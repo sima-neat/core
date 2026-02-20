@@ -79,7 +79,7 @@ else()
   endif()
 endif()
 
-string(REGEX REPLACE "[^A-Za-z0-9.+~_-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
+string(REGEX REPLACE "[^A-Za-z0-9.+~-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
 
 # Debian version must start with a digit. Also normalize common "v1.2.3" tags.
 if (SIMANEAT_VERSION MATCHES "^v[0-9].*")
