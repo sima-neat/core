@@ -119,8 +119,10 @@ jobs:
         run: |
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
           echo "branch_key=${BRANCH_KEY}" >> "${GITHUB_OUTPUT}"
-          echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
           echo "latest_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest" >> "${GITHUB_OUTPUT}"
 
       - name: Prepare artifact payload and metadata
@@ -160,7 +162,8 @@ jobs:
         run: |
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}"
           mkdir -p _work/artifacts
           aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
             --exclude "*" \
@@ -379,7 +382,8 @@ jobs:
         run: |
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}"
           mkdir -p _work/artifacts
           aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
             --exclude "*" \
