@@ -127,7 +127,6 @@ jobs:
         run: |
           for f in ./*.deb ./*extras.tar.gz dist/*.whl; do
             aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
-            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.latest_prefix }}/"
           done
 
   test:
@@ -317,3 +316,88 @@ jobs:
           echo
           echo "Building docs..."
           ./build.sh --doc
+
+  publish-latest:
+    runs-on: [self-hosted, Linux, ARM64, modalix]
+    needs: docs
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Download artifacts from commit prefix
+        run: |
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}"
+          mkdir -p _work/artifacts
+          aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
+            --exclude "*" \
+            --include "*-Linux-core.deb" \
+            --include "*extras.tar.gz" \
+            --include "*.whl"
+
+      - name: Publish latest bundle to S3
+        run: |
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          BRANCH_LABEL="$(echo "${BRANCH_RAW}" | tr '/ +@' '----')"
+          LATEST_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest"
+
+          mapfile -t CORE_DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#CORE_DEBS[@]}" -lt 1 || "${#EXTRAS_TARS[@]}" -lt 1 || "${#WHLS[@]}" -lt 1 ]]; then
+            echo "Missing required artifacts for latest bundle publish." >&2
+            exit 1
+          fi
+
+          CORE_DEB="$(realpath "${CORE_DEBS[0]}")"
+          EXTRAS_TAR="$(realpath "${EXTRAS_TARS[0]}")"
+          WHEEL_PATH="$(realpath "${WHLS[0]}")"
+
+          CORE_BASE="$(basename "${CORE_DEB}")"
+          VERSION_RAW="0.0.0"
+          if [[ "${CORE_BASE}" =~ ^sima-neat-(.+)-Linux-core\.deb$ ]]; then
+            VERSION_RAW="${BASH_REMATCH[1]}"
+          fi
+          VERSION_BASE="${VERSION_RAW%%+*}"
+
+          BUNDLE_DIR="${GITHUB_WORKSPACE}/_work/latest-bundle"
+          mkdir -p "${BUNDLE_DIR}"
+          BUNDLE_NAME="sima-neat-${VERSION_BASE}-${BRANCH_LABEL}-latest.tar.gz"
+          BUNDLE_PATH="${BUNDLE_DIR}/${BUNDLE_NAME}"
+          MANIFEST_PATH="${GITHUB_WORKSPACE}/_work/artifacts/latest-manifest.json"
+
+          cat > "${MANIFEST_PATH}" <<EOF
+          {
+            "branch": "${BRANCH_RAW}",
+            "branch_key": "${BRANCH_KEY}",
+            "commit": "${GITHUB_SHA}",
+            "core_deb": "$(basename "${CORE_DEB}")",
+            "extras_tar": "$(basename "${EXTRAS_TAR}")",
+            "wheel": "$(basename "${WHEEL_PATH}")"
+          }
+          EOF
+
+          tar -C _work/artifacts -czf "${BUNDLE_PATH}" \
+            "$(basename "${CORE_DEB}")" \
+            "$(basename "${EXTRAS_TAR}")" \
+            "$(basename "${WHEEL_PATH}")" \
+            "$(basename "${MANIFEST_PATH}")"
+
+          aws s3 rm "${LATEST_PREFIX}/" --recursive
+          aws s3 cp "${BUNDLE_PATH}" "${LATEST_PREFIX}/${BUNDLE_NAME}"
+
+      - name: Print latest manifest
+        run: |
+          MANIFEST_PATH="${GITHUB_WORKSPACE}/_work/artifacts/latest-manifest.json"
+          if [[ ! -f "${MANIFEST_PATH}" ]]; then
+            echo "Manifest file not found: ${MANIFEST_PATH}" >&2
+            exit 1
+          fi
+          cat "${MANIFEST_PATH}"
