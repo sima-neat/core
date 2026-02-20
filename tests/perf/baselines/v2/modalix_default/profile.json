@@ -1,0 +1,8 @@
+{
+  "modalix_profile_id": "modalix_default",
+  "board_class": "modalix-homogeneous",
+  "sdk_version": "sdk-2.x",
+  "compiler": "g++-12",
+  "gstreamer_version": "1.20.x",
+  "runtime_plugin_bundle_hash": "modalix-plugin-bundle-stable"
+}

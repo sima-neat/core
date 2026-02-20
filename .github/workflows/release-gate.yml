@@ -1,0 +1,161 @@
+name: Release Gate
+
+on:
+  push:
+    branches:
+      - "release/**"
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  repo-hygiene:
+    name: repo-hygiene
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Naming and conflict guard
+        run: bash scripts/ci/check_naming_and_conflicts.sh
+
+      - name: Artifact policy guard
+        run: bash scripts/ci/check_artifacts.sh
+
+  format-hygiene:
+    name: format-hygiene
+    runs-on: [self-hosted, Linux, X64]
+    needs: repo-hygiene
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install formatting/lint tools
+        run: ./build.sh --install-deps-only
+
+      - name: Check internal header hygiene
+        run: ./scripts/check_internal_headers.sh
+
+      - name: Check C/C++ formatting (changed files)
+        run: ./scripts/check_format.sh --changed-only
+
+      - name: Check CMake style (changed files)
+        run: ./scripts/check_cmake_format.sh --changed-only
+
+      - name: Check duplicate includes (changed files)
+        run: ./scripts/check_duplicate_includes.sh --changed-only
+
+  clang-tidy:
+    name: clang-tidy
+    runs-on: [self-hosted, Linux, X64]
+    needs: format-hygiene
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Run clang-tidy
+        env:
+          SIMANEAT_STRICT_WARNINGS: "ON"
+        run: ./scripts/run_cpp_tidy.sh
+
+  build-full:
+    name: build-full
+    runs-on: [self-hosted, Linux, ARM64]
+    needs: clang-tidy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build project
+        env:
+          SIMANEAT_STRICT_WARNINGS: "ON"
+        run: ./build.sh --all --clean --no-doc
+
+      - name: Run full unit and integration tests
+        env:
+          SIMA_YOLO_IMAGE: tests/images/people.jpg
+        run: |
+          ctest --test-dir build --output-on-failure -R "^unit_modalix_contract_preflight_test$"
+          ctest --test-dir build/tests --output-on-failure --no-tests=error
+
+      - name: Run full tutorial tests
+        run: ctest --test-dir build/tutorials --output-on-failure --no-tests=error
+
+  docs-deploy:
+    name: docs-deploy
+    runs-on: [self-hosted, Linux, X64]
+    needs:
+      - build-full
+      - release-policy-check
+    permissions:
+      contents: write
+    env:
+      DOCS_STRICT_LINKS: "1"
+      DOCS_URL: https://ps.modalix.info
+      DOCS_BASE_URL: /
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install build dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Build docs
+        run: ./build.sh --doc
+
+      - name: Validate AWS settings
+        env:
+          AWS_REGION: us-east-1
+          S3_BUCKET: pipeline-session-doc
+          CLOUDFRONT_DISTRIBUTION_ID: E27E3TBO4YSCCW
+        run: |
+          if [ -z "$AWS_REGION" ]; then
+            AWS_REGION="us-east-1"
+            echo "AWS_REGION not set. Defaulting to us-east-1."
+          fi
+          if [ -z "$S3_BUCKET" ]; then
+            echo "Missing S3_BUCKET."
+            exit 1
+          fi
+          if [ -z "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "Missing CLOUDFRONT_DISTRIBUTION_ID."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Deploy to S3
+        run: aws s3 sync website/build/ s3://pipeline-session-doc/ --delete
+
+      - name: Invalidate CloudFront
+        run: aws cloudfront create-invalidation --distribution-id E27E3TBO4YSCCW --paths "/*"
+
+  release-policy-check:
+    name: release-policy-check
+    runs-on: ubuntu-22.04
+    needs:
+      - build-full
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Reference authoritative checklist
+        run: cat docs/release-checklist.md
+
+      - name: Validate release policy files and metadata
+        run: bash scripts/ci/check_release_policy.sh

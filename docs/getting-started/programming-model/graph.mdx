@@ -1,0 +1,62 @@
+---
+title: Graph
+description: Hybrid DAG runtime that combines pipeline and stage nodes
+sidebar_position: 6
+---
+
+# Graph
+
+`graph::Graph` is the DAG (Directed Acyclic Graph) layer for hybrid runtime composition.
+It lets you connect pipeline-backed nodes and stage-backed nodes in one graph, then compile/run it through `GraphSession`.
+
+In practice, this means data flows forward through defined stages without circular dependencies.
+
+## Core objects
+
+- [`Graph`](/reference/{lsa}/classes/simaai-neat-graph-graph): DAG container with typed ports and edges.
+- [`GraphSession`](/reference/{lsa}/classes/simaai-neat-graph-graphsession): compiles the DAG into runnable segments.
+- [`GraphRun`](/reference/{lsa}/classes/simaai-neat-graph-graphrun): runtime handle for push/pull and stats.
+- [`Compiler`](/reference/{lsa}/classes/simaai-neat-graph-compiler): partitions and wires pipeline/stage backends.
+
+## Pipeline-backed vs stage-backed nodes
+
+- **Pipeline-backed node** (`PipelineNode`):
+  wraps regular NEAT `Node`/`NodeGroup` pipeline fragments and runs them through GStreamer pipeline runtime.
+- **Stage-backed node** (`StageNode`):
+  runs custom in-process stage executor logic (C++ callbacks/executors) without requiring a full pipeline fragment.
+
+Use pipeline-backed nodes when behavior is naturally expressed as media pipeline elements.
+Use stage-backed nodes when you need custom control logic, routing, scheduling, or lightweight transformations in process.
+
+## Mental model
+
+1. Build a DAG with `Graph::add(...)` and `connect(...)` (or DSL helpers).
+2. Mix backends:
+   - `PipelineNode` for regular NEAT node groups.
+   - `StageNode` for in-process stage executors.
+3. Build runtime with `GraphSession(...).build()`.
+4. Push/pull via `GraphRun` inputs/outputs.
+
+## What graph adds beyond Session-only pipelines
+
+- Non-linear flow (fan-out/join).
+- Port-based routing and stream-aware scheduling.
+- Hybrid execution where stage executors and pipeline segments coexist.
+
+## Key node families
+
+- [`PipelineNode`](/reference/{lsa}/classes/simaai-neat-graph-nodes-pipelinenode)
+- [`StageNode`](/reference/{lsa}/classes/simaai-neat-graph-nodes-stagenode)
+- [`StreamScheduler`](/reference/{lsa}/classes/simaai-neat-graph-nodes-streamscheduler)
+- [`JoinBundle`](/reference/{lsa}/classes/simaai-neat-graph-nodes-joinbundle)
+
+## See also
+
+- [Node](node)
+- [Pipeline](pipeline)
+- [Session](session)
+
+## Tutorials
+
+- [tutorial_0024_hybrid_graph](../../tutorials/tutorial_0024_hybrid_graph)
+- [tutorial_0025_hybrid_multistream](../../tutorials/tutorial_0025_hybrid_multistream)

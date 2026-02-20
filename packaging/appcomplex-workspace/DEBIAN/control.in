@@ -1,0 +1,11 @@
+Package: @PACKAGE@
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: SiMa.ai <support@sima.ai>
+Depends: bash, coreutils, systemd
+Description: SiMa.ai MLA appcomplex workspace service package
+ Gated workspace package for mlashmcomplex with a dedicated systemd
+ service and isolated control/shm endpoints for validation before
+ promoting to the system service.

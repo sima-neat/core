@@ -1,0 +1,39 @@
+name: Perf Regression
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  perf-regression-gate:
+    name: perf-regression-gate
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Validate perf baseline schema
+        run: |
+          python3 tests/perf/tools/validate_perf_baselines.py \
+            --profile-dir tests/perf/baselines/v2/modalix_default
+
+      - name: Run perf regression gate
+        env:
+          SIMA_PERF_ITERS: "600"
+        run: bash scripts/ci/run_perf_regression_gate.sh
+
+      - name: Validate perf result schema
+        if: always()
+        run: |
+          python3 tests/perf/tools/validate_perf_result.py \
+            --results-dir build-perf-gate/perf_results \
+            --summary
+
+      - name: Upload perf results artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf_results
+          path: build-perf-gate/perf_results

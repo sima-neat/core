@@ -1,0 +1,112 @@
+:root {
+  --ifm-color-primary: #1f6feb;
+  --ifm-color-primary-dark: #1a5fd0;
+  --ifm-color-primary-darker: #1858c3;
+  --ifm-color-primary-darkest: #1246a0;
+  --ifm-color-primary-light: #3a7bf0;
+  --ifm-color-primary-lighter: #4a86f2;
+  --ifm-color-primary-lightest: #6b9af5;
+  --ifm-font-family-base: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --ifm-font-family-monospace: "IBM Plex Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+html[data-theme="dark"] {
+  --ifm-color-primary: #6ea8fe;
+}
+
+@import "./custom-doxygen2docusaurus.css";
+
+/* Hide doxygen2docusaurus generation banner in API reference pages. */
+p.doxyGeneratedBy {
+  display: none !important;
+}
+
+.code-tabs {
+  margin: 16px 0;
+}
+
+.code-tab-buttons {
+  display: flex;
+  gap: 16px;
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  margin-bottom: 8px;
+}
+
+.code-tab-button {
+  border: none;
+  padding: 8px 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  background: transparent;
+  color: var(--ifm-font-color-base);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+
+.code-tab-button.is-active {
+  border-bottom-color: var(--ifm-color-primary);
+}
+
+.code-tabs--js .code-tab-panel {
+  display: none;
+}
+
+.code-tabs--js .code-tab-panel.is-active {
+  display: block;
+}
+
+.language-pref {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+}
+
+.language-pref label {
+  font-size: 0.85rem;
+  color: var(--ifm-color-emphasis-700);
+}
+
+.language-pref select {
+  border-radius: 6px;
+  border: 1px solid var(--ifm-color-emphasis-300);
+  padding: 4px 8px;
+  background: var(--ifm-background-surface-color);
+  color: var(--ifm-font-color-base);
+}
+
+.minimal-tabs {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0 16px;
+  align-items: end;
+  border-bottom: 1px solid var(--ifm-color-emphasis-300);
+  margin: 16px 0 8px;
+}
+
+.minimal-tabs input[type="radio"] {
+  display: none;
+}
+
+.minimal-tabs label {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 8px 0;
+  border-bottom: 2px solid transparent;
+}
+
+#minimal-tab-cpp:checked ~ label[for="minimal-tab-cpp"],
+#minimal-tab-py:checked ~ label[for="minimal-tab-py"] {
+  border-bottom-color: var(--ifm-color-primary);
+}
+
+.minimal-tab-panel {
+  grid-column: 1 / -1;
+  display: none;
+  padding-top: 12px;
+}
+
+#minimal-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
+  display: block;
+}

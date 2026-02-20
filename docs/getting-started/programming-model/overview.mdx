@@ -1,0 +1,118 @@
+---
+title: Inference Workflow
+description: The end-to-end mental model for building and running inference
+sidebar_position: 1
+---
+
+# Inference Workflow
+
+If you are new to SiMa NEAT, keep this sequence in mind:
+
+1. Load a compiled model package (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
+2. Compose a [`Session`](/reference/{lsa}/classes/simaai-neat-session) with input nodes, model stages, and output nodes.
+3. Build a [`PipelineRun`](/reference/{lsa}/classes/simaai-neat-pipelinerun) in sync or async mode.
+4. Push inputs and pull outputs as [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor) or [`Sample`](/reference/{lsa}/structs/simaai-neat-sample).
+
+## Synchronous inference snippet
+
+Sync: use `run(...)` or `push_and_pull(...)` for request/response style execution.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+sima::NeatModel model("resnet_50_model.tar.gz", img_bgr);
+
+sima::PipelineSession session;
+session.add(model.session());
+
+cv::Mat img = /* your frame */;
+
+auto run = session.build(input_tensor, simaai::neat::PipelineRunMode::Sync);
+auto out = run.push_and_pull(input_tensor, /*timeout_ms=*/1000);
+```
+</CodeTab>
+<CodeTab label="Python" lang="python">
+```python
+# Pseudo Python sync example.
+model = NeatModel("resnet_50_model.tar.gz", img_bgr)
+
+session = PipelineSession()
+session.add(model.session())
+
+img = ...  # your frame
+
+run = session.build(input_tensor, PipelineRunMode.Sync)
+out = run.push_and_pull(input_tensor, timeout_ms=1000)
+```
+</CodeTab>
+</CodeTabs>
+
+## Asynchronous inference snippet
+
+Use async mode when you want to decouple producers and consumers, control
+queueing, or overlap IO and compute.
+Async: use `push(...)` / `pull(...)` with [`PipelineRunOptions`](/reference/{lsa}/structs/simaai-neat-pipelinerunoptions) to tune queueing and drop behavior.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+```cpp
+#include "NeatModel.h"
+#include "pipeline/PipelineSession.h"
+
+sima::NeatModel model("resnet_50_model.tar.gz", img_bgr);
+
+sima::PipelineSession session;
+session.add(model.session());
+
+cv::Mat img = /* your frame */;
+
+sima::PipelineRunOptions opt;
+opt.input_queue = 8;
+opt.output_queue = 8;
+opt.drop = sima::DropPolicy::Block;
+
+auto run = session.build(img, sima::PipelineRunMode::Async, opt);
+run.push(img);
+auto out = run.pull(/*timeout_ms=*/1000);
+```
+</CodeTab>
+<CodeTab label="Python" lang="python">
+```python
+# Pseudo Python async example.
+model = NeatModel("resnet_50_model.tar.gz", img_bgr)
+
+session = PipelineSession()
+session.add(model.session())
+
+img = ...  # your frame
+
+opt = PipelineRunOptions()
+opt.input_queue = 8
+opt.output_queue = 8
+opt.drop = DropPolicy.Block
+
+run = session.build(img, PipelineRunMode.Async, opt)
+run.push(img)
+out = run.pull(timeout_ms=1000)
+```
+</CodeTab>
+</CodeTabs>
+
+## Learn the concepts
+
+- [Model](model): model pack loading and model-driven pipeline fragments.
+- [Session](session): assembly, validation, and run/build entry point.
+- [Node](node): atomic pipeline building block and composition unit.
+- [Pipeline](pipeline): deterministic node composition and execution handles.
+- [Graph](graph): hybrid DAG runtime for pipeline + stage composition.
+- [Tensor and Sample](core_types): payload vs metadata envelope.
+- [Input and Output](io): sources, sinks, groups, and I/O contracts.
+
+## Tutorials
+
+- [tutorial_0001_quickstart_image_to_tensor](../../tutorials/tutorial_0001_quickstart_image_to_tensor)
+- [tutorial_0002_pipeline_session_build_run](../../tutorials/tutorial_0002_pipeline_session_build_run)
+- [tutorial_0006_async_push_pull](../../tutorials/tutorial_0006_async_push_pull)
+- [tutorial_0024_hybrid_graph](../../tutorials/tutorial_0024_hybrid_graph)

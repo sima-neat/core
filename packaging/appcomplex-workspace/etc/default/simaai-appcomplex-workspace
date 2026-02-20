@@ -1,0 +1,23 @@
+# Workspace service install gate.
+# 0 = do not auto-enable/start this service during package install.
+# 1 = enable/start this service in postinst.
+APP_COMPLEX_ACTIVATE_ON_INSTALL=0
+
+# Service switch gate.
+# 0 = do not touch the system service (simaai-appcomplex.service).
+# 1 = stop/disable system service in postinst before activating workspace.
+APP_COMPLEX_SWITCH_SYSTEM_SERVICE=0
+
+# Workspace endpoint isolation (safe default for parallel validation).
+MLASHM_CTRL_PATH=/tmp/mlactrl_workspace
+MLASHM_DATA_PATH=/mlashmdata_workspace
+MLASHM_RUNTIME_SHM_PATH=/dev/shm/mlashmdata_workspace
+
+# Runtime arguments for workspace service.
+APP_COMPLEX_MAX_CLIENTS=4
+APP_COMPLEX_VERBOSE=1
+
+# MLA init gate.
+# 0 = skip init_mla_memory.sh (safe for parallel run with system service)
+# 1 = run init_mla_memory.sh before starting workspace service
+APP_COMPLEX_RUN_INIT=0

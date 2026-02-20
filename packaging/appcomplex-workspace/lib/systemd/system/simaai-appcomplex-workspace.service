@@ -1,0 +1,23 @@
+[Unit]
+Description=SiMa.ai MLA workspace shared memory server (gated rollout)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+Environment=MLASHM_CTRL_PATH=/tmp/mlactrl_workspace
+Environment=MLASHM_DATA_PATH=/mlashmdata_workspace
+Environment=MLASHM_RUNTIME_SHM_PATH=/dev/shm/mlashmdata_workspace
+Environment=APP_COMPLEX_MAX_CLIENTS=4
+Environment=APP_COMPLEX_VERBOSE=1
+Environment=APP_COMPLEX_RUN_INIT=0
+EnvironmentFile=-/etc/default/simaai-appcomplex-workspace
+ExecStartPre=/bin/sh -c 'if [ "${APP_COMPLEX_RUN_INIT}" = "1" ]; then /opt/simaai/appcomplex-workspace/bin/init_mla_memory.sh; else exit 0; fi'
+ExecStartPre=+/bin/rm -f ${MLASHM_CTRL_PATH}
+ExecStartPre=+/bin/rm -f ${MLASHM_RUNTIME_SHM_PATH}
+ExecStart=/opt/simaai/appcomplex-workspace/bin/mlashmcomplex -m ${APP_COMPLEX_MAX_CLIENTS} -v ${APP_COMPLEX_VERBOSE}
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target

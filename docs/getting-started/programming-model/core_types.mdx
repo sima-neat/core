@@ -1,0 +1,57 @@
+---
+title: Tensor and Sample
+description: Data payload and metadata envelope used at runtime
+sidebar_position: 7
+---
+
+# Tensor and Sample
+
+The runtime data model has two primary types:
+
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor): typed numeric payload (shape, dtype, layout, storage, device).
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample): envelope around tensor payload with media/runtime metadata.
+
+## Tensor
+
+Use `Tensor` when you only need numeric data and shape/type semantics.
+
+Typical metadata in tensor:
+- shape / dtype / layout
+- storage and mapping behavior
+- optional image/audio/encoded semantic tags
+
+Related references:
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor)
+- [`TensorConstraint`](/reference/{lsa}/structs/simaai-neat-tensorconstraint)
+- [`TensorTypes.h`](/reference/{lsa}/files/include-pipeline-tensortypes-h)
+
+## Sample
+
+Use `Sample` when you need pipeline metadata in addition to tensor bytes.
+
+Typical sample fields:
+- `caps_string`, `media_type`, `payload_tag`
+- `pts_ns`, `dts_ns`, `duration_ns`
+- `stream_id`, `frame_id`, `port_name`
+- `fields` for bundle outputs
+
+Related references:
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample)
+- [`PipelineOptions.h`](/reference/{lsa}/files/include-pipeline-pipelineoptions-h)
+- [`PullError`](/reference/{lsa}/structs/simaai-neat-pullerror)
+
+## Runtime handle
+
+Both types flow through [`PipelineRun`](/reference/{lsa}/classes/simaai-neat-pipelinerun) (`push`, `pull`, `push_and_pull`, `run`).
+
+## See also
+
+- [Session](session)
+- [Pipeline](pipeline)
+- [Input and Output](io)
+
+## Tutorials
+
+- [tutorial_0004_samples_and_neattensor](../../tutorials/tutorial_0004_samples_and_neattensor)
+- [tutorial_0016_data_formats_and_mapping](../../tutorials/tutorial_0016_data_formats_and_mapping)
+- [tutorial_0019_multi_output_bundle](../../tutorials/tutorial_0019_multi_output_bundle)

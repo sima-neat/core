@@ -1,0 +1,1 @@
+{"pipelines":[{"sequence":[{"sequence_id":1,"name":"preproc_0","pluginId":"processcvu","configPath":"0_preproc.json","processor":"CVU","kernel":"preproc","input":"decoder"}]}]}

@@ -1,0 +1,1 @@
+{"pipelines":[{"sequence":[{"sequence_id":1,"name":"mla_0","pluginId":"processmla","configPath":"0_process_mla.json","processor":"MLA","kernel":"infer","input":"decoder"}]}]}

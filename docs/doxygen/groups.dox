@@ -1,0 +1,69 @@
+/**
+ * @defgroup pipeline Pipeline runtime
+ * @brief Session, PipelineRun, options, reports, errors.
+ */
+
+/**
+ * @defgroup builder Builder and graph
+ * @brief Node interfaces and STL-only graph/builder utilities.
+ */
+
+/**
+ * @defgroup nodes Nodes
+ * @brief Pipeline building blocks.
+ */
+
+/**
+ * @defgroup nodes_common Common nodes
+ * @ingroup nodes
+ * @brief Common GStreamer utility nodes (caps, convert, appsink, etc.).
+ */
+
+/**
+ * @defgroup nodes_io I/O nodes
+ * @ingroup nodes
+ * @brief Appsrc/RTSP/file/UDP source and sink nodes.
+ */
+
+/**
+ * @defgroup nodes_groups Node groups
+ * @ingroup nodes
+ * @brief Higher-level recipes composed of multiple nodes.
+ */
+
+/**
+ * @defgroup nodes_sima Sima nodes
+ * @ingroup nodes
+ * @brief SimaAI-specific nodes (decode/encode/preproc/postproc).
+ */
+
+/**
+ * @defgroup nodes_rtp RTP nodes
+ * @ingroup nodes
+ * @brief RTP helpers (depay/payload/caps fixups).
+ */
+
+/**
+ * @defgroup mpk MPK integration
+ * @brief Model pack loading and stage fragments.
+ */
+
+/**
+ * @defgroup contracts Contracts
+ * @brief Builder-level validation rules and reports.
+ */
+
+/**
+ * @defgroup gst GStreamer helpers
+ * @brief Thin wrappers and utilities around GStreamer APIs.
+ */
+
+/**
+ * @defgroup tensors Tensor
+ * @brief Tensor core types, constraints, conversions, adapters.
+ */
+
+/**
+ * @defgroup diagnostics Diagnostics
+ * @brief PipelineReport, debug probes, and observability helpers.
+ */

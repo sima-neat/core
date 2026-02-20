@@ -1,0 +1,36 @@
+/**
+ * @file
+ * @brief Atomic node imports for SiMa NEAT.
+ */
+#pragma once
+
+#include "nodes/common/Caps.h"
+#include "nodes/common/FileInput.h"
+#include "nodes/common/ImageDecode.h"
+#include "nodes/common/ImageFreeze.h"
+#include "nodes/common/JpegDecode.h"
+#include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
+#include "nodes/common/VideoConvert.h"
+#include "nodes/common/VideoRate.h"
+#include "nodes/common/VideoScale.h"
+#include "nodes/common/VideoTrackSelect.h"
+#include "nodes/io/Input.h"
+#include "nodes/io/OptiViewJsonOutput.h"
+#include "nodes/io/RTSPInput.h"
+#include "nodes/io/StillImageInput.h"
+#include "nodes/io/UdpOutput.h"
+#include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/rtp/H264Depacketize.h"
+#include "nodes/sima/DetessDequant.h"
+#include "nodes/sima/H264DecodeSima.h"
+#include "nodes/sima/H264EncodeSima.h"
+#include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/H264Parse.h"
+#include "nodes/sima/PCIeSink.h"
+#include "nodes/sima/PCIeSrc.h"
+#include "nodes/sima/Preproc.h"
+#include "nodes/sima/QuantTess.h"
+#include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/SimaRender.h"

@@ -1,0 +1,1 @@
+appsrc name=src is-live=true ! videoconvert ! fakesink sync=false

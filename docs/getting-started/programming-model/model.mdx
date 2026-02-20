@@ -1,0 +1,71 @@
+---
+title: Model
+description: Load compiled model packs and produce runnable model stages
+sidebar_position: 2
+---
+
+# Model
+
+[`Model`](/reference/{lsa}/classes/simaai-neat-model) is the top-level API for loading a compiled model (`.tar.gz`) and exposing reusable stage fragments.
+
+Use `Model` when you want model-aware pipeline assembly without manually wiring every model plugin.
+
+```cpp
+#include "neat/models.h"
+```
+
+## What `Model` gives you
+
+- `session()`: full model path as a node group.
+- `preprocess()`, `inference()`, `postprocess()`: stage-level composition.
+- `input_spec()` and `output_spec()`: tensor contract introspection.
+- `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
+
+Reference:
+- [`Model` API](/reference/{lsa}/classes/simaai-neat-model)
+- [`Model::Options`](/reference/{lsa}/structs/simaai-neat-model-options)
+- [`Model::SessionOptions`](/reference/{lsa}/structs/simaai-neat-model-sessionoptions)
+
+## Typical usage inside a session
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+```cpp
+simaai::neat::Model model("yolov8s_model.tar.gz");
+
+simaai::neat::Session session;
+session.add(model.session());
+```
+</CodeTab>
+<CodeTab label="Python" lang="python">
+```python
+# Pseudo Python model example.
+model = NeatModel("yolov8s_model.tar.gz")
+
+session = Session()
+session.add(model.session())
+```
+</CodeTab>
+</CodeTabs>
+
+## Failure handling
+
+Model-driven sessions use the same diagnostics contract as raw `Session`:
+
+- `SessionError.report().error_code` for terminal failures
+- `SessionError.report().repro_note` for actionable context + hints
+- `SessionError.report().bus` for plugin/runtime detail
+
+Start triage from `error_code` (`misconfig.*`, `build.*`, `runtime.*`, `io.*`)
+before inspecting detailed bus logs.
+
+## See also
+
+- [Inference Workflow](overview)
+- [Session](session)
+- [Pipeline](pipeline)
+
+## Tutorials
+
+- [tutorial_0013_model_resnet50](../../tutorials/tutorial_0013_model_resnet50)
+- [tutorial_0017_neatmodel_end_to_end](../../tutorials/tutorial_0017_neatmodel_end_to_end)

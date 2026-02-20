@@ -1,0 +1,66 @@
+---
+title: Session
+description: Build, validate, and run deterministic pipelines
+sidebar_position: 3
+---
+
+# Session
+
+[`Session`](/reference/{lsa}/classes/simaai-neat-session) is the runtime entry point.
+It owns pipeline assembly, validation, and build/run orchestration.
+
+Think of `Session` as the place where you define pipeline structure once, then execute it many times.
+
+## Core responsibilities
+
+- Add nodes and groups with `add(...)`.
+- Inspect pipeline text with `describe()` and `to_gst()`.
+- Validate contracts before runtime with `validate(...)`.
+- Build a [`PipelineRun`](/reference/{lsa}/classes/simaai-neat-pipelinerun) via `build(...)`.
+- Run convenience sync paths with `run(...)`.
+
+Reference:
+- [`Session` API](/reference/{lsa}/classes/simaai-neat-session)
+- [`SessionOptions`](/reference/{lsa}/structs/simaai-neat-sessionoptions)
+- [`ValidateOptions`](/reference/{lsa}/structs/simaai-neat-validateoptions)
+
+## Session + PipelineRun pattern
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+```cpp
+simaai::neat::Session session;
+session.add(simaai::neat::nodes::InputAppSrc());
+session.add(simaai::neat::nodes::OutputAppSink());
+
+auto run = session.build(input_tensor, simaai::neat::PipelineRunMode::Sync);
+auto out = run.push_and_pull(input_tensor, 1000);
+```
+</CodeTab>
+<CodeTab label="Python" lang="python">
+```python
+# Pseudo Python session + PipelineRun example.
+session = Session()
+session.add(nodes.InputAppSrc())
+session.add(nodes.OutputAppSink())
+
+run = session.build(input_tensor, PipelineRunMode.Sync)
+out = run.push_and_pull(input_tensor, 1000)
+```
+</CodeTab>
+</CodeTabs>
+
+## See also
+
+- [Model](model)
+- [Node](node)
+- [Pipeline](pipeline)
+- [Graph](graph)
+- [Tensor and Sample](core_types)
+- [Input and Output](io)
+
+## Tutorials
+
+- [tutorial_0002_pipeline_session_build_run](../../tutorials/tutorial_0002_pipeline_session_build_run)
+- [tutorial_0009_pipeline_save_load](../../tutorials/tutorial_0009_pipeline_save_load)
+- [tutorial_0010_diagnostics_debug](../../tutorials/tutorial_0010_diagnostics_debug)

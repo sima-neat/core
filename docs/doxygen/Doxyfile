@@ -1,0 +1,50 @@
+# Doxygen configuration for PipelineSession
+
+PROJECT_NAME           = "PipelineSession"
+PROJECT_BRIEF          = "Typed, composable GStreamer pipelines in C++20"
+OUTPUT_DIRECTORY       = docs/doxygen/out
+
+# Inputs
+INPUT                  = include docs README.md
+RECURSIVE              = YES
+FILE_PATTERNS          = *.h *.hpp *.cpp *.md *.dox
+EXAMPLE_PATH           = examples tests docs/doxygen
+USE_MDFILE_AS_MAINPAGE = docs/doxygen/mainpage.md
+MARKDOWN_SUPPORT       = YES
+
+# Excludes
+EXCLUDE_PATTERNS       = */include/sima/* \
+                          */tests/assets/* \
+                          */examples/media/* \
+                          */build* \
+                          */docs/doxygen/out/* \
+                          */docs/reference/api/* \
+                          */docs/reference/cppapi/* \
+                          */include/policy/* \
+                          */include/mpk/MpK*.* \
+                          */include/nodes/groups/ImageToH264RtspGroup.h \
+                          */include/nodes/groups/MpKCompatGroup.h
+
+# Extraction / warnings
+EXTRACT_ALL            = YES
+WARN_IF_UNDOCUMENTED   = YES
+WARN_IF_DOC_ERROR      = YES
+WARN_NO_PARAMDOC       = YES
+
+# Output formats
+GENERATE_HTML          = NO
+HTML_OUTPUT            = html
+GENERATE_XML           = YES
+XML_OUTPUT             = xml
+GENERATE_LATEX         = NO
+
+# UI
+GENERATE_TREEVIEW      = YES
+FULL_PATH_NAMES        = NO
+STRIP_FROM_PATH        = .
+
+# Diagrams (optional; keep light)
+HAVE_DOT               = YES
+DOT_IMAGE_FORMAT       = svg
+INTERACTIVE_SVG        = YES
+CLASS_DIAGRAMS         = YES

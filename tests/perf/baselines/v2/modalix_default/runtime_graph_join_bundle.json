@@ -1,0 +1,17 @@
+{
+  "scenario_id": "runtime_graph_join_bundle",
+  "model_id": "synthetic_rgb_tensor",
+  "pipeline_id": "graph_join_bundle_two_sources",
+  "run_mode": "graph",
+  "iterations": 300,
+  "metrics_thresholds": {
+    "throughput_min": 10.0,
+    "p50_max": 550.0,
+    "p95_max": 1300.0,
+    "startup_max": 12000.0,
+    "rss_peak_kb_max": 1400000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  }
+}

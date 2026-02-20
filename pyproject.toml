@@ -1,0 +1,64 @@
+[build-system]
+requires = [
+  "scikit-build-core>=0.10.0",
+  "nanobind>=2.4.0",
+]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pyneat"
+version = "0.0.0"
+description = "Python bindings for SiMa NEAT"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+authors = [
+  { name = "SiMa.ai" },
+]
+dependencies = [
+  "numpy>=2.0.0",
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: Implementation :: CPython",
+  "Programming Language :: C++",
+  "Operating System :: POSIX :: Linux",
+  "License :: OSI Approved :: Apache Software License",
+]
+
+[project.optional-dependencies]
+torch = [
+  "torch>=2.3.0",
+]
+dev = [
+  "build>=1.2.0",
+  "cibuildwheel>=2.20.0",
+  "pytest>=8.0.0",
+]
+
+[tool.scikit-build]
+minimum-version = "0.10"
+cmake.build-type = "Release"
+wheel.packages = []
+sdist.include = [
+  "CMakeLists.txt",
+  "cmake/**",
+  "include/**",
+  "src/**",
+  "python/**",
+  "README.md",
+  "LICENSE",
+]
+
+[tool.scikit-build.cmake.define]
+SIMANEAT_BUILD_PYTHON = "ON"
+SIMANEAT_BUILD_SAMPLES = "OFF"
+SIMANEAT_BUILD_TUTORIALS = "OFF"
+SIMANEAT_BUILD_TESTS = "OFF"
+
+[tool.pytest.ini_options]
+testpaths = [
+  "python/tests",
+  "tests/tutorials",
+]

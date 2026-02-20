@@ -1,0 +1,17 @@
+{
+  "scenario_id": "runtime_session_sync_rgb",
+  "model_id": "synthetic_rgb_tensor",
+  "pipeline_id": "session_input_output_sync",
+  "run_mode": "sync",
+  "iterations": 400,
+  "metrics_thresholds": {
+    "throughput_min": 5.0,
+    "p50_max": 200.0,
+    "p95_max": 450.0,
+    "startup_max": 12000.0,
+    "rss_peak_kb_max": 1200000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  }
+}

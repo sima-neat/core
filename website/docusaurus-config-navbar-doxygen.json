@@ -1,0 +1,24 @@
+{
+  "type": "dropdown",
+  "label": "Reference",
+  "to": "/docs/reference/cppapi/",
+  "position": "left",
+  "items": [
+    {
+      "label": "Topics",
+      "to": "/docs/reference/cppapi/groups/"
+    },
+    {
+      "label": "Namespaces",
+      "to": "/docs/reference/cppapi/namespaces/"
+    },
+    {
+      "label": "Classes",
+      "to": "/docs/reference/cppapi/classes/"
+    },
+    {
+      "label": "Files",
+      "to": "/docs/reference/cppapi/files/"
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+#include "graph/Graph.h"
+#include "graph/GraphSession.h"
+#include "graph/StageExecutor.h"
+#include "graph/nodes/StageNode.h"
+#include "test_main.h"
+#include "test_utils.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace {
+
+int env_int(const char* key, int fallback) {
+  const char* raw = std::getenv(key);
+  if (!raw || !*raw) {
+    return fallback;
+  }
+  return std::atoi(raw);
+}
+
+int clamp_iters(int value) {
+  return std::max(20, std::min(value, 6000));
+}
+
+class PassThroughStage final : public simaai::neat::graph::StageExecutor {
+public:
+  void set_ports(const simaai::neat::graph::StagePorts& ports) override {
+    const simaai::neat::graph::PortId only = ports.only_output();
+    if (only != simaai::neat::graph::kInvalidPort) {
+      out_port_ = only;
+    }
+  }
+
+  void on_input(simaai::neat::graph::StageMsg&& msg,
+                std::vector<simaai::neat::graph::StageOutMsg>& out) override {
+    out.push_back(simaai::neat::graph::StageOutMsg{
+        .out_port = (out_port_ == simaai::neat::graph::kInvalidPort)
+                        ? simaai::neat::graph::kInvalidPort
+                        : out_port_,
+        .sample = std::move(msg.sample)});
+  }
+
+private:
+  simaai::neat::graph::PortId out_port_ = simaai::neat::graph::kInvalidPort;
+};
+
+class FanOutStage final : public simaai::neat::graph::StageExecutor {
+public:
+  void set_ports(const simaai::neat::graph::StagePorts& ports) override {
+    left_ = ports.out_port("left");
+    right_ = ports.out_port("right");
+  }
+
+  void on_input(simaai::neat::graph::StageMsg&& msg,
+                std::vector<simaai::neat::graph::StageOutMsg>& out) override {
+    simaai::neat::Sample sample = std::move(msg.sample);
+    if (left_ != simaai::neat::graph::kInvalidPort) {
+      out.push_back(simaai::neat::graph::StageOutMsg{.out_port = left_, .sample = sample});
+    }
+    if (right_ != simaai::neat::graph::kInvalidPort) {
+      out.push_back(
+          simaai::neat::graph::StageOutMsg{.out_port = right_, .sample = std::move(sample)});
+    }
+  }
+
+private:
+  simaai::neat::graph::PortId left_ = simaai::neat::graph::kInvalidPort;
+  simaai::neat::graph::PortId right_ = simaai::neat::graph::kInvalidPort;
+};
+
+std::shared_ptr<simaai::neat::graph::Node> make_pass_node(const std::string& label) {
+  using simaai::neat::graph::PortDesc;
+  using simaai::neat::graph::nodes::StageNode;
+  StageNode::StageExecutorFactory factory = []() { return std::make_unique<PassThroughStage>(); };
+  std::vector<PortDesc> inputs = {PortDesc{.name = "in", .spec = simaai::neat::OutputSpec{}}};
+  std::vector<PortDesc> outputs = {PortDesc{.name = "out", .spec = simaai::neat::OutputSpec{}}};
+  return std::make_shared<StageNode>("PassThrough", std::move(factory), std::move(inputs),
+                                     std::move(outputs), label);
+}
+
+std::shared_ptr<simaai::neat::graph::Node> make_fanout_node() {
+  using simaai::neat::graph::PortDesc;
+  using simaai::neat::graph::nodes::StageNode;
+  StageNode::StageExecutorFactory factory = []() { return std::make_unique<FanOutStage>(); };
+  std::vector<PortDesc> inputs = {PortDesc{.name = "in", .spec = simaai::neat::OutputSpec{}}};
+  std::vector<PortDesc> outputs = {PortDesc{.name = "left", .spec = simaai::neat::OutputSpec{}},
+                                   PortDesc{.name = "right", .spec = simaai::neat::OutputSpec{}}};
+  return std::make_shared<StageNode>("FanOut", std::move(factory), std::move(inputs),
+                                     std::move(outputs), "fanout");
+}
+
+} // namespace
+
+RUN_TEST("stress_graph_execution_test", [] {
+  const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 200));
+  const int cycles = std::max(1, iters / 40);
+  const int frames_per_cycle = std::max(10, std::min(200, iters));
+
+  for (int cycle = 0; cycle < cycles; ++cycle) {
+    simaai::neat::graph::Graph g;
+    auto fan = g.add(make_fanout_node());
+    auto sink_a = g.add(make_pass_node("sink_a"));
+    auto sink_b = g.add(make_pass_node("sink_b"));
+
+    g.connect(fan, sink_a, "left", "in");
+    g.connect(fan, sink_b, "right", "in");
+
+    simaai::neat::graph::GraphSession session(std::move(g));
+    simaai::neat::graph::GraphRun run = session.build();
+
+    for (int frame = 0; frame < frames_per_cycle; ++frame) {
+      simaai::neat::Sample sample;
+      sample.kind = simaai::neat::SampleKind::Tensor;
+      sample.tensor = make_color_tensor(24, 16, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                        static_cast<uint8_t>(frame & 0xFF));
+      sample.frame_id = frame;
+      sample.stream_id = "stress-graph";
+      require(run.push(fan, sample), "stress graph push failed");
+    }
+
+    for (int frame = 0; frame < frames_per_cycle; ++frame) {
+      auto out_a = run.pull(sink_a, 2000);
+      auto out_b = run.pull(sink_b, 2000);
+      require(out_a.has_value(), "stress graph left pull timed out");
+      require(out_b.has_value(), "stress graph right pull timed out");
+      require(out_a->frame_id == frame, "stress graph left frame mismatch");
+      require(out_b->frame_id == frame, "stress graph right frame mismatch");
+    }
+
+    run.stop();
+  }
+});

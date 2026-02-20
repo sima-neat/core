@@ -1,0 +1,26 @@
+name: Crash Correctness
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches:
+      - "main"
+      - "release/**"
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  crash-correctness-gate:
+    name: crash-correctness-gate
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Run crash/correctness gate
+        run: bash scripts/ci/run_crash_correctness_gate.sh

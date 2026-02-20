@@ -1,0 +1,63 @@
+---
+title: Input and Output
+description: Input groups, appsrc/appsink, and I/O contracts
+sidebar_position: 8
+---
+
+# Input and Output
+
+I/O in SiMa NEAT is explicit and contract-driven.
+You select how data enters and exits the pipeline, then tune runtime behavior around those contracts.
+
+## Input patterns
+
+### 1) File/stream input groups
+
+Use group helpers from [`nodes::groups`](/reference/{lsa}/namespaces/simaai-neat-nodes-groups) when the source is image/video/RTSP.
+They package common GStreamer source recipes and reduce boilerplate.
+
+See tutorials:
+- [tutorial_0001_quickstart_image_to_tensor](../../tutorials/tutorial_0001_quickstart_image_to_tensor)
+- [tutorial_0008_input_groups](../../tutorials/tutorial_0008_input_groups)
+
+### 2) Push input (`InputAppSrc`)
+
+Use [`InputAppSrc`](/reference/{lsa}/classes/simaai-neat-inputappsrc) for application-driven frame/tensor push.
+This is the most common pattern for inference services.
+
+Key options and contracts:
+- [`InputAppSrcOptions`](/reference/{lsa}/structs/simaai-neat-inputappsrcoptions)
+- [`RunInputOptions`](/reference/{lsa}/structs/simaai-neat-runinputoptions)
+- [`PipelineRunOptions`](/reference/{lsa}/structs/simaai-neat-pipelinerunoptions)
+
+## Output patterns
+
+### 1) Rich output (`OutputAppSink`)
+
+Use [`OutputAppSink`](/reference/{lsa}/classes/simaai-neat-outputappsink) when you need full sample metadata and flexible sink policies.
+
+Related options:
+- [`OutputAppSinkOptions`](/reference/{lsa}/structs/simaai-neat-outputappsinkoptions)
+
+### 2) Tensor-first output (`add_output_tensor`)
+
+Use `Session::add_output_tensor(...)` for a simpler tensor-oriented output path with format/shape normalization.
+
+Related options:
+- [`OutputTensorOptions`](/reference/{lsa}/structs/simaai-neat-outputtensoroptions)
+
+## RTSP mode
+
+For server-style output, use `Session::run_rtsp(...)` and configure [`RtspServerOptions`](/reference/{lsa}/structs/simaai-neat-rtspserveroptions).
+
+## See also
+
+- [Inference Workflow](overview)
+- [Session](session)
+- [Tensor and Sample](core_types)
+
+## Tutorials
+
+- [tutorial_0014_rtsp_server](../../tutorials/tutorial_0014_rtsp_server)
+- [tutorial_0021_output_appsink_policies](../../tutorials/tutorial_0021_output_appsink_policies)
+- [tutorial_0022_inputappsrc_advanced_caps](../../tutorials/tutorial_0022_inputappsrc_advanced_caps)

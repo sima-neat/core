@@ -1,0 +1,247 @@
+name: PR to main branch gate
+
+on:
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+jobs:
+  format-hygiene:
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install formatting/lint tools
+        run: |
+          ./build.sh --install-deps-only
+
+      - name: Check internal header hygiene
+        run: |
+          ./scripts/check_internal_headers.sh
+
+      - name: Check C/C++ formatting (changed files)
+        run: |
+          ./scripts/check_format.sh --changed-only
+
+      - name: Check CMake style (changed files)
+        run: |
+          ./scripts/check_cmake_format.sh --changed-only
+
+      - name: Check duplicate includes (changed files)
+        run: |
+          ./scripts/check_duplicate_includes.sh --changed-only
+
+  clang-tidy:
+    runs-on: [self-hosted, Linux, X64]
+    needs: format-hygiene
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install clang-tidy
+        run: |
+          if command -v clang-tidy >/dev/null 2>&1 && command -v rg >/dev/null 2>&1; then
+            echo "clang-tidy and ripgrep already installed."
+            exit 0
+          fi
+
+          if [ "$(id -u)" -eq 0 ]; then
+            apt-get update
+            apt-get install -y clang-tidy ripgrep
+            exit 0
+          fi
+
+          if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+            sudo -n apt-get update
+            sudo -n apt-get install -y clang-tidy ripgrep
+            exit 0
+          fi
+
+          echo "Missing clang-tidy or ripgrep, and cannot install without passwordless sudo on this runner." >&2
+          echo "Preinstall these packages on the x86 runner or enable passwordless sudo for the runner user." >&2
+          exit 1
+
+      - name: Install build dependencies
+        run: |
+          ./build.sh --install-deps-only
+
+      - name: Run clang-tidy
+        env:
+          SIMANEAT_STRICT_WARNINGS: "ON"
+        run: |
+          ./scripts/run_cpp_tidy.sh
+
+      - name: Finishing off
+        run: |
+          echo "clang-tidy already executed in scripts/run_cpp_tidy.sh"
+
+  build:
+    runs-on: [self-hosted, Linux, ARM64, elxr-sdk]
+    needs: clang-tidy
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Environment
+        run: |
+          echo "Preparing build environment on private machine..."
+
+      - name: Build Project
+        env:
+          SIMANEAT_STRICT_WARNINGS: "ON"
+        run: |
+          ./build.sh --all --clean --no-doc
+
+      - name: Verify build artifacts
+        run: |
+          ls -lh ./*.deb
+          ls -lh dist/*.whl
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Compute S3 artifact prefixes
+        id: s3-prefix
+        run: |
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          echo "branch_key=${BRANCH_KEY}" >> "${GITHUB_OUTPUT}"
+          echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "latest_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload artifacts to S3
+        run: |
+          for f in ./*.deb dist/*.whl; do
+            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
+            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.latest_prefix }}/"
+          done
+
+  test:
+    runs-on: [self-hosted, Linux, ARM64, modalix]
+    needs: build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Download test artifacts from S3
+        run: |
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}"
+          mkdir -p _work/artifacts
+          aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
+            --exclude "*" \
+            --include "*.deb" \
+            --include "*.whl"
+          ls -lh _work/artifacts
+
+      - name: Install DEB packages for test runtime
+        run: |
+          mapfile -t DEBS < <(ls -1 _work/artifacts/*.deb)
+          if [[ "${#DEBS[@]}" -lt 2 ]]; then
+            echo "Expected at least 2 .deb files, found ${#DEBS[@]}." >&2
+            exit 1
+          fi
+          sudo apt install -y "${DEBS[@]}"
+
+      - name: Setup test venv and install pyneat wheel
+        run: |
+          VENV_DIR="${GITHUB_WORKSPACE}/_work/pyneat-venv"
+          rm -rf "${VENV_DIR}"
+          python3 -m venv "${VENV_DIR}"
+          "${VENV_DIR}/bin/python" -m pip install --upgrade pip
+          WHEEL_PATH="$(ls -1 _work/artifacts/*.whl | head -n1)"
+          "${VENV_DIR}/bin/python" -m pip install --force-reinstall --no-deps "${WHEEL_PATH}"
+          "${VENV_DIR}/bin/python" -c "import pyneat; print(pyneat.__file__)"
+
+      - name: Fix devkit runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/fix_devkit_runtime.sh
+
+      - name: Discover installed CTest directories
+        run: |
+          if [[ ! -d /usr/lib/sima-neat ]]; then
+            echo "/usr/lib/sima-neat not found after extras install." >&2
+            exit 1
+          fi
+          mapfile -t CTEST_DIRS < <(find /usr/lib/sima-neat -type f -name CTestTestfile.cmake -printf '%h\n' | sort -u)
+          if [[ "${#CTEST_DIRS[@]}" -eq 0 ]]; then
+            echo "No CTestTestfile.cmake found under /usr/lib/sima-neat." >&2
+            exit 1
+          fi
+          printf '%s\n' "${CTEST_DIRS[@]}" | sed 's|^|Detected CTest dir: |'
+          printf '%s\n' "${CTEST_DIRS[@]}" > _work/ctest_dirs.txt
+
+      - name: Run Unit & Integration Tests (Strict)
+        env:
+          SIMA_YOLO_IMAGE: tests/images/people.jpg
+        run: |
+          ctest --test-dir /usr/lib/sima-neat/tests --output-on-failure -R "^unit_modalix_contract_preflight_test$"
+          ctest --test-dir /usr/lib/sima-neat/tests \
+            --label-regex "strict" \
+            --label-exclude "long" \
+            --output-on-failure \
+            --no-tests=error
+
+      - name: Manifest Strict Fallback Gate
+        env:
+          SIMA_STRICT_MANIFEST_NO_JSON_FALLBACK: 1
+        run: |
+          ctest --test-dir /usr/lib/sima-neat/tests \
+            --output-on-failure \
+            -R "^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$"
+
+      - name: Run Tutorial Tests
+        continue-on-error: true
+        run: |
+          ctest --test-dir /usr/lib/sima-neat/tutorials --output-on-failure
+
+  docs:
+    runs-on: [self-hosted, Linux, X64]
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install build dependencies
+        run: |
+          ./build.sh --install-deps-only
+
+      - name: Configure docs build
+        run: |
+          cmake -S . -B build
+
+      - name: Build docs
+        env:
+          DOCS_URL: https://ps.modalix.info
+          DOCS_BASE_URL: /
+        run: |
+          echo
+          echo "Building docs..."
+          ./build.sh --doc

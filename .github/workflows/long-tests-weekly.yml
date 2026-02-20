@@ -1,0 +1,35 @@
+name: Long Tests Weekly
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch: {}
+
+jobs:
+  long-tests:
+    name: long-tests
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Configure
+        run: cmake -S . -B build-long-tests -DSIMANEAT_BUILD_SAMPLES=OFF
+
+      - name: Build
+        run: cmake --build build-long-tests -j8
+
+      - name: Run Modalix preflight
+        run: ctest --test-dir build-long-tests --output-on-failure -R "^unit_modalix_contract_preflight_test$"
+
+      - name: Run long tests only
+        env:
+          SIMA_TEST_IS_LONG: "1"
+        run: |
+          ctest --test-dir build-long-tests \
+            --label-regex "long" \
+            --output-on-failure \
+            --no-tests=error

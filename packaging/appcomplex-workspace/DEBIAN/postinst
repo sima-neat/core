@@ -1,0 +1,45 @@
+#!/bin/sh
+set -eu
+
+UNIT_NAME="simaai-appcomplex-workspace.service"
+OLD_UNIT_NAME="simaai-appcomplex.service"
+ENV_FILE="/etc/default/simaai-appcomplex-workspace"
+
+read_flag() {
+  flag_name="$1"
+  default_value="$2"
+  if [ ! -f "$ENV_FILE" ]; then
+    echo "$default_value"
+    return 0
+  fi
+
+  flag_value="$(awk -F= -v key="$flag_name" '$1 == key {print $2}' "$ENV_FILE" | tail -n 1 | tr -d '[:space:]"' || true)"
+  case "$flag_value" in
+    0|1) echo "$flag_value" ;;
+    *) echo "$default_value" ;;
+  esac
+}
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+
+  switch_flag="$(read_flag APP_COMPLEX_SWITCH_SYSTEM_SERVICE 0)"
+  activate_flag="$(read_flag APP_COMPLEX_ACTIVATE_ON_INSTALL 0)"
+
+  if [ "$switch_flag" = "1" ]; then
+    systemctl stop "$OLD_UNIT_NAME" || true
+    systemctl disable "$OLD_UNIT_NAME" || true
+    echo "[postinst] Switched off $OLD_UNIT_NAME as requested by APP_COMPLEX_SWITCH_SYSTEM_SERVICE=1"
+  fi
+
+  if [ "$activate_flag" = "1" ]; then
+    systemctl enable "$UNIT_NAME" || true
+    systemctl restart "$UNIT_NAME" || true
+    echo "[postinst] Enabled and started $UNIT_NAME"
+  else
+    echo "[postinst] Gated install mode: $UNIT_NAME was not started automatically"
+    echo "[postinst] Set APP_COMPLEX_ACTIVATE_ON_INSTALL=1 in $ENV_FILE for auto-start on next upgrade/configure"
+  fi
+fi
+
+exit 0

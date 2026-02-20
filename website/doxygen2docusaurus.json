@@ -1,0 +1,9 @@
+{
+  "doxygenXmlInputFolderPath": "../docs/doxygen/out/xml",
+  "apiFolderPath": "../docs/reference/cppapi",
+  "baseUrl": "/",
+  "apiBaseUrl": "reference/cppapi",
+  "sidebarCategoryLabel": "API",
+  "navbarDropdownLabel": "API References",
+  "mainPageTitle": "API Reference"
+}

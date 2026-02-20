@@ -1,0 +1,19 @@
+#!/bin/sh
+set -eu
+
+UNIT_NAME="simaai-appcomplex-workspace.service"
+
+case "${1:-}" in
+  remove|deconfigure)
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop "$UNIT_NAME" || true
+      systemctl disable "$UNIT_NAME" || true
+      systemctl daemon-reload || true
+    fi
+    ;;
+  upgrade|failed-upgrade)
+    :
+    ;;
+esac
+
+exit 0

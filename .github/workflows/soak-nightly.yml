@@ -1,0 +1,25 @@
+name: Soak Weekly
+
+on:
+  schedule:
+    - cron: "10 4 * * 2"
+  workflow_dispatch: {}
+
+jobs:
+  soak-nightly:
+    name: soak-nightly
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Run soak lane
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            SOAK_DURATION_HOURS=8 SOAK_INTERVAL_SECONDS=900 bash scripts/ci/run_soak_lane.sh
+          else
+            SOAK_DURATION_HOURS=2 SOAK_INTERVAL_SECONDS=600 bash scripts/ci/run_soak_lane.sh
+          fi

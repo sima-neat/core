@@ -1,0 +1,39 @@
+name: Python Bindings
+
+on:
+  push:
+    branches: ["main", "actions"]
+  pull_request:
+    branches: ["main", "actions"]
+  workflow_dispatch: {}
+
+jobs:
+  pyneat-linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install native dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Install Python package (editable)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Run Python tests
+        run: |
+          pytest -q python/tests
+
+      - name: Build wheel and verify import
+        run: |
+          python -m build --wheel
+          python -m pip install --force-reinstall dist/pyneat-*.whl
+          python -c "import pyneat; print(pyneat.__version__)"

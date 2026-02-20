@@ -1,0 +1,36 @@
+name: Zero Skip Gate
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches:
+      - "main"
+  workflow_dispatch: {}
+
+jobs:
+  zero-skip-gate:
+    name: zero-skip-gate
+    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release/') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Enforce skip budget trend
+        run: bash scripts/ci/check_skip_budget.sh
+
+      - name: Run zero-skip gate
+        run: bash scripts/ci/run_zero_skip_gate.sh
+
+      - name: Upload zero-skip artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zero_skip
+          path: |
+            build-zero-skip/zero_skip_junit.xml
+            build-zero-skip/skip_trend.json

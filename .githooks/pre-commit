@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "${ROOT_DIR}"
+
+echo "[pre-commit] checking C/C++ formatting (changed files)..."
+bash scripts/check_format.sh --changed-only
+
+echo "[pre-commit] checking CMake style (changed files)..."
+bash scripts/check_cmake_format.sh --changed-only
+
+echo "[pre-commit] checking duplicate includes (changed files)..."
+bash scripts/check_duplicate_includes.sh --changed-only

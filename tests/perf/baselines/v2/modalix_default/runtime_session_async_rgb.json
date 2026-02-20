@@ -1,0 +1,17 @@
+{
+  "scenario_id": "runtime_session_async_rgb",
+  "model_id": "synthetic_rgb_tensor",
+  "pipeline_id": "session_input_output_async",
+  "run_mode": "async",
+  "iterations": 400,
+  "metrics_thresholds": {
+    "throughput_min": 20.0,
+    "p50_max": 350.0,
+    "p95_max": 800.0,
+    "startup_max": 12000.0,
+    "rss_peak_kb_max": 1200000.0,
+    "input_drop_count_max": 0.0,
+    "output_drop_count_max": 0.0,
+    "regression_tolerance_percent": 10.0
+  }
+}

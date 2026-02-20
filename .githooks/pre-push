@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(git rev-parse --show-toplevel)"
+cd "${ROOT_DIR}"
+
+changed_args=(--changed-only)
+base_ref=""
+
+if upstream_ref="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null)"; then
+  if merge_base="$(git merge-base HEAD "${upstream_ref}" 2>/dev/null)"; then
+    base_ref="${merge_base}"
+  fi
+fi
+
+if [[ -z "${base_ref}" ]] && git rev-parse --verify --quiet origin/main >/dev/null; then
+  if merge_base="$(git merge-base HEAD origin/main 2>/dev/null)"; then
+    base_ref="${merge_base}"
+  fi
+fi
+
+if [[ -z "${base_ref}" ]] && git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+  base_ref="HEAD~1"
+fi
+
+if [[ -n "${base_ref}" ]]; then
+  changed_args+=(--base-ref "${base_ref}")
+fi
+
+echo "[pre-push] checking C/C++ formatting (changed files)..."
+bash scripts/check_format.sh "${changed_args[@]}"
+
+echo "[pre-push] checking CMake style (changed files)..."
+bash scripts/check_cmake_format.sh "${changed_args[@]}"
+
+echo "[pre-push] checking duplicate includes (changed files)..."
+bash scripts/check_duplicate_includes.sh "${changed_args[@]}"
+
+echo "[pre-push] running crash/correctness gate..."
+bash scripts/ci/run_crash_correctness_gate.sh

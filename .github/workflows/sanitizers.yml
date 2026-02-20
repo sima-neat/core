@@ -1,0 +1,88 @@
+name: Sanity Check
+
+on:
+  push:
+    branches:
+      - "**"
+  schedule:
+    - cron: "20 3 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  sanitizer-fast-check:
+    name: sanitizer-fast-check
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install sanitizer dependencies
+        run: ./build.sh --install-deps-only
+      - name: Install neat-internals
+        run: ./build.sh --install-neat-internals       
+      - name: Fast build check (no tests/docs/dist)
+        run: ./build.sh --dev-only --no-dist --no-doc
+
+  asan-ubsan-gate:
+    name: asan-ubsan-gate
+    if: github.event_name != 'push'
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install sanitizer dependencies
+        run: ./build.sh --install-deps-only
+      - name: Install neat-internals
+        run: ./build.sh --install-neat-internals               
+      - name: Run ASan/UBSan gate
+        env:
+          CC: clang
+          CXX: clang++
+          SANITIZER_MODE: asan-ubsan
+        run: bash scripts/ci/run_sanitizer_gate.sh
+
+  tsan-gate:
+    name: tsan-gate
+    if: github.event_name != 'push'
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install sanitizer dependencies
+        run: ./build.sh --install-deps-only
+      - name: Install neat-internals
+        run: ./build.sh --install-neat-internals               
+      - name: Run TSan scoped lane
+        env:
+          CC: clang
+          CXX: clang++
+          SANITIZER_MODE: tsan
+        run: bash scripts/ci/run_sanitizer_gate.sh
+
+  asan-ubsan-nightly:
+    name: asan-ubsan-nightly
+    runs-on: ubuntu-22.04
+    if: github.event_name == 'schedule'
+    needs: asan-ubsan-gate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install sanitizer dependencies
+        run: ./build.sh --install-deps-only
+      - name: Install neat-internals
+        run: ./build.sh --install-neat-internals               
+      - name: Repeat ASan/UBSan lane
+        env:
+          CC: clang
+          CXX: clang++
+          SANITIZER_MODE: asan-ubsan
+        run: |
+          for i in 1 2 3; do
+            echo "[asan-ubsan-nightly] run ${i}/3"
+            BUILD_DIR="build-asan-ubsan-nightly-${i}" bash scripts/ci/run_sanitizer_gate.sh
+          done

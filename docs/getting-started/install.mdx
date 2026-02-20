@@ -1,0 +1,33 @@
+---
+title: Install
+description: Install SiMa NEAT on the DevKit and validate with Hello World
+sidebar_position: 1
+---
+
+
+You can install either the C++ or Python NEAT packages on the DevKit using the instructions below.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+```cpp
+# C++: install from .deb packages.
+# Download the latest .deb files from the release pages:
+# - sima-neat-*-Linux-core.deb (core library and headers)
+# - sima-neat-*-Linux-extras.deb (examples and tests)
+
+sudo apt install ./sima-neat-*-Linux-core.deb
+sudo apt install ./sima-neat-*-Linux-extras.deb
+```
+</CodeTab>
+<CodeTab label="Python" lang="python">
+```python
+# Python: install from PyPI.
+
+pip install pyneat
+```
+</CodeTab>
+</CodeTabs>
+
+If you prefer building from source, follow the [build topic](./build.md).
+
+Next, continue with [Hello SiMa](./minimal_example.md) to validate the install with a minimal app.

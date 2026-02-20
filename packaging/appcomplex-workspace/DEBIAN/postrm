@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+UNIT_NAME="simaai-appcomplex-workspace.service"
+
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+fi
+
+case "${1:-}" in
+  purge)
+    rm -f /tmp/mlactrl_workspace || true
+    rm -f /dev/shm/mlashmdata_workspace || true
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl reset-failed "$UNIT_NAME" >/dev/null 2>&1 || true
+    fi
+    ;;
+esac
+
+exit 0
