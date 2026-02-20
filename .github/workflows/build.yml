@@ -81,7 +81,7 @@ jobs:
           echo "clang-tidy already executed in scripts/run_cpp_tidy.sh"
 
   build:
-    runs-on: [self-hosted, Linux, ARM64, elxr-sdk]
+    runs-on: [self-hosted, Linux, X64, elxr-sdk]
     needs: clang-tidy
 
     steps:
