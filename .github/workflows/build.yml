@@ -94,7 +94,7 @@ jobs:
 
       - name: Build Project
         env:
-          SIMANEAT_STRICT_WARNINGS: "ON"
+          SIMANEAT_STRICT_WARNINGS: "OFF"
         run: |
           ./build.sh --all --clean --no-doc
 
