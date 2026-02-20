@@ -136,6 +136,7 @@ jobs:
             --wheel "${WHEEL_PATH}" \
             --internals-manifest neat-internals/manifest.json \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
+          cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
       - name: Upload artifacts to S3
         run: |
@@ -148,9 +149,6 @@ jobs:
     needs: build
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -168,14 +166,14 @@ jobs:
           aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
             --exclude "*" \
             --include "*-Linux-core.deb" \
-            --include "sima-neat-internals-*.tar.gz" \
             --include "*extras.tar.gz" \
-            --include "*.whl"
+            --include "*.whl" \
+            --include "manifest.json"
           ls -lh _work/artifacts
           mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
           mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
-          mapfile -t INTERNALS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name 'sima-neat-internals-*.tar.gz' | sort)
           mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
+          MANIFEST_PATH="_work/artifacts/manifest.json"
           if [[ "${#DEBS[@]}" -lt 1 ]]; then
             echo "Expected at least 1 .deb file in _work/artifacts, found ${#DEBS[@]}." >&2
             exit 1
@@ -184,31 +182,43 @@ jobs:
             echo "Expected at least 1 extras tarball in _work/artifacts, found ${#EXTRAS_TARS[@]}." >&2
             exit 1
           fi
-          if [[ "${#INTERNALS_TARS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 neat-internals tarball in _work/artifacts, found ${#INTERNALS_TARS[@]}." >&2
-            exit 1
-          fi
           if [[ "${#WHLS[@]}" -lt 1 ]]; then
             echo "Expected at least 1 .whl file in _work/artifacts, found ${#WHLS[@]}." >&2
             exit 1
           fi
+          if [[ ! -f "${MANIFEST_PATH}" ]]; then
+            echo "Expected manifest.json in _work/artifacts." >&2
+            exit 1
+          fi
 
-      - name: Install neat-internals DEBs for test runtime
+      - name: Download and install neat-internals DEBs for test runtime
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
-          mapfile -t INTERNALS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name 'sima-neat-internals-*.tar.gz' | sort)
-          if [[ "${#INTERNALS_TARS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 neat-internals tarball, found ${#INTERNALS_TARS[@]}." >&2
-            exit 1
-          fi
+          INTERNALS_TAG="$(python3 - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("_work/artifacts/manifest.json").read_text(encoding="utf-8"))
+          tag = str(data.get("artifact_tag", "")).strip()
+          if not tag:
+              raise SystemExit("artifact_tag missing in _work/artifacts/manifest.json")
+          print(tag)
+          PY
+          )"
+          INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
+          INTERNALS_ARCHIVE="sima-neat-internals-${INTERNALS_TAG}.tar.gz"
+          INTERNALS_URL="${INTERNALS_BASE_URL}/${INTERNALS_ARCHIVE}"
+
           INTERNALS_ROOT="${GITHUB_WORKSPACE}/_work/neat-internals"
+          INTERNALS_TAR="${GITHUB_WORKSPACE}/_work/${INTERNALS_ARCHIVE}"
           rm -rf "${INTERNALS_ROOT}"
           mkdir -p "${INTERNALS_ROOT}"
-          tar -xzf "${INTERNALS_TARS[0]}" -C "${INTERNALS_ROOT}"
+          curl -fsSL "${INTERNALS_URL}" -o "${INTERNALS_TAR}"
+          tar -xzf "${INTERNALS_TAR}" -C "${INTERNALS_ROOT}"
+
           mapfile -t INTERNALS_DEBS < <(find "${INTERNALS_ROOT}" -type f -name '*.deb' | sort)
           if [[ "${#INTERNALS_DEBS[@]}" -lt 1 ]]; then
-            echo "No neat-internals .deb files found after extract." >&2
+            echo "No neat-internals .deb files found in ${INTERNALS_ARCHIVE}." >&2
             exit 1
           fi
           for i in "${!INTERNALS_DEBS[@]}"; do
@@ -311,8 +321,6 @@ jobs:
           printf '%s\n' "${CTEST_DIRS[@]}" > _work/ctest_dirs.txt
 
       - name: Run Unit & Integration Tests (Strict)
-        env:
-          SIMA_YOLO_IMAGE: tests/images/people.jpg
         run: |
           TEST_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tests"
           ctest --test-dir "${TEST_DIR}" \
