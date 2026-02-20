@@ -123,9 +123,21 @@ jobs:
           echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
           echo "latest_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest" >> "${GITHUB_OUTPUT}"
 
+      - name: Prepare artifact payload and metadata
+        run: |
+          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
+          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
+          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          bash tools/prepare_s3_artifacts.sh \
+            --core-deb "${CORE_DEB}" \
+            --extras-tar "${EXTRAS_TAR}" \
+            --wheel "${WHEEL_PATH}" \
+            --internals-manifest neat-internals/manifest.json \
+            --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
+
       - name: Upload artifacts to S3
         run: |
-          for f in ./*.deb ./*extras.tar.gz dist/*.whl; do
+          for f in "${GITHUB_WORKSPACE}"/_work/upload-artifacts/*; do
             aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
           done
 
@@ -152,12 +164,14 @@ jobs:
           mkdir -p _work/artifacts
           aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
             --exclude "*" \
-            --include "*.deb" \
+            --include "*-Linux-core.deb" \
             --include "*extras.tar.gz" \
+            --include "sima-neat-internals-*.tar.gz" \
             --include "*.whl"
           ls -lh _work/artifacts
-          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*.deb' | sort)
+          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
           mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t INTERNALS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name 'sima-neat-internals-*.tar.gz' | sort)
           mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
           if [[ "${#DEBS[@]}" -lt 1 ]]; then
             echo "Expected at least 1 .deb file in _work/artifacts, found ${#DEBS[@]}." >&2
@@ -167,16 +181,47 @@ jobs:
             echo "Expected at least 1 extras tarball in _work/artifacts, found ${#EXTRAS_TARS[@]}." >&2
             exit 1
           fi
+          if [[ "${#INTERNALS_TARS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 neat-internals tarball in _work/artifacts, found ${#INTERNALS_TARS[@]}." >&2
+            exit 1
+          fi
           if [[ "${#WHLS[@]}" -lt 1 ]]; then
             echo "Expected at least 1 .whl file in _work/artifacts, found ${#WHLS[@]}." >&2
             exit 1
           fi
 
+      - name: Install neat-internals DEBs for test runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          mapfile -t INTERNALS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name 'sima-neat-internals-*.tar.gz' | sort)
+          if [[ "${#INTERNALS_TARS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 neat-internals tarball, found ${#INTERNALS_TARS[@]}." >&2
+            exit 1
+          fi
+          INTERNALS_ROOT="${GITHUB_WORKSPACE}/_work/neat-internals"
+          rm -rf "${INTERNALS_ROOT}"
+          mkdir -p "${INTERNALS_ROOT}"
+          tar -xzf "${INTERNALS_TARS[0]}" -C "${INTERNALS_ROOT}"
+          mapfile -t INTERNALS_DEBS < <(find "${INTERNALS_ROOT}" -type f -name '*.deb' | sort)
+          if [[ "${#INTERNALS_DEBS[@]}" -lt 1 ]]; then
+            echo "No neat-internals .deb files found after extract." >&2
+            exit 1
+          fi
+          for i in "${!INTERNALS_DEBS[@]}"; do
+            INTERNALS_DEBS[$i]="$(realpath "${INTERNALS_DEBS[$i]}")"
+          done
+          if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
+            echo "DEVKIT_PASSWORD is not set." >&2
+            exit 1
+          fi
+          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y --allow-downgrades "${INTERNALS_DEBS[@]}"
+
       - name: Install DEB packages for test runtime
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
-          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*.deb' | sort)
+          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
           if [[ "${#DEBS[@]}" -lt 1 ]]; then
             echo "Expected at least 1 .deb file, found ${#DEBS[@]}." >&2
             exit 1
