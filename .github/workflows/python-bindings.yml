@@ -2,9 +2,7 @@ name: Python Bindings
 
 on:
   push:
-    branches: ["main", "actions"]
-  pull_request:
-    branches: ["main", "actions"]
+    branches: ["actions"]
   workflow_dispatch: {}
 
 jobs:
