@@ -204,6 +204,27 @@ jobs:
           mkdir -p "${EXTRAS_ROOT}"
           tar -xzf "${EXTRAS_TAR}" -C "${EXTRAS_ROOT}"
 
+      - name: Rebase CTest paths to runner workspace
+        run: |
+          EXTRAS_ROOT="${GITHUB_WORKSPACE}/_work/extras"
+          TESTS_ROOT="${EXTRAS_ROOT}/lib/sima-neat/tests"
+          TUTORIALS_ROOT="${EXTRAS_ROOT}/lib/sima-neat/tutorials"
+          mapfile -t CTEST_FILES < <(find "${EXTRAS_ROOT}/lib/sima-neat" -type f -name CTestTestfile.cmake | sort)
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "No CTestTestfile.cmake files found under ${EXTRAS_ROOT}/lib/sima-neat." >&2
+            exit 1
+          fi
+          for f in "${CTEST_FILES[@]}"; do
+            sed -E -i \
+              -e "s|\"/[^\\\"]*/build/tests/|\"${TESTS_ROOT}/|g" \
+              -e "s|\"/[^\\\"]*/build/tutorials/|\"${TUTORIALS_ROOT}/|g" \
+              "${f}"
+          done
+          if rg -n '/home/sima/|/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+            echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
+            exit 1
+          fi
+
       - name: Setup test venv and install pyneat wheel
         run: |
           VENV_DIR="${GITHUB_WORKSPACE}/_work/pyneat-venv"
