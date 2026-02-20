@@ -814,6 +814,7 @@ install(
   DIRECTORY ${CMAKE_BINARY_DIR}/tests/
   DESTINATION lib/sima-neat/tests
   COMPONENT extras
+  USE_SOURCE_PERMISSIONS
   FILES_MATCHING
     PATTERN "*"
 )

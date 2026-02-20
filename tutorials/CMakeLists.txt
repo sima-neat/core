@@ -277,6 +277,7 @@ install(
   DIRECTORY ${CMAKE_BINARY_DIR}/tutorials/
   DESTINATION lib/sima-neat/tutorials
   COMPONENT extras
+  USE_SOURCE_PERMISSIONS
   FILES_MATCHING
     PATTERN "*"
 )

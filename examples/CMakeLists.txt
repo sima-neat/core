@@ -127,7 +127,7 @@ install(
     DIRECTORY ${CMAKE_BINARY_DIR}/examples/
     DESTINATION lib/sima-neat/examples
     COMPONENT extras
+    USE_SOURCE_PERMISSIONS
     FILES_MATCHING
       PATTERN "*"
 )
-
