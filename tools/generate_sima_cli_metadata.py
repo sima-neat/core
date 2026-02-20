@@ -125,7 +125,7 @@ def main() -> None:
     install_script = (
         "python3 -m venv ~/pyneat/.venv && "
         "~/pyneat/.venv/bin/python -m pip install --upgrade pip && "
-        "~/pyneat/.venv/bin/python -m pip install \"$(ls -1 ./*.whl | head -n1)\" && "
+        "~/pyneat/.venv/bin/python -m pip install --force-reinstall \"$(ls -1 ./*.whl | head -n1)\" && "
         "sudo apt install -y --allow-downgrades ./sima-neat-*-Linux-core.deb ./neat-*.deb"
     )
 

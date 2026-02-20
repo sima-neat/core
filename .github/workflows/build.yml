@@ -386,6 +386,15 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      - name: Update latest.tag for branch
+        run: |
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          mkdir -p _work/index
+          printf '%s\n' "${SHORT_SHA}" > _work/index/latest.tag
+          aws s3 cp _work/index/latest.tag "s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest.tag"
+
       - name: Download artifacts from commit prefix
         run: |
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
@@ -468,3 +477,38 @@ jobs:
             exit 1
           fi
           cat "${MANIFEST_PATH}"
+
+      - name: Refresh branches.json
+        run: |
+          mkdir -p _work/index
+          aws s3api list-objects-v2 \
+            --bucket sima-neat-artifacts \
+            --prefix neat/ \
+            --delimiter '/' \
+            > _work/index/prefixes.json
+
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          data = json.loads(Path("_work/index/prefixes.json").read_text(encoding="utf-8"))
+          branches = []
+          for item in data.get("CommonPrefixes", []):
+            prefix = str(item.get("Prefix", ""))
+            if not prefix.startswith("neat/"):
+              continue
+            branch = prefix[len("neat/"):].strip("/")
+            if branch:
+              branches.append(branch)
+
+          payload = {"branches": sorted(set(branches))}
+          Path("_work/index/branches.json").write_text(
+            json.dumps(payload, indent=2) + "\n",
+            encoding="utf-8",
+          )
+          print(json.dumps(payload, indent=2))
+          PY
+
+          aws s3 cp _work/index/branches.json \
+            s3://sima-neat-artifacts/neat/branches.json \
+            --content-type application/json
