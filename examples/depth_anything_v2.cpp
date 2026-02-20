@@ -24,31 +24,43 @@ namespace fs = std::filesystem;
 static size_t dtype_bytes(simaai::neat::TensorDType dtype) {
   switch (dtype) {
   case simaai::neat::TensorDType::UInt8:
-  case simaai::neat::TensorDType::Int8:   return 1;
+  case simaai::neat::TensorDType::Int8:
+    return 1;
   case simaai::neat::TensorDType::UInt16:
-  case simaai::neat::TensorDType::Int16:  return 2;
+  case simaai::neat::TensorDType::Int16:
+    return 2;
   case simaai::neat::TensorDType::Int32:
-  case simaai::neat::TensorDType::Float32: return 4;
-  case simaai::neat::TensorDType::Float64: return 8;
+  case simaai::neat::TensorDType::Float32:
+    return 4;
+  case simaai::neat::TensorDType::Float64:
+    return 8;
   }
   return 1;
 }
 
 static float read_elem(const uint8_t* data, size_t idx, simaai::neat::TensorDType dtype) {
   switch (dtype) {
-  case simaai::neat::TensorDType::UInt8:   return static_cast<float>(reinterpret_cast<const uint8_t*>(data)[idx]);
-  case simaai::neat::TensorDType::Int8:    return static_cast<float>(reinterpret_cast<const int8_t*>(data)[idx]);
-  case simaai::neat::TensorDType::UInt16:  return static_cast<float>(reinterpret_cast<const uint16_t*>(data)[idx]);
-  case simaai::neat::TensorDType::Int16:   return static_cast<float>(reinterpret_cast<const int16_t*>(data)[idx]);
-  case simaai::neat::TensorDType::Int32:   return static_cast<float>(reinterpret_cast<const int32_t*>(data)[idx]);
-  case simaai::neat::TensorDType::Float32: return reinterpret_cast<const float*>(data)[idx];
-  case simaai::neat::TensorDType::Float64: return static_cast<float>(reinterpret_cast<const double*>(data)[idx]);
+  case simaai::neat::TensorDType::UInt8:
+    return static_cast<float>(reinterpret_cast<const uint8_t*>(data)[idx]);
+  case simaai::neat::TensorDType::Int8:
+    return static_cast<float>(reinterpret_cast<const int8_t*>(data)[idx]);
+  case simaai::neat::TensorDType::UInt16:
+    return static_cast<float>(reinterpret_cast<const uint16_t*>(data)[idx]);
+  case simaai::neat::TensorDType::Int16:
+    return static_cast<float>(reinterpret_cast<const int16_t*>(data)[idx]);
+  case simaai::neat::TensorDType::Int32:
+    return static_cast<float>(reinterpret_cast<const int32_t*>(data)[idx]);
+  case simaai::neat::TensorDType::Float32:
+    return reinterpret_cast<const float*>(data)[idx];
+  case simaai::neat::TensorDType::Float64:
+    return static_cast<float>(reinterpret_cast<const double*>(data)[idx]);
   }
   return 0.0f;
 }
 
 static bool depth_tensor_to_colormap(const simaai::neat::Tensor& t, cv::Mat& bgr_out) {
-  if (!t.is_dense()) return false;
+  if (!t.is_dense())
+    return false;
 
   // Determine H, W from tensor shape by collecting non-unit dimensions.
   // Shape [1,518,1,518] → spatial dims are 518×518.
@@ -56,7 +68,8 @@ static bool depth_tensor_to_colormap(const simaai::neat::Tensor& t, cv::Mat& bgr
   {
     std::vector<int> spatial;
     for (auto d : t.shape)
-      if (d > 1) spatial.push_back(static_cast<int>(d));
+      if (d > 1)
+        spatial.push_back(static_cast<int>(d));
     if (spatial.size() >= 2) {
       h = spatial[0];
       w = spatial[1];
@@ -65,17 +78,17 @@ static bool depth_tensor_to_colormap(const simaai::neat::Tensor& t, cv::Mat& bgr
       w = spatial[0];
     }
   }
-  if (w <= 0 || h <= 0) return false;
+  if (w <= 0 || h <= 0)
+    return false;
 
   const size_t total_elems = static_cast<size_t>(w) * h;
   const size_t elem_sz = dtype_bytes(t.dtype);
   std::vector<uint8_t> raw = t.copy_dense_bytes_tight();
-  std::cout << "[DEPTH] Resolved H=" << h << " W=" << w
-            << " total_elems=" << total_elems
-            << " elem_sz=" << elem_sz
-            << " raw_bytes=" << raw.size()
+  std::cout << "[DEPTH] Resolved H=" << h << " W=" << w << " total_elems=" << total_elems
+            << " elem_sz=" << elem_sz << " raw_bytes=" << raw.size()
             << " expected_bytes=" << (total_elems * elem_sz) << "\n";
-  if (raw.size() < total_elems * elem_sz) return false;
+  if (raw.size() < total_elems * elem_sz)
+    return false;
 
   cv::Mat depth_f(h, w, CV_32FC1);
   float minv = std::numeric_limits<float>::infinity();
@@ -125,7 +138,8 @@ static std::vector<simaai::neat::Tensor> tensors_from_sample(const simaai::neat:
 
 static bool is_image(const fs::path& p) {
   auto ext = p.extension().string();
-  for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  for (auto& c : ext)
+    c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
   return ext == ".jpg" || ext == ".jpeg" || ext == ".png" || ext == ".bmp";
 }
 
@@ -236,7 +250,8 @@ int main(int argc, char** argv) {
     std::cout << "[INFER] Output tensor: dims=" << t.shape.size();
     for (size_t i = 0; i < t.shape.size(); ++i)
       std::cout << (i == 0 ? " shape=[" : ",") << t.shape[i];
-    if (!t.shape.empty()) std::cout << "]";
+    if (!t.shape.empty())
+      std::cout << "]";
     std::cout << " dtype=" << static_cast<int>(t.dtype) << "\n";
 
     cv::Mat colormap;
@@ -254,8 +269,8 @@ int main(int argc, char** argv) {
 
     fs::path out_path = output_dir / (img_path.stem().string() + ".png");
     cv::imwrite(out_path.string(), subplot);
-    std::cout << "[" << ++processed << "/" << images.size() << "] "
-              << img_path.filename() << " -> " << out_path.filename() << "\n";
+    std::cout << "[" << ++processed << "/" << images.size() << "] " << img_path.filename() << " -> "
+              << out_path.filename() << "\n";
   }
 
   run.close();

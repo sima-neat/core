@@ -147,8 +147,8 @@ TensorHWC tensor_to_hwc_f32(const simaai::neat::Tensor& t) {
   }
 
   const std::vector<uint8_t> bytes = t.copy_dense_bytes_tight();
-  const size_t elems = static_cast<size_t>(out.h) * static_cast<size_t>(out.w) *
-                       static_cast<size_t>(out.c);
+  const size_t elems =
+      static_cast<size_t>(out.h) * static_cast<size_t>(out.w) * static_cast<size_t>(out.c);
   if (bytes.size() < elems * sizeof(float)) {
     throw std::runtime_error("tensor byte size is smaller than expected");
   }
@@ -385,8 +385,7 @@ int main(int argc, char** argv) {
       const std::vector<simaai::neat::Tensor> tensors = tensors_from_sample(*out);
       std::vector<Box> boxes;
       try {
-        boxes =
-            decode_yolov8_boxes_from_detess(tensors, kInferSize, kScoreThr, kNmsIou, kMaxDet);
+        boxes = decode_yolov8_boxes_from_detess(tensors, kInferSize, kScoreThr, kNmsIou, kMaxDet);
       } catch (const std::exception& e) {
         std::cerr << "Decode failed for " << image_path.filename() << ": " << e.what() << "\n";
         continue;

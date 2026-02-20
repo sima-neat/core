@@ -8,8 +8,7 @@ namespace fs = std::filesystem;
 int main(int argc, char** argv) {
   try {
     const fs::path root = sima_example_test::resolve_root(argc, argv);
-    const std::string model_tar =
-        sima_example_test::resolve_model_tar_or_throw("yolov5n", root);
+    const std::string model_tar = sima_example_test::resolve_model_tar_or_throw("yolov5n", root);
     const sima_example_test::ExampleIoPaths io =
         sima_example_test::prepare_single_input(root, "yolov5_seg_overlay_example_test");
     const fs::path example_bin =

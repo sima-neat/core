@@ -19,7 +19,8 @@ int main(int argc, char** argv) {
 
     const cv::Mat input_img = sima_example_test::require_image(io.input_image, "test input image");
     const fs::path out_path = io.output_dir / (io.stem + "_overlay.jpg");
-    const cv::Mat out_img = sima_example_test::require_image(out_path, "yolov8n-seg overlay output");
+    const cv::Mat out_img =
+        sima_example_test::require_image(out_path, "yolov8n-seg overlay output");
     require(out_img.cols == input_img.cols && out_img.rows == input_img.rows,
             "expected overlay output to preserve original image size");
 

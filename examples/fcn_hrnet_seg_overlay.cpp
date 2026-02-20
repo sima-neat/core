@@ -47,27 +47,27 @@ const simaai::neat::Tensor* find_first_tensor(const simaai::neat::Sample& s) {
 
 cv::Vec3b color_for_class(int class_id) {
   static const cv::Vec3b kVoc21Palette[21] = {
-      cv::Vec3b(0, 0, 0),       // background
-      cv::Vec3b(0, 0, 128),     // aeroplane
-      cv::Vec3b(0, 128, 0),     // bicycle
-      cv::Vec3b(0, 128, 128),   // bird
-      cv::Vec3b(128, 0, 0),     // boat
-      cv::Vec3b(128, 0, 128),   // bottle
-      cv::Vec3b(0, 255, 0),     // bus (green)
-      cv::Vec3b(255, 0, 0),     // car (blue)
-      cv::Vec3b(0, 0, 64),      // cat
-      cv::Vec3b(0, 64, 0),      // chair
-      cv::Vec3b(0, 64, 64),     // cow
-      cv::Vec3b(64, 0, 0),      // diningtable
-      cv::Vec3b(64, 0, 64),     // dog
-      cv::Vec3b(64, 64, 0),     // horse
-      cv::Vec3b(64, 64, 64),    // motorbike
-      cv::Vec3b(0, 0, 192),     // person
-      cv::Vec3b(0, 192, 0),     // pottedplant
-      cv::Vec3b(0, 192, 192),   // sheep
-      cv::Vec3b(192, 0, 0),     // sofa
-      cv::Vec3b(192, 0, 192),   // train
-      cv::Vec3b(192, 192, 0),   // tvmonitor
+      cv::Vec3b(0, 0, 0),     // background
+      cv::Vec3b(0, 0, 128),   // aeroplane
+      cv::Vec3b(0, 128, 0),   // bicycle
+      cv::Vec3b(0, 128, 128), // bird
+      cv::Vec3b(128, 0, 0),   // boat
+      cv::Vec3b(128, 0, 128), // bottle
+      cv::Vec3b(0, 255, 0),   // bus (green)
+      cv::Vec3b(255, 0, 0),   // car (blue)
+      cv::Vec3b(0, 0, 64),    // cat
+      cv::Vec3b(0, 64, 0),    // chair
+      cv::Vec3b(0, 64, 64),   // cow
+      cv::Vec3b(64, 0, 0),    // diningtable
+      cv::Vec3b(64, 0, 64),   // dog
+      cv::Vec3b(64, 64, 0),   // horse
+      cv::Vec3b(64, 64, 64),  // motorbike
+      cv::Vec3b(0, 0, 192),   // person
+      cv::Vec3b(0, 192, 0),   // pottedplant
+      cv::Vec3b(0, 192, 192), // sheep
+      cv::Vec3b(192, 0, 0),   // sofa
+      cv::Vec3b(192, 0, 192), // train
+      cv::Vec3b(192, 192, 0), // tvmonitor
   };
 
   if (class_id < 0) {
@@ -189,9 +189,9 @@ bool logits_to_label_map(const simaai::neat::Tensor& t, cv::Mat& labels, std::st
 
 std::string class_name(int id) {
   static const char* kVoc21[] = {
-      "background", "aeroplane", "bicycle",   "bird",       "boat",   "bottle", "bus",
-      "car",        "cat",       "chair",     "cow",        "table",  "dog",    "horse",
-      "motorbike",  "person",    "pottedplant","sheep",     "sofa",   "train",  "tvmonitor",
+      "background", "aeroplane", "bicycle",     "bird",  "boat",  "bottle", "bus",
+      "car",        "cat",       "chair",       "cow",   "table", "dog",    "horse",
+      "motorbike",  "person",    "pottedplant", "sheep", "sofa",  "train",  "tvmonitor",
   };
   if (id >= 0 && id < 21) {
     return kVoc21[id];
@@ -208,7 +208,8 @@ void print_histogram(const cv::Mat& labels, const fs::path& image_path) {
     }
   }
   std::vector<std::pair<int, int>> items(hist.begin(), hist.end());
-  std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
+  std::sort(items.begin(), items.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
 
   std::cout << "[classes] " << image_path.filename() << ": ";
   const int show = std::min<int>(5, static_cast<int>(items.size()));
