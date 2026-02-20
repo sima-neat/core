@@ -260,11 +260,13 @@ jobs:
           fi
           for f in "${CTEST_FILES[@]}"; do
             sed -E -i \
-              -e "s|\"/[^\\\"]*/build/tests/|\"${TESTS_ROOT}/|g" \
-              -e "s|\"/[^\\\"]*/build/tutorials/|\"${TUTORIALS_ROOT}/|g" \
+              -e "s|/[^\"[:space:]]*/build/tests/|${TESTS_ROOT}/|g" \
+              -e "s|/[^\"[:space:]]*/build/tutorials/|${TUTORIALS_ROOT}/|g" \
               "${f}"
           done
-          if rg -n '/home/sima/|/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+            echo "Unresolved build-tree paths after CTest rebasing:" >&2
+            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
             echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
             exit 1
           fi

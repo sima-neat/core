@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import tarfile
+import urllib.parse
 import zipfile
 from tempfile import TemporaryDirectory
 from pathlib import Path
@@ -24,6 +25,10 @@ def _pick_one(files: List[Path], label: str) -> Path:
 def _version_from_core_deb(core_deb_name: str) -> str:
     match = re.match(r"^sima-neat-(.+)-Linux-core\.deb$", core_deb_name)
     return match.group(1) if match else "unknown"
+
+
+def _url_safe_name(name: str) -> str:
+    return urllib.parse.quote(name, safe="-._~")
 
 
 def _fmt_size(num_bytes: int) -> str:
@@ -103,9 +108,9 @@ def main() -> None:
     )
 
     version = _version_from_core_deb(core_deb.name)
-    resources = [core_deb.name, internals_tar.name, wheel.name]
-    resources.extend(p.name for p in internals_debs)
-    selectable_resources = [extras_tar.name]
+    resources = [_url_safe_name(core_deb.name), _url_safe_name(internals_tar.name), _url_safe_name(wheel.name)]
+    resources.extend(_url_safe_name(p.name) for p in internals_debs)
+    selectable_resources = [_url_safe_name(extras_tar.name)]
 
     all_payload_files = [core_deb, extras_tar, internals_tar, wheel] + internals_debs
     download_size_bytes = sum(p.stat().st_size for p in all_payload_files)
