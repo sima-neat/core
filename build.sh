@@ -1023,10 +1023,50 @@ build_deb_if_requested() {
     echo "Skipping DEB packaging (requires --all)."
   else
     echo
-    echo "Building DEB package..."
+    echo "Building core DEB package..."
     # Remove stale debs so it's obvious what was generated
     rm -f ./*.deb
-    cpack --config "${BUILD_DIR}/CPackConfig.cmake"
+    cpack --config "${BUILD_DIR}/CPackConfig.cmake" -D CPACK_COMPONENTS_ALL=core
+  fi
+}
+
+build_extras_archive_if_requested() {
+  # Package extras as a relocatable tarball for user-chosen install prefixes.
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    echo
+    echo "Skipping extras tarball packaging on macOS."
+  elif [[ "${SKIP_DIST}" == "ON" ]]; then
+    echo
+    echo "Skipping extras tarball packaging (--no-dist)."
+  elif [[ "${BUILD_ALL}" != "ON" ]]; then
+    echo
+    echo "Skipping extras tarball packaging (requires --all)."
+  else
+    echo
+    echo "Building extras tarball..."
+    local stage_root="./_work/extras-stage"
+    local install_prefix="${stage_root}/prefix"
+    local package_version="unknown"
+    local archive_name
+
+    rm -rf "${stage_root}"
+    mkdir -p "${install_prefix}"
+    cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
+
+    if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
+      echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
+      exit 1
+    fi
+
+    if [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
+      package_version="$(sed -n 's/^set(CPACK_PACKAGE_VERSION \"\\(.*\\)\")$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
+      [[ -z "${package_version}" ]] && package_version="unknown"
+    fi
+
+    archive_name="sima-neat-${package_version}-Linux-extras.tar.gz"
+    rm -f "./${archive_name}"
+    tar -C "${install_prefix}" -czf "./${archive_name}" .
+    echo "Built extras archive: ${archive_name}"
   fi
 }
 
@@ -1039,6 +1079,10 @@ print_artifact_summary() {
   if compgen -G "./*.deb" >/dev/null 2>&1; then
     echo "DEB artifacts:"
     ls -lh ./*.deb
+  fi
+  if compgen -G "./*extras.tar.gz" >/dev/null 2>&1; then
+    echo "Extras tarball artifacts:"
+    ls -lh ./*extras.tar.gz
   fi
   if [[ "${BUILD_PYTHON}" == "ON" ]] && compgen -G "dist/*.whl" >/dev/null 2>&1; then
     echo "Python wheel artifacts:"
@@ -1077,6 +1121,7 @@ main() {
   build_python_wheel_if_requested
   run_install_sanity_check
   build_deb_if_requested
+  build_extras_archive_if_requested
   print_artifact_summary
 }
 

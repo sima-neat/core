@@ -3,6 +3,40 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 build_dir="${root_dir}/build-tidy"
+MODE="${TIDY_MODE:-changed}"
+BASE_REF="${TIDY_BASE_REF:-}"
+
+usage() {
+  cat <<USAGE
+Usage: scripts/run_cpp_tidy.sh [--changed-only|--all] [--base-ref <ref>]
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --changed-only)
+      MODE="changed"
+      shift
+      ;;
+    --all)
+      MODE="all"
+      shift
+      ;;
+    --base-ref)
+      BASE_REF="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -15,6 +49,7 @@ require_cmd cmake
 require_cmd clang-tidy
 require_cmd run-clang-tidy
 require_cmd rg
+require_cmd git
 
 detect_jobs() {
   if [ -n "${TIDY_JOBS:-}" ]; then
@@ -35,13 +70,76 @@ detect_jobs() {
   printf '1\n'
 }
 
+resolve_base_ref() {
+  local base="$BASE_REF"
+  if [[ -n "$base" ]]; then
+    echo "$base"
+    return 0
+  fi
+
+  if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+    local remote_ref="origin/${GITHUB_BASE_REF}"
+    if ! git rev-parse --verify --quiet "$remote_ref" >/dev/null; then
+      git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}:${remote_ref}" >/dev/null 2>&1 || true
+    fi
+    if git rev-parse --verify --quiet "$remote_ref" >/dev/null; then
+      echo "$remote_ref"
+      return 0
+    fi
+  fi
+
+  if [[ -n "${CI:-}" && "${CI:-}" != "false" && "${CI:-}" != "0" ]]; then
+    if git rev-parse --verify --quiet HEAD~1 >/dev/null; then
+      echo "HEAD~1"
+      return 0
+    fi
+  fi
+
+  echo ""
+}
+
+collect_changed() {
+  local base
+  base="$(resolve_base_ref)"
+  if [[ -n "$base" ]]; then
+    git diff --name-only --diff-filter=ACMRTUXB "$base"...HEAD
+  else
+    git diff --name-only --diff-filter=ACMRTUXB --cached
+  fi
+}
+
+is_cpp_source() {
+  case "$1" in
+    *.c|*.cc|*.cpp|*.cxx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_tidy_scope_path() {
+  case "$1" in
+    include/*|src/*|tutorials/*|examples/*|tests/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 cmake -S "$root_dir" -B "$build_dir" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
   -DSIMANEAT_CPP_TIDY=ON \
   -DSIMANEAT_STRICT_WARNINGS=ON
 
-mapfile -t all_files < <(rg --no-messages --no-config --files \
-  -g '*.c' -g '*.cc' -g '*.cpp' -g '*.cxx' \
-  "$root_dir/include" "$root_dir/src" "$root_dir/tutorials" "$root_dir/examples" "$root_dir/tests" || true)
+if [[ "$MODE" == "all" ]]; then
+  mapfile -t all_files < <(rg --no-messages --no-config --files \
+    -g '*.c' -g '*.cc' -g '*.cpp' -g '*.cxx' \
+    "$root_dir/include" "$root_dir/src" "$root_dir/tutorials" "$root_dir/examples" "$root_dir/tests" || true)
+else
+  mapfile -t candidates < <(collect_changed || true)
+  all_files=()
+  for f in "${candidates[@]}"; do
+    [[ -f "$f" ]] || continue
+    is_tidy_scope_path "$f" || continue
+    is_cpp_source "$f" || continue
+    all_files+=("$f")
+  done
+fi
 
 declare -A gst_excluded=()
 if [ ${#all_files[@]} -gt 0 ]; then
@@ -57,9 +155,10 @@ for f in "${all_files[@]}"; do
   fi
 done
 
+echo "clang-tidy mode: ${MODE}"
 echo "clang-tidy file count: ${#files[@]}"
 if [ ${#files[@]} -eq 0 ]; then
-  echo "No non-GStreamer sources found for clang-tidy."
+  echo "No non-GStreamer sources found for clang-tidy (${MODE} mode)."
   exit 0
 fi
 

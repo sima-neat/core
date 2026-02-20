@@ -88,11 +88,12 @@ pytest -q
 
 ## Install
 
-If you are installing from release artifacts, use the generated `.deb` packages:
+If you are installing from release artifacts, install core from `.deb` and extract prebuilt examples, tutorials from `.tar.gz`:
 
 ```bash
 sudo apt install ./sima-neat-*-Linux-core.deb
-sudo apt install ./sima-neat-*-Linux-extras.deb
+mkdir -p "${HOME}/sima-neat-extras"
+tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
 ```
 
 ## Documentation

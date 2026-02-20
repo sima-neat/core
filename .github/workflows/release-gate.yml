@@ -61,7 +61,7 @@ jobs:
       - name: Run clang-tidy
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
-        run: ./scripts/run_cpp_tidy.sh
+        run: ./scripts/run_cpp_tidy.sh --all
 
   build-full:
     name: build-full

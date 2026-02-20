@@ -83,6 +83,6 @@ Install dependencies only:
 - Build tree: `build/`
 - Docusaurus output (when docs build runs): `website/build/`
 - Install sanity-check prefix: `/tmp/sima-neat-install-test`
-- `.deb` packages are Linux-only.
-- `.deb` packages are generated via CPack.
-- `.deb` packages are produced only when using `--all` and not `--no-dist`.
+- Core package (`*.deb`) is Linux-only and generated via CPack.
+- Extras package (`*extras.tar.gz`) is produced as a relocatable archive.
+- Distribution artifacts are produced only when using `--all` and not `--no-dist`.

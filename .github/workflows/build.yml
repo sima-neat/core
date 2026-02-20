@@ -1,4 +1,4 @@
-name: PR to main branch gate
+name: Standard Build And Archive - Pre-PR
 
 on:
   pull_request:
@@ -42,6 +42,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install clang-tidy
         run: |
@@ -74,7 +76,7 @@ jobs:
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
         run: |
-          ./scripts/run_cpp_tidy.sh
+          ./scripts/run_cpp_tidy.sh --changed-only
 
       - name: Finishing off
         run: |
@@ -101,6 +103,7 @@ jobs:
       - name: Verify build artifacts
         run: |
           ls -lh ./*.deb
+          ls -lh ./*extras.tar.gz
           ls -lh dist/*.whl
 
       - name: Configure AWS credentials
@@ -121,7 +124,7 @@ jobs:
 
       - name: Upload artifacts to S3
         run: |
-          for f in ./*.deb dist/*.whl; do
+          for f in ./*.deb ./*extras.tar.gz dist/*.whl; do
             aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
             aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.latest_prefix }}/"
           done
@@ -150,12 +153,18 @@ jobs:
           aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
             --exclude "*" \
             --include "*.deb" \
+            --include "*extras.tar.gz" \
             --include "*.whl"
           ls -lh _work/artifacts
           mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
           mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
-          if [[ "${#DEBS[@]}" -lt 2 ]]; then
-            echo "Expected at least 2 .deb files in _work/artifacts, found ${#DEBS[@]}." >&2
+          if [[ "${#DEBS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 .deb file in _work/artifacts, found ${#DEBS[@]}." >&2
+            exit 1
+          fi
+          if [[ "${#EXTRAS_TARS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 extras tarball in _work/artifacts, found ${#EXTRAS_TARS[@]}." >&2
             exit 1
           fi
           if [[ "${#WHLS[@]}" -lt 1 ]]; then
@@ -168,8 +177,8 @@ jobs:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*.deb' | sort)
-          if [[ "${#DEBS[@]}" -lt 2 ]]; then
-            echo "Expected at least 2 .deb files, found ${#DEBS[@]}." >&2
+          if [[ "${#DEBS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 .deb file, found ${#DEBS[@]}." >&2
             exit 1
           fi
           for i in "${!DEBS[@]}"; do
@@ -180,6 +189,22 @@ jobs:
             exit 1
           fi
           printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y "${DEBS[@]}"
+
+      - name: Install extras tarball for test runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          if [[ "${#EXTRAS_TARS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 extras tarball, found ${#EXTRAS_TARS[@]}." >&2
+            exit 1
+          fi
+          EXTRAS_TAR="$(realpath "${EXTRAS_TARS[0]}")"
+          if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
+            echo "DEVKIT_PASSWORD is not set." >&2
+            exit 1
+          fi
+          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S tar -xzf "${EXTRAS_TAR}" -C /usr
 
       - name: Setup test venv and install pyneat wheel
         run: |
