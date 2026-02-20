@@ -165,13 +165,13 @@ jobs:
           aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
             --exclude "*" \
             --include "*-Linux-core.deb" \
-            --include "neat-*.deb" \
+            --include "sima-neat-internals-*.tar.gz" \
             --include "*extras.tar.gz" \
             --include "*.whl"
           ls -lh _work/artifacts
           mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
           mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
-          mapfile -t INTERNALS_DEBS < <(find _work/artifacts -maxdepth 1 -type f -name 'neat-*.deb' | sort)
+          mapfile -t INTERNALS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name 'sima-neat-internals-*.tar.gz' | sort)
           mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
           if [[ "${#DEBS[@]}" -lt 1 ]]; then
             echo "Expected at least 1 .deb file in _work/artifacts, found ${#DEBS[@]}." >&2
@@ -181,8 +181,8 @@ jobs:
             echo "Expected at least 1 extras tarball in _work/artifacts, found ${#EXTRAS_TARS[@]}." >&2
             exit 1
           fi
-          if [[ "${#INTERNALS_DEBS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 neat-internals .deb in _work/artifacts, found ${#INTERNALS_DEBS[@]}." >&2
+          if [[ "${#INTERNALS_TARS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 neat-internals tarball in _work/artifacts, found ${#INTERNALS_TARS[@]}." >&2
             exit 1
           fi
           if [[ "${#WHLS[@]}" -lt 1 ]]; then
@@ -194,9 +194,18 @@ jobs:
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
-          mapfile -t INTERNALS_DEBS < <(find _work/artifacts -maxdepth 1 -type f -name 'neat-*.deb' | sort)
+          mapfile -t INTERNALS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name 'sima-neat-internals-*.tar.gz' | sort)
+          if [[ "${#INTERNALS_TARS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 neat-internals tarball, found ${#INTERNALS_TARS[@]}." >&2
+            exit 1
+          fi
+          INTERNALS_ROOT="${GITHUB_WORKSPACE}/_work/neat-internals"
+          rm -rf "${INTERNALS_ROOT}"
+          mkdir -p "${INTERNALS_ROOT}"
+          tar -xzf "${INTERNALS_TARS[0]}" -C "${INTERNALS_ROOT}"
+          mapfile -t INTERNALS_DEBS < <(find "${INTERNALS_ROOT}" -type f -name '*.deb' | sort)
           if [[ "${#INTERNALS_DEBS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 neat-internals .deb, found ${#INTERNALS_DEBS[@]}." >&2
+            echo "No neat-internals .deb files found after extract." >&2
             exit 1
           fi
           for i in "${!INTERNALS_DEBS[@]}"; do

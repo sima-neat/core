@@ -109,7 +109,14 @@ def main() -> None:
     version = _version_from_core_deb(core_deb.name)
     resources = [_url_safe_name(core_deb.name), _url_safe_name(wheel.name)]
     resources.extend(_url_safe_name(p.name) for p in internals_debs)
-    selectable_resources = [_url_safe_name(extras_tar.name)]
+    extras_resource = _url_safe_name(extras_tar.name)
+    selectable_resources = [
+        {
+            "name": "SiMa NEAT extras (samples/tutorials/tests)",
+            "url": extras_resource,
+            "resource": extras_resource,
+        }
+    ]
 
     all_payload_files = [core_deb, extras_tar, wheel] + internals_debs
     download_size_bytes = sum(p.stat().st_size for p in all_payload_files)
