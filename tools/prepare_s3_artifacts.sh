@@ -98,8 +98,10 @@ PY
 )"
 
 INTERNALS_ARCHIVE="sima-neat-internals-${INTERNALS_TAG}.tar.gz"
-curl -fsSL "${INTERNALS_BASE_URL}/${INTERNALS_ARCHIVE}" -o "${OUTPUT_DIR}/${INTERNALS_ARCHIVE}"
-tar -xzf "${OUTPUT_DIR}/${INTERNALS_ARCHIVE}" -C "${extract_dir}"
+INTERNALS_ARCHIVE_PATH="${tmp_dir}/${INTERNALS_ARCHIVE}"
+curl -fsSL "${INTERNALS_BASE_URL}/${INTERNALS_ARCHIVE}" -o "${INTERNALS_ARCHIVE_PATH}"
+cp "${INTERNALS_ARCHIVE_PATH}" "${OUTPUT_DIR}/${INTERNALS_ARCHIVE}"
+tar -xzf "${INTERNALS_ARCHIVE_PATH}" -C "${extract_dir}"
 
 mapfile -t INTERNALS_DEBS < <(find "${extract_dir}" -type f -name '*.deb' | sort)
 if [[ "${#INTERNALS_DEBS[@]}" -eq 0 ]]; then
@@ -116,4 +118,3 @@ python3 tools/generate_sima_cli_metadata.py \
 
 echo "Prepared upload artifacts:"
 ls -lh "${OUTPUT_DIR}"
-
