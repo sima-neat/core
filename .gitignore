@@ -106,3 +106,6 @@ notes/
 decode_optimizations.txt
 examples/rtsp_list.sample.txt
 pipeline_saved.json
+
+# Sandbox
+sandbox/
