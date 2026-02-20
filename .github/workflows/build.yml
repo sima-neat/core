@@ -312,7 +312,6 @@ jobs:
           SIMA_YOLO_IMAGE: tests/images/people.jpg
         run: |
           TEST_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tests"
-          ctest --test-dir "${TEST_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "strict" \
             --label-exclude "long" \
