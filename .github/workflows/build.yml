@@ -154,13 +154,19 @@ jobs:
           ls -lh _work/artifacts
 
       - name: Install DEB packages for test runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           mapfile -t DEBS < <(ls -1 _work/artifacts/*.deb)
           if [[ "${#DEBS[@]}" -lt 2 ]]; then
             echo "Expected at least 2 .deb files, found ${#DEBS[@]}." >&2
             exit 1
           fi
-          sudo apt install -y "${DEBS[@]}"
+          if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
+            echo "DEVKIT_PASSWORD is not set." >&2
+            exit 1
+          fi
+          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y "${DEBS[@]}"
 
       - name: Setup test venv and install pyneat wheel
         run: |
