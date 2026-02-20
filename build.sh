@@ -1047,6 +1047,7 @@ build_extras_archive_if_requested() {
     local stage_root="./_work/extras-stage"
     local install_prefix="${stage_root}/prefix"
     local package_version="unknown"
+    local core_deb
     local archive_name
 
     rm -rf "${stage_root}"
@@ -1058,8 +1059,18 @@ build_extras_archive_if_requested() {
       exit 1
     fi
 
-    if [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
-      package_version="$(sed -n 's/^set(CPACK_PACKAGE_VERSION \"\\(.*\\)\")$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
+    # Keep extras version aligned with the generated core .deb version.
+    core_deb="$(ls -1 ./*-Linux-core.deb 2>/dev/null | head -n1 || true)"
+    if [[ -n "${core_deb}" ]]; then
+      local core_base
+      core_base="$(basename "${core_deb}")"
+      if [[ "${core_base}" =~ ^sima-neat-(.+)-Linux-core\.deb$ ]]; then
+        package_version="${BASH_REMATCH[1]}"
+      fi
+    fi
+
+    if [[ "${package_version}" == "unknown" ]] && [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
+      package_version="$(sed -n 's/^[[:space:]]*set(CPACK_PACKAGE_VERSION[[:space:]]*\"\\([^\"]*\\)\").*$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
       [[ -z "${package_version}" ]] && package_version="unknown"
     fi
 

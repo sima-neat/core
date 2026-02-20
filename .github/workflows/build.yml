@@ -188,7 +188,7 @@ jobs:
             echo "DEVKIT_PASSWORD is not set." >&2
             exit 1
           fi
-          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y "${DEBS[@]}"
+          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y --allow-downgrades "${DEBS[@]}"
 
       - name: Install extras tarball for test runtime
         env:
