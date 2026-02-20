@@ -1,8 +1,9 @@
-name: Standard Build And Archive - Pre-PR
+name: Standard Build & Archive
 
 on:
-  pull_request:
-    branches: ["main"]
+  push:
+    branches:
+      - "**"
   workflow_dispatch: {}
 
 jobs:
@@ -190,9 +191,7 @@ jobs:
           fi
           printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y --allow-downgrades "${DEBS[@]}"
 
-      - name: Install extras tarball for test runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      - name: Extract extras tarball for test runtime
         run: |
           mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
           if [[ "${#EXTRAS_TARS[@]}" -lt 1 ]]; then
@@ -200,11 +199,10 @@ jobs:
             exit 1
           fi
           EXTRAS_TAR="$(realpath "${EXTRAS_TARS[0]}")"
-          if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
-            echo "DEVKIT_PASSWORD is not set." >&2
-            exit 1
-          fi
-          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S tar -xzf "${EXTRAS_TAR}" -C /usr
+          EXTRAS_ROOT="${GITHUB_WORKSPACE}/_work/extras"
+          rm -rf "${EXTRAS_ROOT}"
+          mkdir -p "${EXTRAS_ROOT}"
+          tar -xzf "${EXTRAS_TAR}" -C "${EXTRAS_ROOT}"
 
       - name: Setup test venv and install pyneat wheel
         run: |
@@ -229,13 +227,14 @@ jobs:
 
       - name: Discover installed CTest directories
         run: |
-          if [[ ! -d /usr/lib/sima-neat ]]; then
-            echo "/usr/lib/sima-neat not found after extras install." >&2
+          EXTRAS_LIB_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat"
+          if [[ ! -d "${EXTRAS_LIB_DIR}" ]]; then
+            echo "${EXTRAS_LIB_DIR} not found after extras extraction." >&2
             exit 1
           fi
-          mapfile -t CTEST_DIRS < <(find /usr/lib/sima-neat -type f -name CTestTestfile.cmake -printf '%h\n' | sort -u)
+          mapfile -t CTEST_DIRS < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake -printf '%h\n' | sort -u)
           if [[ "${#CTEST_DIRS[@]}" -eq 0 ]]; then
-            echo "No CTestTestfile.cmake found under /usr/lib/sima-neat." >&2
+            echo "No CTestTestfile.cmake found under ${EXTRAS_LIB_DIR}." >&2
             exit 1
           fi
           printf '%s\n' "${CTEST_DIRS[@]}" | sed 's|^|Detected CTest dir: |'
@@ -245,8 +244,9 @@ jobs:
         env:
           SIMA_YOLO_IMAGE: tests/images/people.jpg
         run: |
-          ctest --test-dir /usr/lib/sima-neat/tests --output-on-failure -R "^unit_modalix_contract_preflight_test$"
-          ctest --test-dir /usr/lib/sima-neat/tests \
+          TEST_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tests"
+          ctest --test-dir "${TEST_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$"
+          ctest --test-dir "${TEST_DIR}" \
             --label-regex "strict" \
             --label-exclude "long" \
             --output-on-failure \
@@ -256,14 +256,16 @@ jobs:
         env:
           SIMA_STRICT_MANIFEST_NO_JSON_FALLBACK: 1
         run: |
-          ctest --test-dir /usr/lib/sima-neat/tests \
+          TEST_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tests"
+          ctest --test-dir "${TEST_DIR}" \
             --output-on-failure \
             -R "^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$"
 
       - name: Run Tutorial Tests
         continue-on-error: true
         run: |
-          ctest --test-dir /usr/lib/sima-neat/tutorials --output-on-failure
+          TUTORIALS_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tutorials"
+          ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
 
   docs:
     runs-on: [self-hosted, Linux, X64]

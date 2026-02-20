@@ -1,9 +1,6 @@
 name: Sanity Check
 
 on:
-  push:
-    branches:
-      - "**"
   schedule:
     - cron: "20 3 * * *"
   workflow_dispatch: {}
