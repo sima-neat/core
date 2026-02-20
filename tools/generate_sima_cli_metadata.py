@@ -108,13 +108,20 @@ def main() -> None:
     )
 
     version = _version_from_core_deb(core_deb.name)
-    resources = [_url_safe_name(core_deb.name), _url_safe_name(internals_tar.name), _url_safe_name(wheel.name)]
+    resources = [_url_safe_name(core_deb.name), _url_safe_name(wheel.name)]
     resources.extend(_url_safe_name(p.name) for p in internals_debs)
     selectable_resources = [_url_safe_name(extras_tar.name)]
 
-    all_payload_files = [core_deb, extras_tar, internals_tar, wheel] + internals_debs
+    all_payload_files = [core_deb, extras_tar, wheel] + internals_debs
     download_size_bytes = sum(p.stat().st_size for p in all_payload_files)
     install_size_bytes = sum(_extracted_size(p) for p in all_payload_files)
+
+    install_script = (
+        "python3 -m venv ~/pyneat/.venv && "
+        "~/pyneat/.venv/bin/python -m pip install --upgrade pip && "
+        "~/pyneat/.venv/bin/python -m pip install \"$(ls -1 ./*.whl | head -n1)\" && "
+        "sudo apt install -y --allow-downgrades ./sima-neat-*-Linux-core.deb ./neat-*.deb"
+    )
 
     payload = {
         "name": "sima-neat",
@@ -135,8 +142,8 @@ def main() -> None:
             "install": _fmt_size(install_size_bytes),
         },
         "installation": {
-            "script": "",
-            "post-message": "",
+            "script": install_script,
+            "post-message": "Successfully installed SiMa NEAT package.",
         },
     }
 
