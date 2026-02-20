@@ -152,16 +152,29 @@ jobs:
             --include "*.deb" \
             --include "*.whl"
           ls -lh _work/artifacts
+          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*.deb' | sort)
+          mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#DEBS[@]}" -lt 2 ]]; then
+            echo "Expected at least 2 .deb files in _work/artifacts, found ${#DEBS[@]}." >&2
+            exit 1
+          fi
+          if [[ "${#WHLS[@]}" -lt 1 ]]; then
+            echo "Expected at least 1 .whl file in _work/artifacts, found ${#WHLS[@]}." >&2
+            exit 1
+          fi
 
       - name: Install DEB packages for test runtime
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
-          mapfile -t DEBS < <(ls -1 _work/artifacts/*.deb)
+          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*.deb' | sort)
           if [[ "${#DEBS[@]}" -lt 2 ]]; then
             echo "Expected at least 2 .deb files, found ${#DEBS[@]}." >&2
             exit 1
           fi
+          for i in "${!DEBS[@]}"; do
+            DEBS[$i]="$(realpath "${DEBS[$i]}")"
+          done
           if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
             echo "DEVKIT_PASSWORD is not set." >&2
             exit 1
@@ -174,7 +187,12 @@ jobs:
           rm -rf "${VENV_DIR}"
           python3 -m venv "${VENV_DIR}"
           "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-          WHEEL_PATH="$(ls -1 _work/artifacts/*.whl | head -n1)"
+          mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#WHLS[@]}" -lt 1 ]]; then
+            echo "No .whl files found in _work/artifacts." >&2
+            exit 1
+          fi
+          WHEEL_PATH="$(realpath "${WHLS[0]}")"
           "${VENV_DIR}/bin/python" -m pip install --force-reinstall --no-deps "${WHEEL_PATH}"
           "${VENV_DIR}/bin/python" -c "import pyneat; print(pyneat.__file__)"
 
