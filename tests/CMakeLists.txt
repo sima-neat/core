@@ -708,6 +708,57 @@ if (NOT graphpipes_yolo_optiview_16stream_test IN_LIST PIPELINESESSION_TEST_BLAC
 endif()
 
 # ------------------------------------------------------------------------------
+# E2E pipelines – segmentation/depth examples
+# ------------------------------------------------------------------------------
+add_pipeline_test(
+  depth_anything_v2_example_test
+  e2e_pipelines/depth_estimation/depth_anything_v2_example_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT depth_anything_v2_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(depth_anything_v2_example_test
+    PROPERTIES LABELS "e2e;examples;depth"
+  )
+endif()
+
+add_pipeline_test(
+  fcn_hrnet_seg_overlay_example_test
+  e2e_pipelines/segmentation/fcn_hrnet_seg_overlay_example_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT fcn_hrnet_seg_overlay_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(fcn_hrnet_seg_overlay_example_test
+    PROPERTIES LABELS "e2e;examples;segmentation"
+  )
+endif()
+
+add_pipeline_test(
+  yolov5_seg_overlay_example_test
+  e2e_pipelines/segmentation/yolov5_seg_overlay_example_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT yolov5_seg_overlay_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(yolov5_seg_overlay_example_test
+    PROPERTIES LABELS "e2e;examples;segmentation"
+  )
+endif()
+
+add_pipeline_test(
+  yolov8n_seg_detess_simple_example_test
+  e2e_pipelines/segmentation/yolov8n_seg_detess_simple_example_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT yolov8n_seg_detess_simple_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(yolov8n_seg_detess_simple_example_test
+    PROPERTIES LABELS "e2e;examples;segmentation"
+  )
+endif()
+
+# ------------------------------------------------------------------------------
 # E2E pipelines – image classification
 # ------------------------------------------------------------------------------
 add_pipeline_test(
