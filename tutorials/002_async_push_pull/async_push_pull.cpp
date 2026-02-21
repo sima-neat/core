@@ -108,7 +108,8 @@ std::vector<cv::Mat> dataloader_from_images(const fs::path& root, int size, int 
 }
 
 std::vector<float> scores_from_output(const simaai::neat::Sample& out) {
-  tutorial_v2::check("has_tensor_output", out.tensor.has_value(), "expected tensor output from model");
+  tutorial_v2::check("has_tensor_output", out.tensor.has_value(),
+                     "expected tensor output from model");
 
   const simaai::neat::Tensor& t = *out.tensor;
   tutorial_v2::check("tensor_float32", t.dtype == simaai::neat::TensorDType::Float32,
@@ -147,8 +148,7 @@ Sig summarize(const simaai::neat::Sample& out) {
 }
 
 void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0
-            << " [--mpk <path>] [--size <n>] [--n <count>] [--queue <n>]"
+  std::cout << "Usage: " << argv0 << " [--mpk <path>] [--size <n>] [--n <count>] [--queue <n>]"
             << " [--timeout-ms <ms>] [--expect-id <id>] [--print-gst]\n";
   tutorial_v2::print_common_flags(std::cout);
 }
@@ -172,15 +172,22 @@ int main(int argc, char** argv) {
     tutorial_v2::require(size > 0, "--size must be > 0");
     tutorial_v2::require(n > 0, "--n must be > 0");
 
-    tutorial_v2::step("input_contract", "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
-    tutorial_v2::step("run_mode_choice", "run async inference with producer-thread push and main-thread pull");
-    tutorial_v2::why("keep chapter 002 parallel to chapter 001 so sync-vs-async is the main variable");
-    tutorial_v2::tradeoff("threaded async flow improves throughput potential but adds coordination complexity");
-    tutorial_v2::failure_mode("push/pull mismatches, queue stalls, or producer exceptions should fail loudly");
-    tutorial_v2::interpret_output("top1 is human-facing; tput_fps and tput_contract are parity-facing");
+    tutorial_v2::step("input_contract",
+                      "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
+    tutorial_v2::step("run_mode_choice",
+                      "run async inference with producer-thread push and main-thread pull");
+    tutorial_v2::why(
+        "keep chapter 002 parallel to chapter 001 so sync-vs-async is the main variable");
+    tutorial_v2::tradeoff(
+        "threaded async flow improves throughput potential but adds coordination complexity");
+    tutorial_v2::failure_mode(
+        "push/pull mismatches, queue stalls, or producer exceptions should fail loudly");
+    tutorial_v2::interpret_output(
+        "top1 is human-facing; tput_fps and tput_contract are parity-facing");
     tutorial_v2::step("output_contract", "emit top1 lines, async stats, and stable signature");
-    tutorial_v2::check("strict_mode_visible", tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                                               tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
+    tutorial_v2::check("strict_mode_visible",
+                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
+                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
                        "strict-mode guard is observable");
 
     const fs::path root = tutorial_v2::find_repo_root();
@@ -278,16 +285,14 @@ int main(int argc, char** argv) {
       }
 
       const int pushed_final = pushed.load(std::memory_order_acquire);
-      tutorial_v2::require(
-          pulled == pushed_final,
-          "async output count mismatch: pulled=" + std::to_string(pulled) +
-              " pushed=" + std::to_string(pushed_final));
+      tutorial_v2::require(pulled == pushed_final,
+                           "async output count mismatch: pulled=" + std::to_string(pulled) +
+                               " pushed=" + std::to_string(pushed_final));
 
       const auto end = std::chrono::steady_clock::now();
       const auto stats = run.stats();
       const double elapsed_sec = std::max(
-          1e-9,
-          std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
+          1e-9, std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
       const double tput_fps = static_cast<double>(pulled) / elapsed_sec;
       tput_contract = pulled;
 

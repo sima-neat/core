@@ -4,11 +4,12 @@ set -euo pipefail
 MODE="changed"
 BASE_REF="${FORMAT_BASE_REF:-}"
 VERBOSE=0
+PATH_FILTER="${FORMAT_PATH_FILTER:-}"
 
 usage() {
   cat <<USAGE
 Usage: scripts/check_format.sh [--changed-only|--all] [--base-ref <ref>]
-       [--verbose]
+       [--path <folder>] [--verbose]
 USAGE
 }
 
@@ -30,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       VERBOSE=1
       shift
       ;;
+    --path)
+      PATH_FILTER="${2:-}"
+      shift 2
+      ;;
     -h|--help)
       usage
       exit 0
@@ -41,6 +46,40 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+normalize_path_filter() {
+  local p="$1"
+  local root
+  root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+  # Convert absolute paths under the repo to repo-relative paths.
+  if [[ "$p" == "$root" ]]; then
+    echo ""
+    return 0
+  fi
+  if [[ "$p" == "$root/"* ]]; then
+    p="${p#"$root"/}"
+  fi
+
+  p="${p#./}"
+  p="${p%/}"
+  if [[ "$p" == "." ]]; then
+    p=""
+  fi
+  echo "$p"
+}
+
+if [[ -n "$PATH_FILTER" ]]; then
+  local_path_filter_input="$PATH_FILTER"
+  PATH_FILTER="$(normalize_path_filter "$PATH_FILTER")"
+  if [[ -z "$PATH_FILTER" && "$local_path_filter_input" != "." ]]; then
+    root_path="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+    if [[ "$local_path_filter_input" != "$root_path" && "$local_path_filter_input" != "$root_path/" ]]; then
+      echo "ERROR: --path requires a non-empty folder path." >&2
+      exit 1
+    fi
+  fi
+fi
 
 resolve_base_ref() {
   local base="$BASE_REF"
@@ -100,13 +139,20 @@ mapfile -t candidates < <(
 files=()
 for f in "${candidates[@]}"; do
   [[ -f "$f" ]] || continue
+  if [[ -n "$PATH_FILTER" ]]; then
+    [[ "$f" == "$PATH_FILTER" || "$f" == "$PATH_FILTER"/* ]] || continue
+  fi
   if is_cpp_file "$f"; then
     files+=("$f")
   fi
 done
 
 if [[ ${#files[@]} -eq 0 ]]; then
-  echo "[format] no C/C++ files to check (${MODE} mode)"
+  if [[ -n "$PATH_FILTER" ]]; then
+    echo "[format] no C/C++ files to check (${MODE} mode, path=${PATH_FILTER})"
+  else
+    echo "[format] no C/C++ files to check (${MODE} mode)"
+  fi
   exit 0
 fi
 
@@ -115,7 +161,11 @@ if ! command -v clang-format >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[format] checking ${#files[@]} files (${MODE} mode)"
+if [[ -n "$PATH_FILTER" ]]; then
+  echo "[format] checking ${#files[@]} files (${MODE} mode, path=${PATH_FILTER})"
+else
+  echo "[format] checking ${#files[@]} files (${MODE} mode)"
+fi
 failed=0
 for f in "${files[@]}"; do
   if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then

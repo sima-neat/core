@@ -110,9 +110,12 @@ int main(int argc, char** argv) {
     tutorial_v2::step("input_contract", "build graph and push one deterministic tensor sample");
     tutorial_v2::step("run_mode_choice", "prefer pipeline+stage hybrid and fallback to stage-only");
     tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff("prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    tutorial_v2::tradeoff(
+        "prefer deterministic samples and stable contracts over production realism");
+    tutorial_v2::failure_mode(
+        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
+    tutorial_v2::interpret_output(
+        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     std::string flow = "pipeline_plus_stage";
     simaai::neat::Sample out;
@@ -124,7 +127,8 @@ int main(int argc, char** argv) {
     }
 
     tutorial_v2::step("output_interpretation", "validate stream/frame metadata after traversal");
-    tutorial_v2::check("stream_id_present", !out.stream_id.empty(), "stream id should not be empty");
+    tutorial_v2::check("stream_id_present", !out.stream_id.empty(),
+                       "stream id should not be empty");
     tutorial_v2::check("frame_id_stamped", out.frame_id >= 0, "stamp stage should assign id");
 
     tutorial_v2::print_signature({

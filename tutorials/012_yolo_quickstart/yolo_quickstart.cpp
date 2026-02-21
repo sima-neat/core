@@ -30,13 +30,17 @@ int main(int argc, char** argv) {
     tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
     tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
     tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff("prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    tutorial_v2::tradeoff(
+        "prefer deterministic samples and stable contracts over production realism");
+    tutorial_v2::failure_mode(
+        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
+    tutorial_v2::interpret_output(
+        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
     tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available", tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                                              tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                      "strict-mode guard is observable");
+    tutorial_v2::check("strict_flag_available",
+                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
+                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
+                       "strict-mode guard is observable");
 
     const fs::path root = tutorial_v2::find_repo_root();
 
@@ -78,8 +82,8 @@ int main(int argc, char** argv) {
     p.add(simaai::neat::nodes::Input());
     p.add(simaai::neat::nodes::groups::Preprocess(model));
     p.add(simaai::neat::nodes::groups::MLA(model));
-    p.add(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", bgr.cols, bgr.rows, 0.52f, 0.5f,
-                                             100));
+    p.add(
+        simaai::neat::nodes::SimaBoxDecode(model, "yolov8", bgr.cols, bgr.rows, 0.52f, 0.5f, 100));
     p.add(simaai::neat::nodes::Output());
 
     if (tutorial_v2::wants_print_gst(argc, argv)) {
@@ -93,7 +97,8 @@ int main(int argc, char** argv) {
       std::cout << "Output kind: " << static_cast<int>(out.kind) << "\n";
       std::cout << "Fields:      " << out.fields.size() << "\n";
     } catch (const std::exception& e) {
-      // Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
+      // Deterministic fallback keeps strict runs pedagogically useful when device plugins
+      // misconfigure.
       tutorial_v2::runtime_fallback(e);
     }
 

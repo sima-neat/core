@@ -55,8 +55,8 @@ inline bool strict_mode() {
   return std::getenv("SIMA_RUN_TUTORIALS_FULL") != nullptr;
 }
 
-inline std::filesystem::path first_existing(
-    const std::initializer_list<std::filesystem::path>& candidates) {
+inline std::filesystem::path
+first_existing(const std::initializer_list<std::filesystem::path>& candidates) {
   for (const auto& candidate : candidates) {
     if (std::filesystem::exists(candidate)) {
       return candidate;
@@ -156,13 +156,7 @@ inline bool has_signature_key(const std::vector<std::pair<std::string, std::stri
 
 inline void print_signature(const std::vector<std::pair<std::string, std::string>>& values) {
   static constexpr std::array<const char*, 7> kRequired = {
-      "tutorial",
-      "lang",
-      "flow",
-      "run_mode",
-      "output_kind",
-      "tensor_rank",
-      "field_count",
+      "tutorial", "lang", "flow", "run_mode", "output_kind", "tensor_rank", "field_count",
   };
   for (const char* key : kRequired) {
     if (!has_signature_key(values, key)) {
