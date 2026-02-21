@@ -21,40 +21,6 @@ p.doxyGeneratedBy {
   display: none !important;
 }
 
-.code-tabs {
-  margin: 16px 0;
-}
-
-.code-tab-buttons {
-  display: flex;
-  gap: 16px;
-  border-bottom: 1px solid var(--ifm-color-emphasis-300);
-  margin-bottom: 8px;
-}
-
-.code-tab-button {
-  border: none;
-  padding: 8px 0;
-  font-size: 0.95rem;
-  font-weight: 600;
-  background: transparent;
-  color: var(--ifm-font-color-base);
-  cursor: pointer;
-  border-bottom: 2px solid transparent;
-}
-
-.code-tab-button.is-active {
-  border-bottom-color: var(--ifm-color-primary);
-}
-
-.code-tabs--js .code-tab-panel {
-  display: none;
-}
-
-.code-tabs--js .code-tab-panel.is-active {
-  display: block;
-}
-
 .language-pref {
   display: flex;
   align-items: center;

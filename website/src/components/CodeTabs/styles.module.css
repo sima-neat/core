@@ -1,0 +1,33 @@
+.root {
+  margin: 1rem 0;
+}
+
+.tabList {
+  display: inline-flex;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  margin-bottom: 0.75rem;
+}
+
+.tabButton {
+  border: 0;
+  background: transparent;
+  padding: 0.5rem 0.75rem;
+  color: var(--ifm-color-emphasis-900);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  font-weight: 600;
+}
+
+.tabButton:hover {
+  color: var(--ifm-color-primary);
+}
+
+.tabButtonActive {
+  color: var(--ifm-color-primary);
+  border-bottom-color: var(--ifm-color-primary);
+}
+
+.panel :global(pre) {
+  margin-top: 0;
+}

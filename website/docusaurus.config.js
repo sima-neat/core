@@ -73,7 +73,7 @@ const config = {
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
     },
   },
-  clientModules: [require.resolve("./src/clientModules/code-tabs.js")],
+  clientModules: [require.resolve("./src/clientModules/language-preference.js")],
 };
 
 module.exports = config;

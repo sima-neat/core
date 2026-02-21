@@ -1,6 +1,6 @@
 ---
 title: Tutorials
-description: Runnable, ordered learning path
+description: Practical tutorials for C++ and Python
 sidebar_position: 1
 ---
 
@@ -8,79 +8,25 @@ sidebar_position: 1
 
 # Tutorials
 
-This is the canonical tutorial index for SiMa NEAT. Each tutorial is a
-small, runnable C++ program that tells a focused story about one part of the
-framework. Tutorials are designed to be read in order.
+Use these tutorials in order. Each chapter includes matching C++ and Python implementations.
 
-## Build and run
-
-Build everything:
-
-```
-cmake -S . -B build
-cmake --build build
-```
-
-Run a single tutorial:
-
-```
-./build/tutorials/tutorial_0001_quickstart_image_to_tensor
-```
-
-Run the fast tutorial tier in CI or locally:
-
-```
-ctest --test-dir build -L tutorial -L fast
-```
-
-## Common flags
-
-Most tutorials support:
-
-- `--help` show help
-- `--print-gst` print the gst-launch string and exit (when implemented by that tutorial)
-
-## Tiering and prerequisites
-
-- **fast**: no external assets or plugins (always on in CI)
-- **asset**: uses local assets in `examples/media/*` or `tests/assets/*`
-- **mpk**: requires MPK files or downloads
-- **rtsp**: requires RTSP endpoints or local RTSP server
-- **pcie**: requires SoC/host PCIe setup and PCIe GStreamer plugins
-See [Assets and MPK Setup](../how-to/assets_mpk) for asset + MPK setup and download notes.
-
-## Tutorial list (ordered)
-
-1. [tutorial_0001_quickstart_image_to_tensor](tutorial_0001_quickstart_image_to_tensor)
-2. [tutorial_0002_pipeline_session_build_run](tutorial_0002_pipeline_session_build_run)
-3. [tutorial_0003_nodes_and_groups](tutorial_0003_nodes_and_groups)
-4. [tutorial_0004_samples_and_neattensor](tutorial_0004_samples_and_neattensor)
-5. [tutorial_0005_output_tensor_options](tutorial_0005_output_tensor_options)
-6. [tutorial_0006_async_push_pull](tutorial_0006_async_push_pull)
-7. [tutorial_0007_caps_negotiation](tutorial_0007_caps_negotiation)
-8. [tutorial_0008_input_groups](tutorial_0008_input_groups)
-9. [tutorial_0009_pipeline_save_load](tutorial_0009_pipeline_save_load)
-10. [tutorial_0010_diagnostics_debug](tutorial_0010_diagnostics_debug)
-11. [tutorial_0011_mpk_yolov8_pipeline](tutorial_0011_mpk_yolov8_pipeline)
-12. [tutorial_0012_stage_api](tutorial_0012_stage_api)
-13. [tutorial_0013_model_resnet50](tutorial_0013_model_resnet50)
-14. [tutorial_0014_rtsp_server](tutorial_0014_rtsp_server)
-15. [tutorial_0015_multi_stream_multi_output](tutorial_0015_multi_stream_multi_output)
-16. [tutorial_0016_data_formats_and_mapping](tutorial_0016_data_formats_and_mapping)
-17. [tutorial_0017_neatmodel_end_to_end](tutorial_0017_neatmodel_end_to_end)
-18. [tutorial_0018_async_queue_tuning](tutorial_0018_async_queue_tuning)
-19. [tutorial_0019_multi_output_bundle](tutorial_0019_multi_output_bundle)
-20. [tutorial_0020_debugging_workflow](tutorial_0020_debugging_workflow)
-21. [tutorial_0021_output_appsink_policies](tutorial_0021_output_appsink_policies)
-22. [tutorial_0022_inputappsrc_advanced_caps](tutorial_0022_inputappsrc_advanced_caps)
-23. [tutorial_0023_builder_graph_and_contracts](tutorial_0023_builder_graph_and_contracts)
-24. [tutorial_0024_hybrid_graph](tutorial_0024_hybrid_graph)
-25. [tutorial_0025_hybrid_multistream](tutorial_0025_hybrid_multistream)
-26. [tutorial_0026_send_and_receive_via_pcie](tutorial_0026_send_and_receive_via_pcie)
-27. [tutorial_0027_run_e2e_application_via_pcie](tutorial_0027_run_e2e_application_via_pcie)
-
-## Advanced examples (not part of the tutorial sequence)
-
-- `examples/model_resnet50.cpp` (advanced) — direct Model usage.
-- `examples/yolov8_multi_rtsp_demo.cpp` (advanced) — multi-stream RTSP YOLOv8.
-- `examples/mpk_run.cpp` (advanced) — manual ModelMPK wiring.
+| # | Tutorial | Difficulty | Estimated Read Time | Labels |
+| --- | --- | --- | --- | --- |
+| 001 | [001 Model in 5 Minutes](tutorial_v2_001_model_in_5_minutes) | Beginner | <10 minutes | model, mpk, inference, foundations |
+| 002 | [002 Async Push Pull](tutorial_v2_002_async_push_pull) | Intermediate | 10-15 minutes | async, push-pull, throughput, runtime |
+| 003 | [003 Session Build And Run](tutorial_v2_003_session_build_and_run) | Beginner | 10-15 minutes | session, build, run, pipeline |
+| 004 | [004 Model Options Chapter](tutorial_v2_004_model_options_chapter) | Beginner | 10-15 minutes | model-options, configuration, contracts |
+| 005 | [005 Preproc Chapter](tutorial_v2_005_preproc_chapter) | Intermediate | 15-20 minutes | preprocessing, normalization, image |
+| 006 | [006 Postproc Boxdecode](tutorial_v2_006_postproc_boxdecode) | Intermediate | 15-20 minutes | postprocessing, boxdecode, detection |
+| 007 | [007 Session Patterns](tutorial_v2_007_session_patterns) | Intermediate | 15 minutes | session, composition, patterns |
+| 008 | [008 Numpy Torch Tensor IO](tutorial_v2_008_numpy_torch_tensor_io) | Intermediate | 10-15 minutes | numpy, pytorch, tensor, io |
+| 009 | [009 Multi Input Samples](tutorial_v2_009_multi_input_samples) | Intermediate | 15 minutes | multi-input, samples, sync |
+| 010 | [010 Output Handling Patterns](tutorial_v2_010_output_handling_patterns) | Intermediate | 10-15 minutes | output, patterns, sink |
+| 011 | [011 Diagnostics In 3 Commands](tutorial_v2_011_diagnostics_in_3_commands) | Beginner | <10 minutes | diagnostics, debugging, observability |
+| 012 | [012 YOLO Quickstart](tutorial_v2_012_yolo_quickstart) | Intermediate | 15-20 minutes | yolo, detection, mpk |
+| 013 | [013 Resnet Quickstart](tutorial_v2_013_resnet_quickstart) | Beginner | 10-15 minutes | resnet, classification, mpk |
+| 014 | [014 Graph Basics](tutorial_v2_014_graph_basics) | Intermediate | 15-20 minutes | graph, traversal, metadata |
+| 015 | [015 Graph Model Hybrid](tutorial_v2_015_graph_model_hybrid) | Advanced | 20-25 minutes | graph, hybrid, stage-model, mpk |
+| 016 | [016 Graph Multistream](tutorial_v2_016_graph_multistream) | Advanced | 20-25 minutes | graph, multistream, scheduler, join |
+| 017 | [017 Performance Tuning](tutorial_v2_017_performance_tuning) | Advanced | 15-20 minutes | performance, tuning, async, queues |
+| 018 | [018 Production Blueprint](tutorial_v2_018_production_blueprint) | Advanced | 20-25 minutes | production, reliability, deployment |

@@ -28,6 +28,7 @@ Reference:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
+
 ```cpp
 simaai::neat::Session session;
 session.add(simaai::neat::nodes::InputAppSrc());
@@ -36,8 +37,10 @@ session.add(simaai::neat::nodes::OutputAppSink());
 auto run = session.build(input_tensor, simaai::neat::PipelineRunMode::Sync);
 auto out = run.push_and_pull(input_tensor, 1000);
 ```
+
 </CodeTab>
 <CodeTab label="Python" lang="python">
+
 ```python
 # Pseudo Python session + PipelineRun example.
 session = Session()
@@ -47,6 +50,7 @@ session.add(nodes.OutputAppSink())
 run = session.build(input_tensor, PipelineRunMode.Sync)
 out = run.push_and_pull(input_tensor, 1000)
 ```
+
 </CodeTab>
 </CodeTabs>
 
