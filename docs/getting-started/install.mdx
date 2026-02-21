@@ -4,31 +4,52 @@ description: Install SiMa NEAT on the DevKit and validate with Hello World
 sidebar_position: 1
 ---
 
+## sima-cli
 
-You can install either the C++ or Python NEAT packages on the DevKit using the instructions below.
+Install or update `sima-cli` on your Modalix DevKit before installing NEAT. You will use it both to install NEAT and to retrieve precompiled models for examples.
 
-<CodeTabs>
-<CodeTab label="C++" lang="cpp">
-```cpp
-# C++: install core from .deb and extras from .tar.gz.
-# Download the latest artifacts from the release pages:
-# - sima-neat-*-Linux-core.deb (core library and headers)
-# - sima-neat-*-Linux-extras.tar.gz (examples, tutorials, and tests)
+If you do not already have an account, sign up at [developer.sima.ai](https://developer.sima.ai).
 
-sudo apt install ./sima-neat-*-Linux-core.deb
-mkdir -p "${HOME}/sima-neat-extras"
-tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
+Follow the official `sima-cli` installation guide:
+[https://docs.sima.ai/pages/sima_cli/main.html](https://docs.sima.ai/pages/sima_cli/main.html)
+
+After `sima-cli` is installed, choose one of the NEAT installation paths below.
+Each path installs both the C++ and Python NEAT APIs on the Modalix DevKit.
+
+Your Modalix DevKit must be connected to the Internet to install sima-cli and NEAT.
+
+## Official Release
+
+Recommended for most users.
+
+```bash
+cd /media/nvme && mkdir -p neat && cd neat && sima-cli install neat
 ```
-</CodeTab>
-<CodeTab label="Python" lang="python">
-```python
-# Python: install from PyPI.
 
-pip install pyneat
+You can optionally install extras, including prebuilt and source-code tutorials, examples, and tests.
+
+## Latest Build
+
+Use this to try the latest automated build.
+
+```bash
+wget -O /tmp/install-neat.sh https://tools.modalix.info/install-neat.sh && bash /tmp/install-neat.sh
 ```
-</CodeTab>
-</CodeTabs>
+
+## Specific Build
+
+Use this to test a specific branch and commit.
+
+```bash
+sima-cli install -m https://neat-artifacts.modalix.info/neat/{branch}/{githash}/metadata.json
+```
+
+Replace:
+- `{branch}` with your branch name
+- `{githash}` with the 7-character Git commit hash
 
 If you prefer building from source, follow the [build topic](./build.md).
+
+The install also provisions PyNeat in `~/pyneat` virtual environment.
 
 Next, continue with [Hello SiMa](./minimal_example.md) to validate the install with a minimal app.
