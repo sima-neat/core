@@ -377,6 +377,8 @@ jobs:
   publish-latest:
     runs-on: [self-hosted, Linux, ARM64, modalix]
     needs: docs
+    env:
+      CLOUDFRONT_DISTRIBUTION_ID: E3OR0YOA43MQ7D
 
     steps:
       - name: Configure AWS credentials
@@ -468,6 +470,12 @@ jobs:
 
           aws s3 rm "${LATEST_PREFIX}/" --recursive
           aws s3 cp "${BUNDLE_PATH}" "${LATEST_PREFIX}/${BUNDLE_NAME}"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
+            --paths "/*"
 
       - name: Print latest manifest
         run: |
