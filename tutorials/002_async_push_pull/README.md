@@ -3,7 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
-| Difficulty | Intermediate |
+| Difficulty | Beginner |
 | Estimated Read Time | 10-15 minutes |
 | Labels | async, push-pull, throughput, runtime |
 

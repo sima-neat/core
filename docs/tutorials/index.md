@@ -1,6 +1,6 @@
 ---
 title: Tutorials
-description: Practical tutorials for C++ and Python
+description: Practical tutorials for C++ and Python with guided learning paths
 sidebar_position: 1
 ---
 
@@ -8,25 +8,217 @@ sidebar_position: 1
 
 # Tutorials
 
-Use these tutorials in order. Each chapter includes matching C++ and Python implementations.
+<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>
 
-| # | Tutorial | Difficulty | Estimated Read Time | Labels |
-| --- | --- | --- | --- | --- |
-| 001 | [001 Model in 5 Minutes](tutorial_v2_001_model_in_5_minutes) | Beginner | <10 minutes | model, mpk, inference, foundations |
-| 002 | [002 Async Push Pull](tutorial_v2_002_async_push_pull) | Intermediate | 10-15 minutes | async, push-pull, throughput, runtime |
-| 003 | [003 Session Build And Run](tutorial_v2_003_session_build_and_run) | Beginner | 10-15 minutes | session, build, run, pipeline |
-| 004 | [004 Model Options Chapter](tutorial_v2_004_model_options_chapter) | Beginner | 10-15 minutes | model-options, configuration, contracts |
-| 005 | [005 Preproc Chapter](tutorial_v2_005_preproc_chapter) | Intermediate | 15-20 minutes | preprocessing, normalization, image |
-| 006 | [006 Postproc Boxdecode](tutorial_v2_006_postproc_boxdecode) | Intermediate | 15-20 minutes | postprocessing, boxdecode, detection |
-| 007 | [007 Session Patterns](tutorial_v2_007_session_patterns) | Intermediate | 15 minutes | session, composition, patterns |
-| 008 | [008 Numpy Torch Tensor IO](tutorial_v2_008_numpy_torch_tensor_io) | Intermediate | 10-15 minutes | numpy, pytorch, tensor, io |
-| 009 | [009 Multi Input Samples](tutorial_v2_009_multi_input_samples) | Intermediate | 15 minutes | multi-input, samples, sync |
-| 010 | [010 Output Handling Patterns](tutorial_v2_010_output_handling_patterns) | Intermediate | 10-15 minutes | output, patterns, sink |
-| 011 | [011 Diagnostics In 3 Commands](tutorial_v2_011_diagnostics_in_3_commands) | Beginner | <10 minutes | diagnostics, debugging, observability |
-| 012 | [012 YOLO Quickstart](tutorial_v2_012_yolo_quickstart) | Intermediate | 15-20 minutes | yolo, detection, mpk |
-| 013 | [013 Resnet Quickstart](tutorial_v2_013_resnet_quickstart) | Beginner | 10-15 minutes | resnet, classification, mpk |
-| 014 | [014 Graph Basics](tutorial_v2_014_graph_basics) | Intermediate | 15-20 minutes | graph, traversal, metadata |
-| 015 | [015 Graph Model Hybrid](tutorial_v2_015_graph_model_hybrid) | Advanced | 20-25 minutes | graph, hybrid, stage-model, mpk |
-| 016 | [016 Graph Multistream](tutorial_v2_016_graph_multistream) | Advanced | 20-25 minutes | graph, multistream, scheduler, join |
-| 017 | [017 Performance Tuning](tutorial_v2_017_performance_tuning) | Advanced | 15-20 minutes | performance, tuning, async, queues |
-| 018 | [018 Production Blueprint](tutorial_v2_018_production_blueprint) | Advanced | 20-25 minutes | production, reliability, deployment |
+## Beginner
+
+<div class="tutorial-grid">
+  <a class="tutorial-card tutorial-difficulty-beginner" href="/tutorials/v2/002-async-push-pull" aria-label="Async Push Pull">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/beginner.svg" alt="Async Push Pull image" loading="lazy" />
+      <span class="tutorial-card-image-title">Async Push Pull</span>
+      <span class="tutorial-card-duration">10-15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Understand async execution by separating producer push from consumer pull.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">async</span><span class="tutorial-card-tag">push-pull</span><span class="tutorial-card-tag">throughput</span><span class="tutorial-card-tag">runtime</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-beginner" href="/tutorials/v2/001-model-in-5-minutes" aria-label="Model in 5 Minutes">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/beginner.svg" alt="Model in 5 Minutes image" loading="lazy" />
+      <span class="tutorial-card-image-title">Model in 5 Minutes</span>
+      <span class="tutorial-card-duration">&lt;5 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Work with a compiled model end-to-end using the smallest practical sync loop.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">model</span><span class="tutorial-card-tag">mpk</span><span class="tutorial-card-tag">inference</span><span class="tutorial-card-tag">foundations</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-beginner" href="/tutorials/v2/004-model-options-chapter" aria-label="Model Options Chapter">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/beginner.svg" alt="Model Options Chapter image" loading="lazy" />
+      <span class="tutorial-card-image-title">Model Options Chapter</span>
+      <span class="tutorial-card-duration">10-15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">See how Model options shape runtime contracts and output behavior.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">model-options</span><span class="tutorial-card-tag">configuration</span><span class="tutorial-card-tag">contracts</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-beginner" href="/tutorials/v2/003-session-build-and-run" aria-label="Session Build And Run">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/beginner.svg" alt="Session Build And Run image" loading="lazy" />
+      <span class="tutorial-card-image-title">Session Build And Run</span>
+      <span class="tutorial-card-duration">10-15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Build a Session once and run it with deterministic runtime behavior.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">session</span><span class="tutorial-card-tag">build</span><span class="tutorial-card-tag">run</span><span class="tutorial-card-tag">pipeline</span></div>
+    </div>
+  </a>
+</div>
+
+## Intermediate
+
+<div class="tutorial-grid">
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/011-diagnostics-in-3-commands" aria-label="Diagnostics In 3 Commands">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Diagnostics In 3 Commands image" loading="lazy" />
+      <span class="tutorial-card-image-title">Diagnostics In 3 Commands</span>
+      <span class="tutorial-card-duration">&lt;10 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Diagnose common runtime issues quickly with a compact debug workflow.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">diagnostics</span><span class="tutorial-card-tag">debugging</span><span class="tutorial-card-tag">observability</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/014-graph-basics" aria-label="Graph Basics">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Graph Basics image" loading="lazy" />
+      <span class="tutorial-card-image-title">Graph Basics</span>
+      <span class="tutorial-card-duration">15-20 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Build a minimal graph and verify metadata survives graph traversal.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">graph</span><span class="tutorial-card-tag">traversal</span><span class="tutorial-card-tag">metadata</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/009-multi-input-samples" aria-label="Multi Input Samples">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Multi Input Samples image" loading="lazy" />
+      <span class="tutorial-card-image-title">Multi Input Samples</span>
+      <span class="tutorial-card-duration">15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Run pipelines that consume bundled or multiple input samples in one flow.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">multi-input</span><span class="tutorial-card-tag">samples</span><span class="tutorial-card-tag">sync</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/008-numpy-torch-tensor-io" aria-label="Numpy Torch Tensor IO">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Numpy Torch Tensor IO image" loading="lazy" />
+      <span class="tutorial-card-image-title">Numpy Torch Tensor IO</span>
+      <span class="tutorial-card-duration">10-15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Bridge NEAT runtime IO with NumPy and PyTorch tensor paths.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">numpy</span><span class="tutorial-card-tag">pytorch</span><span class="tutorial-card-tag">tensor</span><span class="tutorial-card-tag">io</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/010-output-handling-patterns" aria-label="Output Handling Patterns">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Output Handling Patterns image" loading="lazy" />
+      <span class="tutorial-card-image-title">Output Handling Patterns</span>
+      <span class="tutorial-card-duration">10-15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Understand output handling patterns and choose one based on app needs.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">output</span><span class="tutorial-card-tag">patterns</span><span class="tutorial-card-tag">sink</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/006-postproc-boxdecode" aria-label="Postproc Boxdecode">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Postproc Boxdecode image" loading="lazy" />
+      <span class="tutorial-card-image-title">Postproc Boxdecode</span>
+      <span class="tutorial-card-duration">15-20 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Use postprocessing settings to decode detection-oriented outputs correctly.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">postprocessing</span><span class="tutorial-card-tag">boxdecode</span><span class="tutorial-card-tag">detection</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/005-preproc-chapter" aria-label="Preproc Chapter">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Preproc Chapter image" loading="lazy" />
+      <span class="tutorial-card-image-title">Preproc Chapter</span>
+      <span class="tutorial-card-duration">15-20 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Control preprocessing to align raw input data with model expectations.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">preprocessing</span><span class="tutorial-card-tag">normalization</span><span class="tutorial-card-tag">image</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/013-resnet-quickstart" aria-label="Resnet Quickstart">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Resnet Quickstart image" loading="lazy" />
+      <span class="tutorial-card-image-title">Resnet Quickstart</span>
+      <span class="tutorial-card-duration">10-15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Run a ResNet-style classifier and verify top-class output behavior.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">resnet</span><span class="tutorial-card-tag">classification</span><span class="tutorial-card-tag">mpk</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/007-session-patterns" aria-label="Session Patterns">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="Session Patterns image" loading="lazy" />
+      <span class="tutorial-card-image-title">Session Patterns</span>
+      <span class="tutorial-card-duration">15 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Compare reusable session composition patterns for app-scale workflows.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">session</span><span class="tutorial-card-tag">composition</span><span class="tutorial-card-tag">patterns</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-intermediate" href="/tutorials/v2/012-yolo-quickstart" aria-label="YOLO Quickstart">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/intermediate.svg" alt="YOLO Quickstart image" loading="lazy" />
+      <span class="tutorial-card-image-title">YOLO Quickstart</span>
+      <span class="tutorial-card-duration">15-20 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Run a YOLO-style detection path quickly and validate expected output shape.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">yolo</span><span class="tutorial-card-tag">detection</span><span class="tutorial-card-tag">mpk</span></div>
+    </div>
+  </a>
+</div>
+
+## Advanced
+
+<div class="tutorial-grid">
+  <a class="tutorial-card tutorial-difficulty-advanced" href="/tutorials/v2/015-graph-model-hybrid" aria-label="Graph Model Hybrid">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/advanced.svg" alt="Graph Model Hybrid image" loading="lazy" />
+      <span class="tutorial-card-image-title">Graph Model Hybrid</span>
+      <span class="tutorial-card-duration">20-25 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Combine graph stages with model execution in one hybrid runtime path.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">graph</span><span class="tutorial-card-tag">hybrid</span><span class="tutorial-card-tag">stage-model</span><span class="tutorial-card-tag">mpk</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-advanced" href="/tutorials/v2/016-graph-multistream" aria-label="Graph Multistream">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/advanced.svg" alt="Graph Multistream image" loading="lazy" />
+      <span class="tutorial-card-image-title">Graph Multistream</span>
+      <span class="tutorial-card-duration">20-25 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Model multistream scheduling and joining behavior with deterministic checks.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">graph</span><span class="tutorial-card-tag">multistream</span><span class="tutorial-card-tag">scheduler</span><span class="tutorial-card-tag">join</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-advanced" href="/tutorials/v2/017-performance-tuning" aria-label="Performance Tuning">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/advanced.svg" alt="Performance Tuning image" loading="lazy" />
+      <span class="tutorial-card-image-title">Performance Tuning</span>
+      <span class="tutorial-card-duration">15-20 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Tune async queue behavior to improve throughput and runtime stability.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">performance</span><span class="tutorial-card-tag">tuning</span><span class="tutorial-card-tag">async</span><span class="tutorial-card-tag">queues</span></div>
+    </div>
+  </a>
+  <a class="tutorial-card tutorial-difficulty-advanced" href="/tutorials/v2/018-production-blueprint" aria-label="Production Blueprint">
+    <div class="tutorial-card-image-wrap">
+      <img class="tutorial-card-image" src="/img/tutorials/cards/advanced.svg" alt="Production Blueprint image" loading="lazy" />
+      <span class="tutorial-card-image-title">Production Blueprint</span>
+      <span class="tutorial-card-duration">20-25 minutes</span>
+    </div>
+    <div class="tutorial-card-body">
+      <p class="tutorial-card-summary">Assemble production-style runtime patterns for resilient deployment workflows.</p>
+      <div class="tutorial-card-tags"><span class="tutorial-card-tag">production</span><span class="tutorial-card-tag">reliability</span><span class="tutorial-card-tag">deployment</span></div>
+    </div>
+  </a>
+</div>

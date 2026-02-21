@@ -14,6 +14,8 @@ Outputs:
 from __future__ import annotations
 
 import argparse
+import hashlib
+import html
 import pathlib
 import re
 from dataclasses import dataclass
@@ -44,6 +46,14 @@ class TutorialModule:
     @property
     def doc_slug(self) -> str:
         return f"/tutorials/v2/{self.number:03d}-{self.slug.replace('_', '-')}"
+
+    @property
+    def image_url(self) -> str:
+        return f"/img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
+
+    @property
+    def display_title(self) -> str:
+        return re.sub(r"^\d{3}\s+", "", self.title).strip()
 
 
 def _extract_section(text: str, heading: str) -> str:
@@ -97,6 +107,81 @@ def _description(module: TutorialModule) -> str:
     if len(text) > 120:
         return text[:117].rstrip() + "..."
     return text
+
+
+def _difficulty_theme(difficulty: str) -> Dict[str, str]:
+    key = difficulty.strip().lower()
+    if key == "beginner":
+        return {
+            "bg_a": "#0d5e4a",
+            "bg_b": "#38b57a",
+            "glow": "#89ffd0",
+            "chip_bg": "#153f33",
+            "chip_fg": "#bcffdf",
+        }
+    if key == "advanced":
+        return {
+            "bg_a": "#6f1022",
+            "bg_b": "#e34a4a",
+            "glow": "#ffb2b2",
+            "chip_bg": "#3f1520",
+            "chip_fg": "#ffd2d2",
+        }
+    return {
+        "bg_a": "#72520a",
+        "bg_b": "#f0b33a",
+        "glow": "#ffe39c",
+        "chip_bg": "#413116",
+        "chip_fg": "#ffe7ba",
+    }
+
+
+def _summary_text(module: TutorialModule) -> str:
+    text = module.concept.strip() if module.concept else ""
+    if len(text) > 128:
+        return text[:125].rstrip() + "..."
+    return text or "Learn the key concept and runtime process for this tutorial."
+
+
+def _svg_background(difficulty: str) -> str:
+    theme = _difficulty_theme(difficulty)
+    digest = hashlib.sha256(difficulty.encode("utf-8")).hexdigest()
+    x1 = int(digest[0:2], 16) % 320
+    y1 = int(digest[2:4], 16) % 170
+    x2 = int(digest[4:6], 16) % 320
+    y2 = int(digest[6:8], 16) % 170
+    x3 = int(digest[8:10], 16) % 320
+    y3 = int(digest[10:12], 16) % 170
+
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 170" role="img" aria-label="tutorial difficulty background">\n'
+        "  <defs>\n"
+        f'    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">\n'
+        f'      <stop offset="0%" stop-color="{theme["bg_a"]}"/>\n'
+        f'      <stop offset="100%" stop-color="{theme["bg_b"]}"/>\n'
+        "    </linearGradient>\n"
+        f'    <radialGradient id="glow" cx="50%" cy="35%" r="70%">\n'
+        f'      <stop offset="0%" stop-color="{theme["glow"]}" stop-opacity="0.28"/>\n'
+        f'      <stop offset="100%" stop-color="{theme["glow"]}" stop-opacity="0"/>\n'
+        "    </radialGradient>\n"
+        "  </defs>\n"
+        '  <rect width="320" height="170" rx="16" fill="url(#bg)"/>\n'
+        '  <rect width="320" height="170" rx="16" fill="url(#glow)"/>\n'
+        f'  <circle cx="{x1}" cy="{y1}" r="58" fill="#ffffff" fill-opacity="0.07"/>\n'
+        f'  <circle cx="{x2}" cy="{y2}" r="42" fill="#ffffff" fill-opacity="0.08"/>\n'
+        f'  <circle cx="{x3}" cy="{y3}" r="22" fill="#ffffff" fill-opacity="0.14"/>\n'
+        '  <path d="M24 128 C 84 84, 184 154, 296 94" stroke="#ffffff" stroke-opacity="0.2" stroke-width="3" fill="none"/>\n'
+        "</svg>\n"
+    )
+
+
+def generate_card_images(out_dir: pathlib.Path) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in out_dir.glob("tutorial_v2_*.svg"):
+        stale.unlink(missing_ok=True)
+    for difficulty in ("beginner", "intermediate", "advanced"):
+        svg_path = out_dir / f"{difficulty}.svg"
+        svg_path.write_text(_svg_background(difficulty), encoding="utf-8")
 
 
 def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialModule:
@@ -210,10 +295,21 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int) -> str:
 
 
 def render_index(modules: List[TutorialModule]) -> str:
+    groups: Dict[str, List[TutorialModule]] = {
+        "Beginner": [],
+        "Intermediate": [],
+        "Advanced": [],
+    }
+    for module in modules:
+        key = module.difficulty if module.difficulty in groups else "Intermediate"
+        groups[key].append(module)
+    for key in groups:
+        groups[key] = sorted(groups[key], key=lambda m: m.display_title.lower())
+
     lines: List[str] = [
         "---",
         "title: Tutorials",
-        "description: Practical tutorials for C++ and Python",
+        "description: Practical tutorials for C++ and Python with guided learning paths",
         "sidebar_position: 1",
         "---",
         "",
@@ -221,19 +317,43 @@ def render_index(modules: List[TutorialModule]) -> str:
         "",
         "# Tutorials",
         "",
-        "Use these tutorials in order. Each chapter includes matching C++ and Python implementations.",
+        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
         "",
-        "| # | Tutorial | Difficulty | Estimated Read Time | Labels |",
-        "| --- | --- | --- | --- | --- |",
     ]
 
-    for module in modules:
-        labels = ", ".join(module.labels)
-        lines.append(
-            f"| {module.number:03d} | [{module.title}]({module.doc_id}) | {module.difficulty} | {module.estimated_read_time} | {labels} |"
-        )
+    for difficulty in ("Beginner", "Intermediate", "Advanced"):
+        section = groups[difficulty]
+        if not section:
+            continue
 
-    lines.append("")
+        lines.extend([f"## {difficulty}", "", '<div class="tutorial-grid">'])
+
+        for module in section:
+            title = html.escape(module.display_title)
+            summary = html.escape(_summary_text(module))
+            diff_class = module.difficulty.strip().lower()
+            duration = html.escape(module.estimated_read_time)
+            label_tags = "".join(
+                f'<span class="tutorial-card-tag">{html.escape(label)}</span>'
+                for label in module.labels
+            )
+            lines.extend(
+                [
+                    f'  <a class="tutorial-card tutorial-difficulty-{diff_class}" href="{module.doc_slug}" aria-label="{title}">',
+                    '    <div class="tutorial-card-image-wrap">',
+                    f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
+                    f'      <span class="tutorial-card-image-title">{title}</span>',
+                    f'      <span class="tutorial-card-duration">{duration}</span>',
+                    "    </div>",
+                    '    <div class="tutorial-card-body">',
+                    f'      <p class="tutorial-card-summary">{summary}</p>',
+                    f'      <div class="tutorial-card-tags">{label_tags}</div>',
+                    "    </div>",
+                    "  </a>",
+                ]
+            )
+
+        lines.extend(["</div>", ""])
     return "\n".join(lines)
 
 
@@ -259,6 +379,7 @@ def main() -> int:
     modules = [parse_module(d, root) for d in module_dirs]
 
     docs_tutorials_dir.mkdir(parents=True, exist_ok=True)
+    generate_card_images(root / "website" / "static" / "img" / "tutorials" / "cards")
 
     for idx, module in enumerate(modules, start=2):
         out_path = docs_tutorials_dir / f"{module.doc_id}.mdx"

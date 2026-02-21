@@ -4,7 +4,7 @@
 | Field | Value |
 | --- | --- |
 | Difficulty | Beginner |
-| Estimated Read Time | <10 minutes |
+| Estimated Read Time | <5 minutes |
 | Labels | model, mpk, inference, foundations |
 
 ## Concept

@@ -3,7 +3,7 @@
 ## Metadata
 | Field | Value |
 | --- | --- |
-| Difficulty | Beginner |
+| Difficulty | Intermediate |
 | Estimated Read Time | 10-15 minutes |
 | Labels | resnet, classification, mpk |
 
