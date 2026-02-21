@@ -15,6 +15,7 @@ void print_help(const char* argv0) {
   std::cout << "  --height <h>         Input height (default 240)\n";
 }
 
+// CORE LOGIC
 simaai::neat::Session make_session(int width, int height) {
   simaai::neat::Session session;
 
@@ -30,7 +31,7 @@ simaai::neat::Session make_session(int width, int height) {
   session.add(simaai::neat::nodes::Output());
   return session;
 }
-
+// END CORE LOGIC
 } // namespace
 
 int main(int argc, char** argv) {
@@ -68,11 +69,13 @@ int main(int argc, char** argv) {
       return 0;
     }
 
+    // CORE LOGIC
     simaai::neat::RunOptions run_opt;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
     auto run = session.build(input, simaai::neat::RunMode::Sync, run_opt);
     auto sample = run.push_and_pull(input, /*timeout_ms=*/1000);
+    // END CORE LOGIC
 
     tutorial_v2::require(sample.tensor.has_value(), "missing tensor output");
     std::cout << "Output tensor rank: " << sample.tensor->shape.size() << "\n";

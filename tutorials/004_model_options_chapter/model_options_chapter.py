@@ -34,6 +34,7 @@ def main(argv: list[str]) -> int:
   if not mpk or not mpk.exists():
     return tu.skip("missing MPK (pass --mpk)")
 
+  # CORE LOGIC
   opt = neat.ModelOptions()
   opt.format = "BGR"
   opt.input_max_width = 640
@@ -52,7 +53,7 @@ def main(argv: list[str]) -> int:
   opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 
   model = neat.Model(str(mpk), opt)
-
+  # END CORE LOGIC
   print(f"input_spec.rank:  {model.input_spec().rank}")
   print(f"output_spec.rank: {model.output_spec().rank}")
   print(f"metadata keys:    {len(model.metadata())}")

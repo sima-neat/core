@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
+# CORE LOGIC
 def build_session(neat, width: int, height: int):
   inp = neat.InputOptions()
   inp.format = "RGB"
@@ -21,7 +22,7 @@ def build_session(neat, width: int, height: int):
   s.add(neat.nodes.input(inp))
   s.add(neat.nodes.output())
   return s
-
+# END CORE LOGIC
 
 def main(argv: list[str]) -> int:
   neat = tu.import_pyneat()
@@ -51,11 +52,13 @@ def main(argv: list[str]) -> int:
     print(s.describe_backend())
     return 0
 
+  # CORE LOGIC
   rgb = np.full((height, width, 3), 33, dtype=np.uint8)
   t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
   run = s.build(t, neat.RunMode.Sync)
   out = run.run(t, timeout_ms=1000)
   tu.ensure(out.tensor is not None, "missing output tensor")
+  # END CORE LOGIC
 
   print(f"Output rank: {len(out.tensor.shape)}")
   tu.check("tutorial_completed", True, "main path reached end without exception")

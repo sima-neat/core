@@ -217,6 +217,7 @@ int main(int argc, char** argv) {
       opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
       opt.output_memory = simaai::neat::OutputMemory::Owned;
 
+      // CORE LOGIC
       auto run = s.build(images_to_push.front(), simaai::neat::RunMode::Async, opt);
 
       std::atomic<int> pushed{0};
@@ -242,7 +243,7 @@ int main(int argc, char** argv) {
           producer.join();
         }
       };
-
+      // END CORE LOGIC
       const auto start = std::chrono::steady_clock::now();
       int pulled = 0;
       try {

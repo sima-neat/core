@@ -192,6 +192,7 @@ int main(int argc, char** argv) {
     Sig sig;
     int tput_contract = -1;
     try {
+      // CORE LOGIC
       // The "6-line story": model -> image loader -> run -> top1 -> signature.
       simaai::neat::Model resnet50(mpk_path.string(), build_model_options(size));
 
@@ -218,7 +219,7 @@ int main(int argc, char** argv) {
           tutorial_v2::check("top1_expected_id", pred == expect_id, "verify expected class id");
         }
       }
-
+      // END CORE LOGIC
       const auto end = std::chrono::steady_clock::now();
       const double elapsed_sec = std::max(
           1e-9,

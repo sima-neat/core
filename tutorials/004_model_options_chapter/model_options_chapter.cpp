@@ -58,6 +58,7 @@ int main(int argc, char** argv) {
       return tutorial_v2::skip("missing MPK (pass --mpk)");
     }
 
+    // CORE LOGIC
     simaai::neat::Model::Options opt;
     opt.media_type = "video/x-raw";
     opt.format = "BGR";
@@ -76,6 +77,7 @@ int main(int argc, char** argv) {
     opt.name_suffix = "_chapter";
 
     simaai::neat::Model model(mpk_path.string(), opt);
+    # END CORE LOGIC
 
     print_spec("input_spec", model.input_spec());
     print_spec("output_spec", model.output_spec());

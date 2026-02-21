@@ -8,13 +8,24 @@
 | Labels | model, mpk, inference, foundations |
 
 ## Concept
-Work with a compiled model end-to-end using the smallest practical sync loop.
+This tutorial teaches the quickest practical path to run inference with a compiled model in NEAT.
+
+A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that NEAT can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference. You provide input data, run inference, and consume model outputs.
+
+After this chapter, you should understand the minimum end-to-end loop:
+- Load a compiled model package.
+- Prepare input data that matches model expectations.
+- Run synchronous inference.
+- Read and validate output behavior.
+
+**References**
+- [Model](/getting-started/programming-model/model)
 
 ## Learning Process
-1. Parse CLI and prepare ResNet50 model + local cv::Mat dataloader.
-2. Run synchronous inference over cv::Mat inputs.
-3. Emit top1 lines and a stable tutorial signature.
-4. Run synchronous inference from PyTorch dataloader batches.
+1. Set up runtime inputs: parse CLI args, locate the compiled ResNet50 MPK, and prepare sample input data.
+2. Build the minimal model execution path for one model and one input stream.
+3. Run synchronous inference to keep behavior deterministic and easy to debug.
+4. Inspect top-1 predictions and validation output (`CHECK`, `SIGNATURE`, `[OK]`).
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

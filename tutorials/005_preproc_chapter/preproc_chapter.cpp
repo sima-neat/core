@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
       std::cout << s.describe_backend() << "\n";
       return 0;
     }
-
+    // CORE LOGIC
     try {
       auto pre = simaai::neat::stages::Preproc(bgr, model);
       std::cout << "Preproc tensor rank: " << pre.shape.size() << "\n";
@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
       // Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
       tutorial_v2::runtime_fallback(e);
     }
-
+    // END CORE LOGIC
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({
         {"tutorial", "005"},

@@ -8,12 +8,23 @@
 | Labels | async, push-pull, throughput, runtime |
 
 ## Concept
-Understand async execution by separating producer push from consumer pull.
+This tutorial explains how to use asynchronous APIs to build high-performance production quality applications.
+
+In a synchronous loop, one thread blocks while waiting for each result. That is simple, but it underutilizes compute when input production and output consumption can overlap. Async execution improves throughput by decoupling these stages:
+- `push(...)` feeds inputs as they become ready.
+- `pull(...)` consumes outputs independently.
+
+This chapter focuses on the core async pattern used in real applications: producer-side async `push` and consumer-side async `pull`, with explicit queue/backpressure behavior.
+
+For the programming concepts behind this flow, see:
+- [Session](/getting-started/programming-model/session)
+- [Pipeline](/getting-started/programming-model/pipeline)
 
 ## Learning Process
-1. Parse CLI and prepare ResNet50 model + local cv::Mat dataloader.
-2. Run async inference with producer-thread push and main-thread pull.
-3. Emit top1 lines, async stats, and stable signature.
+1. Prepare runtime inputs: parse CLI args, load ResNet50 MPK, and construct local input samples.
+2. Build the async run path and split responsibilities between producer `push(...)` and consumer `pull(...)`.
+3. Observe queue-driven behavior and verify throughput-oriented execution.
+4. Validate results with top-1 output, async stats, and stable tutorial signature.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

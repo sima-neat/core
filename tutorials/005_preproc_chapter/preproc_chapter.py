@@ -50,9 +50,10 @@ def main(argv: list[str]) -> int:
 
   model = neat.Model(str(mpk), opt)
 
+  # CORE LOGIC
   pre_group = model.preprocess()
   print(f"preprocess group size: {pre_group.size()}")
-
+  # END CORE LOGIC
   if tu.has_flag(argv, "--print-gst"):
     s = neat.Session()
     s.add(pre_group)

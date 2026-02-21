@@ -24,7 +24,7 @@ const config = {
       onBrokenMarkdownLinks: strictLinks ? "throw" : "warn",
     },
   },
-  favicon: "img/favicon.ico",
+  favicon: "img/favicon.png",
   organizationName: org,
   projectName: project,
   presets: [
