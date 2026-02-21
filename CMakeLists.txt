@@ -160,7 +160,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 if (SIMANEAT_CPP_TIDY)
-  pkg_check_modules(GST QUIET
+  pkg_check_modules(GST QUIET IMPORTED_TARGET
     gstreamer-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
@@ -172,7 +172,7 @@ if (SIMANEAT_CPP_TIDY)
     message(WARNING "GStreamer not found; configuring without GST includes/libs (analysis-only mode).")
   endif()
 else()
-  pkg_check_modules(GST REQUIRED
+  pkg_check_modules(GST REQUIRED IMPORTED_TARGET
     gstreamer-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
@@ -183,12 +183,12 @@ else()
 endif()
 
 if (SIMANEAT_CPP_TIDY)
-  pkg_check_modules(OPENCV QUIET opencv4)
+  pkg_check_modules(OPENCV QUIET IMPORTED_TARGET opencv4)
   if (NOT OPENCV_FOUND)
     message(WARNING "OpenCV not found; configuring without OpenCV includes/libs (analysis-only mode).")
   endif()
 else()
-  pkg_check_modules(OPENCV REQUIRED opencv4)
+  pkg_check_modules(OPENCV REQUIRED IMPORTED_TARGET opencv4)
 endif()
 
 find_library(SIMAAI_ALLOCATOR_LIB gstsimaallocator)
@@ -249,13 +249,6 @@ target_include_directories(sima_neat
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
 )
 
-if (GST_FOUND)
-  target_include_directories(sima_neat SYSTEM PUBLIC ${GST_INCLUDE_DIRS})
-endif()
-if (OPENCV_FOUND)
-  target_include_directories(sima_neat SYSTEM PUBLIC ${OPENCV_INCLUDE_DIRS})
-endif()
-
 target_compile_options(sima_neat PRIVATE
 )
 
@@ -266,22 +259,15 @@ if (OPENCV_FOUND)
   target_compile_options(sima_neat PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
 
-if (OPENCV_FOUND)
-  target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
-endif()
-if (GST_FOUND)
-  target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
-endif()
-
 target_link_libraries(sima_neat
   PUBLIC
 )
 
 if (GST_FOUND)
-  target_link_libraries(sima_neat PUBLIC ${GST_LIBRARIES})
+  target_link_libraries(sima_neat PUBLIC PkgConfig::GST)
 endif()
 if (OPENCV_FOUND)
-  target_link_libraries(sima_neat PUBLIC ${OPENCV_LIBRARIES})
+  target_link_libraries(sima_neat PUBLIC PkgConfig::OPENCV)
 endif()
 
 if (SIMA_WITH_OPENCV)
@@ -289,11 +275,21 @@ if (SIMA_WITH_OPENCV)
 endif()
 
 if (SIMAAI_ALLOCATOR_LIB)
-  target_link_libraries(sima_neat PUBLIC ${SIMAAI_ALLOCATOR_LIB})
+  get_filename_component(SIMAAI_ALLOCATOR_LIBDIR "${SIMAAI_ALLOCATOR_LIB}" DIRECTORY)
+  target_link_directories(sima_neat PRIVATE "${SIMAAI_ALLOCATOR_LIBDIR}")
+  target_link_libraries(sima_neat PUBLIC
+    $<BUILD_INTERFACE:${SIMAAI_ALLOCATOR_LIB}>
+    $<INSTALL_INTERFACE:gstsimaallocator>
+  )
 endif()
 
 if (SIMAAI_BUFFERPOOL_LIB)
-  target_link_libraries(sima_neat PUBLIC ${SIMAAI_BUFFERPOOL_LIB})
+  get_filename_component(SIMAAI_BUFFERPOOL_LIBDIR "${SIMAAI_BUFFERPOOL_LIB}" DIRECTORY)
+  target_link_directories(sima_neat PRIVATE "${SIMAAI_BUFFERPOOL_LIBDIR}")
+  target_link_libraries(sima_neat PUBLIC
+    $<BUILD_INTERFACE:${SIMAAI_BUFFERPOOL_LIB}>
+    $<INSTALL_INTERFACE:gstsimaaibufferpool>
+  )
 endif()
 
 if (SIMAAI_ALLOCATOR_LIB AND SIMAAI_BUFFERPOOL_LIB)
