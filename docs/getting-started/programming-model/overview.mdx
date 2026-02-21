@@ -19,6 +19,7 @@ Sync: use `run(...)` or `push_and_pull(...)` for request/response style executio
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
+
 ```cpp
 simaai::neat::Model model("resnet_50_model.tar.gz");
 
@@ -32,8 +33,10 @@ cv::Mat img = /* your frame */;
 auto run = session.build(input_tensor, simaai::neat::PipelineRunMode::Sync);
 auto out = run.push_and_pull(input_tensor, /*timeout_ms=*/1000);
 ```
+
 </CodeTab>
 <CodeTab label="Python" lang="python">
+
 ```python
 # Pseudo Python sync example.
 model = NeatModel("resnet_50_model.tar.gz", img_bgr)
@@ -46,6 +49,7 @@ img = ...  # your frame
 run = session.build(input_tensor, PipelineRunMode.Sync)
 out = run.push_and_pull(input_tensor, timeout_ms=1000)
 ```
+
 </CodeTab>
 </CodeTabs>
 
@@ -57,6 +61,7 @@ Async: use `push(...)` / `pull(...)` with [`PipelineRunOptions`](/reference/{lsa
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
+
 ```cpp
 #include "NeatModel.h"
 #include "pipeline/PipelineSession.h"
@@ -77,8 +82,10 @@ auto run = session.build(img, sima::PipelineRunMode::Async, opt);
 run.push(img);
 auto out = run.pull(/*timeout_ms=*/1000);
 ```
+
 </CodeTab>
 <CodeTab label="Python" lang="python">
+
 ```python
 # Pseudo Python async example.
 model = NeatModel("resnet_50_model.tar.gz", img_bgr)
@@ -97,6 +104,7 @@ run = session.build(img, PipelineRunMode.Async, opt)
 run.push(img)
 out = run.pull(timeout_ms=1000)
 ```
+
 </CodeTab>
 </CodeTabs>
 

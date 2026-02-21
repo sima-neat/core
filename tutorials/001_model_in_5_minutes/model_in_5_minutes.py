@@ -154,6 +154,7 @@ def main(argv: list[str]) -> int:
   sig = Sig()
   tput_contract = -1
   try:
+    # CORE LOGIC
     # the "6-line story": model -> dataloader -> run -> top1 -> signature
 
     opt = neat.ModelOptions()
@@ -181,7 +182,7 @@ def main(argv: list[str]) -> int:
       sig = summarize(out)
       print(f"top1={pred}")
       processed += 1
-
+      # END CORE LOGIC
       if args.expect_id >= 0:
         tu.check("top1_expected_id", pred == args.expect_id, "verify expected class id")
 

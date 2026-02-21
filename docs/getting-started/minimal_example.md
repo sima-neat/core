@@ -6,6 +6,8 @@ sidebar_position: 3
 
 # Hello SiMa!
 
+Use this minimal example as a quick verification that NEAT is properly installed on your Modalix DevKit.
+
 Create a new folder with these files:
 
 <div class="minimal-tabs">
@@ -38,9 +40,12 @@ main.cpp:
 #include <pipeline/TensorCore.h>
 
 int main() {
+  auto storage = simaai::neat::make_cpu_owned_storage(64);
+  if (!storage) {
+    std::cerr << "Failed to allocate CPU tensor storage\n";
+    return 1;
+  }
   std::cout << "Hello from sima-neat\n";
-  std::cout << "DeviceType::CPU = "
-            << static_cast<int>(simaai::neat::DeviceType::CPU) << "\n";
   return 0;
 }
 ```
@@ -58,8 +63,7 @@ cmake --build build -j
     <p>hello_neat.py:</p>
 
 ```python
-# Pseudo Python minimal example.
-from simaneat import DeviceType
+from pyneat import DeviceType
 
 def main():
     print("Hello from sima-neat")

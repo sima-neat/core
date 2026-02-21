@@ -30,14 +30,17 @@ Reference:
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
+
 ```cpp
 simaai::neat::Model model("yolov8s_model.tar.gz");
 
 simaai::neat::Session session;
 session.add(model.session());
 ```
+
 </CodeTab>
 <CodeTab label="Python" lang="python">
+
 ```python
 # Pseudo Python model example.
 model = NeatModel("yolov8s_model.tar.gz")
@@ -45,6 +48,7 @@ model = NeatModel("yolov8s_model.tar.gz")
 session = Session()
 session.add(model.session())
 ```
+
 </CodeTab>
 </CodeTabs>
 

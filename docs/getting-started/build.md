@@ -6,35 +6,59 @@ sidebar_position: 2
 
 # Build NEAT
 
-> **Current requirement:** Source builds are supported on a **Modalix DevKit** environment at this time. Cross compilation is not supported yet.
+This guide covers source builds of NEAT.
+For prebuilt package installation, see [Install](./install).
 
-This guide is for developers who need a source build. If you are installing prebuilt packages, use the install guide instead.
+`build.sh` is the supported build entry point. It handles dependency checks, optional neat-internals sync, CMake configure/build, optional docs generation, install sanity checks, and packaging.
 
-`build.sh` is the supported entry point. It handles dependency checks, runtime plugin assembly, CMake build, optional docs site generation, install sanity-check, and (Linux only) `.deb` packaging.
+## Build Environments
 
-## Prerequisites
+`build.sh` automatically detects the active environment:
 
-- A Modalix DevKit build environment.
-- On Linux: `apt-get` and root/passwordless sudo are needed if dependencies are missing.
-- On macOS: The documentation can be built and tested on Mac for convenience, Homebrew is required to install dependencies.
-- For docs builds: Node.js 20.x (auto-installed by `build.sh` unless `--no-node` is used).
+- Modalix DevKit native environment
+- eLxr SDK environment (cross-compilation)
 
-## Build options
+You can run the same `build.sh` commands in either environment.
 
-`build.sh` options:
+### Cross Compilation Prerequisites
 
-- `--dev-only` (default): Build the core library and headers only.
-- `--all`: Build library + samples + tests + docs.
-- `--example`: Build example executables only (and core library dependencies).
+Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward.
+
+Install `sima-cli` first then install eLxr SDK.
+
+```bash
+sima-cli install sdk
+```
+
+When prompted by `sima-cli`, select the **eLxr SDK** option.
+
+Then apply the eLxr SDK patch:
+
+```bash
+sima-cli sdk elxr
+sima-cli install tools/sdk-patch
+```
+
+- eLxr SDK installation is supported on Windows and Ubuntu.
+- If you are building natively on a Modalix DevKit, the eLxr SDK install/patch steps are not required.
+
+## Build Options
+
+Supported `build.sh` options:
+
+- `--dev-only`: Build only the core library and headers (default).
+- `--all`: Build library + samples + tests + Python wheel; enables docs and neat-internals.
+- `--example`: Build examples only (and core library dependencies).
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
+- `--install-neat-internals`: Download and install neat-internals artifacts before build.
 - `--doc`: Build docs only.
+- `--no-dist`: Skip distribution packaging.
 - `--clean`: Remove `build/` before configuring.
-- `--no-doc`: Skip docs build (useful with `--all`).
-- `--no-node`: Skip Node installation (docs site build may fail if Node is missing).
-- `--no-dist`: Skip `.deb` packaging.
-- `--install-deps-only`: Install missing system deps and exit.
+- `--no-doc`: Skip docs build (even with `--all`).
+- `--no-node`: Skip Node.js install (docs build may fail if Node is missing).
+- `--install-deps-only`: Install system dependencies only, then exit.
 
-## Typical builds
+## Typical Builds
 
 Core library only (default):
 
@@ -42,7 +66,7 @@ Core library only (default):
 ./build.sh
 ```
 
-Full build (library, samples, tests, docs):
+Full build (library, samples, tests, docs, wheel, packaging):
 
 ```bash
 ./build.sh --all
@@ -60,7 +84,9 @@ Core library + Python bindings:
 ./build.sh --dev-only --python
 ```
 
-Docs only (API + tutorial docs + Docusaurus site):
+Docs only:
+
+This command also works on macOS.
 
 ```bash
 ./build.sh --doc
@@ -81,8 +107,8 @@ Install dependencies only:
 ## Outputs
 
 - Build tree: `build/`
-- Docusaurus output (when docs build runs): `website/build/`
+- Docusaurus site output (when docs build runs): `website/build/`
 - Install sanity-check prefix: `/tmp/sima-neat-install-test`
-- Core package (`*.deb`) is Linux-only and generated via CPack.
-- Extras package (`*extras.tar.gz`) is produced as a relocatable archive.
-- Distribution artifacts are produced only when using `--all` and not `--no-dist`.
+- Core package (`*.deb`) is generated on Linux full builds unless `--no-dist` is used.
+- Extras package (`*extras.tar.gz`) is generated on Linux full builds unless `--no-dist` is used.
+- Python wheel (`dist/*.whl`) is generated when Python build is enabled.

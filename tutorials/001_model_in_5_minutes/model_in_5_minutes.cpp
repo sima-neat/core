@@ -105,7 +105,8 @@ std::vector<cv::Mat> dataloader_from_images(const fs::path& root, int size, int 
 }
 
 std::vector<float> scores_from_output(const simaai::neat::Sample& out) {
-  tutorial_v2::check("has_tensor_output", out.tensor.has_value(), "expected tensor output from model");
+  tutorial_v2::check("has_tensor_output", out.tensor.has_value(),
+                     "expected tensor output from model");
 
   const simaai::neat::Tensor& t = *out.tensor;
   tutorial_v2::check("tensor_float32", t.dtype == simaai::neat::TensorDType::Float32,
@@ -144,8 +145,7 @@ Sig summarize(const simaai::neat::Sample& out) {
 }
 
 void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0
-            << " [--mpk <path>] [--size <n>] [--n <count>]"
+  std::cout << "Usage: " << argv0 << " [--mpk <path>] [--size <n>] [--n <count>]"
             << " [--timeout-ms <ms>] [--expect-id <id>] [--print-gst]\n";
   tutorial_v2::print_common_flags(std::cout);
 }
@@ -168,15 +168,18 @@ int main(int argc, char** argv) {
     tutorial_v2::require(size > 0, "--size must be > 0");
     tutorial_v2::require(n > 0, "--n must be > 0");
 
-    tutorial_v2::step("input_contract", "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
+    tutorial_v2::step("input_contract",
+                      "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
     tutorial_v2::step("run_mode_choice", "run synchronous inference over cv::Mat inputs");
-    tutorial_v2::why("start with one minimal model loop before introducing graph/session composition");
+    tutorial_v2::why(
+        "start with one minimal model loop before introducing graph/session composition");
     tutorial_v2::tradeoff("this chapter optimizes for clarity and determinism over throughput");
     tutorial_v2::failure_mode("missing MPK/images or runtime issues should be explicit");
     tutorial_v2::interpret_output("top1 is human-facing; signature fields are tooling-facing");
     tutorial_v2::step("output_contract", "emit top1 lines and a stable tutorial signature");
-    tutorial_v2::check("strict_mode_visible", tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                                               tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
+    tutorial_v2::check("strict_mode_visible",
+                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
+                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
                        "strict-mode guard is observable");
 
     const fs::path root = tutorial_v2::find_repo_root();
@@ -192,6 +195,7 @@ int main(int argc, char** argv) {
     Sig sig;
     int tput_contract = -1;
     try {
+      // CORE LOGIC
       // The "6-line story": model -> image loader -> run -> top1 -> signature.
       simaai::neat::Model resnet50(mpk_path.string(), build_model_options(size));
 
@@ -218,11 +222,10 @@ int main(int argc, char** argv) {
           tutorial_v2::check("top1_expected_id", pred == expect_id, "verify expected class id");
         }
       }
-
+      // END CORE LOGIC
       const auto end = std::chrono::steady_clock::now();
       const double elapsed_sec = std::max(
-          1e-9,
-          std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
+          1e-9, std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
       const double tput_fps = static_cast<double>(processed) / elapsed_sec;
       tput_contract = processed;
       std::cout << "tput_fps:        " << tput_fps << "\n";

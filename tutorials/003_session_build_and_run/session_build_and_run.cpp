@@ -15,6 +15,7 @@ void print_help(const char* argv0) {
   std::cout << "  --height <h>         Input height (default 240)\n";
 }
 
+// CORE LOGIC
 simaai::neat::Session make_session(int width, int height) {
   simaai::neat::Session session;
 
@@ -30,7 +31,7 @@ simaai::neat::Session make_session(int width, int height) {
   session.add(simaai::neat::nodes::Output());
   return session;
 }
-
+// END CORE LOGIC
 } // namespace
 
 int main(int argc, char** argv) {
@@ -45,13 +46,17 @@ int main(int argc, char** argv) {
     tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
     tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
     tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff("prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    tutorial_v2::tradeoff(
+        "prefer deterministic samples and stable contracts over production realism");
+    tutorial_v2::failure_mode(
+        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
+    tutorial_v2::interpret_output(
+        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
     tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available", tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                                              tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                      "strict-mode guard is observable");
+    tutorial_v2::check("strict_flag_available",
+                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
+                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
+                       "strict-mode guard is observable");
 
     const int width = tutorial_v2::parse_int_arg(argc, argv, "--width", 320);
     const int height = tutorial_v2::parse_int_arg(argc, argv, "--height", 240);
@@ -68,11 +73,13 @@ int main(int argc, char** argv) {
       return 0;
     }
 
+    // CORE LOGIC
     simaai::neat::RunOptions run_opt;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
     auto run = session.build(input, simaai::neat::RunMode::Sync, run_opt);
     auto sample = run.push_and_pull(input, /*timeout_ms=*/1000);
+    // END CORE LOGIC
 
     tutorial_v2::require(sample.tensor.has_value(), "missing tensor output");
     std::cout << "Output tensor rank: " << sample.tensor->shape.size() << "\n";

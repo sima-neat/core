@@ -31,13 +31,17 @@ int main(int argc, char** argv) {
     tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
     tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
     tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff("prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    tutorial_v2::tradeoff(
+        "prefer deterministic samples and stable contracts over production realism");
+    tutorial_v2::failure_mode(
+        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
+    tutorial_v2::interpret_output(
+        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
     tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available", tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                                              tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                      "strict-mode guard is observable");
+    tutorial_v2::check("strict_flag_available",
+                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
+                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
+                       "strict-mode guard is observable");
 
     const int iters = tutorial_v2::parse_int_arg(argc, argv, "--iters", 4);
     const fs::path root = tutorial_v2::find_repo_root();
@@ -75,13 +79,14 @@ int main(int argc, char** argv) {
       sess_opt.include_appsink = true;
       sess_opt.name_suffix = "_prod";
 
-      auto runner = model.build(simaai::neat::from_cv_mat(
-          rgb, simaai::neat::ImageSpec::PixelFormat::RGB, true), sess_opt, run_opt);
+      auto runner = model.build(
+          simaai::neat::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB, true), sess_opt,
+          run_opt);
 
       int ok = 0;
       for (int i = 0; i < iters; ++i) {
-        if (!runner.push(simaai::neat::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
-                                                    true))) {
+        if (!runner.push(
+                simaai::neat::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB, true))) {
           continue;
         }
         auto out = runner.pull(2000);

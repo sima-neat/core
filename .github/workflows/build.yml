@@ -26,7 +26,7 @@ jobs:
 
       - name: Check C/C++ formatting (changed files)
         run: |
-          ./scripts/check_format.sh --changed-only
+          ./scripts/check_format.sh --changed-only --verbose
 
       - name: Check CMake style (changed files)
         run: |

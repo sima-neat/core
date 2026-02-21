@@ -75,11 +75,15 @@ int main(int argc, char** argv) {
     const int frames = tutorial_v2::parse_int_arg(argc, argv, "--frames", 4);
 
     tutorial_v2::step("input_contract", "stream/frame tags must survive scheduler and join stages");
-    tutorial_v2::step("run_mode_choice", "build multistream graph with fair scheduling and bundle join");
+    tutorial_v2::step("run_mode_choice",
+                      "build multistream graph with fair scheduling and bundle join");
     tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff("prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    tutorial_v2::tradeoff(
+        "prefer deterministic samples and stable contracts over production realism");
+    tutorial_v2::failure_mode(
+        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
+    tutorial_v2::interpret_output(
+        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     using namespace simaai::neat::graph;
     using namespace simaai::neat::graph::dsl;
@@ -100,14 +104,14 @@ int main(int argc, char** argv) {
     pool_opt.key_by = nodes::StageKeyBy::StreamId;
     pool_opt.max_inflight = 64;
 
-    auto model = add(g, nodes::LambdaStageNode(
-                            "FakeModel", {"in"}, {"out"},
-                            [](StageMsg&& msg, std::vector<StageOutMsg>& out,
-                               const StagePorts& ports) {
-                              out.push_back(StageOutMsg{.out_port = ports.out_port("out"),
-                                                        .sample = msg.sample});
-                            },
-                            "model_pool", pool_opt));
+    auto model =
+        add(g, nodes::LambdaStageNode(
+                   "FakeModel", {"in"}, {"out"},
+                   [](StageMsg&& msg, std::vector<StageOutMsg>& out, const StagePorts& ports) {
+                     out.push_back(
+                         StageOutMsg{.out_port = ports.out_port("out"), .sample = msg.sample});
+                   },
+                   "model_pool", pool_opt));
 
     auto join = add(g, nodes::JoinBundleNode({"image", "bbox"}, "join"));
 

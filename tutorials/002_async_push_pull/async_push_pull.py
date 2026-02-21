@@ -147,9 +147,11 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
     nonlocal pushed
     try:
       for image in images:
+        # CORE LOGIC
         tu.ensure(run.push(image), "push failed")
         with pushed_lock:
           pushed += 1
+        # END CORE LOGIC
     except Exception as exc:  # pragma: no cover - runtime dependent
       producer_error.append(exc)
     finally:
@@ -161,6 +163,7 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
   producer_thread.start()
 
   pulled = 0
+  # CORE LOGIC
   while True:
     out = run.pull(timeout_ms=timeout_ms)
     if out is not None:
@@ -177,7 +180,8 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
       pushed_now = pushed
     if producer_done.is_set() and pulled >= pushed_now:
       break
-
+  # END CORE LOGIC
+  
   producer_thread.join()
   if producer_error:
     raise producer_error[0]
@@ -237,7 +241,7 @@ def main(argv: list[str]) -> int:
 
     resnet_dataloader = dataloader_from_pytorch(args.size, args.batch, args.n)
     images = collect_first_images(resnet_dataloader)
-
+    # CORE LOGIC
     s = neat.Session()
     s.add(resnet50.session())
 
@@ -253,6 +257,7 @@ def main(argv: list[str]) -> int:
         timeout_ms=args.timeout_ms,
         expect_id=args.expect_id,
     )
+    # END CORE LOGIC
     stats = run.stats()
     tput_fps = pulled / elapsed
     tput_contract = pulled

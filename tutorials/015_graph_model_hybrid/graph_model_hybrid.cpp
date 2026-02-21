@@ -29,9 +29,8 @@ std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
 }
 
 simaai::neat::Tensor make_fp32_tensor(int w, int h, int d) {
-  const std::size_t bytes =
-      static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * static_cast<std::size_t>(d) *
-      sizeof(float);
+  const std::size_t bytes = static_cast<std::size_t>(w) * static_cast<std::size_t>(h) *
+                            static_cast<std::size_t>(d) * sizeof(float);
   auto storage = simaai::neat::make_cpu_owned_storage(bytes);
   auto map = storage->map(simaai::neat::MapMode::Write);
   if (map.data && map.size_bytes > 0) {
@@ -59,7 +58,8 @@ std::pair<std::string, simaai::neat::Sample> run_model_stage(const fs::path& mpk
   opt.do_boxdecode = false;
 
   simaai::neat::graph::Graph g;
-  const auto node_id = g.add(simaai::neat::graph::nodes::StageModelExecutorNode(opt, "stage_model"));
+  const auto node_id =
+      g.add(simaai::neat::graph::nodes::StageModelExecutorNode(opt, "stage_model"));
 
   simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(g)).build();
 
@@ -129,11 +129,15 @@ int main(int argc, char** argv) {
                                     });
 
     tutorial_v2::step("input_contract", "model-hybrid stage consumes tensor-shaped samples");
-    tutorial_v2::step("run_mode_choice", "use stage-model node when MPK exists, else fallback stage");
+    tutorial_v2::step("run_mode_choice",
+                      "use stage-model node when MPK exists, else fallback stage");
     tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff("prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    tutorial_v2::tradeoff(
+        "prefer deterministic samples and stable contracts over production realism");
+    tutorial_v2::failure_mode(
+        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
+    tutorial_v2::interpret_output(
+        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     std::string flow = "stage_fallback";
     simaai::neat::Sample out;
@@ -148,10 +152,12 @@ int main(int argc, char** argv) {
       std::tie(flow, out) = run_stage_fallback();
     }
 
-    tutorial_v2::step("output_interpretation", "inspect output rank to reason about stage boundaries");
+    tutorial_v2::step("output_interpretation",
+                      "inspect output rank to reason about stage boundaries");
     tutorial_v2::check("output_kind_tensor", out.kind == simaai::neat::SampleKind::Tensor,
                        "hybrid stage should emit tensor sample");
-    tutorial_v2::check("output_tensor_present", out.tensor.has_value(), "tensor payload must exist");
+    tutorial_v2::check("output_tensor_present", out.tensor.has_value(),
+                       "tensor payload must exist");
 
     tutorial_v2::print_signature({
         {"tutorial", "015"},
