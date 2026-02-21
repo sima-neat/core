@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     opt.name_suffix = "_chapter";
 
     simaai::neat::Model model(mpk_path.string(), opt);
-    # END CORE LOGIC
+    // END CORE LOGIC
 
     print_spec("input_spec", model.input_spec());
     print_spec("output_spec", model.output_spec());

@@ -3,10 +3,12 @@ set -euo pipefail
 
 MODE="changed"
 BASE_REF="${FORMAT_BASE_REF:-}"
+VERBOSE=0
 
 usage() {
   cat <<USAGE
 Usage: scripts/check_format.sh [--changed-only|--all] [--base-ref <ref>]
+       [--verbose]
 USAGE
 }
 
@@ -23,6 +25,10 @@ while [[ $# -gt 0 ]]; do
     --base-ref)
       BASE_REF="${2:-}"
       shift 2
+      ;;
+    --verbose)
+      VERBOSE=1
+      shift
       ;;
     -h|--help)
       usage
@@ -114,6 +120,10 @@ failed=0
 for f in "${files[@]}"; do
   if ! clang-format --dry-run --Werror "$f" >/dev/null 2>&1; then
     echo "[format] needs formatting: $f"
+    if [[ "$VERBOSE" -eq 1 ]]; then
+      echo "[format] diff for $f:"
+      clang-format "$f" | diff -u "$f" - || true
+    fi
     failed=1
   fi
 done
