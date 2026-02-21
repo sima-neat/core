@@ -1,0 +1,78 @@
+name: Publish Docs
+
+on:
+  workflow_dispatch: {}
+  workflow_run:
+    workflows: ["Standard Build & Archive"]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-docs
+  cancel-in-progress: false
+
+jobs:
+  publish-docs:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      S3_BUCKET: pipeline-session-doc
+      CLOUDFRONT_DISTRIBUTION_ID: E27E3TBO4YSCCW
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install docs dependencies
+        working-directory: website
+        run: npm ci
+
+      - name: Build docs website
+        working-directory: website
+        run: npm run build
+
+      - name: Validate AWS settings
+        run: |
+          if [ -z "$AWS_REGION" ]; then
+            AWS_REGION="us-east-1"
+            echo "AWS_REGION not set. Defaulting to us-east-1."
+          fi
+          if [ -z "$S3_BUCKET" ]; then
+            echo "Missing S3_BUCKET."
+            exit 1
+          fi
+          if [ -z "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
+            echo "Missing CLOUDFRONT_DISTRIBUTION_ID."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to S3
+        run: |
+          aws s3 sync website/build/ "s3://${S3_BUCKET}/" --delete
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" --paths "/*"
