@@ -16,12 +16,35 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import os
 import pathlib
 import re
+import subprocess
 from dataclasses import dataclass
 from typing import Dict, List
 
-REPO_LINK_PREFIX = "https://github.com/sima-neat/core/blob/main"
+REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
+
+
+def detect_repo_ref(default: str = "main") -> str:
+    env_ref = (
+        os.environ.get("TUTORIAL_SOURCE_REF")
+        or os.environ.get("GITHUB_REF_NAME")
+    )
+    if env_ref:
+        return env_ref.strip()
+    try:
+        ref = (
+            subprocess.check_output(
+                ["git", "branch", "--show-current"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            .strip()
+        )
+        return ref or default
+    except Exception:
+        return default
 
 
 @dataclass
@@ -288,7 +311,8 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     )
 
 
-def render_tutorial_doc(module: TutorialModule, sidebar_position: int) -> str:
+def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref: str) -> str:
+    repo_link_prefix = f"{REPO_LINK_BASE}/{repo_ref}"
     cpp_src = pathlib.Path(module.cpp_rel).read_text(encoding="utf-8").rstrip()
     py_src = pathlib.Path(module.py_rel).read_text(encoding="utf-8").rstrip()
     cpp_code, cpp_hl = _render_code_with_core_logic(cpp_src)
@@ -342,7 +366,37 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int) -> str:
     else:
         lines.append(f"./tutorial_v2_{module.folder}")
         lines.append(f"python3 {module.py_rel}")
-    lines.extend(["```", "", "## Code", "", "<CodeTabs>", '<CodeTab label="C++" lang="cpp">', "", cpp_fence, cpp_code, "```", "", "</CodeTab>", '<CodeTab label="Python" lang="python">', "", py_fence, py_code, "```", "", "</CodeTab>", "</CodeTabs>", "", "## Source", "", f"- C++: [{module.cpp_rel}]({REPO_LINK_PREFIX}/{module.cpp_rel})", f"- Python: [{module.py_rel}]({REPO_LINK_PREFIX}/{module.py_rel})", f"- README: [tutorials/{module.folder}/README.md]({REPO_LINK_PREFIX}/tutorials/{module.folder}/README.md)", ""])
+    lines.extend(
+        [
+            "```",
+            "",
+            "## Code",
+            "",
+            "<CodeTabs>",
+            '<CodeTab label="C++" lang="cpp">',
+            "",
+            cpp_fence,
+            cpp_code,
+            "```",
+            "",
+            "</CodeTab>",
+            '<CodeTab label="Python" lang="python">',
+            "",
+            py_fence,
+            py_code,
+            "```",
+            "",
+            "</CodeTab>",
+            "</CodeTabs>",
+            "",
+            "## Source",
+            "",
+            f"- [C++]({repo_link_prefix}/{module.cpp_rel})",
+            f"- [Python]({repo_link_prefix}/{module.py_rel})",
+            f"- [README]({repo_link_prefix}/tutorials/{module.folder}/README.md)",
+            "",
+        ]
+    )
 
     return "\n".join(lines)
 
@@ -437,6 +491,7 @@ def main() -> int:
 
     module_dirs = discover_modules(tutorials_dir)
     modules = [parse_module(d, root) for d in module_dirs]
+    repo_ref = detect_repo_ref()
 
     docs_tutorials_dir.mkdir(parents=True, exist_ok=True)
     generate_card_images(root / "website" / "static" / "img" / "tutorials" / "cards")
@@ -445,14 +500,18 @@ def main() -> int:
 
     for idx, module in enumerate(modules, start=2):
         out_path = docs_tutorials_dir / f"{module.doc_id}.mdx"
-        out_path.write_text(render_tutorial_doc(module, sidebar_position=idx), encoding="utf-8")
+        out_path.write_text(
+            render_tutorial_doc(module, sidebar_position=idx, repo_ref=repo_ref),
+            encoding="utf-8",
+        )
 
     index_path = docs_tutorials_dir / "index.md"
     index_path.write_text(render_index(modules, heading_body), encoding="utf-8")
 
-    print(f"Generated {len(modules)} tutorial docs + index.")
+    print(f"Generated {len(modules)} tutorial docs + index (source ref: {repo_ref}).")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+    repo_link_prefix = f"{REPO_LINK_BASE}/{repo_ref}"
