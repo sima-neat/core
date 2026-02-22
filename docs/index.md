@@ -15,7 +15,6 @@ SiMa NEAT is a framework for building, validating, running, and debugging GStrea
 - [Install](getting-started/install)
 - [Build](getting-started/build)
 - [Hello SiMa](getting-started/minimal_example)
-- [Python (pyneat)](getting-started/python)
 - [Programming Model](getting-started/programming-model/overview)
 
 ## Explore
@@ -24,3 +23,4 @@ SiMa NEAT is a framework for building, validating, running, and debugging GStrea
 - [How‑To Guides](how-to/runtime_tuning)
 - [Reference](reference/cppapi)
 - [Contribute](contribute/architecture)
+- [Python Bindings (Contributor)](contribute/python_bindings)

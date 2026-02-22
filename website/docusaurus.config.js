@@ -4,9 +4,6 @@ const repo = process.env.GITHUB_REPOSITORY || "";
 const repoParts = repo.split("/");
 const org = process.env.DOCS_ORG || repoParts[0] || "manuel-roldan";
 const project = process.env.DOCS_PROJECT || repoParts[1] || "PipelineSession";
-const strictLinks =
-  process.env.DOCS_STRICT_LINKS === "1" ||
-  process.env.RELEASE_MODE === "1";
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
@@ -17,11 +14,11 @@ const config = {
   tagline: "SiMa NEAT documentation",
   url,
   baseUrl,
-  onBrokenLinks: strictLinks ? "throw" : "warn",
+  onBrokenLinks: "throw",
   markdown: {
     format: "md",
     hooks: {
-      onBrokenMarkdownLinks: strictLinks ? "throw" : "warn",
+      onBrokenMarkdownLinks: "throw",
     },
   },
   favicon: "img/favicon.png",

@@ -100,6 +100,7 @@ def main(argv: list[str]) -> int:
   rgb = np.full((224, 224, 3), 123, dtype=np.uint8)
   tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
 
+  # CORE LOGIC
   try:
     if mpk and mpk.exists():
       model_blueprint(neat, mpk, tensor, iters)
@@ -108,6 +109,7 @@ def main(argv: list[str]) -> int:
   except Exception as exc:
     # Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
     tu.runtime_fallback(exc)
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

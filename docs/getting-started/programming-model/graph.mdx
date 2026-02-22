@@ -6,10 +6,26 @@ sidebar_position: 6
 
 # Graph
 
-`graph::Graph` is the DAG (Directed Acyclic Graph) layer for hybrid runtime composition.
-It lets you connect pipeline-backed nodes and stage-backed nodes in one graph, then compile/run it through `GraphSession`.
+Use Graph when a single linear pipeline is no longer enough.
+In real deployments, you often need:
 
-In practice, this means data flows forward through defined stages without circular dependencies.
+- **One input, multiple consumers**: run inference, recording, and telemetry from the same stream without duplicating ingest.
+- **Multi-stream coordination**: synchronize or merge outputs from multiple cameras/sources before downstream decisions.
+- **Mixed workloads**: combine media-heavy pipeline stages with lightweight in-process logic (routing, filtering, policy checks).
+- **Selective branching**: route only specific frames/events to expensive stages (for example secondary models).
+- **Operational isolation**: keep custom control logic in stage nodes while leaving media/runtime-heavy parts in pipeline nodes.
+
+`graph::Graph` provides this as a DAG (Directed Acyclic Graph): deterministic forward flow, explicit fan-out/join, and hybrid execution.
+
+## How it works
+
+1. Define nodes and edges in `Graph`.
+2. Build with `GraphSession`.
+3. Run with `GraphRun`.
+
+You can mix:
+- **`PipelineNode`** for regular NEAT `Node`/`NodeGroup` pipeline fragments.
+- **`StageNode`** for in-process custom logic.
 
 ## Core objects
 
@@ -17,31 +33,6 @@ In practice, this means data flows forward through defined stages without circul
 - [`GraphSession`](/reference/{lsa}/classes/simaai-neat-graph-graphsession): compiles the DAG into runnable segments.
 - [`GraphRun`](/reference/{lsa}/classes/simaai-neat-graph-graphrun): runtime handle for push/pull and stats.
 - [`Compiler`](/reference/{lsa}/classes/simaai-neat-graph-compiler): partitions and wires pipeline/stage backends.
-
-## Pipeline-backed vs stage-backed nodes
-
-- **Pipeline-backed node** (`PipelineNode`):
-  wraps regular NEAT `Node`/`NodeGroup` pipeline fragments and runs them through GStreamer pipeline runtime.
-- **Stage-backed node** (`StageNode`):
-  runs custom in-process stage executor logic (C++ callbacks/executors) without requiring a full pipeline fragment.
-
-Use pipeline-backed nodes when behavior is naturally expressed as media pipeline elements.
-Use stage-backed nodes when you need custom control logic, routing, scheduling, or lightweight transformations in process.
-
-## Mental model
-
-1. Build a DAG with `Graph::add(...)` and `connect(...)` (or DSL helpers).
-2. Mix backends:
-   - `PipelineNode` for regular NEAT node groups.
-   - `StageNode` for in-process stage executors.
-3. Build runtime with `GraphSession(...).build()`.
-4. Push/pull via `GraphRun` inputs/outputs.
-
-## What graph adds beyond Session-only pipelines
-
-- Non-linear flow (fan-out/join).
-- Port-based routing and stream-aware scheduling.
-- Hybrid execution where stage executors and pipeline segments coexist.
 
 ## Key node families
 
@@ -58,5 +49,6 @@ Use stage-backed nodes when you need custom control logic, routing, scheduling, 
 
 ## Tutorials
 
-- [tutorial_0024_hybrid_graph](../../tutorials/tutorial_0024_hybrid_graph)
-- [tutorial_0025_hybrid_multistream](../../tutorials/tutorial_0025_hybrid_multistream)
+- [Graph Basics](/tutorials/v2/014-graph-basics)
+- [Graph Model Hybrid](/tutorials/v2/015-graph-model-hybrid)
+- [Graph Multistream](/tutorials/v2/016-graph-multistream)

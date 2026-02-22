@@ -10,11 +10,6 @@ In SiMa NEAT, a pipeline is an ordered composition of nodes and node groups asse
 
 The result is deterministic graph wiring and a reproducible gst-launch representation.
 
-```cpp
-#include "neat/session.h"
-#include "neat/nodes.h"
-#include "neat/node_groups.h"
-```
 
 ## Building blocks
 
@@ -23,9 +18,9 @@ The result is deterministic graph wiring and a reproducible gst-launch represent
 - **Session**: composition boundary and runtime build/validate point.
 
 Reference:
-- [`PipelineRun`](/reference/{lsa}/classes/simaai-neat-pipelinerun)
-- [`PipelineRunOptions`](/reference/{lsa}/structs/simaai-neat-pipelinerunoptions)
-- [`Node` API](/reference/{lsa}/files/include-builder-node-h)
+- [`Run`](/reference/{lsa}/classes/simaai-neat-run)
+- [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions)
+- [`Node` API](/reference/{lsa}/files/include-neat-nodes-h)
 - [`nodes` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes)
 
 ## Deterministic naming
@@ -55,17 +50,11 @@ SiMa NEAT relies on native GStreamer negotiation, but controls key boundaries:
 For push pipelines, format/shape changes are handled automatically. Runtime presets and queue policies control latency/safety tradeoffs, and advanced memory limits can be set with `RunAdvancedOptions::max_input_bytes`.
 
 Reference:
-<<<<<<<< HEAD:docs/getting-started/programming-model/pipeline.mdx
 - [`InputAppSrc`](/reference/{lsa}/classes/simaai-neat-inputappsrc)
 - [`InputAppSrcOptions`](/reference/{lsa}/structs/simaai-neat-inputappsrcoptions)
-- [`PipelineRunOptions`](/reference/{lsa}/structs/simaai-neat-pipelinerunoptions)
+- [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions)
 - [`OutputTensorOptions`](/reference/{lsa}/structs/simaai-neat-outputtensoroptions)
-========
-- [`Input`](/reference/api/classes/simaai-neat-inputappsrc)
-- [`InputOptions`](/reference/api/structs/simaai-neat-inputappsrcoptions)
-- [`RunOptions`](/reference/api/structs/simaai-neat-runoptions)
-- [`OutputTensorOptions`](/reference/api/structs/simaai-neat-outputtensoroptions)
->>>>>>>> origin/main:docs/getting-started/programming-model/pipeline.md
+
 
 ## Why this matters
 
@@ -84,8 +73,8 @@ Reference:
 
 ## Tutorials
 
-- [tutorial_0003_nodes_and_groups](../../tutorials/tutorial_0003_nodes_and_groups)
-- [tutorial_0007_caps_negotiation](../../tutorials/tutorial_0007_caps_negotiation)
-- [tutorial_0022_inputappsrc_advanced_caps](../../tutorials/tutorial_0022_inputappsrc_advanced_caps)
-- [tutorial_0023_builder_graph_and_contracts](../../tutorials/tutorial_0023_builder_graph_and_contracts)
-- [tutorial_0024_hybrid_graph](../../tutorials/tutorial_0024_hybrid_graph)
+- [Async Push Pull](/tutorials/v2/002-async-push-pull)
+- [Session Build And Run](/tutorials/v2/003-session-build-and-run)
+- [Session Patterns](/tutorials/v2/007-session-patterns)
+- [Multi Input Samples](/tutorials/v2/009-multi-input-samples)
+- [Diagnostics In 3 Commands](/tutorials/v2/011-diagnostics-in-3-commands)

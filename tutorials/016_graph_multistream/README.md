@@ -8,15 +8,29 @@
 | Labels | graph, multistream, scheduler, join |
 
 ## Concept
-Model multistream scheduling and joining behavior with deterministic checks.
+This tutorial teaches multistream graph scheduling fundamentals: how multiple stream/frame inputs are fairly scheduled, branched, and re-joined into deterministic bundles.
+
+Why read this before production graph scaling: it gives you a concrete pattern for validating stream fairness and bundle cardinality, which are common failure points in multistream systems.
+
+What this chapter demonstrates:
+- Tagging each sample with stream/frame identity.
+- Building graph path: stamp -> scheduler -> fanout -> join.
+- Verifying expected bundle field count and output count.
+
+Use-case guidance:
+- Multi-camera ingestion where each stream must make progress.
+- Parallel branch processing that must rejoin outputs correctly.
+- Diagnosing dropped/misaligned stream outputs under load.
+
+Reference:
+- [Graph](/getting-started/programming-model/graph)
+- [Pipeline](/getting-started/programming-model/pipeline)
 
 ## Learning Process
-1. Stream/frame tags must survive scheduler and join stages.
-2. Build multistream graph with fair scheduling and bundle join.
-3. Joined bundle cardinality validates graph wiring.
-4. Each stream/frame pair is tagged so scheduler fairness is observable.
-5. Build a strict stage graph: stamp -> scheduler -> fanout -> join.
-6. Joined bundle cardinality validates multistream graph wiring.
+1. Generate deterministic per-stream/per-frame samples with explicit tags.
+2. Build multistream graph with scheduler, fanout, and join stages.
+3. Push all expected inputs and pull joined outputs.
+4. Validate output count and bundle cardinality via `CHECK` and `SIGNATURE`.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

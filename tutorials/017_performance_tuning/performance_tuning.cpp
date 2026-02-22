@@ -76,6 +76,7 @@ int main(int argc, char** argv) {
       return 0;
     }
 
+    // CORE LOGIC
     simaai::neat::RunOptions opt;
     opt.queue_depth = queue_depth;
     opt.overflow_policy = parse_drop_policy(argc, argv);
@@ -103,6 +104,7 @@ int main(int argc, char** argv) {
     std::cout << "avg_latency_ms=" << stats.avg_latency_ms << "\n";
     std::cout << "avg_push_us=" << input_stats.avg_push_us << "\n";
     std::cout << "renegotiations=" << input_stats.renegotiations << "\n";
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

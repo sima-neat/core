@@ -8,12 +8,24 @@
 | Labels | diagnostics, debugging, observability |
 
 ## Concept
-Diagnose common runtime issues quickly with a compact debug workflow.
+This tutorial gives you a compact three-step diagnostics workflow you can run before deep debugging.
+
+The goal is to answer three questions quickly:
+1. Is the session contract/build valid?
+2. Does one run succeed with metrics enabled?
+3. What do runtime diagnostics report about performance and behavior?
+
+This chapter is especially useful when onboarding new models or environments, because it provides a repeatable triage baseline before diving into plugin internals.
+
+Reference:
+- [Session](/getting-started/programming-model/session)
+- [Pipeline](/getting-started/programming-model/pipeline)
 
 ## Learning Process
-1. Parse flags and establish deterministic defaults.
-2. Exercise the chapter's primary runtime path.
-3. Emit checks and machine-parseable signature.
+1. Validate session contract and backend parse path (`validate()`).
+2. Run one deterministic frame with metrics enabled.
+3. Inspect runtime stats/report/diagnostic summary outputs.
+4. Use `CHECK`, `SIGNATURE`, and `[OK]` markers to gate readiness.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

@@ -43,6 +43,7 @@ def main(argv: list[str]) -> int:
   tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
   tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
 
+  # CORE LOGIC
   graph = neat.graph.Graph()
   stamp = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
 
@@ -85,6 +86,7 @@ def main(argv: list[str]) -> int:
   tu.step("output_interpretation", "joined bundle cardinality validates multistream graph wiring")
   tu.check("all_outputs_received", received == expected, f"expected={expected}, received={received}")
   tu.check("bundle_has_two_fields", first_bundle_fields == 2, "join should emit image+bbox bundle")
+  # END CORE LOGIC
 
   tu.signature(
       {

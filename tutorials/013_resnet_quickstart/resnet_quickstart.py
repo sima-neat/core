@@ -35,6 +35,7 @@ def main(argv: list[str]) -> int:
   if not mpk or not mpk.exists():
     return tu.skip("missing ResNet MPK (pass --mpk)")
 
+  # CORE LOGIC
   opt = neat.ModelOptions()
   opt.media_type = "video/x-raw"
   opt.format = "RGB"
@@ -65,6 +66,7 @@ def main(argv: list[str]) -> int:
   except Exception as exc:
     # Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
     tu.runtime_fallback(exc)
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

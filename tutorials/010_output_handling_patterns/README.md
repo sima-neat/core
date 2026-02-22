@@ -8,12 +8,29 @@
 | Labels | output, patterns, sink |
 
 ## Concept
-Understand output handling patterns and choose one based on app needs.
+This tutorial focuses on **output interpretation patterns**: how to reliably inspect what came back from a run and decide what your application should do next.
+
+Before you optimize throughput or add complex graph logic, you need a stable way to classify outputs (`kind`, tensor presence, field count) and validate output contracts. This chapter provides that baseline pattern.
+
+What this chapter demonstrates:
+- Building a minimal sync run path.
+- Reading `Sample` output summary (`kind`, tensor, fields).
+- Validating output shape/rank assumptions before downstream use.
+
+Use-case guidance:
+- New model integration: verify output rank and tensor presence first.
+- Mixed output types: branch behavior by `SampleKind` and field structure.
+- Production robustness: fail fast when output shape contracts are unexpectedly empty.
+
+Reference:
+- [Input and Output](/getting-started/programming-model/io)
+- [Tensor and Sample](/getting-started/programming-model/core_types)
 
 ## Learning Process
-1. Parse flags and establish deterministic defaults.
-2. Exercise the chapter's primary runtime path.
-3. Emit checks and machine-parseable signature.
+1. Build a deterministic sync session with explicit input/output nodes.
+2. Execute one run and summarize output structure (`kind`, tensor, fields).
+3. Validate output contract assumptions (non-empty tensor shape/rank).
+4. Confirm run health through `CHECK`, `SIGNATURE`, and `[OK]`.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

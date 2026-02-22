@@ -85,6 +85,7 @@ int main(int argc, char** argv) {
     tutorial_v2::interpret_output(
         "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
+    // CORE LOGIC
     using namespace simaai::neat::graph;
     using namespace simaai::neat::graph::dsl;
 
@@ -156,6 +157,7 @@ int main(int argc, char** argv) {
                            ", received=" + std::to_string(received));
     tutorial_v2::check("bundle_has_two_fields", first_fields == 2,
                        "join should emit image+bbox bundle");
+    // END CORE LOGIC
 
     tutorial_v2::print_signature({
         {"tutorial", "016"},

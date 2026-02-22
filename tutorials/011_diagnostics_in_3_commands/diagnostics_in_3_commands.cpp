@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
                            tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
                        "strict-mode guard is observable");
 
+    // CORE LOGIC
     cv::Mat rgb(96, 128, CV_8UC3, cv::Scalar(22, 44, 66));
     if (!rgb.isContinuous()) {
       rgb = rgb.clone();
@@ -75,6 +76,7 @@ int main(int argc, char** argv) {
               << " outputs_pulled=" << stats.outputs_pulled << "\n";
     std::cout << "report.size=" << run.report().size() << "\n";
     std::cout << "diag_summary=" << run.diagnostics_summary() << "\n";
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

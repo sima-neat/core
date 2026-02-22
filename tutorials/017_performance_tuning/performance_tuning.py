@@ -58,6 +58,7 @@ def main(argv: list[str]) -> int:
     print(s.describe_backend())
     return 0
 
+  # CORE LOGIC
   opt = neat.RunOptions()
   opt.queue_depth = queue
   opt.overflow_policy = parse_drop(neat, argv)
@@ -81,6 +82,7 @@ def main(argv: list[str]) -> int:
   print(f"avg_latency_ms={stats.avg_latency_ms}")
   print(f"avg_push_us={input_stats.avg_push_us}")
   print(f"renegotiations={input_stats.renegotiations}")
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

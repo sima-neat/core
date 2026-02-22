@@ -36,6 +36,7 @@ def main(argv: list[str]) -> int:
   width = tu.parse_int(argv, "--width", 128)
   height = tu.parse_int(argv, "--height", 96)
 
+  # CORE LOGIC
   arr = np.full((height, width, 3), 17, dtype=np.uint8)
   t = neat.Tensor.from_numpy(arr, copy=True, image_format=neat.PixelFormat.RGB)
   arr2 = t.to_numpy(copy=True)
@@ -50,6 +51,7 @@ def main(argv: list[str]) -> int:
     print(f"torch roundtrip shape: {tuple(torch_back.shape)}")
   except Exception as exc:
     print(f"torch path skipped: {exc}")
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

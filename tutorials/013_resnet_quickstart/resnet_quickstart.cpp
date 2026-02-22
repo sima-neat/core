@@ -66,6 +66,7 @@ int main(int argc, char** argv) {
       return tutorial_v2::skip("failed to load image");
     }
 
+    // CORE LOGIC
     cv::Mat rgb;
     cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
     cv::resize(rgb, rgb, cv::Size(224, 224));
@@ -104,6 +105,7 @@ int main(int argc, char** argv) {
       // misconfigure.
       tutorial_v2::runtime_fallback(e);
     }
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

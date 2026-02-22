@@ -10,7 +10,7 @@ If you are new to SiMa NEAT, keep this sequence in mind:
 
 1. Load a compiled model package (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
 2. Compose a [`Session`](/reference/{lsa}/classes/simaai-neat-session) with input nodes, model stages, and output nodes.
-3. Build a [`PipelineRun`](/reference/{lsa}/classes/simaai-neat-pipelinerun) in sync or async mode.
+3. Build a [`Run`](/reference/{lsa}/classes/simaai-neat-run) in sync or async mode.
 4. Push inputs and pull outputs as [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor) or [`Sample`](/reference/{lsa}/structs/simaai-neat-sample).
 
 ## Synchronous inference snippet
@@ -22,16 +22,12 @@ Sync: use `run(...)` or `push_and_pull(...)` for request/response style executio
 
 ```cpp
 simaai::neat::Model model("resnet_50_model.tar.gz");
-
-sima::NeatModel model("resnet_50_model.tar.gz", img_bgr);
-
-sima::PipelineSession session;
+simaai::neat::Session session;
 session.add(model.session());
 
-cv::Mat img = /* your frame */;
-
-auto run = session.build(input_tensor, simaai::neat::PipelineRunMode::Sync);
-auto out = run.push_and_pull(input_tensor, /*timeout_ms=*/1000);
+cv::Mat img = /* your frame (RGB/BGR as configured) */;
+auto run = session.build(img, simaai::neat::RunMode::Sync);
+auto out = run.push_and_pull(img, /*timeout_ms=*/1000);
 ```
 
 </CodeTab>
@@ -39,15 +35,15 @@ auto out = run.push_and_pull(input_tensor, /*timeout_ms=*/1000);
 
 ```python
 # Pseudo Python sync example.
-model = NeatModel("resnet_50_model.tar.gz", img_bgr)
+model = neat.Model("resnet_50_model.tar.gz")
 
-session = PipelineSession()
+session = neat.Session()
 session.add(model.session())
 
-img = ...  # your frame
+img = ...  # your frame tensor
 
-run = session.build(input_tensor, PipelineRunMode.Sync)
-out = run.push_and_pull(input_tensor, timeout_ms=1000)
+run = session.build(img, neat.RunMode.Sync)
+out = run.run(img, timeout_ms=1000)
 ```
 
 </CodeTab>
@@ -57,28 +53,24 @@ out = run.push_and_pull(input_tensor, timeout_ms=1000)
 
 Use async mode when you want to decouple producers and consumers, control
 queueing, or overlap IO and compute.
-Async: use `push(...)` / `pull(...)` with [`PipelineRunOptions`](/reference/{lsa}/structs/simaai-neat-pipelinerunoptions) to tune queueing and drop behavior.
+Async: use `push(...)` / `pull(...)` with [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions) to tune queueing and drop behavior.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-#include "NeatModel.h"
-#include "pipeline/PipelineSession.h"
-
-sima::NeatModel model("resnet_50_model.tar.gz", img_bgr);
-
-sima::PipelineSession session;
+simaai::neat::Model model("resnet_50_model.tar.gz");
+simaai::neat::Session session;
 session.add(model.session());
 
 cv::Mat img = /* your frame */;
 
-sima::PipelineRunOptions opt;
-opt.input_queue = 8;
-opt.output_queue = 8;
-opt.drop = sima::DropPolicy::Block;
+simaai::neat::RunOptions opt;
+opt.queue_depth = 8;
+opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
+opt.enable_metrics = true;
 
-auto run = session.build(img, sima::PipelineRunMode::Async, opt);
+auto run = session.build(img, simaai::neat::RunMode::Async, opt);
 run.push(img);
 auto out = run.pull(/*timeout_ms=*/1000);
 ```
@@ -88,19 +80,18 @@ auto out = run.pull(/*timeout_ms=*/1000);
 
 ```python
 # Pseudo Python async example.
-model = NeatModel("resnet_50_model.tar.gz", img_bgr)
+model = neat.Model("resnet_50_model.tar.gz")
 
-session = PipelineSession()
+session = neat.Session()
 session.add(model.session())
 
 img = ...  # your frame
 
-opt = PipelineRunOptions()
-opt.input_queue = 8
-opt.output_queue = 8
-opt.drop = DropPolicy.Block
+opt = neat.RunOptions()
+opt.queue_depth = 8
+opt.overflow_policy = neat.OverflowPolicy.Block
 
-run = session.build(img, PipelineRunMode.Async, opt)
+run = session.build(img, neat.RunMode.Async, opt)
 run.push(img)
 out = run.pull(timeout_ms=1000)
 ```
@@ -120,7 +111,7 @@ out = run.pull(timeout_ms=1000)
 
 ## Tutorials
 
-- [tutorial_0001_quickstart_image_to_tensor](../../tutorials/tutorial_0001_quickstart_image_to_tensor)
-- [tutorial_0002_pipeline_session_build_run](../../tutorials/tutorial_0002_pipeline_session_build_run)
-- [tutorial_0006_async_push_pull](../../tutorials/tutorial_0006_async_push_pull)
-- [tutorial_0024_hybrid_graph](../../tutorials/tutorial_0024_hybrid_graph)
+- [Model in 5 Minutes](/tutorials/v2/001-model-in-5-minutes)
+- [Async Push Pull](/tutorials/v2/002-async-push-pull)
+- [Session Build And Run](/tutorials/v2/003-session-build-and-run)
+- [Graph Model Hybrid](/tutorials/v2/015-graph-model-hybrid)

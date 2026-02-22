@@ -71,6 +71,7 @@ int main(int argc, char** argv) {
       return tutorial_v2::skip("missing required SimaAI plugins");
     }
 
+    // CORE LOGIC
     simaai::neat::Model::Options mopt;
     mopt.input_max_width = bgr.cols;
     mopt.input_max_height = bgr.rows;
@@ -101,6 +102,7 @@ int main(int argc, char** argv) {
       // misconfigure.
       tutorial_v2::runtime_fallback(e);
     }
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

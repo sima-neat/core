@@ -28,7 +28,7 @@ Use-case guidance:
 
 Reference:
 - [Model](/getting-started/programming-model/model)
-- [Model Options (C++ API)](/reference/cppapi/structs/simaai-neat-model-options)
+- [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Learning Process
 1. Configure model/postproc options for a detector-style pipeline.

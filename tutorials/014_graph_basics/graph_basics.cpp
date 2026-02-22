@@ -56,6 +56,7 @@ simaai::neat::Sample make_sample() {
 }
 
 std::pair<std::string, simaai::neat::Sample> run_pipeline_plus_stage() {
+  // CORE LOGIC
   // Preferred path: pipeline node negotiates media contract, stage stamps frame id.
   using namespace simaai::neat::graph;
   Graph g;
@@ -72,11 +73,12 @@ std::pair<std::string, simaai::neat::Sample> run_pipeline_plus_stage() {
   auto out = run.pull(stamp, 2000);
   tutorial_v2::check("graph_pull", out.has_value(), "stage sink produced output");
   run.stop();
-
+  // END CORE LOGIC
   return {"pipeline_plus_stage", *out};
 }
 
 std::pair<std::string, simaai::neat::Sample> run_stage_only_fallback() {
+  // CORE LOGIC
   // Fallback still teaches GraphSession/GraphRun when pipeline plugins are unavailable.
   using namespace simaai::neat::graph;
   Graph g;
@@ -89,7 +91,7 @@ std::pair<std::string, simaai::neat::Sample> run_stage_only_fallback() {
   auto out = run.pull(stamp, 2000);
   tutorial_v2::check("graph_pull", out.has_value(), "stage sink produced output");
   run.stop();
-
+  // END CORE LOGIC
   return {"stage_only_fallback", *out};
 }
 

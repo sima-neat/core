@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
+# CORE LOGIC
 def make_base_session(neat, width: int, height: int):
   inp = neat.InputOptions()
   inp.format = "RGB"
@@ -20,6 +21,7 @@ def make_base_session(neat, width: int, height: int):
   s.add(neat.nodes.input(inp))
   s.add(neat.nodes.output())
   return s
+# END CORE LOGIC
 
 
 def main(argv: list[str]) -> int:
@@ -50,6 +52,7 @@ def main(argv: list[str]) -> int:
   mpk = Path(mpk_arg) if mpk_arg else tu.first_existing([tu.default_yolo_mpk(root), tu.default_resnet_mpk(root)])
 
   if mpk and mpk.exists():
+    # CORE LOGIC
     model = neat.Model(str(mpk))
     print(f"model.session().size: {model.session().size()}")
 
@@ -69,14 +72,17 @@ def main(argv: list[str]) -> int:
       print("[attached]")
       print(attached.describe_backend())
       return 0
+    # END CORE LOGIC
   elif tu.has_flag(argv, "--print-gst"):
     print(direct.describe_backend())
     return 0
 
   rgb = np.full((height, width, 3), 55, dtype=np.uint8)
   t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  # CORE LOGIC
   run = direct.build(t, neat.RunMode.Sync)
   out = run.run(t, timeout_ms=1000)
+  # END CORE LOGIC
   tu.ensure(out.tensor is not None, "direct session output missing tensor")
 
   tu.check("tutorial_completed", True, "main path reached end without exception")

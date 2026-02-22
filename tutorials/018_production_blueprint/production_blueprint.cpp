@@ -59,6 +59,7 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
     }
 
+    // CORE LOGIC
     simaai::neat::RunOptions run_opt;
     run_opt.queue_depth = 8;
     run_opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
@@ -119,6 +120,7 @@ int main(int argc, char** argv) {
       std::cout << "session_mode_outputs=" << outputs << "\n";
       std::cout << "session_report_size=" << run.report().size() << "\n";
     }
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

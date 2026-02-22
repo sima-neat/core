@@ -28,6 +28,7 @@ def main(argv: list[str]) -> int:
   tu.check("strict_flag_available", isinstance(tu.strict_mode(), bool),
            "strict-mode guard is observable")
 
+  # CORE LOGIC
   rgb = np.full((96, 128, 3), 77, dtype=np.uint8)
   t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
 
@@ -62,6 +63,7 @@ def main(argv: list[str]) -> int:
   print(f"stats.inputs_enqueued={stats.inputs_enqueued} outputs_pulled={stats.outputs_pulled}")
   print(f"report.size={len(run.report())}")
   print(f"diag_summary={run.diagnostics_summary()}")
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

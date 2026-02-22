@@ -8,12 +8,29 @@
 | Labels | resnet, classification, mpk |
 
 ## Concept
-Run a ResNet-style classifier and verify top-class output behavior.
+This tutorial is a quick classifier bring-up path using a ResNet-style MPK.
+
+If YOLO quickstart teaches detection flow, this chapter teaches classification flow. It helps new users verify model loading, preprocessing assumptions, and output tensor shape before building application logic on top.
+
+What this chapter demonstrates:
+- Loading a ResNet MPK with explicit image/preproc options.
+- Running a deterministic classification inference path.
+- Inspecting output tensor rank and leading dimension as a sanity check.
+
+Use-case guidance:
+- First classification model integration in a new environment.
+- Validating normalization/format settings for classifier accuracy.
+- Establishing baseline output contracts before label mapping/top-k handling.
+
+Reference:
+- [Model](/getting-started/programming-model/model)
+- [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Learning Process
-1. Parse flags and establish deterministic defaults.
-2. Exercise the chapter's primary runtime path.
-3. Emit checks and machine-parseable signature.
+1. Resolve ResNet MPK and deterministic classifier input tensor/image.
+2. Configure model input/preproc options for classification.
+3. Run inference and inspect output tensor rank/shape cues.
+4. Confirm expected path with `CHECK`, `SIGNATURE`, and `[OK]`.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.
