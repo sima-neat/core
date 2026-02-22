@@ -50,6 +50,7 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
     }
 
+    // CORE LOGIC
     auto tensor = simaai::neat::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
                                             /*read_only=*/true);
 
@@ -67,6 +68,7 @@ int main(int argc, char** argv) {
     std::cout << "Tensor bytes:      " << mapped.size_bytes << "\n";
     std::cout << "Head checksum:     " << checksum << "\n";
     std::cout << "Clone dense bytes: " << owned.dense_bytes_tight() << "\n";
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

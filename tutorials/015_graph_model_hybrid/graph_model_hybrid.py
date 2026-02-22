@@ -27,6 +27,7 @@ def make_fp32_sample(neat, width: int, height: int, depth: int):
 
 
 def run_model_hybrid(neat, mpk: Path):
+  # CORE LOGIC
   model = neat.Model(str(mpk))
 
   opt = neat.graph.nodes.StageModelExecutorOptions()
@@ -51,10 +52,12 @@ def run_model_hybrid(neat, mpk: Path):
   out = run.pull(node_id, 2000)
   tu.check("graph_pull", out is not None, "stage-model node produced output")
   run.stop()
+  # END CORE LOGIC
   return "model_stage", out
 
 
 def run_stage_fallback(neat):
+  # CORE LOGIC
   graph = neat.graph.Graph()
   node_id = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
   run = neat.graph.GraphSession(graph).build()
@@ -64,6 +67,7 @@ def run_stage_fallback(neat):
   out = run.pull(node_id, 2000)
   tu.check("graph_pull", out is not None, "fallback stage produced output")
   run.stop()
+  # END CORE LOGIC
   return "stage_fallback", out
 
 

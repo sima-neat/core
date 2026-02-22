@@ -36,13 +36,15 @@ export function CodeTab({children}) {
 export function CodeTabs({children}) {
   const tabs = useMemo(() => {
     return React.Children.toArray(children)
-      .map((child) => {
+      .map((child, index) => {
         if (!React.isValidElement(child)) return null;
         const lang = normalizeLang(child.props?.lang);
         if (!lang) return null;
+        const label = defaultLabel(lang, child.props?.label);
         return {
+          id: `${lang}-${index}-${String(label).toLowerCase().replace(/\s+/g, '-')}`,
           lang,
-          label: defaultLabel(lang, child.props?.label),
+          label,
           content: child.props?.children,
         };
       })
@@ -50,6 +52,7 @@ export function CodeTabs({children}) {
   }, [children]);
 
   const [activeLang, setActiveLang] = useState(getPreferredLang);
+  const [activeTabId, setActiveTabId] = useState(null);
 
   useEffect(() => {
     const sync = (event) => setActiveLang(normalizeLang(event?.detail?.lang) || getPreferredLang());
@@ -64,25 +67,39 @@ export function CodeTabs({children}) {
 
   if (!tabs.length) return null;
 
-  const available = new Set(tabs.map((t) => t.lang));
-  const selectedLang = available.has(activeLang) ? activeLang : tabs[0].lang;
-  const selectedTab = tabs.find((t) => t.lang === selectedLang) || tabs[0];
+  const availableLangs = new Set(tabs.map((t) => t.lang));
+  const isLanguageMode = availableLangs.size > 1;
+
+  const selectedLang = isLanguageMode
+    ? (availableLangs.has(activeLang) ? activeLang : tabs[0].lang)
+    : tabs[0].lang;
+
+  const selectedTab = isLanguageMode
+    ? (tabs.find((t) => t.lang === selectedLang) || tabs[0])
+    : (tabs.find((t) => t.id === activeTabId) || tabs[0]);
 
   return (
     <div className={styles.root}>
-      <div className={styles.tabList} role="tablist" aria-label="Language tabs">
+      <div
+        className={styles.tabList}
+        role="tablist"
+        aria-label={isLanguageMode ? 'Language tabs' : 'Code tabs'}>
         {tabs.map((tab) => {
-          const active = tab.lang === selectedLang;
+          const active = isLanguageMode ? tab.lang === selectedLang : tab.id === selectedTab.id;
           return (
             <button
-              key={tab.lang}
+              key={tab.id}
               type="button"
               role="tab"
               aria-selected={active}
               className={`${styles.tabButton} ${active ? styles.tabButtonActive : ''}`}
               onClick={() => {
-                setPreferredLang(tab.lang);
-                setActiveLang(tab.lang);
+                if (isLanguageMode) {
+                  setPreferredLang(tab.lang);
+                  setActiveLang(tab.lang);
+                  return;
+                }
+                setActiveTabId(tab.id);
               }}>
               {tab.label}
             </button>

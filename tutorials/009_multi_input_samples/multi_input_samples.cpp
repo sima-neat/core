@@ -63,6 +63,7 @@ int main(int argc, char** argv) {
     const int h = tutorial_v2::parse_int_arg(argc, argv, "--height", 48);
     const int c = 3;
 
+    // CORE LOGIC
     simaai::neat::Session p;
     simaai::neat::InputOptions in;
     in.media_type = "application/vnd.simaai.tensor";
@@ -97,6 +98,7 @@ int main(int argc, char** argv) {
       std::cout << "  port=" << field.port_name
                 << " has_tensor=" << (field.tensor.has_value() ? "yes" : "no") << "\n";
     }
+    // END CORE LOGIC
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({

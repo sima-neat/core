@@ -36,6 +36,7 @@ def main(argv: list[str]) -> int:
   if not mpk or not mpk.exists():
     return tu.skip("missing YOLO MPK (pass --mpk)")
 
+  # CORE LOGIC
   opt = neat.ModelOptions()
   opt.format = "RGB"
   opt.input_max_width = width
@@ -66,6 +67,7 @@ def main(argv: list[str]) -> int:
   except Exception as exc:
     # Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
     tu.runtime_fallback(exc)
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

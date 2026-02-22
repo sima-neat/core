@@ -8,12 +8,29 @@
 | Labels | performance, tuning, async, queues |
 
 ## Concept
-Tune async queue behavior to improve throughput and runtime stability.
+This tutorial explains the first performance knobs most teams tune in async pipelines: queue depth, overflow policy, and metrics.
+
+Why this comes late in the tutorial sequence: performance tuning only helps when your correctness baseline is already stable. This chapter assumes you can already run async push/pull and now want controlled throughput/latency tradeoffs.
+
+What this chapter demonstrates:
+- Running async mode with configurable queue depth.
+- Comparing overflow strategies (`Block`, `KeepLatest`, `DropIncoming`).
+- Reading runtime metrics (`inputs_enqueued`, drops, latency, push cost, renegotiations).
+
+Use-case guidance:
+- Throughput bottlenecks: increase queue depth and inspect drop/latency behavior.
+- Low-latency preference: favor latest-frame behavior in bursty streams.
+- Backpressure-sensitive ingestion: prefer block policy for strict loss control.
+
+Reference:
+- [Pipeline](/getting-started/programming-model/pipeline)
+- [Session](/getting-started/programming-model/session)
 
 ## Learning Process
-1. Parse flags and establish deterministic defaults.
-2. Exercise the chapter's primary runtime path.
-3. Emit checks and machine-parseable signature.
+1. Build an async run path with explicit queue and overflow settings.
+2. Push a deterministic workload and drain outputs to completion.
+3. Inspect metrics and input stats for latency/drop behavior.
+4. Validate tuning run completion with `CHECK`, `SIGNATURE`, and `[OK]`.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

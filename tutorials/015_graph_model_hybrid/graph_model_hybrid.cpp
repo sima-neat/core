@@ -49,6 +49,7 @@ simaai::neat::Tensor make_fp32_tensor(int w, int h, int d) {
 }
 
 std::pair<std::string, simaai::neat::Sample> run_model_stage(const fs::path& mpk_path) {
+  // CORE LOGIC
   auto model = std::make_shared<simaai::neat::Model>(mpk_path.string());
 
   simaai::neat::graph::nodes::StageModelExecutorOptions opt;
@@ -83,10 +84,12 @@ std::pair<std::string, simaai::neat::Sample> run_model_stage(const fs::path& mpk
   auto out = run.pull(node_id, 2000);
   tutorial_v2::check("graph_pull", out.has_value(), "stage-model node produced output");
   run.stop();
+  // END CORE LOGIC
   return {"model_stage", *out};
 }
 
 std::pair<std::string, simaai::neat::Sample> run_stage_fallback() {
+  // CORE LOGIC
   simaai::neat::graph::Graph g;
   const auto node_id = g.add(simaai::neat::graph::nodes::StampFrameIdNode("stamp"));
 
@@ -102,6 +105,7 @@ std::pair<std::string, simaai::neat::Sample> run_stage_fallback() {
   auto out = run.pull(node_id, 2000);
   tutorial_v2::check("graph_pull", out.has_value(), "fallback stage produced output");
   run.stop();
+  // END CORE LOGIC
   return {"stage_fallback", *out};
 }
 

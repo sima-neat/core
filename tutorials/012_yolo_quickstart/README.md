@@ -8,12 +8,29 @@
 | Labels | yolo, detection, mpk |
 
 ## Concept
-Run a YOLO-style detection path quickly and validate expected output shape.
+This tutorial is the fastest path to run a YOLO-style detector in NEAT and confirm the detection pipeline is wired correctly.
+
+For new users, this chapter provides a practical bridge from "I have a YOLO MPK" to "I can run detection and inspect outputs." It uses explicit preprocess + MLA + boxdecode composition in C++, and the equivalent model-option path in Python.
+
+What this chapter demonstrates:
+- Loading a YOLO MPK and preparing image/tensor input.
+- Running detection-oriented pipeline stages.
+- Validating output kind and field structure.
+
+Use-case guidance:
+- First detector bring-up on a new board/runtime.
+- Verifying required plugins and model assets are present.
+- Establishing a known-good baseline before threshold/NMS tuning.
+
+Reference:
+- [Model](/getting-started/programming-model/model)
+- [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Learning Process
-1. Parse flags and establish deterministic defaults.
-2. Exercise the chapter's primary runtime path.
-3. Emit checks and machine-parseable signature.
+1. Resolve YOLO MPK and deterministic image/tensor input.
+2. Build and run detection path (preprocess + inference + decode).
+3. Inspect output structure (kind/fields) to validate detector wiring.
+4. Confirm completion with `CHECK`, `SIGNATURE`, and `[OK]`.
 
 ## What To Observe
 - `CHECK ...` lines should indicate contract and runtime validation outcomes.

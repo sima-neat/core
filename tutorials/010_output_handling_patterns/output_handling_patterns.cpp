@@ -49,6 +49,7 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
     }
 
+    // CORE LOGIC
     simaai::neat::Session s;
     simaai::neat::InputOptions in;
     in.format = "RGB";
@@ -75,6 +76,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "output rank: " << out.tensor->shape.size() << "\n";
+    // END CORE LOGIC
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
     tutorial_v2::print_signature({
         {"tutorial", "010"},

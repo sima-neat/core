@@ -4,19 +4,16 @@ description: Install SiMa NEAT on the DevKit and validate with Hello World
 sidebar_position: 1
 ---
 
-## sima-cli
+## Prerequisite: sima-cli
 
-Install or update `sima-cli` on your Modalix DevKit before installing NEAT. You will use it both to install NEAT and to retrieve precompiled models for examples.
+Install `sima-cli` on your Modalix DevKit before installing NEAT.
 
-If you do not already have an account, sign up at [developer.sima.ai](https://developer.sima.ai).
+Before you begin:
+- make sure your Modalix DevKit is connected to the Internet
+- it's recommended to create an account at [developer.sima.ai](https://developer.sima.ai) to access assets such as precompiled models for testing
 
-Follow the official `sima-cli` installation guide:
-[https://docs.sima.ai/pages/sima_cli/main.html](https://docs.sima.ai/pages/sima_cli/main.html)
-
-After `sima-cli` is installed, choose one of the NEAT installation paths below.
-Each path installs both the C++ and Python NEAT APIs on the Modalix DevKit.
-
-Your Modalix DevKit must be connected to the Internet to install sima-cli and NEAT.
+Install `sima-cli` using the [official guide](https://docs.sima.ai/pages/sima_cli/main.html). After `sima-cli` is ready, choose one NEAT installation path below.
+All paths install both C++ and Python NEAT APIs on the Modalix DevKit.
 
 ## Official Release
 
@@ -50,6 +47,6 @@ Replace:
 
 If you prefer building from source, follow the [build topic](./build.md).
 
-The install also provisions PyNeat in `~/pyneat` virtual environment.
+The installation also provisions PyNeat in the `~/pyneat` virtual environment.
 
-Next, continue with [Hello SiMa](./minimal_example.md) to validate the install with a minimal app.
+Next, continue with [Hello SiMa](./minimal_example.md) to validate your setup with a minimal app.

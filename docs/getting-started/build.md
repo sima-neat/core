@@ -22,20 +22,28 @@ You can run the same `build.sh` commands in either environment.
 
 ### Cross Compilation Prerequisites
 
-Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward.
+Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need the SiMa eLxr SDK for cross compilation.
 
-Install `sima-cli` first then install eLxr SDK.
+Install `sima-cli` first on the host machine, then install eLxr SDK.
 
 ```bash
+curl https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
 sima-cli install sdk
 ```
 
 When prompted by `sima-cli`, select the **eLxr SDK** option.
 
-Then apply the eLxr SDK patch:
+Then start the eLxr SDK:
 
 ```bash
 sima-cli sdk elxr
+```
+
+Then install sima-cli inside the eLxr SDK, after that install the eLxr SDK patch.
+
+```bash
+curl https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+source ~/.bash_profile
 sima-cli install tools/sdk-patch
 ```
 

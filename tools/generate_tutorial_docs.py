@@ -110,6 +110,10 @@ def _description(module: TutorialModule) -> str:
     return text
 
 
+def _yaml_double_quote_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _difficulty_theme(difficulty: str) -> Dict[str, str]:
     key = difficulty.strip().lower()
     if key == "beginner":
@@ -296,7 +300,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int) -> str:
         "---",
         f"id: {module.doc_id}",
         f"title: {module.display_title}",
-        f'description: "{_description(module)}"',
+        f'description: "{_yaml_double_quote_escape(_description(module))}"',
         f"sidebar_position: {sidebar_position}",
         f"slug: {module.doc_slug}",
         "---",

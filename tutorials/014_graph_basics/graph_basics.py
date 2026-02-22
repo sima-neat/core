@@ -24,6 +24,7 @@ def make_rgb_sample(neat):
 
 
 def run_pipeline_plus_stage(neat):
+  # CORE LOGIC
   # Hybrid flow: pipeline node normalizes media contract, stage node stamps frame ids.
   graph = neat.graph.Graph()
   pipe = graph.add(neat.graph.nodes.pipeline_node(neat.nodes.video_convert(), "convert"))
@@ -36,10 +37,12 @@ def run_pipeline_plus_stage(neat):
   out = run.pull(stamp, 2000)
   tu.check("graph_pull", out is not None, "stage sink produced output")
   run.stop()
+  # END CORE LOGIC
   return "pipeline_plus_stage", out
 
 
 def run_stage_only_fallback(neat):
+  # CORE LOGIC
   # Fallback still teaches graph push/pull and stage execution when pipeline plugin setup differs.
   graph = neat.graph.Graph()
   stamp = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
@@ -50,6 +53,7 @@ def run_stage_only_fallback(neat):
   out = run.pull(stamp, 2000)
   tu.check("graph_pull", out is not None, "stage sink produced output")
   run.stop()
+  # END CORE LOGIC
   return "stage_only_fallback", out
 
 

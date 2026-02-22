@@ -32,6 +32,7 @@ def main(argv: list[str]) -> int:
   tu.check("strict_flag_available", isinstance(tu.strict_mode(), bool),
            "strict-mode guard is observable")
 
+  # CORE LOGIC
   rgb = np.full((120, 160, 3), 101, dtype=np.uint8)
   tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
 
@@ -56,6 +57,7 @@ def main(argv: list[str]) -> int:
   tu.ensure(out.tensor is not None, "expected tensor output")
   tu.ensure(len(out.tensor.shape) > 0, "output tensor shape is empty")
   print(f"output rank: {len(out.tensor.shape)}")
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

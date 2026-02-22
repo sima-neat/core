@@ -37,6 +37,7 @@ def main(argv: list[str]) -> int:
   width = tu.parse_int(argv, "--width", 64)
   height = tu.parse_int(argv, "--height", 48)
 
+  # CORE LOGIC
   inp = neat.InputOptions()
   inp.media_type = "application/vnd.simaai.tensor"
   inp.format = "FP32"
@@ -70,6 +71,7 @@ def main(argv: list[str]) -> int:
   print(f"Bundle fields: {len(out.fields)}")
   for field in out.fields:
     print(f"  port={field.port_name} has_tensor={field.tensor is not None}")
+  # END CORE LOGIC
 
   tu.check("tutorial_completed", True, "main path reached end without exception")
   tu.signature({

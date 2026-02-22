@@ -81,8 +81,10 @@ int main(int argc, char** argv) {
       p.add(simaai::neat::nodes::Input());
       p.add(simaai::neat::nodes::groups::Preprocess(model));
       p.add(simaai::neat::nodes::groups::MLA(model));
+      // CORE LOGIC
       p.add(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", bgr.cols, bgr.rows, 0.52f, 0.5f,
                                                100));
+      // END CORE LOGIC
       p.add(simaai::neat::nodes::Output());
       std::cout << p.describe_backend() << "\n";
       return 0;

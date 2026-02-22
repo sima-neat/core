@@ -16,6 +16,7 @@ void print_help(const char* argv0) {
   std::cout << "  --mpk <path>         Optional MPK for model-backed session examples\n";
 }
 
+// CORE LOGIC
 simaai::neat::Session make_base_session(int width, int height) {
   simaai::neat::Session s;
   simaai::neat::InputOptions in;
@@ -28,6 +29,7 @@ simaai::neat::Session make_base_session(int width, int height) {
   s.add(simaai::neat::nodes::Output());
   return s;
 }
+// END CORE LOGIC
 
 } // namespace
 
@@ -70,6 +72,7 @@ int main(int argc, char** argv) {
                               });
 
     if (!mpk_path.empty() && fs::exists(mpk_path)) {
+      // CORE LOGIC
       simaai::neat::Model model(mpk_path.string());
 
       simaai::neat::Session from_model;
@@ -85,6 +88,7 @@ int main(int argc, char** argv) {
 
       simaai::neat::Session model_attached;
       model_attached.add(model.session(sopt));
+      // END CORE LOGIC
 
       if (tutorial_v2::wants_print_gst(argc, argv)) {
         std::cout << "[direct]\n" << direct.describe_backend() << "\n";
@@ -102,8 +106,10 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
     }
 
+    // CORE LOGIC
     auto run = direct.build(rgb, simaai::neat::RunMode::Sync);
     auto out = run.push_and_pull(rgb, 1000);
+    // END CORE LOGIC
     tutorial_v2::require(out.tensor.has_value(), "direct session output missing tensor");
 
     tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
