@@ -190,6 +190,7 @@ jobs:
           CC: clang
           CXX: clang++
           SIMANEAT_STRICT_WARNINGS: "OFF"
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           ./build.sh --fuzz --clean --no-doc
           ls -lh ./*.deb

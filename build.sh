@@ -295,7 +295,8 @@ run_privileged() {
   # Run command as root when possible:
   # 1) direct if already root
   # 2) non-interactive sudo if available
-  # 3) interactive sudo only in TTY sessions
+  # 3) password-based sudo via env in non-interactive sessions
+  # 4) interactive sudo only in TTY sessions
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
     return 0
@@ -305,6 +306,14 @@ run_privileged() {
     if sudo -n true 2>/dev/null; then
       sudo -n "$@"
       return 0
+    fi
+
+    local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+    if [[ -n "${sudo_pw}" ]]; then
+      if printf '%s\n' "${sudo_pw}" | sudo -S -v >/dev/null 2>&1; then
+        printf '%s\n' "${sudo_pw}" | sudo -S "$@"
+        return $?
+      fi
     fi
 
     # Fallback for local/dev environments where sudo requires a password.
