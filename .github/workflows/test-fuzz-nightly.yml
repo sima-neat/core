@@ -1,4 +1,4 @@
-name: Fuzz (NoM)
+name: Fuzz Nightly
 
 on:
   schedule:
