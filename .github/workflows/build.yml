@@ -149,126 +149,46 @@ jobs:
     needs: build
 
     steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Download test artifacts from S3
+      - name: Clean test workspace
         run: |
+          rm -rf _work
+          mkdir -p _work
+
+      - name: Install test runtime from metadata-all
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          if ! command -v sima-cli >/dev/null 2>&1; then
+            echo "sima-cli not found on test runner." >&2
+            exit 1
+          fi
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          ARTIFACT_PREFIX="s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}"
-          mkdir -p _work/artifacts
-          aws s3 cp "${ARTIFACT_PREFIX}/" _work/artifacts/ --recursive \
-            --exclude "*" \
-            --include "*-Linux-core.deb" \
-            --include "*extras.tar.gz" \
-            --include "*.whl" \
-            --include "manifest.json"
-          ls -lh _work/artifacts
-          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
-          mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
-          mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
-          MANIFEST_PATH="_work/artifacts/manifest.json"
-          if [[ "${#DEBS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 .deb file in _work/artifacts, found ${#DEBS[@]}." >&2
-            exit 1
-          fi
-          if [[ "${#EXTRAS_TARS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 extras tarball in _work/artifacts, found ${#EXTRAS_TARS[@]}." >&2
-            exit 1
-          fi
-          if [[ "${#WHLS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 .whl file in _work/artifacts, found ${#WHLS[@]}." >&2
-            exit 1
-          fi
-          if [[ ! -f "${MANIFEST_PATH}" ]]; then
-            echo "Expected manifest.json in _work/artifacts." >&2
-            exit 1
-          fi
+          METADATA_URL="https://neat-artifacts.modalix.info/neat/${BRANCH_KEY}/${SHORT_SHA}/metadata-all.json"
+          echo "Installing from ${METADATA_URL}"
+          sima-cli install -m "${METADATA_URL}"
 
-      - name: Download and install neat-internals DEBs for test runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+      - name: Locate installed extras content
         run: |
-          INTERNALS_TAG="$(python3 - <<'PY'
-          import json
-          from pathlib import Path
-          data = json.loads(Path("_work/artifacts/manifest.json").read_text(encoding="utf-8"))
-          tag = str(data.get("artifact_tag", "")).strip()
-          if not tag:
-              raise SystemExit("artifact_tag missing in _work/artifacts/manifest.json")
-          print(tag)
-          PY
-          )"
-          INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
-          INTERNALS_ARCHIVE="sima-neat-internals-${INTERNALS_TAG}.tar.gz"
-          INTERNALS_URL="${INTERNALS_BASE_URL}/${INTERNALS_ARCHIVE}"
-
-          INTERNALS_ROOT="${GITHUB_WORKSPACE}/_work/neat-internals"
-          INTERNALS_TAR="${GITHUB_WORKSPACE}/_work/${INTERNALS_ARCHIVE}"
-          rm -rf "${INTERNALS_ROOT}"
-          mkdir -p "${INTERNALS_ROOT}"
-          curl -fsSL "${INTERNALS_URL}" -o "${INTERNALS_TAR}"
-          tar -xzf "${INTERNALS_TAR}" -C "${INTERNALS_ROOT}"
-
-          mapfile -t INTERNALS_DEBS < <(find "${INTERNALS_ROOT}" -type f -name '*.deb' | sort)
-          if [[ "${#INTERNALS_DEBS[@]}" -lt 1 ]]; then
-            echo "No neat-internals .deb files found in ${INTERNALS_ARCHIVE}." >&2
+          mapfile -t CTEST_FILES < <(find /media/nvme "${HOME}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "Unable to locate installed extras tests after sima-cli install." >&2
             exit 1
           fi
-          for i in "${!INTERNALS_DEBS[@]}"; do
-            INTERNALS_DEBS[$i]="$(realpath "${INTERNALS_DEBS[$i]}")"
-          done
-          if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
-            echo "DEVKIT_PASSWORD is not set." >&2
-            exit 1
-          fi
-          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y --allow-downgrades "${INTERNALS_DEBS[@]}"
-
-      - name: Install DEB packages for test runtime
-        env:
-          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
-        run: |
-          mapfile -t DEBS < <(find _work/artifacts -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
-          if [[ "${#DEBS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 .deb file, found ${#DEBS[@]}." >&2
-            exit 1
-          fi
-          for i in "${!DEBS[@]}"; do
-            DEBS[$i]="$(realpath "${DEBS[$i]}")"
-          done
-          if [[ -z "${DEVKIT_PASSWORD:-}" ]]; then
-            echo "DEVKIT_PASSWORD is not set." >&2
-            exit 1
-          fi
-          printf '%s\n' "${DEVKIT_PASSWORD}" | sudo -S apt install -y --allow-downgrades "${DEBS[@]}"
-
-      - name: Extract extras tarball for test runtime
-        run: |
-          mapfile -t EXTRAS_TARS < <(find _work/artifacts -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
-          if [[ "${#EXTRAS_TARS[@]}" -lt 1 ]]; then
-            echo "Expected at least 1 extras tarball, found ${#EXTRAS_TARS[@]}." >&2
-            exit 1
-          fi
-          EXTRAS_TAR="$(realpath "${EXTRAS_TARS[0]}")"
-          EXTRAS_ROOT="${GITHUB_WORKSPACE}/_work/extras"
-          rm -rf "${EXTRAS_ROOT}"
-          mkdir -p "${EXTRAS_ROOT}"
-          tar -xzf "${EXTRAS_TAR}" -C "${EXTRAS_ROOT}"
+          EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
+          echo "Using extras lib dir: ${EXTRAS_LIB_DIR}"
+          mkdir -p _work
+          printf '%s\n' "${EXTRAS_LIB_DIR}" > _work/extras_lib_dir.txt
 
       - name: Rebase CTest paths to runner workspace
         run: |
-          EXTRAS_ROOT="${GITHUB_WORKSPACE}/_work/extras"
-          TESTS_ROOT="${EXTRAS_ROOT}/lib/sima-neat/tests"
-          TUTORIALS_ROOT="${EXTRAS_ROOT}/lib/sima-neat/tutorials"
-          mapfile -t CTEST_FILES < <(find "${EXTRAS_ROOT}/lib/sima-neat" -type f -name CTestTestfile.cmake | sort)
+          EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
+          TESTS_ROOT="${EXTRAS_LIB_DIR}/tests"
+          TUTORIALS_ROOT="${EXTRAS_LIB_DIR}/tutorials"
+          mapfile -t CTEST_FILES < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake | sort)
           if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
-            echo "No CTestTestfile.cmake files found under ${EXTRAS_ROOT}/lib/sima-neat." >&2
+            echo "No CTestTestfile.cmake files found under ${EXTRAS_LIB_DIR}." >&2
             exit 1
           fi
           for f in "${CTEST_FILES[@]}"; do
@@ -284,21 +204,6 @@ jobs:
             exit 1
           fi
 
-      - name: Setup test venv and install pyneat wheel
-        run: |
-          VENV_DIR="${GITHUB_WORKSPACE}/_work/pyneat-venv"
-          rm -rf "${VENV_DIR}"
-          python3 -m venv "${VENV_DIR}"
-          "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-          mapfile -t WHLS < <(find _work/artifacts -maxdepth 1 -type f -name '*.whl' | sort)
-          if [[ "${#WHLS[@]}" -lt 1 ]]; then
-            echo "No .whl files found in _work/artifacts." >&2
-            exit 1
-          fi
-          WHEEL_PATH="$(realpath "${WHLS[0]}")"
-          "${VENV_DIR}/bin/python" -m pip install --force-reinstall --no-deps "${WHEEL_PATH}"
-          "${VENV_DIR}/bin/python" -c "import pyneat; print(pyneat.__file__)"
-
       - name: Fix devkit runtime
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
@@ -307,9 +212,9 @@ jobs:
 
       - name: Discover installed CTest directories
         run: |
-          EXTRAS_LIB_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat"
+          EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
           if [[ ! -d "${EXTRAS_LIB_DIR}" ]]; then
-            echo "${EXTRAS_LIB_DIR} not found after extras extraction." >&2
+            echo "${EXTRAS_LIB_DIR} not found after sima-cli installation." >&2
             exit 1
           fi
           mapfile -t CTEST_DIRS < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake -printf '%h\n' | sort -u)
@@ -322,7 +227,7 @@ jobs:
 
       - name: Run Unit & Integration Tests (Strict)
         run: |
-          TEST_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tests"
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "strict" \
             --label-exclude "long" \
@@ -333,7 +238,7 @@ jobs:
         env:
           SIMA_STRICT_MANIFEST_NO_JSON_FALLBACK: 1
         run: |
-          TEST_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tests"
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
           ctest --test-dir "${TEST_DIR}" \
             --output-on-failure \
             -R "^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$"
@@ -341,7 +246,7 @@ jobs:
       - name: Run Tutorial Tests
         continue-on-error: true
         run: |
-          TUTORIALS_DIR="${GITHUB_WORKSPACE}/_work/extras/lib/sima-neat/tutorials"
+          TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
 
   docs:
