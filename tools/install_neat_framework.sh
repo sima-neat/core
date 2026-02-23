@@ -11,8 +11,6 @@ set -euo pipefail
 # - Auto-detects environment:
 #   - eLxr SDK when /etc/sdk-release exists, or SYSROOT points to a valid directory.
 #   - Modalix board when /etc/buildinfo reports MACHINE=modalix.
-# - In eLxr SDK mode, extracts .deb payloads into SYSROOT using dpkg-deb -x.
-# - In eLxr SDK mode, skips wheel installation (wheel targets aarch64 runtime on DevKit).
 # - In Modalix board mode, installs .deb packages with apt (sudo).
 #
 # Expected working directory:
@@ -30,8 +28,6 @@ set -euo pipefail
 VENV_DIR="${PYNEAT_VENV_DIR:-$HOME/pyneat/.venv}"
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
-SDK_SYSROOT_DEFAULT="/opt/toolchain/aarch64/modalix"
-
 log() {
   printf '[install_neat_framework] %s\n' "$*"
 }
@@ -84,70 +80,6 @@ detect_env_mode() {
   echo "modalix-board"
 }
 
-install_debs_into_sysroot() {
-  local sysroot="${SYSROOT:-${SDK_SYSROOT_DEFAULT}}"
-  if [[ ! -d "${sysroot}" ]]; then
-    echo "SDK sysroot not found: ${sysroot}" >&2
-    echo "Set SYSROOT to your eLxr SDK sysroot path." >&2
-    exit 1
-  fi
-
-  if ! command -v dpkg-deb >/dev/null 2>&1; then
-    echo "dpkg-deb is required to install DEBs into SDK sysroot." >&2
-    exit 1
-  fi
-
-  log "Detected eLxr SDK environment; installing DEBs into sysroot: ${sysroot}"
-  local use_sudo=""
-  if [[ ! -w "${sysroot}" ]]; then
-    use_sudo="1"
-  fi
-
-  local deb
-  for deb in "${DEBS[@]}"; do
-    if [[ -n "${use_sudo}" ]]; then
-      run_sudo dpkg-deb -x "${deb}" "${sysroot}"
-    else
-      dpkg-deb -x "${deb}" "${sysroot}"
-    fi
-  done
-
-  fix_sdk_symlinks "${sysroot}" "${use_sudo}"
-}
-
-fix_sdk_symlinks() {
-  local sysroot="$1"
-  local use_sudo="${2:-}"
-  local legacy_dir="${sysroot}/usr/lib/sima-neat/gst-plugins"
-  local canonical_dir="${sysroot}/usr/lib/aarch64-linux-gnu/neat/gst-plugins"
-  local rel_target_prefix='../../aarch64-linux-gnu/neat/gst-plugins'
-
-  if [[ ! -d "${legacy_dir}" || ! -d "${canonical_dir}" ]]; then
-    return 0
-  fi
-
-  log "Repairing broken SDK symlinks in ${legacy_dir}"
-  local repaired=0
-  while IFS= read -r link_path; do
-    local name target_abs new_target
-    name="$(basename "${link_path}")"
-    target_abs="${canonical_dir}/${name}"
-    if [[ -f "${target_abs}" ]]; then
-      new_target="${rel_target_prefix}/${name}"
-      if [[ -n "${use_sudo}" ]]; then
-        run_sudo ln -sfn "${new_target}" "${link_path}"
-      else
-        ln -sfn "${new_target}" "${link_path}"
-      fi
-      repaired=$((repaired + 1))
-    fi
-  done < <(find "${legacy_dir}" -maxdepth 1 -type l ! -exec test -e {} \; -print)
-
-  if [[ "${repaired}" -gt 0 ]]; then
-    log "Repaired ${repaired} broken symlink(s) in SDK sysroot."
-  fi
-}
-
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
@@ -161,8 +93,9 @@ fi
 
 ENV_MODE="$(detect_env_mode)"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
-  log "Skipping wheel installation in eLxr SDK environment."
-  install_debs_into_sysroot
+  echo "eLxr SDK installation is temporarily disabled." >&2
+  echo "Please install and run NEAT on a Modalix DevKit for now." >&2
+  exit 1
 else
   python3 -m venv "${VENV_DIR}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
