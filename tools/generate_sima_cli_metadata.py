@@ -15,6 +15,7 @@
 # Output:
 # - metadata.json written to --output
 # - metadata-all.json written next to --output
+# - metadata-minimal.json written next to --output
 
 from __future__ import annotations
 
@@ -203,6 +204,14 @@ def main() -> None:
     metadata_all_path = output_path.with_name("metadata-all.json")
     metadata_all_path.write_text(
         json.dumps(payload_all, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # "minimal" variant: core + wheel + internals only (no extras at all).
+    payload_minimal = copy.deepcopy(payload)
+    payload_minimal.pop("selectable-resources", None)
+    metadata_minimal_path = output_path.with_name("metadata-minimal.json")
+    metadata_minimal_path.write_text(
+        json.dumps(payload_minimal, indent=2) + "\n", encoding="utf-8"
     )
 
 
