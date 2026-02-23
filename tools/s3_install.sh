@@ -1,6 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# s3_install.sh
+#
+# Purpose:
+# - Install NEAT from S3-hosted metadata via sima-cli.
+# - If branch is not provided, fetches branches.json and prompts user to choose.
+#
+# This is for user to easily install NEAT from a specific branch/tag without needing to know exact URLs.
+#
+# Inputs:
+# - Positional arg 1 (optional): branch name
+#
+# Environment:
+# - NEAT_ARTIFACTS_BASE_URL: base URL for artifact index/tag metadata
+#   (default: https://neat-artifacts.modalix.info/neat)
+# - SIMA_CLI_BIN: sima-cli binary/path override (default: sima-cli)
+#
+# Example:
+# - Non-interactive: bash tools/s3_install.sh feature/docs
+# - Interactive:     bash tools/s3_install.sh
+#
 BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://neat-artifacts.modalix.info/neat}"
 CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 BRANCH="${1:-}"

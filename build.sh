@@ -21,6 +21,7 @@ INSTALL_DEPS_ONLY=OFF
 EXAMPLES_ONLY=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
+BUILD_FUZZ=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
@@ -98,6 +99,7 @@ Options:
   --all          Build library + samples + tests + Python wheel
   --example      Build only examples (and core library)
   --python       Build Python bindings (pyneat) in addition to selected targets
+  --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
   --install-neat-internals
                  Download/install neat-internals artifacts before build
   --doc          Build only docs
@@ -113,6 +115,7 @@ Examples:
   ./build.sh
   ./build.sh --dev-only
   ./build.sh --all
+  ./build.sh --fuzz
   ./build.sh --doc
   ./build.sh --all --clean
 USAGE
@@ -145,6 +148,16 @@ parse_args() {
         ;;
       --python)
         BUILD_PYTHON=ON
+        shift
+        ;;
+      --fuzz)
+        BUILD_SAMPLES=OFF
+        BUILD_TESTS=ON
+        BUILD_DOCS=OFF
+        BUILD_PYTHON=ON
+        BUILD_ALL=ON
+        BUILD_FUZZ=ON
+        INSTALL_NEAT_INTERNALS=ON
         shift
         ;;
       --install-neat-internals)
@@ -282,7 +295,8 @@ run_privileged() {
   # Run command as root when possible:
   # 1) direct if already root
   # 2) non-interactive sudo if available
-  # 3) interactive sudo only in TTY sessions
+  # 3) password-based sudo via env in non-interactive sessions
+  # 4) interactive sudo only in TTY sessions
   if [[ "$(id -u)" -eq 0 ]]; then
     "$@"
     return 0
@@ -292,6 +306,14 @@ run_privileged() {
     if sudo -n true 2>/dev/null; then
       sudo -n "$@"
       return 0
+    fi
+
+    local sudo_pw="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
+    if [[ -n "${sudo_pw}" ]]; then
+      if printf '%s\n' "${sudo_pw}" | sudo -S -v >/dev/null 2>&1; then
+        printf '%s\n' "${sudo_pw}" | sudo -S "$@"
+        return $?
+      fi
     fi
 
     # Fallback for local/dev environments where sudo requires a password.
@@ -784,6 +806,49 @@ detect_build_jobs() {
   fi
 }
 
+configure_fuzz_toolchain_if_needed() {
+  if [[ "${BUILD_FUZZ}" != "ON" ]]; then
+    return 0
+  fi
+
+  if [[ "${ELXR_SDK}" == "ON" ]]; then
+    echo "ERROR: --fuzz is not supported in eLxr SDK environment." >&2
+    echo "Run fuzz builds on Modalix ARM64 runners/devkits where libFuzzer targets execute natively." >&2
+    exit 1
+  fi
+
+  if [[ -n "${CC:-}" && -n "${CXX:-}" ]]; then
+    echo "Using user-provided fuzz toolchain: CC=${CC} CXX=${CXX}"
+    return 0
+  fi
+
+  local clang_bin=""
+  local clangxx_bin=""
+
+  for c in clang clang-18 clang-17 clang-16; do
+    if command -v "${c}" >/dev/null 2>&1; then
+      clang_bin="${c}"
+      break
+    fi
+  done
+  for cxx in clang++ clang++-18 clang++-17 clang++-16; do
+    if command -v "${cxx}" >/dev/null 2>&1; then
+      clangxx_bin="${cxx}"
+      break
+    fi
+  done
+
+  if [[ -z "${clang_bin}" || -z "${clangxx_bin}" ]]; then
+    echo "ERROR: --fuzz requires Clang/libFuzzer, but clang/clang++ were not found." >&2
+    echo "Set CC/CXX explicitly or install clang and clang++ on this runner." >&2
+    exit 1
+  fi
+
+  export CC="${CC:-${clang_bin}}"
+  export CXX="${CXX:-${clangxx_bin}}"
+  echo "Auto-selected fuzz toolchain: CC=${CC} CXX=${CXX}"
+}
+
 print_build_config() {
   # Emit resolved configuration so build-mode decisions are explicit.
   echo "========================================"
@@ -795,6 +860,7 @@ print_build_config() {
   echo "Build docs     : ${BUILD_DOCS}"
   echo "Build python   : ${BUILD_PYTHON}"
   echo "Build all      : ${BUILD_ALL}"
+  echo "Build fuzz     : ${BUILD_FUZZ}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Examples only  : ${EXAMPLES_ONLY}"
   echo "Skip dist      : ${SKIP_DIST}"
@@ -828,7 +894,8 @@ configure_cmake() {
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}" \
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TESTS}" \
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
-    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
+    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
+    -DFUZZING="${BUILD_FUZZ}"
 }
 
 build_docs_site() {
@@ -1122,6 +1189,7 @@ main() {
   fi
 
   detect_build_jobs
+  configure_fuzz_toolchain_if_needed
   print_build_config
   clean_build_dir_if_requested
   configure_cmake

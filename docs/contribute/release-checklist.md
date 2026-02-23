@@ -58,15 +58,15 @@ The following checks are required on release PRs and release tags:
 These checks are implemented in:
 
 - `.github/workflows/release-gate.yml`
-- `.github/workflows/crash-correctness.yml`
+- `.github/workflows/test-crash-correctness-nightly.yml`
 - `.github/workflows/mpk-security.yml`
 - `.github/workflows/install-smoke.yml`
 - `.github/workflows/perf-regression.yml`
 - `.github/workflows/zero-skip.yml`
 - `.github/workflows/soak-nightly.yml`
 - `.github/workflows/long-tests-weekly.yml`
-- `.github/workflows/fuzz-nightly.yml`
-- `.github/workflows/stress-nightly.yml`
+- `.github/workflows/test-fuzz-nightly.yml`
+- `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
 
 Trigger ownership to avoid duplicate gate execution:

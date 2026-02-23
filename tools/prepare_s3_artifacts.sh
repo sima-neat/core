@@ -19,6 +19,7 @@ WHEEL_PATH=""
 INTERNALS_MANIFEST=""
 OUTPUT_DIR=""
 INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
+INSTALL_SCRIPT_PATH="tools/install_neat_framework.sh"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -68,6 +69,7 @@ fi
 [[ -f "${EXTRAS_TAR}" ]] || { echo "Missing extras tar: ${EXTRAS_TAR}" >&2; exit 1; }
 [[ -f "${WHEEL_PATH}" ]] || { echo "Missing wheel: ${WHEEL_PATH}" >&2; exit 1; }
 [[ -f "${INTERNALS_MANIFEST}" ]] || { echo "Missing internals manifest: ${INTERNALS_MANIFEST}" >&2; exit 1; }
+[[ -f "${INSTALL_SCRIPT_PATH}" ]] || { echo "Missing install script: ${INSTALL_SCRIPT_PATH}" >&2; exit 1; }
 
 tmp_dir="$(mktemp -d /tmp/sima-neat-upload-XXXXXX)"
 cleanup() {
@@ -83,6 +85,8 @@ mkdir -p "${OUTPUT_DIR}"
 cp "${CORE_DEB}" "${OUTPUT_DIR}/"
 cp "${EXTRAS_TAR}" "${OUTPUT_DIR}/"
 cp "${WHEEL_PATH}" "${OUTPUT_DIR}/"
+cp "${INSTALL_SCRIPT_PATH}" "${OUTPUT_DIR}/"
+chmod +x "${OUTPUT_DIR}/$(basename "${INSTALL_SCRIPT_PATH}")"
 
 INTERNALS_TAG="$(python3 - <<'PY' "${INTERNALS_MANIFEST}"
 import json

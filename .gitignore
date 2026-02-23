@@ -100,6 +100,7 @@ website/.docusaurus/
 website/static/api/*
 website/sidebar-category-doxygen.json
 website/package-lock.json
+!website/static/img/*
 
 # Misc
 notes/

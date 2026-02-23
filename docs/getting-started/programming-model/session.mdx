@@ -16,14 +16,15 @@ Think of `Session` as the place where you define pipeline structure once, then e
 - Add nodes and groups with `add(...)`.
 - Inspect pipeline text with `describe()` and `to_gst()`.
 - Validate contracts before runtime with `validate(...)`.
-- Build a [`Run`](/reference/{lsa}/classes/simaai-neat-run) via `build(...)`.
-- Run convenience sync paths with `run(...)`.
+- Build a [`Run`](/reference/{lsa}/classes/simaai-neat-run) object via `build(...)`.
+- Run inference with `run(...)`.
 
 Reference:
 - [`Session` API](/reference/{lsa}/classes/simaai-neat-session)
 - [`SessionOptions`](/reference/{lsa}/structs/simaai-neat-sessionoptions)
 - [`ValidateOptions`](/reference/{lsa}/structs/simaai-neat-validateoptions)
 
+## Session + Run pattern
 ## Session + Run pattern
 
 <CodeTabs>
@@ -43,9 +44,11 @@ auto out = run.push_and_pull(input_tensor, 1000);
 
 ```python
 # Pseudo Python session + Run example.
+
 session = Session()
 session.add(nodes.input())
 session.add(nodes.output())
+
 
 run = session.build(input_tensor, RunMode.Sync)
 out = run.push_and_pull(input_tensor, 1000)
@@ -65,6 +68,9 @@ out = run.push_and_pull(input_tensor, 1000)
 
 ## Tutorials
 
+- [Session Build And Run](/tutorials/v2/003-session-build-and-run)
+- [Session Patterns](/tutorials/v2/007-session-patterns)
+- [Diagnostics In 3 Commands](/tutorials/v2/011-diagnostics-in-3-commands)
 - [Session Build And Run](/tutorials/v2/003-session-build-and-run)
 - [Session Patterns](/tutorials/v2/007-session-patterns)
 - [Diagnostics In 3 Commands](/tutorials/v2/011-diagnostics-in-3-commands)

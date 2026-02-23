@@ -1,9 +1,26 @@
 #!/usr/bin/env python3
 """Generate sima-cli metadata.json for a sima-neat artifact set."""
+#
+# File purpose:
+# - Build a sima-cli compatible metadata.json from a prepared artifact directory.
+# - Detect core/extras/wheel/internals artifacts and compute user-facing size estimates.
+# - Also generate a "metadata-all.json" variant that includes extras by default without prompts.
+#
+# Expected inputs (via --artifacts-dir):
+# - sima-neat-*-Linux-core.deb
+# - *extras.tar.gz
+# - *.whl
+# - optional additional .deb files (treated as neat-internals dependencies)
+#
+# Output:
+# - metadata.json written to --output
+# - metadata-all.json written next to --output
+# - metadata-minimal.json written next to --output
 
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import shutil
@@ -15,23 +32,29 @@ from tempfile import TemporaryDirectory
 from pathlib import Path
 from typing import List
 
+INSTALLER_SCRIPT_NAME = "install_neat_framework.sh"
+
 
 def _pick_one(files: List[Path], label: str) -> Path:
+    """Pick a deterministic artifact candidate (lexicographically first)."""
     if not files:
         raise SystemExit(f"missing required artifact for {label}")
     return sorted(files)[0]
 
 
 def _version_from_core_deb(core_deb_name: str) -> str:
+    """Extract package version from sima-neat core deb filename."""
     match = re.match(r"^sima-neat-(.+)-Linux-core\.deb$", core_deb_name)
     return match.group(1) if match else "unknown"
 
 
 def _url_safe_name(name: str) -> str:
+    """Encode artifact filenames for metadata URLs."""
     return urllib.parse.quote(name, safe="-._~")
 
 
 def _fmt_size(num_bytes: int) -> str:
+    """Format bytes into a small human-readable size string."""
     units = ["B", "KB", "MB", "GB", "TB"]
     value = float(num_bytes)
     for unit in units:
@@ -44,6 +67,7 @@ def _fmt_size(num_bytes: int) -> str:
 
 
 def _directory_size(path: Path) -> int:
+    """Sum all file sizes in a directory tree."""
     total = 0
     for child in path.rglob("*"):
         if child.is_file():
@@ -52,6 +76,11 @@ def _directory_size(path: Path) -> int:
 
 
 def _installed_size_from_deb(path: Path) -> int:
+    """Estimate installed size of a deb.
+
+    Prefer control metadata (Installed-Size) and fall back to extracting
+    payload if metadata is unavailable in the current environment.
+    """
     if shutil.which("dpkg-deb"):
         proc = subprocess.run(
             ["dpkg-deb", "-f", str(path), "Installed-Size"],
@@ -74,6 +103,7 @@ def _installed_size_from_deb(path: Path) -> int:
 
 
 def _extracted_size(path: Path) -> int:
+    """Estimate post-install/extracted size for supported artifact types."""
     suffixes = "".join(path.suffixes).lower()
     if suffixes.endswith(".tar.gz"):
         with tarfile.open(path, "r:gz") as tar:
@@ -99,15 +129,25 @@ def main() -> None:
     if not artifacts_dir.is_dir():
         raise SystemExit(f"artifacts directory not found: {artifacts_dir}")
 
+    # Required package set for a complete installable payload.
     core_deb = _pick_one(list(artifacts_dir.glob("*-Linux-core.deb")), "core deb")
     extras_tar = _pick_one(list(artifacts_dir.glob("*extras.tar.gz")), "extras tar.gz")
     wheel = _pick_one(list(artifacts_dir.glob("*.whl")), "wheel")
+    # Any additional debs are treated as neat-internals runtime dependencies.
     internals_debs = sorted(
         p for p in artifacts_dir.glob("*.deb") if p.name != core_deb.name
     )
 
+    installer_script_path = artifacts_dir / INSTALLER_SCRIPT_NAME
+    if not installer_script_path.is_file():
+        raise SystemExit(f"missing required installer script: {installer_script_path}")
+
     version = _version_from_core_deb(core_deb.name)
-    resources = [_url_safe_name(core_deb.name), _url_safe_name(wheel.name)]
+    resources = [
+        _url_safe_name(core_deb.name),
+        _url_safe_name(wheel.name),
+        _url_safe_name(installer_script_path.name),
+    ]
     resources.extend(_url_safe_name(p.name) for p in internals_debs)
     extras_resource = _url_safe_name(extras_tar.name)
     selectable_resources = [
@@ -118,17 +158,14 @@ def main() -> None:
         }
     ]
 
-    all_payload_files = [core_deb, extras_tar, wheel] + internals_debs
+    # Size fields are user-facing estimates for download/install budgeting.
+    all_payload_files = [core_deb, extras_tar, wheel, installer_script_path] + internals_debs
     download_size_bytes = sum(p.stat().st_size for p in all_payload_files)
     install_size_bytes = sum(_extracted_size(p) for p in all_payload_files)
 
-    install_script = (
-        "python3 -m venv ~/pyneat/.venv && "
-        "~/pyneat/.venv/bin/python -m pip install --upgrade pip && "
-        "~/pyneat/.venv/bin/python -m pip install --force-reinstall \"$(ls -1 ./*.whl | head -n1)\" && "
-        "sudo apt install -y --allow-downgrades ./sima-neat-*-Linux-core.deb ./neat-*.deb"
-    )
+    install_script = f"bash ./{installer_script_path.name}"
 
+    # sima-cli metadata schema payload.
     payload = {
         "name": "sima-neat",
         "version": version,
@@ -139,6 +176,9 @@ def main() -> None:
                 "type": "board",
                 "compatible_with": [args.board],
                 "version": args.board_version,
+            },
+            {
+                "type": "palette"
             }
         ],
         "resources": resources,
@@ -156,6 +196,23 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    # "all" variant: install everything without selectable prompts.
+    payload_all = copy.deepcopy(payload)
+    payload_all["resources"].append(extras_resource)
+    payload_all.pop("selectable-resources", None)
+    metadata_all_path = output_path.with_name("metadata-all.json")
+    metadata_all_path.write_text(
+        json.dumps(payload_all, indent=2) + "\n", encoding="utf-8"
+    )
+
+    # "minimal" variant: core + wheel + internals only (no extras at all).
+    payload_minimal = copy.deepcopy(payload)
+    payload_minimal.pop("selectable-resources", None)
+    metadata_minimal_path = output_path.with_name("metadata-minimal.json")
+    metadata_minimal_path.write_text(
+        json.dumps(payload_minimal, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":
