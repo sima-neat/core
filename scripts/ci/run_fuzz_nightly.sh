@@ -8,6 +8,8 @@ BUILD_DIR="${BUILD_DIR:-build-fuzz-nightly}"
 CORPUS_ROOT="${CORPUS_ROOT:-tests/fuzz/corpus}"
 ARTIFACT_DIR="${ARTIFACT_DIR:-${BUILD_DIR}/fuzz-artifacts}"
 MAX_TOTAL_TIME="${MAX_TOTAL_TIME:-45}"
+FUZZ_PREBUILT_ONLY="${FUZZ_PREBUILT_ONLY:-0}"
+FUZZ_BIN_DIR="${FUZZ_BIN_DIR:-${BUILD_DIR}/tests/fuzz}"
 
 FUZZ_TARGETS=(
   fuzz_modelpack_json
@@ -23,11 +25,15 @@ declare -A CORPUS_BY_TARGET=(
 
 mkdir -p "${ARTIFACT_DIR}"
 
-echo "[fuzz-nightly] configuring fuzz build in ${BUILD_DIR}..."
-cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF -DFUZZING=ON
+if [[ "${FUZZ_PREBUILT_ONLY}" != "1" ]]; then
+  echo "[fuzz-nightly] configuring fuzz build in ${BUILD_DIR}..."
+  cmake -S . -B "${BUILD_DIR}" -DSIMANEAT_BUILD_SAMPLES=OFF -DFUZZING=ON
 
-echo "[fuzz-nightly] building fuzz targets..."
-cmake --build "${BUILD_DIR}" --target "${FUZZ_TARGETS[@]}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+  echo "[fuzz-nightly] building fuzz targets..."
+  cmake --build "${BUILD_DIR}" --target "${FUZZ_TARGETS[@]}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+else
+  echo "[fuzz-nightly] prebuilt-only mode enabled. Using binaries from ${FUZZ_BIN_DIR}."
+fi
 
 export ASAN_OPTIONS="${ASAN_OPTIONS:-abort_on_error=1:halt_on_error=1:detect_leaks=0}"
 export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
@@ -35,7 +41,7 @@ export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
 for target in "${FUZZ_TARGETS[@]}"; do
   corpus_subdir="${CORPUS_BY_TARGET[${target}]}"
   corpus_dir="${CORPUS_ROOT}/${corpus_subdir}"
-  bin="${BUILD_DIR}/tests/fuzz/${target}"
+  bin="${FUZZ_BIN_DIR}/${target}"
 
   if [[ ! -x "${bin}" ]]; then
     echo "ERROR: missing fuzz binary: ${bin}" >&2

@@ -1,0 +1,124 @@
+name: Stress Nightly
+
+on:
+  schedule:
+    - cron: "35 1 * * *"
+  workflow_dispatch:
+    inputs:
+      stress_iters:
+        description: "SIMA_STRESS_ITERS override"
+        required: false
+        default: "120"
+        type: string
+      repeat_count:
+        description: "Repeat count for race-sensitive subset (until-fail)"
+        required: false
+        default: "20"
+        type: string
+
+jobs:
+  stress-gate:
+    name: stress-gate
+    runs-on: [self-hosted, Linux, ARM64, modalix]
+    if: github.ref_name == 'main'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clean workspace
+        run: |
+          rm -rf _work
+          mkdir -p _work
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./metadata*.json ./install_neat_framework.sh || true
+          find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
+
+      - name: Install runtime from latest main metadata-all
+        run: |
+          if ! command -v sima-cli >/dev/null 2>&1; then
+            echo "sima-cli not found on runner." >&2
+            exit 1
+          fi
+          TAG="$(curl -fsSL https://neat-artifacts.modalix.info/neat/main/latest.tag | tr -d '[:space:]')"
+          if [[ -z "${TAG}" ]]; then
+            echo "Failed to resolve latest.tag for main branch." >&2
+            exit 1
+          fi
+          METADATA_URL="https://neat-artifacts.modalix.info/neat/main/${TAG}/metadata-all.json"
+          echo "Installing from ${METADATA_URL}"
+          sima-cli install -m "${METADATA_URL}"
+
+      - name: Locate installed tests
+        run: |
+          mapfile -t CTEST_FILES < <(find /media/nvme "${HOME}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "Unable to locate installed extras tests after sima-cli install." >&2
+            exit 1
+          fi
+          EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
+          TEST_DIR="${EXTRAS_LIB_DIR}/tests"
+          if [[ ! -d "${TEST_DIR}" ]]; then
+            echo "Test directory not found: ${TEST_DIR}" >&2
+            exit 1
+          fi
+          echo "Using test directory: ${TEST_DIR}"
+          printf '%s\n' "${TEST_DIR}" > _work/test_dir.txt
+
+      - name: Rebase CTest paths to runner workspace
+        run: |
+          TEST_DIR="$(cat _work/test_dir.txt)"
+          TUTORIALS_ROOT="$(dirname "${TEST_DIR}")/tutorials"
+          mapfile -t CTEST_FILES < <(find "${TEST_DIR}" -type f -name CTestTestfile.cmake | sort)
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "No CTestTestfile.cmake files found under ${TEST_DIR}." >&2
+            exit 1
+          fi
+          for f in "${CTEST_FILES[@]}"; do
+            sed -E -i \
+              -e "s|/[^\"[:space:]]*/build/tests/|${TEST_DIR}/|g" \
+              -e "s|/[^\"[:space:]]*/build/tutorials/|${TUTORIALS_ROOT}/|g" \
+              "${f}"
+          done
+          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+            echo "Unresolved build-tree paths after CTest rebasing." >&2
+            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
+            exit 1
+          fi
+
+      - name: Fix devkit runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/fix_devkit_runtime.sh
+
+      - name: Run Modalix preflight
+        run: |
+          TEST_DIR="$(cat _work/test_dir.txt)"
+          ctest --test-dir "${TEST_DIR}" -R "^unit_modalix_contract_preflight_test$" --output-on-failure --no-tests=error
+
+      - name: Run stress suite
+        run: |
+          TEST_DIR="$(cat _work/test_dir.txt)"
+          STRESS_ITERS="${{ github.event.inputs.stress_iters || '120' }}"
+          if [[ ! "${STRESS_ITERS}" =~ ^[0-9]+$ ]] || [[ "${STRESS_ITERS}" -lt 1 ]]; then
+            echo "Invalid stress_iters: ${STRESS_ITERS}" >&2
+            exit 1
+          fi
+          export SIMA_STRESS_ITERS="${STRESS_ITERS}"
+          STRESS_REGEX='^(stress_graph_strict_sync_join_race_test|stress_pipeline_build_repeated_test|stress_model_lifecycle_test|stress_session_lifecycle_test|stress_session_validate_rtsp_churn_test|stress_run_async_pressure_test|stress_run_try_push_holder_race_test|stress_graph_execution_test|stress_udp_json_burst_test)$'
+          ctest --test-dir "${TEST_DIR}" --output-on-failure -R "${STRESS_REGEX}"
+
+      - name: Repeat race-sensitive stress subset until fail
+        run: |
+          TEST_DIR="$(cat _work/test_dir.txt)"
+          REPEAT_COUNT="${{ github.event.inputs.repeat_count || '20' }}"
+          if [[ ! "${REPEAT_COUNT}" =~ ^[0-9]+$ ]] || [[ "${REPEAT_COUNT}" -lt 1 ]]; then
+            echo "Invalid repeat_count: ${REPEAT_COUNT}" >&2
+            exit 1
+          fi
+          if [[ "${REPEAT_COUNT}" -le 1 ]]; then
+            echo "repeat_count=${REPEAT_COUNT}; skipping until-fail loop."
+            exit 0
+          fi
+          REPEAT_REGEX='^(stress_graph_strict_sync_join_race_test|stress_session_validate_rtsp_churn_test|stress_run_try_push_holder_race_test|stress_udp_json_burst_test)$'
+          ctest --test-dir "${TEST_DIR}" --output-on-failure --repeat "until-fail:${REPEAT_COUNT}" -R "${REPEAT_REGEX}"
