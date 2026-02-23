@@ -23,6 +23,7 @@ set -euo pipefail
 #
 BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://neat-artifacts.modalix.info/neat}"
 CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
+CLI_FALLBACK="/data/sima-cli/.venv/bin/sima-cli"
 BRANCH="${1:-}"
 
 usage() {
@@ -56,8 +57,15 @@ if [[ "${BRANCH}" == "-h" || "${BRANCH}" == "--help" ]]; then
 fi
 
 if ! command -v "${CLI_BIN}" >/dev/null 2>&1; then
-  echo "Required command not found: ${CLI_BIN}" >&2
-  exit 1
+  if [[ "${CLI_BIN}" == "sima-cli" && -x "${CLI_FALLBACK}" ]]; then
+    CLI_BIN="${CLI_FALLBACK}"
+  else
+    echo "Required command not found: ${CLI_BIN}" >&2
+    if [[ "${CLI_BIN}" == "sima-cli" ]]; then
+      echo "Also checked fallback path: ${CLI_FALLBACK}" >&2
+    fi
+    exit 1
+  fi
 fi
 
 if ! command -v python3 >/dev/null 2>&1; then
