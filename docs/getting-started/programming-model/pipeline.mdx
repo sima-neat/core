@@ -45,7 +45,7 @@ SiMa NEAT relies on native GStreamer negotiation, but controls key boundaries:
 - **Source pipelines (file/RTSP/image groups)**:
   caps are negotiated by source/decode elements, optionally constrained with explicit caps nodes.
 - **Output normalization**:
-  `add_output_tensor(...)` inserts convert/scale/caps + sink to keep output contracts predictable.
+  `add_output_tensor(...)` inserts convert/scale/caps + sink to keep output predictable.
 
 For push pipelines, format/shape changes are handled automatically. Runtime presets and queue policies control latency/safety tradeoffs, and advanced memory limits can be set with `RunAdvancedOptions::max_input_bytes`.
 

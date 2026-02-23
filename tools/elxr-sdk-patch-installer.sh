@@ -6,6 +6,7 @@ set -euo pipefail
 # - Recursively finds and extracts all .deb files from DEB_DIR into SYSROOT
 # - Normalizes BLAS/LAPACK/OpenBLAS symlinks for cross-linking
 # - Exports/prints pkg-config env for cross builds
+# - Intended for eLxr SDK sysroot preparation before cross-compiling NEAT
 #
 # Usage:
 #   bash scripts/elxr-sdk-patch-installer.sh [SYSROOT] [DEB_DIR]
