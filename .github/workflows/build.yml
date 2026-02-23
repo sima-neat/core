@@ -308,15 +308,6 @@ jobs:
             --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
             --paths "/*"
 
-      - name: Print latest manifest
-        run: |
-          MANIFEST_PATH="${GITHUB_WORKSPACE}/_work/artifacts/latest-manifest.json"
-          if [[ ! -f "${MANIFEST_PATH}" ]]; then
-            echo "Manifest file not found: ${MANIFEST_PATH}" >&2
-            exit 1
-          fi
-          cat "${MANIFEST_PATH}"
-
       - name: Refresh branches.json
         run: |
           mkdir -p _work/index
