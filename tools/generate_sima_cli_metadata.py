@@ -14,6 +14,7 @@
 #
 # Output:
 # - metadata.json written to --output
+# - metadata-all.json written next to --output
 
 from __future__ import annotations
 
@@ -29,6 +30,8 @@ import zipfile
 from tempfile import TemporaryDirectory
 from pathlib import Path
 from typing import List
+
+INSTALLER_SCRIPT_NAME = "install_neat_framework.sh"
 
 
 def _pick_one(files: List[Path], label: str) -> Path:
@@ -134,8 +137,16 @@ def main() -> None:
         p for p in artifacts_dir.glob("*.deb") if p.name != core_deb.name
     )
 
+    installer_script_path = artifacts_dir / INSTALLER_SCRIPT_NAME
+    if not installer_script_path.is_file():
+        raise SystemExit(f"missing required installer script: {installer_script_path}")
+
     version = _version_from_core_deb(core_deb.name)
-    resources = [_url_safe_name(core_deb.name), _url_safe_name(wheel.name)]
+    resources = [
+        _url_safe_name(core_deb.name),
+        _url_safe_name(wheel.name),
+        _url_safe_name(installer_script_path.name),
+    ]
     resources.extend(_url_safe_name(p.name) for p in internals_debs)
     extras_resource = _url_safe_name(extras_tar.name)
     selectable_resources = [
@@ -147,16 +158,11 @@ def main() -> None:
     ]
 
     # Size fields are user-facing estimates for download/install budgeting.
-    all_payload_files = [core_deb, extras_tar, wheel] + internals_debs
+    all_payload_files = [core_deb, extras_tar, wheel, installer_script_path] + internals_debs
     download_size_bytes = sum(p.stat().st_size for p in all_payload_files)
     install_size_bytes = sum(_extracted_size(p) for p in all_payload_files)
 
-    install_script = (
-        "python3 -m venv ~/pyneat/.venv && "
-        "~/pyneat/.venv/bin/python -m pip install --upgrade pip && "
-        "~/pyneat/.venv/bin/python -m pip install --force-reinstall \"$(ls -1 ./*.whl | head -n1)\" && "
-        "sudo apt install -y --allow-downgrades ./sima-neat-*-Linux-core.deb ./neat-*.deb"
-    )
+    install_script = f"bash ./{installer_script_path.name}"
 
     # sima-cli metadata schema payload.
     payload = {
@@ -169,6 +175,9 @@ def main() -> None:
                 "type": "board",
                 "compatible_with": [args.board],
                 "version": args.board_version,
+            },
+            {
+                "type": "palette"
             }
         ],
         "resources": resources,
