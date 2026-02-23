@@ -111,6 +111,41 @@ install_debs_into_sysroot() {
       dpkg-deb -x "${deb}" "${sysroot}"
     fi
   done
+
+  fix_sdk_symlinks "${sysroot}" "${use_sudo}"
+}
+
+fix_sdk_symlinks() {
+  local sysroot="$1"
+  local use_sudo="${2:-}"
+  local legacy_dir="${sysroot}/usr/lib/sima-neat/gst-plugins"
+  local canonical_dir="${sysroot}/usr/lib/aarch64-linux-gnu/neat/gst-plugins"
+  local rel_target_prefix='../../aarch64-linux-gnu/neat/gst-plugins'
+
+  if [[ ! -d "${legacy_dir}" || ! -d "${canonical_dir}" ]]; then
+    return 0
+  fi
+
+  log "Repairing broken SDK symlinks in ${legacy_dir}"
+  local repaired=0
+  while IFS= read -r link_path; do
+    local name target_abs new_target
+    name="$(basename "${link_path}")"
+    target_abs="${canonical_dir}/${name}"
+    if [[ -f "${target_abs}" ]]; then
+      new_target="${rel_target_prefix}/${name}"
+      if [[ -n "${use_sudo}" ]]; then
+        run_sudo ln -sfn "${new_target}" "${link_path}"
+      else
+        ln -sfn "${new_target}" "${link_path}"
+      fi
+      repaired=$((repaired + 1))
+    fi
+  done < <(find "${legacy_dir}" -maxdepth 1 -type l ! -exec test -e {} \; -print)
+
+  if [[ "${repaired}" -gt 0 ]]; then
+    log "Repaired ${repaired} broken symlink(s) in SDK sysroot."
+  fi
 }
 
 install_debs_on_board() {
