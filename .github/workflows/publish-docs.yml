@@ -1,10 +1,7 @@
-name: Publish Docs
+name: Manually Publish Docs
 
 on:
   workflow_dispatch: {}
-  workflow_run:
-    workflows: ["Standard Build & Archive"]
-    types: [completed]
 
 permissions:
   contents: read
@@ -15,11 +12,7 @@ concurrency:
 
 jobs:
   publish-docs:
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+    if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64]
     env:
       AWS_REGION: us-east-1
@@ -30,7 +23,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
