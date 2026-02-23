@@ -178,7 +178,7 @@ jobs:
 
   build-fuzz:
     if: needs.resolve-mode.outputs.build_mode == 'fuzz'
-    runs-on: [self-hosted, Linux, X64, elxr-sdk]
+    runs-on: [self-hosted, Linux, ARM64, modalix]
     needs: resolve-mode
 
     steps:

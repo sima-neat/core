@@ -802,6 +802,12 @@ configure_fuzz_toolchain_if_needed() {
     return 0
   fi
 
+  if [[ "${ELXR_SDK}" == "ON" ]]; then
+    echo "ERROR: --fuzz is not supported in eLxr SDK environment." >&2
+    echo "Run fuzz builds on Modalix ARM64 runners/devkits where libFuzzer targets execute natively." >&2
+    exit 1
+  fi
+
   if [[ -n "${CC:-}" && -n "${CXX:-}" ]]; then
     echo "Using user-provided fuzz toolchain: CC=${CC} CXX=${CXX}"
     return 0
