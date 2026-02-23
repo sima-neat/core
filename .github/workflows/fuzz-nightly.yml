@@ -2,7 +2,7 @@ name: Fuzz Nightly
 
 on:
   schedule:
-    - cron: "30 4 * * *"
+    - cron: "30 2 * * *"
   push:
     branches:
       - "release/**"
@@ -11,24 +11,77 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  fuzz-nightly:
-    name: fuzz-nightly
-    runs-on: ubuntu-22.04
+  build-fuzz-artifacts:
+    uses: ./.github/workflows/build.yml
+    with:
+      build_mode: fuzz
+    secrets: inherit
+
+  run-fuzz:
+    name: run-fuzz
+    runs-on: [self-hosted, Linux, ARM64, modalix]
+    needs: build-fuzz-artifacts
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: ./build.sh --install-deps-only
-
-      - name: Install clang toolchain
+      - name: Clean workspace
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang
+          rm -rf _work
+          mkdir -p _work
+
+      - name: Install fuzz runtime from metadata-all
+        run: |
+          if ! command -v sima-cli >/dev/null 2>&1; then
+            echo "sima-cli not found on fuzz runner." >&2
+            exit 1
+          fi
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          METADATA_URL="https://neat-artifacts.modalix.info/neat/${BRANCH_KEY}/${SHORT_SHA}/fuzz/metadata-all.json"
+          echo "Installing from ${METADATA_URL}"
+          sima-cli install -m "${METADATA_URL}"
+
+      - name: Locate installed extras content
+        run: |
+          mapfile -t CTEST_FILES < <(find /media/nvme "${HOME}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "Unable to locate installed extras tests after sima-cli install." >&2
+            exit 1
+          fi
+          EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
+          echo "Using extras lib dir: ${EXTRAS_LIB_DIR}"
+          printf '%s\n' "${EXTRAS_LIB_DIR}" > _work/extras_lib_dir.txt
+
+      - name: Verify prebuilt fuzz binaries exist
+        run: |
+          FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests/fuzz"
+          missing=0
+          for target in fuzz_modelpack_json fuzz_pipeline_sequence fuzz_gst_pipeline_string; do
+            if [[ ! -x "${FUZZ_BIN_DIR}/${target}" ]]; then
+              echo "Missing prebuilt fuzz binary: ${FUZZ_BIN_DIR}/${target}" >&2
+              missing=1
+            fi
+          done
+          if [[ "${missing}" -ne 0 ]]; then
+            echo "Prebuilt fuzz binaries are required in extras payload." >&2
+            exit 1
+          fi
+
+      - name: Fix devkit runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/fix_devkit_runtime.sh
 
       - name: Run fuzz nightly
         env:
-          CC: clang
-          CXX: clang++
           MAX_TOTAL_TIME: "60"
-        run: bash scripts/ci/run_fuzz_nightly.sh
+          FUZZ_PREBUILT_ONLY: "1"
+        run: |
+          EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
+          export FUZZ_BIN_DIR="${EXTRAS_LIB_DIR}/tests/fuzz"
+          export CORPUS_ROOT="${GITHUB_WORKSPACE}/tests/fuzz/corpus"
+          bash scripts/ci/run_fuzz_nightly.sh

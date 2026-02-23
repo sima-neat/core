@@ -25,4 +25,3 @@ NEAT provides a higher-level "pipeline-as-code" interface while keeping GStreame
 - [How‑To Guides](how-to/runtime_tuning)
 - [Reference](reference/cppapi)
 - [Contribute](contribute/architecture)
-- [Python Bindings (Contributor)](contribute/python_bindings)

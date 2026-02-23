@@ -21,6 +21,7 @@ INSTALL_DEPS_ONLY=OFF
 EXAMPLES_ONLY=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
+BUILD_FUZZ=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
@@ -98,6 +99,7 @@ Options:
   --all          Build library + samples + tests + Python wheel
   --example      Build only examples (and core library)
   --python       Build Python bindings (pyneat) in addition to selected targets
+  --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
   --install-neat-internals
                  Download/install neat-internals artifacts before build
   --doc          Build only docs
@@ -113,6 +115,7 @@ Examples:
   ./build.sh
   ./build.sh --dev-only
   ./build.sh --all
+  ./build.sh --fuzz
   ./build.sh --doc
   ./build.sh --all --clean
 USAGE
@@ -145,6 +148,16 @@ parse_args() {
         ;;
       --python)
         BUILD_PYTHON=ON
+        shift
+        ;;
+      --fuzz)
+        BUILD_SAMPLES=OFF
+        BUILD_TESTS=ON
+        BUILD_DOCS=OFF
+        BUILD_PYTHON=ON
+        BUILD_ALL=ON
+        BUILD_FUZZ=ON
+        INSTALL_NEAT_INTERNALS=ON
         shift
         ;;
       --install-neat-internals)
@@ -795,6 +808,7 @@ print_build_config() {
   echo "Build docs     : ${BUILD_DOCS}"
   echo "Build python   : ${BUILD_PYTHON}"
   echo "Build all      : ${BUILD_ALL}"
+  echo "Build fuzz     : ${BUILD_FUZZ}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Examples only  : ${EXAMPLES_ONLY}"
   echo "Skip dist      : ${SKIP_DIST}"
@@ -828,7 +842,8 @@ configure_cmake() {
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}" \
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TESTS}" \
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
-    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
+    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
+    -DFUZZING="${BUILD_FUZZ}"
 }
 
 build_docs_site() {

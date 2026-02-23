@@ -7,10 +7,37 @@ on:
     tags:
       - "*"
   workflow_dispatch: {}
+  workflow_call:
+    inputs:
+      build_mode:
+        description: "Build mode: standard or fuzz"
+        required: false
+        default: "standard"
+        type: string
 
 jobs:
+  resolve-mode:
+    runs-on: ubuntu-latest
+    outputs:
+      build_mode: ${{ steps.mode.outputs.build_mode }}
+    steps:
+      - name: Resolve build mode
+        id: mode
+        run: |
+          MODE="standard"
+          if [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+            MODE="${{ inputs.build_mode }}"
+          fi
+          if [[ "${MODE}" != "standard" && "${MODE}" != "fuzz" ]]; then
+            echo "Invalid build_mode: ${MODE}. Expected standard or fuzz." >&2
+            exit 1
+          fi
+          echo "build_mode=${MODE}" >> "${GITHUB_OUTPUT}"
+
   format-hygiene:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, X64]
+    needs: resolve-mode
 
     steps:
       - name: Checkout code
@@ -39,8 +66,9 @@ jobs:
           ./scripts/check_duplicate_includes.sh --changed-only
 
   clang-tidy:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, X64]
-    needs: format-hygiene
+    needs: [resolve-mode, format-hygiene]
 
     steps:
       - name: Checkout code
@@ -86,8 +114,9 @@ jobs:
           echo "clang-tidy already executed in scripts/run_cpp_tidy.sh"
 
   build:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, X64, elxr-sdk]
-    needs: clang-tidy
+    needs: [resolve-mode, clang-tidy]
 
     steps:
       - name: Checkout code
@@ -146,9 +175,66 @@ jobs:
             aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
           done
 
+  build-fuzz:
+    if: needs.resolve-mode.outputs.build_mode == 'fuzz'
+    runs-on: [self-hosted, Linux, X64, elxr-sdk]
+    needs: resolve-mode
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build fuzz artifacts
+        env:
+          CC: clang
+          CXX: clang++
+          SIMANEAT_STRICT_WARNINGS: "OFF"
+        run: |
+          ./build.sh --fuzz --clean --no-doc
+          ls -lh ./*.deb
+          ls -lh ./*extras.tar.gz
+          ls -lh dist/*.whl
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Compute fuzz S3 artifact prefix
+        id: s3-prefix
+        run: |
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          echo "branch_key=${BRANCH_KEY}" >> "${GITHUB_OUTPUT}"
+          echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}/fuzz" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare fuzz artifact payload and metadata
+        run: |
+          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
+          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
+          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          bash tools/prepare_s3_artifacts.sh \
+            --core-deb "${CORE_DEB}" \
+            --extras-tar "${EXTRAS_TAR}" \
+            --wheel "${WHEEL_PATH}" \
+            --internals-manifest neat-internals/manifest.json \
+            --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
+          cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+
+      - name: Upload fuzz artifacts to S3
+        run: |
+          for f in "${GITHUB_WORKSPACE}"/_work/upload-artifacts/*; do
+            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
+          done
+
   test:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, ARM64, modalix]
-    needs: build
+    needs: [resolve-mode, build]
 
     steps:
       - name: Clean test workspace
@@ -252,8 +338,9 @@ jobs:
           ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
 
   docs:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, X64]
-    needs: test
+    needs: [resolve-mode, test]
 
     steps:
       - name: Checkout code
@@ -282,8 +369,9 @@ jobs:
           ./build.sh --doc
 
   publish-latest:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, ARM64, modalix]
-    needs: docs
+    needs: [resolve-mode, docs]
     env:
       CLOUDFRONT_DISTRIBUTION_ID: E3OR0YOA43MQ7D
 
