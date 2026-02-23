@@ -4,7 +4,7 @@ set -euo pipefail
 # install_neat_framework.sh
 #
 # Purpose:
-# - Install SiMa NEAT wheel into a Python virtual environment.
+# - Install SiMa NEAT wheel into a Python virtual environment (board mode only).
 # - Install NEAT runtime .deb packages on Modalix board or into eLxr SDK sysroot.
 #
 # Behavior:
@@ -12,6 +12,7 @@ set -euo pipefail
 #   - eLxr SDK when /etc/sdk-release exists, or SYSROOT points to a valid directory.
 #   - Modalix board when /etc/buildinfo reports MACHINE=modalix.
 # - In eLxr SDK mode, extracts .deb payloads into SYSROOT using dpkg-deb -x.
+# - In eLxr SDK mode, skips wheel installation (wheel targets aarch64 runtime on DevKit).
 # - In Modalix board mode, installs .deb packages with apt (sudo).
 #
 # Expected working directory:
@@ -117,16 +118,6 @@ install_debs_on_board() {
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
 }
 
-python3 -m venv "${VENV_DIR}"
-"${VENV_DIR}/bin/python" -m pip install --upgrade pip
-
-WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
-if [[ -z "${WHEEL_FILE}" ]]; then
-  echo "No wheel file found in current directory." >&2
-  exit 1
-fi
-"${VENV_DIR}/bin/python" -m pip install --force-reinstall "${WHEEL_FILE}"
-
 mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
@@ -135,7 +126,17 @@ fi
 
 ENV_MODE="$(detect_env_mode)"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+  log "Skipping wheel installation in eLxr SDK environment."
   install_debs_into_sysroot
 else
+  python3 -m venv "${VENV_DIR}"
+  "${VENV_DIR}/bin/python" -m pip install --upgrade pip
+
+  WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
+  if [[ -z "${WHEEL_FILE}" ]]; then
+    echo "No wheel file found in current directory." >&2
+    exit 1
+  fi
+  "${VENV_DIR}/bin/python" -m pip install --force-reinstall "${WHEEL_FILE}"
   install_debs_on_board
 fi
