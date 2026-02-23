@@ -797,6 +797,43 @@ detect_build_jobs() {
   fi
 }
 
+configure_fuzz_toolchain_if_needed() {
+  if [[ "${BUILD_FUZZ}" != "ON" ]]; then
+    return 0
+  fi
+
+  if [[ -n "${CC:-}" && -n "${CXX:-}" ]]; then
+    echo "Using user-provided fuzz toolchain: CC=${CC} CXX=${CXX}"
+    return 0
+  fi
+
+  local clang_bin=""
+  local clangxx_bin=""
+
+  for c in clang clang-18 clang-17 clang-16; do
+    if command -v "${c}" >/dev/null 2>&1; then
+      clang_bin="${c}"
+      break
+    fi
+  done
+  for cxx in clang++ clang++-18 clang++-17 clang++-16; do
+    if command -v "${cxx}" >/dev/null 2>&1; then
+      clangxx_bin="${cxx}"
+      break
+    fi
+  done
+
+  if [[ -z "${clang_bin}" || -z "${clangxx_bin}" ]]; then
+    echo "ERROR: --fuzz requires Clang/libFuzzer, but clang/clang++ were not found." >&2
+    echo "Set CC/CXX explicitly or install clang and clang++ on this runner." >&2
+    exit 1
+  fi
+
+  export CC="${CC:-${clang_bin}}"
+  export CXX="${CXX:-${clangxx_bin}}"
+  echo "Auto-selected fuzz toolchain: CC=${CC} CXX=${CXX}"
+}
+
 print_build_config() {
   # Emit resolved configuration so build-mode decisions are explicit.
   echo "========================================"
@@ -1137,6 +1174,7 @@ main() {
   fi
 
   detect_build_jobs
+  configure_fuzz_toolchain_if_needed
   print_build_config
   clean_build_dir_if_requested
   configure_cmake
