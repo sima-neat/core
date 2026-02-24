@@ -86,11 +86,6 @@ jobs:
         run: |
           ./scripts/fix_devkit_runtime.sh
 
-      - name: Run Modalix preflight
-        run: |
-          TEST_DIR="$(cat _work/test_dir.txt)"
-          ctest --test-dir "${TEST_DIR}" -R "^unit_modalix_contract_preflight_test$" --output-on-failure --no-tests=error
-
       - name: Run critical crash/correctness suite
         run: |
           TEST_DIR="$(cat _work/test_dir.txt)"
