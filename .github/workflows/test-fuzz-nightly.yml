@@ -6,13 +6,14 @@ on:
   push:
     branches:
       - "release/**"
+      - "feature/nightly"
     tags:
       - "v*-rc*"
   workflow_dispatch: {}
 
 jobs:
   build-fuzz-artifacts:
-    if: github.ref_name == 'main'
+    if: github.ref_name == 'main' || github.ref_name == 'feature/nightly'
     uses: ./.github/workflows/build.yml
     with:
       build_mode: fuzz
@@ -21,7 +22,7 @@ jobs:
   run-fuzz:
     name: run-fuzz
     runs-on: [self-hosted, Linux, ARM64, modalix]
-    if: github.ref_name == 'main'
+    if: github.ref_name == 'main' || github.ref_name == 'feature/nightly'
     needs: build-fuzz-artifacts
 
     steps:
