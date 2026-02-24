@@ -11,10 +11,18 @@ on:
   workflow_dispatch: {}
 
 jobs:
+  build-fuzz-artifacts:
+    if: github.ref_name == 'main'
+    uses: ./.github/workflows/build.yml
+    with:
+      build_mode: fuzz
+    secrets: inherit
+
   run-fuzz:
     name: run-fuzz
     runs-on: [self-hosted, Linux, ARM64, modalix]
     if: github.ref_name == 'main'
+    needs: build-fuzz-artifacts
 
     steps:
       - name: Checkout
@@ -33,12 +41,10 @@ jobs:
             echo "sima-cli not found on fuzz runner." >&2
             exit 1
           fi
-          TAG="$(curl -fsSL https://neat-artifacts.modalix.info/neat/main/latest.tag | tr -d '[:space:]')"
-          if [[ -z "${TAG}" ]]; then
-            echo "Failed to resolve latest.tag for main branch." >&2
-            exit 1
-          fi
-          METADATA_URL="https://neat-artifacts.modalix.info/neat/main/${TAG}/fuzz/metadata-all.json"
+          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          METADATA_URL="https://neat-artifacts.modalix.info/neat/${BRANCH_KEY}/${SHORT_SHA}/fuzz/metadata-all.json"
           echo "Installing from ${METADATA_URL}"
           sima-cli install -m "${METADATA_URL}"
 
