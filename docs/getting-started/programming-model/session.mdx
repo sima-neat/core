@@ -25,7 +25,6 @@ Reference:
 - [`ValidateOptions`](/reference/{lsa}/structs/simaai-neat-validateoptions)
 
 ## Session + Run pattern
-## Session + Run pattern
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -48,7 +47,6 @@ auto out = run.push_and_pull(input_tensor, 1000);
 session = Session()
 session.add(nodes.input())
 session.add(nodes.output())
-
 
 run = session.build(input_tensor, RunMode.Sync)
 out = run.push_and_pull(input_tensor, 1000)

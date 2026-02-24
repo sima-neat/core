@@ -1,6 +1,8 @@
 # SiMa NEAT Framework
 
-[![CI Build](https://github.com/sima-neat/core/actions/workflows/build.yml/badge.svg)](https://github.com/sima-neat/core/actions/workflows/build.yml)
+[![CI Build](https://github.com/sima-neat/core/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/build.yml)
+[![Fuzz Nightly](https://github.com/sima-neat/core/actions/workflows/test-fuzz-nightly.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/test-fuzz-nightly.yml)
+[![Crash Correctness Nightly](https://github.com/sima-neat/core/actions/workflows/test-crash-correctness-nightly.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/test-crash-correctness-nightly.yml)
 ![SDK](https://img.shields.io/badge/SDK-2.0-green)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-informational)
 
