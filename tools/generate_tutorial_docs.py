@@ -359,16 +359,37 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
 
     cpp_fence = f'```cpp title="{module.cpp_rel}"' + (f" {cpp_hl}" if cpp_hl else "")
     py_fence = f'```python title="{module.py_rel}"' + (f" {py_hl}" if py_hl else "")
+    py_script_name = pathlib.Path(module.py_rel).name
 
-    lines.extend(["", "## Run", "", "```bash"])
-    if module.run_commands:
-        lines.extend(module.run_commands)
-    else:
-        lines.append(f"./tutorial_v2_{module.folder}")
-        lines.append(f"python3 {module.py_rel}")
     lines.extend(
         [
+            "",
+            "## Run",
+            "",
+            "<CodeTabs>",
+            '<CodeTab label="C++" lang="bash">',
+            "",
+            "```bash",
+            'NEAT_EXTRAS_ROOT="<sima-neat-*-Linux-extras>"',
+            'cd "${NEAT_EXTRAS_ROOT}/lib/sima-neat/tutorials"',
+            f"./tutorial_v2_{module.folder}",
             "```",
+            "",
+            "</CodeTab>",
+            '<CodeTab label="Python" lang="bash">',
+            "",
+            "```bash",
+            'NEAT_EXTRAS_ROOT="<sima-neat-*-Linux-extras>"',
+            "source ~/pyneat/.venv/bin/activate",
+            f'python3 "${{NEAT_EXTRAS_ROOT}}/share/sima-neat/tutorials/{module.folder}/{py_script_name}"',
+            "```",
+            "",
+            "</CodeTab>",
+            "</CodeTabs>",
+        ]
+    )
+    lines.extend(
+        [
             "",
             "## Code",
             "",

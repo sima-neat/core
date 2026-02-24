@@ -76,6 +76,7 @@ if __name__ == "__main__":
 Run:
 
 ```bash
+source ~/pyneat/.venv/bin/activate
 python3 hello_neat.py
 ```
   </div>
