@@ -532,9 +532,18 @@ collect_plugin_files_from_debs() {
     fi
     # Install packages into host system locations so runtime can resolve them globally.
     echo "Installing neat-internals .deb packages into host system..."
-    if ! run_privileged dpkg -i "${deb_files[@]}"; then
-      echo "ERROR: Failed to install neat-internals .deb packages." >&2
-      exit 1
+    if command -v apt >/dev/null 2>&1; then
+      mapfile -t deb_abs_files < <(for deb in "${deb_files[@]}"; do realpath "${deb}"; done)
+      # Use apt for local .deb install so dependency resolution happens automatically in CI.
+      if ! run_privileged apt install -y --allow-downgrades "${deb_abs_files[@]}"; then
+        echo "ERROR: Failed to install neat-internals .deb packages via apt." >&2
+        exit 1
+      fi
+    else
+      if ! run_privileged dpkg -i "${deb_files[@]}"; then
+        echo "ERROR: Failed to install neat-internals .deb packages." >&2
+        exit 1
+      fi
     fi
   fi
 
