@@ -1,38 +1,24 @@
-name: Sanity Check
+name: Sanitizer Nightly
 
 on:
   schedule:
-    - cron: "20 3 * * *"
+    - cron: "20 1 * * *"
   workflow_dispatch: {}
 
 jobs:
-  sanitizer-fast-check:
-    name: sanitizer-fast-check
-    if: github.event_name == 'push'
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install sanitizer dependencies
-        run: ./build.sh --install-deps-only
-      - name: Install neat-internals
-        run: ./build.sh --install-neat-internals       
-      - name: Fast build check (no tests/docs/dist)
-        run: ./build.sh --dev-only --no-dist --no-doc
-
   asan-ubsan-gate:
     name: asan-ubsan-gate
-    if: github.event_name != 'push'
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, Linux, ARM64, modalix]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install sanitizer dependencies
         run: ./build.sh --install-deps-only
+
       - name: Install neat-internals
-        run: ./build.sh --install-neat-internals               
+        run: ./build.sh --install-neat-internals
+
       - name: Run ASan/UBSan gate
         env:
           CC: clang
@@ -42,8 +28,7 @@ jobs:
 
   tsan-gate:
     name: tsan-gate
-    if: github.event_name != 'push'
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, Linux, ARM64, modalix]
     continue-on-error: true
     steps:
       - name: Checkout
@@ -51,8 +36,10 @@ jobs:
 
       - name: Install sanitizer dependencies
         run: ./build.sh --install-deps-only
+
       - name: Install neat-internals
-        run: ./build.sh --install-neat-internals               
+        run: ./build.sh --install-neat-internals
+
       - name: Run TSan scoped lane
         env:
           CC: clang
@@ -62,7 +49,7 @@ jobs:
 
   asan-ubsan-nightly:
     name: asan-ubsan-nightly
-    runs-on: ubuntu-22.04
+    runs-on: [self-hosted, Linux, ARM64, modalix]
     if: github.event_name == 'schedule'
     needs: asan-ubsan-gate
     steps:
@@ -71,8 +58,10 @@ jobs:
 
       - name: Install sanitizer dependencies
         run: ./build.sh --install-deps-only
+
       - name: Install neat-internals
-        run: ./build.sh --install-neat-internals               
+        run: ./build.sh --install-neat-internals
+
       - name: Repeat ASan/UBSan lane
         env:
           CC: clang
