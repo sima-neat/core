@@ -175,6 +175,7 @@ parse_args() {
         SIMA_ENABLE_ASAN=ON
         SIMA_ENABLE_UBSAN=ON
         SIMA_ENABLE_TSAN=OFF
+        BUILD_SAMPLES=OFF
         shift
         ;;
       --tsan)
@@ -186,6 +187,7 @@ parse_args() {
         SIMA_ENABLE_ASAN=OFF
         SIMA_ENABLE_UBSAN=OFF
         SIMA_ENABLE_TSAN=ON
+        BUILD_SAMPLES=OFF
         shift
         ;;
       --install-neat-internals)
