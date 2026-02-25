@@ -263,9 +263,9 @@ jobs:
 
       - name: Locate installed extras content
         run: |
-          mapfile -t CTEST_FILES < <(find /media/nvme "${HOME}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+          mapfile -t CTEST_FILES < <(find "${GITHUB_WORKSPACE}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
           if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
-            echo "Unable to locate installed extras tests after sima-cli install." >&2
+            echo "Unable to locate installed extras tests under GITHUB_WORKSPACE after sima-cli install." >&2
             exit 1
           fi
           EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"

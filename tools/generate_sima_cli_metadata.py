@@ -163,7 +163,9 @@ def main() -> None:
     download_size_bytes = sum(p.stat().st_size for p in all_payload_files)
     install_size_bytes = sum(_extracted_size(p) for p in all_payload_files)
 
-    install_script = f"bash ./{installer_script_path.name}"
+    # Execute installer directly via shebang to avoid CI shells forcing
+    # interactive-like bash behavior in non-TTY environments.
+    install_script = f"./{installer_script_path.name}"
 
     # sima-cli metadata schema payload.
     payload = {
