@@ -943,12 +943,24 @@ install(
     PATTERN "*.h"
 )
 
-# Install CTest metadata files from build tree (for extras packaging)
-install(
-  DIRECTORY ${CMAKE_BINARY_DIR}/tests/
-  DESTINATION lib/sima-neat/tests
-  COMPONENT extras
-  USE_SOURCE_PERMISSIONS
-  FILES_MATCHING
-    PATTERN "CTestTestfile.cmake"
-)
+# Keep standard extras behavior (full tests tree install), but trim payload
+# aggressively for sanitizer gate artifact builds.
+if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
+  install(
+    DIRECTORY ${CMAKE_BINARY_DIR}/tests/
+    DESTINATION lib/sima-neat/tests
+    COMPONENT extras
+    USE_SOURCE_PERMISSIONS
+    FILES_MATCHING
+      PATTERN "CTestTestfile.cmake"
+  )
+else()
+  install(
+    DIRECTORY ${CMAKE_BINARY_DIR}/tests/
+    DESTINATION lib/sima-neat/tests
+    COMPONENT extras
+    USE_SOURCE_PERMISSIONS
+    FILES_MATCHING
+      PATTERN "*"
+  )
+endif()
