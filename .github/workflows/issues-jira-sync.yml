@@ -1,0 +1,217 @@
+name: Issue to Jira Sync
+# Reference: GitHub issue #39
+
+on:
+  issues:
+    types: [opened, edited, reopened, closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+      JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+      JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      JIRA_PROJECT_KEY: AUTO
+      JIRA_ISSUE_TYPE_NAME: Task
+    steps:
+      - name: Validate Jira configuration
+        run: |
+          for v in JIRA_BASE_URL JIRA_EMAIL JIRA_API_TOKEN; do
+            if [[ -z "${!v:-}" ]]; then
+              echo "Missing required secret: ${v}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Resolve existing Jira key from issue body
+        id: resolve-key
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body || '' }}
+        run: |
+          key="$(printf '%s\n' "${ISSUE_BODY}" | sed -n 's/.*<!-- jira-key:\s*\([A-Z][A-Z0-9]*-[0-9][0-9]*\)\s*-->.*/\1/p' | head -n1)"
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create Jira issue if missing
+        id: create-jira
+        if: steps.resolve-key.outputs.key == ''
+        env:
+          GH_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GH_ISSUE_BODY: ${{ github.event.issue.body || '' }}
+          GH_ISSUE_URL: ${{ github.event.issue.html_url }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          adf_desc="$(jq -n \
+            --arg repo "${GH_REPO}" \
+            --arg issue_url "${GH_ISSUE_URL}" \
+            --arg body "${GH_ISSUE_BODY}" \
+            '{
+              type: "doc",
+              version: 1,
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    {type: "text", text: "GitHub issue: "},
+                    {type: "text", text: $issue_url, marks: [{type: "link", attrs: {href: $issue_url}}]}
+                  ]
+                },
+                {
+                  type: "paragraph",
+                  content: [
+                    {type: "text", text: "Repository: "},
+                    {type: "text", text: $repo}
+                  ]
+                },
+                {
+                  type: "paragraph",
+                  content: [
+                    {type: "text", text: "Issue body:"}
+                  ]
+                },
+                {
+                  type: "codeBlock",
+                  attrs: {language: "markdown"},
+                  content: [{type: "text", text: ($body // "")}]
+                }
+              ]
+            }')"
+
+          payload="$(jq -n \
+            --arg project "${JIRA_PROJECT_KEY}" \
+            --arg issue_type "${JIRA_ISSUE_TYPE_NAME}" \
+            --arg summary "[GH#${GH_ISSUE_NUMBER}] ${GH_ISSUE_TITLE}" \
+            --argjson description "${adf_desc}" \
+            '{
+              fields: {
+                project: { key: $project },
+                issuetype: { name: $issue_type },
+                summary: $summary,
+                description: $description
+              }
+            }')"
+
+          resp="$(curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data "${payload}" \
+            "${JIRA_BASE_URL}/rest/api/3/issue")"
+
+          key="$(printf '%s' "${resp}" | jq -r '.key // empty')"
+          if [[ -z "${key}" ]]; then
+            echo "Failed to create Jira issue. Response: ${resp}" >&2
+            exit 1
+          fi
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+
+      - name: Select Jira key
+        id: jira-key
+        run: |
+          key="${{ steps.resolve-key.outputs.key }}"
+          if [[ -z "${key}" ]]; then
+            key="${{ steps.create-jira.outputs.key }}"
+          fi
+          if [[ -z "${key}" ]]; then
+            echo "Unable to resolve Jira key." >&2
+            exit 1
+          fi
+          echo "key=${key}" >> "${GITHUB_OUTPUT}"
+
+      - name: Persist Jira key marker on GitHub issue
+        if: steps.resolve-key.outputs.key == ''
+        uses: actions/github-script@v7
+        env:
+          JIRA_KEY: ${{ steps.jira-key.outputs.key }}
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const marker = `<!-- jira-key: ${process.env.JIRA_KEY} -->`;
+            const body = (issue.body || "").trim();
+            const nextBody = body.includes("<!-- jira-key:") ? body : [body, "", marker].join("\n");
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: nextBody
+            });
+
+      - name: Update Jira issue summary/description
+        env:
+          JIRA_KEY: ${{ steps.jira-key.outputs.key }}
+          GH_ISSUE_NUMBER: ${{ github.event.issue.number }}
+          GH_ISSUE_TITLE: ${{ github.event.issue.title }}
+          GH_ISSUE_BODY: ${{ github.event.issue.body || '' }}
+          GH_ISSUE_URL: ${{ github.event.issue.html_url }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          adf_desc="$(jq -n \
+            --arg repo "${GH_REPO}" \
+            --arg issue_url "${GH_ISSUE_URL}" \
+            --arg body "${GH_ISSUE_BODY}" \
+            '{
+              type: "doc",
+              version: 1,
+              content: [
+                {
+                  type: "paragraph",
+                  content: [
+                    {type: "text", text: "GitHub issue: "},
+                    {type: "text", text: $issue_url, marks: [{type: "link", attrs: {href: $issue_url}}]}
+                  ]
+                },
+                {
+                  type: "paragraph",
+                  content: [
+                    {type: "text", text: "Repository: "},
+                    {type: "text", text: $repo}
+                  ]
+                },
+                {
+                  type: "paragraph",
+                  content: [
+                    {type: "text", text: "Issue body:"}
+                  ]
+                },
+                {
+                  type: "codeBlock",
+                  attrs: {language: "markdown"},
+                  content: [{type: "text", text: ($body // "")}]
+                }
+              ]
+            }')"
+
+          payload="$(jq -n \
+            --arg summary "[GH#${GH_ISSUE_NUMBER}] ${GH_ISSUE_TITLE}" \
+            --argjson description "${adf_desc}" \
+            '{fields: {summary: $summary, description: $description}}')"
+
+          curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -X PUT \
+            --data "${payload}" \
+            "${JIRA_BASE_URL}/rest/api/3/issue/${JIRA_KEY}"
+
+      - name: Add Jira comment for issue state transitions
+        if: github.event.action == 'closed' || github.event.action == 'reopened'
+        env:
+          JIRA_KEY: ${{ steps.jira-key.outputs.key }}
+          GH_ACTION: ${{ github.event.action }}
+          GH_ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          text="GitHub issue ${GH_ACTION}: ${GH_ISSUE_URL}"
+          payload="$(jq -n --arg t "${text}" \
+            '{body:{type:"doc",version:1,content:[{type:"paragraph",content:[{type:"text",text:$t}]}]}}')"
+
+          curl -fsS -u "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+            -H "Accept: application/json" \
+            -H "Content-Type: application/json" \
+            -X POST \
+            --data "${payload}" \
+            "${JIRA_BASE_URL}/rest/api/3/issue/${JIRA_KEY}/comment"
