@@ -22,7 +22,7 @@ A release is blocked unless all conditions below are true:
 8. MPK security gate is green (`mpk-security-gate`).
 9. Install smoke gate is green (`install-smoke`).
 10. Performance regression gate is green (`perf-regression-gate`).
-11. Soak stability lane is green for release tags (`soak-nightly`).
+11. Soak stability lane is green for release tags (`soak-weekly`).
 12. Fuzz lane is green for release candidates (`fuzz-nightly`).
 13. Zero-skip gate is green (`zero-skip-gate`) for strict test lanes.
 14. Required governance files are present and valid:
@@ -49,7 +49,7 @@ The following checks are required on release PRs and release tags:
 - `install-smoke`
 - `perf-regression-gate`
 - `zero-skip-gate`
-- `soak-nightly` (required for release tags)
+- `soak-weekly` (required for release tags)
 - `fuzz-nightly` (required for release candidates)
 - `stress-gate`
 - `asan-ubsan-gate`
@@ -63,7 +63,7 @@ These checks are implemented in:
 - `.github/workflows/install-smoke.yml`
 - `.github/workflows/perf-regression.yml`
 - `.github/workflows/zero-skip.yml`
-- `.github/workflows/soak-nightly.yml`
+- `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
 - `.github/workflows/test-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
