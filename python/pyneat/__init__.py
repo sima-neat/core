@@ -1,6 +1,21 @@
 """SiMa NEAT Python bindings."""
 
+import os as _os
+import sys as _sys
+
+# Load _pyneat_core with RTLD_GLOBAL so pyneat and NEAT GStreamer plugins share
+# a single symbol namespace in this process. With RTLD_LOCAL (CPython default
+# on POSIX), allocator/buffer-pool GObject types may be registered in separate
+# loader scopes, which can cause plugin initialization failures and timeouts.
+_old_dl_flags = _sys.getdlopenflags()
+_sys.setdlopenflags(_os.RTLD_NOW | _os.RTLD_GLOBAL)
+
 from . import _pyneat_core as _core
+
+# Restore the previous dlopen flags for subsequent imports.
+_sys.setdlopenflags(_old_dl_flags)
+del _old_dl_flags
+
 from ._pyneat_core import *
 from ._wrappers import install_wrappers
 
