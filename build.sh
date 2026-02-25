@@ -11,6 +11,7 @@ OS_NAME="$(uname -s)"
 # Defaults
 BUILD_SAMPLES=OFF
 BUILD_TESTS=OFF
+BUILD_TUTORIALS=OFF
 BUILD_DOCS=OFF
 BUILD_ALL=OFF
 DO_CLEAN=OFF
@@ -139,6 +140,7 @@ parse_args() {
       --all)
         BUILD_SAMPLES=ON
         BUILD_TESTS=ON
+        BUILD_TUTORIALS=ON
         BUILD_DOCS=ON
         BUILD_PYTHON=ON
         INSTALL_NEAT_INTERNALS=ON
@@ -159,6 +161,7 @@ parse_args() {
       --fuzz)
         BUILD_SAMPLES=OFF
         BUILD_TESTS=ON
+        BUILD_TUTORIALS=ON
         BUILD_DOCS=OFF
         BUILD_PYTHON=ON
         BUILD_ALL=ON
@@ -176,6 +179,7 @@ parse_args() {
         SIMA_ENABLE_UBSAN=ON
         SIMA_ENABLE_TSAN=OFF
         BUILD_SAMPLES=OFF
+        BUILD_TUTORIALS=OFF
         shift
         ;;
       --tsan)
@@ -188,6 +192,7 @@ parse_args() {
         SIMA_ENABLE_UBSAN=OFF
         SIMA_ENABLE_TSAN=ON
         BUILD_SAMPLES=OFF
+        BUILD_TUTORIALS=OFF
         shift
         ;;
       --install-neat-internals)
@@ -250,6 +255,7 @@ apply_sanitizer_build_profile() {
   # Sanitizer lanes are test-focused; skip samples/examples to avoid
   # optional UI/OpenGL dependencies in cross-build environments.
   BUILD_SAMPLES=OFF
+  BUILD_TUTORIALS=OFF
 }
 
 detect_elxr_sdk() {
@@ -913,6 +919,7 @@ print_build_config() {
   echo "Build type     : ${BUILD_TYPE}"
   echo "Build samples  : ${BUILD_SAMPLES}"
   echo "Build tests    : ${BUILD_TESTS}"
+  echo "Build tutorials: ${BUILD_TUTORIALS}"
   echo "Build docs     : ${BUILD_DOCS}"
   echo "Build python   : ${BUILD_PYTHON}"
   echo "Build all      : ${BUILD_ALL}"
@@ -949,7 +956,7 @@ configure_cmake() {
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}" \
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}" \
-    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TESTS}" \
+    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
     -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}" \
