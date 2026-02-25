@@ -59,13 +59,14 @@ Common build modes:
 ./build.sh --all           # library + samples + tests + docs
 ./build.sh --doc           # docs only
 ./build.sh --all --clean   # clean full build
+./build.sh -h              # print help
 ```
 
 Build output is generated under `build/`.
 
 ## Python Bindings (`pyneat`)
 
-This repository now includes a production-oriented Python binding layer powered by `nanobind`.
+This repository includes a production-oriented Python binding layer powered by `nanobind`.
 
 Key points:
 
@@ -76,11 +77,10 @@ Key points:
 
 Build/install from source:
 
+Running `./build.sh --all` builds both C++ libs and pyneat. If you want to build pyneat specifically do the following. 
+
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install .
+./build.sh --python
 ```
 
 Run Python tests:
@@ -92,13 +92,7 @@ pytest -q
 
 ## Install
 
-If you are installing from release artifacts, install core from `.deb` and extract prebuilt examples, tutorials from `.tar.gz`:
-
-```bash
-sudo apt install ./sima-neat-*-Linux-core.deb
-mkdir -p "${HOME}/sima-neat-extras"
-tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
-```
+If you are installing from release artifacts, follow instructions [here](https://neat.modalix.info/getting-started/install).
 
 ## Documentation
 
