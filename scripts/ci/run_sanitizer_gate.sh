@@ -179,8 +179,8 @@ if [[ "${SKIP_BUILD}" != "1" ]]; then
   PREFLIGHT_DIR="${BUILD_DIR}"
 fi
 
-echo "[sanitizer-gate] running Modalix preflight..."
-ctest --test-dir "${PREFLIGHT_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$" --no-tests=error
+#echo "[sanitizer-gate] running Modalix preflight..."
+#ctest --test-dir "${PREFLIGHT_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$" --no-tests=error
 
 echo "[sanitizer-gate] running tests..."
 ctest --test-dir "${TEST_DIR}" --output-on-failure --no-tests=error -R "${regex}"

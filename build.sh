@@ -27,7 +27,7 @@ BUILD_SANITIZER_MODE=""
 SIMA_ENABLE_ASAN=OFF
 SIMA_ENABLE_UBSAN=OFF
 SIMA_ENABLE_TSAN=OFF
-SIMANEAT_LINK_QT5GUI_WORKAROUND=OFF
+SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
@@ -257,9 +257,8 @@ apply_sanitizer_build_profile() {
   # optional UI/OpenGL dependencies in cross-build environments.
   BUILD_SAMPLES=OFF
   BUILD_TUTORIALS=OFF
-  # Cross-toolchain sanitizer links can miss Qt5Gui symbols referenced
-  # transitively by OpenCV/Qt5OpenGL in some SDK images.
-  SIMANEAT_LINK_QT5GUI_WORKAROUND=ON
+  # Keep sanitizer extras payloads small by shipping only gate test binaries.
+  SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=ON
 }
 
 detect_elxr_sdk() {
@@ -929,7 +928,7 @@ print_build_config() {
   echo "Build all      : ${BUILD_ALL}"
   echo "Build fuzz     : ${BUILD_FUZZ}"
   echo "Sanitizer mode : ${BUILD_SANITIZER_MODE:-none}"
-  echo "Qt5Gui fixup   : ${SIMANEAT_LINK_QT5GUI_WORKAROUND}"
+  echo "Gate-only extras: ${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Examples only  : ${EXAMPLES_ONLY}"
   echo "Skip dist      : ${SKIP_DIST}"
@@ -967,7 +966,7 @@ configure_cmake() {
     -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}" \
     -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}" \
     -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}" \
-    -DSIMANEAT_LINK_QT5GUI_WORKAROUND="${SIMANEAT_LINK_QT5GUI_WORKAROUND}" \
+    -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}" \
     -DFUZZING="${BUILD_FUZZ}"
 }
 

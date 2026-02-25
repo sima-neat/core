@@ -38,8 +38,8 @@ option(SIMA_ENABLE_ASAN "Enable AddressSanitizer instrumentation" OFF)
 option(SIMA_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer instrumentation" OFF)
 option(SIMA_ENABLE_TSAN "Enable ThreadSanitizer instrumentation" OFF)
 option(FUZZING "Build fuzzing harnesses and corpora runners" OFF)
-option(SIMANEAT_LINK_QT5GUI_WORKAROUND
-  "Explicitly link Qt5Gui to satisfy Qt5OpenGL transitive references in some cross-toolchains"
+option(SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS
+  "Install only sanitizer-gate test binaries into extras payload"
   OFF)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
@@ -271,16 +271,6 @@ if (GST_FOUND)
 endif()
 if (OPENCV_FOUND)
   target_link_libraries(sima_neat PUBLIC PkgConfig::OPENCV)
-endif()
-
-if (SIMANEAT_LINK_QT5GUI_WORKAROUND)
-  find_library(SIMANEAT_QT5_GUI_LIB Qt5Gui)
-  if (SIMANEAT_QT5_GUI_LIB)
-    message(STATUS "Applying Qt5Gui linker workaround: ${SIMANEAT_QT5_GUI_LIB}")
-    target_link_libraries(sima_neat PUBLIC "${SIMANEAT_QT5_GUI_LIB}")
-  else()
-    message(WARNING "SIMANEAT_LINK_QT5GUI_WORKAROUND is ON but Qt5Gui was not found.")
-  endif()
 endif()
 
 if (SIMA_WITH_OPENCV)
