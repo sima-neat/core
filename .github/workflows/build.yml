@@ -374,7 +374,7 @@ jobs:
 
   publish-latest:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: [self-hosted, Linux, ARM64, modalix]
+    runs-on: ubuntu-latest
     needs: [resolve-mode, docs]
     env:
       CLOUDFRONT_DISTRIBUTION_ID: E3OR0YOA43MQ7D
