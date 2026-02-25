@@ -72,7 +72,7 @@ jobs:
   test-sanitizers:
     name: test-sanitizers
     if: github.event_name == 'workflow_dispatch' || github.ref_name == 'main'
-    runs-on: [self-hosted, Linux, ARM64, modalix]
+    runs-on: [self-hosted, Linux, ARM64, modalix, dvt-3]
     needs: build-sanitizers
 
     steps:
