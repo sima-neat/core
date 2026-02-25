@@ -242,6 +242,16 @@ validate_build_mode_combinations() {
   fi
 }
 
+apply_sanitizer_build_profile() {
+  if [[ -z "${BUILD_SANITIZER_MODE}" ]]; then
+    return 0
+  fi
+
+  # Sanitizer lanes are test-focused; skip samples/examples to avoid
+  # optional UI/OpenGL dependencies in cross-build environments.
+  BUILD_SAMPLES=OFF
+}
+
 detect_elxr_sdk() {
   # Detect eLxr SDK environments from /etc/sdk-release style metadata.
   ELXR_SDK=OFF
@@ -1223,6 +1233,7 @@ main() {
   # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
   parse_args "$@"
   validate_build_mode_combinations
+  apply_sanitizer_build_profile
   detect_elxr_sdk
   select_system_deps
   install_system_deps
