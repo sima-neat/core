@@ -19,6 +19,7 @@ SYSROOT="${1:-/opt/toolchain/aarch64/modalix}"
 DEB_DIR="${2:-$PWD}"
 ELXR_LIST="/etc/apt/sources.list.d/elxr.list"
 LIBDIR="$SYSROOT/usr/lib/aarch64-linux-gnu"
+QT5GUI_OVERRIDE="${QT5GUI_OVERRIDE:-}"
 
 log() { printf '[INFO] %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*" >&2; }
@@ -66,6 +67,31 @@ for d in "${DEBS[@]}"; do
 done
 
 $SUDO mkdir -p "$LIBDIR"
+
+# 3b) Optional Qt5Gui override
+# If provided, copy a known-good libQt5Gui into sysroot to match target runtime.
+qt5gui_src=""
+if [[ -n "$QT5GUI_OVERRIDE" ]]; then
+  qt5gui_src="$QT5GUI_OVERRIDE"
+elif [[ -f "$DEB_DIR/libQt5Gui.so.5" ]]; then
+  qt5gui_src="$DEB_DIR/libQt5Gui.so.5"
+else
+  qt5gui_src="$(find "$DEB_DIR" -maxdepth 2 -type f -name 'libQt5Gui.so.5*' | sort | head -n1 || true)"
+fi
+
+if [[ -n "$qt5gui_src" ]]; then
+  if [[ ! -f "$qt5gui_src" ]]; then
+    err "QT5GUI_OVERRIDE does not point to a file: $qt5gui_src"
+  fi
+  qt5gui_base="$(basename "$qt5gui_src")"
+  log "Installing Qt5Gui override: $qt5gui_src -> $LIBDIR/$qt5gui_base"
+  $SUDO install -m 0644 "$qt5gui_src" "$LIBDIR/$qt5gui_base"
+  if [[ "$qt5gui_base" != "libQt5Gui.so.5" ]]; then
+    $SUDO ln -sfn "$qt5gui_base" "$LIBDIR/libQt5Gui.so.5"
+  fi
+else
+  warn "No Qt5Gui override provided/found under $DEB_DIR; keeping sysroot Qt5Gui as-is."
+fi
 
 # 4) Normalize BLAS/LAPACK symlinks for linker compatibility
 log "Normalizing BLAS/LAPACK symlinks under $LIBDIR"

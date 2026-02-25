@@ -11,6 +11,7 @@ OS_NAME="$(uname -s)"
 # Defaults
 BUILD_SAMPLES=OFF
 BUILD_TESTS=OFF
+BUILD_TUTORIALS=OFF
 BUILD_DOCS=OFF
 BUILD_ALL=OFF
 DO_CLEAN=OFF
@@ -22,6 +23,11 @@ EXAMPLES_ONLY=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
+BUILD_SANITIZER_MODE=""
+SIMA_ENABLE_ASAN=OFF
+SIMA_ENABLE_UBSAN=OFF
+SIMA_ENABLE_TSAN=OFF
+SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
@@ -100,6 +106,8 @@ Options:
   --example      Build only examples (and core library)
   --python       Build Python bindings (pyneat) in addition to selected targets
   --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
+  --asan-ubsan   Enable ASan+UBSan instrumentation for this build
+  --tsan         Enable TSan instrumentation for this build
   --install-neat-internals
                  Download/install neat-internals artifacts before build
   --doc          Build only docs
@@ -133,6 +141,7 @@ parse_args() {
       --all)
         BUILD_SAMPLES=ON
         BUILD_TESTS=ON
+        BUILD_TUTORIALS=ON
         BUILD_DOCS=ON
         BUILD_PYTHON=ON
         INSTALL_NEAT_INTERNALS=ON
@@ -153,11 +162,38 @@ parse_args() {
       --fuzz)
         BUILD_SAMPLES=OFF
         BUILD_TESTS=ON
+        BUILD_TUTORIALS=ON
         BUILD_DOCS=OFF
         BUILD_PYTHON=ON
         BUILD_ALL=ON
         BUILD_FUZZ=ON
         INSTALL_NEAT_INTERNALS=ON
+        shift
+        ;;
+      --asan-ubsan)
+        if [[ "${BUILD_SANITIZER_MODE}" == "tsan" ]]; then
+          echo "ERROR: --asan-ubsan and --tsan are mutually exclusive." >&2
+          exit 1
+        fi
+        BUILD_SANITIZER_MODE="asan-ubsan"
+        SIMA_ENABLE_ASAN=ON
+        SIMA_ENABLE_UBSAN=ON
+        SIMA_ENABLE_TSAN=OFF
+        BUILD_SAMPLES=OFF
+        BUILD_TUTORIALS=OFF
+        shift
+        ;;
+      --tsan)
+        if [[ "${BUILD_SANITIZER_MODE}" == "asan-ubsan" ]]; then
+          echo "ERROR: --asan-ubsan and --tsan are mutually exclusive." >&2
+          exit 1
+        fi
+        BUILD_SANITIZER_MODE="tsan"
+        SIMA_ENABLE_ASAN=OFF
+        SIMA_ENABLE_UBSAN=OFF
+        SIMA_ENABLE_TSAN=ON
+        BUILD_SAMPLES=OFF
+        BUILD_TUTORIALS=OFF
         shift
         ;;
       --install-neat-internals)
@@ -203,6 +239,26 @@ parse_args() {
         ;;
     esac
   done
+}
+
+validate_build_mode_combinations() {
+  if [[ "${BUILD_FUZZ}" == "ON" && -n "${BUILD_SANITIZER_MODE}" ]]; then
+    echo "ERROR: --fuzz cannot be combined with sanitizer modes (--asan-ubsan/--tsan)." >&2
+    exit 1
+  fi
+}
+
+apply_sanitizer_build_profile() {
+  if [[ -z "${BUILD_SANITIZER_MODE}" ]]; then
+    return 0
+  fi
+
+  # Sanitizer lanes are test-focused; skip samples/examples to avoid
+  # optional UI/OpenGL dependencies in cross-build environments.
+  BUILD_SAMPLES=OFF
+  BUILD_TUTORIALS=OFF
+  # Keep sanitizer extras payloads small by shipping only gate test binaries.
+  SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=ON
 }
 
 detect_elxr_sdk() {
@@ -532,9 +588,18 @@ collect_plugin_files_from_debs() {
     fi
     # Install packages into host system locations so runtime can resolve them globally.
     echo "Installing neat-internals .deb packages into host system..."
-    if ! run_privileged dpkg -i "${deb_files[@]}"; then
-      echo "ERROR: Failed to install neat-internals .deb packages." >&2
-      exit 1
+    if command -v apt >/dev/null 2>&1; then
+      mapfile -t deb_abs_files < <(for deb in "${deb_files[@]}"; do realpath "${deb}"; done)
+      # Use apt for local .deb install so dependency resolution happens automatically in CI.
+      if ! run_privileged apt install -y --allow-downgrades "${deb_abs_files[@]}"; then
+        echo "ERROR: Failed to install neat-internals .deb packages via apt." >&2
+        exit 1
+      fi
+    else
+      if ! run_privileged dpkg -i "${deb_files[@]}"; then
+        echo "ERROR: Failed to install neat-internals .deb packages." >&2
+        exit 1
+      fi
     fi
   fi
 
@@ -857,10 +922,13 @@ print_build_config() {
   echo "Build type     : ${BUILD_TYPE}"
   echo "Build samples  : ${BUILD_SAMPLES}"
   echo "Build tests    : ${BUILD_TESTS}"
+  echo "Build tutorials: ${BUILD_TUTORIALS}"
   echo "Build docs     : ${BUILD_DOCS}"
   echo "Build python   : ${BUILD_PYTHON}"
   echo "Build all      : ${BUILD_ALL}"
   echo "Build fuzz     : ${BUILD_FUZZ}"
+  echo "Sanitizer mode : ${BUILD_SANITIZER_MODE:-none}"
+  echo "Gate-only extras: ${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Examples only  : ${EXAMPLES_ONLY}"
   echo "Skip dist      : ${SKIP_DIST}"
@@ -892,9 +960,13 @@ configure_cmake() {
     -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
     -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}" \
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}" \
-    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TESTS}" \
+    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
+    -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}" \
+    -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}" \
+    -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}" \
+    -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}" \
     -DFUZZING="${BUILD_FUZZ}"
 }
 
@@ -1172,6 +1244,8 @@ main() {
   # High-level pipeline:
   # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
   parse_args "$@"
+  validate_build_mode_combinations
+  apply_sanitizer_build_profile
   detect_elxr_sdk
   select_system_deps
   install_system_deps

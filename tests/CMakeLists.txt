@@ -845,8 +845,91 @@ if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKL
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
 endif()
 
+set(SIMANEAT_TEST_INSTALL_TARGETS ${PIPELINESESSION_TEST_TARGETS})
+
+if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
+  set(SIMANEAT_SANITIZER_GATE_TESTS
+    unit_modalix_contract_preflight_test
+  )
+
+  if (SIMA_ENABLE_TSAN)
+    list(APPEND SIMANEAT_SANITIZER_GATE_TESTS
+      unit_builder_test
+      unit_contracts_test
+      unit_graph_strict_sync_store_test
+      unit_run_try_push_api_test
+      unit_run_holder_api_test
+      unit_run_api_variants_test
+      unit_session_naming_transform_test
+      session_validate_report_regression_test
+      session_naming_pipeline_integration_test
+      stage_routing_regression_test
+      graph_deterministic_routing_regression_test
+      hybrid_graph_fanout_test
+    )
+  else()
+    list(APPEND SIMANEAT_SANITIZER_GATE_TESTS
+      unit_builder_test
+      unit_caps_bridge_test
+      unit_graph_compiler_topology_test
+      unit_graph_compiler_spec_validation_test
+      unit_graph_join_bundle_test
+      unit_graph_join_encoded_with_meta_test
+      unit_graph_stamp_frame_id_test
+      unit_graph_strict_sync_store_test
+      unit_group_optiview_output_group_failure_test
+      unit_contracts_test
+      unit_detection_types_bbox_test
+      unit_gst_data_adapter_edge_test
+      unit_node_optiview_json_output_test
+      unit_node_udp_output_fragment_test
+      unit_nodes_test
+      unit_outputspec_test
+      unit_pipeline_build_wiring_test
+      unit_model_infer_output_name_test
+      unit_model_input_spec_contract_test
+      unit_model_output_spec_contract_test
+      unit_model_metadata_test
+      unit_model_stage_fragments_test
+      unit_run_holder_api_test
+      unit_run_pull_variants_api_test
+      unit_run_try_push_api_test
+      unit_run_api_variants_test
+      unit_session_io_roundtrip_test
+      unit_session_io_negative_test
+      unit_session_naming_transform_test
+      unit_simaai_guard_test
+      unit_stageconfig_mla_info_test
+      unit_tensor_conversion_policy_test
+      unit_tensor_image_mapping_test
+      caps_negotiation_matrix_regression_test
+      gst_data_adapter_runtime_regression_test
+      pull_timeout_regression_test
+      session_naming_pipeline_integration_test
+      session_rtsp_lifecycle_regression_test
+      session_validate_report_regression_test
+      stage_routing_regression_test
+      graph_deterministic_routing_regression_test
+      hybrid_graph_basic_test
+    )
+  endif()
+
+  set(SIMANEAT_TEST_INSTALL_TARGETS "")
+  foreach(_t IN LISTS SIMANEAT_SANITIZER_GATE_TESTS)
+    if (TARGET "${_t}")
+      list(APPEND SIMANEAT_TEST_INSTALL_TARGETS "${_t}")
+    else()
+      message(WARNING "Sanitizer gate install target not found: ${_t}")
+    endif()
+  endforeach()
+
+  list(REMOVE_DUPLICATES SIMANEAT_TEST_INSTALL_TARGETS)
+  message(STATUS "Sanitizer gate-only extras install enabled (SIMA_ENABLE_TSAN=${SIMA_ENABLE_TSAN})")
+  message(STATUS "Installing ${SIMANEAT_TEST_INSTALL_TARGETS}")
+endif()
+
 install(
-  TARGETS ${PIPELINESESSION_TEST_TARGETS}
+  TARGETS ${SIMANEAT_TEST_INSTALL_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tests
   COMPONENT extras
 )
@@ -860,12 +943,24 @@ install(
     PATTERN "*.h"
 )
 
-# Install built test binaries from the build tree (for extras packaging)
-install(
-  DIRECTORY ${CMAKE_BINARY_DIR}/tests/
-  DESTINATION lib/sima-neat/tests
-  COMPONENT extras
-  USE_SOURCE_PERMISSIONS
-  FILES_MATCHING
-    PATTERN "*"
-)
+# Keep standard extras behavior (full tests tree install), but trim payload
+# aggressively for sanitizer gate artifact builds.
+if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
+  install(
+    DIRECTORY ${CMAKE_BINARY_DIR}/tests/
+    DESTINATION lib/sima-neat/tests
+    COMPONENT extras
+    USE_SOURCE_PERMISSIONS
+    FILES_MATCHING
+      PATTERN "CTestTestfile.cmake"
+  )
+else()
+  install(
+    DIRECTORY ${CMAKE_BINARY_DIR}/tests/
+    DESTINATION lib/sima-neat/tests
+    COMPONENT extras
+    USE_SOURCE_PERMISSIONS
+    FILES_MATCHING
+      PATTERN "*"
+  )
+endif()

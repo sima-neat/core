@@ -38,6 +38,9 @@ option(SIMA_ENABLE_ASAN "Enable AddressSanitizer instrumentation" OFF)
 option(SIMA_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer instrumentation" OFF)
 option(SIMA_ENABLE_TSAN "Enable ThreadSanitizer instrumentation" OFF)
 option(FUZZING "Build fuzzing harnesses and corpora runners" OFF)
+option(SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS
+  "Install only sanitizer-gate test binaries into extras payload"
+  OFF)
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
