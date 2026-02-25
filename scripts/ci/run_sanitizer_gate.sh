@@ -6,7 +6,48 @@ cd "${ROOT_DIR}"
 
 MODE="${SANITIZER_MODE:-asan-ubsan}"
 CMAKE_BUILD_PARALLEL_LEVEL="${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+SKIP_BUILD="${SANITIZER_SKIP_BUILD:-0}"
+TEST_DIR_OVERRIDE="${SANITIZER_TEST_DIR:-}"
 export CMAKE_BUILD_PARALLEL_LEVEL
+
+usage() {
+  cat <<USAGE
+Usage: SANITIZER_MODE=<asan-ubsan|tsan> bash scripts/ci/run_sanitizer_gate.sh [options]
+
+Options:
+  --mode <asan-ubsan|tsan>    Override sanitizer mode
+  --test-dir <path>           Run tests from prebuilt installed artifacts (no build)
+  --build-dir <path>          Override local CMake build directory
+  -h, --help                  Show this help
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode)
+      MODE="${2:-}"
+      shift 2
+      ;;
+    --test-dir)
+      TEST_DIR_OVERRIDE="${2:-}"
+      SKIP_BUILD=1
+      shift 2
+      ;;
+    --build-dir)
+      BUILD_DIR="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage
+      exit 1
+      ;;
+  esac
+done
 
 asan_ubsan_tests=(
   unit_builder_test
@@ -81,44 +122,67 @@ join_regex() {
   printf '^(%s)$\n' "${regex}"
 }
 
+BUILD_DIR="${BUILD_DIR:-build-${MODE}-gate}"
+TEST_DIR=""
+PREFLIGHT_DIR=""
+
 if [[ "${MODE}" == "asan-ubsan" ]]; then
-  BUILD_DIR="${BUILD_DIR:-build-asan-ubsan-gate}"
   TESTS=("${asan_ubsan_tests[@]}")
   # Disable default leak detection in this gate because third-party runtime
   # initialization can report non-actionable leaks and hide project findings.
   export ASAN_OPTIONS="${ASAN_OPTIONS:-detect_leaks=0:abort_on_error=1:halt_on_error=1}"
   export UBSAN_OPTIONS="${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}"
-  echo "[sanitizer-gate] mode=asan-ubsan"
-  cmake -S . -B "${BUILD_DIR}" \
-    -DSIMANEAT_BUILD_SAMPLES=OFF \
-    -DSIMA_ENABLE_ASAN=ON \
-    -DSIMA_ENABLE_UBSAN=ON \
-    -DSIMA_ENABLE_TSAN=OFF
 elif [[ "${MODE}" == "tsan" ]]; then
-  BUILD_DIR="${BUILD_DIR:-build-tsan-gate}"
   TESTS=("${tsan_tests[@]}")
   export TSAN_OPTIONS="${TSAN_OPTIONS:-halt_on_error=1:history_size=7}"
-  echo "[sanitizer-gate] mode=tsan"
-  cmake -S . -B "${BUILD_DIR}" \
-    -DSIMANEAT_BUILD_SAMPLES=OFF \
-    -DSIMA_ENABLE_ASAN=OFF \
-    -DSIMA_ENABLE_UBSAN=OFF \
-    -DSIMA_ENABLE_TSAN=ON
 else
   echo "ERROR: Unsupported SANITIZER_MODE='${MODE}'. Use asan-ubsan or tsan." >&2
   exit 1
 fi
 
+echo "[sanitizer-gate] mode=${MODE} skip_build=${SKIP_BUILD}"
+
+if [[ "${SKIP_BUILD}" == "1" ]]; then
+  TEST_DIR="${TEST_DIR_OVERRIDE}"
+  if [[ -z "${TEST_DIR}" ]]; then
+    echo "ERROR: SANITIZER_TEST_DIR is required when SANITIZER_SKIP_BUILD=1." >&2
+    exit 1
+  fi
+  if [[ ! -d "${TEST_DIR}" ]]; then
+    echo "ERROR: SANITIZER_TEST_DIR does not exist: ${TEST_DIR}" >&2
+    exit 1
+  fi
+  PREFLIGHT_DIR="${TEST_DIR}"
+else
+  if [[ "${MODE}" == "asan-ubsan" ]]; then
+    cmake -S . -B "${BUILD_DIR}" \
+      -DSIMANEAT_BUILD_SAMPLES=OFF \
+      -DSIMA_ENABLE_ASAN=ON \
+      -DSIMA_ENABLE_UBSAN=ON \
+      -DSIMA_ENABLE_TSAN=OFF
+  else
+    cmake -S . -B "${BUILD_DIR}" \
+      -DSIMANEAT_BUILD_SAMPLES=OFF \
+      -DSIMA_ENABLE_ASAN=OFF \
+      -DSIMA_ENABLE_UBSAN=OFF \
+      -DSIMA_ENABLE_TSAN=ON
+  fi
+fi
+
 regex="$(join_regex TESTS)"
 
-echo "[sanitizer-gate] building test targets..."
-build_targets=(unit_modalix_contract_preflight_test "${TESTS[@]}")
-cmake --build "${BUILD_DIR}" --target "${build_targets[@]}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+if [[ "${SKIP_BUILD}" != "1" ]]; then
+  echo "[sanitizer-gate] building test targets..."
+  build_targets=(unit_modalix_contract_preflight_test "${TESTS[@]}")
+  cmake --build "${BUILD_DIR}" --target "${build_targets[@]}" -j"${CMAKE_BUILD_PARALLEL_LEVEL:-8}"
+  TEST_DIR="${BUILD_DIR}/tests"
+  PREFLIGHT_DIR="${BUILD_DIR}"
+fi
 
 echo "[sanitizer-gate] running Modalix preflight..."
-ctest --test-dir "${BUILD_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$"
+ctest --test-dir "${PREFLIGHT_DIR}" --output-on-failure -R "^unit_modalix_contract_preflight_test$" --no-tests=error
 
 echo "[sanitizer-gate] running tests..."
-ctest --test-dir "${BUILD_DIR}/tests" --output-on-failure -R "${regex}"
+ctest --test-dir "${TEST_DIR}" --output-on-failure --no-tests=error -R "${regex}"
 
 echo "[sanitizer-gate] ${MODE} passed."

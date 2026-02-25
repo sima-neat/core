@@ -22,6 +22,10 @@ EXAMPLES_ONLY=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
+BUILD_SANITIZER_MODE=""
+SIMA_ENABLE_ASAN=OFF
+SIMA_ENABLE_UBSAN=OFF
+SIMA_ENABLE_TSAN=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
@@ -100,6 +104,8 @@ Options:
   --example      Build only examples (and core library)
   --python       Build Python bindings (pyneat) in addition to selected targets
   --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
+  --asan-ubsan   Enable ASan+UBSan instrumentation for this build
+  --tsan         Enable TSan instrumentation for this build
   --install-neat-internals
                  Download/install neat-internals artifacts before build
   --doc          Build only docs
@@ -160,6 +166,28 @@ parse_args() {
         INSTALL_NEAT_INTERNALS=ON
         shift
         ;;
+      --asan-ubsan)
+        if [[ "${BUILD_SANITIZER_MODE}" == "tsan" ]]; then
+          echo "ERROR: --asan-ubsan and --tsan are mutually exclusive." >&2
+          exit 1
+        fi
+        BUILD_SANITIZER_MODE="asan-ubsan"
+        SIMA_ENABLE_ASAN=ON
+        SIMA_ENABLE_UBSAN=ON
+        SIMA_ENABLE_TSAN=OFF
+        shift
+        ;;
+      --tsan)
+        if [[ "${BUILD_SANITIZER_MODE}" == "asan-ubsan" ]]; then
+          echo "ERROR: --asan-ubsan and --tsan are mutually exclusive." >&2
+          exit 1
+        fi
+        BUILD_SANITIZER_MODE="tsan"
+        SIMA_ENABLE_ASAN=OFF
+        SIMA_ENABLE_UBSAN=OFF
+        SIMA_ENABLE_TSAN=ON
+        shift
+        ;;
       --install-neat-internals)
         INSTALL_NEAT_INTERNALS=ON
         shift
@@ -203,6 +231,13 @@ parse_args() {
         ;;
     esac
   done
+}
+
+validate_build_mode_combinations() {
+  if [[ "${BUILD_FUZZ}" == "ON" && -n "${BUILD_SANITIZER_MODE}" ]]; then
+    echo "ERROR: --fuzz cannot be combined with sanitizer modes (--asan-ubsan/--tsan)." >&2
+    exit 1
+  fi
 }
 
 detect_elxr_sdk() {
@@ -870,6 +905,7 @@ print_build_config() {
   echo "Build python   : ${BUILD_PYTHON}"
   echo "Build all      : ${BUILD_ALL}"
   echo "Build fuzz     : ${BUILD_FUZZ}"
+  echo "Sanitizer mode : ${BUILD_SANITIZER_MODE:-none}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Examples only  : ${EXAMPLES_ONLY}"
   echo "Skip dist      : ${SKIP_DIST}"
@@ -904,6 +940,9 @@ configure_cmake() {
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TESTS}" \
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
+    -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}" \
+    -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}" \
+    -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}" \
     -DFUZZING="${BUILD_FUZZ}"
 }
 
@@ -1181,6 +1220,7 @@ main() {
   # High-level pipeline:
   # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
   parse_args "$@"
+  validate_build_mode_combinations
   detect_elxr_sdk
   select_system_deps
   install_system_deps

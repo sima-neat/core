@@ -6,69 +6,133 @@ on:
   workflow_dispatch: {}
 
 jobs:
-  asan-ubsan-gate:
-    name: asan-ubsan-gate
-    runs-on: [self-hosted, Linux, ARM64, modalix]
+  build-sanitizers:
+    name: build-${{ matrix.mode }}
+    if: github.ref_name == 'main'
+    runs-on: [self-hosted, Linux, X64, elxr-sdk]
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [asan-ubsan, tsan]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install sanitizer dependencies
-        run: ./build.sh --install-deps-only
-
-      - name: Install neat-internals
-        run: ./build.sh --install-neat-internals
-
-      - name: Run ASan/UBSan gate
+      - name: Build sanitizer artifacts
         env:
           CC: clang
           CXX: clang++
-          SANITIZER_MODE: asan-ubsan
-        run: bash scripts/ci/run_sanitizer_gate.sh
-
-  tsan-gate:
-    name: tsan-gate
-    runs-on: [self-hosted, Linux, ARM64, modalix]
-    continue-on-error: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install sanitizer dependencies
-        run: ./build.sh --install-deps-only
-
-      - name: Install neat-internals
-        run: ./build.sh --install-neat-internals
-
-      - name: Run TSan scoped lane
-        env:
-          CC: clang
-          CXX: clang++
-          SANITIZER_MODE: tsan
-        run: bash scripts/ci/run_sanitizer_gate.sh
-
-  asan-ubsan-nightly:
-    name: asan-ubsan-nightly
-    runs-on: [self-hosted, Linux, ARM64, modalix]
-    if: github.event_name == 'schedule'
-    needs: asan-ubsan-gate
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install sanitizer dependencies
-        run: ./build.sh --install-deps-only
-
-      - name: Install neat-internals
-        run: ./build.sh --install-neat-internals
-
-      - name: Repeat ASan/UBSan lane
-        env:
-          CC: clang
-          CXX: clang++
-          SANITIZER_MODE: asan-ubsan
+          SIMANEAT_STRICT_WARNINGS: "OFF"
         run: |
-          for i in 1 2 3; do
-            echo "[asan-ubsan-nightly] run ${i}/3"
-            BUILD_DIR="build-asan-ubsan-nightly-${i}" bash scripts/ci/run_sanitizer_gate.sh
+          ./build.sh --all --clean --no-doc --${{ matrix.mode }}
+
+      - name: Verify build artifacts
+        run: |
+          ls -lh ./*.deb
+          ls -lh ./*extras.tar.gz
+          ls -lh dist/*.whl
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Compute S3 sanitizer prefix
+        id: s3-prefix
+        run: |
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          MODE="${{ matrix.mode }}"
+          echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
+          echo "commit_prefix=s3://sima-neat-artifacts/neat/main/${SHORT_SHA}/${MODE}" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare sanitizer artifact payload and metadata
+        run: |
+          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
+          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
+          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          OUT_DIR="${GITHUB_WORKSPACE}/_work/upload-artifacts-${{ matrix.mode }}"
+          bash tools/prepare_s3_artifacts.sh \
+            --core-deb "${CORE_DEB}" \
+            --extras-tar "${EXTRAS_TAR}" \
+            --wheel "${WHEEL_PATH}" \
+            --internals-manifest neat-internals/manifest.json \
+            --output-dir "${OUT_DIR}"
+          cp neat-internals/manifest.json "${OUT_DIR}/manifest.json"
+
+      - name: Upload sanitizer artifacts to S3
+        run: |
+          OUT_DIR="${GITHUB_WORKSPACE}/_work/upload-artifacts-${{ matrix.mode }}"
+          for f in "${OUT_DIR}"/*; do
+            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
+          done
+
+  test-sanitizers:
+    name: test-sanitizers
+    if: github.ref_name == 'main'
+    runs-on: [self-hosted, Linux, ARM64, modalix]
+    needs: build-sanitizers
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install sanitizer dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Run sanitizer gates from uploaded artifacts
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          if ! command -v sima-cli >/dev/null 2>&1; then
+            echo "sima-cli not found on runner." >&2
+            exit 1
+          fi
+
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
+          mkdir -p _work
+
+          for MODE in asan-ubsan tsan; do
+            echo "[sanitizers] Installing ${MODE} artifacts..."
+            METADATA_URL="https://neat-artifacts.modalix.info/neat/main/${SHORT_SHA}/${MODE}/metadata-all.json"
+            echo "[sanitizers] Installing from ${METADATA_URL}"
+            sima-cli install -m "${METADATA_URL}"
+
+            mapfile -t CTEST_FILES < <(find /media/nvme "${HOME}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+            if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+              echo "Unable to locate installed extras tests after sima-cli install for ${MODE}." >&2
+              exit 1
+            fi
+
+            EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
+            TEST_DIR="${EXTRAS_LIB_DIR}/tests"
+            TUTORIALS_ROOT="${EXTRAS_LIB_DIR}/tutorials"
+            if [[ ! -d "${TEST_DIR}" ]]; then
+              echo "Test directory not found for ${MODE}: ${TEST_DIR}" >&2
+              exit 1
+            fi
+
+            mapfile -t REBASE_FILES < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake | sort)
+            if [[ "${#REBASE_FILES[@]}" -eq 0 ]]; then
+              echo "No CTestTestfile.cmake files found under ${EXTRAS_LIB_DIR}." >&2
+              exit 1
+            fi
+            for f in "${REBASE_FILES[@]}"; do
+              sed -E -i \
+                -e "s|/[^\"[:space:]]*/build/tests/|${TEST_DIR}/|g" \
+                -e "s|/[^\"[:space:]]*/build/tutorials/|${TUTORIALS_ROOT}/|g" \
+                "${f}"
+            done
+            if rg -n '/build/tests/|/build/tutorials/' "${REBASE_FILES[@]}" >/dev/null; then
+              echo "Unresolved build-tree paths after CTest rebasing for ${MODE}." >&2
+              rg -n '/build/tests/|/build/tutorials/' "${REBASE_FILES[@]}" >&2 || true
+              exit 1
+            fi
+
+            ./scripts/fix_devkit_runtime.sh
+
+            SANITIZER_MODE="${MODE}" \
+              bash scripts/ci/run_sanitizer_gate.sh --test-dir "${TEST_DIR}"
           done
