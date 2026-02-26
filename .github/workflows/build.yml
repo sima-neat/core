@@ -432,7 +432,7 @@ jobs:
             --delimiter '/' \
             > _work/index/prefixes.json
 
-          git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" \
+          git ls-remote --heads "https://x-access-token:${{ github.token }}@github.com/${GITHUB_REPOSITORY}.git" \
             > _work/index/git_heads.txt
 
           python3 - <<'PY'
