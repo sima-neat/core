@@ -432,18 +432,39 @@ jobs:
             --delimiter '/' \
             > _work/index/prefixes.json
 
+          git ls-remote --heads "https://github.com/${GITHUB_REPOSITORY}.git" \
+            > _work/index/git_heads.txt
+
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           data = json.loads(Path("_work/index/prefixes.json").read_text(encoding="utf-8"))
+          heads_path = Path("_work/index/git_heads.txt")
+
+          active_branch_keys = set()
+          for line in heads_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+              continue
+            parts = line.split()
+            if len(parts) != 2:
+              continue
+            ref = parts[1]
+            if not ref.startswith("refs/heads/"):
+              continue
+            branch_name = ref[len("refs/heads/"):]
+            branch_key = branch_name.replace("/", "--").replace(" ", "--")
+            if branch_key:
+              active_branch_keys.add(branch_key)
+
           branches = []
           for item in data.get("CommonPrefixes", []):
             prefix = str(item.get("Prefix", ""))
             if not prefix.startswith("neat/"):
               continue
             branch = prefix[len("neat/"):].strip("/")
-            if branch:
+            if branch and branch in active_branch_keys:
               branches.append(branch)
 
           payload = {"branches": sorted(set(branches))}
