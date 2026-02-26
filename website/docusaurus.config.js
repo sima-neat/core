@@ -7,6 +7,9 @@ const project = process.env.DOCS_PROJECT || repoParts[1] || "PipelineSession";
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
+const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
+const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
+const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -49,6 +52,7 @@ const config = {
         { type: "doc", docId: "index", label: "Docs", position: "left" },
         { label: "C++ API", to: "/reference/cppapi/", position: "left" },
         { label: "Python API", to: "/reference/pythonapi/", position: "left" },
+        { type: "search", position: "right" },
         {
           type: "html",
           position: "right",
@@ -68,6 +72,18 @@ const config = {
         { label: "SiMa.ai NEAT Framework Documentation", to: "/" },
       ],
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
+    },
+    algolia: {
+      appId: algoliaAppId,
+      apiKey: algoliaApiKey,
+      indexName: algoliaIndexName,
+    },
+  },
+  customFields: {
+    algoliaSearch: {
+      appId: algoliaAppId,
+      apiKey: algoliaApiKey,
+      indexName: algoliaIndexName,
     },
   },
   clientModules: [require.resolve("./src/clientModules/language-preference.js")],

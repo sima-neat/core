@@ -39,7 +39,14 @@ jobs:
         env:
           DOCS_URL: https://ps.modalix.info
           DOCS_BASE_URL: /
+          DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
+          DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
+          DOCS_ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
         run: |
+          if [[ -z "${DOCS_ALGOLIA_APP_ID}" || -z "${DOCS_ALGOLIA_API_KEY}" || -z "${DOCS_ALGOLIA_INDEX_NAME}" ]]; then
+            echo "Missing docs build Algolia secrets: DOCS_ALGOLIA_APP_ID / DOCS_ALGOLIA_API_KEY / DOCS_ALGOLIA_INDEX_NAME" >&2
+            exit 1
+          fi
           ./build.sh --doc
 
       - name: Verify build output
@@ -76,3 +83,18 @@ jobs:
       - name: Invalidate CloudFront
         run: |
           aws cloudfront create-invalidation --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" --paths "/*"
+
+      - name: Reindex Algolia docs search
+        env:
+          ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
+          ALGOLIA_ADMIN_API_KEY: ${{ secrets.DOCS_ALGOLIA_ADMIN_API_KEY }}
+          ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
+        run: |
+          if [[ -z "${ALGOLIA_APP_ID}" || -z "${ALGOLIA_ADMIN_API_KEY}" || -z "${ALGOLIA_INDEX_NAME}" ]]; then
+            echo "Missing Algolia secrets: DOCS_ALGOLIA_APP_ID / DOCS_ALGOLIA_ADMIN_API_KEY / DOCS_ALGOLIA_INDEX_NAME" >&2
+            exit 1
+          fi
+          bash scripts/ci/sync_algolia_docs_index.sh \
+            --docs-dir docs \
+            --site-base-url https://ps.modalix.info \
+            --clear
