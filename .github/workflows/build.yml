@@ -270,8 +270,16 @@ jobs:
           fi
           EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
           echo "Using extras lib dir: ${EXTRAS_LIB_DIR}"
+          EXTRAS_PREFIX="$(dirname "$(dirname "${EXTRAS_LIB_DIR}")")"
+          PYTEST_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests"
+          if [[ ! -d "${PYTEST_DIR}" ]]; then
+            echo "Installed python tests not found at ${PYTEST_DIR}" >&2
+            exit 1
+          fi
+          echo "Using pytest dir: ${PYTEST_DIR}"
           mkdir -p _work
           printf '%s\n' "${EXTRAS_LIB_DIR}" > _work/extras_lib_dir.txt
+          printf '%s\n' "${PYTEST_DIR}" > _work/pytest_dir.txt
 
       - name: Rebase CTest paths to runner workspace
         run: |
@@ -340,6 +348,19 @@ jobs:
         run: |
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
+
+      - name: Run Python pytest from installed extras
+        run: |
+          PYTEST_DIR="$(cat _work/pytest_dir.txt)"
+          PYTHON_BIN="${HOME}/pyneat/.venv/bin/python"
+          if [[ ! -x "${PYTHON_BIN}" ]]; then
+            echo "Expected virtualenv python not found: ${PYTHON_BIN}" >&2
+            exit 1
+          fi
+
+          "${PYTHON_BIN}" -m pip install --upgrade pip
+          "${PYTHON_BIN}" -m pip install pytest
+          "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
 
   docs:
     if: needs.resolve-mode.outputs.build_mode == 'standard'

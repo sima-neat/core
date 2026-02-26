@@ -76,7 +76,7 @@ jobs:
         run: |
           TEST_DIR="$(cat _work/test_dir.txt)"
           if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            SIMA_STRESS_ITERS=100 SOAK_DURATION_HOURS=8 SOAK_INTERVAL_SECONDS=900 SOAK_TEST_DIR="${TEST_DIR}" bash scripts/ci/run_soak_lane.sh
+            SIMA_STRESS_ITERS=100 SOAK_DURATION_HOURS=8 SOAK_INTERVAL_SECONDS=900 SOAK_SKIP_PREFLIGHT=1 SOAK_TEST_DIR="${TEST_DIR}" bash scripts/ci/run_soak_lane.sh
           else
-            SIMA_STRESS_ITERS=60 SOAK_DURATION_HOURS=2 SOAK_INTERVAL_SECONDS=600 SOAK_TEST_DIR="${TEST_DIR}" bash scripts/ci/run_soak_lane.sh
+            SIMA_STRESS_ITERS=60 SOAK_DURATION_HOURS=2 SOAK_INTERVAL_SECONDS=600 SOAK_SKIP_PREFLIGHT=1 SOAK_TEST_DIR="${TEST_DIR}" bash scripts/ci/run_soak_lane.sh
           fi

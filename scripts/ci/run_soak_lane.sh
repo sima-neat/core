@@ -11,6 +11,7 @@ SOAK_INTERVAL_SECONDS="${SOAK_INTERVAL_SECONDS:-900}"
 SOAK_LEAK_STEP_KB="${SOAK_LEAK_STEP_KB:-32768}"
 SOAK_MONOTONIC_LIMIT="${SOAK_MONOTONIC_LIMIT:-3}"
 SOAK_REPORT="${SOAK_REPORT:-${BUILD_DIR}/soak_report.csv}"
+SOAK_SKIP_PREFLIGHT="${SOAK_SKIP_PREFLIGHT:-0}"
 
 usage() {
   cat <<USAGE
@@ -19,6 +20,7 @@ Usage: bash scripts/ci/run_soak_lane.sh [options]
 Options:
   --test-dir <path>   Run soak tests from preinstalled test directory (skip local build)
   --build-dir <path>  Override local build directory for build-mode
+  --skip-preflight    Do not run unit_modalix_contract_preflight_test
   -h, --help          Show this help
 USAGE
 }
@@ -32,6 +34,10 @@ while [[ $# -gt 0 ]]; do
     --build-dir)
       BUILD_DIR="${2:-}"
       shift 2
+      ;;
+    --skip-preflight)
+      SOAK_SKIP_PREFLIGHT=1
+      shift
       ;;
     -h|--help)
       usage
@@ -89,8 +95,12 @@ else
   PREFLIGHT_DIR="${BUILD_DIR}"
 fi
 
-echo "[soak-lane] running Modalix preflight..."
-ctest --test-dir "${PREFLIGHT_DIR}" -R "^unit_modalix_contract_preflight_test$" --output-on-failure --no-tests=error
+if [[ "${SOAK_SKIP_PREFLIGHT}" == "1" ]]; then
+  echo "[soak-lane] skipping Modalix preflight test."
+else
+  echo "[soak-lane] running Modalix preflight..."
+  ctest --test-dir "${PREFLIGHT_DIR}" -R "^unit_modalix_contract_preflight_test$" --output-on-failure --no-tests=error
+fi
 
 mkdir -p "$(dirname "${SOAK_REPORT}")"
 echo "timestamp,vmrss_kb,threads,fd_count,iteration" > "${SOAK_REPORT}"

@@ -370,6 +370,14 @@ install(
 )
 
 install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/python/tests
+  COMPONENT extras
+  FILES_MATCHING
+    PATTERN "*.py"
+)
+
+install(
   FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_codex_skill.sh
   DESTINATION ${CMAKE_INSTALL_BINDIR}
   RENAME sima-neat-install-skill
