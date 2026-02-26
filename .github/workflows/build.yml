@@ -352,17 +352,14 @@ jobs:
       - name: Run Python pytest from installed extras
         run: |
           PYTEST_DIR="$(cat _work/pytest_dir.txt)"
-          PYTHON_BIN=""
-          for candidate in "${HOME}/pyneat/.venv/bin/python" "python3"; do
-            if command -v "${candidate}" >/dev/null 2>&1 && "${candidate}" -c "import pytest" >/dev/null 2>&1; then
-              PYTHON_BIN="${candidate}"
-              break
-            fi
-          done
-          if [[ -z "${PYTHON_BIN}" ]]; then
-            echo "pytest is not available in ${HOME}/pyneat/.venv/bin/python or python3." >&2
+          PYTHON_BIN="${HOME}/pyneat/.venv/bin/python"
+          if [[ ! -x "${PYTHON_BIN}" ]]; then
+            echo "Expected virtualenv python not found: ${PYTHON_BIN}" >&2
             exit 1
           fi
+
+          "${PYTHON_BIN}" -m pip install --upgrade pip
+          "${PYTHON_BIN}" -m pip install pytest
           "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
 
   docs:
