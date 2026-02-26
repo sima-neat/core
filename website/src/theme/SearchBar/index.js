@@ -51,6 +51,19 @@ function hitRoute(hitUrl) {
   return hitUrl;
 }
 
+function hitRouteWithQuery(hitUrl, q) {
+  const route = hitRoute(hitUrl);
+  const term = (q || "").trim();
+  if (!term) return route;
+  try {
+    const u = new URL(route, "https://local.search");
+    u.searchParams.set("q", term);
+    return `${u.pathname}${u.search}${u.hash}`;
+  } catch {
+    return route;
+  }
+}
+
 export default function SearchBar() {
   const {siteConfig} = useDocusaurusContext();
   const appId = siteConfig.customFields?.algoliaSearch?.appId;
@@ -248,7 +261,7 @@ export default function SearchBar() {
                   {activeHits.map((hit) => (
                     <li key={hit.objectID} className={styles.resultItem}>
                       <Link
-                        to={hitRoute(hit.url)}
+                        to={hitRouteWithQuery(hit.url, query)}
                         className={styles.resultLink}
                         onClick={() => setOpen(false)}
                       >

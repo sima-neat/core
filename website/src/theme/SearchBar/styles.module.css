@@ -135,6 +135,15 @@
   color: var(--ifm-color-emphasis-700);
 }
 
+.resultTitle :global(em),
+.resultSnippet :global(em) {
+  background: #fff3a3;
+  color: inherit;
+  font-style: normal;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
 .status,
 .error {
   padding: 10px 12px;

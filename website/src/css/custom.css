@@ -241,3 +241,10 @@ html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
   background: rgba(248, 113, 113, 0.2);
   color: #ffb7b7;
 }
+
+mark.docSearchHighlight {
+  background: #fff3a3;
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
+}
