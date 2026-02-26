@@ -85,6 +85,25 @@ install_debs_on_board() {
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
 }
 
+install_debs_into_sysroot() {
+  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  if [[ ! -d "${sysroot}" ]]; then
+    echo "SYSROOT does not exist: ${sysroot}" >&2
+    exit 1
+  fi
+  if ! command -v dpkg-deb >/dev/null 2>&1; then
+    echo "dpkg-deb is required for eLxr SDK/sysroot installs." >&2
+    exit 1
+  fi
+
+  log "Detected eLxr SDK environment; installing DEBs into sysroot: ${sysroot}"
+  local deb
+  for deb in "${DEBS[@]}"; do
+    log "Extracting $(basename "${deb}") into ${sysroot}"
+    dpkg-deb -x "${deb}" "${sysroot}"
+  done
+}
+
 mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
@@ -93,9 +112,7 @@ fi
 
 ENV_MODE="$(detect_env_mode)"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
-  echo "eLxr SDK installation is temporarily disabled." >&2
-  echo "Please install and run NEAT on a Modalix DevKit for now." >&2
-  exit 1
+  install_debs_into_sysroot
 else
   python3 -m venv "${VENV_DIR}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip

@@ -1193,6 +1193,16 @@ build_extras_archive_if_requested() {
     mkdir -p "${install_prefix}"
     cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
 
+    # Include source-side CMake manifests so downstream jobs can inspect and
+    # reason about test/example/tutorial layout from extras alone.
+    mkdir -p \
+      "${install_prefix}/share/sima-neat/tests" \
+      "${install_prefix}/share/sima-neat/examples" \
+      "${install_prefix}/share/sima-neat/tutorials"
+    cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
+    cp -f "examples/CMakeLists.txt" "${install_prefix}/share/sima-neat/examples/CMakeLists.txt"
+    cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
+
     if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
       echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
       exit 1
