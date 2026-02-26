@@ -93,7 +93,11 @@ def _basic_valid_mpk_path():
   from pathlib import Path
 
   root = Path(__file__).resolve().parents[2]
-  return root / "tests" / "assets" / "mpk" / "valid" / "basic_valid.mpk"
+  fixture_root = root / "tests" / "assets" / "mpk" / "valid"
+  mpk = fixture_root / "basic_valid.mpk"
+  if mpk.exists():
+    return mpk
+  return fixture_root / "basic_valid.tar"
 
 
 def test_model_build_accepts_numpy_without_type_error():

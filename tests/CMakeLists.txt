@@ -943,6 +943,16 @@ install(
     PATTERN "*.h"
 )
 
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/mpk/
+  DESTINATION share/sima-neat/tests/assets/mpk
+  COMPONENT extras
+  FILES_MATCHING
+    PATTERN "*.json"
+    PATTERN "*.tar"
+    PATTERN "*.mpk"
+)
+
 # Keep standard extras behavior (full tests tree install), but trim payload
 # aggressively for sanitizer gate artifact builds.
 if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
