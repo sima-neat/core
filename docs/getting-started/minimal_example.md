@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # Hello SiMa!
 
-Use this minimal example as a quick verification that NEAT is properly installed on your Modalix DevKit.
+Use this minimal example to quickly verify that NEAT is installed correctly on your Modalix DevKit or your eLxr SDK cross compilation environment.
 
 Create a new folder with these files:
 
@@ -27,7 +27,18 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(SimaNeat REQUIRED)
+# Supports both:
+# - DevKit/native installs (system paths)
+# - Cross builds with SYSROOT exported (SDK sysroot paths)
+if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
+  list(APPEND CMAKE_PREFIX_PATH
+    "$ENV{SYSROOT}/usr"
+    "$ENV{SYSROOT}/usr/lib"
+    "$ENV{SYSROOT}/usr/lib/aarch64-linux-gnu"
+  )
+endif()
+
+find_package(SimaNeat REQUIRED CONFIG)
 
 add_executable(sima_neat_hello main.cpp)
 target_link_libraries(sima_neat_hello PRIVATE SimaNeat::sima_neat)
@@ -50,13 +61,29 @@ int main() {
 }
 ```
 
-Build and run:
+Setup cross-compilation environment (eLxr SDK only):
+
+```bash
+source /opt/bin/simaai-init-build-env modalix
+```
+
+Build (common for DevKit-native and eLxr SDK cross-compilation workflows):
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
+```
+
+Run:
+
+```bash
+# DevKit/native run
 ./build/sima_neat_hello
 ```
+
+Notes:
+- DevKit/native: build and run locally.
+- eLxr SDK cross-compilation: `./build/sima_neat_hello` is a target binary. Copy it to a Modalix device and run it there.
   </div>
 
   <div class="minimal-tab-panel">

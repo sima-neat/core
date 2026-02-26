@@ -432,18 +432,35 @@ jobs:
             --delimiter '/' \
             > _work/index/prefixes.json
 
+          curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/branches?per_page=100" \
+            > _work/index/git_branches.json
+
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           data = json.loads(Path("_work/index/prefixes.json").read_text(encoding="utf-8"))
+          git_branches = json.loads(Path("_work/index/git_branches.json").read_text(encoding="utf-8"))
+
+          active_branch_keys = set()
+          for item in git_branches:
+            branch_name = str(item.get("name", "")).strip()
+            if not branch_name:
+              continue
+            branch_key = branch_name.replace("/", "--").replace(" ", "--")
+            if branch_key:
+              active_branch_keys.add(branch_key)
+
           branches = []
           for item in data.get("CommonPrefixes", []):
             prefix = str(item.get("Prefix", ""))
             if not prefix.startswith("neat/"):
               continue
             branch = prefix[len("neat/"):].strip("/")
-            if branch:
+            if branch and branch in active_branch_keys:
               branches.append(branch)
 
           payload = {"branches": sorted(set(branches))}
