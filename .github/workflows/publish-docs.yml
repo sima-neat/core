@@ -39,7 +39,14 @@ jobs:
         env:
           DOCS_URL: https://ps.modalix.info
           DOCS_BASE_URL: /
+          DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
+          DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
+          DOCS_ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
         run: |
+          if [[ -z "${DOCS_ALGOLIA_APP_ID}" || -z "${DOCS_ALGOLIA_API_KEY}" || -z "${DOCS_ALGOLIA_INDEX_NAME}" ]]; then
+            echo "Missing docs build Algolia secrets: DOCS_ALGOLIA_APP_ID / DOCS_ALGOLIA_API_KEY / DOCS_ALGOLIA_INDEX_NAME" >&2
+            exit 1
+          fi
           ./build.sh --doc
 
       - name: Verify build output
