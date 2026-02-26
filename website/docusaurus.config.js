@@ -86,7 +86,10 @@ const config = {
       indexName: algoliaIndexName,
     },
   },
-  clientModules: [require.resolve("./src/clientModules/language-preference.js")],
+  clientModules: [
+    require.resolve("./src/clientModules/language-preference.js"),
+    require.resolve("./src/clientModules/search-highlight.js"),
+  ],
 };
 
 module.exports = config;
