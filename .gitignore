@@ -67,6 +67,7 @@ rtsp_decoder_direct.nv12
 *.mpk
 downloads/
 models/
+!basic_valid.mpk
 
 # Images (ignored by default outside fixture paths)
 *.jpg

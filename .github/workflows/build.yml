@@ -424,6 +424,8 @@ jobs:
             --paths "/*"
 
       - name: Refresh branches.json
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p _work/index
           aws s3api list-objects-v2 \
@@ -432,25 +434,44 @@ jobs:
             --delimiter '/' \
             > _work/index/prefixes.json
 
-          curl -fsSL \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ github.token }}" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/branches?per_page=100" \
-            > _work/index/git_branches.json
-
           python3 - <<'PY'
           import json
+          import os
+          import urllib.request
           from pathlib import Path
 
           data = json.loads(Path("_work/index/prefixes.json").read_text(encoding="utf-8"))
-          git_branches = json.loads(Path("_work/index/git_branches.json").read_text(encoding="utf-8"))
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GH_TOKEN"]
+
+          git_branches = []
+          page = 1
+          while True:
+            url = f"https://api.github.com/repos/{repo}/branches?per_page=100&page={page}"
+            req = urllib.request.Request(
+              url,
+              headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {token}",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            )
+            with urllib.request.urlopen(req) as resp:
+              batch = json.loads(resp.read().decode("utf-8"))
+            if not batch:
+              break
+            git_branches.extend(batch)
+            if len(batch) < 100:
+              break
+            page += 1
 
           active_branch_keys = set()
           for item in git_branches:
             branch_name = str(item.get("name", "")).strip()
             if not branch_name:
               continue
-            branch_key = branch_name.replace("/", "--").replace(" ", "--")
+            # Keep normalization aligned with shell: tr '/ ' '--' -> '/' and ' ' both become '-'.
+            branch_key = branch_name.replace("/", "-").replace(" ", "-")
             if branch_key:
               active_branch_keys.add(branch_key)
 

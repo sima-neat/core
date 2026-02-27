@@ -100,7 +100,7 @@ install_debs_into_sysroot() {
   local deb
   for deb in "${DEBS[@]}"; do
     log "Extracting $(basename "${deb}") into ${sysroot}"
-    dpkg-deb -x "${deb}" "${sysroot}"
+    run_sudo dpkg-deb -x "${deb}" "${sysroot}"
   done
 }
 
