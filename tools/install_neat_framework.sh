@@ -24,6 +24,7 @@ set -euo pipefail
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
+# - NEAT_SDK_SYSROOT_OVERLAY: user-writable fallback sysroot overlay path
 
 VENV_DIR="${PYNEAT_VENV_DIR:-$HOME/pyneat/.venv}"
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
@@ -85,12 +86,31 @@ install_debs_on_board() {
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
 }
 
-install_debs_into_sysroot() {
-  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
-  if [[ ! -d "${sysroot}" ]]; then
-    echo "SYSROOT does not exist: ${sysroot}" >&2
+resolve_sdk_install_root() {
+  local preferred="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local overlay="${NEAT_SDK_SYSROOT_OVERLAY:-$HOME/.cache/sima-neat/sysroot-overlay}"
+
+  if [[ ! -d "${preferred}" ]]; then
+    echo "SYSROOT does not exist: ${preferred}" >&2
     exit 1
   fi
+
+  if mkdir -p "${preferred}/.neat-write-test" 2>/dev/null; then
+    rmdir "${preferred}/.neat-write-test" 2>/dev/null || true
+    printf '%s\n' "${preferred}"
+    return 0
+  fi
+
+  mkdir -p "${overlay}"
+  printf '[install_neat_framework] %s\n' "SYSROOT is not writable without sudo: ${preferred}" >&2
+  printf '[install_neat_framework] %s\n' "Using user overlay sysroot for NEAT packages: ${overlay}" >&2
+  printf '[install_neat_framework] %s\n' "For CMake consumers, prepend CMAKE_PREFIX_PATH with: ${overlay}/usr" >&2
+  printf '%s\n' "${overlay}"
+}
+
+install_debs_into_sysroot() {
+  local sysroot
+  sysroot="$(resolve_sdk_install_root)"
   if ! command -v dpkg-deb >/dev/null 2>&1; then
     echo "dpkg-deb is required for eLxr SDK/sysroot installs." >&2
     exit 1
