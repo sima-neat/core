@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# s3_install.sh
+# install-neat-from-a-branch.sh
 #
 # Purpose:
 # - Install NEAT from S3-hosted metadata via sima-cli.
@@ -11,6 +11,9 @@ set -euo pipefail
 #
 # Inputs:
 # - Positional arg 1 (optional): branch name
+# - Positional arg 2 (optional): artifact tag or git hash
+#   - latest: resolve latest.tag for the selected branch
+#   - otherwise: use the provided value directly
 #
 # Environment:
 # - NEAT_ARTIFACTS_BASE_URL: base URL for artifact index/tag metadata
@@ -18,18 +21,20 @@ set -euo pipefail
 # - SIMA_CLI_BIN: sima-cli binary/path override (default: sima-cli)
 #
 # Example:
-# - Non-interactive: bash tools/s3_install.sh feature/docs
-# - Interactive:     bash tools/s3_install.sh
+# - Non-interactive latest: bash tools/install-neat-from-a-branch.sh feature/docs
+# - Non-interactive fixed:  bash tools/install-neat-from-a-branch.sh feature/docs 1a2b3c4
+# - Interactive:            bash tools/install-neat-from-a-branch.sh
 #
 BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://neat-artifacts.modalix.info/neat}"
 CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 CLI_FALLBACK="/data/sima-cli/.venv/bin/sima-cli"
 BRANCH="${1:-}"
+TAG_INPUT="${2:-latest}"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  install.sh [branch]
+  install-neat-from-a-branch.sh [branch] [latest|git-hash]
 
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Base URL for neat artifacts (default: https://neat-artifacts.modalix.info/neat)
@@ -112,10 +117,14 @@ PY
   BRANCH="${BRANCHES[$((choice - 1))]}"
 fi
 
-TAG="$(download_text "${BASE_URL}/${BRANCH}/latest.tag" | tr -d '[:space:]')"
-if [[ -z "${TAG}" ]]; then
-  echo "latest.tag is empty for branch: ${BRANCH}" >&2
-  exit 1
+if [[ "${TAG_INPUT}" == "latest" ]]; then
+  TAG="$(download_text "${BASE_URL}/${BRANCH}/latest.tag" | tr -d '[:space:]')"
+  if [[ -z "${TAG}" ]]; then
+    echo "latest.tag is empty for branch: ${BRANCH}" >&2
+    exit 1
+  fi
+else
+  TAG="${TAG_INPUT}"
 fi
 
 METADATA_URL="${BASE_URL}/${BRANCH}/${TAG}/metadata.json"
