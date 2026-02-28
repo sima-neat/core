@@ -30,7 +30,8 @@ You can optionally install extras, including prebuilt and source-code tutorials,
 Use this to try the latest automated build. This installation method also prompts you to select the latest artifacts from any branch.
 
 ```bash
-wget -O /tmp/install-neat.sh https://tools.modalix.info/install-neat.sh && bash /tmp/install-neat.sh
+wget -O /tmp/install-neat-from-a-branch.sh https://tools.modalix.info/install-neat-from-a-branch.sh && \
+  bash /tmp/install-neat-from-a-branch.sh
 ```
 
 ## Specific Build
@@ -38,7 +39,8 @@ wget -O /tmp/install-neat.sh https://tools.modalix.info/install-neat.sh && bash 
 Use this to test a specific branch and commit.
 
 ```bash
-sima-cli install -m https://neat-artifacts.modalix.info/neat/{branch}/{githash}/metadata.json
+wget -O /tmp/install-neat-from-a-branch.sh https://tools.modalix.info/install-neat-from-a-branch.sh && \
+  bash /tmp/install-neat-from-a-branch.sh {branch} {githash}
 ```
 
 Replace:
