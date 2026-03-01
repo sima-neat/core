@@ -21,6 +21,7 @@ set -euo pipefail
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
+# - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
@@ -29,6 +30,20 @@ SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
 log() {
   printf '[install_neat_framework] %s\n' "$*"
+}
+
+resolve_venv_dir() {
+  if [[ -n "${PYNEAT_VENV_DIR:-}" ]]; then
+    printf '%s\n' "${PYNEAT_VENV_DIR}"
+    return 0
+  fi
+
+  if [[ -d /media/nvme && -w /media/nvme ]]; then
+    printf '%s\n' "/media/nvme/pyneat"
+    return 0
+  fi
+
+  printf '%s\n' "$HOME/pyneat"
 }
 
 resolve_venv_dir() {
@@ -127,6 +142,13 @@ ENV_MODE="$(detect_env_mode)"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
 else
+  VENV_DIR="$(resolve_venv_dir)"
+  mkdir -p "$(dirname "${VENV_DIR}")"
+  python3 -m venv --system-site-packages "${VENV_DIR}"
+  printf '\n=============================================================\n'
+  printf ' PYNEAT VIRTUAL ENV INSTALLED AT:\n'
+  printf ' %s\n' "${VENV_DIR}"
+  printf '=============================================================\n\n'
   VENV_DIR="$(resolve_venv_dir)"
   mkdir -p "$(dirname "${VENV_DIR}")"
   python3 -m venv --system-site-packages "${VENV_DIR}"
