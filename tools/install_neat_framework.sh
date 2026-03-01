@@ -141,6 +141,6 @@ else
     echo "No wheel file found in current directory." >&2
     exit 1
   fi
-  "${VENV_DIR}/bin/python" -m pip install--no-deps --force-reinstall "${WHEEL_FILE}"
+  "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
   install_debs_on_board
 fi
