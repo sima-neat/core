@@ -6,7 +6,14 @@ sidebar_position: 3
 
 # Hello SiMa!
 
-Use this minimal example to quickly verify that NEAT is installed correctly on your Modalix DevKit or your eLxr SDK cross compilation environment.
+## Minimal Example
+
+Use this page to quickly verify that SiMa NEAT is installed correctly on either:
+
+- a Modalix DevKit
+- an eLxr SDK cross-compilation environment
+
+The goal is intentionally simple: build and run the smallest possible application that links against NEAT successfully.
 
 Create a new folder with these files:
 
@@ -61,13 +68,13 @@ int main() {
 }
 ```
 
-Setup cross-compilation environment (eLxr SDK only):
+Set up the cross-compilation environment (eLxr SDK only):
 
 ```bash
 source /opt/bin/simaai-init-build-env modalix
 ```
 
-Build (common for DevKit-native and eLxr SDK cross-compilation workflows):
+Build the example:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -81,9 +88,10 @@ Run:
 ./build/sima_neat_hello
 ```
 
-Notes:
+:::note Build Target
 - DevKit/native: build and run locally.
 - eLxr SDK cross-compilation: `./build/sima_neat_hello` is a target binary. Copy it to a Modalix device and run it there.
+:::
   </div>
 
   <div class="minimal-tab-panel">
@@ -103,8 +111,19 @@ if __name__ == "__main__":
 Run:
 
 ```bash
-source ~/pyneat/.venv/bin/activate
+# The installer typically creates the pyneat virtual environment in one of:
+# - /media/nvme/pyneat
+# - $HOME/pyneat
+source /media/nvme/pyneat/bin/activate
 python3 hello_neat.py
 ```
   </div>
 </div>
+
+
+## Next Steps
+Once this minimal example works, the next step is to explore the broader SiMa NEAT learning material.
+
+- Learn the [core programming model](./programming-model/overview), which explains the main NEAT concepts such as sessions, models, pipeline stages, and graph execution.
+- Follow the [tutorials](../tutorials/index), which walk through specific concepts and workflows step by step.
+- Curated example applications on the [apps portal](https://apps.sima-neat.com/portal), with source code available in the [apps repository on GitHub](https://github.com/sima-neat/apps)
