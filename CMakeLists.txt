@@ -28,7 +28,7 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME core)
 # Build options
 # ------------------------------------------------------------------------------
 option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
-option(SIMANEAT_BUILD_SAMPLES "Build example applications" ON)
+option(SIMANEAT_BUILD_SAMPLES "Build example applications" OFF)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
