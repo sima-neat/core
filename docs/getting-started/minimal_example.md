@@ -126,4 +126,4 @@ Once this minimal example works, the next step is to explore the broader SiMa NE
 
 - Learn the [core programming model](./programming-model/overview), which explains the main NEAT concepts such as sessions, models, pipeline stages, and graph execution.
 - Follow the [tutorials](../tutorials/index), which walk through specific concepts and workflows step by step.
-- Curated example applications on the [apps portal](https://apps.sima-neat.com/portal), with source code available in the [apps repository on GitHub](https://github.com/sima-neat/apps)
+- Curated example applications on the [apps portal](https://apps.sima-neat.com/portal), with source code available in the [apps repository on GitHub](https://github.com/sima-neat/apps).
