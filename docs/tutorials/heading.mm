@@ -10,12 +10,10 @@ Prebuilt layout:
 .
 ├── lib
 │   └── sima-neat
-│       ├── examples
 │       ├── tests
 │       └── tutorials
 └── share
     └── sima-neat
-        ├── examples
         ├── tests
         └── tutorials
 ```

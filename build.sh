@@ -19,7 +19,6 @@ DOCS_ONLY=OFF
 INSTALL_NODE=ON
 SKIP_DOCS=OFF
 INSTALL_DEPS_ONLY=OFF
-EXAMPLES_ONLY=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
@@ -102,8 +101,7 @@ Usage: ./build.sh [options]
 
 Options:
   --dev-only     Build only the core library + headers (DEFAULT)
-  --all          Build library + samples + tests + Python wheel
-  --example      Build only examples (and core library)
+  --all          Build library + tests + tutorials + Python wheel
   --python       Build Python bindings (pyneat) in addition to selected targets
   --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
@@ -139,7 +137,6 @@ parse_args() {
         shift
         ;;
       --all)
-        BUILD_SAMPLES=ON
         BUILD_TESTS=ON
         BUILD_TUTORIALS=ON
         BUILD_DOCS=ON
@@ -201,11 +198,8 @@ parse_args() {
         shift
         ;;
       --example)
-        BUILD_SAMPLES=ON
-        BUILD_TESTS=OFF
-        BUILD_DOCS=OFF
-        EXAMPLES_ONLY=ON
-        shift
+        echo "ERROR: Core no longer builds examples. Use the separate apps repository for curated examples." >&2
+        exit 1
         ;;
       --clean)
         DO_CLEAN=ON
@@ -930,7 +924,6 @@ print_build_config() {
   echo "Sanitizer mode : ${BUILD_SANITIZER_MODE:-none}"
   echo "Gate-only extras: ${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
-  echo "Examples only  : ${EXAMPLES_ONLY}"
   echo "Skip dist      : ${SKIP_DIST}"
   echo "Skip docs      : ${SKIP_DOCS}"
   echo "Clean build    : ${DO_CLEAN}"
@@ -1016,42 +1009,7 @@ build_docs_only_if_requested() {
 
 build_targets() {
   # For dev-only builds, avoid building tests/tutorials/samples by targeting core lib.
-  if [[ "${EXAMPLES_ONLY}" == "ON" ]]; then
-    # Build only example executables (and their dependencies).
-    mapfile -t EXAMPLE_BLACKLIST < <(
-      # Parse SIMANEAT_EXAMPLE_BLACKLIST from CMake to stay aligned with source of truth.
-      awk '
-        /set\(SIMANEAT_EXAMPLE_BLACKLIST/ {in_list=1; next}
-        in_list {
-          if ($0 ~ /\)/) {exit}
-          sub(/#.*/, "", $0)
-          gsub(/[[:space:]]+/, "", $0)
-          if (length($0) > 0) print $0
-        }
-      ' examples/CMakeLists.txt
-    )
-
-    EXAMPLE_TARGETS=()
-    local src fname
-    # Build all examples except helper translation units and blacklisted files.
-    for src in examples/*.cpp; do
-      fname="$(basename "${src}")"
-      if [[ "${fname}" == "example_utils.cpp" ]]; then
-        continue
-      fi
-      if [[ " ${EXAMPLE_BLACKLIST[*]} " == *" ${fname} "* ]]; then
-        continue
-      fi
-      EXAMPLE_TARGETS+=("${fname%.cpp}")
-    done
-
-    if (( ${#EXAMPLE_TARGETS[@]} == 0 )); then
-      echo "ERROR: No example targets found to build."
-      exit 1
-    fi
-
-    cmake --build "${BUILD_DIR}" --target "${EXAMPLE_TARGETS[@]}" -j"${BUILD_JOBS}"
-  elif [[ "${BUILD_SAMPLES}" == "OFF" && "${BUILD_TESTS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
+  if [[ "${BUILD_SAMPLES}" == "OFF" && "${BUILD_TESTS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
     cmake --build "${BUILD_DIR}" --target sima_neat -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
@@ -1194,13 +1152,11 @@ build_extras_archive_if_requested() {
     cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
 
     # Include source-side CMake manifests so downstream jobs can inspect and
-    # reason about test/example/tutorial layout from extras alone.
+    # reason about test/tutorial layout from extras alone.
     mkdir -p \
       "${install_prefix}/share/sima-neat/tests" \
-      "${install_prefix}/share/sima-neat/examples" \
       "${install_prefix}/share/sima-neat/tutorials"
     cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
-    cp -f "examples/CMakeLists.txt" "${install_prefix}/share/sima-neat/examples/CMakeLists.txt"
     cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
 
     if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then

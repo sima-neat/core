@@ -55,8 +55,7 @@ sima-cli install tools/sdk-patch
 Supported `build.sh` options:
 
 - `--dev-only`: Build only the core library and headers (default).
-- `--all`: Build library + samples + tests + Python wheel; enables docs and neat-internals.
-- `--example`: Build examples only (and core library dependencies).
+- `--all`: Build library + tests + tutorials + Python wheel; enables docs and neat-internals.
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
 - `--install-neat-internals`: Download and install neat-internals artifacts before build.
 - `--doc`: Build docs only.
@@ -74,16 +73,10 @@ Core library only (default):
 ./build.sh
 ```
 
-Full build (library, samples, tests, docs, wheel, packaging):
+Full build (library, tests, tutorials, docs, wheel, packaging):
 
 ```bash
 ./build.sh --all
-```
-
-Examples only:
-
-```bash
-./build.sh --example
 ```
 
 Core library + Python bindings:
