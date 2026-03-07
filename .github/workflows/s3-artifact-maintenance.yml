@@ -28,8 +28,7 @@ jobs:
     env:
       AWS_REGION: us-east-1
       S3_BUCKET: sima-neat-artifacts
-      MAIN_RETENTION_DAYS: "30"
-      NON_MAIN_RETENTION_DAYS: "7"
+      NON_LATEST_RETENTION_DAYS: "7"
 
     steps:
       - name: Resolve execution mode
@@ -52,6 +51,7 @@ jobs:
       - name: Cleanup expired artifact objects
         env:
           DRY_RUN: ${{ steps.mode.outputs.dry_run }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -59,6 +59,9 @@ jobs:
           deleted_count=0
           kept_count=0
           scanned_count=0
+
+          declare -A active_branches=()
+          declare -A latest_tags=()
 
           delete_or_echo() {
             local key="$1"
@@ -70,9 +73,109 @@ jobs:
             fi
           }
 
+          is_release_branch() {
+            local branch="$1"
+            [[ "${branch}" =~ ^release-[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]] ||
+              [[ "${branch}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$ ]]
+          }
+
+          load_active_branches() {
+            local page=1
+            local response
+            local branch_name
+            local branch_key
+
+            while :; do
+              response="$(curl -fsSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/branches?per_page=100&page=${page}")"
+
+              if [[ "$(jq 'length' <<<"${response}")" == "0" ]]; then
+                break
+              fi
+
+              while IFS= read -r branch_name; do
+                [[ -z "${branch_name}" ]] && continue
+                branch_key="$(echo "${branch_name}" | tr '/ ' '--')"
+                active_branches["${branch_key}"]=1
+              done < <(jq -r '.[].name // empty' <<<"${response}")
+
+              if [[ "$(jq 'length' <<<"${response}")" -lt 100 ]]; then
+                break
+              fi
+              page=$((page + 1))
+            done
+          }
+
+          load_latest_tags() {
+            local token=""
+            local response
+            local key
+            local branch
+            local tag
+
+            while :; do
+              if [[ -n "${token}" ]]; then
+                response="$(aws s3api list-objects-v2 \
+                  --bucket "${S3_BUCKET}" \
+                  --prefix "neat/" \
+                  --continuation-token "${token}" \
+                  --output json)"
+              else
+                response="$(aws s3api list-objects-v2 \
+                  --bucket "${S3_BUCKET}" \
+                  --prefix "neat/" \
+                  --output json)"
+              fi
+
+              while IFS= read -r key; do
+                [[ "${key}" != neat/*/latest.tag ]] && continue
+                branch="${key#neat/}"
+                branch="${branch%/latest.tag}"
+                tag="$(aws s3 cp "s3://${S3_BUCKET}/${key}" - 2>/dev/null | tr -d '[:space:]' || true)"
+                if [[ -n "${tag}" ]]; then
+                  latest_tags["${branch}"]="${tag}"
+                fi
+              done < <(jq -r '.Contents[]?.Key // empty' <<<"${response}")
+
+              token="$(jq -r '.NextContinuationToken // empty' <<<"${response}")"
+              if [[ -z "${token}" ]]; then
+                break
+              fi
+            done
+          }
+
+          keep_as_latest() {
+            local branch="$1"
+            local artifact_path="$2"
+            local latest_tag="${latest_tags[${branch}]:-}"
+
+            [[ -n "${active_branches[${branch}]:-}" ]] || return 1
+
+            if [[ "${artifact_path}" == "latest.tag" ]]; then
+              return 0
+            fi
+            if [[ "${artifact_path}" == "latest" ]] || [[ "${artifact_path}" == latest/* ]]; then
+              return 0
+            fi
+
+            if [[ -n "${latest_tag}" ]]; then
+              if [[ "${artifact_path}" == "${latest_tag}" ]] || [[ "${artifact_path}" == "${latest_tag}/"* ]]; then
+                return 0
+              fi
+            fi
+
+            return 1
+          }
+
           cleanup_prefix() {
             local prefix="$1"
             local token=""
+            local artifact_path=""
+            local branch=""
+            local retention_days="${NON_LATEST_RETENTION_DAYS}"
 
             echo "Scanning prefix: ${prefix}/"
             while :; do
@@ -102,9 +205,16 @@ jobs:
                 fi
 
                 branch="${rel%%/*}"
-                retention_days="${NON_MAIN_RETENTION_DAYS}"
-                if [[ "${branch}" == "main" ]]; then
-                  retention_days="${MAIN_RETENTION_DAYS}"
+                artifact_path="${rel#*/}"
+
+                if is_release_branch "${branch}"; then
+                  kept_count=$((kept_count + 1))
+                  continue
+                fi
+
+                if keep_as_latest "${branch}" "${artifact_path}"; then
+                  kept_count=$((kept_count + 1))
+                  continue
                 fi
 
                 obj_epoch="$(date -d "${last_modified}" +%s)"
@@ -124,6 +234,11 @@ jobs:
               fi
             done
           }
+
+          load_active_branches
+          load_latest_tags
+          echo "Active branches discovered: ${#active_branches[@]}"
+          echo "Latest tags discovered: ${#latest_tags[@]}"
 
           cleanup_prefix "neat"
           cleanup_prefix "neat-internals"
