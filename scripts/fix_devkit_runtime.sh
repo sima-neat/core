@@ -32,6 +32,13 @@ empty_coprocessing() {
   fi
 
   run_step "empty coprocessing directory" find "${TARGET_COPROCESSING_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+  run_step "remove /tmp/simaai-* and /tmp/sima_*" bash -c '
+    shopt -s nullglob
+    paths=(/tmp/simaai-* /tmp/sima_*)
+    if (( ${#paths[@]} > 0 )); then
+      rm -rf -- "${paths[@]}"
+    fi
+  '
 }
 
 empty_coprocessing
