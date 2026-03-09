@@ -3,6 +3,8 @@ set +e
 
 # Recovery script to bring a devkit out of a bad runtime state by
 # restarting remote processors and related services.
+TARGET_COPROCESSING_DIR="/data/simaai/coprocessing"
+
 if [[ $# -gt 0 ]]; then
   pass="$1"
 else
@@ -18,6 +20,21 @@ run_step() {
   return $rc
 }
 
+empty_coprocessing() {
+  if [[ "${TARGET_COPROCESSING_DIR}" != "/data/simaai/coprocessing" ]]; then
+    printf "[recovery] empty coprocessing skipped: unexpected target %s\n" "${TARGET_COPROCESSING_DIR}"
+    return 1
+  fi
+
+  if [[ ! -d "${TARGET_COPROCESSING_DIR}" ]]; then
+    printf "[recovery] empty coprocessing skipped: directory not found %s\n" "${TARGET_COPROCESSING_DIR}"
+    return 0
+  fi
+
+  run_step "empty coprocessing directory" find "${TARGET_COPROCESSING_DIR}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+}
+
+empty_coprocessing
 run_step "remoteproc0 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'
 run_step "remoteproc1 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc1/state'
 run_step "remoteproc1 start" sh -c 'echo start > /sys/class/remoteproc/remoteproc1/state'
