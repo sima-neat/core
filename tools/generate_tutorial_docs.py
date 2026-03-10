@@ -380,7 +380,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
             "",
             "```bash",
             "NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>",
-            "source ~/pyneat/.venv/bin/activate",
+            "source ~/pyneat/bin/activate",
             f"python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/{module.folder}/{py_script_name}",
             "```",
             "",
