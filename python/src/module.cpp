@@ -28,6 +28,8 @@
 #include "mpk/PipelineSequence.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
+#include "nodes/sima/Preproc.h"
+#include "nodes/sima/QuantTess.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
@@ -48,6 +50,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -130,6 +133,71 @@ bool checked_add(std::size_t a, std::size_t b, std::size_t* out) {
     return false;
   *out = a + b;
   return true;
+}
+
+nb::object json_to_python(const nlohmann::json& value) {
+  if (value.is_null())
+    return nb::none();
+  if (value.is_boolean())
+    return nb::bool_(value.get<bool>());
+  if (value.is_number_integer())
+    return nb::int_(value.get<std::int64_t>());
+  if (value.is_number_unsigned())
+    return nb::int_(value.get<std::uint64_t>());
+  if (value.is_number_float())
+    return nb::float_(value.get<double>());
+  if (value.is_string())
+    return nb::str(value.get_ref<const std::string&>().c_str());
+  if (value.is_array()) {
+    nb::list out;
+    for (const auto& item : value) {
+      out.append(json_to_python(item));
+    }
+    return std::move(out);
+  }
+  if (value.is_object()) {
+    nb::dict out;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+      out[nb::str(it.key().c_str())] = json_to_python(it.value());
+    }
+    return std::move(out);
+  }
+  throw std::runtime_error("unsupported nlohmann::json value in Python binding");
+}
+
+nlohmann::json python_to_json(nb::handle value) {
+  if (value.is_none())
+    return nullptr;
+  if (PyBool_Check(value.ptr()))
+    return nb::cast<bool>(value);
+  if (PyLong_Check(value.ptr()))
+    return nb::cast<std::int64_t>(value);
+  if (PyFloat_Check(value.ptr()))
+    return nb::cast<double>(value);
+  if (PyUnicode_Check(value.ptr()))
+    return nb::cast<std::string>(value);
+  if (PyDict_Check(value.ptr())) {
+    nlohmann::json out = nlohmann::json::object();
+    for (auto item : nb::borrow<nb::dict>(value)) {
+      out[nb::cast<std::string>(item.first)] = python_to_json(item.second);
+    }
+    return out;
+  }
+  if (PyList_Check(value.ptr()) || PyTuple_Check(value.ptr())) {
+    nlohmann::json out = nlohmann::json::array();
+    for (auto item : nb::borrow<nb::sequence>(value)) {
+      out.push_back(python_to_json(item));
+    }
+    return out;
+  }
+  throw nb::type_error(
+      "config_json must be None or a JSON-like Python value (dict, list, str, int, float, bool)");
+}
+
+std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
+  if (value.is_none())
+    return std::nullopt;
+  return python_to_json(value);
 }
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
@@ -1950,6 +2018,91 @@ NB_MODULE(_pyneat_core, m) {
             return model.run(tensor, timeout_ms);
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false);
+
+  nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
+      .def(nb::init<>())
+      .def(nb::init<const simaai::neat::Model&>(), "model"_a)
+      .def_rw("input_width", &simaai::neat::PreprocOptions::input_width)
+      .def_rw("input_height", &simaai::neat::PreprocOptions::input_height)
+      .def_rw("output_width", &simaai::neat::PreprocOptions::output_width)
+      .def_rw("output_height", &simaai::neat::PreprocOptions::output_height)
+      .def_rw("scaled_width", &simaai::neat::PreprocOptions::scaled_width)
+      .def_rw("scaled_height", &simaai::neat::PreprocOptions::scaled_height)
+      .def_rw("input_channels", &simaai::neat::PreprocOptions::input_channels)
+      .def_rw("output_channels", &simaai::neat::PreprocOptions::output_channels)
+      .def_rw("batch_size", &simaai::neat::PreprocOptions::batch_size)
+      .def_rw("normalize", &simaai::neat::PreprocOptions::normalize)
+      .def_rw("aspect_ratio", &simaai::neat::PreprocOptions::aspect_ratio)
+      .def_rw("tessellate", &simaai::neat::PreprocOptions::tessellate)
+      .def_rw("dynamic_input_dims", &simaai::neat::PreprocOptions::dynamic_input_dims)
+      .def_rw("tile_width", &simaai::neat::PreprocOptions::tile_width)
+      .def_rw("tile_height", &simaai::neat::PreprocOptions::tile_height)
+      .def_rw("tile_channels", &simaai::neat::PreprocOptions::tile_channels)
+      .def_rw("input_offset", &simaai::neat::PreprocOptions::input_offset)
+      .def_rw("input_stride", &simaai::neat::PreprocOptions::input_stride)
+      .def_rw("output_stride", &simaai::neat::PreprocOptions::output_stride)
+      .def_rw("q_zp", &simaai::neat::PreprocOptions::q_zp)
+      .def_rw("q_scale", &simaai::neat::PreprocOptions::q_scale)
+      .def_rw("channel_mean", &simaai::neat::PreprocOptions::channel_mean)
+      .def_rw("channel_stddev", &simaai::neat::PreprocOptions::channel_stddev)
+      .def_rw("input_img_type", &simaai::neat::PreprocOptions::input_img_type)
+      .def_rw("output_img_type", &simaai::neat::PreprocOptions::output_img_type)
+      .def_rw("output_dtype", &simaai::neat::PreprocOptions::output_dtype)
+      .def_rw("scaling_type", &simaai::neat::PreprocOptions::scaling_type)
+      .def_rw("padding_type", &simaai::neat::PreprocOptions::padding_type)
+      .def_rw("graph_name", &simaai::neat::PreprocOptions::graph_name)
+      .def_rw("node_name", &simaai::neat::PreprocOptions::node_name)
+      .def_rw("element_name", &simaai::neat::PreprocOptions::element_name)
+      .def_rw("cpu", &simaai::neat::PreprocOptions::cpu)
+      .def_rw("next_cpu", &simaai::neat::PreprocOptions::next_cpu)
+      .def_rw("debug", &simaai::neat::PreprocOptions::debug)
+      .def_rw("upstream_name", &simaai::neat::PreprocOptions::upstream_name)
+      .def_rw("graph_input_name", &simaai::neat::PreprocOptions::graph_input_name)
+      .def_rw("output_memory_order", &simaai::neat::PreprocOptions::output_memory_order)
+      .def_rw("num_buffers", &simaai::neat::PreprocOptions::num_buffers)
+      .def_rw("num_buffers_model", &simaai::neat::PreprocOptions::num_buffers_model)
+      .def_rw("num_buffers_locked", &simaai::neat::PreprocOptions::num_buffers_locked)
+      .def_rw("config_path", &simaai::neat::PreprocOptions::config_path)
+      .def_rw("config_dir", &simaai::neat::PreprocOptions::config_dir)
+      .def_rw("keep_config", &simaai::neat::PreprocOptions::keep_config)
+      .def_prop_rw(
+          "config_json",
+          [](const simaai::neat::PreprocOptions& options) -> nb::object {
+            if (!options.config_json.has_value())
+              return nb::none();
+            return json_to_python(*options.config_json);
+          },
+          [](simaai::neat::PreprocOptions& options, nb::object value) {
+            options.config_json = python_to_optional_json(value);
+          },
+          "value"_a.none());
+
+  nb::class_<simaai::neat::QuantTessOptions>(m, "QuantTessOptions")
+      .def(nb::init<>())
+      .def(nb::init<const simaai::neat::Model&>(), "model"_a)
+      .def_rw("config_path", &simaai::neat::QuantTessOptions::config_path)
+      .def_rw("config_dir", &simaai::neat::QuantTessOptions::config_dir)
+      .def_rw("keep_config", &simaai::neat::QuantTessOptions::keep_config)
+      .def_prop_rw(
+          "config_json",
+          [](const simaai::neat::QuantTessOptions& options) -> nb::object {
+            if (!options.config_json.has_value())
+              return nb::none();
+            return json_to_python(*options.config_json);
+          },
+          [](simaai::neat::QuantTessOptions& options, nb::object value) {
+            options.config_json = python_to_optional_json(value);
+          },
+          "value"_a.none())
+      .def_rw("element_name", &simaai::neat::QuantTessOptions::element_name)
+      .def_rw("num_buffers", &simaai::neat::QuantTessOptions::num_buffers)
+      .def_rw("num_buffers_model", &simaai::neat::QuantTessOptions::num_buffers_model)
+      .def_rw("num_buffers_locked", &simaai::neat::QuantTessOptions::num_buffers_locked);
+
+  nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
+                "options"_a = simaai::neat::PreprocOptions{});
+  nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
+                "options"_a = simaai::neat::QuantTessOptions{});
 
 
   nb::module_ graph_mod = m.def_submodule("graph", "Hybrid graph runtime and helper nodes");
