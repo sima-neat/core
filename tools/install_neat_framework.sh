@@ -74,16 +74,21 @@ ensure_home_pyneat_symlink() {
     return 0
   fi
 
-  # Preserve an existing correct symlink, but refuse to overwrite a real
-  # directory or file in $HOME so we do not destroy user data unexpectedly.
+  # Preserve an existing correct symlink. If $HOME/pyneat is still a real
+  # directory from an older install layout, replace it so activation can always
+  # use ~/pyneat/bin/activate on NVMe-backed devices.
   if [[ -L "${home_pyneat}" ]]; then
     local target
     target="$(readlink "${home_pyneat}")"
     if [[ "${target}" == "${venv_dir}" ]]; then
       return 0
     fi
+    rm -f "${home_pyneat}"
+  elif [[ -d "${home_pyneat}" ]]; then
+    rm -rf "${home_pyneat}"
+    log "Removed existing directory ${home_pyneat} before creating symlink"
   elif [[ -e "${home_pyneat}" ]]; then
-    echo "Cannot create ${home_pyneat} symlink; path already exists and is not the expected symlink." >&2
+    echo "Cannot create ${home_pyneat} symlink; path already exists and is not a directory or symlink." >&2
     exit 1
   fi
 
