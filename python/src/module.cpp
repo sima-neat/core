@@ -1818,8 +1818,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("sync", &simaai::neat::UdpOutputOptions::sync)
       .def_rw("async_", &simaai::neat::UdpOutputOptions::async)
       .def_prop_rw(
-          "async",
-          [](const simaai::neat::UdpOutputOptions& options) { return options.async; },
+          "async", [](const simaai::neat::UdpOutputOptions& options) { return options.async; },
           [](simaai::neat::UdpOutputOptions& options, bool value) { options.async = value; });
 
   nb::enum_<simaai::neat::H264ParseOptions::Alignment>(m, "H264ParseAlignment")
@@ -1849,7 +1848,8 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
-  groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup, "options"_a);
+  groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
+                 "options"_a);
   groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);
@@ -2178,10 +2178,11 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::UdpOutputOptions{});
   nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
                 "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
-  nodes_mod.def("h264_parse",
-                static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(
-                    &simaai::neat::nodes::H264Parse),
-                "options"_a);
+  nodes_mod.def(
+      "h264_parse",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(
+          &simaai::neat::nodes::H264Parse),
+      "options"_a);
   nodes_mod.def(
       "h264_parse",
       [](int config_interval) { return simaai::neat::nodes::H264Parse(config_interval); },
