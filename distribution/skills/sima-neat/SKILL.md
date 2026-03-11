@@ -1,36 +1,38 @@
 # SiMa NEAT Skill
 
-Use this skill when generating, debugging, or refactoring C++ code that builds and runs SiMa NEAT pipelines.
+Use this skill for SiMa NEAT application work in C++ or Python (`pyneat`).
 
-## Goal
+## Environment
 
-Generate production-usable C++20 SiMa NEAT code with correct public APIs, deterministic pipeline composition, and runnable build/test steps.
+- DevKit: use installed NEAT directly.
+- eLxr SDK: expect `SYSROOT=/opt/toolchain/aarch64/modalix`.
+- In SDK, prefer source context from `/neat-resources/core-src` and `/neat-resources/apps-src`.
+- In SDK, prefer `dk`/`devkit-run` for runtime checks on a connected DevKit.
+- On DevKit, Python usually runs from `$HOME/pyneat/bin/activate`.
 
-## Environment Assumptions
+## Defaults
 
-- SiMa NEAT is installed and discoverable via CMake config package.
-- Project uses CMake and links `SimaNeat::sima_neat`.
-- Public headers are available under the install prefix include directory.
+- C++: C++20.
+- Python: use installed public `pyneat`.
+- Public API only.
+- Keep pipeline composition explicit and deterministic.
+- Keep generated examples runnable with build/run commands.
 
-## Required Defaults
+## C++ Default
 
-- Language standard: C++20.
-- Public API only: include files from installed public headers (`include/`), never internal implementation headers.
-- Deterministic pipeline composition: explicit node/group setup and predictable names/options.
-- Keep examples runnable end-to-end with build commands.
+Prefer:
 
-## Preferred Include Surface
+```cpp
+#include <neat.h>
+```
 
-Use specific public headers, for example:
+Use narrower public headers only when the task benefits from tighter dependencies.
 
-- `#include <pipeline/Session.h>`
-- `#include <pipeline/PipelineRun.h>`
-- `#include <pipeline/Tensor.h>`
-- `#include <model/Model.h>`
-- `#include <nodes/io/InputAppSrc.h>`
-- `#include <nodes/common/AppSink.h>`
+## Python Default
 
-## Canonical CMake Template
+Use public `pyneat` only.
+
+## Generated CMake
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)
@@ -46,19 +48,29 @@ add_executable(app main.cpp)
 target_link_libraries(app PRIVATE SimaNeat::sima_neat)
 ```
 
-## Skill Workflow
+## Workflow
 
-1. Classify request by task type (session pipeline, model pipeline, tensor/sample handling, diagnostics, tests).
-2. Select the closest recipe from `references/recipes.md`.
-3. Apply API constraints from `references/api_surface.md` and `references/do_dont.md`.
-4. Validate tensor/sample assumptions via `references/tensor_sample_contracts.md`.
-5. Provide build/test commands from `references/build_test.md`.
+1. Detect environment first:
+   - SDK with `/neat-resources/...`: read source there first.
+   - Installed environment only: use installed headers/runtime paths.
+   - SDK runtime checks: use `dk /workspace/...`.
+2. Detect language:
+   - C++: default to `#include <neat.h>`.
+   - Python: default to installed `pyneat`.
+3. Pick the closest reference:
+   - Environment/runtime: `references/environment_layout.md`, `references/build_test.md`
+   - C++ patterns: `references/recipes.md`
+   - Python patterns: `references/pyneat_patterns.md`
+4. Apply `references/api_surface.md` and `references/do_dont.md`.
+5. Check `references/tensor_sample_contracts.md` when tensors/samples are involved.
 
 ## References
 
+- `references/environment_layout.md`
 - `references/minimal_app.md`
 - `references/session_pattern.md`
 - `references/api_surface.md`
+- `references/pyneat_patterns.md`
 - `references/recipes.md`
 - `references/tensor_sample_contracts.md`
 - `references/diagnostics.md`
@@ -74,3 +86,4 @@ target_link_libraries(app PRIVATE SimaNeat::sima_neat)
 - `templates/session_async_main.cpp`
 - `templates/model_runner_main.cpp`
 - `templates/CMakeLists.txt`
+- `templates/pyneat_hello.py`
