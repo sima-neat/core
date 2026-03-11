@@ -856,3 +856,45 @@ def test_session_error_in_python_exposes_structured_fields():
     assert "error_code" in exc.report_json
   else:
     raise AssertionError("expected SessionError for invalid video tensor dtype")
+
+
+def test_graph_pipeline_node_accepts_nodegroup_without_type_error():
+  group = pyneat.NodeGroup([pyneat.nodes.video_convert()])
+
+  _assert_not_type_error(lambda: pyneat.graph.nodes.pipeline_node(group, "group"))
+
+
+def test_graph_pipeline_node_preserves_existing_node_overload():
+  node = pyneat.graph.nodes.pipeline_node(pyneat.nodes.video_convert(), "convert")
+  graph = pyneat.graph.Graph()
+  graph.add(node)
+
+  text = pyneat.graph.to_text(graph)
+  assert "convert" in text
+  assert "in: in" in text
+  assert "out: out" in text
+
+
+def test_graph_pipeline_node_wraps_push_style_nodegroup_in_graph_text():
+  group = pyneat.NodeGroup([pyneat.nodes.video_convert()])
+  graph = pyneat.graph.Graph()
+  graph.add(pyneat.graph.nodes.pipeline_node(group, "push-group"))
+
+  text = pyneat.graph.to_text(graph)
+  assert "push-group" in text
+  assert "in: in" in text
+  assert "out: out" in text
+
+
+def test_graph_pipeline_node_wraps_source_like_nodegroup_without_input_port():
+  opt = pyneat.RtspDecodedInputOptions()
+  opt.url = "rtsp://example.com/live"
+
+  group = pyneat.groups.rtsp_decoded_input(opt)
+  graph = pyneat.graph.Graph()
+  graph.add(pyneat.graph.nodes.pipeline_node(group, "rtsp-source"))
+
+  text = pyneat.graph.to_text(graph)
+  assert "rtsp-source" in text
+  assert "in: <none>" in text
+  assert "out: out" in text
