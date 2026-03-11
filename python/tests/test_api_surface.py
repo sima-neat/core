@@ -77,6 +77,30 @@ DETESS_DEQUANT_OPTION_FIELDS = (
     "num_buffers_locked",
 )
 
+UDP_OUTPUT_OPTION_FIELDS = (
+    "host",
+    "port",
+    "sync",
+    "async_",
+)
+
+H264_PARSE_OPTION_FIELDS = (
+    "config_interval",
+    "alignment",
+    "stream_format",
+    "enforce_caps",
+)
+
+UDP_H264_OUTPUT_GROUP_OPTION_FIELDS = (
+    "h264_caps",
+    "payload_type",
+    "config_interval",
+    "udp_host",
+    "udp_port",
+    "udp_sync",
+    "udp_async",
+)
+
 
 def _assert_not_type_error(call):
   try:
@@ -241,6 +265,25 @@ def test_postprocess_stage_option_structs_expose_expected_fields():
     assert hasattr(detess, field), field
 
 
+def test_output_stage_option_structs_expose_expected_fields():
+  udp = pyneat.UdpOutputOptions()
+  parse = pyneat.H264ParseOptions()
+  group = pyneat.UdpH264OutputGroupOptions()
+
+  for field in UDP_OUTPUT_OPTION_FIELDS:
+    assert hasattr(udp, field), field
+  assert hasattr(udp, "async"), "async"
+
+  for field in H264_PARSE_OPTION_FIELDS:
+    assert hasattr(parse, field), field
+
+  for field in UDP_H264_OUTPUT_GROUP_OPTION_FIELDS:
+    assert hasattr(group, field), field
+
+  assert hasattr(pyneat, "H264ParseAlignment")
+  assert hasattr(pyneat, "H264ParseStreamFormat")
+
+
 def test_input_stage_option_struct_constructors_accept_expected_args():
   mpk_path = _basic_valid_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
@@ -259,6 +302,12 @@ def test_postprocess_stage_option_struct_constructors_accept_expected_args(tmp_p
 
   _assert_not_type_error(lambda: pyneat.DetessDequantOptions())
   _assert_not_type_error(lambda: pyneat.DetessDequantOptions(model))
+
+
+def test_output_stage_option_struct_constructors_accept_expected_args():
+  _assert_not_type_error(lambda: pyneat.UdpOutputOptions())
+  _assert_not_type_error(lambda: pyneat.H264ParseOptions())
+  _assert_not_type_error(lambda: pyneat.UdpH264OutputGroupOptions())
 
 
 def test_input_stage_option_structs_are_mutable():
@@ -314,6 +363,48 @@ def test_postprocess_stage_option_structs_are_mutable():
   assert detess.num_buffers_locked is True
 
 
+def test_output_stage_option_structs_are_mutable():
+  udp = pyneat.UdpOutputOptions()
+  udp.host = "10.0.0.5"
+  udp.port = 5500
+  udp.sync = True
+  udp.async_ = False
+
+  parse = pyneat.H264ParseOptions()
+  parse.config_interval = 2
+  parse.alignment = pyneat.H264ParseAlignment.AU
+  parse.stream_format = pyneat.H264ParseStreamFormat.ByteStream
+  parse.enforce_caps = True
+
+  group = pyneat.UdpH264OutputGroupOptions()
+  group.h264_caps = 'video/x-h264,profile="high"'
+  group.payload_type = 97
+  group.config_interval = 2
+  group.udp_host = "127.0.0.1"
+  group.udp_port = 5600
+  group.udp_sync = False
+  group.udp_async = False
+
+  assert udp.host == "10.0.0.5"
+  assert udp.port == 5500
+  assert udp.sync is True
+  assert udp.async_ is False
+  assert getattr(udp, "async") is False
+
+  assert parse.config_interval == 2
+  assert parse.alignment == pyneat.H264ParseAlignment.AU
+  assert parse.stream_format == pyneat.H264ParseStreamFormat.ByteStream
+  assert parse.enforce_caps is True
+
+  assert group.h264_caps == 'video/x-h264,profile="high"'
+  assert group.payload_type == 97
+  assert group.config_interval == 2
+  assert group.udp_host == "127.0.0.1"
+  assert group.udp_port == 5600
+  assert group.udp_sync is False
+  assert group.udp_async is False
+
+
 def test_input_stage_node_factories_present_and_accept_expected_args():
   assert hasattr(pyneat.nodes, "preproc")
   assert hasattr(pyneat.nodes, "quant_tess")
@@ -344,6 +435,34 @@ def test_postprocess_stage_node_factories_present_and_accept_expected_args(tmp_p
           nms_iou_threshold=0.55,
           top_k=120,
       )
+  )
+
+
+def test_output_stage_node_and_group_factories_present_and_accept_expected_args():
+  assert hasattr(pyneat.nodes, "udp_output")
+  assert hasattr(pyneat.nodes, "h264_encode_sima")
+  assert hasattr(pyneat.nodes, "h264_parse")
+  assert hasattr(pyneat.nodes, "h264_packetize")
+  assert hasattr(pyneat.groups, "udp_h264_output_group")
+
+  _assert_not_type_error(lambda: pyneat.nodes.udp_output())
+  _assert_not_type_error(lambda: pyneat.nodes.udp_output(pyneat.UdpOutputOptions()))
+  _assert_not_type_error(lambda: pyneat.nodes.h264_encode_sima(1280, 720, 30))
+  _assert_not_type_error(
+      lambda: pyneat.nodes.h264_encode_sima(
+          1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
+      )
+  )
+  _assert_not_type_error(lambda: pyneat.nodes.h264_parse())
+  _assert_not_type_error(lambda: pyneat.nodes.h264_parse(2))
+  _assert_not_type_error(lambda: pyneat.nodes.h264_parse(pyneat.H264ParseOptions()))
+  _assert_not_type_error(lambda: pyneat.nodes.h264_packetize())
+  _assert_not_type_error(lambda: pyneat.nodes.h264_packetize(payload_type=98, config_interval=3))
+  _assert_not_type_error(
+      lambda: pyneat.groups.udp_h264_output_group(pyneat.UdpH264OutputGroupOptions())
+  )
+  assert isinstance(
+      pyneat.groups.udp_h264_output_group(pyneat.UdpH264OutputGroupOptions()), pyneat.NodeGroup
   )
 
 
@@ -406,6 +525,66 @@ def test_session_describe_backend_includes_sima_box_decode_stage(tmp_path):
   assert "boxdecode" in text
 
 
+def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
+  parse = pyneat.H264ParseOptions()
+  parse.config_interval = 2
+  parse.enforce_caps = True
+  parse.alignment = pyneat.H264ParseAlignment.AU
+  parse.stream_format = pyneat.H264ParseStreamFormat.ByteStream
+
+  udp = pyneat.UdpOutputOptions()
+  udp.host = "10.0.0.5"
+  udp.port = 5500
+  udp.sync = True
+  udp.async_ = False
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input())
+  session.add(
+      pyneat.nodes.h264_encode_sima(
+          1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
+      )
+  )
+  session.add(pyneat.nodes.h264_parse(parse))
+  session.add(pyneat.nodes.h264_packetize(payload_type=98, config_interval=2))
+  session.add(pyneat.nodes.udp_output(udp))
+
+  text = session.describe_backend().lower()
+  assert "neatencoder" in text
+  assert "h264parse" in text
+  assert "alignment=(string)au" in text
+  assert "stream-format=(string)byte-stream" in text
+  assert "rtph264pay" in text
+  assert "pt=98" in text
+  assert "udpsink" in text
+  assert "host=10.0.0.5" in text
+  assert "port=5500" in text
+
+
+def test_session_describe_backend_includes_udp_h264_output_group():
+  opt = pyneat.UdpH264OutputGroupOptions()
+  opt.h264_caps = 'video/x-h264,profile="high"'
+  opt.payload_type = 97
+  opt.config_interval = 2
+  opt.udp_host = "127.0.0.1"
+  opt.udp_port = 5600
+  opt.udp_sync = False
+  opt.udp_async = False
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input())
+  session.add(pyneat.groups.udp_h264_output_group(opt))
+
+  text = session.describe_backend().lower()
+  assert "h264parse" in text
+  assert "capsfilter" in text
+  assert 'profile=\\"high\\"' in text
+  assert "rtph264pay" in text
+  assert "pt=97" in text
+  assert "udpsink" in text
+  assert "port=5600" in text
+
+
 def test_postprocess_stage_missing_model_config_reports_clear_error():
   model = pyneat.Model(str(_basic_valid_mpk_path()))
 
@@ -430,6 +609,45 @@ def test_postprocess_stage_api_parity_guards_supported_call_surface(tmp_path):
 
   with pytest.raises(TypeError):
     pyneat.nodes.sima_box_decode(box_model, threshold=0.25)
+
+
+def test_output_stage_api_parity_guards_supported_call_surface():
+  udp = pyneat.UdpOutputOptions()
+  parse = pyneat.H264ParseOptions()
+  group = pyneat.UdpH264OutputGroupOptions()
+
+  for name in ("udp_output", "h264_encode_sima", "h264_parse", "h264_packetize"):
+    assert hasattr(pyneat.nodes, name), name
+  assert hasattr(pyneat.groups, "udp_h264_output_group")
+
+  assert hasattr(udp, "async_")
+  assert hasattr(udp, "async")
+  assert udp.host == "127.0.0.1"
+  assert udp.port == 5000
+  assert udp.sync is False
+  assert udp.async_ is False
+
+  assert parse.config_interval == 1
+  assert parse.alignment == pyneat.H264ParseAlignment.Auto
+  assert parse.stream_format == pyneat.H264ParseStreamFormat.Auto
+  assert parse.enforce_caps is False
+
+  assert group.h264_caps == ""
+  assert group.payload_type == 96
+  assert group.config_interval == 1
+  assert group.udp_host == "127.0.0.1"
+  assert group.udp_port == 5000
+  assert group.udp_sync is False
+  assert group.udp_async is False
+
+  _assert_not_type_error(lambda: pyneat.nodes.input())
+  _assert_not_type_error(lambda: pyneat.nodes.output())
+  _assert_not_type_error(lambda: pyneat.nodes.video_convert())
+  _assert_not_type_error(lambda: pyneat.nodes.h264_parse(1))
+  _assert_not_type_error(lambda: pyneat.nodes.h264_parse(parse))
+  _assert_not_type_error(lambda: pyneat.nodes.h264_packetize(96, 1))
+  _assert_not_type_error(lambda: pyneat.nodes.udp_output(udp))
+  _assert_not_type_error(lambda: pyneat.groups.udp_h264_output_group(group))
 
 
 def test_error_code_constants_present():
