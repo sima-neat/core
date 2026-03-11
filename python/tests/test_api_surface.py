@@ -151,6 +151,17 @@ def test_input_stage_node_factories_present_and_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.nodes.quant_tess(pyneat.QuantTessOptions()))
 
 
+def test_mla_group_helper_present_and_accepts_model():
+  mpk_path = _basic_valid_mpk_path()
+  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+
+  model = pyneat.Model(str(mpk_path))
+
+  assert hasattr(pyneat.groups, "mla")
+  _assert_not_type_error(lambda: pyneat.groups.mla(model))
+  assert isinstance(pyneat.groups.mla(model), pyneat.NodeGroup)
+
+
 def test_session_describe_backend_includes_preproc_stage():
   session = pyneat.Session()
   session.add(pyneat.nodes.input())
