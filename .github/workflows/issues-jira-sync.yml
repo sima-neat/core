@@ -71,11 +71,11 @@ jobs:
       jira_issue_type_name: '${{ vars.JIRA_ISSUE_TYPE_NAME || ''Task'' }}'
       jira_epic_key: '${{ vars.JIRA_NEAT_CORE_EPIC_KEY || '''' }}'
       jira_epic_link_field_id: '${{ vars.JIRA_EPIC_LINK_FIELD_ID || '''' }}'
-      jira_gh_user_map_json: '{}'
-      jira_backlog_enforce: false
+      jira_gh_user_map_json: '${{ vars.JIRA_GH_USER_MAP_JSON || ''{}'' }}'
+      jira_backlog_enforce: ${{ vars.JIRA_BACKLOG_ENFORCE == 'true' }}
       enable_label_lookup: true
-      enable_assignee_sync: false
-      enable_comment_sync: false
-      enable_epic_link: ${{ vars.JIRA_NEAT_CORE_EPIC_KEY != '' }}
-      enable_backlog_move: false
+      enable_assignee_sync: true
+      enable_comment_sync: true
+      enable_epic_link: true
+      enable_backlog_move: true
       enable_issue_label_cleanup: true
