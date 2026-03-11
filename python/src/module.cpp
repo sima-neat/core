@@ -845,9 +845,10 @@ std::optional<ImageSpec::PixelFormat> model_image_format_hint(const simaai::neat
   }
 }
 
-std::vector<Tensor> tensor_batch_from_python_input(
-    const nb::object& input, bool copy, const std::optional<TensorLayout>& layout,
-    const std::optional<ImageSpec::PixelFormat>& image_format) {
+std::vector<Tensor>
+tensor_batch_from_python_input(const nb::object& input, bool copy,
+                               const std::optional<TensorLayout>& layout,
+                               const std::optional<ImageSpec::PixelFormat>& image_format) {
   std::vector<Tensor> tensors;
   if (PyList_Check(input.ptr())) {
     nb::list items = nb::borrow<nb::list>(input);
@@ -946,8 +947,8 @@ NB_MODULE(_pyneat_core, m) {
 
           const SessionReport& rep = e.report();
           const std::string msg = format_session_error_message(e);
-          nb::object exc_obj = nb::steal(
-              PyObject_CallFunctionObjArgs(exc_type, nb::str(msg.c_str(), msg.size()).ptr(), nullptr));
+          nb::object exc_obj = nb::steal(PyObject_CallFunctionObjArgs(
+              exc_type, nb::str(msg.c_str(), msg.size()).ptr(), nullptr));
           if (!exc_obj.is_valid()) {
             throw nb::python_error();
           }
@@ -1250,8 +1251,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("max_width_origin", &simaai::neat::BuildAdaptationSummary::max_width_origin)
       .def_rw("max_height_origin", &simaai::neat::BuildAdaptationSummary::max_height_origin)
       .def_rw("max_depth_origin", &simaai::neat::BuildAdaptationSummary::max_depth_origin)
-      .def_rw("max_input_bytes_guard",
-              &simaai::neat::BuildAdaptationSummary::max_input_bytes_guard)
+      .def_rw("max_input_bytes_guard", &simaai::neat::BuildAdaptationSummary::max_input_bytes_guard)
       .def_rw("byte_guard_origin", &simaai::neat::BuildAdaptationSummary::byte_guard_origin)
       .def_rw("allow_ingress_cvu_format_renegotiation",
               &simaai::neat::BuildAdaptationSummary::allow_ingress_cvu_format_renegotiation)
@@ -1926,8 +1926,8 @@ NB_MODULE(_pyneat_core, m) {
             Tensor tensor = tensor_from_python_input(input, copy, layout, image_format);
             return runner.warmup(tensor, warm, timeout_ms);
           },
-          "input"_a, "warm"_a = -1, "timeout_ms"_a = -1, "copy"_a = false,
-          "layout"_a = nb::none(), "image_format"_a = nb::none())
+          "input"_a, "warm"_a = -1, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
+          "image_format"_a = nb::none())
       .def("close", &simaai::neat::Model::Runner::close);
 
   nb::class_<simaai::neat::Model>(m, "Model")
@@ -2105,7 +2105,6 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
                 "options"_a = simaai::neat::QuantTessOptions{});
 
-
   nb::module_ graph_mod = m.def_submodule("graph", "Hybrid graph runtime and helper nodes");
 
   nb::enum_<simaai::neat::graph::Backend>(graph_mod, "Backend")
@@ -2136,16 +2135,18 @@ NB_MODULE(_pyneat_core, m) {
       .def("is_dag", &simaai::neat::graph::Graph::is_dag)
       .def("edges", [](const simaai::neat::graph::Graph& g) { return g.edges(); });
 
-  graph_mod.def("to_text",
-                [](const simaai::neat::graph::Graph& g) {
-                  return simaai::neat::graph::GraphPrinter::to_text(g);
-                },
-                "graph"_a);
-  graph_mod.def("to_dot",
-                [](const simaai::neat::graph::Graph& g) {
-                  return simaai::neat::graph::GraphPrinter::to_dot(g);
-                },
-                "graph"_a);
+  graph_mod.def(
+      "to_text",
+      [](const simaai::neat::graph::Graph& g) {
+        return simaai::neat::graph::GraphPrinter::to_text(g);
+      },
+      "graph"_a);
+  graph_mod.def(
+      "to_dot",
+      [](const simaai::neat::graph::Graph& g) {
+        return simaai::neat::graph::GraphPrinter::to_dot(g);
+      },
+      "graph"_a);
 
   nb::class_<simaai::neat::graph::GraphRunOptions>(graph_mod, "GraphRunOptions")
       .def(nb::init<>())
@@ -2159,23 +2160,24 @@ NB_MODULE(_pyneat_core, m) {
            nb::call_guard<nb::gil_scoped_release>());
 
   nb::class_<simaai::neat::graph::GraphRun::Output>(graph_mod, "Output")
-      .def("pull",
-           [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
-             return output.pull(timeout_ms);
-           },
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("pull_or_throw",
-           [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
-             return output.pull_or_throw(timeout_ms);
-           },
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "pull",
+          [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
+            return output.pull(timeout_ms);
+          },
+          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "pull_or_throw",
+          [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
+            return output.pull_or_throw(timeout_ms);
+          },
+          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def("node_id", &simaai::neat::graph::GraphRun::Output::node_id);
 
   nb::class_<simaai::neat::graph::GraphRun>(graph_mod, "GraphRun")
       .def(nb::init<>())
-      .def("__bool__", [](const simaai::neat::graph::GraphRun& run) {
-        return static_cast<bool>(run);
-      })
+      .def("__bool__",
+           [](const simaai::neat::graph::GraphRun& run) { return static_cast<bool>(run); })
       .def("running", &simaai::neat::graph::GraphRun::running)
       .def("push",
            nb::overload_cast<simaai::neat::graph::NodeId, const Sample&>(
@@ -2213,7 +2215,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("DropNewest", simaai::neat::graph::nodes::StreamDropPolicy::DropNewest);
 
   nb::class_<simaai::neat::graph::nodes::StreamSchedulerOptions>(graph_nodes_mod,
-                                                                  "StreamSchedulerOptions")
+                                                                 "StreamSchedulerOptions")
       .def(nb::init<>())
       .def_rw("per_stream_queue",
               &simaai::neat::graph::nodes::StreamSchedulerOptions::per_stream_queue)
@@ -2221,7 +2223,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("max_batch", &simaai::neat::graph::nodes::StreamSchedulerOptions::max_batch);
 
   nb::class_<simaai::neat::graph::nodes::StageModelExecutorOptions>(graph_nodes_mod,
-                                                                     "StageModelExecutorOptions")
+                                                                    "StageModelExecutorOptions")
       .def(nb::init<>())
       .def_prop_rw(
           "model",
@@ -2232,16 +2234,15 @@ NB_MODULE(_pyneat_core, m) {
              const std::shared_ptr<simaai::neat::Model>& model) { opt.model = model; })
       .def_rw("do_preproc", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_preproc)
       .def_rw("do_mla", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_mla)
-      .def_rw("do_boxdecode",
-              &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
+      .def_rw("do_boxdecode", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
 
-  graph_nodes_mod.def("pipeline_node",
-                      [](std::shared_ptr<simaai::neat::Node> node, const std::string& label) {
-                        return std::static_pointer_cast<simaai::neat::graph::Node>(
-                            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(
-                                std::move(node), label));
-                      },
-                      "node"_a, "label"_a = "");
+  graph_nodes_mod.def(
+      "pipeline_node",
+      [](std::shared_ptr<simaai::neat::Node> node, const std::string& label) {
+        return std::static_pointer_cast<simaai::neat::graph::Node>(
+            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(std::move(node), label));
+      },
+      "node"_a, "label"_a = "");
   graph_nodes_mod.def("stamp_frame_id", &simaai::neat::graph::nodes::StampFrameIdNode,
                       "label"_a = "");
   graph_nodes_mod.def(
