@@ -1,8 +1,4 @@
-#include <pipeline/Session.h>
-#include <pipeline/PipelineRun.h>
-#include <pipeline/Tensor.h>
-#include <nodes/io/InputAppSrc.h>
-#include <nodes/common/AppSink.h>
+#include <neat.h>
 
 #include <stdexcept>
 
