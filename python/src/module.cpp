@@ -28,7 +28,11 @@
 #include "mpk/PipelineSequence.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
+#include "nodes/groups/UdpH264OutputGroup.h"
 #include "nodes/sima/DetessDequant.h"
+#include "nodes/sima/H264EncodeSima.h"
+#include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/H264Parse.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
@@ -38,6 +42,7 @@
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/UdpOutput.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Session.h"
@@ -1795,6 +1800,44 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment);
 
+  nb::class_<simaai::neat::nodes::groups::UdpH264OutputGroupOptions>(m, "UdpH264OutputGroupOptions")
+      .def(nb::init<>())
+      .def_rw("h264_caps", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::h264_caps)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::payload_type)
+      .def_rw("config_interval",
+              &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::config_interval)
+      .def_rw("udp_host", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_host)
+      .def_rw("udp_port", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_port)
+      .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_sync)
+      .def_rw("udp_async", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_async);
+
+  nb::class_<simaai::neat::UdpOutputOptions>(m, "UdpOutputOptions")
+      .def(nb::init<>())
+      .def_rw("host", &simaai::neat::UdpOutputOptions::host)
+      .def_rw("port", &simaai::neat::UdpOutputOptions::port)
+      .def_rw("sync", &simaai::neat::UdpOutputOptions::sync)
+      .def_rw("async_", &simaai::neat::UdpOutputOptions::async)
+      .def_prop_rw(
+          "async", [](const simaai::neat::UdpOutputOptions& options) { return options.async; },
+          [](simaai::neat::UdpOutputOptions& options, bool value) { options.async = value; });
+
+  nb::enum_<simaai::neat::H264ParseOptions::Alignment>(m, "H264ParseAlignment")
+      .value("Auto", simaai::neat::H264ParseOptions::Alignment::Auto)
+      .value("AU", simaai::neat::H264ParseOptions::Alignment::AU)
+      .value("NAL", simaai::neat::H264ParseOptions::Alignment::NAL);
+
+  nb::enum_<simaai::neat::H264ParseOptions::StreamFormat>(m, "H264ParseStreamFormat")
+      .value("Auto", simaai::neat::H264ParseOptions::StreamFormat::Auto)
+      .value("AVC", simaai::neat::H264ParseOptions::StreamFormat::AVC)
+      .value("ByteStream", simaai::neat::H264ParseOptions::StreamFormat::ByteStream);
+
+  nb::class_<simaai::neat::H264ParseOptions>(m, "H264ParseOptions")
+      .def(nb::init<>())
+      .def_rw("config_interval", &simaai::neat::H264ParseOptions::config_interval)
+      .def_rw("alignment", &simaai::neat::H264ParseOptions::alignment)
+      .def_rw("stream_format", &simaai::neat::H264ParseOptions::stream_format)
+      .def_rw("enforce_caps", &simaai::neat::H264ParseOptions::enforce_caps);
+
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def("input", &simaai::neat::nodes::Input, "options"_a = simaai::neat::InputOptions{});
   nodes_mod.def("output", &simaai::neat::nodes::Output,
@@ -1805,6 +1848,8 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
+  groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
+                 "options"_a);
   groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);
@@ -2129,6 +2174,27 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::PreprocOptions{});
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
                 "options"_a = simaai::neat::QuantTessOptions{});
+  nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
+                "options"_a = simaai::neat::UdpOutputOptions{});
+  nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
+                "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def(
+      "h264_parse",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(
+          &simaai::neat::nodes::H264Parse),
+      "options"_a);
+  nodes_mod.def(
+      "h264_parse",
+      [](int config_interval) { return simaai::neat::nodes::H264Parse(config_interval); },
+      "config_interval"_a = 1);
+  nodes_mod.def(
+      "h264_packetize",
+      [](int payload_type, int config_interval) {
+        return simaai::neat::nodes::H264Packetize(
+            simaai::neat::H264Packetize::PayloadType{payload_type},
+            simaai::neat::H264Packetize::ConfigInterval{config_interval});
+      },
+      "payload_type"_a = 96, "config_interval"_a = 1);
   nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
                 "options"_a = simaai::neat::DetessDequantOptions{});
   nodes_mod.def("sima_box_decode", &simaai::neat::nodes::SimaBoxDecode, "model"_a,
