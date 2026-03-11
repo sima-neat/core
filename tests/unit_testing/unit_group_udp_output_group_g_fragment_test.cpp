@@ -29,6 +29,8 @@ RUN_TEST("unit_group_udp_output_group_g_fragment_test", ([] {
            const std::string render_fragment = nodes[0]->backend_fragment(0);
            require_contains(render_fragment, "simaai_sampledemux",
                             "UdpOutputGroupG render fragment missing sample demux");
+           require_contains(render_fragment, "simaairender name=render",
+                            "UdpOutputGroupG render factory mismatch");
            require_contains(render_fragment, "config=\"/tmp/render_config.json\"",
                             "UdpOutputGroupG render config propagation mismatch");
 

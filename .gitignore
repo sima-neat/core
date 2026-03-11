@@ -17,6 +17,7 @@ _CPack_Packages/
 .venv/
 __pycache__/
 *.pyc
+.env
 dist/
 *.whl
 *.egg-info/
