@@ -28,8 +28,10 @@
 #include "mpk/PipelineSequence.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
+#include "nodes/sima/DetessDequant.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/QuantTess.h"
+#include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
@@ -2100,10 +2102,38 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("num_buffers_model", &simaai::neat::QuantTessOptions::num_buffers_model)
       .def_rw("num_buffers_locked", &simaai::neat::QuantTessOptions::num_buffers_locked);
 
+  nb::class_<simaai::neat::DetessDequantOptions>(m, "DetessDequantOptions")
+      .def(nb::init<>())
+      .def(nb::init<const simaai::neat::Model&>(), "model"_a)
+      .def_rw("config_path", &simaai::neat::DetessDequantOptions::config_path)
+      .def_rw("config_dir", &simaai::neat::DetessDequantOptions::config_dir)
+      .def_rw("keep_config", &simaai::neat::DetessDequantOptions::keep_config)
+      .def_prop_rw(
+          "config_json",
+          [](const simaai::neat::DetessDequantOptions& options) -> nb::object {
+            if (!options.config_json.has_value())
+              return nb::none();
+            return json_to_python(*options.config_json);
+          },
+          [](simaai::neat::DetessDequantOptions& options, nb::object value) {
+            options.config_json = python_to_optional_json(value);
+          },
+          "value"_a.none())
+      .def_rw("upstream_name", &simaai::neat::DetessDequantOptions::upstream_name)
+      .def_rw("element_name", &simaai::neat::DetessDequantOptions::element_name)
+      .def_rw("num_buffers", &simaai::neat::DetessDequantOptions::num_buffers)
+      .def_rw("num_buffers_model", &simaai::neat::DetessDequantOptions::num_buffers_model)
+      .def_rw("num_buffers_locked", &simaai::neat::DetessDequantOptions::num_buffers_locked);
+
   nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
                 "options"_a = simaai::neat::PreprocOptions{});
   nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
                 "options"_a = simaai::neat::QuantTessOptions{});
+  nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
+                "options"_a = simaai::neat::DetessDequantOptions{});
+  nodes_mod.def("sima_box_decode", &simaai::neat::nodes::SimaBoxDecode, "model"_a,
+                "decode_type"_a = "", "original_width"_a = 0, "original_height"_a = 0,
+                "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0);
 
   nb::module_ graph_mod = m.def_submodule("graph", "Hybrid graph runtime and helper nodes");
 

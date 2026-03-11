@@ -1,4 +1,9 @@
+import io
+import json
+import tarfile
+
 import numpy as np
+import pytest
 
 import pyneat
 
@@ -60,12 +65,140 @@ QUANT_TESS_OPTION_FIELDS = (
     "num_buffers_locked",
 )
 
+DETESS_DEQUANT_OPTION_FIELDS = (
+    "config_path",
+    "config_dir",
+    "keep_config",
+    "config_json",
+    "upstream_name",
+    "element_name",
+    "num_buffers",
+    "num_buffers_model",
+    "num_buffers_locked",
+)
+
 
 def _assert_not_type_error(call):
   try:
     call()
   except Exception as exc:
     assert not isinstance(exc, TypeError), str(exc)
+
+
+def _write_tar_text(tar, name, text):
+  data = text.encode("utf-8")
+  info = tarfile.TarInfo(name=name)
+  info.size = len(data)
+  tar.addfile(info, io.BytesIO(data))
+
+
+def _write_tar_bytes(tar, name, data):
+  info = tarfile.TarInfo(name=name)
+  info.size = len(data)
+  tar.addfile(info, io.BytesIO(data))
+
+
+def _write_mpk_fixture(tmp_path, name, files):
+  tar_path = tmp_path / f"{name}.tar.gz"
+  with tarfile.open(tar_path, "w:gz") as tar:
+    for path, contents in files.items():
+      _write_tar_text(tar, path, contents)
+    _write_tar_bytes(tar, "share/placeholder.elf", bytes((0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01)))
+  return tar_path
+
+
+def _postprocess_fixture_path(tmp_path, name, *, include_boxdecode=False, include_detess=False):
+  sequence = [
+      {
+          "sequence_id": 1,
+          "name": "preproc_0",
+          "pluginId": "processcvu",
+          "configPath": "0_preproc.json",
+          "processor": "CVU",
+          "kernel": "preproc",
+          "input": "decoder",
+      },
+      {
+          "sequence_id": 2,
+          "name": "mla_0",
+          "pluginId": "processmla",
+          "configPath": "0_process_mla.json",
+          "processor": "MLA",
+          "kernel": "infer",
+          "input": "preproc_0",
+      },
+  ]
+  files = {
+      "etc/pipeline_sequence.json": json.dumps({"pipelines": [{"sequence": sequence}]}, indent=2),
+      "etc/0_preproc.json": json.dumps(
+          {
+              "node_name": "preproc_0",
+              "input_width": 1280,
+              "input_height": 720,
+              "input_img_type": "RGB",
+              "output_width": 640,
+              "output_height": 640,
+              "output_img_type": "RGB",
+          },
+          indent=2,
+      ),
+      "etc/0_process_mla.json": json.dumps(
+          {
+              "node_name": "mla_0",
+              "input_buffers": [{"name": "preproc_0"}],
+              "data_type": ["INT8"],
+              "output_width": [80],
+              "output_height": [80],
+              "output_depth": [6],
+          },
+          indent=2,
+      ),
+  }
+
+  if include_boxdecode:
+    sequence.append(
+        {
+            "sequence_id": 3,
+            "name": "boxdecode_0",
+            "pluginId": "processcvu",
+            "configPath": "0_boxdecode.json",
+            "processor": "CVU",
+            "kernel": "boxdecode",
+            "input": "mla_0",
+        }
+    )
+    files["etc/0_boxdecode.json"] = json.dumps(
+        {
+            "node_name": "boxdecode_0",
+            "input_buffers": [{"name": "mla_0"}],
+            "decode_type": "yolov8",
+        },
+        indent=2,
+    )
+
+  if include_detess:
+    sequence.append(
+        {
+            "sequence_id": 3,
+            "name": "detessdequant_0",
+            "pluginId": "processcvu",
+            "configPath": "0_postproc.json",
+            "processor": "CVU",
+            "kernel": "detessdequant",
+            "input": "mla_0",
+        }
+    )
+    files["etc/0_postproc.json"] = json.dumps(
+        {
+            "node_name": "detessdequant_0",
+            "input_buffers": [{"name": "mla_0"}],
+            "memory": {"cpu": "CVU", "next_cpu": "CVU"},
+            "simaai__params": {"cpu": "CVU", "next_cpu": "CVU"},
+        },
+        indent=2,
+    )
+
+  return _write_mpk_fixture(tmp_path, name, files)
 
 
 def test_session_pythonic_add_and_describe():
@@ -101,6 +234,13 @@ def test_input_stage_option_structs_expose_expected_fields():
     assert hasattr(quant_tess, field), field
 
 
+def test_postprocess_stage_option_structs_expose_expected_fields():
+  detess = pyneat.DetessDequantOptions()
+
+  for field in DETESS_DEQUANT_OPTION_FIELDS:
+    assert hasattr(detess, field), field
+
+
 def test_input_stage_option_struct_constructors_accept_expected_args():
   mpk_path = _basic_valid_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
@@ -111,6 +251,14 @@ def test_input_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.PreprocOptions(model))
   _assert_not_type_error(lambda: pyneat.QuantTessOptions())
   _assert_not_type_error(lambda: pyneat.QuantTessOptions(model))
+
+
+def test_postprocess_stage_option_struct_constructors_accept_expected_args(tmp_path):
+  mpk_path = _postprocess_fixture_path(tmp_path, "detess_valid", include_detess=True)
+  model = pyneat.Model(str(mpk_path))
+
+  _assert_not_type_error(lambda: pyneat.DetessDequantOptions())
+  _assert_not_type_error(lambda: pyneat.DetessDequantOptions(model))
 
 
 def test_input_stage_option_structs_are_mutable():
@@ -141,6 +289,31 @@ def test_input_stage_option_structs_are_mutable():
   assert quant_tess.config_json is None
 
 
+def test_postprocess_stage_option_structs_are_mutable():
+  detess = pyneat.DetessDequantOptions()
+  detess.config_path = "/tmp/detess.json"
+  detess.config_dir = "/tmp"
+  detess.keep_config = True
+  detess.config_json = {"node_name": "detessdequant_0"}
+  detess.upstream_name = "mla_0"
+  detess.element_name = "detessdequant_0"
+  detess.num_buffers = 4
+  detess.num_buffers_model = 4
+  detess.num_buffers_locked = True
+
+  assert detess.config_path == "/tmp/detess.json"
+  assert detess.config_dir == "/tmp"
+  assert detess.keep_config is True
+  assert detess.config_json["node_name"] == "detessdequant_0"
+  detess.config_json = None
+  assert detess.config_json is None
+  assert detess.upstream_name == "mla_0"
+  assert detess.element_name == "detessdequant_0"
+  assert detess.num_buffers == 4
+  assert detess.num_buffers_model == 4
+  assert detess.num_buffers_locked is True
+
+
 def test_input_stage_node_factories_present_and_accept_expected_args():
   assert hasattr(pyneat.nodes, "preproc")
   assert hasattr(pyneat.nodes, "quant_tess")
@@ -149,6 +322,29 @@ def test_input_stage_node_factories_present_and_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.nodes.preproc(pyneat.PreprocOptions()))
   _assert_not_type_error(lambda: pyneat.nodes.quant_tess())
   _assert_not_type_error(lambda: pyneat.nodes.quant_tess(pyneat.QuantTessOptions()))
+
+
+def test_postprocess_stage_node_factories_present_and_accept_expected_args(tmp_path):
+  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_valid", include_boxdecode=True)
+  model = pyneat.Model(str(mpk_path))
+
+  assert hasattr(pyneat.nodes, "detess_dequant")
+  assert hasattr(pyneat.nodes, "sima_box_decode")
+
+  _assert_not_type_error(lambda: pyneat.nodes.detess_dequant())
+  _assert_not_type_error(lambda: pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions()))
+  _assert_not_type_error(lambda: pyneat.nodes.sima_box_decode(model))
+  _assert_not_type_error(
+      lambda: pyneat.nodes.sima_box_decode(
+          model,
+          decode_type="yolov8",
+          original_width=640,
+          original_height=640,
+          detection_threshold=0.25,
+          nms_iou_threshold=0.55,
+          top_k=120,
+      )
+  )
 
 
 def test_mla_group_helper_present_and_accepts_model():
@@ -180,6 +376,60 @@ def test_session_describe_backend_includes_quant_tess_stage():
 
   text = session.describe_backend().lower()
   assert "quanttess" in text or "quant_tess" in text
+
+
+def test_session_describe_backend_includes_detess_dequant_stage(tmp_path):
+  mpk_path = _postprocess_fixture_path(tmp_path, "detess_backend", include_detess=True)
+  model = pyneat.Model(str(mpk_path))
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input())
+  session.add(pyneat.groups.mla(model))
+  session.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
+  session.add(pyneat.nodes.output())
+
+  text = session.describe_backend().lower()
+  assert "detessdequant" in text
+
+
+def test_session_describe_backend_includes_sima_box_decode_stage(tmp_path):
+  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_backend", include_boxdecode=True)
+  model = pyneat.Model(str(mpk_path))
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input())
+  session.add(pyneat.groups.mla(model))
+  session.add(pyneat.nodes.sima_box_decode(model))
+  session.add(pyneat.nodes.output())
+
+  text = session.describe_backend().lower()
+  assert "boxdecode" in text
+
+
+def test_postprocess_stage_missing_model_config_reports_clear_error():
+  model = pyneat.Model(str(_basic_valid_mpk_path()))
+
+  with pytest.raises(RuntimeError, match="boxdecode"):
+    pyneat.nodes.sima_box_decode(model)
+
+  with pytest.raises(RuntimeError, match="DetessDequant: config not found"):
+    pyneat.DetessDequantOptions(model)
+
+
+def test_postprocess_stage_api_parity_guards_supported_call_surface(tmp_path):
+  detess_path = _postprocess_fixture_path(tmp_path, "detess_signature", include_detess=True)
+  box_path = _postprocess_fixture_path(tmp_path, "box_signature", include_boxdecode=True)
+  detess_model = pyneat.Model(str(detess_path))
+  box_model = pyneat.Model(str(box_path))
+
+  _assert_not_type_error(lambda: pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)))
+  _assert_not_type_error(lambda: pyneat.nodes.sima_box_decode(box_model, "yolov8", 640, 640, 0.25, 0.55, 120))
+
+  with pytest.raises(TypeError):
+    pyneat.nodes.detess_dequant(detess_model)
+
+  with pytest.raises(TypeError):
+    pyneat.nodes.sima_box_decode(box_model, threshold=0.25)
 
 
 def test_error_code_constants_present():
