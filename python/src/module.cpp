@@ -2334,6 +2334,13 @@ NB_MODULE(_pyneat_core, m) {
 
   graph_nodes_mod.def(
       "pipeline_node",
+      [](const simaai::neat::NodeGroup& group, const std::string& label) {
+        return std::static_pointer_cast<simaai::neat::graph::Node>(
+            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(group, label));
+      },
+      "group"_a, "label"_a = "");
+  graph_nodes_mod.def(
+      "pipeline_node",
       [](std::shared_ptr<simaai::neat::Node> node, const std::string& label) {
         return std::static_pointer_cast<simaai::neat::graph::Node>(
             std::make_shared<simaai::neat::graph::nodes::PipelineNode>(std::move(node), label));
