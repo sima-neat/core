@@ -12,6 +12,8 @@ set -euo pipefail
 # Inputs:
 # - Optional flag: -minimum / --minimum
 #   - install from metadata-minimal.json instead of metadata.json
+# - Optional flag: --all
+#   - install from metadata-all.json so extras are pulled without prompting
 # - Positional arg 1 (optional): branch name
 # - Positional arg 2 (optional): artifact tag or git hash
 #   - latest: resolve latest.tag for the selected branch
@@ -26,12 +28,14 @@ set -euo pipefail
 # - Non-interactive latest:  bash tools/install-neat-from-a-branch.sh feature/docs
 # - Non-interactive fixed:   bash tools/install-neat-from-a-branch.sh feature/docs 1a2b3c4
 # - Minimal install latest:  bash tools/install-neat-from-a-branch.sh -minimum feature/docs
+# - All-components latest:   bash tools/install-neat-from-a-branch.sh --all feature/docs
 # - Interactive:             bash tools/install-neat-from-a-branch.sh
 #
 BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://neat-artifacts.modalix.info/neat}"
 CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 CLI_FALLBACK="/data/sima-cli/.venv/bin/sima-cli"
 MINIMUM=0
+INSTALL_ALL=0
 BRANCH=""
 TAG_INPUT="latest"
 METADATA_FILE="metadata.json"
@@ -39,7 +43,7 @@ METADATA_FILE="metadata.json"
 usage() {
   cat <<'USAGE'
 Usage:
-  install-neat-from-a-branch.sh [-minimum|--minimum] [branch] [latest|git-hash]
+  install-neat-from-a-branch.sh [-minimum|--minimum] [--all] [branch] [latest|git-hash]
 
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Base URL for neat artifacts (default: https://neat-artifacts.modalix.info/neat)
@@ -69,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -minimum|--minimum)
       MINIMUM=1
+      shift
+      ;;
+    --all)
+      INSTALL_ALL=1
       shift
       ;;
     --)
@@ -102,8 +110,16 @@ if [[ $# -gt 0 ]]; then
   exit 1
 fi
 
+if [[ "${MINIMUM}" -eq 1 && "${INSTALL_ALL}" -eq 1 ]]; then
+  echo "--minimum and --all cannot be used together." >&2
+  usage
+  exit 1
+fi
+
 if [[ "${MINIMUM}" -eq 1 ]]; then
   METADATA_FILE="metadata-minimal.json"
+elif [[ "${INSTALL_ALL}" -eq 1 ]]; then
+  METADATA_FILE="metadata-all.json"
 fi
 
 if ! command -v "${CLI_BIN}" >/dev/null 2>&1; then
