@@ -1,8 +1,8 @@
 import os
-import subprocess
 import struct
 from pathlib import Path
 
+import cv2
 import numpy as np
 
 import pyneat
@@ -23,41 +23,10 @@ def _env_path(name: str) -> Path:
 
 
 def _decode_rgb_image(path: Path) -> np.ndarray:
-  probe = subprocess.run(
-      [
-          "ffprobe",
-          "-v",
-          "error",
-          "-select_streams",
-          "v:0",
-          "-show_entries",
-          "stream=width,height",
-          "-of",
-          "csv=p=0:s=x",
-          str(path),
-      ],
-      check=True,
-      capture_output=True,
-      text=True,
-  )
-  width, height = (int(part) for part in probe.stdout.strip().split("x"))
-  raw = subprocess.run(
-      [
-          "ffmpeg",
-          "-v",
-          "error",
-          "-i",
-          str(path),
-          "-f",
-          "rawvideo",
-          "-pix_fmt",
-          "rgb24",
-          "-",
-      ],
-      check=True,
-      capture_output=True,
-  ).stdout
-  return np.frombuffer(raw, dtype=np.uint8).reshape(height, width, 3).copy()
+  image_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  if image_bgr is None:
+    raise AssertionError(f"failed to decode image fixture: {path}")
+  return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
 
 def _tensor_input_model(model_tar: Path) -> pyneat.Model:
@@ -112,35 +81,9 @@ def _cpu_quanttess_input(model: pyneat.Model, image: np.ndarray) -> np.ndarray:
     pad_x = (dst_w - scaled_w) // 2
     pad_y = (dst_h - scaled_h) // 2
 
-  raw = subprocess.run(
-      [
-          "ffmpeg",
-          "-y",
-          "-v",
-          "error",
-          "-f",
-          "rawvideo",
-          "-pix_fmt",
-          "rgb24",
-          "-s",
-          f"{src_w}x{src_h}",
-          "-i",
-          "-",
-          "-vf",
-          f"scale={scaled_w}:{scaled_h}:flags=bilinear,pad={dst_w}:{dst_h}:{pad_x}:{pad_y}:color=black",
-          "-frames:v",
-          "1",
-          "-f",
-          "rawvideo",
-          "-pix_fmt",
-          "rgb24",
-          "-",
-      ],
-      check=True,
-      input=image.tobytes(),
-      capture_output=True,
-  ).stdout
-  image_u8 = np.frombuffer(raw, dtype=np.uint8).reshape(dst_h, dst_w, 3).copy()
+  resized = cv2.resize(image, (scaled_w, scaled_h), interpolation=cv2.INTER_LINEAR)
+  image_u8 = np.zeros((dst_h, dst_w, 3), dtype=np.uint8)
+  image_u8[pad_y : pad_y + scaled_h, pad_x : pad_x + scaled_w] = resized
   return image_u8.astype(np.float32) / 255.0
 
 
@@ -219,50 +162,18 @@ def _write_overlay_artifact(path: Path, image: np.ndarray, boxes: list[dict]) ->
     overlay[y1 : min(y1 + 2, y2), x1:x2] = [255, 0, 0]
     overlay[max(y2 - 2, y1):y2, x1:x2] = [255, 0, 0]
 
-  subprocess.run(
-      [
-          "ffmpeg",
-          "-y",
-          "-v",
-          "error",
-          "-f",
-          "rawvideo",
-          "-pix_fmt",
-          "rgb24",
-          "-s",
-          f"{overlay.shape[1]}x{overlay.shape[0]}",
-          "-i",
-          "-",
-          "-frames:v",
-          "1",
-          str(path),
-      ],
-      check=True,
-      input=overlay.tobytes(),
-      capture_output=True,
-  )
+  overlay_bgr = cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
+  if not cv2.imwrite(str(path), overlay_bgr):
+    raise AssertionError(f"failed to write overlay artifact: {path}")
   return path
 
 
 def _assert_image_dims(path: Path, width: int, height: int) -> None:
-  dims = subprocess.run(
-      [
-          "ffprobe",
-          "-v",
-          "error",
-          "-select_streams",
-          "v:0",
-          "-show_entries",
-          "stream=width,height",
-          "-of",
-          "csv=p=0:s=x",
-          str(path),
-      ],
-      check=True,
-      capture_output=True,
-      text=True,
-  )
-  assert dims.stdout.strip() == f"{width}x{height}"
+  image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  if image is None:
+    raise AssertionError(f"failed to read image artifact: {path}")
+  assert image.shape[1] == width
+  assert image.shape[0] == height
 
 
 def test_resnet_real_fixture_run_preserves_stable_classification_contract():
