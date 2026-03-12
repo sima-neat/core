@@ -1,25 +1,128 @@
 import os
+import shutil
 import struct
+import subprocess
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
+import pytest
 
 import pyneat
 
 
 ROOT = Path(__file__).resolve().parents[2]
 SANDBOX_API_TESTS = ROOT / "sandbox" / "api-tests"
+_MODEL_PATH_CACHE: dict[str, Path | None] = {}
+
+_MODEL_FIXTURES = {
+    "SIMA_RESNET50_TAR": {
+        "model_name": "resnet_50",
+        "names": (
+            "resnet_50_mpk.tar.gz",
+            "resnet-50_mpk.tar.gz",
+        ),
+    },
+    "SIMA_YOLO_TAR": {
+        "model_name": "yolo_v8s",
+        "names": (
+            "yolo_v8s_mpk.tar.gz",
+            "yolo-v8s_mpk.tar.gz",
+            "yolov8s_mpk.tar.gz",
+            "yolov8_s_mpk.tar.gz",
+        ),
+    },
+}
+
+
+def _candidate_model_dirs() -> list[Path]:
+  home = Path.home()
+  return [
+      ROOT / "tmp",
+      ROOT / "assets" / "models",
+      ROOT,
+      Path.cwd() / "tmp",
+      Path.cwd(),
+      home / ".simaai",
+      home / ".simaai" / "modelzoo",
+      home / ".sima" / "modelzoo",
+      Path("/data/simaai/modelzoo"),
+  ]
+
+
+def _find_existing_model_tar(names: tuple[str, ...]) -> Path | None:
+  for directory in _candidate_model_dirs():
+    for name in names:
+      candidate = directory / name
+      if candidate.is_file():
+        return candidate
+  return None
+
+
+def _resolve_model_tar(name: str) -> Path | None:
+  if name in _MODEL_PATH_CACHE:
+    return _MODEL_PATH_CACHE[name]
+
+  spec = _MODEL_FIXTURES[name]
+  env_value = os.environ.get(name, "")
+  if env_value:
+    env_path = Path(env_value)
+    if env_path.is_file():
+      _MODEL_PATH_CACHE[name] = env_path
+      return env_path
+
+  found = _find_existing_model_tar(spec["names"])
+  if found is not None:
+    _MODEL_PATH_CACHE[name] = found
+    return found
+
+  sima_cli = shutil.which("sima-cli")
+  if sima_cli is not None:
+    result = subprocess.run(
+        [sima_cli, "modelzoo", "get", spec["model_name"]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if result.returncode == 0:
+      found = _find_existing_model_tar(spec["names"])
+      if found is not None:
+        _MODEL_PATH_CACHE[name] = found
+        return found
+
+  _MODEL_PATH_CACHE[name] = None
+  return None
+
+
+def _fixture_model_path(name: str) -> Path:
+  path = _resolve_model_tar(name)
+  if path is not None:
+    return path
+
+  spec = _MODEL_FIXTURES[name]
+  pytest.skip(
+      f"missing real model fixture for {name}; set {name} or run "
+      f"'sima-cli modelzoo get {spec['model_name']}'"
+  )
 
 
 def _env_path(name: str) -> Path:
-  value = os.environ.get(name, "")
-  if not value:
-    raise AssertionError(f"missing required env var: {name}")
-  path = Path(value)
-  if not path.is_file():
-    raise AssertionError(f"missing required fixture file for {name}: {path}")
-  return path
+  return _fixture_model_path(name)
+
+
+def test_model_fixture_path_helper_skips_when_unresolved(monkeypatch):
+  _MODEL_PATH_CACHE.clear()
+  monkeypatch.delenv("SIMA_RESNET50_TAR", raising=False)
+  monkeypatch.setattr(
+      sys.modules[__name__],
+      "_resolve_model_tar",
+      lambda _name: None,
+      raising=False,
+  )
+
+  with pytest.raises(pytest.skip.Exception, match="SIMA_RESNET50_TAR"):
+    _fixture_model_path("SIMA_RESNET50_TAR")
 
 
 def _decode_rgb_image(path: Path) -> np.ndarray:
