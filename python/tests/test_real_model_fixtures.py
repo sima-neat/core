@@ -125,6 +125,52 @@ def test_model_fixture_path_helper_skips_when_unresolved(monkeypatch):
     _fixture_model_path("SIMA_RESNET50_TAR")
 
 
+def test_image_fixture_path_helper_falls_back_to_cwd_when_root_missing(monkeypatch, tmp_path):
+  image_path = tmp_path / "test.jpg"
+  image_path.write_bytes(b"fixture")
+
+  monkeypatch.setattr(sys.modules[__name__], "ROOT", tmp_path / "missing")
+  monkeypatch.chdir(tmp_path)
+
+  assert _fixture_image_path(Path("test.jpg")) == image_path
+
+
+def _candidate_fixture_roots() -> list[Path]:
+  roots: list[Path] = []
+
+  def append_unique(path: Path) -> None:
+    if path in roots:
+      return
+    roots.append(path)
+
+  for base in (ROOT, Path.cwd()):
+    append_unique(base)
+    for parent in base.parents:
+      append_unique(parent)
+
+  return roots
+
+
+def _resolve_fixture_image(rel_path: Path) -> Path | None:
+  rel_path = Path(rel_path)
+  if rel_path.is_absolute():
+    return rel_path if rel_path.is_file() else None
+
+  for root in _candidate_fixture_roots():
+    candidate = root / rel_path
+    if candidate.is_file():
+      return candidate
+
+  return None
+
+
+def _fixture_image_path(rel_path: Path) -> Path:
+  path = _resolve_fixture_image(rel_path)
+  if path is not None:
+    return path
+  pytest.skip(f"missing real image fixture: {rel_path}")
+
+
 def _decode_rgb_image(path: Path) -> np.ndarray:
   image_bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
   if image_bgr is None:
@@ -281,7 +327,7 @@ def _assert_image_dims(path: Path, width: int, height: int) -> None:
 
 def test_resnet_real_fixture_run_preserves_stable_classification_contract():
   model = pyneat.Model(str(_env_path("SIMA_RESNET50_TAR")))
-  image = _decode_rgb_image(ROOT / "test.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
 
   outputs = [model.run(image, timeout_ms=20000) for _ in range(3)]
 
@@ -302,8 +348,8 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract():
 def test_real_fixture_paths_resolve():
   assert _env_path("SIMA_RESNET50_TAR").name.endswith(".tar.gz")
   assert _env_path("SIMA_YOLO_TAR").name.endswith(".tar.gz")
-  assert (ROOT / "test.jpg").is_file()
-  assert (ROOT / "tests" / "images" / "people.jpg").is_file()
+  assert _fixture_image_path(Path("test.jpg")).name == "test.jpg"
+  assert _fixture_image_path(Path("tests/images/people.jpg")).name == "people.jpg"
   assert SANDBOX_API_TESTS.parent == ROOT / "sandbox"
 
 
@@ -334,7 +380,7 @@ def test_model_backed_option_structs_preserve_real_fixture_semantics():
 
 
 def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
-  image = _decode_rgb_image(ROOT / "tests" / "images" / "people.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
 
   mla_output = _run_model_on_image(
@@ -361,7 +407,7 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
 
 
 def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_path):
-  image = _decode_rgb_image(ROOT / "tests" / "images" / "people.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
 
   detess_output = _run_model_on_image(
@@ -424,7 +470,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
 
 
 def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
-  image = _decode_rgb_image(ROOT / "tests" / "images" / "people.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
 
   quant_input = _cpu_quanttess_input(model, image)
@@ -469,7 +515,7 @@ def _run_quanttess_boxdecode_on_real_input(
 
 
 def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
-  image = _decode_rgb_image(ROOT / "tests" / "images" / "people.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   quant_input = _cpu_quanttess_input(model, image)
 
@@ -498,7 +544,7 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
 
 
 def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
-  image = _decode_rgb_image(ROOT / "tests" / "images" / "people.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   quant_input = _cpu_quanttess_input(model, image)
 
@@ -529,7 +575,7 @@ def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path
 
 
 def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
-  image = _decode_rgb_image(ROOT / "tests" / "images" / "people.jpg")
+  image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
 
   box_output = _run_model_on_image(
