@@ -53,20 +53,29 @@ target_link_libraries(app PRIVATE SimaNeat::sima_neat)
 1. Detect environment first:
    - SDK with `/neat-resources/...`: read source there first.
    - Installed environment only: use installed headers/runtime paths.
-   - SDK runtime checks: use `dk /workspace/...`.
-2. Detect language:
+2. Run DevKit preflight before coding or testing from SDK:
+   - check `dk`/`devkit-run` first
+   - confirm the target will be built as ARM64
+   - confirm required model/image assets exist when the task depends on them
+   - use `references/devkit_preflight.md`
+3. Detect language:
    - C++: default to `#include <neat.h>`.
    - Python: default to installed `pyneat`.
-3. Pick the closest reference:
+4. Pick the closest reference:
    - Environment/runtime: `references/environment_layout.md`, `references/build_test.md`
    - C++ patterns: `references/recipes.md`
    - Python patterns: `references/pyneat_patterns.md`
-4. Apply `references/api_surface.md` and `references/do_dont.md`.
-5. Check `references/tensor_sample_contracts.md` when tensors/samples are involved.
+5. If the user asks to run on DevKit, do not stop at local compile:
+   - build the ARM64 target
+   - run it with `dk /workspace/...` when available
+   - fall back to direct SSH only if `dk` is unavailable
+6. Apply `references/api_surface.md` and `references/do_dont.md`.
+7. Check `references/tensor_sample_contracts.md` when tensors/samples are involved.
 
 ## References
 
 - `references/environment_layout.md`
+- `references/devkit_preflight.md`
 - `references/minimal_app.md`
 - `references/session_pattern.md`
 - `references/api_surface.md`
