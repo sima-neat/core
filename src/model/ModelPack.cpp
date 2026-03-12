@@ -70,18 +70,12 @@ static std::string to_lower(std::string s) {
 static std::string resolve_stage_factory(const std::string& plugin_id) {
   // Runtime policy: always instantiate NEAT factories from model stages.
   static const std::unordered_map<std::string, std::string> kNeatFactoryOverrides = {
-      {"processcvu", "neatprocesscvu"},
-      {"process_cvu", "neatprocesscvu"},
-      {"processmla", "neatprocessmla"},
-      {"process_mla", "neatprocessmla"},
-      {"boxdecode", "neatboxdecode"},
-      {"box_decode", "neatboxdecode"},
-      {"pciesrc", "neatpciesrc"},
-      {"pcie_src", "neatpciesrc"},
-      {"pciesink", "neatpciesink"},
-      {"pcie_sink", "neatpciesink"},
-      {"processtvm", "neatprocesstvm"},
-      {"process_tvm", "neatprocesstvm"},
+      {"processcvu", "neatprocesscvu"}, {"process_cvu", "neatprocesscvu"},
+      {"processmla", "neatprocessmla"}, {"process_mla", "neatprocessmla"},
+      {"boxdecode", "neatboxdecode"},   {"box_decode", "neatboxdecode"},
+      {"pciesrc", "neatpciesrc"},       {"pcie_src", "neatpciesrc"},
+      {"pciesink", "neatpciesink"},     {"pcie_sink", "neatpciesink"},
+      {"processtvm", "neatprocesstvm"}, {"process_tvm", "neatprocesstvm"},
   };
 
   std::string factory = plugin_id;
@@ -1235,10 +1229,10 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
   }
 
   json new_stage = {
-      {"configPath", "0_quanttess.json"},   {"executable", nullptr},
-      {"input", kDefaultPreviousNodeName},  {"kernel", "quanttess"},
-      {"name", "neatprocessquanttess_1"},   {"params", json::object()},
-      {"pluginId", "processcvu"},           {"processor", "CVU"},
+      {"configPath", "0_quanttess.json"},  {"executable", nullptr},
+      {"input", kDefaultPreviousNodeName}, {"kernel", "quanttess"},
+      {"name", "neatprocessquanttess_1"},  {"params", json::object()},
+      {"pluginId", "processcvu"},          {"processor", "CVU"},
       {"sequence_id", old_seq_id},
   };
 
