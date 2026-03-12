@@ -10,6 +10,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+Preflight SDK runtime support first:
+
+```bash
+bash -lic 'type dk || type devkit-run'
+```
+
 ## Unit + E2E tests
 
 ```bash
@@ -46,6 +52,23 @@ dk /workspace/path/to/app.py
 ```
 
 - `dk` runs remotely on the DevKit over SSH and streams prefixed stdout/stderr back to the SDK shell.
+
+Only fall back to direct SSH if `dk` is unavailable.
+
+## DevKit smoke test
+
+For app iteration, prefer a simple on-device smoke test after build:
+
+```bash
+dk /workspace/path/to/build/my_app --model /workspace/path/to/model.mpk --image /workspace/path/to/image.jpg
+```
+
+Typical pass criteria:
+
+- process exits successfully
+- inference output is produced
+- top-1 label or score is plausible for the test image
+- probability/confidence clears the task-specific threshold when one is defined
 
 ## Tutorial tests
 
