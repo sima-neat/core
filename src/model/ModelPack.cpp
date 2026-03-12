@@ -1180,6 +1180,7 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
   auto& seq = pipe["sequence"];
 
   int preproc_idx = -1;
+  int quanttess_idx = -1;
   std::string old_name;
   int old_seq_id = 0;
   for (int i = 0; i < (int)seq.size(); ++i) {
@@ -1190,8 +1191,11 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
       old_seq_id = s.value("sequence_id", i + 1);
       break;
     }
+    if (quanttess_idx < 0 && s.value("kernel", "") == "quanttess") {
+      quanttess_idx = i;
+    }
   }
-  if (preproc_idx < 0) {
+  if (preproc_idx < 0 && quanttess_idx < 0) {
     throw std::runtime_error("Could not find preproc on first segment");
   }
 
@@ -1224,6 +1228,10 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
   const int out_d = qj.value("input_depth", 0);
   if (out_w <= 0 || out_h <= 0 || out_d <= 0) {
     throw std::runtime_error("Invalid input dims in 0_quanttess.json");
+  }
+
+  if (preproc_idx < 0) {
+    return {false, out_w, out_h, out_d};
   }
 
   json new_stage = {
