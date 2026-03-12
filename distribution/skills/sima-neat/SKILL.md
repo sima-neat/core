@@ -1,3 +1,10 @@
+---
+name: sima-neat
+description: Use this skill for SiMa NEAT application work in C++ or Python on Modalix DevKit and eLxr SDK, including build, runtime, and DevKit validation workflows.
+metadata:
+  short-description: SiMa NEAT DevKit and SDK guidance
+---
+
 # SiMa NEAT Skill
 
 Use this skill for SiMa NEAT application work in C++ or Python (`pyneat`).

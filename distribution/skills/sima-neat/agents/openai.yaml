@@ -1,0 +1,4 @@
+interface:
+  display_name: "SiMa NEAT"
+  short_description: "Build and run SiMa NEAT apps on SDK or DevKit"
+  default_prompt: "Use $sima-neat to build, debug, or validate a SiMa NEAT application on eLxr SDK or Modalix DevKit."
