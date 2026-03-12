@@ -11,11 +11,7 @@ Typical structure:
 Sketch:
 
 ```cpp
-#include <pipeline/Session.h>
-#include <pipeline/PipelineRun.h>
-#include <pipeline/Tensor.h>
-#include <nodes/io/InputAppSrc.h>
-#include <nodes/common/AppSink.h>
+#include <neat.h>
 
 int main() {
   simaai::neat::Session s;

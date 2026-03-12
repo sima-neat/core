@@ -157,6 +157,22 @@ detect_env_mode() {
   echo "modalix-board"
 }
 
+install_codex_skill_for_current_user() {
+  local source_dir="$1"
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log "Codex skill source not found; skipping skill install: ${source_dir}"
+    return 0
+  fi
+
+  local codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local target_dir="${codex_home}/skills/sima-neat"
+  mkdir -p "$(dirname "${target_dir}")"
+  rm -rf "${target_dir}"
+  cp -a "${source_dir}" "${target_dir}"
+  log "Installed Codex skill to: ${target_dir}"
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
@@ -191,6 +207,7 @@ ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
+  install_codex_skill_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
 else
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
@@ -208,4 +225,5 @@ else
   fi
   "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
   install_debs_on_board
+  install_codex_skill_for_current_user "/usr/share/sima-neat/skills/sima-neat"
 fi
