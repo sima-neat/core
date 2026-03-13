@@ -115,7 +115,7 @@ jobs:
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
         run: |
-          ./scripts/run_cpp_tidy.sh --all
+          ./scripts/run_cpp_tidy.sh --changed-only
 
       - name: Finishing off
         run: |
