@@ -3,10 +3,12 @@
 #include "gst/GstHelpers.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
+#include "pipeline/internal/TempJsonFileUtil.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <nlohmann/json.hpp>
 
+#include <cstdio>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -15,6 +17,7 @@
 
 namespace simaai::neat {
 using pipeline_internal::lower_copy;
+using json = nlohmann::json;
 
 struct BoxDecodeOptionsInternal {
   std::string config_path;
@@ -31,8 +34,15 @@ struct BoxDecodeOptionsInternal {
 };
 
 struct SimaBoxDecode::BoxDecodeConfigHolder {
-  nlohmann::json config;
+  std::string path;
+  bool keep = false;
+  json config;
   bool has_config = false;
+  ~BoxDecodeConfigHolder() {
+    if (!keep && !path.empty()) {
+      std::remove(path.c_str());
+    }
+  }
 };
 
 namespace {
@@ -55,14 +65,32 @@ std::string infer_decode_type_from_model_path(const simaai::neat::internal::Mode
   return {};
 }
 
-nlohmann::json load_json_file(const std::string& path, const char* label) {
+std::string make_temp_json_path(const std::string& dir) {
+  return pipeline_internal::make_temp_json_path(dir, "sima_boxdecode", "SimaBoxDecode");
+}
+
+json load_json_file(const std::string& path, const char* label) {
   std::ifstream in(path);
   if (!in.is_open()) {
     throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
   }
-  nlohmann::json j;
+  json j;
   in >> j;
   return j;
+}
+
+void write_json_file(const json& j, const std::string& path, const char* label) {
+  std::ofstream out(path);
+  if (!out.is_open()) {
+    throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
+  }
+  out << j.dump(2);
+}
+
+std::string write_json_temp(const json& j, const std::string& dir) {
+  const std::string path = make_temp_json_path(dir);
+  write_json_file(j, path, "SimaBoxDecode");
+  return path;
 }
 
 } // namespace
@@ -103,9 +131,22 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, const std::string
   try {
     config_holder_->config = load_json_file(config_path_, "SimaBoxDecode");
     config_holder_->has_config = config_holder_->config.is_object();
+    config_holder_->path = config_path_;
+    config_holder_->keep = true;
   } catch (...) {
-    config_holder_->config = nlohmann::json::object();
+    config_holder_->config = json::object();
     config_holder_->has_config = false;
+  }
+
+  if ((original_width > 0 || original_height > 0) && config_holder_->has_config) {
+    override_config_json(
+        [&](json& j) {
+          if (original_width > 0)
+            j["original_width"] = original_width;
+          if (original_height > 0)
+            j["original_height"] = original_height;
+        },
+        "ctor.runtime_dims");
   }
 }
 
@@ -177,7 +218,15 @@ bool SimaBoxDecode::override_config_json(const std::function<void(nlohmann::json
   (void)tag;
   if (!config_holder_ || !config_holder_->has_config)
     return false;
-  edit(config_holder_->config);
+  json cfg = config_holder_->config;
+  edit(cfg);
+  config_path_ = write_json_temp(cfg, /*dir=*/"");
+  auto holder = std::make_shared<BoxDecodeConfigHolder>();
+  holder->config = std::move(cfg);
+  holder->has_config = true;
+  holder->path = config_path_;
+  holder->keep = false;
+  config_holder_ = std::move(holder);
   return true;
 }
 

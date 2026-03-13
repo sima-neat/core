@@ -352,9 +352,13 @@ jobs:
       - name: Run Python pytest from installed extras
         run: |
           PYTEST_DIR="$(cat _work/pytest_dir.txt)"
-          PYTHON_BIN="${HOME}/pyneat/bin/python"
-          if [[ ! -x "${PYTHON_BIN}" ]]; then
-            echo "Expected virtualenv python not found: ${PYTHON_BIN}" >&2
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
             exit 1
           fi
 

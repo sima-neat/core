@@ -78,8 +78,8 @@ bool SimaRender::has_config_json() const {
 
 std::string SimaRender::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  require_element("neatrender", "SimaRender::backend_fragment");
-  ss << "neatrender name=n" << node_index << "_render";
+  require_element("simaairender", "SimaRender::backend_fragment");
+  ss << "simaairender name=n" << node_index << "_render";
   if (!config_path_.empty()) {
     ss << " config=\"" << config_path_ << "\"";
   }
@@ -99,7 +99,7 @@ std::vector<std::string> SimaRender::element_names(int node_index) const {
 OutputSpec SimaRender::output_spec(const OutputSpec& input) const {
   OutputSpec out = input;
   out.certainty = SpecCertainty::Hint;
-  out.note = "neatrender";
+  out.note = "simaairender";
   return out;
 }
 
