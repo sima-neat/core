@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Naming and conflict guard
         run: bash scripts/ci/check_naming_and_conflicts.sh
@@ -28,7 +28,7 @@ jobs:
     needs: repo-hygiene
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -53,7 +53,7 @@ jobs:
     needs: format-hygiene
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: ./build.sh --install-deps-only
@@ -69,7 +69,7 @@ jobs:
     needs: clang-tidy
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build project
         env:
@@ -100,7 +100,7 @@ jobs:
       DOCS_BASE_URL: /
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -152,7 +152,7 @@ jobs:
       - build-full
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Reference authoritative checklist
         run: cat docs/release-checklist.md
