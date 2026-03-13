@@ -15,6 +15,8 @@ import pyneat
 ROOT = Path(__file__).resolve().parents[2]
 SANDBOX_API_TESTS = ROOT / "sandbox" / "api-tests"
 _MODEL_PATH_CACHE: dict[str, Path | None] = {}
+BOXDECODE_THRESHOLDS = (0.20, 0.40, 0.60)
+TOP_SCORE_HIGHLIGHT_COUNT = 3
 
 _MODEL_FIXTURES = {
     "SIMA_RESNET50_TAR": {
@@ -295,10 +297,20 @@ def _bbox_payload_extent(payload: bytes) -> tuple[int, int]:
   return (max_x2, max_y2)
 
 
-def _write_overlay_artifact(path: Path, image: np.ndarray, boxes: list[dict]) -> Path:
+def _threshold_suffix(threshold: float) -> str:
+  return f"t{int(round(threshold * 100)):03d}"
+
+
+def _write_overlay_artifact(
+    path: Path, image: np.ndarray, boxes: list[dict], highlight_top_k: int = TOP_SCORE_HIGHLIGHT_COUNT
+) -> Path:
   SANDBOX_API_TESTS.mkdir(parents=True, exist_ok=True)
 
   overlay = image.copy()
+  highlighted_ids = {
+      id(box)
+      for box in sorted(boxes, key=lambda box: box["score"], reverse=True)[: max(0, highlight_top_k)]
+  }
   for box in boxes:
     x1 = max(0, min(int(round(box["x1"])), overlay.shape[1] - 1))
     y1 = max(0, min(int(round(box["y1"])), overlay.shape[0] - 1))
@@ -306,10 +318,11 @@ def _write_overlay_artifact(path: Path, image: np.ndarray, boxes: list[dict]) ->
     y2 = max(0, min(int(round(box["y2"])), overlay.shape[0]))
     if x2 <= x1 or y2 <= y1:
       continue
-    overlay[y1:y2, x1 : min(x1 + 2, x2)] = [255, 0, 0]
-    overlay[y1:y2, max(x2 - 2, x1):x2] = [255, 0, 0]
-    overlay[y1 : min(y1 + 2, y2), x1:x2] = [255, 0, 0]
-    overlay[max(y2 - 2, y1):y2, x1:x2] = [255, 0, 0]
+    color = [0, 255, 0] if id(box) in highlighted_ids else [255, 0, 0]
+    overlay[y1:y2, x1 : min(x1 + 2, x2)] = color
+    overlay[y1:y2, max(x2 - 2, x1):x2] = color
+    overlay[y1 : min(y1 + 2, y2), x1:x2] = color
+    overlay[max(y2 - 2, y1):y2, x1:x2] = color
 
   overlay_bgr = cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
   if not cv2.imwrite(str(path), overlay_bgr):
@@ -486,7 +499,11 @@ def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
 
 
 def _run_quanttess_boxdecode_on_real_input(
-    model: pyneat.Model, image: np.ndarray, quant_input: np.ndarray, preprocess_part
+    model: pyneat.Model,
+    image: np.ndarray,
+    quant_input: np.ndarray,
+    preprocess_part,
+    detection_threshold: float,
 ) -> tuple[str, pyneat.Sample]:
   session = pyneat.Session()
   session.add(pyneat.nodes.input(model.input_appsrc_options(True)))
@@ -498,7 +515,7 @@ def _run_quanttess_boxdecode_on_real_input(
           "yolov8",
           image.shape[1],
           image.shape[0],
-          0.25,
+          detection_threshold,
           0.55,
           120,
       )
@@ -519,28 +536,37 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   quant_input = _cpu_quanttess_input(model, image)
 
-  backend, box_output = _run_quanttess_boxdecode_on_real_input(
-      model, image, quant_input, pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model))
-  )
+  counts = []
+  for threshold in BOXDECODE_THRESHOLDS:
+    backend, box_output = _run_quanttess_boxdecode_on_real_input(
+        model,
+        image,
+        quant_input,
+        pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model)),
+        threshold,
+    )
 
-  assert "quanttess" in backend
-  assert "preproc" not in backend
-  assert "neatprocessmla" in backend
-  assert "neatboxdecode" in backend
+    assert "quanttess" in backend
+    assert "preproc" not in backend
+    assert "neatprocessmla" in backend
+    assert "neatboxdecode" in backend
 
-  payload = _extract_bbox_payload(box_output)
-  max_x2, max_y2 = _bbox_payload_extent(payload)
-  boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=0.25)
-  out_path = _write_overlay_artifact(SANDBOX_API_TESTS / "people_model_overlay.png", image, boxes)
+    payload = _extract_bbox_payload(box_output)
+    max_x2, max_y2 = _bbox_payload_extent(payload)
+    boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=threshold)
+    counts.append(len(boxes))
+    out_path = SANDBOX_API_TESTS / f"people_model_overlay_{_threshold_suffix(threshold)}.png"
 
-  assert list(quant_input.shape) == [640, 640, 3]
-  assert box_output.kind == pyneat.SampleKind.Tensor
-  assert box_output.payload_tag == "BBOX"
-  assert boxes
-  assert out_path.is_file()
-  assert max_x2 <= int(image.shape[1] * 1.1)
-  assert max_y2 <= int(image.shape[0] * 1.1)
-  _assert_image_dims(out_path, image.shape[1], image.shape[0])
+    assert list(quant_input.shape) == [640, 640, 3]
+    assert box_output.kind == pyneat.SampleKind.Tensor
+    assert box_output.payload_tag == "BBOX"
+    assert boxes
+    assert _write_overlay_artifact(out_path, image, boxes).is_file()
+    assert max_x2 <= int(image.shape[1] * 1.1)
+    assert max_y2 <= int(image.shape[0] * 1.1)
+    _assert_image_dims(out_path, image.shape[1], image.shape[0])
+
+  assert counts == sorted(counts, reverse=True)
 
 
 def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
@@ -548,60 +574,74 @@ def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   quant_input = _cpu_quanttess_input(model, image)
 
-  backend, box_output = _run_quanttess_boxdecode_on_real_input(
-      model, image, quant_input, pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model))
-  )
+  counts = []
+  for threshold in BOXDECODE_THRESHOLDS:
+    backend, box_output = _run_quanttess_boxdecode_on_real_input(
+        model,
+        image,
+        quant_input,
+        pyneat.nodes.quant_tess(pyneat.QuantTessOptions(model)),
+        threshold,
+    )
 
-  assert "quanttess" in backend
-  assert "preproc" not in backend
-  assert "neatprocessmla" in backend
-  assert "neatboxdecode" in backend
+    assert "quanttess" in backend
+    assert "preproc" not in backend
+    assert "neatprocessmla" in backend
+    assert "neatboxdecode" in backend
 
-  payload = _extract_bbox_payload(box_output)
-  max_x2, max_y2 = _bbox_payload_extent(payload)
-  boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=0.25)
-  out_path = _write_overlay_artifact(
-      SANDBOX_API_TESTS / "people_quanttess_mla_boxdecode_overlay.png", image, boxes
-  )
+    payload = _extract_bbox_payload(box_output)
+    max_x2, max_y2 = _bbox_payload_extent(payload)
+    boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=threshold)
+    counts.append(len(boxes))
+    out_path = SANDBOX_API_TESTS / (
+        f"people_quanttess_mla_boxdecode_overlay_{_threshold_suffix(threshold)}.png"
+    )
 
-  assert list(quant_input.shape) == [640, 640, 3]
-  assert box_output.kind == pyneat.SampleKind.Tensor
-  assert box_output.payload_tag == "BBOX"
-  assert boxes
-  assert out_path.is_file()
-  assert max_x2 <= int(image.shape[1] * 1.1)
-  assert max_y2 <= int(image.shape[0] * 1.1)
-  _assert_image_dims(out_path, image.shape[1], image.shape[0])
+    assert list(quant_input.shape) == [640, 640, 3]
+    assert box_output.kind == pyneat.SampleKind.Tensor
+    assert box_output.payload_tag == "BBOX"
+    assert boxes
+    assert _write_overlay_artifact(out_path, image, boxes).is_file()
+    assert max_x2 <= int(image.shape[1] * 1.1)
+    assert max_y2 <= int(image.shape[0] * 1.1)
+    _assert_image_dims(out_path, image.shape[1], image.shape[0])
+
+  assert counts == sorted(counts, reverse=True)
 
 
 def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
 
-  box_output = _run_model_on_image(
-      model,
-      image,
-      _custom_preproc_node(model, image),
-      pyneat.groups.mla(model),
-      pyneat.nodes.sima_box_decode(
-          model,
-          "yolov8",
-          image.shape[1],
-          image.shape[0],
-          0.25,
-          0.55,
-          120,
-      ),
-  )
-  payload = _extract_bbox_payload(box_output)
-  max_x2, max_y2 = _bbox_payload_extent(payload)
-  boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=0.25)
-  out_path = _write_overlay_artifact(
-      SANDBOX_API_TESTS / "people_preproc_mla_boxdecode_overlay.png", image, boxes
-  )
+  counts = []
+  for threshold in BOXDECODE_THRESHOLDS:
+    box_output = _run_model_on_image(
+        model,
+        image,
+        _custom_preproc_node(model, image),
+        pyneat.groups.mla(model),
+        pyneat.nodes.sima_box_decode(
+            model,
+            "yolov8",
+            image.shape[1],
+            image.shape[0],
+            threshold,
+            0.55,
+            120,
+        ),
+    )
+    payload = _extract_bbox_payload(box_output)
+    max_x2, max_y2 = _bbox_payload_extent(payload)
+    boxes = _parse_bbox_payload(payload, image.shape[1], image.shape[0], min_score=threshold)
+    counts.append(len(boxes))
+    out_path = SANDBOX_API_TESTS / (
+        f"people_preproc_mla_boxdecode_overlay_{_threshold_suffix(threshold)}.png"
+    )
 
-  assert out_path.is_file()
-  assert max_x2 <= int(image.shape[1] * 1.1)
-  assert max_y2 <= int(image.shape[0] * 1.1)
-  _assert_image_dims(out_path, image.shape[1], image.shape[0])
-  assert boxes
+    assert _write_overlay_artifact(out_path, image, boxes).is_file()
+    assert max_x2 <= int(image.shape[1] * 1.1)
+    assert max_y2 <= int(image.shape[0] * 1.1)
+    _assert_image_dims(out_path, image.shape[1], image.shape[0])
+    assert boxes
+
+  assert counts == sorted(counts, reverse=True)
