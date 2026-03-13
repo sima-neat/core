@@ -231,6 +231,65 @@ def _postprocess_fixture_path(tmp_path, name, *, include_boxdecode=False, includ
   return _write_mpk_fixture(tmp_path, name, files)
 
 
+def _preproc_fixture_path(tmp_path, name, *, normalize=True):
+  files = {
+      "etc/pipeline_sequence.json": json.dumps(
+          {
+              "pipelines": [
+                  {
+                      "sequence": [
+                          {
+                              "sequence_id": 1,
+                              "name": "preproc_0",
+                              "pluginId": "processcvu",
+                              "configPath": "0_preproc.json",
+                              "processor": "CVU",
+                              "kernel": "preproc",
+                              "input": "decoder",
+                          },
+                          {
+                              "sequence_id": 2,
+                              "name": "mla_0",
+                              "pluginId": "processmla",
+                              "configPath": "0_process_mla.json",
+                              "processor": "MLA",
+                              "kernel": "infer",
+                              "input": "preproc_0",
+                          },
+                      ]
+                  }
+              ]
+          },
+          indent=2,
+      ),
+      "etc/0_preproc.json": json.dumps(
+          {
+              "node_name": "preproc_0",
+              "input_width": 1280,
+              "input_height": 720,
+              "input_img_type": "RGB",
+              "output_width": 640,
+              "output_height": 640,
+              "output_img_type": "RGB",
+              "normalize": normalize,
+          },
+          indent=2,
+      ),
+      "etc/0_process_mla.json": json.dumps(
+          {
+              "node_name": "mla_0",
+              "input_buffers": [{"name": "preproc_0"}],
+              "data_type": ["INT8"],
+              "output_width": [80],
+              "output_height": [80],
+              "output_depth": [6],
+          },
+          indent=2,
+      ),
+  }
+  return _write_mpk_fixture(tmp_path, name, files)
+
+
 def test_session_pythonic_add_and_describe():
   session = pyneat.Session()
   session.add(pyneat.nodes.input())
@@ -539,6 +598,52 @@ def _boxdecode_backend_config_path(text: str) -> str:
     if match:
       return match.group(1)
   raise AssertionError("failed to locate boxdecode config path in backend description")
+
+
+def _preproc_backend_config_path(text: str) -> str:
+  for line in text.splitlines():
+    if "preproc" not in line.lower():
+      continue
+    match = re.search(r'config="?([^" ]+)"?', line)
+    if match:
+      return match.group(1)
+  raise AssertionError("failed to locate preproc config path in backend description")
+
+
+def test_model_preproc_normalize_unset_preserves_model_pack_value(tmp_path):
+  mpk_path = _preproc_fixture_path(tmp_path, "preproc_normalize_default_true", normalize=True)
+  model = pyneat.Model(str(mpk_path))
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  session.add(model.preprocess())
+  session.add(pyneat.nodes.output())
+
+  backend = session.describe_backend()
+  cfg_path = _preproc_backend_config_path(backend)
+  with open(cfg_path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+  assert cfg["normalize"] is True
+
+
+def test_model_preproc_normalize_false_overrides_model_pack_value(tmp_path):
+  mpk_path = _preproc_fixture_path(tmp_path, "preproc_normalize_override_false", normalize=True)
+  opt = pyneat.ModelOptions()
+  opt.preproc.normalize = False
+  model = pyneat.Model(str(mpk_path), opt)
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  session.add(model.preprocess())
+  session.add(pyneat.nodes.output())
+
+  backend = session.describe_backend()
+  cfg_path = _preproc_backend_config_path(backend)
+  with open(cfg_path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+  assert cfg["normalize"] is False
 
 
 def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path):

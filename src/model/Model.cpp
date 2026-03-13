@@ -761,9 +761,14 @@ void apply_preproc_overrides(PreprocOptions& pre_opt, const Model::Options& opt,
 
   const bool has_norm_stats =
       pre_cfg.channel_mean.has_value() || pre_cfg.channel_stddev.has_value();
-  const bool enable_norm = (pre_cfg.normalize.has_value() && *pre_cfg.normalize) || has_norm_stats;
+  if (pre_cfg.normalize.has_value())
+    cfg["normalize"] = *pre_cfg.normalize;
+
+  const bool enable_norm =
+      pre_cfg.normalize.has_value() ? *pre_cfg.normalize : has_norm_stats;
   if (enable_norm) {
-    cfg["normalize"] = true;
+    if (!pre_cfg.normalize.has_value())
+      cfg["normalize"] = true;
     const std::vector<float> mean3 =
         pre_cfg.channel_mean.has_value()
             ? std::vector<float>{(*pre_cfg.channel_mean)[0], (*pre_cfg.channel_mean)[1],
