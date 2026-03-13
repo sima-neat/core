@@ -70,18 +70,12 @@ static std::string to_lower(std::string s) {
 static std::string resolve_stage_factory(const std::string& plugin_id) {
   // Runtime policy: always instantiate NEAT factories from model stages.
   static const std::unordered_map<std::string, std::string> kNeatFactoryOverrides = {
-      {"processcvu", "neatprocesscvu"},
-      {"process_cvu", "neatprocesscvu"},
-      {"processmla", "neatprocessmla"},
-      {"process_mla", "neatprocessmla"},
-      {"boxdecode", "neatboxdecode"},
-      {"box_decode", "neatboxdecode"},
-      {"pciesrc", "neatpciesrc"},
-      {"pcie_src", "neatpciesrc"},
-      {"pciesink", "neatpciesink"},
-      {"pcie_sink", "neatpciesink"},
-      {"processtvm", "neatprocesstvm"},
-      {"process_tvm", "neatprocesstvm"},
+      {"processcvu", "neatprocesscvu"}, {"process_cvu", "neatprocesscvu"},
+      {"processmla", "neatprocessmla"}, {"process_mla", "neatprocessmla"},
+      {"boxdecode", "neatboxdecode"},   {"box_decode", "neatboxdecode"},
+      {"pciesrc", "neatpciesrc"},       {"pcie_src", "neatpciesrc"},
+      {"pciesink", "neatpciesink"},     {"pcie_sink", "neatpciesink"},
+      {"processtvm", "neatprocesstvm"}, {"process_tvm", "neatprocesstvm"},
   };
 
   std::string factory = plugin_id;
@@ -1180,6 +1174,7 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
   auto& seq = pipe["sequence"];
 
   int preproc_idx = -1;
+  int quanttess_idx = -1;
   std::string old_name;
   int old_seq_id = 0;
   for (int i = 0; i < (int)seq.size(); ++i) {
@@ -1190,8 +1185,11 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
       old_seq_id = s.value("sequence_id", i + 1);
       break;
     }
+    if (quanttess_idx < 0 && s.value("kernel", "") == "quanttess") {
+      quanttess_idx = i;
+    }
   }
-  if (preproc_idx < 0) {
+  if (preproc_idx < 0 && quanttess_idx < 0) {
     throw std::runtime_error("Could not find preproc on first segment");
   }
 
@@ -1226,11 +1224,15 @@ static std::tuple<bool, int, int, int> rewrite_preproc_to_quanttess(const std::s
     throw std::runtime_error("Invalid input dims in 0_quanttess.json");
   }
 
+  if (preproc_idx < 0) {
+    return {false, out_w, out_h, out_d};
+  }
+
   json new_stage = {
-      {"configPath", "0_quanttess.json"},   {"executable", nullptr},
-      {"input", kDefaultPreviousNodeName},  {"kernel", "quanttess"},
-      {"name", "neatprocessquanttess_1"},   {"params", json::object()},
-      {"pluginId", "processcvu"},           {"processor", "CVU"},
+      {"configPath", "0_quanttess.json"},  {"executable", nullptr},
+      {"input", kDefaultPreviousNodeName}, {"kernel", "quanttess"},
+      {"name", "neatprocessquanttess_1"},  {"params", json::object()},
+      {"pluginId", "processcvu"},          {"processor", "CVU"},
       {"sequence_id", old_seq_id},
   };
 

@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import tarfile
 
 import numpy as np
@@ -196,6 +197,11 @@ def _postprocess_fixture_path(tmp_path, name, *, include_boxdecode=False, includ
             "node_name": "boxdecode_0",
             "input_buffers": [{"name": "mla_0"}],
             "decode_type": "yolov8",
+            "original_width": 320,
+            "original_height": 240,
+            "detection_threshold": 0.15,
+            "nms_iou_threshold": 0.45,
+            "topk": 24,
         },
         indent=2,
     )
@@ -523,6 +529,64 @@ def test_session_describe_backend_includes_sima_box_decode_stage(tmp_path):
 
   text = session.describe_backend().lower()
   assert "boxdecode" in text
+
+
+def _boxdecode_backend_config_path(text: str) -> str:
+  for line in text.splitlines():
+    if "boxdecode" not in line.lower():
+      continue
+    match = re.search(r'config="([^"]+)"', line)
+    if match:
+      return match.group(1)
+  raise AssertionError("failed to locate boxdecode config path in backend description")
+
+
+def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path):
+  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_defaults", include_boxdecode=True)
+  model = pyneat.Model(str(mpk_path))
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input())
+  session.add(pyneat.groups.mla(model))
+  session.add(pyneat.nodes.sima_box_decode(model))
+  session.add(pyneat.nodes.output())
+
+  backend = session.describe_backend()
+  cfg_path = _boxdecode_backend_config_path(backend)
+  with open(cfg_path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+  assert cfg["original_width"] == 320
+  assert cfg["original_height"] == 240
+
+
+def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
+  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_override", include_boxdecode=True)
+  model = pyneat.Model(str(mpk_path))
+
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input())
+  session.add(pyneat.groups.mla(model))
+  session.add(
+      pyneat.nodes.sima_box_decode(
+          model,
+          decode_type="yolov8",
+          original_width=640,
+          original_height=360,
+          detection_threshold=0.25,
+          nms_iou_threshold=0.55,
+          top_k=120,
+      )
+  )
+  session.add(pyneat.nodes.output())
+
+  backend = session.describe_backend()
+  cfg_path = _boxdecode_backend_config_path(backend)
+  with open(cfg_path, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+  assert cfg["original_width"] == 640
+  assert cfg["original_height"] == 360
 
 
 def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
