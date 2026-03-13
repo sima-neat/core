@@ -1,9 +1,7 @@
 # Minimal SiMa NEAT App
 
 ```cpp
-#include <pipeline/Session.h>
-#include <nodes/io/InputAppSrc.h>
-#include <nodes/common/AppSink.h>
+#include <neat.h>
 
 int main() {
   simaai::neat::Session session;

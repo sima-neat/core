@@ -12,6 +12,9 @@ set -euo pipefail
 #   - eLxr SDK when /etc/sdk-release exists, or SYSROOT points to a valid directory.
 #   - Modalix board when /etc/buildinfo reports MACHINE=modalix.
 # - In Modalix board mode, installs .deb packages with apt (sudo).
+# - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
+#   exposes it via $HOME/pyneat for consistent activation instructions.
+# - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
 #
 # Expected working directory:
 # - Directory containing:
@@ -21,29 +24,30 @@ set -euo pipefail
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
-# - PYNEAT_VENV_DIR: Python virtualenv path
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
+GREEN=$'\033[0;32m'
+RESET=$'\033[0m'
+
 log() {
   printf '[install_neat_framework] %s\n' "$*"
 }
 
-resolve_venv_dir() {
-  if [[ -n "${PYNEAT_VENV_DIR:-}" ]]; then
-    printf '%s\n' "${PYNEAT_VENV_DIR}"
-    return 0
-  fi
+log_green() {
+  printf '%s[install_neat_framework] %s%s\n' "${GREEN}" "$*" "${RESET}"
+}
 
-  if [[ -d /media/nvme && -w /media/nvme ]]; then
-    printf '%s\n' "/media/nvme/pyneat"
-    return 0
-  fi
-
-  printf '%s\n' "$HOME/pyneat"
+print_green_banner() {
+  printf '\n%s=============================================================%s\n' "${GREEN}" "${RESET}"
+  printf '%s PYNEAT VIRTUAL ENV INSTALLED AT:%s\n' "${GREEN}" "${RESET}"
+  printf '%s %s%s\n' "${GREEN}" "$1" "${RESET}"
+  printf '%s ACTIVATE WITH:%s\n' "${GREEN}" "${RESET}"
+  printf '%s source %s%s\n' "${GREEN}" "$2" "${RESET}"
+  printf '%s=============================================================%s\n\n' "${GREEN}" "${RESET}"
 }
 
 resolve_venv_dir() {
@@ -58,6 +62,51 @@ resolve_venv_dir() {
   fi
 
   printf '%s\n' "$HOME/pyneat"
+}
+
+ensure_home_pyneat_symlink() {
+  local venv_dir="$1"
+  local home_pyneat="$HOME/pyneat"
+
+  # Only NVMe-backed installs need a stable home path. Devices that install
+  # directly into $HOME/pyneat should not create or rewrite any symlink.
+  if [[ "${venv_dir}" != "/media/nvme/pyneat" ]]; then
+    return 0
+  fi
+
+  # Preserve an existing correct symlink. If $HOME/pyneat is still a real
+  # directory from an older install layout, replace it so activation can always
+  # use ~/pyneat/bin/activate on NVMe-backed devices.
+  if [[ -L "${home_pyneat}" ]]; then
+    local target
+    target="$(readlink "${home_pyneat}")"
+    if [[ "${target}" == "${venv_dir}" ]]; then
+      return 0
+    fi
+    rm -f "${home_pyneat}"
+  elif [[ -d "${home_pyneat}" ]]; then
+    rm -rf "${home_pyneat}"
+    log "Removed existing directory ${home_pyneat} before creating symlink"
+  elif [[ -e "${home_pyneat}" ]]; then
+    echo "Cannot create ${home_pyneat} symlink; path already exists and is not a directory or symlink." >&2
+    exit 1
+  fi
+
+  # Keep activation instructions consistent across devices:
+  #   source ~/pyneat/bin/activate
+  ln -sfn "${venv_dir}" "${home_pyneat}"
+  log "Created symlink ${home_pyneat} -> ${venv_dir}"
+}
+
+activation_path_for_display() {
+  local venv_dir="$1"
+
+  if [[ "${venv_dir}" == "/media/nvme/pyneat" ]]; then
+    printf '%s\n' '$HOME/pyneat/bin/activate'
+    return 0
+  fi
+
+  printf '%s\n' "${venv_dir}/bin/activate"
 }
 
 run_sudo() {
@@ -108,6 +157,22 @@ detect_env_mode() {
   echo "modalix-board"
 }
 
+install_codex_skill_for_current_user() {
+  local source_dir="$1"
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log "Codex skill source not found; skipping skill install: ${source_dir}"
+    return 0
+  fi
+
+  local codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local target_dir="${codex_home}/skills/sima-neat"
+  mkdir -p "$(dirname "${target_dir}")"
+  rm -rf "${target_dir}"
+  cp -a "${source_dir}" "${target_dir}"
+  log "Installed Codex skill to: ${target_dir}"
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
@@ -139,23 +204,18 @@ if [[ "${#DEBS[@]}" -lt 1 ]]; then
 fi
 
 ENV_MODE="$(detect_env_mode)"
+log_green "Environment mode: ${ENV_MODE}"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
+  install_codex_skill_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
 else
   VENV_DIR="$(resolve_venv_dir)"
+  ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
+  log_green "Preparing Python virtual environment at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
   python3 -m venv --system-site-packages "${VENV_DIR}"
-  printf '\n=============================================================\n'
-  printf ' PYNEAT VIRTUAL ENV INSTALLED AT:\n'
-  printf ' %s\n' "${VENV_DIR}"
-  printf '=============================================================\n\n'
-  VENV_DIR="$(resolve_venv_dir)"
-  mkdir -p "$(dirname "${VENV_DIR}")"
-  python3 -m venv --system-site-packages "${VENV_DIR}"
-  printf '\n=============================================================\n'
-  printf ' PYNEAT VIRTUAL ENV INSTALLED AT:\n'
-  printf ' %s\n' "${VENV_DIR}"
-  printf '=============================================================\n\n'
+  ensure_home_pyneat_symlink "${VENV_DIR}"
+  print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 
   WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
@@ -165,4 +225,5 @@ else
   fi
   "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
   install_debs_on_board
+  install_codex_skill_for_current_user "/usr/share/sima-neat/skills/sima-neat"
 fi

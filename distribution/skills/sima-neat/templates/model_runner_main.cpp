@@ -1,7 +1,4 @@
-#include <model/Model.h>
-#include <pipeline/Session.h>
-#include <nodes/io/InputAppSrc.h>
-#include <nodes/common/AppSink.h>
+#include <neat.h>
 
 int main() {
   // TODO: replace with your model pack path and options as needed.

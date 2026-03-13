@@ -1,5 +1,9 @@
 # API Surface Guide
 
+Default include for generated application code:
+
+- `neat.h`
+
 Primary namespaces:
 
 - `simaai::neat`
