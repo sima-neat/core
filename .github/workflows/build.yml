@@ -81,30 +81,35 @@ jobs:
 
       - name: Install clang-tidy
         run: |
-          if command -v clang-tidy >/dev/null 2>&1 && command -v rg >/dev/null 2>&1; then
-            echo "clang-tidy and ripgrep already installed."
+          if command -v clang-tidy >/dev/null 2>&1 && command -v rg >/dev/null 2>&1 && command -v clang++ >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
+            echo "clang-tidy, ripgrep, clang++, and g++ already installed."
             exit 0
           fi
 
           if [ "$(id -u)" -eq 0 ]; then
             apt-get update
-            apt-get install -y clang-tidy ripgrep
+            apt-get install -y build-essential clang clang-tidy ripgrep
             exit 0
           fi
 
           if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
             sudo -n apt-get update
-            sudo -n apt-get install -y clang-tidy ripgrep
+            sudo -n apt-get install -y build-essential clang clang-tidy ripgrep
             exit 0
           fi
 
-          echo "Missing clang-tidy or ripgrep, and cannot install without passwordless sudo on this runner." >&2
-          echo "Preinstall these packages on the x86 runner or enable passwordless sudo for the runner user." >&2
+          echo "Missing clang-tidy, ripgrep, or host C++ toolchain packages, and cannot install without passwordless sudo on this runner." >&2
+          echo "Preinstall build-essential, clang, clang-tidy, and ripgrep on the x86 runner or enable passwordless sudo for the runner user." >&2
           exit 1
 
       - name: Install build dependencies
         run: |
           ./build.sh --install-deps-only
+
+      - name: Verify host C++ headers for clang-tidy
+        run: |
+          echo '#include <memory>' | clang++ -std=c++20 -x c++ - -fsyntax-only
+          echo '#include <cstdint>' | clang++ -std=c++20 -x c++ - -fsyntax-only
 
       - name: Run clang-tidy
         env:
