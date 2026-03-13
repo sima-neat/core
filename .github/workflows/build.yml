@@ -81,8 +81,16 @@ jobs:
 
       - name: Install clang-tidy
         run: |
-          if command -v clang-tidy >/dev/null 2>&1 && command -v rg >/dev/null 2>&1 && command -v clang++ >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
-            echo "clang-tidy, ripgrep, clang++, and g++ already installed."
+          clang_cpp_works() {
+            command -v clang++ >/dev/null 2>&1 || return 1
+            printf '%s\n' '#include <memory>' | clang++ -std=c++20 -x c++ - -fsyntax-only >/dev/null 2>&1
+          }
+
+          if command -v clang-tidy >/dev/null 2>&1 \
+            && command -v rg >/dev/null 2>&1 \
+            && command -v g++ >/dev/null 2>&1 \
+            && clang_cpp_works; then
+            echo "clang-tidy, ripgrep, and a working host C++ toolchain are already installed."
             exit 0
           fi
 
