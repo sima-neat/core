@@ -96,18 +96,18 @@ jobs:
 
           if [ "$(id -u)" -eq 0 ]; then
             apt-get update
-            apt-get install -y build-essential clang clang-tidy ripgrep
+            apt-get install -y build-essential gcc-12 g++-12 libstdc++-12-dev clang clang-tidy ripgrep
             exit 0
           fi
 
           if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
             sudo -n apt-get update
-            sudo -n apt-get install -y build-essential clang clang-tidy ripgrep
+            sudo -n apt-get install -y build-essential gcc-12 g++-12 libstdc++-12-dev clang clang-tidy ripgrep
             exit 0
           fi
 
           echo "Missing clang-tidy, ripgrep, or host C++ toolchain packages, and cannot install without passwordless sudo on this runner." >&2
-          echo "Preinstall build-essential, clang, clang-tidy, and ripgrep on the x86 runner or enable passwordless sudo for the runner user." >&2
+          echo "Preinstall build-essential, gcc-12, g++-12, libstdc++-12-dev, clang, clang-tidy, and ripgrep on the x86 runner or enable passwordless sudo for the runner user." >&2
           exit 1
 
       - name: Install build dependencies
