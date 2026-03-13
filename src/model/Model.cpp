@@ -66,8 +66,8 @@ std::vector<float> vec3_from_array(const std::optional<std::array<float, 3>>& ar
   return fallback;
 }
 
-pipeline_internal::ModelInputPolicyRequest make_model_input_policy_request(
-    const Model::Options& opt) {
+pipeline_internal::ModelInputPolicyRequest
+make_model_input_policy_request(const Model::Options& opt) {
   pipeline_internal::ModelInputPolicyRequest req;
   req.format = opt.format;
   req.preproc_input_width = opt.preproc.input_width;
@@ -80,8 +80,7 @@ pipeline_internal::ModelInputPolicyRequest make_model_input_policy_request(
   return req;
 }
 
-pipeline_internal::ModelInputPolicyResult resolve_model_input_policy(
-    const Model::Options& opt) {
+pipeline_internal::ModelInputPolicyResult resolve_model_input_policy(const Model::Options& opt) {
   return pipeline_internal::resolve_model_input_policy(make_model_input_policy_request(opt));
 }
 
@@ -764,8 +763,7 @@ void apply_preproc_overrides(PreprocOptions& pre_opt, const Model::Options& opt,
   if (pre_cfg.normalize.has_value())
     cfg["normalize"] = *pre_cfg.normalize;
 
-  const bool enable_norm =
-      pre_cfg.normalize.has_value() ? *pre_cfg.normalize : has_norm_stats;
+  const bool enable_norm = pre_cfg.normalize.has_value() ? *pre_cfg.normalize : has_norm_stats;
   if (enable_norm) {
     if (!pre_cfg.normalize.has_value())
       cfg["normalize"] = true;
