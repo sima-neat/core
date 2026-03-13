@@ -37,7 +37,8 @@ jobs:
 
   format-hygiene:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on:
+      group: generic-x86-linux
     needs: resolve-mode
 
     steps:
@@ -68,7 +69,8 @@ jobs:
 
   clang-tidy:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on:
+      group: generic-x86-linux
     needs: [resolve-mode, format-hygiene]
 
     steps:
@@ -108,7 +110,7 @@ jobs:
         env:
           SIMANEAT_STRICT_WARNINGS: "ON"
         run: |
-          ./scripts/run_cpp_tidy.sh --changed-only
+          ./scripts/run_cpp_tidy.sh --all
 
       - name: Finishing off
         run: |
