@@ -28,12 +28,21 @@
 #include "mpk/PipelineSequence.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
+#include "nodes/groups/UdpH264OutputGroup.h"
+#include "nodes/sima/DetessDequant.h"
+#include "nodes/sima/H264EncodeSima.h"
+#include "nodes/sima/H264Packetize.h"
+#include "nodes/sima/H264Parse.h"
+#include "nodes/sima/Preproc.h"
+#include "nodes/sima/QuantTess.h"
+#include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/UdpOutput.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Session.h"
@@ -48,6 +57,7 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -130,6 +140,71 @@ bool checked_add(std::size_t a, std::size_t b, std::size_t* out) {
     return false;
   *out = a + b;
   return true;
+}
+
+nb::object json_to_python(const nlohmann::json& value) {
+  if (value.is_null())
+    return nb::none();
+  if (value.is_boolean())
+    return nb::bool_(value.get<bool>());
+  if (value.is_number_integer())
+    return nb::int_(value.get<std::int64_t>());
+  if (value.is_number_unsigned())
+    return nb::int_(value.get<std::uint64_t>());
+  if (value.is_number_float())
+    return nb::float_(value.get<double>());
+  if (value.is_string())
+    return nb::str(value.get_ref<const std::string&>().c_str());
+  if (value.is_array()) {
+    nb::list out;
+    for (const auto& item : value) {
+      out.append(json_to_python(item));
+    }
+    return std::move(out);
+  }
+  if (value.is_object()) {
+    nb::dict out;
+    for (auto it = value.begin(); it != value.end(); ++it) {
+      out[nb::str(it.key().c_str())] = json_to_python(it.value());
+    }
+    return std::move(out);
+  }
+  throw std::runtime_error("unsupported nlohmann::json value in Python binding");
+}
+
+nlohmann::json python_to_json(nb::handle value) {
+  if (value.is_none())
+    return nullptr;
+  if (PyBool_Check(value.ptr()))
+    return nb::cast<bool>(value);
+  if (PyLong_Check(value.ptr()))
+    return nb::cast<std::int64_t>(value);
+  if (PyFloat_Check(value.ptr()))
+    return nb::cast<double>(value);
+  if (PyUnicode_Check(value.ptr()))
+    return nb::cast<std::string>(value);
+  if (PyDict_Check(value.ptr())) {
+    nlohmann::json out = nlohmann::json::object();
+    for (auto item : nb::borrow<nb::dict>(value)) {
+      out[nb::cast<std::string>(item.first)] = python_to_json(item.second);
+    }
+    return out;
+  }
+  if (PyList_Check(value.ptr()) || PyTuple_Check(value.ptr())) {
+    nlohmann::json out = nlohmann::json::array();
+    for (auto item : nb::borrow<nb::sequence>(value)) {
+      out.push_back(python_to_json(item));
+    }
+    return out;
+  }
+  throw nb::type_error(
+      "config_json must be None or a JSON-like Python value (dict, list, str, int, float, bool)");
+}
+
+std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
+  if (value.is_none())
+    return std::nullopt;
+  return python_to_json(value);
 }
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
@@ -777,9 +852,10 @@ std::optional<ImageSpec::PixelFormat> model_image_format_hint(const simaai::neat
   }
 }
 
-std::vector<Tensor> tensor_batch_from_python_input(
-    const nb::object& input, bool copy, const std::optional<TensorLayout>& layout,
-    const std::optional<ImageSpec::PixelFormat>& image_format) {
+std::vector<Tensor>
+tensor_batch_from_python_input(const nb::object& input, bool copy,
+                               const std::optional<TensorLayout>& layout,
+                               const std::optional<ImageSpec::PixelFormat>& image_format) {
   std::vector<Tensor> tensors;
   if (PyList_Check(input.ptr())) {
     nb::list items = nb::borrow<nb::list>(input);
@@ -878,8 +954,8 @@ NB_MODULE(_pyneat_core, m) {
 
           const SessionReport& rep = e.report();
           const std::string msg = format_session_error_message(e);
-          nb::object exc_obj = nb::steal(
-              PyObject_CallFunctionObjArgs(exc_type, nb::str(msg.c_str(), msg.size()).ptr(), nullptr));
+          nb::object exc_obj = nb::steal(PyObject_CallFunctionObjArgs(
+              exc_type, nb::str(msg.c_str(), msg.size()).ptr(), nullptr));
           if (!exc_obj.is_valid()) {
             throw nb::python_error();
           }
@@ -1182,8 +1258,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("max_width_origin", &simaai::neat::BuildAdaptationSummary::max_width_origin)
       .def_rw("max_height_origin", &simaai::neat::BuildAdaptationSummary::max_height_origin)
       .def_rw("max_depth_origin", &simaai::neat::BuildAdaptationSummary::max_depth_origin)
-      .def_rw("max_input_bytes_guard",
-              &simaai::neat::BuildAdaptationSummary::max_input_bytes_guard)
+      .def_rw("max_input_bytes_guard", &simaai::neat::BuildAdaptationSummary::max_input_bytes_guard)
       .def_rw("byte_guard_origin", &simaai::neat::BuildAdaptationSummary::byte_guard_origin)
       .def_rw("allow_ingress_cvu_format_renegotiation",
               &simaai::neat::BuildAdaptationSummary::allow_ingress_cvu_format_renegotiation)
@@ -1725,6 +1800,44 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("extra_fragment",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::extra_fragment);
 
+  nb::class_<simaai::neat::nodes::groups::UdpH264OutputGroupOptions>(m, "UdpH264OutputGroupOptions")
+      .def(nb::init<>())
+      .def_rw("h264_caps", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::h264_caps)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::payload_type)
+      .def_rw("config_interval",
+              &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::config_interval)
+      .def_rw("udp_host", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_host)
+      .def_rw("udp_port", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_port)
+      .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_sync)
+      .def_rw("udp_async", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_async);
+
+  nb::class_<simaai::neat::UdpOutputOptions>(m, "UdpOutputOptions")
+      .def(nb::init<>())
+      .def_rw("host", &simaai::neat::UdpOutputOptions::host)
+      .def_rw("port", &simaai::neat::UdpOutputOptions::port)
+      .def_rw("sync", &simaai::neat::UdpOutputOptions::sync)
+      .def_rw("async_", &simaai::neat::UdpOutputOptions::async)
+      .def_prop_rw(
+          "async", [](const simaai::neat::UdpOutputOptions& options) { return options.async; },
+          [](simaai::neat::UdpOutputOptions& options, bool value) { options.async = value; });
+
+  nb::enum_<simaai::neat::H264ParseOptions::Alignment>(m, "H264ParseAlignment")
+      .value("Auto", simaai::neat::H264ParseOptions::Alignment::Auto)
+      .value("AU", simaai::neat::H264ParseOptions::Alignment::AU)
+      .value("NAL", simaai::neat::H264ParseOptions::Alignment::NAL);
+
+  nb::enum_<simaai::neat::H264ParseOptions::StreamFormat>(m, "H264ParseStreamFormat")
+      .value("Auto", simaai::neat::H264ParseOptions::StreamFormat::Auto)
+      .value("AVC", simaai::neat::H264ParseOptions::StreamFormat::AVC)
+      .value("ByteStream", simaai::neat::H264ParseOptions::StreamFormat::ByteStream);
+
+  nb::class_<simaai::neat::H264ParseOptions>(m, "H264ParseOptions")
+      .def(nb::init<>())
+      .def_rw("config_interval", &simaai::neat::H264ParseOptions::config_interval)
+      .def_rw("alignment", &simaai::neat::H264ParseOptions::alignment)
+      .def_rw("stream_format", &simaai::neat::H264ParseOptions::stream_format)
+      .def_rw("enforce_caps", &simaai::neat::H264ParseOptions::enforce_caps);
+
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def("input", &simaai::neat::nodes::Input, "options"_a = simaai::neat::InputOptions{});
   nodes_mod.def("output", &simaai::neat::nodes::Output,
@@ -1735,6 +1848,9 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
+  groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
+                 "options"_a);
+  groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);
   groups_mod.def("video_input_output_spec", &simaai::neat::nodes::groups::VideoInputGroupOutputSpec,
@@ -1857,8 +1973,8 @@ NB_MODULE(_pyneat_core, m) {
             Tensor tensor = tensor_from_python_input(input, copy, layout, image_format);
             return runner.warmup(tensor, warm, timeout_ms);
           },
-          "input"_a, "warm"_a = -1, "timeout_ms"_a = -1, "copy"_a = false,
-          "layout"_a = nb::none(), "image_format"_a = nb::none())
+          "input"_a, "warm"_a = -1, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
+          "image_format"_a = nb::none())
       .def("close", &simaai::neat::Model::Runner::close);
 
   nb::class_<simaai::neat::Model>(m, "Model")
@@ -1951,6 +2067,139 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false);
 
+  nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
+      .def(nb::init<>())
+      .def(nb::init<const simaai::neat::Model&>(), "model"_a)
+      .def_rw("input_width", &simaai::neat::PreprocOptions::input_width)
+      .def_rw("input_height", &simaai::neat::PreprocOptions::input_height)
+      .def_rw("output_width", &simaai::neat::PreprocOptions::output_width)
+      .def_rw("output_height", &simaai::neat::PreprocOptions::output_height)
+      .def_rw("scaled_width", &simaai::neat::PreprocOptions::scaled_width)
+      .def_rw("scaled_height", &simaai::neat::PreprocOptions::scaled_height)
+      .def_rw("input_channels", &simaai::neat::PreprocOptions::input_channels)
+      .def_rw("output_channels", &simaai::neat::PreprocOptions::output_channels)
+      .def_rw("batch_size", &simaai::neat::PreprocOptions::batch_size)
+      .def_rw("normalize", &simaai::neat::PreprocOptions::normalize)
+      .def_rw("aspect_ratio", &simaai::neat::PreprocOptions::aspect_ratio)
+      .def_rw("tessellate", &simaai::neat::PreprocOptions::tessellate)
+      .def_rw("dynamic_input_dims", &simaai::neat::PreprocOptions::dynamic_input_dims)
+      .def_rw("tile_width", &simaai::neat::PreprocOptions::tile_width)
+      .def_rw("tile_height", &simaai::neat::PreprocOptions::tile_height)
+      .def_rw("tile_channels", &simaai::neat::PreprocOptions::tile_channels)
+      .def_rw("input_offset", &simaai::neat::PreprocOptions::input_offset)
+      .def_rw("input_stride", &simaai::neat::PreprocOptions::input_stride)
+      .def_rw("output_stride", &simaai::neat::PreprocOptions::output_stride)
+      .def_rw("q_zp", &simaai::neat::PreprocOptions::q_zp)
+      .def_rw("q_scale", &simaai::neat::PreprocOptions::q_scale)
+      .def_rw("channel_mean", &simaai::neat::PreprocOptions::channel_mean)
+      .def_rw("channel_stddev", &simaai::neat::PreprocOptions::channel_stddev)
+      .def_rw("input_img_type", &simaai::neat::PreprocOptions::input_img_type)
+      .def_rw("output_img_type", &simaai::neat::PreprocOptions::output_img_type)
+      .def_rw("output_dtype", &simaai::neat::PreprocOptions::output_dtype)
+      .def_rw("scaling_type", &simaai::neat::PreprocOptions::scaling_type)
+      .def_rw("padding_type", &simaai::neat::PreprocOptions::padding_type)
+      .def_rw("graph_name", &simaai::neat::PreprocOptions::graph_name)
+      .def_rw("node_name", &simaai::neat::PreprocOptions::node_name)
+      .def_rw("element_name", &simaai::neat::PreprocOptions::element_name)
+      .def_rw("cpu", &simaai::neat::PreprocOptions::cpu)
+      .def_rw("next_cpu", &simaai::neat::PreprocOptions::next_cpu)
+      .def_rw("debug", &simaai::neat::PreprocOptions::debug)
+      .def_rw("upstream_name", &simaai::neat::PreprocOptions::upstream_name)
+      .def_rw("graph_input_name", &simaai::neat::PreprocOptions::graph_input_name)
+      .def_rw("output_memory_order", &simaai::neat::PreprocOptions::output_memory_order)
+      .def_rw("num_buffers", &simaai::neat::PreprocOptions::num_buffers)
+      .def_rw("num_buffers_model", &simaai::neat::PreprocOptions::num_buffers_model)
+      .def_rw("num_buffers_locked", &simaai::neat::PreprocOptions::num_buffers_locked)
+      .def_rw("config_path", &simaai::neat::PreprocOptions::config_path)
+      .def_rw("config_dir", &simaai::neat::PreprocOptions::config_dir)
+      .def_rw("keep_config", &simaai::neat::PreprocOptions::keep_config)
+      .def_prop_rw(
+          "config_json",
+          [](const simaai::neat::PreprocOptions& options) -> nb::object {
+            if (!options.config_json.has_value())
+              return nb::none();
+            return json_to_python(*options.config_json);
+          },
+          [](simaai::neat::PreprocOptions& options, nb::object value) {
+            options.config_json = python_to_optional_json(value);
+          },
+          "value"_a.none());
+
+  nb::class_<simaai::neat::QuantTessOptions>(m, "QuantTessOptions")
+      .def(nb::init<>())
+      .def(nb::init<const simaai::neat::Model&>(), "model"_a)
+      .def_rw("config_path", &simaai::neat::QuantTessOptions::config_path)
+      .def_rw("config_dir", &simaai::neat::QuantTessOptions::config_dir)
+      .def_rw("keep_config", &simaai::neat::QuantTessOptions::keep_config)
+      .def_prop_rw(
+          "config_json",
+          [](const simaai::neat::QuantTessOptions& options) -> nb::object {
+            if (!options.config_json.has_value())
+              return nb::none();
+            return json_to_python(*options.config_json);
+          },
+          [](simaai::neat::QuantTessOptions& options, nb::object value) {
+            options.config_json = python_to_optional_json(value);
+          },
+          "value"_a.none())
+      .def_rw("element_name", &simaai::neat::QuantTessOptions::element_name)
+      .def_rw("num_buffers", &simaai::neat::QuantTessOptions::num_buffers)
+      .def_rw("num_buffers_model", &simaai::neat::QuantTessOptions::num_buffers_model)
+      .def_rw("num_buffers_locked", &simaai::neat::QuantTessOptions::num_buffers_locked);
+
+  nb::class_<simaai::neat::DetessDequantOptions>(m, "DetessDequantOptions")
+      .def(nb::init<>())
+      .def(nb::init<const simaai::neat::Model&>(), "model"_a)
+      .def_rw("config_path", &simaai::neat::DetessDequantOptions::config_path)
+      .def_rw("config_dir", &simaai::neat::DetessDequantOptions::config_dir)
+      .def_rw("keep_config", &simaai::neat::DetessDequantOptions::keep_config)
+      .def_prop_rw(
+          "config_json",
+          [](const simaai::neat::DetessDequantOptions& options) -> nb::object {
+            if (!options.config_json.has_value())
+              return nb::none();
+            return json_to_python(*options.config_json);
+          },
+          [](simaai::neat::DetessDequantOptions& options, nb::object value) {
+            options.config_json = python_to_optional_json(value);
+          },
+          "value"_a.none())
+      .def_rw("upstream_name", &simaai::neat::DetessDequantOptions::upstream_name)
+      .def_rw("element_name", &simaai::neat::DetessDequantOptions::element_name)
+      .def_rw("num_buffers", &simaai::neat::DetessDequantOptions::num_buffers)
+      .def_rw("num_buffers_model", &simaai::neat::DetessDequantOptions::num_buffers_model)
+      .def_rw("num_buffers_locked", &simaai::neat::DetessDequantOptions::num_buffers_locked);
+
+  nodes_mod.def("preproc", &simaai::neat::nodes::Preproc,
+                "options"_a = simaai::neat::PreprocOptions{});
+  nodes_mod.def("quant_tess", &simaai::neat::nodes::QuantTess,
+                "options"_a = simaai::neat::QuantTessOptions{});
+  nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
+                "options"_a = simaai::neat::UdpOutputOptions{});
+  nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
+                "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def(
+      "h264_parse",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(
+          &simaai::neat::nodes::H264Parse),
+      "options"_a);
+  nodes_mod.def(
+      "h264_parse",
+      [](int config_interval) { return simaai::neat::nodes::H264Parse(config_interval); },
+      "config_interval"_a = 1);
+  nodes_mod.def(
+      "h264_packetize",
+      [](int payload_type, int config_interval) {
+        return simaai::neat::nodes::H264Packetize(
+            simaai::neat::H264Packetize::PayloadType{payload_type},
+            simaai::neat::H264Packetize::ConfigInterval{config_interval});
+      },
+      "payload_type"_a = 96, "config_interval"_a = 1);
+  nodes_mod.def("detess_dequant", &simaai::neat::nodes::DetessDequant,
+                "options"_a = simaai::neat::DetessDequantOptions{});
+  nodes_mod.def("sima_box_decode", &simaai::neat::nodes::SimaBoxDecode, "model"_a,
+                "decode_type"_a = "", "original_width"_a = 0, "original_height"_a = 0,
+                "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0);
 
   nb::module_ graph_mod = m.def_submodule("graph", "Hybrid graph runtime and helper nodes");
 
@@ -1982,16 +2231,18 @@ NB_MODULE(_pyneat_core, m) {
       .def("is_dag", &simaai::neat::graph::Graph::is_dag)
       .def("edges", [](const simaai::neat::graph::Graph& g) { return g.edges(); });
 
-  graph_mod.def("to_text",
-                [](const simaai::neat::graph::Graph& g) {
-                  return simaai::neat::graph::GraphPrinter::to_text(g);
-                },
-                "graph"_a);
-  graph_mod.def("to_dot",
-                [](const simaai::neat::graph::Graph& g) {
-                  return simaai::neat::graph::GraphPrinter::to_dot(g);
-                },
-                "graph"_a);
+  graph_mod.def(
+      "to_text",
+      [](const simaai::neat::graph::Graph& g) {
+        return simaai::neat::graph::GraphPrinter::to_text(g);
+      },
+      "graph"_a);
+  graph_mod.def(
+      "to_dot",
+      [](const simaai::neat::graph::Graph& g) {
+        return simaai::neat::graph::GraphPrinter::to_dot(g);
+      },
+      "graph"_a);
 
   nb::class_<simaai::neat::graph::GraphRunOptions>(graph_mod, "GraphRunOptions")
       .def(nb::init<>())
@@ -2005,23 +2256,24 @@ NB_MODULE(_pyneat_core, m) {
            nb::call_guard<nb::gil_scoped_release>());
 
   nb::class_<simaai::neat::graph::GraphRun::Output>(graph_mod, "Output")
-      .def("pull",
-           [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
-             return output.pull(timeout_ms);
-           },
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("pull_or_throw",
-           [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
-             return output.pull_or_throw(timeout_ms);
-           },
-           "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "pull",
+          [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
+            return output.pull(timeout_ms);
+          },
+          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "pull_or_throw",
+          [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
+            return output.pull_or_throw(timeout_ms);
+          },
+          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def("node_id", &simaai::neat::graph::GraphRun::Output::node_id);
 
   nb::class_<simaai::neat::graph::GraphRun>(graph_mod, "GraphRun")
       .def(nb::init<>())
-      .def("__bool__", [](const simaai::neat::graph::GraphRun& run) {
-        return static_cast<bool>(run);
-      })
+      .def("__bool__",
+           [](const simaai::neat::graph::GraphRun& run) { return static_cast<bool>(run); })
       .def("running", &simaai::neat::graph::GraphRun::running)
       .def("push",
            nb::overload_cast<simaai::neat::graph::NodeId, const Sample&>(
@@ -2059,7 +2311,7 @@ NB_MODULE(_pyneat_core, m) {
       .value("DropNewest", simaai::neat::graph::nodes::StreamDropPolicy::DropNewest);
 
   nb::class_<simaai::neat::graph::nodes::StreamSchedulerOptions>(graph_nodes_mod,
-                                                                  "StreamSchedulerOptions")
+                                                                 "StreamSchedulerOptions")
       .def(nb::init<>())
       .def_rw("per_stream_queue",
               &simaai::neat::graph::nodes::StreamSchedulerOptions::per_stream_queue)
@@ -2067,7 +2319,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("max_batch", &simaai::neat::graph::nodes::StreamSchedulerOptions::max_batch);
 
   nb::class_<simaai::neat::graph::nodes::StageModelExecutorOptions>(graph_nodes_mod,
-                                                                     "StageModelExecutorOptions")
+                                                                    "StageModelExecutorOptions")
       .def(nb::init<>())
       .def_prop_rw(
           "model",
@@ -2078,16 +2330,22 @@ NB_MODULE(_pyneat_core, m) {
              const std::shared_ptr<simaai::neat::Model>& model) { opt.model = model; })
       .def_rw("do_preproc", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_preproc)
       .def_rw("do_mla", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_mla)
-      .def_rw("do_boxdecode",
-              &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
+      .def_rw("do_boxdecode", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
 
-  graph_nodes_mod.def("pipeline_node",
-                      [](std::shared_ptr<simaai::neat::Node> node, const std::string& label) {
-                        return std::static_pointer_cast<simaai::neat::graph::Node>(
-                            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(
-                                std::move(node), label));
-                      },
-                      "node"_a, "label"_a = "");
+  graph_nodes_mod.def(
+      "pipeline_node",
+      [](const simaai::neat::NodeGroup& group, const std::string& label) {
+        return std::static_pointer_cast<simaai::neat::graph::Node>(
+            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(group, label));
+      },
+      "group"_a, "label"_a = "");
+  graph_nodes_mod.def(
+      "pipeline_node",
+      [](std::shared_ptr<simaai::neat::Node> node, const std::string& label) {
+        return std::static_pointer_cast<simaai::neat::graph::Node>(
+            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(std::move(node), label));
+      },
+      "node"_a, "label"_a = "");
   graph_nodes_mod.def("stamp_frame_id", &simaai::neat::graph::nodes::StampFrameIdNode,
                       "label"_a = "");
   graph_nodes_mod.def(
