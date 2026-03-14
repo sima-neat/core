@@ -31,6 +31,9 @@ struct BoxDecodeOptionsInternal {
   double nms_iou_threshold = 0.0;
   int original_width = 0;
   int original_height = 0;
+  int num_buffers = 0;
+  int num_buffers_model = 0;
+  bool num_buffers_locked = false;
 };
 
 struct SimaBoxDecode::BoxDecodeConfigHolder {
@@ -103,6 +106,9 @@ static BoxDecodeOptionsInternal options_from_model(const simaai::neat::internal:
   }
   opt.config_path = path;
   opt.decode_type = infer_decode_type_from_model_path(model);
+  opt.num_buffers_model = model.num_buffers_cvu();
+  opt.num_buffers = opt.num_buffers_model;
+  opt.num_buffers_locked = true;
   return opt;
 }
 
@@ -178,6 +184,9 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
     ss << " topk=" << opt_->top_k;
   }
   ss << " transmit=" << (opt_->transmit ? "true" : "false");
+  if (opt_->num_buffers > 0) {
+    ss << " num-buffers=" << opt_->num_buffers;
+  }
   return ss.str();
 }
 
