@@ -144,9 +144,16 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, const std::string
     config_holder_->has_config = false;
   }
 
-  if ((original_width > 0 || original_height > 0) && config_holder_->has_config) {
+  if (config_holder_->has_config &&
+      (opt_->num_buffers > 0 || original_width > 0 || original_height > 0)) {
     override_config_json(
         [&](json& j) {
+          if (opt_->num_buffers > 0) {
+            if (!j.contains("system") || !j["system"].is_object()) {
+              j["system"] = json::object();
+            }
+            j["system"]["out_buf_queue"] = opt_->num_buffers;
+          }
           if (original_width > 0)
             j["original_width"] = original_width;
           if (original_height > 0)
