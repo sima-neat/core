@@ -15,7 +15,7 @@ import pyneat
 ROOT = Path(__file__).resolve().parents[2]
 SANDBOX_API_TESTS = ROOT / "sandbox" / "api-tests"
 _MODEL_PATH_CACHE: dict[str, Path | None] = {}
-BOXDECODE_THRESHOLDS = (0.20, 0.40, 0.60)
+BOXDECODE_THRESHOLDS = (0.50, 0.60, 0.70)
 TOP_SCORE_HIGHLIGHT_COUNT = 3
 
 _MODEL_FIXTURES = {
@@ -429,21 +429,21 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
       pyneat.groups.mla(model),
       pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)),
   )
-  box_output = _run_model_on_image(
-      model,
-      image,
-      _custom_preproc_node(model, image),
-      pyneat.groups.mla(model),
-      pyneat.nodes.sima_box_decode(
-          model,
-          "yolov8",
-          image.shape[1],
-          image.shape[0],
-          0.25,
-          0.55,
-          120,
-      ),
-  )
+  session = pyneat.Session()
+  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  session.add(_custom_preproc_node(model, image))
+  session.add(pyneat.groups.mla(model))
+  session.add(pyneat.nodes.sima_box_decode(model))
+  session.add(pyneat.nodes.output())
+
+  backend = session.describe_backend()
+  assert "detection-threshold=" not in backend.lower()
+
+  runner = session.build(image)
+  try:
+    box_output = runner.run(image, timeout_ms=30000)
+  finally:
+    runner.close()
 
   assert detess_output.kind == pyneat.SampleKind.Bundle
   assert detess_output.payload_tag == "DETESSDEQUANT"
