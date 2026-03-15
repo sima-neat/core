@@ -10,6 +10,9 @@
 
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -31,6 +34,9 @@ struct BoxDecodeOptionsInternal {
   double nms_iou_threshold = 0.0;
   int original_width = 0;
   int original_height = 0;
+  int num_buffers = 0;
+  int num_buffers_model = 0;
+  bool num_buffers_locked = false;
 };
 
 struct SimaBoxDecode::BoxDecodeConfigHolder {
@@ -93,6 +99,47 @@ std::string write_json_temp(const json& j, const std::string& dir) {
   return path;
 }
 
+std::string effective_decode_type(const BoxDecodeOptionsInternal& opt, const json* cfg) {
+  if (!opt.decode_type.empty())
+    return lower_copy(opt.decode_type);
+  if (cfg && cfg->is_object()) {
+    const auto it = cfg->find("decode_type");
+    if (it != cfg->end() && it->is_string()) {
+      return lower_copy(it->get<std::string>());
+    }
+  }
+  return {};
+}
+
+std::optional<double> effective_detection_threshold(const BoxDecodeOptionsInternal& opt,
+                                                    const json* cfg) {
+  if (opt.detection_threshold > 0.0)
+    return opt.detection_threshold;
+  if (cfg && cfg->is_object()) {
+    const auto it = cfg->find("detection_threshold");
+    if (it != cfg->end() && it->is_number()) {
+      return it->get<double>();
+    }
+  }
+  return std::nullopt;
+}
+
+void maybe_warn_yolov8_threshold_cliff(const BoxDecodeOptionsInternal& opt, const json* cfg) {
+  const std::string decode_type = effective_decode_type(opt, cfg);
+  const std::optional<double> threshold = effective_detection_threshold(opt, cfg);
+  if (decode_type != "yolov8" || !threshold.has_value() || *threshold > 0.5) {
+    return;
+  }
+  std::ostringstream msg;
+  msg << std::fixed << std::setprecision(3);
+  msg << "[WARN] SimaBoxDecode: resolved detection-threshold=" << *threshold
+      << " for decode-type=yolov8. Thresholds <= 0.5 are risky for YOLOv8 cut-model outputs "
+         "because they admit borderline 0-logit candidates and can cause severe latency cliffs "
+         "before NMS/topk. Set an explicit threshold >= 0.51 (commonly 0.52+) in the app or "
+         "model pack.\n";
+  std::cerr << msg.str();
+}
+
 } // namespace
 
 static BoxDecodeOptionsInternal options_from_model(const simaai::neat::internal::ModelPack& model) {
@@ -103,6 +150,9 @@ static BoxDecodeOptionsInternal options_from_model(const simaai::neat::internal:
   }
   opt.config_path = path;
   opt.decode_type = infer_decode_type_from_model_path(model);
+  opt.num_buffers_model = model.num_buffers_cvu();
+  opt.num_buffers = opt.num_buffers_model;
+  opt.num_buffers_locked = true;
   return opt;
 }
 
@@ -138,9 +188,16 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, const std::string
     config_holder_->has_config = false;
   }
 
-  if ((original_width > 0 || original_height > 0) && config_holder_->has_config) {
+  if (config_holder_->has_config &&
+      (opt_->num_buffers > 0 || original_width > 0 || original_height > 0)) {
     override_config_json(
         [&](json& j) {
+          if (opt_->num_buffers > 0) {
+            if (!j.contains("system") || !j["system"].is_object()) {
+              j["system"] = json::object();
+            }
+            j["system"]["out_buf_queue"] = opt_->num_buffers;
+          }
           if (original_width > 0)
             j["original_width"] = original_width;
           if (original_height > 0)
@@ -148,6 +205,10 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, const std::string
         },
         "ctor.runtime_dims");
   }
+
+  const json* effective_cfg =
+      (config_holder_ && config_holder_->has_config) ? &config_holder_->config : nullptr;
+  maybe_warn_yolov8_threshold_cliff(*opt_, effective_cfg);
 }
 
 std::string SimaBoxDecode::backend_fragment(int node_index) const {
@@ -178,6 +239,9 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
     ss << " topk=" << opt_->top_k;
   }
   ss << " transmit=" << (opt_->transmit ? "true" : "false");
+  if (opt_->num_buffers > 0) {
+    ss << " num-buffers=" << opt_->num_buffers;
+  }
   return ss.str();
 }
 

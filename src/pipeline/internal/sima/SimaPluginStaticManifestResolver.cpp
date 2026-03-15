@@ -1014,7 +1014,10 @@ SimaPluginStaticManifest resolve_manifest_from_pipeline(const std::string& pipel
       append_trace(stage, "runtime.topk", "property");
     }
     const std::optional<json>& stage_config = parsed_stage_configs[i];
-    if (stage_config.has_value() && !model_managed_stage) {
+    // Model-managed boxdecode stages still rely on packaged config JSON for
+    // decode/runtime defaults when the node does not set explicit properties.
+    const bool allow_model_managed_json_defaults = is_boxdecode_plugin(stage.plugin_kind);
+    if (stage_config.has_value() && (!model_managed_stage || allow_model_managed_json_defaults)) {
       const json* stage_params_ptr = params_or_root(*stage_config);
       const json& stage_params = stage_params_ptr ? *stage_params_ptr : *stage_config;
 
@@ -1170,7 +1173,7 @@ SimaPluginStaticManifest resolve_manifest_from_pipeline(const std::string& pipel
         }
         diagnostics->errors.push_back("Missing required runtime field '" + std::string(key) +
                                       "' for model-managed stage '" + stage.element_name +
-                                      "' (fallback_chain=property->context->json)");
+                                      "' (fallback_chain=property->json)");
       };
 
       if (is_boxdecode_plugin(stage.plugin_kind)) {

@@ -199,6 +199,7 @@ set(UNIT_TESTS
   unit_session_io_roundtrip_test
   unit_session_io_negative_test
   unit_session_naming_transform_test
+  unit_sima_boxdecode_config_test
   unit_simaai_guard_test
   unit_stageconfig_mla_info_test
   unit_simaai_allocator_share_test

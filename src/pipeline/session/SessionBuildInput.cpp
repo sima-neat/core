@@ -217,7 +217,7 @@ bool effective_zero_copy_output(const RunOptions& opt) {
 
 int preset_default_timeout_ms(RunMode mode, RunPreset preset) {
   const int env_default =
-      std::max(10, std::atoi(env_str("SIMA_GST_RUN_INPUT_TIMEOUT_MS", "10000").c_str()));
+      std::max(10, std::atoi(env_str("SIMA_GST_RUN_INPUT_TIMEOUT_MS", "30000").c_str()));
   if (mode == RunMode::Sync)
     return env_default;
   switch (preset) {
@@ -380,9 +380,10 @@ void validate_shape_limits_or_throw(const InputStreamOptions::ResolvedShapeLimit
       "Set depth <= max_depth (or clear depth to infer seed dynamically).");
 }
 
-InputStreamOptions::DynamicCapability detect_dynamic_capability(
-    const std::vector<std::shared_ptr<Node>>& nodes, const InputOptions& src_opt,
-    const SampleSpec& seed, InputStreamOptions::ShapePolicy policy) {
+InputStreamOptions::DynamicCapability
+detect_dynamic_capability(const std::vector<std::shared_ptr<Node>>& nodes,
+                          const InputOptions& src_opt, const SampleSpec& seed,
+                          InputStreamOptions::ShapePolicy policy) {
   if (policy == InputStreamOptions::ShapePolicy::LockedByCapsOverride) {
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
@@ -391,7 +392,8 @@ InputStreamOptions::DynamicCapability detect_dynamic_capability(
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
 
-  const std::string media = lower_copy(src_opt.media_type.empty() ? seed.media_type : src_opt.media_type);
+  const std::string media =
+      lower_copy(src_opt.media_type.empty() ? seed.media_type : src_opt.media_type);
   if (media != "video/x-raw") {
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
@@ -422,8 +424,7 @@ InputStreamOptions::DynamicCapability detect_dynamic_capability(
   }
 
   const auto& pre_opt = dynamic_preproc->options();
-  if (pre_opt.output_width <= 0 || pre_opt.output_height <= 0 ||
-      pre_opt.output_img_type.empty()) {
+  if (pre_opt.output_width <= 0 || pre_opt.output_height <= 0 || pre_opt.output_img_type.empty()) {
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
 
@@ -534,19 +535,18 @@ OutputSpec make_ingress_spec_for_format(const SampleSpec& seed, const std::strin
 
 bool output_contract_equal(const OutputSpec& a, const OutputSpec& b) {
   return a.media_type == b.media_type && a.format == b.format && a.width == b.width &&
-         a.height == b.height && a.depth == b.depth && a.layout == b.layout &&
-         a.dtype == b.dtype;
+         a.height == b.height && a.depth == b.depth && a.layout == b.layout && a.dtype == b.dtype;
 }
 
-bool derive_downstream_contract_for_ingress_format(
-    const std::vector<std::shared_ptr<Node>>& nodes, std::size_t start_idx, const SampleSpec& seed,
-    const std::string& fmt, OutputSpec* out) {
+bool derive_downstream_contract_for_ingress_format(const std::vector<std::shared_ptr<Node>>& nodes,
+                                                   std::size_t start_idx, const SampleSpec& seed,
+                                                   const std::string& fmt, OutputSpec* out) {
   if (!out || seed.width <= 0 || seed.height <= 0)
     return false;
   if (start_idx >= nodes.size())
     return false;
-  std::vector<std::shared_ptr<Node>> downstream(nodes.begin() + static_cast<std::ptrdiff_t>(start_idx),
-                                                nodes.end());
+  std::vector<std::shared_ptr<Node>> downstream(
+      nodes.begin() + static_cast<std::ptrdiff_t>(start_idx), nodes.end());
   if (downstream.empty())
     return false;
 
@@ -559,10 +559,10 @@ bool derive_downstream_contract_for_ingress_format(
   }
 }
 
-bool detect_allow_ingress_format_renegotiation(
-    const std::vector<std::shared_ptr<Node>>& nodes, const InputOptions& src_opt,
-    const SampleSpec& seed, InputStreamOptions::ShapePolicy policy,
-    InputStreamOptions::DynamicCapability capability) {
+bool detect_allow_ingress_format_renegotiation(const std::vector<std::shared_ptr<Node>>& nodes,
+                                               const InputOptions& src_opt, const SampleSpec& seed,
+                                               InputStreamOptions::ShapePolicy policy,
+                                               InputStreamOptions::DynamicCapability capability) {
   if (policy == InputStreamOptions::ShapePolicy::LockedByCapsOverride)
     return false;
   if (capability != InputStreamOptions::DynamicCapability::IngressDynamicCvuOnly)
@@ -592,9 +592,8 @@ bool detect_allow_ingress_format_renegotiation(
   add_unique_ingress_format(formats, src_opt.format);
   add_unique_ingress_format(formats, pre_opt.input_img_type);
 
-  const std::string baseline = !formats.empty()
-                                   ? formats.front()
-                                   : canonical_raw_format(seed.format);
+  const std::string baseline =
+      !formats.empty() ? formats.front() : canonical_raw_format(seed.format);
   if (!is_supported_raw_ingress_format(baseline))
     return false;
 
@@ -678,15 +677,15 @@ InputOptions seed_input_options_from_spec(const InputOptions& opt, const SampleS
   return out;
 }
 
-std::vector<std::shared_ptr<Node>> replace_first_input_node_for_build(
-    const std::vector<std::shared_ptr<Node>>& nodes, const InputOptions& seeded_input_opt) {
+std::vector<std::shared_ptr<Node>>
+replace_first_input_node_for_build(const std::vector<std::shared_ptr<Node>>& nodes,
+                                   const InputOptions& seeded_input_opt) {
   std::vector<std::shared_ptr<Node>> patched = nodes;
   if (!patched.empty()) {
     patched.front() = nodes::Input(seeded_input_opt);
   }
   return patched;
 }
-
 
 RunOptions apply_run_defaults(const RunOptions& opt, const SessionOptions& sess_opt) {
   (void)sess_opt;
@@ -1087,10 +1086,12 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   const Input* src_node = nullptr;
   require_input_appsrc(nodes, "Session::build(input)", &src_node);
-  const InputOptions normalized_input_opt = pipeline_internal::normalize_shape_bounds(src_node->options());
+  const InputOptions normalized_input_opt =
+      pipeline_internal::normalize_shape_bounds(src_node->options());
   const SampleSpec seed_spec =
       infer_input_spec(normalized_input_opt, sample, "Session::build(input)");
-  const InputOptions seeded_input_opt = seed_input_options_from_spec(src_node->options(), seed_spec);
+  const InputOptions seeded_input_opt =
+      seed_input_options_from_spec(src_node->options(), seed_spec);
   const std::vector<std::shared_ptr<Node>> build_nodes =
       replace_first_input_node_for_build(nodes, seeded_input_opt);
 
@@ -1180,9 +1181,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   InputStreamOptions stream_opt = opt;
   const std::size_t bounded_estimate_bytes =
       static_cast<std::size_t>(session_build_estimate_frame_bytes_limit(src_opt, spec));
-  const auto resolved_input_policy =
-      pipeline_internal::resolve_session_input_policy(src_opt, spec, stream_opt.max_input_bytes,
-                                                     bounded_estimate_bytes);
+  const auto resolved_input_policy = pipeline_internal::resolve_session_input_policy(
+      src_opt, spec, stream_opt.max_input_bytes, bounded_estimate_bytes);
   stream_opt.shape_policy = resolved_input_policy.shape_policy;
   stream_opt.shape_limits = resolved_input_policy.shape_limits;
   stream_opt.max_input_bytes = resolved_input_policy.max_input_bytes_guard;
@@ -1219,14 +1219,12 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     add_build_adaptation_action(adaptation, "input_constraints", true, detail.str());
   }
 
-  add_build_adaptation_action(
-      adaptation, "dynamic_capability", true,
-      std::string("shape_policy=") + adaptation.shape_policy + " capability=" +
-          adaptation.dynamic_capability);
+  add_build_adaptation_action(adaptation, "dynamic_capability", true,
+                              std::string("shape_policy=") + adaptation.shape_policy +
+                                  " capability=" + adaptation.dynamic_capability);
 
   add_build_adaptation_action(
-      adaptation, "format_renegotiation_gate",
-      stream_opt.allow_ingress_cvu_format_renegotiation,
+      adaptation, "format_renegotiation_gate", stream_opt.allow_ingress_cvu_format_renegotiation,
       stream_opt.allow_ingress_cvu_format_renegotiation
           ? "ingress raw format changes allowed for this graph"
           : "ingress format changes are rebuild-only for this graph",
@@ -1250,16 +1248,14 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   adaptation.max_input_bytes_guard = stream_opt.max_input_bytes;
   adaptation.byte_guard_origin = byte_guard_origin_name(stream_opt.byte_guard_origin);
-  add_build_adaptation_action(adaptation, "byte_guard", true,
-                              std::string("max_input_bytes=") +
-                                  std::to_string(stream_opt.max_input_bytes),
-                              std::string());
+  add_build_adaptation_action(
+      adaptation, "byte_guard", true,
+      std::string("max_input_bytes=") + std::to_string(stream_opt.max_input_bytes), std::string());
 
   add_build_adaptation_action(
       adaptation, "appsrc_caps_seed", src_opt.caps_override.empty(),
-      src_opt.caps_override.empty()
-          ? std::string("caps derived from resolved seed input")
-          : std::string("caps_override=") + src_opt.caps_override,
+      src_opt.caps_override.empty() ? std::string("caps derived from resolved seed input")
+                                    : std::string("caps_override=") + src_opt.caps_override,
       src_opt.caps_override.empty() ? std::string()
                                     : std::string("caps_override is authoritative"));
 
@@ -1480,10 +1476,9 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
   require_input_appsrc(nodes, "Session::run(input)", &src_node);
 
   const int timeout_ms =
-      std::max(10, std::atoi(env_str("SIMA_GST_RUN_INPUT_TIMEOUT_MS", "10000").c_str()));
-  const SampleSpec spec =
-      infer_input_spec(pipeline_internal::normalize_shape_bounds(src_node->options()), input,
-                       "Session::run(input)");
+      std::max(10, std::atoi(env_str("SIMA_GST_RUN_INPUT_TIMEOUT_MS", "30000").c_str()));
+  const SampleSpec spec = infer_input_spec(
+      pipeline_internal::normalize_shape_bounds(src_node->options()), input, "Session::run(input)");
   const uint64_t version = nodes_version.load(std::memory_order_relaxed);
   const RunOptions run_opt = session_build_resolve_build_opt(RunMode::Sync, opt);
   const bool reuse_cache =
@@ -1514,7 +1509,8 @@ Run Session::build(const cv::Mat& input, RunMode mode, const RunOptions& opt) {
   Run runner = Run::create(std::move(stream), ctx.merged_opt, ctx.stream_opt);
   if (ctx.mode == RunMode::Sync) {
     const SampleSpec spec =
-        infer_input_spec(pipeline_internal::normalize_shape_bounds(ctx.src_node->options()), input, "Session::build(input)");
+        infer_input_spec(pipeline_internal::normalize_shape_bounds(ctx.src_node->options()), input,
+                         "Session::build(input)");
     set_sync_cache(run_cache_, Run(runner.state_), spec.caps_key, ctx.merged_opt,
                    nodes_version_.load(std::memory_order_relaxed), RunInputKind::Mat);
   }
@@ -1532,7 +1528,8 @@ Run Session::build(const simaai::neat::Tensor& input, RunMode mode, const RunOpt
   Run runner = Run::create(std::move(stream), ctx.merged_opt, ctx.stream_opt);
   if (ctx.mode == RunMode::Sync) {
     const SampleSpec spec =
-        infer_input_spec(pipeline_internal::normalize_shape_bounds(ctx.src_node->options()), input, "Session::build(input)");
+        infer_input_spec(pipeline_internal::normalize_shape_bounds(ctx.src_node->options()), input,
+                         "Session::build(input)");
     set_sync_cache(run_cache_, Run(runner.state_), spec.caps_key, ctx.merged_opt,
                    nodes_version_.load(std::memory_order_relaxed), RunInputKind::Tensor);
   }
