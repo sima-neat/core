@@ -10,7 +10,7 @@
 namespace {
 
 sima_test::MpkFixture make_boxdecode_fixture(const std::string& tag,
-                                            double detection_threshold = 0.52) {
+                                             double detection_threshold = 0.52) {
   return sima_test::make_mpk_tar_fixture(tag,
                                          {
                                              {"etc/pipeline_sequence.json",
@@ -86,7 +86,8 @@ sima_test::MpkFixture make_boxdecode_fixture(const std::string& tag,
   "decode_type": "yolov8",
   "original_width": 320,
   "original_height": 240,
-  "detection_threshold": )json" + std::to_string(detection_threshold) + R"json(,
+  "detection_threshold": )json" + std::to_string(detection_threshold) +
+                                                  R"json(,
   "nms_iou_threshold": 0.45,
   "topk": 24
 })json"},
@@ -121,8 +122,8 @@ RUN_TEST("unit_sima_boxdecode_config_test", ([] {
            require_contains(fragment, "num-buffers=4",
                             "SimaBoxDecode fragment should expose async num-buffers");
 
-           const auto warning_fixture = make_boxdecode_fixture("boxdecode_warning_threshold_cliff",
-                                                               0.5);
+           const auto warning_fixture =
+               make_boxdecode_fixture("boxdecode_warning_threshold_cliff", 0.5);
            std::ostringstream captured;
            auto* old_cerr = std::cerr.rdbuf(captured.rdbuf());
            try {
@@ -133,6 +134,7 @@ RUN_TEST("unit_sima_boxdecode_config_test", ([] {
              throw;
            }
            std::cerr.rdbuf(old_cerr);
-           require_contains(captured.str(), "detection-threshold=0.500",
-                            "SimaBoxDecode should warn when effective YOLOv8 threshold resolves to <= 0.5");
+           require_contains(
+               captured.str(), "detection-threshold=0.500",
+               "SimaBoxDecode should warn when effective YOLOv8 threshold resolves to <= 0.5");
          }));
