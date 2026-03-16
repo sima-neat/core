@@ -29,6 +29,17 @@ TempFile write_temp_json(const std::string& tag, const nlohmann::json& j) {
   return TempFile(path);
 }
 
+const simaai::neat::pipeline_internal::sima::StageStaticSpec*
+find_stage(const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest,
+           const std::string& element_name) {
+  for (const auto& stage : manifest.stages) {
+    if (stage.element_name == element_name) {
+      return &stage;
+    }
+  }
+  return nullptr;
+}
+
 } // namespace
 
 RUN_TEST("unit_sima_plugin_manifest_strict_fallback_test", ([] {
@@ -37,6 +48,9 @@ RUN_TEST("unit_sima_plugin_manifest_strict_fallback_test", ([] {
            const nlohmann::json box_cfg = {
                {"node_name", "box_only_0"},
                {"decode_type", "yolov8"},
+               {"topk", 200},
+               {"detection_threshold", 0.15},
+               {"nms_iou_threshold", 0.45},
                {"input_width", nlohmann::json::array({20})},
                {"input_height", nlohmann::json::array({10})},
                {"input_depth", nlohmann::json::array({91})},
@@ -52,19 +66,25 @@ RUN_TEST("unit_sima_plugin_manifest_strict_fallback_test", ([] {
            const SimaPluginStaticManifest manifest =
                resolve_manifest_from_pipeline(pipeline, "sess-strict", &strict_diag);
 
-           require(!strict_diag.errors.empty(),
-                   "resolver should fail when required runtime/static fields are unresolved");
-           bool found_missing_decode_type = false;
-           for (const auto& err : strict_diag.errors) {
-             if (err.find("Missing required runtime field 'decode_type'") != std::string::npos) {
-               found_missing_decode_type = true;
-               break;
-             }
-           }
-           require(found_missing_decode_type,
-                   "resolver should not resolve decode_type from stage JSON fallback");
-           require(!manifest.stages.empty(), "manifest should still include parsed stages");
-           const auto& stage = manifest.stages.front();
-           require(!stage.runtime_defaults.contains("decode_type"),
-                   "runtime defaults must not be populated from stage JSON");
+           require(
+               strict_diag.errors.empty(),
+               "model-managed boxdecode should resolve packaged runtime defaults from stage JSON");
+           const auto* stage = find_stage(manifest, "box_only");
+           require(stage != nullptr, "manifest should include the named boxdecode stage");
+           require(stage->runtime_defaults.contains("decode_type"),
+                   "runtime defaults should include decode_type from stage JSON");
+           require(stage->runtime_defaults["decode_type"] == "yolov8",
+                   "decode_type should match the packaged boxdecode JSON");
+           require(stage->runtime_defaults.contains("detection_threshold"),
+                   "runtime defaults should include detection_threshold from stage JSON");
+           require(stage->runtime_defaults["detection_threshold"] == 0.15,
+                   "detection_threshold should match the packaged boxdecode JSON");
+           require(stage->runtime_defaults.contains("nms_iou_threshold"),
+                   "runtime defaults should include nms_iou_threshold from stage JSON");
+           require(stage->runtime_defaults["nms_iou_threshold"] == 0.45,
+                   "nms_iou_threshold should match the packaged boxdecode JSON");
+           require(stage->runtime_defaults.contains("topk"),
+                   "runtime defaults should include topk from stage JSON");
+           require(stage->runtime_defaults["topk"] == 200,
+                   "topk should match the packaged boxdecode JSON");
          }));

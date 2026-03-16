@@ -661,8 +661,14 @@ def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path)
   with open(cfg_path, "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
+  assert "detection-threshold=" not in backend.lower()
+  assert "nms-iou-threshold=" not in backend.lower()
+  assert "topk=" not in backend.lower()
   assert cfg["original_width"] == 320
   assert cfg["original_height"] == 240
+  assert cfg["detection_threshold"] == pytest.approx(0.15)
+  assert cfg["nms_iou_threshold"] == pytest.approx(0.45)
+  assert cfg["topk"] == 24
 
 
 def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
@@ -690,8 +696,16 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
   with open(cfg_path, "r", encoding="utf-8") as f:
     cfg = json.load(f)
 
+  assert "detection-threshold=0.25" in backend.lower()
+  assert "nms-iou-threshold=0.55" in backend.lower()
+  assert "topk=120" in backend.lower()
   assert cfg["original_width"] == 640
   assert cfg["original_height"] == 360
+  # Runtime threshold/top-k overrides are emitted as backend properties, while
+  # the rewritten config keeps the packaged postprocess defaults.
+  assert cfg["detection_threshold"] == pytest.approx(0.15)
+  assert cfg["nms_iou_threshold"] == pytest.approx(0.45)
+  assert cfg["topk"] == 24
 
 
 def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
