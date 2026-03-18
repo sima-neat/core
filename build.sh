@@ -1277,7 +1277,6 @@ install_artifacts_into_current_environment_if_requested() {
   local -a staged_files=()
   local artifact_stage
   artifact_stage="$(mktemp -d "/tmp/sima-neat-install.XXXXXX")"
-  trap 'rm -rf "${artifact_stage}"' RETURN
 
   local file
   for file in ./*.deb; do
@@ -1292,6 +1291,7 @@ install_artifacts_into_current_environment_if_requested() {
   done
 
   if [[ "${#staged_files[@]}" -eq 0 ]]; then
+    rm -rf "${artifact_stage}"
     echo "ERROR: --install requested, but no .deb/.whl artifacts were generated." >&2
     exit 1
   fi
@@ -1302,6 +1302,7 @@ install_artifacts_into_current_environment_if_requested() {
     cd "${artifact_stage}"
     NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash "${REPO_ROOT}/tools/install_neat_framework.sh"
   )
+  rm -rf "${artifact_stage}"
 }
 
 deploy_artifacts_to_devkit_if_requested() {
