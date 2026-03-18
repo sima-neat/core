@@ -7,6 +7,7 @@ set -euo pipefail
 BUILD_DIR=build
 BUILD_TYPE=Release
 OS_NAME="$(uname -s)"
+REPO_ROOT="$(pwd -P)"
 
 # Defaults
 BUILD_SAMPLES=OFF
@@ -19,6 +20,7 @@ DOCS_ONLY=OFF
 INSTALL_NODE=ON
 SKIP_DOCS=OFF
 INSTALL_DEPS_ONLY=OFF
+INSTALL_AFTER_BUILD=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
@@ -33,6 +35,7 @@ NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-neat-internals}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
+NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
@@ -41,6 +44,7 @@ ELXR_SDK=OFF
 ELXR_SDK_VERSION=""
 ELXR_VERSION=""
 ELXR_WHEEL_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM:-}"
+DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -109,6 +113,8 @@ Options:
   --install-neat-internals
                  Download/install neat-internals artifacts before build
   --doc          Build only docs
+  --install      After build/package, install artifacts into the current environment.
+                 In paired eLxr SDK mode, also deploy/install on the paired DevKit.
   --no-dist      Skip DEB packaging
   --clean        Remove build directory before building
   --no-doc       Skip documentation build (even with --all)
@@ -150,6 +156,16 @@ parse_args() {
         BUILD_TESTS=OFF
         BUILD_DOCS=ON
         DOCS_ONLY=ON
+        shift
+        ;;
+      --install)
+        INSTALL_AFTER_BUILD=ON
+        BUILD_ALL=ON
+        BUILD_TESTS=ON
+        BUILD_TUTORIALS=ON
+        BUILD_DOCS=ON
+        BUILD_PYTHON=ON
+        INSTALL_NEAT_INTERNALS=ON
         shift
         ;;
       --python)
@@ -215,7 +231,12 @@ parse_args() {
         shift
         ;;
       --no-dist)
-        SKIP_DIST=ON
+        if [[ "${INSTALL_AFTER_BUILD}" == "ON" ]]; then
+          echo "WARNING: --no-dist ignored because --install requires distribution packages." >&2
+          SKIP_DIST=OFF
+        else
+          SKIP_DIST=ON
+        fi
         shift
         ;;
       --install-deps-only)
@@ -236,6 +257,10 @@ parse_args() {
 }
 
 validate_build_mode_combinations() {
+  if [[ "${INSTALL_AFTER_BUILD}" == "ON" ]]; then
+    SKIP_DIST=OFF
+  fi
+
   if [[ "${BUILD_FUZZ}" == "ON" && -n "${BUILD_SANITIZER_MODE}" ]]; then
     echo "ERROR: --fuzz cannot be combined with sanitizer modes (--asan-ubsan/--tsan)." >&2
     exit 1
@@ -550,6 +575,7 @@ find_legacy_plugin_dir() {
 collect_plugin_files_from_debs() {
   local extract_dir="$1"
   local output_file="$2"
+  local deb_cache_dir="$3"
   local install_root="${SYSROOT:-}"
 
   # New artifact model: tarball contains one or more .deb files.
@@ -562,6 +588,13 @@ collect_plugin_files_from_debs() {
     echo "ERROR: dpkg-deb is required to extract .so files from neat-internals .deb packages." >&2
     exit 1
   fi
+
+  mkdir -p "${deb_cache_dir}"
+  rm -f "${deb_cache_dir}"/*.deb
+  local cached_deb
+  for cached_deb in "${deb_files[@]}"; do
+    cp -f "${cached_deb}" "${deb_cache_dir}/$(basename "${cached_deb}")"
+  done
 
   if [[ "${ELXR_SDK}" == "ON" ]]; then
     if [[ -z "${install_root}" ]]; then
@@ -730,6 +763,7 @@ ensure_neat_internals() {
 
   local marker_file="${NEAT_INTERNALS_DIR}/.artifact_tag"
   local checksum_file="${NEAT_INTERNALS_DIR}/.artifact_sha256"
+  local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
   local archive_name="sima-neat-internals-${artifact_tag}.tar.gz"
   local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
   local checksum_url="${archive_url}.sha256"
@@ -767,8 +801,9 @@ ensure_neat_internals() {
     # Cache hit requires matching tag, checksum, and a known plugin sentinel.
     if [[ "${current_tag}" == "${artifact_tag}" ]] &&
        [[ "${cached_sha}" == "${server_sha}" ]] &&
-       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]]; then
-      echo "Using cached neat-internals plugins (${artifact_tag}, sha256=${server_sha})."
+       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
+       compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
+      echo "Using cached neat-internals plugins/debs (${artifact_tag}, sha256=${server_sha})."
       rm -rf "${tmp_dir}"
       return 0
     fi
@@ -802,7 +837,7 @@ ensure_neat_internals() {
   tar -xzf "${archive_path}" -C "${extract_dir}"
 
   # Prefer .deb flow; fall back to legacy flat-plugin tarballs for compatibility.
-  if ! collect_plugin_files_from_debs "${extract_dir}" "${plugins_list_file}"; then
+  if ! collect_plugin_files_from_debs "${extract_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     collect_plugin_files_from_legacy_tar "${extract_dir}" "${plugins_list_file}"
   fi
 
@@ -811,6 +846,39 @@ ensure_neat_internals() {
   printf '%s\n' "${artifact_tag}" > "${marker_file}"
   printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
+}
+
+collect_install_artifact_files() {
+  local -n out_files_ref="$1"
+  out_files_ref=()
+
+  local -A seen_basenames=()
+  local file
+  local basename_file
+
+  for file in ./*.deb; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in dist/*.whl; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
 }
 
 ensure_node20_for_docs() {
@@ -925,6 +993,7 @@ print_build_config() {
   echo "Gate-only extras: ${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Skip dist      : ${SKIP_DIST}"
+  echo "Install after  : ${INSTALL_AFTER_BUILD}"
   echo "Skip docs      : ${SKIP_DOCS}"
   echo "Clean build    : ${DO_CLEAN}"
   echo "Strict warns   : ${STRICT_WARNINGS}"
@@ -1141,48 +1210,63 @@ build_extras_archive_if_requested() {
   else
     echo
     echo "Building extras tarball..."
-    local stage_root="./_work/extras-stage"
+    local stage_root
+    local keep_stage_root=OFF
+    if [[ -n "${SIMANEAT_EXTRAS_STAGE_ROOT:-}" ]]; then
+      stage_root="${SIMANEAT_EXTRAS_STAGE_ROOT%/}/extras-stage"
+      keep_stage_root=ON
+    else
+      stage_root="$(mktemp -d /tmp/sima-neat-extras-stage.XXXXXX)"
+    fi
     local install_prefix="${stage_root}/prefix"
     local package_version="unknown"
     local core_deb
     local archive_name
 
-    rm -rf "${stage_root}"
-    mkdir -p "${install_prefix}"
-    cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
+    (
+      trap 'if [[ "${keep_stage_root}" != "ON" ]]; then rm -rf "${stage_root}"; fi' EXIT
 
-    # Include source-side CMake manifests so downstream jobs can inspect and
-    # reason about test/tutorial layout from extras alone.
-    mkdir -p \
-      "${install_prefix}/share/sima-neat/tests" \
-      "${install_prefix}/share/sima-neat/tutorials"
-    cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
-    cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
+      rm -rf "${stage_root}"
+      mkdir -p "${install_prefix}"
+      cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
 
-    if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
-      echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
-      exit 1
-    fi
+      # Include source-side CMake manifests so downstream jobs can inspect and
+      # reason about test/tutorial layout from extras alone.
+      mkdir -p \
+        "${install_prefix}/share/sima-neat/tests" \
+        "${install_prefix}/share/sima-neat/tutorials"
+      cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
+      cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
 
-    # Keep extras version aligned with the generated core .deb version.
-    core_deb="$(ls -1 ./*-Linux-core.deb 2>/dev/null | head -n1 || true)"
-    if [[ -n "${core_deb}" ]]; then
-      local core_base
-      core_base="$(basename "${core_deb}")"
-      if [[ "${core_base}" =~ ^sima-neat-(.+)-Linux-core\.deb$ ]]; then
-        package_version="${BASH_REMATCH[1]}"
+      if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
+        echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
+        exit 1
       fi
-    fi
 
-    if [[ "${package_version}" == "unknown" ]] && [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
-      package_version="$(sed -n 's/^[[:space:]]*set(CPACK_PACKAGE_VERSION[[:space:]]*\"\\([^\"]*\\)\").*$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
-      [[ -z "${package_version}" ]] && package_version="unknown"
-    fi
+      # Keep extras version aligned with the generated core .deb version.
+      core_deb="$(ls -1 ./*-Linux-core.deb 2>/dev/null | head -n1 || true)"
+      if [[ -n "${core_deb}" ]]; then
+        local core_base
+        core_base="$(basename "${core_deb}")"
+        if [[ "${core_base}" =~ ^sima-neat-(.+)-Linux-core\.deb$ ]]; then
+          package_version="${BASH_REMATCH[1]}"
+        fi
+      fi
 
-    archive_name="sima-neat-${package_version}-Linux-extras.tar.gz"
-    rm -f "./${archive_name}"
-    tar -C "${install_prefix}" -czf "./${archive_name}" .
-    echo "Built extras archive: ${archive_name}"
+      if [[ "${package_version}" == "unknown" ]] && [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
+        package_version="$(sed -n 's/^[[:space:]]*set(CPACK_PACKAGE_VERSION[[:space:]]*\"\\([^\"]*\\)\").*$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
+        [[ -z "${package_version}" ]] && package_version="unknown"
+      fi
+
+      archive_name="sima-neat-${package_version}-Linux-extras.tar.gz"
+      rm -f "./${archive_name}"
+      tar -C "${install_prefix}" -czf "./${archive_name}" .
+      echo "Built extras archive: ${archive_name}"
+    )
+
+    if [[ "${keep_stage_root}" == "ON" ]]; then
+      echo "Preserved extras staging directory: ${stage_root}"
+    fi
   fi
 }
 
@@ -1204,6 +1288,129 @@ print_artifact_summary() {
     echo "Python wheel artifacts:"
     ls -lh dist/*.whl
   fi
+}
+
+should_deploy_to_devkit() {
+  [[ "${INSTALL_AFTER_BUILD}" == "ON" ]] || return 1
+  [[ "${ELXR_SDK}" == "ON" ]] || return 1
+  [[ -n "${DEVKIT_SYNC_DEVKIT_IP:-}" ]] || return 1
+  [[ "${OS_NAME}" != "Darwin" ]] || return 1
+
+  compgen -G "./*.deb" >/dev/null 2>&1 || [[ "${BUILD_PYTHON}" == "ON" && -n "$(compgen -G 'dist/*.whl' || true)" ]] || return 1
+}
+
+run_devkit_ssh() {
+  if command -v ssh >/dev/null 2>&1; then
+    ssh "$@"
+    return 0
+  fi
+  if command -v sima-ssh >/dev/null 2>&1; then
+    sima-ssh "$@"
+    return 0
+  fi
+  echo "ERROR: ssh/sima-ssh is required for DevKit deployment in paired SDK mode." >&2
+  exit 1
+}
+
+run_devkit_scp() {
+  if command -v scp >/dev/null 2>&1; then
+    scp "$@"
+    return 0
+  fi
+  if command -v sima-scp >/dev/null 2>&1; then
+    sima-scp "$@"
+    return 0
+  fi
+  echo "ERROR: scp/sima-scp is required for DevKit deployment in paired SDK mode." >&2
+  exit 1
+}
+
+install_artifacts_into_current_environment_if_requested() {
+  [[ "${INSTALL_AFTER_BUILD}" == "ON" ]] || return 0
+
+  if [[ "${SKIP_DIST}" == "ON" ]]; then
+    echo "ERROR: --install cannot be used with --no-dist." >&2
+    exit 1
+  fi
+
+  local -a staged_files=()
+  collect_install_artifact_files staged_files
+  local artifact_stage
+  artifact_stage="$(mktemp -d "/tmp/sima-neat-install.XXXXXX")"
+
+  local file
+  for file in "${staged_files[@]}"; do
+    cp "${file}" "${artifact_stage}/"
+  done
+
+  if [[ "${#staged_files[@]}" -eq 0 ]]; then
+    rm -rf "${artifact_stage}"
+    echo "ERROR: --install requested, but no .deb/.whl artifacts were generated." >&2
+    exit 1
+  fi
+
+  echo
+  echo "Installing generated artifacts into the current environment..."
+  (
+    cd "${artifact_stage}"
+    NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash "${REPO_ROOT}/tools/install_neat_framework.sh"
+  )
+  rm -rf "${artifact_stage}"
+}
+
+deploy_artifacts_to_devkit_if_requested() {
+  if ! should_deploy_to_devkit; then
+    return 0
+  fi
+
+  echo
+  echo "SDK/DevKit deploy context detected for --install:"
+  echo "  ELXR_SDK=${ELXR_SDK}"
+  echo "  SYSROOT=${SYSROOT:-<unset>}"
+  echo "  DEVKIT_SYNC_DEVKIT_IP=${DEVKIT_SYNC_DEVKIT_IP}"
+
+  local ssh_target="${DEVKIT_DEPLOY_USER}@${DEVKIT_SYNC_DEVKIT_IP}"
+  if ! run_devkit_ssh -o ConnectTimeout=5 "${ssh_target}" "true" >/dev/null 2>&1; then
+    echo "ERROR: Paired DevKit ${ssh_target} is not reachable over SSH." >&2
+    echo "Fix network/pairing, or unset DEVKIT_SYNC_DEVKIT_IP to run SDK-only installs." >&2
+    exit 1
+  fi
+
+  local remote_dir="/tmp/sima-neat-build-$(date +%Y%m%d-%H%M%S)"
+  local -a deploy_files=()
+  collect_install_artifact_files deploy_files
+  local installer_path="${REPO_ROOT}/tools/install_neat_framework.sh"
+  local installer_basename
+  installer_basename="$(basename "${installer_path}")"
+
+  if [[ "${#deploy_files[@]}" -eq 0 ]]; then
+    echo "No deployable .deb or .whl artifacts found."
+    return 0
+  fi
+  deploy_files+=("${installer_path}")
+
+  echo
+  echo "Deploying artifacts to ${ssh_target}:${remote_dir}"
+  run_devkit_ssh "${ssh_target}" "mkdir -p '${remote_dir}'"
+  run_devkit_scp "${deploy_files[@]}" "${ssh_target}:${remote_dir}/"
+
+  local remote_install_cmd
+  remote_install_cmd="set -euo pipefail
+remote_dir=$(printf '%q' "${remote_dir}")
+installer_name=$(printf '%q' "${installer_basename}")
+cleanup_remote_artifacts() {
+  rm -rf \"\${remote_dir}\"
+}
+trap cleanup_remote_artifacts EXIT
+chmod +x \"\${remote_dir}/\${installer_name}\"
+cd \"\${remote_dir}\"
+NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
+
+  run_devkit_ssh -t "${ssh_target}" "bash -lc $(printf '%q' "${remote_install_cmd}")"
+
+  echo
+  echo "DevKit deployment completed successfully."
+  echo "Remote artifact directory cleaned: ${remote_dir}"
 }
 
 main() {
@@ -1242,6 +1449,8 @@ main() {
   build_deb_if_requested
   build_extras_archive_if_requested
   print_artifact_summary
+  install_artifacts_into_current_environment_if_requested
+  deploy_artifacts_to_devkit_if_requested
 }
 
 main "$@"
