@@ -35,6 +35,7 @@ NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-neat-internals}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
+NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
@@ -574,6 +575,7 @@ find_legacy_plugin_dir() {
 collect_plugin_files_from_debs() {
   local extract_dir="$1"
   local output_file="$2"
+  local deb_cache_dir="$3"
   local install_root="${SYSROOT:-}"
 
   # New artifact model: tarball contains one or more .deb files.
@@ -586,6 +588,13 @@ collect_plugin_files_from_debs() {
     echo "ERROR: dpkg-deb is required to extract .so files from neat-internals .deb packages." >&2
     exit 1
   fi
+
+  mkdir -p "${deb_cache_dir}"
+  rm -f "${deb_cache_dir}"/*.deb
+  local cached_deb
+  for cached_deb in "${deb_files[@]}"; do
+    cp -f "${cached_deb}" "${deb_cache_dir}/$(basename "${cached_deb}")"
+  done
 
   if [[ "${ELXR_SDK}" == "ON" ]]; then
     if [[ -z "${install_root}" ]]; then
@@ -754,6 +763,7 @@ ensure_neat_internals() {
 
   local marker_file="${NEAT_INTERNALS_DIR}/.artifact_tag"
   local checksum_file="${NEAT_INTERNALS_DIR}/.artifact_sha256"
+  local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
   local archive_name="sima-neat-internals-${artifact_tag}.tar.gz"
   local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
   local checksum_url="${archive_url}.sha256"
@@ -791,8 +801,9 @@ ensure_neat_internals() {
     # Cache hit requires matching tag, checksum, and a known plugin sentinel.
     if [[ "${current_tag}" == "${artifact_tag}" ]] &&
        [[ "${cached_sha}" == "${server_sha}" ]] &&
-       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]]; then
-      echo "Using cached neat-internals plugins (${artifact_tag}, sha256=${server_sha})."
+       [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
+       compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
+      echo "Using cached neat-internals plugins/debs (${artifact_tag}, sha256=${server_sha})."
       rm -rf "${tmp_dir}"
       return 0
     fi
@@ -826,7 +837,7 @@ ensure_neat_internals() {
   tar -xzf "${archive_path}" -C "${extract_dir}"
 
   # Prefer .deb flow; fall back to legacy flat-plugin tarballs for compatibility.
-  if ! collect_plugin_files_from_debs "${extract_dir}" "${plugins_list_file}"; then
+  if ! collect_plugin_files_from_debs "${extract_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
     collect_plugin_files_from_legacy_tar "${extract_dir}" "${plugins_list_file}"
   fi
 
@@ -835,6 +846,39 @@ ensure_neat_internals() {
   printf '%s\n' "${artifact_tag}" > "${marker_file}"
   printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
+}
+
+collect_install_artifact_files() {
+  local -n out_files_ref="$1"
+  out_files_ref=()
+
+  local -A seen_basenames=()
+  local file
+  local basename_file
+
+  for file in ./*.deb; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in dist/*.whl; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
 }
 
 ensure_node20_for_docs() {
@@ -1275,19 +1319,13 @@ install_artifacts_into_current_environment_if_requested() {
   fi
 
   local -a staged_files=()
+  collect_install_artifact_files staged_files
   local artifact_stage
   artifact_stage="$(mktemp -d "/tmp/sima-neat-install.XXXXXX")"
 
   local file
-  for file in ./*.deb; do
-    [[ -e "${file}" ]] || continue
+  for file in "${staged_files[@]}"; do
     cp "${file}" "${artifact_stage}/"
-    staged_files+=("${file}")
-  done
-  for file in dist/*.whl; do
-    [[ -e "${file}" ]] || continue
-    cp "${file}" "${artifact_stage}/"
-    staged_files+=("${file}")
   done
 
   if [[ "${#staged_files[@]}" -eq 0 ]]; then
@@ -1325,19 +1363,10 @@ deploy_artifacts_to_devkit_if_requested() {
 
   local remote_dir="/tmp/sima-neat-build-$(date +%Y%m%d-%H%M%S)"
   local -a deploy_files=()
+  collect_install_artifact_files deploy_files
   local installer_path="${REPO_ROOT}/tools/install_neat_framework.sh"
   local installer_basename
   installer_basename="$(basename "${installer_path}")"
-  local file
-
-  for file in ./*.deb; do
-    [[ -e "${file}" ]] || continue
-    deploy_files+=("${file}")
-  done
-  for file in dist/*.whl; do
-    [[ -e "${file}" ]] || continue
-    deploy_files+=("${file}")
-  done
 
   if [[ "${#deploy_files[@]}" -eq 0 ]]; then
     echo "No deployable .deb or .whl artifacts found."
