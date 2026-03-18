@@ -7,6 +7,7 @@ set -euo pipefail
 BUILD_DIR=build
 BUILD_TYPE=Release
 OS_NAME="$(uname -s)"
+REPO_ROOT="$(pwd -P)"
 
 # Defaults
 BUILD_SAMPLES=OFF
@@ -19,6 +20,7 @@ DOCS_ONLY=OFF
 INSTALL_NODE=ON
 SKIP_DOCS=OFF
 INSTALL_DEPS_ONLY=OFF
+INSTALL_AFTER_BUILD=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
@@ -41,6 +43,7 @@ ELXR_SDK=OFF
 ELXR_SDK_VERSION=""
 ELXR_VERSION=""
 ELXR_WHEEL_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM:-}"
+DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -109,6 +112,8 @@ Options:
   --install-neat-internals
                  Download/install neat-internals artifacts before build
   --doc          Build only docs
+  --install      After build/package, install artifacts into the current environment.
+                 In paired eLxr SDK mode, also deploy/install on the paired DevKit.
   --no-dist      Skip DEB packaging
   --clean        Remove build directory before building
   --no-doc       Skip documentation build (even with --all)
@@ -150,6 +155,16 @@ parse_args() {
         BUILD_TESTS=OFF
         BUILD_DOCS=ON
         DOCS_ONLY=ON
+        shift
+        ;;
+      --install)
+        INSTALL_AFTER_BUILD=ON
+        BUILD_ALL=ON
+        BUILD_TESTS=ON
+        BUILD_TUTORIALS=ON
+        BUILD_DOCS=ON
+        BUILD_PYTHON=ON
+        INSTALL_NEAT_INTERNALS=ON
         shift
         ;;
       --python)
@@ -215,7 +230,12 @@ parse_args() {
         shift
         ;;
       --no-dist)
-        SKIP_DIST=ON
+        if [[ "${INSTALL_AFTER_BUILD}" == "ON" ]]; then
+          echo "WARNING: --no-dist ignored because --install requires distribution packages." >&2
+          SKIP_DIST=OFF
+        else
+          SKIP_DIST=ON
+        fi
         shift
         ;;
       --install-deps-only)
@@ -236,6 +256,10 @@ parse_args() {
 }
 
 validate_build_mode_combinations() {
+  if [[ "${INSTALL_AFTER_BUILD}" == "ON" ]]; then
+    SKIP_DIST=OFF
+  fi
+
   if [[ "${BUILD_FUZZ}" == "ON" && -n "${BUILD_SANITIZER_MODE}" ]]; then
     echo "ERROR: --fuzz cannot be combined with sanitizer modes (--asan-ubsan/--tsan)." >&2
     exit 1
@@ -925,6 +949,7 @@ print_build_config() {
   echo "Gate-only extras: ${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
   echo "Neat internals : ${INSTALL_NEAT_INTERNALS}"
   echo "Skip dist      : ${SKIP_DIST}"
+  echo "Install after  : ${INSTALL_AFTER_BUILD}"
   echo "Skip docs      : ${SKIP_DOCS}"
   echo "Clean build    : ${DO_CLEAN}"
   echo "Strict warns   : ${STRICT_WARNINGS}"
@@ -1206,6 +1231,143 @@ print_artifact_summary() {
   fi
 }
 
+should_deploy_to_devkit() {
+  [[ "${INSTALL_AFTER_BUILD}" == "ON" ]] || return 1
+  [[ "${ELXR_SDK}" == "ON" ]] || return 1
+  [[ -n "${DEVKIT_SYNC_DEVKIT_IP:-}" ]] || return 1
+  [[ "${OS_NAME}" != "Darwin" ]] || return 1
+
+  compgen -G "./*.deb" >/dev/null 2>&1 || [[ "${BUILD_PYTHON}" == "ON" && -n "$(compgen -G 'dist/*.whl' || true)" ]] || return 1
+}
+
+run_devkit_ssh() {
+  if command -v ssh >/dev/null 2>&1; then
+    ssh "$@"
+    return 0
+  fi
+  if command -v sima-ssh >/dev/null 2>&1; then
+    sima-ssh "$@"
+    return 0
+  fi
+  echo "ERROR: ssh/sima-ssh is required for DevKit deployment in paired SDK mode." >&2
+  exit 1
+}
+
+run_devkit_scp() {
+  if command -v scp >/dev/null 2>&1; then
+    scp "$@"
+    return 0
+  fi
+  if command -v sima-scp >/dev/null 2>&1; then
+    sima-scp "$@"
+    return 0
+  fi
+  echo "ERROR: scp/sima-scp is required for DevKit deployment in paired SDK mode." >&2
+  exit 1
+}
+
+install_artifacts_into_current_environment_if_requested() {
+  [[ "${INSTALL_AFTER_BUILD}" == "ON" ]] || return 0
+
+  if [[ "${SKIP_DIST}" == "ON" ]]; then
+    echo "ERROR: --install cannot be used with --no-dist." >&2
+    exit 1
+  fi
+
+  local -a staged_files=()
+  local artifact_stage
+  artifact_stage="$(mktemp -d "/tmp/sima-neat-install.XXXXXX")"
+  trap 'rm -rf "${artifact_stage}"' RETURN
+
+  local file
+  for file in ./*.deb; do
+    [[ -e "${file}" ]] || continue
+    cp "${file}" "${artifact_stage}/"
+    staged_files+=("${file}")
+  done
+  for file in dist/*.whl; do
+    [[ -e "${file}" ]] || continue
+    cp "${file}" "${artifact_stage}/"
+    staged_files+=("${file}")
+  done
+
+  if [[ "${#staged_files[@]}" -eq 0 ]]; then
+    echo "ERROR: --install requested, but no .deb/.whl artifacts were generated." >&2
+    exit 1
+  fi
+
+  echo
+  echo "Installing generated artifacts into the current environment..."
+  (
+    cd "${artifact_stage}"
+    NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash "${REPO_ROOT}/tools/install_neat_framework.sh"
+  )
+}
+
+deploy_artifacts_to_devkit_if_requested() {
+  if ! should_deploy_to_devkit; then
+    return 0
+  fi
+
+  echo
+  echo "SDK/DevKit deploy context detected for --install:"
+  echo "  ELXR_SDK=${ELXR_SDK}"
+  echo "  SYSROOT=${SYSROOT:-<unset>}"
+  echo "  DEVKIT_SYNC_DEVKIT_IP=${DEVKIT_SYNC_DEVKIT_IP}"
+
+  local ssh_target="${DEVKIT_DEPLOY_USER}@${DEVKIT_SYNC_DEVKIT_IP}"
+  if ! run_devkit_ssh -o ConnectTimeout=5 "${ssh_target}" "true" >/dev/null 2>&1; then
+    echo "ERROR: Paired DevKit ${ssh_target} is not reachable over SSH." >&2
+    echo "Fix network/pairing, or unset DEVKIT_SYNC_DEVKIT_IP to run SDK-only installs." >&2
+    exit 1
+  fi
+
+  local remote_dir="/tmp/sima-neat-build-$(date +%Y%m%d-%H%M%S)"
+  local -a deploy_files=()
+  local installer_path="${REPO_ROOT}/tools/install_neat_framework.sh"
+  local installer_basename
+  installer_basename="$(basename "${installer_path}")"
+  local file
+
+  for file in ./*.deb; do
+    [[ -e "${file}" ]] || continue
+    deploy_files+=("${file}")
+  done
+  for file in dist/*.whl; do
+    [[ -e "${file}" ]] || continue
+    deploy_files+=("${file}")
+  done
+
+  if [[ "${#deploy_files[@]}" -eq 0 ]]; then
+    echo "No deployable .deb or .whl artifacts found."
+    return 0
+  fi
+  deploy_files+=("${installer_path}")
+
+  echo
+  echo "Deploying artifacts to ${ssh_target}:${remote_dir}"
+  run_devkit_ssh "${ssh_target}" "mkdir -p '${remote_dir}'"
+  run_devkit_scp "${deploy_files[@]}" "${ssh_target}:${remote_dir}/"
+
+  local remote_install_cmd
+  remote_install_cmd="set -euo pipefail
+remote_dir=$(printf '%q' "${remote_dir}")
+installer_name=$(printf '%q' "${installer_basename}")
+cleanup_remote_artifacts() {
+  rm -rf \"\${remote_dir}\"
+}
+trap cleanup_remote_artifacts EXIT
+chmod +x \"\${remote_dir}/\${installer_name}\"
+cd \"\${remote_dir}\"
+NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
+
+  run_devkit_ssh -t "${ssh_target}" "bash -lc $(printf '%q' "${remote_install_cmd}")"
+
+  echo
+  echo "DevKit deployment completed successfully."
+  echo "Remote artifact directory cleaned: ${remote_dir}"
+}
+
 main() {
   # High-level pipeline:
   # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
@@ -1242,6 +1404,8 @@ main() {
   build_deb_if_requested
   build_extras_archive_if_requested
   print_artifact_summary
+  install_artifacts_into_current_environment_if_requested
+  deploy_artifacts_to_devkit_if_requested
 }
 
 main "$@"
