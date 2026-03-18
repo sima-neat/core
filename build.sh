@@ -1210,48 +1210,63 @@ build_extras_archive_if_requested() {
   else
     echo
     echo "Building extras tarball..."
-    local stage_root="./_work/extras-stage"
+    local stage_root
+    local keep_stage_root=OFF
+    if [[ -n "${SIMANEAT_EXTRAS_STAGE_ROOT:-}" ]]; then
+      stage_root="${SIMANEAT_EXTRAS_STAGE_ROOT%/}/extras-stage"
+      keep_stage_root=ON
+    else
+      stage_root="$(mktemp -d /tmp/sima-neat-extras-stage.XXXXXX)"
+    fi
     local install_prefix="${stage_root}/prefix"
     local package_version="unknown"
     local core_deb
     local archive_name
 
-    rm -rf "${stage_root}"
-    mkdir -p "${install_prefix}"
-    cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
+    (
+      trap 'if [[ "${keep_stage_root}" != "ON" ]]; then rm -rf "${stage_root}"; fi' EXIT
 
-    # Include source-side CMake manifests so downstream jobs can inspect and
-    # reason about test/tutorial layout from extras alone.
-    mkdir -p \
-      "${install_prefix}/share/sima-neat/tests" \
-      "${install_prefix}/share/sima-neat/tutorials"
-    cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
-    cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
+      rm -rf "${stage_root}"
+      mkdir -p "${install_prefix}"
+      cmake --install "${BUILD_DIR}" --component extras --prefix "${install_prefix}"
 
-    if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
-      echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
-      exit 1
-    fi
+      # Include source-side CMake manifests so downstream jobs can inspect and
+      # reason about test/tutorial layout from extras alone.
+      mkdir -p \
+        "${install_prefix}/share/sima-neat/tests" \
+        "${install_prefix}/share/sima-neat/tutorials"
+      cp -f "tests/CMakeLists.txt" "${install_prefix}/share/sima-neat/tests/CMakeLists.txt"
+      cp -f "tutorials/CMakeLists.txt" "${install_prefix}/share/sima-neat/tutorials/CMakeLists.txt"
 
-    # Keep extras version aligned with the generated core .deb version.
-    core_deb="$(ls -1 ./*-Linux-core.deb 2>/dev/null | head -n1 || true)"
-    if [[ -n "${core_deb}" ]]; then
-      local core_base
-      core_base="$(basename "${core_deb}")"
-      if [[ "${core_base}" =~ ^sima-neat-(.+)-Linux-core\.deb$ ]]; then
-        package_version="${BASH_REMATCH[1]}"
+      if [[ ! -d "${install_prefix}/lib/sima-neat" ]] && [[ ! -d "${install_prefix}/share/sima-neat" ]]; then
+        echo "ERROR: extras install tree is empty under ${install_prefix}." >&2
+        exit 1
       fi
-    fi
 
-    if [[ "${package_version}" == "unknown" ]] && [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
-      package_version="$(sed -n 's/^[[:space:]]*set(CPACK_PACKAGE_VERSION[[:space:]]*\"\\([^\"]*\\)\").*$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
-      [[ -z "${package_version}" ]] && package_version="unknown"
-    fi
+      # Keep extras version aligned with the generated core .deb version.
+      core_deb="$(ls -1 ./*-Linux-core.deb 2>/dev/null | head -n1 || true)"
+      if [[ -n "${core_deb}" ]]; then
+        local core_base
+        core_base="$(basename "${core_deb}")"
+        if [[ "${core_base}" =~ ^sima-neat-(.+)-Linux-core\.deb$ ]]; then
+          package_version="${BASH_REMATCH[1]}"
+        fi
+      fi
 
-    archive_name="sima-neat-${package_version}-Linux-extras.tar.gz"
-    rm -f "./${archive_name}"
-    tar -C "${install_prefix}" -czf "./${archive_name}" .
-    echo "Built extras archive: ${archive_name}"
+      if [[ "${package_version}" == "unknown" ]] && [[ -f "${BUILD_DIR}/CPackConfig.cmake" ]]; then
+        package_version="$(sed -n 's/^[[:space:]]*set(CPACK_PACKAGE_VERSION[[:space:]]*\"\\([^\"]*\\)\").*$/\\1/p' "${BUILD_DIR}/CPackConfig.cmake" | head -n1)"
+        [[ -z "${package_version}" ]] && package_version="unknown"
+      fi
+
+      archive_name="sima-neat-${package_version}-Linux-extras.tar.gz"
+      rm -f "./${archive_name}"
+      tar -C "${install_prefix}" -czf "./${archive_name}" .
+      echo "Built extras archive: ${archive_name}"
+    )
+
+    if [[ "${keep_stage_root}" == "ON" ]]; then
+      echo "Preserved extras staging directory: ${stage_root}"
+    fi
   fi
 }
 
