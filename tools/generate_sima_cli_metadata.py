@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import re
 import shutil
@@ -64,6 +65,60 @@ def _fmt_size(num_bytes: int) -> str:
             return f"{value:.1f} {unit}"
         value /= 1024.0
     return f"{num_bytes} B"
+
+
+def _sha256_file(path: Path) -> str:
+    """Compute SHA-256 for a file as 64-char lowercase hex."""
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _is_valid_sha256_hex(value: str) -> bool:
+    """Return True when value is 64-char lowercase hex SHA-256."""
+    return bool(re.fullmatch(r"[0-9a-f]{64}", value or ""))
+
+
+def _validate_metadata_payload(payload: dict) -> None:
+    """Validate metadata shape/constraints relevant to resources/checksums."""
+    resources = payload.get("resources")
+    if not isinstance(resources, list):
+        raise SystemExit("metadata validation failed: resources must be a list")
+    if not all(isinstance(r, str) and r for r in resources):
+        raise SystemExit("metadata validation failed: resources entries must be non-empty strings")
+
+    resources_checksum = payload.get("resources-checksum")
+    if resources_checksum is not None:
+        if not isinstance(resources_checksum, dict):
+            raise SystemExit("metadata validation failed: resources-checksum must be a dict")
+        for key, value in resources_checksum.items():
+            if not isinstance(key, str) or not key:
+                raise SystemExit("metadata validation failed: resources-checksum keys must be non-empty strings")
+            if key not in resources:
+                raise SystemExit(
+                    f"metadata validation failed: resources-checksum key '{key}' not present in resources"
+                )
+            if not isinstance(value, str) or not _is_valid_sha256_hex(value):
+                raise SystemExit(
+                    f"metadata validation failed: invalid SHA-256 for resources-checksum['{key}']"
+                )
+
+    selectable = payload.get("selectable-resources", [])
+    if selectable is None:
+        selectable = []
+    if not isinstance(selectable, list):
+        raise SystemExit("metadata validation failed: selectable-resources must be a list")
+    for idx, item in enumerate(selectable):
+        if not isinstance(item, dict):
+            raise SystemExit(f"metadata validation failed: selectable-resources[{idx}] must be an object")
+        checksum = item.get("checksum")
+        if checksum is not None:
+            if not isinstance(checksum, str) or not _is_valid_sha256_hex(checksum):
+                raise SystemExit(
+                    f"metadata validation failed: selectable-resources[{idx}].checksum must be 64-char lowercase SHA-256"
+                )
 
 
 def _directory_size(path: Path) -> int:
@@ -150,11 +205,19 @@ def main() -> None:
     ]
     resources.extend(_url_safe_name(p.name) for p in internals_debs)
     extras_resource = _url_safe_name(extras_tar.name)
+    resource_checksums = {
+        _url_safe_name(core_deb.name): _sha256_file(core_deb),
+        _url_safe_name(wheel.name): _sha256_file(wheel),
+        _url_safe_name(installer_script_path.name): _sha256_file(installer_script_path),
+    }
+    resource_checksums.update({_url_safe_name(p.name): _sha256_file(p) for p in internals_debs})
+    extras_checksum = _sha256_file(extras_tar)
     selectable_resources = [
         {
             "name": "SiMa NEAT extras (samples/tutorials/tests)",
             "url": extras_resource,
             "resource": extras_resource,
+            "checksum": extras_checksum,
         }
     ]
 
@@ -182,6 +245,7 @@ def main() -> None:
             }
         ],
         "resources": resources,
+        "resources-checksum": resource_checksums,
         "selectable-resources": selectable_resources,
         "size": {
             "download": _fmt_size(download_size_bytes),
@@ -195,12 +259,16 @@ def main() -> None:
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    _validate_metadata_payload(payload)
     output_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     # "all" variant: install everything without selectable prompts.
     payload_all = copy.deepcopy(payload)
     payload_all["resources"].append(extras_resource)
+    payload_all.setdefault("resources-checksum", {})
+    payload_all["resources-checksum"][extras_resource] = extras_checksum
     payload_all.pop("selectable-resources", None)
+    _validate_metadata_payload(payload_all)
     metadata_all_path = output_path.with_name("metadata-all.json")
     metadata_all_path.write_text(
         json.dumps(payload_all, indent=2) + "\n", encoding="utf-8"
@@ -209,6 +277,7 @@ def main() -> None:
     # "minimal" variant: core + wheel + internals only (no extras at all).
     payload_minimal = copy.deepcopy(payload)
     payload_minimal.pop("selectable-resources", None)
+    _validate_metadata_payload(payload_minimal)
     metadata_minimal_path = output_path.with_name("metadata-minimal.json")
     metadata_minimal_path.write_text(
         json.dumps(payload_minimal, indent=2) + "\n", encoding="utf-8"
