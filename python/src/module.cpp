@@ -1993,6 +1993,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("enforce_caps", &simaai::neat::H264ParseOptions::enforce_caps);
 
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
+  nodes_mod.def("queue", &simaai::neat::nodes::Queue);
+  nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
+                "tcp"_a = true, "drop_on_latency"_a = false, "buffer_mode"_a = "");
+  nodes_mod.def("h264_depacketize", &simaai::neat::nodes::H264Depacketize, "payload_type"_a = 96,
+                "h264_parse_config_interval"_a = -1, "h264_fps"_a = -1, "h264_width"_a = -1,
+                "h264_height"_a = -1, "enforce_h264_caps"_a = true);
   nodes_mod.def("input", &simaai::neat::nodes::Input, "options"_a = simaai::neat::InputOptions{});
   nodes_mod.def("output", &simaai::neat::nodes::Output,
                 "options"_a = simaai::neat::OutputOptions{});
@@ -2332,6 +2338,10 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::UdpOutputOptions{});
   nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
                 "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
+  nodes_mod.def("h264_decode", &simaai::neat::nodes::H264Decode, "sima_allocator_type"_a = 2,
+                "out_format"_a = "NV12", "decoder_name"_a = "", "raw_output"_a = false,
+                "next_element"_a = "", "dec_width"_a = -1, "dec_height"_a = -1, "dec_fps"_a = -1,
+                "num_buffers"_a = -1);
   nodes_mod.def(
       "h264_parse",
       static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::H264ParseOptions)>(

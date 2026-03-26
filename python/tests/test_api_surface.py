@@ -725,6 +725,50 @@ def test_output_stage_node_and_group_factories_present_and_accept_expected_args(
   )
 
 
+def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
+  assert hasattr(pyneat.nodes, "queue")
+  assert hasattr(pyneat.nodes, "rtsp_input")
+  assert hasattr(pyneat.nodes, "h264_depacketize")
+  assert hasattr(pyneat.nodes, "h264_decode")
+
+  _assert_not_type_error(lambda: pyneat.nodes.queue())
+  _assert_not_type_error(lambda: pyneat.nodes.rtsp_input("rtsp://127.0.0.1:8554/src"))
+  _assert_not_type_error(
+      lambda: pyneat.nodes.rtsp_input(
+          "rtsp://127.0.0.1:8554/src",
+          latency_ms=120,
+          tcp=False,
+          drop_on_latency=True,
+          buffer_mode="none",
+      )
+  )
+  _assert_not_type_error(lambda: pyneat.nodes.h264_depacketize())
+  _assert_not_type_error(
+      lambda: pyneat.nodes.h264_depacketize(
+          payload_type=96,
+          h264_parse_config_interval=1,
+          h264_fps=15,
+          h264_width=1280,
+          h264_height=720,
+          enforce_h264_caps=True,
+      )
+  )
+  _assert_not_type_error(lambda: pyneat.nodes.h264_decode())
+  _assert_not_type_error(
+      lambda: pyneat.nodes.h264_decode(
+          sima_allocator_type=2,
+          out_format="NV12",
+          decoder_name="",
+          raw_output=True,
+          next_element="",
+          dec_width=-1,
+          dec_height=-1,
+          dec_fps=-1,
+          num_buffers=7,
+      )
+  )
+
+
 def test_mla_group_helper_present_and_accepts_model():
   mpk_path = _basic_valid_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
