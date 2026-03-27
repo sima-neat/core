@@ -51,6 +51,29 @@ require_cmd run-clang-tidy
 require_cmd rg
 require_cmd git
 
+configure_tidy_build() {
+  # Keep clang-tidy analysis on the host toolchain even when SDK/cross env
+  # variables are present in CI.
+  env \
+    -u CC \
+    -u CXX \
+    -u CPPFLAGS \
+    -u CFLAGS \
+    -u CXXFLAGS \
+    -u LDFLAGS \
+    -u SYSROOT \
+    -u SDKTARGETSYSROOT \
+    -u PKG_CONFIG_SYSROOT_DIR \
+    -u PKG_CONFIG_PATH \
+    -u CONFIGURE_FLAGS \
+    -u OECORE_TARGET_ARCH \
+    -u OECORE_TARGET_SYSROOT \
+    -u OECORE_NATIVE_SYSROOT \
+    cmake -S "$root_dir" -B "$build_dir" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+      -DSIMANEAT_CPP_TIDY=ON \
+      -DSIMANEAT_STRICT_WARNINGS=ON
+}
+
 detect_jobs() {
   if [ -n "${TIDY_JOBS:-}" ]; then
     printf '%s\n' "${TIDY_JOBS}"
@@ -122,9 +145,7 @@ is_tidy_scope_path() {
   esac
 }
 
-cmake -S "$root_dir" -B "$build_dir" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-  -DSIMANEAT_CPP_TIDY=ON \
-  -DSIMANEAT_STRICT_WARNINGS=ON
+configure_tidy_build
 
 if [[ "$MODE" == "all" ]]; then
   mapfile -t all_files < <(rg --no-messages --no-config --files \

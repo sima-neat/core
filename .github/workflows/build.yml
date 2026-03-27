@@ -37,12 +37,13 @@ jobs:
 
   format-hygiene:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on:
+      group: generic-x86-linux
     needs: resolve-mode
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -68,41 +69,55 @@ jobs:
 
   clang-tidy:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on:
+      group: generic-x86-linux
     needs: [resolve-mode, format-hygiene]
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Install clang-tidy
         run: |
-          if command -v clang-tidy >/dev/null 2>&1 && command -v rg >/dev/null 2>&1; then
-            echo "clang-tidy and ripgrep already installed."
+          clang_cpp_works() {
+            command -v clang++ >/dev/null 2>&1 || return 1
+            printf '%s\n' '#include <memory>' | clang++ -std=c++20 -x c++ - -fsyntax-only >/dev/null 2>&1
+          }
+
+          if command -v clang-tidy >/dev/null 2>&1 \
+            && command -v rg >/dev/null 2>&1 \
+            && command -v g++ >/dev/null 2>&1 \
+            && clang_cpp_works; then
+            echo "clang-tidy, ripgrep, and a working host C++ toolchain are already installed."
             exit 0
           fi
 
           if [ "$(id -u)" -eq 0 ]; then
             apt-get update
-            apt-get install -y clang-tidy ripgrep
+            apt-get install -y build-essential gcc-12 g++-12 libstdc++-12-dev clang clang-tidy ripgrep
             exit 0
           fi
 
           if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
             sudo -n apt-get update
-            sudo -n apt-get install -y clang-tidy ripgrep
+            sudo -n apt-get install -y build-essential gcc-12 g++-12 libstdc++-12-dev clang clang-tidy ripgrep
             exit 0
           fi
 
-          echo "Missing clang-tidy or ripgrep, and cannot install without passwordless sudo on this runner." >&2
-          echo "Preinstall these packages on the x86 runner or enable passwordless sudo for the runner user." >&2
+          echo "Missing clang-tidy, ripgrep, or host C++ toolchain packages, and cannot install without passwordless sudo on this runner." >&2
+          echo "Preinstall build-essential, gcc-12, g++-12, libstdc++-12-dev, clang, clang-tidy, and ripgrep on the x86 runner or enable passwordless sudo for the runner user." >&2
           exit 1
 
       - name: Install build dependencies
         run: |
           ./build.sh --install-deps-only
+
+      - name: Verify host C++ headers for clang-tidy
+        run: |
+          echo '#include <memory>' | clang++ -std=c++20 -x c++ - -fsyntax-only
+          echo '#include <cstdint>' | clang++ -std=c++20 -x c++ - -fsyntax-only
 
       - name: Run clang-tidy
         env:
@@ -121,7 +136,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Environment
         run: |
@@ -140,7 +155,7 @@ jobs:
           ls -lh dist/*.whl
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -183,7 +198,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Build fuzz artifacts
         env:
@@ -198,7 +213,7 @@ jobs:
           ls -lh dist/*.whl
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -352,9 +367,13 @@ jobs:
       - name: Run Python pytest from installed extras
         run: |
           PYTEST_DIR="$(cat _work/pytest_dir.txt)"
-          PYTHON_BIN="${HOME}/pyneat/bin/python"
-          if [[ ! -x "${PYTHON_BIN}" ]]; then
-            echo "Expected virtualenv python not found: ${PYTHON_BIN}" >&2
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
             exit 1
           fi
 
@@ -369,7 +388,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -402,7 +421,7 @@ jobs:
 
     steps:
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}

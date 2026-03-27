@@ -46,7 +46,7 @@ static simaai::neat::Model model_from_format(const std::string& tar_gz, int widt
   opt.input_max_width = width;
   opt.input_max_height = height;
   opt.input_max_depth = depth;
-  opt.preproc.normalize = false;
+  opt.preproc.normalize = true;
   opt.upstream_name = upstream_name;
   return simaai::neat::Model(tar_gz, opt);
 }

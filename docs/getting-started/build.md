@@ -59,6 +59,7 @@ Supported `build.sh` options:
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
 - `--install-neat-internals`: Download and install neat-internals artifacts before build.
 - `--doc`: Build docs only.
+- `--install`: After build/package, install generated artifacts into the current environment. In paired eLxr SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
 - `--no-dist`: Skip distribution packaging.
 - `--clean`: Remove `build/` before configuring.
 - `--no-doc`: Skip docs build (even with `--all`).

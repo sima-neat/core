@@ -82,6 +82,13 @@ struct OptiViewJsonResult {
 
 class OptiViewOutputNodeGroup {
 public:
+  OptiViewOutputNodeGroup() = default;
+  ~OptiViewOutputNodeGroup() = default;
+  OptiViewOutputNodeGroup(const OptiViewOutputNodeGroup&) = delete;
+  OptiViewOutputNodeGroup& operator=(const OptiViewOutputNodeGroup&) = delete;
+  OptiViewOutputNodeGroup(OptiViewOutputNodeGroup&&) noexcept = default;
+  OptiViewOutputNodeGroup& operator=(OptiViewOutputNodeGroup&&) noexcept = default;
+
   bool init(const OptiViewOutputNodeGroupOptions& opt, size_t streams, std::string* err = nullptr);
 
   bool push_video(size_t idx, const simaai::neat::Sample& sample) const;

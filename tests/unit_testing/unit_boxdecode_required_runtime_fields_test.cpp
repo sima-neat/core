@@ -60,11 +60,13 @@ RUN_TEST("unit_boxdecode_required_runtime_fields_test", ([] {
            ManifestBuildDiagnostics diag;
            (void)resolve_manifest_from_pipeline(pipeline, "sess-required-runtime", &diag);
 
-           require(!diag.errors.empty(),
-                   "model-managed boxdecode stage with missing runtime knobs should emit diagnostics");
+           require(
+               !diag.errors.empty(),
+               "model-managed boxdecode stage with missing runtime knobs should emit diagnostics");
            bool missing_topk = false;
            bool missing_det = false;
            bool missing_nms = false;
+           bool fallback_chain_matches = false;
            for (const auto& err : diag.errors) {
              if (err.find("runtime field 'topk'") != std::string::npos) {
                missing_topk = true;
@@ -75,9 +77,14 @@ RUN_TEST("unit_boxdecode_required_runtime_fields_test", ([] {
              if (err.find("runtime field 'nms_iou_threshold'") != std::string::npos) {
                missing_nms = true;
              }
+             if (err.find("fallback_chain=property->json") != std::string::npos) {
+               fallback_chain_matches = true;
+             }
            }
 
            require(missing_topk, "missing topk runtime field should be reported");
            require(missing_det, "missing detection_threshold runtime field should be reported");
            require(missing_nms, "missing nms_iou_threshold runtime field should be reported");
+           require(fallback_chain_matches,
+                   "boxdecode missing-runtime diagnostics should describe property->json fallback");
          }));

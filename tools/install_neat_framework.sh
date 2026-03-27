@@ -27,11 +27,51 @@ set -euo pipefail
 # - SUDO_PASSWORD / DEVKIT_PASSWORD: sudo password (preferred non-interactive override)
 # - DEFAULT_SUDO_PASSWORD: fallback password (default: edgeai)
 # - SYSROOT: SDK sysroot path override (default: /opt/toolchain/aarch64/modalix)
+# - DEVKIT_SYNC_DEVKIT_IP: paired DevKit IP for SDK->DevKit artifact sync
+# - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
+# - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
+# - NEAT_INSTALLER_SKIP_DEVKIT_SYNC: ON/OFF (default: OFF) skip SDK->DevKit sync
+# - CODEX_HOME: optional Codex home override for skill install target
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
+DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
+DEVKIT_SYNC_REQUIRED="${DEVKIT_SYNC_REQUIRED:-ON}"
+NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
+INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
+
+usage() {
+  cat <<'EOF'
+Usage: install_neat_framework.sh [--local] [-h|--help]
+
+Options:
+  --local      Install only into the current environment from artifacts in cwd.
+               Disables paired SDK->DevKit sync behavior.
+  -h, --help   Show this help.
+EOF
+}
+
+parse_args() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --local)
+        NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        echo "Unknown option: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+}
 
 log() {
   printf '[install_neat_framework] %s\n' "$*"
@@ -141,6 +181,32 @@ run_sudo() {
   exit 1
 }
 
+run_scp() {
+  if command -v scp >/dev/null 2>&1; then
+    scp "$@"
+    return 0
+  fi
+  if command -v sima-scp >/dev/null 2>&1; then
+    sima-scp "$@"
+    return 0
+  fi
+  echo "Neither scp nor sima-scp is available for DevKit sync." >&2
+  return 1
+}
+
+run_ssh() {
+  if command -v ssh >/dev/null 2>&1; then
+    ssh "$@"
+    return 0
+  fi
+  if command -v sima-ssh >/dev/null 2>&1; then
+    sima-ssh "$@"
+    return 0
+  fi
+  echo "Neither ssh nor sima-ssh is available for DevKit sync." >&2
+  return 1
+}
+
 detect_env_mode() {
   if [[ -f /etc/sdk-release ]]; then
     echo "elxr-sdk"
@@ -155,6 +221,22 @@ detect_env_mode() {
     return 0
   fi
   echo "modalix-board"
+}
+
+install_codex_skill_for_current_user() {
+  local source_dir="$1"
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log "Codex skill source not found; skipping skill install: ${source_dir}"
+    return 0
+  fi
+
+  local codex_home="${CODEX_HOME:-$HOME/.codex}"
+  local target_dir="${codex_home}/skills/sima-neat"
+  mkdir -p "$(dirname "${target_dir}")"
+  rm -rf "${target_dir}"
+  cp -a "${source_dir}" "${target_dir}"
+  log "Installed Codex skill to: ${target_dir}"
 }
 
 install_debs_on_board() {
@@ -181,6 +263,70 @@ install_debs_into_sysroot() {
   done
 }
 
+deploy_artifacts_to_paired_devkit_if_configured() {
+  if [[ "${NEAT_INSTALLER_SKIP_DEVKIT_SYNC}" == "ON" ]]; then
+    log "NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON; skipping paired DevKit sync."
+    return 0
+  fi
+
+  local devkit_ip="${DEVKIT_SYNC_DEVKIT_IP:-}"
+  [[ -n "${devkit_ip}" ]] || return 0
+
+  local ssh_target="${DEVKIT_DEPLOY_USER}@${devkit_ip}"
+  local remote_dir="/tmp/sima-neat-install-$(date +%Y%m%d-%H%M%S)"
+  local -a deploy_files=()
+  local installer_basename
+  installer_basename="$(basename "${INSTALLER_SCRIPT_PATH}")"
+  local file
+
+  for file in "${DEBS[@]}"; do
+    deploy_files+=("${file}")
+  done
+
+  WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
+  if [[ -n "${WHEEL_FILE}" ]]; then
+    deploy_files+=("${WHEEL_FILE}")
+  fi
+  deploy_files+=("${INSTALLER_SCRIPT_PATH}")
+
+  if [[ "${#deploy_files[@]}" -eq 0 ]]; then
+    log "No deployable artifacts found for paired DevKit sync."
+    return 0
+  fi
+
+  log_green "Paired DevKit detected; syncing install artifacts to ${ssh_target}"
+
+  if ! run_ssh -o ConnectTimeout=5 "${ssh_target}" "true" >/dev/null 2>&1; then
+    echo "Paired DevKit ${ssh_target} is not reachable over SSH." >&2
+    if [[ "${DEVKIT_SYNC_REQUIRED}" == "ON" ]]; then
+      exit 1
+    fi
+    log "DEVKIT_SYNC_REQUIRED=OFF; skipping DevKit sync."
+    return 0
+  fi
+
+  run_ssh "${ssh_target}" "mkdir -p '${remote_dir}'"
+  run_scp "${deploy_files[@]}" "${ssh_target}:${remote_dir}/"
+
+  local remote_install_cmd
+  remote_install_cmd="set -euo pipefail
+remote_dir=$(printf '%q' "${remote_dir}")
+installer_name=$(printf '%q' "${installer_basename}")
+cleanup_remote_artifacts() {
+  rm -rf \"\${remote_dir}\"
+}
+trap cleanup_remote_artifacts EXIT
+chmod +x \"\${remote_dir}/\${installer_name}\"
+cd \"\${remote_dir}\"
+NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
+
+  run_ssh -t "${ssh_target}" "bash -lc $(printf '%q' "${remote_install_cmd}")"
+
+  log_green "Paired DevKit sync completed: ${ssh_target}"
+}
+
+parse_args "$@"
+
 mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
@@ -191,6 +337,8 @@ ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
+  install_codex_skill_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
+  deploy_artifacts_to_paired_devkit_if_configured
 else
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
@@ -208,4 +356,5 @@ else
   fi
   "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
   install_debs_on_board
+  install_codex_skill_for_current_user "/usr/share/sima-neat/skills/sima-neat"
 fi
