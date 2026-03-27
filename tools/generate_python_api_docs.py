@@ -165,7 +165,7 @@ def main() -> int:
         json.dumps(
             {
                 "label": "Python Reference",
-                "position": 5,
+                "position": 99,
                 "link": {"type": "doc", "id": "reference/pythonapi/index"},
             },
             indent=2,

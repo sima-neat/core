@@ -7,7 +7,7 @@ sidebar_position: 2
 # Build NEAT
 
 This guide covers source builds of NEAT.
-For prebuilt package installation, see [Install](./install).
+For prebuilt package installation, see [NEAT Framework](./installation/neat-framework).
 
 `build.sh` is the supported build entry point. It handles dependency checks, optional neat-internals sync, CMake configure/build, optional docs generation, install sanity checks, and packaging.
 
