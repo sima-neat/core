@@ -61,7 +61,7 @@ When setup succeeds, you should see output similar to:
   DevKit Connected
 ============================================================
   DevKit target : sima@192.168.91.221:22
-  Mounted path  : /sdk-workspace
+  Mounted path  : /workspace
   Host export   : 192.168.74.48:/Users/joey/workspace
 
   You can now run DevKit binaries from this SDK shell:
@@ -86,8 +86,8 @@ The SDK setup workflow connects three environments:
 
 - Host local workspace folder is exported through host NFS.
 - That folder is mounted into the SDK container as `/workspace`.
-- The same shared content appears on DevKit as `/sdk-workspace` through NFS.
-- Mounted folder names such as `/workspace` and `/sdk-workspace` are defaults and can be changed during the SDK setup process.
+- The same shared content appears on DevKit as `/workspace` through NFS.
+- Mounted folder names such as `/workspace` is default and can be changed during the SDK setup process.
 
 ![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.jpg)
 
