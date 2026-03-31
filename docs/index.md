@@ -14,7 +14,7 @@ NEAT provides a higher-level "pipeline-as-code" interface while keeping GStreame
 
 ## Start Here
 
-- [Install](getting-started/install)
+- [Installation](getting-started/installation)
 - [Build](getting-started/build)
 - [Hello SiMa](getting-started/minimal_example)
 - [Programming Model](getting-started/programming-model/overview)
