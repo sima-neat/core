@@ -4,12 +4,27 @@ description: Install or update the SiMa NEAT framework on DevKit or inside the N
 sidebar_position: 3
 ---
 
-Use this page to install or update the SiMa NEAT framework/runtime.
+Use this page to install or update the SiMa NEAT framework/runtime in either eLxr SDK or DevKit. The installation procedure is the same in both environments, except that on the DevKit we recommend installing under `/media/nvme` to avoid filling the root file system:
 
-The install procedure is identical across both environments:
+`/media/nvme` exists on the DevKit. In the eLxr SDK container, use a container-local path such as `$HOME/neat`.
 
-- Modalix DevKit
-- NEAT eLxr SDK container
+<CodeTabs>
+<CodeTab label="NEAT eLxr SDK" lang="bash">
+
+```bash
+cd $HOME && mkdir -p neat && cd neat
+```
+
+</CodeTab>
+
+<CodeTab label="DevKit" lang="bash">
+
+```bash
+cd /media/nvme && mkdir -p neat && cd neat
+```
+
+</CodeTab>
+</CodeTabs>
 
 ## Prerequisite: sima-cli
 
@@ -18,25 +33,22 @@ Install `sima-cli` in the environment where you plan to install NEAT.
 Before you begin:
 
 - Make sure your Modalix DevKit is connected to the Internet.
-- It is recommended that you create an account at [developer.sima.ai](https://developer.sima.ai) to access assets such as precompiled models for testing.
+- We recommend creating an account at [developer.sima.ai](https://developer.sima.ai) to access assets such as precompiled models for testing.
 
-Install `sima-cli` using the [official guide](https://docs.sima.ai/pages/sima_cli/main.html). After `sima-cli` is ready, choose one NEAT installation path below.
-
-All paths install both C++ and Python NEAT APIs. The same framework installation flow applies on Modalix DevKit and in the NEAT eLxr SDK container.
+Install `sima-cli` using the [official guide](https://docs.sima.ai/pages/sima_cli/main.html). After `sima-cli` is ready, choose one of the NEAT installation paths below.
 
 ## Official Release
 
-Recommended for most users.
-
 ```bash
-cd /media/nvme && mkdir -p neat && cd neat && sima-cli install neat
+sima-cli install neat
 ```
 
-You can optionally install extras, including prebuilt and source-code tutorials and tests.
+
+You can optionally install extras, including prebuilt tutorials, source-code tutorials, and tests.
 
 ## Latest Build
 
-Use this to try the latest automated build. This installation method also prompts you to select the latest artifacts from any branch.
+Use this option to try the latest automated build. This method also prompts you to select the latest artifacts from any branch.
 
 ```bash
 wget -O /tmp/install-neat-from-a-branch.sh https://tools.modalix.info/install-neat-from-a-branch.sh && \
@@ -45,7 +57,7 @@ wget -O /tmp/install-neat-from-a-branch.sh https://tools.modalix.info/install-ne
 
 ## Specific Build
 
-Use this to test a specific branch and commit.
+Use this option to test a specific branch and commit.
 
 ```bash
 wget -O /tmp/install-neat-from-a-branch.sh https://tools.modalix.info/install-neat-from-a-branch.sh && \
@@ -59,7 +71,7 @@ Replace:
 
 If you prefer building from source, follow the [Build](../build.md) guide.
 
-The installation also provisions PyNeat in `~/pyneat` virtual environment on the DevKit.
+On the DevKit, this installation also provisions a PyNeat virtual environment at `~/pyneat`.
 
 ```bash
 source ~/pyneat/bin/activate
@@ -67,7 +79,7 @@ source ~/pyneat/bin/activate
 
 ## Notes for SDK users
 
-For SDK environment setup and DevKit-Sync onboarding, see [NEAT eLxr SDK](./neat-elxr-sdk.mdx).
+For SDK environment setup and DevKit Sync onboarding, see [NEAT eLxr SDK](./neat-elxr-sdk.mdx).
 
 ## Next step
 
