@@ -138,7 +138,8 @@ int main() {
       bayer_opt.height = 480;
       auto bayer = simaai::neat::nodes::V4L2Input(bayer_opt);
       const std::string bayer_fragment = bayer->backend_fragment(3);
-      require_contains(bayer_fragment, "caps=\"video/x-bayer,format=rggb12le,width=640,height=480\"",
+      require_contains(bayer_fragment,
+                       "caps=\"video/x-bayer,format=rggb12le,width=640,height=480\"",
                        "V4L2Input bayer caps mismatch");
 
       simaai::neat::V4L2InputOptions io_mode_opt = mipi_opt;

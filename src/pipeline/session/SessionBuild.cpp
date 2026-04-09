@@ -1945,9 +1945,7 @@ void enforce_mla_num_buffers(const std::string& pipeline, const char* context,
   if (env_bool("SIMA_MLA_NUM_BUFFERS_DEBUG", false)) {
     std::fprintf(stderr, "[DBG] %s enforce_mla_num_buffers allow_one=%d has_mla=%d\n",
                  context ? context : "Session", allow_one ? 1 : 0,
-                 (pipeline.find("neatprocessmla") != std::string::npos)
-                     ? 1
-                     : 0);
+                 (pipeline.find("neatprocessmla") != std::string::npos) ? 1 : 0);
   }
   if (allow_one) {
     return;
@@ -2262,24 +2260,24 @@ namespace {
 
 constexpr std::uint64_t kSimaaiMemoryTargetGeneric =
     static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 0;
-constexpr std::uint64_t kSimaaiMemoryTargetOcm =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 1;
-constexpr std::uint64_t kSimaaiMemoryTargetDms0 =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 2;
-constexpr std::uint64_t kSimaaiMemoryTargetDms1 =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 3;
-constexpr std::uint64_t kSimaaiMemoryTargetDms2 =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 4;
-constexpr std::uint64_t kSimaaiMemoryTargetDms3 =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 5;
-constexpr std::uint64_t kSimaaiMemoryTargetEv74 =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 6;
-constexpr std::uint64_t kSimaaiMemoryFlagCached =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 7;
-constexpr std::uint64_t kSimaaiMemoryFlagReadonly =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 8;
-constexpr std::uint64_t kSimaaiMemoryFlagDefault =
-    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 9;
+constexpr std::uint64_t kSimaaiMemoryTargetOcm = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                 << 1;
+constexpr std::uint64_t kSimaaiMemoryTargetDms0 = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                  << 2;
+constexpr std::uint64_t kSimaaiMemoryTargetDms1 = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                  << 3;
+constexpr std::uint64_t kSimaaiMemoryTargetDms2 = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                  << 4;
+constexpr std::uint64_t kSimaaiMemoryTargetDms3 = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                  << 5;
+constexpr std::uint64_t kSimaaiMemoryTargetEv74 = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                  << 6;
+constexpr std::uint64_t kSimaaiMemoryFlagCached = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                  << 7;
+constexpr std::uint64_t kSimaaiMemoryFlagReadonly = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                    << 8;
+constexpr std::uint64_t kSimaaiMemoryFlagDefault = static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST)
+                                                   << 9;
 
 struct AppSinkAllocPref {
   std::uint64_t mem_type = kSimaaiMemoryTargetGeneric;
@@ -2378,8 +2376,13 @@ static bool infer_appsink_alloc_pref(const std::vector<std::shared_ptr<Node>>& n
   if (sink_idx < 0)
     return false;
 
-  // Appsink is a CPU-facing consumer; request generic memory to ensure
-  // the sink can map buffers even when upstream runs on CVU/MLA.
+  OutputSpec spec = derive_output_spec(NodeGroup(nodes));
+  if (spec.memory != "SimaAI") {
+    return false;
+  }
+
+  // Appsink is a CPU-facing consumer; when upstream advertises SimaAI memory,
+  // request generic cached buffers so the sink can map them safely.
   *mem_type_out = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_GENERIC);
   *mem_flag_out = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED);
   return true;
@@ -2582,7 +2585,8 @@ std::uint64_t estimate_frame_bytes_limit(const InputOptions& opt, const SampleSp
     return static_cast<std::uint64_t>(spec.required_bytes_actual);
   }
 
-  const std::string media = lower_copy(normalized.media_type.empty() ? spec.media_type : normalized.media_type);
+  const std::string media =
+      lower_copy(normalized.media_type.empty() ? spec.media_type : normalized.media_type);
   const std::string fmt = lower_copy(normalized.format.empty() ? spec.format : normalized.format);
   std::uint64_t bytes = 0;
   if (media == "video/x-raw") {
