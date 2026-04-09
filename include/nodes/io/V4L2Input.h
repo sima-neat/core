@@ -15,20 +15,28 @@
 namespace simaai::neat {
 
 struct V4L2InputOptions {
-  /// V4L2 device path.
+  /// V4L2 device path (must not be empty).
   std::string device = "/dev/video0";
 
-  /// Optional caps enforcement. A capsfilter is appended only when media_type,
-  /// width, and height are all set.
-  std::string media_type;
-  std::string format;
-  int width = -1;
-  int height = -1;
+  /// Optional caps enforcement. A capsfilter is appended only when media_type
+  /// is non-empty and both width and height are positive (> 0). Setting only
+  /// some of these fields triggers a diagnostic warning; the capsfilter will
+  /// not be emitted unless all three are specified.
+  std::string media_type; ///< e.g. "video/x-raw", "image/jpeg", "video/x-bayer"
+  std::string format;     ///< e.g. "RGB", "NV12", "rggb12le" (omit for MJPEG)
+  int width = -1;         ///< Capture width in pixels (-1 = unconstrained).
+  int height = -1;        ///< Capture height in pixels (-1 = unconstrained).
+  /// Framerate numerator. 0 or negative omits the framerate field from caps.
+  /// Use 0 when the ISP advertises a rate different from what you expect.
   int fps_n = 0;
+  /// Framerate denominator (default: 1). Clamped to 1 if fps_n > 0 and fps_d <= 0.
   int fps_d = 1;
 
-  /// Optional v4l2src tuning properties.
+  /// V4L2 I/O method. Valid values: "mmap", "userptr", "dmabuf",
+  /// "dmabuf-import", "read". Empty string uses the GStreamer default.
   std::string io_mode;
+  /// Number of buffers for v4l2src. -1 (default) omits the property, letting
+  /// GStreamer use its built-in default (continuous capture).
   int num_buffers = -1;
 };
 

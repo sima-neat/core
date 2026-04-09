@@ -108,10 +108,11 @@ session.add(neat.nodes.v4l2_input(opt))
 </CodeTabs>
 
 Key options:
-- `device` — V4L2 device path (default: `/dev/video0`)
-- `media_type` / `format` / `width` / `height` / `fps_n` — caps enforcement (capsfilter appended when media_type + width + height are all set)
+- `device` — V4L2 device path (default: `/dev/video0`; must not be empty)
+- `media_type` / `format` / `width` / `height` — caps enforcement (capsfilter appended when `media_type` is non-empty and both `width` and `height` are positive)
+- `fps_n` / `fps_d` — framerate numerator/denominator (capsfilter uses `framerate=fps_n/fps_d`; default 0/1 omits the field — recommended for Modalix where the ISP may advertise a non-standard rate)
 - `io_mode` — V4L2 I/O method (`"mmap"`, `"dmabuf"`, `"dmabuf-import"`, etc.)
-- `num_buffers` — V4L2 buffer count (-1 for unlimited)
+- `num_buffers` — V4L2 buffer count; -1 (default) omits the property, letting GStreamer use its built-in default (continuous capture)
 
 :::caution[Modalix MIPI prerequisite]
 When using `V4L2Input` with a Modalix MIPI post-ISP device (e.g., `/dev/video0out`),
@@ -292,7 +293,8 @@ Use this when:
 
 ## Quick decision guide
 
-- Source is file/camera/RTSP: use input groups from `nodes::groups`.
+- Source is file/RTSP: use input groups from `nodes::groups`.
+- Source is V4L2 camera (USB, MIPI post-ISP): use `nodes::V4L2Input`.
 - Source is app-produced tensor/frame: use `nodes::Input`.
 - Need rich metadata-aware outputs: use `nodes::Output`.
 - Need normalized tensor outputs: use `add_output_tensor(...)`.
@@ -309,3 +311,4 @@ Use this when:
 - [Numpy Torch Tensor IO](/tutorials/v2/008-numpy-torch-tensor-io)
 - [Multi Input Samples](/tutorials/v2/009-multi-input-samples)
 - [Output Handling Patterns](/tutorials/v2/010-output-handling-patterns)
+- [MIPI Camera Input](/tutorials/v2/019-mipi-camera-input)

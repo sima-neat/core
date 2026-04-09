@@ -181,6 +181,97 @@ int main() {
       const simaai::neat::OutputSpec nv12_spec = nv12_provider->output_spec({});
       require(nv12_spec.layout == "Planar", "V4L2Input NV12 layout mismatch");
       require(nv12_spec.depth == 3, "V4L2Input NV12 depth mismatch");
+
+      // Bayer output_spec: rggb12le -> UInt16, layout HW, depth 1
+      auto* bayer_provider =
+          dynamic_cast<simaai::neat::OutputSpecProvider*>(bayer.get());
+      require(bayer_provider != nullptr, "V4L2Input bayer OutputSpecProvider missing");
+      const simaai::neat::OutputSpec bayer_spec = bayer_provider->output_spec({});
+      require(bayer_spec.media_type == "video/x-bayer",
+              "V4L2Input bayer media_type mismatch");
+      require(bayer_spec.layout == "HW", "V4L2Input bayer layout mismatch");
+      require(bayer_spec.depth == 1, "V4L2Input bayer depth mismatch");
+      require(bayer_spec.dtype == "UInt16", "V4L2Input bayer 12-bit dtype mismatch");
+
+      // BGR output_spec
+      simaai::neat::V4L2InputOptions bgr_opt;
+      bgr_opt.media_type = "video/x-raw";
+      bgr_opt.format = "BGR";
+      bgr_opt.width = 640;
+      bgr_opt.height = 480;
+      auto bgr = simaai::neat::nodes::V4L2Input(bgr_opt);
+      auto* bgr_provider =
+          dynamic_cast<simaai::neat::OutputSpecProvider*>(bgr.get());
+      require(bgr_provider != nullptr, "V4L2Input BGR OutputSpecProvider missing");
+      const simaai::neat::OutputSpec bgr_spec = bgr_provider->output_spec({});
+      require(bgr_spec.dtype == "UInt8", "V4L2Input BGR dtype mismatch");
+      require(bgr_spec.layout == "HWC", "V4L2Input BGR layout mismatch");
+      require(bgr_spec.depth == 3, "V4L2Input BGR depth mismatch");
+
+      // GRAY output_spec
+      simaai::neat::V4L2InputOptions gray_opt;
+      gray_opt.media_type = "video/x-raw";
+      gray_opt.format = "GRAY8";
+      gray_opt.width = 320;
+      gray_opt.height = 240;
+      auto gray = simaai::neat::nodes::V4L2Input(gray_opt);
+      auto* gray_provider =
+          dynamic_cast<simaai::neat::OutputSpecProvider*>(gray.get());
+      require(gray_provider != nullptr, "V4L2Input GRAY OutputSpecProvider missing");
+      const simaai::neat::OutputSpec gray_spec = gray_provider->output_spec({});
+      require(gray_spec.dtype == "UInt8", "V4L2Input GRAY dtype mismatch");
+      require(gray_spec.layout == "HW", "V4L2Input GRAY layout mismatch");
+      require(gray_spec.depth == 1, "V4L2Input GRAY depth mismatch");
+
+      // I420 output_spec
+      simaai::neat::V4L2InputOptions i420_opt;
+      i420_opt.media_type = "video/x-raw";
+      i420_opt.format = "I420";
+      i420_opt.width = 640;
+      i420_opt.height = 480;
+      auto i420 = simaai::neat::nodes::V4L2Input(i420_opt);
+      auto* i420_provider =
+          dynamic_cast<simaai::neat::OutputSpecProvider*>(i420.get());
+      require(i420_provider != nullptr, "V4L2Input I420 OutputSpecProvider missing");
+      const simaai::neat::OutputSpec i420_spec = i420_provider->output_spec({});
+      require(i420_spec.layout == "Planar", "V4L2Input I420 layout mismatch");
+      require(i420_spec.depth == 3, "V4L2Input I420 depth mismatch");
+
+      // Unrecognized format output_spec
+      simaai::neat::V4L2InputOptions unk_opt;
+      unk_opt.media_type = "video/x-raw";
+      unk_opt.format = "UYVY";
+      unk_opt.width = 640;
+      unk_opt.height = 480;
+      auto unk = simaai::neat::nodes::V4L2Input(unk_opt);
+      auto* unk_provider =
+          dynamic_cast<simaai::neat::OutputSpecProvider*>(unk.get());
+      require(unk_provider != nullptr,
+              "V4L2Input unrecognized OutputSpecProvider missing");
+      const simaai::neat::OutputSpec unk_spec = unk_provider->output_spec({});
+      require_contains(unk_spec.note, "unrecognized format",
+                       "V4L2Input unrecognized format note missing");
+
+      // Partial caps: width+height set but media_type empty -> no capsfilter
+      simaai::neat::V4L2InputOptions partial_opt;
+      partial_opt.width = 1920;
+      partial_opt.height = 1080;
+      auto partial = simaai::neat::nodes::V4L2Input(partial_opt);
+      const std::string partial_fragment = partial->backend_fragment(5);
+      require(partial_fragment.find("capsfilter") == std::string::npos,
+              "V4L2Input partial caps should not produce capsfilter");
+
+      // Empty device should throw
+      bool threw = false;
+      try {
+        simaai::neat::V4L2InputOptions empty_dev;
+        empty_dev.device = "";
+        auto bad = simaai::neat::nodes::V4L2Input(empty_dev);
+        (void)bad;
+      } catch (const std::invalid_argument&) {
+        threw = true;
+      }
+      require(threw, "V4L2Input empty device should throw invalid_argument");
     }
 
     auto depay = simaai::neat::nodes::H264Depacketize(97);

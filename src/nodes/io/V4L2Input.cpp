@@ -3,7 +3,9 @@
 #include "gst/GstHelpers.h"
 
 #include <cctype>
+#include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,9 +24,27 @@ bool has_fixed_caps(const V4L2InputOptions& opt) {
   return !opt.media_type.empty() && opt.width > 0 && opt.height > 0;
 }
 
+bool has_partial_caps(const V4L2InputOptions& opt) {
+  const int set_count = (!opt.media_type.empty() ? 1 : 0) + (opt.width > 0 ? 1 : 0) +
+                        (opt.height > 0 ? 1 : 0);
+  return set_count > 0 && set_count < 3;
+}
+
 } // namespace
 
-V4L2Input::V4L2Input(V4L2InputOptions opt) : opt_(std::move(opt)) {}
+V4L2Input::V4L2Input(V4L2InputOptions opt) : opt_(std::move(opt)) {
+  if (opt_.device.empty()) {
+    throw std::invalid_argument("V4L2Input: device path must not be empty");
+  }
+  if (opt_.fps_n > 0 && opt_.fps_d <= 0) {
+    opt_.fps_d = 1;
+  }
+  if (has_partial_caps(opt_)) {
+    std::cerr << "[V4L2Input] warning: partial caps specified (need all of media_type, "
+                 "width, height for capsfilter; currently some are missing — caps will be "
+                 "unconstrained)\n";
+  }
+}
 
 std::string V4L2Input::backend_fragment(int node_index) const {
   require_element("v4l2src", "V4L2Input::backend_fragment");
