@@ -5,6 +5,7 @@
 #include "nodes/common/VideoConvert.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/V4L2Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/Session.h"
 
@@ -115,13 +116,6 @@ bool parse_args(int argc, char** argv, Config& cfg) {
   return true;
 }
 
-std::string build_camera_caps(const Config& cfg) {
-  std::ostringstream ss;
-  ss << "image/jpeg,width=" << cfg.width << ",height=" << cfg.height << ",framerate=" << cfg.fps
-     << "/1";
-  return ss.str();
-}
-
 const std::vector<std::string>& coco_labels() {
   static const std::vector<std::string> kLabels = {
       "person",        "bicycle",      "car",
@@ -217,9 +211,14 @@ int main(int argc, char** argv) {
     simaai::neat::Model model(cfg.model_path, model_opt);
 
     simaai::neat::Session cam;
-    cam.custom("v4l2src device=" + cfg.device, simaai::neat::InputRole::Source);
-    cam.custom(build_camera_caps(cfg));
-    cam.custom("jpegdec");
+    simaai::neat::V4L2InputOptions v4l2_opt;
+    v4l2_opt.device = cfg.device;
+    v4l2_opt.media_type = "image/jpeg";
+    v4l2_opt.width = cfg.width;
+    v4l2_opt.height = cfg.height;
+    v4l2_opt.fps_n = cfg.fps;
+    cam.add(simaai::neat::nodes::V4L2Input(v4l2_opt));
+    cam.add(simaai::neat::nodes::JpegDecode());
     cam.add(simaai::neat::nodes::VideoConvert());
     cam.add(simaai::neat::nodes::CapsNV12SysMem(cfg.width, cfg.height, cfg.fps));
     cam.add(simaai::neat::nodes::Output());

@@ -1,5 +1,7 @@
 #include "internal/GraphRunState.h"
 
+#include <unistd.h>
+
 namespace simaai::neat::graph {
 GraphSession::GraphSession(Graph graph) : graph_(std::move(graph)) {}
 

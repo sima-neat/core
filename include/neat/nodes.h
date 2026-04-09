@@ -20,6 +20,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/V4L2Input.h"
 #include "nodes/rtp/H264CapsFixup.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/DetessDequant.h"

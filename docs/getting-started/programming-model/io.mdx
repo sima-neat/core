@@ -60,6 +60,84 @@ Use this pattern when:
 - You want decode/source behavior handled inside the pipeline.
 - You are building media-first flows (decode -> convert -> infer -> render/stream).
 
+#### V4L2 camera source
+
+Use `V4L2Input` when you need direct control over a V4L2 device node—for
+example, a USB camera or a Modalix MIPI post-ISP stream.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/session.h"
+#include "neat/nodes.h"
+
+simaai::neat::Session session;
+
+simaai::neat::V4L2InputOptions opt;
+opt.device = "/dev/video0out";
+opt.media_type = "video/x-raw";
+opt.format = "RGB";
+opt.width = 1920;
+opt.height = 1080;
+opt.fps_n = 30;
+
+session.add(simaai::neat::nodes::V4L2Input(opt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+session = neat.Session()
+
+opt = neat.V4L2InputOptions()
+opt.device = "/dev/video0out"
+opt.media_type = "video/x-raw"
+opt.format = "RGB"
+opt.width = 1920
+opt.height = 1080
+opt.fps_n = 30
+
+session.add(neat.nodes.v4l2_input(opt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+Key options:
+- `device` — V4L2 device path (default: `/dev/video0`)
+- `media_type` / `format` / `width` / `height` / `fps_n` — caps enforcement (capsfilter appended when media_type + width + height are all set)
+- `io_mode` — V4L2 I/O method (`"mmap"`, `"dmabuf"`, `"dmabuf-import"`, etc.)
+- `num_buffers` — V4L2 buffer count (-1 for unlimited)
+
+:::caution[Modalix MIPI prerequisite]
+When using `V4L2Input` with a Modalix MIPI post-ISP device (e.g., `/dev/video0out`),
+the following **must be running externally** before the NEAT pipeline starts:
+
+1. **Raw sensor keepalive** — a process must continuously read from the raw device node
+   to keep the MIPI sensor active and the ISP fed:
+   ```bash
+   gst-launch-1.0 v4l2src device=/dev/video0raw \
+     ! video/x-bayer,format=rggb12le,width=1920,height=1080,framerate=30/1 \
+     ! fakesink &
+   ```
+   Without this, the ISP produces no output and `V4L2Input` will stall silently.
+
+2. **ISP 3A controller** — auto-exposure, white balance, and focus:
+   ```bash
+   sudo isp_3a.elf
+   ```
+
+3. **Device tree overlay** — the correct DTBO must be applied at boot (one-time U-Boot setup).
+
+These are board-level prerequisites, not NEAT runtime concerns.
+`V4L2Input` captures from the post-ISP V4L2 output; it does not manage sensor
+initialization, ISP control, or DTBO selection.
+:::
+
 ### Push input (`nodes::Input`)
 
 Use the input node pattern for application-driven frame/tensor push.

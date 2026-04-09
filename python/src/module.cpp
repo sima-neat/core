@@ -45,6 +45,7 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/OptiViewJsonOutput.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/io/V4L2Input.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Session.h"
@@ -1975,6 +1976,18 @@ NB_MODULE(_pyneat_core, m) {
           "async", [](const simaai::neat::UdpOutputOptions& options) { return options.async; },
           [](simaai::neat::UdpOutputOptions& options, bool value) { options.async = value; });
 
+  nb::class_<simaai::neat::V4L2InputOptions>(m, "V4L2InputOptions")
+      .def(nb::init<>())
+      .def_rw("device", &simaai::neat::V4L2InputOptions::device)
+      .def_rw("media_type", &simaai::neat::V4L2InputOptions::media_type)
+      .def_rw("format", &simaai::neat::V4L2InputOptions::format)
+      .def_rw("width", &simaai::neat::V4L2InputOptions::width)
+      .def_rw("height", &simaai::neat::V4L2InputOptions::height)
+      .def_rw("fps_n", &simaai::neat::V4L2InputOptions::fps_n)
+      .def_rw("fps_d", &simaai::neat::V4L2InputOptions::fps_d)
+      .def_rw("io_mode", &simaai::neat::V4L2InputOptions::io_mode)
+      .def_rw("num_buffers", &simaai::neat::V4L2InputOptions::num_buffers);
+
   nb::enum_<simaai::neat::H264ParseOptions::Alignment>(m, "H264ParseAlignment")
       .value("Auto", simaai::neat::H264ParseOptions::Alignment::Auto)
       .value("AU", simaai::neat::H264ParseOptions::Alignment::AU)
@@ -2336,6 +2349,8 @@ NB_MODULE(_pyneat_core, m) {
                 "options"_a = simaai::neat::QuantTessOptions{});
   nodes_mod.def("udp_output", &simaai::neat::nodes::UdpOutput,
                 "options"_a = simaai::neat::UdpOutputOptions{});
+  nodes_mod.def("v4l2_input", &simaai::neat::nodes::V4L2Input,
+                "options"_a = simaai::neat::V4L2InputOptions{});
   nodes_mod.def("h264_encode_sima", &simaai::neat::nodes::H264EncodeSima, "width"_a, "height"_a,
                 "fps"_a, "bitrate_kbps"_a = 4000, "profile"_a = "baseline", "level"_a = "4.0");
   nodes_mod.def("h264_decode", &simaai::neat::nodes::H264Decode, "sima_allocator_type"_a = 2,

@@ -2260,26 +2260,47 @@ bool has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes) {
 
 namespace {
 
+constexpr std::uint64_t kSimaaiMemoryTargetGeneric =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 0;
+constexpr std::uint64_t kSimaaiMemoryTargetOcm =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 1;
+constexpr std::uint64_t kSimaaiMemoryTargetDms0 =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 2;
+constexpr std::uint64_t kSimaaiMemoryTargetDms1 =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 3;
+constexpr std::uint64_t kSimaaiMemoryTargetDms2 =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 4;
+constexpr std::uint64_t kSimaaiMemoryTargetDms3 =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 5;
+constexpr std::uint64_t kSimaaiMemoryTargetEv74 =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 6;
+constexpr std::uint64_t kSimaaiMemoryFlagCached =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 7;
+constexpr std::uint64_t kSimaaiMemoryFlagReadonly =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 8;
+constexpr std::uint64_t kSimaaiMemoryFlagDefault =
+    static_cast<std::uint64_t>(GST_MEMORY_FLAG_LAST) << 9;
+
 struct AppSinkAllocPref {
-  std::uint64_t mem_type = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_GENERIC);
-  std::uint64_t mem_flag = static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED);
+  std::uint64_t mem_type = kSimaaiMemoryTargetGeneric;
+  std::uint64_t mem_flag = kSimaaiMemoryFlagCached;
 };
 
 static const char* simaai_mem_type_to_str(std::uint64_t mem_type) {
   switch (mem_type) {
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_GENERIC):
+  case kSimaaiMemoryTargetGeneric:
     return "GST_SIMAAI_MEMORY_TARGET_GENERIC";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_EV74):
+  case kSimaaiMemoryTargetEv74:
     return "GST_SIMAAI_MEMORY_TARGET_EV74";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS0):
+  case kSimaaiMemoryTargetDms0:
     return "GST_SIMAAI_MEMORY_TARGET_DMS0";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS1):
+  case kSimaaiMemoryTargetDms1:
     return "GST_SIMAAI_MEMORY_TARGET_DMS1";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS2):
+  case kSimaaiMemoryTargetDms2:
     return "GST_SIMAAI_MEMORY_TARGET_DMS2";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_DMS3):
+  case kSimaaiMemoryTargetDms3:
     return "GST_SIMAAI_MEMORY_TARGET_DMS3";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_TARGET_OCM):
+  case kSimaaiMemoryTargetOcm:
     return "GST_SIMAAI_MEMORY_TARGET_OCM";
   default:
     return "GST_SIMAAI_MEMORY_TARGET_GENERIC";
@@ -2288,11 +2309,11 @@ static const char* simaai_mem_type_to_str(std::uint64_t mem_type) {
 
 static const char* simaai_mem_flag_to_str(std::uint64_t mem_flag) {
   switch (mem_flag) {
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_CACHED):
+  case kSimaaiMemoryFlagCached:
     return "GST_SIMAAI_MEMORY_FLAG_CACHED";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_RDONLY):
+  case kSimaaiMemoryFlagReadonly:
     return "GST_SIMAAI_MEMORY_FLAG_RDONLY";
-  case static_cast<std::uint64_t>(GST_SIMAAI_MEMORY_FLAG_DEFAULT):
+  case kSimaaiMemoryFlagDefault:
     return "GST_SIMAAI_MEMORY_FLAG_DEFAULT";
   default:
     return "GST_SIMAAI_MEMORY_FLAG_DEFAULT";

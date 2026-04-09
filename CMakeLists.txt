@@ -194,6 +194,8 @@ else()
   pkg_check_modules(OPENCV REQUIRED IMPORTED_TARGET opencv4)
 endif()
 
+find_package(nlohmann_json CONFIG REQUIRED)
+
 find_library(SIMAAI_ALLOCATOR_LIB gstsimaallocator)
 find_library(SIMAAI_BUFFERPOOL_LIB gstsimaaibufferpool)
 
@@ -264,6 +266,7 @@ endif()
 
 target_link_libraries(sima_neat
   PUBLIC
+    nlohmann_json::nlohmann_json
 )
 
 if (GST_FOUND)

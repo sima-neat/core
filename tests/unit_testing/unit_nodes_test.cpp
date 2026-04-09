@@ -9,6 +9,7 @@
 #include "nodes/common/VideoRate.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/io/RTSPInput.h"
+#include "nodes/io/V4L2Input.h"
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264EncodeSima.h"
@@ -63,6 +64,123 @@ int main() {
     auto rtsp = simaai::neat::nodes::RTSPInput("rtsp://example", 200, true);
     require_contains(rtsp->backend_fragment(1), "rtspsrc name=n1_rtspsrc",
                      "RTSPInput name mismatch");
+
+    if (simaai::neat::element_exists("v4l2src")) {
+      simaai::neat::V4L2InputOptions mipi_opt;
+      mipi_opt.device = "/dev/video0out";
+      mipi_opt.media_type = "video/x-raw";
+      mipi_opt.format = "RGB";
+      mipi_opt.width = 1920;
+      mipi_opt.height = 1080;
+      mipi_opt.fps_n = 30;
+
+      auto mipi = simaai::neat::nodes::V4L2Input(mipi_opt);
+      require(mipi->kind() == "V4L2Input", "V4L2Input kind mismatch");
+      require(mipi->user_label() == "/dev/video0out", "V4L2Input user label mismatch");
+      require(mipi->input_role() == simaai::neat::InputRole::Source,
+              "V4L2Input input role mismatch");
+      require(mipi->caps_behavior() == simaai::neat::NodeCapsBehavior::Dynamic,
+              "V4L2Input caps behavior mismatch");
+
+      const std::string mipi_fragment = mipi->backend_fragment(0);
+      require_contains(mipi_fragment, "v4l2src name=n0_v4l2src device=/dev/video0out",
+                       "V4L2Input fragment device mismatch");
+      require_contains(mipi_fragment, "capsfilter name=n0_v4l2src_caps",
+                       "V4L2Input capsfilter missing");
+      require_contains(mipi_fragment,
+                       "caps=\"video/x-raw,format=RGB,width=1920,height=1080,framerate=30/1\"",
+                       "V4L2Input RGB caps mismatch");
+
+      const auto mipi_names = mipi->element_names(0);
+      require(mipi_names.size() == 2, "V4L2Input element_names with caps size mismatch");
+      require(mipi_names[0] == "n0_v4l2src", "V4L2Input primary element name mismatch");
+      require(mipi_names[1] == "n0_v4l2src_caps", "V4L2Input caps element name mismatch");
+
+      auto* mipi_provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(mipi.get());
+      require(mipi_provider != nullptr, "V4L2Input OutputSpecProvider missing");
+      const simaai::neat::OutputSpec rgb_spec = mipi_provider->output_spec({});
+      require(rgb_spec.media_type == "video/x-raw", "V4L2Input RGB media_type mismatch");
+      require(rgb_spec.format == "RGB", "V4L2Input RGB format mismatch");
+      require(rgb_spec.width == 1920 && rgb_spec.height == 1080,
+              "V4L2Input RGB dimensions mismatch");
+      require(rgb_spec.fps_num == 30 && rgb_spec.fps_den == 1, "V4L2Input RGB fps mismatch");
+      require(rgb_spec.dtype == "UInt8", "V4L2Input RGB dtype mismatch");
+      require(rgb_spec.layout == "HWC", "V4L2Input RGB layout mismatch");
+      require(rgb_spec.depth == 3, "V4L2Input RGB depth mismatch");
+      require(rgb_spec.memory == "SystemMemory", "V4L2Input RGB memory mismatch");
+      require(rgb_spec.certainty == simaai::neat::SpecCertainty::Hint,
+              "V4L2Input RGB certainty mismatch");
+
+      simaai::neat::V4L2InputOptions mjpeg_opt;
+      mjpeg_opt.media_type = "image/jpeg";
+      mjpeg_opt.width = 1280;
+      mjpeg_opt.height = 720;
+      auto mjpeg = simaai::neat::nodes::V4L2Input(mjpeg_opt);
+      const std::string mjpeg_fragment = mjpeg->backend_fragment(2);
+      require_contains(mjpeg_fragment, "v4l2src name=n2_v4l2src device=/dev/video0",
+                       "V4L2Input MJPEG default device mismatch");
+      require_contains(mjpeg_fragment, "caps=\"image/jpeg,width=1280,height=720\"",
+                       "V4L2Input MJPEG caps mismatch");
+      require(mjpeg_fragment.find("format=") == std::string::npos,
+              "V4L2Input MJPEG should omit format");
+      auto* mjpeg_provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(mjpeg.get());
+      require(mjpeg_provider != nullptr, "V4L2Input MJPEG OutputSpecProvider missing");
+      const simaai::neat::OutputSpec mjpeg_spec = mjpeg_provider->output_spec({});
+      require(mjpeg_spec.media_type == "image/jpeg", "V4L2Input MJPEG media_type mismatch");
+      require(mjpeg_spec.width == 1280 && mjpeg_spec.height == 720,
+              "V4L2Input MJPEG dimensions mismatch");
+      require(mjpeg_spec.depth == -1, "V4L2Input MJPEG depth mismatch");
+
+      simaai::neat::V4L2InputOptions bayer_opt;
+      bayer_opt.media_type = "video/x-bayer";
+      bayer_opt.format = "rggb12le";
+      bayer_opt.width = 640;
+      bayer_opt.height = 480;
+      auto bayer = simaai::neat::nodes::V4L2Input(bayer_opt);
+      const std::string bayer_fragment = bayer->backend_fragment(3);
+      require_contains(bayer_fragment, "caps=\"video/x-bayer,format=rggb12le,width=640,height=480\"",
+                       "V4L2Input bayer caps mismatch");
+
+      simaai::neat::V4L2InputOptions io_mode_opt = mipi_opt;
+      io_mode_opt.io_mode = "dmabuf";
+      io_mode_opt.num_buffers = 4;
+      auto io_mode = simaai::neat::nodes::V4L2Input(io_mode_opt);
+      const std::string io_mode_fragment = io_mode->backend_fragment(4);
+      require_contains(io_mode_fragment, "io-mode=dmabuf", "V4L2Input io-mode mismatch");
+      require_contains(io_mode_fragment, "num-buffers=4", "V4L2Input num-buffers mismatch");
+
+      simaai::neat::V4L2InputOptions no_caps_opt;
+      auto no_caps = simaai::neat::nodes::V4L2Input(no_caps_opt);
+      const std::string no_caps_fragment = no_caps->backend_fragment(1);
+      require_contains(no_caps_fragment, "v4l2src name=n1_v4l2src device=/dev/video0",
+                       "V4L2Input no-caps fragment mismatch");
+      require(no_caps_fragment.find("capsfilter") == std::string::npos,
+              "V4L2Input no-caps fragment should omit capsfilter");
+      require(no_caps_fragment.find("num-buffers=") == std::string::npos,
+              "V4L2Input default num-buffers should be omitted");
+
+      const auto no_caps_names = no_caps->element_names(1);
+      require(no_caps_names.size() == 1, "V4L2Input no-caps element_names size mismatch");
+      require(no_caps_names[0] == "n1_v4l2src", "V4L2Input no-caps element name mismatch");
+
+      auto* no_caps_provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(no_caps.get());
+      require(no_caps_provider != nullptr, "V4L2Input no-caps OutputSpecProvider missing");
+      const simaai::neat::OutputSpec no_caps_spec = no_caps_provider->output_spec({});
+      require(no_caps_spec.certainty == simaai::neat::SpecCertainty::Unknown,
+              "V4L2Input no-caps certainty mismatch");
+
+      simaai::neat::V4L2InputOptions nv12_opt;
+      nv12_opt.media_type = "video/x-raw";
+      nv12_opt.format = "NV12";
+      nv12_opt.width = 1280;
+      nv12_opt.height = 720;
+      auto nv12 = simaai::neat::nodes::V4L2Input(nv12_opt);
+      auto* nv12_provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(nv12.get());
+      require(nv12_provider != nullptr, "V4L2Input NV12 OutputSpecProvider missing");
+      const simaai::neat::OutputSpec nv12_spec = nv12_provider->output_spec({});
+      require(nv12_spec.layout == "Planar", "V4L2Input NV12 layout mismatch");
+      require(nv12_spec.depth == 3, "V4L2Input NV12 depth mismatch");
+    }
 
     auto depay = simaai::neat::nodes::H264Depacketize(97);
     require_contains(depay->backend_fragment(2), "rtph264depay name=n2_depay",

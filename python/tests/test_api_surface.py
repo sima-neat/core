@@ -92,6 +92,18 @@ H264_PARSE_OPTION_FIELDS = (
     "enforce_caps",
 )
 
+V4L2_INPUT_OPTION_FIELDS = (
+    "device",
+    "media_type",
+    "format",
+    "width",
+    "height",
+    "fps_n",
+    "fps_d",
+    "io_mode",
+    "num_buffers",
+)
+
 UDP_H264_OUTPUT_GROUP_OPTION_FIELDS = (
     "h264_caps",
     "payload_type",
@@ -662,6 +674,50 @@ def test_output_stage_option_structs_are_mutable():
   assert json_result.nonempty is True
   assert json_result.boxes == 2
   assert json_result.error == "none"
+
+
+def test_v4l2_input_options_and_factory():
+  assert len(V4L2_INPUT_OPTION_FIELDS) == 9
+  assert hasattr(pyneat, "V4L2InputOptions")
+  assert hasattr(pyneat.nodes, "v4l2_input")
+
+  opt = pyneat.V4L2InputOptions()
+  for field in V4L2_INPUT_OPTION_FIELDS:
+    assert hasattr(opt, field), field
+
+  assert opt.device == "/dev/video0"
+  assert opt.media_type == ""
+  assert opt.format == ""
+  assert opt.width == -1
+  assert opt.height == -1
+  assert opt.fps_n == 0
+  assert opt.fps_d == 1
+  assert opt.io_mode == ""
+  assert opt.num_buffers == -1
+
+  opt.device = "/dev/video2"
+  opt.media_type = "image/jpeg"
+  opt.format = "MJPG"
+  opt.width = 640
+  opt.height = 480
+  opt.fps_n = 30
+  opt.fps_d = 1
+  opt.io_mode = "dmabuf"
+  opt.num_buffers = 4
+
+  assert opt.device == "/dev/video2"
+  assert opt.media_type == "image/jpeg"
+  assert opt.format == "MJPG"
+  assert opt.width == 640
+  assert opt.height == 480
+  assert opt.fps_n == 30
+  assert opt.fps_d == 1
+  assert opt.io_mode == "dmabuf"
+  assert opt.num_buffers == 4
+
+  _assert_not_type_error(lambda: pyneat.nodes.v4l2_input())
+  _assert_not_type_error(lambda: pyneat.nodes.v4l2_input(opt))
+  assert isinstance(pyneat.nodes.v4l2_input(opt), pyneat.Node)
 
 
 def test_input_stage_node_factories_present_and_accept_expected_args():
