@@ -255,6 +255,11 @@ add_tutorial(tutorial_v2_018_production_blueprint
   LABELS fast
 )
 
+add_tutorial(tutorial_v2_019_mipi_camera_input
+  019_mipi_camera_input/mipi_camera_input.cpp
+  LABELS fast
+)
+
 install(
   TARGETS ${PIPELINESESSION_TUTORIAL_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tutorials

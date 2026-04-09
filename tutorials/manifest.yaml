@@ -146,3 +146,11 @@ chapters:
     tags: [production, blueprint]
     pair_cpp: tutorials/018_production_blueprint/production_blueprint.cpp
     pair_py: tutorials/018_production_blueprint/production_blueprint.py
+  - id: 019
+    title: MIPI Camera Input
+    difficulty: intermediate
+    runtime: 10-15-min
+    assets_required: none
+    tags: [camera, v4l2, mipi, input]
+    pair_cpp: tutorials/019_mipi_camera_input/mipi_camera_input.cpp
+    pair_py: tutorials/019_mipi_camera_input/mipi_camera_input.py
