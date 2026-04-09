@@ -107,17 +107,6 @@ OutputSpec V4L2Input::output_spec(const OutputSpec& /*input*/) const {
     return out;
   }
 
-  if (out.media_type == "video/x-bayer") {
-    out.layout = "HW";
-    out.depth = 1;
-    if (!opt_.format.empty()) {
-      const std::string fmt = upper_copy(opt_.format);
-      out.dtype = (fmt.find("8") != std::string::npos) ? "UInt8" : "UInt16";
-    }
-    out.byte_size = expected_byte_size(out);
-    return out;
-  }
-
   const std::string fmt = upper_copy(opt_.format);
   if (fmt == "RGB" || fmt == "BGR") {
     out.dtype = "UInt8";

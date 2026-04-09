@@ -182,14 +182,13 @@ int main() {
       require(nv12_spec.layout == "Planar", "V4L2Input NV12 layout mismatch");
       require(nv12_spec.depth == 3, "V4L2Input NV12 depth mismatch");
 
-      // Bayer output_spec: rggb12le -> UInt16, layout HW, depth 1
+      // Bayer output_spec: runtime does not support bayer tensors, so the
+      // format falls through to the unrecognized-format path.
       auto* bayer_provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(bayer.get());
       require(bayer_provider != nullptr, "V4L2Input bayer OutputSpecProvider missing");
       const simaai::neat::OutputSpec bayer_spec = bayer_provider->output_spec({});
-      require(bayer_spec.media_type == "video/x-bayer", "V4L2Input bayer media_type mismatch");
-      require(bayer_spec.layout == "HW", "V4L2Input bayer layout mismatch");
-      require(bayer_spec.depth == 1, "V4L2Input bayer depth mismatch");
-      require(bayer_spec.dtype == "UInt16", "V4L2Input bayer 12-bit dtype mismatch");
+      require_contains(bayer_spec.note, "unrecognized format",
+                       "V4L2Input bayer should report unrecognized format");
 
       // BGR output_spec
       simaai::neat::V4L2InputOptions bgr_opt;
