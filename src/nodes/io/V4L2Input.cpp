@@ -25,8 +25,8 @@ bool has_fixed_caps(const V4L2InputOptions& opt) {
 }
 
 bool has_partial_caps(const V4L2InputOptions& opt) {
-  const int set_count = (!opt.media_type.empty() ? 1 : 0) + (opt.width > 0 ? 1 : 0) +
-                        (opt.height > 0 ? 1 : 0);
+  const int set_count =
+      (!opt.media_type.empty() ? 1 : 0) + (opt.width > 0 ? 1 : 0) + (opt.height > 0 ? 1 : 0);
   return set_count > 0 && set_count < 3;
 }
 
