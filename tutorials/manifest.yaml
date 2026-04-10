@@ -154,3 +154,11 @@ chapters:
     tags: [camera, v4l2, mipi, input]
     pair_cpp: tutorials/019_mipi_camera_input/mipi_camera_input.cpp
     pair_py: tutorials/019_mipi_camera_input/mipi_camera_input.py
+  - id: 020
+    title: MIPI Camera to UDP H264
+    difficulty: intermediate
+    runtime: 10-15-min
+    assets_required: none
+    tags: [camera, v4l2, mipi, h264, udp, streaming]
+    pair_cpp: tutorials/020_mipi_camera_to_udp/mipi_camera_to_udp.cpp
+    pair_py: tutorials/020_mipi_camera_to_udp/mipi_camera_to_udp.py

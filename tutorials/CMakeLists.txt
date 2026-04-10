@@ -260,6 +260,11 @@ add_tutorial(tutorial_v2_019_mipi_camera_input
   LABELS fast
 )
 
+add_tutorial(tutorial_v2_020_mipi_camera_to_udp
+  020_mipi_camera_to_udp/mipi_camera_to_udp.cpp
+  LABELS fast
+)
+
 install(
   TARGETS ${PIPELINESESSION_TUTORIAL_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tutorials
