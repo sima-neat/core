@@ -1054,7 +1054,7 @@ build_docs_site() {
   if [[ "${INSTALL_NODE}" == "ON" ]]; then
     echo
     echo "Installing website dependencies..."
-    npm --prefix website install
+    npm --prefix website ci
   fi
   echo
   echo "Building Docusaurus site..."
