@@ -376,7 +376,8 @@ int main(int argc, char** argv) {
     tar_gz = resolve_midas_tar();
     if (tar_gz.empty()) {
       std::cerr << "Missing midas_v21_small_256 MPK tarball.\n";
-      std::cerr << "Set SIMA_MIDAS_TAR or run 'sima-cli modelzoo -v 2.0.0 get midas_v21_small_256'.\n";
+      std::cerr
+          << "Set SIMA_MIDAS_TAR or run 'sima-cli modelzoo -v 2.0.0 get midas_v21_small_256'.\n";
       return 3;
     }
   }
