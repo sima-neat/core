@@ -228,6 +228,12 @@ jobs:
           rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./metadata*.json ./install_neat_framework.sh || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
+      - name: Download prepared artifacts from build job
+        uses: actions/download-artifact@v7
+        with:
+          name: neat-artifacts-standard
+          path: _work/upload-artifacts
+
       - name: Install test runtime from metadata-all
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
@@ -236,12 +242,18 @@ jobs:
             echo "sima-cli not found on test runner." >&2
             exit 1
           fi
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          METADATA_URL="https://sima-neat.com/core/${BRANCH_KEY}/${SHORT_SHA}/metadata-all.json"
-          echo "Installing from ${METADATA_URL}"
-          sima-cli install -m "${METADATA_URL}"
+          ARTIFACT_DIR="${GITHUB_WORKSPACE}/_work/upload-artifacts"
+          METADATA_PATH="${ARTIFACT_DIR}/metadata-all.json"
+          if [[ ! -f "${METADATA_PATH}" ]]; then
+            echo "Missing ${METADATA_PATH}" >&2
+            ls -lah "${ARTIFACT_DIR}" || true
+            exit 1
+          fi
+          echo "Installing from local metadata: ${METADATA_PATH}"
+          (
+            cd "${ARTIFACT_DIR}"
+            sima-cli install -m "metadata-all.json"
+          )
 
       - name: Locate installed extras content
         run: |
