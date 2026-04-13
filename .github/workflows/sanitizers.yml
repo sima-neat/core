@@ -96,7 +96,7 @@ jobs:
 
           for MODE in asan-ubsan tsan; do
             echo "[sanitizers] Installing ${MODE} artifacts..."
-            METADATA_URL="https://sima-neat.com/core/main/${SHORT_SHA}/${MODE}/metadata-all.json"
+            METADATA_URL="https://artifacts.sima-neat.com/core/main/${SHORT_SHA}/${MODE}/metadata-all.json"
             echo "[sanitizers] Installing from ${METADATA_URL}"
             sima-cli install -m "${METADATA_URL}"
 
