@@ -4,7 +4,7 @@ set -euo pipefail
 # install-neat-from-a-branch.sh
 #
 # Purpose:
-# - Install NEAT from S3-hosted metadata via sima-cli.
+# - Install NEAT from R2-hosted metadata via sima-cli.
 # - If branch is not provided, fetches branches.json and prompts user to choose.
 #
 # This is for user to easily install NEAT from a specific branch/tag without needing to know exact URLs.
@@ -63,6 +63,10 @@ download_text() {
   fi
   echo "Neither curl nor wget is installed." >&2
   return 1
+}
+
+sanitize_branch_key() {
+  printf '%s' "$1" | tr '/ ' '--'
 }
 
 while [[ $# -gt 0 ]]; do
@@ -178,16 +182,19 @@ PY
   BRANCH="${BRANCHES[$((choice - 1))]}"
 fi
 
+BRANCH_KEY="$(sanitize_branch_key "${BRANCH}")"
+
 if [[ "${TAG_INPUT}" == "latest" ]]; then
-  TAG="$(download_text "${BASE_URL}/${BRANCH}/latest.tag" | tr -d '[:space:]')"
+  TAG_CONTENT="$(download_text "${BASE_URL}/${BRANCH_KEY}/latest.tag" || true)"
+  TAG="$(printf '%s' "${TAG_CONTENT}" | tr -d '[:space:]')"
   if [[ -z "${TAG}" ]]; then
-    echo "latest.tag is empty for branch: ${BRANCH}" >&2
+    echo "latest.tag is empty or unavailable for branch: ${BRANCH} (key: ${BRANCH_KEY})" >&2
     exit 1
   fi
 else
   TAG="${TAG_INPUT}"
 fi
 
-METADATA_URL="${BASE_URL}/${BRANCH}/${TAG}/${METADATA_FILE}"
+METADATA_URL="${BASE_URL}/${BRANCH_KEY}/${TAG}/${METADATA_FILE}"
 echo "Installing from ${METADATA_URL}"
 "${CLI_BIN}" install -m "${METADATA_URL}"

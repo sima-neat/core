@@ -96,5 +96,5 @@ jobs:
           fi
           bash scripts/ci/sync_algolia_docs_index.sh \
             --docs-dir docs \
-            --site-base-url https://ps.modalix.info \
+            --site-base-url https://docs.sima-neat.com \
             --clear

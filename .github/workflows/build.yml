@@ -429,7 +429,7 @@ jobs:
 
       - name: Build docs
         env:
-          DOCS_URL: https://ps.modalix.info
+          DOCS_URL: https://docs.sima-neat.com
           DOCS_BASE_URL: /
         run: |
           echo
