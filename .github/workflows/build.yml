@@ -167,102 +167,12 @@ jobs:
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
           cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
-      - name: Verify aws cli is available
-        run: |
-          aws --version
-
-      - name: Upload standard artifacts to Cloudflare R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: "true"
-          R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-        run: |
-          set -euo pipefail
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          DEST_PREFIX="s3://neat-artifacts/core/${BRANCH_KEY}/${SHORT_SHA}"
-          for f in "${GITHUB_WORKSPACE}"/_work/upload-artifacts/*; do
-            aws s3 cp "${f}" "${DEST_PREFIX}/" --endpoint-url "${R2_ENDPOINT_URL}"
-          done
-
-      - name: Update latest.tag and branches.json in Cloudflare R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: "true"
-          R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          mkdir -p _work/index
-          printf '%s\n' "${SHORT_SHA}" > _work/index/latest.tag
-          aws s3 cp _work/index/latest.tag \
-            "s3://neat-artifacts/core/${BRANCH_KEY}/latest.tag" \
-            --endpoint-url "${R2_ENDPOINT_URL}"
-
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-          from pathlib import Path
-
-          repo = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GH_TOKEN"]
-          headers = {
-              "Accept": "application/vnd.github+json",
-              "Authorization": f"Bearer {token}",
-              "X-GitHub-Api-Version": "2022-11-28",
-          }
-
-          def paged_list(url_template: str, field: str) -> list[str]:
-              items = []
-              page = 1
-              while True:
-                  url = url_template.format(page=page)
-                  req = urllib.request.Request(url, headers=headers)
-                  with urllib.request.urlopen(req) as resp:
-                      batch = json.loads(resp.read().decode("utf-8"))
-                  if not batch:
-                      break
-                  for item in batch:
-                      val = str(item.get(field, "")).strip()
-                      if val:
-                          items.append(val)
-                  if len(batch) < 100:
-                      break
-                  page += 1
-              return sorted(set(items))
-
-          branches = paged_list(
-              f"https://api.github.com/repos/{repo}/branches?per_page=100&page={{page}}",
-              "name",
-          )
-          tags = paged_list(
-              f"https://api.github.com/repos/{repo}/tags?per_page=100&page={{page}}",
-              "name",
-          )
-          payload = {
-              "branches": branches,
-              "tags": tags,
-              "releases": tags,
-          }
-          Path("_work/index/branches.json").write_text(
-              json.dumps(payload, indent=2) + "\n",
-              encoding="utf-8",
-          )
-          PY
-
-          aws s3 cp _work/index/branches.json \
-            s3://neat-artifacts/core/branches.json \
-            --content-type application/json \
-            --endpoint-url "${R2_ENDPOINT_URL}"
+      - name: Upload prepared artifacts for publish pipeline
+        uses: actions/upload-artifact@v6
+        with:
+          name: neat-artifacts-standard
+          path: _work/upload-artifacts/*
+          if-no-files-found: error
 
   build-fuzz:
     if: needs.resolve-mode.outputs.build_mode == 'fuzz'
@@ -298,31 +208,59 @@ jobs:
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
           cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
-      - name: Verify aws cli is available
-        run: |
-          aws --version
+      - name: Upload prepared fuzz artifacts for publish pipeline
+        uses: actions/upload-artifact@v6
+        with:
+          name: neat-artifacts-fuzz
+          path: _work/upload-artifacts/*
+          if-no-files-found: error
 
-      - name: Upload fuzz artifacts to Cloudflare R2
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: auto
-          AWS_EC2_METADATA_DISABLED: "true"
-          R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-        run: |
-          set -euo pipefail
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          DEST_PREFIX="s3://neat-artifacts/core/${BRANCH_KEY}/${SHORT_SHA}/fuzz"
-          for f in "${GITHUB_WORKSPACE}"/_work/upload-artifacts/*; do
-            aws s3 cp "${f}" "${DEST_PREFIX}/" --endpoint-url "${R2_ENDPOINT_URL}"
-          done
+  publish-standard:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
+    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@main
+    needs: [resolve-mode, build]
+    with:
+      bucket: neat-artifacts
+      environment_name: CloudFlare-R2
+      artifact_root: core
+      project_name: sima-neat
+      artifact_pattern: neat-artifacts-standard
+      artifact_glob: dist/*
+      min_artifact_count: 6
+      aws_region: auto
+      upload_strategy: branch-sha
+      install_awscli: false
+    secrets:
+      aws_access_key_id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      aws_secret_access_key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      r2_account_id: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+
+  publish-fuzz:
+    if: needs.resolve-mode.outputs.build_mode == 'fuzz'
+    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@main
+    needs: [resolve-mode, build-fuzz]
+    with:
+      bucket: neat-artifacts
+      environment_name: CloudFlare-R2
+      artifact_root: core
+      project_name: sima-neat-fuzz
+      artifact_pattern: neat-artifacts-fuzz
+      artifact_glob: dist/*
+      min_artifact_count: 6
+      aws_region: auto
+      upload_strategy: branch-sha
+      artifact_subdir: fuzz
+      publish_index: false
+      install_awscli: false
+    secrets:
+      aws_access_key_id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      aws_secret_access_key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      r2_account_id: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
 
   test:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, ARM64, modalix]
-    needs: [resolve-mode, build]
+    needs: [resolve-mode, publish-standard]
 
     steps:
       - name: Clean test workspace
