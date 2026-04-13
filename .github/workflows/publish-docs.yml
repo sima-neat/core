@@ -41,7 +41,7 @@ jobs:
 
       - name: Build docs website
         env:
-          DOCS_URL: https://ps.modalix.info
+          DOCS_URL: https://docs.sima-neat.com
           DOCS_BASE_URL: /
           DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
           DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
@@ -73,10 +73,9 @@ jobs:
             exit 1
           fi
 
-      - name: Install aws cli tooling
+      - name: Verify aws cli is available
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install awscli
+          aws --version
 
       - name: Deploy docs to Cloudflare R2
         run: |
