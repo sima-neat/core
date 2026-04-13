@@ -20,8 +20,8 @@ jobs:
       AWS_DEFAULT_REGION: auto
       AWS_EC2_METADATA_DISABLED: "true"
       R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
 
     steps:
       - name: Checkout code
@@ -60,7 +60,7 @@ jobs:
 
       - name: Validate R2 settings
         run: |
-          if [ -z "$AWS_ACCESS_KEY_ID" ] || [ -z "$AWS_SECRET_ACCESS_KEY" ]; then
+          if [ -z "$CLOUDFLARE_R2_ACCESS_KEY_ID" ] || [ -z "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" ]; then
             echo "Missing Cloudflare R2 credentials."
             exit 1
           fi
@@ -79,6 +79,9 @@ jobs:
 
       - name: Deploy docs to Cloudflare R2
         run: |
+          unset AWS_PROFILE AWS_DEFAULT_PROFILE
+          AWS_ACCESS_KEY_ID="${CLOUDFLARE_R2_ACCESS_KEY_ID}" \
+          AWS_SECRET_ACCESS_KEY="${CLOUDFLARE_R2_SECRET_ACCESS_KEY}" \
           aws s3 sync website/build/ "s3://${S3_BUCKET}/" --delete --endpoint-url "${R2_ENDPOINT_URL}"
 
       - name: Reindex Algolia docs search
