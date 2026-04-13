@@ -1,4 +1,4 @@
-name: S3 Artifact Maintenance
+name: R2 Artifact Maintenance
 
 on:
   schedule:
@@ -25,10 +25,15 @@ concurrency:
 jobs:
   cleanup:
     runs-on: ubuntu-latest
+    environment: CloudFlare-R2
     env:
-      AWS_REGION: us-east-1
-      S3_BUCKET: sima-neat-artifacts
+      S3_BUCKET: neat-artifacts
       NON_LATEST_RETENTION_DAYS: "7"
+      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
     steps:
       - name: Resolve execution mode
@@ -41,12 +46,9 @@ jobs:
           fi
           echo "Dry run mode: $(cat "${GITHUB_OUTPUT}" | awk -F= '/^dry_run=/{print $2}')"
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Verify aws cli is available
+        run: |
+          aws --version
 
       - name: Cleanup expired artifact objects
         env:
@@ -68,7 +70,7 @@ jobs:
             if [[ "${DRY_RUN}" == "true" ]]; then
               echo "[dry-run] delete s3://${S3_BUCKET}/${key}"
             else
-              aws s3api delete-object --bucket "${S3_BUCKET}" --key "${key}" >/dev/null
+              aws s3api delete-object --bucket "${S3_BUCKET}" --key "${key}" --endpoint-url "${R2_ENDPOINT_URL}" >/dev/null
               echo "deleted s3://${S3_BUCKET}/${key}"
             fi
           }
@@ -120,21 +122,23 @@ jobs:
               if [[ -n "${token}" ]]; then
                 response="$(aws s3api list-objects-v2 \
                   --bucket "${S3_BUCKET}" \
-                  --prefix "neat/" \
+                  --prefix "core/" \
                   --continuation-token "${token}" \
+                  --endpoint-url "${R2_ENDPOINT_URL}" \
                   --output json)"
               else
                 response="$(aws s3api list-objects-v2 \
                   --bucket "${S3_BUCKET}" \
-                  --prefix "neat/" \
+                  --prefix "core/" \
+                  --endpoint-url "${R2_ENDPOINT_URL}" \
                   --output json)"
               fi
 
               while IFS= read -r key; do
-                [[ "${key}" != neat/*/latest.tag ]] && continue
-                branch="${key#neat/}"
+                [[ "${key}" != core/*/latest.tag ]] && continue
+                branch="${key#core/}"
                 branch="${branch%/latest.tag}"
-                tag="$(aws s3 cp "s3://${S3_BUCKET}/${key}" - 2>/dev/null | tr -d '[:space:]' || true)"
+                tag="$(aws s3 cp --endpoint-url "${R2_ENDPOINT_URL}" "s3://${S3_BUCKET}/${key}" - 2>/dev/null | tr -d '[:space:]' || true)"
                 if [[ -n "${tag}" ]]; then
                   latest_tags["${branch}"]="${tag}"
                 fi
@@ -184,11 +188,13 @@ jobs:
                   --bucket "${S3_BUCKET}" \
                   --prefix "${prefix}/" \
                   --continuation-token "${token}" \
+                  --endpoint-url "${R2_ENDPOINT_URL}" \
                   --output json)"
               else
                 response="$(aws s3api list-objects-v2 \
                   --bucket "${S3_BUCKET}" \
                   --prefix "${prefix}/" \
+                  --endpoint-url "${R2_ENDPOINT_URL}" \
                   --output json)"
               fi
 
@@ -240,8 +246,7 @@ jobs:
           echo "Active branches discovered: ${#active_branches[@]}"
           echo "Latest tags discovered: ${#latest_tags[@]}"
 
-          cleanup_prefix "neat"
-          cleanup_prefix "neat-internals"
+          cleanup_prefix "core"
 
           echo "Scan complete."
           echo "Scanned objects: ${scanned_count}"
