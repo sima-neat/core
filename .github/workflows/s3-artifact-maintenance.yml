@@ -63,6 +63,7 @@ jobs:
           scanned_count=0
 
           declare -A active_branches=()
+          declare -A active_tags=()
           declare -A latest_tags=()
 
           delete_or_echo() {
@@ -102,6 +103,36 @@ jobs:
                 [[ -z "${branch_name}" ]] && continue
                 branch_key="$(echo "${branch_name}" | tr '/ ' '--')"
                 active_branches["${branch_key}"]=1
+              done < <(jq -r '.[].name // empty' <<<"${response}")
+
+              if [[ "$(jq 'length' <<<"${response}")" -lt 100 ]]; then
+                break
+              fi
+              page=$((page + 1))
+            done
+          }
+
+          load_active_tags() {
+            local page=1
+            local response
+            local tag_name
+            local tag_key
+
+            while :; do
+              response="$(curl -fsSL \
+                -H "Accept: application/vnd.github+json" \
+                -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                -H "X-GitHub-Api-Version: 2022-11-28" \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/tags?per_page=100&page=${page}")"
+
+              if [[ "$(jq 'length' <<<"${response}")" == "0" ]]; then
+                break
+              fi
+
+              while IFS= read -r tag_name; do
+                [[ -z "${tag_name}" ]] && continue
+                tag_key="$(echo "${tag_name}" | tr '/ ' '--')"
+                active_tags["${tag_key}"]=1
               done < <(jq -r '.[].name // empty' <<<"${response}")
 
               if [[ "$(jq 'length' <<<"${response}")" -lt 100 ]]; then
@@ -213,6 +244,13 @@ jobs:
                 branch="${rel%%/*}"
                 artifact_path="${rel#*/}"
 
+                # Remove all objects for refs (branch/tag) that no longer exist.
+                if [[ -z "${active_branches[${branch}]:-}" && -z "${active_tags[${branch}]:-}" ]]; then
+                  delete_or_echo "${key}"
+                  deleted_count=$((deleted_count + 1))
+                  continue
+                fi
+
                 if is_release_branch "${branch}"; then
                   kept_count=$((kept_count + 1))
                   continue
@@ -242,8 +280,10 @@ jobs:
           }
 
           load_active_branches
+          load_active_tags
           load_latest_tags
           echo "Active branches discovered: ${#active_branches[@]}"
+          echo "Active tags discovered: ${#active_tags[@]}"
           echo "Latest tags discovered: ${#latest_tags[@]}"
 
           cleanup_prefix "core"
