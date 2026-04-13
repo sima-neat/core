@@ -381,7 +381,7 @@ jobs:
 
   publish-standard:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@main
+    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@chore/reusable-r2-upload-strategy-149
     needs: [resolve-mode, docs]
     with:
       bucket: neat-artifacts
@@ -400,7 +400,7 @@ jobs:
 
   publish-fuzz:
     if: needs.resolve-mode.outputs.build_mode == 'fuzz'
-    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@main
+    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@chore/reusable-r2-upload-strategy-149
     needs: [resolve-mode, build-fuzz]
     with:
       bucket: neat-artifacts
