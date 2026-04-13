@@ -28,7 +28,7 @@ jobs:
     environment: CloudFlare-R2
     env:
       S3_BUCKET: neat-artifacts
-      NON_LATEST_RETENTION_DAYS: "7"
+      NON_LATEST_RETENTION_DAYS: "2"
       AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
