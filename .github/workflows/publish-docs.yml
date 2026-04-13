@@ -16,7 +16,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     environment: CloudFlare-R2
     env:
-      S3_BUCKET: pipeline-session-doc
+      S3_BUCKET: docs
       AWS_DEFAULT_REGION: auto
       AWS_EC2_METADATA_DISABLED: "true"
       R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
