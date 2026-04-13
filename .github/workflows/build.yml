@@ -167,10 +167,9 @@ jobs:
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
           cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
-      - name: Install aws cli tooling
+      - name: Verify aws cli is available
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install awscli
+          aws --version
 
       - name: Upload standard artifacts to Cloudflare R2
         env:
@@ -299,10 +298,9 @@ jobs:
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
           cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
-      - name: Install aws cli tooling
+      - name: Verify aws cli is available
         run: |
-          python3 -m pip install --upgrade pip
-          python3 -m pip install awscli
+          aws --version
 
       - name: Upload fuzz artifacts to Cloudflare R2
         env:
