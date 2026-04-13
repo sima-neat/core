@@ -430,3 +430,46 @@ jobs:
       aws_access_key_id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
       aws_secret_access_key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
       r2_account_id: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+
+  cleanup-run-artifacts:
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    needs:
+      - build
+      - build-fuzz
+      - test
+      - docs
+      - publish-standard
+      - publish-fuzz
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete temporary workflow artifacts
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const run_id = context.runId;
+            const targets = new Set(["neat-artifacts-standard", "neat-artifacts-fuzz"]);
+
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id,
+              per_page: 100,
+            });
+
+            let deleted = 0;
+            for (const artifact of artifacts) {
+              if (!targets.has(artifact.name)) continue;
+              core.info(`Deleting artifact ${artifact.name} (id=${artifact.id})`);
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id,
+              });
+              deleted += 1;
+            }
+            core.info(`Deleted ${deleted} temporary artifact(s) from run ${run_id}.`);
