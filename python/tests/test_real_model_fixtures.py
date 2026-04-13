@@ -82,7 +82,7 @@ def _resolve_model_tar(name: str) -> Path | None:
   sima_cli = shutil.which("sima-cli")
   if sima_cli is not None:
     result = subprocess.run(
-        [sima_cli, "modelzoo", "get", spec["model_name"]],
+        [sima_cli, "modelzoo", "-v", "2.0.0", "get", spec["model_name"]],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -105,7 +105,7 @@ def _fixture_model_path(name: str) -> Path:
   spec = _MODEL_FIXTURES[name]
   pytest.skip(
       f"missing real model fixture for {name}; set {name} or run "
-      f"'sima-cli modelzoo get {spec['model_name']}'"
+      f"'sima-cli modelzoo -v 2.0.0 get {spec['model_name']}'"
   )
 
 

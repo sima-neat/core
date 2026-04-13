@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
   }
   if (model_path.empty()) {
     std::cerr << "Missing ResNet50 MPK tarball.\n";
-    std::cerr << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo get resnet_50'.\n";
+    std::cerr << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo -v 2.0.0 get resnet_50'.\n";
     return 2;
   }
 

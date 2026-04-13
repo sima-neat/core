@@ -39,7 +39,7 @@ Search order:
 
 Download (if `sima-cli` is available):
 ```
-sima-cli modelzoo get resnet_50
+sima-cli modelzoo -v 2.0.0 get resnet_50
 ```
 
 ### YOLOv8 (v8s)
@@ -55,7 +55,7 @@ Search order:
 
 Download (if `sima-cli` is available):
 ```
-sima-cli modelzoo get yolo_v8s
+sima-cli modelzoo -v 2.0.0 get yolo_v8s
 ```
 
 ## Sample images

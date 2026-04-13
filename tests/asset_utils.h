@@ -10,6 +10,8 @@ namespace sima_test {
 
 namespace fs = std::filesystem;
 
+constexpr auto kModelzooVersion = "2.0.0";
+
 inline std::string shell_quote(const std::string& s) {
   std::string out = "'";
   for (char c : s) {
@@ -108,7 +110,9 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
   if (fs::exists(local))
     return local.string();
 
-  const int rc = std::system("sima-cli modelzoo get resnet_50");
+  const std::string dl_cmd =
+      std::string("sima-cli modelzoo -v ") + kModelzooVersion + " get resnet_50";
+  const int rc = std::system(dl_cmd.c_str());
   if (rc != 0)
     return "";
 
@@ -175,7 +179,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   }
 
   if (!skip_download) {
-    const int rc = std::system("sima-cli modelzoo get yolo_v8s");
+    const std::string yolo_cmd =
+        std::string("sima-cli modelzoo -v ") + kModelzooVersion + " get yolo_v8s";
+    const int rc = std::system(yolo_cmd.c_str());
     if (rc == 0 && fs::exists(tmp_tar))
       return tmp_tar.string();
   }
@@ -294,7 +300,8 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
     }
   }
 
-  const std::string cmd = "sima-cli modelzoo get " + shell_quote(model_name);
+  const std::string cmd =
+      std::string("sima-cli modelzoo -v ") + kModelzooVersion + " get " + shell_quote(model_name);
   if (std::system(cmd.c_str()) != 0)
     return "";
 

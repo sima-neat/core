@@ -107,7 +107,7 @@ inline cv::Mat require_image(const fs::path& image_path, const std::string& labe
 inline std::string resolve_model_tar_or_throw(const std::string& model_name, const fs::path& root) {
   const std::string tar = sima_test::resolve_modelzoo_tar(model_name, root);
   require(!tar.empty(), "Failed to resolve model tar for '" + model_name +
-                            "'. Run: sima-cli modelzoo get " + model_name);
+                            "'. Run: sima-cli modelzoo -v 2.0.0 get " + model_name);
   return tar;
 }
 

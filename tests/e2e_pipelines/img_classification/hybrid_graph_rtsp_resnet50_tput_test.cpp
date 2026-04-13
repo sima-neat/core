@@ -539,7 +539,7 @@ int main(int argc, char** argv) {
     }
     if (model_tar.empty()) {
       skip_long_test_exception("ResNet50 model pack not found (set SIMA_RESNET50_TAR or run "
-                               "'sima-cli modelzoo get resnet_50')");
+                               "'sima-cli modelzoo -v 2.0.0 get resnet_50')");
     }
 
     auto rtsp_servers_vec = start_rtsp_servers_with_retry(
