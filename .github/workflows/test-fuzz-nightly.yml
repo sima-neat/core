@@ -45,7 +45,7 @@ jobs:
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          METADATA_URL="https://neat-artifacts.modalix.info/neat/${BRANCH_KEY}/${SHORT_SHA}/fuzz/metadata-all.json"
+          METADATA_URL="https://sima-neat.com/core/${BRANCH_KEY}/${SHORT_SHA}/fuzz/metadata-all.json"
           echo "Installing from ${METADATA_URL}"
           sima-cli install -m "${METADATA_URL}"
 

@@ -21,7 +21,7 @@ set -euo pipefail
 #
 # Environment:
 # - NEAT_ARTIFACTS_BASE_URL: base URL for artifact index/tag metadata
-#   (default: https://neat-artifacts.modalix.info/neat)
+#   (default: https://sima-neat.com/core)
 # - SIMA_CLI_BIN: sima-cli binary/path override (default: sima-cli)
 #
 # Example:
@@ -31,7 +31,7 @@ set -euo pipefail
 # - All-components latest:   bash tools/install-neat-from-a-branch.sh --all feature/docs
 # - Interactive:             bash tools/install-neat-from-a-branch.sh
 #
-BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://neat-artifacts.modalix.info/neat}"
+BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://sima-neat.com/core}"
 CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 CLI_FALLBACK="/data/sima-cli/.venv/bin/sima-cli"
 MINIMUM=0
@@ -46,7 +46,7 @@ Usage:
   install-neat-from-a-branch.sh [-minimum|--minimum] [--all] [branch] [latest|git-hash]
 
 Environment:
-  NEAT_ARTIFACTS_BASE_URL  Base URL for neat artifacts (default: https://neat-artifacts.modalix.info/neat)
+  NEAT_ARTIFACTS_BASE_URL  Base URL for neat artifacts (default: https://sima-neat.com/core)
   SIMA_CLI_BIN             sima-cli executable name/path (default: sima-cli)
 USAGE
 }
