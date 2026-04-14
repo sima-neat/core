@@ -45,6 +45,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          clean: true
           fetch-depth: 0
 
       - name: Install formatting/lint tools
@@ -137,6 +138,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          clean: true
 
       - name: Setup Environment
         run: |
@@ -156,9 +159,22 @@ jobs:
 
       - name: Prepare artifact payload and metadata
         run: |
-          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
-          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
-          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          mapfile -t CORE_DEBS < <(find . -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find . -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one core .deb, one extras tar.gz, and one wheel." >&2
+            echo "core debs: ${#CORE_DEBS[@]}" >&2
+            printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+            echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+            printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+            echo "wheels: ${#WHEELS[@]}" >&2
+            printf '  %s\n' "${WHEELS[@]}" >&2 || true
+            exit 1
+          fi
+          CORE_DEB="${CORE_DEBS[0]}"
+          EXTRAS_TAR="${EXTRAS_TARS[0]}"
+          WHEEL_PATH="${WHEELS[0]}"
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
@@ -182,6 +198,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          clean: true
 
       - name: Build fuzz artifacts
         env:
@@ -197,9 +215,22 @@ jobs:
 
       - name: Prepare fuzz artifact payload and metadata
         run: |
-          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
-          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
-          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          mapfile -t CORE_DEBS < <(find . -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find . -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one core .deb, one extras tar.gz, and one wheel." >&2
+            echo "core debs: ${#CORE_DEBS[@]}" >&2
+            printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+            echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+            printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+            echo "wheels: ${#WHEELS[@]}" >&2
+            printf '  %s\n' "${WHEELS[@]}" >&2 || true
+            exit 1
+          fi
+          CORE_DEB="${CORE_DEBS[0]}"
+          EXTRAS_TAR="${EXTRAS_TARS[0]}"
+          WHEEL_PATH="${WHEELS[0]}"
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
