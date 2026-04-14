@@ -1018,18 +1018,46 @@ clean_build_dir_if_requested() {
 
 configure_cmake() {
   # Configure once; subsequent steps reuse this build tree.
-  cmake -S . -B "${BUILD_DIR}" \
-    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-    -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}" \
-    -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}" \
-    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
-    -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
-    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
-    -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}" \
-    -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}" \
-    -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}" \
-    -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}" \
+  local -a cmake_args=(
+    -S . -B "${BUILD_DIR}"
+    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}"
+    -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
+    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
+    -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
+    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
+    -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}"
+    -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}"
+    -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}"
+    -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
     -DFUZZING="${BUILD_FUZZ}"
+  )
+
+  if [[ "${ELXR_SDK}" == "ON" && -n "${SYSROOT:-}" ]]; then
+    local -a pkgconfig_dirs=(
+      "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig"
+      "${SYSROOT}/usr/lib/pkgconfig"
+      "${SYSROOT}/usr/share/pkgconfig"
+    )
+    local pkg_config_executable
+    pkg_config_executable="${PKG_CONFIG_EXECUTABLE:-$(command -v pkg-config)}"
+    export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
+    export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
+    export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+
+    cmake_args+=(
+      -DCMAKE_SYSROOT="${SYSROOT}"
+      -DCMAKE_FIND_ROOT_PATH="${SYSROOT}"
+      -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+      -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
+      -DCMAKE_PREFIX_PATH="${SYSROOT}/usr;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake;${SYSROOT}/usr/lib/cmake"
+      -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+    )
+  fi
+
+  cmake "${cmake_args[@]}"
 }
 
 build_docs_site() {
