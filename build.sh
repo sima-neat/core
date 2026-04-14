@@ -8,6 +8,7 @@ BUILD_DIR=build
 BUILD_TYPE=Release
 OS_NAME="$(uname -s)"
 REPO_ROOT="$(pwd -P)"
+cd "${REPO_ROOT}"
 
 # Defaults
 BUILD_SAMPLES=OFF
@@ -32,7 +33,7 @@ SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
-NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
+NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-neat-internals}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
@@ -1062,6 +1063,7 @@ configure_cmake() {
 
 build_docs_site() {
   # Shared docs pipeline used by both --doc and --all/--no-doc flows.
+  cd "${REPO_ROOT}"
   echo
   echo "Building docs..."
   cmake --build "${BUILD_DIR}" --target docs -j"${BUILD_JOBS}"
@@ -1077,16 +1079,21 @@ build_docs_site() {
   echo
   echo "Expanding code tabs..."
   local expanded_docs_dir
-  expanded_docs_dir="$(pwd)/${BUILD_DIR}/docs-expanded"
-  python3 tools/expand_code_tabs.py --src docs --dst "${expanded_docs_dir}"
+  expanded_docs_dir="${REPO_ROOT}/${BUILD_DIR}/docs-expanded"
+  python3 tools/expand_code_tabs.py --src "${REPO_ROOT}/docs" --dst "${expanded_docs_dir}"
+  echo
+  echo "Resetting website build caches..."
+  rm -rf "${REPO_ROOT}/website/node_modules/.cache"
+  rm -rf "${REPO_ROOT}/website/.docusaurus"
+  rm -rf "${REPO_ROOT}/website/build"
   if [[ "${INSTALL_NODE}" == "ON" ]]; then
     echo
     echo "Installing website dependencies..."
-    npm --prefix website ci
+    npm --prefix "${REPO_ROOT}/website" ci
   fi
   echo
   echo "Building Docusaurus site..."
-  DOCS_PATH="${expanded_docs_dir}" npm --prefix website run build
+  DOCS_PATH="${expanded_docs_dir}" npm --prefix "${REPO_ROOT}/website" run build
 }
 
 build_docs_only_if_requested() {
