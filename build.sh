@@ -8,6 +8,7 @@ BUILD_DIR=build
 BUILD_TYPE=Release
 OS_NAME="$(uname -s)"
 REPO_ROOT="$(pwd -P)"
+cd "${REPO_ROOT}"
 
 # Defaults
 BUILD_SAMPLES=OFF
@@ -32,7 +33,7 @@ SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
-NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
+NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-neat-internals}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
@@ -1018,22 +1019,51 @@ clean_build_dir_if_requested() {
 
 configure_cmake() {
   # Configure once; subsequent steps reuse this build tree.
-  cmake -S . -B "${BUILD_DIR}" \
-    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-    -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}" \
-    -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}" \
-    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}" \
-    -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}" \
-    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}" \
-    -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}" \
-    -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}" \
-    -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}" \
-    -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}" \
+  local -a cmake_args=(
+    -S . -B "${BUILD_DIR}"
+    -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    -DSIMANEAT_BUILD_SAMPLES="${BUILD_SAMPLES}"
+    -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
+    -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
+    -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
+    -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
+    -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}"
+    -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}"
+    -DSIMA_ENABLE_TSAN="${SIMA_ENABLE_TSAN}"
+    -DSIMANEAT_SANITIZER_GATE_ONLY_EXTRAS="${SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS}"
     -DFUZZING="${BUILD_FUZZ}"
+  )
+
+  if [[ "${ELXR_SDK}" == "ON" && -n "${SYSROOT:-}" ]]; then
+    local -a pkgconfig_dirs=(
+      "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig"
+      "${SYSROOT}/usr/lib/pkgconfig"
+      "${SYSROOT}/usr/share/pkgconfig"
+    )
+    local pkg_config_executable
+    pkg_config_executable="${PKG_CONFIG_EXECUTABLE:-$(command -v pkg-config)}"
+    export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
+    export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
+    export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+
+    cmake_args+=(
+      -DCMAKE_SYSROOT="${SYSROOT}"
+      -DCMAKE_FIND_ROOT_PATH="${SYSROOT}"
+      -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER
+      -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY
+      -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY
+      -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
+      -DCMAKE_PREFIX_PATH="${SYSROOT}/usr;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake;${SYSROOT}/usr/lib/cmake"
+      -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+    )
+  fi
+
+  cmake "${cmake_args[@]}"
 }
 
 build_docs_site() {
   # Shared docs pipeline used by both --doc and --all/--no-doc flows.
+  cd "${REPO_ROOT}"
   echo
   echo "Building docs..."
   cmake --build "${BUILD_DIR}" --target docs -j"${BUILD_JOBS}"
@@ -1049,16 +1079,21 @@ build_docs_site() {
   echo
   echo "Expanding code tabs..."
   local expanded_docs_dir
-  expanded_docs_dir="$(pwd)/${BUILD_DIR}/docs-expanded"
-  python3 tools/expand_code_tabs.py --src docs --dst "${expanded_docs_dir}"
+  expanded_docs_dir="${REPO_ROOT}/${BUILD_DIR}/docs-expanded"
+  python3 tools/expand_code_tabs.py --src "${REPO_ROOT}/docs" --dst "${expanded_docs_dir}"
+  echo
+  echo "Resetting website build caches..."
+  rm -rf "${REPO_ROOT}/website/node_modules/.cache"
+  rm -rf "${REPO_ROOT}/website/.docusaurus"
+  rm -rf "${REPO_ROOT}/website/build"
   if [[ "${INSTALL_NODE}" == "ON" ]]; then
     echo
     echo "Installing website dependencies..."
-    npm --prefix website install
+    npm --prefix "${REPO_ROOT}/website" ci
   fi
   echo
   echo "Building Docusaurus site..."
-  DOCS_PATH="${expanded_docs_dir}" npm --prefix website run build
+  DOCS_PATH="${expanded_docs_dir}" npm --prefix "${REPO_ROOT}/website" run build
 }
 
 build_docs_only_if_requested() {
