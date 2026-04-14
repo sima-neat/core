@@ -18,7 +18,7 @@ EXTRAS_TAR=""
 WHEEL_PATH=""
 INTERNALS_MANIFEST=""
 OUTPUT_DIR=""
-INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
+INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
 INSTALL_SCRIPT_PATH="tools/install_neat_framework.sh"
 
 while [[ $# -gt 0 ]]; do
