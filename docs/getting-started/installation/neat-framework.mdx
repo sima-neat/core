@@ -48,7 +48,7 @@ You can optionally install extras, including prebuilt tutorials, source-code tut
 
 ## Latest Build
 
-Use this option to try the latest automated build. This method also prompts you to select the latest artifacts from any branch.
+Use this option to try the latest automated build. This method prompts you to select artifacts from any available branch or release.
 
 ```bash
 wget -O /tmp/install-neat-from-a-branch.sh https://tools.sima-neat.com/install-neat-from-a-branch.sh && \
@@ -57,17 +57,23 @@ wget -O /tmp/install-neat-from-a-branch.sh https://tools.sima-neat.com/install-n
 
 ## Specific Build
 
-Use this option to test a specific branch and commit.
+Use this option to test a specific branch build or install a specific release.
 
 ```bash
 wget -O /tmp/install-neat-from-a-branch.sh https://tools.sima-neat.com/install-neat-from-a-branch.sh && \
-  bash /tmp/install-neat-from-a-branch.sh {branch} {githash}
+  bash /tmp/install-neat-from-a-branch.sh {branch-or-release} {githash}
 ```
 
 Replace:
 
-- `{branch}` with your branch name
+- `{branch-or-release}` with your branch name or release tag such as `v0.0.1`
 - `{githash}` with the 7-character Git commit hash
+
+For releases, omit `{githash}` and pass only the release tag:
+
+```bash
+bash /tmp/install-neat-from-a-branch.sh v0.0.1
+```
 
 If you prefer building from source, follow the [Build](../build.md) guide.
 
