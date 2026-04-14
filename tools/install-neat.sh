@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# install-neat-from-a-branch.sh
+# install-neat.sh
 #
 # Purpose:
 # - Install NEAT from R2-hosted metadata via sima-cli.
@@ -28,12 +28,12 @@ set -euo pipefail
 # - SIMA_CLI_BIN: sima-cli binary/path override (default: sima-cli)
 #
 # Example:
-# - Non-interactive latest branch:  bash tools/install-neat-from-a-branch.sh feature/docs
-# - Non-interactive fixed branch:   bash tools/install-neat-from-a-branch.sh feature/docs 1a2b3c4
-# - Non-interactive release:        bash tools/install-neat-from-a-branch.sh v0.0.1
-# - Minimal install latest:         bash tools/install-neat-from-a-branch.sh -minimum feature/docs
-# - All-components latest:          bash tools/install-neat-from-a-branch.sh --all feature/docs
-# - Interactive:             bash tools/install-neat-from-a-branch.sh
+# - Non-interactive latest branch:  bash tools/install-neat.sh feature/docs
+# - Non-interactive fixed branch:   bash tools/install-neat.sh feature/docs 1a2b3c4
+# - Non-interactive release:        bash tools/install-neat.sh v0.0.1
+# - Minimal install latest:         bash tools/install-neat.sh -minimum feature/docs
+# - All-components latest:          bash tools/install-neat.sh --all feature/docs
+# - Interactive:             bash tools/install-neat.sh
 #
 BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://artifacts.sima-neat.com/core}"
 CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
@@ -52,7 +52,7 @@ RELEASES=()
 usage() {
   cat <<'USAGE'
 Usage:
-  install-neat-from-a-branch.sh [-minimum|--minimum] [--all] [branch-or-release] [latest|git-hash]
+  install-neat.sh [-minimum|--minimum] [--all] [branch-or-release] [latest|git-hash]
 
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Base URL for neat artifacts (default: https://artifacts.sima-neat.com/core)
