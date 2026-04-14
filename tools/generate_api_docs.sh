@@ -69,5 +69,6 @@ cat > "${OUT_DIR}/_category_.json" <<'EOF'
 EOF
 
 python3 "${ROOT}/tools/postprocess_d2d_links.py"
+python3 "${ROOT}/tools/postprocess_api_availability_tags.py" --docs-dir "${OUT_DIR}"
 
 echo "API docs generated at ${OUT_DIR}"
