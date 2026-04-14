@@ -7,6 +7,7 @@ Primary docs live under /reference/pythonapi/modules.
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import shutil
@@ -17,6 +18,12 @@ from typing import Iterable
 
 MODULE_CLASS_RE = re.compile(r'nb::class_<[^>]+>\(m,\s*"(?P<name>[A-Za-z0-9_]+)"\)')
 MODULE_DEF_RE = re.compile(r'm\.def_submodule\("(?P<name>[A-Za-z0-9_]+)"')
+SINCE_RE = re.compile(r"<since>\s*([^<]+?)\s*</since>", re.IGNORECASE)
+COMPAT_RE = re.compile(r"<compatible-with>\s*([^<]+?)\s*</compatible-with>", re.IGNORECASE)
+SINCE_ESC_RE = re.compile(r"&lt;since&gt;\s*([^<]+?)\s*&lt;/since&gt;", re.IGNORECASE)
+COMPAT_ESC_RE = re.compile(
+    r"&lt;compatible-with&gt;\s*([^<]+?)\s*&lt;/compatible-with&gt;", re.IGNORECASE
+)
 
 
 @dataclass(frozen=True)
@@ -29,6 +36,36 @@ class MethodDoc:
 class PropertyDoc:
     name: str
     doc: str | None
+
+
+def _safe_badge_text(text: str) -> str:
+    # Keep '>' readable (e.g., ">=2.1.0"), escape only unsafe chars.
+    text = html.unescape(text.strip())
+    return text.replace("&", "&amp;").replace("<", "&lt;")
+
+
+def _since_badge(version: str) -> str:
+    safe = _safe_badge_text(version)
+    return f'<span class="api-availability-badge api-since">Since {safe}</span>'
+
+
+def _compat_badge(spec: str) -> str:
+    safe = _safe_badge_text(spec)
+    return (
+        f'<span class="api-availability-badge api-compatible">Compatible With {safe}</span>'
+    )
+
+
+def render_availability_tags(text: str | None) -> str | None:
+    if text is None:
+        return None
+    out = SINCE_RE.sub(lambda m: _since_badge(m.group(1)), text)
+    out = COMPAT_RE.sub(lambda m: _compat_badge(m.group(1)), out)
+    out = SINCE_ESC_RE.sub(lambda m: _since_badge(m.group(1)), out)
+    out = COMPAT_ESC_RE.sub(lambda m: _compat_badge(m.group(1)), out)
+    out = re.sub(r"[ \t]+(<span class=\"api-availability-badge)", r" \1", out)
+    out = re.sub(r"(</span>)[ \t]+", r"\1 ", out)
+    return out.strip()
 
 
 def write_text(path: Path, content: str) -> None:
@@ -76,7 +113,7 @@ def extract_module_docstring(path: Path, fallback: str) -> str:
     if not m:
         return fallback
     doc = m.group(1).strip()
-    return doc if doc else fallback
+    return render_availability_tags(doc) if doc else fallback
 
 
 def render_list(items: Iterable[str]) -> str:
@@ -256,20 +293,22 @@ def main() -> int:
     class_blocks = extract_class_blocks(module_cpp)
     for class_name in module_classes:
         block = class_blocks.get(class_name, "")
-        class_doc = extract_class_doc(block)
+        class_doc = render_availability_tags(extract_class_doc(block))
         methods = extract_methods(block)
         properties = extract_properties(block)
         method_lines = []
         for method in methods:
-            if method.doc:
-                method_lines.append(f"- `{method.name}`: {method.doc}")
+            doc = render_availability_tags(method.doc)
+            if doc:
+                method_lines.append(f"- `{method.name}`: {doc}")
             else:
                 method_lines.append(f"- `{method.name}`")
         method_section = "\n".join(method_lines) if method_lines else "- (No methods discovered)"
         prop_lines = []
         for prop in properties:
-            if prop.doc:
-                prop_lines.append(f"- `{prop.name}`: {prop.doc}")
+            doc = render_availability_tags(prop.doc)
+            if doc:
+                prop_lines.append(f"- `{prop.name}`: {doc}")
             else:
                 prop_lines.append(f"- `{prop.name}`")
         prop_section = "\n".join(prop_lines) if prop_lines else "- (No properties discovered)"
