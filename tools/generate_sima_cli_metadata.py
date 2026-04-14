@@ -51,7 +51,8 @@ def _version_from_core_deb(core_deb_name: str) -> str:
 
 def _url_safe_name(name: str) -> str:
     """Encode artifact filenames for metadata URLs."""
-    return urllib.parse.quote(name, safe="-._~")
+    # Keep '+' unescaped so metadata keys match canonical artifact object names.
+    return urllib.parse.quote(name, safe="-._~+")
 
 
 def _fmt_size(num_bytes: int) -> str:

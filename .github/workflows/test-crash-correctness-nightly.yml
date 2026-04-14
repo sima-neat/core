@@ -34,12 +34,12 @@ jobs:
             echo "sima-cli not found on runner." >&2
             exit 1
           fi
-          TAG="$(curl -fsSL https://neat-artifacts.modalix.info/neat/main/latest.tag | tr -d '[:space:]')"
+          TAG="$(curl -fsSL https://artifacts.sima-neat.com/core/main/latest.tag | tr -d '[:space:]')"
           if [[ -z "${TAG}" ]]; then
             echo "Failed to resolve latest.tag for main branch." >&2
             exit 1
           fi
-          METADATA_URL="https://neat-artifacts.modalix.info/neat/main/${TAG}/metadata-all.json"
+          METADATA_URL="https://artifacts.sima-neat.com/core/main/${TAG}/metadata-all.json"
           echo "Installing from ${METADATA_URL}"
           sima-cli install -m "${METADATA_URL}"
 

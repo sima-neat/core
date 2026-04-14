@@ -96,14 +96,14 @@ jobs:
       contents: write
     env:
       DOCS_STRICT_LINKS: "1"
-      DOCS_URL: https://ps.modalix.info
+      DOCS_URL: https://docs.sima-neat.com
       DOCS_BASE_URL: /
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
 

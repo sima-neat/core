@@ -14,10 +14,14 @@ jobs:
   publish-docs:
     if: github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64]
+    environment: CloudFlare-R2
     env:
-      AWS_REGION: us-east-1
-      S3_BUCKET: pipeline-session-doc
-      CLOUDFRONT_DISTRIBUTION_ID: E27E3TBO4YSCCW
+      S3_BUCKET: docs
+      AWS_DEFAULT_REGION: auto
+      AWS_EC2_METADATA_DISABLED: "true"
+      R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+      CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
 
     steps:
       - name: Checkout code
@@ -26,7 +30,7 @@ jobs:
           ref: ${{ github.sha }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
 
@@ -37,7 +41,7 @@ jobs:
 
       - name: Build docs website
         env:
-          DOCS_URL: https://ps.modalix.info
+          DOCS_URL: https://docs.sima-neat.com
           DOCS_BASE_URL: /
           DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
           DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
@@ -54,35 +58,31 @@ jobs:
           test -d website/build
           test -f website/build/index.html
 
-      - name: Validate AWS settings
+      - name: Validate R2 settings
         run: |
-          if [ -z "$AWS_REGION" ]; then
-            AWS_REGION="us-east-1"
-            echo "AWS_REGION not set. Defaulting to us-east-1."
+          if [ -z "$CLOUDFLARE_R2_ACCESS_KEY_ID" ] || [ -z "$CLOUDFLARE_R2_SECRET_ACCESS_KEY" ]; then
+            echo "Missing Cloudflare R2 credentials."
+            exit 1
           fi
           if [ -z "$S3_BUCKET" ]; then
             echo "Missing S3_BUCKET."
             exit 1
           fi
-          if [ -z "$CLOUDFRONT_DISTRIBUTION_ID" ]; then
-            echo "Missing CLOUDFRONT_DISTRIBUTION_ID."
+          if [ -z "$R2_ENDPOINT_URL" ]; then
+            echo "Missing R2 endpoint URL."
             exit 1
           fi
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy to S3
+      - name: Verify aws cli is available
         run: |
-          aws s3 sync website/build/ "s3://${S3_BUCKET}/" --delete
+          aws --version
 
-      - name: Invalidate CloudFront
+      - name: Deploy docs to Cloudflare R2
         run: |
-          aws cloudfront create-invalidation --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" --paths "/*"
+          unset AWS_PROFILE AWS_DEFAULT_PROFILE
+          AWS_ACCESS_KEY_ID="${CLOUDFLARE_R2_ACCESS_KEY_ID}" \
+          AWS_SECRET_ACCESS_KEY="${CLOUDFLARE_R2_SECRET_ACCESS_KEY}" \
+          aws s3 sync website/build/ "s3://${S3_BUCKET}/" --delete --endpoint-url "${R2_ENDPOINT_URL}"
 
       - name: Reindex Algolia docs search
         env:
@@ -96,5 +96,5 @@ jobs:
           fi
           bash scripts/ci/sync_algolia_docs_index.sh \
             --docs-dir docs \
-            --site-base-url https://ps.modalix.info \
+            --site-base-url https://docs.sima-neat.com \
             --clear

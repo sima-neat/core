@@ -70,7 +70,9 @@ actually does.
 
 - `DOXYGEN2DOCUSAURUS_CMD`
   Command used by `tools/generate_api_docs.sh` for the Doxygen-to-Docusaurus
-  conversion step. Override it only if you need a custom wrapper or tool path.
+  conversion step. The default pins both `@xpack/doxygen2docusaurus@2.0.0`
+  and `fast-xml-parser@5.2.5` to keep docs builds reproducible across
+  containers. Override it only if you need a custom wrapper or tool path.
 
 - `DOCS_STRICT_LINKS`
   Contributor-facing flag for strict docs builds. Use `DOCS_STRICT_LINKS=1`
