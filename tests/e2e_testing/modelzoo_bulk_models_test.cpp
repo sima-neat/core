@@ -343,8 +343,7 @@ int main(int argc, char** argv) {
       std::string tar_gz = sima_test::resolve_modelzoo_tar(name, root);
       if (tar_gz.empty()) {
         std::cerr << "[FAIL] download failed for " << name << " (sima-cli modelzoo -v "
-                  << sima_test::modelzoo_version() << " get "
-                  << name << ")\n";
+                  << sima_test::modelzoo_version() << " get " << name << ")\n";
         failures += 1;
         ran += 1;
         continue;

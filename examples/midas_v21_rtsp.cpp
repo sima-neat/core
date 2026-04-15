@@ -104,9 +104,8 @@ std::string resolve_midas_tar() {
     return true;
   };
 
-  const std::string modelzoo_cmd =
-      std::string("sima-cli modelzoo -v ") + sima_examples::modelzoo_version() +
-      " get midas_v21_small_256";
+  const std::string modelzoo_cmd = std::string("sima-cli modelzoo -v ") +
+                                   sima_examples::modelzoo_version() + " get midas_v21_small_256";
   const int rc = std::system(modelzoo_cmd.c_str());
   if (rc != 0)
     return "";

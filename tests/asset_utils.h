@@ -19,8 +19,8 @@ namespace sima_test {
 namespace fs = std::filesystem;
 
 inline std::string platform_version_from_manifest() {
-  const fs::path manifest_path = fs::path(__FILE__).parent_path().parent_path() / "deps" /
-                                 "manifest.json";
+  const fs::path manifest_path =
+      fs::path(__FILE__).parent_path().parent_path() / "deps" / "manifest.json";
   std::error_code ec;
   if (!fs::exists(manifest_path, ec))
     return "";
