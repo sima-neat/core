@@ -25,6 +25,10 @@ Both paths use the same NEAT framework installation procedure. The difference is
 | DevKit | Convenience and simplicity | <ul><li>Fewer moving parts</li><li>Quick path to first run</li><li>Everything happens on the device</li></ul> |
 | NEAT eLxr SDK | Efficiency and faster iteration | <ul><li>Building complex compiled apps in the eLxr SDK is generally about 5-10x faster than building directly on a DevKit</li><li>SDK helpers integrate the DevKit with the SDK so build/run workflows can stay in the SDK context</li><li>A better fit for agent-driven workflows and rapid iteration</li></ul> |
 
+:::note Python-only workflow tip
+If your app is primarily Python, working directly on the DevKit is often sufficient because the Python runtime (`pyneat`) executes on the DevKit. Use the NEAT eLxr SDK primarily when you need C++ cross-compilation and unified SDK/DevKit orchestration.
+:::
+
 ## Recommended flow
 
 1. Install on [NEAT eLxr SDK](./neat-elxr-sdk.mdx) if you want maximum development efficiency.
