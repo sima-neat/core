@@ -35,22 +35,22 @@ actually does.
   development.
 
 - `NEAT_INTERNALS_MANIFEST`
-  Path to the manifest file used by `build.sh --install-neat-internals`.
+  Path to the manifest file used by `build.sh --install-deps`.
   Override it only when you want to test against a different manifest than the
-  default `neat-internals/manifest.json`.
+  default `deps/manifest.json`.
 
 - `NEAT_INTERNALS_BASE_URL`
-  Base URL used to download `neat-internals` artifacts and checksums. Override
+  Base URL used to download `deps` artifacts and checksums. Override
   it for staging, mirrors, or private artifact servers.
 
 - `NEAT_INTERNALS_DIR`
-  Local directory where `build.sh` stages downloaded `neat-internals` content.
+  Local directory where `build.sh` stages downloaded `deps` content.
   Change it only if you want those artifacts somewhere other than the default
-  `neat-internals/`.
+  `deps/`.
 
 - `NEAT_INTERNALS_BASIC_AUTH`
   Optional `user:password` credential pair used when `build.sh` fetches
-  protected `neat-internals` artifacts. Leave it unset for public endpoints.
+  protected `deps` artifacts. Leave it unset for public endpoints.
 
 - `ELXR_SDK_RELEASE_FILE`
   File that `build.sh` checks to detect whether it is running inside an eLxr SDK
@@ -70,7 +70,9 @@ actually does.
 
 - `DOXYGEN2DOCUSAURUS_CMD`
   Command used by `tools/generate_api_docs.sh` for the Doxygen-to-Docusaurus
-  conversion step. Override it only if you need a custom wrapper or tool path.
+  conversion step. The default pins both `@xpack/doxygen2docusaurus@2.0.0`
+  and `fast-xml-parser@5.2.5` to keep docs builds reproducible across
+  containers. Override it only if you need a custom wrapper or tool path.
 
 - `DOCS_STRICT_LINKS`
   Contributor-facing flag for strict docs builds. Use `DOCS_STRICT_LINKS=1`

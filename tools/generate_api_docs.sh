@@ -15,12 +15,12 @@ if [[ ! -d "${XML_DIR}" ]]; then
   exit 1
 fi
 
-CMD="${DOXYGEN2DOCUSAURUS_CMD:-npx --yes @xpack/doxygen2docusaurus@2.0.0}"
+CMD="${DOXYGEN2DOCUSAURUS_CMD:-npx --yes --package @xpack/doxygen2docusaurus@2.0.0 --package fast-xml-parser@5.2.5 doxygen2docusaurus}"
 read -r -a cmd_parts <<< "${CMD}"
 if ! command -v "${cmd_parts[0]}" >/dev/null 2>&1; then
   echo "Missing command: ${cmd_parts[0]}"
   echo "Install Node.js/npm (for npx) or set DOXYGEN2DOCUSAURUS_CMD."
-  echo "Example: DOXYGEN2DOCUSAURUS_CMD=\"npx --yes @xpack/doxygen2docusaurus@2.0.0\""
+  echo "Example: DOXYGEN2DOCUSAURUS_CMD=\"npx --yes --package @xpack/doxygen2docusaurus@2.0.0 --package fast-xml-parser@5.2.5 doxygen2docusaurus\""
   exit 1
 fi
 
@@ -69,5 +69,6 @@ cat > "${OUT_DIR}/_category_.json" <<'EOF'
 EOF
 
 python3 "${ROOT}/tools/postprocess_d2d_links.py"
+python3 "${ROOT}/tools/postprocess_api_availability_tags.py" --docs-dir "${OUT_DIR}"
 
 echo "API docs generated at ${OUT_DIR}"

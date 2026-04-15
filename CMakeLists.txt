@@ -11,8 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
-set(CMAKE_BUILD_RPATH "$ORIGIN/../neat-internals/gst-plugins")
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../neat-internals/gst-plugins")
+set(CMAKE_BUILD_RPATH "$ORIGIN/../deps/gst-plugins")
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../deps/gst-plugins")
 
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -358,7 +358,7 @@ install(
 )
 
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/neat-internals/gst-plugins/
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/gst-plugins/
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/sima-neat/gst-plugins
   COMPONENT core
 )

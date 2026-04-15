@@ -92,9 +92,9 @@ pytest -q
 
 ## Install
 
-If you are installing from release artifacts, follow instructions [here](https://neat.modalix.info/getting-started/install).
+If you are installing from release artifacts, follow instructions [here](https://docs.sima-neat.com/getting-started/install).
 
 ## Documentation
 
-Full documentation, guides, and API references are published [here](https://neat.modalix.info).
+Full documentation, guides, and API references are published [here](https://docs.sima-neat.com).
 Contributor and agent quality guidance is documented in [AGENTS.md](AGENTS.md).

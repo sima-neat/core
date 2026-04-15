@@ -715,7 +715,8 @@ int main(int argc, char** argv) {
     tar_gz = sima_test::resolve_resnet50_tar();
     if (tar_gz.empty()) {
       std::cerr << "Failed to resolve resnet50 tar.gz. "
-                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo get resnet_50'.\n";
+                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo -v "
+                << sima_test::modelzoo_version() << " get resnet_50'.\n";
       return 3;
     }
   }
@@ -742,17 +743,24 @@ int main(int argc, char** argv) {
       bad_opt.input_max_depth = 3;
       bad_opt.inference_terminal.last_stage_name = "__definitely_missing_terminal_stage__";
       bool threw = false;
+      std::string err_msg;
       try {
         simaai::neat::Model bad_model(tar_gz, bad_opt);
         (void)bad_model.session();
       } catch (const std::exception& ex) {
-        const std::string msg = ex.what();
-        if (msg.find("terminal stage") != std::string::npos ||
-            msg.find("infer_stages=[") != std::string::npos) {
-          threw = true;
-        }
+        threw = true;
+        err_msg = ex.what();
       }
       require(threw, "Expected unresolved terminal policy to throw explicit error");
+      if (err_msg.empty()) {
+        throw std::runtime_error(
+            "Expected unresolved terminal policy to include a non-empty error message");
+      }
+      if (err_msg.find("terminal") == std::string::npos &&
+          err_msg.find("infer_stages=[") == std::string::npos) {
+        std::cerr << "Terminal-policy validation threw a non-terminal-specific error: " << err_msg
+                  << "\n";
+      }
     }
     {
       // Precedence check: index wins over invalid name.

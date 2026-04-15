@@ -5,7 +5,7 @@ on:
     branches:
       - "**"
     tags:
-      - "*"
+      - "v*"
   workflow_dispatch: {}
   workflow_call:
     inputs:
@@ -45,6 +45,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v5
         with:
+          clean: true
           fetch-depth: 0
 
       - name: Install formatting/lint tools
@@ -137,6 +138,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          clean: true
 
       - name: Setup Environment
         run: |
@@ -154,42 +157,38 @@ jobs:
           ls -lh ./*extras.tar.gz
           ls -lh dist/*.whl
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Compute S3 artifact prefixes
-        id: s3-prefix
-        run: |
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          echo "branch_key=${BRANCH_KEY}" >> "${GITHUB_OUTPUT}"
-          echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "latest_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest" >> "${GITHUB_OUTPUT}"
-
       - name: Prepare artifact payload and metadata
         run: |
-          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
-          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
-          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          mapfile -t CORE_DEBS < <(find . -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find . -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one core .deb, one extras tar.gz, and one wheel." >&2
+            echo "core debs: ${#CORE_DEBS[@]}" >&2
+            printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+            echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+            printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+            echo "wheels: ${#WHEELS[@]}" >&2
+            printf '  %s\n' "${WHEELS[@]}" >&2 || true
+            exit 1
+          fi
+          CORE_DEB="${CORE_DEBS[0]}"
+          EXTRAS_TAR="${EXTRAS_TARS[0]}"
+          WHEEL_PATH="${WHEELS[0]}"
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest neat-internals/manifest.json \
+            --internals-manifest deps/manifest.json \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
-          cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+          cp deps/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
-      - name: Upload artifacts to S3
-        run: |
-          for f in "${GITHUB_WORKSPACE}"/_work/upload-artifacts/*; do
-            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
-          done
+      - name: Upload prepared artifacts for publish pipeline
+        uses: actions/upload-artifact@v6
+        with:
+          name: neat-artifacts-standard
+          path: _work/upload-artifacts/*
+          if-no-files-found: error
 
   build-fuzz:
     if: needs.resolve-mode.outputs.build_mode == 'fuzz'
@@ -199,6 +198,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          clean: true
 
       - name: Build fuzz artifacts
         env:
@@ -212,46 +213,85 @@ jobs:
           ls -lh ./*extras.tar.gz
           ls -lh dist/*.whl
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Compute fuzz S3 artifact prefix
-        id: s3-prefix
-        run: |
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          echo "branch_key=${BRANCH_KEY}" >> "${GITHUB_OUTPUT}"
-          echo "short_sha=${SHORT_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "commit_prefix=s3://sima-neat-artifacts/neat/${BRANCH_KEY}/${SHORT_SHA}/fuzz" >> "${GITHUB_OUTPUT}"
-
       - name: Prepare fuzz artifact payload and metadata
         run: |
-          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
-          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
-          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
+          mapfile -t CORE_DEBS < <(find . -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find . -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+          if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+            echo "Expected exactly one core .deb, one extras tar.gz, and one wheel." >&2
+            echo "core debs: ${#CORE_DEBS[@]}" >&2
+            printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+            echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+            printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+            echo "wheels: ${#WHEELS[@]}" >&2
+            printf '  %s\n' "${WHEELS[@]}" >&2 || true
+            exit 1
+          fi
+          CORE_DEB="${CORE_DEBS[0]}"
+          EXTRAS_TAR="${EXTRAS_TARS[0]}"
+          WHEEL_PATH="${WHEELS[0]}"
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest neat-internals/manifest.json \
+            --internals-manifest deps/manifest.json \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
-          cp neat-internals/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+          cp deps/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
-      - name: Upload fuzz artifacts to S3
-        run: |
-          for f in "${GITHUB_WORKSPACE}"/_work/upload-artifacts/*; do
-            aws s3 cp "${f}" "${{ steps.s3-prefix.outputs.commit_prefix }}/"
-          done
+      - name: Upload prepared fuzz artifacts for publish pipeline
+        uses: actions/upload-artifact@v6
+        with:
+          name: neat-artifacts-fuzz
+          path: _work/upload-artifacts/*
+          if-no-files-found: error
+
+  publish-standard:
+    if: needs.resolve-mode.outputs.build_mode == 'standard'
+    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@main
+    needs: [resolve-mode, build]
+    with:
+      bucket: neat-artifacts
+      environment_name: CloudFlare-R2
+      artifact_root: core
+      project_name: sima-neat
+      artifact_pattern: neat-artifacts-standard
+      artifact_glob: dist/*
+      min_artifact_count: 6
+      aws_region: auto
+      upload_strategy: branch-sha
+      install_awscli: false
+    secrets:
+      aws_access_key_id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      aws_secret_access_key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      r2_account_id: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+
+  publish-fuzz:
+    if: needs.resolve-mode.outputs.build_mode == 'fuzz'
+    uses: sima-neat/.github/.github/workflows/reusable-publish-download-artifacts.yml@main
+    needs: [resolve-mode, build-fuzz]
+    with:
+      bucket: neat-artifacts
+      environment_name: CloudFlare-R2
+      artifact_root: core
+      project_name: sima-neat-fuzz
+      artifact_pattern: neat-artifacts-fuzz
+      artifact_glob: dist/*
+      min_artifact_count: 6
+      aws_region: auto
+      upload_strategy: branch-sha
+      artifact_subdir: fuzz
+      publish_index: false
+      install_awscli: false
+    secrets:
+      aws_access_key_id: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+      aws_secret_access_key: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+      r2_account_id: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
 
   test:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, ARM64, modalix]
-    needs: [resolve-mode, build]
+    needs: [resolve-mode, publish-standard]
 
     steps:
       - name: Clean test workspace
@@ -272,7 +312,7 @@ jobs:
           BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          METADATA_URL="https://neat-artifacts.modalix.info/neat/${BRANCH_KEY}/${SHORT_SHA}/metadata-all.json"
+          METADATA_URL="https://artifacts.sima-neat.com/core/${BRANCH_KEY}/${SHORT_SHA}/metadata-all.json"
           echo "Installing from ${METADATA_URL}"
           sima-cli install -m "${METADATA_URL}"
 
@@ -343,6 +383,10 @@ jobs:
       - name: Run Unit & Integration Tests (Strict)
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           ctest --test-dir "${TEST_DIR}" \
             --label-regex "strict" \
             --label-exclude "long" \
@@ -354,6 +398,10 @@ jobs:
           SIMA_STRICT_MANIFEST_NO_JSON_FALLBACK: 1
         run: |
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-manifest"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           ctest --test-dir "${TEST_DIR}" \
             --output-on-failure \
             -R "^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$"
@@ -381,6 +429,13 @@ jobs:
           "${PYTHON_BIN}" -m pip install pytest
           "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
 
+      - name: Cleanup modelpack extraction workspace
+        if: ${{ always() }}
+        run: |
+          MPK_BASE="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          echo "Cleaning up ${MPK_BASE}*"
+          rm -rf "${MPK_BASE}" "${MPK_BASE}-manifest" || true
+
   docs:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
     runs-on: [self-hosted, Linux, X64]
@@ -391,7 +446,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
 
@@ -405,112 +460,9 @@ jobs:
 
       - name: Build docs
         env:
-          DOCS_URL: https://ps.modalix.info
+          DOCS_URL: https://docs.sima-neat.com
           DOCS_BASE_URL: /
         run: |
           echo
           echo "Building docs..."
           ./build.sh --doc
-
-  publish-latest:
-    if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: ubuntu-latest
-    needs: [resolve-mode, docs]
-    env:
-      CLOUDFRONT_DISTRIBUTION_ID: E3OR0YOA43MQ7D
-
-    steps:
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: us-east-1
-
-      - name: Update latest.tag for branch
-        run: |
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          mkdir -p _work/index
-          printf '%s\n' "${SHORT_SHA}" > _work/index/latest.tag
-          aws s3 cp _work/index/latest.tag "s3://sima-neat-artifacts/neat/${BRANCH_KEY}/latest.tag"
-
-      - name: Invalidate CloudFront cache
-        run: |
-          aws cloudfront create-invalidation \
-            --distribution-id "${CLOUDFRONT_DISTRIBUTION_ID}" \
-            --paths "/*"
-
-      - name: Refresh branches.json
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p _work/index
-          aws s3api list-objects-v2 \
-            --bucket sima-neat-artifacts \
-            --prefix neat/ \
-            --delimiter '/' \
-            > _work/index/prefixes.json
-
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-          from pathlib import Path
-
-          data = json.loads(Path("_work/index/prefixes.json").read_text(encoding="utf-8"))
-          repo = os.environ["GITHUB_REPOSITORY"]
-          token = os.environ["GH_TOKEN"]
-
-          git_branches = []
-          page = 1
-          while True:
-            url = f"https://api.github.com/repos/{repo}/branches?per_page=100&page={page}"
-            req = urllib.request.Request(
-              url,
-              headers={
-                "Accept": "application/vnd.github+json",
-                "Authorization": f"Bearer {token}",
-                "X-GitHub-Api-Version": "2022-11-28",
-              },
-            )
-            with urllib.request.urlopen(req) as resp:
-              batch = json.loads(resp.read().decode("utf-8"))
-            if not batch:
-              break
-            git_branches.extend(batch)
-            if len(batch) < 100:
-              break
-            page += 1
-
-          active_branch_keys = set()
-          for item in git_branches:
-            branch_name = str(item.get("name", "")).strip()
-            if not branch_name:
-              continue
-            # Keep normalization aligned with shell: tr '/ ' '--' -> '/' and ' ' both become '-'.
-            branch_key = branch_name.replace("/", "-").replace(" ", "-")
-            if branch_key:
-              active_branch_keys.add(branch_key)
-
-          branches = []
-          for item in data.get("CommonPrefixes", []):
-            prefix = str(item.get("Prefix", ""))
-            if not prefix.startswith("neat/"):
-              continue
-            branch = prefix[len("neat/"):].strip("/")
-            if branch and branch in active_branch_keys:
-              branches.append(branch)
-
-          payload = {"branches": sorted(set(branches))}
-          Path("_work/index/branches.json").write_text(
-            json.dumps(payload, indent=2) + "\n",
-            encoding="utf-8",
-          )
-          print(json.dumps(payload, indent=2))
-          PY
-
-          aws s3 cp _work/index/branches.json \
-            s3://sima-neat-artifacts/neat/branches.json \
-            --content-type application/json

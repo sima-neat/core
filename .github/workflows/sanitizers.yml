@@ -58,9 +58,9 @@ jobs:
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest neat-internals/manifest.json \
+            --internals-manifest deps/manifest.json \
             --output-dir "${OUT_DIR}"
-          cp neat-internals/manifest.json "${OUT_DIR}/manifest.json"
+          cp deps/manifest.json "${OUT_DIR}/manifest.json"
 
       - name: Upload sanitizer artifacts to S3
         run: |
@@ -96,7 +96,7 @@ jobs:
 
           for MODE in asan-ubsan tsan; do
             echo "[sanitizers] Installing ${MODE} artifacts..."
-            METADATA_URL="https://neat-artifacts.modalix.info/neat/main/${SHORT_SHA}/${MODE}/metadata-all.json"
+            METADATA_URL="https://artifacts.sima-neat.com/core/main/${SHORT_SHA}/${MODE}/metadata-all.json"
             echo "[sanitizers] Installing from ${METADATA_URL}"
             sima-cli install -m "${METADATA_URL}"
 

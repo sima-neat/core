@@ -82,7 +82,7 @@ should use only public API.
 
 Runtime environment notes:
 
-- If using bundled GStreamer plugins in `neat-internals/gst-plugins`, set
+- If using bundled GStreamer plugins in `deps/gst-plugins`, set
   `GST_PLUGIN_PATH` and/or `GST_PLUGIN_PATH_1_0` to include that directory.
 - If installed with `cmake --install`, plugins are placed under
   `${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/sima-neat/gst-plugins`.

@@ -252,4 +252,4 @@ Any JSON field removal must include all of:
 - Several missing-key paths still abort with uncaught `nlohmann::json` exceptions or SIGSEGV instead of bus errors.
 - `detessdequant` legacy path is crash-prone for missing parser keys.
 - `slicedequant` ignores JSON entirely and uses compiled constants.
-- Runtime/source divergence can reappear whenever rebuilt `.so` files are not copied from `tmp/gst/*/build` to `neat-internals/gst-plugins`.
+- Runtime/source divergence can reappear whenever rebuilt `.so` files are not copied from `tmp/gst/*/build` to `deps/gst-plugins`.
