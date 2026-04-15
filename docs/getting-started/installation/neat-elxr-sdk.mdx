@@ -121,6 +121,8 @@ dk build/sima_neat_hello
 dk hello_neat.py
 ```
 
+For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKit PyNeat runtime environment. The SDK container remains useful as a unified workspace/orchestration environment, but Python-only workflows do not require the C++ cross-compilation toolchain.
+
 :::note Where `dk` Comes From
 `dk` (alias for `devkit-run`) is a shell function defined in `~/devkit-sync.rc` inside the SDK container. The SDK shell loads this through `~/.bashrc`, so it is available in interactive SDK sessions.
 :::

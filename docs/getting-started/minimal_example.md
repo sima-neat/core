@@ -132,6 +132,12 @@ python3 hello_neat.py
 ```bash
 dk hello_neat.py
 ```
+
+:::note Python Runtime Location
+`pyneat` is installed on the DevKit runtime side, even if you run the NEAT installer from inside the NEAT eLxr SDK container.
+
+When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit using the DevKit `pyneat` environment.
+:::
   </div>
 </div>
 
