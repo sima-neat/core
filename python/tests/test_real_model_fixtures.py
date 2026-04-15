@@ -3,6 +3,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import json
 from pathlib import Path
 
 import cv2
@@ -17,6 +18,17 @@ SANDBOX_API_TESTS = ROOT / "sandbox" / "api-tests"
 _MODEL_PATH_CACHE: dict[str, Path | None] = {}
 BOXDECODE_THRESHOLDS = (0.50, 0.60, 0.70)
 TOP_SCORE_HIGHLIGHT_COUNT = 3
+
+try:
+  from _platform_version_generated import PLATFORM_VERSION as MODELZOO_PLATFORM_VERSION
+except Exception:
+  manifest = ROOT / "deps" / "manifest.json"
+  try:
+    MODELZOO_PLATFORM_VERSION = (
+        json.loads(manifest.read_text(encoding="utf-8")).get("platform-version", "") or "2.0.0"
+    )
+  except Exception:
+    MODELZOO_PLATFORM_VERSION = "2.0.0"
 
 _MODEL_FIXTURES = {
     "SIMA_RESNET50_TAR": {
@@ -82,7 +94,7 @@ def _resolve_model_tar(name: str) -> Path | None:
   sima_cli = shutil.which("sima-cli")
   if sima_cli is not None:
     result = subprocess.run(
-        [sima_cli, "modelzoo", "get", spec["model_name"]],
+        [sima_cli, "modelzoo", "-v", MODELZOO_PLATFORM_VERSION, "get", spec["model_name"]],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
@@ -105,7 +117,7 @@ def _fixture_model_path(name: str) -> Path:
   spec = _MODEL_FIXTURES[name]
   pytest.skip(
       f"missing real model fixture for {name}; set {name} or run "
-      f"'sima-cli modelzoo get {spec['model_name']}'"
+      f"'sima-cli modelzoo -v {MODELZOO_PLATFORM_VERSION} get {spec['model_name']}'"
   )
 
 

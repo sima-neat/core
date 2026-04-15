@@ -44,6 +44,7 @@ bool probe_rtsp_decoded_dims(const std::string& url, const RtspProbeOptions& opt
 
 std::filesystem::path default_goldfish_path();
 bool download_file(const std::string& url, const std::filesystem::path& out_path);
+const std::string& modelzoo_version();
 std::string resolve_resnet50_tar();
 std::string resolve_yolov8s_tar(const std::filesystem::path& root = {});
 std::string resolve_yolov8s_tar_local_first(const std::filesystem::path& root = {},

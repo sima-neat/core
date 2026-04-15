@@ -37,8 +37,8 @@ dist/
 *.dll
 *.exe
 *.out
-neat-internals/*
-!neat-internals/manifest.json
+deps/*
+!deps/manifest.json
 
 # Logs
 *.log
@@ -114,3 +114,5 @@ sandbox/
 
 _work/
 docs/images/.DS_Store
+python/tests/_platform_version_generated.py
+generated/platform_version.h

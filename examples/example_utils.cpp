@@ -335,6 +335,10 @@ fs::path default_goldfish_path() {
   return sima_test::default_goldfish_path();
 }
 
+const std::string& modelzoo_version() {
+  return sima_test::modelzoo_version();
+}
+
 std::string resolve_resnet50_tar() {
   return sima_test::resolve_resnet50_tar();
 }

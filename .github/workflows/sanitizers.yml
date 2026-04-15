@@ -58,9 +58,9 @@ jobs:
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest neat-internals/manifest.json \
+            --internals-manifest deps/manifest.json \
             --output-dir "${OUT_DIR}"
-          cp neat-internals/manifest.json "${OUT_DIR}/manifest.json"
+          cp deps/manifest.json "${OUT_DIR}/manifest.json"
 
       - name: Upload sanitizer artifacts to S3
         run: |

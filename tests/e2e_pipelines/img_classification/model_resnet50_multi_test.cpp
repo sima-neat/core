@@ -185,7 +185,8 @@ int main(int argc, char** argv) {
     tar_gz = sima_test::resolve_resnet50_tar();
     if (tar_gz.empty()) {
       std::cerr << "Failed to resolve resnet50 tar.gz. "
-                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo get resnet_50'.\n";
+                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo -v "
+                << sima_test::modelzoo_version() << " get resnet_50'.\n";
       return 3;
     }
   }

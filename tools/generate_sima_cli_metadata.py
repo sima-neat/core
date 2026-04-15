@@ -10,7 +10,7 @@
 # - sima-neat-*-Linux-core.deb
 # - *extras.tar.gz
 # - *.whl
-# - optional additional .deb files (treated as neat-internals dependencies)
+# - optional additional .deb files (treated as deps dependencies)
 #
 # Output:
 # - metadata.json written to --output
@@ -189,7 +189,7 @@ def main() -> None:
     core_deb = _pick_one(list(artifacts_dir.glob("*-Linux-core.deb")), "core deb")
     extras_tar = _pick_one(list(artifacts_dir.glob("*extras.tar.gz")), "extras tar.gz")
     wheel = _pick_one(list(artifacts_dir.glob("*.whl")), "wheel")
-    # Any additional debs are treated as neat-internals runtime dependencies.
+    # Any additional debs are treated as deps runtime dependencies.
     internals_debs = sorted(
         p for p in artifacts_dir.glob("*.deb") if p.name != core_deb.name
     )
