@@ -28,14 +28,14 @@ file_size_bytes() {
 
 fail=0
 
-echo "[repo-hygiene] checking neat-internals manifest..."
-if [[ ! -f neat-internals/manifest.json ]]; then
-  echo "ERROR: neat-internals/manifest.json is required." >&2
+echo "[repo-hygiene] checking deps manifest..."
+if [[ ! -f deps/manifest.json ]]; then
+  echo "ERROR: deps/manifest.json is required." >&2
   fail=1
 else
-  artifact_tag="$(sed -n 's/.*"artifact_tag"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' neat-internals/manifest.json | head -n1)"
-  if [[ -z "${artifact_tag}" ]]; then
-    echo "ERROR: neat-internals/manifest.json must define a non-empty artifact_tag." >&2
+  internals_ref="$(sed -n 's/.*"internals"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
+  if [[ -z "${internals_ref}" ]]; then
+    echo "ERROR: deps/manifest.json must define a non-empty internals." >&2
     fail=1
   fi
 fi

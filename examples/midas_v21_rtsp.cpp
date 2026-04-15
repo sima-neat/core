@@ -104,7 +104,10 @@ std::string resolve_midas_tar() {
     return true;
   };
 
-  const int rc = std::system("sima-cli modelzoo -v 2.0.0 get midas_v21_small_256");
+  const std::string modelzoo_cmd =
+      std::string("sima-cli modelzoo -v ") + sima_examples::modelzoo_version() +
+      " get midas_v21_small_256";
+  const int rc = std::system(modelzoo_cmd.c_str());
   if (rc != 0)
     return "";
 
@@ -376,8 +379,8 @@ int main(int argc, char** argv) {
     tar_gz = resolve_midas_tar();
     if (tar_gz.empty()) {
       std::cerr << "Missing midas_v21_small_256 MPK tarball.\n";
-      std::cerr
-          << "Set SIMA_MIDAS_TAR or run 'sima-cli modelzoo -v 2.0.0 get midas_v21_small_256'.\n";
+      std::cerr << "Set SIMA_MIDAS_TAR or run 'sima-cli modelzoo -v "
+                << sima_examples::modelzoo_version() << " get midas_v21_small_256'.\n";
       return 3;
     }
   }

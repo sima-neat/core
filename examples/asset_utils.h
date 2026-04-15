@@ -2,15 +2,55 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <regex>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#if __has_include("../generated/platform_version.h")
+#include "../generated/platform_version.h"
+#define SIMA_HAS_GENERATED_PLATFORM_VERSION 1
+#endif
 
 namespace sima_test {
 
 namespace fs = std::filesystem;
 
-constexpr auto kModelzooVersion = "2.0.0";
+inline std::string platform_version_from_manifest() {
+  const fs::path manifest_path = fs::path(__FILE__).parent_path().parent_path() / "deps" /
+                                 "manifest.json";
+  std::error_code ec;
+  if (!fs::exists(manifest_path, ec))
+    return "";
+
+  std::ifstream in(manifest_path);
+  if (!in.is_open())
+    return "";
+
+  std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  std::smatch match;
+  static const std::regex kVersionRegex(R"(\"platform-version\"\s*:\s*\"([^\"]+)\")");
+  if (std::regex_search(content, match, kVersionRegex) && match.size() > 1) {
+    return match[1].str();
+  }
+  return "";
+}
+
+inline const std::string& modelzoo_version() {
+  static const std::string version = []() -> std::string {
+#if defined(SIMA_HAS_GENERATED_PLATFORM_VERSION)
+    return sima_generated::kPlatformVersion;
+#else
+    const std::string from_manifest = platform_version_from_manifest();
+    if (!from_manifest.empty())
+      return from_manifest;
+    return "2.0.0";
+#endif
+  }();
+  return version;
+}
 
 inline std::string shell_quote(const std::string& s) {
   std::string out = "'";
@@ -111,7 +151,7 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
     return local.string();
 
   const std::string dl_cmd =
-      std::string("sima-cli modelzoo -v ") + kModelzooVersion + " get resnet_50";
+      std::string("sima-cli modelzoo -v ") + modelzoo_version() + " get resnet_50";
   const int rc = std::system(dl_cmd.c_str());
   if (rc != 0)
     return "";
@@ -180,7 +220,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
 
   if (!skip_download) {
     const std::string yolo_cmd =
-        std::string("sima-cli modelzoo -v ") + kModelzooVersion + " get yolo_v8s";
+        std::string("sima-cli modelzoo -v ") + modelzoo_version() + " get yolo_v8s";
     const int rc = std::system(yolo_cmd.c_str());
     if (rc == 0 && fs::exists(tmp_tar))
       return tmp_tar.string();
@@ -301,7 +341,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   }
 
   const std::string cmd =
-      std::string("sima-cli modelzoo -v ") + kModelzooVersion + " get " + shell_quote(model_name);
+      std::string("sima-cli modelzoo -v ") + modelzoo_version() + " get " + shell_quote(model_name);
   if (std::system(cmd.c_str()) != 0)
     return "";
 

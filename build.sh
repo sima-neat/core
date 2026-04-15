@@ -32,9 +32,9 @@ SIMA_ENABLE_TSAN=OFF
 SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
-NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
+NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
-NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-neat-internals}"
+NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
@@ -111,8 +111,8 @@ Options:
   --fuzz         Build fuzz-enabled package artifacts (core + extras + wheel)
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
-  --install-neat-internals
-                 Download/install neat-internals artifacts before build
+  --install-neat-internals, --install-deps
+                 Download/install deps artifacts before build
   --doc          Build only docs
   --install      After build/package, install artifacts into the current environment.
                  In paired eLxr SDK mode, also deploy/install on the paired DevKit.
@@ -210,7 +210,7 @@ parse_args() {
         BUILD_TUTORIALS=OFF
         shift
         ;;
-      --install-neat-internals)
+      --install-neat-internals|--install-deps)
         INSTALL_NEAT_INTERNALS=ON
         shift
         ;;
@@ -625,7 +625,7 @@ collect_plugin_files_from_debs() {
       fi
     else
       if ! run_privileged dpkg -i "${deb_files[@]}"; then
-        echo "ERROR: Failed to install neat-internals .deb packages." >&2
+        echo "ERROR: Failed to install deps .deb packages." >&2
         exit 1
       fi
     fi
@@ -754,18 +754,18 @@ ensure_neat_internals() {
     exit 1
   fi
 
-  local artifact_tag
-  # Manifest drives which artifact tag to fetch.
-  artifact_tag="$(extract_json_string "artifact_tag" "${NEAT_INTERNALS_MANIFEST}")"
-  if [[ -z "${artifact_tag}" ]]; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty artifact_tag string." >&2
+  local internals_ref
+  # Manifest drives which internals artifact to fetch.
+  internals_ref="$(extract_json_string "internals" "${NEAT_INTERNALS_MANIFEST}")"
+  if [[ -z "${internals_ref}" ]]; then
+    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty internals string." >&2
     exit 1
   fi
 
-  local marker_file="${NEAT_INTERNALS_DIR}/.artifact_tag"
+  local marker_file="${NEAT_INTERNALS_DIR}/.internals"
   local checksum_file="${NEAT_INTERNALS_DIR}/.artifact_sha256"
   local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
-  local archive_name="sima-neat-internals-${artifact_tag}.tar.gz"
+  local archive_name="sima-neat-internals-${internals_ref}.tar.gz"
   local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
   local checksum_url="${archive_url}.sha256"
 
@@ -800,11 +800,11 @@ ensure_neat_internals() {
       cached_sha="$(tr -d '[:space:]' < "${checksum_file}")"
     fi
     # Cache hit requires matching tag, checksum, and a known plugin sentinel.
-    if [[ "${current_tag}" == "${artifact_tag}" ]] &&
+    if [[ "${current_tag}" == "${internals_ref}" ]] &&
        [[ "${cached_sha}" == "${server_sha}" ]] &&
        [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
        compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
-      echo "Using cached neat-internals plugins/debs (${artifact_tag}, sha256=${server_sha})."
+      echo "Using cached neat-internals plugins/debs (${internals_ref}, sha256=${server_sha})."
       rm -rf "${tmp_dir}"
       return 0
     fi
@@ -844,7 +844,7 @@ ensure_neat_internals() {
 
   copy_plugins_to_neat_internals "${plugins_list_file}"
 
-  printf '%s\n' "${artifact_tag}" > "${marker_file}"
+  printf '%s\n' "${internals_ref}" > "${marker_file}"
   printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
@@ -1132,6 +1132,11 @@ build_docs_if_requested() {
   if [[ "${BUILD_DOCS}" == "ON" && "${SKIP_DOCS}" == "OFF" ]]; then
     build_docs_site
   fi
+}
+
+generate_platform_version_artifacts() {
+  # Keep C++ and Python consumers aligned with deps/manifest.json.
+  python3 tools/generate_platform_version_artifacts.py --repo-root "${REPO_ROOT}"
 }
 
 build_python_wheel_if_requested() {
@@ -1472,6 +1477,7 @@ main() {
 
   detect_build_jobs
   configure_fuzz_toolchain_if_needed
+  generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
   configure_cmake

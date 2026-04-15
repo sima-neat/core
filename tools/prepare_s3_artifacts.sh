@@ -94,9 +94,9 @@ import sys
 from pathlib import Path
 manifest = Path(sys.argv[1])
 data = json.loads(manifest.read_text(encoding="utf-8"))
-tag = str(data.get("artifact_tag", "")).strip()
+tag = str(data.get("internals", "")).strip()
 if not tag:
-    raise SystemExit("artifact_tag missing in neat-internals manifest")
+    raise SystemExit("internals missing in deps manifest")
 print(tag)
 PY
 )"
@@ -108,7 +108,7 @@ tar -xzf "${INTERNALS_ARCHIVE_PATH}" -C "${extract_dir}"
 
 mapfile -t INTERNALS_DEBS < <(find "${extract_dir}" -type f -name '*.deb' | sort)
 if [[ "${#INTERNALS_DEBS[@]}" -eq 0 ]]; then
-  echo "No neat-internals .deb files found in ${INTERNALS_ARCHIVE}." >&2
+  echo "No deps .deb files found in ${INTERNALS_ARCHIVE}." >&2
   exit 1
 fi
 for f in "${INTERNALS_DEBS[@]}"; do

@@ -35,22 +35,22 @@ actually does.
   development.
 
 - `NEAT_INTERNALS_MANIFEST`
-  Path to the manifest file used by `build.sh --install-neat-internals`.
+  Path to the manifest file used by `build.sh --install-deps`.
   Override it only when you want to test against a different manifest than the
-  default `neat-internals/manifest.json`.
+  default `deps/manifest.json`.
 
 - `NEAT_INTERNALS_BASE_URL`
-  Base URL used to download `neat-internals` artifacts and checksums. Override
+  Base URL used to download `deps` artifacts and checksums. Override
   it for staging, mirrors, or private artifact servers.
 
 - `NEAT_INTERNALS_DIR`
-  Local directory where `build.sh` stages downloaded `neat-internals` content.
+  Local directory where `build.sh` stages downloaded `deps` content.
   Change it only if you want those artifacts somewhere other than the default
-  `neat-internals/`.
+  `deps/`.
 
 - `NEAT_INTERNALS_BASIC_AUTH`
   Optional `user:password` credential pair used when `build.sh` fetches
-  protected `neat-internals` artifacts. Leave it unset for public endpoints.
+  protected `deps` artifacts. Leave it unset for public endpoints.
 
 - `ELXR_SDK_RELEASE_FILE`
   File that `build.sh` checks to detect whether it is running inside an eLxr SDK

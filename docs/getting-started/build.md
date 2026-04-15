@@ -9,7 +9,7 @@ sidebar_position: 2
 This guide covers source builds of NEAT.
 For prebuilt package installation, see [NEAT Framework](./installation/neat-framework).
 
-`build.sh` is the supported build entry point. It handles dependency checks, optional neat-internals sync, CMake configure/build, optional docs generation, install sanity checks, and packaging.
+`build.sh` is the supported build entry point. It handles dependency checks, optional deps sync, CMake configure/build, optional docs generation, install sanity checks, and packaging.
 
 ## Build Environments
 
@@ -55,9 +55,9 @@ sima-cli install tools/sdk-patch
 Supported `build.sh` options:
 
 - `--dev-only`: Build only the core library and headers (default).
-- `--all`: Build library + tests + tutorials + Python wheel; enables docs and neat-internals.
+- `--all`: Build library + tests + tutorials + Python wheel; enables docs and deps.
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
-- `--install-neat-internals`: Download and install neat-internals artifacts before build.
+- `--install-neat-internals`, `--install-deps`: Download and install deps artifacts before build.
 - `--doc`: Build docs only.
 - `--install`: After build/package, install generated artifacts into the current environment. In paired eLxr SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
 - `--no-dist`: Skip distribution packaging.
