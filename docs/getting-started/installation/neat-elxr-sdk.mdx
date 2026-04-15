@@ -105,6 +105,26 @@ The SDK includes the `dk` helper (also known as `devkit-run`) to run ARM64 execu
 
 When you invoke `dk`, the SDK offloads execution to the paired DevKit and handles path translation and normalization so file and path arguments passed from the SDK side resolve correctly on the DevKit side.
 
+`dk` usage pattern:
+
+```bash
+dk <file> [args...]
+```
+
+Examples:
+
+```bash
+# Run an ARM64 executable built in the SDK workspace
+dk build/sima_neat_hello
+
+# Run a Python entry point on the paired DevKit
+dk hello_neat.py
+```
+
+:::note Where `dk` Comes From
+`dk` (alias for `devkit-run`) is a shell function defined in `~/devkit-sync.rc` inside the SDK container. The SDK shell loads this through `~/.bashrc`, so it is available in interactive SDK sessions.
+:::
+
 ## VS Code workflow
 
 1. Connect VS Code to `ghcr.io-sima-neat-elxr-latest` with [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers). Install Dev Containers extension if needed.

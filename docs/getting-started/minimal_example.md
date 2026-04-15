@@ -1,21 +1,35 @@
 ---
-title: Hello SiMa!
+title: Hello NEAT!
 description: Validate your install with a minimal SiMa NEAT CMake app
 sidebar_position: 3
 ---
 
-# Hello SiMa!
+# Hello NEAT!
 
 ## Minimal Example
 
-Use this page to quickly verify that SiMa NEAT is installed correctly on either:
+This guide uses a minimal example to verify that NEAT is installed and runnable, while introducing the core application development and validation workflow.
 
 - a Modalix DevKit
-- an eLxr SDK cross-compilation environment
+- the [NEAT eLxr SDK](./installation/neat-elxr-sdk.mdx)
 
-The goal is intentionally simple: build and run the smallest possible application that links against NEAT successfully.
+:::note NEAT eLxr SDK Prerequisite
+To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first:
 
-Create a new folder with these files:
+```bash
+sima-cli sdk setup --devkit <devkit-ip>
+```
+
+If SDK/DevKit pairing is not configured, you can still build inside the NEAT eLxr SDK, but you must manually transfer the built binary or script to the DevKit and run it there.
+:::
+
+:::tip About `dk` / `devkit-run`
+`dk` (alias for `devkit-run`) is a shell function in the SDK container, defined in `~/devkit-sync.rc` and loaded by `~/.bashrc`.
+
+Because it is a shell function, commands such as `which devkit-run` may return nothing in the SDK shell. Use `dk <file>` to execute a built binary or Python entry-point file on the paired DevKit.
+:::
+
+Create a working directory with the following files:
 
 <div class="minimal-tabs">
   <input type="radio" name="minimal-tabs-lang" id="minimal-tab-cpp" checked>
@@ -24,7 +38,7 @@ Create a new folder with these files:
   <label for="minimal-tab-py">Python</label>
 
   <div class="minimal-tab-panel">
-    <p>CMakeLists.txt:</p>
+    <p><code>CMakeLists.txt</code>:</p>
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)
@@ -51,7 +65,7 @@ add_executable(sima_neat_hello main.cpp)
 target_link_libraries(sima_neat_hello PRIVATE SimaNeat::sima_neat)
 ```
 
-main.cpp:
+`main.cpp`:
 
 ```cpp
 #include <iostream>
@@ -68,12 +82,6 @@ int main() {
 }
 ```
 
-Set up the cross-compilation environment (eLxr SDK only):
-
-```bash
-source /opt/bin/simaai-init-build-env modalix
-```
-
 Build the example:
 
 ```bash
@@ -83,19 +91,21 @@ cmake --build build -j
 
 Run:
 
+**DevKit**
+
 ```bash
-# DevKit/native run
 ./build/sima_neat_hello
 ```
 
-:::note Build Target
-- DevKit/native: build and run locally.
-- eLxr SDK cross-compilation: `./build/sima_neat_hello` is a target binary. Copy it to a Modalix device and run it there.
-:::
+**NEAT eLxr SDK**
+
+```bash
+dk build/sima_neat_hello
+```
   </div>
 
   <div class="minimal-tab-panel">
-    <p>hello_neat.py:</p>
+    <p><code>hello_neat.py</code>:</p>
 
 ```python
 from pyneat import DeviceType
@@ -110,20 +120,25 @@ if __name__ == "__main__":
 
 Run:
 
+**DevKit**
+
 ```bash
-# The installer typically creates the pyneat virtual environment in one of:
-# - /media/nvme/pyneat
-# - $HOME/pyneat
-source /media/nvme/pyneat/bin/activate
+source ~/pyneat/bin/activate
 python3 hello_neat.py
+```
+
+**NEAT eLxr SDK**
+
+```bash
+dk hello_neat.py
 ```
   </div>
 </div>
 
 
 ## Next Steps
-Once this minimal example works, the next step is to explore the broader SiMa NEAT learning material.
+Once this minimal example works, continue with broader SiMa NEAT learning resources:
 
 - Learn the [core programming model](./programming-model/overview), which explains the main NEAT concepts such as sessions, models, pipeline stages, and graph execution.
 - Follow the [tutorials](../tutorials/index), which walk through specific concepts and workflows step by step.
-- Curated example applications on the [apps portal](https://apps.sima-neat.com/portal), with source code available in the [apps repository on GitHub](https://github.com/sima-neat/apps).
+- Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).
