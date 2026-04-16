@@ -280,8 +280,17 @@ install(
     PATTERN "*.cpp"
     PATTERN "*.h"
     PATTERN "*.py"
-    PATTERN "*.sh"
     PATTERN "*.yaml"
+)
+
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+  DESTINATION share/sima-neat/tutorials
+  COMPONENT extras
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
 )
 
 # Install built tutorial binaries from the build tree (for extras packaging)
