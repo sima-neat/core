@@ -32,8 +32,9 @@ Steps:
 
 1. Open System Settings.
 2. Go to Privacy & Security > Full Disk Access.
-3. Ensure NFS daemon (`nfsd`) is allowed.
-4. Re-run SDK setup after permission is granted.
+3. Click `+`, then press `Cmd + Shift + G` and enter `/sbin/`.
+4. Select `nfsd` and ensure it is allowed.
+5. Re-run SDK setup after permission is granted.
 
 ## Next step
 
