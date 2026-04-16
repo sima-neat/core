@@ -1,3 +1,14 @@
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  cmake_minimum_required(VERSION 3.16)
+  project(SimaNeatTutorials LANGUAGES CXX)
+  enable_testing()
+
+  find_package(SimaNeat REQUIRED CONFIG)
+  set(SIMANEAT_TUTORIAL_LINK_TARGET SimaNeat::sima_neat)
+else()
+  set(SIMANEAT_TUTORIAL_LINK_TARGET sima_neat)
+endif()
+
 # Tutorial executables and CTest registration.
 
 include(CMakeParseArguments)
@@ -11,7 +22,7 @@ function(add_tutorial exe source)
   cmake_parse_arguments(AT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   add_executable(${exe} ${source})
-  target_link_libraries(${exe} PRIVATE sima_neat)
+  target_link_libraries(${exe} PRIVATE ${SIMANEAT_TUTORIAL_LINK_TARGET})
   target_include_directories(${exe} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
   )
@@ -269,6 +280,7 @@ install(
     PATTERN "*.cpp"
     PATTERN "*.h"
     PATTERN "*.py"
+    PATTERN "*.sh"
     PATTERN "*.yaml"
 )
 
