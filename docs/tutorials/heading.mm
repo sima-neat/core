@@ -21,4 +21,19 @@ Prebuilt layout:
 - `lib/...`: prebuilt binaries
 - `share/...`: source code
 
+## Build Tutorials From Source
+
+From the tutorial source directory, use `build.sh`:
+
+```bash
+./build.sh --list-targets
+./build.sh
+```
+
+Build a single tutorial target:
+
+```bash
+./build.sh --target tutorial_v2_015_graph_model_hybrid
+```
+
 <p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>
