@@ -145,7 +145,7 @@ def _signature_from_output(output: str) -> dict[str, str]:
 
 def _signature_from_py_source(py_path: Path) -> dict[str, str]:
   text = py_path.read_text(encoding="utf-8", errors="ignore")
-  m = re.search(r"tu\.signature\(\s*(\{.*?\})\s*\)", text, flags=re.S)
+  m = re.search(r'print\("SIGNATURE " \+ json\.dumps\((\{.*?\})', text, flags=re.DOTALL)
   if not m:
     return {}
   obj = ast.literal_eval(m.group(1))

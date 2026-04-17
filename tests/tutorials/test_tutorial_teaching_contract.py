@@ -20,7 +20,7 @@ REQUIRED_SIGNATURE_KEYS = {
 def _signature_keys(text: str, suffix: str) -> set[str]:
   keys: set[str] = set()
   if suffix == ".py":
-    for match in re.finditer(r"tu\.signature\(\s*(\{.*?\})\s*\)", text, flags=re.S):
+    for match in re.finditer(r'print\("SIGNATURE " \+ json\.dumps\(\s*(\{.*?\})', text, flags=re.S):
       keys.update(re.findall(r'["\']([A-Za-z0-9_]+)["\']\s*:', match.group(1)))
   else:
     for match in re.finditer(r"tutorial_v2::print_signature\(\{(.*?)\}\);", text, flags=re.S):
@@ -29,11 +29,7 @@ def _signature_keys(text: str, suffix: str) -> set[str]:
 
 
 def test_teaching_helpers_exist() -> None:
-  py_helper = (TUTORIALS_ROOT / "common" / "python_utils.py").read_text(encoding="utf-8", errors="ignore")
   cpp_helper = (TUTORIALS_ROOT / "common" / "cpp_utils.h").read_text(encoding="utf-8", errors="ignore")
-
-  for marker in ("def runtime_fallback(",):
-    assert marker in py_helper, f"missing Python helper: {marker}"
 
   for marker in (
       "inline void why(",

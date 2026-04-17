@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import time
 from dataclasses import dataclass
@@ -10,10 +12,11 @@ from pathlib import Path
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate\n"
+      "If the venv does not exist yet, follow the installation guide."
+  )
 
 
 @dataclass
@@ -26,8 +29,7 @@ class Sig:
 def _source_fallback_signature_stub() -> None:
   # Source-fallback signature for tutorial parity tests when runtime output is unavailable.
   if False:
-    tu.signature(
-        {
+    print("SIGNATURE " + json.dumps({
             "tutorial": "001",
             "lang": "py",
             "flow": "minimal_numpy_dataloader",
@@ -36,8 +38,10 @@ def _source_fallback_signature_stub() -> None:
             "tensor_rank": -1,
             "field_count": -1,
             "tput_contract": -1,
-        }
-    )
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ))
 
 
 
@@ -74,7 +78,7 @@ def dataloader_from_numpy(size: int, batch: int, n: int):
   # pyneat only needs HWC uint8 RGB numpy arrays and model.run will resize internally.
   import numpy as np
 
-  root = tu.repo_root()
+  root = Path(__file__).resolve().parents[2]
   existing = [p for p in _resnet_image_candidates(root) if p.exists()]
 
   count = max(1, n)
@@ -100,9 +104,9 @@ def dataloader_from_numpy(size: int, batch: int, n: int):
 def _scores_from_output(out):
   import numpy as np
 
-  tu.ensure(out.tensor is not None, "expected tensor output from model")
+  assert out.tensor is not None, "expected tensor output from model"
   flat = out.tensor.to_numpy(copy=True).astype(np.float32, copy=False).reshape(-1)
-  tu.ensure(flat.size > 0, "empty tensor output")
+  assert flat.size > 0, "empty tensor output"
   if flat.size >= 1000:
     flat = flat[:1000]
   return flat
@@ -135,15 +139,28 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--print-gst", action="store_true")
   args = ap.parse_args(argv)
 
-  tu.step("input_contract", "parse CLI and prepare ResNet50 model + local image dataloader")
-  tu.step("run_mode_choice", "run synchronous inference from NumPy dataloader batches")
-  tu.step("output_contract", "emit top1 lines and a stable tutorial signature")
-  tu.check("strict_mode_visible", isinstance(tu.strict_mode(), bool), "strict-mode guard is observable")
+  strict_mode = os.getenv("SIMA_RUN_TUTORIALS_FULL") is not None
 
-  root = tu.repo_root()
-  mpk_path = Path(args.mpk) if args.mpk else tu.default_resnet_mpk(root)
+  print("STEP input_contract: parse CLI and prepare ResNet50 model + local image dataloader")
+  print("STEP run_mode_choice: run synchronous inference from NumPy dataloader batches")
+  print("STEP output_contract: emit top1 lines and a stable tutorial signature")
+  print("CHECK strict_mode_visible: PASS (strict-mode guard is observable)")
+  assert isinstance(strict_mode, bool), "check failed: strict_mode_visible (strict-mode guard is observable)"
+
+  root = Path(__file__).resolve().parents[2]
+  if args.mpk:
+    mpk_path = Path(args.mpk)
+  else:
+    mpk_path = next(
+        (p for p in [
+            root / "tmp" / "resnet_50_mpk.tar.gz",
+            root / "tmp" / "resnet50_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
   if not mpk_path or not mpk_path.exists():
-    return tu.skip("missing ResNet50 MPK (pass --mpk)")
+    print("SKIP: missing ResNet50 MPK (pass --mpk)")
+    return 0
 
   sig = Sig()
   tput_contract = -1
@@ -178,7 +195,9 @@ def main(argv: list[str]) -> int:
       processed += 1
       # END CORE LOGIC
       if args.expect_id >= 0:
-        tu.check("top1_expected_id", pred == args.expect_id, "verify expected class id")
+        _cond = pred == args.expect_id
+        print("CHECK top1_expected_id: " + ("PASS" if _cond else "FAIL") + " (verify expected class id)")
+        assert _cond, "check failed: top1_expected_id (verify expected class id)"
 
     elapsed = max(time.perf_counter() - start, 1e-9)
     tput_fps = processed / elapsed
@@ -186,13 +205,13 @@ def main(argv: list[str]) -> int:
     print(f"tput_fps:        {tput_fps:.3f}")
     print(f"tput_contract:   {tput_contract}")
   except Exception as exc:
-    tu.runtime_fallback(exc)
-    if tu.strict_mode():
+    _msg = str(exc).strip() or exc.__class__.__name__
+    print(f"runtime_fallback: {_msg}")
+    if strict_mode:
       raise
 
-  tu.check("tutorial_completed", True, "minimal NumPy dataloader path completed")
-  tu.signature(
-      {
+  print("CHECK tutorial_completed: PASS (minimal NumPy dataloader path completed)")
+  print("SIGNATURE " + json.dumps({
           "tutorial": "001",
           "lang": "py",
           "flow": "minimal_numpy_dataloader",
@@ -201,8 +220,10 @@ def main(argv: list[str]) -> int:
           "tensor_rank": sig.tensor_rank,
           "field_count": sig.field_count,
           "tput_contract": tput_contract,
-      }
-  )
+      },
+      sort_keys=True,
+      separators=(",", ":"),
+  ))
   print("[OK] 001_model_in_5_minutes")
   return 0
 

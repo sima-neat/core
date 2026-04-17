@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate\n"
+      "If the venv does not exist yet, follow the installation guide."
+  )
 
 
 # CORE LOGIC
@@ -32,24 +35,44 @@ def make_base_session(width: int, height: int):
 def main(argv: list[str]) -> int:
   import numpy as np
 
-  if tu.has_flag(argv, "--help"):
+  if "--help" in argv:
     print(f"Usage: {argv[0]} [--mpk <path>] [--print-gst]")
     return 0
 
+  strict_mode = os.getenv("SIMA_RUN_TUTORIALS_FULL") is not None
+
   # Why: runtime markers make intent explicit without requiring external docs.
   # Why: parity/scorecard tooling relies on stable, machine-parseable checkpoints.
-  tu.step("input_contract", "parse flags and establish deterministic defaults")
-  tu.step("run_mode_choice", "exercise the chapter's primary runtime path")
-  tu.step("output_contract", "emit checks and machine-parseable signature")
-  tu.check("strict_flag_available", isinstance(tu.strict_mode(), bool),
-           "strict-mode guard is observable")
+  print("STEP input_contract: parse flags and establish deterministic defaults")
+  print("STEP run_mode_choice: exercise the chapter's primary runtime path")
+  print("STEP output_contract: emit checks and machine-parseable signature")
+  print("CHECK strict_flag_available: PASS (strict-mode guard is observable)")
+  assert isinstance(strict_mode, bool), "check failed: strict_flag_available (strict-mode guard is observable)"
 
   width, height = 224, 224
   direct = make_base_session(width, height)
 
-  root = tu.repo_root()
-  mpk_arg = tu.get_arg(argv, "--mpk")
-  mpk = Path(mpk_arg) if mpk_arg else tu.first_existing([tu.default_yolo_mpk(root), tu.default_resnet_mpk(root)])
+  root = Path(__file__).resolve().parents[2]
+  mpk_arg = next((argv[i + 1] for i in range(1, len(argv) - 1) if argv[i] == "--mpk"), None)
+  if mpk_arg:
+    mpk = Path(mpk_arg)
+  else:
+    yolo = next(
+        (p for p in [
+            root / "tmp" / "yolo_v8s_mpk.tar.gz",
+            root / "tmp" / "yolov8s_mpk.tar.gz",
+            root / "tmp" / "yolo_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
+    resnet = next(
+        (p for p in [
+            root / "tmp" / "resnet_50_mpk.tar.gz",
+            root / "tmp" / "resnet50_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
+    mpk = next((p for p in [yolo, resnet] if p is not None and p.exists()), None)
 
   if mpk and mpk.exists():
     # CORE LOGIC
@@ -66,14 +89,14 @@ def main(argv: list[str]) -> int:
     attached = pyneat.Session()
     attached.add(model.session(sopt))
 
-    if tu.has_flag(argv, "--print-gst"):
+    if "--print-gst" in argv:
       print("[direct]")
       print(direct.describe_backend())
       print("[attached]")
       print(attached.describe_backend())
       return 0
     # END CORE LOGIC
-  elif tu.has_flag(argv, "--print-gst"):
+  elif "--print-gst" in argv:
     print(direct.describe_backend())
     return 0
 
@@ -83,18 +106,21 @@ def main(argv: list[str]) -> int:
   run = direct.build(t, pyneat.RunMode.Sync)
   out = run.run(t, timeout_ms=1000)
   # END CORE LOGIC
-  tu.ensure(out.tensor is not None, "direct session output missing tensor")
+  assert out.tensor is not None, "direct session output missing tensor"
 
-  tu.check("tutorial_completed", True, "main path reached end without exception")
-  tu.signature({
-      "tutorial": "007",
-      "lang": "py",
-      "flow": "chapter_path",
-      "run_mode": "sync_or_async",
-      "output_kind": "sample_or_tensor",
-      "tensor_rank": -1,
-      "field_count": -1,
-  })
+  print("CHECK tutorial_completed: PASS (main path reached end without exception)")
+  print("SIGNATURE " + json.dumps({
+          "tutorial": "007",
+          "lang": "py",
+          "flow": "chapter_path",
+          "run_mode": "sync_or_async",
+          "output_kind": "sample_or_tensor",
+          "tensor_rank": -1,
+          "field_count": -1,
+      },
+      sort_keys=True,
+      separators=(",", ":"),
+  ))
 
   print("[OK] 007_session_patterns")
   return 0

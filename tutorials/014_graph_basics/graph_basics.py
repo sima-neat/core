@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate\n"
+      "If the venv does not exist yet, follow the installation guide."
+  )
 
 
 def make_rgb_sample():
@@ -38,9 +41,13 @@ def run_pipeline_plus_stage():
 
   print(pyneat.graph.to_text(graph))
   run = pyneat.graph.GraphSession(graph).build()
-  tu.check("graph_push", run.push(pipe, make_rgb_sample()), "sample reached pipeline node")
+  _pushed = run.push(pipe, make_rgb_sample())
+  print("CHECK graph_push: " + ("PASS" if _pushed else "FAIL") + " (sample reached pipeline node)")
+  assert _pushed, "check failed: graph_push (sample reached pipeline node)"
   out = run.pull(stamp, 2000)
-  tu.check("graph_pull", out is not None, "stage sink produced output")
+  _pulled = out is not None
+  print("CHECK graph_pull: " + ("PASS" if _pulled else "FAIL") + " (stage sink produced output)")
+  assert _pulled, "check failed: graph_pull (stage sink produced output)"
   run.stop()
   # END CORE LOGIC
   return "pipeline_plus_stage", out
@@ -54,9 +61,13 @@ def run_stage_only_fallback():
 
   print(pyneat.graph.to_text(graph))
   run = pyneat.graph.GraphSession(graph).build()
-  tu.check("graph_push", run.push(stamp, make_rgb_sample()), "sample reached stage node")
+  _pushed = run.push(stamp, make_rgb_sample())
+  print("CHECK graph_push: " + ("PASS" if _pushed else "FAIL") + " (sample reached stage node)")
+  assert _pushed, "check failed: graph_push (sample reached stage node)"
   out = run.pull(stamp, 2000)
-  tu.check("graph_pull", out is not None, "stage sink produced output")
+  _pulled = out is not None
+  print("CHECK graph_pull: " + ("PASS" if _pulled else "FAIL") + " (stage sink produced output)")
+  assert _pulled, "check failed: graph_pull (stage sink produced output)"
   run.stop()
   # END CORE LOGIC
   return "stage_only_fallback", out
@@ -64,12 +75,12 @@ def run_stage_only_fallback():
 
 def main(argv: list[str]) -> int:
 
-  if tu.has_flag(argv, "--help"):
+  if "--help" in argv:
     print(f"Usage: {argv[0]}")
     return 0
 
-  tu.step("input_contract", "build a minimal graph and push one deterministic tensor sample")
-  tu.step("run_mode_choice", "prefer pipeline+stage hybrid; fallback to stage-only if needed")
+  print("STEP input_contract: build a minimal graph and push one deterministic tensor sample")
+  print("STEP run_mode_choice: prefer pipeline+stage hybrid; fallback to stage-only if needed")
   flow = "pipeline_plus_stage"
   try:
     flow, out = run_pipeline_plus_stage()
@@ -77,12 +88,15 @@ def main(argv: list[str]) -> int:
     print(f"fallback reason: {exc}")
     flow, out = run_stage_only_fallback()
 
-  tu.step("output_interpretation", "verify stream/frame metadata survived graph traversal")
-  tu.check("stream_id_present", bool(out.stream_id), "stream id should be non-empty")
-  tu.check("frame_id_stamped", out.frame_id >= 0, "stamp stage should assign non-negative frame id")
+  print("STEP output_interpretation: verify stream/frame metadata survived graph traversal")
+  _cond = bool(out.stream_id)
+  print("CHECK stream_id_present: " + ("PASS" if _cond else "FAIL") + " (stream id should be non-empty)")
+  assert _cond, "check failed: stream_id_present (stream id should be non-empty)"
+  _cond = out.frame_id >= 0
+  print("CHECK frame_id_stamped: " + ("PASS" if _cond else "FAIL") + " (stamp stage should assign non-negative frame id)")
+  assert _cond, "check failed: frame_id_stamped (stamp stage should assign non-negative frame id)"
 
-  tu.signature(
-      {
+  print("SIGNATURE " + json.dumps({
           "tutorial": "014",
           "lang": "py",
           "flow": flow,
@@ -90,8 +104,10 @@ def main(argv: list[str]) -> int:
           "output_kind": 0,
           "tensor_rank": 3,
           "field_count": 0,
-      }
-  )
+      },
+      sort_keys=True,
+      separators=(",", ":"),
+  ))
 
   print(f"Output stream={out.stream_id} frame={out.frame_id}")
   print("[OK] 014_graph_basics")
