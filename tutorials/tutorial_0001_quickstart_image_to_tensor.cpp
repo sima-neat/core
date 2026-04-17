@@ -6,11 +6,14 @@
 // - Run::pull_tensor_or_throw() yields a simaai::neat::Tensor directly.
 //
 // Prereqs:
-// - An image file (default: test.jpg or tests/assets/preproc_dynamic/ilena_488.jpg).
+// - An image file. Default: the shipped sample at
+//   <tutorials/assets>/ilena_488.jpg (installed under
+//   /usr/share/sima-neat/tutorials/assets/ on DEB installs). Override with
+//   --image <path> or SIMA_NEAT_TUTORIAL_ASSETS=<dir>.
 //
 // Try:
 //   ./build/tutorial_0001_quickstart_image_to_tensor --print-gst
-//   ./build/tutorial_0001_quickstart_image_to_tensor --image test.jpg
+//   ./build/tutorial_0001_quickstart_image_to_tensor --image /path/to/my.jpg
 
 #include "neat.h"
 
@@ -32,14 +35,8 @@ void print_help(const char* argv0) {
   std::cout << "  --height <h>         Output height (default 256)\n";
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
@@ -77,13 +74,12 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
     std::string image_arg;
     fs::path image_path;
     if (sima_tutorial::get_arg(argc, argv, "--image", image_arg)) {
       image_path = fs::path(image_arg);
     } else {
-      image_path = default_image_path(root);
+      image_path = default_image_path();
     }
 
     if (!sima_tutorial::exists_or_skip(image_path, "image")) {

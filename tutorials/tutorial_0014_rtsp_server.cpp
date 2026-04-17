@@ -25,7 +25,7 @@ void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0
             << " [--image <path>] [--port <p>] [--mount <name>] [--duration-ms <ms>]\n";
   sima_tutorial::print_common_flags(std::cout);
-  std::cout << "  --image <path>       Image path (default: test.jpg)\n";
+  std::cout << "  --image <path>       Image path (default: shipped tutorial sample)\n";
   std::cout << "  --port <p>           RTSP port (default: 8554)\n";
   std::cout << "  --mount <name>       RTSP mount (default: image)\n";
   std::cout << "  --duration-ms <ms>   How long to keep the server alive (default: 2000)\n";
@@ -45,14 +45,8 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   }
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 } // namespace
@@ -64,11 +58,10 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
     std::string image_arg;
     fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                               ? fs::path(image_arg)
-                              : default_image_path(root);
+                              : default_image_path();
     if (!fs::exists(image_path)) {
       return sima_tutorial::skip("missing image for RTSP server");
     }

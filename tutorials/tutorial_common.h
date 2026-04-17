@@ -1,7 +1,8 @@
 #pragma once
 
-// Tutorial helpers: argument parsing, skip handling, and repo root discovery.
+// Tutorial helpers: argument parsing, skip handling, and asset discovery.
 
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -71,6 +72,29 @@ inline std::filesystem::path find_repo_root() {
     cur = cur.parent_path();
   }
   return std::filesystem::current_path();
+}
+
+// Returns the directory containing tutorial sample assets.
+// Lookup order:
+//   1. SIMA_NEAT_TUTORIAL_ASSETS env var, if set and exists.
+//   2. /usr/share/sima-neat/tutorials/assets (installed DEB layout).
+//   3. /neat-resources/core-src/tutorials/assets (eLxr SDK layout).
+//   4. <repo>/tutorials/assets (source checkout fallback).
+inline std::filesystem::path find_asset_root() {
+  namespace fs = std::filesystem;
+  if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
+    fs::path p{env};
+    if (fs::exists(p))
+      return p;
+  }
+  for (const fs::path& p : {
+           fs::path{"/usr/share/sima-neat/tutorials/assets"},
+           fs::path{"/neat-resources/core-src/tutorials/assets"},
+       }) {
+    if (fs::exists(p))
+      return p;
+  }
+  return find_repo_root() / "tutorials" / "assets";
 }
 
 inline std::string join_args(int argc, char** argv) {

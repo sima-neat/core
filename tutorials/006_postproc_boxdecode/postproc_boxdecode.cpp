@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     std::string img_arg;
     fs::path image_path = tutorial_v2::get_arg(argc, argv, "--image", img_arg)
                               ? fs::path(img_arg)
-                              : tutorial_v2::default_image(root);
+                              : tutorial_v2::default_image();
     if (image_path.empty() || !fs::exists(image_path)) {
       return tutorial_v2::skip("missing image (pass --image)");
     }

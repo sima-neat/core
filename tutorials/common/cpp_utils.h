@@ -17,6 +17,7 @@
 namespace tutorial_v2 {
 
 using sima_tutorial::exists_or_skip;
+using sima_tutorial::find_asset_root;
 using sima_tutorial::find_repo_root;
 using sima_tutorial::get_arg;
 using sima_tutorial::has_flag;
@@ -80,12 +81,11 @@ inline std::filesystem::path default_resnet_mpk(const std::filesystem::path& roo
   });
 }
 
-inline std::filesystem::path default_image(const std::filesystem::path& root) {
-  return first_existing({
-      root / "tmp" / "coco_sample.jpg",
-      root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg",
-      root / "test.jpg",
-  });
+// Default tutorial sample image.
+// Resolved via sima_tutorial::find_asset_root() — see its doc comment for
+// lookup precedence (env > DEB install > SDK mirror > repo fallback).
+inline std::filesystem::path default_image() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 inline void print_header(const std::string& title) {

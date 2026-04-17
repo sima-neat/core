@@ -40,14 +40,8 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   }
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 simaai::neat::Session make_group_session(const std::string& image_path, int w, int h) {
@@ -87,7 +81,7 @@ int main(int argc, char** argv) {
     std::string image_arg;
     const fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                                     ? fs::path(image_arg)
-                                    : default_image_path(root);
+                                    : default_image_path();
 
     const int w = parse_int_arg(argc, argv, "--width", 256);
     const int h = parse_int_arg(argc, argv, "--height", 256);
