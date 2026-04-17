@@ -46,14 +46,8 @@ std::string get_mode(int argc, char** argv) {
   return "image";
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 fs::path default_video_path(const fs::path& root) {
@@ -83,7 +77,7 @@ int main(int argc, char** argv) {
     simaai::neat::Session p;
 
     if (mode == "image") {
-      fs::path image_path = path_arg.empty() ? default_image_path(root) : fs::path(path_arg);
+      fs::path image_path = path_arg.empty() ? default_image_path() : fs::path(path_arg);
       if (!sima_tutorial::exists_or_skip(image_path, "image"))
         return 0;
 

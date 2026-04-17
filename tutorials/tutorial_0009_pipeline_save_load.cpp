@@ -26,14 +26,8 @@ void print_help(const char* argv0) {
       << "  --out <path>         Output JSON path (default: tmp/tutorial_0009_pipeline.json)\n";
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 } // namespace
@@ -49,7 +43,7 @@ int main(int argc, char** argv) {
     std::string image_arg;
     fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                               ? fs::path(image_arg)
-                              : default_image_path(root);
+                              : default_image_path();
 
     std::string out_arg;
     const fs::path out_path = sima_tutorial::get_arg(argc, argv, "--out", out_arg)

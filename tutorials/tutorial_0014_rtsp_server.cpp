@@ -45,14 +45,8 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   }
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 } // namespace
@@ -68,7 +62,7 @@ int main(int argc, char** argv) {
     std::string image_arg;
     fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                               ? fs::path(image_arg)
-                              : default_image_path(root);
+                              : default_image_path();
     if (!fs::exists(image_path)) {
       return sima_tutorial::skip("missing image for RTSP server");
     }

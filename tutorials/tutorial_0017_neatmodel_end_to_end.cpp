@@ -44,14 +44,8 @@ fs::path find_default_mpk(const fs::path& root) {
   return {};
 }
 
-fs::path find_default_image(const fs::path& root) {
-  const fs::path c1 = root / "tmp" / "coco_sample.jpg";
-  const fs::path c2 = root / "test.jpg";
-  if (fs::exists(c1))
-    return c1;
-  if (fs::exists(c2))
-    return c2;
-  return c1;
+fs::path find_default_image() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 const char* dtype_name(simaai::neat::TensorDType dtype) {
@@ -159,7 +153,7 @@ int main(int argc, char** argv) {
     std::string img_arg;
     fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", img_arg)
                               ? fs::path(img_arg)
-                              : find_default_image(root);
+                              : find_default_image();
     if (!fs::exists(image_path)) {
       return sima_tutorial::skip("missing image (pass --image)");
     }

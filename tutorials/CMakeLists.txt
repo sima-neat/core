@@ -282,6 +282,8 @@ install(
     PATTERN "*.py"
     PATTERN "*.yaml"
     PATTERN "*.md"
+    PATTERN "*.jpg"
+    PATTERN "*.png"
 )
 
 install(

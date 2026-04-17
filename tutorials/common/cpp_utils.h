@@ -80,12 +80,14 @@ inline std::filesystem::path default_resnet_mpk(const std::filesystem::path& roo
   });
 }
 
-inline std::filesystem::path default_image(const std::filesystem::path& root) {
-  return first_existing({
-      root / "tmp" / "coco_sample.jpg",
-      root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg",
-      root / "test.jpg",
-  });
+inline std::filesystem::path default_image(const std::filesystem::path& /*root*/) {
+  // Canonical customer-install layout: tutorial assets ship to
+  //   /usr/share/sima-neat/tutorials/assets/ (DEB)
+  //   /neat-resources/core-src/tutorials/assets/ (SDK)
+  //   <repo>/tutorials/assets/ (source checkout)
+  // sima_tutorial::find_asset_root() implements this lookup order and is
+  // source-of-truth for all tutorial image discovery.
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 inline void print_header(const std::string& title) {

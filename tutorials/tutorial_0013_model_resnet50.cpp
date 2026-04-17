@@ -35,14 +35,8 @@ fs::path default_model_path(const fs::path& root) {
   return {};
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path c1 = root / "tmp" / "coco_sample.jpg";
-  const fs::path c2 = root / "test.jpg";
-  if (fs::exists(c1))
-    return c1;
-  if (fs::exists(c2))
-    return c2;
-  return c1;
+fs::path default_image_path() {
+  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 
 } // namespace
@@ -67,7 +61,7 @@ int main(int argc, char** argv) {
     std::string image_arg;
     fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                               ? fs::path(image_arg)
-                              : default_image_path(root);
+                              : default_image_path();
     if (!fs::exists(image_path)) {
       return sima_tutorial::skip("missing image (pass --image)");
     }

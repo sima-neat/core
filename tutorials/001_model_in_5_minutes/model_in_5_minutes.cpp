@@ -53,13 +53,12 @@ simaai::neat::Model::Options build_model_options(int size) {
   return opt;
 }
 
-std::vector<fs::path> resnet_image_candidates(const fs::path& root) {
+std::vector<fs::path> resnet_image_candidates() {
+  const fs::path assets = tutorial_v2::find_asset_root();
   return {
-      root / "tests" / "assets" / "preproc_dynamic" / "fronalpstock_1330.jpg",
-      root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg",
-      root / "tests" / "assets" / "preproc_dynamic" / "lichtenstein_512.png",
-      root / "tmp" / "coco_sample.jpg",
-      root / "test.jpg",
+      assets / "fronalpstock_1330.jpg",
+      assets / "ilena_488.jpg",
+      assets / "lichtenstein_512.png",
   };
 }
 
@@ -84,9 +83,9 @@ cv::Mat load_rgb_u8(const fs::path& path, int size) {
   return rgb;
 }
 
-std::vector<cv::Mat> dataloader_from_images(const fs::path& root, int size, int n) {
+std::vector<cv::Mat> dataloader_from_images(int size, int n) {
   std::vector<fs::path> existing;
-  for (const auto& p : resnet_image_candidates(root)) {
+  for (const auto& p : resnet_image_candidates()) {
     if (fs::exists(p)) {
       existing.push_back(p);
     }
@@ -207,7 +206,7 @@ int main(int argc, char** argv) {
       }
 
       // Contract: dataloader yields HWC uint8 RGB cv::Mat (CV_8UC3, contiguous).
-      const std::vector<cv::Mat> resnet_dataloader = dataloader_from_images(root, size, n);
+      const std::vector<cv::Mat> resnet_dataloader = dataloader_from_images(size, n);
 
       int processed = 0;
       const auto start = std::chrono::steady_clock::now();

@@ -86,6 +86,7 @@ models/
 !samples/media/**
 !tests/images/**
 !docs/images/**
+!tutorials/assets/**
 
 # Docs output
 docs/doxygen/out/
