@@ -281,6 +281,7 @@ install(
     PATTERN "*.h"
     PATTERN "*.py"
     PATTERN "*.yaml"
+    PATTERN "*.md"
 )
 
 install(
