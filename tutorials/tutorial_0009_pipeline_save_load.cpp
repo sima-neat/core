@@ -21,7 +21,8 @@ namespace {
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--image <path>] [--out <path>]\n";
   sima_tutorial::print_common_flags(std::cout);
-  std::cout << "  --image <path>       Image path used in FileInput (default: shipped tutorial sample)\n";
+  std::cout
+      << "  --image <path>       Image path used in FileInput (default: shipped tutorial sample)\n";
   std::cout
       << "  --out <path>         Output JSON path (default: tmp/tutorial_0009_pipeline.json)\n";
 }
