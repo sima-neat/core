@@ -18,7 +18,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -44,7 +45,8 @@ void print_common_flags(std::ostream& os) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string value;
-  if (!get_arg(argc, argv, key, value)) return def;
+  if (!get_arg(argc, argv, key, value))
+    return def;
   try {
     return std::stoi(value);
   } catch (...) {
@@ -62,9 +64,11 @@ void step(const std::string& name, const std::string& detail = {}) {
 
 void check(const std::string& name, bool cond, const std::string& detail = {}) {
   std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
-  if (!detail.empty()) std::cout << " (" << detail << ")";
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
   std::cout << "\n";
-  if (!cond) throw std::runtime_error("check failed: " + name);
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
 }
 
 void why(const std::string& detail) {
@@ -90,14 +94,19 @@ void print_signature(std::initializer_list<std::pair<std::string, std::string>> 
   for (const char* key : kRequired) {
     bool found = false;
     for (const auto& kv : values) {
-      if (kv.first == key) { found = true; break; }
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
     }
-    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
   }
   std::cout << "SIGNATURE {";
   bool first = true;
   for (const auto& kv : values) {
-    if (!first) std::cout << ",";
+    if (!first)
+      std::cout << ",";
     std::cout << kv.first << "=" << kv.second;
     first = false;
   }
@@ -173,15 +182,12 @@ int main(int argc, char** argv) {
     const int frames = parse_int_arg(argc, argv, "--frames", 4);
 
     step("input_contract", "stream/frame tags must survive scheduler and join stages");
-    step("run_mode_choice",
-                      "build multistream graph with fair scheduling and bundle join");
+    step("run_mode_choice", "build multistream graph with fair scheduling and bundle join");
     why("understand the contract first: inputs, run mode, and outputs");
-    tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
+    tradeoff("prefer deterministic samples and stable contracts over production realism");
     failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     // CORE LOGIC
     using namespace simaai::neat::graph;
@@ -227,7 +233,7 @@ int main(int argc, char** argv) {
     for (int frame = 0; frame < frames; ++frame) {
       for (int sid = 0; sid < streams; ++sid) {
         check("graph_push", in.push(make_rgb_sample(std::to_string(sid), frame)),
-                           "sample accepted by input node");
+              "sample accepted by input node");
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -251,10 +257,8 @@ int main(int argc, char** argv) {
 
     step("output_interpretation", "joined bundle cardinality validates graph wiring");
     check("all_outputs_received", received == expected,
-                       "expected=" + std::to_string(expected) +
-                           ", received=" + std::to_string(received));
-    check("bundle_has_two_fields", first_fields == 2,
-                       "join should emit image+bbox bundle");
+          "expected=" + std::to_string(expected) + ", received=" + std::to_string(received));
+    check("bundle_has_two_fields", first_fields == 2, "join should emit image+bbox bundle");
     // END CORE LOGIC
 
     print_signature({

@@ -11,7 +11,6 @@
 #include "neat/nodes.h"
 #include "neat/node_groups.h"
 
-
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -27,7 +26,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -56,7 +56,8 @@ void print_common_flags(std::ostream& os) {
 }
 
 void require(bool ok, const std::string& msg) {
-  if (!ok) throw std::runtime_error(msg);
+  if (!ok)
+    throw std::runtime_error(msg);
 }
 
 std::filesystem::path find_repo_root() {
@@ -67,7 +68,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -77,13 +79,15 @@ std::filesystem::path find_asset_root() {
   namespace fs = std::filesystem;
   if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
     fs::path p{env};
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   for (const fs::path& p : {
            fs::path{"/usr/share/sima-neat/tutorials/assets"},
            fs::path{"/neat-resources/core-src/tutorials/assets"},
        }) {
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   return find_repo_root() / "tutorials" / "assets";
 }
@@ -152,9 +156,8 @@ int main(int argc, char** argv) {
 
     const fs::path root = find_repo_root();
     std::string image_arg;
-    const fs::path image_path = get_arg(argc, argv, "--image", image_arg)
-                                    ? fs::path(image_arg)
-                                    : default_image_path();
+    const fs::path image_path =
+        get_arg(argc, argv, "--image", image_arg) ? fs::path(image_arg) : default_image_path();
 
     const int w = parse_int_arg(argc, argv, "--width", 256);
     const int h = parse_int_arg(argc, argv, "--height", 256);
@@ -180,9 +183,9 @@ int main(int argc, char** argv) {
 
     // Deterministic naming: describe_backend() should be stable across calls.
     require(group_session.describe_backend() == group_session.describe_backend(),
-                           "NodeGroup gst string should be deterministic");
+            "NodeGroup gst string should be deterministic");
     require(manual_session.describe_backend() == manual_session.describe_backend(),
-                           "Manual gst string should be deterministic");
+            "Manual gst string should be deterministic");
 
     if (!fs::exists(image_path)) {
       std::cout << "Note: image path does not exist; this tutorial only prints pipelines.\n";

@@ -27,7 +27,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }

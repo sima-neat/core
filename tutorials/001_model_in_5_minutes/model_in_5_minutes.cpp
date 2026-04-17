@@ -23,7 +23,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -53,7 +54,8 @@ void print_common_flags(std::ostream& os) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string value;
-  if (!get_arg(argc, argv, key, value)) return def;
+  if (!get_arg(argc, argv, key, value))
+    return def;
   try {
     return std::stoi(value);
   } catch (...) {
@@ -67,14 +69,17 @@ int skip(const std::string& reason) {
 }
 
 void require(bool ok, const std::string& msg) {
-  if (!ok) throw std::runtime_error(msg);
+  if (!ok)
+    throw std::runtime_error(msg);
 }
 
 bool strict_mode() {
   return std::getenv("SIMA_RUN_TUTORIALS_FULL") != nullptr;
 }
 
-std::string yes_no(bool v) { return v ? "yes" : "no"; }
+std::string yes_no(bool v) {
+  return v ? "yes" : "no";
+}
 
 void step(const std::string& name, const std::string& detail = {}) {
   if (detail.empty()) {
@@ -86,9 +91,11 @@ void step(const std::string& name, const std::string& detail = {}) {
 
 void check(const std::string& name, bool cond, const std::string& detail = {}) {
   std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
-  if (!detail.empty()) std::cout << " (" << detail << ")";
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
   std::cout << "\n";
-  if (!cond) throw std::runtime_error("check failed: " + name);
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
 }
 
 void why(const std::string& detail) {
@@ -119,14 +126,19 @@ void print_signature(std::initializer_list<std::pair<std::string, std::string>> 
   for (const char* key : kRequired) {
     bool found = false;
     for (const auto& kv : values) {
-      if (kv.first == key) { found = true; break; }
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
     }
-    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
   }
   std::cout << "SIGNATURE {";
   bool first = true;
   for (const auto& kv : values) {
-    if (!first) std::cout << ",";
+    if (!first)
+      std::cout << ",";
     std::cout << kv.first << "=" << kv.second;
     first = false;
   }
@@ -141,7 +153,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -151,20 +164,23 @@ std::filesystem::path find_asset_root() {
   namespace fs = std::filesystem;
   if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
     fs::path p{env};
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   for (const fs::path& p : {
            fs::path{"/usr/share/sima-neat/tutorials/assets"},
            fs::path{"/neat-resources/core-src/tutorials/assets"},
        }) {
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   return find_repo_root() / "tutorials" / "assets";
 }
 
 std::filesystem::path first_existing(std::initializer_list<std::filesystem::path> candidates) {
   for (const auto& c : candidates) {
-    if (std::filesystem::exists(c)) return c;
+    if (std::filesystem::exists(c))
+      return c;
   }
   return {};
 }
@@ -268,18 +284,17 @@ std::vector<cv::Mat> dataloader_from_images(int size, int n) {
 }
 
 std::vector<float> scores_from_output(const simaai::neat::Sample& out) {
-  check("has_tensor_output", out.tensor.has_value(),
-                     "expected tensor output from model");
+  check("has_tensor_output", out.tensor.has_value(), "expected tensor output from model");
 
   const simaai::neat::Tensor& t = *out.tensor;
   check("tensor_float32", t.dtype == simaai::neat::TensorDType::Float32,
-                     "expected float32 logits tensor");
+        "expected float32 logits tensor");
 
   const simaai::neat::Mapping map = t.map_read();
   check("tensor_non_empty", map.data != nullptr && map.size_bytes > 0,
-                     "model output tensor bytes must be non-empty");
+        "model output tensor bytes must be non-empty");
   check("tensor_size_aligned", (map.size_bytes % sizeof(float)) == 0,
-                     "tensor bytes must align to float32");
+        "tensor bytes must align to float32");
 
   const size_t elems = map.size_bytes / sizeof(float);
   std::vector<float> flat(elems);
@@ -331,26 +346,21 @@ int main(int argc, char** argv) {
     require(size > 0, "--size must be > 0");
     require(n > 0, "--n must be > 0");
 
-    step("input_contract",
-                      "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
+    step("input_contract", "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
     step("run_mode_choice", "run synchronous inference over cv::Mat inputs");
-    why(
-        "start with one minimal model loop before introducing graph/session composition");
+    why("start with one minimal model loop before introducing graph/session composition");
     tradeoff("this chapter optimizes for clarity and determinism over throughput");
     failure_mode("missing MPK/images or runtime issues should be explicit");
     interpret_output("top1 is human-facing; signature fields are tooling-facing");
     step("output_contract", "emit top1 lines and a stable tutorial signature");
-    check("strict_mode_visible",
-                       yes_no(strict_mode()) == "yes" ||
-                           yes_no(strict_mode()) == "no",
-                       "strict-mode guard is observable");
+    check("strict_mode_visible", yes_no(strict_mode()) == "yes" || yes_no(strict_mode()) == "no",
+          "strict-mode guard is observable");
 
     const fs::path root = find_repo_root();
 
     std::string mpk_arg;
-    const fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg)
-                                  ? fs::path(mpk_arg)
-                                  : default_resnet_mpk();
+    const fs::path mpk_path =
+        get_arg(argc, argv, "--mpk", mpk_arg) ? fs::path(mpk_arg) : default_resnet_mpk();
     if (mpk_path.empty() || !fs::exists(mpk_path)) {
       return skip("missing ResNet50 MPK (pass --mpk)");
     }

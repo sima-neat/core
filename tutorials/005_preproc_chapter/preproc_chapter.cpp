@@ -19,7 +19,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -49,7 +50,8 @@ void print_common_flags(std::ostream& os) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string value;
-  if (!get_arg(argc, argv, key, value)) return def;
+  if (!get_arg(argc, argv, key, value))
+    return def;
   try {
     return std::stoi(value);
   } catch (...) {
@@ -66,7 +68,9 @@ bool strict_mode() {
   return std::getenv("SIMA_RUN_TUTORIALS_FULL") != nullptr;
 }
 
-std::string yes_no(bool v) { return v ? "yes" : "no"; }
+std::string yes_no(bool v) {
+  return v ? "yes" : "no";
+}
 
 void step(const std::string& name, const std::string& detail = {}) {
   if (detail.empty()) {
@@ -78,9 +82,11 @@ void step(const std::string& name, const std::string& detail = {}) {
 
 void check(const std::string& name, bool cond, const std::string& detail = {}) {
   std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
-  if (!detail.empty()) std::cout << " (" << detail << ")";
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
   std::cout << "\n";
-  if (!cond) throw std::runtime_error("check failed: " + name);
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
 }
 
 void why(const std::string& detail) {
@@ -111,14 +117,19 @@ void print_signature(std::initializer_list<std::pair<std::string, std::string>> 
   for (const char* key : kRequired) {
     bool found = false;
     for (const auto& kv : values) {
-      if (kv.first == key) { found = true; break; }
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
     }
-    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
   }
   std::cout << "SIGNATURE {";
   bool first = true;
   for (const auto& kv : values) {
-    if (!first) std::cout << ",";
+    if (!first)
+      std::cout << ",";
     std::cout << kv.first << "=" << kv.second;
     first = false;
   }
@@ -133,7 +144,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -141,7 +153,8 @@ std::filesystem::path find_repo_root() {
 
 std::filesystem::path first_existing(std::initializer_list<std::filesystem::path> candidates) {
   for (const auto& c : candidates) {
-    if (std::filesystem::exists(c)) return c;
+    if (std::filesystem::exists(c))
+      return c;
   }
   return {};
 }
@@ -192,28 +205,23 @@ int main(int argc, char** argv) {
     step("input_contract", "parse flags and establish deterministic defaults");
     step("run_mode_choice", "exercise the chapter's primary runtime path");
     why("understand the contract first: inputs, run mode, and outputs");
-    tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
+    tradeoff("prefer deterministic samples and stable contracts over production realism");
     failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
     step("output_contract", "emit checks and machine-parseable signature");
-    check("strict_flag_available",
-                       yes_no(strict_mode()) == "yes" ||
-                           yes_no(strict_mode()) == "no",
-                       "strict-mode guard is observable");
+    check("strict_flag_available", yes_no(strict_mode()) == "yes" || yes_no(strict_mode()) == "no",
+          "strict-mode guard is observable");
 
     const fs::path root = find_repo_root();
     const int size = parse_int_arg(argc, argv, "--size", 224);
 
     std::string mpk_arg;
-    fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg)
-                            ? fs::path(mpk_arg)
-                            : first_existing({
-                                  default_resnet_mpk(),
-                                  default_yolo_mpk(),
-                              });
+    fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg) ? fs::path(mpk_arg)
+                                                              : first_existing({
+                                                                    default_resnet_mpk(),
+                                                                    default_yolo_mpk(),
+                                                                });
     if (mpk_path.empty() || !fs::exists(mpk_path)) {
       return skip("missing MPK (pass --mpk)");
     }

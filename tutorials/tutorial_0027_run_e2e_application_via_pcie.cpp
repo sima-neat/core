@@ -32,7 +32,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -68,7 +69,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -189,9 +191,8 @@ int main(int argc, char** argv) {
 
     const fs::path root = find_repo_root();
     std::string model_arg;
-    const fs::path model_path = get_arg(argc, argv, "--model", model_arg)
-                                    ? fs::path(model_arg)
-                                    : find_default_model(root);
+    const fs::path model_path =
+        get_arg(argc, argv, "--model", model_arg) ? fs::path(model_arg) : find_default_model(root);
     if (model_path.empty() || !fs::exists(model_path)) {
       return skip("missing MPK (pass --model)");
     }

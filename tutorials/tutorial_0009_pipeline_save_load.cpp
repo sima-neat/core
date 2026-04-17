@@ -8,7 +8,6 @@
 #include "neat/session.h"
 #include "neat/nodes.h"
 
-
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -24,7 +23,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -53,7 +53,8 @@ void print_common_flags(std::ostream& os) {
 }
 
 void require(bool ok, const std::string& msg) {
-  if (!ok) throw std::runtime_error(msg);
+  if (!ok)
+    throw std::runtime_error(msg);
 }
 
 std::filesystem::path find_repo_root() {
@@ -64,7 +65,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -74,13 +76,15 @@ std::filesystem::path find_asset_root() {
   namespace fs = std::filesystem;
   if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
     fs::path p{env};
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   for (const fs::path& p : {
            fs::path{"/usr/share/sima-neat/tutorials/assets"},
            fs::path{"/neat-resources/core-src/tutorials/assets"},
        }) {
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   return find_repo_root() / "tutorials" / "assets";
 }
@@ -115,9 +119,8 @@ int main(int argc, char** argv) {
 
     const fs::path root = find_repo_root();
     std::string image_arg;
-    fs::path image_path = get_arg(argc, argv, "--image", image_arg)
-                              ? fs::path(image_arg)
-                              : default_image_path();
+    fs::path image_path =
+        get_arg(argc, argv, "--image", image_arg) ? fs::path(image_arg) : default_image_path();
 
     std::string out_arg;
     const fs::path out_path = get_arg(argc, argv, "--out", out_arg)
@@ -126,8 +129,7 @@ int main(int argc, char** argv) {
     if (!out_path.parent_path().empty()) {
       std::error_code mkdir_ec;
       fs::create_directories(out_path.parent_path(), mkdir_ec);
-      require(!mkdir_ec, "failed to create output directory: " +
-                                            out_path.parent_path().string());
+      require(!mkdir_ec, "failed to create output directory: " + out_path.parent_path().string());
     }
 
     simaai::neat::Session p;

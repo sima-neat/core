@@ -18,7 +18,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -42,9 +43,11 @@ void step(const std::string& name, const std::string& detail = {}) {
 
 void check(const std::string& name, bool cond, const std::string& detail = {}) {
   std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
-  if (!detail.empty()) std::cout << " (" << detail << ")";
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
   std::cout << "\n";
-  if (!cond) throw std::runtime_error("check failed: " + name);
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
 }
 
 void why(const std::string& detail) {
@@ -70,14 +73,19 @@ void print_signature(std::initializer_list<std::pair<std::string, std::string>> 
   for (const char* key : kRequired) {
     bool found = false;
     for (const auto& kv : values) {
-      if (kv.first == key) { found = true; break; }
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
     }
-    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
   }
   std::cout << "SIGNATURE {";
   bool first = true;
   for (const auto& kv : values) {
-    if (!first) std::cout << ",";
+    if (!first)
+      std::cout << ",";
     std::cout << kv.first << "=" << kv.second;
     first = false;
   }
@@ -189,12 +197,10 @@ int main(int argc, char** argv) {
     step("input_contract", "build graph and push one deterministic tensor sample");
     step("run_mode_choice", "prefer pipeline+stage hybrid and fallback to stage-only");
     why("understand the contract first: inputs, run mode, and outputs");
-    tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
+    tradeoff("prefer deterministic samples and stable contracts over production realism");
     failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     std::string flow = "pipeline_plus_stage";
     simaai::neat::Sample out;
@@ -206,8 +212,7 @@ int main(int argc, char** argv) {
     }
 
     step("output_interpretation", "validate stream/frame metadata after traversal");
-    check("stream_id_present", !out.stream_id.empty(),
-                       "stream id should not be empty");
+    check("stream_id_present", !out.stream_id.empty(), "stream id should not be empty");
     check("frame_id_stamped", out.frame_id >= 0, "stamp stage should assign id");
 
     print_signature({

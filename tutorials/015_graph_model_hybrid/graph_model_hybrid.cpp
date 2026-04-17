@@ -19,7 +19,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -53,9 +54,11 @@ void step(const std::string& name, const std::string& detail = {}) {
 
 void check(const std::string& name, bool cond, const std::string& detail = {}) {
   std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
-  if (!detail.empty()) std::cout << " (" << detail << ")";
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
   std::cout << "\n";
-  if (!cond) throw std::runtime_error("check failed: " + name);
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
 }
 
 void why(const std::string& detail) {
@@ -81,14 +84,19 @@ void print_signature(std::initializer_list<std::pair<std::string, std::string>> 
   for (const char* key : kRequired) {
     bool found = false;
     for (const auto& kv : values) {
-      if (kv.first == key) { found = true; break; }
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
     }
-    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
   }
   std::cout << "SIGNATURE {";
   bool first = true;
   for (const auto& kv : values) {
-    if (!first) std::cout << ",";
+    if (!first)
+      std::cout << ",";
     std::cout << kv.first << "=" << kv.second;
     first = false;
   }
@@ -103,7 +111,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -111,7 +120,8 @@ std::filesystem::path find_repo_root() {
 
 std::filesystem::path first_existing(std::initializer_list<std::filesystem::path> candidates) {
   for (const auto& c : candidates) {
-    if (std::filesystem::exists(c)) return c;
+    if (std::filesystem::exists(c))
+      return c;
   }
   return {};
 }
@@ -252,23 +262,19 @@ int main(int argc, char** argv) {
 
     const fs::path root = find_repo_root();
     std::string mpk_arg;
-    const fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg)
-                                  ? fs::path(mpk_arg)
-                                  : first_existing({
-                                        default_yolo_mpk(),
-                                        default_resnet_mpk(),
-                                    });
+    const fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg) ? fs::path(mpk_arg)
+                                                                    : first_existing({
+                                                                          default_yolo_mpk(),
+                                                                          default_resnet_mpk(),
+                                                                      });
 
     step("input_contract", "model-hybrid stage consumes tensor-shaped samples");
-    step("run_mode_choice",
-                      "use stage-model node when MPK exists, else fallback stage");
+    step("run_mode_choice", "use stage-model node when MPK exists, else fallback stage");
     why("understand the contract first: inputs, run mode, and outputs");
-    tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
+    tradeoff("prefer deterministic samples and stable contracts over production realism");
     failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     std::string flow = "stage_fallback";
     simaai::neat::Sample out;
@@ -283,12 +289,10 @@ int main(int argc, char** argv) {
       std::tie(flow, out) = run_stage_fallback();
     }
 
-    step("output_interpretation",
-                      "inspect output rank to reason about stage boundaries");
+    step("output_interpretation", "inspect output rank to reason about stage boundaries");
     check("output_kind_tensor", out.kind == simaai::neat::SampleKind::Tensor,
-                       "hybrid stage should emit tensor sample");
-    check("output_tensor_present", out.tensor.has_value(),
-                       "tensor payload must exist");
+          "hybrid stage should emit tensor sample");
+    check("output_tensor_present", out.tensor.has_value(), "tensor payload must exist");
 
     print_signature({
         {"tutorial", "015"},

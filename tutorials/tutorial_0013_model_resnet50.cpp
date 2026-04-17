@@ -25,7 +25,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -62,7 +63,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -72,13 +74,15 @@ std::filesystem::path find_asset_root() {
   namespace fs = std::filesystem;
   if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
     fs::path p{env};
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   for (const fs::path& p : {
            fs::path{"/usr/share/sima-neat/tutorials/assets"},
            fs::path{"/neat-resources/core-src/tutorials/assets"},
        }) {
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   return find_repo_root() / "tutorials" / "assets";
 }
@@ -119,17 +123,15 @@ int main(int argc, char** argv) {
     const fs::path root = find_repo_root();
 
     std::string model_arg;
-    fs::path model_path = get_arg(argc, argv, "--model", model_arg)
-                              ? fs::path(model_arg)
-                              : default_model_path(root);
+    fs::path model_path =
+        get_arg(argc, argv, "--model", model_arg) ? fs::path(model_arg) : default_model_path(root);
     if (model_path.empty() || !fs::exists(model_path)) {
       return skip("missing ResNet50 MPK (pass --model)");
     }
 
     std::string image_arg;
-    fs::path image_path = get_arg(argc, argv, "--image", image_arg)
-                              ? fs::path(image_arg)
-                              : default_image_path();
+    fs::path image_path =
+        get_arg(argc, argv, "--image", image_arg) ? fs::path(image_arg) : default_image_path();
     if (!fs::exists(image_path)) {
       return skip("missing image (pass --image)");
     }

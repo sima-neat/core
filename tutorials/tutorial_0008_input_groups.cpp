@@ -8,7 +8,6 @@
 #include "neat/session.h"
 #include "neat/node_groups.h"
 
-
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -24,7 +23,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -73,7 +73,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -83,13 +84,15 @@ std::filesystem::path find_asset_root() {
   namespace fs = std::filesystem;
   if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
     fs::path p{env};
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   for (const fs::path& p : {
            fs::path{"/usr/share/sima-neat/tutorials/assets"},
            fs::path{"/neat-resources/core-src/tutorials/assets"},
        }) {
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   return find_repo_root() / "tutorials" / "assets";
 }

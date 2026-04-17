@@ -9,7 +9,6 @@
 
 #include "neat.h"
 
-
 #include <opencv2/core.hpp>
 
 #include <iostream>
@@ -27,7 +26,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -56,7 +56,8 @@ void print_common_flags(std::ostream& os) {
 }
 
 void require(bool ok, const std::string& msg) {
-  if (!ok) throw std::runtime_error(msg);
+  if (!ok)
+    throw std::runtime_error(msg);
 }
 
 } // namespace

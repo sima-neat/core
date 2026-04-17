@@ -9,7 +9,6 @@
 #include "neat/nodes.h"
 #include "gst/GstHelpers.h"
 
-
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -27,7 +26,8 @@ namespace {
 
 bool has_flag(int argc, char** argv, const std::string& key) {
   for (int i = 1; i < argc; ++i) {
-    if (key == argv[i]) return true;
+    if (key == argv[i])
+      return true;
   }
   return false;
 }
@@ -68,7 +68,8 @@ std::filesystem::path find_repo_root() {
         fs::exists(cur / "tests")) {
       return cur;
     }
-    if (!cur.has_parent_path()) break;
+    if (!cur.has_parent_path())
+      break;
     cur = cur.parent_path();
   }
   return fs::current_path();
@@ -78,13 +79,15 @@ std::filesystem::path find_asset_root() {
   namespace fs = std::filesystem;
   if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
     fs::path p{env};
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   for (const fs::path& p : {
            fs::path{"/usr/share/sima-neat/tutorials/assets"},
            fs::path{"/neat-resources/core-src/tutorials/assets"},
        }) {
-    if (fs::exists(p)) return p;
+    if (fs::exists(p))
+      return p;
   }
   return find_repo_root() / "tutorials" / "assets";
 }
@@ -133,9 +136,8 @@ int main(int argc, char** argv) {
     }
 
     std::string image_arg;
-    fs::path image_path = get_arg(argc, argv, "--image", image_arg)
-                              ? fs::path(image_arg)
-                              : default_image_path();
+    fs::path image_path =
+        get_arg(argc, argv, "--image", image_arg) ? fs::path(image_arg) : default_image_path();
     if (!fs::exists(image_path)) {
       return skip("missing image for RTSP server");
     }
@@ -143,8 +145,7 @@ int main(int argc, char** argv) {
     if (!simaai::neat::element_exists("appsrc") || !simaai::neat::element_exists("rtph264pay") ||
         !simaai::neat::element_exists("h264parse") ||
         !simaai::neat::element_exists("neatencoder")) {
-      return skip(
-          "missing RTSP/H264 elements (appsrc/rtph264pay/h264parse/neatencoder)");
+      return skip("missing RTSP/H264 elements (appsrc/rtph264pay/h264parse/neatencoder)");
     }
 
     const int port = parse_int_arg(argc, argv, "--port", 8554);
