@@ -189,6 +189,7 @@ jobs:
           name: neat-artifacts-standard
           path: _work/upload-artifacts/*
           if-no-files-found: error
+          retention-days: 1
 
   build-fuzz:
     if: needs.resolve-mode.outputs.build_mode == 'fuzz'
@@ -245,6 +246,7 @@ jobs:
           name: neat-artifacts-fuzz
           path: _work/upload-artifacts/*
           if-no-files-found: error
+          retention-days: 1
 
   publish-standard:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
@@ -466,3 +468,67 @@ jobs:
           echo
           echo "Building docs..."
           ./build.sh --doc
+
+  cleanup-standard-artifacts:
+    if: ${{ always() && needs.resolve-mode.outputs.build_mode == 'standard' }}
+    runs-on: ubuntu-latest
+    needs: [resolve-mode, publish-standard, test, docs]
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete temporary standard build artifacts from this run
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const run_id = context.runId;
+            const targetNames = new Set(["neat-artifacts-standard"]);
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id,
+              per_page: 100
+            });
+            for (const artifact of artifacts) {
+              if (!targetNames.has(artifact.name)) continue;
+              core.info(`Deleting artifact ${artifact.name} (id=${artifact.id})`);
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id
+              });
+            }
+
+  cleanup-fuzz-artifacts:
+    if: ${{ always() && needs.resolve-mode.outputs.build_mode == 'fuzz' }}
+    runs-on: ubuntu-latest
+    needs: [resolve-mode, publish-fuzz]
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Delete temporary fuzz build artifacts from this run
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const run_id = context.runId;
+            const targetNames = new Set(["neat-artifacts-fuzz"]);
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              owner,
+              repo,
+              run_id,
+              per_page: 100
+            });
+            for (const artifact of artifacts) {
+              if (!targetNames.has(artifact.name)) continue;
+              core.info(`Deleting artifact ${artifact.name} (id=${artifact.id})`);
+              await github.rest.actions.deleteArtifact({
+                owner,
+                repo,
+                artifact_id: artifact.id
+              });
+            }
