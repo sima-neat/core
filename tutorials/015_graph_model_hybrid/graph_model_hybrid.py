@@ -88,11 +88,6 @@ def main(argv: list[str]) -> int:
 
   tu.step("input_contract", "graph model stage expects tensor input with model-compatible dimensions")
   tu.step("run_mode_choice", "run stage-model hybrid when MPK exists, otherwise stage fallback")
-  tu.why("understand the contract first: inputs, run mode, and outputs")
-  tu.tradeoff("prefer deterministic samples and stable contracts over production realism")
-  tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
-  tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
-
   flow = "stage_fallback"
   out = None
   if mpk and mpk.exists():

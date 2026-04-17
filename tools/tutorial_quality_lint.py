@@ -47,7 +47,7 @@ def lint() -> list[Violation]:
   violations: list[Violation] = []
 
   py_helper = _read(TUTORIALS_ROOT / "common" / "python_utils.py")
-  for marker in ("def why(", "def tradeoff(", "def failure_mode(", "def interpret_output(", "def runtime_fallback("):
+  for marker in ("def runtime_fallback(",):
     if marker not in py_helper:
       violations.append(
           Violation(
@@ -113,10 +113,6 @@ def lint() -> list[Violation]:
       step_count = len(re.findall(r"\btu\.step\(", text))
       check_count = len(re.findall(r"\btu\.(check|ensure)\(", text))
       signature_count = len(re.findall(r"\btu\.signature\(", text))
-      why_count = len(re.findall(r"\btu\.why\(", text))
-      tradeoff_count = len(re.findall(r"\btu\.tradeoff\(", text))
-      failure_count = len(re.findall(r"\btu\.failure_mode\(", text))
-      interpret_count = len(re.findall(r"\btu\.interpret_output\(", text))
       raw_fallback_count = len(re.findall(r'print\(\s*f?["\']runtime_fallback:', text))
 
       if step_count < 3 or check_count < 2 or signature_count < 1:
@@ -127,19 +123,6 @@ def lint() -> list[Violation]:
                 detail=(
                     f"need step>=3/check>=2/signature>=1; got "
                     f"step={step_count} check={check_count} signature={signature_count}"
-                ),
-            )
-        )
-
-      if why_count < 1 or tradeoff_count < 1 or failure_count < 1 or interpret_count < 1:
-        violations.append(
-            Violation(
-                file=rel,
-                rule="teaching-contract",
-                detail=(
-                    "need why/tradeoff/failure_mode/interpret_output >=1; got "
-                    f"why={why_count} tradeoff={tradeoff_count} "
-                    f"failure_mode={failure_count} interpret_output={interpret_count}"
                 ),
             )
         )

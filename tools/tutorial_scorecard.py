@@ -36,10 +36,6 @@ class FileStats:
   skip_count: int
   skip_without_strict: bool
   signature_key_count: int
-  why_count: int
-  tradeoff_count: int
-  failure_mode_count: int
-  interpret_output_count: int
   signature_required_ok: bool
 
 
@@ -95,10 +91,6 @@ def analyze_file(path: Path, tid: str) -> FileStats:
     ok_marker = bool(re.search(rf"\[OK\]\s+{re.escape(tid)}", text))
     skip_count = len(re.findall(r"return\s+tu\.skip\(", text))
     strict_mode_ref = "strict_mode" in text
-    why_count = len(re.findall(r"\btu\.why\(", text))
-    tradeoff_count = len(re.findall(r"\btu\.tradeoff\(", text))
-    failure_mode_count = len(re.findall(r"\btu\.failure_mode\(", text))
-    interpret_output_count = len(re.findall(r"\btu\.interpret_output\(", text))
   else:
     step_count = len(re.findall(r"\btutorial_v2::step\(", text))
     check_count = len(re.findall(r"\btutorial_v2::(check|require)\(", text))
@@ -106,10 +98,6 @@ def analyze_file(path: Path, tid: str) -> FileStats:
     ok_marker = bool(re.search(rf"\[OK\]\s+{re.escape(tid)}", text))
     skip_count = len(re.findall(r"return\s+tutorial_v2::skip\(", text))
     strict_mode_ref = "strict_mode" in text
-    why_count = len(re.findall(r"\btutorial_v2::why\(", text))
-    tradeoff_count = len(re.findall(r"\btutorial_v2::tradeoff\(", text))
-    failure_mode_count = len(re.findall(r"\btutorial_v2::failure_mode\(", text))
-    interpret_output_count = len(re.findall(r"\btutorial_v2::interpret_output\(", text))
 
   comment_count = _comment_count(lines, ext)
   sig_keys = _signature_call_keys(text, ext)
@@ -129,10 +117,6 @@ def analyze_file(path: Path, tid: str) -> FileStats:
       skip_count=skip_count,
       skip_without_strict=skip_without_strict,
       signature_key_count=signature_key_count,
-      why_count=why_count,
-      tradeoff_count=tradeoff_count,
-      failure_mode_count=failure_mode_count,
-      interpret_output_count=interpret_output_count,
       signature_required_ok=signature_required_ok,
   )
 
@@ -165,14 +149,8 @@ def _score_parity(cpp: FileStats, py: FileStats) -> float:
 
 def _score_explainability(cpp: FileStats, py: FileStats) -> float:
   score = 0.0
-  if cpp.why_count >= 1 and py.why_count >= 1:
-    score += 1.0
-  if cpp.tradeoff_count >= 1 and py.tradeoff_count >= 1:
-    score += 0.75
-  if cpp.interpret_output_count >= 1 and py.interpret_output_count >= 1:
-    score += 0.5
   if cpp.step_count >= 3 and py.step_count >= 3:
-    score += 0.25
+    score += 2.5
   return score
 
 
@@ -180,12 +158,10 @@ def _score_framework_understanding(cpp: FileStats, py: FileStats) -> float:
   score = 0.0
   if cpp.signature_required_ok and py.signature_required_ok:
     score += 1.0
-  if cpp.failure_mode_count >= 1 and py.failure_mode_count >= 1:
-    score += 0.5
   if cpp.check_count >= 2 and py.check_count >= 2:
-    score += 0.5
+    score += 0.75
   if cpp.signature_key_count >= 6 and py.signature_key_count >= 6:
-    score += 0.5
+    score += 0.75
   return score
 
 

@@ -70,11 +70,6 @@ def main(argv: list[str]) -> int:
 
   tu.step("input_contract", "build a minimal graph and push one deterministic tensor sample")
   tu.step("run_mode_choice", "prefer pipeline+stage hybrid; fallback to stage-only if needed")
-  tu.why("understand the contract first: inputs, run mode, and outputs")
-  tu.tradeoff("prefer deterministic samples and stable contracts over production realism")
-  tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
-  tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
-
   flow = "pipeline_plus_stage"
   try:
     flow, out = run_pipeline_plus_stage()

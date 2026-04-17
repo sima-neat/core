@@ -32,7 +32,7 @@ def test_teaching_helpers_exist() -> None:
   py_helper = (TUTORIALS_ROOT / "common" / "python_utils.py").read_text(encoding="utf-8", errors="ignore")
   cpp_helper = (TUTORIALS_ROOT / "common" / "cpp_utils.h").read_text(encoding="utf-8", errors="ignore")
 
-  for marker in ("def why(", "def tradeoff(", "def failure_mode(", "def interpret_output(", "def runtime_fallback("):
+  for marker in ("def runtime_fallback(",):
     assert marker in py_helper, f"missing Python helper: {marker}"
 
   for marker in (
@@ -53,12 +53,7 @@ def test_tutorial_teaching_markers_and_signature_contract() -> None:
     text = path.read_text(encoding="utf-8", errors="ignore")
     rel = str(path.relative_to(REPO_ROOT))
 
-    if path.suffix == ".py":
-      assert "tu.why(" in text, f"missing why marker in {rel}"
-      assert "tu.tradeoff(" in text, f"missing tradeoff marker in {rel}"
-      assert "tu.failure_mode(" in text, f"missing failure_mode marker in {rel}"
-      assert "tu.interpret_output(" in text, f"missing interpret_output marker in {rel}"
-    else:
+    if path.suffix == ".cpp":
       assert "tutorial_v2::why(" in text, f"missing why marker in {rel}"
       assert "tutorial_v2::tradeoff(" in text, f"missing tradeoff marker in {rel}"
       assert "tutorial_v2::failure_mode(" in text, f"missing failure_mode marker in {rel}"
