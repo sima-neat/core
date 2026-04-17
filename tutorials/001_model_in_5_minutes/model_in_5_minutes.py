@@ -137,10 +137,6 @@ def main(argv: list[str]) -> int:
 
   tu.step("input_contract", "parse CLI and prepare ResNet50 model + local image dataloader")
   tu.step("run_mode_choice", "run synchronous inference from NumPy dataloader batches")
-  tu.why("start with one minimal model loop before introducing Session graph complexity")
-  tu.tradeoff("this chapter prioritizes clarity over maximum throughput")
-  tu.failure_mode("missing MPK/images or runtime errors should fail visibly")
-  tu.interpret_output("top1 is user-facing; signature fields are machine-facing")
   tu.step("output_contract", "emit top1 lines and a stable tutorial signature")
   tu.check("strict_mode_visible", isinstance(tu.strict_mode(), bool), "strict-mode guard is observable")
 

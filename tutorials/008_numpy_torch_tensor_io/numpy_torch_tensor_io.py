@@ -27,10 +27,6 @@ def main(argv: list[str]) -> int:
   # Why: parity/scorecard tooling relies on stable, machine-parseable checkpoints.
   tu.step("input_contract", "parse flags and establish deterministic defaults")
   tu.step("run_mode_choice", "exercise the chapter's primary runtime path")
-  tu.why("understand the contract first: inputs, run mode, and outputs")
-  tu.tradeoff("prefer deterministic samples and stable contracts over production realism")
-  tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
-  tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
   tu.step("output_contract", "emit checks and machine-parseable signature")
 # Framework map: model session graph run output contract.
   tu.check("strict_flag_available", isinstance(tu.strict_mode(), bool),

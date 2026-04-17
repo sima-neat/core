@@ -218,10 +218,6 @@ def main(argv: list[str]) -> int:
 
   tu.step("input_contract", "parse CLI and prepare ResNet50 model + local image dataloader")
   tu.step("run_mode_choice", "run async inference with producer-thread push and main-thread pull")
-  tu.why("keep chapter 002 parallel to chapter 001 so sync-vs-async is the main variable")
-  tu.tradeoff("threaded async flow improves throughput potential but adds coordination complexity")
-  tu.failure_mode("push/pull mismatches, queue stalls, or producer exceptions should fail loudly")
-  tu.interpret_output("top1 is user-facing; tput_fps and tput_contract are parity-facing")
   tu.step("output_contract", "emit top1 lines, async stats, and stable signature")
   tu.check("strict_mode_visible", isinstance(tu.strict_mode(), bool), "strict-mode guard is observable")
 

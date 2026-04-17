@@ -125,29 +125,6 @@ def step(name: str, detail: str = "") -> None:
     print(f"STEP {name}")
 
 
-def _emit(tag: str, detail: str = "") -> None:
-  if detail:
-    print(f"{tag} {detail}")
-  else:
-    print(tag)
-
-
-def why(detail: str) -> None:
-  _emit("WHY", detail)
-
-
-def tradeoff(detail: str) -> None:
-  _emit("TRADEOFF", detail)
-
-
-def failure_mode(detail: str) -> None:
-  _emit("FAILURE_MODE", detail)
-
-
-def interpret_output(detail: str) -> None:
-  _emit("INTERPRET", detail)
-
-
 def runtime_fallback(exc: BaseException) -> None:
   msg = str(exc).strip()
   if not msg:

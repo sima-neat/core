@@ -42,11 +42,6 @@ def main(argv: list[str]) -> int:
 
   tu.step("input_contract", "each stream/frame pair is tagged so scheduler fairness is observable")
   tu.step("run_mode_choice", "build a strict stage graph: stamp -> scheduler -> fanout -> join")
-  tu.why("understand the contract first: inputs, run mode, and outputs")
-  tu.tradeoff("prefer deterministic samples and stable contracts over production realism")
-  tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
-  tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
-
   # CORE LOGIC
   graph = pyneat.graph.Graph()
   stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
