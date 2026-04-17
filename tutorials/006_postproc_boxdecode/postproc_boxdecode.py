@@ -55,6 +55,11 @@ def main(argv: list[str]) -> int:
   t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
 
   # Python path: postproc/boxdecode is configured via ModelOptions and inferred in model.run().
+  # Output contract (see README.md "Output Structure"):
+  #   out.kind == SampleKind.Tensor, out.payload_tag == "BBOX",
+  #   out.tensor is a rank-1 uint8 buffer: uint32 count header + N * 24-byte
+  #   RawBox records (int32 x, y, w, h; float32 score; int32 class_id),
+  #   with (x, y, w, h) in original-image pixels.
   try:
     out = model.run(t, timeout_ms=2000)
     print(f"Output kind: {out.kind}")
