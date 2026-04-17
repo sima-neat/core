@@ -10,6 +10,7 @@ const baseUrl = process.env.DOCS_BASE_URL || "/";
 const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
 const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
 const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
+const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -78,6 +79,14 @@ const config = {
       apiKey: algoliaApiKey,
       indexName: algoliaIndexName,
     },
+    ...(docsGaMeasurementId
+      ? {
+          gtag: {
+            trackingID: docsGaMeasurementId,
+            anonymizeIP: true,
+          },
+        }
+      : {}),
   },
   customFields: {
     algoliaSearch: {

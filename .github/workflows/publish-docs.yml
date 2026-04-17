@@ -48,6 +48,7 @@ jobs:
           if [[ "$publish_target" == "preview" ]]; then
             echo "S3_BUCKET=docs-preview" >> "$GITHUB_ENV"
             echo "DOCS_URL=https://docs-preview.sima-neat.com" >> "$GITHUB_ENV"
+            echo "DOCS_GA_MEASUREMENT_ID=" >> "$GITHUB_ENV"
             echo "SHOULD_REINDEX_ALGOLIA=false" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -59,6 +60,7 @@ jobs:
 
           echo "S3_BUCKET=docs" >> "$GITHUB_ENV"
           echo "DOCS_URL=https://docs.sima-neat.com" >> "$GITHUB_ENV"
+          echo "DOCS_GA_MEASUREMENT_ID=${{ vars.DOCS_GA_MEASUREMENT_ID }}" >> "$GITHUB_ENV"
           echo "SHOULD_REINDEX_ALGOLIA=true" >> "$GITHUB_ENV"
 
       - name: Install build dependencies
@@ -70,6 +72,7 @@ jobs:
         env:
           DOCS_URL: ${{ env.DOCS_URL }}
           DOCS_BASE_URL: /
+          DOCS_GA_MEASUREMENT_ID: ${{ env.DOCS_GA_MEASUREMENT_ID }}
           DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
           DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
           DOCS_ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
