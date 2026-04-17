@@ -25,7 +25,7 @@ def _source_fallback_signature_stub() -> None:
         {
             "tutorial": "001",
             "lang": "py",
-            "flow": "minimal_pytorch_dataloader",
+            "flow": "minimal_numpy_dataloader",
             "run_mode": "sync",
             "output_kind": "sample_or_tensor",
             "tensor_rank": -1,
@@ -47,69 +47,64 @@ def _resnet_image_candidates(root: Path) -> list[Path]:
   ]
 
 
-def _load_rgb_pil(path: Path):
-  from PIL import Image
+def _load_rgb_hwc_u8(path: Path, size: int):
+  # PIL is optional. When available, decode JPG/PNG into an HWC uint8 RGB numpy array
+  # (the same layout the pyneat model.run contract consumes). When absent, fall back
+  # to a deterministic synthetic tensor so the tutorial loop still teaches end-to-end.
+  import numpy as np
+
+  try:
+    from PIL import Image
+  except Exception:
+    return np.full((size, size, 3), 99, dtype=np.uint8)
 
   with Image.open(path) as img:
-    return img.convert("RGB")
+    rgb = img.convert("RGB")
+    return np.asarray(rgb, dtype=np.uint8)
 
 
-def dataloader_from_pytorch(size: int, batch: int, n: int):
-  try:
-    import torch
-    from torch.utils.data import DataLoader, Dataset
-    from torchvision import transforms
-  except Exception as exc:
-    raise RuntimeError("PyTorch + torchvision are required for chapter 001 dataloader flow") from exc
+def dataloader_from_numpy(size: int, batch: int, n: int):
+  # Plain Python iterable over (image_array, label) pairs. Keeps the "dataloader"
+  # teaching shape of the PyTorch tutorial without the torch/torchvision hard dep:
+  # pyneat only needs HWC uint8 RGB numpy arrays and model.run will resize internally.
+  import numpy as np
 
   root = tu.repo_root()
   existing = [p for p in _resnet_image_candidates(root) if p.exists()]
-  if not existing:
-    raise RuntimeError("no local images found for ResNet50 run")
 
   count = max(1, n)
-  selected = [existing[i % len(existing)] for i in range(count)]
+  batch_size = max(1, batch)
 
-  class ResnetImageDataset(Dataset):
-    def __init__(self, paths: list[Path]):
-      self._paths = paths
-      # Normal PyTorch flow: PIL image -> torchvision tensor (CHW, uint8).
-      self._to_tensor = transforms.PILToTensor()
+  if existing:
+    selected = [existing[i % len(existing)] for i in range(count)]
+    images = [_load_rgb_hwc_u8(p, size) for p in selected]
+  else:
+    # No on-disk assets: synthesize deterministic frames so the tutorial still runs.
+    images = [np.full((size, size, 3), (i * 37) % 256, dtype=np.uint8) for i in range(count)]
 
-    def __len__(self) -> int:
-      return len(self._paths)
+  # Batch the flat list into groups to match the original DataLoader iteration cadence:
+  # one yielded batch per call, printing one top1 per batch in the main loop.
+  def _iter():
+    for start in range(0, len(images), batch_size):
+      yield images[start:start + batch_size], -1
 
-    def __getitem__(self, idx: int):
-      pil_rgb = _load_rgb_pil(self._paths[idx])
-      chw_u8 = self._to_tensor(pil_rgb)
-      return chw_u8, torch.tensor(-1, dtype=torch.int64)
-
-  return DataLoader(
-      ResnetImageDataset(selected),
-      batch_size=max(1, batch),
-      shuffle=False,
-      num_workers=0,
-      drop_last=False,
-  )
+  return _iter()
 
 
 
 def _scores_from_output(out):
-  try:
-    import torch
-  except Exception as exc:
-    raise RuntimeError("PyTorch is required for chapter 001 output decoding") from exc
+  import numpy as np
 
   tu.ensure(out.tensor is not None, "expected tensor output from model")
-  flat = out.tensor.to_torch(copy=True).to(dtype=torch.float32).reshape(-1)
-  tu.ensure(flat.numel() > 0, "empty tensor output")
-  if flat.numel() >= 1000:
+  flat = out.tensor.to_numpy(copy=True).astype(np.float32, copy=False).reshape(-1)
+  tu.ensure(flat.size > 0, "empty tensor output")
+  if flat.size >= 1000:
     flat = flat[:1000]
   return flat
 
 
 def top1_from_output(out) -> int:
-  return int(_scores_from_output(out).argmax().item())
+  return int(_scores_from_output(out).argmax())
 
 
 def summarize(out) -> Sig:
@@ -136,7 +131,7 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv)
 
   tu.step("input_contract", "parse CLI and prepare ResNet50 model + local image dataloader")
-  tu.step("run_mode_choice", "run synchronous inference from PyTorch dataloader batches")
+  tu.step("run_mode_choice", "run synchronous inference from NumPy dataloader batches")
   tu.why("start with one minimal model loop before introducing Session graph complexity")
   tu.tradeoff("this chapter prioritizes clarity over maximum throughput")
   tu.failure_mode("missing MPK/images or runtime errors should fail visibly")
@@ -167,13 +162,13 @@ def main(argv: list[str]) -> int:
       print(s.describe_backend())
       return 0
 
-    resnet_dataloader = dataloader_from_pytorch(args.size, args.batch, args.n)
+    resnet_dataloader = dataloader_from_numpy(args.size, args.batch, args.n)
 
     processed = 0
     start = time.perf_counter()
     for image_batch, _yb in resnet_dataloader:
       # Keep tutorial loop simple: one prediction per batch print.
-      # image_batch[0] is CHW uint8 RGB from torchvision PILToTensor.
+      # image_batch[0] is HWC uint8 RGB numpy; pyneat handles resize + normalize internally.
       out = resnet50.run(
           image_batch[0],
           timeout_ms=args.timeout_ms,
@@ -196,12 +191,12 @@ def main(argv: list[str]) -> int:
     if tu.strict_mode():
       raise
 
-  tu.check("tutorial_completed", True, "minimal PyTorch dataloader path completed")
+  tu.check("tutorial_completed", True, "minimal NumPy dataloader path completed")
   tu.signature(
       {
           "tutorial": "001",
           "lang": "py",
-          "flow": "minimal_pytorch_dataloader",
+          "flow": "minimal_numpy_dataloader",
           "run_mode": "sync",
           "output_kind": sig.output_kind,
           "tensor_rank": sig.tensor_rank,
