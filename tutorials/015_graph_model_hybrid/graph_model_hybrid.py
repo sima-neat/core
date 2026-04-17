@@ -44,9 +44,11 @@ def main(argv: list[str]) -> int:
   stage_opt.do_mla = False
   stage_opt.do_boxdecode = False
 
+  # CORE LOGIC
   graph = pyneat.graph.Graph()
   node_id = graph.add(pyneat.graph.nodes.stage_model_executor(stage_opt, "stage_model"))
   run = pyneat.graph.GraphSession(graph).build()
+  # END CORE LOGIC
 
   tensor_opt = model.input_appsrc_options(True)
   width = tensor_opt.width if tensor_opt.width > 0 else tensor_opt.max_width

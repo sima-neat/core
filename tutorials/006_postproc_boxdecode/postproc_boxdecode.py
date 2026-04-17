@@ -44,11 +44,13 @@ def main(argv: list[str]) -> int:
   opt.original_width = args.width
   opt.original_height = args.height
 
+  # CORE LOGIC
   model = pyneat.Model(str(args.mpk), opt)
 
   rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
   sample = model.run(tensor, timeout_ms=2000)
+  # END CORE LOGIC
 
   buf = bytes(sample.tensor.to_numpy(copy=False))
   detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0

@@ -36,6 +36,7 @@ def main(argv: list[str]) -> int:
   session.add(pyneat.nodes.input(inp))
   session.add(pyneat.nodes.output())
 
+  # CORE LOGIC
   # 1. Validate pipeline before building.
   report = session.validate()
   print(f"validate_error_code={report.error_code}")
@@ -52,6 +53,7 @@ def main(argv: list[str]) -> int:
   print(f"inputs_enqueued={stats.inputs_enqueued} outputs_pulled={stats.outputs_pulled}")
   print(f"report_size={len(run.report())}")
   print(f"diagnostics_summary={run.diagnostics_summary()}")
+  # END CORE LOGIC
   return 0
 
 

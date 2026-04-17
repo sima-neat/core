@@ -53,10 +53,14 @@ def main(argv: list[str]) -> int:
   opt.original_width = args.size
   opt.original_height = args.size
 
+  # CORE LOGIC
   model = pyneat.Model(str(args.mpk), opt)
-  image = load_image(args.image, size=args.size)
-  sample = model.run(image, timeout_ms=2000)
+  rgb = load_image(args.image, size=args.size)
+  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  sample = model.run(tensor, timeout_ms=2000)
+  # END CORE LOGIC
 
+  # The BBOX tensor is a uint32 count header followed by N 24-byte RawBox records.
   buf = bytes(sample.tensor.to_numpy(copy=False))
   detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
   print(f"detections={detections}")

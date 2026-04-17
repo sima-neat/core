@@ -27,8 +27,10 @@ def main(argv: list[str]) -> int:
   model = pyneat.Model(str(args.mpk))
 
   # Pattern A: drop the model's own session group directly into a Session.
+  # CORE LOGIC
   direct = pyneat.Session()
   direct.add(model.session())
+  # END CORE LOGIC
   print(f"direct_session_size={model.session().size()}")
 
   # Pattern B: configure the session options for an attached upstream (e.g. a camera).
@@ -39,8 +41,10 @@ def main(argv: list[str]) -> int:
   sopt.name_suffix = "_camera0"
   sopt.buffer_name = "camera0"
 
+  # CORE LOGIC
   attached = pyneat.Session()
   attached.add(model.session(sopt))
+  # END CORE LOGIC
   print(f"attached_session_built=True")
   return 0
 

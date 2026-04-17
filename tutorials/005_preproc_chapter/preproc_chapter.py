@@ -40,9 +40,11 @@ def main(argv: list[str]) -> int:
   opt.preproc.channel_mean = [0.5, 0.5, 0.5]
   opt.preproc.channel_stddev = [0.5, 0.5, 0.5]
 
+  # CORE LOGIC
   model = pyneat.Model(str(args.mpk), opt)
   preproc_group = model.preprocess()
   print(f"preproc_group_size={preproc_group.size()}")
+  # END CORE LOGIC
 
   rgb = np.full((args.size, args.size, 3), 120, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)

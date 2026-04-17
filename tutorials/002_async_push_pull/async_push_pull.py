@@ -44,9 +44,11 @@ def main(argv: list[str]) -> int:
   frame = load_image(args.image, size=224)
   model = pyneat.Model(str(args.mpk))
 
+  # CORE LOGIC
   session = pyneat.Session()
   session.add(model.session())
   run = session.build(frame, pyneat.RunMode.Async)
+  # END CORE LOGIC
 
   # Producer thread pushes frames; main thread pulls predictions.
   def producer() -> None:

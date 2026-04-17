@@ -33,6 +33,7 @@ def make_rgb_sample():
 def main(argv: list[str]) -> int:
   argparse.ArgumentParser(description=__doc__).parse_args(argv[1:])
 
+  # CORE LOGIC
   graph = pyneat.graph.Graph()
   pipe = graph.add(pyneat.graph.nodes.pipeline_node(pyneat.nodes.video_convert(), "convert"))
   stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
@@ -42,6 +43,7 @@ def main(argv: list[str]) -> int:
   run.push(pipe, make_rgb_sample())
   out = run.pull(stamp, 2000)
   run.stop()
+  # END CORE LOGIC
 
   print(f"stream_id={out.stream_id} frame_id={out.frame_id}")
   return 0

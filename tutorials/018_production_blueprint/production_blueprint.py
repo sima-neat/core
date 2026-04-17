@@ -30,6 +30,7 @@ def main(argv: list[str]) -> int:
   rgb = np.full((224, 224, 3), 123, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
+  # CORE LOGIC
   mopt = pyneat.ModelOptions()
   mopt.input_max_width = int(tensor.shape[1])
   mopt.input_max_height = int(tensor.shape[0])
@@ -56,6 +57,7 @@ def main(argv: list[str]) -> int:
     if runner.pull(timeout_ms=2000) is not None:
       ok += 1
   runner.close()
+  # END CORE LOGIC
 
   print(f"iters={args.iters} ok={ok}")
   return 0

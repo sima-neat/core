@@ -50,9 +50,11 @@ def main(argv: list[str]) -> int:
   opt.preproc.channel_mean = [0.485, 0.456, 0.406]
   opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 
+  # CORE LOGIC
   model = pyneat.Model(str(args.mpk), opt)
   image = load_image(args.image, size=args.size)
   sample = model.run(image, timeout_ms=2000)
+  # END CORE LOGIC
 
   top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
   print(f"top1={top1}")

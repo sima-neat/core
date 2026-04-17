@@ -45,6 +45,7 @@ def main(argv: list[str]) -> int:
   seed = make_fp32_tensor(args.width, args.height, 0.0)
   run = session.build(seed, pyneat.RunMode.Sync)
 
+  # CORE LOGIC
   bundle = pyneat.Sample()
   bundle.kind = pyneat.SampleKind.Bundle
   bundle.fields = [
@@ -54,6 +55,7 @@ def main(argv: list[str]) -> int:
 
   run.push(bundle)
   out = run.pull(timeout_ms=1000)
+  # END CORE LOGIC
 
   print(f"bundle_fields={len(out.fields)}")
   for field in out.fields:

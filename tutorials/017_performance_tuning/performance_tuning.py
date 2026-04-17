@@ -48,6 +48,7 @@ def main(argv: list[str]) -> int:
   session.add(pyneat.nodes.input(inp))
   session.add(pyneat.nodes.output())
 
+  # CORE LOGIC
   opt = pyneat.RunOptions()
   opt.queue_depth = args.queue
   opt.overflow_policy = getattr(pyneat.OverflowPolicy, DROP_MODES[args.drop])
@@ -65,6 +66,7 @@ def main(argv: list[str]) -> int:
 
   stats = run.stats()
   input_stats = run.input_stats()
+  # END CORE LOGIC
   print(f"inputs_enqueued={stats.inputs_enqueued}")
   print(f"inputs_dropped={stats.inputs_dropped}")
   print(f"outputs_pulled={pulled}")
