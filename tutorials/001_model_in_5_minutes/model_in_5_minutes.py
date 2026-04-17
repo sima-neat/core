@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
+"""Run a ResNet-50 model on an image in three lines of pyneat.
+
+Usage:
+  python3 model_in_5_minutes.py --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
+"""
 from __future__ import annotations
 
 import argparse
-import json
-import os
 import sys
-import time
-from dataclasses import dataclass
 from pathlib import Path
 
 try:
@@ -14,219 +15,34 @@ try:
 except ImportError:
   sys.exit(
       "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
-      "Run: source ~/pyneat/bin/activate\n"
-      "If the venv does not exist yet, follow the installation guide."
+      "Run: source ~/pyneat/bin/activate"
   )
 
-
-@dataclass
-class Sig:
-  output_kind: str = "sample_or_tensor"
-  tensor_rank: int = -1
-  field_count: int = -1
+import numpy as np
+from PIL import Image
 
 
-def _source_fallback_signature_stub() -> None:
-  # Source-fallback signature for tutorial parity tests when runtime output is unavailable.
-  if False:
-    print("SIGNATURE " + json.dumps({
-            "tutorial": "001",
-            "lang": "py",
-            "flow": "minimal_numpy_dataloader",
-            "run_mode": "sync",
-            "output_kind": "sample_or_tensor",
-            "tensor_rank": -1,
-            "field_count": -1,
-            "tput_contract": -1,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    ))
-
-
-
-
-def _resnet_image_candidates(root: Path) -> list[Path]:
-  return [
-      root / "tests" / "assets" / "preproc_dynamic" / "fronalpstock_1330.jpg",
-      root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg",
-      root / "tests" / "assets" / "preproc_dynamic" / "lichtenstein_512.png",
-      root / "tmp" / "coco_sample.jpg",
-      root / "test.jpg",
-  ]
-
-
-def _load_rgb_hwc_u8(path: Path, size: int):
-  # PIL is optional. When available, decode JPG/PNG into an HWC uint8 RGB numpy array
-  # (the same layout the pyneat model.run contract consumes). When absent, fall back
-  # to a deterministic synthetic tensor so the tutorial loop still teaches end-to-end.
-  import numpy as np
-
-  try:
-    from PIL import Image
-  except Exception:
+def load_image(path: Path | None, size: int) -> np.ndarray:
+  if path is None:
     return np.full((size, size, 3), 99, dtype=np.uint8)
-
-  with Image.open(path) as img:
-    rgb = img.convert("RGB")
-    return np.asarray(rgb, dtype=np.uint8)
-
-
-def dataloader_from_numpy(size: int, batch: int, n: int):
-  # Plain Python iterable over (image_array, label) pairs. Keeps the "dataloader"
-  # teaching shape of the PyTorch tutorial without the torch/torchvision hard dep:
-  # pyneat only needs HWC uint8 RGB numpy arrays and model.run will resize internally.
-  import numpy as np
-
-  root = Path(__file__).resolve().parents[2]
-  existing = [p for p in _resnet_image_candidates(root) if p.exists()]
-
-  count = max(1, n)
-  batch_size = max(1, batch)
-
-  if existing:
-    selected = [existing[i % len(existing)] for i in range(count)]
-    images = [_load_rgb_hwc_u8(p, size) for p in selected]
-  else:
-    # No on-disk assets: synthesize deterministic frames so the tutorial still runs.
-    images = [np.full((size, size, 3), (i * 37) % 256, dtype=np.uint8) for i in range(count)]
-
-  # Batch the flat list into groups to match the original DataLoader iteration cadence:
-  # one yielded batch per call, printing one top1 per batch in the main loop.
-  def _iter():
-    for start in range(0, len(images), batch_size):
-      yield images[start:start + batch_size], -1
-
-  return _iter()
-
-
-
-def _scores_from_output(out):
-  import numpy as np
-
-  assert out.tensor is not None, "expected tensor output from model"
-  flat = out.tensor.to_numpy(copy=True).astype(np.float32, copy=False).reshape(-1)
-  assert flat.size > 0, "empty tensor output"
-  if flat.size >= 1000:
-    flat = flat[:1000]
-  return flat
-
-
-def top1_from_output(out) -> int:
-  return int(_scores_from_output(out).argmax())
-
-
-def summarize(out) -> Sig:
-  try:
-    kind = str(int(out.kind))
-  except Exception:
-    kind = str(out.kind)
-
-  rank = len(out.tensor.shape) if out.tensor is not None else -1
-  return Sig(output_kind=kind, tensor_rank=rank, field_count=len(out.fields))
+  return np.asarray(Image.open(path).convert("RGB").resize((size, size)), dtype=np.uint8)
 
 
 def main(argv: list[str]) -> int:
-  _source_fallback_signature_stub()
+  ap = argparse.ArgumentParser(description=__doc__)
+  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--image", type=Path)
+  args = ap.parse_args(argv[1:])
 
-  ap = argparse.ArgumentParser()
-  ap.add_argument("--mpk", type=str, default=None)
-  ap.add_argument("--size", type=int, default=224)
-  ap.add_argument("--batch", type=int, default=1)
-  ap.add_argument("--n", type=int, default=4)
-  ap.add_argument("--timeout-ms", type=int, default=2000)
-  ap.add_argument("--expect-id", type=int, default=-1)
-  ap.add_argument("--print-gst", action="store_true")
-  args = ap.parse_args(argv)
+  # The three-line NEAT story:
+  model = pyneat.Model(str(args.mpk))
+  image = load_image(args.image, size=224)
+  sample = model.run(image, timeout_ms=2000)
 
-  strict_mode = os.getenv("SIMA_RUN_TUTORIALS_FULL") is not None
-
-  print("STEP input_contract: parse CLI and prepare ResNet50 model + local image dataloader")
-  print("STEP run_mode_choice: run synchronous inference from NumPy dataloader batches")
-  print("STEP output_contract: emit top1 lines and a stable tutorial signature")
-  print("CHECK strict_mode_visible: PASS (strict-mode guard is observable)")
-  assert isinstance(strict_mode, bool), "check failed: strict_mode_visible (strict-mode guard is observable)"
-
-  root = Path(__file__).resolve().parents[2]
-  if args.mpk:
-    mpk_path = Path(args.mpk)
-  else:
-    mpk_path = next(
-        (p for p in [
-            root / "tmp" / "resnet_50_mpk.tar.gz",
-            root / "tmp" / "resnet50_mpk.tar.gz",
-        ] if p.exists()),
-        None,
-    )
-  if not mpk_path or not mpk_path.exists():
-    print("SKIP: missing ResNet50 MPK (pass --mpk)")
-    return 0
-
-  sig = Sig()
-  tput_contract = -1
-  try:
-    # CORE LOGIC
-    # the "6-line story": model -> dataloader -> run -> top1 -> signature
-
-    opt = pyneat.ModelOptions()
-    opt.format = "RGB"
-    resnet50 = pyneat.Model(str(mpk_path), opt)
-
-    if args.print_gst:
-      s = pyneat.Session()
-      s.add(resnet50.session())
-      print(s.describe_backend())
-      return 0
-
-    resnet_dataloader = dataloader_from_numpy(args.size, args.batch, args.n)
-
-    processed = 0
-    start = time.perf_counter()
-    for image_batch, _yb in resnet_dataloader:
-      # Keep tutorial loop simple: one prediction per batch print.
-      # image_batch[0] is HWC uint8 RGB numpy; pyneat handles resize + normalize internally.
-      out = resnet50.run(
-          image_batch[0],
-          timeout_ms=args.timeout_ms,
-      )
-      pred = top1_from_output(out)
-      sig = summarize(out)
-      print(f"top1={pred}")
-      processed += 1
-      # END CORE LOGIC
-      if args.expect_id >= 0:
-        _cond = pred == args.expect_id
-        print("CHECK top1_expected_id: " + ("PASS" if _cond else "FAIL") + " (verify expected class id)")
-        assert _cond, "check failed: top1_expected_id (verify expected class id)"
-
-    elapsed = max(time.perf_counter() - start, 1e-9)
-    tput_fps = processed / elapsed
-    tput_contract = processed
-    print(f"tput_fps:        {tput_fps:.3f}")
-    print(f"tput_contract:   {tput_contract}")
-  except Exception as exc:
-    _msg = str(exc).strip() or exc.__class__.__name__
-    print(f"runtime_fallback: {_msg}")
-    if strict_mode:
-      raise
-
-  print("CHECK tutorial_completed: PASS (minimal NumPy dataloader path completed)")
-  print("SIGNATURE " + json.dumps({
-          "tutorial": "001",
-          "lang": "py",
-          "flow": "minimal_numpy_dataloader",
-          "run_mode": "sync",
-          "output_kind": sig.output_kind,
-          "tensor_rank": sig.tensor_rank,
-          "field_count": sig.field_count,
-          "tput_contract": tput_contract,
-      },
-      sort_keys=True,
-      separators=(",", ":"),
-  ))
-  print("[OK] 001_model_in_5_minutes")
+  top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
+  print(f"top1={top1}")
   return 0
 
 
 if __name__ == "__main__":
-  raise SystemExit(main(sys.argv[1:]))
+  raise SystemExit(main(sys.argv))
