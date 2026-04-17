@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate\n"
+      "If the venv does not exist yet, follow the installation guide."
+  )
 
 # Why: this chapter contrasts model-backed graph stages with deterministic fallback flow.
 # Why: learners should see identical checkpoint output even when model assets are unavailable.
@@ -53,9 +56,13 @@ def run_model_hybrid(mpk: Path):
     width, height, depth = 8, 8, 3
 
   inp = make_fp32_sample(width, height, depth)
-  tu.check("graph_push", run.push(node_id, inp), "sample accepted by stage-model node")
+  _pushed = run.push(node_id, inp)
+  print("CHECK graph_push: " + ("PASS" if _pushed else "FAIL") + " (sample accepted by stage-model node)")
+  assert _pushed, "check failed: graph_push (sample accepted by stage-model node)"
   out = run.pull(node_id, 2000)
-  tu.check("graph_pull", out is not None, "stage-model node produced output")
+  _pulled = out is not None
+  print("CHECK graph_pull: " + ("PASS" if _pulled else "FAIL") + " (stage-model node produced output)")
+  assert _pulled, "check failed: graph_pull (stage-model node produced output)"
   run.stop()
   # END CORE LOGIC
   return "model_stage", out
@@ -68,9 +75,13 @@ def run_stage_fallback():
   run = pyneat.graph.GraphSession(graph).build()
 
   inp = make_fp32_sample(8, 8, 3)
-  tu.check("graph_push", run.push(node_id, inp), "sample accepted by fallback stage")
+  _pushed = run.push(node_id, inp)
+  print("CHECK graph_push: " + ("PASS" if _pushed else "FAIL") + " (sample accepted by fallback stage)")
+  assert _pushed, "check failed: graph_push (sample accepted by fallback stage)"
   out = run.pull(node_id, 2000)
-  tu.check("graph_pull", out is not None, "fallback stage produced output")
+  _pulled = out is not None
+  print("CHECK graph_pull: " + ("PASS" if _pulled else "FAIL") + " (fallback stage produced output)")
+  assert _pulled, "check failed: graph_pull (fallback stage produced output)"
   run.stop()
   # END CORE LOGIC
   return "stage_fallback", out
@@ -78,16 +89,34 @@ def run_stage_fallback():
 
 def main(argv: list[str]) -> int:
 
-  if tu.has_flag(argv, "--help"):
+  if "--help" in argv:
     print(f"Usage: {argv[0]} [--mpk <path>]")
     return 0
 
-  root = tu.repo_root()
-  mpk_arg = tu.get_arg(argv, "--mpk")
-  mpk = Path(mpk_arg) if mpk_arg else tu.first_existing([tu.default_yolo_mpk(root), tu.default_resnet_mpk(root)])
+  root = Path(__file__).resolve().parents[2]
+  mpk_arg = next((argv[i + 1] for i in range(1, len(argv) - 1) if argv[i] == "--mpk"), None)
+  if mpk_arg:
+    mpk = Path(mpk_arg)
+  else:
+    yolo = next(
+        (p for p in [
+            root / "tmp" / "yolo_v8s_mpk.tar.gz",
+            root / "tmp" / "yolov8s_mpk.tar.gz",
+            root / "tmp" / "yolo_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
+    resnet = next(
+        (p for p in [
+            root / "tmp" / "resnet_50_mpk.tar.gz",
+            root / "tmp" / "resnet50_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
+    mpk = next((p for p in [yolo, resnet] if p is not None and p.exists()), None)
 
-  tu.step("input_contract", "graph model stage expects tensor input with model-compatible dimensions")
-  tu.step("run_mode_choice", "run stage-model hybrid when MPK exists, otherwise stage fallback")
+  print("STEP input_contract: graph model stage expects tensor input with model-compatible dimensions")
+  print("STEP run_mode_choice: run stage-model hybrid when MPK exists, otherwise stage fallback")
   flow = "stage_fallback"
   out = None
   if mpk and mpk.exists():
@@ -99,12 +128,15 @@ def main(argv: list[str]) -> int:
   else:
     flow, out = run_stage_fallback()
 
-  tu.step("output_interpretation", "read output rank and payload shape to reason about stage boundaries")
-  tu.check("output_kind_tensor", out.kind == pyneat.SampleKind.Tensor, "hybrid stage should emit tensor sample")
-  tu.check("output_tensor_present", out.tensor is not None, "tensor payload must exist")
+  print("STEP output_interpretation: read output rank and payload shape to reason about stage boundaries")
+  _cond = out.kind == pyneat.SampleKind.Tensor
+  print("CHECK output_kind_tensor: " + ("PASS" if _cond else "FAIL") + " (hybrid stage should emit tensor sample)")
+  assert _cond, "check failed: output_kind_tensor (hybrid stage should emit tensor sample)"
+  _cond = out.tensor is not None
+  print("CHECK output_tensor_present: " + ("PASS" if _cond else "FAIL") + " (tensor payload must exist)")
+  assert _cond, "check failed: output_tensor_present (tensor payload must exist)"
 
-  tu.signature(
-      {
+  print("SIGNATURE " + json.dumps({
           "tutorial": "015",
           "lang": "py",
           "flow": flow,
@@ -112,8 +144,10 @@ def main(argv: list[str]) -> int:
           "output_kind": 0,
           "tensor_rank": 3,
           "field_count": 0,
-      }
-  )
+      },
+      sort_keys=True,
+      separators=(",", ":"),
+  ))
 
   print(f"Output rank: {len(out.tensor.shape) if out.tensor is not None else 0}")
   print("[OK] 015_graph_model_hybrid")

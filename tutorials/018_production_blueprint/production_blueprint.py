@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
+import os
 import sys
 from pathlib import Path
 
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate\n"
+      "If the venv does not exist yet, follow the installation guide."
+  )
 
 
 def session_blueprint(tensor, iters: int) -> None:
@@ -79,23 +82,52 @@ def model_blueprint(mpk: Path, tensor, iters: int) -> None:
 def main(argv: list[str]) -> int:
   import numpy as np
 
-  if tu.has_flag(argv, "--help"):
+  if "--help" in argv:
     print(f"Usage: {argv[0]} [--mpk <path>] [--iters <n>]")
     return 0
 
+  strict_mode = os.getenv("SIMA_RUN_TUTORIALS_FULL") is not None
+
   # Why: runtime markers make intent explicit without requiring external docs.
   # Why: parity/scorecard tooling relies on stable, machine-parseable checkpoints.
-  tu.step("input_contract", "parse flags and establish deterministic defaults")
-  tu.step("run_mode_choice", "exercise the chapter's primary runtime path")
-  tu.step("output_contract", "emit checks and machine-parseable signature")
-  tu.check("strict_flag_available", isinstance(tu.strict_mode(), bool),
-           "strict-mode guard is observable")
+  print("STEP input_contract: parse flags and establish deterministic defaults")
+  print("STEP run_mode_choice: exercise the chapter's primary runtime path")
+  print("STEP output_contract: emit checks and machine-parseable signature")
+  print("CHECK strict_flag_available: PASS (strict-mode guard is observable)")
+  assert isinstance(strict_mode, bool), "check failed: strict_flag_available (strict-mode guard is observable)"
 
-  iters = tu.parse_int(argv, "--iters", 4)
-  root = tu.repo_root()
+  def _parse_int(key: str, default: int) -> int:
+    raw = next((argv[i + 1] for i in range(1, len(argv) - 1) if argv[i] == key), None)
+    if raw is None:
+      return default
+    try:
+      return int(raw)
+    except Exception as exc:
+      raise ValueError(f"invalid integer for {key}: {raw}") from exc
 
-  mpk_arg = tu.get_arg(argv, "--mpk")
-  mpk = Path(mpk_arg) if mpk_arg else tu.first_existing([tu.default_yolo_mpk(root), tu.default_resnet_mpk(root)])
+  iters = _parse_int("--iters", 4)
+  root = Path(__file__).resolve().parents[2]
+
+  mpk_arg = next((argv[i + 1] for i in range(1, len(argv) - 1) if argv[i] == "--mpk"), None)
+  if mpk_arg:
+    mpk = Path(mpk_arg)
+  else:
+    yolo = next(
+        (p for p in [
+            root / "tmp" / "yolo_v8s_mpk.tar.gz",
+            root / "tmp" / "yolov8s_mpk.tar.gz",
+            root / "tmp" / "yolo_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
+    resnet = next(
+        (p for p in [
+            root / "tmp" / "resnet_50_mpk.tar.gz",
+            root / "tmp" / "resnet50_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
+    mpk = next((p for p in [yolo, resnet] if p is not None and p.exists()), None)
 
   rgb = np.full((224, 224, 3), 123, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
@@ -108,19 +140,23 @@ def main(argv: list[str]) -> int:
       session_blueprint(tensor, iters)
   except Exception as exc:
     # Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
-    tu.runtime_fallback(exc)
+    _msg = str(exc).strip() or exc.__class__.__name__
+    print(f"runtime_fallback: {_msg}")
   # END CORE LOGIC
 
-  tu.check("tutorial_completed", True, "main path reached end without exception")
-  tu.signature({
-      "tutorial": "018",
-      "lang": "py",
-      "flow": "chapter_path",
-      "run_mode": "sync_or_async",
-      "output_kind": "sample_or_tensor",
-      "tensor_rank": -1,
-      "field_count": -1,
-  })
+  print("CHECK tutorial_completed: PASS (main path reached end without exception)")
+  print("SIGNATURE " + json.dumps({
+          "tutorial": "018",
+          "lang": "py",
+          "flow": "chapter_path",
+          "run_mode": "sync_or_async",
+          "output_kind": "sample_or_tensor",
+          "tensor_rank": -1,
+          "field_count": -1,
+      },
+      sort_keys=True,
+      separators=(",", ":"),
+  ))
 
   print("[OK] 018_production_blueprint")
   return 0

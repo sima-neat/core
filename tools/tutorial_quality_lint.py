@@ -35,7 +35,7 @@ def _read(path: Path) -> str:
 def _signature_keys(text: str, suffix: str) -> set[str]:
   keys: set[str] = set()
   if suffix == ".py":
-    for match in re.finditer(r"tu\.signature\(\s*(\{.*?\})\s*\)", text, flags=re.S):
+    for match in re.finditer(r'print\("SIGNATURE " \+ json\.dumps\(\s*(\{.*?\})', text, flags=re.S):
       keys.update(re.findall(r'["\']([A-Za-z0-9_]+)["\']\s*:', match.group(1)))
   else:
     for match in re.finditer(r"tutorial_v2::print_signature\(\{(.*?)\}\);", text, flags=re.S):
@@ -45,26 +45,6 @@ def _signature_keys(text: str, suffix: str) -> set[str]:
 
 def lint() -> list[Violation]:
   violations: list[Violation] = []
-
-  py_helper = _read(TUTORIALS_ROOT / "common" / "python_utils.py")
-  for marker in ("def runtime_fallback(",):
-    if marker not in py_helper:
-      violations.append(
-          Violation(
-              file="tutorials/common/python_utils.py",
-              rule="teaching-helper",
-              detail=f"missing helper marker: {marker}",
-          )
-      )
-
-  if "raise ValueError" not in py_helper:
-    violations.append(
-        Violation(
-            file="tutorials/common/python_utils.py",
-            rule="strict-parse",
-            detail="parse helpers must raise on invalid CLI values",
-        )
-    )
 
   cpp_helper = _read(TUTORIALS_ROOT / "common" / "cpp_utils.h")
   for marker in (
@@ -110,10 +90,9 @@ def lint() -> list[Violation]:
       )
 
     if path.suffix == ".py":
-      step_count = len(re.findall(r"\btu\.step\(", text))
-      check_count = len(re.findall(r"\btu\.(check|ensure)\(", text))
-      signature_count = len(re.findall(r"\btu\.signature\(", text))
-      raw_fallback_count = len(re.findall(r'print\(\s*f?["\']runtime_fallback:', text))
+      step_count = len(re.findall(r'print\(f?"STEP ', text))
+      check_count = len(re.findall(r'print\(f?"CHECK ', text))
+      signature_count = len(re.findall(r'print\("SIGNATURE " \+ json\.dumps', text))
 
       if step_count < 3 or check_count < 2 or signature_count < 1:
         violations.append(
@@ -127,16 +106,7 @@ def lint() -> list[Violation]:
             )
         )
 
-      if raw_fallback_count > 0:
-        violations.append(
-            Violation(
-                file=rel,
-                rule="fallback-helper",
-                detail="use tu.runtime_fallback(...) instead of raw runtime_fallback print",
-            )
-        )
-
-      if tid in {"014", "015", "016"} and "tu.skip(" in text:
+      if tid in {"014", "015", "016"} and re.search(r'print\(f?"SKIP:', text):
         violations.append(
             Violation(
                 file=rel,

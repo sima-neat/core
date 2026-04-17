@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import threading
 import time
@@ -11,10 +13,11 @@ from pathlib import Path
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate\n"
+      "If the venv does not exist yet, follow the installation guide."
+  )
 
 
 @dataclass
@@ -27,8 +30,7 @@ class Sig:
 def _source_fallback_signature_stub() -> None:
   # Source-fallback signature for parity tooling if runtime output is unavailable.
   if False:
-    tu.signature(
-        {
+    print("SIGNATURE " + json.dumps({
             "tutorial": "002",
             "lang": "py",
             "flow": "minimal_pytorch_dataloader_async_threaded",
@@ -37,8 +39,10 @@ def _source_fallback_signature_stub() -> None:
             "tensor_rank": -1,
             "field_count": -1,
             "tput_contract": -1,
-        }
-    )
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ))
 
 
 def build_model_options():
@@ -72,7 +76,7 @@ def dataloader_from_pytorch(size: int, batch: int, n: int):
   except Exception as exc:
     raise RuntimeError("PyTorch + torchvision are required for chapter 002 dataloader flow") from exc
 
-  root = tu.repo_root()
+  root = Path(__file__).resolve().parents[2]
   existing = [p for p in _resnet_image_candidates(root) if p.exists()]
   if not existing:
     raise RuntimeError("no local images found for ResNet50 run")
@@ -111,9 +115,9 @@ def _scores_from_output(out):
   except Exception as exc:
     raise RuntimeError("PyTorch is required for chapter 002 output decoding") from exc
 
-  tu.ensure(out.tensor is not None, "expected tensor output from model")
+  assert out.tensor is not None, "expected tensor output from model"
   flat = out.tensor.to_torch(copy=True).to(dtype=torch.float32).reshape(-1)
-  tu.ensure(flat.numel() > 0, "empty tensor output")
+  assert flat.numel() > 0, "empty tensor output"
   if flat.numel() >= 1000:
     flat = flat[:1000]
   return flat
@@ -137,7 +141,7 @@ def collect_first_images(resnet_dataloader):
   images = []
   for image_batch, _yb in resnet_dataloader:
     images.append(image_batch[0])
-  tu.ensure(images, "no images available for async run")
+  assert images, "no images available for async run"
   return images
 
 
@@ -153,7 +157,7 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
     try:
       for image in images:
         # CORE LOGIC
-        tu.ensure(run.push(image), "push failed")
+        assert run.push(image), "push failed"
         with pushed_lock:
           pushed += 1
         # END CORE LOGIC
@@ -178,7 +182,9 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
       print(f"top1={pred}")
 
       if expect_id >= 0:
-        tu.check("top1_expected_id", pred == expect_id, "verify expected class id")
+        _cond = pred == expect_id
+        print("CHECK top1_expected_id: " + ("PASS" if _cond else "FAIL") + " (verify expected class id)")
+        assert _cond, "check failed: top1_expected_id (verify expected class id)"
       continue
 
     with pushed_lock:
@@ -186,7 +192,7 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
     if producer_done.is_set() and pulled >= pushed_now:
       break
   # END CORE LOGIC
-  
+
   producer_thread.join()
   if producer_error:
     raise producer_error[0]
@@ -194,9 +200,8 @@ def run_async_inference(run, images, timeout_ms: int, expect_id: int):
   with pushed_lock:
     pushed_final = pushed
 
-  tu.ensure(
-      pulled == pushed_final,
-      f"async output count mismatch: pulled={pulled}, pushed={pushed_final}",
+  assert pulled == pushed_final, (
+      f"async output count mismatch: pulled={pulled}, pushed={pushed_final}"
   )
   elapsed = max(time.perf_counter() - start, 1e-9)
   return pushed_final, pulled, sig, elapsed
@@ -216,15 +221,28 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--print-gst", action="store_true")
   args = ap.parse_args(argv)
 
-  tu.step("input_contract", "parse CLI and prepare ResNet50 model + local image dataloader")
-  tu.step("run_mode_choice", "run async inference with producer-thread push and main-thread pull")
-  tu.step("output_contract", "emit top1 lines, async stats, and stable signature")
-  tu.check("strict_mode_visible", isinstance(tu.strict_mode(), bool), "strict-mode guard is observable")
+  strict_mode = os.getenv("SIMA_RUN_TUTORIALS_FULL") is not None
 
-  root = tu.repo_root()
-  mpk_path = Path(args.mpk) if args.mpk else tu.default_resnet_mpk(root)
+  print("STEP input_contract: parse CLI and prepare ResNet50 model + local image dataloader")
+  print("STEP run_mode_choice: run async inference with producer-thread push and main-thread pull")
+  print("STEP output_contract: emit top1 lines, async stats, and stable signature")
+  print("CHECK strict_mode_visible: PASS (strict-mode guard is observable)")
+  assert isinstance(strict_mode, bool), "check failed: strict_mode_visible (strict-mode guard is observable)"
+
+  root = Path(__file__).resolve().parents[2]
+  if args.mpk:
+    mpk_path = Path(args.mpk)
+  else:
+    mpk_path = next(
+        (p for p in [
+            root / "tmp" / "resnet_50_mpk.tar.gz",
+            root / "tmp" / "resnet50_mpk.tar.gz",
+        ] if p.exists()),
+        None,
+    )
   if not mpk_path or not mpk_path.exists():
-    return tu.skip("missing ResNet50 MPK (pass --mpk)")
+    print("SKIP: missing ResNet50 MPK (pass --mpk)")
+    return 0
 
   sig = Sig()
   tput_contract = -1
@@ -268,13 +286,13 @@ def main(argv: list[str]) -> int:
     print(f"tput_fps:        {tput_fps:.3f}")
     print(f"tput_contract:   {tput_contract}")
   except Exception as exc:
-    tu.runtime_fallback(exc)
-    if tu.strict_mode():
+    _msg = str(exc).strip() or exc.__class__.__name__
+    print(f"runtime_fallback: {_msg}")
+    if strict_mode:
       raise
 
-  tu.check("tutorial_completed", True, "async dataloader path completed")
-  tu.signature(
-      {
+  print("CHECK tutorial_completed: PASS (async dataloader path completed)")
+  print("SIGNATURE " + json.dumps({
           "tutorial": "002",
           "lang": "py",
           "flow": "minimal_pytorch_dataloader_async_threaded",
@@ -283,8 +301,10 @@ def main(argv: list[str]) -> int:
           "tensor_rank": sig.tensor_rank,
           "field_count": sig.field_count,
           "tput_contract": tput_contract,
-      }
-  )
+      },
+      sort_keys=True,
+      separators=(",", ":"),
+  ))
 
   print("[OK] 002_async_push_pull")
   return 0

@@ -71,7 +71,7 @@ def _comment_count(lines: Iterable[str], ext: str) -> int:
 def _signature_call_keys(text: str, ext: str) -> set[str]:
   keys: set[str] = set()
   if ext == ".py":
-    for match in re.finditer(r"tu\.signature\(\s*(\{.*?\})\s*\)", text, flags=re.S):
+    for match in re.finditer(r'print\("SIGNATURE " \+ json\.dumps\(\s*(\{.*?\})', text, flags=re.S):
       keys.update(re.findall(r'["\']([A-Za-z0-9_]+)["\']\s*:', match.group(1)))
   else:
     for match in re.finditer(r"tutorial_v2::print_signature\(\{(.*?)\}\);", text, flags=re.S):
@@ -85,11 +85,11 @@ def analyze_file(path: Path, tid: str) -> FileStats:
   ext = path.suffix
 
   if ext == ".py":
-    step_count = len(re.findall(r"\btu\.step\(", text))
-    check_count = len(re.findall(r"\btu\.(check|ensure)\(", text))
-    signature_count = len(re.findall(r"\btu\.signature\(", text))
+    step_count = len(re.findall(r'print\(f?"STEP ', text))
+    check_count = len(re.findall(r'print\(f?"CHECK ', text))
+    signature_count = len(re.findall(r'print\("SIGNATURE " \+ json\.dumps', text))
     ok_marker = bool(re.search(rf"\[OK\]\s+{re.escape(tid)}", text))
-    skip_count = len(re.findall(r"return\s+tu\.skip\(", text))
+    skip_count = len(re.findall(r'print\(f?"SKIP:', text))
     strict_mode_ref = "strict_mode" in text
   else:
     step_count = len(re.findall(r"\btutorial_v2::step\(", text))
