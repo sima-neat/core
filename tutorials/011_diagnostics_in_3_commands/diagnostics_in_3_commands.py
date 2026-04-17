@@ -4,12 +4,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -30,17 +34,17 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   rgb = np.full((96, 128, 3), 77, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
-  inp = neat.InputOptions()
+  inp = pyneat.InputOptions()
   inp.format = "RGB"
   inp.width = 128
   inp.height = 96
   inp.depth = 3
 
-  s = neat.Session()
-  s.add(neat.nodes.input(inp))
-  s.add(neat.nodes.output())
+  s = pyneat.Session()
+  s.add(pyneat.nodes.input(inp))
+  s.add(pyneat.nodes.output())
 
   if tu.has_flag(argv, "--print-gst"):
     print(s.describe_backend())
@@ -51,10 +55,10 @@ def main(argv: list[str]) -> int:
   print(f"validate.error_code: {rep.error_code}")
 
   # Command 2: run with metrics
-  ropt = neat.RunOptions()
+  ropt = pyneat.RunOptions()
   ropt.enable_metrics = True
-  ropt.output_memory = neat.OutputMemory.Owned
-  run = s.build(t, neat.RunMode.Sync, ropt)
+  ropt.output_memory = pyneat.OutputMemory.Owned
+  run = s.build(t, pyneat.RunMode.Sync, ropt)
   out = run.run(t, timeout_ms=1000)
   tu.ensure(out.tensor is not None, "missing output tensor")
 

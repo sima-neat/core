@@ -4,28 +4,32 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
 # CORE LOGIC
-def make_base_session(neat, width: int, height: int):
-  inp = neat.InputOptions()
+def make_base_session(width: int, height: int):
+  inp = pyneat.InputOptions()
   inp.format = "RGB"
   inp.width = width
   inp.height = height
   inp.depth = 3
   inp.do_timestamp = True
 
-  s = neat.Session()
-  s.add(neat.nodes.input(inp))
-  s.add(neat.nodes.output())
+  s = pyneat.Session()
+  s.add(pyneat.nodes.input(inp))
+  s.add(pyneat.nodes.output())
   return s
 # END CORE LOGIC
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -45,7 +49,7 @@ def main(argv: list[str]) -> int:
            "strict-mode guard is observable")
 
   width, height = 224, 224
-  direct = make_base_session(neat, width, height)
+  direct = make_base_session(width, height)
 
   root = tu.repo_root()
   mpk_arg = tu.get_arg(argv, "--mpk")
@@ -53,17 +57,17 @@ def main(argv: list[str]) -> int:
 
   if mpk and mpk.exists():
     # CORE LOGIC
-    model = neat.Model(str(mpk))
+    model = pyneat.Model(str(mpk))
     print(f"model.session().size: {model.session().size()}")
 
-    sopt = neat.ModelSessionOptions()
+    sopt = pyneat.ModelSessionOptions()
     sopt.include_appsrc = False
     sopt.include_appsink = True
     sopt.upstream_name = "camera0"
     sopt.name_suffix = "_camera0"
     sopt.buffer_name = "camera0"
 
-    attached = neat.Session()
+    attached = pyneat.Session()
     attached.add(model.session(sopt))
 
     if tu.has_flag(argv, "--print-gst"):
@@ -78,9 +82,9 @@ def main(argv: list[str]) -> int:
     return 0
 
   rgb = np.full((height, width, 3), 55, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
   # CORE LOGIC
-  run = direct.build(t, neat.RunMode.Sync)
+  run = direct.build(t, pyneat.RunMode.Sync)
   out = run.run(t, timeout_ms=1000)
   # END CORE LOGIC
   tu.ensure(out.tensor is not None, "direct session output missing tensor")

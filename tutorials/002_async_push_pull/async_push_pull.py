@@ -8,6 +8,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
@@ -36,8 +41,8 @@ def _source_fallback_signature_stub() -> None:
     )
 
 
-def build_model_options(neat):
-  opt = neat.ModelOptions()
+def build_model_options():
+  opt = pyneat.ModelOptions()
   opt.format = "RGB"
   return opt
 
@@ -225,16 +230,14 @@ def main(argv: list[str]) -> int:
   if not mpk_path or not mpk_path.exists():
     return tu.skip("missing ResNet50 MPK (pass --mpk)")
 
-  neat = tu.import_pyneat()
-
   sig = Sig()
   tput_contract = -1
   try:
     # Same model/dataloader setup as 001; only run mode differs.
-    resnet50 = neat.Model(str(mpk_path), build_model_options(neat))
+    resnet50 = pyneat.Model(str(mpk_path), build_model_options())
 
     if args.print_gst:
-      s = neat.Session()
+      s = pyneat.Session()
       s.add(resnet50.session())
       print(s.describe_backend())
       return 0
@@ -242,15 +245,15 @@ def main(argv: list[str]) -> int:
     resnet_dataloader = dataloader_from_pytorch(args.size, args.batch, args.n)
     images = collect_first_images(resnet_dataloader)
     # CORE LOGIC
-    s = neat.Session()
+    s = pyneat.Session()
     s.add(resnet50.session())
 
-    opt = neat.RunOptions()
+    opt = pyneat.RunOptions()
     opt.queue_depth = args.queue
-    opt.overflow_policy = neat.OverflowPolicy.Block
-    opt.output_memory = neat.OutputMemory.Owned
+    opt.overflow_policy = pyneat.OverflowPolicy.Block
+    opt.output_memory = pyneat.OutputMemory.Owned
 
-    run = s.build(images[0], neat.RunMode.Async, opt)
+    run = s.build(images[0], pyneat.RunMode.Async, opt)
     pushed_final, pulled, sig, elapsed = run_async_inference(
         run=run,
         images=images,

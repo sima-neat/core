@@ -4,21 +4,25 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
-def parse_drop(neat, argv: list[str]):
+def parse_drop(argv: list[str]):
   mode = tu.get_arg(argv, "--drop", "block")
   if mode == "latest":
-    return neat.OverflowPolicy.KeepLatest
+    return pyneat.OverflowPolicy.KeepLatest
   if mode == "incoming":
-    return neat.OverflowPolicy.DropIncoming
-  return neat.OverflowPolicy.Block
+    return pyneat.OverflowPolicy.DropIncoming
+  return pyneat.OverflowPolicy.Block
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -41,31 +45,31 @@ def main(argv: list[str]) -> int:
   queue = tu.parse_int(argv, "--queue", 4)
 
   rgb = np.full((120, 160, 3), 88, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
-  inp = neat.InputOptions()
+  inp = pyneat.InputOptions()
   inp.format = "RGB"
   inp.width = 160
   inp.height = 120
   inp.depth = 3
   inp.is_live = True
 
-  s = neat.Session()
-  s.add(neat.nodes.input(inp))
-  s.add(neat.nodes.output())
+  s = pyneat.Session()
+  s.add(pyneat.nodes.input(inp))
+  s.add(pyneat.nodes.output())
 
   if tu.has_flag(argv, "--print-gst"):
     print(s.describe_backend())
     return 0
 
   # CORE LOGIC
-  opt = neat.RunOptions()
+  opt = pyneat.RunOptions()
   opt.queue_depth = queue
-  opt.overflow_policy = parse_drop(neat, argv)
-  opt.output_memory = neat.OutputMemory.Owned
+  opt.overflow_policy = parse_drop(argv)
+  opt.output_memory = pyneat.OutputMemory.Owned
   opt.enable_metrics = True
 
-  run = s.build(t, neat.RunMode.Async, opt)
+  run = s.build(t, pyneat.RunMode.Async, opt)
   for _ in range(iters):
     run.try_push(t)
   run.close_input()

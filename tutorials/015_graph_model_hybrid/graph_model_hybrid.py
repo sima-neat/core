@@ -4,6 +4,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
@@ -11,34 +16,34 @@ import python_utils as tu
 # Why: learners should see identical checkpoint output even when model assets are unavailable.
 
 
-def make_fp32_sample(neat, width: int, height: int, depth: int):
+def make_fp32_sample(width: int, height: int, depth: int):
   # A synthetic tensor keeps the tutorial deterministic while matching model tensor contracts.
   import numpy as np
 
   arr = np.zeros((height, width, depth), dtype=np.float32)
-  tensor = neat.Tensor.from_numpy(arr, copy=True)
+  tensor = pyneat.Tensor.from_numpy(arr, copy=True)
 
-  sample = neat.Sample()
-  sample.kind = neat.SampleKind.Tensor
+  sample = pyneat.Sample()
+  sample.kind = pyneat.SampleKind.Tensor
   sample.tensor = tensor
   sample.frame_id = 1
   sample.stream_id = "model"
   return sample
 
 
-def run_model_hybrid(neat, mpk: Path):
+def run_model_hybrid(mpk: Path):
   # CORE LOGIC
-  model = neat.Model(str(mpk))
+  model = pyneat.Model(str(mpk))
 
-  opt = neat.graph.nodes.StageModelExecutorOptions()
+  opt = pyneat.graph.nodes.StageModelExecutorOptions()
   opt.model = model
   opt.do_preproc = False
   opt.do_mla = False
   opt.do_boxdecode = False
 
-  graph = neat.graph.Graph()
-  node_id = graph.add(neat.graph.nodes.stage_model_executor(opt, "stage_model"))
-  run = neat.graph.GraphSession(graph).build()
+  graph = pyneat.graph.Graph()
+  node_id = graph.add(pyneat.graph.nodes.stage_model_executor(opt, "stage_model"))
+  run = pyneat.graph.GraphSession(graph).build()
 
   tensor_opt = model.input_appsrc_options(True)
   width = tensor_opt.width if tensor_opt.width > 0 else tensor_opt.max_width
@@ -47,7 +52,7 @@ def run_model_hybrid(neat, mpk: Path):
   if width <= 0 or height <= 0 or depth <= 0:
     width, height, depth = 8, 8, 3
 
-  inp = make_fp32_sample(neat, width, height, depth)
+  inp = make_fp32_sample(width, height, depth)
   tu.check("graph_push", run.push(node_id, inp), "sample accepted by stage-model node")
   out = run.pull(node_id, 2000)
   tu.check("graph_pull", out is not None, "stage-model node produced output")
@@ -56,13 +61,13 @@ def run_model_hybrid(neat, mpk: Path):
   return "model_stage", out
 
 
-def run_stage_fallback(neat):
+def run_stage_fallback():
   # CORE LOGIC
-  graph = neat.graph.Graph()
-  node_id = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
-  run = neat.graph.GraphSession(graph).build()
+  graph = pyneat.graph.Graph()
+  node_id = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
+  run = pyneat.graph.GraphSession(graph).build()
 
-  inp = make_fp32_sample(neat, 8, 8, 3)
+  inp = make_fp32_sample(8, 8, 3)
   tu.check("graph_push", run.push(node_id, inp), "sample accepted by fallback stage")
   out = run.pull(node_id, 2000)
   tu.check("graph_pull", out is not None, "fallback stage produced output")
@@ -72,7 +77,6 @@ def run_stage_fallback(neat):
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
 
   if tu.has_flag(argv, "--help"):
     print(f"Usage: {argv[0]} [--mpk <path>]")
@@ -93,15 +97,15 @@ def main(argv: list[str]) -> int:
   out = None
   if mpk and mpk.exists():
     try:
-      flow, out = run_model_hybrid(neat, mpk)
+      flow, out = run_model_hybrid(mpk)
     except Exception as exc:
       print(f"model branch fallback reason: {exc}")
-      flow, out = run_stage_fallback(neat)
+      flow, out = run_stage_fallback()
   else:
-    flow, out = run_stage_fallback(neat)
+    flow, out = run_stage_fallback()
 
   tu.step("output_interpretation", "read output rank and payload shape to reason about stage boundaries")
-  tu.check("output_kind_tensor", out.kind == neat.SampleKind.Tensor, "hybrid stage should emit tensor sample")
+  tu.check("output_kind_tensor", out.kind == pyneat.SampleKind.Tensor, "hybrid stage should emit tensor sample")
   tu.check("output_tensor_present", out.tensor is not None, "tensor payload must exist")
 
   tu.signature(

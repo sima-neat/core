@@ -4,6 +4,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
@@ -13,7 +18,6 @@ def summarize(sample) -> str:
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -34,23 +38,23 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   rgb = np.full((120, 160, 3), 101, dtype=np.uint8)
-  tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
-  inp = neat.InputOptions()
+  inp = pyneat.InputOptions()
   inp.format = "RGB"
   inp.width = 160
   inp.height = 120
   inp.depth = 3
 
-  s = neat.Session()
-  s.add(neat.nodes.input(inp))
-  s.add(neat.nodes.output())
+  s = pyneat.Session()
+  s.add(pyneat.nodes.input(inp))
+  s.add(pyneat.nodes.output())
 
   if tu.has_flag(argv, "--print-gst"):
     print(s.describe_backend())
     return 0
 
-  run = s.build(tensor, neat.RunMode.Sync)
+  run = s.build(tensor, pyneat.RunMode.Sync)
   out = run.run(tensor, timeout_ms=1000)
   print(f"push_and_pull output: {summarize(out)}")
 

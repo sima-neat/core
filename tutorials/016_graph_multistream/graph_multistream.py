@@ -4,6 +4,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
@@ -11,15 +16,15 @@ import python_utils as tu
 # Why: learners should see identical checkpoint output even when model assets are unavailable.
 
 
-def make_rgb_sample(neat, stream_id: str, frame_id: int):
+def make_rgb_sample(stream_id: str, frame_id: int):
   # Per-stream synthetic RGB tensors keep multistream scheduling deterministic.
   import numpy as np
 
   arr = (np.arange(6 * 8 * 3, dtype=np.uint8) % 255).reshape(6, 8, 3)
-  tensor = neat.Tensor.from_numpy(arr, copy=True, image_format=neat.PixelFormat.RGB)
+  tensor = pyneat.Tensor.from_numpy(arr, copy=True, image_format=pyneat.PixelFormat.RGB)
 
-  sample = neat.Sample()
-  sample.kind = neat.SampleKind.Tensor
+  sample = pyneat.Sample()
+  sample.kind = pyneat.SampleKind.Tensor
   sample.tensor = tensor
   sample.frame_id = frame_id
   sample.stream_id = stream_id
@@ -27,7 +32,6 @@ def make_rgb_sample(neat, stream_id: str, frame_id: int):
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
 
   if tu.has_flag(argv, "--help"):
     print(f"Usage: {argv[0]} [--streams <n>] [--frames <n>]")
@@ -44,30 +48,30 @@ def main(argv: list[str]) -> int:
   tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
 
   # CORE LOGIC
-  graph = neat.graph.Graph()
-  stamp = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
+  graph = pyneat.graph.Graph()
+  stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
 
-  sched_opt = neat.graph.nodes.StreamSchedulerOptions()
+  sched_opt = pyneat.graph.nodes.StreamSchedulerOptions()
   sched_opt.per_stream_queue = 2
-  sched_opt.drop_policy = neat.graph.nodes.StreamDropPolicy.DropOldest
-  sched = graph.add(neat.graph.nodes.stream_scheduler(sched_opt, "sched"))
+  sched_opt.drop_policy = pyneat.graph.nodes.StreamDropPolicy.DropOldest
+  sched = graph.add(pyneat.graph.nodes.stream_scheduler(sched_opt, "sched"))
 
-  fan = graph.add(neat.graph.nodes.fan_out(["image", "bbox"], "fan"))
-  join = graph.add(neat.graph.nodes.join_bundle(["image", "bbox"], "join", "bundle"))
+  fan = graph.add(pyneat.graph.nodes.fan_out(["image", "bbox"], "fan"))
+  join = graph.add(pyneat.graph.nodes.join_bundle(["image", "bbox"], "join", "bundle"))
 
   graph.connect(stamp, sched)
   graph.connect(sched, fan)
   graph.connect(fan, join, "image", "image")
   graph.connect(fan, join, "bbox", "bbox")
 
-  print(neat.graph.to_text(graph))
+  print(pyneat.graph.to_text(graph))
 
-  run = neat.graph.GraphSession(graph).build()
+  run = pyneat.graph.GraphSession(graph).build()
   for frame in range(frames):
     for sid in range(streams):
       tu.check(
           "graph_push",
-          run.push(stamp, make_rgb_sample(neat, str(sid), frame)),
+          run.push(stamp, make_rgb_sample(str(sid), frame)),
           f"stream={sid} frame={frame}",
       )
 

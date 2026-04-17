@@ -4,12 +4,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -37,7 +41,7 @@ def main(argv: list[str]) -> int:
     return tu.skip("missing YOLO MPK (pass --mpk)")
 
   # CORE LOGIC
-  opt = neat.ModelOptions()
+  opt = pyneat.ModelOptions()
   opt.format = "RGB"
   opt.input_max_width = width
   opt.input_max_height = height
@@ -49,10 +53,10 @@ def main(argv: list[str]) -> int:
   opt.original_width = width
   opt.original_height = height
 
-  model = neat.Model(str(mpk), opt)
+  model = pyneat.Model(str(mpk), opt)
 
   rgb = np.full((height, width, 3), 80, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
   # Python path: postproc/boxdecode is configured via ModelOptions and inferred in model.run().
   # Output contract (see README.md "Output Structure"):

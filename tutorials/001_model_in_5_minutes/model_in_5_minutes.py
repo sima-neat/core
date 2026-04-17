@@ -7,6 +7,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
@@ -144,20 +149,18 @@ def main(argv: list[str]) -> int:
   if not mpk_path or not mpk_path.exists():
     return tu.skip("missing ResNet50 MPK (pass --mpk)")
 
-  neat = tu.import_pyneat()
-
   sig = Sig()
   tput_contract = -1
   try:
     # CORE LOGIC
     # the "6-line story": model -> dataloader -> run -> top1 -> signature
 
-    opt = neat.ModelOptions()
+    opt = pyneat.ModelOptions()
     opt.format = "RGB"
-    resnet50 = neat.Model(str(mpk_path), opt)
+    resnet50 = pyneat.Model(str(mpk_path), opt)
 
     if args.print_gst:
-      s = neat.Session()
+      s = pyneat.Session()
       s.add(resnet50.session())
       print(s.describe_backend())
       return 0
