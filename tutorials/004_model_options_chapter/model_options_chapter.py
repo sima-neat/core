@@ -42,10 +42,12 @@ def main(argv: list[str]) -> int:
   opt.preproc.channel_mean = [0.485, 0.456, 0.406]
   opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 
+  # CORE LOGIC
   model = pyneat.Model(str(args.mpk), opt)
   print(f"input_rank={model.input_spec().rank}")
   print(f"output_rank={model.output_spec().rank}")
   print(f"metadata_keys={len(model.metadata())}")
+  # END CORE LOGIC
 
   rgb = np.full((224, 224, 3), 44, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.BGR)

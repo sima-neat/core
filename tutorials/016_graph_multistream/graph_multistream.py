@@ -36,6 +36,7 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--frames", type=int, default=4)
   args = ap.parse_args(argv[1:])
 
+  # CORE LOGIC
   graph = pyneat.graph.Graph()
   stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
 
@@ -53,6 +54,7 @@ def main(argv: list[str]) -> int:
   graph.connect(fan, join, "bbox", "bbox")
 
   run = pyneat.graph.GraphSession(graph).build()
+  # END CORE LOGIC
   for frame in range(args.frames):
     for sid in range(args.streams):
       run.push(stamp, make_rgb_sample(str(sid), frame))

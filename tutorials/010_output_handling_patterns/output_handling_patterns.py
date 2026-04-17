@@ -39,10 +39,12 @@ def main(argv: list[str]) -> int:
   run = session.build(tensor, pyneat.RunMode.Sync)
   sample = run.run(tensor, timeout_ms=1000)
 
+  # CORE LOGIC
   print(f"sample_kind={sample.kind}")
   print(f"has_tensor={sample.tensor is not None}")
   print(f"num_fields={len(sample.fields)}")
   print(f"output_rank={len(sample.tensor.shape)}")
+  # END CORE LOGIC
   return 0
 
 

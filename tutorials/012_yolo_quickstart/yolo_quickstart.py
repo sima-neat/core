@@ -20,13 +20,18 @@ except ImportError:
   )
 
 import numpy as np
-from PIL import Image
+import cv2
 
 
 def load_image(path: Path | None, size: int) -> np.ndarray:
   if path is None:
     return np.full((size, size, 3), 66, dtype=np.uint8)
-  return np.asarray(Image.open(path).convert("RGB").resize((size, size)), dtype=np.uint8)
+  bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  if bgr is None:
+    raise RuntimeError(f"failed to read image: {path}")
+  if bgr.shape[0] != size or bgr.shape[1] != size:
+    bgr = cv2.resize(bgr, (size, size), interpolation=cv2.INTER_AREA)
+  return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def main(argv: list[str]) -> int:
@@ -48,13 +53,23 @@ def main(argv: list[str]) -> int:
   opt.original_width = args.size
   opt.original_height = args.size
 
+  # CORE LOGIC
   model = pyneat.Model(str(args.mpk), opt)
-  image = load_image(args.image, size=args.size)
-  sample = model.run(image, timeout_ms=2000)
+  rgb = load_image(args.image, size=args.size)
+  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  sample = model.run(tensor, timeout_ms=2000)
+  # END CORE LOGIC
 
-  buf = bytes(sample.tensor.to_numpy(copy=False))
-  detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
-  print(f"detections={detections}")
+  # When the runtime wires BoxDecode into model.run, `sample.tensor` is the
+  # BBOX uint8 buffer (uint32 count + N 24-byte RawBox). Otherwise `sample`
+  # is a Bundle of raw MLA feature maps — see tutorial 006 for the contract.
+  if sample.tensor is not None:
+    buf = bytes(sample.tensor.to_numpy(copy=False))
+    detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
+    print(f"detections={detections}")
+  else:
+    heads = len(sample.fields or [])
+    print(f"raw_output_heads={heads}  # BoxDecode not wired by this runtime")
   return 0
 
 

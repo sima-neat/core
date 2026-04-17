@@ -20,13 +20,18 @@ except ImportError:
   )
 
 import numpy as np
-from PIL import Image
+import cv2
 
 
 def load_image(path: Path | None, size: int) -> np.ndarray:
   if path is None:
     return np.full((size, size, 3), 99, dtype=np.uint8)
-  return np.asarray(Image.open(path).convert("RGB").resize((size, size)), dtype=np.uint8)
+  bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  if bgr is None:
+    raise RuntimeError(f"failed to read image: {path}")
+  if bgr.shape[0] != size or bgr.shape[1] != size:
+    bgr = cv2.resize(bgr, (size, size), interpolation=cv2.INTER_AREA)
+  return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def main(argv: list[str]) -> int:
@@ -39,9 +44,11 @@ def main(argv: list[str]) -> int:
   frame = load_image(args.image, size=224)
   model = pyneat.Model(str(args.mpk))
 
+  # CORE LOGIC
   session = pyneat.Session()
   session.add(model.session())
   run = session.build(frame, pyneat.RunMode.Async)
+  # END CORE LOGIC
 
   # Producer thread pushes frames; main thread pulls predictions.
   def producer() -> None:

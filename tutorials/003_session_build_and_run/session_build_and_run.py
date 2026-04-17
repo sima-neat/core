@@ -33,6 +33,7 @@ def main(argv: list[str]) -> int:
   inp.depth = 3
   inp.do_timestamp = True
 
+  # CORE LOGIC
   session = pyneat.Session()
   session.add(pyneat.nodes.input(inp))
   session.add(pyneat.nodes.output())
@@ -42,6 +43,7 @@ def main(argv: list[str]) -> int:
 
   run = session.build(tensor, pyneat.RunMode.Sync)
   sample = run.run(tensor, timeout_ms=1000)
+  # END CORE LOGIC
 
   print(f"output_rank={len(sample.tensor.shape)}")
   return 0
