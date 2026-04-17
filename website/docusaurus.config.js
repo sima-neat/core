@@ -38,6 +38,14 @@ const config = {
           sidebarPath: require.resolve("./sidebars.js"),
           exclude: ["doxygen/**", "_tmp_test.txt"],
         },
+        ...(docsGaMeasurementId
+          ? {
+              gtag: {
+                trackingID: docsGaMeasurementId,
+                anonymizeIP: true,
+              },
+            }
+          : {}),
         blog: false,
         theme: {
           customCss: require.resolve("./src/css/custom.css"),
@@ -79,14 +87,6 @@ const config = {
       apiKey: algoliaApiKey,
       indexName: algoliaIndexName,
     },
-    ...(docsGaMeasurementId
-      ? {
-          gtag: {
-            trackingID: docsGaMeasurementId,
-            anonymizeIP: true,
-          },
-        }
-      : {}),
   },
   customFields: {
     algoliaSearch: {
