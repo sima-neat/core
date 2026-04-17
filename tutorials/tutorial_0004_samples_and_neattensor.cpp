@@ -7,25 +7,70 @@
 
 #include "neat.h"
 
-#include "tutorial_common.h"
 
 #include <opencv2/core.hpp>
 
 #include <iostream>
 #include <string>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void require(bool ok, const std::string& msg) {
+  if (!ok) throw std::runtime_error(msg);
+}
+
+} // namespace
 
 namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--width <w>] [--height <h>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --width <w>          Input width (default 160)\n";
   std::cout << "  --height <h>         Input height (default 120)\n";
 }
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -82,7 +127,7 @@ simaai::neat::Session make_session(int w, int h) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
@@ -95,7 +140,7 @@ int main(int argc, char** argv) {
       img = img.clone();
 
     simaai::neat::Session p = make_session(w, h);
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       std::cout << p.describe_backend() << "\n";
       return 0;
     }
@@ -110,7 +155,7 @@ int main(int argc, char** argv) {
     // 2) Pull only the tensor payload (simpler API).
     simaai::neat::Session p2 = make_session(w, h);
     auto run2 = p2.build(img, simaai::neat::RunMode::Sync, run_opt);
-    sima_tutorial::require(run2.push(img), "push() failed for pull_tensor demo");
+    require(run2.push(img), "push() failed for pull_tensor demo");
     auto t = run2.pull_tensor_or_throw(/*timeout_ms=*/1000);
     std::cout << "simaai::neat::Tensor only (pull_tensor_or_throw): shape dims=" << t.shape.size()
               << "\n";

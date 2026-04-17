@@ -1,5 +1,4 @@
 #include "neat.h"
-#include "common/cpp_utils.h"
 
 #include <opencv2/core.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -18,6 +17,171 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <cstdlib>
+#include <exception>
+#include <initializer_list>
+#include <utility>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
+  std::string value;
+  if (!get_arg(argc, argv, key, value)) return def;
+  try {
+    return std::stoi(value);
+  } catch (...) {
+    throw std::invalid_argument("invalid integer for " + key + ": " + value);
+  }
+}
+
+int skip(const std::string& reason) {
+  std::cout << "SKIP: " << reason << "\n";
+  return 0;
+}
+
+void require(bool ok, const std::string& msg) {
+  if (!ok) throw std::runtime_error(msg);
+}
+
+bool strict_mode() {
+  return std::getenv("SIMA_RUN_TUTORIALS_FULL") != nullptr;
+}
+
+std::string yes_no(bool v) { return v ? "yes" : "no"; }
+
+void step(const std::string& name, const std::string& detail = {}) {
+  if (detail.empty()) {
+    std::cout << "STEP " << name << "\n";
+  } else {
+    std::cout << "STEP " << name << ": " << detail << "\n";
+  }
+}
+
+void check(const std::string& name, bool cond, const std::string& detail = {}) {
+  std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
+  if (!detail.empty()) std::cout << " (" << detail << ")";
+  std::cout << "\n";
+  if (!cond) throw std::runtime_error("check failed: " + name);
+}
+
+void why(const std::string& detail) {
+  std::cout << "WHY " << detail << "\n";
+}
+
+void tradeoff(const std::string& detail) {
+  std::cout << "TRADEOFF " << detail << "\n";
+}
+
+void failure_mode(const std::string& detail) {
+  std::cout << "FAILURE_MODE " << detail << "\n";
+}
+
+void interpret_output(const std::string& detail) {
+  std::cout << "INTERPRET " << detail << "\n";
+}
+
+void runtime_fallback(const std::exception& e) {
+  const char* what = e.what();
+  std::cout << "runtime_fallback: " << (what ? what : "unknown") << "\n";
+}
+
+void print_signature(std::initializer_list<std::pair<std::string, std::string>> values) {
+  static constexpr std::array<const char*, 7> kRequired = {
+      "tutorial", "lang", "flow", "run_mode", "output_kind", "tensor_rank", "field_count",
+  };
+  for (const char* key : kRequired) {
+    bool found = false;
+    for (const auto& kv : values) {
+      if (kv.first == key) { found = true; break; }
+    }
+    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+  }
+  std::cout << "SIGNATURE {";
+  bool first = true;
+  for (const auto& kv : values) {
+    if (!first) std::cout << ",";
+    std::cout << kv.first << "=" << kv.second;
+    first = false;
+  }
+  std::cout << "}\n";
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path()) break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+std::filesystem::path find_asset_root() {
+  namespace fs = std::filesystem;
+  if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
+    fs::path p{env};
+    if (fs::exists(p)) return p;
+  }
+  for (const fs::path& p : {
+           fs::path{"/usr/share/sima-neat/tutorials/assets"},
+           fs::path{"/neat-resources/core-src/tutorials/assets"},
+       }) {
+    if (fs::exists(p)) return p;
+  }
+  return find_repo_root() / "tutorials" / "assets";
+}
+
+std::filesystem::path first_existing(std::initializer_list<std::filesystem::path> candidates) {
+  for (const auto& c : candidates) {
+    if (std::filesystem::exists(c)) return c;
+  }
+  return {};
+}
+
+std::filesystem::path default_resnet_mpk() {
+  namespace fs = std::filesystem;
+  const fs::path root = find_repo_root();
+  return first_existing({
+      root / "tmp" / "resnet_50_mpk.tar.gz",
+      root / "tmp" / "resnet50_mpk.tar.gz",
+  });
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -32,7 +196,7 @@ struct Sig {
 void source_fallback_signature_stub() {
   // Source-fallback signature for parity tooling if runtime output is unavailable.
   if (false) {
-    tutorial_v2::print_signature({
+    print_signature({
         {"tutorial", "002"},
         {"lang", "cpp"},
         {"flow", "minimal_cvmat_dataloader_async_threaded"},
@@ -57,7 +221,7 @@ simaai::neat::Model::Options build_model_options(int size) {
 }
 
 std::vector<fs::path> resnet_image_candidates() {
-  const fs::path assets = tutorial_v2::find_asset_root();
+  const fs::path assets = find_asset_root();
   return {
       assets / "fronalpstock_1330.jpg",
       assets / "ilena_488.jpg",
@@ -107,17 +271,17 @@ std::vector<cv::Mat> dataloader_from_images(int size, int n) {
 }
 
 std::vector<float> scores_from_output(const simaai::neat::Sample& out) {
-  tutorial_v2::check("has_tensor_output", out.tensor.has_value(),
+  check("has_tensor_output", out.tensor.has_value(),
                      "expected tensor output from model");
 
   const simaai::neat::Tensor& t = *out.tensor;
-  tutorial_v2::check("tensor_float32", t.dtype == simaai::neat::TensorDType::Float32,
+  check("tensor_float32", t.dtype == simaai::neat::TensorDType::Float32,
                      "expected float32 logits tensor");
 
   const simaai::neat::Mapping map = t.map_read();
-  tutorial_v2::check("tensor_non_empty", map.data != nullptr && map.size_bytes > 0,
+  check("tensor_non_empty", map.data != nullptr && map.size_bytes > 0,
                      "model output tensor bytes must be non-empty");
-  tutorial_v2::check("tensor_size_aligned", (map.size_bytes % sizeof(float)) == 0,
+  check("tensor_size_aligned", (map.size_bytes % sizeof(float)) == 0,
                      "tensor bytes must align to float32");
 
   const size_t elems = map.size_bytes / sizeof(float);
@@ -149,7 +313,7 @@ Sig summarize(const simaai::neat::Sample& out) {
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--mpk <path>] [--size <n>] [--n <count>] [--queue <n>]"
             << " [--timeout-ms <ms>] [--expect-id <id>] [--print-gst]\n";
-  tutorial_v2::print_common_flags(std::cout);
+  print_common_flags(std::cout);
 }
 
 } // namespace
@@ -158,45 +322,45 @@ int main(int argc, char** argv) {
   try {
     source_fallback_signature_stub();
 
-    if (tutorial_v2::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
-    const int size = tutorial_v2::parse_int_arg(argc, argv, "--size", 224);
-    const int n = tutorial_v2::parse_int_arg(argc, argv, "--n", 4);
-    const int queue_depth = tutorial_v2::parse_int_arg(argc, argv, "--queue", 8);
-    const int timeout_ms = tutorial_v2::parse_int_arg(argc, argv, "--timeout-ms", 2000);
-    const int expect_id = tutorial_v2::parse_int_arg(argc, argv, "--expect-id", -1);
-    tutorial_v2::require(size > 0, "--size must be > 0");
-    tutorial_v2::require(n > 0, "--n must be > 0");
+    const int size = parse_int_arg(argc, argv, "--size", 224);
+    const int n = parse_int_arg(argc, argv, "--n", 4);
+    const int queue_depth = parse_int_arg(argc, argv, "--queue", 8);
+    const int timeout_ms = parse_int_arg(argc, argv, "--timeout-ms", 2000);
+    const int expect_id = parse_int_arg(argc, argv, "--expect-id", -1);
+    require(size > 0, "--size must be > 0");
+    require(n > 0, "--n must be > 0");
 
-    tutorial_v2::step("input_contract",
+    step("input_contract",
                       "parse CLI and prepare ResNet50 model + local cv::Mat dataloader");
-    tutorial_v2::step("run_mode_choice",
+    step("run_mode_choice",
                       "run async inference with producer-thread push and main-thread pull");
-    tutorial_v2::why(
+    why(
         "keep chapter 002 parallel to chapter 001 so sync-vs-async is the main variable");
-    tutorial_v2::tradeoff(
+    tradeoff(
         "threaded async flow improves throughput potential but adds coordination complexity");
-    tutorial_v2::failure_mode(
+    failure_mode(
         "push/pull mismatches, queue stalls, or producer exceptions should fail loudly");
-    tutorial_v2::interpret_output(
+    interpret_output(
         "top1 is human-facing; tput_fps and tput_contract are parity-facing");
-    tutorial_v2::step("output_contract", "emit top1 lines, async stats, and stable signature");
-    tutorial_v2::check("strict_mode_visible",
-                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
+    step("output_contract", "emit top1 lines, async stats, and stable signature");
+    check("strict_mode_visible",
+                       yes_no(strict_mode()) == "yes" ||
+                           yes_no(strict_mode()) == "no",
                        "strict-mode guard is observable");
 
-    const fs::path root = tutorial_v2::find_repo_root();
+    const fs::path root = find_repo_root();
 
     std::string mpk_arg;
-    const fs::path mpk_path = tutorial_v2::get_arg(argc, argv, "--mpk", mpk_arg)
+    const fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg)
                                   ? fs::path(mpk_arg)
-                                  : tutorial_v2::default_resnet_mpk(root);
+                                  : default_resnet_mpk();
     if (mpk_path.empty() || !fs::exists(mpk_path)) {
-      return tutorial_v2::skip("missing ResNet50 MPK (pass --mpk)");
+      return skip("missing ResNet50 MPK (pass --mpk)");
     }
 
     Sig sig;
@@ -205,7 +369,7 @@ int main(int argc, char** argv) {
       // Same model/dataloader setup as 001; only run mode differs.
       simaai::neat::Model resnet50(mpk_path.string(), build_model_options(size));
 
-      if (tutorial_v2::wants_print_gst(argc, argv)) {
+      if (wants_print_gst(argc, argv)) {
         simaai::neat::Session describe_session;
         describe_session.add(resnet50.session());
         std::cout << describe_session.describe_backend() << "\n";
@@ -213,7 +377,7 @@ int main(int argc, char** argv) {
       }
 
       const std::vector<cv::Mat> images_to_push = dataloader_from_images(size, n);
-      tutorial_v2::require(!images_to_push.empty(), "no images available for async run");
+      require(!images_to_push.empty(), "no images available for async run");
 
       simaai::neat::Session s;
       s.add(resnet50.session());
@@ -234,7 +398,7 @@ int main(int argc, char** argv) {
       std::thread producer([&]() {
         try {
           for (const cv::Mat& image : images_to_push) {
-            tutorial_v2::require(run.push(image), "push failed");
+            require(run.push(image), "push failed");
             pushed.fetch_add(1, std::memory_order_relaxed);
           }
         } catch (...) {
@@ -262,7 +426,7 @@ int main(int argc, char** argv) {
             std::cout << "top1=" << pred << "\n";
 
             if (expect_id >= 0) {
-              tutorial_v2::check("top1_expected_id", pred == expect_id, "verify expected class id");
+              check("top1_expected_id", pred == expect_id, "verify expected class id");
             }
             continue;
           }
@@ -284,7 +448,7 @@ int main(int argc, char** argv) {
       }
 
       const int pushed_final = pushed.load(std::memory_order_acquire);
-      tutorial_v2::require(pulled == pushed_final,
+      require(pulled == pushed_final,
                            "async output count mismatch: pulled=" + std::to_string(pulled) +
                                " pushed=" + std::to_string(pushed_final));
 
@@ -302,14 +466,14 @@ int main(int argc, char** argv) {
       std::cout << "tput_fps:        " << tput_fps << "\n";
       std::cout << "tput_contract:   " << tput_contract << "\n";
     } catch (const std::exception& e) {
-      tutorial_v2::runtime_fallback(e);
-      if (tutorial_v2::strict_mode()) {
+      runtime_fallback(e);
+      if (strict_mode()) {
         throw;
       }
     }
 
-    tutorial_v2::check("tutorial_completed", true, "async dataloader path completed");
-    tutorial_v2::print_signature({
+    check("tutorial_completed", true, "async dataloader path completed");
+    print_signature({
         {"tutorial", "002"},
         {"lang", "cpp"},
         {"flow", "minimal_cvmat_dataloader_async_threaded"},

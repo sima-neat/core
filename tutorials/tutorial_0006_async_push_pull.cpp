@@ -9,18 +9,63 @@
 
 #include "neat.h"
 
-#include "tutorial_common.h"
 
 #include <opencv2/core.hpp>
 
 #include <iostream>
 #include <string>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void require(bool ok, const std::string& msg) {
+  if (!ok) throw std::runtime_error(msg);
+}
+
+} // namespace
 
 namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--iters <n>] [--width <w>] [--height <h>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --iters <n>          Number of frames to push (default 16)\n";
   std::cout << "  --width <w>          Input width (default 320)\n";
   std::cout << "  --height <h>         Input height (default 240)\n";
@@ -28,7 +73,7 @@ void print_help(const char* argv0) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -41,7 +86,7 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
@@ -65,7 +110,7 @@ int main(int argc, char** argv) {
     p.add(simaai::neat::nodes::Input(in));
     p.add(simaai::neat::nodes::Output());
 
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       std::cout << p.describe_backend() << "\n";
       return 0;
     }
@@ -78,7 +123,7 @@ int main(int argc, char** argv) {
     auto run = p.build(img, simaai::neat::RunMode::Async, run_opt);
 
     for (int i = 0; i < iters; ++i) {
-      sima_tutorial::require(run.push(img), "async push failed");
+      require(run.push(img), "async push failed");
     }
     run.close_input();
 
@@ -90,7 +135,7 @@ int main(int argc, char** argv) {
       outputs += 1;
     }
 
-    sima_tutorial::require(outputs == iters, "async output count mismatch");
+    require(outputs == iters, "async output count mismatch");
     std::cout << "[OK] tutorial_0006 complete\n";
     return 0;
   } catch (const std::exception& e) {

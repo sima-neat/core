@@ -1,6 +1,5 @@
 #include "neat/graph.h"
 #include "neat/models.h"
-#include "common/cpp_utils.h"
 
 #include <cstring>
 #include <filesystem>
@@ -9,6 +8,134 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <initializer_list>
+#include <stdexcept>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void step(const std::string& name, const std::string& detail = {}) {
+  if (detail.empty()) {
+    std::cout << "STEP " << name << "\n";
+  } else {
+    std::cout << "STEP " << name << ": " << detail << "\n";
+  }
+}
+
+void check(const std::string& name, bool cond, const std::string& detail = {}) {
+  std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
+  if (!detail.empty()) std::cout << " (" << detail << ")";
+  std::cout << "\n";
+  if (!cond) throw std::runtime_error("check failed: " + name);
+}
+
+void why(const std::string& detail) {
+  std::cout << "WHY " << detail << "\n";
+}
+
+void tradeoff(const std::string& detail) {
+  std::cout << "TRADEOFF " << detail << "\n";
+}
+
+void failure_mode(const std::string& detail) {
+  std::cout << "FAILURE_MODE " << detail << "\n";
+}
+
+void interpret_output(const std::string& detail) {
+  std::cout << "INTERPRET " << detail << "\n";
+}
+
+void print_signature(std::initializer_list<std::pair<std::string, std::string>> values) {
+  static constexpr std::array<const char*, 7> kRequired = {
+      "tutorial", "lang", "flow", "run_mode", "output_kind", "tensor_rank", "field_count",
+  };
+  for (const char* key : kRequired) {
+    bool found = false;
+    for (const auto& kv : values) {
+      if (kv.first == key) { found = true; break; }
+    }
+    if (!found) throw std::invalid_argument(std::string("missing signature key: ") + key);
+  }
+  std::cout << "SIGNATURE {";
+  bool first = true;
+  for (const auto& kv : values) {
+    if (!first) std::cout << ",";
+    std::cout << kv.first << "=" << kv.second;
+    first = false;
+  }
+  std::cout << "}\n";
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path()) break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+std::filesystem::path first_existing(std::initializer_list<std::filesystem::path> candidates) {
+  for (const auto& c : candidates) {
+    if (std::filesystem::exists(c)) return c;
+  }
+  return {};
+}
+
+std::filesystem::path default_yolo_mpk() {
+  namespace fs = std::filesystem;
+  const fs::path root = find_repo_root();
+  return first_existing({
+      root / "tmp" / "yolo_v8s_mpk.tar.gz",
+      root / "tmp" / "yolov8s_mpk.tar.gz",
+      root / "tmp" / "yolo_mpk.tar.gz",
+  });
+}
+
+std::filesystem::path default_resnet_mpk() {
+  namespace fs = std::filesystem;
+  const fs::path root = find_repo_root();
+  return first_existing({
+      root / "tmp" / "resnet_50_mpk.tar.gz",
+      root / "tmp" / "resnet50_mpk.tar.gz",
+  });
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -80,9 +207,9 @@ std::pair<std::string, simaai::neat::Sample> run_model_stage(const fs::path& mpk
   in.frame_id = 1;
   in.stream_id = "model";
 
-  tutorial_v2::check("graph_push", run.push(node_id, in), "sample accepted by stage-model node");
+  check("graph_push", run.push(node_id, in), "sample accepted by stage-model node");
   auto out = run.pull(node_id, 2000);
-  tutorial_v2::check("graph_pull", out.has_value(), "stage-model node produced output");
+  check("graph_pull", out.has_value(), "stage-model node produced output");
   run.stop();
   // END CORE LOGIC
   return {"model_stage", *out};
@@ -101,9 +228,9 @@ std::pair<std::string, simaai::neat::Sample> run_stage_fallback() {
   in.frame_id = 1;
   in.stream_id = "model";
 
-  tutorial_v2::check("graph_push", run.push(node_id, in), "sample accepted by fallback stage");
+  check("graph_push", run.push(node_id, in), "sample accepted by fallback stage");
   auto out = run.pull(node_id, 2000);
-  tutorial_v2::check("graph_pull", out.has_value(), "fallback stage produced output");
+  check("graph_pull", out.has_value(), "fallback stage produced output");
   run.stop();
   // END CORE LOGIC
   return {"stage_fallback", *out};
@@ -111,36 +238,36 @@ std::pair<std::string, simaai::neat::Sample> run_stage_fallback() {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--mpk <path>]\n";
-  tutorial_v2::print_common_flags(std::cout);
+  print_common_flags(std::cout);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
-    const fs::path root = tutorial_v2::find_repo_root();
+    const fs::path root = find_repo_root();
     std::string mpk_arg;
-    const fs::path mpk_path = tutorial_v2::get_arg(argc, argv, "--mpk", mpk_arg)
+    const fs::path mpk_path = get_arg(argc, argv, "--mpk", mpk_arg)
                                   ? fs::path(mpk_arg)
-                                  : tutorial_v2::first_existing({
-                                        tutorial_v2::default_yolo_mpk(root),
-                                        tutorial_v2::default_resnet_mpk(root),
+                                  : first_existing({
+                                        default_yolo_mpk(),
+                                        default_resnet_mpk(),
                                     });
 
-    tutorial_v2::step("input_contract", "model-hybrid stage consumes tensor-shaped samples");
-    tutorial_v2::step("run_mode_choice",
+    step("input_contract", "model-hybrid stage consumes tensor-shaped samples");
+    step("run_mode_choice",
                       "use stage-model node when MPK exists, else fallback stage");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
+    why("understand the contract first: inputs, run mode, and outputs");
+    tradeoff(
         "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
+    failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
+    interpret_output(
         "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     std::string flow = "stage_fallback";
@@ -156,14 +283,14 @@ int main(int argc, char** argv) {
       std::tie(flow, out) = run_stage_fallback();
     }
 
-    tutorial_v2::step("output_interpretation",
+    step("output_interpretation",
                       "inspect output rank to reason about stage boundaries");
-    tutorial_v2::check("output_kind_tensor", out.kind == simaai::neat::SampleKind::Tensor,
+    check("output_kind_tensor", out.kind == simaai::neat::SampleKind::Tensor,
                        "hybrid stage should emit tensor sample");
-    tutorial_v2::check("output_tensor_present", out.tensor.has_value(),
+    check("output_tensor_present", out.tensor.has_value(),
                        "tensor payload must exist");
 
-    tutorial_v2::print_signature({
+    print_signature({
         {"tutorial", "015"},
         {"lang", "cpp"},
         {"flow", flow},

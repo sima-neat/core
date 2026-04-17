@@ -8,26 +8,70 @@
 #include "neat/session.h"
 #include "neat/nodes.h"
 
-#include "tutorial_common.h"
 
 #include <cstdint>
 #include <cstring>
 #include <iostream>
 #include <string>
 #include <vector>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void require(bool ok, const std::string& msg) {
+  if (!ok) throw std::runtime_error(msg);
+}
+
+} // namespace
 
 namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--width <w>] [--height <h>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --width <w>          Width (default 64)\n";
   std::cout << "  --height <h>         Height (default 48)\n";
 }
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -142,7 +186,7 @@ simaai::neat::Tensor run_passthrough(const simaai::neat::Tensor& input) {
 
   auto run = p.build(input, simaai::neat::RunMode::Sync, run_opt);
   simaai::neat::Sample out = run.push_and_pull(input, /*timeout_ms=*/1000);
-  sima_tutorial::require(out.tensor.has_value(), "missing output tensor");
+  require(out.tensor.has_value(), "missing output tensor");
   return *out.tensor;
 }
 
@@ -163,7 +207,7 @@ void print_tensor_summary(const simaai::neat::Tensor& t, const std::string& labe
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
@@ -178,7 +222,7 @@ int main(int argc, char** argv) {
     const simaai::neat::Tensor nv12 = make_nv12_tensor(w, h, 0x10);
     const simaai::neat::Tensor i420 = make_i420_tensor(w, h, 0x22);
 
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       simaai::neat::Session p;
       p.add(simaai::neat::nodes::Input());
       p.add(simaai::neat::nodes::Output());
@@ -201,7 +245,7 @@ int main(int argc, char** argv) {
     print_tensor_summary(out_nv12, "NV12 output:");
     {
       auto mapped = out_nv12.map_nv12_read();
-      sima_tutorial::require(mapped.has_value(), "map_nv12_read failed");
+      require(mapped.has_value(), "map_nv12_read failed");
       std::cout << "  Y[0]: " << static_cast<int>(mapped->view.y[0]) << "\n";
       std::cout << "  UV[0]: " << static_cast<int>(mapped->view.uv[0]) << "\n";
     }
@@ -211,7 +255,7 @@ int main(int argc, char** argv) {
     print_tensor_summary(out_i420, "I420 output:");
     {
       auto mapped = out_i420.map_i420_read();
-      sima_tutorial::require(mapped.has_value(), "map_i420_read failed");
+      require(mapped.has_value(), "map_i420_read failed");
       std::cout << "  Y[0]: " << static_cast<int>(mapped->view.y[0]) << "\n";
       std::cout << "  U[0]: " << static_cast<int>(mapped->view.u[0]) << "\n";
       std::cout << "  V[0]: " << static_cast<int>(mapped->view.v[0]) << "\n";

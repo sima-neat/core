@@ -10,7 +10,6 @@
 #include "neat/nodes.h"
 #include "builder/OutputSpec.h"
 #include "gst/GstHelpers.h"
-#include "tutorial_common.h"
 
 #include <algorithm>
 #include <atomic>
@@ -22,6 +21,60 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <initializer_list>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+int skip(const std::string& reason) {
+  std::cout << "SKIP: " << reason << "\n";
+  return 0;
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path()) break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -49,14 +102,6 @@ bool get_arg_int(int argc, char** argv, const std::string& key, int& out) {
     return false;
   out = std::stoi(val);
   return true;
-}
-
-bool has_flag(int argc, char** argv, const std::string& key) {
-  for (int i = 1; i < argc; ++i) {
-    if (argv[i] == key)
-      return true;
-  }
-  return false;
 }
 
 bool runtime_unavailable(const std::string& msg) {
@@ -137,23 +182,23 @@ void print_usage(const char* argv0) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_usage(argv[0]);
       return 0;
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
+    const fs::path root = find_repo_root();
     std::string model_arg;
-    const fs::path model_path = sima_tutorial::get_arg(argc, argv, "--model", model_arg)
+    const fs::path model_path = get_arg(argc, argv, "--model", model_arg)
                                     ? fs::path(model_arg)
                                     : find_default_model(root);
     if (model_path.empty() || !fs::exists(model_path)) {
-      return sima_tutorial::skip("missing MPK (pass --model)");
+      return skip("missing MPK (pass --model)");
     }
 
     if (!simaai::neat::element_exists("simaaipciesrc") ||
         !simaai::neat::element_exists("simaaipciesink")) {
-      return sima_tutorial::skip("missing PCIe plugins: simaaipciesrc/simaaipciesink");
+      return skip("missing PCIe plugins: simaaipciesrc/simaaipciesink");
     }
 
     int duration_ms = 3000;
@@ -164,7 +209,7 @@ int main(int argc, char** argv) {
     (void)get_arg_int(argc, argv, "--pcie-src-buf-size", src_buf_override);
     (void)get_arg_int(argc, argv, "--pcie-sink-buf-size", sink_buf_override);
     (void)get_arg_string(argc, argv, "--sink-buf-name", sink_buf_name);
-    const bool print_gst = sima_tutorial::wants_print_gst(argc, argv);
+    const bool print_gst = wants_print_gst(argc, argv);
 
     std::cout << "[STEP] Loading model: " << model_path << "\n";
     simaai::neat::Model model(model_path.string(), simaai::neat::Model::Options{});
@@ -260,7 +305,7 @@ int main(int argc, char** argv) {
   } catch (const std::exception& e) {
     const std::string msg = e.what();
     if (runtime_unavailable(msg)) {
-      return sima_tutorial::skip("runtime unavailable: " + msg);
+      return skip("runtime unavailable: " + msg);
     }
     std::cerr << "[FAIL] " << msg << "\n";
     return 1;

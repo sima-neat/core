@@ -8,7 +8,6 @@
 
 #include "neat/graph.h"
 #include "neat/session.h"
-#include "tutorial_common.h"
 
 #include <chrono>
 #include <cstdint>
@@ -16,6 +15,33 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+} // namespace
 
 namespace {
 
@@ -97,9 +123,9 @@ simaai::neat::Sample make_bbox_sample(const simaai::neat::Sample& in) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       std::cout << "Usage: " << argv[0] << "\n";
-      sima_tutorial::print_common_flags(std::cout);
+      print_common_flags(std::cout);
       return 0;
     }
 

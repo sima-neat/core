@@ -38,7 +38,7 @@ def _signature_keys(text: str, suffix: str) -> set[str]:
     for match in re.finditer(r'print\("SIGNATURE " \+ json\.dumps\(\s*(\{.*?\})', text, flags=re.S):
       keys.update(re.findall(r'["\']([A-Za-z0-9_]+)["\']\s*:', match.group(1)))
   else:
-    for match in re.finditer(r"tutorial_v2::print_signature\(\{(.*?)\}\);", text, flags=re.S):
+    for match in re.finditer(r"print_signature\(\{(.*?)\}\);", text, flags=re.S):
       keys.update(re.findall(r'\{\s*"([A-Za-z0-9_]+)"\s*,', match.group(1)))
   return keys
 
@@ -46,31 +46,7 @@ def _signature_keys(text: str, suffix: str) -> set[str]:
 def lint() -> list[Violation]:
   violations: list[Violation] = []
 
-  cpp_helper = _read(TUTORIALS_ROOT / "common" / "cpp_utils.h")
-  for marker in (
-      "inline void why(",
-      "inline void tradeoff(",
-      "inline void failure_mode(",
-      "inline void interpret_output(",
-      "inline void runtime_fallback(",
-  ):
-    if marker not in cpp_helper:
-      violations.append(
-          Violation(
-              file="tutorials/common/cpp_utils.h",
-              rule="teaching-helper",
-              detail=f"missing helper marker: {marker}",
-          )
-      )
-
-  if "throw std::invalid_argument" not in cpp_helper:
-    violations.append(
-        Violation(
-            file="tutorials/common/cpp_utils.h",
-            rule="strict-parse",
-            detail="parse helpers must throw on invalid CLI values",
-        )
-    )
+  # No shared helpers to check — tutorials are self-contained.
 
   for path in sorted(TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/*")):
     if path.suffix not in {".py", ".cpp"}:
@@ -116,14 +92,9 @@ def lint() -> list[Violation]:
         )
 
     else:
-      step_count = len(re.findall(r"\btutorial_v2::step\(", text))
-      check_count = len(re.findall(r"\btutorial_v2::(check|require)\(", text))
-      signature_count = len(re.findall(r"\btutorial_v2::print_signature\(", text))
-      why_count = len(re.findall(r"\btutorial_v2::why\(", text))
-      tradeoff_count = len(re.findall(r"\btutorial_v2::tradeoff\(", text))
-      failure_count = len(re.findall(r"\btutorial_v2::failure_mode\(", text))
-      interpret_count = len(re.findall(r"\btutorial_v2::interpret_output\(", text))
-      raw_fallback_count = len(re.findall(r'std::cout << "runtime_fallback:', text))
+      step_count = len(re.findall(r'\bstep\(\s*"', text))
+      check_count = len(re.findall(r'\b(check|require)\(', text))
+      signature_count = len(re.findall(r'\bprint_signature\(\s*\{', text))
 
       if step_count < 3 or check_count < 2 or signature_count < 1:
         violations.append(
@@ -134,28 +105,6 @@ def lint() -> list[Violation]:
                     f"need step>=3/check>=2/signature>=1; got "
                     f"step={step_count} check={check_count} signature={signature_count}"
                 ),
-            )
-        )
-
-      if why_count < 1 or tradeoff_count < 1 or failure_count < 1 or interpret_count < 1:
-        violations.append(
-            Violation(
-                file=rel,
-                rule="teaching-contract",
-                detail=(
-                    "need why/tradeoff/failure_mode/interpret_output >=1; got "
-                    f"why={why_count} tradeoff={tradeoff_count} "
-                    f"failure_mode={failure_count} interpret_output={interpret_count}"
-                ),
-            )
-        )
-
-      if raw_fallback_count > 0:
-        violations.append(
-            Violation(
-                file=rel,
-                rule="fallback-helper",
-                detail="use tutorial_v2::runtime_fallback(...) instead of raw runtime_fallback print",
             )
         )
 

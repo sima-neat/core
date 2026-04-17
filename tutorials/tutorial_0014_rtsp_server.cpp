@@ -9,13 +9,87 @@
 #include "neat/nodes.h"
 #include "gst/GstHelpers.h"
 
-#include "tutorial_common.h"
 
 #include <chrono>
 #include <filesystem>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+int skip(const std::string& reason) {
+  std::cout << "SKIP: " << reason << "\n";
+  return 0;
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path()) break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+std::filesystem::path find_asset_root() {
+  namespace fs = std::filesystem;
+  if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
+    fs::path p{env};
+    if (fs::exists(p)) return p;
+  }
+  for (const fs::path& p : {
+           fs::path{"/usr/share/sima-neat/tutorials/assets"},
+           fs::path{"/neat-resources/core-src/tutorials/assets"},
+       }) {
+    if (fs::exists(p)) return p;
+  }
+  return find_repo_root() / "tutorials" / "assets";
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -24,7 +98,7 @@ namespace {
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0
             << " [--image <path>] [--port <p>] [--mount <name>] [--duration-ms <ms>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --image <path>       Image path (default: shipped tutorial sample)\n";
   std::cout << "  --port <p>           RTSP port (default: 8554)\n";
   std::cout << "  --mount <name>       RTSP mount (default: image)\n";
@@ -36,7 +110,7 @@ void print_help(const char* argv0) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -46,36 +120,36 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
 }
 
 fs::path default_image_path() {
-  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
+  return find_asset_root() / "ilena_488.jpg";
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
     std::string image_arg;
-    fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
+    fs::path image_path = get_arg(argc, argv, "--image", image_arg)
                               ? fs::path(image_arg)
                               : default_image_path();
     if (!fs::exists(image_path)) {
-      return sima_tutorial::skip("missing image for RTSP server");
+      return skip("missing image for RTSP server");
     }
 
     if (!simaai::neat::element_exists("appsrc") || !simaai::neat::element_exists("rtph264pay") ||
         !simaai::neat::element_exists("h264parse") ||
         !simaai::neat::element_exists("neatencoder")) {
-      return sima_tutorial::skip(
+      return skip(
           "missing RTSP/H264 elements (appsrc/rtph264pay/h264parse/neatencoder)");
     }
 
     const int port = parse_int_arg(argc, argv, "--port", 8554);
     std::string mount = "image";
-    sima_tutorial::get_arg(argc, argv, "--mount", mount);
+    get_arg(argc, argv, "--mount", mount);
     const int duration_ms = parse_int_arg(argc, argv, "--duration-ms", 2000);
 
     // StillImageInput expects even dimensions for NV12.
@@ -93,7 +167,7 @@ int main(int argc, char** argv) {
     p.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
     p.add(simaai::neat::nodes::H264Packetize(/*pt=*/96, /*config_interval=*/1));
 
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       std::cout << p.describe_backend() << "\n";
       return 0;
     }

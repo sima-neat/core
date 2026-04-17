@@ -9,17 +9,48 @@
 #include "neat/nodes.h"
 #include "neat/session.h"
 
-#include "tutorial_common.h"
 
 #include <cstdint>
 #include <iostream>
 #include <vector>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i]) return true;
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void require(bool ok, const std::string& msg) {
+  if (!ok) throw std::runtime_error(msg);
+}
+
+} // namespace
 
 namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << "\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
 }
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
@@ -72,7 +103,7 @@ simaai::neat::Sample make_sample() {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
@@ -96,7 +127,7 @@ int main(int argc, char** argv) {
     std::cout << run.describe() << "\n";
 
     simaai::neat::Sample input = make_sample();
-    sima_tutorial::require(run.push(pipe, input), "GraphRun::push failed");
+    require(run.push(pipe, input), "GraphRun::push failed");
 
     auto out = run.pull(stamp, 2000);
     if (!out.has_value()) {
