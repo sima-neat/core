@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
+"""Decode YOLO detections through ModelOptions and read the BBOX tensor.
+
+The output tensor is a rank-1 uint8 buffer: a uint32 count header followed by
+N 24-byte RawBox records (int32 x, y, w, h; float32 score; int32 class_id).
+
+Usage:
+  python3 postproc_boxdecode.py --mpk /path/to/yolo_v8s.tar.gz [--width 640] [--height 640]
+"""
 from __future__ import annotations
 
-import json
-import os
+import argparse
+import struct
 import sys
 from pathlib import Path
 
@@ -11,105 +19,40 @@ try:
 except ImportError:
   sys.exit(
       "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
-      "Run: source ~/pyneat/bin/activate\n"
-      "If the venv does not exist yet, follow the installation guide."
+      "Run: source ~/pyneat/bin/activate"
   )
+
+import numpy as np
 
 
 def main(argv: list[str]) -> int:
-  import numpy as np
+  ap = argparse.ArgumentParser(description=__doc__)
+  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--width", type=int, default=640)
+  ap.add_argument("--height", type=int, default=640)
+  args = ap.parse_args(argv[1:])
 
-  if "--help" in argv:
-    print(f"Usage: {argv[0]} [--mpk <path>] [--width <w>] [--height <h>]")
-    return 0
-
-  strict_mode = os.getenv("SIMA_RUN_TUTORIALS_FULL") is not None
-
-  # Why: runtime markers make intent explicit without requiring external docs.
-  # Why: parity/scorecard tooling relies on stable, machine-parseable checkpoints.
-  print("STEP input_contract: parse flags and establish deterministic defaults")
-  print("STEP run_mode_choice: exercise the chapter's primary runtime path")
-  print("STEP output_contract: emit checks and machine-parseable signature")
-  print("CHECK strict_flag_available: PASS (strict-mode guard is observable)")
-  assert isinstance(strict_mode, bool), "check failed: strict_flag_available (strict-mode guard is observable)"
-
-  def _parse_int(key: str, default: int) -> int:
-    raw = next((argv[i + 1] for i in range(1, len(argv) - 1) if argv[i] == key), None)
-    if raw is None:
-      return default
-    try:
-      return int(raw)
-    except Exception as exc:
-      raise ValueError(f"invalid integer for {key}: {raw}") from exc
-
-  root = Path(__file__).resolve().parents[2]
-  width = _parse_int("--width", 640)
-  height = _parse_int("--height", 640)
-  mpk_arg = next((argv[i + 1] for i in range(1, len(argv) - 1) if argv[i] == "--mpk"), None)
-  if mpk_arg:
-    mpk = Path(mpk_arg)
-  else:
-    mpk = next(
-        (p for p in [
-            root / "tmp" / "yolo_v8s_mpk.tar.gz",
-            root / "tmp" / "yolov8s_mpk.tar.gz",
-            root / "tmp" / "yolo_mpk.tar.gz",
-        ] if p.exists()),
-        None,
-    )
-  if not mpk or not mpk.exists():
-    print("SKIP: missing YOLO MPK (pass --mpk)")
-    return 0
-
-  # CORE LOGIC
   opt = pyneat.ModelOptions()
   opt.format = "RGB"
-  opt.input_max_width = width
-  opt.input_max_height = height
+  opt.input_max_width = args.width
+  opt.input_max_height = args.height
   opt.input_max_depth = 3
   opt.decode_type = "yolov8"
   opt.score_threshold = 0.52
   opt.nms_iou_threshold = 0.50
   opt.top_k = 100
-  opt.original_width = width
-  opt.original_height = height
+  opt.original_width = args.width
+  opt.original_height = args.height
 
-  model = pyneat.Model(str(mpk), opt)
+  model = pyneat.Model(str(args.mpk), opt)
 
-  rgb = np.full((height, width, 3), 80, dtype=np.uint8)
-  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
+  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  sample = model.run(tensor, timeout_ms=2000)
 
-  # Python path: postproc/boxdecode is configured via ModelOptions and inferred in model.run().
-  # Output contract (see README.md "Output Structure"):
-  #   out.kind == SampleKind.Tensor, out.payload_tag == "BBOX",
-  #   out.tensor is a rank-1 uint8 buffer: uint32 count header + N * 24-byte
-  #   RawBox records (int32 x, y, w, h; float32 score; int32 class_id),
-  #   with (x, y, w, h) in original-image pixels.
-  try:
-    out = model.run(t, timeout_ms=2000)
-    print(f"Output kind: {out.kind}")
-    print(f"Fields:      {len(out.fields)}")
-  except Exception as exc:
-    # Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
-    _msg = str(exc).strip() or exc.__class__.__name__
-    print(f"runtime_fallback: {_msg}")
-  # END CORE LOGIC
-
-  print("CHECK tutorial_completed: PASS (main path reached end without exception)")
-  print("SIGNATURE " + json.dumps({
-          "tutorial": "006",
-          "lang": "py",
-          "flow": "chapter_path",
-          "run_mode": "sync_or_async",
-          "output_kind": "sample_or_tensor",
-          "tensor_rank": -1,
-          "field_count": -1,
-      },
-      sort_keys=True,
-      separators=(",", ":"),
-  ))
-
-  print("[OK] 006_postproc_boxdecode")
+  buf = bytes(sample.tensor.to_numpy(copy=False))
+  detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
+  print(f"detections={detections}")
   return 0
 
 
