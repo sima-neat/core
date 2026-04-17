@@ -17,6 +17,29 @@ def repo_root() -> Path:
   return here.parents[2]
 
 
+def asset_root() -> Path:
+  """Directory containing tutorial sample assets.
+
+  Mirrors sima_tutorial::find_asset_root() in tutorial_common.h. Lookup order:
+    1. SIMA_NEAT_TUTORIAL_ASSETS env var, if set and exists.
+    2. /usr/share/sima-neat/tutorials/assets (installed DEB layout).
+    3. /neat-resources/core-src/tutorials/assets (eLxr SDK layout).
+    4. <repo>/tutorials/assets (source checkout fallback).
+  """
+  env = os.environ.get("SIMA_NEAT_TUTORIAL_ASSETS")
+  if env:
+    p = Path(env)
+    if p.exists():
+      return p
+  for p in (
+      Path("/usr/share/sima-neat/tutorials/assets"),
+      Path("/neat-resources/core-src/tutorials/assets"),
+  ):
+    if p.exists():
+      return p
+  return repo_root() / "tutorials" / "assets"
+
+
 def has_flag(argv: list[str], key: str) -> bool:
   return key in argv
 
@@ -78,14 +101,11 @@ def default_resnet_mpk(root: Path) -> Optional[Path]:
   )
 
 
-def default_image(root: Path) -> Optional[Path]:
-  return first_existing(
-      [
-          root / "tmp" / "coco_sample.jpg",
-          root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg",
-          root / "test.jpg",
-      ]
-  )
+def default_image(root: Path) -> Optional[Path]:  # pylint: disable=unused-argument
+  # `root` is ignored and retained only for backward compatibility with existing
+  # callers. Lookup now flows through asset_root() so DEB/SDK installs resolve
+  # the same way the cpp helper does (see tutorials/common/cpp_utils.h).
+  return asset_root() / "ilena_488.jpg"
 
 
 def skip(reason: str) -> int:
