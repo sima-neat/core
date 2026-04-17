@@ -96,6 +96,9 @@ def _run_cpp_tutorial(cpp_path: Path) -> tuple[int, str]:
 def _run_py_tutorial(py_path: Path) -> tuple[int, str]:
   _ensure_pyneat_core_in_package()
   env = os.environ.copy()
+  env["PYTHONPATH"] = os.pathsep.join(
+      p for p in [str(REPO_ROOT / "python"), env.get("PYTHONPATH", "")] if p
+  )
   env["SIMA_RUN_TUTORIALS_FULL"] = "1"
   try:
     proc = subprocess.run(

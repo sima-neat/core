@@ -4,13 +4,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
 # CORE LOGIC
-def build_session(neat, width: int, height: int):
-  inp = neat.InputOptions()
+def build_session(width: int, height: int):
+  inp = pyneat.InputOptions()
   inp.format = "RGB"
   inp.width = width
   inp.height = height
@@ -18,14 +23,13 @@ def build_session(neat, width: int, height: int):
   inp.is_live = False
   inp.do_timestamp = True
 
-  s = neat.Session()
-  s.add(neat.nodes.input(inp))
-  s.add(neat.nodes.output())
+  s = pyneat.Session()
+  s.add(pyneat.nodes.input(inp))
+  s.add(pyneat.nodes.output())
   return s
 # END CORE LOGIC
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -47,15 +51,15 @@ def main(argv: list[str]) -> int:
   width = tu.parse_int(argv, "--width", 320)
   height = tu.parse_int(argv, "--height", 240)
 
-  s = build_session(neat, width, height)
+  s = build_session(width, height)
   if tu.has_flag(argv, "--print-gst"):
     print(s.describe_backend())
     return 0
 
   # CORE LOGIC
   rgb = np.full((height, width, 3), 33, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
-  run = s.build(t, neat.RunMode.Sync)
+  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  run = s.build(t, pyneat.RunMode.Sync)
   out = run.run(t, timeout_ms=1000)
   tu.ensure(out.tensor is not None, "missing output tensor")
   # END CORE LOGIC

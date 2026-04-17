@@ -4,12 +4,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
   import numpy as np
 
   if tu.has_flag(argv, "--help"):
@@ -37,7 +41,7 @@ def main(argv: list[str]) -> int:
     return tu.skip("missing YOLO MPK (pass --mpk)")
 
   # CORE LOGIC
-  opt = neat.ModelOptions()
+  opt = pyneat.ModelOptions()
   opt.format = "RGB"
   opt.input_max_width = width
   opt.input_max_height = height
@@ -49,16 +53,16 @@ def main(argv: list[str]) -> int:
   opt.original_width = width
   opt.original_height = height
 
-  model = neat.Model(str(mpk), opt)
+  model = pyneat.Model(str(mpk), opt)
 
   if tu.has_flag(argv, "--print-gst"):
-    s = neat.Session()
+    s = pyneat.Session()
     s.add(model.session())
     print(s.describe_backend())
     return 0
 
   rgb = np.full((height, width, 3), 66, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+  t = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
   try:
     out = model.run(t, timeout_ms=2000)

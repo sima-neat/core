@@ -4,13 +4,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
-
   try:
     import numpy as np
   except Exception:
@@ -38,7 +41,7 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   arr = np.full((height, width, 3), 17, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(arr, copy=True, image_format=neat.PixelFormat.RGB)
+  t = pyneat.Tensor.from_numpy(arr, copy=True, image_format=pyneat.PixelFormat.RGB)
   arr2 = t.to_numpy(copy=True)
   print(f"numpy roundtrip shape: {arr2.shape}")
 
@@ -46,7 +49,7 @@ def main(argv: list[str]) -> int:
     import torch
 
     torch_tensor = torch.full((height, width, 3), 9, dtype=torch.uint8)
-    t2 = neat.Tensor.from_torch(torch_tensor, copy=True, image_format=neat.PixelFormat.RGB)
+    t2 = pyneat.Tensor.from_torch(torch_tensor, copy=True, image_format=pyneat.PixelFormat.RGB)
     torch_back = t2.to_torch(copy=True)
     print(f"torch roundtrip shape: {tuple(torch_back.shape)}")
   except Exception as exc:

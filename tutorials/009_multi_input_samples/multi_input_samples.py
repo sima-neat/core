@@ -4,19 +4,23 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+try:
+  import pyneat
+except ImportError:
+  sys.exit("pyneat is not installed. Follow the installation guide.")
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
 
 
-def make_tensor(neat, width: int, height: int, value: float):
+def make_tensor(width: int, height: int, value: float):
   import numpy as np
 
   arr = np.full((height, width, 3), value, dtype=np.float32)
-  return neat.Tensor.from_numpy(arr, copy=True)
+  return pyneat.Tensor.from_numpy(arr, copy=True)
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
 
   if tu.has_flag(argv, "--help"):
     print(f"Usage: {argv[0]} [--width <w>] [--height <h>] [--print-gst]")
@@ -38,35 +42,35 @@ def main(argv: list[str]) -> int:
   height = tu.parse_int(argv, "--height", 48)
 
   # CORE LOGIC
-  inp = neat.InputOptions()
+  inp = pyneat.InputOptions()
   inp.media_type = "application/vnd.simaai.tensor"
   inp.format = "FP32"
   inp.width = width
   inp.height = height
   inp.depth = 3
 
-  s = neat.Session()
-  s.add(neat.nodes.input(inp))
-  s.add(neat.nodes.output())
+  s = pyneat.Session()
+  s.add(pyneat.nodes.input(inp))
+  s.add(pyneat.nodes.output())
 
   if tu.has_flag(argv, "--print-gst"):
     print(s.describe_backend())
     return 0
 
-  seed = make_tensor(neat, width, height, 0.0)
-  run = s.build(seed, neat.RunMode.Sync)
+  seed = make_tensor(width, height, 0.0)
+  run = s.build(seed, pyneat.RunMode.Sync)
 
-  left = neat.make_tensor_sample("left", make_tensor(neat, width, height, 1.0))
-  right = neat.make_tensor_sample("right", make_tensor(neat, width, height, 2.0))
+  left = pyneat.make_tensor_sample("left", make_tensor(width, height, 1.0))
+  right = pyneat.make_tensor_sample("right", make_tensor(width, height, 2.0))
 
-  bundle = neat.Sample()
-  bundle.kind = neat.SampleKind.Bundle
+  bundle = pyneat.Sample()
+  bundle.kind = pyneat.SampleKind.Bundle
   bundle.fields = [left, right]
 
   tu.ensure(run.push(bundle), "bundle push failed")
   out = run.pull(timeout_ms=1000)
   tu.ensure(out is not None, "bundle output missing")
-  tu.ensure(out.kind == neat.SampleKind.Bundle, "expected bundle output")
+  tu.ensure(out.kind == pyneat.SampleKind.Bundle, "expected bundle output")
 
   print(f"Bundle fields: {len(out.fields)}")
   for field in out.fields:

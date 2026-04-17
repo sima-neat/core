@@ -17,20 +17,6 @@ def repo_root() -> Path:
   return here.parents[2]
 
 
-def ensure_python_path() -> None:
-  root = repo_root()
-  py_dir = root / "python"
-  if str(py_dir) not in sys.path:
-    sys.path.insert(0, str(py_dir))
-
-
-def import_pyneat():
-  ensure_python_path()
-  import pyneat as neat  # pylint: disable=import-outside-toplevel
-
-  return neat
-
-
 def has_flag(argv: list[str], key: str) -> bool:
   return key in argv
 
