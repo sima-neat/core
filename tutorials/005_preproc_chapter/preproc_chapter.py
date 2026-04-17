@@ -7,7 +7,7 @@ from pathlib import Path
 try:
   import pyneat
 except ImportError:
-  sys.exit("pyneat is not installed. Follow the installation guide.")
+  sys.exit("pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\nRun: source ~/pyneat/bin/activate\nIf the venv does not exist yet, follow the installation guide.")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 import python_utils as tu
