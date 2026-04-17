@@ -1,13 +1,98 @@
 #include "neat/graph.h"
 #include "neat/nodes.h"
 #include "neat/session.h"
-#include "common/cpp_utils.h"
 
 #include <cstdint>
 #include <iostream>
 #include <string>
 #include <utility>
 #include <vector>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void step(const std::string& name, const std::string& detail = {}) {
+  if (detail.empty()) {
+    std::cout << "STEP " << name << "\n";
+  } else {
+    std::cout << "STEP " << name << ": " << detail << "\n";
+  }
+}
+
+void check(const std::string& name, bool cond, const std::string& detail = {}) {
+  std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
+  std::cout << "\n";
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
+}
+
+void why(const std::string& detail) {
+  std::cout << "WHY " << detail << "\n";
+}
+
+void tradeoff(const std::string& detail) {
+  std::cout << "TRADEOFF " << detail << "\n";
+}
+
+void failure_mode(const std::string& detail) {
+  std::cout << "FAILURE_MODE " << detail << "\n";
+}
+
+void interpret_output(const std::string& detail) {
+  std::cout << "INTERPRET " << detail << "\n";
+}
+
+void print_signature(std::initializer_list<std::pair<std::string, std::string>> values) {
+  static constexpr std::array<const char*, 7> kRequired = {
+      "tutorial", "lang", "flow", "run_mode", "output_kind", "tensor_rank", "field_count",
+  };
+  for (const char* key : kRequired) {
+    bool found = false;
+    for (const auto& kv : values) {
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
+  }
+  std::cout << "SIGNATURE {";
+  bool first = true;
+  for (const auto& kv : values) {
+    if (!first)
+      std::cout << ",";
+    std::cout << kv.first << "=" << kv.second;
+    first = false;
+  }
+  std::cout << "}\n";
+}
+
+} // namespace
 
 namespace {
 
@@ -69,9 +154,9 @@ std::pair<std::string, simaai::neat::Sample> run_pipeline_plus_stage() {
   std::cout << GraphPrinter::to_text(g) << "\n";
 
   GraphRun run = GraphSession(std::move(g)).build();
-  tutorial_v2::check("graph_push", run.push(pipe, make_sample()), "sample reached pipeline node");
+  check("graph_push", run.push(pipe, make_sample()), "sample reached pipeline node");
   auto out = run.pull(stamp, 2000);
-  tutorial_v2::check("graph_pull", out.has_value(), "stage sink produced output");
+  check("graph_pull", out.has_value(), "stage sink produced output");
   run.stop();
   // END CORE LOGIC
   return {"pipeline_plus_stage", *out};
@@ -87,9 +172,9 @@ std::pair<std::string, simaai::neat::Sample> run_stage_only_fallback() {
   std::cout << GraphPrinter::to_text(g) << "\n";
 
   GraphRun run = GraphSession(std::move(g)).build();
-  tutorial_v2::check("graph_push", run.push(stamp, make_sample()), "sample reached stage node");
+  check("graph_push", run.push(stamp, make_sample()), "sample reached stage node");
   auto out = run.pull(stamp, 2000);
-  tutorial_v2::check("graph_pull", out.has_value(), "stage sink produced output");
+  check("graph_pull", out.has_value(), "stage sink produced output");
   run.stop();
   // END CORE LOGIC
   return {"stage_only_fallback", *out};
@@ -97,27 +182,25 @@ std::pair<std::string, simaai::neat::Sample> run_stage_only_fallback() {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << "\n";
-  tutorial_v2::print_common_flags(std::cout);
+  print_common_flags(std::cout);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
-    tutorial_v2::step("input_contract", "build graph and push one deterministic tensor sample");
-    tutorial_v2::step("run_mode_choice", "prefer pipeline+stage hybrid and fallback to stage-only");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
+    step("input_contract", "build graph and push one deterministic tensor sample");
+    step("run_mode_choice", "prefer pipeline+stage hybrid and fallback to stage-only");
+    why("understand the contract first: inputs, run mode, and outputs");
+    tradeoff("prefer deterministic samples and stable contracts over production realism");
+    failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     std::string flow = "pipeline_plus_stage";
     simaai::neat::Sample out;
@@ -128,12 +211,11 @@ int main(int argc, char** argv) {
       std::tie(flow, out) = run_stage_only_fallback();
     }
 
-    tutorial_v2::step("output_interpretation", "validate stream/frame metadata after traversal");
-    tutorial_v2::check("stream_id_present", !out.stream_id.empty(),
-                       "stream id should not be empty");
-    tutorial_v2::check("frame_id_stamped", out.frame_id >= 0, "stamp stage should assign id");
+    step("output_interpretation", "validate stream/frame metadata after traversal");
+    check("stream_id_present", !out.stream_id.empty(), "stream id should not be empty");
+    check("frame_id_stamped", out.frame_id >= 0, "stamp stage should assign id");
 
-    tutorial_v2::print_signature({
+    print_signature({
         {"tutorial", "014"},
         {"lang", "cpp"},
         {"flow", flow},

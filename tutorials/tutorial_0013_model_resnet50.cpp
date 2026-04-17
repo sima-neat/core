@@ -6,7 +6,6 @@
 // - Useful for simple classification flows.
 
 #include "neat.h"
-#include "tutorial_common.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -16,6 +15,79 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cstdlib>
+#include <exception>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+int skip(const std::string& reason) {
+  std::cout << "SKIP: " << reason << "\n";
+  return 0;
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path())
+      break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+std::filesystem::path find_asset_root() {
+  namespace fs = std::filesystem;
+  if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
+    fs::path p{env};
+    if (fs::exists(p))
+      return p;
+  }
+  for (const fs::path& p : {
+           fs::path{"/usr/share/sima-neat/tutorials/assets"},
+           fs::path{"/neat-resources/core-src/tutorials/assets"},
+       }) {
+    if (fs::exists(p))
+      return p;
+  }
+  return find_repo_root() / "tutorials" / "assets";
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -23,7 +95,7 @@ namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--model <path>] [--image <path>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --model <path>       ResNet50 MPK tar.gz (default: tmp/resnet_50_mpk.tar.gz)\n";
   std::cout << "  --image <path>       Input image (default: shipped tutorial sample)\n";
 }
@@ -36,39 +108,37 @@ fs::path default_model_path(const fs::path& root) {
 }
 
 fs::path default_image_path() {
-  return sima_tutorial::find_asset_root() / "ilena_488.jpg";
+  return find_asset_root() / "ilena_488.jpg";
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
+    const fs::path root = find_repo_root();
 
     std::string model_arg;
-    fs::path model_path = sima_tutorial::get_arg(argc, argv, "--model", model_arg)
-                              ? fs::path(model_arg)
-                              : default_model_path(root);
+    fs::path model_path =
+        get_arg(argc, argv, "--model", model_arg) ? fs::path(model_arg) : default_model_path(root);
     if (model_path.empty() || !fs::exists(model_path)) {
-      return sima_tutorial::skip("missing ResNet50 MPK (pass --model)");
+      return skip("missing ResNet50 MPK (pass --model)");
     }
 
     std::string image_arg;
-    fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
-                              ? fs::path(image_arg)
-                              : default_image_path();
+    fs::path image_path =
+        get_arg(argc, argv, "--image", image_arg) ? fs::path(image_arg) : default_image_path();
     if (!fs::exists(image_path)) {
-      return sima_tutorial::skip("missing image (pass --image)");
+      return skip("missing image (pass --image)");
     }
 
     cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
     if (bgr.empty()) {
-      return sima_tutorial::skip("failed to load image");
+      return skip("failed to load image");
     }
 
     cv::Mat rgb;
@@ -103,7 +173,7 @@ int main(int argc, char** argv) {
       std::cout << "Output tensor dims: " << out.tensor->shape.size() << "\n";
     } catch (const std::exception& e) {
       if (!strict) {
-        return sima_tutorial::skip(std::string("runtime unavailable: ") + e.what());
+        return skip(std::string("runtime unavailable: ") + e.what());
       }
       throw;
     }

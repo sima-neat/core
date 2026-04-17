@@ -8,14 +8,68 @@
 #include "neat/session.h"
 #include "neat/nodes.h"
 
-#include "tutorial_common.h"
-
 #include <opencv2/core.hpp>
 
 #include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <array>
+#include <exception>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path())
+      break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -23,7 +77,7 @@ namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--width <w>] [--height <h>] [--debug-env] [--bad-input]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --width <w>          Width (default 160)\n";
   std::cout << "  --height <h>         Height (default 120)\n";
   std::cout << "  --debug-env          Enable common debug env vars\n";
@@ -37,7 +91,7 @@ void print_help(const char* argv0) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -61,17 +115,17 @@ void enable_debug_env(const fs::path& root) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
     const int w = parse_int_arg(argc, argv, "--width", 160);
     const int h = parse_int_arg(argc, argv, "--height", 120);
-    const bool use_debug_env = sima_tutorial::has_flag(argc, argv, "--debug-env");
-    const bool bad_input = sima_tutorial::has_flag(argc, argv, "--bad-input");
+    const bool use_debug_env = has_flag(argc, argv, "--debug-env");
+    const bool bad_input = has_flag(argc, argv, "--bad-input");
 
-    const fs::path root = sima_tutorial::find_repo_root();
+    const fs::path root = find_repo_root();
     if (use_debug_env) {
       enable_debug_env(root);
     }
@@ -90,7 +144,7 @@ int main(int argc, char** argv) {
     p.add(simaai::neat::nodes::Input(in));
     p.add(simaai::neat::nodes::Output());
 
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       std::cout << p.describe_backend() << "\n";
       return 0;
     }

@@ -154,7 +154,7 @@ def _signature_from_py_source(py_path: Path) -> dict[str, str]:
 
 def _signature_from_cpp_source(cpp_path: Path) -> dict[str, str]:
   text = cpp_path.read_text(encoding="utf-8", errors="ignore")
-  m = re.search(r"tutorial_v2::print_signature\(\{(.*?)\}\);", text, flags=re.S)
+  m = re.search(r"print_signature\(\{(.*?)\}\);", text, flags=re.S)
   if not m:
     return {}
   out: dict[str, str] = {}

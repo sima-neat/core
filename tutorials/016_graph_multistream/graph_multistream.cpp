@@ -1,5 +1,4 @@
 #include "neat/graph.h"
-#include "common/cpp_utils.h"
 
 #include <chrono>
 #include <cstdint>
@@ -7,6 +6,114 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
+  std::string value;
+  if (!get_arg(argc, argv, key, value))
+    return def;
+  try {
+    return std::stoi(value);
+  } catch (...) {
+    throw std::invalid_argument("invalid integer for " + key + ": " + value);
+  }
+}
+
+void step(const std::string& name, const std::string& detail = {}) {
+  if (detail.empty()) {
+    std::cout << "STEP " << name << "\n";
+  } else {
+    std::cout << "STEP " << name << ": " << detail << "\n";
+  }
+}
+
+void check(const std::string& name, bool cond, const std::string& detail = {}) {
+  std::cout << "CHECK " << name << ": " << (cond ? "PASS" : "FAIL");
+  if (!detail.empty())
+    std::cout << " (" << detail << ")";
+  std::cout << "\n";
+  if (!cond)
+    throw std::runtime_error("check failed: " + name);
+}
+
+void why(const std::string& detail) {
+  std::cout << "WHY " << detail << "\n";
+}
+
+void tradeoff(const std::string& detail) {
+  std::cout << "TRADEOFF " << detail << "\n";
+}
+
+void failure_mode(const std::string& detail) {
+  std::cout << "FAILURE_MODE " << detail << "\n";
+}
+
+void interpret_output(const std::string& detail) {
+  std::cout << "INTERPRET " << detail << "\n";
+}
+
+void print_signature(std::initializer_list<std::pair<std::string, std::string>> values) {
+  static constexpr std::array<const char*, 7> kRequired = {
+      "tutorial", "lang", "flow", "run_mode", "output_kind", "tensor_rank", "field_count",
+  };
+  for (const char* key : kRequired) {
+    bool found = false;
+    for (const auto& kv : values) {
+      if (kv.first == key) {
+        found = true;
+        break;
+      }
+    }
+    if (!found)
+      throw std::invalid_argument(std::string("missing signature key: ") + key);
+  }
+  std::cout << "SIGNATURE {";
+  bool first = true;
+  for (const auto& kv : values) {
+    if (!first)
+      std::cout << ",";
+    std::cout << kv.first << "=" << kv.second;
+    first = false;
+  }
+  std::cout << "}\n";
+}
+
+} // namespace
 
 namespace {
 
@@ -59,31 +166,28 @@ simaai::neat::Sample make_rgb_sample(const std::string& stream_id, int frame_id)
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << "\n";
-  tutorial_v2::print_common_flags(std::cout);
+  print_common_flags(std::cout);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
-    const int streams = tutorial_v2::parse_int_arg(argc, argv, "--streams", 8);
-    const int frames = tutorial_v2::parse_int_arg(argc, argv, "--frames", 4);
+    const int streams = parse_int_arg(argc, argv, "--streams", 8);
+    const int frames = parse_int_arg(argc, argv, "--frames", 4);
 
-    tutorial_v2::step("input_contract", "stream/frame tags must survive scheduler and join stages");
-    tutorial_v2::step("run_mode_choice",
-                      "build multistream graph with fair scheduling and bundle join");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
+    step("input_contract", "stream/frame tags must survive scheduler and join stages");
+    step("run_mode_choice", "build multistream graph with fair scheduling and bundle join");
+    why("understand the contract first: inputs, run mode, and outputs");
+    tradeoff("prefer deterministic samples and stable contracts over production realism");
+    failure_mode(
         "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity");
 
     // CORE LOGIC
     using namespace simaai::neat::graph;
@@ -128,8 +232,8 @@ int main(int argc, char** argv) {
 
     for (int frame = 0; frame < frames; ++frame) {
       for (int sid = 0; sid < streams; ++sid) {
-        tutorial_v2::check("graph_push", in.push(make_rgb_sample(std::to_string(sid), frame)),
-                           "sample accepted by input node");
+        check("graph_push", in.push(make_rgb_sample(std::to_string(sid), frame)),
+              "sample accepted by input node");
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -151,15 +255,13 @@ int main(int argc, char** argv) {
 
     run.stop();
 
-    tutorial_v2::step("output_interpretation", "joined bundle cardinality validates graph wiring");
-    tutorial_v2::check("all_outputs_received", received == expected,
-                       "expected=" + std::to_string(expected) +
-                           ", received=" + std::to_string(received));
-    tutorial_v2::check("bundle_has_two_fields", first_fields == 2,
-                       "join should emit image+bbox bundle");
+    step("output_interpretation", "joined bundle cardinality validates graph wiring");
+    check("all_outputs_received", received == expected,
+          "expected=" + std::to_string(expected) + ", received=" + std::to_string(received));
+    check("bundle_has_two_fields", first_fields == 2, "join should emit image+bbox bundle");
     // END CORE LOGIC
 
-    tutorial_v2::print_signature({
+    print_signature({
         {"tutorial", "016"},
         {"lang", "cpp"},
         {"flow", "multistream_stage_graph"},
