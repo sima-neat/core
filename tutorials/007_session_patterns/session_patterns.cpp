@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
 
       simaai::neat::Session attached;
       attached.add(model.session(sopt));
-      std::cout << "attached_session_size=" << attached.size() << "\n";
+      std::cout << "attached_session_backend=\n" << attached.describe_backend() << "\n";
     }
 
     auto run = direct.build(rgb, simaai::neat::RunMode::Sync);
