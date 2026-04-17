@@ -361,6 +361,22 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     py_fence = f'```python title="{module.py_rel}"' + (f" {py_hl}" if py_hl else "")
     py_script_name = pathlib.Path(module.py_rel).name
 
+    # Tutorials that require a model pack end with --mpk placeholder so customers
+    # do not copy a zero-argument command that would silently SKIP on install.
+    mpk_label_tutorials = {
+        "001_model_in_5_minutes",
+        "004_model_options_chapter",
+        "005_preproc_chapter",
+        "006_postproc_boxdecode",
+        "007_session_patterns",
+        "012_yolo_quickstart",
+        "013_resnet_quickstart",
+        "015_graph_model_hybrid",
+        "018_production_blueprint",
+    }
+    cpp_suffix = " --mpk /path/to/model.tar.gz" if module.folder in mpk_label_tutorials else ""
+    py_suffix = " --mpk /path/to/model.tar.gz" if module.folder in mpk_label_tutorials else ""
+
     lines.extend(
         [
             "",
@@ -372,7 +388,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
             "```bash",
             "NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>",
             "cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials",
-            f"./tutorial_v2_{module.folder}",
+            f"./tutorial_v2_{module.folder}{cpp_suffix}",
             "```",
             "",
             "</CodeTab>",
@@ -381,7 +397,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
             "```bash",
             "NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>",
             "if [[ -f ~/pyneat/bin/activate ]]; then source ~/pyneat/bin/activate; else source ~/pyneat/.venv/bin/activate; fi",
-            f"python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/{module.folder}/{py_script_name}",
+            f"python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/{module.folder}/{py_script_name}{py_suffix}",
             "```",
             "",
             "</CodeTab>",
