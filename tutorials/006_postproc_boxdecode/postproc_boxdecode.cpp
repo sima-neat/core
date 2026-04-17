@@ -102,6 +102,10 @@ int main(int argc, char** argv) {
       box.nms_iou_threshold = 0.5;
       box.top_k = 100;
 
+      // stages::BoxDecode parses the tagged "BBOX" uint8 tensor into the
+      // expanded Box vector for you (see README.md "Output Structure"): each
+      // decoded.boxes[i] is {x1, y1, x2, y2, score, class_id} with coords
+      // already clamped to original_width x original_height source pixels.
       auto decoded = simaai::neat::stages::BoxDecode(infer, model, box);
       std::cout << "Decoded boxes: " << decoded.boxes.size() << "\n";
     } catch (const std::exception& e) {
