@@ -25,6 +25,7 @@ dist/
 # Editor / IDE
 .vscode/
 .idea/
+.claude/
 
 # OS junk
 .DS_Store
