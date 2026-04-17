@@ -60,10 +60,16 @@ def main(argv: list[str]) -> int:
   sample = model.run(tensor, timeout_ms=2000)
   # END CORE LOGIC
 
-  # The BBOX tensor is a uint32 count header followed by N 24-byte RawBox records.
-  buf = bytes(sample.tensor.to_numpy(copy=False))
-  detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
-  print(f"detections={detections}")
+  # When the runtime wires BoxDecode into model.run, `sample.tensor` is the
+  # BBOX uint8 buffer (uint32 count + N 24-byte RawBox). Otherwise `sample`
+  # is a Bundle of raw MLA feature maps — see tutorial 006 for the contract.
+  if sample.tensor is not None:
+    buf = bytes(sample.tensor.to_numpy(copy=False))
+    detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
+    print(f"detections={detections}")
+  else:
+    heads = len(sample.fields or [])
+    print(f"raw_output_heads={heads}  # BoxDecode not wired by this runtime")
   return 0
 
 

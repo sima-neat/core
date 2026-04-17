@@ -52,9 +52,17 @@ def main(argv: list[str]) -> int:
   sample = model.run(tensor, timeout_ms=2000)
   # END CORE LOGIC
 
-  buf = bytes(sample.tensor.to_numpy(copy=False))
-  detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
-  print(f"detections={detections}")
+  # Two paths for reading the output:
+  #   - Runtimes that wire BoxDecode into model.run produce one BBOX uint8 tensor.
+  #   - Runtimes that do not produce a Bundle of raw MLA feature maps instead.
+  # The shipped README explains the BBOX wire format (uint32 count + N 24-byte RawBox).
+  if sample.tensor is not None:
+    buf = bytes(sample.tensor.to_numpy(copy=False))
+    detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
+    print(f"detections={detections}")
+  else:
+    heads = len(sample.fields or [])
+    print(f"raw_output_heads={heads}  # BoxDecode not wired by this runtime")
   return 0
 
 
