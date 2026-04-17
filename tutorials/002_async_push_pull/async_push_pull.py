@@ -48,7 +48,6 @@ def main(argv: list[str]) -> int:
   session = pyneat.Session()
   session.add(model.session())
   run = session.build(frame, pyneat.RunMode.Async)
-  # END CORE LOGIC
 
   # Producer thread pushes frames; main thread pulls predictions.
   def producer() -> None:
@@ -69,6 +68,7 @@ def main(argv: list[str]) -> int:
     top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
     print(f"top1={top1}")
     pulled += 1
+  # END CORE LOGIC
 
   thread.join()
   print(f"pulled={pulled}")
