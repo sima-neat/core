@@ -39,10 +39,12 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--image", type=Path)
   args = ap.parse_args(argv[1:])
 
+  # CORE LOGIC
   # The three-line NEAT story:
   model = pyneat.Model(str(args.mpk))
   image = load_image(args.image, size=224)
   sample = model.run(image, timeout_ms=2000)
+  # END CORE LOGIC
 
   top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
   print(f"top1={top1}")
