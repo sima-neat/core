@@ -10,6 +10,7 @@ const baseUrl = process.env.DOCS_BASE_URL || "/";
 const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
 const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
 const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
+const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -37,6 +38,14 @@ const config = {
           sidebarPath: require.resolve("./sidebars.js"),
           exclude: ["doxygen/**", "_tmp_test.txt"],
         },
+        ...(docsGaMeasurementId
+          ? {
+              gtag: {
+                trackingID: docsGaMeasurementId,
+                anonymizeIP: true,
+              },
+            }
+          : {}),
         blog: false,
         theme: {
           customCss: require.resolve("./src/css/custom.css"),

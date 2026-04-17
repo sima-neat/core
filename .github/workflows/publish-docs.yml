@@ -1,7 +1,16 @@
 name: Manually Publish Docs
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      publish_target:
+        description: "Publish destination"
+        required: true
+        default: production
+        type: choice
+        options:
+          - production
+          - preview
 
 permissions:
   contents: read
@@ -16,7 +25,6 @@ jobs:
     runs-on: [self-hosted, Linux, X64]
     environment: CloudFlare-R2
     env:
-      S3_BUCKET: docs
       AWS_DEFAULT_REGION: auto
       AWS_EC2_METADATA_DISABLED: "true"
       R2_ENDPOINT_URL: https://${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
@@ -34,6 +42,27 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Resolve publish configuration
+        run: |
+          publish_target="${{ inputs.publish_target }}"
+          if [[ "$publish_target" == "preview" ]]; then
+            echo "S3_BUCKET=docs-preview" >> "$GITHUB_ENV"
+            echo "DOCS_URL=https://docs-preview.sima-neat.com" >> "$GITHUB_ENV"
+            echo "DOCS_GA_MEASUREMENT_ID=" >> "$GITHUB_ENV"
+            echo "SHOULD_REINDEX_ALGOLIA=false" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          if [[ "${{ github.ref }}" != "refs/heads/main" ]]; then
+            echo "Production docs publish is only allowed from refs/heads/main. Current ref: ${{ github.ref }}" >&2
+            exit 1
+          fi
+
+          echo "S3_BUCKET=docs" >> "$GITHUB_ENV"
+          echo "DOCS_URL=https://docs.sima-neat.com" >> "$GITHUB_ENV"
+          echo "DOCS_GA_MEASUREMENT_ID=${{ vars.DOCS_GA_MEASUREMENT_ID }}" >> "$GITHUB_ENV"
+          echo "SHOULD_REINDEX_ALGOLIA=true" >> "$GITHUB_ENV"
+
       - name: Install build dependencies
         run: |
           ./build.sh --install-deps-only
@@ -41,8 +70,9 @@ jobs:
 
       - name: Build docs website
         env:
-          DOCS_URL: https://docs.sima-neat.com
+          DOCS_URL: ${{ env.DOCS_URL }}
           DOCS_BASE_URL: /
+          DOCS_GA_MEASUREMENT_ID: ${{ env.DOCS_GA_MEASUREMENT_ID }}
           DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
           DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
           DOCS_ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
@@ -85,6 +115,7 @@ jobs:
           aws s3 sync website/build/ "s3://${S3_BUCKET}/" --delete --endpoint-url "${R2_ENDPOINT_URL}"
 
       - name: Reindex Algolia docs search
+        if: env.SHOULD_REINDEX_ALGOLIA == 'true'
         env:
           ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
           ALGOLIA_ADMIN_API_KEY: ${{ secrets.DOCS_ALGOLIA_ADMIN_API_KEY }}
@@ -96,5 +127,5 @@ jobs:
           fi
           bash scripts/ci/sync_algolia_docs_index.sh \
             --docs-dir docs \
-            --site-base-url https://docs.sima-neat.com \
+            --site-base-url "${DOCS_URL}" \
             --clear
