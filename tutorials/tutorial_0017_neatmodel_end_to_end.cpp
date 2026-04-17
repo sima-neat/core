@@ -31,7 +31,7 @@ void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--mpk <path>] [--image <path>]\n";
   sima_tutorial::print_common_flags(std::cout);
   std::cout << "  --mpk <path>         MPK tar.gz (default: search tmp/)\n";
-  std::cout << "  --image <path>       Input image (default: tmp/coco_sample.jpg or test.jpg)\n";
+  std::cout << "  --image <path>       Input image (default: shipped tutorial sample)\n";
 }
 
 fs::path find_default_mpk(const fs::path& root) {

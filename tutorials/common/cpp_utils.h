@@ -81,13 +81,10 @@ inline std::filesystem::path default_resnet_mpk(const std::filesystem::path& roo
   });
 }
 
-inline std::filesystem::path default_image(const std::filesystem::path& /*root*/) {
-  // Canonical customer-install layout: tutorial assets ship to
-  //   /usr/share/sima-neat/tutorials/assets/ (DEB)
-  //   /neat-resources/core-src/tutorials/assets/ (SDK)
-  //   <repo>/tutorials/assets/ (source checkout)
-  // sima_tutorial::find_asset_root() implements this lookup order and is
-  // source-of-truth for all tutorial image discovery.
+// Default tutorial sample image.
+// Resolved via sima_tutorial::find_asset_root() — see its doc comment for
+// lookup precedence (env > DEB install > SDK mirror > repo fallback).
+inline std::filesystem::path default_image() {
   return sima_tutorial::find_asset_root() / "ilena_488.jpg";
 }
 

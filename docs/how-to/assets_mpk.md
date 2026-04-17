@@ -60,10 +60,18 @@ sima-cli modelzoo -v 2.0.0 get yolo_v8s
 
 ## Sample images
 
-Default image candidates used in tutorials/tests:
-- `tmp/coco_sample.jpg` (downloaded if missing)
-- `test.jpg`
-- `tests/assets/preproc_dynamic/ilena_488.jpg`
+Tutorials ship with sample images under `tutorials/assets/`. Cpp tutorials
+resolve image paths in this order:
+
+1. `--image <path>` CLI override.
+2. `SIMA_NEAT_TUTORIAL_ASSETS` env var (directory path).
+3. `/usr/share/sima-neat/tutorials/assets/` (DEB install).
+4. `/neat-resources/core-src/tutorials/assets/` (eLxr SDK).
+5. `<repo>/tutorials/assets/` (source checkout fallback).
+
+The shipped defaults are `ilena_488.jpg`, `fronalpstock_1330.jpg`, and
+`lichtenstein_512.png`. Test suites may still download additional assets
+under `tmp/` — see their own documentation.
 
 You can override the COCO image URL used by tests with:
 ```

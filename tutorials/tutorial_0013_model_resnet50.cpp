@@ -25,7 +25,7 @@ void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--model <path>] [--image <path>]\n";
   sima_tutorial::print_common_flags(std::cout);
   std::cout << "  --model <path>       ResNet50 MPK tar.gz (default: tmp/resnet_50_mpk.tar.gz)\n";
-  std::cout << "  --image <path>       Input image (default: tmp/coco_sample.jpg or test.jpg)\n";
+  std::cout << "  --image <path>       Input image (default: shipped tutorial sample)\n";
 }
 
 fs::path default_model_path(const fs::path& root) {

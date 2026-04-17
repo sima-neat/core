@@ -25,7 +25,7 @@ void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0
             << " [--image <path>] [--port <p>] [--mount <name>] [--duration-ms <ms>]\n";
   sima_tutorial::print_common_flags(std::cout);
-  std::cout << "  --image <path>       Image path (default: test.jpg)\n";
+  std::cout << "  --image <path>       Image path (default: shipped tutorial sample)\n";
   std::cout << "  --port <p>           RTSP port (default: 8554)\n";
   std::cout << "  --mount <name>       RTSP mount (default: image)\n";
   std::cout << "  --duration-ms <ms>   How long to keep the server alive (default: 2000)\n";
@@ -58,7 +58,6 @@ int main(int argc, char** argv) {
       return 0;
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
     std::string image_arg;
     fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                               ? fs::path(image_arg)

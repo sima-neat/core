@@ -6,11 +6,14 @@
 // - Run::pull_tensor_or_throw() yields a simaai::neat::Tensor directly.
 //
 // Prereqs:
-// - An image file (default: test.jpg or tests/assets/preproc_dynamic/ilena_488.jpg).
+// - An image file. Default: the shipped sample at
+//   <tutorials/assets>/ilena_488.jpg (installed under
+//   /usr/share/sima-neat/tutorials/assets/ on DEB installs). Override with
+//   --image <path> or SIMA_NEAT_TUTORIAL_ASSETS=<dir>.
 //
 // Try:
 //   ./build/tutorial_0001_quickstart_image_to_tensor --print-gst
-//   ./build/tutorial_0001_quickstart_image_to_tensor --image test.jpg
+//   ./build/tutorial_0001_quickstart_image_to_tensor --image /path/to/my.jpg
 
 #include "neat.h"
 

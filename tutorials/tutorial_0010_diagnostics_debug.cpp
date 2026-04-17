@@ -43,7 +43,6 @@ int main(int argc, char** argv) {
       setenv("SIMA_GST_VALIDATE_TIMEOUT_MS", "1000", 1);
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
     std::string image_arg;
     const fs::path image_path = sima_tutorial::get_arg(argc, argv, "--image", image_arg)
                                     ? fs::path(image_arg)
