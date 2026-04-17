@@ -53,10 +53,10 @@ with:
 
 The tensor shape is a **byte count**, not a detection count. The packed bytes
 hold both a small header and a contiguous array of fixed-size box records.
-`len(N_bytes)` is determined by the MPK's `buffers.output.size` field and
-bounds the maximum number of detections the decoder can emit in a single
-frame (see "Override contract" below for how runtime dims interact with
-packaged values).
+`N_bytes` is determined by the MPK's `buffers.input[0].size` field (inside
+the boxdecode stage's config JSON) and bounds the maximum number of
+detections the decoder can emit in a single frame (see "Override contract"
+below for how runtime dims interact with packaged values).
 
 ### Packed wire format
 
@@ -81,8 +81,8 @@ Each `RawBox` record is 24 bytes:
 |  4 | 4 | int32 | `y`     | top-left y, in source pixels |
 |  8 | 4 | int32 | `w`     | width, in source pixels  |
 | 12 | 4 | int32 | `h`     | height, in source pixels |
-| 16 | 4 | float32 | `score` | post-NMS detection confidence (the value `detection_threshold` gates on) |
-| 20 | 4 | int32 | `class_id` | predicted class id (model-defined) |
+| 16 | 4 | float32 | `score` | post-NMS detection confidence in `[0.0, 1.0]` (the value `detection_threshold` gates on) |
+| 20 | 4 | int32 | `class_id` | predicted class id (model-defined; 0-indexed; class-name map lives in the MPK metadata) |
 
 The canonical Python `struct` format matching one record is `"<iiiifi"`
 (little-endian, 4 signed ints, one float, one signed int).
@@ -113,12 +113,15 @@ so caller code can draw them directly on the source frame.
 
 With the tutorial's runtime configuration (`original_width = 640`,
 `original_height = 640`, `top_k = 100`) and the stock YOLOv8 pack
-(`buffers.output.size = 20160`), a single decoded frame yields:
+(`buffers.input[0].size = 20160` in the boxdecode config), a single decoded
+frame yields:
 
 - `out.kind == SampleKind.Tensor`
 - `out.payload_tag == "BBOX"`
 - `out.tensor.dtype == UInt8`, `out.tensor.shape == [20160]`
-- Bytes `[0:4]` give `N` in little-endian; `N <= 100` because `top_k = 100`.
+- Bytes `[0:4]` give `N` in little-endian; `0 <= N <= 100` because
+  `top_k = 100`. An `N` of `0` means "no detections above threshold this
+  frame" — iterate zero times and emit nothing.
 - Bytes `[4 : 4 + 24 * N]` hold the valid detections; everything after that
   offset is zero/padding and must be ignored.
 
@@ -154,7 +157,13 @@ SimaBoxDecode(const Model& model,
 ```
 
 and its Python twin `pyneat.nodes.sima_box_decode(model, ...)` use a simple
-"positive overrides, zero/empty preserves" rule per field:
+"positive overrides, zero/empty preserves" rule per field.
+
+> **Naming note.** `detection_threshold` is the name used by
+> `SimaBoxDecode`'s constructor. `ModelOptions.score_threshold` (used in the
+> Python tutorial) is plumbed into that same argument. The two names refer
+> to the same underlying control.
+
 
 | Runtime argument | Value passed | Behavior |
 | --- | --- | --- |
@@ -169,11 +178,14 @@ and its Python twin `pyneat.nodes.sima_box_decode(model, ...)` use a simple
 | `top_k` | `0` | preserve MPK packaged top-K |
 | `top_k` | `> 0` | override |
 
-The rule is strictly per-field: the tutorial's Python path overrides all of
-them because `ModelOptions` sets positive values, while
-`postproc_boxdecode.cpp`'s constructor form passes `0.52f, 0.5f, 100` —
-those override thresholds and top-K but, because it also sets
-`bgr.cols, bgr.rows` positively, `original_*` is overridden too.
+The rule is strictly per-field:
+
+- **Python path** — the tutorial overrides every field because
+  `ModelOptions` sets positive values.
+- **C++ path** — `postproc_boxdecode.cpp` passes `0.52f, 0.5f, 100` (so
+  `detection_threshold`, `nms_iou_threshold`, and `top_k` are overridden)
+  plus `bgr.cols, bgr.rows` positively (so `original_width` /
+  `original_height` are overridden too).
 
 Practical consequences:
 
