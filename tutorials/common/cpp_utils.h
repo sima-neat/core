@@ -17,6 +17,7 @@
 namespace tutorial_v2 {
 
 using sima_tutorial::exists_or_skip;
+using sima_tutorial::find_asset_root;
 using sima_tutorial::find_repo_root;
 using sima_tutorial::get_arg;
 using sima_tutorial::has_flag;
