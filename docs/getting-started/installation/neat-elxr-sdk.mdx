@@ -10,7 +10,7 @@ The NEAT eLxr SDK is built on top of the [open source SiMa eLxr SDK](https://git
 
 - Supports both x86 and arm64 container images, including native use on Mac without Rosetta overhead.
 - Supports the DevKit Sync feature so humans and coding agents can cross-compile and run DevKit binaries from the SDK shell without switching context.
-- Ships with preinstalled Codex skills and preinstalled latest `main` branch source references for `core` and `apps`.
+- Ships with preinstalled Codex and Claude skills and preinstalled latest `main` branch source references for `core` and `apps`.
 
 This setup makes it possible to run end-to-end agentic workflows from a single prompt, including build-and-run loops against a paired DevKit.
 
@@ -136,8 +136,8 @@ For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKi
 sima-cli login
 ```
 
-3. Install the [Codex Extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt) in VS Code and sign in.
-4. Ask Codex what skills are available; when `NEAT` appears, environment setup is ready.
+3. Install the [Codex Extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt) or [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) in VS Code and sign in.
+4. Ask Codex or Claude what skills are available; when `NEAT` appears, environment setup is ready.
 
 You can then use a prompt such as:
 

@@ -32,12 +32,17 @@ set -euo pipefail
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
 # - NEAT_INSTALLER_SKIP_DEVKIT_SYNC: ON/OFF (default: OFF) skip SDK->DevKit sync
 # - CODEX_HOME: optional Codex home override for skill install target
+# - CLAUDE_HOME: optional Claude home override for skill install target
+# - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
+# - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 DEVKIT_SYNC_REQUIRED="${DEVKIT_SYNC_REQUIRED:-ON}"
 NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
+NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
+NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
@@ -223,20 +228,37 @@ detect_env_mode() {
   echo "modalix-board"
 }
 
-install_codex_skill_for_current_user() {
+install_skill_for_agent() {
   local source_dir="$1"
+  local agent_name="$2"
+  local agent_home="$3"
 
-  if [[ ! -d "${source_dir}" ]]; then
-    log "Codex skill source not found; skipping skill install: ${source_dir}"
-    return 0
-  fi
-
-  local codex_home="${CODEX_HOME:-$HOME/.codex}"
-  local target_dir="${codex_home}/skills/sima-neat"
+  local target_dir="${agent_home}/skills/sima-neat"
   mkdir -p "$(dirname "${target_dir}")"
   rm -rf "${target_dir}"
   cp -a "${source_dir}" "${target_dir}"
-  log "Installed Codex skill to: ${target_dir}"
+  log "Installed ${agent_name} skill to: ${target_dir}"
+}
+
+install_agent_skills_for_current_user() {
+  local source_dir="$1"
+
+  if [[ ! -d "${source_dir}" ]]; then
+    log "Agent skill source not found; skipping skill install: ${source_dir}"
+    return 0
+  fi
+
+  if [[ "${NEAT_INSTALLER_INSTALL_CODEX_SKILL}" == "ON" ]]; then
+    install_skill_for_agent "${source_dir}" "Codex" "${CODEX_HOME:-$HOME/.codex}"
+  else
+    log "NEAT_INSTALLER_INSTALL_CODEX_SKILL=${NEAT_INSTALLER_INSTALL_CODEX_SKILL}; skipping Codex skill install."
+  fi
+
+  if [[ "${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL}" == "ON" ]]; then
+    install_skill_for_agent "${source_dir}" "Claude" "${CLAUDE_HOME:-$HOME/.claude}"
+  else
+    log "NEAT_INSTALLER_INSTALL_CLAUDE_SKILL=${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL}; skipping Claude skill install."
+  fi
 }
 
 install_debs_on_board() {
@@ -337,7 +359,7 @@ ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
-  install_codex_skill_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
+  install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
   deploy_artifacts_to_paired_devkit_if_configured
 else
   VENV_DIR="$(resolve_venv_dir)"
@@ -356,5 +378,5 @@ else
   fi
   "${VENV_DIR}/bin/python" -m pip install --no-deps --force-reinstall "${WHEEL_FILE}"
   install_debs_on_board
-  install_codex_skill_for_current_user "/usr/share/sima-neat/skills/sima-neat"
+  install_agent_skills_for_current_user "/usr/share/sima-neat/skills/sima-neat"
 fi
