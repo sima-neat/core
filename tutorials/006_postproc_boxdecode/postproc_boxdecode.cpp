@@ -62,8 +62,7 @@ int main(int argc, char** argv) {
 
     // BoxDecode parses the "BBOX" tensor into {x1, y1, x2, y2, score, class_id}
     // entries clamped to original_width x original_height source pixels.
-    simaai::neat::BoxDecodeResult decoded =
-        simaai::neat::stages::BoxDecode(infer, model, box);
+    simaai::neat::BoxDecodeResult decoded = simaai::neat::stages::BoxDecode(infer, model, box);
     // END CORE LOGIC
 
     std::cout << "boxes=" << decoded.boxes.size() << "\n";
