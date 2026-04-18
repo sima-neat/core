@@ -8,21 +8,24 @@
 | Labels | resnet, classification, mpk |
 
 ## Concept
-This tutorial is a quick classifier bring-up path using a ResNet-style MPK.
 
-If YOLO quickstart teaches detection flow, this chapter teaches classification flow. It helps new users verify model loading, preprocessing assumptions, and output tensor shape before building application logic on top.
+Load a ResNet-50 MPK with explicit preprocessing options, feed it a 224×224 image, and read the top-1 class. The classification twin of chapter 012 — same recipe, classifier output.
 
-What this chapter demonstrates:
-- Loading a ResNet MPK with explicit image/preproc options.
-- Running a deterministic classification inference path.
-- Inspecting output tensor rank and leading dimension as a sanity check.
+If chapter 012 teaches detection flow, this one teaches classification flow. It helps new users verify model loading, preprocessing assumptions, and output tensor shape before building application logic on top.
 
-Use-case guidance:
+**APIs introduced**
+- `pyneat.ModelOptions()` with classification-oriented fields (`.format`, `.preproc.input_*`, `.preproc.output_*`, `.preproc.normalize`, `.preproc.channel_mean/stddev`).
+- `model.run(image, timeout_ms)` — direct NumPy image input, no explicit tensor wrap needed.
+
+**When to use this**
 - First classification model integration in a new environment.
 - Validating normalization/format settings for classifier accuracy.
-- Establishing baseline output contracts before label mapping/top-k handling.
+- Establishing baseline output contracts before label mapping / top-k handling.
 
-Reference:
+**Prerequisites**
+Chapter 001 (Model). Chapter 005 for preprocessing options.
+
+**References**
 - [Model](/getting-started/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
@@ -58,14 +61,14 @@ From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-dk ./tutorial_v2_013_resnet_quickstart --mpk /absolute/path/to/resnet_50.tar.gz
+dk ./tutorial_v2_013_classify_images_with_resnet50 --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
 ### eLxr SDK (Python)
 
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/013_resnet_quickstart/resnet_quickstart.py \
+dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py \
   --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
@@ -78,7 +81,7 @@ From a shell on the DevKit itself:
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-./tutorial_v2_013_resnet_quickstart --mpk /absolute/path/to/resnet_50.tar.gz
+./tutorial_v2_013_classify_images_with_resnet50 --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
 ### DevKit (Python)
@@ -86,10 +89,10 @@ cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
 ```bash
 source ~/pyneat/bin/activate
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/013_resnet_quickstart/resnet_quickstart.py \
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py \
   --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
 ## Source Files
-- C++: `tutorials/013_resnet_quickstart/resnet_quickstart.cpp`
-- Python: `tutorials/013_resnet_quickstart/resnet_quickstart.py`
+- C++: `tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.cpp`
+- Python: `tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py`

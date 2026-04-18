@@ -8,19 +8,28 @@
 | Labels | graph, traversal, metadata |
 
 ## Concept
-This tutorial introduces the NEAT graph runtime using the smallest useful graph: push one sample through connected nodes and verify metadata survives traversal.
 
-If you are new to graph APIs, read this chapter before hybrid/multistream graph tutorials. It teaches the baseline mental model:
-- Build graph nodes and edges.
-- Start a `GraphSession`, then push/pull samples.
-- Validate stream/frame metadata after graph execution.
+Build the smallest useful NEAT graph — one pipeline node wired to one stage node — then push a sample through and verify metadata survives traversal. This is the baseline before hybrid or multistream graph tutorials.
 
-What this chapter demonstrates:
-- Preferred hybrid path (pipeline node + stage node).
-- Deterministic fallback path (stage-only graph).
-- Signature checks that confirm graph output contracts.
+A graph is an explicit DAG of nodes you build programmatically, separate from the pipeline/session abstraction. You add nodes with `graph.add(...)`, wire them with `graph.connect(...)`, and run the whole thing via `GraphSession`.
 
-Reference:
+**APIs introduced**
+- `pyneat.graph.Graph()` — the graph container.
+- `graph.add(node)` — add a node; returns an ID.
+- `graph.connect(src_id, dst_id)` — wire outputs to inputs.
+- `pyneat.graph.nodes.pipeline_node(inner_node, name)` — wrap a regular pipeline node for use inside a graph.
+- `pyneat.graph.nodes.stamp_frame_id(name)` — a stage node that tags samples with frame identity.
+- `pyneat.graph.GraphSession(graph).build()` — materialize the graph into a runnable.
+
+**When to use this**
+- Custom orchestration where pipeline/session semantics don't fit (fan-out, fan-in, per-stream routing).
+- Multistream scheduling (see chapter 016).
+- Embedding model execution as one stage of a larger flow (see chapter 015).
+
+**Prerequisites**
+Chapter 003 (Session basics).
+
+**References**
 - [Graph](/getting-started/programming-model/graph)
 - [Session](/getting-started/programming-model/session)
 
@@ -37,10 +46,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_014_graph_basics
-python3 tutorials/014_graph_basics/graph_basics.py
+./tutorial_v2_014_build_a_custom_data_graph
+python3 tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.py
 ```
 
 ## Source Files
-- C++: `tutorials/014_graph_basics/graph_basics.cpp`
-- Python: `tutorials/014_graph_basics/graph_basics.py`
+- C++: `tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.cpp`
+- Python: `tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.py`

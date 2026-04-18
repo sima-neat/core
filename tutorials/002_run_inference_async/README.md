@@ -8,15 +8,25 @@
 | Labels | async, push-pull, throughput, runtime |
 
 ## Concept
-This tutorial explains how to use asynchronous APIs to build high-performance production quality applications.
 
-In a synchronous loop, one thread blocks while waiting for each result. That is simple, but it underutilizes compute when input production and output consumption can overlap. Async execution improves throughput by decoupling these stages:
+Feed a model from a producer thread while consuming predictions from another — decouple input and output for real throughput. Same ResNet path as chapter 001, now async.
+
+In a synchronous loop, one thread blocks while waiting for each result. That underutilizes compute when input production and output consumption can overlap. Async execution improves throughput by decoupling:
 - `push(...)` feeds inputs as they become ready.
 - `pull(...)` consumes outputs independently.
 
-This chapter focuses on the core async pattern used in real applications: producer-side async `push` and consumer-side async `pull`, with explicit queue/backpressure behavior.
+**APIs introduced**
+- `pyneat.Session()` + `session.add(model.session())` — compose a model into a runnable session.
+- `session.build(sample, pyneat.RunMode.Async)` — produce an async `Run` handle.
+- `run.push(frame)`, `run.pull(timeout_ms)`, `run.close_input()` — the producer/consumer pair.
 
-For the programming concepts behind this flow, see:
+**When to use this**
+Camera streams, batch processing, or any pipeline where inputs arrive faster than a one-at-a-time synchronous loop can handle.
+
+**Prerequisites**
+Chapter 001. Familiarity with `pyneat.Model` and `model.run()` is assumed.
+
+**References**
 - [Session](/getting-started/programming-model/session)
 - [Pipeline](/getting-started/programming-model/pipeline)
 
@@ -33,10 +43,10 @@ For the programming concepts behind this flow, see:
 
 ## Run
 ```bash
-./tutorial_v2_002_async_push_pull
-python3 tutorials/002_async_push_pull/async_push_pull.py
+./tutorial_v2_002_run_inference_async
+python3 tutorials/002_run_inference_async/run_inference_async.py
 ```
 
 ## Source Files
-- C++: `tutorials/002_async_push_pull/async_push_pull.cpp`
-- Python: `tutorials/002_async_push_pull/async_push_pull.py`
+- C++: `tutorials/002_run_inference_async/run_inference_async.cpp`
+- Python: `tutorials/002_run_inference_async/run_inference_async.py`

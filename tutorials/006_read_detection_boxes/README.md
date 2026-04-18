@@ -8,9 +8,10 @@
 | Labels | postprocessing, boxdecode, detection |
 
 ## Concept
-Postprocessing converts raw model outputs into actionable detection results (boxes, scores, classes).
 
-In this chapter, `BoxDecode` is the key focus. It is a highly optimized detection postprocessing path for vision workloads, designed to efficiently transform inference tensors into final bounding-box results with thresholding and NMS.
+Decode raw model output into usable bounding boxes using `SimaBoxDecode` — thresholding, NMS, and coordinate mapping built into one postprocessing stage. Read both decoded tensors and the raw byte format so you can handle any runtime shape.
+
+`BoxDecode` is a highly optimized detection postprocessing path for vision workloads. It transforms inference tensors into final bounding-box results with thresholding and NMS in a single step.
 
 Common box-decode controls in this tutorial:
 - `decode_type` (for example `yolov8`): selects model-family decode behavior.
@@ -19,14 +20,22 @@ Common box-decode controls in this tutorial:
 - `top_k`: limits final detection count for deterministic downstream cost.
 - `original_width`, `original_height`: maps decoded boxes to the source image coordinate space.
 
-Use-case guidance:
+**Use-case guidance**
 - Too many noisy boxes: increase `score_threshold` and/or reduce `top_k`.
 - Duplicate overlapping boxes: lower `nms_iou_threshold` to make suppression stricter.
 - Missed true positives: decrease `score_threshold` cautiously.
 - Boxes appear scaled/offset incorrectly: verify `original_width` and `original_height` match real source frames.
 - Porting between detector variants: ensure `decode_type` matches the model family expected by the MPK.
 
-Reference:
+**APIs introduced**
+- `pyneat.ModelOptions()` with `.decode_type`, `.score_threshold`, `.nms_iou_threshold`, `.top_k`, `.original_width/height`.
+- `pyneat.Tensor.from_numpy(array, image_format=...)` — build the input tensor.
+- `sample.tensor` with `dtype=UInt8` — the packed `BBOX` byte buffer (wire format documented below).
+
+**Prerequisites**
+Chapter 001. Chapter 004 for `ModelOptions` basics.
+
+**References**
 - [Model](/getting-started/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
@@ -182,7 +191,7 @@ The rule is strictly per-field:
 
 - **Python path** — the tutorial overrides every field because
   `ModelOptions` sets positive values.
-- **C++ path** — `postproc_boxdecode.cpp` passes `0.52f, 0.5f, 100` (so
+- **C++ path** — `read_detection_boxes.cpp` passes `0.52f, 0.5f, 100` (so
   `detection_threshold`, `nms_iou_threshold`, and `top_k` are overridden)
   plus `bgr.cols, bgr.rows` positively (so `original_width` /
   `original_height` are overridden too).
@@ -213,10 +222,10 @@ Practical consequences:
 
 ## Run
 ```bash
-./tutorial_v2_006_postproc_boxdecode
-python3 tutorials/006_postproc_boxdecode/postproc_boxdecode.py
+./tutorial_v2_006_read_detection_boxes
+python3 tutorials/006_read_detection_boxes/read_detection_boxes.py
 ```
 
 ## Source Files
-- C++: `tutorials/006_postproc_boxdecode/postproc_boxdecode.cpp`
-- Python: `tutorials/006_postproc_boxdecode/postproc_boxdecode.py`
+- C++: `tutorials/006_read_detection_boxes/read_detection_boxes.cpp`
+- Python: `tutorials/006_read_detection_boxes/read_detection_boxes.py`

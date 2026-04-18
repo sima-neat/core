@@ -8,21 +8,30 @@
 | Labels | performance, tuning, async, queues |
 
 ## Concept
-This tutorial explains the first performance knobs most teams tune in async pipelines: queue depth, overflow policy, and metrics.
 
-Why this comes late in the tutorial sequence: performance tuning only helps when your correctness baseline is already stable. This chapter assumes you can already run async push/pull and now want controlled throughput/latency tradeoffs.
+Tune three knobs that control async pipeline behavior under load — queue depth, overflow policy, metrics — and read back what happened. Performance tuning only helps once the correctness baseline is stable; this chapter assumes it is.
 
-What this chapter demonstrates:
-- Running async mode with configurable queue depth.
-- Comparing overflow strategies (`Block`, `KeepLatest`, `DropIncoming`).
-- Reading runtime metrics (`inputs_enqueued`, drops, latency, push cost, renegotiations).
+The chapter exercises `RunOptions` at the level a production pipeline needs to control:
+- `queue_depth`: how many in-flight samples the runtime accepts.
+- `overflow_policy`: `Block`, `KeepLatest`, or `DropIncoming` when the queue is full.
+- `enable_metrics`: turn on per-run metric collection.
 
-Use-case guidance:
+**APIs introduced**
+- `pyneat.RunOptions()` with `.queue_depth`, `.overflow_policy`, `.output_memory`, `.enable_metrics`.
+- `pyneat.OverflowPolicy.{Block,KeepLatest,DropIncoming}` — the policy values.
+- `run.try_push(sample)` — non-blocking push that returns whether the sample was accepted.
+- `run.stats()` — latency/enqueue/pull counters.
+- `run.input_stats()` — push-side counters (accepted, dropped, queue fullness).
+
+**When to use this**
 - Throughput bottlenecks: increase queue depth and inspect drop/latency behavior.
-- Low-latency preference: favor latest-frame behavior in bursty streams.
-- Backpressure-sensitive ingestion: prefer block policy for strict loss control.
+- Low-latency preference: favor `KeepLatest` in bursty streams.
+- Backpressure-sensitive ingestion: prefer `Block` for strict loss control.
 
-Reference:
+**Prerequisites**
+Chapter 002 (async basics). Chapter 011 (diagnostics).
+
+**References**
 - [Pipeline](/getting-started/programming-model/pipeline)
 - [Session](/getting-started/programming-model/session)
 
@@ -39,10 +48,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_017_performance_tuning
-python3 tutorials/017_performance_tuning/performance_tuning.py
+./tutorial_v2_017_tune_throughput_and_queues
+python3 tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.py
 ```
 
 ## Source Files
-- C++: `tutorials/017_performance_tuning/performance_tuning.cpp`
-- Python: `tutorials/017_performance_tuning/performance_tuning.py`
+- C++: `tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.cpp`
+- Python: `tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.py`

@@ -8,7 +8,8 @@
 | Labels | model-options, configuration, contracts |
 
 ## Concept
-Model options define the runtime contract between your input data, model pipeline stages, and output decoding behavior.
+
+`ModelOptions` declares the runtime contract between your input data, the model pipeline stages, and output decoding. It is the first struct you reach for when moving past default behavior — one place to tune preprocessing, input bounds, and postprocessing together.
 
 This chapter focuses on the options most teams use first:
 - `format`, `media_type`: declare incoming data type (for example raw RGB/BGR image input).
@@ -18,14 +19,21 @@ This chapter focuses on the options most teams use first:
 - `original_width`, `original_height`: provide original image geometry when postprocessing requires source-frame coordinates.
 - `name_suffix`, `upstream_name`: stabilize/clarify generated stage naming when composing bigger pipelines.
 
-Use-case guidance:
+**Use-case guidance**
 - Prototype classification quickly: set `format` + input max dimensions, keep postproc defaults minimal.
 - Detection model bring-up (YOLO-style): set `decode_type` plus threshold/NMS/top-k options to shape final boxes.
 - Mixed input sizes in one app: set `input_max_*` high enough for expected ranges to avoid runtime contract failures.
 - Accuracy tuning after deployment: adjust `preproc.normalize`, `channel_mean`, `channel_stddev` to match model training assumptions.
-- Multi-model or hybrid pipelines: use `name_suffix`/`upstream_name` to keep pipeline graph naming explicit and debuggable.
+- Multi-model or hybrid pipelines: use `name_suffix` / `upstream_name` to keep pipeline graph naming explicit and debuggable.
 
-Reference:
+**APIs introduced**
+- `pyneat.ModelOptions()` with the fields listed above.
+- `model.input_spec()`, `model.output_spec()`, `model.metadata()` — inspect the resolved contract after loading.
+
+**Prerequisites**
+Chapter 001.
+
+**References**
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Learning Process
@@ -41,10 +49,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_004_model_options_chapter
-python3 tutorials/004_model_options_chapter/model_options_chapter.py
+./tutorial_v2_004_configure_model_options
+python3 tutorials/004_configure_model_options/configure_model_options.py
 ```
 
 ## Source Files
-- C++: `tutorials/004_model_options_chapter/model_options_chapter.cpp`
-- Python: `tutorials/004_model_options_chapter/model_options_chapter.py`
+- C++: `tutorials/004_configure_model_options/configure_model_options.cpp`
+- Python: `tutorials/004_configure_model_options/configure_model_options.py`

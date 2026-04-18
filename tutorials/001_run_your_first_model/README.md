@@ -8,15 +8,20 @@
 | Labels | model, mpk, inference, foundations |
 
 ## Concept
-This tutorial teaches the quickest practical path to run inference with a compiled model in NEAT.
 
-A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that NEAT can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference. You provide input data, run inference, and consume model outputs.
+Load a compiled ResNet-50 MPK, feed it an image, and read the top-1 class in three lines of Python. This is the shortest path from "I have a model package" to "I have a prediction."
 
-After this chapter, you should understand the minimum end-to-end loop:
-- Load a compiled model package.
-- Prepare input data that matches model expectations.
-- Run synchronous inference.
-- Read and validate output behavior.
+A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that NEAT can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference — you provide input, call `run()`, and read outputs.
+
+**APIs introduced**
+- `pyneat.Model(mpk_path)` — load the compiled model.
+- `model.run(input, timeout_ms)` — synchronous inference; returns a `Sample` with the model's output tensor.
+
+**When to use this**
+Fastest way to verify an MPK loads and runs on hardware. For throughput, batching, or live streams, move on to chapter 002.
+
+**Prerequisites**
+None — this is the entry chapter.
 
 **References**
 - [Model](/getting-started/programming-model/model)
@@ -53,14 +58,14 @@ From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-dk ./tutorial_v2_001_model_in_5_minutes --mpk /absolute/path/to/resnet_50.tar.gz
+dk ./tutorial_v2_001_run_your_first_model --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
 ### eLxr SDK (Python)
 
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_model_in_5_minutes/model_in_5_minutes.py \
+dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
   --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
@@ -73,7 +78,7 @@ From a shell on the DevKit itself:
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-./tutorial_v2_001_model_in_5_minutes --mpk /absolute/path/to/resnet_50.tar.gz
+./tutorial_v2_001_run_your_first_model --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
 ### DevKit (Python)
@@ -81,10 +86,10 @@ cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
 ```bash
 source ~/pyneat/bin/activate
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_model_in_5_minutes/model_in_5_minutes.py \
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
   --mpk /absolute/path/to/resnet_50.tar.gz
 ```
 
 ## Source Files
-- C++: `tutorials/001_model_in_5_minutes/model_in_5_minutes.cpp`
-- Python: `tutorials/001_model_in_5_minutes/model_in_5_minutes.py`
+- C++: `tutorials/001_run_your_first_model/run_your_first_model.cpp`
+- Python: `tutorials/001_run_your_first_model/run_your_first_model.py`

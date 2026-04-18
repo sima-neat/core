@@ -8,21 +8,25 @@
 | Labels | graph, hybrid, stage-model, mpk |
 
 ## Concept
-This tutorial shows how to combine graph orchestration with model execution in one hybrid flow.
 
-Why this chapter matters: many production systems need graph-level control (routing, scheduling, composition) while still using model execution as a stage. This tutorial demonstrates that bridge pattern with a reliable fallback path.
+Drop a model into a graph as a single stage using `stage_model_executor`. This is the bridge pattern when you need graph-level orchestration (routing, scheduling) around model execution as one node in the flow.
 
-What this chapter demonstrates:
-- Building a graph with `StageModelExecutor` when an MPK is available.
-- Running a deterministic stage-only fallback when model assets are missing/unavailable.
-- Validating tensor output kind/payload consistency across both paths.
+Many production systems need graph-level control while still using model execution as a stage. The hybrid pattern — graph container + `StageModelExecutor` node — gives you both.
 
-Use-case guidance:
-- You need graph-level composition around model execution.
-- You want deterministic behavior in CI/dev even when model assets differ by environment.
-- You need a safe migration path from simple stage graphs to model-backed hybrid graphs.
+**APIs introduced**
+- `pyneat.graph.nodes.StageModelExecutorOptions()` with model-backed fields.
+- `pyneat.graph.nodes.stage_model_executor(opts, name)` — the graph-node form of a model stage.
+- `graph.add(stage_node)` + `pyneat.graph.GraphSession(graph).build()` — same graph lifecycle as chapter 014.
 
-Reference:
+**When to use this**
+- Graph-level composition around model execution.
+- Deterministic behavior in CI/dev even when model assets differ across environments.
+- Safe migration path from simple stage graphs to model-backed hybrid graphs.
+
+**Prerequisites**
+Chapter 001 (Model). Chapter 014 (Graph basics).
+
+**References**
 - [Graph](/getting-started/programming-model/graph)
 - [Model](/getting-started/programming-model/model)
 
@@ -39,10 +43,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_015_graph_model_hybrid
-python3 tutorials/015_graph_model_hybrid/graph_model_hybrid.py
+./tutorial_v2_015_embed_model_inside_graph
+python3 tutorials/015_embed_model_inside_graph/embed_model_inside_graph.py
 ```
 
 ## Source Files
-- C++: `tutorials/015_graph_model_hybrid/graph_model_hybrid.cpp`
-- Python: `tutorials/015_graph_model_hybrid/graph_model_hybrid.py`
+- C++: `tutorials/015_embed_model_inside_graph/embed_model_inside_graph.cpp`
+- Python: `tutorials/015_embed_model_inside_graph/embed_model_inside_graph.py`

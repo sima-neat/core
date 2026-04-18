@@ -8,21 +8,28 @@
 | Labels | production, reliability, deployment |
 
 ## Concept
-This tutorial assembles a practical production blueprint from patterns introduced earlier: explicit run options, controlled async behavior, and model/session fallback paths.
 
-The goal is not a full product framework. It is a reliable template you can adapt for deployment:
-- model-backed path when MPK assets are available
-- session-only fallback path when they are not
-- consistent runtime/metrics/report behavior in both cases
+Assemble a production-style run loop from the patterns earlier chapters taught: explicit `ModelOptions`, explicit `ModelSessionOptions`, explicit `RunOptions`, and one async push/pull loop. Not a full product framework — a reliable skeleton you can adapt.
 
-Why this chapter is last: it combines correctness, observability, and resilience patterns from previous tutorials into one deployment-ready skeleton.
+The template makes three things explicit that defaults leave implicit:
+- Input bounds on `ModelOptions` (`input_max_width/height/depth`) so contract failures surface at build time, not runtime.
+- Stage naming (`name_suffix`) so diagnostics in a multi-model system stay readable.
+- Queue policy on `RunOptions` (`queue_depth`, `overflow_policy=Block`, metrics on) so pipeline behavior under load is observable.
 
-What this chapter demonstrates:
-- Standardized `RunOptions` for queueing, memory ownership, and metrics.
-- `Model.build(...)` blueprint path with `ModelSessionOptions`.
-- Session async fallback blueprint with output/report checks.
+**APIs introduced**
+- `pyneat.ModelOptions()` + `pyneat.ModelSessionOptions()` + `pyneat.RunOptions()` as a composed unit.
+- `model.build(tensor, session_options, run_options)` — one-call path from `Model` to `Run`.
+- `runner.push(tensor)` returning bool + `runner.pull(timeout_ms)` + `runner.close()` — the production loop.
 
-Reference:
+**When to use this**
+- Adapting an earlier tutorial into real deployment code.
+- Establishing a consistent runtime skeleton across multiple models in the same app.
+- As a starting point for apps/examples repo integrations.
+
+**Prerequisites**
+Chapters 002 (async), 004 (ModelOptions), 007 (ModelSessionOptions), 017 (RunOptions and queues).
+
+**References**
 - [Model](/getting-started/programming-model/model)
 - [Session](/getting-started/programming-model/session)
 - [Pipeline](/getting-started/programming-model/pipeline)
@@ -40,10 +47,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_018_production_blueprint
-python3 tutorials/018_production_blueprint/production_blueprint.py
+./tutorial_v2_018_build_production_pipeline
+python3 tutorials/018_build_production_pipeline/build_production_pipeline.py
 ```
 
 ## Source Files
-- C++: `tutorials/018_production_blueprint/production_blueprint.cpp`
-- Python: `tutorials/018_production_blueprint/production_blueprint.py`
+- C++: `tutorials/018_build_production_pipeline/build_production_pipeline.cpp`
+- Python: `tutorials/018_build_production_pipeline/build_production_pipeline.py`
