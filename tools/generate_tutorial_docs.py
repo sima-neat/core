@@ -364,15 +364,15 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     # Tutorials that require a model pack end with --mpk placeholder so customers
     # do not copy a zero-argument command that would silently SKIP on install.
     mpk_label_tutorials = {
-        "001_model_in_5_minutes",
-        "004_model_options_chapter",
-        "005_preproc_chapter",
-        "006_postproc_boxdecode",
-        "007_session_patterns",
-        "012_yolo_quickstart",
-        "013_resnet_quickstart",
-        "015_graph_model_hybrid",
-        "018_production_blueprint",
+        "001_run_your_first_model",
+        "004_configure_model_options",
+        "005_preprocess_images",
+        "006_read_detection_boxes",
+        "007_plug_model_into_pipeline",
+        "012_detect_objects_with_yolov8",
+        "013_classify_images_with_resnet50",
+        "015_embed_model_inside_graph",
+        "018_build_production_pipeline",
     }
     cpp_suffix = " --mpk /path/to/model.tar.gz" if module.folder in mpk_label_tutorials else ""
     py_suffix = " --mpk /path/to/model.tar.gz" if module.folder in mpk_label_tutorials else ""

@@ -176,93 +176,93 @@ add_tutorial(tutorial_0027_run_e2e_application_via_pcie
 )
 
 # New fast-path tutorial track (paired with Python scripts under tutorials/00x_*/).
-add_tutorial(tutorial_v2_001_model_in_5_minutes
-  001_model_in_5_minutes/model_in_5_minutes.cpp
+add_tutorial(tutorial_v2_001_run_your_first_model
+  001_run_your_first_model/run_your_first_model.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_002_async_push_pull
-  002_async_push_pull/async_push_pull.cpp
+add_tutorial(tutorial_v2_002_run_inference_async
+  002_run_inference_async/run_inference_async.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_003_session_build_and_run
-  003_session_build_and_run/session_build_and_run.cpp
+add_tutorial(tutorial_v2_003_build_inference_pipeline
+  003_build_inference_pipeline/build_inference_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_004_model_options_chapter
-  004_model_options_chapter/model_options_chapter.cpp
+add_tutorial(tutorial_v2_004_configure_model_options
+  004_configure_model_options/configure_model_options.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_005_preproc_chapter
-  005_preproc_chapter/preproc_chapter.cpp
+add_tutorial(tutorial_v2_005_preprocess_images
+  005_preprocess_images/preprocess_images.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_006_postproc_boxdecode
-  006_postproc_boxdecode/postproc_boxdecode.cpp
+add_tutorial(tutorial_v2_006_read_detection_boxes
+  006_read_detection_boxes/read_detection_boxes.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_007_session_patterns
-  007_session_patterns/session_patterns.cpp
+add_tutorial(tutorial_v2_007_plug_model_into_pipeline
+  007_plug_model_into_pipeline/plug_model_into_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_008_numpy_torch_tensor_io
-  008_numpy_torch_tensor_io/numpy_torch_tensor_io.cpp
+add_tutorial(tutorial_v2_008_pass_numpy_to_model
+  008_pass_numpy_to_model/pass_numpy_to_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_009_multi_input_samples
-  009_multi_input_samples/multi_input_samples.cpp
+add_tutorial(tutorial_v2_009_feed_multi_input_model
+  009_feed_multi_input_model/feed_multi_input_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_010_output_handling_patterns
-  010_output_handling_patterns/output_handling_patterns.cpp
+add_tutorial(tutorial_v2_010_interpret_model_output
+  010_interpret_model_output/interpret_model_output.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_011_diagnostics_in_3_commands
-  011_diagnostics_in_3_commands/diagnostics_in_3_commands.cpp
+add_tutorial(tutorial_v2_011_diagnose_a_pipeline
+  011_diagnose_a_pipeline/diagnose_a_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_012_yolo_quickstart
-  012_yolo_quickstart/yolo_quickstart.cpp
+add_tutorial(tutorial_v2_012_detect_objects_with_yolov8
+  012_detect_objects_with_yolov8/detect_objects_with_yolov8.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_013_resnet_quickstart
-  013_resnet_quickstart/resnet_quickstart.cpp
+add_tutorial(tutorial_v2_013_classify_images_with_resnet50
+  013_classify_images_with_resnet50/classify_images_with_resnet50.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_014_graph_basics
-  014_graph_basics/graph_basics.cpp
+add_tutorial(tutorial_v2_014_build_a_custom_data_graph
+  014_build_a_custom_data_graph/build_a_custom_data_graph.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_015_graph_model_hybrid
-  015_graph_model_hybrid/graph_model_hybrid.cpp
+add_tutorial(tutorial_v2_015_embed_model_inside_graph
+  015_embed_model_inside_graph/embed_model_inside_graph.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_016_graph_multistream
-  016_graph_multistream/graph_multistream.cpp
+add_tutorial(tutorial_v2_016_run_multiple_streams
+  016_run_multiple_streams/run_multiple_streams.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_017_performance_tuning
-  017_performance_tuning/performance_tuning.cpp
+add_tutorial(tutorial_v2_017_tune_throughput_and_queues
+  017_tune_throughput_and_queues/tune_throughput_and_queues.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_018_production_blueprint
-  018_production_blueprint/production_blueprint.cpp
+add_tutorial(tutorial_v2_018_build_production_pipeline
+  018_build_production_pipeline/build_production_pipeline.cpp
   LABELS fast
 )
 
