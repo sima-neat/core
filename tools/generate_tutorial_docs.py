@@ -535,6 +535,13 @@ def main() -> int:
     heading_path = docs_tutorials_dir / "heading.mm"
     heading_body = heading_path.read_text(encoding="utf-8").strip() if heading_path.exists() else ""
 
+    # Purge stale auto-generated MDX from renamed/removed tutorial folders.
+    # Without this, Docusaurus indexes both old and new titles after a rename.
+    expected = {f"{m.doc_id}.mdx" for m in modules}
+    for stale in docs_tutorials_dir.glob("tutorial_v2_*.mdx"):
+        if stale.name not in expected:
+            stale.unlink()
+
     for idx, module in enumerate(modules, start=2):
         out_path = docs_tutorials_dir / f"{module.doc_id}.mdx"
         out_path.write_text(
