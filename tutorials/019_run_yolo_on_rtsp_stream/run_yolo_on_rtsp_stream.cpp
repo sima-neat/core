@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
       }
       auto out = model.run(*frame->tensor, /*timeout_ms=*/2000);
       const auto bbox_bytes =
-          out.tensor.has_value() ? static_cast<long long>(out.tensor->shape()[0]) : -1LL;
+          out.tensor.has_value() ? static_cast<long long>(out.tensor->shape[0]) : -1LL;
       std::cout << "frame=" << i << " fields=" << out.fields.size() << " bbox_bytes=" << bbox_bytes
                 << "\n";
     }
