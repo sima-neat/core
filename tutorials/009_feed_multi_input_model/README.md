@@ -8,21 +8,25 @@
 | Labels | multi-input, samples, sync |
 
 ## Concept
-This tutorial shows how to send and receive **multi-field samples** (bundle samples) instead of only single-tensor payloads.
 
-Many real applications carry more than one input per inference event (for example left/right streams, image + metadata, or multi-sensor packets). This chapter teaches the sample-bundling pattern you need before building those systems.
+Bundle multiple tensors into one `Sample` and push it as a single inference event. This is the pattern you need when a model takes more than one input — stereo frames, image + metadata, sensor fusion.
 
-What this chapter demonstrates:
-- Building a tensor-input session contract (`FP32` tensor media).
-- Constructing a bundle sample with multiple named fields.
-- Pushing/pulling bundle payloads and validating field-level outputs.
+Many real applications carry more than one input per inference event. NEAT represents this as a **bundle sample**: a single `Sample` whose `fields` list holds multiple named tensor payloads, each addressable by port name.
 
-Use-case guidance:
+**APIs introduced**
+- `pyneat.Sample()` + `sample.kind = pyneat.SampleKind.Bundle` — create the bundle envelope.
+- `sample.fields = [...]` — the list of named inner samples.
+- `pyneat.make_tensor_sample(port_name, tensor)` — build one named field.
+
+**When to use this**
 - Stereo or paired inputs: bundle `left` and `right` together as one logical unit.
 - Sensor fusion pipelines: attach related tensors/fields in one sample envelope.
 - Debugging wiring issues: inspect `port_name` and field tensor presence on output.
 
-Reference:
+**Prerequisites**
+Chapters 001–003 (Model, Session, Run basics). Chapter 008 (Tensor interop).
+
+**References**
 - [Session](/getting-started/programming-model/session)
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 
@@ -39,10 +43,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_009_multi_input_samples
-python3 tutorials/009_multi_input_samples/multi_input_samples.py
+./tutorial_v2_009_feed_multi_input_model
+python3 tutorials/009_feed_multi_input_model/feed_multi_input_model.py
 ```
 
 ## Source Files
-- C++: `tutorials/009_multi_input_samples/multi_input_samples.cpp`
-- Python: `tutorials/009_multi_input_samples/multi_input_samples.py`
+- C++: `tutorials/009_feed_multi_input_model/feed_multi_input_model.cpp`
+- Python: `tutorials/009_feed_multi_input_model/feed_multi_input_model.py`

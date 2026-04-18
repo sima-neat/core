@@ -8,21 +8,27 @@
 | Labels | numpy, pytorch, tensor, io |
 
 ## Concept
-This tutorial explains how NEAT tensors map to the data structures most Python and ML users already know: NumPy arrays and PyTorch tensors.
 
-If you are integrating NEAT into an existing Python inference stack, this chapter should come handy. It helps you avoid common integration mistakes around shape/layout, dtype, and copy semantics before you build larger pipelines.
+Move data between NEAT tensors and the data structures Python users already have — NumPy arrays and PyTorch tensors — without rewriting your existing preprocessing or postprocessing stacks. Layout, dtype, and copy semantics handled in two calls.
 
-What this chapter demonstrates:
-- Creating NEAT tensors from NumPy and PyTorch.
-- Converting NEAT tensors back to NumPy/PyTorch.
-- Basic C++ tensor mapping/clone flow for parity with Python paths.
+If you are integrating NEAT into an existing Python inference stack, this is the interop surface you need. It prevents the common integration mistakes (wrong layout, silent dtype coercion, unexpected aliasing) before you build larger pipelines.
 
-Use-case guidance:
+**APIs introduced**
+- `pyneat.Tensor.from_numpy(array, copy=..., image_format=...)` — wrap a NumPy array as a NEAT tensor.
+- `tensor.to_numpy(copy=...)` — materialize a NumPy view (or copy) of a NEAT tensor.
+- `pyneat.Tensor.from_torch(tensor, copy=..., image_format=...)` — same surface for PyTorch.
+- `tensor.to_torch(copy=...)` — round-trip back to PyTorch.
+- `pyneat.PixelFormat.RGB` (and siblings) — explicit image-layout tag that controls interpretation.
+
+**When to use this**
 - Existing preprocessing in NumPy: keep that path, then hand off tensors to NEAT.
 - Existing model/postprocessing in PyTorch: convert in/out cleanly without rewriting your whole stack.
 - Interop debugging: use deterministic round-trip checks to confirm data integrity.
 
-Reference:
+**Prerequisites**
+Chapter 001.
+
+**References**
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 - [Input and Output](/getting-started/programming-model/io)
 
@@ -39,10 +45,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_008_numpy_torch_tensor_io
-python3 tutorials/008_numpy_torch_tensor_io/numpy_torch_tensor_io.py
+./tutorial_v2_008_pass_numpy_to_model
+python3 tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py
 ```
 
 ## Source Files
-- C++: `tutorials/008_numpy_torch_tensor_io/numpy_torch_tensor_io.cpp`
-- Python: `tutorials/008_numpy_torch_tensor_io/numpy_torch_tensor_io.py`
+- C++: `tutorials/008_pass_numpy_to_model/pass_numpy_to_model.cpp`
+- Python: `tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py`

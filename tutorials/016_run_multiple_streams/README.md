@@ -8,21 +8,27 @@
 | Labels | graph, multistream, scheduler, join |
 
 ## Concept
-This tutorial teaches multistream graph scheduling fundamentals: how multiple stream/frame inputs are fairly scheduled, branched, and re-joined into deterministic bundles.
 
-Why read this before production graph scaling: it gives you a concrete pattern for validating stream fairness and bundle cardinality, which are common failure points in multistream systems.
+Schedule multiple streams through one graph — fair scheduling, fan-out branches, and deterministic bundle re-join. This is the pattern behind any multi-camera or multi-source system built on NEAT graphs.
 
-What this chapter demonstrates:
-- Tagging each sample with stream/frame identity.
-- Building graph path: stamp -> scheduler -> fanout -> join.
-- Verifying expected bundle field count and output count.
+The graph here is: `stamp → stream_scheduler → fan_out → join_bundle`. Each sample is tagged with stream/frame identity, scheduled fairly across streams, branched into parallel paths, and re-joined into a bundle you can pull as one unit.
 
-Use-case guidance:
-- Multi-camera ingestion where each stream must make progress.
-- Parallel branch processing that must rejoin outputs correctly.
-- Diagnosing dropped/misaligned stream outputs under load.
+**APIs introduced**
+- `pyneat.graph.nodes.StreamSchedulerOptions()` with `per_stream_queue`, `drop_policy`.
+- `pyneat.graph.nodes.stream_scheduler(opts, name)` — the fairness primitive.
+- `pyneat.graph.nodes.fan_out(port_names, name)` — split one sample into multiple named branches.
+- `pyneat.graph.nodes.join_bundle(port_names, name, bundle_name)` — re-join branches into one bundle.
+- `pyneat.graph.nodes.StreamDropPolicy.DropOldest` — per-stream overflow policy.
 
-Reference:
+**When to use this**
+- Multi-camera ingestion where each stream must make progress independently.
+- Parallel branch processing (e.g. two models running side-by-side) that must rejoin outputs correctly.
+- Diagnosing dropped or misaligned stream outputs under load.
+
+**Prerequisites**
+Chapter 014 (Graph basics). Chapter 009 (bundle samples) helps for join semantics.
+
+**References**
 - [Graph](/getting-started/programming-model/graph)
 - [Pipeline](/getting-started/programming-model/pipeline)
 
@@ -39,10 +45,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_016_graph_multistream
-python3 tutorials/016_graph_multistream/graph_multistream.py
+./tutorial_v2_016_run_multiple_streams
+python3 tutorials/016_run_multiple_streams/run_multiple_streams.py
 ```
 
 ## Source Files
-- C++: `tutorials/016_graph_multistream/graph_multistream.cpp`
-- Python: `tutorials/016_graph_multistream/graph_multistream.py`
+- C++: `tutorials/016_run_multiple_streams/run_multiple_streams.cpp`
+- Python: `tutorials/016_run_multiple_streams/run_multiple_streams.py`

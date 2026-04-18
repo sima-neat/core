@@ -8,21 +8,26 @@
 | Labels | output, patterns, sink |
 
 ## Concept
-This tutorial focuses on **output interpretation patterns**: how to reliably inspect what came back from a run and decide what your application should do next.
 
-Before you optimize throughput or add complex graph logic, you need a stable way to classify outputs (`kind`, tensor presence, field count) and validate output contracts. This chapter provides that baseline pattern.
+Read back from `run.pull()` or `model.run()` safely. Every model returns a `Sample`, but `Sample` is a small sum type — a tensor, a bundle of fields, or both. Learn which fields to check before touching the payload.
 
-What this chapter demonstrates:
-- Building a minimal sync run path.
-- Reading `Sample` output summary (`kind`, tensor, fields).
-- Validating output shape/rank assumptions before downstream use.
+Before you optimize throughput or add complex graph logic, you need a stable way to classify outputs (`kind`, tensor presence, field count) and validate output contracts. This chapter provides that baseline.
 
-Use-case guidance:
+**APIs introduced**
+- `sample.kind` — `SampleKind.Tensor`, `SampleKind.Bundle`, etc.
+- `sample.tensor` — present for tensor-kind samples; `None` otherwise.
+- `sample.fields` — list of inner samples for bundle-kind.
+- `tensor.shape`, `tensor.dtype` — inspect the payload before use.
+
+**When to use this**
 - New model integration: verify output rank and tensor presence first.
 - Mixed output types: branch behavior by `SampleKind` and field structure.
-- Production robustness: fail fast when output shape contracts are unexpectedly empty.
+- Building output readers that need to handle any model the runtime serves.
 
-Reference:
+**Prerequisites**
+Chapter 001.
+
+**References**
 - [Input and Output](/getting-started/programming-model/io)
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 
@@ -39,10 +44,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_010_output_handling_patterns
-python3 tutorials/010_output_handling_patterns/output_handling_patterns.py
+./tutorial_v2_010_interpret_model_output
+python3 tutorials/010_interpret_model_output/interpret_model_output.py
 ```
 
 ## Source Files
-- C++: `tutorials/010_output_handling_patterns/output_handling_patterns.cpp`
-- Python: `tutorials/010_output_handling_patterns/output_handling_patterns.py`
+- C++: `tutorials/010_interpret_model_output/interpret_model_output.cpp`
+- Python: `tutorials/010_interpret_model_output/interpret_model_output.py`

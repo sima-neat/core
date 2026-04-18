@@ -8,21 +8,25 @@
 | Labels | yolo, detection, mpk |
 
 ## Concept
-This tutorial is the fastest path to run a YOLO-style detector in NEAT and confirm the detection pipeline is wired correctly.
 
-For new users, this chapter provides a practical bridge from "I have a YOLO MPK" to "I can run detection and inspect outputs." It uses explicit preprocess + MLA + boxdecode composition in C++, and the equivalent model-option path in Python.
+Load a YOLOv8 MPK, feed it one image as a `Tensor`, and read back detection boxes. End-to-end object detection in a handful of lines — the sanity check that says "the YOLO path works on this board."
 
-What this chapter demonstrates:
-- Loading a YOLO MPK and preparing image/tensor input.
-- Running detection-oriented pipeline stages.
-- Validating output kind and field structure.
+This chapter bridges "I have a YOLO MPK" to "I can run detection and inspect outputs." It uses the same `model.run()` call as chapter 001, now with detection-shaped output instead of classification logits.
 
-Use-case guidance:
+**APIs introduced**
+- `pyneat.ModelOptions()` with YOLO-specific fields (`.decode_type="yolov8"`, `.score_threshold`, `.nms_iou_threshold`, `.top_k`, `.original_width/height`).
+- `pyneat.Tensor.from_numpy(rgb, image_format=pyneat.PixelFormat.RGB)` — explicit tensor input.
+- `model.run(tensor, timeout_ms)` — same call as chapter 001, YOLO-shaped output.
+
+**When to use this**
 - First detector bring-up on a new board/runtime.
 - Verifying required plugins and model assets are present.
 - Establishing a known-good baseline before threshold/NMS tuning.
 
-Reference:
+**Prerequisites**
+Chapter 001 (Model). Chapter 004 for `ModelOptions`. Chapter 006 for reading detection outputs.
+
+**References**
 - [Model](/getting-started/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
@@ -58,14 +62,14 @@ From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-dk ./tutorial_v2_012_yolo_quickstart --mpk /absolute/path/to/yolo_v8s.tar.gz
+dk ./tutorial_v2_012_detect_objects_with_yolov8 --mpk /absolute/path/to/yolo_v8s.tar.gz
 ```
 
 ### eLxr SDK (Python)
 
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/012_yolo_quickstart/yolo_quickstart.py \
+dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py \
   --mpk /absolute/path/to/yolo_v8s.tar.gz
 ```
 
@@ -78,7 +82,7 @@ From a shell on the DevKit itself:
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-./tutorial_v2_012_yolo_quickstart --mpk /absolute/path/to/yolo_v8s.tar.gz
+./tutorial_v2_012_detect_objects_with_yolov8 --mpk /absolute/path/to/yolo_v8s.tar.gz
 ```
 
 ### DevKit (Python)
@@ -86,10 +90,10 @@ cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
 ```bash
 source ~/pyneat/bin/activate
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/012_yolo_quickstart/yolo_quickstart.py \
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py \
   --mpk /absolute/path/to/yolo_v8s.tar.gz
 ```
 
 ## Source Files
-- C++: `tutorials/012_yolo_quickstart/yolo_quickstart.cpp`
-- Python: `tutorials/012_yolo_quickstart/yolo_quickstart.py`
+- C++: `tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.cpp`
+- Python: `tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py`

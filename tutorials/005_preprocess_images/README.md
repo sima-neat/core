@@ -8,7 +8,8 @@
 | Labels | preprocessing, normalization, image |
 
 ## Concept
-Preprocessing is where raw input data is transformed into the exact tensor contract your model expects.
+
+Configure the preprocessing stage — format, dimensions, and per-channel normalization — so raw image input becomes the exact tensor your model was trained on. Accurate preprocessing is usually the difference between a model that works and a model that looks broken.
 
 This chapter focuses on the preproc controls you use most in real deployments:
 - `format`: declares input image layout/color order (`RGB`/`BGR`/`GRAY`) expected at ingress.
@@ -18,13 +19,20 @@ This chapter focuses on the preproc controls you use most in real deployments:
 - `preproc.normalize`: enables value normalization before inference.
 - `preproc.channel_mean`, `preproc.channel_stddev`: per-channel normalization constants that should match model training assumptions.
 
-Use-case guidance:
-- Model output is unstable or low-confidence after deployment: verify `format` and `channel_mean/stddev` first.
+**Use-case guidance**
+- Model output is unstable or low-confidence after deployment: verify `format` and `channel_mean` / `channel_stddev` first.
 - Multiple cameras/sources with different resolutions: set `input_max_*` and explicit preproc in/out dimensions for predictable behavior.
 - Porting a model from another framework: mirror the training-time normalization recipe with `preproc.normalize` + channel stats.
 - Isolating preprocessing issues: run/inspect `model.preprocess()` path and confirm shape/dtype before debugging inference/postproc.
 
-Reference:
+**APIs introduced**
+- `pyneat.ModelOptions().preproc.*` — the preprocessing sub-struct with the fields listed above.
+- `model.preprocess()` — retrieves the preprocessing node group so you can inspect it in isolation.
+
+**Prerequisites**
+Chapter 001. Chapter 004 for the rest of `ModelOptions`.
+
+**References**
 - [Model](/getting-started/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
@@ -41,10 +49,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_005_preproc_chapter
-python3 tutorials/005_preproc_chapter/preproc_chapter.py
+./tutorial_v2_005_preprocess_images
+python3 tutorials/005_preprocess_images/preprocess_images.py
 ```
 
 ## Source Files
-- C++: `tutorials/005_preproc_chapter/preproc_chapter.cpp`
-- Python: `tutorials/005_preproc_chapter/preproc_chapter.py`
+- C++: `tutorials/005_preprocess_images/preprocess_images.cpp`
+- Python: `tutorials/005_preprocess_images/preprocess_images.py`

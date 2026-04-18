@@ -8,16 +8,26 @@
 | Labels | diagnostics, debugging, observability |
 
 ## Concept
-This tutorial gives you a compact three-step diagnostics workflow you can run before deep debugging.
 
-The goal is to answer three questions quickly:
-1. Is the session contract/build valid?
-2. Does one run succeed with metrics enabled?
-3. What do runtime diagnostics report about performance and behavior?
+Run three checks — `session.validate()`, one metrics-enabled `run.run()`, and `run.stats()` + `run.report()` — to answer whether a pipeline is wired correctly and how it is performing. This is the triage baseline before deep debugging.
 
-This chapter is especially useful when onboarding new models or environments, because it provides a repeatable triage baseline before diving into plugin internals.
+The three checks answer three questions:
+1. Is the session contract/build valid? (`validate()`)
+2. Does one run succeed with metrics enabled? (`build(..., RunOptions(enable_metrics=True))` + `run.run()`)
+3. What do runtime diagnostics report? (`run.stats()`, `run.report()`, `run.diagnostics_summary()`)
 
-Reference:
+Especially useful when onboarding new models or environments — repeatable, fast, and catches most misconfiguration before it becomes a multi-hour debugging session.
+
+**APIs introduced**
+- `session.validate()` — contract-level check, returns a report with `error_code`.
+- `pyneat.RunOptions()` with `enable_metrics=True` and `output_memory=OutputMemory.Owned`.
+- `run.stats()` — `inputs_enqueued`, `outputs_pulled`, `avg/min/max_latency_ms`.
+- `run.report()`, `run.diagnostics_summary()` — structured runtime diagnostics.
+
+**Prerequisites**
+Chapter 002 or 003 (Session/Run basics).
+
+**References**
 - [Session](/getting-started/programming-model/session)
 - [Pipeline](/getting-started/programming-model/pipeline)
 
@@ -34,10 +44,10 @@ Reference:
 
 ## Run
 ```bash
-./tutorial_v2_011_diagnostics_in_3_commands
-python3 tutorials/011_diagnostics_in_3_commands/diagnostics_in_3_commands.py
+./tutorial_v2_011_diagnose_a_pipeline
+python3 tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.py
 ```
 
 ## Source Files
-- C++: `tutorials/011_diagnostics_in_3_commands/diagnostics_in_3_commands.cpp`
-- Python: `tutorials/011_diagnostics_in_3_commands/diagnostics_in_3_commands.py`
+- C++: `tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.cpp`
+- Python: `tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.py`
