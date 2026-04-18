@@ -40,142 +40,6 @@ function(add_tutorial exe source)
 endfunction()
 
 # Tutorials are added as they are implemented.
-add_tutorial(tutorial_0001_quickstart_image_to_tensor
-  tutorial_0001_quickstart_image_to_tensor.cpp
-  LABELS asset
-)
-
-add_tutorial(tutorial_0002_pipeline_session_build_run
-  tutorial_0002_pipeline_session_build_run.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0003_nodes_and_groups
-  tutorial_0003_nodes_and_groups.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0004_samples_and_neattensor
-  tutorial_0004_samples_and_neattensor.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0005_output_tensor_options
-  tutorial_0005_output_tensor_options.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0006_async_push_pull
-  tutorial_0006_async_push_pull.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0007_caps_negotiation
-  tutorial_0007_caps_negotiation.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0008_input_groups
-  tutorial_0008_input_groups.cpp
-  LABELS asset
-)
-
-add_tutorial(tutorial_0009_pipeline_save_load
-  tutorial_0009_pipeline_save_load.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0010_diagnostics_debug
-  tutorial_0010_diagnostics_debug.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0011_mpk_yolov8_pipeline
-  tutorial_0011_mpk_yolov8_pipeline.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0012_stage_api
-  tutorial_0012_stage_api.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0013_model_resnet50
-  tutorial_0013_model_resnet50.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0014_rtsp_server
-  tutorial_0014_rtsp_server.cpp
-  LABELS rtsp
-)
-
-add_tutorial(tutorial_0015_multi_stream_multi_output
-  tutorial_0015_multi_stream_multi_output.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0016_data_formats_and_mapping
-  tutorial_0016_data_formats_and_mapping.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0017_neatmodel_end_to_end
-  tutorial_0017_neatmodel_end_to_end.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0018_async_queue_tuning
-  tutorial_0018_async_queue_tuning.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0019_multi_output_bundle
-  tutorial_0019_multi_output_bundle.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0020_debugging_workflow
-  tutorial_0020_debugging_workflow.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0021_output_appsink_policies
-  tutorial_0021_output_appsink_policies.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0022_inputappsrc_advanced_caps
-  tutorial_0022_inputappsrc_advanced_caps.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0023_builder_graph_and_contracts
-  tutorial_0023_builder_graph_and_contracts.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0024_hybrid_graph
-  tutorial_0024_hybrid_graph.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0025_hybrid_multistream
-  tutorial_0025_hybrid_multistream.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0026_send_and_receive_via_pcie
-  tutorial_0026_send_and_receive_via_pcie.cpp
-  LABELS pcie
-)
-
-add_tutorial(tutorial_0027_run_e2e_application_via_pcie
-  tutorial_0027_run_e2e_application_via_pcie.cpp
-  LABELS pcie
-)
-
-# New fast-path tutorial track (paired with Python scripts under tutorials/00x_*/).
 add_tutorial(tutorial_v2_001_run_your_first_model
   001_run_your_first_model/run_your_first_model.cpp
   LABELS mpk
@@ -264,6 +128,11 @@ add_tutorial(tutorial_v2_017_tune_throughput_and_queues
 add_tutorial(tutorial_v2_018_build_production_pipeline
   018_build_production_pipeline/build_production_pipeline.cpp
   LABELS fast
+)
+
+add_tutorial(tutorial_v2_019_run_yolo_on_rtsp_stream
+  019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.cpp
+  LABELS asset
 )
 
 install(
