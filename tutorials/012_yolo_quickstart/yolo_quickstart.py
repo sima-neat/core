@@ -1,86 +1,75 @@
 #!/usr/bin/env python3
+"""End-to-end YOLOv8 detection: load the MPK, run on an image, count detections.
+
+Usage:
+  python3 yolo_quickstart.py --mpk /path/to/yolo_v8s.tar.gz [--image /path/to.jpg]
+"""
 from __future__ import annotations
 
+import argparse
+import struct
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+try:
+  import pyneat
+except ImportError:
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate"
+  )
+
+import numpy as np
+import cv2
+
+
+def load_image(path: Path | None, size: int) -> np.ndarray:
+  if path is None:
+    return np.full((size, size, 3), 66, dtype=np.uint8)
+  bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+  if bgr is None:
+    raise RuntimeError(f"failed to read image: {path}")
+  if bgr.shape[0] != size or bgr.shape[1] != size:
+    bgr = cv2.resize(bgr, (size, size), interpolation=cv2.INTER_AREA)
+  return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
-  import numpy as np
+  ap = argparse.ArgumentParser(description=__doc__)
+  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--image", type=Path)
+  ap.add_argument("--size", type=int, default=640)
+  args = ap.parse_args(argv[1:])
 
-  if tu.has_flag(argv, "--help"):
-    print(f"Usage: {argv[0]} [--mpk <path>] [--width <w>] [--height <h>]")
-    return 0
-
-  # Why: runtime markers make intent explicit without requiring external docs.
-  # Why: parity/scorecard tooling relies on stable, machine-parseable checkpoints.
-  tu.step("input_contract", "parse flags and establish deterministic defaults")
-  tu.step("run_mode_choice", "exercise the chapter's primary runtime path")
-  tu.why("understand the contract first: inputs, run mode, and outputs")
-  tu.tradeoff("prefer deterministic samples and stable contracts over production realism")
-  tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
-  tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
-  tu.step("output_contract", "emit checks and machine-parseable signature")
-  tu.check("strict_flag_available", isinstance(tu.strict_mode(), bool),
-           "strict-mode guard is observable")
-
-  root = tu.repo_root()
-  width = tu.parse_int(argv, "--width", 640)
-  height = tu.parse_int(argv, "--height", 640)
-  mpk_arg = tu.get_arg(argv, "--mpk")
-  mpk = Path(mpk_arg) if mpk_arg else tu.default_yolo_mpk(root)
-  if not mpk or not mpk.exists():
-    return tu.skip("missing YOLO MPK (pass --mpk)")
-
-  # CORE LOGIC
-  opt = neat.ModelOptions()
+  opt = pyneat.ModelOptions()
   opt.format = "RGB"
-  opt.input_max_width = width
-  opt.input_max_height = height
+  opt.input_max_width = args.size
+  opt.input_max_height = args.size
   opt.input_max_depth = 3
   opt.decode_type = "yolov8"
   opt.score_threshold = 0.52
   opt.nms_iou_threshold = 0.50
   opt.top_k = 100
-  opt.original_width = width
-  opt.original_height = height
+  opt.original_width = args.size
+  opt.original_height = args.size
 
-  model = neat.Model(str(mpk), opt)
-
-  if tu.has_flag(argv, "--print-gst"):
-    s = neat.Session()
-    s.add(model.session())
-    print(s.describe_backend())
-    return 0
-
-  rgb = np.full((height, width, 3), 66, dtype=np.uint8)
-  t = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
-
-  try:
-    out = model.run(t, timeout_ms=2000)
-    print(f"Output kind: {out.kind}")
-    print(f"Fields:      {len(out.fields)}")
-  except Exception as exc:
-    # Deterministic fallback keeps strict runs pedagogically useful when device plugins misconfigure.
-    tu.runtime_fallback(exc)
+  # CORE LOGIC
+  model = pyneat.Model(str(args.mpk), opt)
+  rgb = load_image(args.image, size=args.size)
+  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  sample = model.run(tensor, timeout_ms=2000)
   # END CORE LOGIC
 
-  tu.check("tutorial_completed", True, "main path reached end without exception")
-  tu.signature({
-      "tutorial": "012",
-      "lang": "py",
-      "flow": "chapter_path",
-      "run_mode": "sync_or_async",
-      "output_kind": "sample_or_tensor",
-      "tensor_rank": -1,
-      "field_count": -1,
-  })
-
-  print("[OK] 012_yolo_quickstart")
+  # When the runtime wires BoxDecode into model.run, `sample.tensor` is the
+  # BBOX uint8 buffer (uint32 count + N 24-byte RawBox). Otherwise `sample`
+  # is a Bundle of raw MLA feature maps — see tutorial 006 for the contract.
+  if sample.tensor is not None:
+    buf = bytes(sample.tensor.to_numpy(copy=False))
+    detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
+    print(f"detections={detections}")
+  else:
+    heads = len(sample.fields or [])
+    print(f"raw_output_heads={heads}  # BoxDecode not wired by this runtime")
   return 0
 
 

@@ -8,19 +8,65 @@
 #include "neat/session.h"
 #include "neat/nodes.h"
 
-#include "tutorial_common.h"
-
 #include <opencv2/core.hpp>
 
 #include <iostream>
 #include <string>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <filesystem>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+void require(bool ok, const std::string& msg) {
+  if (!ok)
+    throw std::runtime_error(msg);
+}
+
+} // namespace
 
 namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--small-width <w>] [--small-height <h>] "
             << "[--large-width <w>] [--large-height <h>] [--stability <n>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --small-width <w>    First size width (default 320)\n";
   std::cout << "  --small-height <h>   First size height (default 240)\n";
   std::cout << "  --large-width <w>    Second size width (default 640)\n";
@@ -31,7 +77,7 @@ void print_help(const char* argv0) {
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -44,7 +90,7 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
@@ -73,7 +119,7 @@ int main(int argc, char** argv) {
     p.add(simaai::neat::nodes::Input(in));
     p.add(simaai::neat::nodes::Output());
 
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       std::cout << p.describe_backend() << "\n";
       return 0;
     }
@@ -87,17 +133,17 @@ int main(int argc, char** argv) {
 
     auto run = p.build(small, simaai::neat::RunMode::Async, run_opt);
 
-    const bool do_reneg = sima_tutorial::has_flag(argc, argv, "--renegotiate");
+    const bool do_reneg = has_flag(argc, argv, "--renegotiate");
 
     // Push a stable regime at the original size.
-    sima_tutorial::require(run.try_push(small), "try_push(small) failed");
-    sima_tutorial::require(run.try_push(small), "try_push(small) failed");
+    require(run.try_push(small), "try_push(small) failed");
+    require(run.try_push(small), "try_push(small) failed");
 
     if (do_reneg) {
       // Now switch to a new resolution. Preset-driven stability handling
       // controls when the caps transition is accepted.
-      sima_tutorial::require(run.try_push(large), "try_push(large) failed");
-      sima_tutorial::require(run.try_push(large), "try_push(large) failed");
+      require(run.try_push(large), "try_push(large) failed");
+      require(run.try_push(large), "try_push(large) failed");
     } else {
       std::cout << "Skipping size change (pass --renegotiate to trigger caps changes).\n";
     }

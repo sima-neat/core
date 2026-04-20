@@ -1,17 +1,37 @@
+// Multistream Graph: StampFrameId -> StreamScheduler -> FanOut -> LambdaStage -> JoinBundle.
+//
+// Usage:
+//   tutorial_v2_016_graph_multistream [--streams 8] [--frames 4]
+
 #include "neat/graph.h"
-#include "common/cpp_utils.h"
 
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {
 
-// Why: this chapter contrasts model-backed graph stages with deterministic fallback flow.
-// Why: learners should see identical checkpoint output even when model assets are unavailable.
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
+  std::string value;
+  if (!get_arg(argc, argv, key, value))
+    return def;
+  return std::stoi(value);
+}
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
                                               int64_t elem_bytes) {
@@ -39,13 +59,11 @@ simaai::neat::Sample make_rgb_sample(const std::string& stream_id, int frame_id)
   t.storage = simaai::neat::make_cpu_owned_storage(bytes);
   t.strides_bytes = contiguous_strides_bytes(t.shape, 1);
   t.read_only = false;
-
   {
     auto map = t.map(simaai::neat::MapMode::Write);
     auto* p = static_cast<std::uint8_t*>(map.data);
-    for (std::size_t i = 0; i < bytes; ++i) {
+    for (std::size_t i = 0; i < bytes; ++i)
       p[i] = static_cast<std::uint8_t>(i % 255);
-    }
   }
   t.read_only = true;
 
@@ -57,33 +75,12 @@ simaai::neat::Sample make_rgb_sample(const std::string& stream_id, int frame_id)
   return sample;
 }
 
-void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0 << "\n";
-  tutorial_v2::print_common_flags(std::cout);
-}
-
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
-      print_help(argv[0]);
-      return 0;
-    }
-
-    const int streams = tutorial_v2::parse_int_arg(argc, argv, "--streams", 8);
-    const int frames = tutorial_v2::parse_int_arg(argc, argv, "--frames", 4);
-
-    tutorial_v2::step("input_contract", "stream/frame tags must survive scheduler and join stages");
-    tutorial_v2::step("run_mode_choice",
-                      "build multistream graph with fair scheduling and bundle join");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
-        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
+    const int streams = parse_int_arg(argc, argv, "--streams", 8);
+    const int frames = parse_int_arg(argc, argv, "--frames", 4);
 
     // CORE LOGIC
     using namespace simaai::neat::graph;
@@ -91,6 +88,8 @@ int main(int argc, char** argv) {
 
     Graph g;
 
+    // Assign frame ids, then fair-schedule across streams, fan out into two
+    // parallel paths, run a mock model on one, and join both back into a bundle.
     auto stamp = add(g, nodes::StampFrameIdNode("stamp"));
 
     nodes::StreamSchedulerOptions sched_opt;
@@ -128,8 +127,7 @@ int main(int argc, char** argv) {
 
     for (int frame = 0; frame < frames; ++frame) {
       for (int sid = 0; sid < streams; ++sid) {
-        tutorial_v2::check("graph_push", in.push(make_rgb_sample(std::to_string(sid), frame)),
-                           "sample accepted by input node");
+        in.push(make_rgb_sample(std::to_string(sid), frame));
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
@@ -138,10 +136,9 @@ int main(int argc, char** argv) {
     int received = 0;
     int first_fields = -1;
     for (int i = 0; i < expected; ++i) {
-      auto bundle = out.pull_or_throw(2000);
-      if (first_fields < 0) {
+      auto bundle = out.pull_or_throw(/*timeout_ms=*/2000);
+      if (first_fields < 0)
         first_fields = static_cast<int>(bundle.fields.size());
-      }
       ++received;
       if (i < 4) {
         std::cout << "bundle stream=" << bundle.stream_id << " fields=" << bundle.fields.size()
@@ -150,27 +147,15 @@ int main(int argc, char** argv) {
     }
 
     run.stop();
-
-    tutorial_v2::step("output_interpretation", "joined bundle cardinality validates graph wiring");
-    tutorial_v2::check("all_outputs_received", received == expected,
-                       "expected=" + std::to_string(expected) +
-                           ", received=" + std::to_string(received));
-    tutorial_v2::check("bundle_has_two_fields", first_fields == 2,
-                       "join should emit image+bbox bundle");
     // END CORE LOGIC
 
-    tutorial_v2::print_signature({
-        {"tutorial", "016"},
-        {"lang", "cpp"},
-        {"flow", "multistream_stage_graph"},
-        {"run_mode", "graph_sync_pull"},
-        {"output_kind", std::to_string(static_cast<int>(simaai::neat::SampleKind::Bundle))},
-        {"tensor_rank", "-1"},
-        {"field_count", std::to_string(first_fields)},
-        {"streams", std::to_string(streams)},
-        {"frames", std::to_string(frames)},
-    });
+    if (received != expected)
+      throw std::runtime_error("expected=" + std::to_string(expected) +
+                               " received=" + std::to_string(received));
+    if (first_fields != 2)
+      throw std::runtime_error("join should emit an image+bbox bundle");
 
+    std::cout << "received=" << received << " fields=" << first_fields << "\n";
     std::cout << "[OK] 016_graph_multistream\n";
     return 0;
   } catch (const std::exception& e) {

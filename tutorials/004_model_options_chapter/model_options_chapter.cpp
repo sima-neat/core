@@ -1,21 +1,27 @@
+// Model::Options chapter: configure input/preproc/boxdecode via Options, inspect specs.
+//
+// Usage:
+//   tutorial_v2_004_model_options_chapter --mpk /path/to/yolo_v8s.tar.gz
+
 #include "neat.h"
-#include "common/cpp_utils.h"
 
 #include <opencv2/core.hpp>
 
 #include <array>
-#include <filesystem>
 #include <iostream>
+#include <stdexcept>
 #include <string>
-
-namespace fs = std::filesystem;
 
 namespace {
 
-void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0 << " [--mpk <path>]\n";
-  tutorial_v2::print_common_flags(std::cout);
-  std::cout << "  --mpk <path>         Path to model MPK\n";
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
 }
 
 void print_spec(const char* label, const simaai::neat::TensorConstraint& spec) {
@@ -27,42 +33,14 @@ void print_spec(const char* label, const simaai::neat::TensorConstraint& spec) {
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
-      print_help(argv[0]);
-      return 0;
-    }
-
-    // Why: explicit runtime markers keep the tutorial explainable from terminal output alone.
-    // Why: parity and score tooling consume these checkpoints as a stable contract.
-    tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
-    tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
-        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
-    tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available",
-                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                       "strict-mode guard is observable");
-
-    const fs::path root = tutorial_v2::find_repo_root();
-
-    std::string mpk_arg;
-    fs::path mpk_path = tutorial_v2::get_arg(argc, argv, "--mpk", mpk_arg)
-                            ? fs::path(mpk_arg)
-                            : tutorial_v2::first_existing({
-                                  tutorial_v2::default_yolo_mpk(root),
-                                  tutorial_v2::default_resnet_mpk(root),
-                              });
-    if (mpk_path.empty() || !fs::exists(mpk_path)) {
-      return tutorial_v2::skip("missing MPK (pass --mpk)");
+    std::string mpk;
+    if (!get_arg(argc, argv, "--mpk", mpk)) {
+      std::cerr << "Usage: tutorial_v2_004_model_options_chapter --mpk <path>\n";
+      return 1;
     }
 
     // CORE LOGIC
+    // Model::Options groups input caps, preproc, and box-decode into one struct.
     simaai::neat::Model::Options opt;
     opt.media_type = "video/x-raw";
     opt.format = "BGR";
@@ -80,45 +58,18 @@ int main(int argc, char** argv) {
     opt.original_height = 640;
     opt.name_suffix = "_chapter";
 
-    simaai::neat::Model model(mpk_path.string(), opt);
+    simaai::neat::Model model(mpk, opt);
     // END CORE LOGIC
 
     print_spec("input_spec", model.input_spec());
     print_spec("output_spec", model.output_spec());
-    std::cout << "metadata keys: " << model.metadata().size() << "\n";
-
-    if (tutorial_v2::wants_print_gst(argc, argv)) {
-      simaai::neat::Session s;
-      s.add(model.session());
-      std::cout << s.describe_backend() << "\n";
-      return 0;
-    }
+    std::cout << "metadata_keys=" << model.metadata().size() << "\n";
 
     cv::Mat bgr(224, 224, CV_8UC3, cv::Scalar(10, 20, 30));
-    if (!bgr.isContinuous()) {
+    if (!bgr.isContinuous())
       bgr = bgr.clone();
-    }
-
-    try {
-      auto out = model.run(bgr, 2000);
-      std::cout << "run() output kind: " << static_cast<int>(out.kind) << "\n";
-    } catch (const std::exception& e) {
-      // Deterministic fallback keeps strict runs pedagogically useful when device plugins
-      // misconfigure.
-      tutorial_v2::runtime_fallback(e);
-    }
-
-    tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
-    tutorial_v2::print_signature({
-        {"tutorial", "004"},
-        {"lang", "cpp"},
-        {"flow", "chapter_path"},
-        {"run_mode", "sync_or_async"},
-        {"output_kind", "sample_or_tensor"},
-        {"tensor_rank", "-1"},
-        {"field_count", "-1"},
-    });
-
+    auto out = model.run(bgr, /*timeout_ms=*/2000);
+    std::cout << "output_kind=" << static_cast<int>(out.kind) << "\n";
     std::cout << "[OK] 004_model_options_chapter\n";
     return 0;
   } catch (const std::exception& e) {

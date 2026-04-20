@@ -1,101 +1,51 @@
 #!/usr/bin/env python3
+"""Build a two-node pyneat.graph.Graph and push/pull one tensor Sample.
+
+Usage:
+  python3 graph_basics.py
+"""
 from __future__ import annotations
 
+import argparse
 import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-import python_utils as tu
+try:
+  import pyneat
+except ImportError:
+  sys.exit(
+      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "Run: source ~/pyneat/bin/activate"
+  )
+
+import numpy as np
 
 
-def make_rgb_sample(neat):
-  # We use a deterministic CPU tensor so graph behavior is reproducible.
-  import numpy as np
-
+def make_rgb_sample():
   arr = (np.arange(8 * 8 * 3, dtype=np.uint8) % 255).reshape(8, 8, 3)
-  tensor = neat.Tensor.from_numpy(arr, copy=True, image_format=neat.PixelFormat.RGB)
-
-  sample = neat.Sample()
-  sample.kind = neat.SampleKind.Tensor
-  sample.tensor = tensor
+  sample = pyneat.Sample()
+  sample.kind = pyneat.SampleKind.Tensor
+  sample.tensor = pyneat.Tensor.from_numpy(arr, copy=True, image_format=pyneat.PixelFormat.RGB)
   sample.stream_id = "graph"
   sample.frame_id = -1
   return sample
 
 
-def run_pipeline_plus_stage(neat):
+def main(argv: list[str]) -> int:
+  argparse.ArgumentParser(description=__doc__).parse_args(argv[1:])
+
   # CORE LOGIC
-  # Hybrid flow: pipeline node normalizes media contract, stage node stamps frame ids.
-  graph = neat.graph.Graph()
-  pipe = graph.add(neat.graph.nodes.pipeline_node(neat.nodes.video_convert(), "convert"))
-  stamp = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
+  graph = pyneat.graph.Graph()
+  pipe = graph.add(pyneat.graph.nodes.pipeline_node(pyneat.nodes.video_convert(), "convert"))
+  stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
   graph.connect(pipe, stamp)
 
-  print(neat.graph.to_text(graph))
-  run = neat.graph.GraphSession(graph).build()
-  tu.check("graph_push", run.push(pipe, make_rgb_sample(neat)), "sample reached pipeline node")
+  run = pyneat.graph.GraphSession(graph).build()
+  run.push(pipe, make_rgb_sample())
   out = run.pull(stamp, 2000)
-  tu.check("graph_pull", out is not None, "stage sink produced output")
   run.stop()
   # END CORE LOGIC
-  return "pipeline_plus_stage", out
 
-
-def run_stage_only_fallback(neat):
-  # CORE LOGIC
-  # Fallback still teaches graph push/pull and stage execution when pipeline plugin setup differs.
-  graph = neat.graph.Graph()
-  stamp = graph.add(neat.graph.nodes.stamp_frame_id("stamp"))
-
-  print(neat.graph.to_text(graph))
-  run = neat.graph.GraphSession(graph).build()
-  tu.check("graph_push", run.push(stamp, make_rgb_sample(neat)), "sample reached stage node")
-  out = run.pull(stamp, 2000)
-  tu.check("graph_pull", out is not None, "stage sink produced output")
-  run.stop()
-  # END CORE LOGIC
-  return "stage_only_fallback", out
-
-
-def main(argv: list[str]) -> int:
-  neat = tu.import_pyneat()
-
-  if tu.has_flag(argv, "--help"):
-    print(f"Usage: {argv[0]}")
-    return 0
-
-  tu.step("input_contract", "build a minimal graph and push one deterministic tensor sample")
-  tu.step("run_mode_choice", "prefer pipeline+stage hybrid; fallback to stage-only if needed")
-  tu.why("understand the contract first: inputs, run mode, and outputs")
-  tu.tradeoff("prefer deterministic samples and stable contracts over production realism")
-  tu.failure_mode("runtime/plugin issues should degrade to runtime_fallback without losing observability")
-  tu.interpret_output("use CHECK markers plus SIGNATURE fields to validate behavior and parity")
-
-  flow = "pipeline_plus_stage"
-  try:
-    flow, out = run_pipeline_plus_stage(neat)
-  except Exception as exc:
-    print(f"fallback reason: {exc}")
-    flow, out = run_stage_only_fallback(neat)
-
-  tu.step("output_interpretation", "verify stream/frame metadata survived graph traversal")
-  tu.check("stream_id_present", bool(out.stream_id), "stream id should be non-empty")
-  tu.check("frame_id_stamped", out.frame_id >= 0, "stamp stage should assign non-negative frame id")
-
-  tu.signature(
-      {
-          "tutorial": "014",
-          "lang": "py",
-          "flow": flow,
-          "run_mode": "graph_sync_pull",
-          "output_kind": 0,
-          "tensor_rank": 3,
-          "field_count": 0,
-      }
-  )
-
-  print(f"Output stream={out.stream_id} frame={out.frame_id}")
-  print("[OK] 014_graph_basics")
+  print(f"stream_id={out.stream_id} frame_id={out.frame_id}")
   return 0
 
 

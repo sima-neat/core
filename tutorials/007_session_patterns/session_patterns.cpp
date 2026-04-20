@@ -1,84 +1,64 @@
+// Three Session composition patterns: direct nodes, model.session(), attached session.
+//
+// Usage:
+//   tutorial_v2_007_session_patterns [--mpk /path/to/model.tar.gz]
+
 #include "neat.h"
-#include "common/cpp_utils.h"
 
 #include <opencv2/core.hpp>
 
 #include <filesystem>
 #include <iostream>
+#include <stdexcept>
+#include <string>
 
 namespace fs = std::filesystem;
 
 namespace {
 
-void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0 << " [--mpk <path>]\n";
-  tutorial_v2::print_common_flags(std::cout);
-  std::cout << "  --mpk <path>         Optional MPK for model-backed session examples\n";
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
 }
-
-// CORE LOGIC
-simaai::neat::Session make_base_session(int width, int height) {
-  simaai::neat::Session s;
-  simaai::neat::InputOptions in;
-  in.format = "RGB";
-  in.width = width;
-  in.height = height;
-  in.depth = 3;
-  in.do_timestamp = true;
-  s.add(simaai::neat::nodes::Input(in));
-  s.add(simaai::neat::nodes::Output());
-  return s;
-}
-// END CORE LOGIC
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
-      print_help(argv[0]);
-      return 0;
-    }
-
-    // Why: explicit runtime markers keep the tutorial explainable from terminal output alone.
-    // Why: parity and score tooling consume these checkpoints as a stable contract.
-    tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
-    tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
-        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
-    tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available",
-                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                       "strict-mode guard is observable");
-
     const int width = 224;
     const int height = 224;
 
-    simaai::neat::Session direct = make_base_session(width, height);
+    cv::Mat rgb(height, width, CV_8UC3, cv::Scalar(80, 40, 160));
+    if (!rgb.isContinuous())
+      rgb = rgb.clone();
 
-    const fs::path root = tutorial_v2::find_repo_root();
-    std::string mpk_arg;
-    fs::path mpk_path = tutorial_v2::get_arg(argc, argv, "--mpk", mpk_arg)
-                            ? fs::path(mpk_arg)
-                            : tutorial_v2::first_existing({
-                                  tutorial_v2::default_yolo_mpk(root),
-                                  tutorial_v2::default_resnet_mpk(root),
-                              });
+    // CORE LOGIC
+    // Pattern 1: build a Session by adding Input/Output nodes directly.
+    simaai::neat::Session direct;
+    simaai::neat::InputOptions in;
+    in.format = "RGB";
+    in.width = width;
+    in.height = height;
+    in.depth = 3;
+    in.do_timestamp = true;
+    direct.add(simaai::neat::nodes::Input(in));
+    direct.add(simaai::neat::nodes::Output());
 
-    if (!mpk_path.empty() && fs::exists(mpk_path)) {
-      // CORE LOGIC
-      simaai::neat::Model model(mpk_path.string());
+    std::string mpk;
+    if (get_arg(argc, argv, "--mpk", mpk) && fs::exists(mpk)) {
+      simaai::neat::Model model(mpk);
 
+      // Pattern 2: ingest the model's default session group.
       simaai::neat::Session from_model;
       from_model.add(model.session());
-      std::cout << "Model session group size: " << model.session().size() << "\n";
+      std::cout << "model_session_size=" << model.session().size() << "\n";
 
+      // Pattern 3: attach the model under an upstream name with custom options.
       simaai::neat::Model::SessionOptions sopt;
       sopt.include_appsrc = false;
       sopt.include_appsink = true;
@@ -86,43 +66,18 @@ int main(int argc, char** argv) {
       sopt.name_suffix = "_camera0";
       sopt.buffer_name = "camera0";
 
-      simaai::neat::Session model_attached;
-      model_attached.add(model.session(sopt));
-      // END CORE LOGIC
-
-      if (tutorial_v2::wants_print_gst(argc, argv)) {
-        std::cout << "[direct]\n" << direct.describe_backend() << "\n";
-        std::cout << "[model default]\n" << from_model.describe_backend() << "\n";
-        std::cout << "[model attached]\n" << model_attached.describe_backend() << "\n";
-        return 0;
-      }
-    } else if (tutorial_v2::wants_print_gst(argc, argv)) {
-      std::cout << direct.describe_backend() << "\n";
-      return 0;
+      simaai::neat::Session attached;
+      attached.add(model.session(sopt));
+      std::cout << "attached_session_backend=\n" << attached.describe_backend() << "\n";
     }
 
-    cv::Mat rgb(height, width, CV_8UC3, cv::Scalar(80, 40, 160));
-    if (!rgb.isContinuous()) {
-      rgb = rgb.clone();
-    }
-
-    // CORE LOGIC
     auto run = direct.build(rgb, simaai::neat::RunMode::Sync);
-    auto out = run.push_and_pull(rgb, 1000);
+    auto out = run.push_and_pull(rgb, /*timeout_ms=*/1000);
     // END CORE LOGIC
-    tutorial_v2::require(out.tensor.has_value(), "direct session output missing tensor");
 
-    tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
-    tutorial_v2::print_signature({
-        {"tutorial", "007"},
-        {"lang", "cpp"},
-        {"flow", "chapter_path"},
-        {"run_mode", "sync_or_async"},
-        {"output_kind", "sample_or_tensor"},
-        {"tensor_rank", "-1"},
-        {"field_count", "-1"},
-    });
-
+    if (!out.tensor.has_value())
+      throw std::runtime_error("direct session output missing tensor");
+    std::cout << "direct_rank=" << out.tensor->shape.size() << "\n";
     std::cout << "[OK] 007_session_patterns\n";
     return 0;
   } catch (const std::exception& e) {

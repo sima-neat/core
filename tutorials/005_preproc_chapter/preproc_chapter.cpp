@@ -1,64 +1,48 @@
+// Run preprocessing standalone via stages::Preproc and inspect the resulting tensor.
+//
+// Usage:
+//   tutorial_v2_005_preproc_chapter --mpk /path/to/resnet_50.tar.gz [--size 224]
+
 #include "neat.h"
-#include "common/cpp_utils.h"
 
 #include "pipeline/StageRun.h"
 
 #include <opencv2/core.hpp>
 
 #include <array>
-#include <filesystem>
 #include <iostream>
-
-namespace fs = std::filesystem;
+#include <stdexcept>
+#include <string>
 
 namespace {
 
-void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0 << " [--mpk <path>] [--size <n>]\n";
-  tutorial_v2::print_common_flags(std::cout);
-  std::cout << "  --mpk <path>         Path to model MPK\n";
-  std::cout << "  --size <n>           Input size (default 224)\n";
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
+  std::string value;
+  if (!get_arg(argc, argv, key, value))
+    return def;
+  return std::stoi(value);
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
-      print_help(argv[0]);
-      return 0;
+    std::string mpk;
+    if (!get_arg(argc, argv, "--mpk", mpk)) {
+      std::cerr << "Usage: tutorial_v2_005_preproc_chapter --mpk <path> [--size <n>]\n";
+      return 1;
     }
-
-    // Why: explicit runtime markers keep the tutorial explainable from terminal output alone.
-    // Why: parity and score tooling consume these checkpoints as a stable contract.
-    tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
-    tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
-        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
-    tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available",
-                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                       "strict-mode guard is observable");
-
-    const fs::path root = tutorial_v2::find_repo_root();
-    const int size = tutorial_v2::parse_int_arg(argc, argv, "--size", 224);
-
-    std::string mpk_arg;
-    fs::path mpk_path = tutorial_v2::get_arg(argc, argv, "--mpk", mpk_arg)
-                            ? fs::path(mpk_arg)
-                            : tutorial_v2::first_existing({
-                                  tutorial_v2::default_resnet_mpk(root),
-                                  tutorial_v2::default_yolo_mpk(root),
-                              });
-    if (mpk_path.empty() || !fs::exists(mpk_path)) {
-      return tutorial_v2::skip("missing MPK (pass --mpk)");
-    }
+    const int size = parse_int_arg(argc, argv, "--size", 224);
 
     simaai::neat::Model::Options opt;
     opt.format = "BGR";
@@ -73,42 +57,20 @@ int main(int argc, char** argv) {
     opt.preproc.channel_mean = std::array<float, 3>{0.5f, 0.5f, 0.5f};
     opt.preproc.channel_stddev = std::array<float, 3>{0.5f, 0.5f, 0.5f};
 
-    simaai::neat::Model model(mpk_path.string(), opt);
+    simaai::neat::Model model(mpk, opt);
 
     cv::Mat bgr(size, size, CV_8UC3, cv::Scalar(40, 80, 120));
-    if (!bgr.isContinuous()) {
+    if (!bgr.isContinuous())
       bgr = bgr.clone();
-    }
 
-    if (tutorial_v2::wants_print_gst(argc, argv)) {
-      simaai::neat::Session s;
-      s.add(model.preprocess());
-      s.add(simaai::neat::nodes::Output());
-      std::cout << s.describe_backend() << "\n";
-      return 0;
-    }
     // CORE LOGIC
-    try {
-      auto pre = simaai::neat::stages::Preproc(bgr, model);
-      std::cout << "Preproc tensor rank: " << pre.shape.size() << "\n";
-      std::cout << "Preproc dtype:       " << static_cast<int>(pre.dtype) << "\n";
-    } catch (const std::exception& e) {
-      // Deterministic fallback keeps strict runs pedagogically useful when device plugins
-      // misconfigure.
-      tutorial_v2::runtime_fallback(e);
-    }
+    // stages::Preproc runs just the preprocessing step from the model's Options
+    // and returns the preprocessed Tensor.
+    simaai::neat::Tensor pre = simaai::neat::stages::Preproc(bgr, model);
     // END CORE LOGIC
-    tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
-    tutorial_v2::print_signature({
-        {"tutorial", "005"},
-        {"lang", "cpp"},
-        {"flow", "chapter_path"},
-        {"run_mode", "sync_or_async"},
-        {"output_kind", "sample_or_tensor"},
-        {"tensor_rank", "-1"},
-        {"field_count", "-1"},
-    });
 
+    std::cout << "preproc_rank=" << pre.shape.size() << "\n";
+    std::cout << "preproc_dtype=" << static_cast<int>(pre.dtype) << "\n";
     std::cout << "[OK] 005_preproc_chapter\n";
     return 0;
   } catch (const std::exception& e) {

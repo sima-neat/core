@@ -1,79 +1,52 @@
+// ResNet quickstart: ImageNet normalization via Model::Options, then one-shot model.run.
+//
+// Usage:
+//   tutorial_v2_013_resnet_quickstart --mpk /path/to/resnet_50.tar.gz --image /path/to.jpg
+
 #include "neat.h"
-#include "common/cpp_utils.h"
 
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 #include <array>
-#include <filesystem>
 #include <iostream>
-
-namespace fs = std::filesystem;
+#include <stdexcept>
+#include <string>
 
 namespace {
 
-void print_help(const char* argv0) {
-  std::cout << "Usage: " << argv0 << " [--mpk <path>] [--image <path>]\n";
-  tutorial_v2::print_common_flags(std::cout);
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
 }
 
 } // namespace
 
 int main(int argc, char** argv) {
   try {
-    if (tutorial_v2::wants_help(argc, argv)) {
-      print_help(argv[0]);
-      return 0;
+    std::string mpk, image;
+    if (!get_arg(argc, argv, "--mpk", mpk) || !get_arg(argc, argv, "--image", image)) {
+      std::cerr << "Usage: tutorial_v2_013_resnet_quickstart --mpk <path> --image <path>\n";
+      return 1;
     }
 
-    // Why: explicit runtime markers keep the tutorial explainable from terminal output alone.
-    // Why: parity and score tooling consume these checkpoints as a stable contract.
-    tutorial_v2::step("input_contract", "parse flags and establish deterministic defaults");
-    tutorial_v2::step("run_mode_choice", "exercise the chapter's primary runtime path");
-    tutorial_v2::why("understand the contract first: inputs, run mode, and outputs");
-    tutorial_v2::tradeoff(
-        "prefer deterministic samples and stable contracts over production realism");
-    tutorial_v2::failure_mode(
-        "runtime/plugin issues should degrade to runtime_fallback without losing observability");
-    tutorial_v2::interpret_output(
-        "use CHECK markers plus SIGNATURE fields to validate behavior and parity");
-    tutorial_v2::step("output_contract", "emit checks and machine-parseable signature");
-    tutorial_v2::check("strict_flag_available",
-                       tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "yes" ||
-                           tutorial_v2::yes_no(tutorial_v2::strict_mode()) == "no",
-                       "strict-mode guard is observable");
+    cv::Mat bgr = cv::imread(image, cv::IMREAD_COLOR);
+    if (bgr.empty())
+      throw std::runtime_error("failed to load image: " + image);
 
-    const fs::path root = tutorial_v2::find_repo_root();
-
-    std::string mpk_arg;
-    fs::path mpk_path = tutorial_v2::get_arg(argc, argv, "--mpk", mpk_arg)
-                            ? fs::path(mpk_arg)
-                            : tutorial_v2::default_resnet_mpk(root);
-    if (mpk_path.empty() || !fs::exists(mpk_path)) {
-      return tutorial_v2::skip("missing ResNet MPK (pass --mpk)");
-    }
-
-    std::string img_arg;
-    fs::path image_path = tutorial_v2::get_arg(argc, argv, "--image", img_arg)
-                              ? fs::path(img_arg)
-                              : tutorial_v2::default_image(root);
-    if (image_path.empty() || !fs::exists(image_path)) {
-      return tutorial_v2::skip("missing image (pass --image)");
-    }
-
-    cv::Mat bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
-    if (bgr.empty()) {
-      return tutorial_v2::skip("failed to load image");
-    }
-
-    // CORE LOGIC
     cv::Mat rgb;
     cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
     cv::resize(rgb, rgb, cv::Size(224, 224));
-    if (!rgb.isContinuous()) {
+    if (!rgb.isContinuous())
       rgb = rgb.clone();
-    }
 
+    // CORE LOGIC
+    // ImageNet-trained ResNet needs per-channel mean/stddev normalization.
     simaai::neat::Model::Options opt;
     opt.media_type = "video/x-raw";
     opt.format = "RGB";
@@ -84,40 +57,15 @@ int main(int argc, char** argv) {
     opt.preproc.channel_mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
     opt.preproc.channel_stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
 
-    simaai::neat::Model model(mpk_path.string(), opt);
-
-    if (tutorial_v2::wants_print_gst(argc, argv)) {
-      simaai::neat::Session p;
-      p.add(model.session());
-      std::cout << p.describe_backend() << "\n";
-      return 0;
-    }
-
-    try {
-      auto out = model.run(rgb, 2000);
-      tutorial_v2::require(out.tensor.has_value(), "missing output tensor");
-      std::cout << "Output rank: " << out.tensor->shape.size() << "\n";
-      if (!out.tensor->shape.empty()) {
-        std::cout << "Output first dim: " << out.tensor->shape.front() << "\n";
-      }
-    } catch (const std::exception& e) {
-      // Deterministic fallback keeps strict runs pedagogically useful when device plugins
-      // misconfigure.
-      tutorial_v2::runtime_fallback(e);
-    }
+    simaai::neat::Model model(mpk, opt);
+    auto out = model.run(rgb, /*timeout_ms=*/2000);
     // END CORE LOGIC
 
-    tutorial_v2::check("tutorial_completed", true, "main path reached end without exception");
-    tutorial_v2::print_signature({
-        {"tutorial", "013"},
-        {"lang", "cpp"},
-        {"flow", "chapter_path"},
-        {"run_mode", "sync_or_async"},
-        {"output_kind", "sample_or_tensor"},
-        {"tensor_rank", "-1"},
-        {"field_count", "-1"},
-    });
-
+    if (!out.tensor.has_value())
+      throw std::runtime_error("missing output tensor");
+    std::cout << "output_rank=" << out.tensor->shape.size() << "\n";
+    if (!out.tensor->shape.empty())
+      std::cout << "first_dim=" << out.tensor->shape.front() << "\n";
     std::cout << "[OK] 013_resnet_quickstart\n";
     return 0;
   } catch (const std::exception& e) {

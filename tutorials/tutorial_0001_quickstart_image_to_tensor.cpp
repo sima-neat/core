@@ -6,19 +6,102 @@
 // - Run::pull_tensor_or_throw() yields a simaai::neat::Tensor directly.
 //
 // Prereqs:
-// - An image file (default: test.jpg or tests/assets/preproc_dynamic/ilena_488.jpg).
+// - An image file. Default: the shipped sample at
+//   <tutorials/assets>/ilena_488.jpg (installed under
+//   /usr/share/sima-neat/tutorials/assets/ on DEB installs). Override with
+//   --image <path> or SIMA_NEAT_TUTORIAL_ASSETS=<dir>.
 //
 // Try:
 //   ./build/tutorial_0001_quickstart_image_to_tensor --print-gst
-//   ./build/tutorial_0001_quickstart_image_to_tensor --image test.jpg
+//   ./build/tutorial_0001_quickstart_image_to_tensor --image /path/to/my.jpg
 
 #include "neat.h"
-
-#include "tutorial_common.h"
 
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <array>
+#include <cstdlib>
+#include <exception>
+#include <initializer_list>
+#include <stdexcept>
+#include <utility>
+#include <vector>
+
+namespace {
+
+bool has_flag(int argc, char** argv, const std::string& key) {
+  for (int i = 1; i < argc; ++i) {
+    if (key == argv[i])
+      return true;
+  }
+  return false;
+}
+
+bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (key == argv[i]) {
+      out = argv[i + 1];
+      return true;
+    }
+  }
+  return false;
+}
+
+bool wants_help(int argc, char** argv) {
+  return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
+}
+
+bool wants_print_gst(int argc, char** argv) {
+  return has_flag(argc, argv, "--print-gst");
+}
+
+void print_common_flags(std::ostream& os) {
+  os << "  --help               Show this help message\n";
+  os << "  --print-gst          Print the gst-launch string and exit\n";
+}
+
+bool exists_or_skip(const std::filesystem::path& path, const std::string& label) {
+  if (!std::filesystem::exists(path)) {
+    std::cout << "SKIP: missing " << label << " at " << path.string() << "\n";
+    return false;
+  }
+  return true;
+}
+
+std::filesystem::path find_repo_root() {
+  namespace fs = std::filesystem;
+  fs::path cur = fs::current_path();
+  for (int i = 0; i < 6; ++i) {
+    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "include") &&
+        fs::exists(cur / "tests")) {
+      return cur;
+    }
+    if (!cur.has_parent_path())
+      break;
+    cur = cur.parent_path();
+  }
+  return fs::current_path();
+}
+
+std::filesystem::path find_asset_root() {
+  namespace fs = std::filesystem;
+  if (const char* env = std::getenv("SIMA_NEAT_TUTORIAL_ASSETS")) {
+    fs::path p{env};
+    if (fs::exists(p))
+      return p;
+  }
+  for (const fs::path& p : {
+           fs::path{"/usr/share/sima-neat/tutorials/assets"},
+           fs::path{"/neat-resources/core-src/tutorials/assets"},
+       }) {
+    if (fs::exists(p))
+      return p;
+  }
+  return find_repo_root() / "tutorials" / "assets";
+}
+
+} // namespace
 
 namespace fs = std::filesystem;
 
@@ -26,25 +109,19 @@ namespace {
 
 void print_help(const char* argv0) {
   std::cout << "Usage: " << argv0 << " [--image <path>] [--width <w>] [--height <h>]\n";
-  sima_tutorial::print_common_flags(std::cout);
+  print_common_flags(std::cout);
   std::cout << "  --image <path>       Image file to decode (jpg/png)\n";
   std::cout << "  --width <w>          Output width (default 256)\n";
   std::cout << "  --height <h>         Output height (default 256)\n";
 }
 
-fs::path default_image_path(const fs::path& root) {
-  const fs::path candidate1 = root / "test.jpg";
-  const fs::path candidate2 = root / "tests" / "assets" / "preproc_dynamic" / "ilena_488.jpg";
-  if (fs::exists(candidate1))
-    return candidate1;
-  if (fs::exists(candidate2))
-    return candidate2;
-  return candidate1;
+fs::path default_image_path() {
+  return find_asset_root() / "ilena_488.jpg";
 }
 
 int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
   std::string val;
-  if (!sima_tutorial::get_arg(argc, argv, key, val))
+  if (!get_arg(argc, argv, key, val))
     return def;
   try {
     return std::stoi(val);
@@ -72,21 +149,20 @@ void print_tensor_summary(const simaai::neat::Tensor& t) {
 
 int main(int argc, char** argv) {
   try {
-    if (sima_tutorial::wants_help(argc, argv)) {
+    if (wants_help(argc, argv)) {
       print_help(argv[0]);
       return 0;
     }
 
-    const fs::path root = sima_tutorial::find_repo_root();
     std::string image_arg;
     fs::path image_path;
-    if (sima_tutorial::get_arg(argc, argv, "--image", image_arg)) {
+    if (get_arg(argc, argv, "--image", image_arg)) {
       image_path = fs::path(image_arg);
     } else {
-      image_path = default_image_path(root);
+      image_path = default_image_path();
     }
 
-    if (!sima_tutorial::exists_or_skip(image_path, "image")) {
+    if (!exists_or_skip(image_path, "image")) {
       return 0;
     }
 
@@ -111,7 +187,7 @@ int main(int argc, char** argv) {
     // and does not transform layout (layout is metadata only).
     p.add_output_tensor(out);
 
-    if (sima_tutorial::wants_print_gst(argc, argv)) {
+    if (wants_print_gst(argc, argv)) {
       std::cout << p.describe_backend() << "\n";
       return 0;
     }

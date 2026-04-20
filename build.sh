@@ -1229,10 +1229,10 @@ build_deb_if_requested() {
     echo "Skipping DEB packaging (requires --all)."
   else
     echo
-    echo "Building core DEB package..."
+    echo "Building DEB packages (core + extras)..."
     # Remove stale debs so it's obvious what was generated
     rm -f ./*.deb
-    cpack --config "${BUILD_DIR}/CPackConfig.cmake" -D CPACK_COMPONENTS_ALL=core
+    cpack --config "${BUILD_DIR}/CPackConfig.cmake"
   fi
 }
 
