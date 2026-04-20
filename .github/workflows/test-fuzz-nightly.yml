@@ -11,6 +11,10 @@ on:
       - "v*-rc*"
   workflow_dispatch: {}
 
+permissions:
+  actions: write
+  contents: read
+
 jobs:
   build-fuzz-artifacts:
     if: github.ref_name == 'main' || github.ref_name == 'feature/nightly'
