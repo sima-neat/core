@@ -39,12 +39,6 @@ Chapter 002 (async basics). Chapter 011 (diagnostics).
 1. Build an async run path with explicit queue and overflow settings.
 2. Push a deterministic workload and drain outputs to completion.
 3. Inspect metrics and input stats for latency/drop behavior.
-4. Validate tuning run completion with `CHECK`, `SIGNATURE`, and `[OK]`.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

@@ -90,7 +90,7 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     std::cout << "top1=" << top1_from_output(sample) << "\n";
-    std::cout << "[OK] 001_model_in_5_minutes\n";
+    std::cout << "[OK] 001_run_your_first_model\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

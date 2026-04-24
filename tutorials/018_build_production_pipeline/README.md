@@ -38,12 +38,6 @@ Chapters 002 (async), 004 (ModelOptions), 007 (ModelSessionOptions), 017 (RunOpt
 1. Prepare deterministic input and shared runtime options for production-like behavior.
 2. Execute model-backed blueprint when MPK exists.
 3. Execute session fallback blueprint when model assets are unavailable.
-4. Validate resiliency path with consistent `CHECK`, `SIGNATURE`, and `[OK]` outputs.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

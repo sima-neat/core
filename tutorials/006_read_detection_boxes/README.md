@@ -173,7 +173,6 @@ and its Python twin `pyneat.nodes.sima_box_decode(model, ...)` use a simple
 > Python tutorial) is plumbed into that same argument. The two names refer
 > to the same underlying control.
 
-
 | Runtime argument | Value passed | Behavior |
 | --- | --- | --- |
 | `decode_type` | `""` (empty) | preserve MPK / model-path inference |
@@ -213,12 +212,6 @@ Practical consequences:
 1. Configure model/postproc options for a detector-style pipeline.
 2. Run deterministic preproc + inference + boxdecode flow.
 3. Inspect decoded output signals (box count, output kind/fields).
-4. Validate run completion via `CHECK`, `SIGNATURE`, and `[OK]` markers.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

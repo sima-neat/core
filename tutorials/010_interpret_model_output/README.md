@@ -35,12 +35,6 @@ Chapter 001.
 1. Build a deterministic sync session with explicit input/output nodes.
 2. Execute one run and summarize output structure (`kind`, tensor, fields).
 3. Validate output contract assumptions (non-empty tensor shape/rank).
-4. Confirm run health through `CHECK`, `SIGNATURE`, and `[OK]`.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     if (!sample.tensor.has_value())
       throw std::runtime_error("missing tensor output");
     std::cout << "tensor_rank=" << sample.tensor->shape.size() << "\n";
-    std::cout << "[OK] 003_session_build_and_run\n";
+    std::cout << "[OK] 003_build_inference_pipeline\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

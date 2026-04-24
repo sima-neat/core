@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     std::cout << "output_rank=" << out.tensor->shape.size() << "\n";
     if (!out.tensor->shape.empty())
       std::cout << "first_dim=" << out.tensor->shape.front() << "\n";
-    std::cout << "[OK] 013_resnet_quickstart\n";
+    std::cout << "[OK] 013_classify_images_with_resnet50\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

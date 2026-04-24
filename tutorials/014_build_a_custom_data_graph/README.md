@@ -37,12 +37,6 @@ Chapter 003 (Session basics).
 1. Build a minimal graph and push one deterministic tensor sample.
 2. Run preferred pipeline+stage composition, with stage-only fallback when needed.
 3. Pull graph output and validate stream/frame metadata stamping.
-4. Use `CHECK`, `SIGNATURE`, and `[OK]` markers to confirm graph correctness.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

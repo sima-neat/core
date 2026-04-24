@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
     std::cout << "avg_latency_ms=" << stats.avg_latency_ms << "\n";
     std::cout << "avg_push_us=" << input_stats.avg_push_us << "\n";
     std::cout << "renegotiations=" << input_stats.renegotiations << "\n";
-    std::cout << "[OK] 017_performance_tuning\n";
+    std::cout << "[OK] 017_tune_throughput_and_queues\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

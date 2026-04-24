@@ -35,12 +35,6 @@ Chapter 002 or 003 (Session/Run basics).
 1. Validate session contract and backend parse path (`validate()`).
 2. Run one deterministic frame with metrics enabled.
 3. Inspect runtime stats/report/diagnostic summary outputs.
-4. Use `CHECK`, `SIGNATURE`, and `[OK]` markers to gate readiness.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

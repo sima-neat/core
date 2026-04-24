@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
       bgr = bgr.clone();
     auto out = model.run(bgr, /*timeout_ms=*/2000);
     std::cout << "output_kind=" << static_cast<int>(out.kind) << "\n";
-    std::cout << "[OK] 004_model_options_chapter\n";
+    std::cout << "[OK] 004_configure_model_options\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     std::cout << "boxes=" << decoded.boxes.size() << "\n";
-    std::cout << "[OK] 006_postproc_boxdecode\n";
+    std::cout << "[OK] 006_read_detection_boxes\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

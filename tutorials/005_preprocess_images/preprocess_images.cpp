@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
 
     std::cout << "preproc_rank=" << pre.shape.size() << "\n";
     std::cout << "preproc_dtype=" << static_cast<int>(pre.dtype) << "\n";
-    std::cout << "[OK] 005_preproc_chapter\n";
+    std::cout << "[OK] 005_preprocess_images\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

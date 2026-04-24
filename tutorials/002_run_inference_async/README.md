@@ -36,11 +36,6 @@ Chapter 001. Familiarity with `pyneat.Model` and `model.run()` is assumed.
 3. Observe queue-driven behavior and verify throughput-oriented execution.
 4. Validate results with top-1 output, async stats, and stable tutorial signature.
 
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
-
 ## Run
 
 Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.

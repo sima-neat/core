@@ -39,12 +39,6 @@ Chapter 001.
 1. Create a minimal `Session` with explicit input and output nodes.
 2. Build the session with a concrete sample input to materialize a runnable pipeline.
 3. Execute one deterministic sync run to verify output contract behavior.
-4. Read validation checkpoints (`CHECK`, `SIGNATURE`, `[OK]`) to confirm the runtime path.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

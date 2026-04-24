@@ -36,12 +36,6 @@ Chapter 001.
 1. Build deterministic tensor inputs in NumPy/PyTorch and C++ tensor storage.
 2. Convert across boundaries (NumPy/PyTorch <-> NEAT tensor).
 3. Verify round-trip shape/bytes/checksum behavior.
-4. Validate completion through `CHECK`, `SIGNATURE`, and `[OK]` markers.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

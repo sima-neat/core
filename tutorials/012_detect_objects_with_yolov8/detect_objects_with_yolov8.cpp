@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
 
     std::cout << "output_kind=" << static_cast<int>(out.kind) << "\n";
     std::cout << "fields=" << out.fields.size() << "\n";
-    std::cout << "[OK] 012_yolo_quickstart\n";
+    std::cout << "[OK] 012_detect_objects_with_yolov8\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

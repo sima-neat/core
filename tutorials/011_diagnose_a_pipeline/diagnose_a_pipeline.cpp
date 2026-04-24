@@ -47,7 +47,7 @@ int main() {
     std::cout << "diagnostics_summary=" << run.diagnostics_summary() << "\n";
     // END CORE LOGIC
 
-    std::cout << "[OK] 011_diagnostics_in_3_commands\n";
+    std::cout << "[OK] 011_diagnose_a_pipeline\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

@@ -40,12 +40,6 @@ Chapter 001. Chapter 004 for the rest of `ModelOptions`.
 1. Configure `Model::Options` / `ModelOptions` with explicit preproc dimensions, format, and normalization policy.
 2. Build the model and inspect preprocessing-stage behavior (group composition and tensor contract cues).
 3. Execute a deterministic run path and verify resulting output/type signals.
-4. Confirm expected behavior through `CHECK`, `SIGNATURE`, and `[OK]` markers.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

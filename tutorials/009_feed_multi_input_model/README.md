@@ -34,12 +34,6 @@ Chapters 001–003 (Model, Session, Run basics). Chapter 008 (Tensor interop).
 1. Define a tensor session contract for deterministic multi-field routing.
 2. Build a seed run handle, then create a bundle sample with named tensor fields.
 3. Push/pull the bundle and inspect output field structure.
-4. Confirm behavior using `CHECK`, `SIGNATURE`, and `[OK]`.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

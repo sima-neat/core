@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     std::cout << "outputs=" << ok << "\n";
-    std::cout << "[OK] 018_production_blueprint\n";
+    std::cout << "[OK] 018_build_production_pipeline\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

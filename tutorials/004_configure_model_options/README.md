@@ -40,12 +40,6 @@ Chapter 001.
 1. Build a `Model::Options` / `ModelOptions` config covering input, preproc, and postproc settings.
 2. Instantiate a model with those options and inspect `input_spec()`, `output_spec()`, and metadata.
 3. Run one deterministic inference path and observe how options influence runtime behavior.
-4. Validate completion through `CHECK`, `SIGNATURE`, and `[OK]` markers.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

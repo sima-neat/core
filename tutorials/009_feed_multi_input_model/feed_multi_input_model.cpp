@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
       std::cout << "  port=" << field.port_name
                 << " has_tensor=" << (field.tensor.has_value() ? "yes" : "no") << "\n";
     }
-    std::cout << "[OK] 009_multi_input_samples\n";
+    std::cout << "[OK] 009_feed_multi_input_model\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

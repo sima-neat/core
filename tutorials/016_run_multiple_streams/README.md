@@ -38,11 +38,6 @@ Chapter 014 (Graph basics). Chapter 009 (bundle samples) helps for join semantic
 3. Push all expected inputs and pull joined outputs.
 4. Validate output count and bundle cardinality via `CHECK` and `SIGNATURE`.
 
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
-
 ## Run
 
 **Python:**

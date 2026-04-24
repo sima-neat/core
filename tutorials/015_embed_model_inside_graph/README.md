@@ -36,11 +36,6 @@ Chapter 001 (Model). Chapter 014 (Graph basics).
 3. Fall back to stage-only graph flow when model path is unavailable.
 4. Compare output kind/rank behavior and validate with `CHECK` + `SIGNATURE`.
 
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
-
 ## Run
 
 Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.

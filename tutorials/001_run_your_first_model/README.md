@@ -30,12 +30,6 @@ None — this is the entry chapter.
 1. Set up runtime inputs: parse CLI args, locate the compiled ResNet50 MPK, and prepare sample input data.
 2. Build the minimal model execution path for one model and one input stream.
 3. Run synchronous inference to keep behavior deterministic and easy to debug.
-4. Inspect top-1 predictions and validation output (`CHECK`, `SIGNATURE`, `[OK]`).
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

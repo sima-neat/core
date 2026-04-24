@@ -34,12 +34,6 @@ Chapter 001 (Model). Chapter 004 for `ModelOptions`. Chapter 006 for reading det
 1. Resolve YOLO MPK and deterministic image/tensor input.
 2. Build and run detection path (preprocess + inference + decode).
 3. Inspect output structure (kind/fields) to validate detector wiring.
-4. Confirm completion with `CHECK`, `SIGNATURE`, and `[OK]`.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

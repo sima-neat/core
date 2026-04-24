@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
     if (!out.tensor.has_value())
       throw std::runtime_error("direct session output missing tensor");
     std::cout << "direct_rank=" << out.tensor->shape.size() << "\n";
-    std::cout << "[OK] 007_session_patterns\n";
+    std::cout << "[OK] 007_plug_model_into_pipeline\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

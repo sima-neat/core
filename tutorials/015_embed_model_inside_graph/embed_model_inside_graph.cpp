@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
     if (!out->tensor.has_value())
       throw std::runtime_error("graph output missing tensor");
     std::cout << "output_rank=" << out->tensor->shape.size() << "\n";
-    std::cout << "[OK] 015_graph_model_hybrid\n";
+    std::cout << "[OK] 015_embed_model_inside_graph\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

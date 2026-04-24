@@ -41,7 +41,7 @@ int main() {
     if (out.tensor->shape.empty())
       throw std::runtime_error("output tensor shape is empty");
     std::cout << "rank=" << out.tensor->shape.size() << "\n";
-    std::cout << "[OK] 010_output_handling_patterns\n";
+    std::cout << "[OK] 010_interpret_model_output\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

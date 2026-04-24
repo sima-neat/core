@@ -37,12 +37,6 @@ Chapter 001 (Model). Chapter 002 or 003 (Session basics).
 1. Build a minimal direct session and validate it can run end-to-end.
 2. Construct model-backed session variants (`model.session()` and `model.session(options)`).
 3. Compare generated backend graphs with `--print-gst` to understand composition differences.
-4. Execute a deterministic sync run and validate completion with `CHECK`, `SIGNATURE`, and `[OK]`.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

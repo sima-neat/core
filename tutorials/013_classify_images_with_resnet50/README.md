@@ -33,12 +33,6 @@ Chapter 001 (Model). Chapter 005 for preprocessing options.
 1. Resolve ResNet MPK and deterministic classifier input tensor/image.
 2. Configure model input/preproc options for classification.
 3. Run inference and inspect output tensor rank/shape cues.
-4. Confirm expected path with `CHECK`, `SIGNATURE`, and `[OK]`.
-
-## What To Observe
-- `CHECK ...` lines should indicate contract and runtime validation outcomes.
-- `SIGNATURE ...` output should summarize machine-parseable chapter behavior.
-- `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
 

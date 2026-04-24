@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
     std::cout << "tensor_bytes=" << mapped.size_bytes << "\n";
     std::cout << "head_checksum=" << checksum << "\n";
     std::cout << "clone_bytes=" << owned.dense_bytes_tight() << "\n";
-    std::cout << "[OK] 008_numpy_torch_tensor_io\n";
+    std::cout << "[OK] 008_pass_numpy_to_model\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
