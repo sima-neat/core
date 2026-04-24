@@ -46,17 +46,17 @@ Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py \
+python3 share/sima-neat/tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py \
   --mpk /path/to/resnet_50.tar.gz --image /path/to/frame.jpg --size 224
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_013_classify_images_with_resnet50 \
+./lib/sima-neat/tutorials/tutorial_v2_013_classify_images_with_resnet50 \
   --mpk /path/to/resnet_50.tar.gz --image /path/to/frame.jpg
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.cpp`

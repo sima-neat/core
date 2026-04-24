@@ -50,17 +50,17 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.py \
+python3 share/sima-neat/tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.py \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_007_plug_model_into_pipeline \
+./lib/sima-neat/tutorials/tutorial_v2_007_plug_model_into_pipeline \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.cpp`

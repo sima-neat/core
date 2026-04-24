@@ -1,21 +1,42 @@
-## Prebuilt Binaries and Source Code
+## What Gets Installed
 
-When prompted during installation of NEAT, select **SiMa NEAT extras** (press `Space` to toggle), then continue installation.
+Running `sima-cli install neat` installs **two** things:
 
-The extras package includes prebuilt tutorial binaries plus source code, installed under `/usr/` on the DevKit:
+1. **The NEAT library** (the `sima-neat` package). Goes system-wide via `apt`. You never interact with it directly — your code links against it through CMake's `find_package(SimaNeat CONFIG)`.
 
-- `/usr/lib/sima-neat/tutorials/` — prebuilt C++ tutorial binaries (`tutorial_v2_*`).
-- `/usr/share/sima-neat/tutorials/` — tutorial source code (`.cpp`, `.py`, `README.md`).
+2. **The tutorials** (the **SiMa NEAT extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
+
+   ```text
+   sima-neat-0.0.0+<branch>-<sha>-Linux-extras/
+   ├── lib/
+   │   └── sima-neat/
+   │       └── tutorials/           ← 19 prebuilt C++ binaries (tutorial_v2_*)
+   └── share/
+       └── sima-neat/
+           └── tutorials/           ← 19 source folders (.cpp, .py, README.md)
+   ```
+
+The folder name includes the NEAT version, branch, and commit hash. For example, if you ran the installer from `~/neat/`, the folder ends up at `~/neat/sima-neat-0.0.0+<branch>-<sha>-Linux-extras/`.
+
+When prompted during install, select **SiMa NEAT extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
 
 ## How to Run Tutorials
 
-### Verify your install
-
-Both lists below should print 19 entries. If either is empty, re-run `sima-cli install neat` and select **SiMa NEAT extras**.
+Everything happens inside the extras folder. `cd` into it first:
 
 ```bash
-ls /usr/lib/sima-neat/tutorials/ | grep '^tutorial_v2_'
-ls /usr/share/sima-neat/tutorials/ | grep -E '^0[0-9]{2}_'
+cd sima-neat-*-Linux-extras
+```
+
+Your shell's current directory is now the root of the extras tree. All tutorial commands below use paths relative to here.
+
+### Verify the install
+
+Both lists should print 19 entries. If either is empty, re-run `sima-cli install neat` and make sure **SiMa NEAT extras** is selected.
+
+```bash
+ls lib/sima-neat/tutorials/ | grep '^tutorial_v2_'
+ls share/sima-neat/tutorials/ | grep -E '^0[0-9]{2}_'
 ```
 
 Activate the `pyneat` virtual environment before running any Python tutorial:
@@ -26,25 +47,27 @@ source ~/pyneat/bin/activate
 
 ### Python
 
-Python tutorials are interpreted — no build step. Run the script directly:
+Python tutorials are interpreted — there's nothing to compile. Run the script directly:
 
 ```bash
-python3 /usr/share/sima-neat/tutorials/<chapter>/<chapter_name>.py --args
+python3 share/sima-neat/tutorials/<chapter>/<chapter_name>.py --args
 ```
 
 Copy the `.py` anywhere on disk if you want to modify it — the same command works from any location.
 
 ### C++ — run the prebuilt
 
+Every chapter ships as a compiled binary. Run it straight from `lib/`:
+
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_<chapter_name> --args
+./lib/sima-neat/tutorials/tutorial_v2_<chapter_name> --args
 ```
 
 ### C++ — compile a copy yourself {#compile-a-copy-yourself}
 
-Want to modify a chapter's C++ source, or reuse it inside your own project? You do not need `sima-neat-extras.deb` for this path — only `sima-neat.deb` (which provides `libsima_neat.so` and `SimaNeatConfig.cmake`).
+Want to modify a chapter's C++ source, or reuse it inside your own project? You do not need the extras folder for this path — only the base NEAT library (the `sima-neat` package, which provides `libsima_neat.so` and `SimaNeatConfig.cmake`).
 
-Copy the `.cpp` into a new folder. Drop in this minimal `CMakeLists.txt`:
+Copy the `.cpp` from `share/sima-neat/tutorials/<chapter>/` into a new folder. Drop in this minimal `CMakeLists.txt`:
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)
@@ -66,7 +89,7 @@ cmake -S . -B build && cmake --build build -j
 ./build/my_chapter --args
 ```
 
-`find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed NEAT — no hardcoded paths.
+`find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed NEAT — no hardcoded paths, no extras folder required.
 
 For the full template with SYSROOT handling (cross-builds from inside the eLxr SDK container), see the [Hello NEAT Minimal Example](/getting-started/minimal_example).
 

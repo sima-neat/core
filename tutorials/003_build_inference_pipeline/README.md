@@ -50,17 +50,17 @@ Chapter 001.
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/003_build_inference_pipeline/build_inference_pipeline.py \
+python3 share/sima-neat/tutorials/003_build_inference_pipeline/build_inference_pipeline.py \
   --width 320 --height 240
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_003_build_inference_pipeline \
+./lib/sima-neat/tutorials/tutorial_v2_003_build_inference_pipeline \
   --width 320 --height 240
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/003_build_inference_pipeline/build_inference_pipeline.cpp`
