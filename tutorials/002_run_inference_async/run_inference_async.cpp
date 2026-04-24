@@ -10,6 +10,7 @@
 #include <opencv2/imgproc.hpp>
 
 #include <atomic>
+#include <cstdlib>
 #include <cstring>
 #include <exception>
 #include <filesystem>
@@ -82,6 +83,12 @@ int top1_from_output(const simaai::neat::Sample& out) {
 } // namespace
 
 int main(int argc, char** argv) {
+  // Ensure the async pipeline preflights caps during Session::build().
+  // Without it, the first push can race caps negotiation on
+  // neatprocesscvu and Run::pull times out silently. Tracked upstream
+  // in issue #207.
+  setenv("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1", /*overwrite=*/0);
+
   try {
     std::string mpk, image;
     if (!get_arg(argc, argv, "--mpk", mpk)) {

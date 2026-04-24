@@ -7,9 +7,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 from pathlib import Path
+
+# Ensure the async pipeline preflights caps during Session.build().
+# Without it, the first push can race caps negotiation on neatprocesscvu
+# and Run.pull times out silently. Tracked upstream in issue #207.
+os.environ.setdefault("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1")
 
 try:
   import pyneat
