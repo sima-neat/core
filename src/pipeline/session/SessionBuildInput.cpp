@@ -352,13 +352,8 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.on_input_drop = opt.on_input_drop;
   stream_opt.enable_timings = opt.enable_metrics;
   stream_opt.timeout_ms = preset_default_timeout_ms(mode, opt.preset);
-  // Async pipelines need one warmup push+pull during build() to let
-  // neatprocesscvu complete input-group caps negotiation; without it the
-  // first user push races caps and fails with "Missing required input group
-  // 'sink_pad_0'", the worker stops, and Run::pull times out silently.
-  // Sync mode's first Model::run() is its own warmup, so it is unaffected.
-  // SIMA_INPUTSTREAM_PREFLIGHT_RUN remains the opt-out.
-  stream_opt.startup_preflight = (mode == RunMode::Async);
+  const bool balanced_zero_copy_probe = (opt.preset == RunPreset::Balanced) && zero_copy;
+  stream_opt.startup_preflight = balanced_zero_copy_probe;
   stream_opt.worker_poll_ms = preset_default_worker_poll_ms(opt.preset);
   return stream_opt;
 }
