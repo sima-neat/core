@@ -1,8 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-TUTORIALS_DIR="${REPO_ROOT}/tutorials"
+# Resolve TUTORIALS_DIR / REPO_ROOT based on where this script lives.
+# Supported layouts (extras takes precedence when both are reachable, since a
+# user running build.sh from inside the extracted extras folder expects the
+# output to land there):
+#   1. Extras tarball:     extras-root/build.sh     -> tutorials at ./share/sima-neat/tutorials
+#   2. Source tree:        core/tutorials/build.sh  -> tutorials at ../tutorials, build at ../build/...
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+if [[ -f "${SCRIPT_DIR}/share/sima-neat/tutorials/CMakeLists.txt" ]]; then
+  REPO_ROOT="${SCRIPT_DIR}"
+  TUTORIALS_DIR="${SCRIPT_DIR}/share/sima-neat/tutorials"
+elif [[ -f "${SCRIPT_DIR}/../tutorials/CMakeLists.txt" ]]; then
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+  TUTORIALS_DIR="${REPO_ROOT}/tutorials"
+else
+  echo "build.sh: cannot locate tutorials/CMakeLists.txt (checked ./share/sima-neat/tutorials and ../tutorials)" >&2
+  exit 1
+fi
 BUILD_DIR="${REPO_ROOT}/build/tutorials-standalone"
 BUILD_TYPE="Release"
 TARGET="all"
@@ -46,7 +61,7 @@ usage() {
 Usage: tutorials/build.sh [options]
 
 Options:
-  --target <name>      Build one target (e.g. tutorial_v2_001_model_in_5_minutes)
+  --target <name>      Build one target (e.g. tutorial_001_model_in_5_minutes)
   --build-dir <path>   Build directory (default: build/tutorials-standalone)
   --build-type <type>  CMake build type (default: Release)
   --clean              Remove build directory before configure
@@ -57,7 +72,7 @@ Options:
 
 Examples:
   tutorials/build.sh
-  tutorials/build.sh --target tutorial_v2_001_model_in_5_minutes
+  tutorials/build.sh --target tutorial_001_run_your_first_model
   tutorials/build.sh --simaneat-dir /usr/lib/aarch64-linux-gnu/cmake/SimaNeat
   tutorials/build.sh --list-targets
 EOF
