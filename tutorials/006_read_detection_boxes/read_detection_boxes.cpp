@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
     box.decode_type = "yolov8";
     box.original_width = bgr.cols;
     box.original_height = bgr.rows;
-    box.detection_threshold = 0.52;
+    box.detection_threshold = 0.55;
     box.nms_iou_threshold = 0.5;
     box.top_k = 100;
 

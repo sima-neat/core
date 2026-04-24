@@ -38,7 +38,7 @@ def main(argv: list[str]) -> int:
   opt.input_max_height = args.height
   opt.input_max_depth = 3
   opt.decode_type = "yolov8"
-  opt.score_threshold = 0.52
+  opt.score_threshold = 0.55
   opt.nms_iou_threshold = 0.50
   opt.top_k = 100
   opt.original_width = args.width

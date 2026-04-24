@@ -190,7 +190,7 @@ The rule is strictly per-field:
 
 - **Python path** — the tutorial overrides every field because
   `ModelOptions` sets positive values.
-- **C++ path** — `read_detection_boxes.cpp` passes `0.52f, 0.5f, 100` (so
+- **C++ path** — `read_detection_boxes.cpp` passes `0.55f, 0.5f, 100` (so
   `detection_threshold`, `nms_iou_threshold`, and `top_k` are overridden)
   plus `bgr.cols, bgr.rows` positively (so `original_width` /
   `original_height` are overridden too).
@@ -205,7 +205,7 @@ Practical consequences:
   deliberately retuning.
 - For YOLOv8-family packs, a resolved `detection_threshold <= 0.5` triggers
   a `[WARN] SimaBoxDecode: resolved detection-threshold=...` on `stderr` at
-  construction time. Prefer `>= 0.51` (the tutorial uses `0.52`) to avoid
+  construction time. Prefer `>= 0.51` (the tutorial uses `0.55`) to avoid
   severe pre-NMS latency cliffs from borderline 0-logit candidates.
 
 ## Learning Process

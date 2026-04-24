@@ -51,7 +51,7 @@ int main(int argc, char** argv) {
     opt.preproc.channel_mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
     opt.preproc.channel_stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
     opt.decode_type = "yolov8";
-    opt.score_threshold = 0.35f;
+    opt.score_threshold = 0.55f;
     opt.nms_iou_threshold = 0.45f;
     opt.top_k = 100;
     opt.original_width = 640;
