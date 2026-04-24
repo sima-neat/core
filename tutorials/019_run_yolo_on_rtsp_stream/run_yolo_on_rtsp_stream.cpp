@@ -45,9 +45,6 @@ simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_options(const std::str
   simaai::neat::nodes::groups::RtspDecodedInputOptions opt;
   opt.url = url;
   opt.tcp = true;
-  opt.out_format = "BGR";
-  opt.output_caps.enable = true;
-  opt.output_caps.format = "BGR";
   return opt;
 }
 

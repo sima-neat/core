@@ -27,13 +27,10 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
-  # Session 1: decode the RTSP stream into BGR frames.
+  # Session 1: decode the RTSP stream. The model's preproc handles format conversion.
   ro = pyneat.RtspDecodedInputOptions()
   ro.url = args.url
   ro.tcp = True
-  ro.out_format = "BGR"
-  ro.output_caps.enable = True
-  ro.output_caps.format = "BGR"
 
   rtsp = pyneat.Session()
   rtsp.add(pyneat.groups.rtsp_decoded_input(ro))

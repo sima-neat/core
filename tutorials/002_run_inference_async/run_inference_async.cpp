@@ -105,27 +105,27 @@ int main(int argc, char** argv) {
     simaai::neat::Session session;
     session.add(model.session());
 
-    simaai::neat::RunOptions opt;
-    opt.queue_depth = 8;
-    opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
-    opt.output_memory = simaai::neat::OutputMemory::Owned;
-
-    auto run = session.build(frames.front(), simaai::neat::RunMode::Async, opt);
+    auto run = session.build(frames.front(), simaai::neat::RunMode::Async);
 
     std::atomic<int> pushed{0};
+    std::atomic<bool> producer_done{false};
     std::thread producer([&]() {
       for (const cv::Mat& f : frames) {
         run.push(f);
         pushed.fetch_add(1, std::memory_order_relaxed);
       }
       run.close_input();
+      producer_done.store(true);
     });
 
     int pulled = 0;
     while (pulled < n) {
       auto out = run.pull(/*timeout_ms=*/2000);
-      if (!out.has_value())
-        break;
+      if (!out.has_value()) {
+        if (producer_done.load())
+          break;
+        continue;
+      }
       std::cout << "top1=" << top1_from_output(*out) << "\n";
       ++pulled;
     }
@@ -133,7 +133,10 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     std::cout << "pushed=" << pushed.load() << " pulled=" << pulled << "\n";
-    std::cout << "[OK] 002_async_push_pull\n";
+    if (pulled != n)
+      throw std::runtime_error("pulled=" + std::to_string(pulled) +
+                               " != pushed=" + std::to_string(pushed.load()));
+    std::cout << "[OK] 002_run_inference_async\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
