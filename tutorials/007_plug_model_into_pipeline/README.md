@@ -45,10 +45,22 @@ Chapter 001 (Model). Chapter 002 or 003 (Session basics).
 - `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
+
+Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
+
+**Python:**
 ```bash
-./tutorial_v2_007_plug_model_into_pipeline
-python3 tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.py
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.py \
+  --mpk /path/to/yolo_v8s.tar.gz
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_007_plug_model_into_pipeline \
+  --mpk /path/to/yolo_v8s.tar.gz
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.cpp`

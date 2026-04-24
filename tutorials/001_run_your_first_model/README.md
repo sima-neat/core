@@ -39,56 +39,21 @@ None — this is the entry chapter.
 
 ## Run
 
-This tutorial loads a ResNet-50 MPK. You must supply one via `--mpk`. If the flag is omitted and no MPK is cached under `tmp/`, the tutorial prints a `SKIP` line and exits.
+Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
 
-### Download the ResNet-50 MPK
-
-Fetch `resnet_50.tar.gz` from the SiMa modelzoo once:
-
+**Python:**
 ```bash
-sima-cli modelzoo -v 2.0.0 get resnet_50
-```
-
-Note the absolute path to the downloaded `resnet_50.tar.gz`; you will pass it to every `--mpk` invocation below. For more on asset resolution (env vars, fallback paths), see [Assets and MPK Setup](/how-to/assets_mpk).
-
-### eLxr SDK (C++)
-
-From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
-
-```bash
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-dk ./tutorial_v2_001_run_your_first_model --mpk /absolute/path/to/resnet_50.tar.gz
-```
-
-### eLxr SDK (Python)
-
-```bash
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
-  --mpk /absolute/path/to/resnet_50.tar.gz
-```
-
-`dk` runs the script on the paired DevKit using the DevKit-side `pyneat` venv. No activation is required on the SDK side.
-
-### DevKit (C++)
-
-From a shell on the DevKit itself:
-
-```bash
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-./tutorial_v2_001_run_your_first_model --mpk /absolute/path/to/resnet_50.tar.gz
-```
-
-### DevKit (Python)
-
-```bash
-source ~/pyneat/bin/activate
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
-  --mpk /absolute/path/to/resnet_50.tar.gz
+  --mpk /path/to/resnet_50.tar.gz
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_001_run_your_first_model \
+  --mpk /path/to/resnet_50.tar.gz
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/001_run_your_first_model/run_your_first_model.cpp`

@@ -60,64 +60,22 @@ A pull timeout prints `frame=N rtsp_timeout` and exits. That usually means the U
 
 ## Run
 
-### Prepare an RTSP URL
+Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
+This chapter consumes a live RTSP stream. If you do not have a camera, you can publish an MP4 file through `mediamtx` + `ffmpeg` — see the chapter README for the quick-start snippet. Then pass the URL via `--url`.
 
-If you do not have a camera handy, a reliable quick source is to publish an MP4 file through `mediamtx`:
-
+**Python:**
 ```bash
-# On any machine on your network:
-./mediamtx &
-ffmpeg -re -stream_loop -1 -i my_video.mp4 -c copy -f rtsp rtsp://127.0.0.1:8554/stream
-```
-
-Your URL is then `rtsp://<that-machine-ip>:8554/stream`.
-
-### Download the YOLOv8 MPK
-
-Fetch `yolo_v8s.tar.gz` from the SiMa modelzoo once:
-
-```bash
-sima-cli modelzoo -v 2.0.0 get yolo_v8s
-```
-
-### eLxr SDK (C++)
-
-```bash
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-dk ./tutorial_v2_019_run_yolo_on_rtsp_stream \
-  --url rtsp://host:port/stream \
-  --mpk /absolute/path/to/yolo_v8s.tar.gz
-```
-
-### eLxr SDK (Python)
-
-```bash
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-dk python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.py \
-  --url rtsp://host:port/stream \
-  --mpk /absolute/path/to/yolo_v8s.tar.gz
-```
-
-### DevKit (C++)
-
-```bash
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
-cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials
-./tutorial_v2_019_run_yolo_on_rtsp_stream \
-  --url rtsp://host:port/stream \
-  --mpk /absolute/path/to/yolo_v8s.tar.gz
-```
-
-### DevKit (Python)
-
-```bash
-source ~/pyneat/bin/activate
-NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
 python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.py \
-  --url rtsp://host:port/stream \
-  --mpk /absolute/path/to/yolo_v8s.tar.gz
+  --url rtsp://host:port/stream --mpk /path/to/yolo_v8s.tar.gz --frames 5
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_019_run_yolo_on_rtsp_stream \
+  --url rtsp://host:port/stream --mpk /path/to/yolo_v8s.tar.gz --frames 5
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.cpp`
