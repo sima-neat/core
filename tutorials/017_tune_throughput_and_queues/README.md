@@ -50,13 +50,13 @@ Chapter 002 (async basics). Chapter 011 (diagnostics).
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.py \
+python3 /usr/share/sima-neat/tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.py \
   --iters 32 --queue 4 --drop block
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_017_tune_throughput_and_queues \
+/usr/lib/sima-neat/tutorials/tutorial_v2_017_tune_throughput_and_queues \
   --iters 32 --queue 4 --drop block
 ```
 

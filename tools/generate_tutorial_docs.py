@@ -58,7 +58,7 @@ class TutorialModule:
     labels: List[str]
     concept: str
     process_steps: List[str]
-    run_commands: List[str]
+    run_section: str
     cpp_rel: str
     py_rel: str
 
@@ -116,13 +116,6 @@ def _parse_numbered(section_text: str) -> List[str]:
         if m:
             out.append(m.group(1).strip())
     return out
-
-
-def _parse_run_commands(section_text: str) -> List[str]:
-    m = re.search(r"```bash\n(.*?)\n```", section_text, flags=re.S)
-    if not m:
-        return []
-    return [ln.rstrip() for ln in m.group(1).splitlines() if ln.strip()]
 
 
 def _description(module: TutorialModule) -> str:
@@ -290,7 +283,6 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     labels = [x.strip() for x in labels_raw.split(",") if x.strip()]
 
     process_steps = _parse_numbered(process_section)
-    run_commands = _parse_run_commands(run_section)
 
     cpp_rel = cpp.resolve().relative_to(repo_root.resolve()).as_posix()
     py_rel = py.resolve().relative_to(repo_root.resolve()).as_posix()
@@ -305,7 +297,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         labels=labels,
         concept=concept_section,
         process_steps=process_steps,
-        run_commands=run_commands,
+        run_section=run_section,
         cpp_rel=cpp_rel,
         py_rel=py_rel,
     )
@@ -359,51 +351,11 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
 
     cpp_fence = f'```cpp title="{module.cpp_rel}"' + (f" {cpp_hl}" if cpp_hl else "")
     py_fence = f'```python title="{module.py_rel}"' + (f" {py_hl}" if py_hl else "")
-    py_script_name = pathlib.Path(module.py_rel).name
 
-    # Tutorials that require a model pack end with --mpk placeholder so customers
-    # do not copy a zero-argument command that would silently SKIP on install.
-    mpk_label_tutorials = {
-        "001_run_your_first_model",
-        "004_configure_model_options",
-        "005_preprocess_images",
-        "006_read_detection_boxes",
-        "007_plug_model_into_pipeline",
-        "012_detect_objects_with_yolov8",
-        "013_classify_images_with_resnet50",
-        "015_embed_model_inside_graph",
-        "018_build_production_pipeline",
-    }
-    cpp_suffix = " --mpk /path/to/model.tar.gz" if module.folder in mpk_label_tutorials else ""
-    py_suffix = " --mpk /path/to/model.tar.gz" if module.folder in mpk_label_tutorials else ""
-
-    lines.extend(
-        [
-            "",
-            "## Run",
-            "",
-            "<CodeTabs>",
-            '<CodeTab label="C++" lang="cpp">',
-            "",
-            "```bash",
-            "NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>",
-            "cd $NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials",
-            f"./tutorial_v2_{module.folder}{cpp_suffix}",
-            "```",
-            "",
-            "</CodeTab>",
-            '<CodeTab label="Python" lang="py">',
-            "",
-            "```bash",
-            "NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>",
-            "if [[ -f ~/pyneat/bin/activate ]]; then source ~/pyneat/bin/activate; else source ~/pyneat/.venv/bin/activate; fi",
-            f"python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/{module.folder}/{py_script_name}{py_suffix}",
-            "```",
-            "",
-            "</CodeTab>",
-            "</CodeTabs>",
-        ]
-    )
+    # Pass the README's `## Run` section through verbatim so the README is the
+    # single source of truth for run instructions — no hardcoded env-var blocks.
+    if module.run_section.strip():
+        lines.extend(["", "## Run", "", module.run_section])
     lines.extend(
         [
             "",

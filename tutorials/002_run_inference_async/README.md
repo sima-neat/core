@@ -47,13 +47,13 @@ Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/002_run_inference_async/run_inference_async.py \
+python3 /usr/share/sima-neat/tutorials/002_run_inference_async/run_inference_async.py \
   --mpk /path/to/resnet_50.tar.gz --n 4
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_002_run_inference_async \
+/usr/lib/sima-neat/tutorials/tutorial_v2_002_run_inference_async \
   --mpk /path/to/resnet_50.tar.gz --n 4
 ```
 

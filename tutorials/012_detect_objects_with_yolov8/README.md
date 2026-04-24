@@ -47,13 +47,13 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py \
+python3 /usr/share/sima-neat/tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg --size 640
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_012_detect_objects_with_yolov8 \
+/usr/lib/sima-neat/tutorials/tutorial_v2_012_detect_objects_with_yolov8 \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 

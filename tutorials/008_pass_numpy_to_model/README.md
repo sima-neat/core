@@ -47,13 +47,13 @@ Chapter 001.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py \
+python3 /usr/share/sima-neat/tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py \
   --width 128 --height 96
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_008_pass_numpy_to_model \
+/usr/lib/sima-neat/tutorials/tutorial_v2_008_pass_numpy_to_model \
   --width 128 --height 96
 ```
 

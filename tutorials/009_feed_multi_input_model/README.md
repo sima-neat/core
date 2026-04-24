@@ -45,13 +45,13 @@ Chapters 001–003 (Model, Session, Run basics). Chapter 008 (Tensor interop).
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/009_feed_multi_input_model/feed_multi_input_model.py \
+python3 /usr/share/sima-neat/tutorials/009_feed_multi_input_model/feed_multi_input_model.py \
   --width 64 --height 48
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_009_feed_multi_input_model \
+/usr/lib/sima-neat/tutorials/tutorial_v2_009_feed_multi_input_model \
   --width 64 --height 48
 ```
 

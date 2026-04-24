@@ -65,13 +65,13 @@ This chapter consumes a live RTSP stream. If you do not have a camera, you can p
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.py \
+python3 /usr/share/sima-neat/tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.py \
   --url rtsp://host:port/stream --mpk /path/to/yolo_v8s.tar.gz --frames 5
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_019_run_yolo_on_rtsp_stream \
+/usr/lib/sima-neat/tutorials/tutorial_v2_019_run_yolo_on_rtsp_stream \
   --url rtsp://host:port/stream --mpk /path/to/yolo_v8s.tar.gz --frames 5
 ```
 

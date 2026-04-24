@@ -226,13 +226,13 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/006_read_detection_boxes/read_detection_boxes.py \
+python3 /usr/share/sima-neat/tutorials/006_read_detection_boxes/read_detection_boxes.py \
   --mpk /path/to/yolo_v8s.tar.gz --width 640 --height 640
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_006_read_detection_boxes \
+/usr/lib/sima-neat/tutorials/tutorial_v2_006_read_detection_boxes \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
