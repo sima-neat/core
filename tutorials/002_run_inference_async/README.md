@@ -47,17 +47,17 @@ Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/002_run_inference_async/run_inference_async.py \
+python3 share/sima-neat/tutorials/002_run_inference_async/run_inference_async.py \
   --mpk /path/to/resnet_50.tar.gz --n 4
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_002_run_inference_async \
+./lib/sima-neat/tutorials/tutorial_v2_002_run_inference_async \
   --mpk /path/to/resnet_50.tar.gz --n 4
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/002_run_inference_async/run_inference_async.cpp`

@@ -65,17 +65,17 @@ This chapter consumes a live RTSP stream. If you do not have a camera, you can p
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.py \
+python3 share/sima-neat/tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.py \
   --url rtsp://host:port/stream --mpk /path/to/yolo_v8s.tar.gz --frames 5
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_019_run_yolo_on_rtsp_stream \
+./lib/sima-neat/tutorials/tutorial_v2_019_run_yolo_on_rtsp_stream \
   --url rtsp://host:port/stream --mpk /path/to/yolo_v8s.tar.gz --frames 5
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.cpp`

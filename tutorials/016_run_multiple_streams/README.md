@@ -47,17 +47,17 @@ Chapter 014 (Graph basics). Chapter 009 (bundle samples) helps for join semantic
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/016_run_multiple_streams/run_multiple_streams.py \
+python3 share/sima-neat/tutorials/016_run_multiple_streams/run_multiple_streams.py \
   --streams 8 --frames 4
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_016_run_multiple_streams \
+./lib/sima-neat/tutorials/tutorial_v2_016_run_multiple_streams \
   --streams 8 --frames 4
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/016_run_multiple_streams/run_multiple_streams.cpp`

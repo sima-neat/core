@@ -47,17 +47,17 @@ Chapter 001.
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py \
+python3 share/sima-neat/tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py \
   --width 128 --height 96
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_008_pass_numpy_to_model \
+./lib/sima-neat/tutorials/tutorial_v2_008_pass_numpy_to_model \
   --width 128 --height 96
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/008_pass_numpy_to_model/pass_numpy_to_model.cpp`

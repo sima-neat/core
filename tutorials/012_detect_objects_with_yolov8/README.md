@@ -47,17 +47,17 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py \
+python3 share/sima-neat/tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.py \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg --size 640
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_012_detect_objects_with_yolov8 \
+./lib/sima-neat/tutorials/tutorial_v2_012_detect_objects_with_yolov8 \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/012_detect_objects_with_yolov8/detect_objects_with_yolov8.cpp`

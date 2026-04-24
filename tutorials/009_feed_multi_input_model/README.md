@@ -45,17 +45,17 @@ Chapters 001–003 (Model, Session, Run basics). Chapter 008 (Tensor interop).
 
 **Python:**
 ```bash
-python3 /usr/share/sima-neat/tutorials/009_feed_multi_input_model/feed_multi_input_model.py \
+python3 share/sima-neat/tutorials/009_feed_multi_input_model/feed_multi_input_model.py \
   --width 64 --height 48
 ```
 
 **C++:**
 ```bash
-/usr/lib/sima-neat/tutorials/tutorial_v2_009_feed_multi_input_model \
+./lib/sima-neat/tutorials/tutorial_v2_009_feed_multi_input_model \
   --width 64 --height 48
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/009_feed_multi_input_model/feed_multi_input_model.cpp`
