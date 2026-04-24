@@ -1,7 +1,7 @@
 // Multistream Graph: StampFrameId -> StreamScheduler -> FanOut -> LambdaStage -> JoinBundle.
 //
 // Usage:
-//   tutorial_v2_014_run_multiple_streams [--streams 8] [--frames 4]
+//   tutorial_014_run_multiple_streams [--streams 8] [--frames 4]
 
 #include "neat/graph.h"
 

@@ -225,18 +225,18 @@ python3 share/sima-neat/tutorials/006_read_detection_boxes/read_detection_boxes.
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_006_read_detection_boxes \
+./lib/sima-neat/tutorials/tutorial_006_read_detection_boxes \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_006_read_detection_boxes
-./build/tutorials-standalone/tutorial_v2_006_read_detection_boxes \
+./build.sh --target tutorial_006_read_detection_boxes
+./build/tutorials-standalone/tutorial_006_read_detection_boxes \
   --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/006_read_detection_boxes/read_detection_boxes.cpp`

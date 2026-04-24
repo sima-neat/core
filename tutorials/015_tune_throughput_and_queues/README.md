@@ -50,18 +50,18 @@ python3 share/sima-neat/tutorials/015_tune_throughput_and_queues/tune_throughput
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_015_tune_throughput_and_queues \
+./lib/sima-neat/tutorials/tutorial_015_tune_throughput_and_queues \
   --iters 32 --queue 4 --drop block
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_015_tune_throughput_and_queues
-./build/tutorials-standalone/tutorial_v2_015_tune_throughput_and_queues \
+./build.sh --target tutorial_015_tune_throughput_and_queues
+./build/tutorials-standalone/tutorial_015_tune_throughput_and_queues \
   --iters 32 --queue 4 --drop block
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/015_tune_throughput_and_queues/tune_throughput_and_queues.cpp`

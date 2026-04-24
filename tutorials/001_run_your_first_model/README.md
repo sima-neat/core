@@ -43,18 +43,18 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_001_run_your_first_model \
+./lib/sima-neat/tutorials/tutorial_001_run_your_first_model \
   --mpk /path/to/resnet_50.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_001_run_your_first_model
-./build/tutorials-standalone/tutorial_v2_001_run_your_first_model \
+./build.sh --target tutorial_001_run_your_first_model
+./build/tutorials-standalone/tutorial_001_run_your_first_model \
   --mpk /path/to/resnet_50.tar.gz
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/001_run_your_first_model/run_your_first_model.cpp`

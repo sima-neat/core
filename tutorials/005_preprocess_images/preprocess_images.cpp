@@ -1,7 +1,7 @@
 // Run preprocessing standalone via stages::Preproc and inspect the resulting tensor.
 //
 // Usage:
-//   tutorial_v2_005_preprocess_images --mpk /path/to/resnet_50.tar.gz [--size 224]
+//   tutorial_005_preprocess_images --mpk /path/to/resnet_50.tar.gz [--size 224]
 
 #include "neat.h"
 
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_v2_005_preprocess_images --mpk <path> [--size <n>]\n";
+      std::cerr << "Usage: tutorial_005_preprocess_images --mpk <path> [--size <n>]\n";
       return 1;
     }
     const int size = parse_int_arg(argc, argv, "--size", 224);

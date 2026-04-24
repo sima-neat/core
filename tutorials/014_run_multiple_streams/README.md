@@ -48,18 +48,18 @@ python3 share/sima-neat/tutorials/014_run_multiple_streams/run_multiple_streams.
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_014_run_multiple_streams \
+./lib/sima-neat/tutorials/tutorial_014_run_multiple_streams \
   --streams 8 --frames 4
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_014_run_multiple_streams
-./build/tutorials-standalone/tutorial_v2_014_run_multiple_streams \
+./build.sh --target tutorial_014_run_multiple_streams
+./build/tutorials-standalone/tutorial_014_run_multiple_streams \
   --streams 8 --frames 4
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/014_run_multiple_streams/run_multiple_streams.cpp`

@@ -45,16 +45,16 @@ python3 share/sima-neat/tutorials/010_interpret_model_output/interpret_model_out
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_010_interpret_model_output
+./lib/sima-neat/tutorials/tutorial_010_interpret_model_output
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_010_interpret_model_output
-./build/tutorials-standalone/tutorial_v2_010_interpret_model_output
+./build.sh --target tutorial_010_interpret_model_output
+./build/tutorials-standalone/tutorial_010_interpret_model_output
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/010_interpret_model_output/interpret_model_output.cpp`

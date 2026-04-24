@@ -1,7 +1,7 @@
 // Three Session composition patterns: direct nodes, model.session(), attached session.
 //
 // Usage:
-//   tutorial_v2_007_plug_model_into_pipeline [--mpk /path/to/model.tar.gz]
+//   tutorial_007_plug_model_into_pipeline [--mpk /path/to/model.tar.gz]
 
 #include "neat.h"
 

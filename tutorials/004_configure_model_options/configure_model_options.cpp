@@ -1,7 +1,7 @@
 // Model::Options chapter: configure input/preproc/boxdecode via Options, inspect specs.
 //
 // Usage:
-//   tutorial_v2_004_configure_model_options --mpk /path/to/yolo_v8s.tar.gz
+//   tutorial_004_configure_model_options --mpk /path/to/yolo_v8s.tar.gz
 
 #include "neat.h"
 
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_v2_004_configure_model_options --mpk <path>\n";
+      std::cerr << "Usage: tutorial_004_configure_model_options --mpk <path>\n";
       return 1;
     }
 

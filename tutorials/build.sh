@@ -61,7 +61,7 @@ usage() {
 Usage: tutorials/build.sh [options]
 
 Options:
-  --target <name>      Build one target (e.g. tutorial_v2_001_model_in_5_minutes)
+  --target <name>      Build one target (e.g. tutorial_001_model_in_5_minutes)
   --build-dir <path>   Build directory (default: build/tutorials-standalone)
   --build-type <type>  CMake build type (default: Release)
   --clean              Remove build directory before configure
@@ -72,7 +72,7 @@ Options:
 
 Examples:
   tutorials/build.sh
-  tutorials/build.sh --target tutorial_v2_001_run_your_first_model
+  tutorials/build.sh --target tutorial_001_run_your_first_model
   tutorials/build.sh --simaneat-dir /usr/lib/aarch64-linux-gnu/cmake/SimaNeat
   tutorials/build.sh --list-targets
 EOF

@@ -40,87 +40,87 @@ function(add_tutorial exe source)
 endfunction()
 
 # Tutorials are added as they are implemented.
-add_tutorial(tutorial_v2_001_run_your_first_model
+add_tutorial(tutorial_001_run_your_first_model
   001_run_your_first_model/run_your_first_model.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_002_run_inference_async
+add_tutorial(tutorial_002_run_inference_async
   002_run_inference_async/run_inference_async.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_003_build_inference_pipeline
+add_tutorial(tutorial_003_build_inference_pipeline
   003_build_inference_pipeline/build_inference_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_004_configure_model_options
+add_tutorial(tutorial_004_configure_model_options
   004_configure_model_options/configure_model_options.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_005_preprocess_images
+add_tutorial(tutorial_005_preprocess_images
   005_preprocess_images/preprocess_images.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_006_read_detection_boxes
+add_tutorial(tutorial_006_read_detection_boxes
   006_read_detection_boxes/read_detection_boxes.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_007_plug_model_into_pipeline
+add_tutorial(tutorial_007_plug_model_into_pipeline
   007_plug_model_into_pipeline/plug_model_into_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_008_pass_numpy_to_model
+add_tutorial(tutorial_008_pass_numpy_to_model
   008_pass_numpy_to_model/pass_numpy_to_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_009_feed_multi_input_model
+add_tutorial(tutorial_009_feed_multi_input_model
   009_feed_multi_input_model/feed_multi_input_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_010_interpret_model_output
+add_tutorial(tutorial_010_interpret_model_output
   010_interpret_model_output/interpret_model_output.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_011_diagnose_a_pipeline
+add_tutorial(tutorial_011_diagnose_a_pipeline
   011_diagnose_a_pipeline/diagnose_a_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_012_build_a_custom_data_graph
+add_tutorial(tutorial_012_build_a_custom_data_graph
   012_build_a_custom_data_graph/build_a_custom_data_graph.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_013_embed_model_inside_graph
+add_tutorial(tutorial_013_embed_model_inside_graph
   013_embed_model_inside_graph/embed_model_inside_graph.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_014_run_multiple_streams
+add_tutorial(tutorial_014_run_multiple_streams
   014_run_multiple_streams/run_multiple_streams.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_015_tune_throughput_and_queues
+add_tutorial(tutorial_015_tune_throughput_and_queues
   015_tune_throughput_and_queues/tune_throughput_and_queues.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_016_build_production_pipeline
+add_tutorial(tutorial_016_build_production_pipeline
   016_build_production_pipeline/build_production_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_017_consume_rtsp_stream
+add_tutorial(tutorial_017_consume_rtsp_stream
   017_consume_rtsp_stream/consume_rtsp_stream.cpp
   LABELS asset
 )

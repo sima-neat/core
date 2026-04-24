@@ -1,7 +1,7 @@
 // Build a multi-port bundle Sample and push it through a tensor-in/tensor-out Session.
 //
 // Usage:
-//   tutorial_v2_009_feed_multi_input_model [--width 64] [--height 48]
+//   tutorial_009_feed_multi_input_model [--width 64] [--height 48]
 
 #include "neat.h"
 

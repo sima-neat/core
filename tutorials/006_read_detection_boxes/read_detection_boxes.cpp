@@ -1,7 +1,7 @@
 // Decompose model execution into stages: Preproc -> Infer -> BoxDecode.
 //
 // Usage:
-//   tutorial_v2_006_read_detection_boxes --mpk /path/to/yolo_v8s.tar.gz --image /path/to.jpg
+//   tutorial_006_read_detection_boxes --mpk /path/to/yolo_v8s.tar.gz --image /path/to.jpg
 
 #include "neat.h"
 
@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk, image;
     if (!get_arg(argc, argv, "--mpk", mpk) || !get_arg(argc, argv, "--image", image)) {
-      std::cerr << "Usage: tutorial_v2_006_read_detection_boxes --mpk <path> --image <path>\n";
+      std::cerr << "Usage: tutorial_006_read_detection_boxes --mpk <path> --image <path>\n";
       return 1;
     }
 

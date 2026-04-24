@@ -8,12 +8,13 @@ Running `sima-cli install neat` installs **two** things:
 
    ```text
    sima-neat-0.0.0+<branch>-<sha>-Linux-extras/
+   ├── build.sh                      ← build helper (auto-detects extras layout)
    ├── lib/
    │   └── sima-neat/
-   │       └── tutorials/           ← 19 prebuilt C++ binaries (tutorial_v2_*)
+   │       └── tutorials/            ← prebuilt C++ binaries (tutorial_*)
    └── share/
        └── sima-neat/
-           └── tutorials/           ← 19 source folders (.cpp, .py, README.md)
+           └── tutorials/            ← source folders (.cpp, .py, README.md)
    ```
 
 The folder name includes the NEAT version, branch, and commit hash. For example, if you ran the installer from `~/neat/`, the folder ends up at `~/neat/sima-neat-0.0.0+<branch>-<sha>-Linux-extras/`.
@@ -35,7 +36,7 @@ Your shell's current directory is now the root of the extras tree. All tutorial 
 Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa NEAT extras** is selected.
 
 ```bash
-ls lib/sima-neat/tutorials/ | grep '^tutorial_v2_'
+ls lib/sima-neat/tutorials/ | grep '^tutorial_'
 ls share/sima-neat/tutorials/ | grep -E '^0[0-9]{2}_'
 ```
 
@@ -60,7 +61,7 @@ Copy the `.py` anywhere on disk if you want to modify it — the same command wo
 Every chapter ships as a compiled binary. Run it straight from `lib/`:
 
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_<chapter_name> --args
+./lib/sima-neat/tutorials/tutorial_<chapter_name> --args
 ```
 
 ### C++ — build from source with `build.sh` {#build-from-source}
@@ -69,8 +70,8 @@ If you want to recompile a chapter (to tweak it, or because the shipped binary d
 
 ```bash
 ./build.sh --list-targets
-./build.sh --target tutorial_v2_<chapter_name>
-./build/tutorials-standalone/tutorial_v2_<chapter_name> --args
+./build.sh --target tutorial_<chapter_name>
+./build/tutorials-standalone/tutorial_<chapter_name> --args
 ```
 
 `build.sh` auto-detects `SimaNeatConfig.cmake` from the installed NEAT package, invokes CMake for the whole `tutorials/` tree (or a single target), and writes the binaries under `build/tutorials-standalone/`. No flags required for a stock eLxr SDK or on-device apt install.

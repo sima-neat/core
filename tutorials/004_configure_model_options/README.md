@@ -53,18 +53,18 @@ python3 share/sima-neat/tutorials/004_configure_model_options/configure_model_op
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_004_configure_model_options \
+./lib/sima-neat/tutorials/tutorial_004_configure_model_options \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_004_configure_model_options
-./build/tutorials-standalone/tutorial_v2_004_configure_model_options \
+./build.sh --target tutorial_004_configure_model_options
+./build/tutorials-standalone/tutorial_004_configure_model_options \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/004_configure_model_options/configure_model_options.cpp`

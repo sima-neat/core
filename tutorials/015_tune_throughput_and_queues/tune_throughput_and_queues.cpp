@@ -1,7 +1,7 @@
 // Tune async Session throughput via RunOptions: queue_depth, overflow_policy, metrics.
 //
 // Usage:
-//   tutorial_v2_015_tune_throughput_and_queues [--iters 32] [--queue 4] [--drop block|latest|incoming]
+//   tutorial_015_tune_throughput_and_queues [--iters 32] [--queue 4] [--drop block|latest|incoming]
 
 #include "neat.h"
 

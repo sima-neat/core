@@ -1,7 +1,7 @@
 // Run a ResNet-50 model on an image in three lines of NEAT.
 //
 // Usage:
-//   tutorial_v2_001_run_your_first_model --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
+//   tutorial_001_run_your_first_model --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
 
 #include "neat.h"
 
@@ -74,7 +74,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk, image;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_v2_001_run_your_first_model --mpk <path> [--image <path>]\n";
+      std::cerr << "Usage: tutorial_001_run_your_first_model --mpk <path> [--image <path>]\n";
       return 1;
     }
     get_arg(argc, argv, "--image", image);

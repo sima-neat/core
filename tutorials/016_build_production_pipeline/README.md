@@ -51,18 +51,18 @@ python3 share/sima-neat/tutorials/016_build_production_pipeline/build_production
 
 **C++ (prebuilt):**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_016_build_production_pipeline \
+./lib/sima-neat/tutorials/tutorial_016_build_production_pipeline \
   --mpk /path/to/yolo_v8s.tar.gz --iters 4
 ```
 
 **C++ (build from source):**
 ```bash
-./build.sh --target tutorial_v2_016_build_production_pipeline
-./build/tutorials-standalone/tutorial_v2_016_build_production_pipeline \
+./build.sh --target tutorial_016_build_production_pipeline
+./build/tutorials-standalone/tutorial_016_build_production_pipeline \
   --mpk /path/to/yolo_v8s.tar.gz --iters 4
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/016_build_production_pipeline/build_production_pipeline.cpp`

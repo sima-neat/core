@@ -1,7 +1,7 @@
 // Hybrid graph: a Model lives inside a Graph via StageModelExecutorNode.
 //
 // Usage:
-//   tutorial_v2_013_embed_model_inside_graph --mpk /path/to/model.tar.gz
+//   tutorial_013_embed_model_inside_graph --mpk /path/to/model.tar.gz
 
 #include "neat/graph.h"
 #include "neat/models.h"
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_v2_013_embed_model_inside_graph --mpk <path>\n";
+      std::cerr << "Usage: tutorial_013_embed_model_inside_graph --mpk <path>\n";
       return 1;
     }
 
