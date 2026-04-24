@@ -95,16 +95,6 @@ add_tutorial(tutorial_v2_011_diagnose_a_pipeline
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_012_detect_objects_with_yolov8
-  012_detect_objects_with_yolov8/detect_objects_with_yolov8.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_013_classify_images_with_resnet50
-  013_classify_images_with_resnet50/classify_images_with_resnet50.cpp
-  LABELS mpk
-)
-
 add_tutorial(tutorial_v2_014_build_a_custom_data_graph
   014_build_a_custom_data_graph/build_a_custom_data_graph.cpp
   LABELS fast
@@ -130,8 +120,8 @@ add_tutorial(tutorial_v2_018_build_production_pipeline
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_019_run_yolo_on_rtsp_stream
-  019_run_yolo_on_rtsp_stream/run_yolo_on_rtsp_stream.cpp
+add_tutorial(tutorial_v2_019_consume_rtsp_stream
+  019_consume_rtsp_stream/consume_rtsp_stream.cpp
   LABELS asset
 )
 
