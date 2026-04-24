@@ -43,12 +43,18 @@ Chapter 002 or 003 (Session/Run basics).
 python3 share/sima-neat/tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.py
 ```
 
-**C++:**
+**C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_v2_011_diagnose_a_pipeline
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+**C++ (build from source):**
+```bash
+./build.sh --target tutorial_v2_011_diagnose_a_pipeline
+./build/tutorials-standalone/tutorial_v2_011_diagnose_a_pipeline
+```
+
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.cpp`

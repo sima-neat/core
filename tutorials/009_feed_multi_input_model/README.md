@@ -43,13 +43,20 @@ python3 share/sima-neat/tutorials/009_feed_multi_input_model/feed_multi_input_mo
   --width 64 --height 48
 ```
 
-**C++:**
+**C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_v2_009_feed_multi_input_model \
   --width 64 --height 48
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+**C++ (build from source):**
+```bash
+./build.sh --target tutorial_v2_009_feed_multi_input_model
+./build/tutorials-standalone/tutorial_v2_009_feed_multi_input_model \
+  --width 64 --height 48
+```
+
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/009_feed_multi_input_model/feed_multi_input_model.cpp`

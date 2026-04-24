@@ -32,7 +32,7 @@ Your shell's current directory is now the root of the extras tree. All tutorial 
 
 ### Verify the install
 
-Both lists should print 19 entries. If either is empty, re-run `sima-cli install neat` and make sure **SiMa NEAT extras** is selected.
+Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa NEAT extras** is selected.
 
 ```bash
 ls lib/sima-neat/tutorials/ | grep '^tutorial_v2_'
@@ -63,11 +63,21 @@ Every chapter ships as a compiled binary. Run it straight from `lib/`:
 ./lib/sima-neat/tutorials/tutorial_v2_<chapter_name> --args
 ```
 
-### C++ — compile a copy yourself {#compile-a-copy-yourself}
+### C++ — build from source with `build.sh` {#build-from-source}
 
-Want to modify a chapter's C++ source, or reuse it inside your own project? You do not need the extras folder for this path — only the base NEAT library (the `sima-neat` package, which provides `libsima_neat.so` and `SimaNeatConfig.cmake`).
+If you want to recompile a chapter (to tweak it, or because the shipped binary does not match your runtime), run the bundled helper:
 
-Copy the `.cpp` from `share/sima-neat/tutorials/<chapter>/` into a new folder. Drop in this minimal `CMakeLists.txt`:
+```bash
+./build.sh --list-targets
+./build.sh --target tutorial_v2_<chapter_name>
+./build/tutorials-standalone/tutorial_v2_<chapter_name> --args
+```
+
+`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed NEAT package, invokes CMake for the whole `tutorials/` tree (or a single target), and writes the binaries under `build/tutorials-standalone/`. No flags required for a stock eLxr SDK or on-device apt install.
+
+### C++ — integrate NEAT into your own project {#compile-a-copy-yourself}
+
+Copying a chapter's `.cpp` into your own codebase? Drop this minimal `CMakeLists.txt` alongside it — no extras folder required, only the base `sima-neat` package (which provides `libsima_neat.a` and `SimaNeatConfig.cmake`):
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)

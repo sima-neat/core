@@ -51,13 +51,20 @@ python3 share/sima-neat/tutorials/005_preprocess_images/preprocess_images.py \
   --mpk /path/to/yolo_v8s.tar.gz --size 224
 ```
 
-**C++:**
+**C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_v2_005_preprocess_images \
   --mpk /path/to/yolo_v8s.tar.gz --size 224
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+**C++ (build from source):**
+```bash
+./build.sh --target tutorial_v2_005_preprocess_images
+./build/tutorials-standalone/tutorial_v2_005_preprocess_images \
+  --mpk /path/to/yolo_v8s.tar.gz --size 224
+```
+
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/005_preprocess_images/preprocess_images.cpp`

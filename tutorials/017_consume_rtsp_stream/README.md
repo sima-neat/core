@@ -54,13 +54,20 @@ python3 share/sima-neat/tutorials/017_consume_rtsp_stream/consume_rtsp_stream.py
   --url rtsp://host:port/stream --frames 5
 ```
 
-**C++:**
+**C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_v2_017_consume_rtsp_stream \
   --url rtsp://host:port/stream --frames 5
 ```
 
-To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
+**C++ (build from source):**
+```bash
+./build.sh --target tutorial_v2_017_consume_rtsp_stream
+./build/tutorials-standalone/tutorial_v2_017_consume_rtsp_stream \
+  --url rtsp://host:port/stream --frames 5
+```
+
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/017_consume_rtsp_stream/consume_rtsp_stream.cpp`
