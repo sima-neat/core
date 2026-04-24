@@ -45,10 +45,18 @@ Chapter 003 (Session basics).
 - `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
+
+**Python:**
 ```bash
-./tutorial_v2_014_build_a_custom_data_graph
-python3 tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.py
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.py
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_014_build_a_custom_data_graph
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.cpp`

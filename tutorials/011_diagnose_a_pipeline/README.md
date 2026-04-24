@@ -43,10 +43,18 @@ Chapter 002 or 003 (Session/Run basics).
 - `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
+
+**Python:**
 ```bash
-./tutorial_v2_011_diagnose_a_pipeline
-python3 tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.py
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.py
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_011_diagnose_a_pipeline
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/011_diagnose_a_pipeline/diagnose_a_pipeline.cpp`

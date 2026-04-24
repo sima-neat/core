@@ -47,10 +47,20 @@ Chapter 002 (async basics). Chapter 011 (diagnostics).
 - `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
+
+**Python:**
 ```bash
-./tutorial_v2_017_tune_throughput_and_queues
-python3 tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.py
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.py \
+  --iters 32 --queue 4 --drop block
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_017_tune_throughput_and_queues \
+  --iters 32 --queue 4 --drop block
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/017_tune_throughput_and_queues/tune_throughput_and_queues.cpp`

@@ -42,10 +42,22 @@ Chapter 001 (Model). Chapter 014 (Graph basics).
 - `[OK] ...` indicates the chapter flow completed successfully.
 
 ## Run
+
+Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
+
+**Python:**
 ```bash
-./tutorial_v2_015_embed_model_inside_graph
-python3 tutorials/015_embed_model_inside_graph/embed_model_inside_graph.py
+python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/015_embed_model_inside_graph/embed_model_inside_graph.py \
+  --mpk /path/to/yolo_v8s.tar.gz
 ```
+
+**C++:**
+```bash
+$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_015_embed_model_inside_graph \
+  --mpk /path/to/yolo_v8s.tar.gz
+```
+
+To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/015_embed_model_inside_graph/embed_model_inside_graph.cpp`
