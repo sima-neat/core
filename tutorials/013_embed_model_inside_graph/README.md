@@ -1,4 +1,4 @@
-# 015 Embed a Model Inside a Graph
+# 013 Embed a Model Inside a Graph
 
 ## Metadata
 | Field | Value |
@@ -16,7 +16,7 @@ Many production systems need graph-level control while still using model executi
 **APIs introduced**
 - `pyneat.graph.nodes.StageModelExecutorOptions()` with model-backed fields.
 - `pyneat.graph.nodes.stage_model_executor(opts, name)` — the graph-node form of a model stage.
-- `graph.add(stage_node)` + `pyneat.graph.GraphSession(graph).build()` — same graph lifecycle as chapter 014.
+- `graph.add(stage_node)` + `pyneat.graph.GraphSession(graph).build()` — same graph lifecycle as chapter 012.
 
 **When to use this**
 - Graph-level composition around model execution.
@@ -24,7 +24,7 @@ Many production systems need graph-level control while still using model executi
 - Safe migration path from simple stage graphs to model-backed hybrid graphs.
 
 **Prerequisites**
-Chapter 001 (Model). Chapter 014 (Graph basics).
+Chapter 001 (Model). Chapter 012 (Graph basics).
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
@@ -42,18 +42,18 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 share/sima-neat/tutorials/015_embed_model_inside_graph/embed_model_inside_graph.py \
+python3 share/sima-neat/tutorials/013_embed_model_inside_graph/embed_model_inside_graph.py \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
 **C++:**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_015_embed_model_inside_graph \
+./lib/sima-neat/tutorials/tutorial_v2_013_embed_model_inside_graph \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
 To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
-- C++: `tutorials/015_embed_model_inside_graph/embed_model_inside_graph.cpp`
-- Python: `tutorials/015_embed_model_inside_graph/embed_model_inside_graph.py`
+- C++: `tutorials/013_embed_model_inside_graph/embed_model_inside_graph.cpp`
+- Python: `tutorials/013_embed_model_inside_graph/embed_model_inside_graph.py`

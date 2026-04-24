@@ -1,7 +1,7 @@
 // Async push/pull: producer thread pushes frames, main thread pulls outputs.
 //
 // Usage:
-//   tutorial_v2_002_async_push_pull --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg] [--n 4]
+//   tutorial_v2_002_run_inference_async --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg] [--n 4]
 
 #include "neat.h"
 
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
     std::string mpk, image;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
       std::cerr
-          << "Usage: tutorial_v2_002_async_push_pull --mpk <path> [--image <path>] [--n <n>]\n";
+          << "Usage: tutorial_v2_002_run_inference_async --mpk <path> [--image <path>] [--n <n>]\n";
       return 1;
     }
     get_arg(argc, argv, "--image", image);

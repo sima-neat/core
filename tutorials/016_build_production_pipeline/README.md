@@ -1,4 +1,4 @@
-# 018 Build a Production-Ready Pipeline
+# 016 Build a Production-Ready Pipeline
 
 ## Metadata
 | Field | Value |
@@ -45,18 +45,18 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 share/sima-neat/tutorials/018_build_production_pipeline/build_production_pipeline.py \
+python3 share/sima-neat/tutorials/016_build_production_pipeline/build_production_pipeline.py \
   --mpk /path/to/yolo_v8s.tar.gz --iters 4
 ```
 
 **C++:**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_018_build_production_pipeline \
+./lib/sima-neat/tutorials/tutorial_v2_016_build_production_pipeline \
   --mpk /path/to/yolo_v8s.tar.gz --iters 4
 ```
 
 To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
-- C++: `tutorials/018_build_production_pipeline/build_production_pipeline.cpp`
-- Python: `tutorials/018_build_production_pipeline/build_production_pipeline.py`
+- C++: `tutorials/016_build_production_pipeline/build_production_pipeline.cpp`
+- Python: `tutorials/016_build_production_pipeline/build_production_pipeline.py`

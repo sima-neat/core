@@ -1,7 +1,7 @@
 // Multistream Graph: StampFrameId -> StreamScheduler -> FanOut -> LambdaStage -> JoinBundle.
 //
 // Usage:
-//   tutorial_v2_016_graph_multistream [--streams 8] [--frames 4]
+//   tutorial_v2_014_run_multiple_streams [--streams 8] [--frames 4]
 
 #include "neat/graph.h"
 
@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("join should emit an image+bbox bundle");
 
     std::cout << "received=" << received << " fields=" << first_fields << "\n";
-    std::cout << "[OK] 016_run_multiple_streams\n";
+    std::cout << "[OK] 014_run_multiple_streams\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

@@ -1,4 +1,4 @@
-# 019 Consume a Live RTSP Stream
+# 017 Consume a Live RTSP Stream
 
 ## Metadata
 | Field | Value |
@@ -50,18 +50,18 @@ This chapter consumes a live RTSP stream. If you do not have a camera, publish a
 
 **Python:**
 ```bash
-python3 share/sima-neat/tutorials/019_consume_rtsp_stream/consume_rtsp_stream.py \
+python3 share/sima-neat/tutorials/017_consume_rtsp_stream/consume_rtsp_stream.py \
   --url rtsp://host:port/stream --frames 5
 ```
 
 **C++:**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_019_consume_rtsp_stream \
+./lib/sima-neat/tutorials/tutorial_v2_017_consume_rtsp_stream \
   --url rtsp://host:port/stream --frames 5
 ```
 
 To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
-- C++: `tutorials/019_consume_rtsp_stream/consume_rtsp_stream.cpp`
-- Python: `tutorials/019_consume_rtsp_stream/consume_rtsp_stream.py`
+- C++: `tutorials/017_consume_rtsp_stream/consume_rtsp_stream.cpp`
+- Python: `tutorials/017_consume_rtsp_stream/consume_rtsp_stream.py`

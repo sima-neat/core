@@ -1,4 +1,4 @@
-# 014 Build a Custom Data Graph
+# 012 Build a Custom Data Graph
 
 ## Metadata
 | Field | Value |
@@ -23,8 +23,8 @@ A graph is an explicit DAG of nodes you build programmatically, separate from th
 
 **When to use this**
 - Custom orchestration where pipeline/session semantics don't fit (fan-out, fan-in, per-stream routing).
-- Multistream scheduling (see chapter 016).
-- Embedding model execution as one stage of a larger flow (see chapter 015).
+- Multistream scheduling (see chapter 014).
+- Embedding model execution as one stage of a larger flow (see chapter 013).
 
 **Prerequisites**
 Chapter 003 (Session basics).
@@ -42,16 +42,16 @@ Chapter 003 (Session basics).
 
 **Python:**
 ```bash
-python3 share/sima-neat/tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.py
+python3 share/sima-neat/tutorials/012_build_a_custom_data_graph/build_a_custom_data_graph.py
 ```
 
 **C++:**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_014_build_a_custom_data_graph
+./lib/sima-neat/tutorials/tutorial_v2_012_build_a_custom_data_graph
 ```
 
 To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
-- C++: `tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.cpp`
-- Python: `tutorials/014_build_a_custom_data_graph/build_a_custom_data_graph.py`
+- C++: `tutorials/012_build_a_custom_data_graph/build_a_custom_data_graph.cpp`
+- Python: `tutorials/012_build_a_custom_data_graph/build_a_custom_data_graph.py`

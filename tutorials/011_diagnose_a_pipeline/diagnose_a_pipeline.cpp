@@ -1,7 +1,7 @@
 // Three diagnostic commands: Session::validate, Run::stats, Run::report / diagnostics_summary.
 //
 // Usage:
-//   tutorial_v2_011_diagnostics_in_3_commands
+//   tutorial_v2_011_diagnose_a_pipeline
 
 #include "neat.h"
 

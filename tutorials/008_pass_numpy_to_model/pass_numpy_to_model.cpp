@@ -1,7 +1,7 @@
 // Convert a cv::Mat into a NEAT Tensor, map it read-only, and clone it.
 //
 // Usage:
-//   tutorial_v2_008_numpy_torch_tensor_io [--width 128] [--height 96]
+//   tutorial_v2_008_pass_numpy_to_model [--width 128] [--height 96]
 
 #include "neat.h"
 

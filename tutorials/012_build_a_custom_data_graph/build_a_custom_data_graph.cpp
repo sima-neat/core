@@ -1,7 +1,7 @@
 // Compose a minimal NEAT Graph: PipelineNode -> StampFrameIdNode, push one sample, pull output.
 //
 // Usage:
-//   tutorial_v2_014_graph_basics
+//   tutorial_v2_012_build_a_custom_data_graph
 
 #include "neat/graph.h"
 #include "neat/nodes.h"
@@ -85,7 +85,7 @@ int main() {
     if (!out.has_value())
       throw std::runtime_error("graph produced no output");
     std::cout << "stream=" << out->stream_id << " frame=" << out->frame_id << "\n";
-    std::cout << "[OK] 014_build_a_custom_data_graph\n";
+    std::cout << "[OK] 012_build_a_custom_data_graph\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

@@ -95,33 +95,33 @@ add_tutorial(tutorial_v2_011_diagnose_a_pipeline
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_014_build_a_custom_data_graph
-  014_build_a_custom_data_graph/build_a_custom_data_graph.cpp
+add_tutorial(tutorial_v2_012_build_a_custom_data_graph
+  012_build_a_custom_data_graph/build_a_custom_data_graph.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_015_embed_model_inside_graph
-  015_embed_model_inside_graph/embed_model_inside_graph.cpp
+add_tutorial(tutorial_v2_013_embed_model_inside_graph
+  013_embed_model_inside_graph/embed_model_inside_graph.cpp
   LABELS mpk
 )
 
-add_tutorial(tutorial_v2_016_run_multiple_streams
-  016_run_multiple_streams/run_multiple_streams.cpp
+add_tutorial(tutorial_v2_014_run_multiple_streams
+  014_run_multiple_streams/run_multiple_streams.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_017_tune_throughput_and_queues
-  017_tune_throughput_and_queues/tune_throughput_and_queues.cpp
+add_tutorial(tutorial_v2_015_tune_throughput_and_queues
+  015_tune_throughput_and_queues/tune_throughput_and_queues.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_018_build_production_pipeline
-  018_build_production_pipeline/build_production_pipeline.cpp
+add_tutorial(tutorial_v2_016_build_production_pipeline
+  016_build_production_pipeline/build_production_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_v2_019_consume_rtsp_stream
-  019_consume_rtsp_stream/consume_rtsp_stream.cpp
+add_tutorial(tutorial_v2_017_consume_rtsp_stream
+  017_consume_rtsp_stream/consume_rtsp_stream.cpp
   LABELS asset
 )
 

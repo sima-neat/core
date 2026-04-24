@@ -29,18 +29,18 @@ This map links common tasks to concrete in-repo references. Tutorials live under
 
 ## Live streaming input
 
-- Consume an RTSP stream and run YOLO on it: `tutorials/019_run_yolo_on_rtsp_stream/`
+- Consume a live RTSP stream: `tutorials/017_consume_rtsp_stream/`
 
 ## Graph APIs
 
-- Build a custom data graph: `tutorials/014_build_a_custom_data_graph/`
-- Embed a model inside a graph: `tutorials/015_embed_model_inside_graph/`
-- Run multiple streams in one graph: `tutorials/016_run_multiple_streams/`
+- Build a custom data graph: `tutorials/012_build_a_custom_data_graph/`
+- Embed a model inside a graph: `tutorials/013_embed_model_inside_graph/`
+- Run multiple streams in one graph: `tutorials/014_run_multiple_streams/`
 
 ## Performance and production
 
-- Tune throughput and queues: `tutorials/017_tune_throughput_and_queues/`
-- Production-ready pipeline skeleton: `tutorials/018_build_production_pipeline/`
+- Tune throughput and queues: `tutorials/015_tune_throughput_and_queues/`
+- Production-ready pipeline skeleton: `tutorials/016_build_production_pipeline/`
 
 ## Diagnostics
 

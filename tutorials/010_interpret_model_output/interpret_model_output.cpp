@@ -1,7 +1,7 @@
 // Inspect a Sample returned by a Session: kind, tensor, fields, rank.
 //
 // Usage:
-//   tutorial_v2_010_output_handling_patterns
+//   tutorial_v2_010_interpret_model_output
 
 #include "neat.h"
 

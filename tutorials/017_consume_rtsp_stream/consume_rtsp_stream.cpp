@@ -4,7 +4,7 @@
 // a URL and pull decoded frames. This chapter is about the input group only.
 //
 // Usage:
-//   tutorial_v2_019_consume_rtsp_stream --url rtsp://host/path [--frames 5]
+//   tutorial_v2_017_consume_rtsp_stream --url rtsp://host/path [--frames 5]
 
 #include "neat.h"
 #include "nodes/groups/RtspDecodedInput.h"
@@ -39,7 +39,7 @@ int main(int argc, char** argv) {
   try {
     std::string url;
     if (!get_arg(argc, argv, "--url", url)) {
-      std::cerr << "Usage: tutorial_v2_019_consume_rtsp_stream --url <rtsp://...> [--frames <n>]\n";
+      std::cerr << "Usage: tutorial_v2_017_consume_rtsp_stream --url <rtsp://...> [--frames <n>]\n";
       return 1;
     }
     const int frames = parse_int_arg(argc, argv, "--frames", 5);

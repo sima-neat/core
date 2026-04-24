@@ -1,7 +1,7 @@
 // Production blueprint: wrap a Model in a Runner with production-grade RunOptions.
 //
 // Usage:
-//   tutorial_v2_018_production_blueprint --mpk /path/to/model.tar.gz [--iters 4]
+//   tutorial_v2_016_build_production_pipeline --mpk /path/to/model.tar.gz [--iters 4]
 
 #include "neat.h"
 
@@ -36,7 +36,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_v2_018_production_blueprint --mpk <path> [--iters <n>]\n";
+      std::cerr << "Usage: tutorial_v2_016_build_production_pipeline --mpk <path> [--iters <n>]\n";
       return 1;
     }
     const int iters = parse_int_arg(argc, argv, "--iters", 4);
@@ -84,7 +84,7 @@ int main(int argc, char** argv) {
     // END CORE LOGIC
 
     std::cout << "outputs=" << ok << "\n";
-    std::cout << "[OK] 018_build_production_pipeline\n";
+    std::cout << "[OK] 016_build_production_pipeline\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

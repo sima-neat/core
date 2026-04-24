@@ -1,7 +1,7 @@
 // Tune async Session throughput via RunOptions: queue_depth, overflow_policy, metrics.
 //
 // Usage:
-//   tutorial_v2_017_performance_tuning [--iters 32] [--queue 4] [--drop block|latest|incoming]
+//   tutorial_v2_015_tune_throughput_and_queues [--iters 32] [--queue 4] [--drop block|latest|incoming]
 
 #include "neat.h"
 
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
     std::cout << "avg_latency_ms=" << stats.avg_latency_ms << "\n";
     std::cout << "avg_push_us=" << input_stats.avg_push_us << "\n";
     std::cout << "renegotiations=" << input_stats.renegotiations << "\n";
-    std::cout << "[OK] 017_tune_throughput_and_queues\n";
+    std::cout << "[OK] 015_tune_throughput_and_queues\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";

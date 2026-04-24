@@ -3,7 +3,7 @@
 Requires these env vars to actually exercise the tutorials (skipped otherwise):
   SIMA_NEAT_TUTORIAL_MPK_RESNET=/path/to/resnet_50_mpk.tar.gz
   SIMA_NEAT_TUTORIAL_MPK_YOLO=/path/to/yolo_v8s_mpk.tar.gz
-  SIMA_NEAT_TUTORIAL_RTSP_URL=rtsp://host:port/stream   # chapter 019
+  SIMA_NEAT_TUTORIAL_RTSP_URL=rtsp://host:port/stream   # chapter 017
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ RTSP_URL = os.environ.get("SIMA_NEAT_TUTORIAL_RTSP_URL")
 
 # Which MPK each chapter needs. Keep in sync with the --mpk argparse calls
 # in each tutorial; chapters not listed here do not take --mpk.
-RESNET_CHAPTERS = {"001", "002", "013"}
-YOLO_CHAPTERS = {"004", "005", "006", "007", "012", "015", "018", "019"}
-RTSP_CHAPTERS = {"019"}
+RESNET_CHAPTERS = {"001", "002"}
+YOLO_CHAPTERS = {"004", "005", "006", "007", "013", "016"}
+RTSP_CHAPTERS = {"017"}
 
 
 def _chapter_id(folder: str) -> str:

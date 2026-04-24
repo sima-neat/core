@@ -1,4 +1,4 @@
-# 016 Run Multiple Streams in One Graph
+# 014 Run Multiple Streams in One Graph
 
 ## Metadata
 | Field | Value |
@@ -26,7 +26,7 @@ The graph here is: `stamp → stream_scheduler → fan_out → join_bundle`. Eac
 - Diagnosing dropped or misaligned stream outputs under load.
 
 **Prerequisites**
-Chapter 014 (Graph basics). Chapter 009 (bundle samples) helps for join semantics.
+Chapter 012 (Graph basics). Chapter 009 (bundle samples) helps for join semantics.
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
@@ -42,18 +42,18 @@ Chapter 014 (Graph basics). Chapter 009 (bundle samples) helps for join semantic
 
 **Python:**
 ```bash
-python3 share/sima-neat/tutorials/016_run_multiple_streams/run_multiple_streams.py \
+python3 share/sima-neat/tutorials/014_run_multiple_streams/run_multiple_streams.py \
   --streams 8 --frames 4
 ```
 
 **C++:**
 ```bash
-./lib/sima-neat/tutorials/tutorial_v2_016_run_multiple_streams \
+./lib/sima-neat/tutorials/tutorial_v2_014_run_multiple_streams \
   --streams 8 --frames 4
 ```
 
 To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
-- C++: `tutorials/016_run_multiple_streams/run_multiple_streams.cpp`
-- Python: `tutorials/016_run_multiple_streams/run_multiple_streams.py`
+- C++: `tutorials/014_run_multiple_streams/run_multiple_streams.cpp`
+- Python: `tutorials/014_run_multiple_streams/run_multiple_streams.py`

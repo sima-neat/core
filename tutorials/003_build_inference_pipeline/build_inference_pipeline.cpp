@@ -1,7 +1,7 @@
 // Build a minimal Session (Input -> Output), run a frame, read the tensor rank.
 //
 // Usage:
-//   tutorial_v2_003_session_build_and_run [--width <w>] [--height <h>]
+//   tutorial_v2_003_build_inference_pipeline [--width <w>] [--height <h>]
 
 #include "neat.h"
 

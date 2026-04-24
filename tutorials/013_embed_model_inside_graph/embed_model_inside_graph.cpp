@@ -1,7 +1,7 @@
 // Hybrid graph: a Model lives inside a Graph via StageModelExecutorNode.
 //
 // Usage:
-//   tutorial_v2_015_graph_model_hybrid --mpk /path/to/model.tar.gz
+//   tutorial_v2_013_embed_model_inside_graph --mpk /path/to/model.tar.gz
 
 #include "neat/graph.h"
 #include "neat/models.h"
@@ -60,7 +60,7 @@ int main(int argc, char** argv) {
   try {
     std::string mpk;
     if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_v2_015_graph_model_hybrid --mpk <path>\n";
+      std::cerr << "Usage: tutorial_v2_013_embed_model_inside_graph --mpk <path>\n";
       return 1;
     }
 
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
     if (!out->tensor.has_value())
       throw std::runtime_error("graph output missing tensor");
     std::cout << "output_rank=" << out->tensor->shape.size() << "\n";
-    std::cout << "[OK] 015_embed_model_inside_graph\n";
+    std::cout << "[OK] 013_embed_model_inside_graph\n";
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "[FAIL] " << e.what() << "\n";
