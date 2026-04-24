@@ -60,12 +60,13 @@ sima-cli modelzoo -v 2.0.0 get yolo_v8s
 
 ## Sample images
 
-Default image candidates used in tutorials/tests:
-- `tmp/coco_sample.jpg` (downloaded if missing)
-- `test.jpg`
-- `tests/assets/preproc_dynamic/ilena_488.jpg`
+Tutorials that need an image accept a `--image <path>` flag. Chapters 001,
+012, and 013 each document the expected format and size in their README.
+If no `--image` is passed, the Python tutorials fall back to a synthetic
+uint8 frame so the path still runs end-to-end.
 
-You can override the COCO image URL used by tests with:
+Test suites may download additional assets under `tmp/` — see their own
+documentation. You can override the COCO image URL used by tests with:
 ```
 SIMA_COCO_URL=<custom_url>
 ```

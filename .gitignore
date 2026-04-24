@@ -47,6 +47,8 @@ deps/*
 # Runtime and temporary files
 tmp/
 tmp-*/
+sima-neat-*-extras/
+/install_neat_framework.sh
 core
 core/
 a.out
@@ -87,6 +89,7 @@ models/
 !samples/media/**
 !tests/images/**
 !docs/images/**
+!tutorials/assets/**
 
 # Docs output
 docs/doxygen/out/
