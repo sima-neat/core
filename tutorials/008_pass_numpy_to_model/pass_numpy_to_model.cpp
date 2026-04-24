@@ -50,12 +50,15 @@ int main(int argc, char** argv) {
 
     // map_read yields a Mapping with a raw pointer and size in bytes.
     simaai::neat::Mapping mapped = tensor.map_read();
+    // END CORE LOGIC
+
     std::uint64_t checksum = 0;
     const auto* bytes = static_cast<const std::uint8_t*>(mapped.data);
     const std::size_t n = std::min<std::size_t>(mapped.size_bytes, 256);
     for (std::size_t i = 0; i < n; ++i)
       checksum += bytes[i];
 
+    // CORE LOGIC
     // clone() copies into CPU-owned storage, detached from the cv::Mat buffer.
     simaai::neat::Tensor owned = tensor.clone();
     // END CORE LOGIC

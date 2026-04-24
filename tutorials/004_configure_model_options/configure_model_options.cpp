@@ -39,7 +39,6 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    // CORE LOGIC
     // Model::Options groups input caps, preproc, and box-decode into one struct.
     simaai::neat::Model::Options opt;
     opt.media_type = "video/x-raw";
@@ -58,12 +57,12 @@ int main(int argc, char** argv) {
     opt.original_height = 640;
     opt.name_suffix = "_chapter";
 
+    // CORE LOGIC
     simaai::neat::Model model(mpk, opt);
-    // END CORE LOGIC
-
     print_spec("input_spec", model.input_spec());
     print_spec("output_spec", model.output_spec());
     std::cout << "metadata_keys=" << model.metadata().size() << "\n";
+    // END CORE LOGIC
 
     cv::Mat bgr(224, 224, CV_8UC3, cv::Scalar(10, 20, 30));
     if (!bgr.isContinuous())

@@ -64,21 +64,7 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    // CORE LOGIC
-    // Wrap a Model as a StageModelExecutorNode so it participates in a Graph.
     auto model = std::make_shared<simaai::neat::Model>(mpk);
-
-    simaai::neat::graph::nodes::StageModelExecutorOptions opt;
-    opt.model = model;
-    opt.do_preproc = false;
-    opt.do_mla = false;
-    opt.do_boxdecode = false;
-
-    simaai::neat::graph::Graph g;
-    const auto node_id =
-        g.add(simaai::neat::graph::nodes::StageModelExecutorNode(opt, "stage_model"));
-
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(g)).build();
 
     // Size the input tensor from the model's declared input appsrc options.
     simaai::neat::InputOptions tensor_opt = model->input_appsrc_options(true);
@@ -91,6 +77,20 @@ int main(int argc, char** argv) {
     in.tensor = make_fp32_tensor(w, h, d);
     in.frame_id = 1;
     in.stream_id = "model";
+
+    // CORE LOGIC
+    // Wrap a Model as a StageModelExecutorNode so it participates in a Graph.
+    simaai::neat::graph::nodes::StageModelExecutorOptions opt;
+    opt.model = model;
+    opt.do_preproc = false;
+    opt.do_mla = false;
+    opt.do_boxdecode = false;
+
+    simaai::neat::graph::Graph g;
+    const auto node_id =
+        g.add(simaai::neat::graph::nodes::StageModelExecutorNode(opt, "stage_model"));
+
+    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(g)).build();
 
     run.push(node_id, in);
     auto out = run.pull(node_id, /*timeout_ms=*/2000);

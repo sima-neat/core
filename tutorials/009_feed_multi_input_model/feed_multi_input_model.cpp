@@ -56,19 +56,20 @@ int main(int argc, char** argv) {
     const int h = parse_int_arg(argc, argv, "--height", 48);
     const int c = 3;
 
-    // CORE LOGIC
-    // Session accepting fp32 tensors as input.
-    simaai::neat::Session session;
     simaai::neat::InputOptions in;
     in.media_type = "application/vnd.simaai.tensor";
     in.format = "FP32";
     in.width = w;
     in.height = h;
     in.depth = c;
-    session.add(simaai::neat::nodes::Input(in));
-    session.add(simaai::neat::nodes::Output());
 
     simaai::neat::Tensor seed = make_fp32_tensor(w, h, c, 0.0f);
+
+    // CORE LOGIC
+    // Session accepting fp32 tensors as input.
+    simaai::neat::Session session;
+    session.add(simaai::neat::nodes::Input(in));
+    session.add(simaai::neat::nodes::Output());
     auto run = session.build(seed, simaai::neat::RunMode::Sync);
 
     // make_bundle_sample packs multiple named tensors into one Sample.

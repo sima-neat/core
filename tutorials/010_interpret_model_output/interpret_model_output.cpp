@@ -16,18 +16,18 @@ int main() {
     if (!rgb.isContinuous())
       rgb = rgb.clone();
 
-    // CORE LOGIC
-    simaai::neat::Session session;
     simaai::neat::InputOptions in;
     in.format = "RGB";
     in.width = rgb.cols;
     in.height = rgb.rows;
     in.depth = rgb.channels();
+
+    simaai::neat::Session session;
     session.add(simaai::neat::nodes::Input(in));
     session.add(simaai::neat::nodes::Output());
-
     auto run = session.build(rgb, simaai::neat::RunMode::Sync);
 
+    // CORE LOGIC
     // push_and_pull is the one-frame synchronous shortcut; Sample has .kind,
     // .tensor (optional), .fields (named sub-tensors for bundles).
     simaai::neat::Sample out = run.push_and_pull(rgb, /*timeout_ms=*/1000);

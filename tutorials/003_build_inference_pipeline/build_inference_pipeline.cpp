@@ -41,10 +41,6 @@ int main(int argc, char** argv) {
     if (!input.isContinuous())
       input = input.clone();
 
-    // CORE LOGIC
-    // Compose a Session from Input and Output nodes, then build+run one frame.
-    simaai::neat::Session session;
-
     simaai::neat::InputOptions in;
     in.format = "RGB";
     in.width = width;
@@ -53,12 +49,14 @@ int main(int argc, char** argv) {
     in.is_live = false;
     in.do_timestamp = true;
 
-    session.add(simaai::neat::nodes::Input(in));
-    session.add(simaai::neat::nodes::Output());
-
     simaai::neat::RunOptions run_opt;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
+    // CORE LOGIC
+    // Compose a Session from Input and Output nodes, then build+run one frame.
+    simaai::neat::Session session;
+    session.add(simaai::neat::nodes::Input(in));
+    session.add(simaai::neat::nodes::Output());
     auto run = session.build(input, simaai::neat::RunMode::Sync, run_opt);
     auto sample = run.push_and_pull(input, /*timeout_ms=*/1000);
     // END CORE LOGIC

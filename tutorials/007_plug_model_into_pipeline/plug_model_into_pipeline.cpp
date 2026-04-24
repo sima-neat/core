@@ -37,25 +37,29 @@ int main(int argc, char** argv) {
     if (!rgb.isContinuous())
       rgb = rgb.clone();
 
-    // CORE LOGIC
     // Pattern 1: build a Session by adding Input/Output nodes directly.
-    simaai::neat::Session direct;
     simaai::neat::InputOptions in;
     in.format = "RGB";
     in.width = width;
     in.height = height;
     in.depth = 3;
     in.do_timestamp = true;
+
+    // CORE LOGIC
+    simaai::neat::Session direct;
     direct.add(simaai::neat::nodes::Input(in));
     direct.add(simaai::neat::nodes::Output());
+    // END CORE LOGIC
 
     std::string mpk;
     if (get_arg(argc, argv, "--mpk", mpk) && fs::exists(mpk)) {
       simaai::neat::Model model(mpk);
 
       // Pattern 2: ingest the model's default session group.
+      // CORE LOGIC
       simaai::neat::Session from_model;
       from_model.add(model.session());
+      // END CORE LOGIC
       std::cout << "model_session_size=" << model.session().size() << "\n";
 
       // Pattern 3: attach the model under an upstream name with custom options.
@@ -66,14 +70,15 @@ int main(int argc, char** argv) {
       sopt.name_suffix = "_camera0";
       sopt.buffer_name = "camera0";
 
+      // CORE LOGIC
       simaai::neat::Session attached;
       attached.add(model.session(sopt));
+      // END CORE LOGIC
       std::cout << "attached_session_backend=\n" << attached.describe_backend() << "\n";
     }
 
     auto run = direct.build(rgb, simaai::neat::RunMode::Sync);
     auto out = run.push_and_pull(rgb, /*timeout_ms=*/1000);
-    // END CORE LOGIC
 
     if (!out.tensor.has_value())
       throw std::runtime_error("direct session output missing tensor");
