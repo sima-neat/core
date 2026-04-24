@@ -53,13 +53,13 @@ Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/004_configure_model_options/configure_model_options.py \
+python3 /usr/share/sima-neat/tutorials/004_configure_model_options/configure_model_options.py \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_004_configure_model_options \
+/usr/lib/sima-neat/tutorials/tutorial_v2_004_configure_model_options \
   --mpk /path/to/yolo_v8s.tar.gz
 ```
 

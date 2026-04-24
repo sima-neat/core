@@ -47,13 +47,13 @@ Chapter 014 (Graph basics). Chapter 009 (bundle samples) helps for join semantic
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/016_run_multiple_streams/run_multiple_streams.py \
+python3 /usr/share/sima-neat/tutorials/016_run_multiple_streams/run_multiple_streams.py \
   --streams 8 --frames 4
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_016_run_multiple_streams \
+/usr/lib/sima-neat/tutorials/tutorial_v2_016_run_multiple_streams \
   --streams 8 --frames 4
 ```
 

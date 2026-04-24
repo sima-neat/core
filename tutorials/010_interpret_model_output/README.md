@@ -46,12 +46,12 @@ Chapter 001.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/010_interpret_model_output/interpret_model_output.py
+python3 /usr/share/sima-neat/tutorials/010_interpret_model_output/interpret_model_output.py
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_010_interpret_model_output
+/usr/lib/sima-neat/tutorials/tutorial_v2_010_interpret_model_output
 ```
 
 To compile this chapter's C++ source in your own project with a custom `CMakeLists.txt` (no `sima-neat-extras.deb` required), see [How to Run Tutorials](/tutorials/v2#compile-a-copy-yourself) on the landing page.

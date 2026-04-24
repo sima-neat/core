@@ -50,13 +50,13 @@ Chapter 001.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/003_build_inference_pipeline/build_inference_pipeline.py \
+python3 /usr/share/sima-neat/tutorials/003_build_inference_pipeline/build_inference_pipeline.py \
   --width 320 --height 240
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_003_build_inference_pipeline \
+/usr/lib/sima-neat/tutorials/tutorial_v2_003_build_inference_pipeline \
   --width 320 --height 240
 ```
 

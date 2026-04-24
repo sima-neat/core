@@ -46,13 +46,13 @@ Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py \
+python3 /usr/share/sima-neat/tutorials/013_classify_images_with_resnet50/classify_images_with_resnet50.py \
   --mpk /path/to/resnet_50.tar.gz --image /path/to/frame.jpg --size 224
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_013_classify_images_with_resnet50 \
+/usr/lib/sima-neat/tutorials/tutorial_v2_013_classify_images_with_resnet50 \
   --mpk /path/to/resnet_50.tar.gz --image /path/to/frame.jpg
 ```
 

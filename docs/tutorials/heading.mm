@@ -2,59 +2,42 @@
 
 When prompted during installation of NEAT, select **SiMa NEAT extras** (press `Space` to toggle), then continue installation.
 
-The extras package includes prebuilt tutorials/tests plus source code, and is automatically unpacked under the NEAT installation folder.
+The extras package includes prebuilt tutorial binaries plus source code, installed under `/usr/` on the DevKit:
 
-Prebuilt layout:
-
-```text
-.
-├── lib
-│   └── sima-neat
-│       ├── tests
-│       └── tutorials
-└── share
-    └── sima-neat
-        ├── tests
-        └── tutorials
-```
-
-- `lib/...`: prebuilt binaries
-- `share/...`: source code
+- `/usr/lib/sima-neat/tutorials/` — prebuilt C++ tutorial binaries (`tutorial_v2_*`).
+- `/usr/share/sima-neat/tutorials/` — tutorial source code (`.cpp`, `.py`, `README.md`).
 
 ## How to Run Tutorials
 
-Before running anything, make sure NEAT is installed — `sima-neat.deb` is the library, `sima-neat-extras.deb` adds the prebuilt tutorial binaries and source.
+### Verify your install
 
-Set the install root once per shell:
+Both lists below should print 19 entries. If either is empty, re-run `sima-cli install neat` and select **SiMa NEAT extras**.
 
 ```bash
-export NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
+ls /usr/lib/sima-neat/tutorials/ | grep '^tutorial_v2_'
+ls /usr/share/sima-neat/tutorials/ | grep -E '^0[0-9]{2}_'
 ```
 
-**On the DevKit** — activate the `pyneat` venv before running Python tutorials:
+Activate the `pyneat` virtual environment before running any Python tutorial:
 
 ```bash
 source ~/pyneat/bin/activate
 ```
 
-**On the eLxr SDK** — prefix every command with `dk` (forwards to the paired DevKit). No venv activation needed on the SDK side.
-
 ### Python
 
-Python tutorials are interpreted — no build step. Run the shipped script directly:
+Python tutorials are interpreted — no build step. Run the script directly:
 
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/<chapter>/<chapter_name>.py --args
+python3 /usr/share/sima-neat/tutorials/<chapter>/<chapter_name>.py --args
 ```
 
-The `.py` file runs from any location. Copy it elsewhere if you want to modify it, and the same command works against the copy.
+Copy the `.py` anywhere on disk if you want to modify it — the same command works from any location.
 
 ### C++ — run the prebuilt
 
-Every chapter ships a compiled binary under `$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/`:
-
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_<chapter_name> --args
+/usr/lib/sima-neat/tutorials/tutorial_v2_<chapter_name> --args
 ```
 
 ### C++ — compile a copy yourself {#compile-a-copy-yourself}

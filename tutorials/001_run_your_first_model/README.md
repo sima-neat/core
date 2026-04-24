@@ -43,13 +43,13 @@ Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
 
 **Python:**
 ```bash
-python3 $NEAT_EXTRAS_ROOT/share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
+python3 /usr/share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
   --mpk /path/to/resnet_50.tar.gz
 ```
 
 **C++:**
 ```bash
-$NEAT_EXTRAS_ROOT/lib/sima-neat/tutorials/tutorial_v2_001_run_your_first_model \
+/usr/lib/sima-neat/tutorials/tutorial_v2_001_run_your_first_model \
   --mpk /path/to/resnet_50.tar.gz
 ```
 
