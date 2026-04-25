@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Beginner |
 | Estimated Read Time | 5 minutes |
+| Model | yolo_v8s |
 | Labels | model-options, configuration, contracts |
 
 ## Concept
@@ -43,25 +44,23 @@ Chapter 001.
 
 ## Run
 
-Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/004_configure_model_options/configure_model_options.py \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_004_configure_model_options \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_004_configure_model_options
 ./build/tutorials-standalone/tutorial_004_configure_model_options \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

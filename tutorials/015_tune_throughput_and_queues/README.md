@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Advanced |
 | Estimated Read Time | 15-20 minutes |
+| Model | None |
 | Labels | performance, tuning, async, queues |
 
 ## Concept

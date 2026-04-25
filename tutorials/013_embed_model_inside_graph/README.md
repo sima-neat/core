@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
+| Model | yolo_v8s |
 | Labels | graph, hybrid, stage-model, mpk |
 
 ## Concept
@@ -38,25 +39,23 @@ Chapter 001 (Model). Chapter 012 (Graph basics).
 
 ## Run
 
-Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/013_embed_model_inside_graph/embed_model_inside_graph.py \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_013_embed_model_inside_graph \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_013_embed_model_inside_graph
 ./build/tutorials-standalone/tutorial_013_embed_model_inside_graph \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

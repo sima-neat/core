@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Beginner |
 | Estimated Read Time | 10-15 minutes |
+| Model | resnet_50 |
 | Labels | async, push-pull, throughput, runtime |
 
 ## Concept
@@ -38,25 +39,23 @@ Chapter 001. Familiarity with `pyneat.Model` and `model.run()` is assumed.
 
 ## Run
 
-Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/002_run_inference_async/run_inference_async.py \
-  --mpk /path/to/resnet_50.tar.gz --n 4
+  --mpk /tmp/resnet_50_mpk.tar.gz --n 4
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_002_run_inference_async \
-  --mpk /path/to/resnet_50.tar.gz --n 4
+  --mpk /tmp/resnet_50_mpk.tar.gz --n 4
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_002_run_inference_async
 ./build/tutorials-standalone/tutorial_002_run_inference_async \
-  --mpk /path/to/resnet_50.tar.gz --n 4
+  --mpk /tmp/resnet_50_mpk.tar.gz --n 4
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15-20 minutes |
+| Model | yolo_v8s |
 | Labels | postprocessing, boxdecode, detection |
 
 ## Concept
@@ -215,25 +216,23 @@ Practical consequences:
 
 ## Run
 
-Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/006_read_detection_boxes/read_detection_boxes.py \
-  --mpk /path/to/yolo_v8s.tar.gz --width 640 --height 640
+  --mpk /tmp/yolo_v8s_mpk.tar.gz --width 640 --height 640
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_006_read_detection_boxes \
-  --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
+  --mpk /tmp/yolo_v8s_mpk.tar.gz --image /path/to/frame.jpg
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_006_read_detection_boxes
 ./build/tutorials-standalone/tutorial_006_read_detection_boxes \
-  --mpk /path/to/yolo_v8s.tar.gz --image /path/to/frame.jpg
+  --mpk /tmp/yolo_v8s_mpk.tar.gz --image /path/to/frame.jpg
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

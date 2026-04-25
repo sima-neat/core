@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Beginner |
 | Estimated Read Time | <5 minutes |
+| Model | resnet_50 |
 | Labels | model, mpk, inference, foundations |
 
 ## Concept
@@ -34,25 +35,23 @@ None — this is the entry chapter.
 
 ## Run
 
-Fetch the ResNet-50 MPK once: `sima-cli modelzoo -v 2.0.0 get resnet_50`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.py \
-  --mpk /path/to/resnet_50.tar.gz
+  --mpk /tmp/resnet_50_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_001_run_your_first_model \
-  --mpk /path/to/resnet_50.tar.gz
+  --mpk /tmp/resnet_50_mpk.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_001_run_your_first_model
 ./build/tutorials-standalone/tutorial_001_run_your_first_model \
-  --mpk /path/to/resnet_50.tar.gz
+  --mpk /tmp/resnet_50_mpk.tar.gz
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
