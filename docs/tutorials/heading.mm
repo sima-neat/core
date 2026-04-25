@@ -31,6 +31,24 @@ cd sima-neat-*-Linux-extras
 
 Your shell's current directory is now the root of the extras tree. All tutorial commands below use paths relative to here.
 
+### Tutorial models
+
+Some chapters need Model Zoo MPKs. `build.sh` reads the tutorial metadata and the installed dependency manifest, then downloads the right model versions for your platform. By default, models are prepared under `/tmp`.
+
+When you build C++ tutorials from source, models are downloaded automatically before the build:
+
+```bash
+./build.sh --target tutorial_<chapter_name>
+```
+
+If you want to prepare models without rebuilding tutorials, run:
+
+```bash
+./build.sh --download-models-only
+```
+
+To use a different download root, add `--model-target-folder <path>`.
+
 ### Verify the install
 
 Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa NEAT extras** is selected.

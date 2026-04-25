@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 minutes |
+| Model | yolo_v8s |
 | Labels | session, composition, patterns |
 
 ## Concept
@@ -40,25 +41,23 @@ Chapter 001 (Model). Chapter 002 or 003 (Session basics).
 
 ## Run
 
-Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/007_plug_model_into_pipeline/plug_model_into_pipeline.py \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_007_plug_model_into_pipeline \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_007_plug_model_into_pipeline
 ./build/tutorials-standalone/tutorial_007_plug_model_into_pipeline \
-  --mpk /path/to/yolo_v8s.tar.gz
+  --mpk /tmp/yolo_v8s_mpk.tar.gz
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

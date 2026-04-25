@@ -15,6 +15,10 @@ on:
         default: "standard"
         type: string
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   resolve-mode:
     runs-on: ubuntu-latest
@@ -336,13 +340,16 @@ jobs:
           echo "Using pytest dir: ${PYTEST_DIR}"
           mkdir -p _work
           printf '%s\n' "${EXTRAS_LIB_DIR}" > _work/extras_lib_dir.txt
+          printf '%s\n' "${EXTRAS_PREFIX}" > _work/extras_prefix.txt
           printf '%s\n' "${PYTEST_DIR}" > _work/pytest_dir.txt
 
       - name: Rebase CTest paths to runner workspace
         run: |
           EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
+          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
           TESTS_ROOT="${EXTRAS_LIB_DIR}/tests"
           TUTORIALS_ROOT="${EXTRAS_LIB_DIR}/tutorials"
+          TUTORIALS_SHARE_ROOT="${EXTRAS_PREFIX}/share/sima-neat/tutorials"
           mapfile -t CTEST_FILES < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake | sort)
           if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
             echo "No CTestTestfile.cmake files found under ${EXTRAS_LIB_DIR}." >&2
@@ -352,6 +359,7 @@ jobs:
             sed -E -i \
               -e "s|/[^\"[:space:]]*/build/tests/|${TESTS_ROOT}/|g" \
               -e "s|/[^\"[:space:]]*/build/tutorials/|${TUTORIALS_ROOT}/|g" \
+              -e "s|/[^\"[:space:]]*/tutorials/assets/|${TUTORIALS_SHARE_ROOT}/assets/|g" \
               "${f}"
           done
           if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
@@ -409,8 +417,18 @@ jobs:
             -R "^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$"
 
       - name: Run Tutorial Tests
-        continue-on-error: true
+        env:
+          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
+          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
         run: |
+          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
+          TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/share/sima-neat/tutorials/build.sh"
+          if [[ ! -x "${TUTORIALS_BUILD_SH}" ]]; then
+            echo "Installed tutorial build.sh not found or not executable: ${TUTORIALS_BUILD_SH}" >&2
+            exit 1
+          fi
+          "${TUTORIALS_BUILD_SH}" --download-models-only
+
           TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
           ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
 

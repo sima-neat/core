@@ -13,12 +13,16 @@ endif()
 
 include(CMakeParseArguments)
 
+set(SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER "/tmp" CACHE PATH
+  "Directory passed to tutorials/build.sh --model-target-folder for Model Zoo downloads"
+)
+
 set(PIPELINESESSION_TUTORIAL_TARGETS "")
 
 function(add_tutorial exe source)
-  set(options)
-  set(oneValueArgs)
-  set(multiValueArgs LABELS)
+  set(options NO_TEST)
+  set(oneValueArgs MODEL)
+  set(multiValueArgs ARGS LABELS)
   cmake_parse_arguments(AT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   add_executable(${exe} ${source})
@@ -27,14 +31,26 @@ function(add_tutorial exe source)
     ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
-  add_test(NAME ${exe} COMMAND ${exe})
-  set_tests_properties(${exe} PROPERTIES RESOURCE_LOCK "dispatcher")
+  set(test_args ${AT_ARGS})
+  if (AT_MODEL)
+    get_filename_component(model_base "${AT_MODEL}" NAME)
+    list(APPEND test_args
+      --mpk "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+    )
+  endif()
 
   set(label_list "tutorial")
   if (AT_LABELS)
     list(APPEND label_list ${AT_LABELS})
   endif()
-  set_tests_properties(${exe} PROPERTIES LABELS "${label_list}")
+
+  if (NOT AT_NO_TEST)
+    add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+    set_tests_properties(${exe} PROPERTIES
+      LABELS "${label_list}"
+      RESOURCE_LOCK "dispatcher"
+    )
+  endif()
 
   list(APPEND PIPELINESESSION_TUTORIAL_TARGETS ${exe})
 endfunction()
@@ -42,12 +58,14 @@ endfunction()
 # Tutorials are added as they are implemented.
 add_tutorial(tutorial_001_run_your_first_model
   001_run_your_first_model/run_your_first_model.cpp
+  MODEL resnet_50
   LABELS mpk
 )
 
 add_tutorial(tutorial_002_run_inference_async
   002_run_inference_async/run_inference_async.cpp
-  LABELS fast
+  MODEL resnet_50
+  LABELS mpk
 )
 
 add_tutorial(tutorial_003_build_inference_pipeline
@@ -57,22 +75,27 @@ add_tutorial(tutorial_003_build_inference_pipeline
 
 add_tutorial(tutorial_004_configure_model_options
   004_configure_model_options/configure_model_options.cpp
+  MODEL yolo_v8s
   LABELS mpk
 )
 
 add_tutorial(tutorial_005_preprocess_images
   005_preprocess_images/preprocess_images.cpp
+  MODEL yolo_v8s
   LABELS mpk
 )
 
 add_tutorial(tutorial_006_read_detection_boxes
   006_read_detection_boxes/read_detection_boxes.cpp
+  MODEL yolo_v8s
+  ARGS --image "${CMAKE_CURRENT_SOURCE_DIR}/assets/fronalpstock_1330.jpg"
   LABELS mpk
 )
 
 add_tutorial(tutorial_007_plug_model_into_pipeline
   007_plug_model_into_pipeline/plug_model_into_pipeline.cpp
-  LABELS fast
+  MODEL yolo_v8s
+  LABELS mpk
 )
 
 add_tutorial(tutorial_008_pass_numpy_to_model
@@ -102,6 +125,7 @@ add_tutorial(tutorial_012_build_a_custom_data_graph
 
 add_tutorial(tutorial_013_embed_model_inside_graph
   013_embed_model_inside_graph/embed_model_inside_graph.cpp
+  MODEL yolo_v8s
   LABELS mpk
 )
 
@@ -117,12 +141,34 @@ add_tutorial(tutorial_015_tune_throughput_and_queues
 
 add_tutorial(tutorial_016_build_production_pipeline
   016_build_production_pipeline/build_production_pipeline.cpp
-  LABELS fast
+  MODEL yolo_v8s
+  LABELS mpk
 )
 
 add_tutorial(tutorial_017_consume_rtsp_stream
   017_consume_rtsp_stream/consume_rtsp_stream.cpp
+  NO_TEST
   LABELS asset
+)
+add_test(
+  NAME tutorial_017_consume_rtsp_stream
+  COMMAND /bin/sh -c [=[
+url="${SIMANEAT_APPS_TEST_RTSP_URL:-}"
+if [ -z "${url}" ]; then
+  urls="${SIMANEAT_APPS_TEST_RTSP_URLS:-}"
+  url="${urls%%[ ,;]*}"
+fi
+if [ -z "${url}" ]; then
+  echo "Skipping tutorial_017_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
+  exit 77
+fi
+exec "$1" --url "${url}" --frames 1
+]=] sh $<TARGET_FILE:tutorial_017_consume_rtsp_stream>
+)
+set_tests_properties(tutorial_017_consume_rtsp_stream PROPERTIES
+  LABELS "tutorial;asset;rtsp"
+  RESOURCE_LOCK "dispatcher"
+  SKIP_RETURN_CODE 77
 )
 
 install(
@@ -154,6 +200,15 @@ install(
     GROUP_READ GROUP_EXECUTE
     WORLD_READ WORLD_EXECUTE
 )
+
+set(SIMANEAT_TUTORIALS_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../deps/manifest.json")
+if (EXISTS "${SIMANEAT_TUTORIALS_MANIFEST}")
+  install(
+    FILES ${SIMANEAT_TUTORIALS_MANIFEST}
+    DESTINATION share/sima-neat/deps
+    COMPONENT extras
+  )
+endif()
 
 # Install built tutorial binaries from the build tree (for extras packaging)
 install(

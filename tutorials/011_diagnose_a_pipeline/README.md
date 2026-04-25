@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | <10 minutes |
+| Model | None |
 | Labels | diagnostics, debugging, observability |
 
 ## Concept
