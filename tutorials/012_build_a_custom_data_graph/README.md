@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15-20 minutes |
+| Model | None |
 | Labels | graph, traversal, metadata |
 
 ## Concept

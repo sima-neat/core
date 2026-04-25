@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 10-15 minutes |
+| Model | None |
 | Labels | numpy, pytorch, tensor, io |
 
 ## Concept

@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Beginner |
 | Estimated Read Time | 5 minutes |
+| Model | None |
 | Labels | session, build, run, pipeline |
 
 ## Concept

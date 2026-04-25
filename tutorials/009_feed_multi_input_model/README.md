@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15 minutes |
+| Model | None |
 | Labels | multi-input, samples, sync |
 
 ## Concept

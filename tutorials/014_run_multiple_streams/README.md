@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
+| Model | None |
 | Labels | graph, multistream, scheduler, join |
 
 ## Concept

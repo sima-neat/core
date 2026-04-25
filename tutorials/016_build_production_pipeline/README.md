@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Advanced |
 | Estimated Read Time | 20-25 minutes |
+| Model | yolo_v8s |
 | Labels | production, reliability, deployment |
 
 ## Concept
@@ -41,25 +42,23 @@ Chapters 002 (async), 004 (ModelOptions), 007 (ModelSessionOptions), 017 (RunOpt
 
 ## Run
 
-Fetch the YOLOv8-s MPK once: `sima-cli modelzoo -v 2.0.0 get yolo_v8s`.
-
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/016_build_production_pipeline/build_production_pipeline.py \
-  --mpk /path/to/yolo_v8s.tar.gz --iters 4
+  --mpk /tmp/yolo_v8s_mpk.tar.gz --iters 4
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_016_build_production_pipeline \
-  --mpk /path/to/yolo_v8s.tar.gz --iters 4
+  --mpk /tmp/yolo_v8s_mpk.tar.gz --iters 4
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_016_build_production_pipeline
 ./build/tutorials-standalone/tutorial_016_build_production_pipeline \
-  --mpk /path/to/yolo_v8s.tar.gz --iters 4
+  --mpk /tmp/yolo_v8s_mpk.tar.gz --iters 4
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

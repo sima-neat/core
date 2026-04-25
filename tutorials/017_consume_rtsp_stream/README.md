@@ -5,6 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 5-10 minutes |
+| Model | None |
 | Labels | rtsp, streaming, input-group, live-input |
 
 ## Concept
@@ -47,6 +48,8 @@ For each frame the tutorial prints `frame=N shape=[...]`. The shape is the decod
 ## Run
 
 This chapter consumes a live RTSP stream. If you do not have a camera, publish an MP4 through `mediamtx` + `ffmpeg` and pass the URL via `--url`.
+
+CTest reads `SIMANEAT_APPS_TEST_RTSP_URL` for this chapter's RTSP source. If you manage several sources, set `SIMANEAT_APPS_TEST_RTSP_URLS` and the first URL is used.
 
 **Python:**
 ```bash
