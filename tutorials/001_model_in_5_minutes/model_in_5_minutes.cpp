@@ -1,4 +1,4 @@
-// Run a ResNet-50 model on an image in three lines of NEAT.
+// Run a ResNet-50 model on an image in three lines of Neat.
 //
 // Usage:
 //   tutorial_v2_001_model_in_5_minutes --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
     const int size = 224;
 
     // CORE LOGIC
-    // The three-line NEAT story:
+    // The three-line Neat story:
     simaai::neat::Model model(mpk, build_options(size));
     cv::Mat input = image.empty() ? cv::Mat(size, size, CV_8UC3, cv::Scalar(99, 99, 99))
                                   : load_rgb(image, size);

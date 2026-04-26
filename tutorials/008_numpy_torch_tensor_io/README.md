@@ -8,17 +8,17 @@
 | Labels | numpy, pytorch, tensor, io |
 
 ## Concept
-This tutorial explains how NEAT tensors map to the data structures most Python and ML users already know: NumPy arrays and PyTorch tensors.
+This tutorial explains how Neat tensors map to the data structures most Python and ML users already know: NumPy arrays and PyTorch tensors.
 
-If you are integrating NEAT into an existing Python inference stack, this chapter should come handy. It helps you avoid common integration mistakes around shape/layout, dtype, and copy semantics before you build larger pipelines.
+If you are integrating Neat into an existing Python inference stack, this chapter should come handy. It helps you avoid common integration mistakes around shape/layout, dtype, and copy semantics before you build larger pipelines.
 
 What this chapter demonstrates:
-- Creating NEAT tensors from NumPy and PyTorch.
-- Converting NEAT tensors back to NumPy/PyTorch.
+- Creating Neat tensors from NumPy and PyTorch.
+- Converting Neat tensors back to NumPy/PyTorch.
 - Basic C++ tensor mapping/clone flow for parity with Python paths.
 
 Use-case guidance:
-- Existing preprocessing in NumPy: keep that path, then hand off tensors to NEAT.
+- Existing preprocessing in NumPy: keep that path, then hand off tensors to Neat.
 - Existing model/postprocessing in PyTorch: convert in/out cleanly without rewriting your whole stack.
 - Interop debugging: use deterministic round-trip checks to confirm data integrity.
 
@@ -28,7 +28,7 @@ Reference:
 
 ## Learning Process
 1. Build deterministic tensor inputs in NumPy/PyTorch and C++ tensor storage.
-2. Convert across boundaries (NumPy/PyTorch <-> NEAT tensor).
+2. Convert across boundaries (NumPy/PyTorch <-> Neat tensor).
 3. Verify round-trip shape/bytes/checksum behavior.
 4. Validate completion through `CHECK`, `SIGNATURE`, and `[OK]` markers.
 

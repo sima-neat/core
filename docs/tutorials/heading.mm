@@ -1,8 +1,8 @@
 ## Prebuilt Binaries and Source Code
 
-When prompted during installation of NEAT, select **SiMa NEAT extras** (press `Space` to toggle), then continue installation.
+When prompted during installation of Neat, select **SiMa Neat extras** (press `Space` to toggle), then continue installation.
 
-The extras package includes prebuilt tutorials/tests plus source code, and is automatically unpacked under the NEAT installation folder.
+The extras package includes prebuilt tutorials/tests plus source code, and is automatically unpacked under the Neat installation folder.
 
 Prebuilt layout:
 

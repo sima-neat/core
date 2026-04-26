@@ -82,39 +82,39 @@ actually does.
 ### GStreamer plugin discovery and startup
 
 - `SIMA_GST_PLUGIN_DIR`
-  Overrides the NEAT plugin directory that runtime startup uses as its
+  Overrides the Neat plugin directory that runtime startup uses as its
   preferred third-party plugin root. Set this when you want `Session` and
   `gst_init_once()` to load plugins from a custom install instead of the
   default system path.
 
 - `GST_PLUGIN_PATH_1_0` and `GST_PLUGIN_PATH`
-  Standard GStreamer plugin search paths. NEAT startup can set or prepend these
+  Standard GStreamer plugin search paths. Neat startup can set or prepend these
   automatically, but you can manage them yourself if you are controlling plugin
   discovery outside the framework.
 
 - `GST_PLUGIN_SYSTEM_PATH_1_0`
-  Standard GStreamer system plugin path. NEAT treats a pre-set value as risky
+  Standard GStreamer system plugin path. Neat treats a pre-set value as risky
   because it can bypass duplicate-plugin filtering; use it only when you
   intentionally want unrestricted system plugin discovery.
 
 - `GST_PLUGIN_SCANNER`
-  Standard GStreamer scanner executable override. NEAT can wrap this scanner to
+  Standard GStreamer scanner executable override. Neat can wrap this scanner to
   force the right library path for plugin probing; set it only when you need to
   pin a specific scanner binary.
 
 - `GST_REGISTRY_1_0`
-  Standard GStreamer registry file path. If unset, NEAT creates a per-process
+  Standard GStreamer registry file path. If unset, Neat creates a per-process
   registry under `/tmp`. Set it when you want deterministic registry reuse or
   easier plugin-discovery debugging.
 
 - `LD_LIBRARY_PATH`
-  Standard dynamic library search path. NEAT may prepend the third-party plugin
+  Standard dynamic library search path. Neat may prepend the third-party plugin
   directory so plugin-side shared libraries resolve correctly. You usually only
   need to set it yourself for custom install layouts.
 
 - `SIMA_SET_GST_SYSTEM_PATH`
   Read by `scripts/use_neatdecoder.sh`. When set, that helper clears
-  `GST_PLUGIN_SYSTEM_PATH_1_0` so the current shell sees only the intended NEAT
+  `GST_PLUGIN_SYSTEM_PATH_1_0` so the current shell sees only the intended Neat
   plugin location.
 
 - `SIMA_ALLOW_GST_INIT`
@@ -123,12 +123,12 @@ actually does.
   to bypass the startup guard.
 
 - `SIMA_GST_NEAT_ONLY`
-  Controls whether startup forces a strict NEAT-only plugin view. The effective
-  default is `1`, which favors the NEAT plugin directory and filtered system
+  Controls whether startup forces a strict Neat-only plugin view. The effective
+  default is `1`, which favors the Neat plugin directory and filtered system
   plugins.
 
 - `SIMA_GST_ALLOW_SYSTEM_PLUGINS`
-  Disables NEAT's guard against unrestricted system plugin discovery. Use it
+  Disables Neat's guard against unrestricted system plugin discovery. Use it
   only when you intentionally want the full system plugin set and accept the
   risk of duplicate registrations or conflicting factories.
 
@@ -138,7 +138,7 @@ actually does.
   this only when you deliberately want the system allocator instead.
 
 - `SIMA_GST_WRAP_SCANNER`
-  Controls whether NEAT writes a wrapper around the plugin scanner so the
+  Controls whether Neat writes a wrapper around the plugin scanner so the
   scanner runs with the correct `LD_LIBRARY_PATH`. Leave it enabled unless you
   are debugging scanner behavior itself.
 
@@ -148,7 +148,7 @@ actually does.
 
 - `SIMA_GST_SUPPRESS_JSON_WARNINGS`
   Suppresses noisy JSON-GLib warnings that are usually not actionable for
-  normal NEAT runs. Set it to `0` when you need the raw warnings.
+  normal Neat runs. Set it to `0` when you need the raw warnings.
 
 - `SIMA_GST_SUPPRESS_GOBJECT_ASSERTS`
   Suppresses known noisy `GLib-GObject` assert lines that often appear during

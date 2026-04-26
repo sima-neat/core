@@ -150,7 +150,7 @@ if [[ -n "${SIMANEAT_DIR}" ]]; then
 else
   cat >&2 <<'EOF'
 Failed to locate SimaNeatConfig.cmake.
-Install NEAT core package first, or pass one of:
+Install Neat core package first, or pass one of:
   tutorials/build.sh --simaneat-dir <path-to-cmake/SimaNeat>
   SimaNeat_DIR=<path-to-cmake/SimaNeat> tutorials/build.sh
 EOF

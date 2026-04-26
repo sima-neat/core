@@ -1,10 +1,10 @@
 ---
 title: macOS Host Notes
-description: Prepare a macOS host for NEAT eLxr SDK and DevKit-Sync
+description: Prepare a macOS host for Neat eLxr SDK and DevKit-Sync
 sidebar_position: 2
 ---
 
-Use this guide when your host machine is macOS and you want to run NEAT eLxr SDK with DevKit-Sync.
+Use this guide when your host machine is macOS and you want to run Neat eLxr SDK with DevKit-Sync.
 
 ## Prerequisites
 
@@ -65,4 +65,4 @@ nameserver 127.0.0.1
 
 ## Next step
 
-Return to [NEAT eLxr SDK](../../getting-started/installation/neat-elxr-sdk.mdx) and continue with install/setup.
+Return to [Neat eLxr SDK](../../getting-started/installation/neat-elxr-sdk.mdx) and continue with install/setup.

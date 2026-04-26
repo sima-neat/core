@@ -8,9 +8,9 @@
 | Labels | model, mpk, inference, foundations |
 
 ## Concept
-This tutorial teaches the quickest practical path to run inference with a compiled model in NEAT.
+This tutorial teaches the quickest practical path to run inference with a compiled model in Neat.
 
-A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that NEAT can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference. You provide input data, run inference, and consume model outputs.
+A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that Neat can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference. You provide input data, run inference, and consume model outputs.
 
 After this chapter, you should understand the minimum end-to-end loop:
 - Load a compiled model package.
@@ -48,7 +48,7 @@ Note the absolute path to the downloaded `resnet_50.tar.gz`; you will pass it to
 
 ### eLxr SDK (C++)
 
-From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
+From inside the paired Neat eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
 
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>

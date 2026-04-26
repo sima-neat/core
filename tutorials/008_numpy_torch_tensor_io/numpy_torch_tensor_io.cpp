@@ -1,4 +1,4 @@
-// Convert a cv::Mat into a NEAT Tensor, map it read-only, and clone it.
+// Convert a cv::Mat into a Neat Tensor, map it read-only, and clone it.
 //
 // Usage:
 //   tutorial_v2_008_numpy_torch_tensor_io [--width 128] [--height 96]
@@ -44,7 +44,7 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
 
     // CORE LOGIC
-    // from_cv_mat wraps a cv::Mat as a NEAT Tensor (read-only here).
+    // from_cv_mat wraps a cv::Mat as a Neat Tensor (read-only here).
     simaai::neat::Tensor tensor = simaai::neat::from_cv_mat(
         rgb, simaai::neat::ImageSpec::PixelFormat::RGB, /*read_only=*/true);
 

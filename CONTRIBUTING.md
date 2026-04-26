@@ -1,4 +1,4 @@
-# Contributing to SiMa NEAT
+# Contributing to SiMa Neat
 
 This repository follows a release-first workflow: `main` must stay releasable.
 

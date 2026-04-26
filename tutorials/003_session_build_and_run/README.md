@@ -8,7 +8,7 @@
 | Labels | session, build, run, pipeline |
 
 ## Concept
-This tutorial introduces `Session`, the runtime composition entry point in NEAT.
+This tutorial introduces `Session`, the runtime composition entry point in Neat.
 
 A `Session` is where you define pipeline structure by adding nodes and node groups in order. It is not a one-off inference call; it is a reusable runtime graph definition that can be built once and executed many times.
 

@@ -53,7 +53,7 @@ Note the absolute path to the downloaded `resnet_50.tar.gz`; you will pass it to
 
 ### eLxr SDK (C++)
 
-From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
+From inside the paired Neat eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
 
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>

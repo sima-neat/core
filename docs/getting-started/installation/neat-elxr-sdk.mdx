@@ -1,12 +1,12 @@
 ---
-title: NEAT eLxr SDK
-description: Set up the NEAT eLxr SDK for fast, agent-ready NEAT development
+title: Neat eLxr SDK
+description: Set up the Neat eLxr SDK for fast, agent-ready Neat development
 sidebar_position: 2
 ---
 
-Use the NEAT eLxr SDK if you want a fast, agent-ready environment for building NEAT applications.
+Use the Neat eLxr SDK if you want a fast, agent-ready environment for building Neat applications.
 
-The NEAT eLxr SDK is built on top of the [open source SiMa eLxr SDK](https://github.com/SiMa-ai/swsoc-simaai-elxr-doc), with workflow-focused additions:
+The Neat eLxr SDK is built on top of the [open source SiMa eLxr SDK](https://github.com/SiMa-ai/swsoc-simaai-elxr-doc), with workflow-focused additions:
 
 - Supports both x86 and arm64 container images, including native use on Mac without Rosetta overhead.
 - Supports the DevKit Sync feature so humans and coding agents can cross-compile and run DevKit binaries from the SDK shell without switching context.
@@ -14,7 +14,7 @@ The NEAT eLxr SDK is built on top of the [open source SiMa eLxr SDK](https://git
 
 This setup makes it possible to run end-to-end agentic workflows from a single prompt, including build-and-run loops against a paired DevKit.
 
-The NEAT eLxr SDK source code is available on GitHub at [sima-neat/elxr-sdk](https://github.com/sima-neat/elxr-sdk).
+The Neat eLxr SDK source code is available on GitHub at [sima-neat/elxr-sdk](https://github.com/sima-neat/elxr-sdk).
 
 ## Supported platforms
 
@@ -29,7 +29,7 @@ The NEAT eLxr SDK source code is available on GitHub at [sima-neat/elxr-sdk](htt
 
 ## Install and Setup
 
-1. Install the NEAT eLxr SDK:
+1. Install the Neat eLxr SDK:
 
 ```bash
 sima-cli install ghcr:sima-neat/elxr
@@ -137,17 +137,17 @@ sima-cli login
 ```
 
 3. Install the [Codex Extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt) or [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) in VS Code and sign in.
-4. Ask Codex or Claude what skills are available; when `NEAT` appears, environment setup is ready.
+4. Ask Codex or Claude what skills are available; when `Neat` appears, environment setup is ready.
 
 You can then use a prompt such as:
 
 ```text
-Build a C++ app doing image classification with RESNET50 using SiMa NEAT framework, run it on the devkit until you get the result.
+Build a C++ app doing image classification with RESNET50 using SiMa Neat framework, run it on the devkit until you get the result.
 ```
 
 ## SDK upgrade
 
-To upgrade NEAT eLxr SDK to the latest version, rerun:
+To upgrade Neat eLxr SDK to the latest version, rerun:
 
 ```bash
 sima-cli install ghcr:sima-neat/elxr
@@ -155,4 +155,4 @@ sima-cli install ghcr:sima-neat/elxr
 
 ## Next step
 
-To install or update the framework/runtime itself (the same flow for DevKit and SDK), continue to [NEAT Framework](./neat-framework.mdx).
+To install or update the framework/runtime itself (the same flow for DevKit and SDK), continue to [Neat Framework](./neat-framework.mdx).

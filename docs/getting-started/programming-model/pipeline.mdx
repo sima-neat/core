@@ -6,7 +6,7 @@ sidebar_position: 5
 
 # Pipeline
 
-In SiMa NEAT, a pipeline is an ordered composition of nodes and node groups assembled through [`Session`](/reference/{lsa}/classes/simaai-neat-session).
+In SiMa Neat, a pipeline is an ordered composition of nodes and node groups assembled through [`Session`](/reference/{lsa}/classes/simaai-neat-session).
 
 The result is deterministic graph wiring and a reproducible gst-launch representation.
 
@@ -38,7 +38,7 @@ Element names are generated deterministically from node order. This gives:
 
 ## Caps and negotiation (simple mental model)
 
-SiMa NEAT relies on native GStreamer negotiation, but controls key boundaries:
+SiMa Neat relies on native GStreamer negotiation, but controls key boundaries:
 
 - **Push pipelines (`Input`)**:
   caps are derived from actual input at build/start time, then enforced by runtime policy.

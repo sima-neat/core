@@ -8,7 +8,7 @@
 | Labels | graph, traversal, metadata |
 
 ## Concept
-This tutorial introduces the NEAT graph runtime using the smallest useful graph: push one sample through connected nodes and verify metadata survives traversal.
+This tutorial introduces the Neat graph runtime using the smallest useful graph: push one sample through connected nodes and verify metadata survives traversal.
 
 If you are new to graph APIs, read this chapter before hybrid/multistream graph tutorials. It teaches the baseline mental model:
 - Build graph nodes and edges.

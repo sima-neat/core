@@ -8,7 +8,7 @@
 | Labels | yolo, detection, mpk |
 
 ## Concept
-This tutorial is the fastest path to run a YOLO-style detector in NEAT and confirm the detection pipeline is wired correctly.
+This tutorial is the fastest path to run a YOLO-style detector in Neat and confirm the detection pipeline is wired correctly.
 
 For new users, this chapter provides a practical bridge from "I have a YOLO MPK" to "I can run detection and inspect outputs." It uses explicit preprocess + MLA + boxdecode composition in C++, and the equivalent model-option path in Python.
 
@@ -53,7 +53,7 @@ Note the absolute path to the downloaded `yolo_v8s.tar.gz`; you will pass it to 
 
 ### eLxr SDK (C++)
 
-From inside the paired NEAT eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
+From inside the paired Neat eLxr SDK container shell, `dk` forwards execution to the DevKit while keeping paths consistent across the shared NFS workspace:
 
 ```bash
 NEAT_EXTRAS_ROOT=<sima-neat-*-Linux-extras>
