@@ -27,6 +27,7 @@ DOWNLOAD_MODELS_ONLY="OFF"
 MODEL_TARGET_FOLDER="/tmp"
 JOBS=""
 SIMANEAT_DIR="${SimaNeat_DIR:-}"
+SIMA_CLI="${SIMA_CLI:-}"
 
 auto_jobs() {
   local cpu_count=1
@@ -65,6 +66,117 @@ absolute_path() {
   else
     printf '%s/%s\n' "${PWD%/}" "${path%/}"
   fi
+}
+
+discover_sima_cli() {
+  if [[ -n "${SIMA_CLI}" ]]; then
+    if [[ -x "${SIMA_CLI}" ]]; then
+      printf '%s\n' "${SIMA_CLI}"
+      return 0
+    fi
+    if type -P "${SIMA_CLI}" >/dev/null 2>&1; then
+      type -P "${SIMA_CLI}"
+      return 0
+    fi
+  fi
+
+  if type -P sima-cli >/dev/null 2>&1; then
+    type -P sima-cli
+    return 0
+  fi
+
+  local -a shell_setup_files=(
+    "${HOME:-}/.bash_profile"
+    "${HOME:-}/.bash_login"
+    "${HOME:-}/.profile"
+    "${HOME:-}/.bashrc"
+  )
+
+  local setup_file
+  for setup_file in "${shell_setup_files[@]}"; do
+    if [[ -r "${setup_file}" ]]; then
+      set +u
+      # shellcheck source=/dev/null
+      source "${setup_file}" >/dev/null 2>&1 || true
+      set -u
+      if type -P sima-cli >/dev/null 2>&1; then
+        type -P sima-cli
+        return 0
+      fi
+
+      local alias_line alias_value alias_cmd
+      alias_line="$(alias sima-cli 2>/dev/null || true)"
+      if [[ "${alias_line}" == alias\ sima-cli=\'*\' ]]; then
+        alias_value="${alias_line#alias sima-cli=\'}"
+        alias_value="${alias_value%\'}"
+        read -r alias_cmd _ <<< "${alias_value}"
+        if [[ -x "${alias_cmd}" ]]; then
+          printf '%s\n' "${alias_cmd}"
+          return 0
+        fi
+        if type -P "${alias_cmd}" >/dev/null 2>&1; then
+          type -P "${alias_cmd}"
+          return 0
+        fi
+      fi
+    fi
+  done
+
+  local -a candidates=(
+    "${HOME:-}/.sima-cli/.venv/bin/sima-cli"
+    "${HOME:-}/.local/bin/sima-cli"
+    "/data/sima-cli/.venv/bin/sima-cli"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+header_exists() {
+  local header="$1"
+  local -a roots=()
+  if [[ -n "${SYSROOT:-}" ]]; then
+    roots+=("${SYSROOT}/usr/include" "${SYSROOT}/usr/local/include")
+  fi
+  roots+=(
+    "/usr/include"
+    "/usr/local/include"
+    "/opt/toolchain/aarch64/modalix/usr/include"
+    "/opt/toolchain/aarch64/modalix/usr/local/include"
+  )
+
+  local root
+  for root in "${roots[@]}"; do
+    if [[ -f "${root}/${header}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+preflight_cpp_headers() {
+  if header_exists "nlohmann/json.hpp"; then
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+build.sh: missing required C++ header: nlohmann/json.hpp
+
+The installed NEAT public headers include nlohmann/json.hpp, but that header is
+not present in the active DevKit/SDK include paths. Install the JSON header
+package, then rerun build.sh:
+
+  sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
+
+EOF
+  return 1
 }
 
 usage() {
@@ -289,8 +401,18 @@ download_models() {
     return 0
   fi
 
-  if ! command -v sima-cli >/dev/null 2>&1; then
-    echo "build.sh: sima-cli is required to download tutorial models" >&2
+  local sima_cli
+  if ! sima_cli="$(discover_sima_cli)"; then
+    cat >&2 <<'EOF'
+build.sh: sima-cli is required to download tutorial models.
+
+The helper could not find sima-cli on PATH, in the common DevKit install
+locations, or after sourcing the user's shell startup files. If sima-cli is
+installed in a custom location, rerun with:
+
+  SIMA_CLI=/path/to/sima-cli ./build.sh
+
+EOF
     return 1
   fi
 
@@ -314,7 +436,7 @@ download_models() {
   (
     cd "${MODEL_TARGET_FOLDER}"
     for model in "${unique_models[@]}"; do
-      sima-cli modelzoo -v "${version}" get "${model}"
+      "${sima_cli}" modelzoo -v "${version}" get "${model}"
       local downloaded_path
       if downloaded_path="$(model_download_path "${model}")"; then
         echo "Downloaded ${model}: ${downloaded_path}"
@@ -329,6 +451,8 @@ if [[ "${DOWNLOAD_MODELS_ONLY}" == "ON" ]]; then
   download_models
   exit 0
 fi
+
+preflight_cpp_headers
 
 cmake_args=(
   -S "${TUTORIALS_DIR}"
