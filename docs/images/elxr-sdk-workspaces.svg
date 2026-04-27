@@ -1,0 +1,71 @@
+<svg width="1280" height="489" viewBox="0 0 1280 489" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Host, SDK, and Modalix DevKit workspace mapping</title>
+  <desc id="desc">Host O/S is the base workspace layer. SDK maps the host workspace through a container volume. Modalix DevKit mounts the host workspace through NFS.</desc>
+  <defs>
+    <linearGradient id="bg" x1="96" y1="48" x2="1184" y2="441" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F4F5"/>
+    </linearGradient>
+    <linearGradient id="panelBlue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF7FF"/>
+    </linearGradient>
+    <linearGradient id="panelGreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EFFAF4"/>
+    </linearGradient>
+    <linearGradient id="accentBlue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5998DD"/>
+      <stop offset="1" stop-color="#C0E8DB"/>
+    </linearGradient>
+    <filter id="cardShadow" x="-8%" y="-20%" width="116%" height="150%" filterUnits="objectBoundingBox" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#010F0E" flood-opacity="0.11"/>
+    </filter>
+    <marker id="arrowBlue" markerWidth="15" markerHeight="15" refX="11" refY="7.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L15 7.5L0 15V0Z" fill="#5998DD"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="15" markerHeight="15" refX="11" refY="7.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L15 7.5L0 15V0Z" fill="#2A9C4F"/>
+    </marker>
+    <style>
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", "Menlo", "Consolas", monospace; }
+      .label { font-size: 26px; font-weight: 700; fill: #010F0E; }
+      .pathBlue { font-size: 24px; font-weight: 700; fill: #5998DD; }
+      .pathGreen { font-size: 24px; font-weight: 700; fill: #2A9C4F; }
+      .caption { font-size: 17px; font-weight: 700; fill: #010F0E; opacity: 0.72; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="489" rx="24" fill="url(#bg)"/>
+  <circle cx="1110" cy="82" r="58" fill="#D1CEE6" opacity="0.72"/>
+  <circle cx="140" cy="418" r="64" fill="#C0E8DB" opacity="0.76"/>
+  <circle cx="1198" cy="394" r="48" fill="#A4CC2D" opacity="0.82"/>
+
+  <g filter="url(#cardShadow)">
+    <rect x="96" y="298" width="1088" height="136" rx="28" fill="url(#panelGreen)" stroke="#CBE9D4"/>
+    <rect x="96" y="298" width="1088" height="8" rx="4" fill="#2A9C4F"/>
+    <text x="640" y="346" text-anchor="middle" class="sans label">Host O/S</text>
+    <text x="640" y="380" text-anchor="middle" class="mono pathGreen">~/my-workspace</text>
+    <text x="640" y="407" text-anchor="middle" class="sans caption">Exposed via NFS</text>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <rect x="144" y="52" width="430" height="142" rx="28" fill="url(#panelBlue)" stroke="#D6E2EF"/>
+    <rect x="144" y="52" width="430" height="8" rx="4" fill="url(#accentBlue)"/>
+    <text x="359" y="100" text-anchor="middle" class="sans label">SDK</text>
+    <text x="359" y="134" text-anchor="middle" class="mono pathBlue">/workspace</text>
+    <text x="359" y="161" text-anchor="middle" class="sans caption">Container volume map</text>
+  </g>
+
+  <g filter="url(#cardShadow)">
+    <rect x="752" y="124" width="430" height="142" rx="28" fill="url(#panelBlue)" stroke="#D6E2EF"/>
+    <rect x="752" y="124" width="430" height="8" rx="4" fill="url(#accentBlue)"/>
+    <text x="967" y="172" text-anchor="middle" class="sans label">Modalix DevKit</text>
+    <text x="967" y="206" text-anchor="middle" class="mono pathBlue">/workspace</text>
+    <text x="967" y="233" text-anchor="middle" class="sans caption">NFS mount</text>
+  </g>
+
+  <path d="M359 294V218" stroke="#5998DD" stroke-width="8" stroke-linecap="round" marker-end="url(#arrowBlue)"/>
+  <path d="M967 294V286" stroke="#2A9C4F" stroke-width="8" stroke-linecap="round" marker-end="url(#arrowGreen)"/>
+</svg>
