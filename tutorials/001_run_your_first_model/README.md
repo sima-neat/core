@@ -12,7 +12,7 @@
 
 Load a compiled ResNet-50 MPK, feed it an image, and read the top-1 class in three lines of Python. This is the shortest path from "I have a model package" to "I have a prediction."
 
-A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that NEAT can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference — you provide input, call `run()`, and read outputs.
+A compiled model is a deployable model package (`.tar.gz`, often called an MPK) that Neat can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference — you provide input, call `run()`, and read outputs.
 
 **APIs introduced**
 - `pyneat.Model(mpk_path)` — load the compiled model.

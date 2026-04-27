@@ -169,7 +169,7 @@ preflight_cpp_headers() {
   cat >&2 <<'EOF'
 build.sh: missing required C++ header: nlohmann/json.hpp
 
-The installed NEAT public headers include nlohmann/json.hpp, but that header is
+The installed Neat public headers include nlohmann/json.hpp, but that header is
 not present in the active DevKit/SDK include paths. Install the JSON header
 package, then rerun build.sh:
 
@@ -466,7 +466,7 @@ if [[ -n "${SIMANEAT_DIR}" ]]; then
 else
   cat >&2 <<'EOF'
 Failed to locate SimaNeatConfig.cmake.
-Install NEAT core package first, or pass one of:
+Install Neat core package first, or pass one of:
   tutorials/build.sh --simaneat-dir <path-to-cmake/SimaNeat>
   SimaNeat_DIR=<path-to-cmake/SimaNeat> tutorials/build.sh
 EOF

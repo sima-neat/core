@@ -12,7 +12,7 @@ SiMa Neat is a C++20 library for building, validating, running, and debugging GS
 
 It helps teams ship production media/ML pipelines with reproducible pipeline generation, strong diagnostics, and clean C++ integration.
 
-<img src="docs/images/concepts.jpg" alt="NEAT concepts diagram" width="80%" />
+<img src="docs/images/concepts.jpg" alt="Neat concepts diagram" width="80%" />
 
 ## Programming Model
 
@@ -45,7 +45,7 @@ auto run = session.build(input_tensor, simaai::neat::RunMode::Sync);
 auto out = run.push_and_pull(input_tensor);
 ```
 
-## Build NEAT
+## Build Neat
 
 For source builds, use `build.sh`:
 

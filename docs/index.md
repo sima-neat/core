@@ -6,6 +6,8 @@ sidebar_position: 1
 
 # SiMa Neat Overview
 
+<div class="overview-section-label">What Neat Is</div>
+
 SiMa Neat (**Neural Edge Acceleration Toolkit**) is an application-development framework for building and running AI applications on the SiMa platform.
 It provides developers a set of Python and C++ APIs to execute and test compiled model artifacts (`tar.gz models`), compose AI applications that leverage the SoC's hardware blocks, and manage runtime execution. 
 
@@ -54,7 +56,7 @@ The getting-started guides help you install and build Neat, the programming-mode
     <h2>Start Here</h2>
     <p>Use these first steps to get Neat installed, built, and running with the core mental model in place.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="getting-started/installation"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat eLxr SDK development.</span></a></li>
+      <li><a class="overview-link-card" href="getting-started/installation"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
       <li><a class="overview-link-card" href="getting-started/build"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
       <li><a class="overview-link-card" href="getting-started/minimal_example"><strong>Hello Neat!</strong><span>Validate your environment with a minimal Neat application.</span></a></li>
       <li><a class="overview-link-card" href="getting-started/programming-model/overview"><strong>Programming Model</strong><span>Learn the `Model`, `Session`, and `Run` workflow in more detail.</span></a></li>

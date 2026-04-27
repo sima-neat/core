@@ -12,7 +12,7 @@
 
 Bundle multiple tensors into one `Sample` and push it as a single inference event. This is the pattern you need when a model takes more than one input — stereo frames, image + metadata, sensor fusion.
 
-Many real applications carry more than one input per inference event. NEAT represents this as a **bundle sample**: a single `Sample` whose `fields` list holds multiple named tensor payloads, each addressable by port name.
+Many real applications carry more than one input per inference event. Neat represents this as a **bundle sample**: a single `Sample` whose `fields` list holds multiple named tensor payloads, each addressable by port name.
 
 **APIs introduced**
 - `pyneat.Sample()` + `sample.kind = pyneat.SampleKind.Bundle` — create the bundle envelope.

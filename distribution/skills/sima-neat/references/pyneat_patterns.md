@@ -1,6 +1,6 @@
 # pyneat Patterns
 
-Use this reference when the user asks for Python application code with NEAT.
+Use this reference when the user asks for Python application code with Neat.
 
 ## Primary reference locations
 

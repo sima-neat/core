@@ -1,4 +1,4 @@
-// Compose a minimal NEAT Graph: PipelineNode -> StampFrameIdNode, push one sample, pull output.
+// Compose a minimal Neat Graph: PipelineNode -> StampFrameIdNode, push one sample, pull output.
 //
 // Usage:
 //   tutorial_012_build_a_custom_data_graph

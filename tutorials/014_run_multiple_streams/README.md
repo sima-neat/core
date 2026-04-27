@@ -10,7 +10,7 @@
 
 ## Concept
 
-Schedule multiple streams through one graph — fair scheduling, fan-out branches, and deterministic bundle re-join. This is the pattern behind any multi-camera or multi-source system built on NEAT graphs.
+Schedule multiple streams through one graph — fair scheduling, fan-out branches, and deterministic bundle re-join. This is the pattern behind any multi-camera or multi-source system built on Neat graphs.
 
 The graph here is: `stamp → stream_scheduler → fan_out → join_bundle`. Each sample is tagged with stream/frame identity, scheduled fairly across streams, branched into parallel paths, and re-joined into a bundle you can pull as one unit.
 
