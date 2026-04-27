@@ -448,7 +448,7 @@ set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_DEPENDS
-  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libgstrtspserver-1.0-dev, libglib2.0-0, libopencv-core406"
+  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libgstrtspserver-1.0-dev, libglib2.0-0, libopencv-core406, nlohmann-json3-dev"
 )
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"

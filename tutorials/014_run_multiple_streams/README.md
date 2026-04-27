@@ -1,0 +1,67 @@
+# 014 Run Multiple Streams in One Graph
+
+## Metadata
+| Field | Value |
+| --- | --- |
+| Difficulty | Advanced |
+| Estimated Read Time | 20-25 minutes |
+| Model | None |
+| Labels | graph, multistream, scheduler, join |
+
+## Concept
+
+Schedule multiple streams through one graph — fair scheduling, fan-out branches, and deterministic bundle re-join. This is the pattern behind any multi-camera or multi-source system built on Neat graphs.
+
+The graph here is: `stamp → stream_scheduler → fan_out → join_bundle`. Each sample is tagged with stream/frame identity, scheduled fairly across streams, branched into parallel paths, and re-joined into a bundle you can pull as one unit.
+
+**APIs introduced**
+- `pyneat.graph.nodes.StreamSchedulerOptions()` with `per_stream_queue`, `drop_policy`.
+- `pyneat.graph.nodes.stream_scheduler(opts, name)` — the fairness primitive.
+- `pyneat.graph.nodes.fan_out(port_names, name)` — split one sample into multiple named branches.
+- `pyneat.graph.nodes.join_bundle(port_names, name, bundle_name)` — re-join branches into one bundle.
+- `pyneat.graph.nodes.StreamDropPolicy.DropOldest` — per-stream overflow policy.
+
+**When to use this**
+- Multi-camera ingestion where each stream must make progress independently.
+- Parallel branch processing (e.g. two models running side-by-side) that must rejoin outputs correctly.
+- Diagnosing dropped or misaligned stream outputs under load.
+
+**Prerequisites**
+Chapter 012 (Graph basics). Chapter 009 (bundle samples) helps for join semantics.
+
+**References**
+- [Graph](/getting-started/programming-model/graph)
+- [Pipeline](/getting-started/programming-model/pipeline)
+
+## Learning Process
+1. Generate deterministic per-stream/per-frame samples with explicit tags.
+2. Build multistream graph with scheduler, fanout, and join stages.
+3. Push all expected inputs and pull joined outputs.
+4. Validate output count and bundle cardinality via `CHECK` and `SIGNATURE`.
+
+## Run
+
+**Python:**
+```bash
+python3 share/sima-neat/tutorials/014_run_multiple_streams/run_multiple_streams.py \
+  --streams 8 --frames 4
+```
+
+**C++ (prebuilt):**
+```bash
+./lib/sima-neat/tutorials/tutorial_014_run_multiple_streams \
+  --streams 8 --frames 4
+```
+
+**C++ (build from source):**
+```bash
+./build.sh --target tutorial_014_run_multiple_streams
+./build/tutorials-standalone/tutorial_014_run_multiple_streams \
+  --streams 8 --frames 4
+```
+
+To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+
+## Source Files
+- C++: `tutorials/014_run_multiple_streams/run_multiple_streams.cpp`
+- Python: `tutorials/014_run_multiple_streams/run_multiple_streams.py`

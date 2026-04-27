@@ -13,12 +13,16 @@ endif()
 
 include(CMakeParseArguments)
 
+set(SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER "/tmp" CACHE PATH
+  "Directory passed to tutorials/build.sh --model-target-folder for Model Zoo downloads"
+)
+
 set(PIPELINESESSION_TUTORIAL_TARGETS "")
 
 function(add_tutorial exe source)
-  set(options)
-  set(oneValueArgs)
-  set(multiValueArgs LABELS)
+  set(options NO_TEST)
+  set(oneValueArgs MODEL)
+  set(multiValueArgs ARGS LABELS)
   cmake_parse_arguments(AT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   add_executable(${exe} ${source})
@@ -27,243 +31,144 @@ function(add_tutorial exe source)
     ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
-  add_test(NAME ${exe} COMMAND ${exe})
-  set_tests_properties(${exe} PROPERTIES RESOURCE_LOCK "dispatcher")
+  set(test_args ${AT_ARGS})
+  if (AT_MODEL)
+    get_filename_component(model_base "${AT_MODEL}" NAME)
+    list(APPEND test_args
+      --mpk "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+    )
+  endif()
 
   set(label_list "tutorial")
   if (AT_LABELS)
     list(APPEND label_list ${AT_LABELS})
   endif()
-  set_tests_properties(${exe} PROPERTIES LABELS "${label_list}")
+
+  if (NOT AT_NO_TEST)
+    add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+    set_tests_properties(${exe} PROPERTIES
+      LABELS "${label_list}"
+      RESOURCE_LOCK "dispatcher"
+    )
+  endif()
 
   list(APPEND PIPELINESESSION_TUTORIAL_TARGETS ${exe})
 endfunction()
 
 # Tutorials are added as they are implemented.
-add_tutorial(tutorial_0001_quickstart_image_to_tensor
-  tutorial_0001_quickstart_image_to_tensor.cpp
+add_tutorial(tutorial_001_run_your_first_model
+  001_run_your_first_model/run_your_first_model.cpp
+  MODEL resnet_50
+  LABELS mpk
+)
+
+add_tutorial(tutorial_002_run_inference_async
+  002_run_inference_async/run_inference_async.cpp
+  MODEL resnet_50
+  LABELS mpk
+)
+
+add_tutorial(tutorial_003_build_inference_pipeline
+  003_build_inference_pipeline/build_inference_pipeline.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_004_configure_model_options
+  004_configure_model_options/configure_model_options.cpp
+  MODEL yolo_v8s
+  LABELS mpk
+)
+
+add_tutorial(tutorial_005_preprocess_images
+  005_preprocess_images/preprocess_images.cpp
+  MODEL yolo_v8s
+  LABELS mpk
+)
+
+add_tutorial(tutorial_006_read_detection_boxes
+  006_read_detection_boxes/read_detection_boxes.cpp
+  MODEL yolo_v8s
+  ARGS --image "${CMAKE_CURRENT_SOURCE_DIR}/assets/fronalpstock_1330.jpg"
+  LABELS mpk
+)
+
+add_tutorial(tutorial_007_plug_model_into_pipeline
+  007_plug_model_into_pipeline/plug_model_into_pipeline.cpp
+  MODEL yolo_v8s
+  LABELS mpk
+)
+
+add_tutorial(tutorial_008_pass_numpy_to_model
+  008_pass_numpy_to_model/pass_numpy_to_model.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_009_feed_multi_input_model
+  009_feed_multi_input_model/feed_multi_input_model.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_010_interpret_model_output
+  010_interpret_model_output/interpret_model_output.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_011_diagnose_a_pipeline
+  011_diagnose_a_pipeline/diagnose_a_pipeline.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_012_build_a_custom_data_graph
+  012_build_a_custom_data_graph/build_a_custom_data_graph.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_013_embed_model_inside_graph
+  013_embed_model_inside_graph/embed_model_inside_graph.cpp
+  MODEL yolo_v8s
+  LABELS mpk
+)
+
+add_tutorial(tutorial_014_run_multiple_streams
+  014_run_multiple_streams/run_multiple_streams.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_015_tune_throughput_and_queues
+  015_tune_throughput_and_queues/tune_throughput_and_queues.cpp
+  LABELS fast
+)
+
+add_tutorial(tutorial_016_build_production_pipeline
+  016_build_production_pipeline/build_production_pipeline.cpp
+  MODEL yolo_v8s
+  LABELS mpk
+)
+
+add_tutorial(tutorial_017_consume_rtsp_stream
+  017_consume_rtsp_stream/consume_rtsp_stream.cpp
+  NO_TEST
   LABELS asset
 )
-
-add_tutorial(tutorial_0002_pipeline_session_build_run
-  tutorial_0002_pipeline_session_build_run.cpp
-  LABELS fast
+add_test(
+  NAME tutorial_017_consume_rtsp_stream
+  COMMAND /bin/sh -c [=[
+url="${SIMANEAT_APPS_TEST_RTSP_URL:-}"
+if [ -z "${url}" ]; then
+  urls="${SIMANEAT_APPS_TEST_RTSP_URLS:-}"
+  url="${urls%%[ ,;]*}"
+fi
+if [ -z "${url}" ]; then
+  echo "Skipping tutorial_017_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
+  exit 77
+fi
+exec "$1" --url "${url}" --frames 1
+]=] sh $<TARGET_FILE:tutorial_017_consume_rtsp_stream>
 )
-
-add_tutorial(tutorial_0003_nodes_and_groups
-  tutorial_0003_nodes_and_groups.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0004_samples_and_neattensor
-  tutorial_0004_samples_and_neattensor.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0005_output_tensor_options
-  tutorial_0005_output_tensor_options.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0006_async_push_pull
-  tutorial_0006_async_push_pull.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0007_caps_negotiation
-  tutorial_0007_caps_negotiation.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0008_input_groups
-  tutorial_0008_input_groups.cpp
-  LABELS asset
-)
-
-add_tutorial(tutorial_0009_pipeline_save_load
-  tutorial_0009_pipeline_save_load.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0010_diagnostics_debug
-  tutorial_0010_diagnostics_debug.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0011_mpk_yolov8_pipeline
-  tutorial_0011_mpk_yolov8_pipeline.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0012_stage_api
-  tutorial_0012_stage_api.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0013_model_resnet50
-  tutorial_0013_model_resnet50.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0014_rtsp_server
-  tutorial_0014_rtsp_server.cpp
-  LABELS rtsp
-)
-
-add_tutorial(tutorial_0015_multi_stream_multi_output
-  tutorial_0015_multi_stream_multi_output.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0016_data_formats_and_mapping
-  tutorial_0016_data_formats_and_mapping.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0017_neatmodel_end_to_end
-  tutorial_0017_neatmodel_end_to_end.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_0018_async_queue_tuning
-  tutorial_0018_async_queue_tuning.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0019_multi_output_bundle
-  tutorial_0019_multi_output_bundle.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0020_debugging_workflow
-  tutorial_0020_debugging_workflow.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0021_output_appsink_policies
-  tutorial_0021_output_appsink_policies.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0022_inputappsrc_advanced_caps
-  tutorial_0022_inputappsrc_advanced_caps.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0023_builder_graph_and_contracts
-  tutorial_0023_builder_graph_and_contracts.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0024_hybrid_graph
-  tutorial_0024_hybrid_graph.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0025_hybrid_multistream
-  tutorial_0025_hybrid_multistream.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_0026_send_and_receive_via_pcie
-  tutorial_0026_send_and_receive_via_pcie.cpp
-  LABELS pcie
-)
-
-add_tutorial(tutorial_0027_run_e2e_application_via_pcie
-  tutorial_0027_run_e2e_application_via_pcie.cpp
-  LABELS pcie
-)
-
-# New fast-path tutorial track (paired with Python scripts under tutorials/00x_*/).
-add_tutorial(tutorial_v2_001_model_in_5_minutes
-  001_model_in_5_minutes/model_in_5_minutes.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_002_async_push_pull
-  002_async_push_pull/async_push_pull.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_003_session_build_and_run
-  003_session_build_and_run/session_build_and_run.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_004_model_options_chapter
-  004_model_options_chapter/model_options_chapter.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_005_preproc_chapter
-  005_preproc_chapter/preproc_chapter.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_006_postproc_boxdecode
-  006_postproc_boxdecode/postproc_boxdecode.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_007_session_patterns
-  007_session_patterns/session_patterns.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_008_numpy_torch_tensor_io
-  008_numpy_torch_tensor_io/numpy_torch_tensor_io.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_009_multi_input_samples
-  009_multi_input_samples/multi_input_samples.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_010_output_handling_patterns
-  010_output_handling_patterns/output_handling_patterns.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_011_diagnostics_in_3_commands
-  011_diagnostics_in_3_commands/diagnostics_in_3_commands.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_012_yolo_quickstart
-  012_yolo_quickstart/yolo_quickstart.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_013_resnet_quickstart
-  013_resnet_quickstart/resnet_quickstart.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_014_graph_basics
-  014_graph_basics/graph_basics.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_015_graph_model_hybrid
-  015_graph_model_hybrid/graph_model_hybrid.cpp
-  LABELS mpk
-)
-
-add_tutorial(tutorial_v2_016_graph_multistream
-  016_graph_multistream/graph_multistream.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_017_performance_tuning
-  017_performance_tuning/performance_tuning.cpp
-  LABELS fast
-)
-
-add_tutorial(tutorial_v2_018_production_blueprint
-  018_production_blueprint/production_blueprint.cpp
-  LABELS fast
+set_tests_properties(tutorial_017_consume_rtsp_stream PROPERTIES
+  LABELS "tutorial;asset;rtsp"
+  RESOURCE_LOCK "dispatcher"
+  SKIP_RETURN_CODE 77
 )
 
 install(
@@ -295,6 +200,15 @@ install(
     GROUP_READ GROUP_EXECUTE
     WORLD_READ WORLD_EXECUTE
 )
+
+set(SIMANEAT_TUTORIALS_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/../deps/manifest.json")
+if (EXISTS "${SIMANEAT_TUTORIALS_MANIFEST}")
+  install(
+    FILES ${SIMANEAT_TUTORIALS_MANIFEST}
+    DESTINATION share/sima-neat/deps
+    COMPONENT extras
+  )
+endif()
 
 # Install built tutorial binaries from the build tree (for extras packaging)
 install(

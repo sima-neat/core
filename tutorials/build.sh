@@ -1,15 +1,33 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
-TUTORIALS_DIR="${REPO_ROOT}/tutorials"
+# Resolve TUTORIALS_DIR / REPO_ROOT based on where this script lives.
+# Supported layouts (extras takes precedence when both are reachable, since a
+# user running build.sh from inside the extracted extras folder expects the
+# output to land there):
+#   1. Extras tarball:     extras-root/build.sh     -> tutorials at ./share/sima-neat/tutorials
+#   2. Source tree:        core/tutorials/build.sh  -> tutorials at ../tutorials, build at ../build/...
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+if [[ -f "${SCRIPT_DIR}/share/sima-neat/tutorials/CMakeLists.txt" ]]; then
+  REPO_ROOT="${SCRIPT_DIR}"
+  TUTORIALS_DIR="${SCRIPT_DIR}/share/sima-neat/tutorials"
+elif [[ -f "${SCRIPT_DIR}/../tutorials/CMakeLists.txt" ]]; then
+  REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd -P)"
+  TUTORIALS_DIR="${REPO_ROOT}/tutorials"
+else
+  echo "build.sh: cannot locate tutorials/CMakeLists.txt (checked ./share/sima-neat/tutorials and ../tutorials)" >&2
+  exit 1
+fi
 BUILD_DIR="${REPO_ROOT}/build/tutorials-standalone"
 BUILD_TYPE="Release"
 TARGET="all"
 DO_CLEAN="OFF"
 LIST_TARGETS="OFF"
+DOWNLOAD_MODELS_ONLY="OFF"
+MODEL_TARGET_FOLDER="/tmp"
 JOBS=""
 SIMANEAT_DIR="${SimaNeat_DIR:-}"
+SIMA_CLI="${SIMA_CLI:-}"
 
 auto_jobs() {
   local cpu_count=1
@@ -41,15 +59,139 @@ auto_jobs() {
   echo "${cpu_count}"
 }
 
+absolute_path() {
+  local path="$1"
+  if [[ "${path}" == /* ]]; then
+    printf '%s\n' "${path%/}"
+  else
+    printf '%s/%s\n' "${PWD%/}" "${path%/}"
+  fi
+}
+
+discover_sima_cli() {
+  if [[ -n "${SIMA_CLI}" ]]; then
+    if [[ -x "${SIMA_CLI}" ]]; then
+      printf '%s\n' "${SIMA_CLI}"
+      return 0
+    fi
+    if type -P "${SIMA_CLI}" >/dev/null 2>&1; then
+      type -P "${SIMA_CLI}"
+      return 0
+    fi
+  fi
+
+  if type -P sima-cli >/dev/null 2>&1; then
+    type -P sima-cli
+    return 0
+  fi
+
+  local -a shell_setup_files=(
+    "${HOME:-}/.bash_profile"
+    "${HOME:-}/.bash_login"
+    "${HOME:-}/.profile"
+    "${HOME:-}/.bashrc"
+  )
+
+  local setup_file
+  for setup_file in "${shell_setup_files[@]}"; do
+    if [[ -r "${setup_file}" ]]; then
+      set +u
+      # shellcheck source=/dev/null
+      source "${setup_file}" >/dev/null 2>&1 || true
+      set -u
+      if type -P sima-cli >/dev/null 2>&1; then
+        type -P sima-cli
+        return 0
+      fi
+
+      local alias_line alias_value alias_cmd
+      alias_line="$(alias sima-cli 2>/dev/null || true)"
+      if [[ "${alias_line}" == alias\ sima-cli=\'*\' ]]; then
+        alias_value="${alias_line#alias sima-cli=\'}"
+        alias_value="${alias_value%\'}"
+        read -r alias_cmd _ <<< "${alias_value}"
+        if [[ -x "${alias_cmd}" ]]; then
+          printf '%s\n' "${alias_cmd}"
+          return 0
+        fi
+        if type -P "${alias_cmd}" >/dev/null 2>&1; then
+          type -P "${alias_cmd}"
+          return 0
+        fi
+      fi
+    fi
+  done
+
+  local -a candidates=(
+    "${HOME:-}/.sima-cli/.venv/bin/sima-cli"
+    "${HOME:-}/.local/bin/sima-cli"
+    "/data/sima-cli/.venv/bin/sima-cli"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -x "${candidate}" ]]; then
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+header_exists() {
+  local header="$1"
+  local -a roots=()
+  if [[ -n "${SYSROOT:-}" ]]; then
+    roots+=("${SYSROOT}/usr/include" "${SYSROOT}/usr/local/include")
+  fi
+  roots+=(
+    "/usr/include"
+    "/usr/local/include"
+    "/opt/toolchain/aarch64/modalix/usr/include"
+    "/opt/toolchain/aarch64/modalix/usr/local/include"
+  )
+
+  local root
+  for root in "${roots[@]}"; do
+    if [[ -f "${root}/${header}" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+preflight_cpp_headers() {
+  if header_exists "nlohmann/json.hpp"; then
+    return 0
+  fi
+
+  cat >&2 <<'EOF'
+build.sh: missing required C++ header: nlohmann/json.hpp
+
+The installed Neat public headers include nlohmann/json.hpp, but that header is
+not present in the active DevKit/SDK include paths. Install the JSON header
+package, then rerun build.sh:
+
+  sudo apt-get update && sudo apt-get install -y nlohmann-json3-dev
+
+EOF
+  return 1
+}
+
 usage() {
   cat <<EOF
 Usage: tutorials/build.sh [options]
 
 Options:
-  --target <name>      Build one target (e.g. tutorial_v2_001_model_in_5_minutes)
+  --target <name>      Build one target (e.g. tutorial_001_model_in_5_minutes)
   --build-dir <path>   Build directory (default: build/tutorials-standalone)
   --build-type <type>  CMake build type (default: Release)
   --clean              Remove build directory before configure
+  --download-models-only
+                       Download tutorial models from Model Zoo and exit
+  --model-target-folder <path>
+                       Directory where Model Zoo downloads are written (default: /tmp)
   --list-targets       List available tutorial targets and exit
   --simaneat-dir <dir> Path to directory containing SimaNeatConfig.cmake
   -j, --jobs <N>       Parallel build jobs (default: auto)
@@ -57,7 +199,9 @@ Options:
 
 Examples:
   tutorials/build.sh
-  tutorials/build.sh --target tutorial_v2_001_model_in_5_minutes
+  tutorials/build.sh --target tutorial_001_run_your_first_model
+  tutorials/build.sh --target tutorial_001_run_your_first_model --download-models-only
+  tutorials/build.sh --model-target-folder /data/models
   tutorials/build.sh --simaneat-dir /usr/lib/aarch64-linux-gnu/cmake/SimaNeat
   tutorials/build.sh --list-targets
 EOF
@@ -80,6 +224,14 @@ while [[ $# -gt 0 ]]; do
     --clean)
       DO_CLEAN="ON"
       shift
+      ;;
+    --download-models-only)
+      DOWNLOAD_MODELS_ONLY="ON"
+      shift
+      ;;
+    --model-target-folder)
+      MODEL_TARGET_FOLDER="${2:-}"
+      shift 2
       ;;
     --list-targets)
       LIST_TARGETS="ON"
@@ -104,6 +256,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "${MODEL_TARGET_FOLDER}" ]]; then
+  echo "build.sh: --model-target-folder requires a non-empty path" >&2
+  exit 1
+fi
+MODEL_TARGET_FOLDER="$(absolute_path "${MODEL_TARGET_FOLDER}")"
 
 if [[ "${DO_CLEAN}" == "ON" ]]; then
   rm -rf "${BUILD_DIR}"
@@ -139,10 +297,168 @@ discover_simaneat_dir() {
 
 discover_simaneat_dir
 
+manifest_path() {
+  local -a candidates=(
+    "${REPO_ROOT}/deps/manifest.json"
+    "${REPO_ROOT}/share/sima-neat/deps/manifest.json"
+    "${REPO_ROOT}/../deps/manifest.json"
+    "${SCRIPT_DIR}/deps/manifest.json"
+    "${SCRIPT_DIR}/../deps/manifest.json"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      echo "${candidate}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+platform_version() {
+  local manifest
+  if ! manifest="$(manifest_path)"; then
+    echo "build.sh: cannot locate deps/manifest.json for Model Zoo platform version" >&2
+    return 1
+  fi
+
+  local version
+  version="$(
+    sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "${manifest}" \
+      | head -n1
+  )"
+  if [[ -z "${version}" ]]; then
+    echo "build.sh: deps/manifest.json does not define platform-version: ${manifest}" >&2
+    return 1
+  fi
+  echo "${version}"
+}
+
+target_readmes() {
+  if [[ "${TARGET}" == "all" ]]; then
+    find "${TUTORIALS_DIR}" -maxdepth 2 -name README.md -print
+    return 0
+  fi
+
+  local target_dir="${TARGET#tutorial_}"
+  local readme="${TUTORIALS_DIR}/${target_dir}/README.md"
+  if [[ ! -f "${readme}" ]]; then
+    echo "build.sh: cannot find README.md for target '${TARGET}' at ${readme}" >&2
+    return 1
+  fi
+  echo "${readme}"
+}
+
+model_download_path() {
+  local model="$1"
+  local model_base="${model##*/}"
+  local model_dash="${model_base//_/-}"
+  local model_underscore="${model_base//-/_}"
+  local -a candidates=(
+    "${MODEL_TARGET_FOLDER}/tmp/${model_base}_mpk.tar.gz"
+    "${MODEL_TARGET_FOLDER}/tmp/${model_dash}_mpk.tar.gz"
+    "${MODEL_TARGET_FOLDER}/tmp/${model_underscore}_mpk.tar.gz"
+    "${MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+    "${MODEL_TARGET_FOLDER}/${model_dash}_mpk.tar.gz"
+    "${MODEL_TARGET_FOLDER}/${model_underscore}_mpk.tar.gz"
+    "${MODEL_TARGET_FOLDER}/tmp/${model_base}.tar.gz"
+    "${MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
+  )
+
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if [[ -f "${candidate}" ]]; then
+      printf '%s/%s\n' "$(dirname "${candidate}")" "$(basename "${candidate}")"
+      return 0
+    fi
+  done
+  return 1
+}
+
+download_models() {
+  local readme_output
+  readme_output="$(target_readmes)"
+
+  local -a readmes=()
+  mapfile -t readmes < <(printf '%s\n' "${readme_output}" | sort)
+
+  local -a models=()
+  local readme model
+  for readme in "${readmes[@]}"; do
+    model="$(
+      sed -n 's/^|[[:space:]]*Model[[:space:]]*|[[:space:]]*\([^|[:space:]][^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p' "${readme}" \
+        | head -n1
+    )"
+    if [[ -z "${model}" || "${model}" == "None" || "${model}" == "none" || "${model}" == "N/A" ]]; then
+      continue
+    fi
+    models+=("${model}")
+  done
+
+  if [[ "${#models[@]}" -eq 0 ]]; then
+    echo "No tutorial models to download."
+    return 0
+  fi
+
+  local sima_cli
+  if ! sima_cli="$(discover_sima_cli)"; then
+    cat >&2 <<'EOF'
+build.sh: sima-cli is required to download tutorial models.
+
+The helper could not find sima-cli on PATH, in the common DevKit install
+locations, or after sourcing the user's shell startup files. If sima-cli is
+installed in a custom location, rerun with:
+
+  SIMA_CLI=/path/to/sima-cli ./build.sh
+
+EOF
+    return 1
+  fi
+
+  local version
+  version="$(platform_version)"
+
+  local -a unique_models=()
+  local seen=" "
+  for model in "${models[@]}"; do
+    if [[ "${seen}" == *" ${model} "* ]]; then
+      continue
+    fi
+    seen+="${model} "
+    unique_models+=("${model}")
+  done
+
+  mkdir -p "${MODEL_TARGET_FOLDER}"
+
+  echo "Downloading tutorial model(s) for platform ${version}: ${unique_models[*]}"
+  echo "Model download target folder: ${MODEL_TARGET_FOLDER}"
+  (
+    cd "${MODEL_TARGET_FOLDER}"
+    for model in "${unique_models[@]}"; do
+      "${sima_cli}" modelzoo -v "${version}" get "${model}"
+      local downloaded_path
+      if downloaded_path="$(model_download_path "${model}")"; then
+        echo "Downloaded ${model}: ${downloaded_path}"
+      else
+        echo "Downloaded ${model}: unable to locate tarball under ${MODEL_TARGET_FOLDER}" >&2
+      fi
+    done
+  )
+}
+
+if [[ "${DOWNLOAD_MODELS_ONLY}" == "ON" ]]; then
+  download_models
+  exit 0
+fi
+
+preflight_cpp_headers
+
 cmake_args=(
   -S "${TUTORIALS_DIR}"
   -B "${BUILD_DIR}"
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+  -DSIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER="${MODEL_TARGET_FOLDER}"
 )
 if [[ -n "${SIMANEAT_DIR}" ]]; then
   cmake_args+=("-DSimaNeat_DIR=${SIMANEAT_DIR}")
@@ -163,6 +479,8 @@ if [[ "${LIST_TARGETS}" == "ON" ]]; then
   cmake --build "${BUILD_DIR}" --target help | sed -n '/tutorial_/p'
   exit 0
 fi
+
+download_models
 
 build_cmd=(cmake --build "${BUILD_DIR}")
 if [[ "${TARGET}" != "all" ]]; then

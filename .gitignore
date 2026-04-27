@@ -47,6 +47,8 @@ deps/*
 # Runtime and temporary files
 tmp/
 tmp-*/
+sima-neat-*-extras/
+/install_neat_framework.sh
 core
 core/
 a.out

@@ -1,71 +1,54 @@
 # Coverage Map (Examples and Tutorials)
 
-This map links common tasks to concrete in-repo references.
+This map links common tasks to concrete in-repo references. Tutorials live under
+`tutorials/NNN_<name>/` with paired C++ and Python sources (plus a README).
 
 ## Core session and run patterns
 
-- Sync build/run basics:
-  - `tutorials/tutorial_0002_pipeline_session_build_run.cpp`
-- Async push/pull:
-  - `tutorials/tutorial_0006_async_push_pull.cpp`
-  - `tutorials/tutorial_0018_async_queue_tuning.cpp`
-- Sample/tensor output handling:
-  - `tutorials/tutorial_0004_samples_and_neattensor.cpp`
+- First model run (synchronous): `tutorials/001_run_your_first_model/`
+- Async push/pull: `tutorials/002_run_inference_async/`
+- Build a Session by hand (no model): `tutorials/003_build_inference_pipeline/`
+- Plug a model into a Session: `tutorials/007_plug_model_into_pipeline/`
 
-## Caps and input control
+## Model configuration
 
-- Caps negotiation and dynamic size behavior:
-  - `tutorials/tutorial_0007_caps_negotiation.cpp`
-- Advanced appsrc caps and buffer contracts:
-  - `tutorials/tutorial_0022_inputappsrc_advanced_caps.cpp`
+- Model options (format, bounds, preproc, postproc): `tutorials/004_configure_model_options/`
+- Preprocessing (normalize, channel stats): `tutorials/005_preprocess_images/`
 
 ## Model workflows
 
-- Basic model usage:
-  - `tutorials/tutorial_0013_model_resnet50.cpp`
-  - `examples/model_resnet50.cpp`
-- End-to-end model options/stages/sync-async:
-  - `tutorials/tutorial_0017_neatmodel_end_to_end.cpp`
-- MPK pipeline composition:
-  - `tutorials/tutorial_0011_mpk_yolov8_pipeline.cpp`
-  - `examples/modelmpk_resnet50.cpp`
+- Object detection (YOLOv8): `tutorials/012_detect_objects_with_yolov8/`
+- Image classification (ResNet-50): `tutorials/013_classify_images_with_resnet50/`
+- Decoding detection boxes (`SimaBoxDecode`): `tutorials/006_read_detection_boxes/`
 
-## Output policies and tensor conversion
+## Tensor and sample handling
 
-- Output tensor options:
-  - `tutorials/tutorial_0005_output_tensor_options.cpp`
-- Appsink policy behavior:
-  - `tutorials/tutorial_0021_output_appsink_policies.cpp`
+- NumPy/PyTorch interop: `tutorials/008_pass_numpy_to_model/`
+- Multi-input (bundle) samples: `tutorials/009_feed_multi_input_model/`
+- Reading `Sample` output: `tutorials/010_interpret_model_output/`
 
-## RTSP and source-driven flows
+## Live streaming input
 
-- RTSP server:
-  - `tutorials/tutorial_0014_rtsp_server.cpp`
-  - `examples/rtsp_server.cpp`
-- RTSP-heavy applications:
-  - `examples/decode_rtsp.cpp`
-  - `examples/yolov8_multi_rtsp_demo.cpp`
+- Consume a live RTSP stream: `tutorials/017_consume_rtsp_stream/`
 
-## Hybrid graph and multistream
+## Graph APIs
 
-- Hybrid graph basics:
-  - `tutorials/tutorial_0024_hybrid_graph.cpp`
-- Hybrid multistream orchestration:
-  - `tutorials/tutorial_0025_hybrid_multistream.cpp`
-- Large graph production pattern:
-  - `examples/GraphPipesYOLOOptiview.cpp`
+- Build a custom data graph: `tutorials/012_build_a_custom_data_graph/`
+- Embed a model inside a graph: `tutorials/013_embed_model_inside_graph/`
+- Run multiple streams in one graph: `tutorials/014_run_multiple_streams/`
 
-## PCIe flows
+## Performance and production
 
-- PCIe send/receive:
-  - `tutorials/tutorial_0026_send_and_receive_via_pcie.cpp`
-- PCIe model pipeline:
-  - `tutorials/tutorial_0027_run_e2e_application_via_pcie.cpp`
+- Tune throughput and queues: `tutorials/015_tune_throughput_and_queues/`
+- Production-ready pipeline skeleton: `tutorials/016_build_production_pipeline/`
 
-## Diagnostics and validation
+## Diagnostics
 
-- Debugging and diagnostics workflow:
-  - `tutorials/tutorial_0010_diagnostics_debug.cpp`
-  - `tutorials/tutorial_0020_debugging_workflow.cpp`
-- Builder graph/contracts:
-  - `tutorials/tutorial_0023_builder_graph_and_contracts.cpp`
+- Diagnose and profile a pipeline: `tutorials/011_diagnose_a_pipeline/`
+
+## Reference apps (not tutorials)
+
+Larger end-to-end examples live in the `sima-neat/apps` repository under
+`apps/examples/`. Use those for production-scale integration patterns (OptiView
+publishing, multistream detection, face detection, pose, tracking, depth, RTSP
+publishing, etc.). Tutorials in this repo stay minimal and single-topic.
