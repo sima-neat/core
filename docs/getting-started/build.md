@@ -1,13 +1,13 @@
 ---
 title: Build
-description: Build SiMa NEAT from source with build.sh
+description: Build SiMa Neat from source with build.sh
 sidebar_position: 2
 ---
 
-# Build NEAT
+# Build Neat
 
-This guide covers source builds of NEAT.
-For prebuilt package installation, see [NEAT Framework](./installation/neat-framework).
+This guide covers source builds of Neat.
+For prebuilt package installation, see [Neat Framework](./installation/neat-framework).
 
 `build.sh` is the supported build entry point. It handles dependency checks, optional deps sync, CMake configure/build, optional docs generation, install sanity checks, and packaging.
 
@@ -16,30 +16,30 @@ For prebuilt package installation, see [NEAT Framework](./installation/neat-fram
 `build.sh` automatically detects the active environment:
 
 - Modalix DevKit native environment
-- eLxr SDK environment (cross-compilation)
+- Neat SDK environment (cross-compilation)
 
 You can run the same `build.sh` commands in either environment.
 
 ### Cross Compilation Prerequisites
 
-Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need the SiMa eLxr SDK for cross compilation.
+Cross-compilation is typically faster than building directly on the DevKit, but you must transfer build artifacts to the DevKit afterward. You will need the Neat SDK for cross compilation.
 
-Install `sima-cli` first on the host machine, then install eLxr SDK.
+Install `sima-cli` first on the host machine, then install the SDK.
 
 ```bash
 curl https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
 sima-cli install sdk
 ```
 
-When prompted by `sima-cli`, select the **eLxr SDK** option.
+When prompted by `sima-cli`, select the SDK option.
 
-Then start the eLxr SDK:
+Then start the SDK:
 
 ```bash
 sima-cli sdk elxr
 ```
 
-Then install sima-cli inside the eLxr SDK, after that install the eLxr SDK patch.
+Then install `sima-cli` inside the SDK, then install the SDK patch.
 
 ```bash
 curl https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
@@ -47,8 +47,8 @@ source ~/.bash_profile
 sima-cli install tools/sdk-patch
 ```
 
-- eLxr SDK installation is supported on Windows and Ubuntu.
-- If you are building natively on a Modalix DevKit, the eLxr SDK install/patch steps are not required.
+- SDK installation is supported on Windows and Ubuntu.
+- If you are building natively on a Modalix DevKit, the SDK install/patch steps are not required.
 
 ## Build Options
 
@@ -59,7 +59,7 @@ Supported `build.sh` options:
 - `--python`: Build Python bindings (`pyneat`) in addition to selected targets.
 - `--install-neat-internals`, `--install-deps`: Download and install deps artifacts before build.
 - `--doc`: Build docs only.
-- `--install`: After build/package, install generated artifacts into the current environment. In paired eLxr SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
+- `--install`: After build/package, install generated artifacts into the current environment. In paired Neat SDK mode, this also deploys and installs matching artifacts on the paired DevKit.
 - `--no-dist`: Skip distribution packaging.
 - `--clean`: Remove `build/` before configuring.
 - `--no-doc`: Skip docs build (even with `--all`).

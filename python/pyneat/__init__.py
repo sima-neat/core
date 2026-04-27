@@ -1,4 +1,4 @@
-"""SiMa NEAT Python bindings."""
+"""SiMa Neat Python bindings."""
 
 import os as _os
 import sys as _sys

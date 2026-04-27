@@ -1,9 +1,46 @@
-const path = require("path");
+const {execSync} = require("child_process");
 
-const repo = process.env.GITHUB_REPOSITORY || "";
+function gitValue(command) {
+  try {
+    return execSync(command, {
+      cwd: __dirname,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function parseGitHubRepo(remoteUrl) {
+  const match = (remoteUrl || "").match(/github\.com[:/]([^/]+)\/(.+?)(?:\.git)?$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    org: match[1],
+    project: match[2],
+  };
+}
+
+function normalizeBranch(branch) {
+  return (branch || "")
+    .replace(/^refs\/heads\//, "")
+    .replace(/^origin\//, "")
+    .trim();
+}
+
+const remoteRepo = parseGitHubRepo(gitValue("git config --get remote.origin.url"));
+const repo =
+  process.env.GITHUB_REPOSITORY ||
+  (remoteRepo ? `${remoteRepo.org}/${remoteRepo.project}` : "");
 const repoParts = repo.split("/");
-const org = process.env.DOCS_ORG || repoParts[0] || "manuel-roldan";
-const project = process.env.DOCS_PROJECT || repoParts[1] || "PipelineSession";
+const org = process.env.DOCS_ORG || repoParts[0] || "sima-neat";
+const project = process.env.DOCS_PROJECT || repoParts[1] || "core";
+const githubRepoUrl =
+  process.env.DOCS_REPO_URL || `https://github.com/${org}/${project}`;
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
@@ -12,10 +49,30 @@ const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
 const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
 const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
 
+const buildBranch = normalizeBranch(
+  process.env.DOCS_BUILD_BRANCH ||
+    process.env.GITHUB_HEAD_REF ||
+    process.env.GITHUB_REF_NAME ||
+    gitValue("git rev-parse --abbrev-ref HEAD"),
+);
+const buildCommit = (
+  process.env.DOCS_BUILD_COMMIT ||
+  process.env.GITHUB_SHA ||
+  gitValue("git rev-parse HEAD")
+).trim();
+const buildTime = (
+  process.env.DOCS_BUILD_TIME || new Date().toISOString()
+).trim();
+const showBuildBanner = Boolean(buildBranch && buildBranch !== "main");
+const buildBranchUrl = buildBranch
+  ? `${githubRepoUrl}/tree/${encodeURI(buildBranch)}`
+  : "";
+const buildCommitUrl = buildCommit ? `${githubRepoUrl}/commit/${buildCommit}` : "";
+
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "SiMa NEAT",
-  tagline: "SiMa NEAT documentation",
+  title: "SiMa Neat",
+  tagline: "SiMa Neat documentation",
   url,
   baseUrl,
   onBrokenLinks: "throw",
@@ -56,7 +113,7 @@ const config = {
   plugins: [],
   themeConfig: {
     navbar: {
-      title: "SiMa NEAT",
+      title: "SiMa Neat",
       items: [
         { type: "doc", docId: "index", label: "Docs", position: "left" },
         { label: "C++ API", to: "/reference/cppapi/", position: "left" },
@@ -69,7 +126,7 @@ const config = {
             '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
         },
         {
-          href: `https://github.com/${org}/${project}`,
+          href: githubRepoUrl,
           label: "GitHub",
           position: "right",
         },
@@ -78,7 +135,7 @@ const config = {
     footer: {
       style: "dark",
       links: [
-        { label: "SiMa.ai NEAT Framework Documentation", to: "/" },
+        { label: "SiMa.ai Neat Framework Documentation", to: "/" },
       ],
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
     },
@@ -93,6 +150,14 @@ const config = {
       appId: algoliaAppId,
       apiKey: algoliaApiKey,
       indexName: algoliaIndexName,
+    },
+    buildInfo: {
+      showBanner: showBuildBanner,
+      branch: buildBranch,
+      branchUrl: buildBranchUrl,
+      commit: buildCommit.slice(0, 12),
+      commitUrl: buildCommitUrl,
+      builtAt: buildTime.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"),
     },
   },
   clientModules: [

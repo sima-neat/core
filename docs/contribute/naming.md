@@ -1,16 +1,16 @@
 ---
 title: Naming Contract
-description: Canonical product, API, and type naming for SiMa NEAT
+description: Canonical product, API, and type naming for SiMa Neat
 sidebar_position: 1
 ---
 
 # Naming Contract
 
-This document defines the canonical naming contract for the SiMa NEAT codebase.
+This document defines the canonical naming contract for the SiMa Neat codebase.
 
 ## Canonical names
 
-- Product name: `SiMa NEAT`
+- Product name: `SiMa Neat`
 - CMake project: `SimaNeat`
 - C++ namespace: `simaai::neat`
 - Core runtime types: `Model`, `Session`, `Run`

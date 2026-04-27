@@ -1,12 +1,12 @@
 ---
 title: Coding Standard
-description: Contributor coding standards for SiMa NEAT
+description: Contributor coding standards for SiMa Neat
 sidebar_position: 2
 ---
 
 # Coding Standard
 
-This guide defines contribution rules for code that lands in the SiMa NEAT library.
+This guide defines contribution rules for code that lands in the SiMa Neat library.
 
 ## Language and API constraints
 

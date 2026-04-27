@@ -1,6 +1,6 @@
 <svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
-  <title id="title">SiMa NEAT three-step workflow infographic for Python</title>
-  <desc id="desc">An infographic showing the three main NEAT steps in Python: load a compiled model as a Model, compose an application as a Session, and build and run it on a SiMa SoC.</desc>
+  <title id="title">SiMa Neat three-step workflow infographic for Python</title>
+  <desc id="desc">An infographic showing the three main Neat steps in Python: load a compiled model as a Model, compose an application as a Session, and build and run it on a SiMa SoC.</desc>
   <defs>
     <linearGradient id="bg" x1="120" y1="80" x2="1320" y2="820" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>
@@ -45,7 +45,7 @@
   <circle cx="1350" cy="742" r="74" fill="#A4CC2D"/>
 
   <text x="110" y="112" class="sans title">From compiled model to AI application</text>
-  <text x="110" y="148" class="sans subtitle">SiMa NEAT gives developers a clean path from model artifact to composed application runtime on the SoC.</text>
+  <text x="110" y="148" class="sans subtitle">SiMa Neat gives developers a clean path from model artifact to composed application runtime on the SoC.</text>
 
   <g filter="url(#cardShadow)">
     <rect x="84" y="214" width="388" height="454" rx="30" fill="url(#panel)"/>
@@ -53,7 +53,7 @@
     <text x="145" y="270" class="sans step">Step 1</text>
     <text x="112" y="330" class="sans cardTitle">Load a `Model`</text>
     <text x="112" y="366" class="sans cardBody">Start with a compiled model package</text>
-    <text x="112" y="390" class="sans cardBody">and let NEAT expose it as a reusable</text>
+    <text x="112" y="390" class="sans cardBody">and let Neat expose it as a reusable</text>
     <text x="112" y="414" class="sans cardBody">application building block.</text>
 
     <rect x="106" y="452" width="344" height="178" rx="20" fill="#1F232A"/>
@@ -111,7 +111,7 @@
     <text x="1029" y="270" class="sans step">Step 3</text>
     <text x="996" y="330" class="sans cardTitle">Build and `Run`</text>
     <text x="996" y="366" class="sans cardBody">Execute the composed application with</text>
-    <text x="996" y="390" class="sans cardBody">NEAT runtime controls so it performs</text>
+    <text x="996" y="390" class="sans cardBody">Neat runtime controls so it performs</text>
     <text x="996" y="414" class="sans cardBody">efficiently on the SiMa SoC.</text>
 
     <rect x="990" y="452" width="344" height="178" rx="20" fill="#1F232A"/>

@@ -2,9 +2,9 @@
 
 Running `sima-cli install neat` installs **two** things:
 
-1. **The NEAT library** (the `sima-neat` package). Goes system-wide via `apt`. You never interact with it directly — your code links against it through CMake's `find_package(SimaNeat CONFIG)`.
+1. **The Neat library** (the `sima-neat` package). Goes system-wide via `apt`. You never interact with it directly — your code links against it through CMake's `find_package(SimaNeat CONFIG)`.
 
-2. **The tutorials** (the **SiMa NEAT extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
+2. **The tutorials** (the **SiMa Neat extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
 
    ```text
    sima-neat-0.0.0+<branch>-<sha>-Linux-extras/
@@ -17,9 +17,9 @@ Running `sima-cli install neat` installs **two** things:
            └── tutorials/            ← source folders (.cpp, .py, README.md)
    ```
 
-The folder name includes the NEAT version, branch, and commit hash. For example, if you ran the installer from `~/neat/`, the folder ends up at `~/neat/sima-neat-0.0.0+<branch>-<sha>-Linux-extras/`.
+The folder name includes the Neat version, branch, and commit hash. For example, if you ran the installer from `~/neat/`, the folder ends up at `~/neat/sima-neat-0.0.0+<branch>-<sha>-Linux-extras/`.
 
-When prompted during install, select **SiMa NEAT extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
+When prompted during install, select **SiMa Neat extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
 
 ## How to Run Tutorials
 
@@ -51,7 +51,7 @@ To use a different download root, add `--model-target-folder <path>`.
 
 ### Verify the install
 
-Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa NEAT extras** is selected.
+Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa Neat extras** is selected.
 
 ```bash
 ls lib/sima-neat/tutorials/ | grep '^tutorial_'
@@ -92,9 +92,9 @@ If you want to recompile a chapter (to tweak it, or because the shipped binary d
 ./build/tutorials-standalone/tutorial_<chapter_name> --args
 ```
 
-`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed NEAT package, invokes CMake for the whole `tutorials/` tree (or a single target), and writes the binaries under `build/tutorials-standalone/`. No flags required for a stock eLxr SDK or on-device apt install.
+`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed Neat package, invokes CMake for the whole `tutorials/` tree (or a single target), and writes the binaries under `build/tutorials-standalone/`. No flags required for a stock Neat SDK or on-device apt install.
 
-### C++ — integrate NEAT into your own project {#compile-a-copy-yourself}
+### C++ — integrate Neat into your own project {#compile-a-copy-yourself}
 
 Copying a chapter's `.cpp` into your own codebase? Drop this minimal `CMakeLists.txt` alongside it — no extras folder required, only the base `sima-neat` package (which provides `libsima_neat.a` and `SimaNeatConfig.cmake`):
 
@@ -118,8 +118,8 @@ cmake -S . -B build && cmake --build build -j
 ./build/my_chapter --args
 ```
 
-`find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed NEAT — no hardcoded paths, no extras folder required.
+`find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
-For the full template with SYSROOT handling (cross-builds from inside the eLxr SDK container), see the [Hello NEAT Minimal Example](/getting-started/minimal_example).
+For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see the [Hello Neat Minimal Example](/getting-started/minimal_example).
 
 <p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>

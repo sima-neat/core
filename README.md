@@ -1,4 +1,4 @@
-# SiMa NEAT Framework
+# SiMa Neat Framework
 
 [![CI Build](https://github.com/sima-neat/core/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/build.yml)
 [![Sanitization Nightly](https://github.com/sima-neat/core/actions/workflows/sanitizers.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/sanitizers.yml)
@@ -8,7 +8,7 @@
 ![SDK](https://img.shields.io/badge/SDK-2.0-green)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-informational)
 
-SiMa NEAT is a C++20 library for building, validating, running, and debugging GStreamer pipelines with a typed, composable API.
+SiMa Neat is a C++20 library for building, validating, running, and debugging GStreamer pipelines with a typed, composable API.
 
 It helps teams ship production media/ML pipelines with reproducible pipeline generation, strong diagnostics, and clean C++ integration.
 
@@ -16,7 +16,7 @@ It helps teams ship production media/ML pipelines with reproducible pipeline gen
 
 ## Programming Model
 
-NEAT is built around three core concepts:
+Neat is built around three core concepts:
 
 - `Model`: loads a compiled model pack (`.tar.gz`) and exposes reusable pipeline stages (`preprocess`, `inference`, `postprocess`, or full `session()`).
 - `Session` + `Run`: composes typed `Node`/`NodeGroup` blocks into a deterministic pipeline, then executes it in `Sync` or `Async` mode via push/pull APIs.
