@@ -14,7 +14,7 @@ try:
   import pyneat
 except ImportError:
   sys.exit(
-      "pyneat is not importable. Either NEAT is not installed, or the venv is not activated.\n"
+      "pyneat is not importable. Either Neat is not installed, or the venv is not activated.\n"
       "Run: source ~/pyneat/bin/activate"
   )
 
@@ -40,7 +40,7 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
-  # The three-line NEAT story:
+  # The three-line Neat story:
   model = pyneat.Model(str(args.mpk))
   image = load_image(args.image, size=224)
   sample = model.run(image, timeout_ms=2000)

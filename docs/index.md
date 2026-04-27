@@ -1,27 +1,76 @@
 ---
 title: Overview
-description: SiMa NEAT overview and entry points
+description: SiMa Neat overview and entry points
 sidebar_position: 1
 ---
 
-# SiMa NEAT Overview
+# SiMa Neat Overview
 
-SiMa NEAT (**Neural Edge Acceleration Toolkit**) is a framework for building, running, and debugging AI applications on SiMa platform using a stable, composable C++ and Python APIs and leveraging the benefits of GStreamer pipelines. 
+<div class="overview-section-label">What Neat Is</div>
 
-NEAT provides a higher-level "pipeline-as-code" interface while keeping GStreamer's power and flexibility, with ML-friendly outputs (tensors) and reproducible configs. The goal is to deliver an API experience that makes it as easy as possible for developers to move from Nvidia-based applications to SiMa.
+SiMa Neat (**Neural Edge Acceleration Toolkit**) is an application-development framework for building and running AI applications on the SiMa platform.
+It provides developers a set of Python and C++ APIs to execute and test compiled model artifacts (`tar.gz models`), compose AI applications that leverage the SoC's hardware blocks, and manage runtime execution. 
 
-![NEAT concepts diagram](./images/concepts.jpg)
+In the broader SiMa software ecosystem, Neat sits at the application layer, building on the SiMa runtime stack and using GStreamer-based execution underneath so developers can stay focused on application logic instead of manually stitching together lower-level runtime pieces.
 
-## Start Here
+<div class="overview-section-label">How It Works</div>
 
-- [Installation](getting-started/installation)
-- [Build](getting-started/build)
-- [Hello SiMa](getting-started/minimal_example)
-- [Programming Model](getting-started/programming-model/overview)
+Neat gives you a direct mental model for that path. A compiled model package (`.tar.gz`) becomes a `Model` component, application logic is assembled as a `Session`, and that session is built and executed as a `Run` object on the SoC. The same workflow is designed to work well with agentic development too, so teams can explore, build, and iterate faster.
 
-## Explore
+<LanguageContent lang="cpp">
 
-- [Tutorials](tutorials)
-- [How‑To Guides](how-to/runtime_tuning)
-- [Reference](reference/cppapi)
-- [Contribute](contribute/architecture)
+<div className="overview-workflow-image overview-workflow-image-light">
+
+![Neat three-step workflow diagram](./images/neat-overview-workflow-cpp.svg)
+
+</div>
+
+<div className="overview-workflow-image overview-workflow-image-dark">
+
+![Neat three-step workflow diagram](./images/neat-overview-workflow-cpp-dark.svg)
+
+</div>
+
+</LanguageContent>
+
+<LanguageContent lang="py">
+
+<div className="overview-workflow-image overview-workflow-image-light">
+
+![Neat three-step workflow diagram](./images/neat-overview-workflow-python.svg)
+
+</div>
+
+<div className="overview-workflow-image overview-workflow-image-dark">
+
+![Neat three-step workflow diagram](./images/neat-overview-workflow-python-dark.svg)
+
+</div>
+
+</LanguageContent>
+
+The getting-started guides help you install and build Neat, the programming-model pages explain the main concepts in more detail, and the tutorials show how to apply them to real application patterns.
+
+<div class="overview-link-columns">
+  <section class="overview-link-panel overview-link-panel-start">
+    <h2>Start Here</h2>
+    <p>Use these first steps to get Neat installed, built, and running with the core mental model in place.</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="getting-started/installation"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat eLxr SDK development.</span></a></li>
+      <li><a class="overview-link-card" href="getting-started/build"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
+      <li><a class="overview-link-card" href="getting-started/minimal_example"><strong>Hello SiMa</strong><span>Validate your environment with a minimal Neat application.</span></a></li>
+      <li><a class="overview-link-card" href="getting-started/programming-model/overview"><strong>Programming Model</strong><span>Learn the `Model`, `Session`, and `Run` workflow in more detail.</span></a></li>
+    </ul>
+  </section>
+
+  <section class="overview-link-panel overview-link-panel-explore">
+    <h2>Explore</h2>
+    <p>Once the basics are working, use the rest of the docs to deepen your understanding and move faster.</p>
+    <ul class="overview-link-list">
+      <li><a class="overview-link-card" href="tutorials"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
+      <li><a class="overview-link-card" href="how-to/runtime_tuning"><strong>How-To Guides</strong><span>Jump into focused topics such as runtime tuning and practical workflows.</span></a></li>
+      <li><a class="overview-link-card" href="reference/cppapi"><strong>Reference</strong><span>Browse the C++ API and supporting reference material.</span></a></li>
+      <li><a class="overview-link-card" href="contribute/architecture"><strong>Contribute</strong><span>Understand the architecture, contributor expectations, and repo conventions.</span></a></li>
+    </ul>
+  </section>
+</div>

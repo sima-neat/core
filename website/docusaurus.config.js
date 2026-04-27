@@ -14,8 +14,8 @@ const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "SiMa NEAT",
-  tagline: "SiMa NEAT documentation",
+  title: "SiMa Neat",
+  tagline: "SiMa Neat documentation",
   url,
   baseUrl,
   onBrokenLinks: "throw",
@@ -56,7 +56,7 @@ const config = {
   plugins: [],
   themeConfig: {
     navbar: {
-      title: "SiMa NEAT",
+      title: "SiMa Neat",
       items: [
         { type: "doc", docId: "index", label: "Docs", position: "left" },
         { label: "C++ API", to: "/reference/cppapi/", position: "left" },
@@ -78,7 +78,7 @@ const config = {
     footer: {
       style: "dark",
       links: [
-        { label: "SiMa.ai NEAT Framework Documentation", to: "/" },
+        { label: "SiMa.ai Neat Framework Documentation", to: "/" },
       ],
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
     },

@@ -1,26 +1,26 @@
 ---
-title: Hello NEAT!
-description: Validate your install with a minimal SiMa NEAT CMake app
+title: Hello Neat!
+description: Validate your install with a minimal SiMa Neat CMake app
 sidebar_position: 3
 ---
 
-# Hello NEAT!
+# Hello Neat!
 
 ## Minimal Example
 
-This guide uses a minimal example to verify that NEAT is installed and runnable, while introducing the core application development and validation workflow.
+This guide uses a minimal example to verify that Neat is installed and runnable, while introducing the core application development and validation workflow.
 
 - a Modalix DevKit
-- the [NEAT eLxr SDK](./installation/neat-elxr-sdk.mdx)
+- the [Neat eLxr SDK](./installation/neat-elxr-sdk.mdx)
 
-:::note NEAT eLxr SDK Prerequisite
+:::note Neat eLxr SDK Prerequisite
 To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first:
 
 ```bash
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
-If SDK/DevKit pairing is not configured, you can still build inside the NEAT eLxr SDK, but you must manually transfer the built binary or script to the DevKit and run it there.
+If SDK/DevKit pairing is not configured, you can still build inside the Neat eLxr SDK, but you must manually transfer the built binary or script to the DevKit and run it there.
 :::
 
 :::tip About `dk` / `devkit-run`
@@ -97,7 +97,7 @@ Run:
 ./build/sima_neat_hello
 ```
 
-**NEAT eLxr SDK**
+**Neat eLxr SDK**
 
 ```bash
 dk build/sima_neat_hello
@@ -127,14 +127,14 @@ source ~/pyneat/bin/activate
 python3 hello_neat.py
 ```
 
-**NEAT eLxr SDK**
+**Neat eLxr SDK**
 
 ```bash
 dk hello_neat.py
 ```
 
 :::note Python Runtime Location
-`pyneat` is installed on the DevKit runtime side, even if you run the NEAT installer from inside the NEAT eLxr SDK container.
+`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat eLxr SDK container.
 
 When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit using the DevKit `pyneat` environment.
 :::
@@ -143,8 +143,8 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 
 ## Next Steps
-Once this minimal example works, continue with broader SiMa NEAT learning resources:
+Once this minimal example works, continue with broader SiMa Neat learning resources:
 
-- Learn the [core programming model](./programming-model/overview), which explains the main NEAT concepts such as sessions, models, pipeline stages, and graph execution.
+- Learn the [core programming model](./programming-model/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
 - Follow the [tutorials](../tutorials/index), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).
