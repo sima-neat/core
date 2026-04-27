@@ -8,7 +8,7 @@ sidebar_position: 6
 
 This page is for `pyneat` contributors and maintainers.
 
-`pyneat` is the Python binding layer for SiMa NEAT, built with `nanobind` and packaged with `scikit-build-core`.
+`pyneat` is the Python binding layer for SiMa Neat, built with `nanobind` and packaged with `scikit-build-core`.
 
 See the [Python API Reference](/reference/pythonapi/modules/pyneat) for generated API docs.
 

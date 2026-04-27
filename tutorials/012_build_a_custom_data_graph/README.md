@@ -10,7 +10,7 @@
 
 ## Concept
 
-Build the smallest useful NEAT graph — one pipeline node wired to one stage node — then push a sample through and verify metadata survives traversal. This is the baseline before hybrid or multistream graph tutorials.
+Build the smallest useful Neat graph — one pipeline node wired to one stage node — then push a sample through and verify metadata survives traversal. This is the baseline before hybrid or multistream graph tutorials.
 
 A graph is an explicit DAG of nodes you build programmatically, separate from the pipeline/session abstraction. You add nodes with `graph.add(...)`, wire them with `graph.connect(...)`, and run the whole thing via `GraphSession`.
 

@@ -1,13 +1,13 @@
 ---
 title: Build
-description: Build SiMa NEAT from source with build.sh
+description: Build SiMa Neat from source with build.sh
 sidebar_position: 2
 ---
 
-# Build NEAT
+# Build Neat
 
-This guide covers source builds of NEAT.
-For prebuilt package installation, see [NEAT Framework](./installation/neat-framework).
+This guide covers source builds of Neat.
+For prebuilt package installation, see [Neat Framework](./installation/neat-framework).
 
 `build.sh` is the supported build entry point. It handles dependency checks, optional deps sync, CMake configure/build, optional docs generation, install sanity checks, and packaging.
 

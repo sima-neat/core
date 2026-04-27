@@ -1,6 +1,6 @@
 ---
 title: Test Requirements
-description: Minimum testing expectations for SiMa NEAT contributions
+description: Minimum testing expectations for SiMa Neat contributions
 sidebar_position: 3
 ---
 

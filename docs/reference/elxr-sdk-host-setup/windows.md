@@ -1,10 +1,10 @@
 ---
 title: Windows Host Notes
-description: Prepare a Windows 11 host for NEAT eLxr SDK and DevKit-Sync
+description: Prepare a Windows 11 host for Neat eLxr SDK and DevKit-Sync
 sidebar_position: 1
 ---
 
-Use this guide when your host machine is Windows 11 and you want to run NEAT eLxr SDK with DevKit-Sync.
+Use this guide when your host machine is Windows 11 and you want to run Neat eLxr SDK with DevKit-Sync.
 
 ## Prerequisites
 
@@ -45,4 +45,4 @@ Add any additional ports required by your NFS server/client setup.
 
 ## Next step
 
-Return to [NEAT eLxr SDK](../../getting-started/installation/neat-elxr-sdk.mdx) and continue with install/setup.
+Return to [Neat eLxr SDK](../../getting-started/installation/neat-elxr-sdk.mdx) and continue with install/setup.

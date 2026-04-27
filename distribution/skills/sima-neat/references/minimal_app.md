@@ -1,4 +1,4 @@
-# Minimal SiMa NEAT App
+# Minimal SiMa Neat App
 
 ```cpp
 #include <neat.h>

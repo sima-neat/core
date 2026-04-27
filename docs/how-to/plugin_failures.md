@@ -1,6 +1,6 @@
 # How To Debug Plugin Failures
 
-When a plugin fails, NEAT raises a `SessionError` whose message contains the
+When a plugin fails, Neat raises a `SessionError` whose message contains the
 GStreamer error and a structured debug string. Use the fields to locate the
 root cause quickly.
 
