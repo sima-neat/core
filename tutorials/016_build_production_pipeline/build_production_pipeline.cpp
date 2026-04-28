@@ -1,7 +1,7 @@
 // Production blueprint: wrap a Model in a Runner with production-grade RunOptions.
 //
 // Usage:
-//   tutorial_016_build_production_pipeline --mpk /path/to/model.tar.gz [--iters 4]
+//   tutorial_016_build_production_pipeline --mpk /path/to/resnet_50.tar.gz [--iters 4]
 
 #include "neat.h"
 

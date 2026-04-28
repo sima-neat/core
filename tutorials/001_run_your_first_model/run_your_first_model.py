@@ -2,7 +2,7 @@
 """Run a ResNet-50 model on an image in three lines of pyneat.
 
 Usage:
-  python3 model_in_5_minutes.py --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
+  python3 run_your_first_model.py --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
 """
 from __future__ import annotations
 

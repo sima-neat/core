@@ -5,7 +5,7 @@ The output tensor is a rank-1 uint8 buffer: a uint32 count header followed by
 N 24-byte RawBox records (int32 x, y, w, h; float32 score; int32 class_id).
 
 Usage:
-  python3 postproc_boxdecode.py --mpk /path/to/yolo_v8s.tar.gz [--width 640] [--height 640]
+  python3 read_detection_boxes.py --mpk /path/to/yolo_v8s.tar.gz [--width 640] [--height 640]
 """
 from __future__ import annotations
 

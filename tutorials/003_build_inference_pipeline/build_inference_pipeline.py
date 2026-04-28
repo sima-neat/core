@@ -2,7 +2,7 @@
 """Compose a Session from input + output nodes, build a Run, invoke it once.
 
 Usage:
-  python3 session_build_and_run.py [--width 320] [--height 240]
+  python3 build_inference_pipeline.py [--width 320] [--height 240]
 """
 from __future__ import annotations
 

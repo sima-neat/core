@@ -2,7 +2,7 @@
 """Build a multistream graph: stamp -> scheduler -> fan-out -> join.
 
 Usage:
-  python3 graph_multistream.py [--streams 8] [--frames 4]
+  python3 run_multiple_streams.py [--streams 8] [--frames 4]
 """
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 """Push a Bundle Sample containing two named tensor fields and read them back.
 
 Usage:
-  python3 multi_input_samples.py [--width 64] [--height 48]
+  python3 feed_multi_input_model.py [--width 64] [--height 48]
 """
 from __future__ import annotations
 
