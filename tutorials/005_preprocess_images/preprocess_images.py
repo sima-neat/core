@@ -2,7 +2,7 @@
 """Configure preproc knobs on ModelOptions and inspect the preprocess() node group.
 
 Usage:
-  python3 preproc_chapter.py --mpk /path/to/yolo_v8s.tar.gz [--size 224]
+  python3 preprocess_images.py --mpk /path/to/resnet_50.tar.gz [--size 224]
 """
 from __future__ import annotations
 
