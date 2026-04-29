@@ -724,7 +724,20 @@ html[data-theme="dark"] .overview-link-card span {
 .installation-path-cta:hover {
   transform: translateY(-1px);
   text-decoration: none !important;
-  box-shadow: 0 10px 20px rgba(16, 36, 58, 0.1);
+  color: var(--installation-path-cta-text);
+  border-color: var(--installation-path-cta-border);
+  box-shadow:
+    0 10px 20px rgba(16, 36, 58, 0.1),
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 0 24px var(--installation-path-cta-shadow);
+}
+
+.installation-path-cta:hover .installation-path-cta-copy strong {
+  color: var(--installation-path-cta-text);
+}
+
+.installation-path-cta:hover .installation-path-cta-copy span {
+  color: rgba(243, 248, 255, 0.92);
 }
 
 .installation-path-cta-devkit {
@@ -732,6 +745,7 @@ html[data-theme="dark"] .overview-link-card span {
   --installation-path-cta-bg: #12355c;
   --installation-path-cta-border: rgba(29, 79, 134, 0.9);
   --installation-path-cta-text: #f3f8ff;
+  --installation-path-cta-shadow: rgba(89, 152, 221, 0.34);
 }
 
 .installation-path-cta-sdk {
@@ -739,6 +753,7 @@ html[data-theme="dark"] .overview-link-card span {
   --installation-path-cta-bg: #124924;
   --installation-path-cta-border: rgba(27, 106, 54, 0.9);
   --installation-path-cta-text: #f3fff6;
+  --installation-path-cta-shadow: rgba(42, 156, 79, 0.34);
 }
 
 .installation-workflow-card {
@@ -1018,7 +1033,20 @@ html[data-theme="dark"] .installation-path-cta-copy span {
 }
 
 html[data-theme="dark"] .installation-path-cta:hover {
-  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.24);
+  color: var(--installation-path-cta-text);
+  border-color: var(--installation-path-cta-border);
+  box-shadow:
+    0 10px 20px rgba(0, 0, 0, 0.24),
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 24px var(--installation-path-cta-shadow);
+}
+
+html[data-theme="dark"] .installation-path-cta:hover .installation-path-cta-copy strong {
+  color: var(--installation-path-cta-text);
+}
+
+html[data-theme="dark"] .installation-path-cta:hover .installation-path-cta-copy span {
+  color: rgba(243, 248, 255, 0.9);
 }
 
 html[data-theme="dark"] .installation-path-cta-arrow {
@@ -1030,6 +1058,7 @@ html[data-theme="dark"] .installation-path-cta-devkit {
   --installation-path-cta-bg: #1a456f;
   --installation-path-cta-border: rgba(110, 168, 254, 0.45);
   --installation-path-cta-text: #f3f8ff;
+  --installation-path-cta-shadow: rgba(110, 168, 254, 0.34);
 }
 
 html[data-theme="dark"] .installation-path-cta-sdk {
@@ -1037,6 +1066,7 @@ html[data-theme="dark"] .installation-path-cta-sdk {
   --installation-path-cta-bg: #16512f;
   --installation-path-cta-border: rgba(134, 227, 156, 0.42);
   --installation-path-cta-text: #f3fff6;
+  --installation-path-cta-shadow: rgba(134, 227, 156, 0.32);
 }
 
 html[data-theme="dark"] .installation-start-card {
