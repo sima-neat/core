@@ -3,6 +3,7 @@ import Link from "@docusaurus/Link";
 import useDocusaurusContext from "@docusaurus/useDocusaurusContext";
 import clsx from "clsx";
 import {liteClient as algoliasearch} from "algoliasearch/lite";
+import {trackDocsEvent} from "@site/src/lib/analytics";
 import styles from "./styles.module.css";
 
 const MAX_RESULTS = 24;
@@ -91,6 +92,7 @@ export default function SearchBar() {
   const [activeGroup, setActiveGroup] = useState("");
   const wrapperRef = useRef(null);
   const inputRef = useRef(null);
+  const lastTrackedSearchRef = useRef("");
 
   useEffect(() => {
     if (!open) return undefined;
@@ -106,7 +108,7 @@ export default function SearchBar() {
   useEffect(() => {
     function onKeyDown(event) {
       const isFindShortcut =
-        event.key.toLowerCase() === "f" && (event.metaKey || event.ctrlKey) && !event.altKey;
+        event.key.toLowerCase() === "k" && (event.metaKey || event.ctrlKey) && !event.altKey;
       if (!isFindShortcut) return;
 
       const target = event.target;
@@ -154,6 +156,14 @@ export default function SearchBar() {
         if (cancelled) return;
         const found = response.results?.[0]?.hits || [];
         setHits(found);
+        if (trimmed.length >= 2 && lastTrackedSearchRef.current !== trimmed) {
+          lastTrackedSearchRef.current = trimmed;
+          trackDocsEvent("search", {
+            search_term: trimmed,
+            search_location: "navbar",
+            result_count: found.length,
+          });
+        }
         setActiveGroup((prev) => {
           if (!found.length) return "";
           const available = new Set(found.map((h) => sectionFromUrl(h.url || "")));
@@ -263,7 +273,17 @@ export default function SearchBar() {
                       <Link
                         to={hitRouteWithQuery(hit.url, query)}
                         className={styles.resultLink}
-                        onClick={() => setOpen(false)}
+                        onClick={() => {
+                          const rank = activeHits.findIndex((item) => item.objectID === hit.objectID) + 1;
+                          trackDocsEvent("docs_search_result_click", {
+                            search_term: query,
+                            search_location: "navbar",
+                            result_rank: rank,
+                            result_section: sectionFromUrl(hit.url || ""),
+                            result_url: hitRoute(hit.url),
+                          });
+                          setOpen(false);
+                        }}
                       >
                         <div
                           className={styles.resultTitle}

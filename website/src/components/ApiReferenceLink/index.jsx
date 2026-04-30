@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import {trackDocsEvent} from '@site/src/lib/analytics';
 import styles from './styles.module.css';
 
 const LANG_PREF_KEY = 'neat-docs-language';
@@ -41,10 +42,9 @@ function resolvePythonHref(href) {
   return `/reference/pythonapi/modules/pyneat/${klass}`;
 }
 
-function resolveApiHref(href) {
+function resolveApiHref(href, preferredLang = 'cpp') {
   if (typeof href !== 'string') return href;
-  const pref = getPreferredLang();
-  const segment = pref === 'py' ? 'pythonapi' : 'cppapi';
+  const segment = preferredLang === 'py' ? 'pythonapi' : 'cppapi';
   const resolved = href
     .replace('/reference/%7Blsa%7D/', '/reference/{lsa}/')
     .replace('/reference/{lsa}/', `/reference/${segment}/`);
@@ -69,16 +69,20 @@ export default function ApiReferenceLink(props) {
   const [open, setOpen] = useState(false);
   const [iframeKey, setIframeKey] = useState(0);
   const [loading, setLoading] = useState(false);
-
-  const [langTick, setLangTick] = useState(0);
+  const [preferredLang, setPreferredLang] = useState('cpp');
 
   useEffect(() => {
-    const handler = () => setLangTick((v) => v + 1);
+    const handler = () => setPreferredLang(getPreferredLang());
+    handler();
     window.addEventListener('neat:langchange', handler);
-    return () => window.removeEventListener('neat:langchange', handler);
+    window.addEventListener('storage', handler);
+    return () => {
+      window.removeEventListener('neat:langchange', handler);
+      window.removeEventListener('storage', handler);
+    };
   }, []);
 
-  const resolvedHref = useMemo(() => resolveApiHref(href), [href, langTick]);
+  const resolvedHref = useMemo(() => resolveApiHref(href, preferredLang), [href, preferredLang]);
 
   const title = useMemo(() => {
     if (typeof children === 'string') return children;
@@ -151,6 +155,11 @@ export default function ApiReferenceLink(props) {
   const handleClick = (event) => {
     if (onClick) onClick(event);
     if (event.defaultPrevented) return;
+    trackDocsEvent('api_reference_view', {
+      language: resolvedHref.includes('/reference/pythonapi/') ? 'python' : 'cpp',
+      link_url: resolvedHref,
+      source: 'inline_preview',
+    });
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     setOpen(true);

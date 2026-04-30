@@ -1,15 +1,42 @@
 ---
 title: Neat Framework
-description: Install or update the SiMa Neat framework on DevKit or inside the Neat eLxr SDK
+description: Install or update the SiMa Neat Framework on DevKit or inside the Neat SDK
 sidebar_position: 3
 ---
 
-Use this page to install or update the SiMa Neat framework/runtime in either eLxr SDK or DevKit. The installation procedure is the same in both environments, except that on the DevKit we recommend installing under `/media/nvme` to avoid filling the root file system:
+Use this page to install or update the SiMa Neat Framework/runtime in either the Neat SDK or directly on a DevKit.
 
-`/media/nvme` exists on the DevKit. In the eLxr SDK container, use a container-local path such as `$HOME/neat`.
+The Neat Framework is installed independently from the Neat SDK. This lets you update the framework/runtime without updating the SDK container.
+
+## Choose Where to Install
+
+Install from the environment where you plan to build or run Neat applications:
+
+| Environment | Use this when |
+| --- | --- |
+| Neat SDK with DevKit Sync | You want the SDK build environment and paired DevKit runtime kept in sync automatically. |
+| Neat SDK without DevKit Sync | You only need to build in the SDK container and will transfer binaries to a DevKit manually. |
+| DevKit | You want to install or update the runtime directly on the device. |
+
+:::note DevKit Sync keeps the runtime aligned
+When you install from inside a Neat SDK container that has been paired with a DevKit through DevKit Sync, the installer also installs the Neat Framework on the paired DevKit. This keeps the SDK build environment and the DevKit runtime on the same Neat core library version.
+:::
+
+## Prerequisites
+
+Install `sima-cli` in the environment where you plan to install Neat. Use the [official guide](https://docs.sima.ai/pages/sima_cli/main.html).
+
+Before you begin:
+
+- Make sure your Modalix DevKit is connected to the Internet.
+- We recommend creating an account at [developer.sima.ai](https://developer.sima.ai) to access assets such as precompiled models for testing.
+
+## Prepare an Install Directory
+
+On the DevKit, install under `/media/nvme` to avoid filling the root file system. In the Neat SDK container, use a container-local path such as `$HOME/neat`.
 
 <CodeTabs>
-<CodeTab label="Neat eLxr SDK" lang="bash">
+<CodeTab label="Neat SDK" lang="bash">
 
 ```bash
 cd $HOME && mkdir -p neat && cd neat
@@ -26,18 +53,9 @@ cd /media/nvme && mkdir -p neat && cd neat
 </CodeTab>
 </CodeTabs>
 
-## Prerequisite: sima-cli
+## Install the Latest Stable Build
 
-Install `sima-cli` in the environment where you plan to install Neat.
-
-Before you begin:
-
-- Make sure your Modalix DevKit is connected to the Internet.
-- We recommend creating an account at [developer.sima.ai](https://developer.sima.ai) to access assets such as precompiled models for testing.
-
-Install `sima-cli` using the [official guide](https://docs.sima.ai/pages/sima_cli/main.html). After `sima-cli` is ready, choose one of the Neat installation paths below.
-
-## Latest stable build
+Use this option for the latest stable build from the `main` branch:
 
 ```bash
 wget -O /tmp/install-neat.sh https://tools.sima-neat.com/install-neat.sh && \
@@ -46,7 +64,7 @@ wget -O /tmp/install-neat.sh https://tools.sima-neat.com/install-neat.sh && \
 
 You can optionally install extras, including prebuilt tutorials, source-code tutorials, and tests.
 
-## Selected branch or release
+## Install a Selected Branch or Release
 
 Use this option to try the latest automated build from any branch or release. This method prompts you to select artifacts from any available branch or release.
 
@@ -55,20 +73,20 @@ wget -O /tmp/install-neat.sh https://tools.sima-neat.com/install-neat.sh && \
   bash /tmp/install-neat.sh
 ```
 
-If you prefer building from source, follow the [Build](../build.md) guide.
+## After Installation
 
-On the DevKit, this installation also provisions a PyNeat virtual environment at `~/pyneat`.
+On the DevKit, installation also provisions a PyNeat virtual environment at `~/pyneat`:
 
 ```bash
 source ~/pyneat/bin/activate
 ```
 
-If you run the installer from inside the Neat eLxr SDK container, PyNeat runtime installation still targets the paired DevKit environment. Neat is installed into a virtual environment under `~/pyneat` on the DevKit.
+If you run the installer from inside a Neat SDK container paired with DevKit Sync, the PyNeat runtime installation targets the paired DevKit environment. Neat is installed into a virtual environment under `~/pyneat` on the DevKit.
 
-## Notes for SDK users
+If you prefer building from source, follow the [Build](../build.md) guide.
 
-For SDK environment setup and DevKit Sync onboarding, see [Neat eLxr SDK](./neat-elxr-sdk.mdx).
+For SDK environment setup and DevKit Sync onboarding, see [Neat SDK](./neat-elxr-sdk.mdx).
 
 ## Next step
 
-Continue with [Hello SiMa](../minimal_example.md) to validate your setup with a minimal app.
+Continue with [Hello Neat!](../minimal_example.md) to validate your setup with a minimal app.

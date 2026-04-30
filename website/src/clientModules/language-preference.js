@@ -1,4 +1,5 @@
 import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
+import {trackDocsEvent} from "@site/src/lib/analytics";
 
 const PREF_KEY = "neat-docs-language";
 
@@ -34,7 +35,12 @@ const initLanguageSelect = () => {
   syncLanguageSelect(getPreferredLang());
 
   select.addEventListener("change", () => {
-    setPreferredLang(select.value);
+    const lang = normalizeLang(select.value);
+    setPreferredLang(lang);
+    trackDocsEvent("language_tab_select", {
+      language: lang,
+      source: "navbar",
+    });
   });
 
   window.addEventListener("neat:langchange", (event) => {

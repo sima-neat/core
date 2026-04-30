@@ -12,6 +12,22 @@ without breaking its module and runtime contracts.
 
 ---
 
+## Framework vs environment
+
+The word "Neat" is used for two related but separate concerns:
+
+- **Neat Framework:** the C++/Python library and runtime in this repository. It loads model
+  packs, composes pipelines, validates contracts, runs on Modalix hardware, and exposes the
+  public API.
+- **Neat SDK / environment:** the containerized development workflow around the framework,
+  including DevKit Sync, shared workspaces, and agent tooling.
+
+When changing this repository, optimize for framework properties that support both humans and
+agents: explicit APIs, deterministic behavior, structured diagnostics, strict validation, and
+stable public contracts.
+
+---
+
 ## What this library is for
 
 ### Primary users
@@ -48,6 +64,84 @@ Nodes/NodeGroups  ->  GStreamer fragments  ->  caps negotiation  ->  runtime (Ru
     +-----------------------------------------------------------+
                                 Sample / Tensor
 ```
+
+---
+
+## Core concepts
+
+The framework is intentionally organized around a small set of concepts. Most user code touches
+only `Model`, `Session`, `Run`, `Tensor`, and `Sample`; lower-level contributors also work with
+`Node`, `NodeGroup`, MPK parsing, and Graphs.
+
+| Concept | Role |
+| --- | --- |
+| MPK | A sealed model artifact (`.tar.gz`, `.mpk`, etc.) containing the manifest, plugin-private configs, model binaries, and kernel artifacts. |
+| `Model` | The loaded MPK. It parses the manifest, runs route planning, exposes model stages, and provides simple `run(...)` / `session(...)` entry points. |
+| `Tensor` | Typed numeric payload with dtype, shape, layout, storage, device, and semantic metadata. |
+| `Sample` | Runtime/media envelope around tensors, tensor lists, or bundles. Check `Sample::kind` before reading fields. |
+| `Node` | Atomic pipeline stage that emits a deterministic GStreamer fragment and owned element names. |
+| `NodeGroup` | Reusable recipe that expands to multiple Nodes, such as decoded RTSP input or model stages. |
+| `Session` | Assembly and validation boundary. Nodes and NodeGroups become a negotiated, buildable pipeline. |
+| `Run` | Live pipeline handle returned by `Session::build(...)`; owns push/pull/runtime lifecycle. |
+| Graph | Use builder graph for DAG composition inside one pipeline; use runtime graph for coordinating stages/runs across pipelines. |
+
+Read the relationship left to right:
+
+```text
+MPK on disk -> Model -> NodeGroups/Nodes -> Session -> Run
+                                           |
+                                           v
+                                  Tensor/Sample flow
+```
+
+`Model` is the beginner-facing entry point, but it is not a separate execution engine. It resolves
+to model Nodes/NodeGroups that can be added to a `Session`. `Session` is the central assembly
+concept; `Run` is the live object after build.
+
+---
+
+## Design principles for contributors
+
+These are the load-bearing architecture principles behind the framework. Use them when deciding
+between implementation options.
+
+- **Determinism wins.** Keep element names, generated pipeline strings, serialized pipeline data,
+  report fields, and tests reproducible. Diagnostics and agent loops depend on stable identifiers.
+- **Debuggability is first-class.** Failures should produce structured data, not only strings:
+  `SessionReport.error_code`, `repro_note`, bus messages, and replayable backend pipelines.
+- **No silent fallback.** Do not hide model-input bugs or hardware/runtime failures by quietly
+  converting formats, changing graph families, falling back to CPU, or swallowing plugin errors.
+- **Validate before run.** Prefer structural, caps, shape, and contract validation before runtime
+  threads start or hardware resources are acquired.
+- **The MPK manifest is the model source of truth.** Core routing, dtype, shape, quantization, and
+  stage decisions must come from `mpk.json` / `*_mpk.json`. Per-stage JSON files are
+  plugin-private.
+- **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
+  Prefer additive changes and deprecation paths over breaking signatures.
+- **Concurrency must be bounded and observable.** Streaming-thread work should be lightweight;
+  probe-side diagnostics need atomics or equivalent thread-safe handling; teardown must not hang.
+
+---
+
+## Model execution path
+
+For model-backed pipelines, the high-level path is:
+
+```text
+input Sample/Tensor
+  -> optional preprocessing / format normalization
+  -> MLA inference stages selected from MPK manifest
+  -> optional postprocessing / box decode
+  -> output Sample/Tensor
+```
+
+The user-visible `Model` contract is intentionally friendlier than the MLA hardware contract. The
+MLA may require INT8/BF16 and tessellated layouts, while user code generally works with FP32
+and normal tensor layouts. The framework bridges that gap with manifest-driven adapter stages.
+
+Preprocessing and postprocessing are explicit framework stages/options. A format mismatch, missing
+required preprocessing metadata, unavailable MLA dispatcher, invalid MPK, or caps negotiation
+failure should surface as an actionable structured error rather than a hidden runtime correction.
 
 ---
 

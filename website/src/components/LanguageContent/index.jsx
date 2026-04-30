@@ -17,7 +17,7 @@ function getPreferredLang() {
 
 export default function LanguageContent({lang, children}) {
   const targetLang = useMemo(() => normalizeLang(lang), [lang]);
-  const [activeLang, setActiveLang] = useState(getPreferredLang);
+  const [activeLang, setActiveLang] = useState('cpp');
 
   useEffect(() => {
     const sync = () => setActiveLang(getPreferredLang());

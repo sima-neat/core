@@ -465,7 +465,15 @@ def discover_modules(tutorials_dir: pathlib.Path) -> List[pathlib.Path]:
     items = [
         p
         for p in tutorials_dir.iterdir()
-        if p.is_dir() and re.match(r"^\d{3}_.+", p.name)
+        if (
+            p.is_dir()
+            and re.match(r"^\d{3}_.+", p.name)
+            and (
+                (p / "README.md").exists()
+                or next(p.glob("*.cpp"), None)
+                or next(p.glob("*.py"), None)
+            )
+        )
     ]
     return sorted(items, key=lambda p: p.name)
 

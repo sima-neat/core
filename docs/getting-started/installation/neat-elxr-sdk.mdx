@@ -1,12 +1,12 @@
 ---
-title: Neat eLxr SDK
-description: Set up the Neat eLxr SDK for fast, agent-ready Neat development
+title: Neat SDK
+description: Set up the Neat SDK for fast, agent-ready Neat apps development
 sidebar_position: 2
 ---
 
-Use the Neat eLxr SDK if you want a fast, agent-ready environment for building Neat applications.
+Use the Neat SDK if you want a fast, agent-ready environment for building Neat applications.
 
-The Neat eLxr SDK is built on top of the [open source SiMa eLxr SDK](https://github.com/SiMa-ai/swsoc-simaai-elxr-doc), with workflow-focused additions:
+The Neat SDK is built on top of the [open source SiMa eLxr SDK](https://github.com/SiMa-ai/swsoc-simaai-elxr-doc), with workflow-focused additions:
 
 - Supports both x86 and arm64 container images, including native use on Mac without Rosetta overhead.
 - Supports the DevKit Sync feature so humans and coding agents can cross-compile and run DevKit binaries from the SDK shell without switching context.
@@ -14,35 +14,42 @@ The Neat eLxr SDK is built on top of the [open source SiMa eLxr SDK](https://git
 
 This setup makes it possible to run end-to-end agentic workflows from a single prompt, including build-and-run loops against a paired DevKit.
 
-The Neat eLxr SDK source code is available on GitHub at [sima-neat/elxr-sdk](https://github.com/sima-neat/elxr-sdk).
+The Neat SDK source code is available on GitHub at [sima-neat/sdk](https://github.com/sima-neat/sdk).
 
 ## Supported platforms
 
-- Ubuntu 22.04 and 24.04 (through Docker Engine)
-- macOS 15.5 or above (through [Colima](https://github.com/abiosoft/colima))
-- Windows 11 (through [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and Docker Engine)
+| Platform | Arch | Neat SDK | Model SDK Extension |
+| --- | --- | --- | --- |
+| Ubuntu 22.04 and 24.04 (through Docker Engine) | x86_64 | ✅ | ✅ |
+| Windows 11 (through [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and Docker Engine) | x86_64 | ✅ | ✅ |
+| macOS 15.5 or above (through [Colima](https://github.com/abiosoft/colima)) | aarch64 | ✅ | ❌ |
 
 ## Prerequisites
 
-- Your host machine and DevKit must be on the same network and must allow NFS setup.
-- You should know your DevKit IP address.
+- Install `sima-cli` on your host machine using the [official install guide](https://docs.sima.ai/pages/sima_cli/main.html).
+- Complete any host-specific setup for your platform:
+  - [Windows Host Notes](../../reference/elxr-sdk-host-setup/windows)
+  - [macOS Host Notes](../../reference/elxr-sdk-host-setup/macos)
 
-## Install and Setup
+For DevKit Sync, you also need:
 
-1. Install the Neat eLxr SDK:
+- A Modalix DevKit running the eLxr 2.0.0 release.
+- Your host machine and DevKit on the same network with NFS traffic allowed.
+- Your DevKit IP address.
+
+## Install the Neat SDK
 
 ```bash
 sima-cli install ghcr:sima-neat/elxr
 ```
 
-:::note Host setup notes
-Host-specific setup details are documented in Reference:
+## Set Up the SDK
 
-- [Windows Host Notes](../../reference/elxr-sdk-host-setup/windows)
-- [macOS Host Notes](../../reference/elxr-sdk-host-setup/macos)
-:::
+After installation, run one of the setup flows below.
 
-2. Set up the SDK and pair it with your DevKit:
+### Pair with a DevKit
+
+Use this flow when the DevKit is reachable from the SDK host over the same network:
 
 ```bash
 sima-cli sdk setup --devkit {devkit-ip}
@@ -52,7 +59,7 @@ During setup:
 
 - Select container `ghcr.io-sima-neat-elxr-latest` if multiple SDK containers are present.
 - Enter host admin password when prompted (NFS server setup on host).
-- Enter DevKit `sima` password (`edgeai`) when prompted (NFS client setup on DevKit).
+- Enter DevKit user `sima` password (`edgeai`) when prompted (NFS client setup on DevKit).
 
 When setup succeeds, you should see output similar to:
 
@@ -74,22 +81,73 @@ __SIMA_DEVKIT_BOOTSTRAP_STATUS=sourced_no_dk
 ✅ All selected containers started successfully!
 ```
 
-## File sharing model (Host, Container, DevKit)
+### Set up without DevKit pairing
 
-The SDK setup workflow connects three environments:
+Use this flow when the DevKit is not on the same network as the SDK host:
+
+```bash
+sima-cli sdk setup
+```
+
+You can still build binaries in the SDK container, but you must manually transfer binaries to the DevKit for testing. You are also responsible for ensuring the DevKit runs the same version of the Neat core library as the SDK.
+
+## Model SDK Extension
+
+On x86_64 platforms, including Ubuntu and Windows through WSL, Neat SDK installation prompts you to optionally install the Model SDK Extension.
+
+The Model SDK Extension adds tools for quantizing and compiling ONNX models so they can run on SiMa's MLA (Machine Learning Accelerator). To install it, opt in when prompted during Neat SDK installation.
+
+Example installation prompt:
+
+```text
+Setting up build environment for modalix...
+Aliases loaded in this session.
+✅ sima-cli installed for user 'sima' in 'ghcr.io-sima-neat-elxr-latest'.
+╭───────────────────────────────────────────────── Model SDK Extension ─────────────────────────────────────────────────╮
+│ This SDK supports the installable Model SDK Extension.                                                                │
+│                                                                                                                       │
+│ The Model SDK Extension lets you quantize and compile models so they can run on SiMa hardware accelerated.            │
+│ It will be installed on your host under $HOME/sima-sdk-extensions and mounted into this container at /sdk-extensions. │
+│ Depending on network conditions, installation may take up to 15 minutes.                                              │
+│                                                                                                                       │
+│                                                                                                                       │
+│ If you decide to install it later, run this from within the SDK container shell:                                      │
+│ sima-cli install sdk-extensions/model                                                                                 │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+Install the Model SDK Extension now? (Y/n): y
+ℹ️  Logging in to sima-cli before installing the Model SDK Extension...
+```
+
+After the extension is installed, activate it from inside the Neat SDK shell:
+
+```bash
+activate-model-sdk
+```
+
+To return to the default Neat SDK environment, run:
+
+```bash
+deactivate-model-sdk
+```
+
+The Model SDK Extension is available on x86_64 platforms for now. Arm64 support, including macOS, will be added later.
+
+## File Sharing with DevKit Sync
+
+The DevKit Sync setup connects three environments:
 
 1. Host
-2. Container
+2. SDK Container
 3. DevKit
 
-`sima-cli sdk setup` configures NFS so your host workspace is shared across all three:
+`sima-cli sdk setup --devkit {devkit-ip}` configures NFS so your host workspace is shared across all three:
 
 - Host local workspace folder is exported through host NFS.
 - That folder is mounted into the SDK container as `/workspace`.
 - The same shared content appears on DevKit as `/workspace` through NFS.
-- Mounted folder names such as `/workspace` is default and can be changed during the SDK setup process.
+- The mounted folder name defaults to `/workspace` and can be changed during SDK setup.
 
-![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.jpg)
+![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.svg)
 
 The diagram above shows how the same workspace is exposed across the host, SDK container, and DevKit through NFS-backed volume mapping.
 
@@ -99,9 +157,9 @@ This setup provides a seamless workflow for build artifacts:
 - agents can access interim files (logs, outputs, traces) generated while the app runs on DevKit
 - humans and agents can inspect the same files from one workspace context
 
-## `dk` helper (`devkit-run`)
+## Run on the DevKit with `dk`
 
-The SDK includes the `dk` helper (also known as `devkit-run`) to run ARM64 executables from within the SDK shell.
+The SDK includes the `dk` helper (also known as `devkit-run`) to run ARM64 executables on the DevKit from within the SDK shell.
 
 When you invoke `dk`, the SDK offloads execution to the paired DevKit and handles path translation and normalization so file and path arguments passed from the SDK side resolve correctly on the DevKit side.
 
@@ -127,7 +185,7 @@ For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKi
 `dk` (alias for `devkit-run`) is a shell function defined in `~/devkit-sync.rc` inside the SDK container. The SDK shell loads this through `~/.bashrc`, so it is available in interactive SDK sessions.
 :::
 
-## VS Code workflow
+## VS Code Workflow
 
 1. Connect VS Code to `ghcr.io-sima-neat-elxr-latest` with [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers). Install Dev Containers extension if needed.
 2. In the container terminal, run the following command once so the SDK can retrieve assets such as prebuilt models:
@@ -142,12 +200,12 @@ sima-cli login
 You can then use a prompt such as:
 
 ```text
-Build a C++ app doing image classification with RESNET50 using SiMa Neat framework, run it on the devkit until you get the result.
+Build a C++ app doing image classification with RESNET50 using SiMa Neat Framework, run it on the devkit until you get the result.
 ```
 
 ## SDK upgrade
 
-To upgrade Neat eLxr SDK to the latest version, rerun:
+To upgrade Neat SDK to the latest version, rerun:
 
 ```bash
 sima-cli install ghcr:sima-neat/elxr

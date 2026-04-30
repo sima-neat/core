@@ -426,15 +426,15 @@ install(
 set(CPACK_PACKAGE_NAME "sima-neat")
 set(CPACK_PACKAGE_VENDOR "SiMa.ai")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-    "SiMa NEAT core static library and headers")
+    "SiMa Neat core static library and headers")
 
 set(CPACK_COMPONENTS_ALL core extras)
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 
 set(CPACK_COMPONENT_CORE_DESCRIPTION
-    "SiMa NEAT core library and headers")
+    "SiMa Neat core library and headers")
 set(CPACK_COMPONENT_EXTRAS_DESCRIPTION
-    "SiMa NEAT samples, tutorials, and tests")
+    "SiMa Neat samples, tutorials, and tests")
 
 set(CPACK_PACKAGE_VERSION "${SIMANEAT_VERSION}")
 

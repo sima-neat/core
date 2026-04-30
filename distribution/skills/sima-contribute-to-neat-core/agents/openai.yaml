@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contribute To Neat Core"
+  short_description: "Guidance for safe SiMa Neat core changes"
+  default_prompt: "Use this skill when modifying the SiMa Neat core repository."
