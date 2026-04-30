@@ -3,10 +3,26 @@ import ExecutionEnvironment from "@docusaurus/ExecutionEnvironment";
 const CONSENT_KEY = "neat-docs-cookie-consent";
 const CONSENT_VERSION = 1;
 const ANALYTICS_EVENT = "neat:analytics-consent";
+const TRACK_EVENT = "neat:analytics-track";
+const INTERNAL_HOSTS = new Set([
+  "docs.sima-neat.com",
+  "docs-preview.sima-neat.com",
+  "localhost",
+  "127.0.0.1",
+]);
+const DOWNLOAD_EXTENSIONS = new Set([
+  "deb",
+  "gz",
+  "tgz",
+  "whl",
+  "zip",
+  "pdf",
+]);
 
 let gtagLoaded = false;
 let initialPageViewSent = false;
 let lastTrackedLocation = "";
+let lastDerivedLocation = "";
 
 const deniedConsent = {
   analytics_storage: "denied",
@@ -21,6 +37,134 @@ const analyticsGrantedConsent = {
 };
 
 const getAnalyticsConfig = () => window.__NEAT_DOCS_ANALYTICS__ || {};
+
+const getCurrentPath = () => `${window.location.pathname}${window.location.search}`;
+
+const cleanString = (value, maxLength = 160) => {
+  if (value === undefined || value === null) return undefined;
+  const normalized = String(value).replace(/\s+/g, " ").trim();
+  if (!normalized) return undefined;
+  return normalized.slice(0, maxLength);
+};
+
+const sanitizeSearchTerm = (value) => {
+  const term = cleanString(value, 80);
+  if (!term) return undefined;
+  if (/@/.test(term)) return "[redacted]";
+  return term;
+};
+
+const sanitizeUrl = (value) => {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value, window.location.href);
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    return url.toString().slice(0, 240);
+  } catch {
+    return cleanString(value, 240);
+  }
+};
+
+const docSectionFromPath = (pathname) => {
+  const parts = pathname.split("/").filter(Boolean);
+  if (pathname.startsWith("/reference/cppapi")) return "api-reference-cpp";
+  if (pathname.startsWith("/reference/pythonapi")) return "api-reference-python";
+  if (parts[0] === "getting-started") return "getting-started";
+  if (parts[0] === "how-to") return "how-to";
+  if (parts[0] === "tutorials") return "tutorials";
+  if (parts[0] === "reference") return "reference";
+  if (parts[0] === "contribute") return "contribute";
+  return parts[0] || "home";
+};
+
+const getDocContext = () => {
+  const pathname = window.location.pathname;
+  const docId = pathname.replace(/^\/+|\/+$/g, "") || "index";
+  const title = document.title.replace(/\s*\|\s*SiMa Neat\s*$/i, "");
+  return {
+    doc_id: docId,
+    doc_title: cleanString(title, 120),
+    doc_section: docSectionFromPath(pathname),
+    page_path: getCurrentPath(),
+  };
+};
+
+const normalizeParams = (params = {}) => {
+  const normalized = {};
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    if (key === "link_url") {
+      normalized[key] = sanitizeUrl(value);
+    } else if (key === "search_term") {
+      normalized[key] = sanitizeSearchTerm(value);
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      normalized[key] = value;
+    } else {
+      normalized[key] = cleanString(value);
+    }
+  }
+  return normalized;
+};
+
+const trackEvent = (name, params = {}) => {
+  if (!name || !window.gtag || !getStoredConsent()?.analytics) return;
+  window.gtag("event", name, {
+    ...getDocContext(),
+    ...normalizeParams(params),
+  });
+};
+
+const tutorialIdFromPath = (pathname) => {
+  const match = pathname.match(/^\/tutorials\/([^/?#]+)/);
+  return match ? match[1] : "";
+};
+
+const getSessionFlag = (key) => {
+  try {
+    return window.sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const setSessionFlag = (key, value) => {
+  try {
+    window.sessionStorage.setItem(key, value);
+  } catch {
+    // Session storage may be unavailable in strict privacy modes.
+  }
+};
+
+const trackRouteDerivedEvents = () => {
+  const pagePath = getCurrentPath();
+  if (pagePath === lastDerivedLocation) return;
+  lastDerivedLocation = pagePath;
+
+  const pathname = window.location.pathname.replace(/\/$/, "") || "/";
+  if (/^\/reference\/(cppapi|pythonapi)(\/|$)/.test(pathname)) {
+    trackEvent("api_reference_view", {
+      language: pathname.includes("/pythonapi/") ? "python" : "cpp",
+      source: "page_view",
+    });
+  }
+
+  const tutorialId = tutorialIdFromPath(pathname);
+  if (tutorialId) {
+    const key = `neat-docs-tutorial-begin:${tutorialId}`;
+    if (getSessionFlag(key) !== "1") {
+      setSessionFlag(key, "1");
+      trackEvent("tutorial_begin", {tutorial_id: tutorialId});
+    }
+  }
+
+  if (pathname === "/getting-started/installation/neat-framework") {
+    trackEvent("install_page_view", {
+      platform: "neat-framework",
+    });
+  }
+};
 
 const getStoredConsent = () => {
   try {
@@ -66,7 +210,7 @@ const updateGtagConsent = (consent) => {
 
 const trackPageView = () => {
   if (!window.gtag || !getStoredConsent()?.analytics) return;
-  const pagePath = `${window.location.pathname}${window.location.search}`;
+  const pagePath = getCurrentPath();
   if (pagePath === lastTrackedLocation) return;
   lastTrackedLocation = pagePath;
   window.gtag("event", "page_view", {
@@ -74,6 +218,7 @@ const trackPageView = () => {
     page_location: window.location.href,
     page_path: pagePath,
   });
+  trackRouteDerivedEvents();
 };
 
 const loadGtag = () => {
@@ -107,6 +252,130 @@ const applyConsent = (consent) => {
   if (consent.analytics) {
     loadGtag();
   }
+};
+
+const closestLink = (target) => {
+  if (!target?.closest) return null;
+  return target.closest("a[href]");
+};
+
+const linkText = (link) => cleanString(link?.textContent || link?.getAttribute("aria-label"), 120);
+
+const linkUrl = (link) => {
+  if (!link) return "";
+  try {
+    return new URL(link.getAttribute("href"), window.location.href).toString();
+  } catch {
+    return link.getAttribute("href") || "";
+  }
+};
+
+const isInternalUrl = (urlValue) => {
+  try {
+    const url = new URL(urlValue, window.location.href);
+    return url.origin === window.location.origin || INTERNAL_HOSTS.has(url.hostname);
+  } catch {
+    return true;
+  }
+};
+
+const isDownloadUrl = (urlValue) => {
+  try {
+    const url = new URL(urlValue, window.location.href);
+    const ext = url.pathname.split(".").pop()?.toLowerCase();
+    return DOWNLOAD_EXTENSIONS.has(ext || "");
+  } catch {
+    return false;
+  }
+};
+
+const platformFromText = (value) => {
+  const text = String(value || "").toLowerCase();
+  if (text.includes("devkit")) return "devkit";
+  if (text.includes("elxr") || text.includes("sdk")) return "elxr_sdk";
+  return undefined;
+};
+
+const commandIdFromCode = (value) => {
+  const code = String(value || "").toLowerCase();
+  if (code.includes("tools.sima-neat.com/install-neat.sh")) return "install_neat_framework";
+  if (code.includes("sima-cli install ghcr:sima-neat/elxr")) return "install_elxr_sdk";
+  if (code.includes("sima-cli install sdk")) return "install_sdk";
+  if (code.includes("sima-cli install")) return "sima_cli_install";
+  return undefined;
+};
+
+const languageFromCodeElement = (element) => {
+  const className = element?.className || "";
+  const match = String(className).match(/language-([a-z0-9_+-]+)/i);
+  return match ? match[1] : undefined;
+};
+
+const codeTextNearButton = (button) => {
+  const container = button.closest("[class*='codeBlockContainer'], .theme-code-block, div");
+  const code = container?.querySelector?.("pre code") || container?.querySelector?.("code");
+  return {
+    codeText: code?.textContent || "",
+    language: languageFromCodeElement(code || container),
+  };
+};
+
+const isCopyButton = (button) => {
+  const label = `${button.getAttribute("aria-label") || ""} ${button.title || ""} ${
+    button.textContent || ""
+  }`.toLowerCase();
+  return label.includes("copy");
+};
+
+const bindInteractionTracking = () => {
+  if (document.body.dataset.analyticsInteractionsBound === "1") return;
+  document.body.dataset.analyticsInteractionsBound = "1";
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      const button = event.target?.closest?.("button");
+      if (button && isCopyButton(button)) {
+        const {codeText, language} = codeTextNearButton(button);
+        if (!codeText.trim()) return;
+        const commandId = commandIdFromCode(codeText);
+        window.setTimeout(() => {
+          const params = {
+            language,
+            command_id: commandId,
+            platform: platformFromText(codeText),
+          };
+          trackEvent("copy_code", params);
+          if (commandId) {
+            trackEvent("install_command_copy", params);
+          }
+        }, 0);
+      }
+
+      const link = closestLink(event.target);
+      if (!link) return;
+      const href = linkUrl(link);
+      const text = linkText(link);
+      const params = {
+        link_url: href,
+        link_text: text,
+        platform: platformFromText(`${text} ${href}`),
+      };
+
+      if (/^https?:\/\/github\.com\//i.test(href)) {
+        trackEvent("github_link_click", params);
+      }
+
+      if (/install/i.test(`${text} ${href}`)) {
+        trackEvent("install_cta_click", params);
+      }
+
+      if (!isInternalUrl(href) && isDownloadUrl(href)) {
+        trackEvent("external_download_click", params);
+      }
+    },
+    true,
+  );
 };
 
 const closeConsentUi = () => {
@@ -209,6 +478,12 @@ const bindPreferenceLinks = () => {
 
 const initConsent = () => {
   ensureGtag();
+  window.neatDocsTrack = trackEvent;
+  window.addEventListener(TRACK_EVENT, (event) => {
+    const detail = event?.detail || {};
+    trackEvent(detail.name, detail.params);
+  });
+  bindInteractionTracking();
   bindPreferenceLinks();
 
   const stored = getStoredConsent();
