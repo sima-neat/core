@@ -2,7 +2,7 @@
 """Run a Model inside a pyneat.graph via StageModelExecutorOptions.
 
 Usage:
-  python3 graph_model_hybrid.py --mpk /path/to/yolo_v8s.tar.gz
+  python3 embed_model_inside_graph.py --mpk /path/to/yolo_v8s.tar.gz
 """
 from __future__ import annotations
 

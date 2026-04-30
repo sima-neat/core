@@ -2,7 +2,7 @@
 """Build a two-node pyneat.graph.Graph and push/pull one tensor Sample.
 
 Usage:
-  python3 graph_basics.py
+  python3 build_a_custom_data_graph.py
 """
 from __future__ import annotations
 

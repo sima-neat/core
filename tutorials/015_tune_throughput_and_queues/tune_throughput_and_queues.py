@@ -2,7 +2,7 @@
 """Tune queue_depth and overflow_policy on RunOptions, then read perf metrics.
 
 Usage:
-  python3 performance_tuning.py [--iters 32] [--queue 4] [--drop {block,latest,incoming}]
+  python3 tune_throughput_and_queues.py [--iters 32] [--queue 4] [--drop {block,latest,incoming}]
 """
 from __future__ import annotations
 

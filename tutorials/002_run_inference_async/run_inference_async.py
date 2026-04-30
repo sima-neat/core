@@ -2,7 +2,7 @@
 """Feed frames to a model asynchronously from a producer thread and pull results.
 
 Usage:
-  python3 async_push_pull.py --mpk /path/to/resnet_50.tar.gz [--n 4] [--image /path/to.jpg]
+  python3 run_inference_async.py --mpk /path/to/resnet_50.tar.gz [--n 4] [--image /path/to.jpg]
 """
 from __future__ import annotations
 

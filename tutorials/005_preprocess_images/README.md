@@ -5,7 +5,7 @@
 | --- | --- |
 | Difficulty | Intermediate |
 | Estimated Read Time | 15-20 minutes |
-| Model | yolo_v8s |
+| Model | resnet_50 |
 | Labels | preprocessing, normalization, image |
 
 ## Concept
@@ -47,20 +47,20 @@ Chapter 001. Chapter 004 for the rest of `ModelOptions`.
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/005_preprocess_images/preprocess_images.py \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz --size 224
+  --mpk /tmp/resnet_50_mpk.tar.gz --size 224
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_005_preprocess_images \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz --size 224
+  --mpk /tmp/resnet_50_mpk.tar.gz --size 224
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_005_preprocess_images
 ./build/tutorials-standalone/tutorial_005_preprocess_images \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz --size 224
+  --mpk /tmp/resnet_50_mpk.tar.gz --size 224
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
