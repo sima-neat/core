@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import {trackDocsEvent} from '@site/src/lib/analytics';
 import styles from './styles.module.css';
 
 const LANG_PREF_KEY = 'neat-docs-language';
@@ -29,6 +30,13 @@ function defaultLabel(lang, fallback) {
   return String(lang || 'Code');
 }
 
+function platformFromLabel(label) {
+  const lower = String(label || '').toLowerCase();
+  if (lower.includes('devkit')) return 'devkit';
+  if (lower.includes('elxr') || lower.includes('sdk')) return 'elxr_sdk';
+  return null;
+}
+
 export function CodeTab({children}) {
   return <>{children}</>;
 }
@@ -51,7 +59,7 @@ export function CodeTabs({children}) {
       .filter(Boolean);
   }, [children]);
 
-  const [activeLang, setActiveLang] = useState(getPreferredLang);
+  const [activeLang, setActiveLang] = useState('cpp');
   const [activeTabId, setActiveTabId] = useState(null);
 
   useEffect(() => {
@@ -97,9 +105,20 @@ export function CodeTabs({children}) {
                 if (isLanguageMode) {
                   setPreferredLang(tab.lang);
                   setActiveLang(tab.lang);
+                  trackDocsEvent('language_tab_select', {
+                    language: tab.lang,
+                    tab_label: tab.label,
+                  });
                   return;
                 }
                 setActiveTabId(tab.id);
+                const platform = platformFromLabel(tab.label);
+                if (platform) {
+                  trackDocsEvent('platform_select', {
+                    platform,
+                    tab_label: tab.label,
+                  });
+                }
               }}>
               {tab.label}
             </button>

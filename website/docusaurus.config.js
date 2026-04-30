@@ -11,6 +11,15 @@ const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
 const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
 const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
 const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
+const docsAnalyticsConfig = {
+  measurementId: docsGaMeasurementId,
+};
+const footerLinks = [
+  { label: "SiMa.ai Neat Framework Documentation", to: "/" },
+  {
+    html: '<button type="button" class="footer__link-item cookie-preferences-link" data-cookie-preferences>Cookie preferences</button>',
+  },
+];
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -28,6 +37,15 @@ const config = {
   favicon: "img/favicon.png",
   organizationName: org,
   projectName: project,
+  headTags: [
+    {
+      tagName: "script",
+      attributes: {},
+      innerHTML: `window.__NEAT_DOCS_ANALYTICS__ = ${JSON.stringify(
+        docsAnalyticsConfig,
+      )};`,
+    },
+  ],
   presets: [
     [
       "classic",
@@ -38,14 +56,6 @@ const config = {
           sidebarPath: require.resolve("./sidebars.js"),
           exclude: ["doxygen/**", "_tmp_test.txt"],
         },
-        ...(docsGaMeasurementId
-          ? {
-              gtag: {
-                trackingID: docsGaMeasurementId,
-                anonymizeIP: true,
-              },
-            }
-          : {}),
         blog: false,
         theme: {
           customCss: require.resolve("./src/css/custom.css"),
@@ -77,9 +87,7 @@ const config = {
     },
     footer: {
       style: "dark",
-      links: [
-        { label: "SiMa.ai Neat Framework Documentation", to: "/" },
-      ],
+      links: footerLinks,
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
     },
     algolia: {
@@ -94,8 +102,10 @@ const config = {
       apiKey: algoliaApiKey,
       indexName: algoliaIndexName,
     },
+    analytics: docsAnalyticsConfig,
   },
   clientModules: [
+    require.resolve("./src/clientModules/analytics-consent.js"),
     require.resolve("./src/clientModules/language-preference.js"),
     require.resolve("./src/clientModules/search-highlight.js"),
   ],
