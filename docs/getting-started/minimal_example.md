@@ -11,16 +11,16 @@ sidebar_position: 3
 This guide uses a minimal example to verify that Neat is installed and runnable, while introducing the core application development and validation workflow.
 
 - a Modalix DevKit
-- the [Neat eLxr SDK](./installation/neat-elxr-sdk.mdx)
+- the [Neat SDK](./installation/neat-elxr-sdk.mdx)
 
-:::note Neat eLxr SDK Prerequisite
+:::note Neat SDK Prerequisite
 To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first:
 
 ```bash
 sima-cli sdk setup --devkit <devkit-ip>
 ```
 
-If SDK/DevKit pairing is not configured, you can still build inside the Neat eLxr SDK, but you must manually transfer the built binary or script to the DevKit and run it there.
+If SDK/DevKit pairing is not configured, you can still build inside the Neat SDK, but you must manually transfer the built binary or script to the DevKit and run it there.
 :::
 
 :::tip About `dk` / `devkit-run`
@@ -97,7 +97,7 @@ Run:
 ./build/sima_neat_hello
 ```
 
-**Neat eLxr SDK**
+**Neat SDK**
 
 ```bash
 dk build/sima_neat_hello
@@ -127,14 +127,14 @@ source ~/pyneat/bin/activate
 python3 hello_neat.py
 ```
 
-**Neat eLxr SDK**
+**Neat SDK**
 
 ```bash
 dk hello_neat.py
 ```
 
 :::note Python Runtime Location
-`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat eLxr SDK container.
+`pyneat` is installed on the DevKit runtime side, even if you run the Neat installer from inside the Neat SDK container.
 
 When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit using the DevKit `pyneat` environment.
 :::

@@ -14,6 +14,76 @@ html[data-theme="dark"] {
   --ifm-color-primary: #6ea8fe;
 }
 
+.build-info-banner {
+  position: relative;
+  z-index: 190;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  max-width: min(940px, calc(100% - 2rem));
+  margin: 0 auto 0.45rem;
+  padding: 0.68rem 1.75rem 0.72rem;
+  color: #f8fbff;
+  gap: 0.62rem;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  letter-spacing: 0;
+}
+
+.build-info-banner__shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 12px 24px rgba(16, 36, 58, 0.18));
+  pointer-events: none;
+}
+
+.build-info-banner > span {
+  position: relative;
+  z-index: 1;
+}
+
+.build-info-banner__label {
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.9;
+}
+
+.build-info-banner__item {
+  color: rgba(248, 251, 255, 0.78);
+  white-space: nowrap;
+}
+
+.build-info-banner__item strong {
+  color: #ffffff;
+  font-weight: 800;
+}
+
+.build-info-banner__link {
+  color: #ffffff;
+  text-decoration-color: rgba(255, 255, 255, 0.42);
+  text-underline-offset: 0.16em;
+}
+
+.build-info-banner__link:hover,
+.build-info-banner__link:focus {
+  color: #ffffff;
+  text-decoration-color: #ffffff;
+}
+
+@media (max-width: 640px) {
+  .build-info-banner {
+    max-width: calc(100% - 1rem);
+    padding: 0.58rem 1.1rem 0.64rem;
+    gap: 0.42rem 0.58rem;
+    font-size: 0.72rem;
+  }
+}
+
 @import "./custom-doxygen2docusaurus.css";
 
 .cookie-preferences-link {

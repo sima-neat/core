@@ -53,7 +53,7 @@ actually does.
   protected `deps` artifacts. Leave it unset for public endpoints.
 
 - `ELXR_SDK_RELEASE_FILE`
-  File that `build.sh` checks to detect whether it is running inside an eLxr SDK
+  File that `build.sh` checks to detect whether it is running inside a Neat SDK
   environment. Override it only if your SDK metadata is not at `/etc/sdk-release`.
 
 - `ELXR_INIT_SCRIPT`

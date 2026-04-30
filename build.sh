@@ -980,7 +980,7 @@ configure_fuzz_toolchain_if_needed() {
 print_build_config() {
   # Emit resolved configuration so build-mode decisions are explicit.
   echo "========================================"
-  echo " SiMa NEAT build configuration"
+  echo " SiMa Neat build configuration"
   echo "========================================"
   echo "Build type     : ${BUILD_TYPE}"
   echo "Build samples  : ${BUILD_SAMPLES}"
@@ -1089,7 +1089,7 @@ build_docs_site() {
   if [[ "${INSTALL_NODE}" == "ON" ]]; then
     echo
     echo "Installing website dependencies..."
-    npm --prefix "${REPO_ROOT}/website" ci
+    npm --prefix "${REPO_ROOT}/website" ci --no-audit --no-fund
   fi
   echo
   echo "Building Docusaurus site..."

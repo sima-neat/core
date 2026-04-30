@@ -92,7 +92,7 @@ If you want to recompile a chapter (to tweak it, or because the shipped binary d
 ./build/tutorials-standalone/tutorial_<chapter_name> --args
 ```
 
-`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed Neat package, invokes CMake for the whole `tutorials/` tree (or a single target), and writes the binaries under `build/tutorials-standalone/`. No flags required for a stock eLxr SDK or on-device apt install.
+`build.sh` auto-detects `SimaNeatConfig.cmake` from the installed Neat package, invokes CMake for the whole `tutorials/` tree (or a single target), and writes the binaries under `build/tutorials-standalone/`. No flags required for a stock Neat SDK or on-device apt install.
 
 ### C++ — integrate Neat into your own project {#compile-a-copy-yourself}
 
@@ -120,6 +120,6 @@ cmake -S . -B build && cmake --build build -j
 
 `find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
-For the full template with SYSROOT handling (cross-builds from inside the eLxr SDK container), see the [Hello Neat Minimal Example](/getting-started/minimal_example).
+For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see the [Hello Neat Minimal Example](/getting-started/minimal_example).
 
 <p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>
