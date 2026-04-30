@@ -2,7 +2,7 @@
 """Configure a YOLO Model with ModelOptions knobs and introspect its specs.
 
 Usage:
-  python3 model_options_chapter.py --mpk /path/to/yolo_v8s.tar.gz
+  python3 configure_model_options.py --mpk /path/to/yolo_v8s.tar.gz
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ def main(argv: list[str]) -> int:
   print(f"metadata_keys={len(model.metadata())}")
   # END CORE LOGIC
 
-  rgb = np.full((224, 224, 3), 44, dtype=np.uint8)
-  tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.BGR)
+  bgr = np.full((640, 640, 3), 44, dtype=np.uint8)
+  tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
   sample = model.run(tensor, timeout_ms=2000)
   print(f"output_kind={sample.kind}")
   return 0

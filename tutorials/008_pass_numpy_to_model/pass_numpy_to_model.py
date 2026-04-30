@@ -2,7 +2,7 @@
 """Round-trip pyneat.Tensor through numpy and (optionally) torch.
 
 Usage:
-  python3 numpy_torch_tensor_io.py [--width 128] [--height 96]
+  python3 pass_numpy_to_model.py [--width 128] [--height 96]
 """
 from __future__ import annotations
 

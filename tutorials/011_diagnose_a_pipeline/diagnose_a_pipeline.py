@@ -2,7 +2,7 @@
 """Validate a Session, enable metrics on the Run, then read stats/report/diagnostics.
 
 Usage:
-  python3 diagnostics_in_3_commands.py
+  python3 diagnose_a_pipeline.py
 """
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 """Read the Sample that a Session Run returns: kind, tensor, fields.
 
 Usage:
-  python3 output_handling_patterns.py
+  python3 interpret_model_output.py
 """
 from __future__ import annotations
 

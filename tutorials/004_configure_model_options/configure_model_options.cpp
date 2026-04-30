@@ -64,7 +64,7 @@ int main(int argc, char** argv) {
     std::cout << "metadata_keys=" << model.metadata().size() << "\n";
     // END CORE LOGIC
 
-    cv::Mat bgr(224, 224, CV_8UC3, cv::Scalar(10, 20, 30));
+    cv::Mat bgr(640, 640, CV_8UC3, cv::Scalar(10, 20, 30));
     if (!bgr.isContinuous())
       bgr = bgr.clone();
     auto out = model.run(bgr, /*timeout_ms=*/2000);

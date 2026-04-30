@@ -2,7 +2,7 @@
 """Production blueprint: Model + ModelSessionOptions + async RunOptions.
 
 Usage:
-  python3 production_blueprint.py --mpk /path/to/yolo_v8s.tar.gz [--iters 4]
+  python3 build_production_pipeline.py --mpk /path/to/resnet_50.tar.gz [--iters 4]
 """
 from __future__ import annotations
 

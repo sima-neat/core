@@ -2,7 +2,7 @@
 """Two ways to plug a Model into a Session: direct vs. attached via ModelSessionOptions.
 
 Usage:
-  python3 session_patterns.py --mpk /path/to/yolo_v8s.tar.gz
+  python3 plug_model_into_pipeline.py --mpk /path/to/yolo_v8s.tar.gz
 """
 from __future__ import annotations
 

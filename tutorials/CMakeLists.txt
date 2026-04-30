@@ -81,7 +81,7 @@ add_tutorial(tutorial_004_configure_model_options
 
 add_tutorial(tutorial_005_preprocess_images
   005_preprocess_images/preprocess_images.cpp
-  MODEL yolo_v8s
+  MODEL resnet_50
   LABELS mpk
 )
 
@@ -141,7 +141,7 @@ add_tutorial(tutorial_015_tune_throughput_and_queues
 
 add_tutorial(tutorial_016_build_production_pipeline
   016_build_production_pipeline/build_production_pipeline.cpp
-  MODEL yolo_v8s
+  MODEL resnet_50
   LABELS mpk
 )
 
