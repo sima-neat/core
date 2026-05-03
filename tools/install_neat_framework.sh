@@ -12,6 +12,8 @@ set -euo pipefail
 #   - eLxr SDK when /etc/sdk-release exists, or SYSROOT points to a valid directory.
 #   - Modalix board when /etc/buildinfo reports MACHINE=modalix.
 # - In Modalix board mode, installs .deb packages with apt (sudo).
+# - In eLxr SDK mode, caches install artifacts under the sysroot
+#   neat-install-packages folder for paired DevKit sync.
 # - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
 #   exposes it via $HOME/pyneat for consistent activation instructions.
 # - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
@@ -261,13 +263,88 @@ install_agent_skills_for_current_user() {
   fi
 }
 
+sysroot_path() {
+  printf '%s\n' "${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+}
+
+sysroot_neat_install_packages_dir() {
+  printf '%s\n' "$(sysroot_path)/neat-install-packages"
+}
+
+cache_install_artifacts_in_sysroot() {
+  local cache_dir
+  cache_dir="$(sysroot_neat_install_packages_dir)"
+
+  log "Caching SDK install artifacts in sysroot: ${cache_dir}"
+  run_sudo mkdir -p "${cache_dir}"
+  run_sudo rm -f \
+    "${cache_dir}"/sima-neat-*-Linux-core.deb \
+    "${cache_dir}"/neat-*.deb \
+    "${cache_dir}"/*.whl \
+    "${cache_dir}"/install_neat_framework.sh
+
+  local file
+  for file in "${DEBS[@]}"; do
+    run_sudo cp -f "${file}" "${cache_dir}/"
+  done
+
+  local -a wheel_files=()
+  mapfile -t wheel_files < <(find . -maxdepth 1 -type f -name '*.whl' | sort)
+  for file in "${wheel_files[@]}"; do
+    run_sudo cp -f "${file}" "${cache_dir}/"
+  done
+
+  run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
+  run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
+}
+
+collect_cached_devkit_deploy_files() {
+  local cache_dir
+  cache_dir="$(sysroot_neat_install_packages_dir)"
+
+  if [[ "${ENV_MODE:-}" != "elxr-sdk" ]]; then
+    echo "Paired DevKit sync from sysroot cache is only supported in eLxr SDK mode." >&2
+    exit 1
+  fi
+  if [[ ! -d "${cache_dir}" ]]; then
+    echo "Missing SDK install artifact cache: ${cache_dir}" >&2
+    exit 1
+  fi
+
+  local -a cached_core_debs=()
+  mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+  mapfile -t CACHED_DEBS < <(find "${cache_dir}" -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
+  mapfile -t CACHED_WHEELS < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
+  local cached_installer="${cache_dir}/install_neat_framework.sh"
+
+  if [[ "${#cached_core_debs[@]}" -lt 1 ]]; then
+    echo "No cached sima-neat core DEB found for paired DevKit sync in: ${cache_dir}" >&2
+    exit 1
+  fi
+  if [[ "${#CACHED_DEBS[@]}" -lt 1 ]]; then
+    echo "No cached DEB files found for paired DevKit sync in: ${cache_dir}" >&2
+    exit 1
+  fi
+  if [[ "${#CACHED_WHEELS[@]}" -lt 1 ]]; then
+    echo "No cached PyNeat wheel found for paired DevKit sync in: ${cache_dir}" >&2
+    exit 1
+  fi
+  if [[ ! -f "${cached_installer}" ]]; then
+    echo "Cached installer script not found for paired DevKit sync: ${cached_installer}" >&2
+    exit 1
+  fi
+
+  CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}" "${cached_installer}")
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
 }
 
 install_debs_into_sysroot() {
-  local sysroot="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+  local sysroot
+  sysroot="$(sysroot_path)"
   if [[ ! -d "${sysroot}" ]]; then
     echo "SYSROOT does not exist: ${sysroot}" >&2
     exit 1
@@ -283,6 +360,8 @@ install_debs_into_sysroot() {
     log "Extracting $(basename "${deb}") into ${sysroot}"
     run_sudo dpkg-deb -x "${deb}" "${sysroot}"
   done
+
+  cache_install_artifacts_in_sysroot
 }
 
 deploy_artifacts_to_paired_devkit_if_configured() {
@@ -296,25 +375,11 @@ deploy_artifacts_to_paired_devkit_if_configured() {
 
   local ssh_target="${DEVKIT_DEPLOY_USER}@${devkit_ip}"
   local remote_dir="/tmp/sima-neat-install-$(date +%Y%m%d-%H%M%S)"
-  local -a deploy_files=()
-  local installer_basename
-  installer_basename="$(basename "${INSTALLER_SCRIPT_PATH}")"
-  local file
-
-  for file in "${DEBS[@]}"; do
-    deploy_files+=("${file}")
-  done
-
-  WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
-  if [[ -n "${WHEEL_FILE}" ]]; then
-    deploy_files+=("${WHEEL_FILE}")
-  fi
-  deploy_files+=("${INSTALLER_SCRIPT_PATH}")
-
-  if [[ "${#deploy_files[@]}" -eq 0 ]]; then
-    log "No deployable artifacts found for paired DevKit sync."
-    return 0
-  fi
+  local -a CACHED_DEBS=()
+  local -a CACHED_WHEELS=()
+  local -a CACHED_DEPLOY_FILES=()
+  collect_cached_devkit_deploy_files
+  local installer_basename="install_neat_framework.sh"
 
   log_green "Paired DevKit detected; syncing install artifacts to ${ssh_target}"
 
@@ -328,7 +393,7 @@ deploy_artifacts_to_paired_devkit_if_configured() {
   fi
 
   run_ssh "${ssh_target}" "mkdir -p '${remote_dir}'"
-  run_scp "${deploy_files[@]}" "${ssh_target}:${remote_dir}/"
+  run_scp "${CACHED_DEPLOY_FILES[@]}" "${ssh_target}:${remote_dir}/"
 
   local remote_install_cmd
   remote_install_cmd="set -euo pipefail
