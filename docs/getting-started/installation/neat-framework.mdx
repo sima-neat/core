@@ -83,6 +83,22 @@ source ~/pyneat/bin/activate
 
 If you run the installer from inside a Neat SDK container paired with DevKit Sync, the PyNeat runtime installation targets the paired DevKit environment. Neat is installed into a virtual environment under `~/pyneat` on the DevKit.
 
+The installed framework also provides the `neat` environment command. Run it from either the Neat SDK or DevKit to see installed component versions, installed `sima-cli` playbooks, and whether newer artifacts are available.
+
+In the Neat SDK, the status output also includes the Insight exposed host ports from `$HOME/.insight-config/neat-port-map.json`.
+
+```bash
+neat
+```
+
+To update the Neat core runtime, `neat-insight`, and installed `sima-cli` playbooks from the detected channel, run:
+
+```bash
+neat update
+```
+
+For automation, use `neat update --yes`.
+
 If you prefer building from source, follow the [Build](../build.md) guide.
 
 For SDK environment setup and DevKit Sync onboarding, see [Neat SDK](./neat-elxr-sdk.mdx).

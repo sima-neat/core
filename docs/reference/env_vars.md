@@ -52,9 +52,41 @@ actually does.
   Optional `user:password` credential pair used when `build.sh` fetches
   protected `deps` artifacts. Leave it unset for public endpoints.
 
+- `NEAT_ARTIFACTS_BASE_URL`
+  Base URL used by `tools/install-neat.sh` and the installed `neat` command
+  when resolving Neat core artifact metadata. The default is
+  `https://artifacts.sima-neat.com/core`.
+
+- `NEAT_INSIGHT_BASE_URL`
+  Base URL used by the installed `neat` command when resolving
+  `neat-insight` update metadata. The default is
+  `https://apps.sima-neat.com/insight/download`.
+
+- `NEAT_INSIGHT_VENV_DIR`
+  Overrides the `neat-insight` virtual environment inspected and updated by
+  the installed `neat` command. Defaults are `/opt/neat-insight/venv` in the
+  Neat SDK and `$HOME/.simaai/neat-insight/venv` on DevKit.
+
+- `NEAT_PORT_MAP_FILE`
+  Overrides the Neat SDK exposed-port map inspected by the installed `neat`
+  command. The default is `$HOME/.insight-config/neat-port-map.json`. The
+  status report and `neat --json` include host ports only and omit
+  container-only fields.
+
+- `CONTAINER_HOST_IP`
+  When set in the Neat SDK, the installed `neat` command combines this host
+  address with the `mainUI` host port from `NEAT_PORT_MAP_FILE` and reports the
+  Insight Web UI URL in text and JSON status output.
+
+- `SIMA_CLI_BIN`
+  Overrides the `sima-cli` executable used by the installed `neat` command.
+  When unset, `neat` checks `PATH`, `$HOME/.sima-cli/.venv/bin/sima-cli`,
+  `$HOME/.local/bin/sima-cli`, and `/data/sima-cli/.venv/bin/sima-cli`.
+
 - `ELXR_SDK_RELEASE_FILE`
-  File that `build.sh` checks to detect whether it is running inside a Neat SDK
-  environment. Override it only if your SDK metadata is not at `/etc/sdk-release`.
+  File that `build.sh` and the installed `neat` command check to detect whether
+  they are running inside a Neat SDK environment. Override it only if your SDK
+  metadata is not at `/etc/sdk-release`.
 
 - `ELXR_INIT_SCRIPT`
   SDK environment activation script sourced by `build.sh` in eLxr builds.
@@ -78,6 +110,11 @@ actually does.
   Contributor-facing flag for strict docs builds. Use `DOCS_STRICT_LINKS=1`
   when you want the website build to fail on broken links instead of tolerating
   them.
+
+- `NO_COLOR`
+  Standard terminal convention honored by the installed `neat` command. When
+  set to any value, `neat` disables colored output. The same command also
+  accepts `--color=auto`, `--color=always`, and `--color=never`.
 
 ### GStreamer plugin discovery and startup
 

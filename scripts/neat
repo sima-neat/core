@@ -1,0 +1,1062 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROGRAM_NAME="$(basename "$0")"
+
+CORE_BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://artifacts.sima-neat.com/core}"
+INSIGHT_BASE_URL="${NEAT_INSIGHT_BASE_URL:-https://apps.sima-neat.com/insight/download}"
+DEFAULT_SYSROOT="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
+PORT_MAP_FILE="${NEAT_PORT_MAP_FILE:-${HOME}/.insight-config/neat-port-map.json}"
+SIMA_CLI_BIN="${SIMA_CLI_BIN:-}"
+SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
+BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
+STATUS_OFFLINE=0
+COLOR_MODE="auto"
+OUTPUT_JSON=0
+UPDATE_YES=0
+UPDATE_CORE=1
+UPDATE_INSIGHT=1
+UPDATE_SKILLS=1
+CHANNEL_OVERRIDE=""
+TAG_INPUT="latest"
+
+RESET=""
+BOLD=""
+DIM=""
+GREEN=""
+YELLOW=""
+RED=""
+BLUE=""
+
+ENV_MODE=""
+ENV_LABEL=""
+SYSROOT_PATH=""
+CORE_VERSION=""
+CORE_CHANNEL=""
+CORE_TAG=""
+CORE_CHANNEL_ASSUMED=0
+PYNEAT_VERSION=""
+RUNTIME_VERSION=""
+GST_PLUGINS_VERSION=""
+INSIGHT_VERSION=""
+INSIGHT_CHANNEL=""
+INSIGHT_TAG=""
+INSIGHT_CHANNEL_ASSUMED=0
+INSIGHT_VENV_DIR=""
+INSIGHT_SERVICE_STATE="Stopped"
+MODEL_SDK_AVAILABLE=0
+MODEL_SDK_VERSION=""
+MODEL_SDK_DETAIL=""
+SIMA_CLI_PATH=""
+CORE_LATEST_TAG=""
+CORE_LATEST_VERSION=""
+CORE_METADATA_URL=""
+INSIGHT_LATEST_TAG=""
+INSIGHT_LATEST_VERSION=""
+INSIGHT_METADATA_URL=""
+
+usage() {
+  cat <<'EOF'
+Usage:
+  neat [status] [--offline] [--json] [--color=auto|always|never]
+  neat update [--yes] [--core-only|--insight-only] [--channel <name>] [--tag <latest|sha>] [--color=auto|always|never]
+
+Environment:
+  NEAT_ARTIFACTS_BASE_URL  Core artifact index (default: https://artifacts.sima-neat.com/core)
+  NEAT_INSIGHT_BASE_URL    Insight artifact index (default: https://apps.sima-neat.com/insight/download)
+  NEAT_PORT_MAP_FILE       SDK exposed-port map (default: $HOME/.insight-config/neat-port-map.json)
+  SIMA_CLI_BIN             sima-cli executable path/name override
+  SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
+  NO_COLOR                 Disable color when set
+EOF
+}
+
+die() {
+  echo "${PROGRAM_NAME}: $*" >&2
+  exit 1
+}
+
+sanitize_channel_key() {
+  printf '%s' "$1" | tr '/ ' '--'
+}
+
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+resolve_sima_cli() {
+  local candidate
+  if [[ -n "${SIMA_CLI_PATH}" ]]; then
+    printf '%s' "${SIMA_CLI_PATH}"
+    return 0
+  fi
+  if [[ -n "${SIMA_CLI_BIN}" ]]; then
+    if [[ -x "${SIMA_CLI_BIN}" ]]; then
+      SIMA_CLI_PATH="${SIMA_CLI_BIN}"
+      printf '%s' "${SIMA_CLI_PATH}"
+      return 0
+    fi
+    if command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1; then
+      SIMA_CLI_PATH="$(command -v "${SIMA_CLI_BIN}")"
+      printf '%s' "${SIMA_CLI_PATH}"
+      return 0
+    fi
+  fi
+  if command -v sima-cli >/dev/null 2>&1; then
+    SIMA_CLI_PATH="$(command -v sima-cli)"
+    printf '%s' "${SIMA_CLI_PATH}"
+    return 0
+  fi
+  for candidate in \
+    "${HOME}/.sima-cli/.venv/bin/sima-cli" \
+    "${HOME}/.local/bin/sima-cli" \
+    "/data/sima-cli/.venv/bin/sima-cli"; do
+    if [[ -x "${candidate}" ]]; then
+      SIMA_CLI_PATH="${candidate}"
+      printf '%s' "${SIMA_CLI_PATH}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+have_sima_cli() {
+  resolve_sima_cli >/dev/null 2>&1
+}
+
+run_sima_cli() {
+  local cli
+  cli="$(resolve_sima_cli)" || return 127
+  SIMA_CLI_CHECK_FOR_UPDATE=0 "${cli}" "$@"
+}
+
+download_text() {
+  local url="$1"
+  if have_cmd curl; then
+    curl -fsSL "${url}"
+    return 0
+  fi
+  if have_cmd wget; then
+    wget -qO- "${url}"
+    return 0
+  fi
+  return 127
+}
+
+json_field() {
+  local field="$1"
+  python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get(sys.argv[1], ""))' "${field}" 2>/dev/null || true
+}
+
+version_from_wheel() {
+  local filename="$1"
+  python3 -c 'import re,sys; m=re.match(r"^[A-Za-z0-9_.]+-(.+?)-(?:py\d|cp\d)", sys.argv[1]); print(m.group(1) if m else "")' "${filename}" 2>/dev/null || true
+}
+
+version_from_pip_show() {
+  local pip_bin="$1"
+  local package="$2"
+  if [[ ! -x "${pip_bin}" ]]; then
+    return 0
+  fi
+  "${pip_bin}" show "${package}" 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }'
+}
+
+setup_color() {
+  if [[ -n "${NO_COLOR:-}" ]]; then
+    COLOR_MODE="never"
+  fi
+  if [[ "${COLOR_MODE}" == "never" ]]; then
+    return 0
+  fi
+  if [[ "${COLOR_MODE}" == "auto" && ! -t 1 ]]; then
+    return 0
+  fi
+  RESET=$'\033[0m'
+  BOLD=$'\033[1m'
+  DIM=$'\033[2m'
+  GREEN=$'\033[0;32m'
+  YELLOW=$'\033[0;33m'
+  RED=$'\033[0;31m'
+  BLUE=$'\033[0;34m'
+}
+
+status_color() {
+  case "$1" in
+    ok|current|installed) printf '%s' "${GREEN}" ;;
+    update|missing|warning|assumed) printf '%s' "${YELLOW}" ;;
+    error) printf '%s' "${RED}" ;;
+    *) printf '%s' "${BLUE}" ;;
+  esac
+}
+
+print_kv() {
+  local key="$1"
+  local value="$2"
+  printf '  %-18s %s\n' "${key}" "${value}"
+}
+
+print_colored_kv() {
+  local key="$1"
+  local value="$2"
+  local color="$3"
+  printf '  %s%s%-18s%s %s%s%s\n' "${BOLD}" "${color}" "${key}" "${RESET}" "${BOLD}" "${color}" "${value}${RESET}"
+}
+
+print_component() {
+  local name="$1"
+  local version="$2"
+  local detail="$3"
+  local state="$4"
+  local color
+  color="$(status_color "${state}")"
+  if [[ -z "${version}" ]]; then
+    version="not installed"
+  fi
+  printf '  %s%-22s%s %s%-18s%s %s\n' "${BOLD}" "${name}" "${RESET}" "${color}" "${version}" "${RESET}" "${detail}"
+}
+
+detect_env_mode() {
+  SYSROOT_PATH="${DEFAULT_SYSROOT}"
+  if [[ -f "${SDK_RELEASE_FILE}" ]]; then
+    ENV_MODE="elxr-sdk"
+    ENV_LABEL="Neat SDK"
+    return 0
+  fi
+  if [[ -n "${SYSROOT:-}" && -d "${SYSROOT}" ]]; then
+    ENV_MODE="elxr-sdk"
+    ENV_LABEL="Neat SDK"
+    return 0
+  fi
+  if [[ -f "${BUILDINFO_FILE}" ]] && grep -qE '^MACHINE[[:space:]]*=[[:space:]]*modalix' "${BUILDINFO_FILE}"; then
+    ENV_MODE="modalix-board"
+    ENV_LABEL="Modalix DevKit"
+    return 0
+  fi
+  ENV_MODE="modalix-board"
+  ENV_LABEL="Modalix DevKit"
+}
+
+infer_channel_and_tag() {
+  local version="$1"
+  local default_channel="$2"
+  local channel_var="$3"
+  local tag_var="$4"
+  local assumed_var="$5"
+  local normalized="${version//+/-}"
+  normalized="${normalized//./-}"
+  local channel=""
+  local tag=""
+
+  if [[ "${version}" =~ ^v[0-9] ]]; then
+    channel="${version}"
+    tag="${version}"
+  elif [[ "${version}" =~ ^[0-9][A-Za-z0-9.+~_-]*\+(.+)-([0-9a-f]{7,40})$ ]]; then
+    channel="${BASH_REMATCH[1]}"
+    tag="${BASH_REMATCH[2]}"
+  elif [[ "${version}" =~ ^[0-9][A-Za-z0-9.+~_-]*\+(.+)\.([0-9a-f]{7,40})$ ]]; then
+    channel="${BASH_REMATCH[1]//./-}"
+    tag="${BASH_REMATCH[2]}"
+  elif [[ "${normalized}" =~ ^[0-9][A-Za-z0-9-]*-([A-Za-z0-9_-]+)-([0-9a-f]{7,40})$ ]]; then
+    channel="${BASH_REMATCH[1]}"
+    tag="${BASH_REMATCH[2]}"
+  fi
+
+  if [[ -z "${channel}" ]]; then
+    channel="${default_channel}"
+    printf -v "${assumed_var}" '%s' "1"
+  else
+    printf -v "${assumed_var}" '%s' "0"
+  fi
+  printf -v "${channel_var}" '%s' "${CHANNEL_OVERRIDE:-${channel}}"
+  printf -v "${tag_var}" '%s' "${tag}"
+}
+
+discover_sdk_components() {
+  local cache_dir="${SYSROOT_PATH}/neat-install-packages"
+  local file
+
+  if [[ -d "${cache_dir}" ]]; then
+    file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort | tail -n1 || true)"
+    if [[ -n "${file}" ]]; then
+      CORE_VERSION="$(basename "${file}")"
+      CORE_VERSION="${CORE_VERSION#sima-neat-}"
+      CORE_VERSION="${CORE_VERSION%-Linux-core.deb}"
+    fi
+
+    file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'pyneat-*.whl' | sort | tail -n1 || true)"
+    if [[ -n "${file}" ]]; then
+      PYNEAT_VERSION="$(version_from_wheel "$(basename "${file}")")"
+    fi
+
+    file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'neat-runtime_*.deb' | sort | tail -n1 || true)"
+    if [[ -n "${file}" ]]; then
+      RUNTIME_VERSION="$(basename "${file}")"
+      RUNTIME_VERSION="${RUNTIME_VERSION#neat-runtime_}"
+      RUNTIME_VERSION="${RUNTIME_VERSION%_*.deb}"
+    fi
+
+    file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'neat-gst-plugins_*.deb' | sort | tail -n1 || true)"
+    if [[ -n "${file}" ]]; then
+      GST_PLUGINS_VERSION="$(basename "${file}")"
+      GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION#neat-gst-plugins_}"
+      GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION%_*.deb}"
+    fi
+  fi
+}
+
+dpkg_version() {
+  local package="$1"
+  if ! have_cmd dpkg-query; then
+    return 0
+  fi
+  dpkg-query -W -f='${Version}' "${package}" 2>/dev/null || true
+}
+
+discover_devkit_components() {
+  CORE_VERSION="$(dpkg_version sima-neat)"
+  RUNTIME_VERSION="$(dpkg_version neat-runtime)"
+  GST_PLUGINS_VERSION="$(dpkg_version neat-gst-plugins)"
+  if [[ -x "${HOME}/pyneat/bin/pip3" ]]; then
+    PYNEAT_VERSION="$(version_from_pip_show "${HOME}/pyneat/bin/pip3" pyneat)"
+  elif [[ -x "${HOME}/pyneat/bin/python" ]]; then
+    PYNEAT_VERSION="$("${HOME}/pyneat/bin/python" -m pip show pyneat 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }')"
+  fi
+}
+
+discover_insight() {
+  local status_output=""
+  if [[ -n "${NEAT_INSIGHT_VENV_DIR:-}" ]]; then
+    INSIGHT_VENV_DIR="${NEAT_INSIGHT_VENV_DIR}"
+  elif [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+    INSIGHT_VENV_DIR="/opt/neat-insight/venv"
+  else
+    INSIGHT_VENV_DIR="${HOME}/.simaai/neat-insight/venv"
+  fi
+
+  if [[ -x "${INSIGHT_VENV_DIR}/bin/pip3" ]]; then
+    INSIGHT_VERSION="$(version_from_pip_show "${INSIGHT_VENV_DIR}/bin/pip3" neat-insight)"
+  elif [[ -x "${INSIGHT_VENV_DIR}/bin/python" ]]; then
+    INSIGHT_VERSION="$("${INSIGHT_VENV_DIR}/bin/python" -m pip show neat-insight 2>/dev/null | awk -F': ' '$1 == "Version" { print $2 }')"
+  fi
+
+  if have_cmd insight-admin; then
+    status_output="$(insight-admin status 2>/dev/null || true)"
+    if printf '%s\n' "${status_output}" | grep -qE '(^|[[:space:]])RUNNING([[:space:]]|$)'; then
+      INSIGHT_SERVICE_STATE="Running"
+    else
+      INSIGHT_SERVICE_STATE="Stopped"
+    fi
+  fi
+}
+
+discover_model_sdk() {
+  local registry="${SIMA_CLI_REGISTRY_FILE:-${HOME}/.sima-cli/registry.json}"
+  local entry=""
+  if [[ ! -f "${registry}" ]]; then
+    return 0
+  fi
+
+  if ! entry="$(python3 - "${registry}" 2>/dev/null <<'PY'
+import json
+import sys
+from pathlib import Path
+
+registry = Path(sys.argv[1])
+data = json.loads(registry.read_text(encoding="utf-8"))
+if not isinstance(data, list):
+    raise SystemExit(0)
+for item in data:
+    if not isinstance(item, dict):
+        continue
+    if item.get("package_name") != "sima-neat-model-sdk":
+        continue
+    if item.get("state") != "installed":
+        continue
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    version = str(item.get("version") or metadata.get("version") or "installed")
+    print(version)
+    break
+PY
+)"; then
+    entry=""
+  fi
+
+  if [[ -n "${entry}" ]]; then
+    MODEL_SDK_VERSION="${entry}"
+    MODEL_SDK_AVAILABLE=1
+    MODEL_SDK_DETAIL="run activate-model-sdk to activate"
+    return 0
+  fi
+}
+
+discover_all() {
+  detect_env_mode
+  if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+    discover_sdk_components
+  else
+    discover_devkit_components
+  fi
+  discover_insight
+  discover_model_sdk
+  infer_channel_and_tag "${CORE_VERSION}" "main" CORE_CHANNEL CORE_TAG CORE_CHANNEL_ASSUMED
+  infer_channel_and_tag "${INSIGHT_VERSION}" "main" INSIGHT_CHANNEL INSIGHT_TAG INSIGHT_CHANNEL_ASSUMED
+}
+
+resolve_core_latest() {
+  local channel="${CHANNEL_OVERRIDE:-${CORE_CHANNEL:-main}}"
+  local channel_key
+  local metadata
+  channel_key="$(sanitize_channel_key "${channel}")"
+  if [[ "${TAG_INPUT}" == "latest" ]]; then
+    CORE_LATEST_TAG="$(download_text "${CORE_BASE_URL}/${channel_key}/latest.tag" 2>/dev/null | tr -d '[:space:]')"
+  else
+    CORE_LATEST_TAG="${TAG_INPUT}"
+  fi
+  [[ -n "${CORE_LATEST_TAG}" ]] || return 1
+  CORE_METADATA_URL="${CORE_BASE_URL}/${channel_key}/${CORE_LATEST_TAG}/metadata-minimal.json"
+  metadata="$(download_text "${CORE_METADATA_URL}" 2>/dev/null || true)"
+  if [[ -n "${metadata}" ]]; then
+    CORE_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field version)"
+  fi
+}
+
+resolve_insight_latest() {
+  local channel="${CHANNEL_OVERRIDE:-${INSIGHT_CHANNEL:-main}}"
+  local channel_key
+  local metadata
+  channel_key="$(sanitize_channel_key "${channel}")"
+  if [[ "${TAG_INPUT}" == "latest" ]]; then
+    INSIGHT_LATEST_TAG="$(download_text "${INSIGHT_BASE_URL}/${channel_key}/latest.tag" 2>/dev/null | tr -d '[:space:]')"
+  else
+    INSIGHT_LATEST_TAG="${TAG_INPUT}"
+  fi
+  [[ -n "${INSIGHT_LATEST_TAG}" ]] || return 1
+  INSIGHT_METADATA_URL="${INSIGHT_BASE_URL}/${channel_key}/${INSIGHT_LATEST_TAG}.json"
+  metadata="$(download_text "${INSIGHT_METADATA_URL}" 2>/dev/null || true)"
+  if [[ -n "${metadata}" ]]; then
+    INSIGHT_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field short_sha)"
+    if [[ -n "${INSIGHT_LATEST_VERSION}" ]]; then
+      INSIGHT_LATEST_VERSION="0.0.0+${channel}.${INSIGHT_LATEST_VERSION}"
+    fi
+  fi
+}
+
+resolve_updates() {
+  local core_ok=0
+  local insight_ok=0
+  if resolve_core_latest; then
+    core_ok=1
+  fi
+  if resolve_insight_latest; then
+    insight_ok=1
+  fi
+  if [[ "${core_ok}" -eq 0 && "${insight_ok}" -eq 0 ]]; then
+    return 1
+  fi
+}
+
+component_state_from_latest() {
+  local current_tag="$1"
+  local latest_tag="$2"
+  if [[ -z "${latest_tag}" ]]; then
+    printf '%s' "warning"
+  elif [[ -n "${current_tag}" && "${current_tag}" == "${latest_tag}" ]]; then
+    printf '%s' "current"
+  else
+    printf '%s' "update"
+  fi
+}
+
+component_update_needed() {
+  local current_tag="$1"
+  local latest_tag="$2"
+  [[ -z "${current_tag}" || -z "${latest_tag}" || "${current_tag}" != "${latest_tag}" ]]
+}
+
+format_insight_service_state() {
+  local state_color
+  if [[ "${INSIGHT_SERVICE_STATE}" == "Running" ]]; then
+    state_color="$(status_color installed)"
+  else
+    state_color="$(status_color warning)"
+  fi
+  printf 'status=%s%s%s' "${state_color}" "${INSIGHT_SERVICE_STATE}" "${RESET}"
+}
+
+print_exposed_ports() {
+  local rows
+  local insight_web_ui_port=""
+  local name=""
+  local protocol=""
+  local host_start=""
+  local host_end=""
+  if [[ "${ENV_MODE}" != "elxr-sdk" || ! -f "${PORT_MAP_FILE}" ]]; then
+    return 0
+  fi
+  if ! have_cmd python3; then
+    printf '\n%sExposed Ports%s\n' "${BOLD}" "${RESET}"
+    printf '  %spython3 not found; unable to read %s%s\n' "${YELLOW}" "${PORT_MAP_FILE}" "${RESET}"
+    return 0
+  fi
+
+  rows="$(python3 - "${PORT_MAP_FILE}" 2>/dev/null <<'PY' || true
+import json
+import sys
+from pathlib import Path
+
+
+def protocol_for(name_parts, value):
+    protocol = value.get("protocol")
+    if protocol:
+        return str(protocol)
+    if name_parts and name_parts[-1].lower() in {"tcp", "udp"}:
+        return name_parts[-1].lower()
+    return ""
+
+
+def collect(name_parts, value, rows):
+    if not isinstance(value, dict):
+        return
+    name = ".".join(name_parts)
+    protocol = protocol_for(name_parts, value)
+    if "host" in value:
+        rows.append((name, protocol, str(value.get("host", "")), ""))
+        return
+    if "hostStart" in value or "hostEnd" in value:
+        rows.append((name, protocol, str(value.get("hostStart", "")), str(value.get("hostEnd", ""))))
+        return
+    for key, child in value.items():
+        collect([*name_parts, str(key)], child, rows)
+
+
+data = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+rows = []
+if isinstance(data, dict):
+    for key, value in data.items():
+        collect([str(key)], value, rows)
+for row in rows:
+    print("\t".join(row))
+PY
+)"
+
+  if [[ -z "${rows}" ]]; then
+    return 0
+  fi
+
+  printf '\n%sExposed Ports%s\n' "${BOLD}" "${RESET}"
+  while IFS=$'\t' read -r name protocol host_start host_end; do
+    if [[ "${name}" == "mainUI" && -n "${host_start}" ]]; then
+      insight_web_ui_port="${host_start}"
+      break
+    fi
+  done <<< "${rows}"
+  if [[ -n "${CONTAINER_HOST_IP:-}" && -n "${insight_web_ui_port}" ]]; then
+    print_colored_kv "Insight Web UI" "https://${CONTAINER_HOST_IP}:${insight_web_ui_port}" "${GREEN}"
+    echo
+  fi
+  printf '  %-18s %-8s %-17s %-15s\n' "Name" "Protocol" "Host Port (Start)" "Host Port (End)"
+  printf '  %-18s %-8s %-17s %-15s\n' "------------------" "--------" "-----------------" "---------------"
+  while IFS=$'\t' read -r name protocol host_start host_end; do
+    [[ -n "${name}" ]] || continue
+    printf '  %-18s %-8s %-17s %-15s\n' "${name}" "${protocol:-"-"}" "${host_start:-"-"}" "${host_end:-"-"}"
+  done <<< "${rows}"
+}
+
+print_status_json() {
+  local update_check_status="skipped"
+  if ! have_cmd python3; then
+    die "--json requires python3"
+  fi
+  if [[ "${STATUS_OFFLINE}" -eq 0 ]]; then
+    if resolve_updates; then
+      update_check_status="ok"
+    else
+      update_check_status="failed"
+    fi
+  fi
+
+  env \
+    NEAT_JSON_ENV_MODE="${ENV_MODE}" \
+    NEAT_JSON_ENV_LABEL="${ENV_LABEL}" \
+    NEAT_JSON_SYSROOT="${SYSROOT_PATH}" \
+    NEAT_JSON_UPDATE_OFFLINE="${STATUS_OFFLINE}" \
+    NEAT_JSON_UPDATE_STATUS="${update_check_status}" \
+    NEAT_JSON_CORE_VERSION="${CORE_VERSION}" \
+    NEAT_JSON_CORE_CHANNEL="${CORE_CHANNEL}" \
+    NEAT_JSON_CORE_TAG="${CORE_TAG}" \
+    NEAT_JSON_CORE_CHANNEL_ASSUMED="${CORE_CHANNEL_ASSUMED}" \
+    NEAT_JSON_CORE_LATEST_TAG="${CORE_LATEST_TAG}" \
+    NEAT_JSON_CORE_LATEST_VERSION="${CORE_LATEST_VERSION}" \
+    NEAT_JSON_CORE_METADATA_URL="${CORE_METADATA_URL}" \
+    NEAT_JSON_PYNEAT_VERSION="${PYNEAT_VERSION}" \
+    NEAT_JSON_RUNTIME_VERSION="${RUNTIME_VERSION}" \
+    NEAT_JSON_GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION}" \
+    NEAT_JSON_INSIGHT_VERSION="${INSIGHT_VERSION}" \
+    NEAT_JSON_INSIGHT_CHANNEL="${INSIGHT_CHANNEL}" \
+    NEAT_JSON_INSIGHT_TAG="${INSIGHT_TAG}" \
+    NEAT_JSON_INSIGHT_CHANNEL_ASSUMED="${INSIGHT_CHANNEL_ASSUMED}" \
+    NEAT_JSON_INSIGHT_LATEST_TAG="${INSIGHT_LATEST_TAG}" \
+    NEAT_JSON_INSIGHT_LATEST_VERSION="${INSIGHT_LATEST_VERSION}" \
+    NEAT_JSON_INSIGHT_METADATA_URL="${INSIGHT_METADATA_URL}" \
+    NEAT_JSON_INSIGHT_VENV_DIR="${INSIGHT_VENV_DIR}" \
+    NEAT_JSON_INSIGHT_SERVICE_STATE="${INSIGHT_SERVICE_STATE}" \
+    NEAT_JSON_MODEL_SDK_AVAILABLE="${MODEL_SDK_AVAILABLE}" \
+    NEAT_JSON_MODEL_SDK_VERSION="${MODEL_SDK_VERSION}" \
+    NEAT_JSON_MODEL_SDK_DETAIL="${MODEL_SDK_DETAIL}" \
+    NEAT_JSON_PORT_MAP_FILE="${PORT_MAP_FILE}" \
+    NEAT_JSON_CONTAINER_HOST_IP="${CONTAINER_HOST_IP:-}" \
+    python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+
+def env(name):
+    return os.environ.get(name, "")
+
+
+def optional(value):
+    return value if value else None
+
+
+def bool_env(name):
+    return env(name) == "1"
+
+
+def update_available(current_tag, latest_tag):
+    if not latest_tag:
+        return None
+    return current_tag != latest_tag
+
+
+def protocol_for(name_parts, value):
+    protocol = value.get("protocol")
+    if protocol:
+        return str(protocol)
+    if name_parts and name_parts[-1].lower() in {"tcp", "udp"}:
+        return name_parts[-1].lower()
+    return None
+
+
+def collect_ports(name_parts, value, rows):
+    if not isinstance(value, dict):
+        return
+    name = ".".join(name_parts)
+    protocol = protocol_for(name_parts, value)
+    if "host" in value:
+        rows.append(
+            {
+                "name": name,
+                "protocol": protocol,
+                "hostPortStart": value.get("host"),
+                "hostPortEnd": None,
+            }
+        )
+        return
+    if "hostStart" in value or "hostEnd" in value:
+        rows.append(
+            {
+                "name": name,
+                "protocol": protocol,
+                "hostPortStart": value.get("hostStart"),
+                "hostPortEnd": value.get("hostEnd"),
+            }
+        )
+        return
+    for key, child in value.items():
+        collect_ports([*name_parts, str(key)], child, rows)
+
+
+def read_ports():
+    rows = []
+    if env("NEAT_JSON_ENV_MODE") != "elxr-sdk":
+        return rows
+    path = Path(env("NEAT_JSON_PORT_MAP_FILE"))
+    if not path.is_file():
+        return rows
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return rows
+    if isinstance(data, dict):
+        for key, value in data.items():
+            collect_ports([str(key)], value, rows)
+    return rows
+
+
+ports = read_ports()
+main_ui_port = next(
+    (row["hostPortStart"] for row in ports if row["name"] == "mainUI" and row["hostPortStart"]),
+    None,
+)
+container_host_ip = env("NEAT_JSON_CONTAINER_HOST_IP")
+insight_web_ui_url = (
+    f"https://{container_host_ip}:{main_ui_port}"
+    if container_host_ip and main_ui_port
+    else None
+)
+
+core_tag = env("NEAT_JSON_CORE_TAG")
+core_latest_tag = env("NEAT_JSON_CORE_LATEST_TAG")
+insight_tag = env("NEAT_JSON_INSIGHT_TAG")
+insight_latest_tag = env("NEAT_JSON_INSIGHT_LATEST_TAG")
+
+payload = {
+    "schema": "sima.neat.status.v1",
+    "environment": {
+        "mode": env("NEAT_JSON_ENV_MODE"),
+        "label": env("NEAT_JSON_ENV_LABEL"),
+        "sysroot": optional(env("NEAT_JSON_SYSROOT"))
+        if env("NEAT_JSON_ENV_MODE") == "elxr-sdk"
+        else None,
+    },
+    "updateCheck": {
+        "offline": bool_env("NEAT_JSON_UPDATE_OFFLINE"),
+        "status": env("NEAT_JSON_UPDATE_STATUS"),
+    },
+    "components": {
+        "core": {
+            "name": "Neat core",
+            "version": optional(env("NEAT_JSON_CORE_VERSION")),
+            "channel": optional(env("NEAT_JSON_CORE_CHANNEL")),
+            "tag": optional(core_tag),
+            "channelAssumed": bool_env("NEAT_JSON_CORE_CHANNEL_ASSUMED"),
+            "latestTag": optional(core_latest_tag),
+            "latestVersion": optional(env("NEAT_JSON_CORE_LATEST_VERSION")),
+            "metadataUrl": optional(env("NEAT_JSON_CORE_METADATA_URL")),
+            "updateAvailable": update_available(core_tag, core_latest_tag),
+        },
+        "pyneat": {"name": "PyNeat", "version": optional(env("NEAT_JSON_PYNEAT_VERSION"))},
+        "runtime": {
+            "name": "neat-runtime",
+            "version": optional(env("NEAT_JSON_RUNTIME_VERSION")),
+        },
+        "gstPlugins": {
+            "name": "neat-gst-plugins",
+            "version": optional(env("NEAT_JSON_GST_PLUGINS_VERSION")),
+        },
+        "insight": {
+            "name": "neat-insight",
+            "version": optional(env("NEAT_JSON_INSIGHT_VERSION")),
+            "channel": optional(env("NEAT_JSON_INSIGHT_CHANNEL")),
+            "tag": optional(insight_tag),
+            "channelAssumed": bool_env("NEAT_JSON_INSIGHT_CHANNEL_ASSUMED"),
+            "latestTag": optional(insight_latest_tag),
+            "latestVersion": optional(env("NEAT_JSON_INSIGHT_LATEST_VERSION")),
+            "metadataUrl": optional(env("NEAT_JSON_INSIGHT_METADATA_URL")),
+            "updateAvailable": update_available(insight_tag, insight_latest_tag),
+            "venv": optional(env("NEAT_JSON_INSIGHT_VENV_DIR")),
+            "serviceState": env("NEAT_JSON_INSIGHT_SERVICE_STATE"),
+        },
+        "modelSdkExtension": {
+            "name": "Model SDK Extension",
+            "installed": bool_env("NEAT_JSON_MODEL_SDK_AVAILABLE"),
+            "version": optional(env("NEAT_JSON_MODEL_SDK_VERSION")),
+            "detail": optional(env("NEAT_JSON_MODEL_SDK_DETAIL")),
+        },
+    },
+    "insight": {
+        "serviceState": env("NEAT_JSON_INSIGHT_SERVICE_STATE"),
+        "venv": optional(env("NEAT_JSON_INSIGHT_VENV_DIR")),
+        "webUiUrl": insight_web_ui_url,
+    },
+    "exposedPorts": ports,
+}
+json.dump(payload, fp=os.sys.stdout, indent=2, sort_keys=True)
+os.sys.stdout.write("\n")
+PY
+}
+
+print_status() {
+  local core_detail=""
+  local insight_detail=""
+  local core_state="installed"
+  local insight_state="installed"
+  local model_detail=""
+
+  printf '%sNeat Environment%s\n' "${BOLD}" "${RESET}"
+  print_kv "Mode" "${ENV_LABEL}"
+  if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+    print_kv "Sysroot" "${SYSROOT_PATH}"
+  fi
+  print_kv "Update check" "$([[ "${STATUS_OFFLINE}" -eq 1 ]] && echo offline || echo online)"
+  echo
+
+  if [[ "${STATUS_OFFLINE}" -eq 0 ]]; then
+    if ! resolve_updates; then
+      printf '  %supdate check failed%s\n\n' "${YELLOW}" "${RESET}"
+    fi
+  fi
+
+  if [[ -n "${CORE_CHANNEL}" ]]; then
+    core_detail="channel=${CORE_CHANNEL}"
+    [[ "${CORE_CHANNEL_ASSUMED}" -eq 1 ]] && core_detail="${core_detail} (assumed)"
+    if [[ -n "${CORE_LATEST_TAG}" ]]; then
+      core_detail="${core_detail} latest=${CORE_LATEST_TAG}"
+      core_state="$(component_state_from_latest "${CORE_TAG}" "${CORE_LATEST_TAG}")"
+    fi
+  fi
+  if [[ -n "${INSIGHT_CHANNEL}" ]]; then
+    insight_detail="channel=${INSIGHT_CHANNEL}"
+    [[ "${INSIGHT_CHANNEL_ASSUMED}" -eq 1 ]] && insight_detail="${insight_detail} (assumed)"
+    if [[ -n "${INSIGHT_LATEST_TAG}" ]]; then
+      insight_detail="${insight_detail} latest=${INSIGHT_LATEST_TAG}"
+      insight_state="$(component_state_from_latest "${INSIGHT_TAG}" "${INSIGHT_LATEST_TAG}")"
+    fi
+  fi
+  insight_detail="${insight_detail} $(format_insight_service_state)"
+  [[ -n "${INSIGHT_VENV_DIR}" ]] && insight_detail="${insight_detail} venv=${INSIGHT_VENV_DIR}"
+
+  printf '%sComponents%s\n' "${BOLD}" "${RESET}"
+  print_component "Neat core" "${CORE_VERSION}" "${core_detail}" "${core_state}"
+  print_component "PyNeat" "${PYNEAT_VERSION}" "" "$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo missing)"
+  print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
+  print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"
+  print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "$([[ -n "${INSIGHT_VERSION}" ]] && echo "${insight_state}" || echo missing)"
+
+  if [[ "${MODEL_SDK_AVAILABLE}" -eq 1 ]]; then
+    model_detail="${MODEL_SDK_DETAIL}"
+  fi
+  print_component "Model SDK Extension" "${MODEL_SDK_VERSION}" "${model_detail}" "$([[ "${MODEL_SDK_AVAILABLE}" -eq 1 ]] && echo installed || echo missing)"
+
+  print_exposed_ports
+
+  echo
+  printf '%sCoding Agent Playbooks%s\n' "${BOLD}" "${RESET}"
+  print_playbooks
+}
+
+print_playbooks() {
+  local output
+  if ! have_sima_cli; then
+    printf '  %ssima-cli not found; unable to list playbooks%s\n' "${YELLOW}" "${RESET}"
+    return 0
+  fi
+  if ! output="$(run_sima_cli playbooks list 2>&1)"; then
+    output="$(printf '%s\n' "${output}" | sed '/disabled update check/d')"
+    printf '  %ssima-cli playbooks list failed%s\n' "${YELLOW}" "${RESET}"
+    printf '%s\n' "${output}" | sed 's/^/  /'
+    return 0
+  fi
+  output="$(printf '%s\n' "${output}" | sed '/disabled update check/d')"
+  if [[ -z "${output}" ]]; then
+    printf '  %s(no playbooks reported)%s\n' "${DIM}" "${RESET}"
+    return 0
+  fi
+  printf '%s\n' "${output}" | sed 's/^/  /'
+}
+
+confirm_update() {
+  if [[ "${UPDATE_YES}" -eq 1 ]]; then
+    return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    die "refusing to update without confirmation on non-interactive stdin; pass --yes"
+  fi
+  local answer
+  read -r -p "Proceed with update? [y/N] " answer
+  case "${answer}" in
+    y|Y|yes|YES) return 0 ;;
+    *) echo "Update cancelled."; exit 0 ;;
+  esac
+}
+
+run_core_update() {
+  if [[ -z "${CORE_METADATA_URL}" ]]; then
+    die "unable to resolve core update URL"
+  fi
+  if ! have_sima_cli; then
+    die "sima-cli is required to update Neat core"
+  fi
+  echo "Updating Neat core from ${CORE_METADATA_URL}"
+  run_sima_cli install -m "${CORE_METADATA_URL}"
+}
+
+run_insight_update() {
+  local channel="${CHANNEL_OVERRIDE:-${INSIGHT_CHANNEL:-main}}"
+  local tag="${INSIGHT_LATEST_TAG:-${TAG_INPUT}}"
+  [[ -n "${tag}" ]] || die "unable to resolve Insight update tag"
+
+  echo "Updating neat-insight channel=${channel} tag=${tag}"
+  if have_cmd insight-admin; then
+    insight-admin update "${channel}" "${tag}"
+    return 0
+  fi
+
+  if ! have_cmd python3; then
+    die "python3 is required to update neat-insight without insight-admin"
+  fi
+
+  local tmp_script
+  tmp_script="$(mktemp /tmp/install-neat-insight.XXXXXX.py)"
+  trap 'rm -f "${tmp_script}"' EXIT
+  download_text "https://apps.sima-neat.com/tools/install-neat-insight.py" > "${tmp_script}"
+  NEAT_INSIGHT_VENV_DIR="${INSIGHT_VENV_DIR}" python3 "${tmp_script}" "${channel}" "${tag}"
+  rm -f "${tmp_script}"
+  trap - EXIT
+}
+
+run_skills_update() {
+  if ! have_sima_cli; then
+    die "sima-cli is required to update playbooks"
+  fi
+  echo "Updating sima-cli playbooks"
+  run_sima_cli playbooks update
+}
+
+print_update_plan() {
+  printf '%sUpdate Plan%s\n' "${BOLD}" "${RESET}"
+  if [[ "${UPDATE_CORE}" -eq 1 ]]; then
+    if component_update_needed "${CORE_TAG}" "${CORE_LATEST_TAG}"; then
+      printf '  Neat core     %s -> %s (%s)\n' "${CORE_VERSION:-unknown}" "${CORE_LATEST_VERSION:-${CORE_LATEST_TAG:-unknown}}" "${CORE_METADATA_URL:-unresolved}"
+    else
+      printf '  Neat core     %s (already current)\n' "${CORE_VERSION:-unknown}"
+    fi
+  fi
+  if [[ "${UPDATE_INSIGHT}" -eq 1 ]]; then
+    if component_update_needed "${INSIGHT_TAG}" "${INSIGHT_LATEST_TAG}"; then
+      printf '  neat-insight  %s -> %s (%s)\n' "${INSIGHT_VERSION:-unknown}" "${INSIGHT_LATEST_VERSION:-${INSIGHT_LATEST_TAG:-unknown}}" "${INSIGHT_METADATA_URL:-unresolved}"
+    else
+      printf '  neat-insight  %s (already current)\n' "${INSIGHT_VERSION:-unknown}"
+    fi
+  fi
+  if [[ "${UPDATE_SKILLS}" -eq 1 ]]; then
+    printf '  Playbooks     sima-cli playbooks update\n'
+  fi
+}
+
+run_update() {
+  STATUS_OFFLINE=0
+  discover_all
+  if [[ "${UPDATE_CORE}" -eq 1 ]] && ! resolve_core_latest; then
+    die "unable to resolve latest Neat core artifact"
+  fi
+  if [[ "${UPDATE_INSIGHT}" -eq 1 ]] && ! resolve_insight_latest; then
+    die "unable to resolve latest neat-insight artifact"
+  fi
+  local core_needed=0
+  local insight_needed=0
+  if [[ "${UPDATE_CORE}" -eq 1 ]] && component_update_needed "${CORE_TAG}" "${CORE_LATEST_TAG}"; then
+    core_needed=1
+  fi
+  if [[ "${UPDATE_INSIGHT}" -eq 1 ]] && component_update_needed "${INSIGHT_TAG}" "${INSIGHT_LATEST_TAG}"; then
+    insight_needed=1
+  fi
+  print_update_plan
+  if [[ "${core_needed}" -eq 0 && "${insight_needed}" -eq 0 ]]; then
+    if [[ "${UPDATE_SKILLS}" -eq 1 ]]; then
+      echo "Neat core and neat-insight are already current; only playbooks will be checked."
+    else
+      echo "All selected components are already current."
+      return 0
+    fi
+  fi
+  confirm_update
+  if [[ "${core_needed}" -eq 1 ]]; then
+    run_core_update
+  fi
+  if [[ "${insight_needed}" -eq 1 ]]; then
+    run_insight_update
+  fi
+  if [[ "${UPDATE_SKILLS}" -eq 1 ]]; then
+    run_skills_update
+  fi
+}
+
+parse_common_arg() {
+  case "$1" in
+    --offline)
+      STATUS_OFFLINE=1
+      return 0
+      ;;
+    --color=auto|--color=always|--color=never)
+      COLOR_MODE="${1#--color=}"
+      return 0
+      ;;
+    --json)
+      OUTPUT_JSON=1
+      return 0
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+  esac
+  return 1
+}
+
+main() {
+  local command="status"
+  if [[ $# -gt 0 ]]; then
+    case "$1" in
+      status)
+        command="status"
+        shift
+        ;;
+      update)
+        command="update"
+        shift
+        ;;
+    esac
+  fi
+
+  while [[ $# -gt 0 ]]; do
+    if parse_common_arg "$1"; then
+      shift
+      continue
+    fi
+    case "$1" in
+      --yes|-y)
+        UPDATE_YES=1
+        shift
+        ;;
+      --core-only)
+        UPDATE_CORE=1
+        UPDATE_INSIGHT=0
+        UPDATE_SKILLS=0
+        shift
+        ;;
+      --insight-only)
+        UPDATE_CORE=0
+        UPDATE_INSIGHT=1
+        UPDATE_SKILLS=0
+        shift
+        ;;
+      --channel)
+        CHANNEL_OVERRIDE="${2:-}"
+        [[ -n "${CHANNEL_OVERRIDE}" ]] || die "--channel requires a value"
+        shift 2
+        ;;
+      --tag)
+        TAG_INPUT="${2:-}"
+        [[ -n "${TAG_INPUT}" ]] || die "--tag requires a value"
+        shift 2
+        ;;
+      *)
+        die "unknown option or command: $1"
+        ;;
+    esac
+  done
+
+  if [[ "${command}" == "update" && "${OUTPUT_JSON}" -eq 1 ]]; then
+    die "--json is only supported with status"
+  fi
+
+  setup_color
+  case "${command}" in
+    status)
+      discover_all
+      if [[ "${OUTPUT_JSON}" -eq 1 ]]; then
+        print_status_json
+      else
+        print_status
+      fi
+      ;;
+    update)
+      run_update
+      ;;
+  esac
+}
+
+main "$@"
