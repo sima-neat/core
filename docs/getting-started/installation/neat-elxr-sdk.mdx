@@ -91,6 +91,23 @@ sima-cli sdk setup
 
 You can still build binaries in the SDK container, but you must manually transfer binaries to the DevKit for testing. You are also responsible for ensuring the DevKit runs the same version of the Neat core library as the SDK.
 
+## Insight
+
+Neat Insight is a web app for setting up and inspecting vision ML application tests. It provides a media library, RTSP source control, a low-latency WebRTC video viewer with metadata overlays, and system/runtime stats for debugging stream and application behavior.
+
+In the Neat SDK, Insight is served over HTTPS on port `9900`. Open one of the following URLs:
+
+- `https://localhost:9900` when browsing from the same machine where the SDK is running.
+- `https://<host-ip>:9900` when browsing from another machine on the network.
+
+The `neat` command also reports the actual Insight Web UI URL when the SDK exposes host-port mappings:
+
+```bash
+neat
+```
+
+For more detail on the status output and JSON format, see [Neat CLI](./neat-framework.mdx#neat-cli).
+
 ## Model SDK Extension
 
 On x86_64 platforms, including Ubuntu and Windows through WSL, Neat SDK installation prompts you to optionally install the Model SDK Extension.
@@ -205,11 +222,23 @@ Build a C++ app doing image classification with RESNET50 using SiMa Neat Framewo
 
 ## SDK upgrade
 
-To upgrade Neat SDK to the latest version, rerun:
+To upgrade Neat SDK to the latest version, rerun the following command from the host:
 
 ```bash
 sima-cli install ghcr:sima-neat/elxr
 ```
+
+For a temporary or quicker framework/runtime update inside an existing SDK container, you can run the Neat CLI from the SDK shell:
+
+```bash
+neat update
+```
+
+This updates the installed Neat framework components in the current SDK environment, but it does not replace a full SDK image upgrade from the host when you need SDK-level changes.
+
+If you delete or recreate the SDK container later, run `neat update` again inside the new container. The SDK image may not include the latest Neat framework or `neat-insight` artifacts at the time you recreate it.
+
+For more detail on status checks, JSON output, and component updates, see [Neat CLI](./neat-framework.mdx#neat-cli).
 
 ## Next step
 
