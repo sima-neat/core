@@ -176,6 +176,7 @@ def test_sdk_status_parses_sysroot_cache_and_checks_updates(tmp_path: Path) -> N
 
     assert proc.returncode == 0, proc.stderr
     assert "Mode               Neat SDK" in proc.stdout
+    assert "SDK Version        10.0.0.244" in proc.stdout
     assert "Neat core" in proc.stdout
     assert "0.0.0+main-1111111" in proc.stdout
     assert "latest=abcdef0" in proc.stdout
@@ -338,6 +339,7 @@ def test_json_status_exports_components_and_ports(tmp_path: Path) -> None:
     payload = json.loads(proc.stdout)
     assert payload["schema"] == "sima.neat.status.v1"
     assert payload["environment"]["mode"] == "elxr-sdk"
+    assert payload["environment"]["sdkVersion"] == "10.0.0.244"
     assert payload["updateCheck"] == {"offline": False, "status": "ok"}
     assert payload["components"]["core"]["version"] == "0.0.0+main-1111111"
     assert payload["components"]["core"]["latestTag"] == "abcdef0"
@@ -378,6 +380,7 @@ def test_json_status_offline_skips_network(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
+    assert payload["environment"]["sdkVersion"] is None
     assert payload["updateCheck"] == {"offline": True, "status": "skipped"}
     assert payload["components"]["core"]["latestTag"] is None
 
@@ -558,7 +561,13 @@ def test_devkit_status_uses_dpkg_and_pyneat_venv(tmp_path: Path) -> None:
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     buildinfo = tmp_path / "buildinfo"
-    buildinfo.write_text("MACHINE = modalix\n", encoding="utf-8")
+    buildinfo.write_text(
+        "DISTRO = eLxr\n"
+        "DISTRO_VERSION = 2.0.0\n"
+        "MACHINE = modalix\n"
+        "SIMA_BUILD_VERSION = 2.0.0_master_B827\n",
+        encoding="utf-8",
+    )
     write_exe(
         bin_dir / "dpkg-query",
         """\
@@ -582,9 +591,17 @@ def test_devkit_status_uses_dpkg_and_pyneat_venv(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "Mode               Modalix DevKit" in proc.stdout
+    assert "DevKit Version     2.0.0_master_B827" in proc.stdout
     assert "0.0.0+main-4444444" in proc.stdout
     assert "0.0.1-main-5555555" in proc.stdout
     assert "PyNeat" in proc.stdout and "0.0.0" in proc.stdout
+
+    proc = run_neat(tmp_path, ["--json", "--offline"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["environment"]["mode"] == "modalix-board"
+    assert payload["environment"]["devkitBuildVersion"] == "2.0.0_master_B827"
 
 
 def test_update_yes_dispatches_core_and_insight_commands(tmp_path: Path) -> None:

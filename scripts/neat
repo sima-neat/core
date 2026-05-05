@@ -31,6 +31,8 @@ BLUE=""
 ENV_MODE=""
 ENV_LABEL=""
 SYSROOT_PATH=""
+SDK_VERSION=""
+DEVKIT_BUILD_VERSION=""
 CORE_VERSION=""
 CORE_CHANNEL=""
 CORE_TAG=""
@@ -216,6 +218,38 @@ print_component() {
   printf '  %s%-22s%s %s%-18s%s %s\n' "${BOLD}" "${name}" "${RESET}" "${color}" "${version}" "${RESET}" "${detail}"
 }
 
+discover_sdk_version() {
+  SDK_VERSION=""
+  if [[ ! -f "${SDK_RELEASE_FILE}" ]]; then
+    return 0
+  fi
+  SDK_VERSION="$(awk -F'=' '
+    $1 ~ /^[[:space:]]*SDK Version[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "${SDK_RELEASE_FILE}" 2>/dev/null || true)"
+}
+
+discover_devkit_build_version() {
+  DEVKIT_BUILD_VERSION=""
+  if [[ ! -f "${BUILDINFO_FILE}" ]]; then
+    return 0
+  fi
+  DEVKIT_BUILD_VERSION="$(awk -F'=' '
+    $1 ~ /^[[:space:]]*SIMA_BUILD_VERSION[[:space:]]*$/ {
+      value=$2
+      sub(/^[[:space:]]+/, "", value)
+      sub(/[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "${BUILDINFO_FILE}" 2>/dev/null || true)"
+}
+
 detect_env_mode() {
   SYSROOT_PATH="${DEFAULT_SYSROOT}"
   if [[ -f "${SDK_RELEASE_FILE}" ]]; then
@@ -393,8 +427,10 @@ PY
 discover_all() {
   detect_env_mode
   if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+    discover_sdk_version
     discover_sdk_components
   else
+    discover_devkit_build_version
     discover_devkit_components
   fi
   discover_insight
@@ -580,6 +616,8 @@ print_status_json() {
     NEAT_JSON_ENV_MODE="${ENV_MODE}" \
     NEAT_JSON_ENV_LABEL="${ENV_LABEL}" \
     NEAT_JSON_SYSROOT="${SYSROOT_PATH}" \
+    NEAT_JSON_SDK_VERSION="${SDK_VERSION}" \
+    NEAT_JSON_DEVKIT_BUILD_VERSION="${DEVKIT_BUILD_VERSION}" \
     NEAT_JSON_UPDATE_OFFLINE="${STATUS_OFFLINE}" \
     NEAT_JSON_UPDATE_STATUS="${update_check_status}" \
     NEAT_JSON_CORE_VERSION="${CORE_VERSION}" \
@@ -707,6 +745,12 @@ payload = {
     "environment": {
         "mode": env("NEAT_JSON_ENV_MODE"),
         "label": env("NEAT_JSON_ENV_LABEL"),
+        "sdkVersion": optional(env("NEAT_JSON_SDK_VERSION"))
+        if env("NEAT_JSON_ENV_MODE") == "elxr-sdk"
+        else None,
+        "devkitBuildVersion": optional(env("NEAT_JSON_DEVKIT_BUILD_VERSION"))
+        if env("NEAT_JSON_ENV_MODE") == "modalix-board"
+        else None,
         "sysroot": optional(env("NEAT_JSON_SYSROOT"))
         if env("NEAT_JSON_ENV_MODE") == "elxr-sdk"
         else None,
@@ -778,7 +822,10 @@ print_status() {
   printf '%sNeat Environment%s\n' "${BOLD}" "${RESET}"
   print_kv "Mode" "${ENV_LABEL}"
   if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+    [[ -n "${SDK_VERSION}" ]] && print_kv "SDK Version" "${SDK_VERSION}"
     print_kv "Sysroot" "${SYSROOT_PATH}"
+  elif [[ -n "${DEVKIT_BUILD_VERSION}" ]]; then
+    print_kv "DevKit Version" "${DEVKIT_BUILD_VERSION}"
   fi
   print_kv "Update check" "$([[ "${STATUS_OFFLINE}" -eq 1 ]] && echo offline || echo online)"
   echo
