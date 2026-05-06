@@ -63,11 +63,17 @@ USAGE
 download_text() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "${url}"
+    curl -fsSL \
+      -H 'Cache-Control: no-cache, no-store, max-age=0' \
+      -H 'Pragma: no-cache' \
+      "${url}"
     return 0
   fi
   if command -v wget >/dev/null 2>&1; then
-    wget -qO- "${url}"
+    wget -qO- \
+      --header='Cache-Control: no-cache, no-store, max-age=0' \
+      --header='Pragma: no-cache' \
+      "${url}"
     return 0
   fi
   echo "Neither curl nor wget is installed." >&2
