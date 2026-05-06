@@ -139,11 +139,17 @@ run_sima_cli() {
 download_text() {
   local url="$1"
   if have_cmd curl; then
-    curl -fsSL "${url}"
+    curl -fsSL \
+      -H 'Cache-Control: no-cache, no-store, max-age=0' \
+      -H 'Pragma: no-cache' \
+      "${url}"
     return 0
   fi
   if have_cmd wget; then
-    wget -qO- "${url}"
+    wget -qO- \
+      --header='Cache-Control: no-cache, no-store, max-age=0' \
+      --header='Pragma: no-cache' \
+      "${url}"
     return 0
   fi
   return 127
