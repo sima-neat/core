@@ -41,6 +41,10 @@ def base_env(tmp_path: Path, bin_dir: Path) -> dict[str, str]:
         "NEAT_BUILDINFO_FILE": str(tmp_path / "missing-buildinfo"),
         "NEAT_ARTIFACTS_BASE_URL": "https://core.test",
         "NEAT_INSIGHT_BASE_URL": "https://insight.test",
+        "NEAT_PORT_MAP_FILE": str(tmp_path / "missing-port-map.json"),
+        "NEAT_INSIGHT_VENV_DIR": "",
+        "SIMA_CLI_BIN": "",
+        "SIMA_CLI_REGISTRY_FILE": str(home / ".sima-cli" / "registry.json"),
     }
 
 
