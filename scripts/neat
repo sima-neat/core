@@ -106,8 +106,7 @@ resolve_sima_cli() {
   fi
   for candidate in \
     "${HOME}/.sima-cli/.venv/bin/sima-cli" \
-    "${HOME}/.local/bin/sima-cli" \
-    "/data/sima-cli/.venv/bin/sima-cli"; do
+    "${HOME}/.local/bin/sima-cli"; do
     if [[ -x "${candidate}" ]]; then
       SIMA_CLI_PATH="${candidate}"
       printf '%s' "${SIMA_CLI_PATH}"
@@ -116,6 +115,11 @@ resolve_sima_cli() {
   done
   if command -v sima-cli >/dev/null 2>&1; then
     SIMA_CLI_PATH="$(command -v sima-cli)"
+    printf '%s' "${SIMA_CLI_PATH}"
+    return 0
+  fi
+  if [[ -x "/data/sima-cli/.venv/bin/sima-cli" ]]; then
+    SIMA_CLI_PATH="/data/sima-cli/.venv/bin/sima-cli"
     printf '%s' "${SIMA_CLI_PATH}"
     return 0
   fi

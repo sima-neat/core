@@ -14,6 +14,8 @@ set -euo pipefail
 # - In Modalix board mode, installs .deb packages with apt (sudo).
 # - In eLxr SDK mode, caches install artifacts under the sysroot
 #   neat-install-packages folder for paired DevKit sync.
+# - In eLxr SDK mode, exposes the sysroot-installed neat command at
+#   /usr/local/bin/neat for convenient use inside the SDK container.
 # - On devices with writable /media/nvme, creates the venv at /media/nvme/pyneat and
 #   exposes it via $HOME/pyneat for consistent activation instructions.
 # - On devices without /media/nvme, creates the venv directly at $HOME/pyneat.
@@ -271,6 +273,25 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
+ensure_sdk_neat_cli_symlink() {
+  local sysroot
+  sysroot="$(sysroot_path)"
+  local target="${sysroot}/usr/bin/neat"
+  local link="/usr/local/bin/neat"
+
+  if [[ ! -x "${target}" ]]; then
+    return 0
+  fi
+  if [[ -d "${link}" && ! -L "${link}" ]]; then
+    echo "Cannot create ${link} symlink; path already exists as a directory." >&2
+    exit 1
+  fi
+
+  run_sudo mkdir -p "$(dirname "${link}")"
+  run_sudo ln -sfn "${target}" "${link}"
+  log "Created SDK neat command symlink ${link} -> ${target}"
+}
+
 cache_install_artifacts_in_sysroot() {
   local cache_dir
   cache_dir="$(sysroot_neat_install_packages_dir)"
@@ -424,6 +445,7 @@ ENV_MODE="$(detect_env_mode)"
 log_green "Environment mode: ${ENV_MODE}"
 if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_debs_into_sysroot
+  ensure_sdk_neat_cli_symlink
   install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
   deploy_artifacts_to_paired_devkit_if_configured
 else
