@@ -394,6 +394,7 @@ def test_status_finds_sima_cli_in_user_install_location(tmp_path: Path) -> None:
     bin_dir.mkdir()
     env = base_env(tmp_path, bin_dir)
     env["PATH"] = f"{bin_dir}:/bin:/usr/bin"
+    make_sima_cli_with_playbooks(bin_dir, output="global-playbook\n")
     sima_cli = Path(env["HOME"]) / ".sima-cli" / ".venv" / "bin" / "sima-cli"
     sima_cli.parent.mkdir(parents=True)
     make_sima_cli_executable(sima_cli)
@@ -405,6 +406,7 @@ def test_status_finds_sima_cli_in_user_install_location(tmp_path: Path) -> None:
     assert "sima-cli not found" not in proc.stdout
     assert "sima-neat" in proc.stdout
     assert "use-neat-insight" in proc.stdout
+    assert "global-playbook" not in proc.stdout
 
 
 def test_insight_status_reports_stopped_when_insight_admin_is_not_running(tmp_path: Path) -> None:
