@@ -104,11 +104,6 @@ resolve_sima_cli() {
       return 0
     fi
   fi
-  if command -v sima-cli >/dev/null 2>&1; then
-    SIMA_CLI_PATH="$(command -v sima-cli)"
-    printf '%s' "${SIMA_CLI_PATH}"
-    return 0
-  fi
   for candidate in \
     "${HOME}/.sima-cli/.venv/bin/sima-cli" \
     "${HOME}/.local/bin/sima-cli" \
@@ -119,6 +114,11 @@ resolve_sima_cli() {
       return 0
     fi
   done
+  if command -v sima-cli >/dev/null 2>&1; then
+    SIMA_CLI_PATH="$(command -v sima-cli)"
+    printf '%s' "${SIMA_CLI_PATH}"
+    return 0
+  fi
   return 1
 }
 
