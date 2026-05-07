@@ -1,8 +1,7 @@
-#include "nodes/io/OptiViewJsonOutput.h"
+#include "nodes/io/MetadataReceiverOutput.h"
 
 #include <nlohmann/json.hpp>
 
-#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <memory>
@@ -54,7 +53,7 @@ bool resolve_udp_addr(const std::string& host, int port, sockaddr_storage& out, 
 
 } // namespace
 
-std::vector<std::string> OptiViewDefaultLabels() {
+std::vector<std::string> MetadataReceiverDefaultLabels() {
   std::vector<std::string> labels;
   labels.reserve(80);
   for (int i = 0; i < 80; ++i) {
@@ -63,9 +62,48 @@ std::vector<std::string> OptiViewDefaultLabels() {
   return labels;
 }
 
-std::string OptiViewMakeJson(int64_t timestamp_ms, const std::string& frame_id,
-                             const std::vector<OptiViewObject>& objects,
-                             const std::vector<std::string>& labels) {
+bool MetadataReceiverMakeJson(const MetadataReceiverPayload& payload, std::string* out_json,
+                              std::string* err) {
+  if (!out_json) {
+    if (err)
+      *err = "MetadataReceiverMakeJson requires out_json";
+    return false;
+  }
+  out_json->clear();
+
+  if (payload.type.empty()) {
+    if (err)
+      *err = "MetadataReceiverPayload type must not be empty";
+    return false;
+  }
+
+  json data;
+  try {
+    data = json::parse(payload.data_json);
+  } catch (const std::exception& ex) {
+    if (err)
+      *err = std::string("MetadataReceiverPayload data_json parse failed: ") + ex.what();
+    return false;
+  }
+
+  json output;
+  output["type"] = payload.type;
+  output["data"] = std::move(data);
+  if (payload.timestamp_ms >= 0) {
+    output["timestamp"] = payload.timestamp_ms;
+  }
+  if (!payload.frame_id.empty()) {
+    output["frame_id"] = payload.frame_id;
+  }
+
+  *out_json = output.dump();
+  return true;
+}
+
+std::string
+MetadataReceiverMakeObjectDetectionJson(int64_t timestamp_ms, const std::string& frame_id,
+                                        const std::vector<MetadataReceiverObject>& objects,
+                                        const std::vector<std::string>& labels) {
   json output;
   output["type"] = "object-detection";
   output["timestamp"] = timestamp_ms;
@@ -90,24 +128,30 @@ std::string OptiViewMakeJson(int64_t timestamp_ms, const std::string& frame_id,
   return output.dump();
 }
 
-struct OptiViewJsonOutput::Impl {
+struct MetadataReceiverOutput::Impl {
+  ~Impl() {
+    if (fd >= 0) {
+      ::close(fd);
+    }
+  }
+
   int fd = -1;
   sockaddr_storage addr{};
   socklen_t addr_len = 0;
   std::string host;
-  int json_port = 0;
-  int video_port = 0;
+  int metadata_port = 0;
   bool ok = false;
 };
 
-OptiViewJsonOutput::OptiViewJsonOutput(const OptiViewChannelOptions& opt, std::string* err) {
+MetadataReceiverOutput::MetadataReceiverOutput(const MetadataReceiverChannelOptions& opt,
+                                               std::string* err) {
   impl_ = std::make_unique<Impl>();
   impl_->host = opt.host.empty() ? "127.0.0.1" : opt.host;
-  impl_->json_port = opt.json_port_base + opt.channel;
-  impl_->video_port = opt.video_port_base + opt.channel;
+  impl_->metadata_port = opt.metadata_port_base + opt.channel;
 
   std::string addr_err;
-  if (!resolve_udp_addr(impl_->host, impl_->json_port, impl_->addr, impl_->addr_len, addr_err)) {
+  if (!resolve_udp_addr(impl_->host, impl_->metadata_port, impl_->addr, impl_->addr_len,
+                        addr_err)) {
     if (err)
       *err = addr_err;
     return;
@@ -124,36 +168,28 @@ OptiViewJsonOutput::OptiViewJsonOutput(const OptiViewChannelOptions& opt, std::s
   impl_->ok = true;
 }
 
-OptiViewJsonOutput::~OptiViewJsonOutput() {
-  if (impl_ && impl_->fd >= 0) {
-    ::close(impl_->fd);
-  }
-}
+MetadataReceiverOutput::~MetadataReceiverOutput() = default;
+MetadataReceiverOutput::MetadataReceiverOutput(MetadataReceiverOutput&&) noexcept = default;
+MetadataReceiverOutput&
+MetadataReceiverOutput::operator=(MetadataReceiverOutput&&) noexcept = default;
 
-OptiViewJsonOutput::OptiViewJsonOutput(OptiViewJsonOutput&&) noexcept = default;
-OptiViewJsonOutput& OptiViewJsonOutput::operator=(OptiViewJsonOutput&&) noexcept = default;
-
-bool OptiViewJsonOutput::ok() const {
+bool MetadataReceiverOutput::ok() const {
   return impl_ && impl_->ok;
 }
 
-const std::string& OptiViewJsonOutput::host() const {
+const std::string& MetadataReceiverOutput::host() const {
   static const std::string empty;
   return impl_ ? impl_->host : empty;
 }
 
-int OptiViewJsonOutput::json_port() const {
-  return impl_ ? impl_->json_port : -1;
+int MetadataReceiverOutput::metadata_port() const {
+  return impl_ ? impl_->metadata_port : -1;
 }
 
-int OptiViewJsonOutput::video_port() const {
-  return impl_ ? impl_->video_port : -1;
-}
-
-bool OptiViewJsonOutput::send_json(const std::string& payload, std::string* err) const {
+bool MetadataReceiverOutput::send_json(const std::string& payload, std::string* err) const {
   if (!ok()) {
     if (err)
-      *err = "OptiViewJsonOutput not initialized";
+      *err = "MetadataReceiverOutput not initialized";
     return false;
   }
   const ssize_t sent = ::sendto(impl_->fd, payload.data(), payload.size(), 0,
@@ -163,14 +199,28 @@ bool OptiViewJsonOutput::send_json(const std::string& payload, std::string* err)
       *err = std::string("sendto failed: ") + std::strerror(errno);
     return false;
   }
+  if (static_cast<size_t>(sent) != payload.size()) {
+    if (err)
+      *err = "sendto sent a partial datagram";
+    return false;
+  }
   return true;
 }
 
-bool OptiViewJsonOutput::send_detection(int64_t timestamp_ms, const std::string& frame_id,
-                                        const std::vector<OptiViewObject>& objects,
-                                        const std::vector<std::string>& labels,
-                                        std::string* err) const {
-  return send_json(OptiViewMakeJson(timestamp_ms, frame_id, objects, labels), err);
+bool MetadataReceiverOutput::send_metadata(const MetadataReceiverPayload& payload,
+                                           std::string* err) const {
+  std::string payload_json;
+  if (!MetadataReceiverMakeJson(payload, &payload_json, err))
+    return false;
+  return send_json(payload_json, err);
+}
+
+bool MetadataReceiverOutput::send_object_detection(
+    int64_t timestamp_ms, const std::string& frame_id,
+    const std::vector<MetadataReceiverObject>& objects, const std::vector<std::string>& labels,
+    std::string* err) const {
+  return send_json(MetadataReceiverMakeObjectDetectionJson(timestamp_ms, frame_id, objects, labels),
+                   err);
 }
 
 } // namespace simaai::neat

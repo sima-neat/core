@@ -23,9 +23,9 @@ struct Config {
   std::string rtsp_list;
   int frames = 3000;
   bool debug = false;
-  std::string optiview_host = "127.0.0.1";
-  int optiview_video_port = 9000;
-  int optiview_json_port = 9100;
+  std::string metadata_receiver_host = "127.0.0.1";
+  int metadata_receiver_video_port = 9000;
+  int metadata_receiver_metadata_port = 9100;
 };
 struct Inflight {
   int64_t frame_id = -1;
@@ -39,7 +39,7 @@ struct Stream {
   int idx = 0;
   std::string url, stream_id;
   simaai::neat::Run enc, dec, fwd;
-  std::unique_ptr<sima_examples::OptiViewSender> ov;
+  std::unique_ptr<sima_examples::MetadataReceiverSender> ov;
   std::deque<Inflight> inflight;
   size_t pushed = 0;
   bool closed = false;
@@ -53,9 +53,9 @@ static void die(bool ok, const std::string& msg) {
 static void usage() {
   std::cerr << "Usage: ./yolov8_multi_rtsp_demo --rtsp-list "
             << sima_examples::default_rtsp_list_path().string() << " --frames 3000 [--debug]"
-            << " [--optiview-host 127.0.0.1]"
-            << " [--optiview-video-port 9000]"
-            << " [--optiview-json-port 9100]\n";
+            << " [--metadata-receiver-host 127.0.0.1]"
+            << " [--metadata-receiver-video-port 9000]"
+            << " [--metadata-receiver-port 9100]\n";
 }
 
 static Config parse_config(int argc, char** argv) {
@@ -66,17 +66,17 @@ static Config parse_config(int argc, char** argv) {
     cfg.rtsp_list = raw;
   if (sima_examples::get_arg(argc, argv, "--frames", raw))
     cfg.frames = std::stoi(raw);
-  if (sima_examples::get_arg(argc, argv, "--optiview-host", raw))
-    cfg.optiview_host = raw;
-  if (sima_examples::get_arg(argc, argv, "--optiview-video-port", raw))
-    cfg.optiview_video_port = std::stoi(raw);
-  if (sima_examples::get_arg(argc, argv, "--optiview-json-port", raw))
-    cfg.optiview_json_port = std::stoi(raw);
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-host", raw))
+    cfg.metadata_receiver_host = raw;
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-video-port", raw))
+    cfg.metadata_receiver_video_port = std::stoi(raw);
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-port", raw))
+    cfg.metadata_receiver_metadata_port = std::stoi(raw);
   cfg.debug = sima_examples::has_flag(argc, argv, "--debug");
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--rtsp-list" || arg == "--frames" || arg == "--optiview-host" ||
-        arg == "--optiview-video-port" || arg == "--optiview-json-port") {
+    if (arg == "--rtsp-list" || arg == "--frames" || arg == "--metadata-receiver-host" ||
+        arg == "--metadata-receiver-video-port" || arg == "--metadata-receiver-port") {
       if (i + 1 < argc)
         ++i;
       continue;
@@ -190,9 +190,9 @@ int main(int argc, char** argv) {
     die(!mpk.empty(), "Failed to locate yolo_v8s MPK tarball");
 
     const int kW = 1280, kH = 720;
-    const std::string kHost = cfg.optiview_host;
-    const int kVideoBase = cfg.optiview_video_port;
-    const int kJsonBase = cfg.optiview_json_port;
+    const std::string kHost = cfg.metadata_receiver_host;
+    const int kVideoBase = cfg.metadata_receiver_video_port;
+    const int kMetadataBase = cfg.metadata_receiver_metadata_port;
     std::vector<Stream> streams;
     streams.reserve(urls.size());
     std::string ref_caps;
@@ -262,21 +262,22 @@ int main(int argc, char** argv) {
       if (cfg.debug)
         std::cout << "[PIPE] dec stream=" << s.idx << " " << dec.last_pipeline() << "\n";
 
-      sima_examples::OptiViewOptions opt;
+      sima_examples::MetadataReceiverOptions opt;
       opt.host = kHost;
       opt.channel = s.idx;
-      opt.video_port_base = kVideoBase;
-      opt.json_port_base = kJsonBase;
+      opt.metadata_port_base = kMetadataBase;
       std::string opt_err;
-      s.ov = std::make_unique<sima_examples::OptiViewSender>(opt, &opt_err);
+      s.ov = std::make_unique<sima_examples::MetadataReceiverSender>(opt, &opt_err);
       die(s.ov->ok(), opt_err);
-      std::cout << "optiview host=" << s.ov->host() << " video_port=" << s.ov->video_port()
-                << " json_port=" << s.ov->json_port() << " channel=" << s.idx << " fifo=1\n";
+      std::cout << "metadata_receiver host=" << s.ov->host()
+                << " video_port=" << kVideoBase + static_cast<int>(s.idx)
+                << " metadata_port=" << s.ov->metadata_port() << " channel=" << s.idx
+                << " fifo=1\n";
 
       streams.push_back(std::move(s));
     }
 
-    const auto labels = sima_examples::optiview_default_labels();
+    const auto labels = sima_examples::metadata_receiver_default_labels();
     const int topk = 100;
     const float min_score = 0.52f;
     simaai::neat::Model::Options model_opt;
@@ -437,10 +438,10 @@ int main(int argc, char** argv) {
 
         if (sidx >= 0 && sidx < static_cast<int>(streams.size())) {
           auto& s = streams[sidx];
-          std::vector<sima_examples::OptiViewObject> objs;
+          std::vector<sima_examples::MetadataReceiverObject> objs;
           objs.reserve(boxes.size());
           for (const auto& b : boxes) {
-            sima_examples::OptiViewObject obj;
+            sima_examples::MetadataReceiverObject obj;
             obj.x = static_cast<int>(b.x1);
             obj.y = static_cast<int>(b.y1);
             obj.w = static_cast<int>(b.x2 - b.x1);
@@ -449,11 +450,11 @@ int main(int argc, char** argv) {
             obj.class_id = b.class_id;
             objs.push_back(obj);
           }
-          std::string json = sima_examples::optiview_make_json(
+          std::string json = sima_examples::metadata_receiver_make_json(
               static_cast<int64_t>(now_ms()), std::to_string(out_msg.frame_id), objs, labels);
           std::string json_err;
           if (!s.ov->send_json(json, &json_err))
-            std::cerr << "[warn] optiview json send failed: " << json_err << "\n";
+            std::cerr << "[warn] metadata_receiver metadata send failed: " << json_err << "\n";
         }
       }
 

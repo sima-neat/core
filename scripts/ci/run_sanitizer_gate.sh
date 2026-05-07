@@ -58,11 +58,12 @@ asan_ubsan_tests=(
   unit_graph_join_encoded_with_meta_test
   unit_graph_stamp_frame_id_test
   unit_graph_strict_sync_store_test
-  unit_group_optiview_output_group_failure_test
+  unit_metadata_receiver_output_group_test
   unit_contracts_test
   unit_detection_types_bbox_test
   unit_gst_data_adapter_edge_test
-  unit_node_optiview_json_output_test
+  unit_node_metadata_receiver_output_test
+  unit_udp_output_group_test
   unit_node_udp_output_fragment_test
   unit_nodes_test
   unit_outputspec_test

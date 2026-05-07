@@ -1,4 +1,4 @@
-#include "graphpipes_optiview_helpers.h"
+#include "graphpipes_metadata_receiver_helpers.h"
 
 #include "example_utils.h"
 
@@ -27,7 +27,7 @@
 
 namespace fs = std::filesystem;
 
-namespace sima_examples::graphpipes_optiview {
+namespace sima_examples::graphpipes_metadata_receiver {
 namespace {
 
 constexpr int kOutputPayloadType = 96;
@@ -174,13 +174,13 @@ Config parse_config(int argc, char** argv) {
   if (sima_examples::get_arg(argc, argv, "--streams", raw))
     cfg.streams = std::stoi(raw);
 
-  if (sima_examples::get_arg(argc, argv, "--optiview-host", raw))
-    cfg.optiview_host = raw;
-  if (sima_examples::get_arg(argc, argv, "--optiview-video-port", raw)) {
-    cfg.optiview_video_port = std::stoi(raw);
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-host", raw))
+    cfg.metadata_receiver_host = raw;
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-video-port", raw)) {
+    cfg.metadata_receiver_video_port = std::stoi(raw);
   }
-  if (sima_examples::get_arg(argc, argv, "--optiview-json-port", raw)) {
-    cfg.optiview_json_port = std::stoi(raw);
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-port", raw)) {
+    cfg.metadata_receiver_metadata_port = std::stoi(raw);
   }
 
   if (sima_examples::get_arg(argc, argv, "--rtsp-pt", raw))
@@ -199,8 +199,8 @@ Config parse_config(int argc, char** argv) {
     cfg.rtsp_tcp = false;
   if (sima_examples::has_flag(argc, argv, "--rtsp-tcp"))
     cfg.rtsp_tcp = true;
-  if (sima_examples::has_flag(argc, argv, "--no-json"))
-    cfg.send_json = false;
+  if (sima_examples::has_flag(argc, argv, "--no-metadata"))
+    cfg.send_metadata = false;
 
   return cfg;
 }
@@ -278,29 +278,32 @@ ProbeResult probe_inputs(const Config& cfg, const std::vector<std::string>& urls
   return out;
 }
 
-void init_optiview_group(const Config& cfg, const ProbeResult& probe, size_t streams,
-                         simaai::neat::nodes::groups::OptiViewOutputNodeGroup& out_group) {
-  simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions optiview_opt;
-  optiview_opt.udp.h264_caps = probe.enc_caps_appsrc;
-  optiview_opt.udp.payload_type = kOutputPayloadType;
-  optiview_opt.udp.config_interval = 1;
-  optiview_opt.udp.enable_timings = cfg.debug;
-  optiview_opt.udp.host = cfg.optiview_host;
-  optiview_opt.udp.video_port_base = cfg.optiview_video_port;
-  optiview_opt.send_json = cfg.send_json;
-  optiview_opt.json_port_base = cfg.optiview_json_port;
-  optiview_opt.frame_w = probe.frame_w;
-  optiview_opt.frame_h = probe.frame_h;
-  optiview_opt.topk = 100;
-  optiview_opt.parse_debug = false;
+void init_metadata_receiver_group(
+    const Config& cfg, const ProbeResult& probe, size_t streams,
+    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup& out_group) {
+  simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions metadata_receiver_opt;
+  metadata_receiver_opt.udp.h264_caps = probe.enc_caps_appsrc;
+  metadata_receiver_opt.udp.payload_type = kOutputPayloadType;
+  metadata_receiver_opt.udp.config_interval = 1;
+  metadata_receiver_opt.udp.enable_timings = cfg.debug;
+  metadata_receiver_opt.udp.host = cfg.metadata_receiver_host;
+  metadata_receiver_opt.udp.video_port_base = cfg.metadata_receiver_video_port;
+  metadata_receiver_opt.send_metadata = cfg.send_metadata;
+  metadata_receiver_opt.metadata_port_base = cfg.metadata_receiver_metadata_port;
+  metadata_receiver_opt.frame_w = probe.frame_w;
+  metadata_receiver_opt.frame_h = probe.frame_h;
+  metadata_receiver_opt.topk = 100;
+  metadata_receiver_opt.parse_debug = false;
 
-  std::string optiview_err;
-  sima_examples::require(out_group.init(optiview_opt, streams, &optiview_err), optiview_err);
+  std::string metadata_receiver_err;
+  sima_examples::require(out_group.init(metadata_receiver_opt, streams, &metadata_receiver_err),
+                         metadata_receiver_err);
 
-  std::cout << "[optiview] host=" << cfg.optiview_host
-            << " video_port_base=" << cfg.optiview_video_port
-            << " json_port_base=" << cfg.optiview_json_port
-            << " send_json=" << (cfg.send_json ? "1" : "0") << " streams=" << streams << "\n";
+  std::cout << "[metadata_receiver] host=" << cfg.metadata_receiver_host
+            << " video_port_base=" << cfg.metadata_receiver_video_port
+            << " metadata_port_base=" << cfg.metadata_receiver_metadata_port
+            << " send_metadata=" << (cfg.send_metadata ? "1" : "0") << " streams=" << streams
+            << "\n";
 }
 
 std::vector<std::shared_ptr<StreamIoStats>> make_io_stats(size_t streams) {
@@ -641,7 +644,7 @@ void on_yolo_sample(const simaai::neat::Sample& sample, CollectorContext& ctx) {
     if (ctx.release_pacer) {
       accepted = ctx.release_pacer->enqueue(idx, std::move(pending_video->sample));
     } else {
-      const bool release_ok = ctx.optiview_group.push_video(idx, pending_video->sample);
+      const bool release_ok = ctx.metadata_receiver_group.push_video(idx, pending_video->sample);
       if (!release_ok) {
         io.sync_release_fail.fetch_add(1, std::memory_order_relaxed);
       } else {
@@ -664,34 +667,34 @@ void on_yolo_sample(const simaai::neat::Sample& sample, CollectorContext& ctx) {
   }
   ctx.processed[idx]++;
 
-  if (ctx.cfg.send_json) {
-    simaai::neat::nodes::groups::OptiViewJsonInput json_in;
-    json_in.stream_idx = idx;
-    json_in.stream_id = sid;
-    json_in.frame_id = yolo_frame;
-    json_in.capture_ms = pending_video.has_value() ? pending_video->cap_ms : -1;
-    json_in.yolo_ms = yolo_ms;
-    json_in.output_frame_id = ctx.processed[idx] - 1;
-    json_in.yolo_sample = &sample;
+  if (ctx.cfg.send_metadata) {
+    simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput detection_in;
+    detection_in.stream_idx = idx;
+    detection_in.stream_id = sid;
+    detection_in.frame_id = yolo_frame;
+    detection_in.capture_ms = pending_video.has_value() ? pending_video->cap_ms : -1;
+    detection_in.yolo_ms = yolo_ms;
+    detection_in.output_frame_id = ctx.processed[idx] - 1;
+    detection_in.yolo_sample = &sample;
 
-    simaai::neat::nodes::groups::OptiViewJsonResult json_out;
-    if (ctx.optiview_group.emit_json(json_in, &json_out)) {
-      io.json_ok.fetch_add(1, std::memory_order_relaxed);
-      io.boxes_total.fetch_add(json_out.boxes, std::memory_order_relaxed);
-      if (json_out.nonempty) {
-        io.json_nonempty.fetch_add(1, std::memory_order_relaxed);
+    simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult detection_out;
+    if (ctx.metadata_receiver_group.emit_object_detection(detection_in, &detection_out)) {
+      io.metadata_ok.fetch_add(1, std::memory_order_relaxed);
+      io.boxes_total.fetch_add(detection_out.boxes, std::memory_order_relaxed);
+      if (detection_out.nonempty) {
+        io.metadata_nonempty.fetch_add(1, std::memory_order_relaxed);
       } else {
-        io.json_empty.fetch_add(1, std::memory_order_relaxed);
+        io.metadata_empty.fetch_add(1, std::memory_order_relaxed);
       }
     } else {
-      io.json_fail.fetch_add(1, std::memory_order_relaxed);
-      if (json_out.error.find("bbox extract failed") != std::string::npos) {
+      io.metadata_fail.fetch_add(1, std::memory_order_relaxed);
+      if (detection_out.error.find("bbox extract failed") != std::string::npos) {
         io.bbox_extract_fail.fetch_add(1, std::memory_order_relaxed);
-      } else if (json_out.error.find("bbox parse failed") != std::string::npos) {
+      } else if (detection_out.error.find("bbox parse failed") != std::string::npos) {
         io.bbox_parse_fail.fetch_add(1, std::memory_order_relaxed);
       }
-      std::cerr << "[warn] optiview json send failed stream=" << sid << " err=" << json_out.error
-                << "\n";
+      std::cerr << "[warn] metadata_receiver metadata send failed stream=" << sid
+                << " err=" << detection_out.error << "\n";
     }
   }
 
@@ -708,10 +711,10 @@ FinalTotals print_stream_summaries(const std::vector<std::shared_ptr<StreamIoSta
     const auto& io = *io_stats[i];
 
     const int64_t yolo_samples = io.yolo_samples.load(std::memory_order_relaxed);
-    const int64_t json_ok = io.json_ok.load(std::memory_order_relaxed);
-    const int64_t json_fail = io.json_fail.load(std::memory_order_relaxed);
-    const int64_t json_nonempty = io.json_nonempty.load(std::memory_order_relaxed);
-    const int64_t json_empty = io.json_empty.load(std::memory_order_relaxed);
+    const int64_t metadata_ok = io.metadata_ok.load(std::memory_order_relaxed);
+    const int64_t metadata_fail = io.metadata_fail.load(std::memory_order_relaxed);
+    const int64_t metadata_nonempty = io.metadata_nonempty.load(std::memory_order_relaxed);
+    const int64_t metadata_empty = io.metadata_empty.load(std::memory_order_relaxed);
     const int64_t boxes_total = io.boxes_total.load(std::memory_order_relaxed);
 
     const int64_t fwd_ok = io.fwd_push_ok.load(std::memory_order_relaxed);
@@ -750,13 +753,13 @@ FinalTotals print_stream_summaries(const std::vector<std::shared_ptr<StreamIoSta
     const auto pacer_stats = release_pacer ? release_pacer->stats(i) : SyncReleasePacer::Stats{};
 
     const double avg_boxes =
-        json_ok > 0 ? static_cast<double>(boxes_total) / static_cast<double>(json_ok) : 0.0;
+        metadata_ok > 0 ? static_cast<double>(boxes_total) / static_cast<double>(metadata_ok) : 0.0;
 
     std::cout << "[stream_io_summary]"
               << " stream=" << i << " fwd_ok=" << fwd_ok << " fwd_fail=" << fwd_fail
-              << " yolo_samples=" << yolo_samples << " json_ok=" << json_ok
-              << " json_fail=" << json_fail << " json_nonempty=" << json_nonempty
-              << " json_empty=" << json_empty << " boxes_total=" << boxes_total
+              << " yolo_samples=" << yolo_samples << " metadata_ok=" << metadata_ok
+              << " metadata_fail=" << metadata_fail << " metadata_nonempty=" << metadata_nonempty
+              << " metadata_empty=" << metadata_empty << " boxes_total=" << boxes_total
               << " avg_boxes_per_json=" << avg_boxes << " bbox_extract_fail=" << bbox_extract_fail
               << " bbox_parse_fail=" << bbox_parse_fail << " sync_release_ok=" << sync_release_ok
               << " sync_release_fail=" << sync_release_fail
@@ -781,4 +784,4 @@ FinalTotals print_stream_summaries(const std::vector<std::shared_ptr<StreamIoSta
   return totals;
 }
 
-} // namespace sima_examples::graphpipes_optiview
+} // namespace sima_examples::graphpipes_metadata_receiver

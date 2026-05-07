@@ -16,7 +16,7 @@
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/VideoTrackSelect.h"
 #include "nodes/io/Input.h"
-#include "nodes/io/OptiViewJsonOutput.h"
+#include "nodes/io/MetadataReceiverOutput.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/UdpOutput.h"

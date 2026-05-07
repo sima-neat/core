@@ -1,4 +1,4 @@
-#include "nodes/groups/OptiViewOutputGroup.h"
+#include "nodes/groups/MetadataReceiverOutputGroup.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
 
@@ -59,25 +59,25 @@ simaai::neat::Sample make_bbox_tensor_sample(const std::vector<uint8_t>& payload
 
 } // namespace
 
-RUN_TEST("optiview_json_udp_integration_test", ([] {
+RUN_TEST("metadata_receiver_udp_integration_test", ([] {
            using nlohmann::json;
-           using simaai::neat::nodes::groups::OptiViewJsonInput;
-           using simaai::neat::nodes::groups::OptiViewJsonResult;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+           using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput;
+           using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult;
+           using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup;
+           using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions;
 
            sima_test::UdpReceiver rx;
 
-           OptiViewOutputNodeGroup group;
-           OptiViewOutputNodeGroupOptions opt;
-           opt.send_json = true;
+           MetadataReceiverOutputNodeGroup group;
+           MetadataReceiverOutputNodeGroupOptions opt;
+           opt.send_metadata = true;
            opt.udp.h264_caps =
                "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
            opt.udp.host = "127.0.0.1";
            opt.udp.video_port_base = 9700;
            opt.udp.udp_sync = false;
            opt.udp.udp_async = false;
-           opt.json_port_base = rx.port();
+           opt.metadata_port_base = rx.port();
            opt.frame_w = 640;
            opt.frame_h = 480;
            opt.topk = 16;
@@ -87,13 +87,14 @@ RUN_TEST("optiview_json_udp_integration_test", ([] {
            if (!group.init(opt, 1, &init_err)) {
              if (sima_test::likely_runtime_missing(init_err)) {
                throw std::runtime_error(
-                   "Skipping OptiView JSON UDP integration due runtime limitations: " + init_err);
+                   "Skipping MetadataReceiver metadata UDP integration due runtime limitations: " +
+                   init_err);
              }
-             throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+             throw std::runtime_error("MetadataReceiverOutputNodeGroup init failed: " + init_err);
            }
 
            struct Guard {
-             OptiViewOutputNodeGroup* g = nullptr;
+             MetadataReceiverOutputNodeGroup* g = nullptr;
              ~Guard() {
                if (!g)
                  return;
@@ -112,34 +113,37 @@ RUN_TEST("optiview_json_udp_integration_test", ([] {
            const auto payload = make_bbox_payload(2, boxes);
            const auto yolo_sample = make_bbox_tensor_sample(payload, 987000000, 77);
 
-           OptiViewJsonInput in;
+           MetadataReceiverObjectDetectionInput in;
            in.stream_idx = 0;
            in.yolo_sample = &yolo_sample;
            in.frame_id = 77;
            in.output_frame_id = 777;
            in.capture_ms = 4444;
 
-           OptiViewJsonResult out;
-           require(group.emit_json(in, &out), "OptiView JSON integration emit_json failed");
-           require(out.ok, "OptiView JSON integration result should be ok");
-           require(out.nonempty, "OptiView JSON integration should report non-empty detections");
-           require(out.boxes == 2, "OptiView JSON integration detection count mismatch");
+           MetadataReceiverObjectDetectionResult out;
+           require(group.emit_object_detection(in, &out),
+                   "MetadataReceiver metadata integration emit_object_detection failed");
+           require(out.ok, "MetadataReceiver metadata integration result should be ok");
+           require(out.nonempty,
+                   "MetadataReceiver metadata integration should report non-empty detections");
+           require(out.boxes == 2,
+                   "MetadataReceiver metadata integration detection count mismatch");
 
-           std::string payload_json;
-           require(rx.recv_one(&payload_json, 2000),
-                   "OptiView JSON integration expected UDP payload not received");
+           std::string payload_metadata;
+           require(rx.recv_one(&payload_metadata, 2000),
+                   "MetadataReceiver metadata integration expected UDP payload not received");
 
-           const json parsed = json::parse(payload_json);
+           const json parsed = json::parse(payload_metadata);
            require(parsed["type"].get<std::string>() == "object-detection",
-                   "OptiView JSON integration type mismatch");
+                   "MetadataReceiver metadata integration type mismatch");
            require(parsed["frame_id"].get<std::string>() == "777",
-                   "OptiView JSON integration frame id mismatch");
+                   "MetadataReceiver metadata integration frame id mismatch");
            require(parsed["timestamp"].get<int64_t>() == 4444,
-                   "OptiView JSON integration timestamp mismatch");
+                   "MetadataReceiver metadata integration timestamp mismatch");
            require(parsed["data"]["objects"].size() == 2,
-                   "OptiView JSON integration object count mismatch");
+                   "MetadataReceiver metadata integration object count mismatch");
            require(parsed["data"]["objects"][0]["label"].get<std::string>() == "car",
-                   "OptiView JSON integration label mapping mismatch");
+                   "MetadataReceiver metadata integration label mapping mismatch");
 
            guard.g = nullptr;
            group.stop();

@@ -1,8 +1,8 @@
-// 4PipesYOLOOptiview_no_restart.cpp
+// 4PipesYOLOMetadataReceiver_no_restart.cpp
 //
 // New architecture (no restarts):
 // 1) Build RTSP pipelines (per stream)  -> produces encoded H264
-// 2) Build UDP forward pipelines (per stream) and keep hot  -> forwards encoded to OptiView
+// 2) Build UDP forward pipelines (per stream) and keep hot  -> forwards encoded to MetadataReceiver
 // immediately 3) Build Decoder pipelines (per stream) and keep hot       -> decodes continuously 4)
 // Build YOLO once (shared) after first decoded dims are known 5) Start feeding YOLO from decoded
 // queue (drop until ready)
@@ -66,9 +66,9 @@ struct Config {
   int frames = 300;
   bool frames_set = false;
   bool debug = false;
-  std::string optiview_host = "127.0.0.1";
-  int optiview_video_port = 9000;
-  int optiview_json_port = 9100;
+  std::string metadata_receiver_host = "127.0.0.1";
+  int metadata_receiver_video_port = 9000;
+  int metadata_receiver_metadata_port = 9100;
 };
 
 Config parse_config(int argc, char** argv) {
@@ -81,14 +81,14 @@ Config parse_config(int argc, char** argv) {
     cfg.frames = std::stoi(raw);
     cfg.frames_set = true;
   }
-  if (sima_examples::get_arg(argc, argv, "--optiview-host", raw)) {
-    cfg.optiview_host = raw;
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-host", raw)) {
+    cfg.metadata_receiver_host = raw;
   }
-  if (sima_examples::get_arg(argc, argv, "--optiview-video-port", raw)) {
-    cfg.optiview_video_port = std::stoi(raw);
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-video-port", raw)) {
+    cfg.metadata_receiver_video_port = std::stoi(raw);
   }
-  if (sima_examples::get_arg(argc, argv, "--optiview-json-port", raw)) {
-    cfg.optiview_json_port = std::stoi(raw);
+  if (sima_examples::get_arg(argc, argv, "--metadata-receiver-port", raw)) {
+    cfg.metadata_receiver_metadata_port = std::stoi(raw);
   }
   cfg.debug = sima_examples::has_flag(argc, argv, "--debug");
   return cfg;
@@ -535,8 +535,8 @@ int main(int argc, char** argv) {
           "x-h264,stream-format=(string)byte-stream,alignment=(string)au,parsed=(boolean)true\""));
       forward.add(simaai::neat::nodes::H264Packetize(96, 1));
       simaai::neat::UdpOutputOptions udp;
-      udp.host = cfg.optiview_host;
-      udp.port = cfg.optiview_video_port + s.idx;
+      udp.host = cfg.metadata_receiver_host;
+      udp.port = cfg.metadata_receiver_video_port + s.idx;
       forward.add(simaai::neat::nodes::UdpOutput(udp));
 
       simaai::neat::RunOptions opt;
@@ -570,25 +570,25 @@ int main(int argc, char** argv) {
       s.dec_run = decoder.build(dummy, simaai::neat::RunMode::Async, opt);
     }
 
-    // ------------------ OptiView JSON senders ------------------
+    // ------------------ MetadataReceiver JSON senders ------------------
 
-    std::vector<std::unique_ptr<sima_examples::OptiViewSender>> senders;
+    std::vector<std::unique_ptr<sima_examples::MetadataReceiverSender>> senders;
     senders.reserve(streams.size());
     for (size_t i = 0; i < streams.size(); ++i) {
-      sima_examples::OptiViewOptions opt;
-      opt.host = cfg.optiview_host;
+      sima_examples::MetadataReceiverOptions opt;
+      opt.host = cfg.metadata_receiver_host;
       opt.channel = static_cast<int>(i);
-      opt.video_port_base = cfg.optiview_video_port;
-      opt.json_port_base = cfg.optiview_json_port;
+      opt.metadata_port_base = cfg.metadata_receiver_metadata_port;
       std::string opt_err;
-      auto sender = std::make_unique<sima_examples::OptiViewSender>(opt, &opt_err);
+      auto sender = std::make_unique<sima_examples::MetadataReceiverSender>(opt, &opt_err);
       sima_examples::require(sender->ok(), opt_err);
-      std::cout << "optiview host=" << sender->host() << " video_port=" << sender->video_port()
-                << " json_port=" << sender->json_port() << " channel=" << i << "\n";
+      std::cout << "metadata_receiver host=" << sender->host()
+                << " video_port=" << cfg.metadata_receiver_video_port + static_cast<int>(i)
+                << " metadata_port=" << sender->metadata_port() << " channel=" << i << "\n";
       senders.push_back(std::move(sender));
     }
 
-    const auto optiview_labels = sima_examples::optiview_default_labels();
+    const auto metadata_receiver_labels = sima_examples::metadata_receiver_default_labels();
 
     // ------------------ Global decoded queue (latest-ish) ------------------
 
@@ -860,7 +860,7 @@ int main(int argc, char** argv) {
       yolo_thread = std::thread([&]() {
         std::vector<uint8_t> payload;
         std::vector<objdet::Box> boxes;
-        std::vector<sima_examples::OptiViewObject> objects;
+        std::vector<sima_examples::MetadataReceiverObject> objects;
         payload.reserve(8192);
         boxes.reserve(static_cast<size_t>(topk));
         objects.reserve(static_cast<size_t>(topk));
@@ -959,7 +959,7 @@ int main(int argc, char** argv) {
               w = 0;
             if (h < 0)
               h = 0;
-            sima_examples::OptiViewObject obj;
+            sima_examples::MetadataReceiverObject obj;
             obj.x = x1;
             obj.y = y1;
             obj.w = w;
@@ -973,15 +973,15 @@ int main(int argc, char** argv) {
           const int64_t ts_ms = time_ms_i64();
           char frame_id_buf[32];
           std::snprintf(frame_id_buf, sizeof(frame_id_buf), "%d", stats[sidx]->saved.load());
-          std::string json_payload =
-              sima_examples::optiview_make_json(ts_ms, frame_id_buf, objects, optiview_labels);
+          std::string json_payload = sima_examples::metadata_receiver_make_json(
+              ts_ms, frame_id_buf, objects, metadata_receiver_labels);
 
           std::string json_err;
           if (senders[sidx]->send_json(json_payload, &json_err)) {
             stats[sidx]->saved.fetch_add(1);
             total_saved.fetch_add(1);
           } else {
-            std::cerr << "[warn] optiview json send failed: " << json_err << "\n";
+            std::cerr << "[warn] metadata_receiver metadata send failed: " << json_err << "\n";
           }
         }
       });

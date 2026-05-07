@@ -1,7 +1,7 @@
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/ModelGroups.h"
-#include "nodes/groups/OptiViewOutputGroup.h"
+#include "nodes/groups/MetadataReceiverOutputGroup.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/Session.h"
@@ -44,46 +44,47 @@ int run_case(const fs::path& root) {
   const std::string tar_gz = sima_yolov8_test::resolve_yolov8s_tar_or_skip(root);
   const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
 
-  using simaai::neat::nodes::groups::OptiViewJsonInput;
-  using simaai::neat::nodes::groups::OptiViewJsonResult;
-  using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-  using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+  using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput;
+  using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult;
+  using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup;
+  using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions;
 
-  const int json_base = rtsp_find_free_port_range(/*base_port=*/18000,
-                                                  /*ports_needed=*/kStreams,
-                                                  /*stride=*/1,
-                                                  /*max_tries=*/5000);
-  require(json_base > 0, "failed to reserve contiguous UDP port range for OptiView JSON");
+  const int metadata_base = rtsp_find_free_port_range(/*base_port=*/18000,
+                                                      /*ports_needed=*/kStreams,
+                                                      /*stride=*/1,
+                                                      /*max_tries=*/5000);
+  require(metadata_base > 0,
+          "failed to reserve contiguous UDP port range for MetadataReceiver metadata");
   std::vector<sima_test::UdpReceiver> receivers;
   receivers.reserve(kStreams);
   for (int i = 0; i < kStreams; ++i) {
-    receivers.emplace_back(json_base + i, "127.0.0.1");
+    receivers.emplace_back(metadata_base + i, "127.0.0.1");
   }
 
-  OptiViewOutputNodeGroup optiview;
-  OptiViewOutputNodeGroupOptions opt;
-  opt.send_json = true;
+  MetadataReceiverOutputNodeGroup metadata_receiver;
+  MetadataReceiverOutputNodeGroupOptions opt;
+  opt.send_metadata = true;
   opt.udp.h264_caps = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
   opt.udp.host = "127.0.0.1";
   opt.udp.video_port_base = 9900;
   opt.udp.udp_sync = false;
   opt.udp.udp_async = false;
-  opt.json_port_base = json_base;
+  opt.metadata_port_base = metadata_base;
   opt.frame_w = img_bgr.cols;
   opt.frame_h = img_bgr.rows;
   opt.topk = kTopK;
-  opt.labels = simaai::neat::OptiViewDefaultLabels();
+  opt.labels = simaai::neat::MetadataReceiverDefaultLabels();
 
   std::string init_err;
-  if (!optiview.init(opt, kStreams, &init_err)) {
+  if (!metadata_receiver.init(opt, kStreams, &init_err)) {
     if (sima_test::likely_runtime_missing(init_err)) {
-      skip_long_test_exception("OptiView runtime unavailable: " + init_err);
+      skip_long_test_exception("MetadataReceiver runtime unavailable: " + init_err);
     }
-    throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+    throw std::runtime_error("MetadataReceiverOutputNodeGroup init failed: " + init_err);
   }
 
   struct Guard {
-    simaai::neat::nodes::groups::OptiViewOutputNodeGroup* group = nullptr;
+    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup* group = nullptr;
     simaai::neat::Run* run = nullptr;
     ~Guard() {
       if (run) {
@@ -99,7 +100,7 @@ int run_case(const fs::path& root) {
         }
       }
     }
-  } guard{&optiview, nullptr};
+  } guard{&metadata_receiver, nullptr};
 
   simaai::neat::Model::Options model_opt;
   model_opt.media_type = "video/x-raw";
@@ -140,51 +141,56 @@ int run_case(const fs::path& root) {
         objdet::parse_boxes_strict(payload, img_bgr.cols, img_bgr.rows, kTopK, false);
     const objdet::MatchResult match =
         objdet::match_expected_boxes(boxes, expected, kMinScore, kMinIou);
-    require(match.ok, "bbox accuracy mismatch before OptiView UDP send: " + match.note + " " +
-                          sample_note(out));
+    require(match.ok, "bbox accuracy mismatch before MetadataReceiver UDP send: " + match.note +
+                          " " + sample_note(out));
 
     const int64_t frame_id = static_cast<int64_t>(i + 1);
     const std::string stream_id = "stream" + std::to_string(i);
     expected_frame_ids.insert(std::to_string(frame_id));
 
-    OptiViewJsonInput json_in;
-    json_in.stream_idx = static_cast<std::size_t>(i);
-    json_in.stream_id = stream_id;
-    json_in.frame_id = frame_id;
-    json_in.output_frame_id = static_cast<int>(frame_id);
-    json_in.capture_ms = frame_id;
-    json_in.yolo_sample = &out;
+    MetadataReceiverObjectDetectionInput detection_in;
+    detection_in.stream_idx = static_cast<std::size_t>(i);
+    detection_in.stream_id = stream_id;
+    detection_in.frame_id = frame_id;
+    detection_in.output_frame_id = static_cast<int>(frame_id);
+    detection_in.capture_ms = frame_id;
+    detection_in.yolo_sample = &out;
 
-    OptiViewJsonResult json_out;
-    require(optiview.emit_json(json_in, &json_out), "emit_json failed for stream " + stream_id);
-    require(json_out.ok,
-            "emit_json result not ok for stream " + stream_id + " err=" + json_out.error);
-    require(json_out.nonempty, "emit_json expected non-empty detections for stream " + stream_id);
+    MetadataReceiverObjectDetectionResult detection_out;
+    require(metadata_receiver.emit_object_detection(detection_in, &detection_out),
+            "emit_object_detection failed for stream " + stream_id);
+    require(detection_out.ok, "emit_object_detection result not ok for stream " + stream_id +
+                                  " err=" + detection_out.error);
+    require(detection_out.nonempty,
+            "emit_object_detection expected non-empty detections for stream " + stream_id);
   }
 
   std::unordered_set<std::string> received_frame_ids;
   for (int i = 0; i < kStreams; ++i) {
     std::string payload;
     require(receivers[static_cast<size_t>(i)].recv_one(&payload, 5000),
-            "missing OptiView UDP JSON packet for stream " + std::to_string(i));
+            "missing MetadataReceiver UDP metadata packet for stream " + std::to_string(i));
 
     const nlohmann::json parsed = nlohmann::json::parse(payload);
     require(parsed["type"].get<std::string>() == "object-detection",
-            "OptiView UDP JSON type mismatch");
-    require(parsed["data"]["objects"].is_array(), "OptiView UDP JSON objects field is not array");
-    require(!parsed["data"]["objects"].empty(), "OptiView UDP JSON objects unexpectedly empty");
+            "MetadataReceiver UDP metadata type mismatch");
+    require(parsed["data"]["objects"].is_array(),
+            "MetadataReceiver UDP metadata objects field is not array");
+    require(!parsed["data"]["objects"].empty(),
+            "MetadataReceiver UDP metadata objects unexpectedly empty");
 
     received_frame_ids.insert(parsed["frame_id"].get<std::string>());
   }
 
-  require(received_frame_ids == expected_frame_ids, "OptiView UDP JSON frame-id set mismatch");
+  require(received_frame_ids == expected_frame_ids,
+          "MetadataReceiver UDP metadata frame-id set mismatch");
 
   guard.run = nullptr;
   run.close();
   guard.group = nullptr;
-  optiview.stop();
+  metadata_receiver.stop();
 
-  std::cout << "[OK] graphpipes_yolo_optiview_16stream_test passed\n";
+  std::cout << "[OK] graphpipes_yolo_metadata_receiver_16stream_test passed\n";
   return 0;
 }
 

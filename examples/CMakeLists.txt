@@ -17,7 +17,7 @@ set(SIMANEAT_EXAMPLE_BLACKLIST
 # ------------------------------------------------------------------------------
 set(EXAMPLE_COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/example_utils.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/graphpipes_optiview_helpers.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/graphpipes_metadata_receiver_helpers.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/support/obj_detection_utils.cpp
 )
 
@@ -46,7 +46,7 @@ foreach(src ${EXAMPLE_SOURCES})
     list(REMOVE_ITEM EXAMPLE_SOURCES ${src})
   endif()
 
-  if (fname STREQUAL "graphpipes_optiview_helpers.cpp")
+  if (fname STREQUAL "graphpipes_metadata_receiver_helpers.cpp")
     list(REMOVE_ITEM EXAMPLE_SOURCES ${src})
   endif()
 

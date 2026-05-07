@@ -170,16 +170,15 @@ set(UNIT_TESTS
   unit_mpk_loader_test
   unit_mpk_pipeline_adapter_test
   unit_node_h264_caps_fixup_fragment_test
-  unit_node_optiview_json_output_test
+  unit_node_metadata_receiver_output_test
   unit_node_quanttess_config_test
   unit_node_udp_output_fragment_test
   unit_outputspec_test
   unit_pcie_nodes_test
-  unit_group_optiview_output_group_failure_test
+  unit_udp_output_group_test
   unit_group_udp_h264_output_group_fragment_test
   unit_group_udp_output_group_g_fragment_test
-  unit_optiview_json_output_udp_test
-  unit_optiview_output_group_test
+  unit_metadata_receiver_output_group_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -304,7 +303,7 @@ set(E2E_TESTS
   inputstream_videoscale_test
   output_appsink_policy_test
   gst_data_adapter_runtime_regression_test
-  optiview_json_udp_integration_test
+  metadata_receiver_udp_integration_test
   preproc_standalone_test
   session_naming_pipeline_integration_test
   session_rtsp_lifecycle_regression_test
@@ -355,7 +354,7 @@ endif()
 # ------------------------------------------------------------------------------
 set(STRESS_TESTS
   stress_graph_strict_sync_join_race_test
-  stress_udp_json_burst_test
+  stress_udp_metadata_burst_test
   stress_pipeline_build_repeated_test
   stress_model_lifecycle_test
   stress_session_lifecycle_test
@@ -515,8 +514,9 @@ foreach(test
     unit_graph_join_encoded_with_meta_test
     unit_graph_stamp_frame_id_test
     unit_graph_strict_sync_store_test
-    unit_group_optiview_output_group_failure_test
-    unit_node_optiview_json_output_test
+    unit_metadata_receiver_output_group_test
+    unit_node_metadata_receiver_output_test
+    unit_udp_output_group_test
     unit_modalix_contract_preflight_test
     unit_run_holder_api_test
     unit_run_pull_variants_api_test
@@ -603,8 +603,9 @@ foreach(test
     unit_session_io_negative_test
     unit_graph_compiler_topology_test
     unit_graph_compiler_spec_validation_test
-    unit_group_optiview_output_group_failure_test
-    unit_node_optiview_json_output_test
+    unit_metadata_receiver_output_group_test
+    unit_node_metadata_receiver_output_test
+    unit_udp_output_group_test
     unit_modelpack_parse_test
     unit_modelpack_extract_test
     unit_pipeline_sequence_parse_test
@@ -695,15 +696,15 @@ if (NOT yolov8_stage_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
-  graphpipes_yolo_optiview_16stream_test
-  e2e_pipelines/obj_detection/graphpipes_yolo_optiview_16stream_test.cpp
+  graphpipes_yolo_metadata_receiver_16stream_test
+  e2e_pipelines/obj_detection/graphpipes_yolo_metadata_receiver_16stream_test.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
   ARGS ${CMAKE_SOURCE_DIR}
 )
 
-if (NOT graphpipes_yolo_optiview_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(graphpipes_yolo_optiview_16stream_test
+if (NOT graphpipes_yolo_metadata_receiver_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(graphpipes_yolo_metadata_receiver_16stream_test
     PROPERTIES LABELS "e2e;obj_detection"
   )
 endif()
@@ -878,11 +879,12 @@ if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
       unit_graph_join_encoded_with_meta_test
       unit_graph_stamp_frame_id_test
       unit_graph_strict_sync_store_test
-      unit_group_optiview_output_group_failure_test
+      unit_metadata_receiver_output_group_test
       unit_contracts_test
       unit_detection_types_bbox_test
       unit_gst_data_adapter_edge_test
-      unit_node_optiview_json_output_test
+      unit_node_metadata_receiver_output_test
+      unit_udp_output_group_test
       unit_node_udp_output_fragment_test
       unit_nodes_test
       unit_outputspec_test

@@ -1,7 +1,7 @@
 /**
  * ANPR Pipeline - C++ Port (Refactored)
  *
- * Architecture: Decoupled threaded pipelines following 4PipesYOLOOptiview.cpp pattern.
+ * Architecture: Decoupled threaded pipelines following 4PipesYOLOMetadataReceiver.cpp pattern.
  * Key principle: Keep pipelines HOT - push/pull immediately after build() to avoid
  * the 15-second lifecycle timeout.
  */
@@ -55,7 +55,7 @@ static std::vector<std::string> VEH_CLASSES;
 static std::vector<std::string> OCR_CHARS;
 
 // ------------------------ BoundedQueue (drop-oldest) ------------------------
-// From 4PipesYOLOOptiview.cpp - thread-safe bounded queue with drop policy
+// From 4PipesYOLOMetadataReceiver.cpp - thread-safe bounded queue with drop policy
 
 template <class T> class BoundedQueue {
 public:

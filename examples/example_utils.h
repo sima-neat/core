@@ -92,18 +92,19 @@ bool open_h264_writer(cv::VideoWriter& writer, const std::filesystem::path& out_
 bool extract_bbox_payload(const simaai::neat::Sample& result, std::vector<uint8_t>& payload,
                           std::string& err);
 
-using OptiViewObject = simaai::neat::OptiViewObject;
-using OptiViewOptions = simaai::neat::OptiViewChannelOptions;
-using OptiViewSender = simaai::neat::OptiViewJsonOutput;
+using MetadataReceiverObject = simaai::neat::MetadataReceiverObject;
+using MetadataReceiverOptions = simaai::neat::MetadataReceiverChannelOptions;
+using MetadataReceiverSender = simaai::neat::MetadataReceiverOutput;
 
-inline std::vector<std::string> optiview_default_labels() {
-  return simaai::neat::OptiViewDefaultLabels();
+inline std::vector<std::string> metadata_receiver_default_labels() {
+  return simaai::neat::MetadataReceiverDefaultLabels();
 }
 
-inline std::string optiview_make_json(int64_t timestamp_ms, const std::string& frame_id,
-                                      const std::vector<OptiViewObject>& objects,
-                                      const std::vector<std::string>& labels) {
-  return simaai::neat::OptiViewMakeJson(timestamp_ms, frame_id, objects, labels);
+inline std::string metadata_receiver_make_json(int64_t timestamp_ms, const std::string& frame_id,
+                                               const std::vector<MetadataReceiverObject>& objects,
+                                               const std::vector<std::string>& labels) {
+  return simaai::neat::MetadataReceiverMakeObjectDetectionJson(timestamp_ms, frame_id, objects,
+                                                               labels);
 }
 
 } // namespace sima_examples

@@ -102,7 +102,7 @@ UDP_H264_OUTPUT_GROUP_OPTION_FIELDS = (
     "udp_async",
 )
 
-OPTIVIEW_OBJECT_FIELDS = (
+METADATA_RECEIVER_OBJECT_FIELDS = (
     "x",
     "y",
     "w",
@@ -111,11 +111,17 @@ OPTIVIEW_OBJECT_FIELDS = (
     "class_id",
 )
 
-OPTIVIEW_CHANNEL_OPTION_FIELDS = (
+METADATA_RECEIVER_PAYLOAD_FIELDS = (
+    "type",
+    "data_json",
+    "timestamp_ms",
+    "frame_id",
+)
+
+METADATA_RECEIVER_CHANNEL_OPTION_FIELDS = (
     "host",
     "channel",
-    "video_port_base",
-    "json_port_base",
+    "metadata_port_base",
 )
 
 UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS = (
@@ -129,20 +135,20 @@ UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS = (
     "udp_async",
 )
 
-OPTIVIEW_OUTPUT_GROUP_OPTION_FIELDS = (
+METADATA_RECEIVER_OUTPUT_GROUP_OPTION_FIELDS = (
     "udp",
-    "send_json",
-    "json_port_base",
+    "send_metadata",
+    "metadata_port_base",
     "frame_w",
     "frame_h",
     "topk",
     "parse_debug",
-    "json_delay_ms",
+    "metadata_delay_ms",
     "video_delay_ms",
     "labels",
 )
 
-OPTIVIEW_JSON_INPUT_FIELDS = (
+METADATA_RECEIVER_OBJECT_DETECTION_INPUT_FIELDS = (
     "stream_idx",
     "stream_id",
     "frame_id",
@@ -153,7 +159,7 @@ OPTIVIEW_JSON_INPUT_FIELDS = (
     "decoded_sample",
 )
 
-OPTIVIEW_JSON_RESULT_FIELDS = (
+METADATA_RECEIVER_OBJECT_DETECTION_RESULT_FIELDS = (
     "ok",
     "nonempty",
     "boxes",
@@ -392,12 +398,13 @@ def test_output_stage_option_structs_expose_expected_fields():
   udp = pyneat.UdpOutputOptions()
   parse = pyneat.H264ParseOptions()
   group = pyneat.UdpH264OutputGroupOptions()
-  optiview_object = pyneat.OptiViewObject()
-  optiview_channel = pyneat.OptiViewChannelOptions()
+  metadata_object = pyneat.MetadataReceiverObject()
+  metadata_payload = pyneat.MetadataReceiverPayload()
+  metadata_channel = pyneat.MetadataReceiverChannelOptions()
   udp_group = pyneat.UdpOutputNodeGroupOptions()
-  optiview_group = pyneat.OptiViewOutputNodeGroupOptions()
-  json_input = pyneat.OptiViewJsonInput()
-  json_result = pyneat.OptiViewJsonResult()
+  metadata_group = pyneat.MetadataReceiverOutputNodeGroupOptions()
+  object_detection_input = pyneat.MetadataReceiverObjectDetectionInput()
+  object_detection_result = pyneat.MetadataReceiverObjectDetectionResult()
 
   for field in UDP_OUTPUT_OPTION_FIELDS:
     assert hasattr(udp, field), field
@@ -409,29 +416,33 @@ def test_output_stage_option_structs_expose_expected_fields():
   for field in UDP_H264_OUTPUT_GROUP_OPTION_FIELDS:
     assert hasattr(group, field), field
 
-  for field in OPTIVIEW_OBJECT_FIELDS:
-    assert hasattr(optiview_object, field), field
+  for field in METADATA_RECEIVER_OBJECT_FIELDS:
+    assert hasattr(metadata_object, field), field
 
-  for field in OPTIVIEW_CHANNEL_OPTION_FIELDS:
-    assert hasattr(optiview_channel, field), field
+  for field in METADATA_RECEIVER_PAYLOAD_FIELDS:
+    assert hasattr(metadata_payload, field), field
+
+  for field in METADATA_RECEIVER_CHANNEL_OPTION_FIELDS:
+    assert hasattr(metadata_channel, field), field
 
   for field in UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS:
     assert hasattr(udp_group, field), field
 
-  for field in OPTIVIEW_OUTPUT_GROUP_OPTION_FIELDS:
-    assert hasattr(optiview_group, field), field
+  for field in METADATA_RECEIVER_OUTPUT_GROUP_OPTION_FIELDS:
+    assert hasattr(metadata_group, field), field
 
-  for field in OPTIVIEW_JSON_INPUT_FIELDS:
-    assert hasattr(json_input, field), field
+  for field in METADATA_RECEIVER_OBJECT_DETECTION_INPUT_FIELDS:
+    assert hasattr(object_detection_input, field), field
 
-  for field in OPTIVIEW_JSON_RESULT_FIELDS:
-    assert hasattr(json_result, field), field
+  for field in METADATA_RECEIVER_OBJECT_DETECTION_RESULT_FIELDS:
+    assert hasattr(object_detection_result, field), field
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")
-  assert hasattr(pyneat, "OptiViewJsonOutput")
-  assert hasattr(pyneat, "OptiViewOutputNodeGroup")
-  assert hasattr(pyneat, "OptiViewMakeJson")
+  assert hasattr(pyneat, "MetadataReceiverOutput")
+  assert hasattr(pyneat, "MetadataReceiverOutputNodeGroup")
+  assert hasattr(pyneat, "MetadataReceiverMakeJson")
+  assert hasattr(pyneat, "MetadataReceiverMakeObjectDetectionJson")
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
@@ -458,14 +469,17 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.UdpOutputOptions())
   _assert_not_type_error(lambda: pyneat.H264ParseOptions())
   _assert_not_type_error(lambda: pyneat.UdpH264OutputGroupOptions())
-  _assert_not_type_error(lambda: pyneat.OptiViewObject())
-  _assert_not_type_error(lambda: pyneat.OptiViewChannelOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverObject())
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverPayload())
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverChannelOptions())
   _assert_not_type_error(lambda: pyneat.UdpOutputNodeGroupOptions())
-  _assert_not_type_error(lambda: pyneat.OptiViewOutputNodeGroupOptions())
-  _assert_not_type_error(lambda: pyneat.OptiViewJsonInput())
-  _assert_not_type_error(lambda: pyneat.OptiViewJsonResult())
-  _assert_not_type_error(lambda: pyneat.OptiViewJsonOutput(pyneat.OptiViewChannelOptions()))
-  _assert_not_type_error(lambda: pyneat.OptiViewOutputNodeGroup())
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverOutputNodeGroupOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverObjectDetectionInput())
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverObjectDetectionResult())
+  _assert_not_type_error(
+      lambda: pyneat.MetadataReceiverOutput(pyneat.MetadataReceiverChannelOptions())
+  )
+  _assert_not_type_error(lambda: pyneat.MetadataReceiverOutputNodeGroup())
 
 
 def test_input_stage_option_structs_are_mutable():
@@ -543,19 +557,24 @@ def test_output_stage_option_structs_are_mutable():
   group.udp_sync = False
   group.udp_async = False
 
-  optiview_object = pyneat.OptiViewObject()
-  optiview_object.x = 10
-  optiview_object.y = 20
-  optiview_object.w = 30
-  optiview_object.h = 40
-  optiview_object.score = 0.9
-  optiview_object.class_id = 1
+  metadata_object = pyneat.MetadataReceiverObject()
+  metadata_object.x = 10
+  metadata_object.y = 20
+  metadata_object.w = 30
+  metadata_object.h = 40
+  metadata_object.score = 0.9
+  metadata_object.class_id = 1
 
-  optiview_channel = pyneat.OptiViewChannelOptions()
-  optiview_channel.host = "127.0.0.1"
-  optiview_channel.channel = 2
-  optiview_channel.video_port_base = 9000
-  optiview_channel.json_port_base = 9100
+  metadata_payload = pyneat.MetadataReceiverPayload()
+  metadata_payload.type = "tracking"
+  metadata_payload.data_json = '{"tracks":[]}'
+  metadata_payload.timestamp_ms = 123
+  metadata_payload.frame_id = "frame-1"
+
+  metadata_channel = pyneat.MetadataReceiverChannelOptions()
+  metadata_channel.host = "127.0.0.1"
+  metadata_channel.channel = 2
+  metadata_channel.metadata_port_base = 9100
 
   udp_group = pyneat.UdpOutputNodeGroupOptions()
   udp_group.h264_caps = "video/x-h264"
@@ -567,36 +586,36 @@ def test_output_stage_option_structs_are_mutable():
   udp_group.udp_sync = False
   udp_group.udp_async = False
 
-  optiview_group = pyneat.OptiViewOutputNodeGroupOptions()
-  optiview_group.udp = udp_group
-  optiview_group.send_json = True
-  optiview_group.json_port_base = 9300
-  optiview_group.frame_w = 640
-  optiview_group.frame_h = 480
-  optiview_group.topk = 8
-  optiview_group.parse_debug = False
-  optiview_group.json_delay_ms = 4
-  optiview_group.video_delay_ms = 5
-  optiview_group.labels = ["person", "car"]
+  metadata_group = pyneat.MetadataReceiverOutputNodeGroupOptions()
+  metadata_group.udp = udp_group
+  metadata_group.send_metadata = True
+  metadata_group.metadata_port_base = 9300
+  metadata_group.frame_w = 640
+  metadata_group.frame_h = 480
+  metadata_group.topk = 8
+  metadata_group.parse_debug = False
+  metadata_group.metadata_delay_ms = 4
+  metadata_group.video_delay_ms = 5
+  metadata_group.labels = ["person", "car"]
 
   sample = pyneat.Sample()
   sample.frame_id = 11
 
-  json_input = pyneat.OptiViewJsonInput()
-  json_input.stream_idx = 1
-  json_input.stream_id = "stream-1"
-  json_input.frame_id = 7
-  json_input.capture_ms = 111
-  json_input.yolo_ms = 222
-  json_input.output_frame_id = 8
-  json_input.yolo_sample = sample
-  json_input.decoded_sample = sample
+  object_detection_input = pyneat.MetadataReceiverObjectDetectionInput()
+  object_detection_input.stream_idx = 1
+  object_detection_input.stream_id = "stream-1"
+  object_detection_input.frame_id = 7
+  object_detection_input.capture_ms = 111
+  object_detection_input.yolo_ms = 222
+  object_detection_input.output_frame_id = 8
+  object_detection_input.yolo_sample = sample
+  object_detection_input.decoded_sample = sample
 
-  json_result = pyneat.OptiViewJsonResult()
-  json_result.ok = True
-  json_result.nonempty = True
-  json_result.boxes = 2
-  json_result.error = "none"
+  object_detection_result = pyneat.MetadataReceiverObjectDetectionResult()
+  object_detection_result.ok = True
+  object_detection_result.nonempty = True
+  object_detection_result.boxes = 2
+  object_detection_result.error = "none"
 
   assert udp.host == "10.0.0.5"
   assert udp.port == 5500
@@ -617,17 +636,21 @@ def test_output_stage_option_structs_are_mutable():
   assert group.udp_sync is False
   assert group.udp_async is False
 
-  assert optiview_object.x == 10
-  assert optiview_object.y == 20
-  assert optiview_object.w == 30
-  assert optiview_object.h == 40
-  assert optiview_object.score == pytest.approx(0.9)
-  assert optiview_object.class_id == 1
+  assert metadata_object.x == 10
+  assert metadata_object.y == 20
+  assert metadata_object.w == 30
+  assert metadata_object.h == 40
+  assert metadata_object.score == pytest.approx(0.9)
+  assert metadata_object.class_id == 1
 
-  assert optiview_channel.host == "127.0.0.1"
-  assert optiview_channel.channel == 2
-  assert optiview_channel.video_port_base == 9000
-  assert optiview_channel.json_port_base == 9100
+  assert metadata_payload.type == "tracking"
+  assert metadata_payload.data_json == '{"tracks":[]}'
+  assert metadata_payload.timestamp_ms == 123
+  assert metadata_payload.frame_id == "frame-1"
+
+  assert metadata_channel.host == "127.0.0.1"
+  assert metadata_channel.channel == 2
+  assert metadata_channel.metadata_port_base == 9100
 
   assert udp_group.h264_caps == "video/x-h264"
   assert udp_group.payload_type == 98
@@ -638,30 +661,30 @@ def test_output_stage_option_structs_are_mutable():
   assert udp_group.udp_sync is False
   assert udp_group.udp_async is False
 
-  assert optiview_group.udp.video_port_base == 9200
-  assert optiview_group.send_json is True
-  assert optiview_group.json_port_base == 9300
-  assert optiview_group.frame_w == 640
-  assert optiview_group.frame_h == 480
-  assert optiview_group.topk == 8
-  assert optiview_group.parse_debug is False
-  assert optiview_group.json_delay_ms == 4
-  assert optiview_group.video_delay_ms == 5
-  assert optiview_group.labels == ["person", "car"]
+  assert metadata_group.udp.video_port_base == 9200
+  assert metadata_group.send_metadata is True
+  assert metadata_group.metadata_port_base == 9300
+  assert metadata_group.frame_w == 640
+  assert metadata_group.frame_h == 480
+  assert metadata_group.topk == 8
+  assert metadata_group.parse_debug is False
+  assert metadata_group.metadata_delay_ms == 4
+  assert metadata_group.video_delay_ms == 5
+  assert metadata_group.labels == ["person", "car"]
 
-  assert json_input.stream_idx == 1
-  assert json_input.stream_id == "stream-1"
-  assert json_input.frame_id == 7
-  assert json_input.capture_ms == 111
-  assert json_input.yolo_ms == 222
-  assert json_input.output_frame_id == 8
-  assert json_input.yolo_sample is not None
-  assert json_input.decoded_sample is not None
+  assert object_detection_input.stream_idx == 1
+  assert object_detection_input.stream_id == "stream-1"
+  assert object_detection_input.frame_id == 7
+  assert object_detection_input.capture_ms == 111
+  assert object_detection_input.yolo_ms == 222
+  assert object_detection_input.output_frame_id == 8
+  assert object_detection_input.yolo_sample is not None
+  assert object_detection_input.decoded_sample is not None
 
-  assert json_result.ok is True
-  assert json_result.nonempty is True
-  assert json_result.boxes == 2
-  assert json_result.error == "none"
+  assert object_detection_result.ok is True
+  assert object_detection_result.nonempty is True
+  assert object_detection_result.boxes == 2
+  assert object_detection_result.error == "none"
 
 
 def test_input_stage_node_factories_present_and_accept_expected_args():

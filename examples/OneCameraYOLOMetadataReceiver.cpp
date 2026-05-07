@@ -42,12 +42,12 @@ struct Config {
   bool debug = false;
   bool udp = false;
   bool forever = false;
-  bool optiview = false;
-  std::string optiview_host = "127.0.0.1";
-  int optiview_video_port = 9000;
-  int optiview_json_port = 9100;
-  double optiview_offset_ms = 0.0;
-  bool optiview_fifo = false;
+  bool metadata_receiver = false;
+  std::string metadata_receiver_host = "127.0.0.1";
+  int metadata_receiver_video_port = 9000;
+  int metadata_receiver_metadata_port = 9100;
+  double metadata_receiver_offset_ms = 0.0;
+  bool metadata_receiver_fifo = false;
 };
 
 bool parse_double_arg(int argc, char** argv, const std::string& key, double& out) {
@@ -66,14 +66,14 @@ Config parse_config(int argc, char** argv) {
   cfg.debug = sima_examples::has_flag(argc, argv, "--debug");
   cfg.udp = sima_examples::has_flag(argc, argv, "--udp");
   cfg.forever = sima_examples::has_flag(argc, argv, "--forever");
-  cfg.optiview = sima_examples::has_flag(argc, argv, "--optiview");
-  sima_examples::get_arg(argc, argv, "--optiview-host", cfg.optiview_host);
-  if (cfg.optiview_host.empty())
-    cfg.optiview_host = "127.0.0.1";
-  parse_int_arg(argc, argv, "--optiview-video-port", cfg.optiview_video_port);
-  parse_int_arg(argc, argv, "--optiview-json-port", cfg.optiview_json_port);
-  parse_double_arg(argc, argv, "--optiview-offset-ms", cfg.optiview_offset_ms);
-  cfg.optiview_fifo = sima_examples::has_flag(argc, argv, "--optiview-fifo");
+  cfg.metadata_receiver = sima_examples::has_flag(argc, argv, "--metadata-receiver");
+  sima_examples::get_arg(argc, argv, "--metadata-receiver-host", cfg.metadata_receiver_host);
+  if (cfg.metadata_receiver_host.empty())
+    cfg.metadata_receiver_host = "127.0.0.1";
+  parse_int_arg(argc, argv, "--metadata-receiver-video-port", cfg.metadata_receiver_video_port);
+  parse_int_arg(argc, argv, "--metadata-receiver-port", cfg.metadata_receiver_metadata_port);
+  parse_double_arg(argc, argv, "--metadata-receiver-offset-ms", cfg.metadata_receiver_offset_ms);
+  cfg.metadata_receiver_fifo = sima_examples::has_flag(argc, argv, "--metadata-receiver-fifo");
   return cfg;
 }
 
@@ -90,7 +90,7 @@ void print_time(const char* label, double ms, bool enabled) {
   std::cout << label << " " << ms << "\n";
 }
 
-void enable_optiview_diagnostics(bool enabled) {
+void enable_metadata_receiver_diagnostics(bool enabled) {
   if (!enabled)
     return;
   setenv("SIMA_GST_ELEMENT_TIMINGS", "1", 0);
@@ -356,7 +356,7 @@ int main(int argc, char** argv) {
       cfg.mpk = sima_examples::resolve_yolov8s_tar(fs::current_path());
     sima_examples::require(!cfg.mpk.empty(), "Failed to locate yolo_v8s MPK tarball");
 
-    enable_optiview_diagnostics(cfg.optiview);
+    enable_metadata_receiver_diagnostics(cfg.metadata_receiver);
 
     simaai::neat::Session camera;
     simaai::neat::nodes::groups::RtspDecodedInputOptions cam_opt;
@@ -367,7 +367,7 @@ int main(int argc, char** argv) {
     camera.add(simaai::neat::nodes::groups::RtspDecodedInput(cam_opt));
     camera.add(simaai::neat::nodes::Output());
     simaai::neat::RunOptions cam_run_opt;
-    cam_run_opt.enable_metrics = cfg.optiview;
+    cam_run_opt.enable_metrics = cfg.metadata_receiver;
     auto cam = camera.build(cam_run_opt);
 
     const double first_pull_start = time_ms();
@@ -393,15 +393,15 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "[WARN] deriving width=1280 and height=720 from SDP or timestamp\n");
     }
 
-    const bool use_optiview = cfg.optiview;
-    const bool use_udp = cfg.udp || cfg.optiview;
-    const std::string udp_host = use_optiview ? cfg.optiview_host : "127.0.0.1";
-    const int udp_port = use_optiview ? cfg.optiview_video_port : 5000;
+    const bool use_metadata_receiver = cfg.metadata_receiver;
+    const bool use_udp = cfg.udp || cfg.metadata_receiver;
+    const std::string udp_host = use_metadata_receiver ? cfg.metadata_receiver_host : "127.0.0.1";
+    const int udp_port = use_metadata_receiver ? cfg.metadata_receiver_video_port : 5000;
     fs::path out_path;
     cv::VideoWriter writer;
     simaai::neat::Run udp_run;
-    std::unique_ptr<sima_examples::OptiViewSender> optiview_sender;
-    std::vector<std::string> optiview_labels;
+    std::unique_ptr<sima_examples::MetadataReceiverSender> metadata_receiver_sender;
+    std::vector<std::string> metadata_receiver_labels;
 
     if (use_udp) {
       simaai::neat::Session udp;
@@ -425,7 +425,7 @@ int main(int argc, char** argv) {
       std::string udp_err;
       sima_examples::require(make_blank_nv12_tensor(frame_w, frame_h, udp_dummy, udp_err), udp_err);
       simaai::neat::RunOptions udp_run_opt;
-      udp_run_opt.enable_metrics = cfg.optiview;
+      udp_run_opt.enable_metrics = cfg.metadata_receiver;
       udp_run = udp.build(udp_dummy, simaai::neat::RunMode::Async, udp_run_opt);
       std::cout << "udp=" << udp_host << ":" << udp_port << "\n";
     } else {
@@ -439,21 +439,21 @@ int main(int argc, char** argv) {
                              writer_err);
     }
 
-    if (use_optiview) {
-      sima_examples::OptiViewOptions opt;
-      opt.host = cfg.optiview_host;
+    if (use_metadata_receiver) {
+      sima_examples::MetadataReceiverOptions opt;
+      opt.host = cfg.metadata_receiver_host;
       opt.channel = 0;
-      opt.video_port_base = cfg.optiview_video_port;
-      opt.json_port_base = cfg.optiview_json_port;
+      opt.metadata_port_base = cfg.metadata_receiver_metadata_port;
       std::string opt_err;
-      optiview_sender = std::make_unique<sima_examples::OptiViewSender>(opt, &opt_err);
-      sima_examples::require(optiview_sender->ok(), opt_err);
-      optiview_labels = sima_examples::optiview_default_labels();
-      std::cout << "optiview host=" << optiview_sender->host()
-                << " video_port=" << optiview_sender->video_port()
-                << " json_port=" << optiview_sender->json_port() << " channel=0"
-                << " offset_ms=" << cfg.optiview_offset_ms
-                << " fifo=" << (cfg.optiview_fifo ? "1" : "0") << "\n";
+      metadata_receiver_sender =
+          std::make_unique<sima_examples::MetadataReceiverSender>(opt, &opt_err);
+      sima_examples::require(metadata_receiver_sender->ok(), opt_err);
+      metadata_receiver_labels = sima_examples::metadata_receiver_default_labels();
+      std::cout << "metadata_receiver host=" << metadata_receiver_sender->host()
+                << " video_port=" << cfg.metadata_receiver_video_port
+                << " metadata_port=" << metadata_receiver_sender->metadata_port() << " channel=0"
+                << " offset_ms=" << cfg.metadata_receiver_offset_ms
+                << " fifo=" << (cfg.metadata_receiver_fifo ? "1" : "0") << "\n";
     }
 
     simaai::neat::Model::Options model_opt;
@@ -474,7 +474,7 @@ int main(int argc, char** argv) {
                                                 topk));
     yolo.add(simaai::neat::nodes::Output());
     simaai::neat::RunOptions det_run_opt;
-    det_run_opt.enable_metrics = cfg.optiview;
+    det_run_opt.enable_metrics = cfg.metadata_receiver;
     auto det = yolo.build(first, simaai::neat::RunMode::Async, det_run_opt);
 
     if (!use_udp && cfg.forever) {
@@ -492,7 +492,7 @@ int main(int argc, char** argv) {
     } else {
       frame_limit = cfg.frames;
     }
-    const char* mode = use_optiview ? "optiview" : (use_udp ? "udp" : "video");
+    const char* mode = use_metadata_receiver ? "metadata_receiver" : (use_udp ? "udp" : "video");
     std::cout << "mode=" << mode
               << " frame_limit=" << (frame_limit ? std::to_string(*frame_limit) : "inf")
               << " frames_set=" << (cfg.frames_set ? "1" : "0")
@@ -558,7 +558,7 @@ int main(int argc, char** argv) {
     std::thread consumer([&]() {
       consumer_start_ms = time_ms();
       int out_pulls = 0;
-      const bool use_fifo = cfg.optiview_fifo;
+      const bool use_fifo = cfg.metadata_receiver_fifo;
       std::deque<PendingFrame> inflight;
       while (!stop.load() && (!frame_limit || saved.load() < *frame_limit)) {
         FrameItem item;
@@ -575,7 +575,7 @@ int main(int argc, char** argv) {
         pending_current.pull_ts_ms = item.pull_ts_ms;
         pending_current.frame = std::move(item.frame);
 
-        if (!use_optiview) {
+        if (!use_metadata_receiver) {
           const double t_convert0 = time_ms();
           std::string bgr_err;
           if (!nv12_to_bgr(pending_current.frame, pending_current.bgr, bgr_err)) {
@@ -659,9 +659,9 @@ int main(int argc, char** argv) {
         print_time("bbox_parse_ms", parse_ms, cfg.debug);
         consumer_stats.add_bbox_parse(parse_ms);
 
-        std::vector<sima_examples::OptiViewObject> optiview_objects;
-        if (use_optiview) {
-          optiview_objects.reserve(boxes.size());
+        std::vector<sima_examples::MetadataReceiverObject> metadata_receiver_objects;
+        if (use_metadata_receiver) {
+          metadata_receiver_objects.reserve(boxes.size());
           for (const auto& box : boxes) {
             int x1 = static_cast<int>(box.x1);
             int y1 = static_cast<int>(box.y1);
@@ -683,14 +683,14 @@ int main(int argc, char** argv) {
               w = 0;
             if (h < 0)
               h = 0;
-            sima_examples::OptiViewObject obj;
+            sima_examples::MetadataReceiverObject obj;
             obj.x = x1;
             obj.y = y1;
             obj.w = w;
             obj.h = h;
             obj.score = box.score;
             obj.class_id = box.class_id;
-            optiview_objects.push_back(obj);
+            metadata_receiver_objects.push_back(obj);
           }
         } else {
           const double t_overlay0 = time_ms();
@@ -711,7 +711,7 @@ int main(int argc, char** argv) {
           simaai::neat::Tensor nv12_frame;
           std::string nv12_err;
           bool converted = false;
-          if (use_optiview) {
+          if (use_metadata_receiver) {
             converted = nv12_copy_to_cpu_tensor(pending.frame, nv12_frame, nv12_err);
           } else {
             converted = bgr_to_nv12_tensor(pending.bgr, nv12_frame, nv12_err);
@@ -722,7 +722,8 @@ int main(int argc, char** argv) {
           }
           const double t_udp_conv1 = time_ms();
           const double udp_conv_ms = t_udp_conv1 - t_udp_conv0;
-          print_time(use_optiview ? "nv12_copy_ms" : "bgr_to_nv12_ms", udp_conv_ms, cfg.debug);
+          print_time(use_metadata_receiver ? "nv12_copy_ms" : "bgr_to_nv12_ms", udp_conv_ms,
+                     cfg.debug);
           consumer_stats.add_udp_convert(udp_conv_ms);
 
           const double t_udp_push0 = time_ms();
@@ -735,15 +736,15 @@ int main(int argc, char** argv) {
           print_time("udp_push_ms", udp_push_ms, cfg.debug);
           consumer_stats.add_udp_push(udp_push_ms);
           output_ts = t_udp_push1;
-          if (use_optiview) {
+          if (use_metadata_receiver) {
             const int64_t fid =
                 out_opt->frame_id >= 0 ? out_opt->frame_id : static_cast<int64_t>(pending.index);
-            const int64_t ts_ms = static_cast<int64_t>(output_ts + cfg.optiview_offset_ms);
-            std::string json_payload = sima_examples::optiview_make_json(
-                ts_ms, std::to_string(fid), optiview_objects, optiview_labels);
+            const int64_t ts_ms = static_cast<int64_t>(output_ts + cfg.metadata_receiver_offset_ms);
+            std::string json_payload = sima_examples::metadata_receiver_make_json(
+                ts_ms, std::to_string(fid), metadata_receiver_objects, metadata_receiver_labels);
             std::string json_err;
-            if (!optiview_sender->send_json(json_payload, &json_err)) {
-              std::cerr << "[warn] optiview json send failed: " << json_err << "\n";
+            if (!metadata_receiver_sender->send_json(json_payload, &json_err)) {
+              std::cerr << "[warn] metadata_receiver metadata send failed: " << json_err << "\n";
             }
           }
         } else {
@@ -782,7 +783,7 @@ int main(int argc, char** argv) {
     print_throughput_summary(producer_stats.count, det_outputs.load(), saved.load(),
                              producer_start_ms, producer_end_ms, consumer_start_ms,
                              consumer_end_ms);
-    if (cfg.optiview) {
+    if (cfg.metadata_receiver) {
       print_stream_summary("rtsp", cam, true);
       print_stream_summary("yolo", det, true);
       print_pipeline_report("yolo", det, true);

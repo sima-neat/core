@@ -1,4 +1,4 @@
-#include "nodes/groups/OptiViewOutputGroup.h"
+#include "nodes/groups/MetadataReceiverOutputGroup.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
 
@@ -72,7 +72,7 @@ simaai::neat::Sample make_bbox_tensor_sample(const std::vector<uint8_t>& payload
   return sample;
 }
 
-bool is_parseable_optiview_json(const std::string& payload) {
+bool is_parseable_metadata_receiver_json(const std::string& payload) {
   try {
     const auto parsed = nlohmann::json::parse(payload);
     if (!parsed.contains("type") || !parsed["type"].is_string())
@@ -89,29 +89,29 @@ bool is_parseable_optiview_json(const std::string& payload) {
 
 } // namespace
 
-RUN_TEST("stress_udp_json_burst_test", ([] {
-           using simaai::neat::nodes::groups::OptiViewJsonInput;
-           using simaai::neat::nodes::groups::OptiViewJsonResult;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+RUN_TEST("stress_udp_metadata_burst_test", ([] {
+           using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput;
+           using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult;
+           using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup;
+           using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions;
 
            const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 180));
            const int streams = 2;
-           const int json_port_base = 9900;
+           const int metadata_port_base = 9900;
 
-           sima_test::UdpReceiver rx0(json_port_base);
-           sima_test::UdpReceiver rx1(json_port_base + 1);
+           sima_test::UdpReceiver rx0(metadata_port_base);
+           sima_test::UdpReceiver rx1(metadata_port_base + 1);
 
-           OptiViewOutputNodeGroup group;
-           OptiViewOutputNodeGroupOptions opt;
-           opt.send_json = true;
+           MetadataReceiverOutputNodeGroup group;
+           MetadataReceiverOutputNodeGroupOptions opt;
+           opt.send_metadata = true;
            opt.udp.h264_caps =
                "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
            opt.udp.host = "127.0.0.1";
            opt.udp.video_port_base = 9800;
            opt.udp.udp_sync = false;
            opt.udp.udp_async = false;
-           opt.json_port_base = json_port_base;
+           opt.metadata_port_base = metadata_port_base;
            opt.frame_w = 640;
            opt.frame_h = 480;
            opt.topk = 16;
@@ -123,11 +123,11 @@ RUN_TEST("stress_udp_json_burst_test", ([] {
                skip_long_test_exception("Skipping UDP JSON burst stress due runtime limitations: " +
                                         init_err);
              }
-             throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+             throw std::runtime_error("MetadataReceiverOutputNodeGroup init failed: " + init_err);
            }
 
            struct Guard {
-             OptiViewOutputNodeGroup* group_ptr = nullptr;
+             MetadataReceiverOutputNodeGroup* group_ptr = nullptr;
              ~Guard() {
                if (!group_ptr)
                  return;
@@ -161,15 +161,15 @@ RUN_TEST("stress_udp_json_burst_test", ([] {
                const auto yolo = make_bbox_tensor_sample(
                    payload, i, static_cast<int64_t>(i) * 33000000LL, "stream" + std::to_string(s));
 
-               OptiViewJsonInput in;
+               MetadataReceiverObjectDetectionInput in;
                in.stream_idx = static_cast<size_t>(s);
                in.yolo_sample = &yolo;
                in.frame_id = i;
                in.output_frame_id = i;
                in.capture_ms = 1000 + i;
 
-               OptiViewJsonResult out;
-               if (group.emit_json(in, &out)) {
+               MetadataReceiverObjectDetectionResult out;
+               if (group.emit_object_detection(in, &out)) {
                  ++emitted;
                } else {
                  ++emit_fail;
@@ -185,11 +185,11 @@ RUN_TEST("stress_udp_json_burst_test", ([] {
 
            int parseable = 0;
            for (const auto& payload : packets0) {
-             if (is_parseable_optiview_json(payload))
+             if (is_parseable_metadata_receiver_json(payload))
                ++parseable;
            }
            for (const auto& payload : packets1) {
-             if (is_parseable_optiview_json(payload))
+             if (is_parseable_metadata_receiver_json(payload))
                ++parseable;
            }
 
@@ -197,12 +197,13 @@ RUN_TEST("stress_udp_json_burst_test", ([] {
            const int total_received = got0 + got1;
            const int dropped = total_expected - total_received;
 
-           require(emit_fail == 0, "UDP JSON burst stress should not fail emit_json calls");
+           require(emit_fail == 0,
+                   "UDP JSON burst stress should not fail emit_object_detection calls");
            require(emitted == total_expected, "UDP JSON burst stress emitted count mismatch");
            require(total_received > 0,
                    "UDP JSON burst stress should receive at least one datagram");
            require(parseable == total_received,
-                   "UDP JSON burst stress should produce parseable JSON datagrams");
+                   "UDP JSON burst stress should produce parseable metadata datagrams");
            require(dropped <= (total_expected / 2),
                    "UDP JSON burst stress drop count exceeded bounded threshold");
 

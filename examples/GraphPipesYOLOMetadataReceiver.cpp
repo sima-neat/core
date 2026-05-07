@@ -1,14 +1,14 @@
-// GraphPipesYOLOOptiview.cpp
+// GraphPipesYOLOMetadataReceiver.cpp
 //
 // Minimal strict multi-channel reference:
 // 1) RTSP capture (encoded H264)
 // 2) Decode for YOLO only
-// 3) Forward original encoded stream to OptiView UDP (no re-encode)
-// 4) Emit OptiView JSON from YOLO output
+// 3) Forward original encoded stream to MetadataReceiver UDP (no re-encode)
+// 4) Emit MetadataReceiver JSON from YOLO output
 // 5) Release video only when exact frame match exists (strict sync)
 
 #include "example_utils.h"
-#include "graphpipes_optiview_helpers.h"
+#include "graphpipes_metadata_receiver_helpers.h"
 
 #include "neat/graph.h"
 #include "neat/models.h"
@@ -26,7 +26,7 @@
 #include <vector>
 
 namespace fs = std::filesystem;
-namespace gp = sima_examples::graphpipes_optiview;
+namespace gp = sima_examples::graphpipes_metadata_receiver;
 
 int main(int argc, char** argv) {
   try {
@@ -55,14 +55,14 @@ int main(int argc, char** argv) {
 
     const gp::ProbeResult probe = gp::probe_inputs(cfg, urls);
 
-    simaai::neat::nodes::groups::OptiViewOutputNodeGroup optiview_group;
-    gp::init_optiview_group(cfg, probe, urls.size(), optiview_group);
+    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup metadata_receiver_group;
+    gp::init_metadata_receiver_group(cfg, probe, urls.size(), metadata_receiver_group);
 
     auto io_stats = gp::make_io_stats(urls.size());
 
     auto sync_store = std::make_shared<gp::SyncPendingVideoStore>(urls.size());
     auto release_pacer =
-        gp::make_release_pacer(optiview_group.video_runs(), io_stats, probe.stream_fps);
+        gp::make_release_pacer(metadata_receiver_group.video_runs(), io_stats, probe.stream_fps);
 
     simaai::neat::graph::Graph g;
 
@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     for (size_t worker = 0; worker < yolo_workers; ++worker) {
       collect_ctx_by_worker.push_back(std::make_unique<gp::CollectorContext>(
           gp::CollectorContext{cfg, processed, stream_index, io_stats, sync_store,
-                               yolo_tokens[worker], release_pacer, optiview_group}));
+                               yolo_tokens[worker], release_pacer, metadata_receiver_group}));
     }
 
     std::vector<simaai::neat::graph::GraphRun::Output> outputs;
@@ -156,7 +156,7 @@ int main(int argc, char** argv) {
     std::cout << "processed_total=" << processed_total << "\n";
 
     run.stop();
-    optiview_group.stop();
+    metadata_receiver_group.stop();
 
     if (totals.total_fwd_fail > 0 || totals.total_sync_match_miss > 0 ||
         totals.total_sync_release_fail > 0) {

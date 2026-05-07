@@ -1,10 +1,6 @@
-#include "nodes/groups/OptiViewOutputGroup.h"
+#include "nodes/groups/MetadataReceiverOutputGroup.h"
 
-#include "nodes/groups/UdpH264OutputGroup.h"
-#include "nodes/io/Input.h"
 #include "pipeline/DetectionTypes.h"
-#include "pipeline/EncodedSampleUtil.h"
-#include "pipeline/Session.h"
 
 #include <algorithm>
 #include <cctype>
@@ -84,12 +80,6 @@ bool decode_bbox_sample_recursive(const simaai::neat::Sample& sample, int frame_
   }
 }
 
-simaai::neat::Sample make_dummy_encoded_sample(size_t bytes, const std::string& caps) {
-  if (bytes == 0)
-    bytes = 1;
-  return simaai::neat::make_encoded_sample(std::vector<uint8_t>(bytes, 0), caps);
-}
-
 int64_t now_ms_i64() {
   const auto now = std::chrono::steady_clock::now().time_since_epoch();
   return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();
@@ -97,109 +87,37 @@ int64_t now_ms_i64() {
 
 } // namespace
 
-bool UdpOutputNodeGroup::init(const UdpOutputNodeGroupOptions& opt, size_t streams,
-                              std::string* err) {
-  runs_.clear();
-  opt_ = opt;
-  if (streams == 0) {
-    if (err)
-      *err = "UdpOutputNodeGroup: streams must be > 0";
-    return false;
-  }
-  if (opt_.h264_caps.empty()) {
-    if (err)
-      *err = "UdpOutputNodeGroup: missing h264_caps";
-    return false;
-  }
-
-  runs_.reserve(streams);
-  try {
-    for (size_t i = 0; i < streams; ++i) {
-      simaai::neat::Session forward;
-      simaai::neat::InputOptions src_opt;
-      src_opt.use_simaai_pool = false;
-      src_opt.block = true;
-      src_opt.caps_override = opt_.h264_caps;
-      forward.add(simaai::neat::nodes::Input(src_opt));
-
-      simaai::neat::nodes::groups::UdpH264OutputGroupOptions udp_opt;
-      udp_opt.h264_caps = opt_.h264_caps;
-      udp_opt.payload_type = opt_.payload_type;
-      udp_opt.config_interval = opt_.config_interval;
-      udp_opt.udp_host = opt_.host;
-      udp_opt.udp_port = opt_.video_port_base + static_cast<int>(i);
-      udp_opt.udp_sync = opt_.udp_sync;
-      udp_opt.udp_async = opt_.udp_async;
-      forward.add(simaai::neat::nodes::groups::UdpH264OutputGroup(udp_opt));
-
-      simaai::neat::RunOptions run_opt;
-      run_opt.enable_metrics = opt_.enable_timings;
-
-      auto dummy = make_dummy_encoded_sample(1, opt_.h264_caps);
-      auto run = std::make_shared<simaai::neat::Run>(
-          forward.build(dummy, simaai::neat::RunMode::Async, run_opt));
-      runs_.push_back(std::move(run));
-    }
-  } catch (const std::exception& ex) {
-    stop();
-    if (err)
-      *err = ex.what();
-    return false;
-  }
-  return true;
-}
-
-bool UdpOutputNodeGroup::push_video(size_t idx, const simaai::neat::Sample& sample) const {
-  if (idx >= runs_.size() || !runs_[idx])
-    return false;
-  return runs_[idx]->push(sample);
-}
-
-bool UdpOutputNodeGroup::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
-  if (idx >= runs_.size() || !runs_[idx])
-    return false;
-  return runs_[idx]->try_push(sample);
-}
-
-void UdpOutputNodeGroup::stop() {
-  for (auto& run : runs_) {
-    if (run)
-      run->stop();
-  }
-}
-
-bool OptiViewOutputNodeGroup::init(const OptiViewOutputNodeGroupOptions& opt, size_t streams,
-                                   std::string* err) {
+bool MetadataReceiverOutputNodeGroup::init(const MetadataReceiverOutputNodeGroupOptions& opt,
+                                           size_t streams, std::string* err) {
   opt_ = opt;
   senders_.clear();
   if (opt_.labels.empty()) {
-    opt_.labels = simaai::neat::OptiViewDefaultLabels();
+    opt_.labels = simaai::neat::MetadataReceiverDefaultLabels();
   }
 
   std::string udp_err;
   if (!udp_.init(opt_.udp, streams, &udp_err)) {
     if (err)
-      *err = "OptiViewOutputNodeGroup: UDP init failed: " + udp_err;
+      *err = "MetadataReceiverOutputNodeGroup: UDP init failed: " + udp_err;
     return false;
   }
 
-  if (!opt_.send_json)
+  if (!opt_.send_metadata)
     return true;
 
   try {
     senders_.reserve(streams);
     for (size_t i = 0; i < streams; ++i) {
-      simaai::neat::OptiViewChannelOptions sender_opt;
+      simaai::neat::MetadataReceiverChannelOptions sender_opt;
       sender_opt.host = opt_.udp.host;
       sender_opt.channel = static_cast<int>(i);
-      sender_opt.video_port_base = opt_.udp.video_port_base;
-      sender_opt.json_port_base = opt_.json_port_base;
+      sender_opt.metadata_port_base = opt_.metadata_port_base;
 
       std::string sender_err;
-      auto sender = std::make_unique<simaai::neat::OptiViewJsonOutput>(sender_opt, &sender_err);
+      auto sender = std::make_unique<simaai::neat::MetadataReceiverOutput>(sender_opt, &sender_err);
       if (!sender->ok()) {
         if (err)
-          *err = "OptiViewOutputNodeGroup: sender init failed: " + sender_err;
+          *err = "MetadataReceiverOutputNodeGroup: sender init failed: " + sender_err;
         stop();
         return false;
       }
@@ -214,27 +132,55 @@ bool OptiViewOutputNodeGroup::init(const OptiViewOutputNodeGroupOptions& opt, si
   return true;
 }
 
-bool OptiViewOutputNodeGroup::push_video(size_t idx, const simaai::neat::Sample& sample) const {
+bool MetadataReceiverOutputNodeGroup::push_video(size_t idx,
+                                                 const simaai::neat::Sample& sample) const {
   return udp_.push_video(idx, sample);
 }
 
-bool OptiViewOutputNodeGroup::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
+bool MetadataReceiverOutputNodeGroup::try_push_video(size_t idx,
+                                                     const simaai::neat::Sample& sample) const {
   return udp_.try_push_video(idx, sample);
 }
 
-bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
-                                        OptiViewJsonResult* out) const {
-  OptiViewJsonResult local;
+bool MetadataReceiverOutputNodeGroup::send_json(size_t stream_idx, const std::string& payload,
+                                                std::string* err) const {
+  if (!opt_.send_metadata)
+    return true;
+  if (stream_idx >= senders_.size() || !senders_[stream_idx]) {
+    if (err)
+      *err = "invalid stream index for metadata sender";
+    return false;
+  }
+  return senders_[stream_idx]->send_json(payload, err);
+}
+
+bool MetadataReceiverOutputNodeGroup::send_metadata(
+    size_t stream_idx, const simaai::neat::MetadataReceiverPayload& payload,
+    std::string* err) const {
+  if (!opt_.send_metadata)
+    return true;
+  if (stream_idx >= senders_.size() || !senders_[stream_idx]) {
+    if (err)
+      *err = "invalid stream index for metadata sender";
+    return false;
+  }
+  return senders_[stream_idx]->send_metadata(payload, err);
+}
+
+bool MetadataReceiverOutputNodeGroup::emit_object_detection(
+    const MetadataReceiverObjectDetectionInput& in,
+    MetadataReceiverObjectDetectionResult* out) const {
+  MetadataReceiverObjectDetectionResult local;
   if (!out)
     out = &local;
-  *out = OptiViewJsonResult{};
+  *out = MetadataReceiverObjectDetectionResult{};
 
-  if (!opt_.send_json) {
+  if (!opt_.send_metadata) {
     out->ok = true;
     return true;
   }
   if (in.stream_idx >= senders_.size() || !senders_[in.stream_idx]) {
-    out->error = "invalid stream index for JSON sender";
+    out->error = "invalid stream index for metadata sender";
     return false;
   }
   if (!in.yolo_sample) {
@@ -256,7 +202,7 @@ bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
 
   (void)opt_.parse_debug;
 
-  std::vector<simaai::neat::OptiViewObject> objects;
+  std::vector<simaai::neat::MetadataReceiverObject> objects;
   objects.reserve(boxes.size());
   for (const auto& b : boxes) {
     int x1 = static_cast<int>(b.x1);
@@ -280,7 +226,7 @@ bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
     if (h < 0)
       h = 0;
 
-    simaai::neat::OptiViewObject obj;
+    simaai::neat::MetadataReceiverObject obj;
     obj.x = x1;
     obj.y = y1;
     obj.w = w;
@@ -295,15 +241,15 @@ bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
       (in.output_frame_id >= 0) ? std::to_string(in.output_frame_id) : std::to_string(in.frame_id);
 
   const std::string payload_json =
-      simaai::neat::OptiViewMakeJson(ts_ms, frame_id, objects, opt_.labels);
+      simaai::neat::MetadataReceiverMakeObjectDetectionJson(ts_ms, frame_id, objects, opt_.labels);
 
-  int json_delay_ms = opt_.json_delay_ms;
-  if (json_delay_ms <= 0 && opt_.video_delay_ms > 0) {
-    json_delay_ms = opt_.video_delay_ms;
+  int metadata_delay_ms = opt_.metadata_delay_ms;
+  if (metadata_delay_ms <= 0 && opt_.video_delay_ms > 0) {
+    metadata_delay_ms = opt_.video_delay_ms;
   }
-  if (json_delay_ms > 0 && ts_ms >= 0) {
+  if (metadata_delay_ms > 0 && ts_ms >= 0) {
     const int64_t now_ms = now_ms_i64();
-    const int64_t target_ms = ts_ms + json_delay_ms;
+    const int64_t target_ms = ts_ms + metadata_delay_ms;
     if (now_ms < target_ms) {
       std::this_thread::sleep_for(std::chrono::milliseconds(target_ms - now_ms));
     }
@@ -311,7 +257,7 @@ bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
 
   std::string send_err;
   if (!senders_[in.stream_idx]->send_json(payload_json, &send_err)) {
-    out->error = "JSON send failed: " + send_err;
+    out->error = "metadata send failed: " + send_err;
     return false;
   }
 
@@ -321,12 +267,13 @@ bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
   return true;
 }
 
-void OptiViewOutputNodeGroup::stop() {
+void MetadataReceiverOutputNodeGroup::stop() {
   udp_.stop();
   senders_.clear();
 }
 
-int64_t OptiViewOutputNodeGroup::pick_timestamp_ms_(const OptiViewJsonInput& in) const {
+int64_t MetadataReceiverOutputNodeGroup::pick_timestamp_ms_(
+    const MetadataReceiverObjectDetectionInput& in) const {
   if (in.capture_ms >= 0)
     return in.capture_ms;
   if (in.decoded_sample && in.decoded_sample->pts_ns >= 0) {

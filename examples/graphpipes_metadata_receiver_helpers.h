@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-namespace sima_examples::graphpipes_optiview {
+namespace sima_examples::graphpipes_metadata_receiver {
 
 struct Config {
   std::string rtsp_list;
@@ -22,16 +22,16 @@ struct Config {
   int frames = 3000;
   int streams = 4;
 
-  std::string optiview_host = "127.0.0.1";
-  int optiview_video_port = 9000;
-  int optiview_json_port = 9100;
+  std::string metadata_receiver_host = "127.0.0.1";
+  int metadata_receiver_video_port = 9000;
+  int metadata_receiver_metadata_port = 9100;
 
   int rtsp_latency_ms = 200;
   bool rtsp_tcp = true;
 
   int stall_timeout_ms = 20000;
 
-  bool send_json = true;
+  bool send_metadata = true;
   bool debug = false;
   bool rtsp_debug = false;
 
@@ -47,10 +47,10 @@ struct StreamIoStats {
   std::atomic<int64_t> bbox_extract_fail{0};
   std::atomic<int64_t> bbox_parse_fail{0};
 
-  std::atomic<int64_t> json_ok{0};
-  std::atomic<int64_t> json_fail{0};
-  std::atomic<int64_t> json_nonempty{0};
-  std::atomic<int64_t> json_empty{0};
+  std::atomic<int64_t> metadata_ok{0};
+  std::atomic<int64_t> metadata_fail{0};
+  std::atomic<int64_t> metadata_nonempty{0};
+  std::atomic<int64_t> metadata_empty{0};
   std::atomic<int64_t> boxes_total{0};
 
   std::atomic<int64_t> sync_release_ok{0};
@@ -83,7 +83,7 @@ struct CollectorContext {
   const std::shared_ptr<SyncPendingVideoStore>& sync_store;
   const std::shared_ptr<YoloTokenStore>& yolo_tokens;
   const std::shared_ptr<SyncReleasePacer>& release_pacer;
-  simaai::neat::nodes::groups::OptiViewOutputNodeGroup& optiview_group;
+  simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup& metadata_receiver_group;
 };
 
 struct FinalTotals {
@@ -97,8 +97,9 @@ void force_runtime_defaults();
 Config parse_config(int argc, char** argv);
 ProbeResult probe_inputs(const Config& cfg, const std::vector<std::string>& urls);
 
-void init_optiview_group(const Config& cfg, const ProbeResult& probe, size_t streams,
-                         simaai::neat::nodes::groups::OptiViewOutputNodeGroup& out_group);
+void init_metadata_receiver_group(
+    const Config& cfg, const ProbeResult& probe, size_t streams,
+    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup& out_group);
 
 std::vector<std::shared_ptr<StreamIoStats>> make_io_stats(size_t streams);
 
@@ -128,4 +129,4 @@ FinalTotals print_stream_summaries(const std::vector<std::shared_ptr<StreamIoSta
                                    const std::vector<std::shared_ptr<YoloTokenStore>>& yolo_tokens,
                                    const std::shared_ptr<SyncReleasePacer>& release_pacer);
 
-} // namespace sima_examples::graphpipes_optiview
+} // namespace sima_examples::graphpipes_metadata_receiver
