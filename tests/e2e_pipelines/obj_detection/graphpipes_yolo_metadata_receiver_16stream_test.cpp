@@ -44,10 +44,8 @@ int run_case(const fs::path& root) {
   const std::string tar_gz = sima_yolov8_test::resolve_yolov8s_tar_or_skip(root);
   const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
 
-  using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput;
-  using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult;
-  using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup;
-  using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions;
+  using simaai::neat::nodes::groups::MetadataReceiverOutputGroup;
+  using simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions;
 
   const int metadata_base = rtsp_find_free_port_range(/*base_port=*/18000,
                                                       /*ports_needed=*/kStreams,
@@ -61,30 +59,17 @@ int run_case(const fs::path& root) {
     receivers.emplace_back(metadata_base + i, "127.0.0.1");
   }
 
-  MetadataReceiverOutputNodeGroup metadata_receiver;
-  MetadataReceiverOutputNodeGroupOptions opt;
-  opt.send_metadata = true;
-  opt.udp.h264_caps = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
-  opt.udp.host = "127.0.0.1";
-  opt.udp.video_port_base = 9900;
-  opt.udp.udp_sync = false;
-  opt.udp.udp_async = false;
+  MetadataReceiverOutputGroup metadata_receiver;
+  MetadataReceiverOutputGroupOptions opt;
+  opt.host = "127.0.0.1";
   opt.metadata_port_base = metadata_base;
-  opt.frame_w = img_bgr.cols;
-  opt.frame_h = img_bgr.rows;
-  opt.topk = kTopK;
-  opt.labels = simaai::neat::MetadataReceiverDefaultLabels();
 
   std::string init_err;
-  if (!metadata_receiver.init(opt, kStreams, &init_err)) {
-    if (sima_test::likely_runtime_missing(init_err)) {
-      skip_long_test_exception("MetadataReceiver runtime unavailable: " + init_err);
-    }
-    throw std::runtime_error("MetadataReceiverOutputNodeGroup init failed: " + init_err);
-  }
+  require(metadata_receiver.init(opt, kStreams, &init_err),
+          "MetadataReceiverOutputGroup init failed: " + init_err);
 
   struct Guard {
-    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup* group = nullptr;
+    simaai::neat::nodes::groups::MetadataReceiverOutputGroup* group = nullptr;
     simaai::neat::Run* run = nullptr;
     ~Guard() {
       if (run) {
@@ -148,21 +133,24 @@ int run_case(const fs::path& root) {
     const std::string stream_id = "stream" + std::to_string(i);
     expected_frame_ids.insert(std::to_string(frame_id));
 
-    MetadataReceiverObjectDetectionInput detection_in;
-    detection_in.stream_idx = static_cast<std::size_t>(i);
-    detection_in.stream_id = stream_id;
-    detection_in.frame_id = frame_id;
-    detection_in.output_frame_id = static_cast<int>(frame_id);
-    detection_in.capture_ms = frame_id;
-    detection_in.yolo_sample = &out;
+    nlohmann::json data;
+    data["objects"] = nlohmann::json::array();
+    for (size_t j = 0; j < boxes.size(); ++j) {
+      const objdet::Box& box = boxes[j];
+      data["objects"].push_back(
+          nlohmann::json{{"id", "obj_" + std::to_string(j + 1)},
+                         {"label", "label_" + std::to_string(box.class_id)},
+                         {"confidence", box.score},
+                         {"bbox",
+                          {static_cast<int>(box.x1), static_cast<int>(box.y1),
+                           static_cast<int>(box.x2 - box.x1), static_cast<int>(box.y2 - box.y1)}}});
+    }
 
-    MetadataReceiverObjectDetectionResult detection_out;
-    require(metadata_receiver.emit_object_detection(detection_in, &detection_out),
-            "emit_object_detection failed for stream " + stream_id);
-    require(detection_out.ok, "emit_object_detection result not ok for stream " + stream_id +
-                                  " err=" + detection_out.error);
-    require(detection_out.nonempty,
-            "emit_object_detection expected non-empty detections for stream " + stream_id);
+    std::string send_err;
+    require(metadata_receiver.send_metadata(static_cast<std::size_t>(i), "object-detection",
+                                            data.dump(), frame_id, std::to_string(frame_id),
+                                            &send_err),
+            "send_metadata failed for stream " + stream_id + ": " + send_err);
   }
 
   std::unordered_set<std::string> received_frame_ids;

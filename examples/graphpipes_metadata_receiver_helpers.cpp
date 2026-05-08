@@ -1,6 +1,7 @@
 #include "graphpipes_metadata_receiver_helpers.h"
 
 #include "example_utils.h"
+#include "support/obj_detection_utils.h"
 
 #include "builder/ConfigJsonOverride.h"
 #include "neat/graph.h"
@@ -33,6 +34,7 @@ namespace {
 constexpr int kOutputPayloadType = 96;
 constexpr int kFixedModelNumBuffers = 3;
 constexpr int kFixedDecoderNumBuffers = 7;
+constexpr int kYoloTopK = 100;
 
 bool parse_stream_index(const std::string& sid, size_t* out_idx) {
   if (!out_idx)
@@ -278,26 +280,30 @@ ProbeResult probe_inputs(const Config& cfg, const std::vector<std::string>& urls
   return out;
 }
 
-void init_metadata_receiver_group(
+void init_metadata_receiver_outputs(
     const Config& cfg, const ProbeResult& probe, size_t streams,
-    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup& out_group) {
-  simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions metadata_receiver_opt;
-  metadata_receiver_opt.udp.h264_caps = probe.enc_caps_appsrc;
-  metadata_receiver_opt.udp.payload_type = kOutputPayloadType;
-  metadata_receiver_opt.udp.config_interval = 1;
-  metadata_receiver_opt.udp.enable_timings = cfg.debug;
-  metadata_receiver_opt.udp.host = cfg.metadata_receiver_host;
-  metadata_receiver_opt.udp.video_port_base = cfg.metadata_receiver_video_port;
-  metadata_receiver_opt.send_metadata = cfg.send_metadata;
-  metadata_receiver_opt.metadata_port_base = cfg.metadata_receiver_metadata_port;
-  metadata_receiver_opt.frame_w = probe.frame_w;
-  metadata_receiver_opt.frame_h = probe.frame_h;
-  metadata_receiver_opt.topk = 100;
-  metadata_receiver_opt.parse_debug = false;
+    simaai::neat::nodes::groups::UdpOutputNodeGroup& out_video_group,
+    simaai::neat::nodes::groups::MetadataReceiverOutputGroup& out_metadata_group) {
+  simaai::neat::nodes::groups::UdpOutputNodeGroupOptions video_opt;
+  video_opt.h264_caps = probe.enc_caps_appsrc;
+  video_opt.payload_type = kOutputPayloadType;
+  video_opt.config_interval = 1;
+  video_opt.enable_timings = cfg.debug;
+  video_opt.host = cfg.metadata_receiver_host;
+  video_opt.video_port_base = cfg.metadata_receiver_video_port;
 
-  std::string metadata_receiver_err;
-  sima_examples::require(out_group.init(metadata_receiver_opt, streams, &metadata_receiver_err),
-                         metadata_receiver_err);
+  std::string video_err;
+  sima_examples::require(out_video_group.init(video_opt, streams, &video_err), video_err);
+
+  if (cfg.send_metadata) {
+    simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions metadata_opt;
+    metadata_opt.host = cfg.metadata_receiver_host;
+    metadata_opt.metadata_port_base = cfg.metadata_receiver_metadata_port;
+
+    std::string metadata_err;
+    sima_examples::require(out_metadata_group.init(metadata_opt, streams, &metadata_err),
+                           metadata_err);
+  }
 
   std::cout << "[metadata_receiver] host=" << cfg.metadata_receiver_host
             << " video_port_base=" << cfg.metadata_receiver_video_port
@@ -407,7 +413,7 @@ add_yolo_pipeline(simaai::neat::graph::Graph& g, simaai::neat::Model& model, int
   yolo_nodes.push_back(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", frame_w, frame_h,
                                                           /*min_score=*/0.52f,
                                                           /*nms=*/0.5f,
-                                                          /*topk=*/100));
+                                                          /*topk=*/kYoloTopK));
 
   auto yolo_group = simaai::neat::NodeGroup(std::move(yolo_nodes));
   auto yolo_pipe =
@@ -644,7 +650,7 @@ void on_yolo_sample(const simaai::neat::Sample& sample, CollectorContext& ctx) {
     if (ctx.release_pacer) {
       accepted = ctx.release_pacer->enqueue(idx, std::move(pending_video->sample));
     } else {
-      const bool release_ok = ctx.metadata_receiver_group.push_video(idx, pending_video->sample);
+      const bool release_ok = ctx.video_group.push_video(idx, pending_video->sample);
       if (!release_ok) {
         io.sync_release_fail.fetch_add(1, std::memory_order_relaxed);
       } else {
@@ -668,33 +674,82 @@ void on_yolo_sample(const simaai::neat::Sample& sample, CollectorContext& ctx) {
   ctx.processed[idx]++;
 
   if (ctx.cfg.send_metadata) {
-    simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput detection_in;
-    detection_in.stream_idx = idx;
-    detection_in.stream_id = sid;
-    detection_in.frame_id = yolo_frame;
-    detection_in.capture_ms = pending_video.has_value() ? pending_video->cap_ms : -1;
-    detection_in.yolo_ms = yolo_ms;
-    detection_in.output_frame_id = ctx.processed[idx] - 1;
-    detection_in.yolo_sample = &sample;
-
-    simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult detection_out;
-    if (ctx.metadata_receiver_group.emit_object_detection(detection_in, &detection_out)) {
-      io.metadata_ok.fetch_add(1, std::memory_order_relaxed);
-      io.boxes_total.fetch_add(detection_out.boxes, std::memory_order_relaxed);
-      if (detection_out.nonempty) {
-        io.metadata_nonempty.fetch_add(1, std::memory_order_relaxed);
-      } else {
-        io.metadata_empty.fetch_add(1, std::memory_order_relaxed);
-      }
-    } else {
+    std::vector<uint8_t> payload;
+    std::string metadata_err;
+    if (!sima_examples::extract_bbox_payload(sample, payload, metadata_err)) {
       io.metadata_fail.fetch_add(1, std::memory_order_relaxed);
-      if (detection_out.error.find("bbox extract failed") != std::string::npos) {
-        io.bbox_extract_fail.fetch_add(1, std::memory_order_relaxed);
-      } else if (detection_out.error.find("bbox parse failed") != std::string::npos) {
+      io.bbox_extract_fail.fetch_add(1, std::memory_order_relaxed);
+      std::cerr << "[warn] metadata_receiver bbox extract failed stream=" << sid
+                << " err=" << metadata_err << "\n";
+    } else {
+      std::vector<objdet::Box> boxes;
+      bool parsed_boxes = true;
+      try {
+        boxes = objdet::parse_boxes_strict(payload, ctx.frame_w, ctx.frame_h, kYoloTopK, false);
+      } catch (const std::exception& ex) {
+        parsed_boxes = false;
+        io.metadata_fail.fetch_add(1, std::memory_order_relaxed);
         io.bbox_parse_fail.fetch_add(1, std::memory_order_relaxed);
+        std::cerr << "[warn] metadata_receiver bbox parse failed stream=" << sid
+                  << " err=" << ex.what() << "\n";
       }
-      std::cerr << "[warn] metadata_receiver metadata send failed stream=" << sid
-                << " err=" << detection_out.error << "\n";
+
+      if (parsed_boxes) {
+        std::vector<sima_examples::ObjectDetectionMetadataObject> objects;
+        objects.reserve(boxes.size());
+        for (const auto& b : boxes) {
+          int x1 = static_cast<int>(b.x1);
+          int y1 = static_cast<int>(b.y1);
+          int w = static_cast<int>(b.x2 - b.x1);
+          int h = static_cast<int>(b.y2 - b.y1);
+          if (x1 < 0)
+            x1 = 0;
+          if (y1 < 0)
+            y1 = 0;
+          if (w < 0)
+            w = 0;
+          if (h < 0)
+            h = 0;
+          if (x1 + w > ctx.frame_w)
+            w = ctx.frame_w - x1;
+          if (y1 + h > ctx.frame_h)
+            h = ctx.frame_h - y1;
+          if (w < 0)
+            w = 0;
+          if (h < 0)
+            h = 0;
+
+          sima_examples::ObjectDetectionMetadataObject obj;
+          obj.x = x1;
+          obj.y = y1;
+          obj.w = w;
+          obj.h = h;
+          obj.score = b.score;
+          obj.class_id = b.class_id;
+          objects.push_back(obj);
+        }
+
+        const int64_t ts_ms = pending_video.has_value() ? pending_video->cap_ms : yolo_ms;
+        const std::string frame_id = std::to_string(ctx.processed[idx] - 1);
+        const std::string data_json =
+            sima_examples::metadata_receiver_make_object_detection_data_json(
+                objects, ctx.metadata_receiver_labels);
+
+        if (ctx.metadata_receiver_group.send_metadata(idx, "object-detection", data_json, ts_ms,
+                                                      frame_id, &metadata_err)) {
+          io.metadata_ok.fetch_add(1, std::memory_order_relaxed);
+          io.boxes_total.fetch_add(static_cast<int64_t>(objects.size()), std::memory_order_relaxed);
+          if (!objects.empty()) {
+            io.metadata_nonempty.fetch_add(1, std::memory_order_relaxed);
+          } else {
+            io.metadata_empty.fetch_add(1, std::memory_order_relaxed);
+          }
+        } else {
+          io.metadata_fail.fetch_add(1, std::memory_order_relaxed);
+          std::cerr << "[warn] metadata_receiver metadata send failed stream=" << sid
+                    << " err=" << metadata_err << "\n";
+        }
+      }
     }
   }
 

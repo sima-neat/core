@@ -659,7 +659,7 @@ int main(int argc, char** argv) {
         print_time("bbox_parse_ms", parse_ms, cfg.debug);
         consumer_stats.add_bbox_parse(parse_ms);
 
-        std::vector<sima_examples::MetadataReceiverObject> metadata_receiver_objects;
+        std::vector<sima_examples::ObjectDetectionMetadataObject> metadata_receiver_objects;
         if (use_metadata_receiver) {
           metadata_receiver_objects.reserve(boxes.size());
           for (const auto& box : boxes) {
@@ -683,7 +683,7 @@ int main(int argc, char** argv) {
               w = 0;
             if (h < 0)
               h = 0;
-            sima_examples::MetadataReceiverObject obj;
+            sima_examples::ObjectDetectionMetadataObject obj;
             obj.x = x1;
             obj.y = y1;
             obj.w = w;
@@ -740,10 +740,13 @@ int main(int argc, char** argv) {
             const int64_t fid =
                 out_opt->frame_id >= 0 ? out_opt->frame_id : static_cast<int64_t>(pending.index);
             const int64_t ts_ms = static_cast<int64_t>(output_ts + cfg.metadata_receiver_offset_ms);
-            std::string json_payload = sima_examples::metadata_receiver_make_json(
-                ts_ms, std::to_string(fid), metadata_receiver_objects, metadata_receiver_labels);
+            const std::string data_json =
+                sima_examples::metadata_receiver_make_object_detection_data_json(
+                    metadata_receiver_objects, metadata_receiver_labels);
+            const std::string frame_id = std::to_string(fid);
             std::string json_err;
-            if (!metadata_receiver_sender->send_json(json_payload, &json_err)) {
+            if (!metadata_receiver_sender->send_metadata("object-detection", data_json, ts_ms,
+                                                         frame_id, &json_err)) {
               std::cerr << "[warn] metadata_receiver metadata send failed: " << json_err << "\n";
             }
           }

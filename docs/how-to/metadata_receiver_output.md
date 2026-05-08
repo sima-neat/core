@@ -14,7 +14,7 @@ Insight is one MetadataReceiver implementation.
 For Insight, pair metadata channel `N` with the video UDP stream on `9000 + N`.
 The object-detection schema renders in Insight today. Other metadata types can be transported as JSON, but they need viewer-side renderer support before overlays appear.
 
-## C++: raw metadata
+## C++
 
 ```cpp
 simaai::neat::MetadataReceiverChannelOptions opt;
@@ -25,43 +25,38 @@ opt.metadata_port_base = 9100;
 std::string err;
 simaai::neat::MetadataReceiverOutput out(opt, &err);
 
-simaai::neat::MetadataReceiverPayload payload;
-payload.type = "tracking";
-payload.data_json = R"({"tracks":[{"id":"trk-1","bbox":[10,20,30,40]}]})";
-payload.timestamp_ms = 12345;
-payload.frame_id = "frame-7";
-
-out.send_metadata(payload, &err);
+out.send_metadata(
+    "tracking",
+    R"({"tracks":[{"id":"trk-1","bbox":[10,20,30,40]}]})",
+    12345,
+    "frame-7",
+    &err);
 ```
 
-## C++: object detection
-
-```cpp
-std::vector<simaai::neat::MetadataReceiverObject> objects = {
-    {.x = 10, .y = 20, .w = 30, .h = 40, .score = 0.95f, .class_id = 0},
-};
-
-out.send_object_detection(12345, "frame-7", objects, {"person"}, &err);
-```
-
-This sends:
+`send_metadata(...)` builds this envelope:
 
 ```json
 {
-  "type": "object-detection",
+  "type": "tracking",
   "timestamp": 12345,
   "frame_id": "frame-7",
   "data": {
-    "objects": [
+    "tracks": [
       {
-        "id": "obj_1",
-        "label": "person",
-        "confidence": 0.95,
+        "id": "trk-1",
         "bbox": [10, 20, 30, 40]
       }
     ]
   }
 }
+```
+
+Use `send_raw_json(...)` only when the caller already built the full top-level payload:
+
+```cpp
+out.send_raw_json(
+    R"({"type":"object-detection","data":{"objects":[{"id":"obj_1","label":"car","confidence":0.92,"bbox":[120,80,96,64]}]}})",
+    &err);
 ```
 
 ## Python
@@ -77,11 +72,21 @@ opt.metadata_port_base = 9100
 
 out = pyneat.MetadataReceiverOutput(opt)
 
-payload = pyneat.MetadataReceiverPayload()
-payload.type = "tracking"
-payload.data_json = json.dumps({"tracks": [{"id": "trk-1", "bbox": [10, 20, 30, 40]}]})
-payload.timestamp_ms = 12345
-payload.frame_id = "frame-7"
-
-out.send_metadata(payload)
+out.send_metadata(
+    "object-detection",
+    json.dumps(
+        {
+            "objects": [
+                {
+                    "id": "obj_1",
+                    "label": "car",
+                    "confidence": 0.92,
+                    "bbox": [120, 80, 96, 64],
+                }
+            ]
+        }
+    ),
+    12345,
+    "frame-7",
+)
 ```

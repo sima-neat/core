@@ -4,13 +4,13 @@
 
 #include <cerrno>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <string>
 #include <sys/socket.h>
 #include <unistd.h>
-#include <vector>
 
 namespace simaai::neat {
 namespace {
@@ -51,82 +51,51 @@ bool resolve_udp_addr(const std::string& host, int port, sockaddr_storage& out, 
   return true;
 }
 
-} // namespace
-
-std::vector<std::string> MetadataReceiverDefaultLabels() {
-  std::vector<std::string> labels;
-  labels.reserve(80);
-  for (int i = 0; i < 80; ++i) {
-    labels.push_back("label_" + std::to_string(i));
-  }
-  return labels;
-}
-
-bool MetadataReceiverMakeJson(const MetadataReceiverPayload& payload, std::string* out_json,
-                              std::string* err) {
+bool make_metadata_json(const std::string& type, const std::string& data_json, int64_t timestamp_ms,
+                        const std::string& frame_id, std::string* out_json, std::string* err) {
   if (!out_json) {
     if (err)
-      *err = "MetadataReceiverMakeJson requires out_json";
+      *err = "MetadataReceiverOutput send_metadata requires out_json";
     return false;
   }
   out_json->clear();
 
-  if (payload.type.empty()) {
+  if (type.empty()) {
     if (err)
-      *err = "MetadataReceiverPayload type must not be empty";
+      *err = "MetadataReceiverOutput metadata type must not be empty";
     return false;
   }
 
   json data;
   try {
-    data = json::parse(payload.data_json);
+    data = json::parse(data_json);
   } catch (const std::exception& ex) {
     if (err)
-      *err = std::string("MetadataReceiverPayload data_json parse failed: ") + ex.what();
+      *err = std::string("MetadataReceiverOutput data_json parse failed: ") + ex.what();
+    return false;
+  }
+
+  if (!data.is_object()) {
+    if (err)
+      *err = "MetadataReceiverOutput data_json must be a JSON object";
     return false;
   }
 
   json output;
-  output["type"] = payload.type;
+  output["type"] = type;
   output["data"] = std::move(data);
-  if (payload.timestamp_ms >= 0) {
-    output["timestamp"] = payload.timestamp_ms;
+  if (timestamp_ms >= 0) {
+    output["timestamp"] = timestamp_ms;
   }
-  if (!payload.frame_id.empty()) {
-    output["frame_id"] = payload.frame_id;
+  if (!frame_id.empty()) {
+    output["frame_id"] = frame_id;
   }
 
   *out_json = output.dump();
   return true;
 }
 
-std::string
-MetadataReceiverMakeObjectDetectionJson(int64_t timestamp_ms, const std::string& frame_id,
-                                        const std::vector<MetadataReceiverObject>& objects,
-                                        const std::vector<std::string>& labels) {
-  json output;
-  output["type"] = "object-detection";
-  output["timestamp"] = timestamp_ms;
-  output["frame_id"] = frame_id;
-  output["data"]["objects"] = json::array();
-
-  for (size_t i = 0; i < objects.size(); ++i) {
-    const auto& obj = objects[i];
-    const std::string label =
-        (obj.class_id >= 0 && static_cast<size_t>(obj.class_id) < labels.size())
-            ? labels[static_cast<size_t>(obj.class_id)]
-            : "Unknown";
-
-    json item;
-    item["id"] = "obj_" + std::to_string(i + 1);
-    item["label"] = label;
-    item["confidence"] = obj.score;
-    item["bbox"] = {obj.x, obj.y, obj.w, obj.h};
-    output["data"]["objects"].push_back(std::move(item));
-  }
-
-  return output.dump();
-}
+} // namespace
 
 struct MetadataReceiverOutput::Impl {
   ~Impl() {
@@ -186,7 +155,7 @@ int MetadataReceiverOutput::metadata_port() const {
   return impl_ ? impl_->metadata_port : -1;
 }
 
-bool MetadataReceiverOutput::send_json(const std::string& payload, std::string* err) const {
+bool MetadataReceiverOutput::send_raw_json(const std::string& payload, std::string* err) const {
   if (!ok()) {
     if (err)
       *err = "MetadataReceiverOutput not initialized";
@@ -207,20 +176,13 @@ bool MetadataReceiverOutput::send_json(const std::string& payload, std::string* 
   return true;
 }
 
-bool MetadataReceiverOutput::send_metadata(const MetadataReceiverPayload& payload,
+bool MetadataReceiverOutput::send_metadata(const std::string& type, const std::string& data_json,
+                                           int64_t timestamp_ms, const std::string& frame_id,
                                            std::string* err) const {
   std::string payload_json;
-  if (!MetadataReceiverMakeJson(payload, &payload_json, err))
+  if (!make_metadata_json(type, data_json, timestamp_ms, frame_id, &payload_json, err))
     return false;
-  return send_json(payload_json, err);
-}
-
-bool MetadataReceiverOutput::send_object_detection(
-    int64_t timestamp_ms, const std::string& frame_id,
-    const std::vector<MetadataReceiverObject>& objects, const std::vector<std::string>& labels,
-    std::string* err) const {
-  return send_json(MetadataReceiverMakeObjectDetectionJson(timestamp_ms, frame_id, objects, labels),
-                   err);
+  return send_raw_json(payload_json, err);
 }
 
 } // namespace simaai::neat

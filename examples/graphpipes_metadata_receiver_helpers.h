@@ -83,7 +83,11 @@ struct CollectorContext {
   const std::shared_ptr<SyncPendingVideoStore>& sync_store;
   const std::shared_ptr<YoloTokenStore>& yolo_tokens;
   const std::shared_ptr<SyncReleasePacer>& release_pacer;
-  simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup& metadata_receiver_group;
+  simaai::neat::nodes::groups::UdpOutputNodeGroup& video_group;
+  simaai::neat::nodes::groups::MetadataReceiverOutputGroup& metadata_receiver_group;
+  int frame_w = 0;
+  int frame_h = 0;
+  const std::vector<std::string>& metadata_receiver_labels;
 };
 
 struct FinalTotals {
@@ -97,9 +101,10 @@ void force_runtime_defaults();
 Config parse_config(int argc, char** argv);
 ProbeResult probe_inputs(const Config& cfg, const std::vector<std::string>& urls);
 
-void init_metadata_receiver_group(
+void init_metadata_receiver_outputs(
     const Config& cfg, const ProbeResult& probe, size_t streams,
-    simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup& out_group);
+    simaai::neat::nodes::groups::UdpOutputNodeGroup& out_video_group,
+    simaai::neat::nodes::groups::MetadataReceiverOutputGroup& out_metadata_group);
 
 std::vector<std::shared_ptr<StreamIoStats>> make_io_stats(size_t streams);
 

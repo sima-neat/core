@@ -5,8 +5,6 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
-#include <cstdint>
-#include <cstring>
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
@@ -26,60 +24,12 @@ int clamp_iters(int value) {
   return std::max(40, std::min(value, 4000));
 }
 
-struct RawBox {
-  int32_t x = 0;
-  int32_t y = 0;
-  int32_t w = 0;
-  int32_t h = 0;
-  float score = 0.0f;
-  int32_t cls = 0;
-};
-
-std::vector<uint8_t> make_bbox_payload(uint32_t count, const std::vector<RawBox>& boxes) {
-  std::vector<uint8_t> out(sizeof(uint32_t) + boxes.size() * sizeof(RawBox), 0);
-  std::memcpy(out.data(), &count, sizeof(uint32_t));
-  if (!boxes.empty()) {
-    std::memcpy(out.data() + sizeof(uint32_t), boxes.data(), boxes.size() * sizeof(RawBox));
-  }
-  return out;
-}
-
-simaai::neat::Sample make_bbox_tensor_sample(const std::vector<uint8_t>& payload, int frame_id,
-                                             int64_t pts_ns, const std::string& stream_id) {
-  using namespace simaai::neat;
-  auto storage = make_cpu_owned_storage(payload.size());
-  auto map = storage->map(MapMode::Write);
-  if (map.data && map.size_bytes >= payload.size()) {
-    std::memcpy(map.data, payload.data(), payload.size());
-  }
-
-  Tensor tensor;
-  tensor.storage = storage;
-  tensor.dtype = TensorDType::UInt8;
-  tensor.layout = TensorLayout::Unknown;
-  tensor.shape = {static_cast<int64_t>(payload.size())};
-  tensor.device = {DeviceType::CPU, 0};
-  tensor.read_only = true;
-  tensor.semantic.tess =
-      TessSpec{.tile_width = 0, .tile_height = 0, .tile_channels = 0, .format = "BBOX"};
-
-  Sample sample;
-  sample.kind = SampleKind::Tensor;
-  sample.tensor = std::move(tensor);
-  sample.frame_id = frame_id;
-  sample.stream_id = stream_id;
-  sample.pts_ns = pts_ns;
-  return sample;
-}
-
 bool is_parseable_metadata_receiver_json(const std::string& payload) {
   try {
     const auto parsed = nlohmann::json::parse(payload);
     if (!parsed.contains("type") || !parsed["type"].is_string())
       return false;
     if (!parsed.contains("data") || !parsed["data"].is_object())
-      return false;
-    if (!parsed["data"].contains("objects") || !parsed["data"]["objects"].is_array())
       return false;
     return true;
   } catch (...) {
@@ -90,10 +40,8 @@ bool is_parseable_metadata_receiver_json(const std::string& payload) {
 } // namespace
 
 RUN_TEST("stress_udp_metadata_burst_test", ([] {
-           using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionInput;
-           using simaai::neat::nodes::groups::MetadataReceiverObjectDetectionResult;
-           using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroup;
-           using simaai::neat::nodes::groups::MetadataReceiverOutputNodeGroupOptions;
+           using simaai::neat::nodes::groups::MetadataReceiverOutputGroup;
+           using simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions;
 
            const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 180));
            const int streams = 2;
@@ -102,74 +50,34 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
            sima_test::UdpReceiver rx0(metadata_port_base);
            sima_test::UdpReceiver rx1(metadata_port_base + 1);
 
-           MetadataReceiverOutputNodeGroup group;
-           MetadataReceiverOutputNodeGroupOptions opt;
-           opt.send_metadata = true;
-           opt.udp.h264_caps =
-               "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
-           opt.udp.host = "127.0.0.1";
-           opt.udp.video_port_base = 9800;
-           opt.udp.udp_sync = false;
-           opt.udp.udp_async = false;
+           MetadataReceiverOutputGroup group;
+           MetadataReceiverOutputGroupOptions opt;
+           opt.host = "127.0.0.1";
            opt.metadata_port_base = metadata_port_base;
-           opt.frame_w = 640;
-           opt.frame_h = 480;
-           opt.topk = 16;
-           opt.labels = {"person", "car", "dog"};
 
            std::string init_err;
-           if (!group.init(opt, streams, &init_err)) {
-             if (sima_test::likely_runtime_missing(init_err)) {
-               skip_long_test_exception("Skipping UDP JSON burst stress due runtime limitations: " +
-                                        init_err);
-             }
-             throw std::runtime_error("MetadataReceiverOutputNodeGroup init failed: " + init_err);
-           }
-
-           struct Guard {
-             MetadataReceiverOutputNodeGroup* group_ptr = nullptr;
-             ~Guard() {
-               if (!group_ptr)
-                 return;
-               try {
-                 group_ptr->stop();
-               } catch (...) {
-               }
-             }
-           } guard{&group};
+           require(group.init(opt, streams, &init_err),
+                   "MetadataReceiverOutputGroup init failed: " + init_err);
 
            int emitted = 0;
            int emit_fail = 0;
 
            for (int i = 0; i < iters; ++i) {
              for (int s = 0; s < streams; ++s) {
-               const std::vector<RawBox> boxes = {
-                   RawBox{.x = 10 + (i % 30),
-                          .y = 20 + (i % 25),
-                          .w = 40,
-                          .h = 35,
-                          .score = 0.90f,
-                          .cls = s},
-                   RawBox{.x = 120 + (i % 15),
-                          .y = 100 + (i % 20),
-                          .w = 30,
-                          .h = 28,
-                          .score = 0.75f,
-                          .cls = 2},
-               };
-               const auto payload = make_bbox_payload(2, boxes);
-               const auto yolo = make_bbox_tensor_sample(
-                   payload, i, static_cast<int64_t>(i) * 33000000LL, "stream" + std::to_string(s));
+               nlohmann::json data;
+               data["objects"] = nlohmann::json::array(
+                   {nlohmann::json{{"id", "obj_1"},
+                                   {"label", s == 0 ? "person" : "car"},
+                                   {"confidence", 0.90},
+                                   {"bbox", {10 + (i % 30), 20 + (i % 25), 40, 35}}},
+                    nlohmann::json{{"id", "obj_2"},
+                                   {"label", "dog"},
+                                   {"confidence", 0.75},
+                                   {"bbox", {120 + (i % 15), 100 + (i % 20), 30, 28}}}});
 
-               MetadataReceiverObjectDetectionInput in;
-               in.stream_idx = static_cast<size_t>(s);
-               in.yolo_sample = &yolo;
-               in.frame_id = i;
-               in.output_frame_id = i;
-               in.capture_ms = 1000 + i;
-
-               MetadataReceiverObjectDetectionResult out;
-               if (group.emit_object_detection(in, &out)) {
+               std::string send_err;
+               if (group.send_metadata(static_cast<size_t>(s), "object-detection", data.dump(),
+                                       1000 + i, std::to_string(i), &send_err)) {
                  ++emitted;
                } else {
                  ++emit_fail;
@@ -197,8 +105,7 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
            const int total_received = got0 + got1;
            const int dropped = total_expected - total_received;
 
-           require(emit_fail == 0,
-                   "UDP JSON burst stress should not fail emit_object_detection calls");
+           require(emit_fail == 0, "UDP JSON burst stress should not fail send_metadata calls");
            require(emitted == total_expected, "UDP JSON burst stress emitted count mismatch");
            require(total_received > 0,
                    "UDP JSON burst stress should receive at least one datagram");
@@ -207,6 +114,5 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
            require(dropped <= (total_expected / 2),
                    "UDP JSON burst stress drop count exceeded bounded threshold");
 
-           guard.group_ptr = nullptr;
            group.stop();
          }));

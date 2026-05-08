@@ -39,7 +39,7 @@ struct Stream {
   int idx = 0;
   std::string url, stream_id;
   simaai::neat::Run enc, dec, fwd;
-  std::unique_ptr<sima_examples::MetadataReceiverSender> ov;
+  std::unique_ptr<sima_examples::MetadataReceiverSender> metadata_sender;
   std::deque<Inflight> inflight;
   size_t pushed = 0;
   bool closed = false;
@@ -267,11 +267,11 @@ int main(int argc, char** argv) {
       opt.channel = s.idx;
       opt.metadata_port_base = kMetadataBase;
       std::string opt_err;
-      s.ov = std::make_unique<sima_examples::MetadataReceiverSender>(opt, &opt_err);
-      die(s.ov->ok(), opt_err);
-      std::cout << "metadata_receiver host=" << s.ov->host()
+      s.metadata_sender = std::make_unique<sima_examples::MetadataReceiverSender>(opt, &opt_err);
+      die(s.metadata_sender->ok(), opt_err);
+      std::cout << "metadata_receiver host=" << s.metadata_sender->host()
                 << " video_port=" << kVideoBase + static_cast<int>(s.idx)
-                << " metadata_port=" << s.ov->metadata_port() << " channel=" << s.idx
+                << " metadata_port=" << s.metadata_sender->metadata_port() << " channel=" << s.idx
                 << " fifo=1\n";
 
       streams.push_back(std::move(s));
@@ -438,10 +438,10 @@ int main(int argc, char** argv) {
 
         if (sidx >= 0 && sidx < static_cast<int>(streams.size())) {
           auto& s = streams[sidx];
-          std::vector<sima_examples::MetadataReceiverObject> objs;
+          std::vector<sima_examples::ObjectDetectionMetadataObject> objs;
           objs.reserve(boxes.size());
           for (const auto& b : boxes) {
-            sima_examples::MetadataReceiverObject obj;
+            sima_examples::ObjectDetectionMetadataObject obj;
             obj.x = static_cast<int>(b.x1);
             obj.y = static_cast<int>(b.y1);
             obj.w = static_cast<int>(b.x2 - b.x1);
@@ -450,10 +450,13 @@ int main(int argc, char** argv) {
             obj.class_id = b.class_id;
             objs.push_back(obj);
           }
-          std::string json = sima_examples::metadata_receiver_make_json(
-              static_cast<int64_t>(now_ms()), std::to_string(out_msg.frame_id), objs, labels);
+          const int64_t ts_ms = static_cast<int64_t>(now_ms());
+          const std::string frame_id = std::to_string(out_msg.frame_id);
+          const std::string data_json =
+              sima_examples::metadata_receiver_make_object_detection_data_json(objs, labels);
           std::string json_err;
-          if (!s.ov->send_json(json, &json_err))
+          if (!s.metadata_sender->send_metadata("object-detection", data_json, ts_ms, frame_id,
+                                                &json_err))
             std::cerr << "[warn] metadata_receiver metadata send failed: " << json_err << "\n";
         }
       }

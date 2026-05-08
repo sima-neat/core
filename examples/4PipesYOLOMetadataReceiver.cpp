@@ -860,7 +860,7 @@ int main(int argc, char** argv) {
       yolo_thread = std::thread([&]() {
         std::vector<uint8_t> payload;
         std::vector<objdet::Box> boxes;
-        std::vector<sima_examples::MetadataReceiverObject> objects;
+        std::vector<sima_examples::ObjectDetectionMetadataObject> objects;
         payload.reserve(8192);
         boxes.reserve(static_cast<size_t>(topk));
         objects.reserve(static_cast<size_t>(topk));
@@ -959,7 +959,7 @@ int main(int argc, char** argv) {
               w = 0;
             if (h < 0)
               h = 0;
-            sima_examples::MetadataReceiverObject obj;
+            sima_examples::ObjectDetectionMetadataObject obj;
             obj.x = x1;
             obj.y = y1;
             obj.w = w;
@@ -973,11 +973,13 @@ int main(int argc, char** argv) {
           const int64_t ts_ms = time_ms_i64();
           char frame_id_buf[32];
           std::snprintf(frame_id_buf, sizeof(frame_id_buf), "%d", stats[sidx]->saved.load());
-          std::string json_payload = sima_examples::metadata_receiver_make_json(
-              ts_ms, frame_id_buf, objects, metadata_receiver_labels);
+          const std::string data_json =
+              sima_examples::metadata_receiver_make_object_detection_data_json(
+                  objects, metadata_receiver_labels);
 
           std::string json_err;
-          if (senders[sidx]->send_json(json_payload, &json_err)) {
+          if (senders[sidx]->send_metadata("object-detection", data_json, ts_ms, frame_id_buf,
+                                           &json_err)) {
             stats[sidx]->saved.fetch_add(1);
             total_saved.fetch_add(1);
           } else {

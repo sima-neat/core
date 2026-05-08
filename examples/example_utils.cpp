@@ -803,4 +803,37 @@ bool extract_bbox_payload(const simaai::neat::Sample& result, std::vector<uint8_
   return objdet::extract_bbox_payload(result, payload, err);
 }
 
+std::vector<std::string> metadata_receiver_default_labels() {
+  std::vector<std::string> labels;
+  labels.reserve(80);
+  for (int i = 0; i < 80; ++i) {
+    labels.push_back("label_" + std::to_string(i));
+  }
+  return labels;
+}
+
+std::string metadata_receiver_make_object_detection_data_json(
+    const std::vector<ObjectDetectionMetadataObject>& objects,
+    const std::vector<std::string>& labels) {
+  json data;
+  data["objects"] = json::array();
+
+  for (size_t i = 0; i < objects.size(); ++i) {
+    const auto& obj = objects[i];
+    const std::string label =
+        (obj.class_id >= 0 && static_cast<size_t>(obj.class_id) < labels.size())
+            ? labels[static_cast<size_t>(obj.class_id)]
+            : "Unknown";
+
+    json item;
+    item["id"] = "obj_" + std::to_string(i + 1);
+    item["label"] = label;
+    item["confidence"] = obj.score;
+    item["bbox"] = {obj.x, obj.y, obj.w, obj.h};
+    data["objects"].push_back(std::move(item));
+  }
+
+  return data.dump();
+}
+
 } // namespace sima_examples
