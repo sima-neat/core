@@ -10,6 +10,7 @@ The Neat SDK is built on top of the [open source SiMa eLxr SDK](https://github.c
 
 - Supports both x86 and arm64 container images, including native use on Mac without Rosetta overhead.
 - Supports the DevKit Sync feature so humans and coding agents can cross-compile and run DevKit binaries from the SDK shell without switching context.
+- Integrates Insight, a Web based tool helping developers to setup video streams, view video metadata overlay, inspect workspace files and profile the Neat applications.
 - Ships with preinstalled Codex and Claude skills and preinstalled latest `main` branch source references for `core` and `apps`.
 
 This setup makes it possible to run end-to-end agentic workflows from a single prompt, including build-and-run loops against a paired DevKit.
@@ -28,6 +29,7 @@ The Neat SDK source code is available on GitHub at [sima-neat/sdk](https://githu
 
 - Install `sima-cli` on your host machine using the [official install guide](https://docs.sima.ai/pages/sima_cli/main.html).
 - Complete any host-specific setup for your platform:
+  - [Ubuntu Host Notes](../../reference/elxr-sdk-host-setup/ubuntu)
   - [Windows Host Notes](../../reference/elxr-sdk-host-setup/windows)
   - [macOS Host Notes](../../reference/elxr-sdk-host-setup/macos)
 
@@ -40,7 +42,7 @@ For DevKit Sync, you also need:
 ## Install the Neat SDK
 
 ```bash
-sima-cli install ghcr:sima-neat/elxr
+sima-cli install ghcr:sima-neat/sdk
 ```
 
 ## Set Up the SDK
@@ -57,7 +59,7 @@ sima-cli sdk setup --devkit {devkit-ip}
 
 During setup:
 
-- Select container `ghcr.io-sima-neat-elxr-latest` if multiple SDK containers are present.
+- Select container `ghcr.io-sima-neat-sdk-latest` if multiple SDK containers are present.
 - Enter host admin password when prompted (NFS server setup on host).
 - Enter DevKit user `sima` password (`edgeai`) when prompted (NFS client setup on DevKit).
 
@@ -91,9 +93,17 @@ sima-cli sdk setup
 
 You can still build binaries in the SDK container, but you must manually transfer binaries to the DevKit for testing. You are also responsible for ensuring the DevKit runs the same version of the Neat core library as the SDK.
 
+### SDK CLI
+
+To access the SDK CLI:
+
+```bash
+sima-cli sdk neat
+```
+
 ## Insight
 
-Neat Insight is a web app for setting up and inspecting vision ML application tests. It provides a media library, RTSP source control, a low-latency WebRTC video viewer with metadata overlays, and system/runtime stats for debugging stream and application behavior.
+Neat Insight is a web app for setting up and inspecting vision ML application tests. It provides a workspace viewer, media library, RTSP source control, a low-latency WebRTC video viewer with metadata overlays, and system/runtime stats for debugging stream and application behavior.
 
 In the Neat SDK, Insight is served over HTTPS on port `9900`. Open one of the following URLs:
 
@@ -174,6 +184,8 @@ This setup provides a seamless workflow for build artifacts:
 - agents can access interim files (logs, outputs, traces) generated while the app runs on DevKit
 - humans and agents can inspect the same files from one workspace context
 
+With Insight, users can view the workspace from a web browser. Some SiMa.ai-specific file formats, such as `*.mpk.tar.gz`, are automatically optimized for easier introspection.
+
 ## Run on the DevKit with `dk`
 
 The SDK includes the `dk` helper (also known as `devkit-run`) to run ARM64 executables on the DevKit from within the SDK shell.
@@ -225,7 +237,7 @@ Build a C++ app doing image classification with RESNET50 using SiMa Neat Framewo
 To upgrade Neat SDK to the latest version, rerun the following command from the host:
 
 ```bash
-sima-cli install ghcr:sima-neat/elxr
+sima-cli install ghcr:sima-neat/sdk
 ```
 
 For a temporary or quicker framework/runtime update inside an existing SDK container, you can run the Neat CLI from the SDK shell:

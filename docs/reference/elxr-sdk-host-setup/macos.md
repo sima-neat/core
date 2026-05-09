@@ -1,7 +1,7 @@
 ---
 title: macOS Host Notes
 description: Prepare a macOS host for Neat SDK and DevKit-Sync
-sidebar_position: 2
+sidebar_position: 3
 ---
 
 Use this guide when your host machine is macOS and you want to run Neat SDK with DevKit-Sync.
@@ -11,6 +11,12 @@ Use this guide when your host machine is macOS and you want to run Neat SDK with
 - macOS host.
 - `sima-cli` installed on host.
 - Modalix DevKit reachable on the same network.
+
+:::info Network topology
+On macOS, you can either connect the DevKit directly to the host through USB/Ethernet or place the
+host and DevKit separately on an existing network. If they are on an existing network, no special
+sharing setup is required as long as the host and DevKit can reach each other for SSH and NFS traffic.
+:::
 
 ## Install and run Colima
 
