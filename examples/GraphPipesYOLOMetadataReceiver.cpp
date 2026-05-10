@@ -56,9 +56,9 @@ int main(int argc, char** argv) {
     const gp::ProbeResult probe = gp::probe_inputs(cfg, urls);
 
     simaai::neat::nodes::groups::UdpOutputNodeGroup metadata_receiver_video_group;
-    simaai::neat::nodes::groups::MetadataReceiverOutputGroup metadata_receiver_group;
-    gp::init_metadata_receiver_outputs(cfg, probe, urls.size(), metadata_receiver_video_group,
-                                       metadata_receiver_group);
+    simaai::neat::MetadataSenderGroup metadata_receiver_group;
+    gp::init_metadata_sender_outputs(cfg, probe, urls.size(), metadata_receiver_video_group,
+                                     metadata_receiver_group);
 
     auto io_stats = gp::make_io_stats(urls.size());
 

@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup nodes_io
- * @brief UDP sender for MetadataReceiver JSON payloads.
+ * @brief UDP sender for JSON metadata payloads.
  */
 #pragma once
 
@@ -11,21 +11,20 @@
 
 namespace simaai::neat {
 
-struct MetadataReceiverChannelOptions {
+struct MetadataSenderOptions {
   std::string host = "127.0.0.1";
   int channel = 0;
   int metadata_port_base = 9100;
 };
 
-class MetadataReceiverOutput {
+class MetadataSender {
 public:
-  explicit MetadataReceiverOutput(const MetadataReceiverChannelOptions& opt,
-                                  std::string* err = nullptr);
-  ~MetadataReceiverOutput();
-  MetadataReceiverOutput(const MetadataReceiverOutput&) = delete;
-  MetadataReceiverOutput& operator=(const MetadataReceiverOutput&) = delete;
-  MetadataReceiverOutput(MetadataReceiverOutput&&) noexcept;
-  MetadataReceiverOutput& operator=(MetadataReceiverOutput&&) noexcept;
+  explicit MetadataSender(const MetadataSenderOptions& opt, std::string* err = nullptr);
+  ~MetadataSender();
+  MetadataSender(const MetadataSender&) = delete;
+  MetadataSender& operator=(const MetadataSender&) = delete;
+  MetadataSender(MetadataSender&&) noexcept;
+  MetadataSender& operator=(MetadataSender&&) noexcept;
 
   bool ok() const;
   const std::string& host() const;

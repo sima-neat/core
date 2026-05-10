@@ -32,6 +32,7 @@ option(SIMANEAT_BUILD_SAMPLES "Build example applications" OFF)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
+option(SIMANEAT_BUILD_DOCS "Configure documentation targets" OFF)
 option(SIMANEAT_CPP_TIDY "Configure in analysis-only mode for clang-tidy" OFF)
 option(SIMANEAT_STRICT_WARNINGS "Enable strict compiler warnings and treat them as errors" OFF)
 option(SIMA_ENABLE_ASAN "Enable AddressSanitizer instrumentation" OFF)
@@ -476,15 +477,17 @@ include(CPack)
 # ------------------------------------------------------------------------------
 # Docs (Doxygen)
 # ------------------------------------------------------------------------------
-find_package(Doxygen QUIET)
-if (DOXYGEN_FOUND)
-  set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile)
-  add_custom_target(docs
-    COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Generating Doxygen documentation"
-    VERBATIM
-  )
-else()
-  message(STATUS "Doxygen not found: 'docs' target will be unavailable.")
+if (SIMANEAT_BUILD_DOCS)
+  find_package(Doxygen QUIET)
+  if (DOXYGEN_FOUND)
+    set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile)
+    add_custom_target(docs
+      COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Generating Doxygen documentation"
+      VERBATIM
+    )
+  else()
+    message(STATUS "Doxygen not found: 'docs' target will be unavailable.")
+  endif()
 endif()

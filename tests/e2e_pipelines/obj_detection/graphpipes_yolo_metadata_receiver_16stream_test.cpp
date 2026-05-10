@@ -1,7 +1,7 @@
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/ModelGroups.h"
-#include "nodes/groups/MetadataReceiverOutputGroup.h"
+#include "nodes/io/MetadataSenderGroup.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/Session.h"
@@ -44,8 +44,8 @@ int run_case(const fs::path& root) {
   const std::string tar_gz = sima_yolov8_test::resolve_yolov8s_tar_or_skip(root);
   const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
 
-  using simaai::neat::nodes::groups::MetadataReceiverOutputGroup;
-  using simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions;
+  using simaai::neat::MetadataSenderGroup;
+  using simaai::neat::MetadataSenderGroupOptions;
 
   const int metadata_base = rtsp_find_free_port_range(/*base_port=*/18000,
                                                       /*ports_needed=*/kStreams,
@@ -59,17 +59,17 @@ int run_case(const fs::path& root) {
     receivers.emplace_back(metadata_base + i, "127.0.0.1");
   }
 
-  MetadataReceiverOutputGroup metadata_receiver;
-  MetadataReceiverOutputGroupOptions opt;
+  MetadataSenderGroup metadata_receiver;
+  MetadataSenderGroupOptions opt;
   opt.host = "127.0.0.1";
   opt.metadata_port_base = metadata_base;
 
   std::string init_err;
   require(metadata_receiver.init(opt, kStreams, &init_err),
-          "MetadataReceiverOutputGroup init failed: " + init_err);
+          "MetadataSenderGroup init failed: " + init_err);
 
   struct Guard {
-    simaai::neat::nodes::groups::MetadataReceiverOutputGroup* group = nullptr;
+    simaai::neat::MetadataSenderGroup* group = nullptr;
     simaai::neat::Run* run = nullptr;
     ~Guard() {
       if (run) {

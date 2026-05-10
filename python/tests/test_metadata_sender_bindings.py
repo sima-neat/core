@@ -11,17 +11,17 @@ def _udp_receiver():
   return rx
 
 
-def test_metadata_receiver_sender_loopback():
+def test_metadata_sender_loopback():
   rx = _udp_receiver()
   try:
     metadata_port = rx.getsockname()[1]
 
-    channel = pyneat.MetadataReceiverChannelOptions()
+    channel = pyneat.MetadataSenderOptions()
     channel.host = "127.0.0.1"
     channel.channel = 2
     channel.metadata_port_base = metadata_port - 2
 
-    sender = pyneat.MetadataReceiverOutput(channel)
+    sender = pyneat.MetadataSender(channel)
 
     assert sender.ok() is True
     assert sender.host() == "127.0.0.1"

@@ -170,7 +170,7 @@ set(UNIT_TESTS
   unit_mpk_loader_test
   unit_mpk_pipeline_adapter_test
   unit_node_h264_caps_fixup_fragment_test
-  unit_node_metadata_receiver_output_test
+  unit_node_metadata_sender_test
   unit_node_quanttess_config_test
   unit_node_udp_output_fragment_test
   unit_outputspec_test
@@ -178,7 +178,8 @@ set(UNIT_TESTS
   unit_udp_output_group_test
   unit_group_udp_h264_output_group_fragment_test
   unit_group_udp_output_group_g_fragment_test
-  unit_metadata_receiver_output_group_test
+  unit_video_sender_test
+  unit_metadata_sender_group_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
@@ -303,7 +304,7 @@ set(E2E_TESTS
   inputstream_videoscale_test
   output_appsink_policy_test
   gst_data_adapter_runtime_regression_test
-  metadata_receiver_udp_integration_test
+  metadata_sender_udp_integration_test
   preproc_standalone_test
   session_naming_pipeline_integration_test
   session_rtsp_lifecycle_regression_test
@@ -514,8 +515,9 @@ foreach(test
     unit_graph_join_encoded_with_meta_test
     unit_graph_stamp_frame_id_test
     unit_graph_strict_sync_store_test
-    unit_metadata_receiver_output_group_test
-    unit_node_metadata_receiver_output_test
+    unit_metadata_sender_group_test
+    unit_node_metadata_sender_test
+    unit_video_sender_test
     unit_udp_output_group_test
     unit_modalix_contract_preflight_test
     unit_run_holder_api_test
@@ -603,8 +605,8 @@ foreach(test
     unit_session_io_negative_test
     unit_graph_compiler_topology_test
     unit_graph_compiler_spec_validation_test
-    unit_metadata_receiver_output_group_test
-    unit_node_metadata_receiver_output_test
+    unit_metadata_sender_group_test
+    unit_node_metadata_sender_test
     unit_udp_output_group_test
     unit_modelpack_parse_test
     unit_modelpack_extract_test
@@ -879,11 +881,11 @@ if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
       unit_graph_join_encoded_with_meta_test
       unit_graph_stamp_frame_id_test
       unit_graph_strict_sync_store_test
-      unit_metadata_receiver_output_group_test
+      unit_metadata_sender_group_test
       unit_contracts_test
       unit_detection_types_bbox_test
       unit_gst_data_adapter_edge_test
-      unit_node_metadata_receiver_output_test
+      unit_node_metadata_sender_test
       unit_udp_output_group_test
       unit_node_udp_output_fragment_test
       unit_nodes_test

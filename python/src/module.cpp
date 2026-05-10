@@ -38,13 +38,14 @@
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
-#include "nodes/groups/MetadataReceiverOutputGroup.h"
+#include "nodes/io/MetadataSenderGroup.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/UdpOutputGroup.h"
 #include "nodes/groups/VideoInputGroup.h"
+#include "nodes/groups/VideoSender.h"
 #include "nodes/io/Input.h"
-#include "nodes/io/MetadataReceiverOutput.h"
+#include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
@@ -1814,12 +1815,53 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_sync)
       .def_rw("udp_async", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_async);
 
-  nb::class_<simaai::neat::MetadataReceiverChannelOptions>(m, "MetadataReceiverChannelOptions")
+  nb::class_<simaai::neat::nodes::groups::VideoSenderUdpOptions>(m, "VideoSenderUdpOptions")
       .def(nb::init<>())
-      .def_rw("host", &simaai::neat::MetadataReceiverChannelOptions::host)
-      .def_rw("channel", &simaai::neat::MetadataReceiverChannelOptions::channel)
-      .def_rw("metadata_port_base",
-              &simaai::neat::MetadataReceiverChannelOptions::metadata_port_base);
+      .def_rw("host", &simaai::neat::nodes::groups::VideoSenderUdpOptions::host)
+      .def_rw("port", &simaai::neat::nodes::groups::VideoSenderUdpOptions::port)
+      .def_rw("sync", &simaai::neat::nodes::groups::VideoSenderUdpOptions::sync)
+      .def_rw("async_", &simaai::neat::nodes::groups::VideoSenderUdpOptions::async)
+      .def_prop_rw(
+          "async",
+          [](const simaai::neat::nodes::groups::VideoSenderUdpOptions& options) {
+            return options.async;
+          },
+          [](simaai::neat::nodes::groups::VideoSenderUdpOptions& options, bool value) {
+            options.async = value;
+          });
+
+  nb::class_<simaai::neat::nodes::groups::VideoSenderRtpOptions>(m, "VideoSenderRtpOptions")
+      .def(nb::init<>())
+      .def_rw("payload_type", &simaai::neat::nodes::groups::VideoSenderRtpOptions::payload_type)
+      .def_rw("config_interval",
+              &simaai::neat::nodes::groups::VideoSenderRtpOptions::config_interval);
+
+  nb::class_<simaai::neat::nodes::groups::VideoSenderEncoderOptions>(m, "VideoSenderEncoderOptions")
+      .def(nb::init<>())
+      .def_rw("bitrate_kbps", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::bitrate_kbps)
+      .def_rw("profile", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::profile)
+      .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
+
+  nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("h264_rtp_udp_from_raw",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
+                  "height"_a, "fps"_a)
+      .def_static("h264_rtp_udp_from_encoded",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
+      .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
+      .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
+      .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)
+      .def_prop_ro("height", &simaai::neat::nodes::groups::VideoSenderOptions::height)
+      .def_prop_ro("fps", &simaai::neat::nodes::groups::VideoSenderOptions::fps)
+      .def_rw("udp", &simaai::neat::nodes::groups::VideoSenderOptions::udp)
+      .def_rw("rtp", &simaai::neat::nodes::groups::VideoSenderOptions::rtp)
+      .def_rw("encoder", &simaai::neat::nodes::groups::VideoSenderOptions::encoder);
+
+  nb::class_<simaai::neat::MetadataSenderOptions>(m, "MetadataSenderOptions")
+      .def(nb::init<>())
+      .def_rw("host", &simaai::neat::MetadataSenderOptions::host)
+      .def_rw("channel", &simaai::neat::MetadataSenderOptions::channel)
+      .def_rw("metadata_port_base", &simaai::neat::MetadataSenderOptions::metadata_port_base);
 
   nb::class_<simaai::neat::nodes::groups::UdpOutputNodeGroupOptions>(m, "UdpOutputNodeGroupOptions")
       .def(nb::init<>())
@@ -1835,32 +1877,29 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::udp_sync)
       .def_rw("udp_async", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::udp_async);
 
-  nb::class_<simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions>(
-      m, "MetadataReceiverOutputGroupOptions")
+  nb::class_<simaai::neat::MetadataSenderGroupOptions>(m, "MetadataSenderGroupOptions")
       .def(nb::init<>())
-      .def_rw("host", &simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions::host)
-      .def_rw("metadata_port_base",
-              &simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions::metadata_port_base);
+      .def_rw("host", &simaai::neat::MetadataSenderGroupOptions::host)
+      .def_rw("metadata_port_base", &simaai::neat::MetadataSenderGroupOptions::metadata_port_base);
 
-  nb::class_<simaai::neat::MetadataReceiverOutput>(m, "MetadataReceiverOutput")
+  nb::class_<simaai::neat::MetadataSender>(m, "MetadataSender")
       .def(
           "__init__",
-          [](simaai::neat::MetadataReceiverOutput* self,
-             const simaai::neat::MetadataReceiverChannelOptions& opt) {
+          [](simaai::neat::MetadataSender* self, const simaai::neat::MetadataSenderOptions& opt) {
             std::string err;
-            new (self) simaai::neat::MetadataReceiverOutput(opt, &err);
+            new (self) simaai::neat::MetadataSender(opt, &err);
             if (!self->ok()) {
-              self->~MetadataReceiverOutput();
-              throw std::runtime_error(err.empty() ? "MetadataReceiverOutput init failed" : err);
+              self->~MetadataSender();
+              throw std::runtime_error(err.empty() ? "MetadataSender init failed" : err);
             }
           },
           "options"_a)
-      .def("ok", &simaai::neat::MetadataReceiverOutput::ok)
-      .def("host", &simaai::neat::MetadataReceiverOutput::host)
-      .def("metadata_port", &simaai::neat::MetadataReceiverOutput::metadata_port)
+      .def("ok", &simaai::neat::MetadataSender::ok)
+      .def("host", &simaai::neat::MetadataSender::host)
+      .def("metadata_port", &simaai::neat::MetadataSender::metadata_port)
       .def(
           "send_raw_json",
-          [](const simaai::neat::MetadataReceiverOutput& self, const std::string& payload) {
+          [](const simaai::neat::MetadataSender& self, const std::string& payload) {
             std::string err;
             const bool ok = self.send_raw_json(payload, &err);
             if (!ok && !err.empty())
@@ -1870,7 +1909,7 @@ NB_MODULE(_pyneat_core, m) {
           "payload"_a)
       .def(
           "send_metadata",
-          [](const simaai::neat::MetadataReceiverOutput& self, const std::string& type,
+          [](const simaai::neat::MetadataSender& self, const std::string& type,
              const std::string& data_json, int64_t timestamp_ms, const std::string& frame_id) {
             std::string err;
             const bool ok = self.send_metadata(type, data_json, timestamp_ms, frame_id, &err);
@@ -1880,29 +1919,25 @@ NB_MODULE(_pyneat_core, m) {
           },
           "type"_a, "data_json"_a, "timestamp_ms"_a, "frame_id"_a);
 
-  nb::class_<simaai::neat::nodes::groups::MetadataReceiverOutputGroup>(
-      m, "MetadataReceiverOutputGroup")
+  nb::class_<simaai::neat::MetadataSenderGroup>(m, "MetadataSenderGroup")
       .def(nb::init<>())
       .def(
           "init",
-          [](simaai::neat::nodes::groups::MetadataReceiverOutputGroup& self,
-             const simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions& opt,
-             size_t streams) {
+          [](simaai::neat::MetadataSenderGroup& self,
+             const simaai::neat::MetadataSenderGroupOptions& opt, size_t streams) {
             std::string err;
             const bool ok = self.init(opt, streams, &err);
             if (!ok)
-              throw std::runtime_error(err.empty() ? "MetadataReceiverOutputGroup init failed"
-                                                   : err);
+              throw std::runtime_error(err.empty() ? "MetadataSenderGroup init failed" : err);
             return ok;
           },
           "options"_a, "streams"_a)
-      .def("size", &simaai::neat::nodes::groups::MetadataReceiverOutputGroup::size)
-      .def("metadata_port",
-           &simaai::neat::nodes::groups::MetadataReceiverOutputGroup::metadata_port, "stream_idx"_a)
+      .def("size", &simaai::neat::MetadataSenderGroup::size)
+      .def("metadata_port", &simaai::neat::MetadataSenderGroup::metadata_port, "stream_idx"_a)
       .def(
           "send_raw_json",
-          [](const simaai::neat::nodes::groups::MetadataReceiverOutputGroup& self,
-             size_t stream_idx, const std::string& payload) {
+          [](const simaai::neat::MetadataSenderGroup& self, size_t stream_idx,
+             const std::string& payload) {
             std::string err;
             const bool ok = self.send_raw_json(stream_idx, payload, &err);
             if (!ok && !err.empty())
@@ -1912,9 +1947,9 @@ NB_MODULE(_pyneat_core, m) {
           "stream_idx"_a, "payload"_a)
       .def(
           "send_metadata",
-          [](const simaai::neat::nodes::groups::MetadataReceiverOutputGroup& self,
-             size_t stream_idx, const std::string& type, const std::string& data_json,
-             int64_t timestamp_ms, const std::string& frame_id) {
+          [](const simaai::neat::MetadataSenderGroup& self, size_t stream_idx,
+             const std::string& type, const std::string& data_json, int64_t timestamp_ms,
+             const std::string& frame_id) {
             std::string err;
             const bool ok =
                 self.send_metadata(stream_idx, type, data_json, timestamp_ms, frame_id, &err);
@@ -1923,7 +1958,7 @@ NB_MODULE(_pyneat_core, m) {
             return ok;
           },
           "stream_idx"_a, "type"_a, "data_json"_a, "timestamp_ms"_a, "frame_id"_a)
-      .def("stop", &simaai::neat::nodes::groups::MetadataReceiverOutputGroup::stop);
+      .def("stop", &simaai::neat::MetadataSenderGroup::stop);
 
   nb::class_<simaai::neat::UdpOutputOptions>(m, "UdpOutputOptions")
       .def(nb::init<>())
@@ -1970,6 +2005,7 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
+  groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);
   groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);

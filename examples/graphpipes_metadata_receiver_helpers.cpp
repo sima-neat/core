@@ -280,10 +280,9 @@ ProbeResult probe_inputs(const Config& cfg, const std::vector<std::string>& urls
   return out;
 }
 
-void init_metadata_receiver_outputs(
-    const Config& cfg, const ProbeResult& probe, size_t streams,
-    simaai::neat::nodes::groups::UdpOutputNodeGroup& out_video_group,
-    simaai::neat::nodes::groups::MetadataReceiverOutputGroup& out_metadata_group) {
+void init_metadata_sender_outputs(const Config& cfg, const ProbeResult& probe, size_t streams,
+                                  simaai::neat::nodes::groups::UdpOutputNodeGroup& out_video_group,
+                                  simaai::neat::MetadataSenderGroup& out_metadata_group) {
   simaai::neat::nodes::groups::UdpOutputNodeGroupOptions video_opt;
   video_opt.h264_caps = probe.enc_caps_appsrc;
   video_opt.payload_type = kOutputPayloadType;
@@ -296,7 +295,7 @@ void init_metadata_receiver_outputs(
   sima_examples::require(out_video_group.init(video_opt, streams, &video_err), video_err);
 
   if (cfg.send_metadata) {
-    simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions metadata_opt;
+    simaai::neat::MetadataSenderGroupOptions metadata_opt;
     metadata_opt.host = cfg.metadata_receiver_host;
     metadata_opt.metadata_port_base = cfg.metadata_receiver_metadata_port;
 

@@ -1,31 +1,32 @@
-# Send MetadataReceiver JSON
+# Send JSON Metadata
 
-Use `MetadataReceiverOutput` when a viewer or recorder accepts UTF-8 JSON metadata over UDP.
-Insight is one MetadataReceiver implementation.
+Use `MetadataSender` when an external viewer, recorder, or service accepts UTF-8 JSON metadata over UDP. Insight is one receiver that understands this wire contract.
 
-## Wire contract
+## Wire Contract
 
-- Metadata UDP port: `metadata_port_base + channel`
-- Default metadata port base: `9100`
 - Default host: `127.0.0.1`
+- Default metadata port base: `9100`
+- Channel port rule: `metadata_port_base + channel`
 - Payload encoding: UTF-8 JSON text
 - Required top-level fields: `type`, `data`
 
 For Insight, pair metadata channel `N` with the video UDP stream on `9000 + N`.
-The object-detection schema renders in Insight today. Other metadata types can be transported as JSON, but they need viewer-side renderer support before overlays appear.
+If Insight or another receiver runs behind container port remapping, pass the mapped host and port explicitly from the app.
+
+Tracking, tracklets, and other custom metadata can be sent as generic JSON. Viewer overlay support is receiver-specific; Insight tracking visualization is tracked separately in `sima-neat/insight#8`.
 
 ## C++
 
 ```cpp
-simaai::neat::MetadataReceiverChannelOptions opt;
+simaai::neat::MetadataSenderOptions opt;
 opt.host = "127.0.0.1";
 opt.channel = 0;
 opt.metadata_port_base = 9100;
 
 std::string err;
-simaai::neat::MetadataReceiverOutput out(opt, &err);
+simaai::neat::MetadataSender sender(opt, &err);
 
-out.send_metadata(
+sender.send_metadata(
     "tracking",
     R"({"tracks":[{"id":"trk-1","bbox":[10,20,30,40]}]})",
     12345,
@@ -33,7 +34,7 @@ out.send_metadata(
     &err);
 ```
 
-`send_metadata(...)` builds this envelope:
+`send_metadata(...)` validates `data_json` and builds this envelope:
 
 ```json
 {
@@ -54,7 +55,7 @@ out.send_metadata(
 Use `send_raw_json(...)` only when the caller already built the full top-level payload:
 
 ```cpp
-out.send_raw_json(
+sender.send_raw_json(
     R"({"type":"object-detection","data":{"objects":[{"id":"obj_1","label":"car","confidence":0.92,"bbox":[120,80,96,64]}]}})",
     &err);
 ```
@@ -65,14 +66,14 @@ out.send_raw_json(
 import json
 import pyneat
 
-opt = pyneat.MetadataReceiverChannelOptions()
+opt = pyneat.MetadataSenderOptions()
 opt.host = "127.0.0.1"
 opt.channel = 0
 opt.metadata_port_base = 9100
 
-out = pyneat.MetadataReceiverOutput(opt)
+sender = pyneat.MetadataSender(opt)
 
-out.send_metadata(
+sender.send_metadata(
     "object-detection",
     json.dumps(
         {

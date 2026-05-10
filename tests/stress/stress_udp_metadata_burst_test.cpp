@@ -1,4 +1,4 @@
-#include "nodes/groups/MetadataReceiverOutputGroup.h"
+#include "nodes/io/MetadataSenderGroup.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
 
@@ -40,8 +40,8 @@ bool is_parseable_metadata_receiver_json(const std::string& payload) {
 } // namespace
 
 RUN_TEST("stress_udp_metadata_burst_test", ([] {
-           using simaai::neat::nodes::groups::MetadataReceiverOutputGroup;
-           using simaai::neat::nodes::groups::MetadataReceiverOutputGroupOptions;
+           using simaai::neat::MetadataSenderGroup;
+           using simaai::neat::MetadataSenderGroupOptions;
 
            const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 180));
            const int streams = 2;
@@ -50,14 +50,14 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
            sima_test::UdpReceiver rx0(metadata_port_base);
            sima_test::UdpReceiver rx1(metadata_port_base + 1);
 
-           MetadataReceiverOutputGroup group;
-           MetadataReceiverOutputGroupOptions opt;
+           MetadataSenderGroup group;
+           MetadataSenderGroupOptions opt;
            opt.host = "127.0.0.1";
            opt.metadata_port_base = metadata_port_base;
 
            std::string init_err;
            require(group.init(opt, streams, &init_err),
-                   "MetadataReceiverOutputGroup init failed: " + init_err);
+                   "MetadataSenderGroup init failed: " + init_err);
 
            int emitted = 0;
            int emit_fail = 0;

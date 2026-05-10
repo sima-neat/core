@@ -1,4 +1,4 @@
-#include "nodes/io/MetadataReceiverOutput.h"
+#include "nodes/io/MetadataSender.h"
 
 #include <nlohmann/json.hpp>
 
@@ -55,14 +55,14 @@ bool make_metadata_json(const std::string& type, const std::string& data_json, i
                         const std::string& frame_id, std::string* out_json, std::string* err) {
   if (!out_json) {
     if (err)
-      *err = "MetadataReceiverOutput send_metadata requires out_json";
+      *err = "MetadataSender send_metadata requires out_json";
     return false;
   }
   out_json->clear();
 
   if (type.empty()) {
     if (err)
-      *err = "MetadataReceiverOutput metadata type must not be empty";
+      *err = "MetadataSender metadata type must not be empty";
     return false;
   }
 
@@ -71,13 +71,13 @@ bool make_metadata_json(const std::string& type, const std::string& data_json, i
     data = json::parse(data_json);
   } catch (const std::exception& ex) {
     if (err)
-      *err = std::string("MetadataReceiverOutput data_json parse failed: ") + ex.what();
+      *err = std::string("MetadataSender data_json parse failed: ") + ex.what();
     return false;
   }
 
   if (!data.is_object()) {
     if (err)
-      *err = "MetadataReceiverOutput data_json must be a JSON object";
+      *err = "MetadataSender data_json must be a JSON object";
     return false;
   }
 
@@ -97,7 +97,7 @@ bool make_metadata_json(const std::string& type, const std::string& data_json, i
 
 } // namespace
 
-struct MetadataReceiverOutput::Impl {
+struct MetadataSender::Impl {
   ~Impl() {
     if (fd >= 0) {
       ::close(fd);
@@ -112,8 +112,7 @@ struct MetadataReceiverOutput::Impl {
   bool ok = false;
 };
 
-MetadataReceiverOutput::MetadataReceiverOutput(const MetadataReceiverChannelOptions& opt,
-                                               std::string* err) {
+MetadataSender::MetadataSender(const MetadataSenderOptions& opt, std::string* err) {
   impl_ = std::make_unique<Impl>();
   impl_->host = opt.host.empty() ? "127.0.0.1" : opt.host;
   impl_->metadata_port = opt.metadata_port_base + opt.channel;
@@ -137,28 +136,27 @@ MetadataReceiverOutput::MetadataReceiverOutput(const MetadataReceiverChannelOpti
   impl_->ok = true;
 }
 
-MetadataReceiverOutput::~MetadataReceiverOutput() = default;
-MetadataReceiverOutput::MetadataReceiverOutput(MetadataReceiverOutput&&) noexcept = default;
-MetadataReceiverOutput&
-MetadataReceiverOutput::operator=(MetadataReceiverOutput&&) noexcept = default;
+MetadataSender::~MetadataSender() = default;
+MetadataSender::MetadataSender(MetadataSender&&) noexcept = default;
+MetadataSender& MetadataSender::operator=(MetadataSender&&) noexcept = default;
 
-bool MetadataReceiverOutput::ok() const {
+bool MetadataSender::ok() const {
   return impl_ && impl_->ok;
 }
 
-const std::string& MetadataReceiverOutput::host() const {
+const std::string& MetadataSender::host() const {
   static const std::string empty;
   return impl_ ? impl_->host : empty;
 }
 
-int MetadataReceiverOutput::metadata_port() const {
+int MetadataSender::metadata_port() const {
   return impl_ ? impl_->metadata_port : -1;
 }
 
-bool MetadataReceiverOutput::send_raw_json(const std::string& payload, std::string* err) const {
+bool MetadataSender::send_raw_json(const std::string& payload, std::string* err) const {
   if (!ok()) {
     if (err)
-      *err = "MetadataReceiverOutput not initialized";
+      *err = "MetadataSender not initialized";
     return false;
   }
   const ssize_t sent = ::sendto(impl_->fd, payload.data(), payload.size(), 0,
@@ -176,9 +174,9 @@ bool MetadataReceiverOutput::send_raw_json(const std::string& payload, std::stri
   return true;
 }
 
-bool MetadataReceiverOutput::send_metadata(const std::string& type, const std::string& data_json,
-                                           int64_t timestamp_ms, const std::string& frame_id,
-                                           std::string* err) const {
+bool MetadataSender::send_metadata(const std::string& type, const std::string& data_json,
+                                   int64_t timestamp_ms, const std::string& frame_id,
+                                   std::string* err) const {
   std::string payload_json;
   if (!make_metadata_json(type, data_json, timestamp_ms, frame_id, &payload_json, err))
     return false;

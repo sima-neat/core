@@ -101,8 +101,8 @@ struct ObjectDetectionMetadataObject {
   int class_id = -1;
 };
 
-using MetadataReceiverOptions = simaai::neat::MetadataReceiverChannelOptions;
-using MetadataReceiverSender = simaai::neat::MetadataReceiverOutput;
+using MetadataReceiverOptions = simaai::neat::MetadataSenderOptions;
+using MetadataReceiverSender = simaai::neat::MetadataSender;
 
 std::vector<std::string> metadata_receiver_default_labels();
 std::string metadata_receiver_make_object_detection_data_json(

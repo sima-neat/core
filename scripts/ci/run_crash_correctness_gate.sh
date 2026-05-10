@@ -19,9 +19,10 @@ critical_tests=(
   unit_contracts_test
   unit_detection_types_bbox_test
   unit_gst_data_adapter_edge_test
-  unit_metadata_receiver_output_group_test
+  unit_metadata_sender_group_test
   unit_nodes_test
-  unit_node_metadata_receiver_output_test
+  unit_node_metadata_sender_test
+  unit_video_sender_test
   unit_udp_output_group_test
   unit_outputspec_test
   unit_pipeline_build_wiring_test

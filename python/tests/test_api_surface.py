@@ -102,7 +102,31 @@ UDP_H264_OUTPUT_GROUP_OPTION_FIELDS = (
     "udp_async",
 )
 
-METADATA_RECEIVER_CHANNEL_OPTION_FIELDS = (
+VIDEO_SENDER_UDP_OPTION_FIELDS = (
+    "host",
+    "port",
+    "sync",
+    "async_",
+)
+
+VIDEO_SENDER_RTP_OPTION_FIELDS = (
+    "payload_type",
+    "config_interval",
+)
+
+VIDEO_SENDER_ENCODER_OPTION_FIELDS = (
+    "bitrate_kbps",
+    "profile",
+    "level",
+)
+
+VIDEO_SENDER_OPTION_FIELDS = (
+    "udp",
+    "rtp",
+    "encoder",
+)
+
+METADATA_SENDER_OPTION_FIELDS = (
     "host",
     "channel",
     "metadata_port_base",
@@ -119,7 +143,7 @@ UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS = (
     "udp_async",
 )
 
-METADATA_RECEIVER_OUTPUT_GROUP_OPTION_FIELDS = (
+METADATA_SENDER_GROUP_OPTION_FIELDS = (
     "host",
     "metadata_port_base",
 )
@@ -356,9 +380,13 @@ def test_output_stage_option_structs_expose_expected_fields():
   udp = pyneat.UdpOutputOptions()
   parse = pyneat.H264ParseOptions()
   group = pyneat.UdpH264OutputGroupOptions()
-  metadata_channel = pyneat.MetadataReceiverChannelOptions()
+  video_raw = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(1920, 1080, 30)
+  video_udp = pyneat.VideoSenderUdpOptions()
+  video_rtp = pyneat.VideoSenderRtpOptions()
+  video_encoder = pyneat.VideoSenderEncoderOptions()
+  metadata_sender = pyneat.MetadataSenderOptions()
   udp_group = pyneat.UdpOutputNodeGroupOptions()
-  metadata_group = pyneat.MetadataReceiverOutputGroupOptions()
+  metadata_group = pyneat.MetadataSenderGroupOptions()
 
   for field in UDP_OUTPUT_OPTION_FIELDS:
     assert hasattr(udp, field), field
@@ -370,19 +398,32 @@ def test_output_stage_option_structs_expose_expected_fields():
   for field in UDP_H264_OUTPUT_GROUP_OPTION_FIELDS:
     assert hasattr(group, field), field
 
-  for field in METADATA_RECEIVER_CHANNEL_OPTION_FIELDS:
-    assert hasattr(metadata_channel, field), field
+  for field in VIDEO_SENDER_OPTION_FIELDS:
+    assert hasattr(video_raw, field), field
+
+  for field in VIDEO_SENDER_UDP_OPTION_FIELDS:
+    assert hasattr(video_udp, field), field
+
+  for field in VIDEO_SENDER_RTP_OPTION_FIELDS:
+    assert hasattr(video_rtp, field), field
+
+  for field in VIDEO_SENDER_ENCODER_OPTION_FIELDS:
+    assert hasattr(video_encoder, field), field
+
+  for field in METADATA_SENDER_OPTION_FIELDS:
+    assert hasattr(metadata_sender, field), field
 
   for field in UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS:
     assert hasattr(udp_group, field), field
 
-  for field in METADATA_RECEIVER_OUTPUT_GROUP_OPTION_FIELDS:
+  for field in METADATA_SENDER_GROUP_OPTION_FIELDS:
     assert hasattr(metadata_group, field), field
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")
-  assert hasattr(pyneat, "MetadataReceiverOutput")
-  assert hasattr(pyneat, "MetadataReceiverOutputGroup")
+  assert hasattr(pyneat, "VideoSenderOptions")
+  assert hasattr(pyneat, "MetadataSender")
+  assert hasattr(pyneat, "MetadataSenderGroup")
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
@@ -409,13 +450,18 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.UdpOutputOptions())
   _assert_not_type_error(lambda: pyneat.H264ParseOptions())
   _assert_not_type_error(lambda: pyneat.UdpH264OutputGroupOptions())
-  _assert_not_type_error(lambda: pyneat.MetadataReceiverChannelOptions())
+  _assert_not_type_error(lambda: pyneat.VideoSenderUdpOptions())
+  _assert_not_type_error(lambda: pyneat.VideoSenderRtpOptions())
+  _assert_not_type_error(lambda: pyneat.VideoSenderEncoderOptions())
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(1920, 1080, 30))
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
   _assert_not_type_error(lambda: pyneat.UdpOutputNodeGroupOptions())
-  _assert_not_type_error(lambda: pyneat.MetadataReceiverOutputGroupOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderGroupOptions())
   _assert_not_type_error(
-      lambda: pyneat.MetadataReceiverOutput(pyneat.MetadataReceiverChannelOptions())
+      lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions())
   )
-  _assert_not_type_error(lambda: pyneat.MetadataReceiverOutputGroup())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderGroup())
 
 
 def test_input_stage_option_structs_are_mutable():
@@ -493,10 +539,21 @@ def test_output_stage_option_structs_are_mutable():
   group.udp_sync = False
   group.udp_async = False
 
-  metadata_channel = pyneat.MetadataReceiverChannelOptions()
-  metadata_channel.host = "127.0.0.1"
-  metadata_channel.channel = 2
-  metadata_channel.metadata_port_base = 9100
+  video_raw = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(1920, 1080, 30)
+  video_raw.udp.host = "127.0.0.1"
+  video_raw.udp.port = 9000
+  video_raw.udp.sync = False
+  video_raw.udp.async_ = False
+  video_raw.rtp.payload_type = 97
+  video_raw.rtp.config_interval = 2
+  video_raw.encoder.bitrate_kbps = 2500
+  video_raw.encoder.profile = "main"
+  video_raw.encoder.level = "4.1"
+
+  metadata_sender = pyneat.MetadataSenderOptions()
+  metadata_sender.host = "127.0.0.1"
+  metadata_sender.channel = 2
+  metadata_sender.metadata_port_base = 9100
 
   udp_group = pyneat.UdpOutputNodeGroupOptions()
   udp_group.h264_caps = "video/x-h264"
@@ -508,7 +565,7 @@ def test_output_stage_option_structs_are_mutable():
   udp_group.udp_sync = False
   udp_group.udp_async = False
 
-  metadata_group = pyneat.MetadataReceiverOutputGroupOptions()
+  metadata_group = pyneat.MetadataSenderGroupOptions()
   metadata_group.host = "127.0.0.1"
   metadata_group.metadata_port_base = 9300
 
@@ -531,9 +588,28 @@ def test_output_stage_option_structs_are_mutable():
   assert group.udp_sync is False
   assert group.udp_async is False
 
-  assert metadata_channel.host == "127.0.0.1"
-  assert metadata_channel.channel == 2
-  assert metadata_channel.metadata_port_base == 9100
+  assert video_raw.is_raw_input() is True
+  assert video_raw.is_encoded_input() is False
+  assert video_raw.width == 1920
+  assert video_raw.height == 1080
+  assert video_raw.fps == 30
+  assert video_raw.udp.host == "127.0.0.1"
+  assert video_raw.udp.port == 9000
+  assert video_raw.udp.sync is False
+  assert video_raw.udp.async_ is False
+  assert video_raw.rtp.payload_type == 97
+  assert video_raw.rtp.config_interval == 2
+  assert video_raw.encoder.bitrate_kbps == 2500
+  assert video_raw.encoder.profile == "main"
+  assert video_raw.encoder.level == "4.1"
+
+  video_encoded = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
+  assert video_encoded.is_raw_input() is False
+  assert video_encoded.is_encoded_input() is True
+
+  assert metadata_sender.host == "127.0.0.1"
+  assert metadata_sender.channel == 2
+  assert metadata_sender.metadata_port_base == 9100
 
   assert udp_group.h264_caps == "video/x-h264"
   assert udp_group.payload_type == 98
@@ -890,6 +966,42 @@ def test_session_describe_backend_includes_udp_h264_output_group():
   assert "port=5600" in text
 
 
+def test_session_describe_backend_includes_video_sender():
+  raw_opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(1280, 720, 30)
+  raw_opt.udp.host = "127.0.0.1"
+  raw_opt.udp.port = 9000
+  raw_opt.rtp.payload_type = 97
+  raw_opt.encoder.bitrate_kbps = 2500
+
+  raw_session = pyneat.Session()
+  raw_session.add(pyneat.nodes.input())
+  raw_session.add(pyneat.groups.video_sender(raw_opt))
+
+  raw_text = raw_session.describe_backend().lower()
+  assert "videoconvert" in raw_text
+  assert "neatencoder" in raw_text
+  assert "h264parse" in raw_text
+  assert "rtph264pay" in raw_text
+  assert "pt=97" in raw_text
+  assert "udpsink" in raw_text
+  assert "port=9000" in raw_text
+
+  encoded_opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
+  encoded_opt.udp.port = 9001
+
+  encoded_session = pyneat.Session()
+  encoded_session.add(pyneat.nodes.input())
+  encoded_session.add(pyneat.groups.video_sender(encoded_opt))
+
+  encoded_text = encoded_session.describe_backend().lower()
+  assert "videoconvert" not in encoded_text
+  assert "neatencoder" not in encoded_text
+  assert "h264parse" in encoded_text
+  assert "rtph264pay" in encoded_text
+  assert "udpsink" in encoded_text
+  assert "port=9001" in encoded_text
+
+
 def test_postprocess_stage_missing_model_config_reports_clear_error():
   model = pyneat.Model(str(_basic_valid_mpk_path()))
 
@@ -924,6 +1036,7 @@ def test_output_stage_api_parity_guards_supported_call_surface():
   for name in ("udp_output", "h264_encode_sima", "h264_parse", "h264_packetize"):
     assert hasattr(pyneat.nodes, name), name
   assert hasattr(pyneat.groups, "udp_h264_output_group")
+  assert hasattr(pyneat.groups, "video_sender")
 
   assert hasattr(udp, "async_")
   assert hasattr(udp, "async")
@@ -953,6 +1066,14 @@ def test_output_stage_api_parity_guards_supported_call_surface():
   _assert_not_type_error(lambda: pyneat.nodes.h264_packetize(96, 1))
   _assert_not_type_error(lambda: pyneat.nodes.udp_output(udp))
   _assert_not_type_error(lambda: pyneat.groups.udp_h264_output_group(group))
+  _assert_not_type_error(
+      lambda: pyneat.groups.video_sender(
+          pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(1280, 720, 30)
+      )
+  )
+  _assert_not_type_error(
+      lambda: pyneat.groups.video_sender(pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
+  )
 
 
 def test_error_code_constants_present():
