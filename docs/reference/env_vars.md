@@ -62,6 +62,14 @@ actually does.
   `neat-insight` update metadata. The default is
   `https://apps.sima-neat.com/insight/download`.
 
+- `NEAT_UPDATE_TIMEOUT_SECONDS`
+  Per-request timeout, in seconds, for the installed `neat` command's online
+  update checks. The default is `8`.
+
+- `NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS`
+  Per-request connection timeout, in seconds, for the installed `neat`
+  command's online update checks. The default is `3`.
+
 - `NEAT_INSIGHT_VENV_DIR`
   Overrides the `neat-insight` virtual environment inspected and updated by
   the installed `neat` command. Defaults are `/opt/neat-insight/venv` in the
