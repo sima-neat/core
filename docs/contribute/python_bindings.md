@@ -20,7 +20,7 @@ See the [Python API Reference](/reference/pythonapi/modules/pyneat) for generate
 - OpenCV development/runtime packages
 - C++ toolchain (`cmake`, compiler, `pkg-config`)
 
-See [Build](../getting-started/build) for host setup guidance.
+See [Build](/getting-started/build) for host setup guidance.
 
 ## Install from source
 

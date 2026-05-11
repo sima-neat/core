@@ -66,6 +66,6 @@ inputs change size.
 
 ## Related docs
 
-- [Tutorials](../tutorials)
-- [Data Formats](../reference/data_formats)
-- [Architecture](../contribute/architecture)
+- [Tutorials](/tutorials)
+- [Data Formats](/reference/data_formats)
+- [Architecture](/contribute/architecture)

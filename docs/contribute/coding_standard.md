@@ -81,7 +81,7 @@ Keep dependency rules strict:
 
 When behavior changes:
 
-- Update [Architecture](./architecture).
+- Update [Architecture](/contribute/architecture).
 - Update user-facing guides if workflow or knobs changed.
 - Document new environment variables in reference docs.
 

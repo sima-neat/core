@@ -88,4 +88,4 @@ host NFS export created by `sima-cli sdk setup --devkit`.
 
 ## Next step
 
-Return to [Neat SDK](../../getting-started/installation/neat-elxr-sdk.mdx) and continue with install/setup.
+Return to [Neat SDK](/getting-started/installation/neat-elxr-sdk/) and continue with install/setup.

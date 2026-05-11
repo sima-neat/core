@@ -50,8 +50,8 @@ SiMa Neat relies on native GStreamer negotiation, but controls key boundaries:
 For push pipelines, format/shape changes are handled automatically. Runtime presets and queue policies control latency/safety tradeoffs, and advanced memory limits can be set with `RunAdvancedOptions::max_input_bytes`.
 
 Reference:
-- [`InputAppSrc`](/reference/{lsa}/classes/simaai-neat-inputappsrc)
-- [`InputAppSrcOptions`](/reference/{lsa}/structs/simaai-neat-inputappsrcoptions)
+- [`Input`](/reference/{lsa}/classes/simaai-neat-input)
+- [`InputOptions`](/reference/{lsa}/structs/simaai-neat-inputoptions)
 - [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions)
 - [`OutputTensorOptions`](/reference/{lsa}/structs/simaai-neat-outputtensoroptions)
 
@@ -65,16 +65,16 @@ Reference:
 
 ## See also
 
-- [Inference Workflow](overview)
-- [Node](node)
-- [Graph](graph)
-- [Session](session)
-- [Input and Output](io)
+- [Inference Workflow](/getting-started/programming-model/overview)
+- [Node](/getting-started/programming-model/node)
+- [Graph](/getting-started/programming-model/graph)
+- [Session](/getting-started/programming-model/session)
+- [Input and Output](/getting-started/programming-model/io)
 
 ## Tutorials
 
-- [Async Push Pull](/tutorials/002-async-push-pull)
-- [Session Build And Run](/tutorials/003-session-build-and-run)
-- [Session Patterns](/tutorials/007-session-patterns)
-- [Multi Input Samples](/tutorials/009-multi-input-samples)
-- [Diagnostics In 3 Commands](/tutorials/011-diagnostics-in-3-commands)
+- [Run Inference Asynchronously](/tutorials/002-run-inference-async)
+- [Build an Inference Pipeline](/tutorials/003-build-inference-pipeline)
+- [Plug a Model Into Your Pipeline](/tutorials/007-plug-model-into-pipeline)
+- [Feed Models That Take Multiple Inputs](/tutorials/009-feed-multi-input-model)
+- [Diagnose and Profile a Pipeline](/tutorials/011-diagnose-a-pipeline)

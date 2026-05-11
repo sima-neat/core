@@ -108,8 +108,20 @@ actually does.
 
 - `DOCS_STRICT_LINKS`
   Contributor-facing flag for strict docs builds. Use `DOCS_STRICT_LINKS=1`
-  when you want the website build to fail on broken links instead of tolerating
-  them.
+  to make `build.sh --doc` serve the rendered static site and crawl internal
+  links after the Docusaurus build. This catches browser-resolved 404s in raw
+  HTML anchors and generated pages that Docusaurus' compile-time link checker
+  cannot see.
+
+- `DOCS_LINK_SITE_DIR`, `DOCS_LINK_CHECK_PORT`
+  Optional overrides for `scripts/ci/check_docs_links.sh`. The site directory
+  defaults to `website/build`; the port defaults to an available local port.
+
+- `DOCS_LINK_START_PATHS`
+  Optional space-separated list of rendered docs paths for the strict link
+  crawler to start from. Defaults to `all`, which crawls from the site root.
+  Set this to one or more paths, such as `/getting-started/installation/`, for
+  targeted local checks while debugging.
 
 - `NO_COLOR`
   Standard terminal convention honored by the installed `neat` command. When

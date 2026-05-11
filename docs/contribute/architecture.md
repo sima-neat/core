@@ -43,7 +43,7 @@ Developers who want to:
 - **Validate:** build + parse + preroll (PAUSED) to catch negotiation issues early
 - **Serve RTSP:** push synthetic frames into an RTSP server pipeline using `appsrc`
 - **ML output:** image/video/RTSP -> decode -> convert/scale -> `add_output_tensor(...)` -> `Run::pull_tensor()`
-- **Tutorials:** start at [Tutorials](../tutorials) for a runnable, ordered learning path
+- **Tutorials:** start at [Tutorials](/tutorials) for a runnable, ordered learning path
 
 ### Canonical production pipeline (source of truth)
 The canonical "production path" for this repo is:
