@@ -11,7 +11,7 @@ sidebar_position: 3
 This guide uses a minimal example to verify that Neat is installed and runnable, while introducing the core application development and validation workflow.
 
 - a Modalix DevKit
-- the [Neat SDK](./installation/neat-elxr-sdk.mdx)
+- the [Neat SDK](/getting-started/installation/neat-elxr-sdk/)
 
 :::note Neat SDK Prerequisite
 To run commands on the DevKit directly from inside the SDK (for example, `dk build/sima_neat_hello` or `dk hello_neat.py`), set up DevKit pairing first:
@@ -145,6 +145,6 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 ## Next Steps
 Once this minimal example works, continue with broader SiMa Neat learning resources:
 
-- Learn the [core programming model](./programming-model/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
-- Follow the [tutorials](../tutorials/index), which walk through specific concepts and workflows step by step.
+- Learn the [core programming model](/getting-started/programming-model/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
+- Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

@@ -70,6 +70,7 @@ jobs:
 
       - name: Build docs website
         env:
+          DOCS_STRICT_LINKS: "1"
           DOCS_URL: ${{ env.DOCS_URL }}
           DOCS_BASE_URL: /
           DOCS_GA_MEASUREMENT_ID: ${{ env.DOCS_GA_MEASUREMENT_ID }}

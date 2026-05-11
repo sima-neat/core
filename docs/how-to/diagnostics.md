@@ -53,7 +53,7 @@ try {
 
 ## Debug knobs (environment)
 
-Key environment variables (see [Architecture](../contribute/architecture) for detail):
+Key environment variables (see [Architecture](/contribute/architecture) for detail):
 - `SIMA_GST_DOT_DIR`: write DOT graphs for failures
 - `SIMA_GST_BOUNDARY_PROBES`: boundary flow counters
 - `SIMA_GST_ELEMENT_TIMINGS`: per-element timings
@@ -86,4 +86,4 @@ Recommended support bundle:
 | `tensor caps change not supported` | Tensor shape/dtype change at runtime | Keep tensor shape/dtype stable (no renegotiation) |
 
 For structured plugin errors and actionable hints, see
-[How To Debug Plugin Failures](plugin_failures.md).
+[How To Debug Plugin Failures](/how-to/plugin_failures).

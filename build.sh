@@ -1094,6 +1094,11 @@ build_docs_site() {
   echo
   echo "Building Docusaurus site..."
   DOCS_PATH="${expanded_docs_dir}" npm --prefix "${REPO_ROOT}/website" run build
+  if [[ "${DOCS_STRICT_LINKS:-0}" == "1" ]]; then
+    echo
+    echo "Checking rendered docs links..."
+    bash "${REPO_ROOT}/scripts/ci/check_docs_links.sh"
+  fi
 }
 
 build_docs_only_if_requested() {
