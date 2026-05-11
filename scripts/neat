@@ -8,6 +8,8 @@ INSIGHT_BASE_URL="${NEAT_INSIGHT_BASE_URL:-https://apps.sima-neat.com/insight/do
 DEFAULT_SYSROOT="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 PORT_MAP_FILE="${NEAT_PORT_MAP_FILE:-${HOME}/.insight-config/neat-port-map.json}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-}"
+UPDATE_CONNECT_TIMEOUT_SECONDS="${NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS:-3}"
+UPDATE_TIMEOUT_SECONDS="${NEAT_UPDATE_TIMEOUT_SECONDS:-8}"
 SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
 STATUS_OFFLINE=0
@@ -56,6 +58,7 @@ CORE_METADATA_URL=""
 INSIGHT_LATEST_TAG=""
 INSIGHT_LATEST_VERSION=""
 INSIGHT_METADATA_URL=""
+UPDATE_FAILURES=""
 
 usage() {
   cat <<'EOF'
@@ -66,6 +69,10 @@ Usage:
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Core artifact index (default: https://artifacts.sima-neat.com/core)
   NEAT_INSIGHT_BASE_URL    Insight artifact index (default: https://apps.sima-neat.com/insight/download)
+  NEAT_UPDATE_TIMEOUT_SECONDS
+                           Per-request update check timeout in seconds (default: 8)
+  NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS
+                           Per-request update check connect timeout in seconds (default: 3)
   NEAT_PORT_MAP_FILE       SDK exposed-port map (default: $HOME/.insight-config/neat-port-map.json)
   SIMA_CLI_BIN             sima-cli executable path/name override
   SYSROOT                  SDK sysroot path (default: /opt/toolchain/aarch64/modalix)
@@ -138,21 +145,102 @@ run_sima_cli() {
 
 download_text() {
   local url="$1"
+  local rc=0
   if have_cmd curl; then
     curl -fsSL \
+      --connect-timeout "${UPDATE_CONNECT_TIMEOUT_SECONDS}" \
+      --max-time "${UPDATE_TIMEOUT_SECONDS}" \
       -H 'Cache-Control: no-cache, no-store, max-age=0' \
       -H 'Pragma: no-cache' \
-      "${url}"
-    return 0
+      "${url}" || rc=$?
+    return "${rc}"
   fi
   if have_cmd wget; then
     wget -qO- \
+      --timeout="${UPDATE_TIMEOUT_SECONDS}" \
+      --tries=1 \
       --header='Cache-Control: no-cache, no-store, max-age=0' \
       --header='Pragma: no-cache' \
-      "${url}"
+      "${url}" || rc=$?
+    return "${rc}"
+  fi
+  echo "curl or wget not found" >&2
+  return 127
+}
+
+reset_update_failures() {
+  UPDATE_FAILURES=""
+}
+
+record_update_failure() {
+  local label="$1"
+  local url="$2"
+  local rc="$3"
+  local stderr_text="$4"
+  local detail=""
+
+  stderr_text="$(printf '%s' "${stderr_text}" | sed 's/[[:space:]]*$//' | tr '\n' ' ')"
+  if [[ -n "${stderr_text}" ]]; then
+    detail="${stderr_text}"
+  elif [[ "${rc}" -eq 127 ]]; then
+    detail="curl or wget not found"
+  elif [[ "${rc}" -eq 124 ]]; then
+    detail="command timed out"
+  else
+    detail="download command exited with status ${rc}"
+  fi
+
+  if [[ -n "${UPDATE_FAILURES}" ]]; then
+    UPDATE_FAILURES+=$'\n'
+  fi
+  UPDATE_FAILURES+="${label}: ${url} failed (${detail})"
+}
+
+record_empty_update_response() {
+  local label="$1"
+  local url="$2"
+  if [[ -n "${UPDATE_FAILURES}" ]]; then
+    UPDATE_FAILURES+=$'\n'
+  fi
+  UPDATE_FAILURES+="${label}: ${url} returned an empty response"
+}
+
+print_update_failures() {
+  local line
+  [[ -n "${UPDATE_FAILURES}" ]] || return 0
+  while IFS= read -r line; do
+    printf '    %s%s%s\n' "${YELLOW}" "${line}" "${RESET}"
+  done <<< "${UPDATE_FAILURES}"
+  printf '    %sTry --offline to skip update checks when network access is unavailable.%s\n' "${YELLOW}" "${RESET}"
+}
+
+update_failure_suffix() {
+  local first_failure=""
+  first_failure="$(printf '%s\n' "${UPDATE_FAILURES}" | sed -n '1p')"
+  if [[ -n "${first_failure}" ]]; then
+    printf ': %s' "${first_failure}"
+  fi
+}
+
+download_text_or_record() {
+  local label="$1"
+  local url="$2"
+  local output_var="$3"
+  local output=""
+  local stderr_file=""
+  local rc=0
+
+  stderr_file="$(mktemp /tmp/neat-update-check.XXXXXX.err)"
+  if output="$(download_text "${url}" 2>"${stderr_file}")"; then
+    rm -f "${stderr_file}"
+    printf -v "${output_var}" '%s' "${output}"
     return 0
   fi
-  return 127
+  rc=$?
+  record_update_failure "${label}" "${url}" "${rc}" "$(cat "${stderr_file}" 2>/dev/null || true)"
+  rm -f "${stderr_file}"
+  printf -v "${output_var}" '%s' ""
+  return "${rc}"
 }
 
 json_field() {
@@ -226,6 +314,15 @@ print_component() {
     version="not installed"
   fi
   printf '  %s%-22s%s %s%-18s%s %s\n' "${BOLD}" "${name}" "${RESET}" "${color}" "${version}" "${RESET}" "${detail}"
+}
+
+print_components_update_note() {
+  local core_state="$1"
+  local insight_state="$2"
+  if [[ "${core_state}" != "update" && "${insight_state}" != "update" ]]; then
+    return 0
+  fi
+  printf '  %sUpdate available: yellow component versions indicate available updates. Run: neat update.%s\n' "${YELLOW}" "${RESET}"
 }
 
 discover_sdk_version() {
@@ -453,16 +550,24 @@ resolve_core_latest() {
   local channel="${CHANNEL_OVERRIDE:-${CORE_CHANNEL:-main}}"
   local channel_key
   local metadata
+  local latest_url
+  local raw_tag
   channel_key="$(sanitize_channel_key "${channel}")"
   if [[ "${TAG_INPUT}" == "latest" ]]; then
-    CORE_LATEST_TAG="$(download_text "${CORE_BASE_URL}/${channel_key}/latest.tag" 2>/dev/null | tr -d '[:space:]')"
+    latest_url="${CORE_BASE_URL}/${channel_key}/latest.tag"
+    if ! download_text_or_record "Neat core latest tag" "${latest_url}" raw_tag; then
+      return 1
+    fi
+    CORE_LATEST_TAG="$(printf '%s' "${raw_tag}" | tr -d '[:space:]')"
   else
     CORE_LATEST_TAG="${TAG_INPUT}"
   fi
-  [[ -n "${CORE_LATEST_TAG}" ]] || return 1
+  if [[ -z "${CORE_LATEST_TAG}" ]]; then
+    record_empty_update_response "Neat core latest tag" "${latest_url}"
+    return 1
+  fi
   CORE_METADATA_URL="${CORE_BASE_URL}/${channel_key}/${CORE_LATEST_TAG}/metadata-minimal.json"
-  metadata="$(download_text "${CORE_METADATA_URL}" 2>/dev/null || true)"
-  if [[ -n "${metadata}" ]]; then
+  if download_text_or_record "Neat core metadata" "${CORE_METADATA_URL}" metadata && [[ -n "${metadata}" ]]; then
     CORE_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field version)"
   fi
 }
@@ -471,16 +576,24 @@ resolve_insight_latest() {
   local channel="${CHANNEL_OVERRIDE:-${INSIGHT_CHANNEL:-main}}"
   local channel_key
   local metadata
+  local latest_url
+  local raw_tag
   channel_key="$(sanitize_channel_key "${channel}")"
   if [[ "${TAG_INPUT}" == "latest" ]]; then
-    INSIGHT_LATEST_TAG="$(download_text "${INSIGHT_BASE_URL}/${channel_key}/latest.tag" 2>/dev/null | tr -d '[:space:]')"
+    latest_url="${INSIGHT_BASE_URL}/${channel_key}/latest.tag"
+    if ! download_text_or_record "neat-insight latest tag" "${latest_url}" raw_tag; then
+      return 1
+    fi
+    INSIGHT_LATEST_TAG="$(printf '%s' "${raw_tag}" | tr -d '[:space:]')"
   else
     INSIGHT_LATEST_TAG="${TAG_INPUT}"
   fi
-  [[ -n "${INSIGHT_LATEST_TAG}" ]] || return 1
+  if [[ -z "${INSIGHT_LATEST_TAG}" ]]; then
+    record_empty_update_response "neat-insight latest tag" "${latest_url}"
+    return 1
+  fi
   INSIGHT_METADATA_URL="${INSIGHT_BASE_URL}/${channel_key}/${INSIGHT_LATEST_TAG}.json"
-  metadata="$(download_text "${INSIGHT_METADATA_URL}" 2>/dev/null || true)"
-  if [[ -n "${metadata}" ]]; then
+  if download_text_or_record "neat-insight metadata" "${INSIGHT_METADATA_URL}" metadata && [[ -n "${metadata}" ]]; then
     INSIGHT_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field short_sha)"
     if [[ -n "${INSIGHT_LATEST_VERSION}" ]]; then
       INSIGHT_LATEST_VERSION="0.0.0+${channel}.${INSIGHT_LATEST_VERSION}"
@@ -491,6 +604,7 @@ resolve_insight_latest() {
 resolve_updates() {
   local core_ok=0
   local insight_ok=0
+  reset_update_failures
   if resolve_core_latest; then
     core_ok=1
   fi
@@ -616,7 +730,11 @@ print_status_json() {
   fi
   if [[ "${STATUS_OFFLINE}" -eq 0 ]]; then
     if resolve_updates; then
-      update_check_status="ok"
+      if [[ -n "${UPDATE_FAILURES}" ]]; then
+        update_check_status="partial"
+      else
+        update_check_status="ok"
+      fi
     else
       update_check_status="failed"
     fi
@@ -630,6 +748,7 @@ print_status_json() {
     NEAT_JSON_DEVKIT_BUILD_VERSION="${DEVKIT_BUILD_VERSION}" \
     NEAT_JSON_UPDATE_OFFLINE="${STATUS_OFFLINE}" \
     NEAT_JSON_UPDATE_STATUS="${update_check_status}" \
+    NEAT_JSON_UPDATE_FAILURES="${UPDATE_FAILURES}" \
     NEAT_JSON_CORE_VERSION="${CORE_VERSION}" \
     NEAT_JSON_CORE_CHANNEL="${CORE_CHANNEL}" \
     NEAT_JSON_CORE_TAG="${CORE_TAG}" \
@@ -817,6 +936,11 @@ payload = {
     },
     "exposedPorts": ports,
 }
+update_failures = [
+    line for line in env("NEAT_JSON_UPDATE_FAILURES").splitlines() if line.strip()
+]
+if update_failures:
+    payload["updateCheck"]["errors"] = update_failures
 json.dump(payload, fp=os.sys.stdout, indent=2, sort_keys=True)
 os.sys.stdout.write("\n")
 PY
@@ -842,7 +966,13 @@ print_status() {
 
   if [[ "${STATUS_OFFLINE}" -eq 0 ]]; then
     if ! resolve_updates; then
-      printf '  %supdate check failed%s\n\n' "${YELLOW}" "${RESET}"
+      printf '  %supdate check failed%s\n' "${YELLOW}" "${RESET}"
+      print_update_failures
+      echo
+    elif [[ -n "${UPDATE_FAILURES}" ]]; then
+      printf '  %supdate check partially failed%s\n' "${YELLOW}" "${RESET}"
+      print_update_failures
+      echo
     fi
   fi
 
@@ -876,6 +1006,7 @@ print_status() {
     model_detail="${MODEL_SDK_DETAIL}"
   fi
   print_component "Model SDK Extension" "${MODEL_SDK_VERSION}" "${model_detail}" "$([[ "${MODEL_SDK_AVAILABLE}" -eq 1 ]] && echo installed || echo missing)"
+  print_components_update_note "${core_state}" "${insight_state}"
 
   print_exposed_ports
 
@@ -986,11 +1117,12 @@ print_update_plan() {
 run_update() {
   STATUS_OFFLINE=0
   discover_all
+  reset_update_failures
   if [[ "${UPDATE_CORE}" -eq 1 ]] && ! resolve_core_latest; then
-    die "unable to resolve latest Neat core artifact"
+    die "unable to resolve latest Neat core artifact$(update_failure_suffix)"
   fi
   if [[ "${UPDATE_INSIGHT}" -eq 1 ]] && ! resolve_insight_latest; then
-    die "unable to resolve latest neat-insight artifact"
+    die "unable to resolve latest neat-insight artifact$(update_failure_suffix)"
   fi
   local core_needed=0
   local insight_needed=0
