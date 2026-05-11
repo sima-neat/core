@@ -10,9 +10,9 @@ namespace simaai::neat::pipeline_internal::sima {
 namespace {
 
 const std::unordered_set<std::string> kPreRules = {"preproc", "quanttess", "quantize",
-                                                    "tessellate", "cvu"};
+                                                    "tessellate"};
 const std::unordered_set<std::string> kPostRules = {"detessdequant", "detessellate",
-                                                     "slicedequant", "dequantize", "boxdecode"};
+                                                     "dequantize", "boxdecode"};
 const std::unordered_map<std::string, StageTransformRule> kRules = {
     {"preproc",
      StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
@@ -22,17 +22,14 @@ const std::unordered_map<std::string, StageTransformRule> kRules = {
      StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
     {"tessellate",
      StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
-    {"cvu", StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
     {"detessdequant",
      StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
     {"detessellate",
      StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
-    {"slicedequant",
-     StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
     {"dequantize",
      StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
     {"boxdecode",
-     StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, false}},
+     StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
 };
 
 } // namespace

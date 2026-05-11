@@ -40,6 +40,30 @@ std::string read_first_line(const char* path) {
   return line;
 }
 
+bool run_input_thread_timing_enabled() {
+  return pipeline_internal::env_bool("SIMA_RUN_INPUT_THREAD_TIMING", false);
+}
+
+int run_input_thread_timing_limit() {
+  static const int limit =
+      std::max(0, pipeline_internal::env_int("SIMA_RUN_INPUT_THREAD_TIMING_LIMIT", 32));
+  return limit;
+}
+
+const char* queued_input_kind_name(QueuedInputKind kind) {
+  switch (kind) {
+  case QueuedInputKind::Tensor:
+    return "Tensor";
+  case QueuedInputKind::Holder:
+    return "Holder";
+  case QueuedInputKind::Message:
+    return "Message";
+  case QueuedInputKind::Mat:
+    return "Mat";
+  }
+  return "Unknown";
+}
+
 std::vector<std::string> tail_lines(const std::string& path, size_t max_lines) {
   std::ifstream in(path);
   if (!in.is_open())
@@ -139,11 +163,17 @@ Run::~Run() {
   close();
 }
 
-Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOptions& stream_opt) {
+Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOptions& stream_opt,
+                RunMode mode, const std::optional<InputOptions>& tensor_input_opt_for_cv,
+                pipeline_internal::InputRouteProcessorPtr input_route_processor) {
   auto st = std::make_shared<State>();
+  st->created_at = std::chrono::steady_clock::now();
   st->stream = std::move(stream);
   st->opt = opt;
   st->stream_opt = stream_opt;
+  st->mode = mode;
+  st->tensor_input_opt_for_cv = tensor_input_opt_for_cv;
+  st->input_route_processor = std::move(input_route_processor);
   st->supports_push = st->stream.can_push();
   st->supports_pull = st->stream.can_pull();
   st->copy_output_latched.store(stream_opt.copy_output, std::memory_order_relaxed);
@@ -157,15 +187,19 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
   if (st->diag_enabled) {
     st->diag_sysinfo = collect_system_info();
   }
+  if (opt.power_monitor.enabled) {
+    st->power_monitor = std::make_unique<PowerMonitor>(opt.power_monitor);
+    st->power_monitor->start();
+  }
 
   auto on_output = [st](Sample out) {
     if (st->stop_requested.load()) {
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
         const char* kind = "Unknown";
-        if (out.kind == SampleKind::Tensor)
-          kind = "Tensor";
-        else if (out.kind == SampleKind::Bundle)
+        if (out.kind == SampleKind::TensorSet)
+          kind = "TensorSet";
+        else if (sample_is_multi_output(out))
           kind = "Bundle";
         std::fprintf(
             stderr,
@@ -200,6 +234,28 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
         st->latency_mean_ms += (ms - st->latency_mean_ms) / n;
         st->latency_min_ms = std::min(st->latency_min_ms, ms);
         st->latency_max_ms = std::max(st->latency_max_ms, ms);
+      }
+      if (st->measurement_active) {
+        st->measurement_latencies_ms.push_back(ms);
+      }
+    }
+    {
+      const auto now = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> lock(st->latency_mu);
+      if (!st->output_timing_init) {
+        st->first_output_at = now;
+        st->output_timing_init = true;
+      }
+      st->last_output_at = now;
+      if (st->measurement_active) {
+        if (st->measurement_output_timing_init) {
+          const double gap_ms =
+              std::chrono::duration<double, std::milli>(now - st->measurement_last_output_at)
+                  .count();
+          st->measurement_frame_gaps_ms.push_back(gap_ms);
+        }
+        st->measurement_last_output_at = now;
+        st->measurement_output_timing_init = true;
       }
     }
 
@@ -236,9 +292,9 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
             if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
                 pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
               const char* kind = "Unknown";
-              if (out.kind == SampleKind::Tensor)
-                kind = "Tensor";
-              else if (out.kind == SampleKind::Bundle)
+              if (out.kind == SampleKind::TensorSet)
+                kind = "TensorSet";
+              else if (sample_is_multi_output(out))
                 kind = "Bundle";
               std::fprintf(stderr,
                            "[PIPELINE] on_output_drop kind=%s frame_id=%lld stream_id=%s "
@@ -262,9 +318,9 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
         const Sample& latest = st->out_queue.back();
         const char* kind = "Unknown";
-        if (latest.kind == SampleKind::Tensor)
-          kind = "Tensor";
-        else if (latest.kind == SampleKind::Bundle)
+        if (latest.kind == SampleKind::TensorSet)
+          kind = "TensorSet";
+        else if (sample_is_multi_output(latest))
           kind = "Bundle";
         std::fprintf(stderr, "[PIPELINE] on_output kind=%s frame_id=%lld stream_id=%s queue=%zu\n",
                      kind, static_cast<long long>(latest.frame_id), latest.stream_id.c_str(),
@@ -284,8 +340,11 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
   }
 
   st->input_thread = std::thread([st]() {
+    const bool input_thread_timing = run_input_thread_timing_enabled();
+    int input_thread_timing_count = 0;
     while (true) {
       InputItem item;
+      std::size_t q_after_pop = 0;
       {
         std::unique_lock<std::mutex> lock(st->in_mu);
         st->in_cv.wait(lock, [&]() {
@@ -300,6 +359,7 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
         }
         item = std::move(st->in_queue.front());
         st->in_queue.pop_front();
+        q_after_pop = st->in_queue.size();
       }
       st->in_cv.notify_one();
 
@@ -310,21 +370,35 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
       }
       try {
         switch (item.kind) {
-        case InputKind::Tensor:
+        case QueuedInputKind::Tensor:
           st->stream.push(item.tensor);
           break;
-        case InputKind::Holder:
+        case QueuedInputKind::Holder:
           st->stream.push_holder(item.holder);
           break;
-        case InputKind::Message:
+        case QueuedInputKind::Message:
           st->stream.push_message(item.msg);
           break;
-        case InputKind::Mat:
+        case QueuedInputKind::Mat:
         default:
           st->stream.push(item.mat);
           break;
         }
         st->inputs_pushed.fetch_add(1, std::memory_order_relaxed);
+        if (input_thread_timing) {
+          const int idx = input_thread_timing_count++;
+          const int limit = run_input_thread_timing_limit();
+          if (idx < limit || (limit > 0 && (idx % limit) == 0)) {
+            const auto t1 = std::chrono::steady_clock::now();
+            const auto push_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+            std::fprintf(stderr,
+                         "[RUN_INPUT_THREAD_TIMING] Run::input_thread idx=%d kind=%s q_after_pop=%zu "
+                         "stream_push_ns=%lld\n",
+                         idx, queued_input_kind_name(item.kind), q_after_pop,
+                         static_cast<long long>(push_ns));
+          }
+        }
       } catch (const std::exception& e) {
         if (st->supports_pull) {
           std::lock_guard<std::mutex> lock(st->latency_mu);
@@ -339,6 +413,7 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
         std::lock_guard<std::mutex> lock(st->error_mu);
         st->error = e.what();
         st->stop_requested.store(true);
+        st->out_cv.notify_all();
         break;
       }
     }
@@ -350,9 +425,11 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
         std::lock_guard<std::mutex> lock(st->error_mu);
         st->error = e.what();
         st->stop_requested.store(true);
+        st->out_cv.notify_all();
       }
     }
     st->input_thread_done.store(true);
+    st->out_cv.notify_all();
   });
 
   return Run(st);

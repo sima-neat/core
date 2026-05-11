@@ -470,14 +470,15 @@ std::string element_timing_summary(const std::shared_ptr<DiagCtx>& diag) {
             });
 
   std::ostringstream ss;
-  ss << "ElementTiming:\n";
+  ss << "ElementTiming (residency = sink-arrival -> src-emit, INCLUDES backpressure wait):\n";
   for (const auto& s : snaps) {
     const double avg_ms = (s.samples == 0) ? 0.0 : (double)s.total_us / (double)s.samples / 1000.0;
     const double max_ms = (double)s.max_us / 1000.0;
     const double min_ms = (double)s.min_us / 1000.0;
     ss << "  - " << s.element_name << " samples=" << s.samples << " avg_ms=" << avg_ms
        << " min_ms=" << min_ms << " max_ms=" << max_ms << " missed_in=" << s.missed_in
-       << " missed_out=" << s.missed_out << "\n";
+       << " missed_out=" << s.missed_out;
+    ss << "\n";
   }
   return ss.str();
 }

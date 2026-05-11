@@ -66,7 +66,7 @@ sima_test::MpkFixture make_metadata_fixture(const std::string& tag, bool include
 })json"});
   }
 
-  return sima_test::make_mpk_tar_fixture(tag, files, true);
+  return sima_test::make_strict_mpk_tar_fixture(tag, files, true);
 }
 
 } // namespace
@@ -97,5 +97,43 @@ RUN_TEST("unit_model_metadata_test", ([] {
              const auto meta = model.metadata();
              require(meta.empty(),
                      "Model::metadata should return empty map when metadata.json is missing");
+           }
+
+           {
+             const auto legacy = sima_test::make_mpk_tar_fixture(
+                 "model_metadata_legacy_missing_mpk",
+                 {
+                     {"etc/pipeline_sequence.json",
+                      R"json({
+  "pipelines": [{
+    "sequence": [
+      {
+        "sequence_id": 1,
+        "name": "mla_0",
+        "pluginId": "processmla",
+        "configPath": "0_process_mla.json",
+        "processor": "MLA",
+        "kernel": "infer",
+        "input": "decoder"
+      }
+    ]
+  }]
+})json"},
+                     {"etc/0_process_mla.json",
+                      R"json({
+  "node_name": "mla_0",
+  "input_buffers": [{"name": "decoder"}]
+})json"},
+                 });
+             bool threw = false;
+             try {
+               Model legacy_model(legacy.tar_path);
+               (void)legacy_model.metadata();
+             } catch (const std::exception& e) {
+               threw = true;
+               require_contains(std::string(e.what()), "strict MPK contract required",
+                                "legacy missing-mpk fixture should fail with strict contract error");
+             }
+             require(threw, "legacy missing-mpk fixture must fail under strict contract");
            }
          }));

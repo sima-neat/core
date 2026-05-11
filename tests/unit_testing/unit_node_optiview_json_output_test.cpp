@@ -47,6 +47,10 @@ RUN_TEST("unit_node_optiview_json_output_test", ([] {
                    "OptiViewMakeJson known label mismatch");
            require(parsed_helper["data"]["objects"][1]["label"].get<std::string>() == "Unknown",
                    "OptiViewMakeJson unknown label fallback mismatch");
+           const auto default_labels = simaai::neat::OptiViewDefaultLabels();
+           require(default_labels.size() == 80, "OptiViewDefaultLabels should emit 80 labels");
+           require(default_labels.front() == "label_0",
+                   "OptiViewDefaultLabels first label mismatch");
 
            // send_json loopback behavior.
            std::string send_err;

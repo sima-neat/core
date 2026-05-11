@@ -58,11 +58,11 @@ int main(int argc, char** argv) {
 
     for (int i = 0; i < frames; ++i) {
       auto sample = run.pull(/*timeout_ms=*/5000);
-      if (!sample.has_value() || !sample->tensor.has_value()) {
+      if (!sample.has_value() || simaai::neat::tensors_from_sample(*sample, true).empty()) {
         std::cout << "frame=" << i << " rtsp_timeout\n";
         break;
       }
-      const auto& shape = sample->tensor->shape;
+      const auto& shape = simaai::neat::tensors_from_sample(*sample, true).front().shape;
       std::cout << "frame=" << i << " shape=[";
       for (std::size_t d = 0; d < shape.size(); ++d) {
         std::cout << shape[d] << (d + 1 < shape.size() ? ", " : "");

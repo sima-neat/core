@@ -58,15 +58,16 @@ void Run::stop() {
     st->in_queue.clear();
   }
   st->stop_requested.store(true);
+  if (st->power_monitor) {
+    st->power_monitor->stop();
+  }
   st->in_cv.notify_all();
   st->out_cv.notify_all();
   st->stream.stop_async();
   // Stop the underlying stream first to unblock any appsrc push waiting on downstream.
   const int stream_stop_timeout_ms =
       std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", 2000));
-  const int stream_stop_timeout_ms_2 =
-      std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS_2",
-                                             stream_stop_timeout_ms));
+  const int stream_stop_timeout_ms_2 = stream_stop_timeout_ms;
   if (stream_stop_timeout_ms <= 0) {
     st->stream.stop();
   } else {
@@ -133,8 +134,7 @@ void Run::stop() {
   if (st->input_thread.joinable()) {
     const int timeout_ms =
         std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", 2000));
-    const int timeout_ms_2 = std::max(
-        0, pipeline_internal::env_int("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS_2", timeout_ms));
+    const int timeout_ms_2 = timeout_ms;
     if (timeout_ms > 0) {
       const auto deadline =
           std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -149,8 +149,7 @@ void Run::stop() {
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
         std::fprintf(stderr,
                      "[PIPELINE] stop: input_thread did not exit within %dms; forcing stop\n",
-                     std::max(0, pipeline_internal::env_int(
-                                     "SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", 2000)));
+                     timeout_ms);
       }
       st->stream.stop_async();
       if (timeout_ms_2 > 0) {

@@ -67,6 +67,8 @@ static const char* sample_kind_name(simaai::neat::SampleKind kind) {
   switch (kind) {
   case simaai::neat::SampleKind::Tensor:
     return "tensor";
+  case simaai::neat::SampleKind::TensorSet:
+    return "tensor_set";
   case simaai::neat::SampleKind::Bundle:
     return "bundle";
   default:
@@ -89,6 +91,8 @@ static void log_edge(const char* tag, const simaai::neat::Sample& sample) {
   const char* dev = "-";
   if (sample.kind == simaai::neat::SampleKind::Tensor && sample.tensor.has_value()) {
     dev = device_type_name(sample.tensor.value());
+  } else if (simaai::neat::sample_has_tensor_list(sample) && !sample.tensors.empty()) {
+    dev = device_type_name(sample.tensors.front());
   }
   std::fprintf(stderr,
                "[EDGE] %s stream=%s frame=%lld input_seq=%lld orig_seq=%lld port=%s kind=%s dev=%s "
@@ -423,14 +427,21 @@ static Top1Result argmax_from_tensor(const simaai::neat::Tensor& t,
 }
 
 static Top1Result argmax_from_sample(const simaai::neat::Sample& sample) {
-  if (sample.kind != simaai::neat::SampleKind::Tensor || !sample.tensor.has_value()) {
-    throw std::runtime_error("Expected tensor sample output");
+  if (simaai::neat::sample_has_tensor_list(sample) && sample.tensors.size() == 1U) {
+    const simaai::neat::Tensor& t = sample.tensors.front();
+    if (looks_like_top1_tensor(t)) {
+      return top1_from_tensor_payload(t);
+    }
+    return argmax_from_tensor(t, sample.stream_id.c_str());
   }
-  const simaai::neat::Tensor& t = sample.tensor.value();
-  if (looks_like_top1_tensor(t)) {
-    return top1_from_tensor_payload(t);
+  if (sample.kind == simaai::neat::SampleKind::Tensor && sample.tensor.has_value()) {
+    const simaai::neat::Tensor& t = sample.tensor.value();
+    if (looks_like_top1_tensor(t)) {
+      return top1_from_tensor_payload(t);
+    }
+    return argmax_from_tensor(t, sample.stream_id.c_str());
   }
-  return argmax_from_tensor(t, sample.stream_id.c_str());
+  throw std::runtime_error("Expected tensor sample output");
 }
 
 } // namespace
@@ -538,9 +549,9 @@ int main(int argc, char** argv) {
       model_tar = sima_test::resolve_resnet50_tar();
     }
     if (model_tar.empty()) {
-      skip_long_test_exception("ResNet50 model pack not found (set SIMA_RESNET50_TAR or run "
-                               "'sima-cli modelzoo -v " +
-                               sima_test::modelzoo_version() + " get resnet_50')");
+      skip_long_test_exception(
+          "ResNet50 model pack not found (set SIMA_MODEL_TAR or SIMA_RESNET50_TAR or run "
+          "'sima-cli modelzoo get resnet_50')");
     }
 
     auto rtsp_servers_vec = start_rtsp_servers_with_retry(
@@ -571,11 +582,10 @@ int main(int argc, char** argv) {
     if (rtsp_debug)
       std::cerr << "[model] loading simaai::neat::Model\n";
     simaai::neat::Model::Options model_cfg;
-    model_cfg.media_type = "video/x-raw";
-    model_cfg.format = "NV12";
-    model_cfg.input_max_width = kEncWidth;
-    model_cfg.input_max_height = kEncHeight;
-    model_cfg.input_max_depth = 0;
+    model_cfg.preprocess.kind = simaai::neat::InputKind::Image;
+    model_cfg.preprocess.enable = simaai::neat::AutoFlag::On;
+    model_cfg.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::NV12;
+    model_cfg.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
     simaai::neat::Model model(model_tar, model_cfg);
     if (rtsp_debug)
       std::cerr << "[model] simaai::neat::Model loaded\n";
@@ -666,8 +676,9 @@ int main(int argc, char** argv) {
       auto argmax_node = g.add(simaai::neat::graph::nodes::TensorMap(
           [](simaai::neat::Sample& sample, simaai::neat::Tensor& tensor) {
             const Top1Result top1 = argmax_from_tensor(tensor, sample.stream_id.c_str());
-            sample.tensor = make_top1_tensor(top1);
-            sample.kind = simaai::neat::SampleKind::Tensor;
+            sample.tensors = simaai::neat::TensorList{make_top1_tensor(top1)};
+            sample.tensor.reset();
+            sample.kind = simaai::neat::SampleKind::TensorSet;
           },
           "argmax_" + suffix));
 

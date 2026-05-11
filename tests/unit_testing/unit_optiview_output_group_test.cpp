@@ -1,145 +1,11 @@
 #include "nodes/groups/OptiViewOutputGroup.h"
-#include "pipeline/TensorCore.h"
+#include "optiview_test_utils.h"
 #include "test_main.h"
-#include "test_utils.h"
+#include "udp_test_utils.h"
 
 #include <nlohmann/json.hpp>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
-#include <array>
-#include <cstdint>
-#include <cstring>
 #include <string>
-#include <vector>
-
-namespace {
-
-class UdpReceiver {
-public:
-  UdpReceiver() {
-    fd_ = ::socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd_ < 0) {
-      throw std::runtime_error("UdpReceiver socket() failed");
-    }
-
-    sockaddr_in addr{};
-    addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    addr.sin_port = 0;
-
-    if (::bind(fd_, reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) < 0) {
-      ::close(fd_);
-      throw std::runtime_error("UdpReceiver bind() failed");
-    }
-
-    socklen_t len = sizeof(addr);
-    if (::getsockname(fd_, reinterpret_cast<sockaddr*>(&addr), &len) < 0) {
-      ::close(fd_);
-      throw std::runtime_error("UdpReceiver getsockname() failed");
-    }
-
-    port_ = static_cast<int>(ntohs(addr.sin_port));
-  }
-
-  ~UdpReceiver() {
-    if (fd_ >= 0) {
-      ::close(fd_);
-    }
-  }
-
-  int port() const {
-    return port_;
-  }
-
-  bool recv_one(std::string* payload, int timeout_ms = 2000) const {
-    if (!payload)
-      return false;
-    payload->clear();
-
-    fd_set rfds;
-    FD_ZERO(&rfds);
-    FD_SET(fd_, &rfds);
-
-    timeval tv{};
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
-
-    const int ready = ::select(fd_ + 1, &rfds, nullptr, nullptr, &tv);
-    if (ready <= 0)
-      return false;
-
-    std::array<char, 4096> buf{};
-    const ssize_t n = ::recvfrom(fd_, buf.data(), buf.size(), 0, nullptr, nullptr);
-    if (n <= 0)
-      return false;
-
-    payload->assign(buf.data(), static_cast<size_t>(n));
-    return true;
-  }
-
-private:
-  int fd_ = -1;
-  int port_ = -1;
-};
-
-struct RawBox {
-  int32_t x = 0;
-  int32_t y = 0;
-  int32_t w = 0;
-  int32_t h = 0;
-  float score = 0.0f;
-  int32_t cls = 0;
-};
-
-std::vector<uint8_t> make_bbox_payload(uint32_t count, const std::vector<RawBox>& boxes) {
-  std::vector<uint8_t> out(sizeof(uint32_t) + boxes.size() * sizeof(RawBox), 0);
-  std::memcpy(out.data(), &count, sizeof(uint32_t));
-  if (!boxes.empty()) {
-    std::memcpy(out.data() + sizeof(uint32_t), boxes.data(), boxes.size() * sizeof(RawBox));
-  }
-  return out;
-}
-
-simaai::neat::Sample make_bbox_tensor_sample(const std::vector<uint8_t>& payload,
-                                             const std::string& fmt = "BBOX") {
-  using namespace simaai::neat;
-  auto storage = make_cpu_owned_storage(payload.size());
-  auto map = storage->map(MapMode::Write);
-  if (map.data && map.size_bytes >= payload.size()) {
-    std::memcpy(map.data, payload.data(), payload.size());
-  }
-
-  Tensor tensor;
-  tensor.storage = storage;
-  tensor.dtype = TensorDType::UInt8;
-  tensor.layout = TensorLayout::Unknown;
-  tensor.shape = {static_cast<int64_t>(payload.size())};
-  tensor.device = {DeviceType::CPU, 0};
-  tensor.read_only = true;
-  tensor.semantic.tess =
-      TessSpec{.tile_width = 0, .tile_height = 0, .tile_channels = 0, .format = fmt};
-
-  Sample sample;
-  sample.kind = SampleKind::Tensor;
-  sample.tensor = std::move(tensor);
-  sample.frame_id = 7;
-  sample.stream_id = "stream0";
-  sample.pts_ns = 123000000;
-  return sample;
-}
-
-bool likely_runtime_missing(const std::string& err) {
-  return is_dispatcher_unavailable(err) || err.find("no element") != std::string::npos ||
-         err.find("No such element") != std::string::npos ||
-         err.find("not found") != std::string::npos || err.find("failed to") != std::string::npos;
-}
-
-} // namespace
 
 RUN_TEST("unit_optiview_output_group_test", ([] {
            using nlohmann::json;
@@ -170,7 +36,7 @@ RUN_TEST("unit_optiview_output_group_test", ([] {
                               "OptiViewOutputNodeGroup streams error mismatch");
            }
 
-           UdpReceiver rx;
+           sima_test::UdpReceiver rx;
 
            OptiViewOutputNodeGroup group;
            OptiViewOutputNodeGroupOptions opt;
@@ -189,7 +55,7 @@ RUN_TEST("unit_optiview_output_group_test", ([] {
 
            std::string init_err;
            if (!group.init(opt, 1, &init_err)) {
-             if (likely_runtime_missing(init_err)) {
+             if (sima_test::likely_runtime_missing(init_err)) {
                throw std::runtime_error(
                    "Skipping OptiViewOutputNodeGroup runtime-dependent checks: " + init_err);
              }
@@ -251,7 +117,8 @@ RUN_TEST("unit_optiview_output_group_test", ([] {
 
            // Failure path: malformed bbox payload with BBOX tag.
            {
-             const auto malformed = make_bbox_tensor_sample(std::vector<uint8_t>{1, 2, 3}, "BBOX");
+             const auto malformed =
+                 sima_test::optiview::make_bbox_tensor_sample(std::vector<uint8_t>{1, 2, 3}, "BBOX");
 
              OptiViewJsonInput in;
              in.stream_idx = 0;
@@ -267,10 +134,11 @@ RUN_TEST("unit_optiview_output_group_test", ([] {
 
            // Happy path: valid bbox payload produces JSON datagram.
            {
-             const std::vector<RawBox> boxes = {
-                 RawBox{.x = 10, .y = 20, .w = 30, .h = 40, .score = 0.9f, .cls = 1}};
-             const auto payload = make_bbox_payload(1, boxes);
-             const auto yolo = make_bbox_tensor_sample(payload, "BBOX");
+             const std::vector<sima_test::optiview::RawBox> boxes = {
+                 sima_test::optiview::RawBox{
+                     .x = 10, .y = 20, .w = 30, .h = 40, .score = 0.9f, .cls = 1}};
+             const auto payload = sima_test::optiview::make_bbox_payload(1, boxes);
+             const auto yolo = sima_test::optiview::make_bbox_tensor_sample(payload, "BBOX");
 
              OptiViewJsonInput in;
              in.stream_idx = 0;

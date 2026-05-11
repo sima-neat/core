@@ -26,20 +26,24 @@
 
 #include "pipeline/TensorAdapters.h"
 
+#include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/TensorUtil.h" // make_gst_sample_storage()
 #include "pipeline/internal/TensorMath.h"
 
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace simaai::neat {
 
@@ -97,7 +101,7 @@ simaai::neat::TensorDType dtype_from_tensor_format(std::string_view fmt) {
   const std::string s = upper_copy(std::string(fmt));
   if (s == "DETESS")
     return simaai::neat::TensorDType::UInt16;
-  if (s == "DETESSDEQUANT" || s == "FP32")
+  if (s == "DETESSDEQUANT" || s == "FP32" || s == "FLOAT32" || s == "EVXX_FLOAT32")
     return simaai::neat::TensorDType::Float32;
   if (s == "EVXX_INT8" || s == "EV74_INT8" || s == "INT8")
     return simaai::neat::TensorDType::Int8;
@@ -105,26 +109,26 @@ simaai::neat::TensorDType dtype_from_tensor_format(std::string_view fmt) {
     return simaai::neat::TensorDType::Int8;
   if (s == "EVXX_BFLOAT16" || s == "BF16" || s == "BFLOAT16")
     return simaai::neat::TensorDType::BFloat16;
-  if (s == "UINT8")
+  if (s == "UINT8" || s == "EVXX_UINT8")
     return simaai::neat::TensorDType::UInt8;
   return simaai::neat::TensorDType::UInt8;
 }
 
 simaai::neat::TensorDType dtype_from_data_type(std::string_view dtype) {
   const std::string s = upper_copy(std::string(dtype));
-  if (s == "INT8")
+  if (s == "INT8" || s == "EVXX_INT8")
     return simaai::neat::TensorDType::Int8;
-  if (s == "UINT8")
+  if (s == "UINT8" || s == "EVXX_UINT8")
     return simaai::neat::TensorDType::UInt8;
-  if (s == "INT16")
+  if (s == "INT16" || s == "EVXX_INT16")
     return simaai::neat::TensorDType::Int16;
-  if (s == "UINT16")
+  if (s == "UINT16" || s == "EVXX_UINT16")
     return simaai::neat::TensorDType::UInt16;
-  if (s == "INT32")
+  if (s == "INT32" || s == "EVXX_INT32")
     return simaai::neat::TensorDType::Int32;
-  if (s == "BF16" || s == "BFLOAT16")
+  if (s == "BF16" || s == "BFLOAT16" || s == "EVXX_BFLOAT16")
     return simaai::neat::TensorDType::BFloat16;
-  if (s == "FP32" || s == "FLOAT32")
+  if (s == "FP32" || s == "FLOAT32" || s == "EVXX_FLOAT32")
     return simaai::neat::TensorDType::Float32;
   if (s == "FP64" || s == "FLOAT64")
     return simaai::neat::TensorDType::Float64;
@@ -222,6 +226,96 @@ bool find_indexed_int_field(const GstStructure* st, const char* base_name, int* 
   return found;
 }
 
+bool parse_shape_csv(const std::string& raw, std::vector<int64_t>* out) {
+  if (!out)
+    return false;
+  out->clear();
+  std::stringstream ss(raw);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    token.erase(std::remove_if(token.begin(), token.end(),
+                               [](unsigned char c) { return std::isspace(c) != 0; }),
+                token.end());
+    if (token.empty())
+      return false;
+    try {
+      const long long value = std::stoll(token);
+      if (value <= 0)
+        return false;
+      out->push_back(static_cast<int64_t>(value));
+    } catch (...) {
+      return false;
+    }
+  }
+  return !out->empty();
+}
+
+bool find_tensor_shape(const GstStructure* st, std::vector<int64_t>* out) {
+  if (!st || !out)
+    return false;
+
+  gint rank_i = 0;
+  if (gst_structure_get_int(st, "rank", &rank_i) && rank_i > 0) {
+    const guint rank = static_cast<guint>(rank_i);
+    if (const char* shape_csv = gst_structure_get_string(st, "shape")) {
+      std::vector<int64_t> parsed;
+      if (parse_shape_csv(shape_csv, &parsed) &&
+          parsed.size() == static_cast<std::size_t>(rank)) {
+        *out = std::move(parsed);
+        return true;
+      }
+      return false;
+    }
+
+    out->clear();
+    out->reserve(rank);
+    for (guint i = 0; i < rank; ++i) {
+      const std::string key = "dim" + std::to_string(i);
+      gint dim_i = 0;
+      if (!gst_structure_get_int(st, key.c_str(), &dim_i) || dim_i <= 0) {
+        out->clear();
+        return false;
+      }
+      out->push_back(static_cast<int64_t>(dim_i));
+    }
+    return true;
+  }
+
+  int w = 0;
+  int h = 0;
+  int d = 0;
+  find_indexed_int_field(st, "width", &w);
+  find_indexed_int_field(st, "height", &h);
+  find_indexed_int_field(st, "depth", &d);
+  if (w > 0 && h > 0 && d > 0) {
+    *out = {h, w, d};
+    return true;
+  }
+  if (w > 0 && h > 0) {
+    *out = {h, w};
+    return true;
+  }
+  if (w > 0) {
+    *out = {w};
+    return true;
+  }
+  return false;
+}
+
+TensorLayout layout_from_caps_token(const char* token) {
+  const std::string layout = upper_copy(std::string(token ? token : ""));
+  if (layout == "HW") {
+    return TensorLayout::HW;
+  }
+  if (layout == "HWC" || layout == "NHWC" || layout == "NDHWC") {
+    return TensorLayout::HWC;
+  }
+  if (layout == "CHW" || layout == "NCHW" || layout == "NDCHW") {
+    return TensorLayout::CHW;
+  }
+  return TensorLayout::Unknown;
+}
+
 /**
  * Build a Tensor wrapping a GstSample that contains "application/vnd.simaai.tensor".
  *
@@ -241,13 +335,6 @@ Tensor from_gst_tensor_sample(GstSample* sample, const GstStructure* st, GstBuff
     throw std::runtime_error("from_gst_sample: missing tensor storage");
   }
 
-  int w = 0;
-  int h = 0;
-  int d = 0;
-  find_indexed_int_field(st, "width", &w);
-  find_indexed_int_field(st, "height", &h);
-  find_indexed_int_field(st, "depth", &d);
-
   const char* fmt = gst_structure_get_string(st, "format");
   const std::string fmt_str = fmt ? fmt : "";
   out.dtype = dtype_from_tensor_format(fmt_str);
@@ -256,23 +343,16 @@ Tensor from_gst_tensor_sample(GstSample* sample, const GstStructure* st, GstBuff
   }
   out.device = out.storage->device;
   out.read_only = true;
-  out.layout = simaai::neat::TensorLayout::Unknown; // unknown unless caps say otherwise
+  out.layout = layout_from_caps_token(gst_structure_get_string(st, "layout"));
 
   const std::size_t elem = dtype_bytes(out.dtype);
   if (elem == 0) {
     throw std::runtime_error("from_gst_sample: unknown tensor element size");
   }
 
-  if (w > 0 && h > 0 && d > 0) {
-    out.shape = {h, w, d};
-    out.strides_bytes = {static_cast<int64_t>(w * d * elem), static_cast<int64_t>(d * elem),
-                         static_cast<int64_t>(elem)};
-  } else if (w > 0 && h > 0) {
-    out.shape = {h, w};
-    out.strides_bytes = {static_cast<int64_t>(w * elem), static_cast<int64_t>(elem)};
-  } else if (w > 0) {
-    out.shape = {w};
-    out.strides_bytes = {static_cast<int64_t>(elem)};
+  if (find_tensor_shape(st, &out.shape)) {
+    out.strides_bytes =
+        simaai::neat::pipeline_internal::contiguous_strides_bytes(out.shape, elem);
   } else {
     const std::size_t bytes = buffer ? gst_buffer_get_size(buffer) : 0;
     const std::size_t n = (bytes > 0) ? (bytes / elem) : 0;
@@ -286,6 +366,9 @@ Tensor from_gst_tensor_sample(GstSample* sample, const GstStructure* st, GstBuff
     TessSpec tess;
     tess.format = fmt_str;
     out.semantic.tess = tess;
+  }
+  if (const auto preprocess = read_simaai_preprocess_meta(buffer); preprocess.has_value()) {
+    out.semantic.preprocess = *preprocess;
   }
 
   return out;
@@ -331,6 +414,9 @@ Tensor from_gst_video_sample(GstSample* sample, GstCaps* caps) {
   ImageSpec image;
   image.format = pixel;
   out.semantic.image = image;
+  if (const auto preprocess = read_simaai_preprocess_meta(buffer); preprocess.has_value()) {
+    out.semantic.preprocess = *preprocess;
+  }
 
   // Planar YUV formats: represent as composite tensor with planes.
   if (fmt == GST_VIDEO_FORMAT_NV12) {

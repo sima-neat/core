@@ -8,6 +8,21 @@
 
 namespace simaai::neat::pipeline_internal {
 
+namespace {
+
+TensorCompatDims seed_compat_dims_from_spec(const SampleSpec& seed) {
+  if (seed.media_type == "application/vnd.simaai.tensor" && !seed.shape.empty()) {
+    return tensor_compat_dims_from_shape(seed.shape, seed.layout);
+  }
+  TensorCompatDims out;
+  out.width = seed.width;
+  out.height = seed.height;
+  out.depth = seed.depth;
+  return out;
+}
+
+} // namespace
+
 InputOptions normalize_shape_bounds(const InputOptions& in) {
   InputOptions out = in;
   if (out.max_width <= 0 && out.width > 0)
@@ -35,28 +50,30 @@ InputStreamOptions::ShapePolicy resolve_shape_policy(const InputOptions& opt) {
 InputStreamOptions::ResolvedShapeLimits resolve_shape_limits(const InputOptions& opt,
                                                              const SampleSpec& seed) {
   InputStreamOptions::ResolvedShapeLimits limits{};
+  const bool use_seed_shape = !seed.tensor_envelope_transport;
+  const TensorCompatDims seed_dims = seed_compat_dims_from_spec(seed);
 
   if (opt.width > 0) {
     limits.seed_width = opt.width;
     limits.seed_width_origin = InputStreamOptions::LimitOrigin::UserSeed;
-  } else if (seed.width > 0) {
-    limits.seed_width = seed.width;
+  } else if (use_seed_shape && seed_dims.width > 0) {
+    limits.seed_width = seed_dims.width;
     limits.seed_width_origin = InputStreamOptions::LimitOrigin::SeedInput;
   }
 
   if (opt.height > 0) {
     limits.seed_height = opt.height;
     limits.seed_height_origin = InputStreamOptions::LimitOrigin::UserSeed;
-  } else if (seed.height > 0) {
-    limits.seed_height = seed.height;
+  } else if (use_seed_shape && seed_dims.height > 0) {
+    limits.seed_height = seed_dims.height;
     limits.seed_height_origin = InputStreamOptions::LimitOrigin::SeedInput;
   }
 
   if (opt.depth > 0) {
     limits.seed_depth = opt.depth;
     limits.seed_depth_origin = InputStreamOptions::LimitOrigin::UserSeed;
-  } else if (seed.depth > 0) {
-    limits.seed_depth = seed.depth;
+  } else if (use_seed_shape && seed_dims.depth > 0) {
+    limits.seed_depth = seed_dims.depth;
     limits.seed_depth_origin = InputStreamOptions::LimitOrigin::SeedInput;
   }
 
@@ -161,8 +178,6 @@ ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest&
 
   out.resolved_input_format =
       req.preproc_input_img_type.has_value() ? *req.preproc_input_img_type : req.format;
-  out.resolved_input_width = req.preproc_input_width.value_or(0);
-  out.resolved_input_height = req.preproc_input_height.value_or(0);
 
   if (req.input_max_depth > 0) {
     out.resolved_input_depth = req.input_max_depth;
@@ -173,14 +188,13 @@ ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest&
   if (req.input_max_width > 0) {
     out.resolved_max_input_width = req.input_max_width;
   } else {
-    out.resolved_max_input_width = (out.resolved_input_width > 0) ? out.resolved_input_width : 1920;
+    out.resolved_max_input_width = 1920;
   }
 
   if (req.input_max_height > 0) {
     out.resolved_max_input_height = req.input_max_height;
   } else {
-    out.resolved_max_input_height =
-        (out.resolved_input_height > 0) ? out.resolved_input_height : 1080;
+    out.resolved_max_input_height = 1080;
   }
 
   if (req.input_max_depth > 0) {

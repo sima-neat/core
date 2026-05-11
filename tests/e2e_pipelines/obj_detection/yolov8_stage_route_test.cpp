@@ -4,6 +4,7 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/Preproc.h"
 #include "model/Model.h"
 
 #include "e2e_pipelines/e2e_utils.h"
@@ -11,13 +12,10 @@
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
 #include "test_utils.h"
 
-#include <nlohmann/json.hpp>
-
 #include <opencv2/imgcodecs.hpp>
 
 #include <cctype>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -35,6 +33,7 @@ enum class StageRoute {
 
 struct StageTestConfig {
   int iters = 1;
+  float boxdecode_score_threshold = 0.50f;
   float min_score = 0.52f;
   float min_iou = 0.30f;
 };
@@ -46,6 +45,16 @@ struct PreprocWireInfo {
   int depth = 0;
 };
 
+template <typename Fn>
+auto run_with_report(simaai::neat::Run& runner, const std::string& label, Fn&& fn)
+    -> decltype(fn()) {
+  try {
+    return fn();
+  } catch (const std::exception& e) {
+    throw std::runtime_error(label + " failed: " + e.what() + "\n" + runner.report());
+  }
+}
+
 std::string upper_copy(std::string s) {
   for (char& c : s) {
     c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
@@ -53,62 +62,14 @@ std::string upper_copy(std::string s) {
   return s;
 }
 
-std::string find_preproc_config_path(const simaai::neat::Model& model) {
-  std::string path = model.find_config_path_by_plugin("process_cvu");
-  if (path.empty())
-    path = model.find_config_path_by_plugin("preproc");
-  if (path.empty())
-    path = model.find_config_path_by_processor("CVU");
-  return path;
-}
-
-nlohmann::json load_json_file(const std::string& path, const char* label) {
-  std::ifstream in(path);
-  if (!in.is_open()) {
-    throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
-  }
-  nlohmann::json j;
-  in >> j;
-  return j;
-}
-
-int read_first_int(const nlohmann::json& v) {
-  if (v.is_number_integer())
-    return v.get<int>();
-  if (v.is_number())
-    return static_cast<int>(v.get<double>());
-  if (v.is_array()) {
-    for (const auto& entry : v) {
-      if (entry.is_number_integer())
-        return entry.get<int>();
-      if (entry.is_number())
-        return static_cast<int>(entry.get<double>());
-    }
-  }
-  return 0;
-}
-
-int read_int_field(const nlohmann::json& j, const char* key) {
-  if (!j.contains(key))
-    return 0;
-  return read_first_int(j.at(key));
-}
-
 PreprocWireInfo read_preproc_wire_info(const simaai::neat::Model& model,
                                        const simaai::neat::Tensor& tensor, const cv::Mat& img) {
   PreprocWireInfo info;
-  const std::string path = find_preproc_config_path(model);
-  if (!path.empty()) {
-    const nlohmann::json j = load_json_file(path, "yolov8_stage_route_test");
-    if (j.contains("output_img_type") && j["output_img_type"].is_string()) {
-      info.format = j["output_img_type"].get<std::string>();
-    }
-    info.width = read_int_field(j, "output_width");
-    info.height = read_int_field(j, "output_height");
-    info.depth = read_int_field(j, "output_channels");
-    if (info.depth <= 0)
-      info.depth = read_int_field(j, "tile_channels");
-  }
+  const simaai::neat::PreprocOptions opt(model);
+  info.format = opt.output_img_type;
+  info.width = opt.output_width();
+  info.height = opt.output_height();
+  info.depth = (opt.output_channels() > 0) ? opt.output_channels() : opt.slice_channels();
 
   if (info.format.empty())
     info.format = "RGB";
@@ -243,23 +204,40 @@ void run_stage_route_once(const cv::Mat& img_bgr, const simaai::neat::Model& mod
                           const simaai::neat::stages::BoxDecodeOptions& box_opt,
                           const std::vector<objdet::ExpectedBox>& expected, int iter) {
   step_log("stage_route: begin");
-  auto pre = simaai::neat::stages::Preproc(img_bgr, model);
-  require(is_int8_tensor(pre), "Preproc output is not INT8 tessellated");
-  require(tensor_width(pre) > 0 && tensor_height(pre) > 0, "Preproc output missing width/height");
-  require(pre.shape.size() >= 3, "Preproc output missing shape dims");
+  const simaai::neat::TensorList pre_tensors =
+      simaai::neat::stages::Preproc(std::vector<cv::Mat>{img_bgr}, model);
+  require(!pre_tensors.empty(), "Preproc output missing tensor outputs");
+  require(is_int8_tensor(pre_tensors.front()), "Preproc output is not INT8 tessellated");
+  require(tensor_width(pre_tensors.front()) > 0 && tensor_height(pre_tensors.front()) > 0,
+          "Preproc output missing width/height");
+  require(pre_tensors.front().shape.size() >= 3, "Preproc output missing shape dims");
   std::cout << "Preproc passed\n" << std::endl;
 
-  auto infer = simaai::neat::stages::Infer(pre, model);
-  require(is_int8_tensor(infer), "Infer output is not INT8 tessellated");
-  require(tensor_width(infer) > 0 && tensor_height(infer) > 0, "Infer output missing width/height");
-  require(infer.shape.size() >= 3, "Infer output missing shape dims");
+  const simaai::neat::Sample pre = simaai::neat::sample_from_tensors(pre_tensors);
+  const simaai::neat::SampleList infer_samples =
+      simaai::neat::stages::Infer(simaai::neat::SampleList{pre}, model);
+  require(infer_samples.size() == 1U, "Infer should return exactly one sample");
+  const simaai::neat::Sample infer = infer_samples.front();
+  const auto infer_tensors = simaai::neat::stages::Tensors(infer);
+  require(!infer_tensors.empty(), "Infer output missing tensor outputs");
+  require(is_int8_tensor(infer_tensors.front()), "Infer output is not INT8 tessellated");
+  require(tensor_width(infer_tensors.front()) > 0 && tensor_height(infer_tensors.front()) > 0,
+          "Infer output missing width/height");
+  require(infer_tensors.front().shape.size() >= 3, "Infer output missing shape dims");
   std::cout << "Infer passed\n" << std::endl;
 
   step_log("stage_route: before BoxDecode");
-  const auto out = simaai::neat::stages::BoxDecode(infer, model, box_opt);
+  const simaai::neat::SampleList out_samples =
+      simaai::neat::stages::BoxDecode(simaai::neat::SampleList{infer}, model, box_opt);
+  require(out_samples.size() == 1U, "BoxDecode should return exactly one sample");
+  const simaai::neat::Sample out = out_samples.front();
   std::cout << "BoxDecode passed\n" << std::endl;
   step_log("stage_route: after BoxDecode");
-  const auto boxes = to_objdet_boxes(out.boxes);
+  std::vector<uint8_t> payload;
+  std::string err;
+  require(objdet::extract_bbox_payload(out, iter, payload, err), err);
+  const auto boxes =
+      objdet::parse_boxes_strict(payload, img_bgr.cols, img_bgr.rows, box_opt.top_k, false);
   const objdet::MatchResult match =
       objdet::match_expected_boxes(boxes, expected, cfg.min_score, cfg.min_iou);
   require(match.ok, "verify_mismatch iter=" + std::to_string(iter) + " " + match.note);
@@ -269,46 +247,36 @@ void run_preproc_pipeline_once(const cv::Mat& img_bgr, const simaai::neat::Model
                                const StageTestConfig& cfg,
                                const simaai::neat::stages::BoxDecodeOptions& box_opt,
                                const std::vector<objdet::ExpectedBox>& expected, int iter) {
+  constexpr int kStageTimeoutMs = 30000;
   step_log("preproc_pipeline: begin");
-  auto pre = simaai::neat::stages::Preproc(img_bgr, model);
-  require(is_int8_tensor(pre), "Preproc output is not INT8 tessellated");
-  require(tensor_width(pre) > 0 && tensor_height(pre) > 0, "Preproc output missing width/height");
-  require(pre.shape.size() >= 3, "Preproc output missing shape dims");
+  const simaai::neat::TensorList pre_tensors =
+      simaai::neat::stages::Preproc(std::vector<cv::Mat>{img_bgr}, model);
+  const simaai::neat::Sample wire = simaai::neat::sample_from_tensors(pre_tensors);
+  std::cout << "[DBG] preproc wire kind=" << static_cast<int>(wire.kind)
+            << " media_type=" << wire.media_type << " format=" << wire.format
+            << " payload_tag=" << wire.payload_tag << "\n";
+  require(!pre_tensors.empty(), "Preproc output missing tensor outputs");
+  require(is_int8_tensor(pre_tensors.front()), "Preproc output is not INT8 tessellated");
+  require(tensor_width(pre_tensors.front()) > 0 && tensor_height(pre_tensors.front()) > 0,
+          "Preproc output missing width/height");
+  require(pre_tensors.front().shape.size() >= 3, "Preproc output missing shape dims");
   std::cout << "Preproc passed\n" << std::endl;
-
-  const PreprocWireInfo wire_info = read_preproc_wire_info(model, pre, img_bgr);
-
-  simaai::neat::Tensor wire = pre;
-  wire.dtype = simaai::neat::TensorDType::UInt8;
-  wire.semantic.tess.reset();
-  {
-    simaai::neat::ImageSpec image;
-    image.format = simaai::neat::ImageSpec::PixelFormat::RGB;
-    if (upper_copy(wire_info.format) == "BGR") {
-      image.format = simaai::neat::ImageSpec::PixelFormat::BGR;
-    }
-    wire.semantic.image = image;
-  }
-  wire.shape = {wire_info.height, wire_info.width, wire_info.depth};
-  wire.strides_bytes.clear();
-
-  simaai::neat::InputOptions src_opt = model.input_appsrc_options(false);
-  src_opt.media_type = "video/x-raw";
-  src_opt.format = wire_info.format;
-  src_opt.width = wire_info.width;
-  src_opt.height = wire_info.height;
-  src_opt.depth = -1;
 
   const int topk = (box_opt.top_k > 0) ? box_opt.top_k : 100;
   simaai::neat::Session p;
-  p.add(simaai::neat::nodes::Input(src_opt));
+  p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Infer(model));
-  p.add(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", img_bgr.cols, img_bgr.rows,
-                                           cfg.min_score, 0.5f, topk));
+  p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
+                                           cfg.boxdecode_score_threshold, 0.5f, topk));
   p.add(simaai::neat::nodes::Output());
 
   step_log("preproc_pipeline: before p.run");
-  const simaai::neat::Sample out = p.run(wire);
+  auto runner = p.build(simaai::neat::SampleList{wire}, simaai::neat::RunMode::Sync);
+  const simaai::neat::SampleList out_samples = run_with_report(
+      runner, "preproc_pipeline p.run",
+      [&]() { return runner.run(simaai::neat::SampleList{wire}, kStageTimeoutMs); });
+  require(out_samples.size() == 1U, "preproc pipeline should return exactly one sample");
+  const simaai::neat::Sample out = out_samples.front();
   step_log("preproc_pipeline: after p.run");
   std::vector<uint8_t> payload;
   std::string err;
@@ -333,21 +301,20 @@ int main(int argc, char** argv) {
     const std::string tar_gz = sima_yolov8_test::resolve_yolov8s_tar_or_skip(root);
     cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
 
-    simaai::neat::Model::Options model_opt;
-    model_opt.format = "BGR";
-    model_opt.input_max_width = img_bgr.cols;
-    model_opt.input_max_height = img_bgr.rows;
-    model_opt.input_max_depth = 3;
-    model_opt.preproc.normalize = false;
-    model_opt.upstream_name = "decoder";
-    auto model = simaai::neat::Model(tar_gz, model_opt);
-
     StageTestConfig cfg;
 
-    simaai::neat::stages::BoxDecodeOptions box_opt;
-    box_opt.decode_type = "yolov8";
-    box_opt.original_width = img_bgr.cols;
-    box_opt.original_height = img_bgr.rows;
+    simaai::neat::Model::Options model_opt;
+    model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+    model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    model_opt.upstream_name = "decoder";
+    model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+    model_opt.score_threshold = cfg.min_score;
+    model_opt.nms_iou_threshold = 0.5f;
+    model_opt.top_k = 100;
+    auto model = simaai::neat::Model(tar_gz, model_opt);
+
+    simaai::neat::stages::BoxDecodeOptions box_opt(simaai::neat::BoxDecodeType::YoloV8);
     box_opt.detection_threshold = cfg.min_score;
     box_opt.nms_iou_threshold = 0.5f;
     box_opt.top_k = 100;

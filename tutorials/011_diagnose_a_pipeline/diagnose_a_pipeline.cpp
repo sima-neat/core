@@ -34,9 +34,9 @@ int main() {
     simaai::neat::RunOptions run_opt;
     run_opt.enable_metrics = true;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-    auto run = session.build(rgb, simaai::neat::RunMode::Sync, run_opt);
-    auto out = run.push_and_pull(rgb, /*timeout_ms=*/1000);
-    if (!out.tensor.has_value())
+    auto run = session.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync, run_opt);
+    simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
+    if (out.empty())
       throw std::runtime_error("missing output tensor");
 
     // 3) Post-run diagnostics: counters, per-element report, and a summary string.

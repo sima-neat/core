@@ -15,8 +15,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <string>
 #include <thread>
@@ -50,16 +50,6 @@ fs::path find_repo_root() {
   return fs::current_path();
 }
 
-json read_json_file(const fs::path& path) {
-  std::ifstream in(path);
-  if (!in.is_open()) {
-    throw std::runtime_error("preproc: failed to open json: " + path.string());
-  }
-  json j;
-  in >> j;
-  return j;
-}
-
 std::string json_string(const json& j, const char* key) {
   auto it = j.find(key);
   if (it == j.end() || !it->is_string())
@@ -74,42 +64,24 @@ int json_int(const json& j, const char* key, int def) {
   return it->get<int>();
 }
 
-bool is_preproc_config(const fs::path& path) {
-  const std::string name = path.filename().string();
-  return name.rfind("sima_preproc_", 0) == 0 && path.extension() == ".json";
+int json_input_width(const json& j, int def = -1) {
+  const int legacy = json_int(j, "input_width", def);
+  if (legacy != def)
+    return legacy;
+  auto it = j.find("input_shape");
+  if (it != j.end() && it->is_array() && it->size() >= 2 && (*it)[1].is_number_integer())
+    return (*it)[1].get<int>();
+  return def;
 }
 
-void cleanup_preproc_configs(const fs::path& dir) {
-  if (!fs::exists(dir))
-    return;
-  for (const auto& entry : fs::directory_iterator(dir)) {
-    if (!entry.is_regular_file())
-      continue;
-    if (is_preproc_config(entry.path())) {
-      std::error_code ec;
-      fs::remove(entry.path(), ec);
-    }
-  }
-}
-
-fs::path find_latest_preproc_config(const fs::path& dir) {
-  fs::path latest;
-  fs::file_time_type latest_time{};
-  if (!fs::exists(dir))
-    return latest;
-  for (const auto& entry : fs::directory_iterator(dir)) {
-    if (!entry.is_regular_file())
-      continue;
-    const fs::path p = entry.path();
-    if (!is_preproc_config(p))
-      continue;
-    const fs::file_time_type t = fs::last_write_time(p);
-    if (latest.empty() || t > latest_time) {
-      latest = p;
-      latest_time = t;
-    }
-  }
-  return latest;
+int json_input_height(const json& j, int def = -1) {
+  const int legacy = json_int(j, "input_height", def);
+  if (legacy != def)
+    return legacy;
+  auto it = j.find("input_shape");
+  if (it != j.end() && it->is_array() && !it->empty() && (*it)[0].is_number_integer())
+    return (*it)[0].get<int>();
+  return def;
 }
 
 struct Metrics {
@@ -136,15 +108,24 @@ Metrics compare_rgb(const cv::Mat& a, const cv::Mat& b) {
 }
 
 cv::Mat require_preproc_rgb(const simaai::neat::Sample& out, int expected_w, int expected_h) {
-  require(out.tensor.has_value(), "preproc: missing output tensor");
-  const simaai::neat::Tensor& tensor = *out.tensor;
+  const simaai::neat::Tensor* tensor_ptr = nullptr;
+  if (!out.tensors.empty()) {
+    tensor_ptr = &out.tensors.front();
+  } else if (out.tensor.has_value()) {
+    tensor_ptr = &*out.tensor;
+  }
+  require(tensor_ptr != nullptr, "preproc: missing output tensor");
+  const simaai::neat::Tensor& tensor = *tensor_ptr;
   require(tensor.shape.size() >= 2, "preproc: missing output shape");
   require(tensor.shape[0] == expected_h, "preproc: height mismatch");
   require(tensor.shape[1] == expected_w, "preproc: width mismatch");
-  require(tensor.semantic.image.has_value(), "preproc: missing image semantic");
-  require(tensor.semantic.image->format == simaai::neat::ImageSpec::PixelFormat::RGB,
-          "preproc: format mismatch");
-  require(tensor.dtype == simaai::neat::TensorDType::UInt8, "preproc: dtype mismatch");
+  if (tensor.semantic.image.has_value()) {
+    require(tensor.semantic.image->format == simaai::neat::ImageSpec::PixelFormat::RGB,
+            "preproc: format mismatch");
+  }
+  require(tensor.dtype == simaai::neat::TensorDType::UInt8 ||
+              tensor.dtype == simaai::neat::TensorDType::Int8,
+          "preproc: dtype mismatch");
 
   simaai::neat::Tensor cpu = tensor.cpu().contiguous();
   simaai::neat::Mapping map = cpu.map(simaai::neat::MapMode::Read);
@@ -194,6 +175,11 @@ cv::Mat load_rgb_image(const fs::path& path, const std::string& name) {
   return rgb;
 }
 
+simaai::neat::Tensor make_rgb_tensor(const cv::Mat& rgb) {
+  return simaai::neat::Tensor::from_cv_mat(
+      rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
+}
+
 } // namespace
 
 int main() {
@@ -205,13 +191,6 @@ int main() {
 
     fs::path root = find_repo_root();
     fs::path assets_dir = root / "tests" / "assets" / "preproc_dynamic";
-    fs::path tmp_dir = root / "tmp" / "preproc_dynamic_test";
-    fs::path fmt_tmp_dir = tmp_dir / "format";
-    fs::create_directories(tmp_dir);
-    fs::create_directories(fmt_tmp_dir);
-    cleanup_preproc_configs(tmp_dir);
-    cleanup_preproc_configs(fmt_tmp_dir);
-
     std::vector<ImageCase> images = {
         {
             "ilena_488",
@@ -288,21 +267,20 @@ int main() {
 
     InputOptions src_opt;
     src_opt.media_type = "video/x-raw";
-    src_opt.format = "RGB";
+    src_opt.format = simaai::neat::FormatTag::RGB;
     src_opt.use_simaai_pool = true;
     p.add(nodes::Input(src_opt));
 
     PreprocOptions pre_opt;
-    pre_opt.input_width = max_w;
-    pre_opt.input_height = max_h;
-    pre_opt.output_width = out_w;
-    pre_opt.output_height = out_h;
+    pre_opt.set_input_shape({max_h, max_w, 3});
+    pre_opt.set_output_shape({out_h, out_w, 3});
     pre_opt.scaled_width = out_w;
     pre_opt.scaled_height = out_h;
     pre_opt.input_img_type = "RGB";
     pre_opt.output_img_type = "RGB";
     pre_opt.normalize = false;
     pre_opt.aspect_ratio = false;
+    pre_opt.tessellate = false;
     pre_opt.dynamic_input_dims = true;
     pre_opt.output_dtype = "EVXX_INT8";
     pre_opt.scaling_type = "BILINEAR";
@@ -310,11 +288,11 @@ int main() {
     pre_opt.next_cpu = "APU";
     pre_opt.upstream_name = "decoder";
     pre_opt.num_buffers = 4;
-    pre_opt.config_dir = tmp_dir.string();
-    pre_opt.keep_config = true;
-    pre_opt.output_memory_order = {"output_rgb_image", "output_tessellated_image"};
+    pre_opt.q_scale = 0.25;
+    pre_opt.q_zp = 0;
 
-    p.add(nodes::Preproc(pre_opt));
+    auto preproc = std::make_shared<Preproc>(pre_opt);
+    p.add(preproc);
 
     OutputOptions sink_opt;
     sink_opt.sync = false;
@@ -327,7 +305,7 @@ int main() {
     run_opt.output_memory =
         simaai::neat::OutputMemory::Owned; // output is copied to CPU, doesn’t pin pool buffers
 
-    Run run = p.build(images[0].rgb, RunMode::Async, run_opt);
+    Run run = p.build(TensorList{make_rgb_tensor(images[0].rgb)}, RunMode::Async, run_opt);
 
     auto check_image = [&](const ImageCase& img, const Sample& out) {
       cv::Mat out_rgb = require_preproc_rgb(out, out_w, out_h);
@@ -345,45 +323,49 @@ int main() {
       require(m.max_abs <= max_thr, "preproc: MaxAbs too high for " + img.name);
     };
 
-    Sample out1 = run.push_and_pull(images[0].rgb, 5000);
+    require(run.push(TensorList{make_rgb_tensor(images[0].rgb)}), "preproc: first push failed");
+    SampleList outs1 = run.pull_samples(5000);
+    require(outs1.size() == 1, "preproc: expected one output sample");
+    Sample out1 = std::move(outs1.front());
     check_image(images[0], out1);
     require(run.input_stats().renegotiations == 0,
             "preproc: unexpected renegotiation on first frame");
 
-    const fs::path config_path = find_latest_preproc_config(tmp_dir);
-    require(!config_path.empty(), "preproc: config json missing");
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    const fs::file_time_type mtime0 = fs::last_write_time(config_path);
-    const json cfg0 = read_json_file(config_path);
-    const int input_w0 = json_int(cfg0, "input_width", -1);
-    const int input_h0 = json_int(cfg0, "input_height", -1);
+    require(preproc->config_path().empty(),
+            "preproc: standalone config_path should be empty with typed processcvu payloads");
+    const json* cfg0_ptr = preproc->config_json();
+    require(cfg0_ptr != nullptr, "preproc: config json missing");
+    const json cfg0 = *cfg0_ptr;
+    const int input_w0 = json_input_width(cfg0);
+    const int input_h0 = json_input_height(cfg0);
     const std::string input_fmt0 = json_string(cfg0, "input_img_type");
     require(input_w0 > 0 && input_h0 > 0, "preproc: invalid input dims in json");
     require(!input_fmt0.empty(), "preproc: missing input_img_type in json");
 
     std::uint64_t expected_reneg = 0;
     for (size_t i = 1; i < images.size(); ++i) {
-      require(run.push(images[i].rgb), "preproc: push new size #1 failed");
-      require(run.push(images[i].rgb), "preproc: push new size #2 failed");
+      require(run.push(TensorList{make_rgb_tensor(images[i].rgb)}),
+              "preproc: push new size #1 failed");
+      require(run.push(TensorList{make_rgb_tensor(images[i].rgb)}),
+              "preproc: push new size #2 failed");
 
-      auto out_opt = run.pull(5000);
-      require(out_opt.has_value(), "appsink: missing output after renegotiation");
-      check_image(images[i], *out_opt);
+      SampleList outs = run.pull_samples(5000);
+      require(outs.size() == 1, "appsink: expected one output after renegotiation");
+      check_image(images[i], outs.front());
 
       expected_reneg++;
       require(wait_for_reneg(run, expected_reneg, 1000),
               "preproc: renegotiation not observed after stability");
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-      const fs::file_time_type mtime = fs::last_write_time(config_path);
-      const json cfg = read_json_file(config_path);
-      require(json_int(cfg, "input_width", -1) == input_w0,
-              "preproc: input_width changed on dims-only renegotiation");
-      require(json_int(cfg, "input_height", -1) == input_h0,
-              "preproc: input_height changed on dims-only renegotiation");
+      const json* cfg_ptr = preproc->config_json();
+      require(cfg_ptr != nullptr, "preproc: config json missing after renegotiation");
+      const json& cfg = *cfg_ptr;
+      require(json_input_width(cfg) == images[i].rgb.cols,
+              "preproc: input_width not updated from renegotiated input contract");
+      require(json_input_height(cfg) == images[i].rgb.rows,
+              "preproc: input_height not updated from renegotiated input contract");
       require(json_string(cfg, "input_img_type") == input_fmt0,
               "preproc: input_img_type changed on dims-only renegotiation");
-      require(mtime == mtime0, "preproc: config json rewritten on dims-only renegotiation");
     }
 
     require(run.input_stats().renegotiations == expected_reneg,
@@ -391,8 +373,6 @@ int main() {
 
     {
       PreprocOptions fmt_opt = pre_opt;
-      fmt_opt.config_dir = fmt_tmp_dir.string();
-      fmt_opt.keep_config = true;
 
       Session p2;
       InputOptions fmt_src;
@@ -400,38 +380,39 @@ int main() {
       fmt_src.format = "";
       fmt_src.use_simaai_pool = true;
       p2.add(nodes::Input(fmt_src));
-      p2.add(nodes::Preproc(fmt_opt));
+      auto fmt_preproc = std::make_shared<Preproc>(fmt_opt);
+      p2.add(fmt_preproc);
       p2.add(nodes::Output(sink_opt));
 
       RunOptions fmt_run_opt = run_opt;
       simaai::neat::Tensor tensor_rgb = simaai::neat::Tensor::from_cv_mat(
-          images[0].rgb, simaai::neat::ImageSpec::PixelFormat::RGB, true);
+          images[0].rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
+          simaai::neat::TensorMemory::EV74);
       simaai::neat::Tensor tensor_bgr = simaai::neat::Tensor::from_cv_mat(
-          images[0].rgb, simaai::neat::ImageSpec::PixelFormat::BGR, true);
+          images[0].rgb, simaai::neat::ImageSpec::PixelFormat::BGR,
+          simaai::neat::TensorMemory::EV74);
 
-      Run run2 = p2.build(tensor_rgb, RunMode::Async, fmt_run_opt);
-      (void)run2.push_and_pull(tensor_rgb, 5000);
-      const fs::path format_config_path = find_latest_preproc_config(fmt_tmp_dir);
-      require(!format_config_path.empty(), "preproc: format config json missing");
-
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-      const fs::file_time_type fmt_mtime0 = fs::last_write_time(format_config_path);
-      const json fmt_cfg0 = read_json_file(format_config_path);
+      Run run2 = p2.build(TensorList{tensor_rgb}, RunMode::Async, fmt_run_opt);
+      (void)run2.run(TensorList{tensor_rgb}, 5000);
+      require(fmt_preproc->config_path().empty(),
+              "preproc: standalone format config_path should stay empty");
+      const json* fmt_cfg0_ptr = fmt_preproc->config_json();
+      require(fmt_cfg0_ptr != nullptr, "preproc: format config json missing");
+      const json fmt_cfg0 = *fmt_cfg0_ptr;
       const std::string fmt0 = json_string(fmt_cfg0, "input_img_type");
 
-      require(run2.push(tensor_bgr), "preproc: push BGR input failed");
+      require(run2.push(TensorList{tensor_bgr}), "preproc: push BGR input failed");
       require(wait_for_reneg(run2, 1, 1000), "preproc: format change renegotiation not observed");
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(20));
-      const fs::file_time_type fmt_mtime1 = fs::last_write_time(format_config_path);
-      const json fmt_cfg1 = read_json_file(format_config_path);
+      const json* fmt_cfg1_ptr = fmt_preproc->config_json();
+      require(fmt_cfg1_ptr != nullptr, "preproc: format config json missing after format change");
+      const json fmt_cfg1 = *fmt_cfg1_ptr;
       const std::string fmt1 = json_string(fmt_cfg1, "input_img_type");
 
       require(!fmt0.empty() && !fmt1.empty(),
               "preproc: input_img_type missing after format change");
       require(fmt0 != fmt1, "preproc: input_img_type did not change on format change");
       require(fmt1 == "BGR", "preproc: input_img_type not updated to BGR");
-      require(fmt_mtime1 != fmt_mtime0, "preproc: config json not rewritten on format change");
     }
 
     std::cout << "[OK] preproc_dynamic_renegotiate_test passed\n";

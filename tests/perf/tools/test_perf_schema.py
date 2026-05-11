@@ -75,6 +75,40 @@ class PerfSchemaTest(unittest.TestCase):
         with self.assertRaises(schema.SchemaError):
             schema.parse_metrics_payload(payload)
 
+    def test_optional_power_payload_is_metadata_not_metric(self) -> None:
+        payload = {
+            "scenario_id": "runtime_session_sync_rgb",
+            "throughput": 12.0,
+            "p50": 1.0,
+            "p95": 2.0,
+            "startup": 10.0,
+            "rss_peak_kb": 10000.0,
+            "input_drop_count": 0.0,
+            "output_drop_count": 0.0,
+            "power": {"samples": 2, "total_avg_watts": 3.5},
+            "runtime_metrics": {"source_kind": "perf", "throughput_fps": 12.0},
+        }
+        metrics = schema.parse_metrics_payload(payload)
+        self.assertEqual(metrics["throughput"], 12.0)
+        self.assertEqual(schema.parse_optional_power_payload(payload)["total_avg_watts"], 3.5)
+        self.assertEqual(
+            schema.parse_optional_runtime_metrics_payload(payload)["source_kind"], "perf"
+        )
+
+    def test_optional_power_payload_must_be_object(self) -> None:
+        payload = {
+            "throughput": 12.0,
+            "p50": 1.0,
+            "p95": 2.0,
+            "startup": 10.0,
+            "rss_peak_kb": 10000.0,
+            "input_drop_count": 0.0,
+            "output_drop_count": 0.0,
+            "power": 3.5,
+        }
+        with self.assertRaises(schema.SchemaError):
+            schema.parse_optional_power_payload(payload)
+
     def test_validate_baseline_directory_rejects_malformed_fixture(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

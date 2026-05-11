@@ -12,6 +12,7 @@
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/OutputTensorOverride.h"
 #include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include <gst/gst.h>
@@ -39,6 +40,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -47,6 +49,31 @@ namespace simaai::neat {
 using pipeline_internal::DiagCtx;
 using pipeline_internal::trim_copy;
 using pipeline_internal::upper_copy;
+
+struct TensorSetOutputDecodeSignature {
+  guint caps_hash = 0;
+  guint tensor_count = 0;
+  guint descriptor_size = 0;
+  guint memory_count = 0;
+  bool copy_output = false;
+  std::string stage_key;
+  std::uint64_t meta_hash = 0;
+
+  bool operator==(const TensorSetOutputDecodeSignature& other) const {
+    return caps_hash == other.caps_hash && tensor_count == other.tensor_count &&
+           descriptor_size == other.descriptor_size && memory_count == other.memory_count &&
+           copy_output == other.copy_output && stage_key == other.stage_key &&
+           meta_hash == other.meta_hash;
+  }
+};
+
+struct CachedTensorSetOutputDecode {
+  bool valid = false;
+  TensorSetOutputDecodeSignature signature;
+  Sample sample_template;
+  TensorList tensor_templates;
+  std::vector<Segment> runtime_segments;
+};
 
 struct InputStream::State {
   GstElement* pipeline = nullptr;
@@ -123,6 +150,11 @@ struct InputStream::State {
   std::atomic<std::int64_t> last_push_ns{0};
   std::atomic<std::int64_t> inflight{0};
   std::atomic<std::int64_t> next_input_seq{0};
+  std::mutex preprocess_meta_mu;
+  std::deque<std::int64_t> preprocess_meta_order;
+  std::unordered_map<std::int64_t, PreprocessRuntimeMeta> preprocess_meta_by_input_seq;
+  std::mutex output_decode_mu;
+  CachedTensorSetOutputDecode tensor_set_output_decode_cache;
   std::atomic<bool> eos_sent{false};
   std::atomic<bool> teardown_started{false};
   std::mutex stop_mu;
@@ -192,6 +224,7 @@ bool unref_on_push_fail_enabled();
 bool push_fail_debug_enabled();
 bool push_fail_detail_enabled();
 bool drop_holder_after_push_enabled();
+bool inputstream_push_timing_enabled();
 bool eos_debug_enabled();
 bool appsink_cb_debug_enabled();
 bool appsink_drop_last_debug_enabled();
@@ -269,9 +302,10 @@ BuiltBuffer build_buffer_with_fill(InputStream::State& st, const char* where,
                                    const std::optional<std::string>& stream_id_override,
                                    const std::optional<std::string>& buffer_name_override,
                                    const std::optional<uint64_t>& timestamp_override,
-                                   const std::function<void(GstBuffer*)>& prepare,
+                                   const std::function<void(GstBuffer**)>& prepare,
                                    bool record_timings, const char* op_tag,
-                                   bool release_reuse_buffer_on_fail);
+                                   bool release_reuse_buffer_on_fail, int input_width = -1,
+                                   int input_height = -1);
 
 void apply_video_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
 void apply_tensor_size_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
@@ -286,6 +320,14 @@ void attach_required_meta(GstBuffer* buffer, const InputOptions& opt, InputBuffe
                           const char* where);
 
 Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy_output,
-                                 const std::optional<OutputTensorOverride>* override_opt);
+                                 const std::optional<OutputTensorOverride>* override_opt,
+                                 InputStream::State* st);
+Sample sample_from_gst_envelope(GstSample* sample, const char* where, bool copy_output,
+                                const std::optional<OutputTensorOverride>* override_opt,
+                                InputStream::State* st);
+void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sample);
+void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Sample* sample);
+Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* sample,
+                                            const char* where);
 
 } // namespace simaai::neat

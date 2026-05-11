@@ -249,10 +249,11 @@ static std::vector<Nv12Frame> pull_frames(simaai::neat::Run& runner, int max_fra
       throw std::runtime_error(msg);
     }
 
-    if (out.kind != simaai::neat::SampleKind::Tensor || !out.tensor.has_value()) {
-      throw std::runtime_error(label + ": non-tensor output");
+    const auto tensors = simaai::neat::tensors_from_sample(out, true);
+    if (tensors.size() != 1U) {
+      throw std::runtime_error(label + ": expected one tensor output");
     }
-    frames.push_back(tensor_to_nv12(*out.tensor));
+    frames.push_back(tensor_to_nv12(tensors.front()));
   }
 
   if (static_cast<int>(frames.size()) < max_frames) {

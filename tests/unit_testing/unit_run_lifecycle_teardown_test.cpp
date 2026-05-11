@@ -45,9 +45,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            using namespace simaai::neat;
 
            EnvVarGuard input_stop_1("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", "200");
-           EnvVarGuard input_stop_2("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS_2", "200");
            EnvVarGuard stream_stop_1("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", "200");
-           EnvVarGuard stream_stop_2("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS_2", "200");
 
            const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x3A);
            Run run = sima_test::make_async_rgb_run(seed, 128, 128);
@@ -62,7 +60,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            std::thread producer([&] {
              try {
                while (keep_running.load(std::memory_order_relaxed)) {
-                 if (run.try_push(seed)) {
+                 if (run.try_push(TensorList{seed})) {
                    pushes.fetch_add(1, std::memory_order_relaxed);
                  } else {
                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -113,7 +111,8 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            const int stop_ms = sima_test::elapsed_ms(t0, t1);
            require(stop_ms < 5000, "Run::stop teardown exceeded expected bound");
 
-           require(!run.try_push(seed), "Run::try_push should fail after stop()");
+           require(!run.try_push(TensorList{seed}),
+                   "Run::try_push should fail after stop()");
            (void)pushes.load(std::memory_order_relaxed);
            (void)pulls.load(std::memory_order_relaxed);
          }));

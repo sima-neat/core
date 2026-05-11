@@ -94,33 +94,34 @@ void force_copy_tensor(simaai::neat::Tensor& t) {
 }
 
 void force_copy_sample_if_zero_copy(Sample& sample) {
-  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
-    force_copy_tensor(*sample.tensor);
+  if (sample.kind == SampleKind::TensorSet) {
+    for (auto& tensor : sample.tensors) {
+      force_copy_tensor(tensor);
+    }
     sample.owned = true;
     return;
   }
-  if (sample.kind != SampleKind::Bundle)
+  if (!sample_is_multi_output(sample))
     return;
   for (auto& field : sample.fields) {
-    if (field.kind == SampleKind::Tensor && field.tensor.has_value()) {
-      force_copy_tensor(*field.tensor);
-      field.owned = true;
-    }
+    force_copy_sample_if_zero_copy(field);
   }
   sample.owned = true;
 }
 
 bool sample_has_zero_copy_tensor(const Sample& sample) {
-  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
-    return tensor_is_zero_copy(*sample.tensor);
-  }
-  if (sample.kind != SampleKind::Bundle)
-    return false;
-  for (const auto& field : sample.fields) {
-    if (field.kind == SampleKind::Tensor && field.tensor.has_value()) {
-      if (tensor_is_zero_copy(*field.tensor))
+  if (sample.kind == SampleKind::TensorSet) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_is_zero_copy(tensor))
         return true;
     }
+    return false;
+  }
+  if (!sample_is_multi_output(sample))
+    return false;
+  for (const auto& field : sample.fields) {
+    if (sample_has_zero_copy_tensor(field))
+      return true;
   }
   return false;
 }
@@ -158,7 +159,10 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete) {
 }
 
 bool is_encoded_sample(const Sample& sample) {
-  return sample.tensor.has_value() && sample.tensor->semantic.encoded.has_value();
+  if (sample.kind != SampleKind::TensorSet || sample.tensors.size() != 1U) {
+    return false;
+  }
+  return sample.tensors.front().semantic.encoded.has_value();
 }
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
@@ -264,7 +268,7 @@ TensorLayout layout_from_spec(const OutputSpec& spec) {
     return TensorLayout::HWC;
   if (up.find("HW") != std::string::npos)
     return TensorLayout::HW;
-  return (spec.depth > 1) ? TensorLayout::HWC : TensorLayout::HW;
+  return TensorLayout::Unknown;
 }
 
 std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string* err) {
@@ -332,8 +336,8 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
           *err = "prebuild skipped: NV12/I420 requires even width/height";
         return std::nullopt;
       }
-      t.layout = TensorLayout::Planar;
       t.shape = {spec.height, spec.width};
+      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
 
       const int64_t w = spec.width;
       const int64_t h = spec.height;
@@ -372,21 +376,20 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
       const int64_t w = spec.width;
       const int64_t h = spec.height;
       if (fmt == "GRAY8") {
-        t.layout = TensorLayout::HW;
         t.shape = {h, w};
+        t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
         t.strides_bytes = contiguous_strides_bytes(t.shape, 1);
       } else {
-        t.layout = TensorLayout::HWC;
         t.shape = {h, w, 3};
+        t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W,
+                            TensorAxisSemantic::C};
         t.strides_bytes = contiguous_strides_bytes(t.shape, 1);
       }
     }
 
-    Sample sample;
-    sample.kind = SampleKind::Tensor;
+    Sample sample = sample_from_tensors(TensorList{std::move(t)});
     sample.media_type = spec.media_type;
     sample.payload_tag = spec.format;
-    sample.tensor = std::move(t);
     return sample;
   }
 
@@ -397,6 +400,11 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
       return std::nullopt;
     }
     TensorLayout layout = layout_from_spec(spec);
+    if (layout == TensorLayout::Unknown && spec.depth > 1) {
+      if (err)
+        *err = "prebuild skipped: missing explicit tensor layout for depth > 1";
+      return std::nullopt;
+    }
     if (layout == TensorLayout::HW && spec.depth > 1) {
       if (err)
         *err = "prebuild skipped: HW layout with depth > 1";
@@ -405,7 +413,6 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
 
     simaai::neat::Tensor t;
     t.dtype = dtype_from_format_or_dtype(spec);
-    t.layout = layout;
     t.device = {simaai::neat::DeviceType::CPU, 0};
     t.read_only = true;
 
@@ -414,10 +421,15 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
     const int64_t d = spec.depth;
     if (layout == TensorLayout::HWC) {
       t.shape = {h, w, d};
+      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W,
+                          TensorAxisSemantic::C};
     } else if (layout == TensorLayout::CHW) {
       t.shape = {d, h, w};
+      t.axis_semantics = {TensorAxisSemantic::C, TensorAxisSemantic::H,
+                          TensorAxisSemantic::W};
     } else {
       t.shape = {h, w};
+      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
     }
 
     const size_t elem = dtype_bytes(t.dtype);
@@ -439,11 +451,9 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
     t.storage = simaai::neat::make_cpu_owned_storage(bytes);
     t.strides_bytes = contiguous_strides_bytes(t.shape, static_cast<int64_t>(elem));
 
-    Sample sample;
-    sample.kind = SampleKind::Tensor;
+    Sample sample = sample_from_tensors(TensorList{std::move(t)});
     sample.media_type = spec.media_type;
     sample.payload_tag = spec.format;
-    sample.tensor = std::move(t);
     return sample;
   }
 
@@ -454,7 +464,6 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
 
 Sample make_bundle_carrier_sample() {
   Sample sample;
-  sample.kind = SampleKind::Tensor;
   sample.media_type = "application/vnd.simaai.tensor";
   sample.format = "FP32";
 
@@ -472,13 +481,15 @@ Sample make_bundle_carrier_sample() {
   simaai::neat::Tensor t;
   t.storage = std::move(storage);
   t.dtype = TensorDType::Float32;
-  t.layout = TensorLayout::HWC;
   t.shape = {kH, kW, kD};
+  t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
   t.strides_bytes = contiguous_strides_bytes(t.shape, static_cast<int64_t>(sizeof(float)));
   t.device = {simaai::neat::DeviceType::CPU, 0};
   t.read_only = true;
 
-  sample.tensor = std::move(t);
+  sample = sample_from_tensors(TensorList{std::move(t)});
+  sample.media_type = "application/vnd.simaai.tensor";
+  sample.format = "FP32";
   return sample;
 }
 

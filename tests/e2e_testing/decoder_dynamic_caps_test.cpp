@@ -273,10 +273,11 @@ int main() {
         throw std::runtime_error(msg);
       }
 
-      if (out.kind != simaai::neat::SampleKind::Tensor || !out.tensor.has_value()) {
-        throw std::runtime_error("non-tensor output");
+      const auto tensors = simaai::neat::tensors_from_sample(out, true);
+      if (tensors.size() != 1U) {
+        throw std::runtime_error("expected one tensor output");
       }
-      const simaai::neat::Tensor& t = *out.tensor;
+      const simaai::neat::Tensor& t = tensors.front();
       if (!t.is_nv12()) {
         throw std::runtime_error("expected NV12 tensor output");
       }

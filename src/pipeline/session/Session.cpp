@@ -17,11 +17,9 @@
 #include "pipeline/internal/SimaaiGuard.h"
 #include "pipeline/internal/SyncBuild.h"
 #include "pipeline/internal/TensorUtil.h"
+#include "pipeline/internal/UxLogging.h"
 #include "builder/Node.h"
 #include "builder/NodeGroup.h"
-#include "builder/ConfigJsonProvider.h"
-#include "builder/ConfigJsonConsumer.h"
-#include "builder/NextCpuConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
 #include "contracts/ContractRegistry.h"
@@ -74,12 +72,12 @@ namespace {
 std::atomic<std::uint64_t> g_pipeline_instance{0};
 
 bool stop_trace_enabled() {
-  const char* v = std::getenv("SIMA_STOP_TRACE");
-  return v && *v && std::strcmp(v, "0") != 0;
+  return pipeline_internal::env_bool("SIMA_STOP_TRACE", false);
 }
 } // namespace
 
 Session::Session(const SessionOptions& opt) : opt_(opt) {
+  verbose_guard_ = pipeline_internal::ux::acquire_runtime_verbosity(opt_.verbose);
   if (opt_.element_name_suffix.empty()) {
     const std::uint64_t id = g_pipeline_instance.fetch_add(1) + 1;
     opt_.element_name_suffix = "_" + std::to_string(id);
@@ -110,6 +108,7 @@ Session::Session(Session&& other) noexcept {
   groups_ = std::move(other.groups_);
   last_pipeline_ = std::move(other.last_pipeline_);
   guard_ = std::move(other.guard_);
+  verbose_guard_ = std::move(other.verbose_guard_);
   opt_ = other.opt_;
   tensor_cb_ = std::move(other.tensor_cb_);
   nodes_version_.store(other.nodes_version_.load(std::memory_order_relaxed),
@@ -117,6 +116,7 @@ Session::Session(Session&& other) noexcept {
   built_ = std::move(other.built_);
   run_cache_ = std::move(other.run_cache_);
   built_version_ = other.built_version_;
+  input_route_processor_ = std::move(other.input_route_processor_);
 }
 
 Session& Session::operator=(Session&& other) noexcept {
@@ -125,6 +125,7 @@ Session& Session::operator=(Session&& other) noexcept {
     groups_ = std::move(other.groups_);
     last_pipeline_ = std::move(other.last_pipeline_);
     guard_ = std::move(other.guard_);
+    verbose_guard_ = std::move(other.verbose_guard_);
     opt_ = other.opt_;
     tensor_cb_ = std::move(other.tensor_cb_);
     nodes_version_.store(other.nodes_version_.load(std::memory_order_relaxed),
@@ -132,6 +133,7 @@ Session& Session::operator=(Session&& other) noexcept {
     built_ = std::move(other.built_);
     run_cache_ = std::move(other.run_cache_);
     built_version_ = other.built_version_;
+    input_route_processor_ = std::move(other.input_route_processor_);
   }
   return *this;
 }
@@ -228,7 +230,7 @@ void Session::set_tensor_callback(TensorCallback cb) {
 Session& Session::add_output_tensor(const OutputTensorOptions& opt) {
   OutputTensorOptions o = opt;
   if (o.format.empty())
-    o.format = "RGB";
+    o.format = FormatTag::RGB;
   if (o.dtype != TensorDType::UInt8) {
     throw std::runtime_error("add_output_tensor: only UInt8 is supported for now");
   }
@@ -238,7 +240,7 @@ Session& Session::add_output_tensor(const OutputTensorOptions& opt) {
   add(nodes::VideoScale());
 
   // Force SystemMemory to keep CPU-accessible tensors for future bindings.
-  add(nodes::CapsRaw(o.format, o.target_width, o.target_height, o.target_fps,
+  add(nodes::CapsRaw(o.format.str(), o.target_width, o.target_height, o.target_fps,
                      simaai::neat::CapsMemory::SystemMemory));
   add(nodes::Output());
   return *this;

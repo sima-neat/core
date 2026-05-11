@@ -1,5 +1,7 @@
 #pragma once
 
+#include "asset_utils.h"
+
 #include <filesystem>
 #include <optional>
 #include <stdexcept>
@@ -11,31 +13,12 @@
 
 namespace sima_test {
 
-namespace fs = std::filesystem;
-
 inline fs::path repo_root_from_tests() {
-  std::error_code ec;
-  fs::path p = fs::current_path(ec);
-  if (ec) {
-    return fs::current_path();
-  }
-
-  while (!p.empty()) {
-    const fs::path marker = p / "tests" / "assets" / "mpk";
-    if (fs::exists(marker, ec) && !ec) {
-      return p;
-    }
-    const fs::path parent = p.parent_path();
-    if (parent == p)
-      break;
-    p = parent;
-  }
-
-  return fs::current_path();
+  return sima_test::test_source_root();
 }
 
 inline fs::path mpk_fixture_root() {
-  return repo_root_from_tests() / "tests" / "assets" / "mpk";
+  return sima_test::test_mpk_fixture_root_path();
 }
 
 inline fs::path mpk_fixture_path(const std::string& rel) {

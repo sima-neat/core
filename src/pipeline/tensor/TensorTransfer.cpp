@@ -685,6 +685,7 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
     gst_buffer_unref(dst);
     throw std::runtime_error("transfer: failed to wrap GstSample");
   }
+  gst_buffer_unref(dst);
 
   auto storage = make_gst_sample_storage(sample);
   gst_sample_unref(sample);

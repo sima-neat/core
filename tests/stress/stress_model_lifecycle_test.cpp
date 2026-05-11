@@ -30,6 +30,10 @@ std::string resolve_model_pack_for_stress() {
   if (env_tar && *env_tar && std::filesystem::exists(env_tar)) {
     return std::string(env_tar);
   }
+  const char* generic = std::getenv("SIMA_MODEL_TAR");
+  if (generic && *generic && std::filesystem::exists(generic)) {
+    return std::string(generic);
+  }
 
   const std::filesystem::path root = std::filesystem::current_path();
   std::string tar = sima_test::resolve_resnet50_tar_local_only(root);
@@ -98,7 +102,8 @@ RUN_TEST("stress_model_lifecycle_test", [] {
   const std::string tar = resolve_model_pack_for_stress();
   if (tar.empty()) {
     skip_long_test_exception(
-        "no local model pack found (set SIMA_STRESS_MODEL_TAR to run model stress)");
+        "no local model pack found (set SIMA_MODEL_TAR or SIMA_STRESS_MODEL_TAR to run model "
+        "stress)");
   }
 
   const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 100));
@@ -115,7 +120,7 @@ RUN_TEST("stress_model_lifecycle_test", [] {
 
       if (run_build) {
         simaai::neat::Tensor input = make_tensor_for_model(model);
-        auto runner = model.build(input);
+        auto runner = model.build(simaai::neat::TensorList{input});
         runner.close();
       }
     }

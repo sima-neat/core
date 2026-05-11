@@ -33,7 +33,7 @@ simaai::neat::Run make_async_rgb_run_with_policy(const simaai::neat::Tensor& see
   Session session;
   InputOptions src_opt;
   src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
@@ -46,7 +46,7 @@ simaai::neat::Run make_async_rgb_run_with_policy(const simaai::neat::Tensor& see
   run_opt.overflow_policy = overflow_policy;
   run_opt.advanced.copy_input = true;
 
-  return session.build(seed, RunMode::Async, run_opt);
+  return session.build(TensorList{seed}, RunMode::Async, run_opt);
 }
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
@@ -69,11 +69,11 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
 
   std::shared_ptr<void> holder;
   if (path == PushPath::Holder) {
-    const Sample first = run.push_and_pull(seed, 1000);
-    require(first.tensor.has_value(), "holder parity test: missing tensor output");
-    require(first.tensor->storage != nullptr, "holder parity test: missing tensor storage");
-    require(first.tensor->storage->holder != nullptr, "holder parity test: missing holder");
-    holder = first.tensor->storage->holder;
+    const TensorList first = run.run(TensorList{seed}, 1000);
+    require(first.size() == 1, "holder parity test: expected one tensor output");
+    require(first.front().storage != nullptr, "holder parity test: missing tensor storage");
+    require(first.front().storage->holder != nullptr, "holder parity test: missing holder");
+    holder = first.front().storage->holder;
   }
 
   PolicyProbeResult result;
@@ -83,13 +83,13 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
     bool ok = false;
     switch (path) {
     case PushPath::Mat:
-      ok = run.try_push(mat_seed);
+      ok = run.try_push(std::vector<cv::Mat>{mat_seed});
       break;
     case PushPath::Tensor:
-      ok = run.try_push(seed);
+      ok = run.try_push(TensorList{seed});
       break;
     case PushPath::Sample:
-      ok = run.try_push(sample_seed);
+      ok = run.try_push(SampleList{sample_seed});
       break;
     case PushPath::Holder:
       ok = run.try_push_holder(holder);

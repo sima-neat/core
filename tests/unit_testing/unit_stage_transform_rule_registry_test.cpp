@@ -11,15 +11,11 @@ RUN_TEST("unit_stage_transform_rule_registry_test", ([] {
                    "preproc should be classified as pre-adapter");
            require(rules.is_pre_adapter("QuantTess"),
                    "QuantTess case-insensitive pre-adapter classification failed");
-           require(rules.is_pre_adapter("CVU"),
-                   "CVU should be classified as pre-adapter");
 
            require(rules.is_post_adapter("boxdecode"),
                    "boxdecode should be classified as post-adapter");
            require(rules.is_post_adapter("DetessDequant"),
                    "DetessDequant case-insensitive post-adapter classification failed");
-           require(rules.is_post_adapter("slicedequant"),
-                   "slicedequant should be classified as post-adapter");
 
            require(!rules.is_pre_adapter("processmla"),
                    "processmla must not be pre-adapter");

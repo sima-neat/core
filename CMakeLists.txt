@@ -11,8 +11,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
-set(CMAKE_BUILD_RPATH "$ORIGIN/../deps/gst-plugins")
-set(CMAKE_INSTALL_RPATH "$ORIGIN/../deps/gst-plugins")
+set(CMAKE_BUILD_RPATH "$ORIGIN/../neat-internals/gst-plugins")
+set(CMAKE_INSTALL_RPATH "$ORIGIN/../neat-internals/gst-plugins")
 
 if (NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -28,7 +28,7 @@ set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME core)
 # Build options
 # ------------------------------------------------------------------------------
 option(SIMA_WITH_OPENCV "Enable OpenCV convenience APIs" ON)
-option(SIMANEAT_BUILD_SAMPLES "Build example applications" OFF)
+option(SIMANEAT_BUILD_SAMPLES "Build example applications" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
@@ -38,9 +38,47 @@ option(SIMA_ENABLE_ASAN "Enable AddressSanitizer instrumentation" OFF)
 option(SIMA_ENABLE_UBSAN "Enable UndefinedBehaviorSanitizer instrumentation" OFF)
 option(SIMA_ENABLE_TSAN "Enable ThreadSanitizer instrumentation" OFF)
 option(FUZZING "Build fuzzing harnesses and corpora runners" OFF)
-option(SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS
-  "Install only sanitizer-gate test binaries into extras payload"
-  OFF)
+option(SIMANEAT_USE_EXPORTED_NEAT_INTERNALS
+  "Prefer the exported NeatInternals SDK package over ad hoc library/header discovery"
+  ON)
+
+if (UNIX)
+  set(SIMANEAT_SOURCE_FS_TYPE "")
+  execute_process(
+    COMMAND findmnt -T ${CMAKE_CURRENT_SOURCE_DIR} -n -o FSTYPE
+    RESULT_VARIABLE SIMANEAT_FINDMNT_RESULT
+    OUTPUT_VARIABLE SIMANEAT_SOURCE_FS_TYPE
+    ERROR_QUIET
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+  )
+  if (NOT SIMANEAT_FINDMNT_RESULT EQUAL 0 OR SIMANEAT_SOURCE_FS_TYPE STREQUAL "")
+    if (APPLE)
+      execute_process(
+        COMMAND stat -f %T ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE SIMANEAT_STAT_RESULT
+        OUTPUT_VARIABLE SIMANEAT_SOURCE_FS_TYPE
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+      )
+    else()
+      execute_process(
+        COMMAND stat -f -c %T ${CMAKE_CURRENT_SOURCE_DIR}
+        RESULT_VARIABLE SIMANEAT_STAT_RESULT
+        OUTPUT_VARIABLE SIMANEAT_SOURCE_FS_TYPE
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+      )
+    endif()
+  endif()
+  if (SIMANEAT_SOURCE_FS_TYPE MATCHES "^(cifs|nfs|nfs4|smb2|smb3|smbfs|fuse.sshfs)$")
+    message(WARNING
+      "SimaNeat is being configured from a ${SIMANEAT_SOURCE_FS_TYPE} source tree. "
+      "Recursive source globs and large C++ builds can stall on remote mounts. "
+      "Prefer ./build.sh, which can auto-stage a local shadow workspace via "
+      "SIMANEAT_SHADOW_BUILD=auto."
+    )
+  endif()
+endif()
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
@@ -82,7 +120,7 @@ else()
   endif()
 endif()
 
-string(REGEX REPLACE "[^A-Za-z0-9.+~-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
+string(REGEX REPLACE "[^A-Za-z0-9.+~_-]" "-" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
 
 # Debian version must start with a digit. Also normalize common "v1.2.3" tags.
 if (SIMANEAT_VERSION MATCHES "^v[0-9].*")
@@ -163,7 +201,7 @@ endif()
 find_package(PkgConfig REQUIRED)
 
 if (SIMANEAT_CPP_TIDY)
-  pkg_check_modules(GST QUIET IMPORTED_TARGET
+  pkg_check_modules(GST QUIET
     gstreamer-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
@@ -175,7 +213,7 @@ if (SIMANEAT_CPP_TIDY)
     message(WARNING "GStreamer not found; configuring without GST includes/libs (analysis-only mode).")
   endif()
 else()
-  pkg_check_modules(GST REQUIRED IMPORTED_TARGET
+  pkg_check_modules(GST REQUIRED
     gstreamer-1.0
     gstreamer-app-1.0
     gstreamer-video-1.0
@@ -186,16 +224,342 @@ else()
 endif()
 
 if (SIMANEAT_CPP_TIDY)
-  pkg_check_modules(OPENCV QUIET IMPORTED_TARGET opencv4)
+  pkg_check_modules(OPENCV QUIET opencv4)
   if (NOT OPENCV_FOUND)
     message(WARNING "OpenCV not found; configuring without OpenCV includes/libs (analysis-only mode).")
   endif()
 else()
-  pkg_check_modules(OPENCV REQUIRED IMPORTED_TARGET opencv4)
+  pkg_check_modules(OPENCV REQUIRED opencv4)
 endif()
 
-find_library(SIMAAI_ALLOCATOR_LIB gstsimaallocator)
-find_library(SIMAAI_BUFFERPOOL_LIB gstsimaaibufferpool)
+set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE OFF)
+if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
+  find_package(NeatInternals CONFIG QUIET)
+  if (NeatInternals_FOUND)
+    set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE ON)
+    message(STATUS "Using exported NeatInternals package from ${NeatInternals_DIR}")
+  endif()
+endif()
+
+function(simaneat_imported_target_location out_var target_name)
+  set(${out_var} "" PARENT_SCOPE)
+  if (NOT TARGET ${target_name})
+    return()
+  endif()
+
+  foreach(_prop
+          IMPORTED_LOCATION_RELWITHDEBINFO
+          IMPORTED_LOCATION_RELEASE
+          IMPORTED_LOCATION_DEBUG
+          IMPORTED_LOCATION_MINSIZEREL
+          IMPORTED_LOCATION)
+    get_target_property(_value ${target_name} ${_prop})
+    if (_value AND NOT _value MATCHES "-NOTFOUND$")
+      set(${out_var} "${_value}" PARENT_SCOPE)
+      return()
+    endif()
+  endforeach()
+
+  get_target_property(_configs ${target_name} IMPORTED_CONFIGURATIONS)
+  foreach(_cfg IN LISTS _configs)
+    string(TOUPPER "${_cfg}" _cfg_upper)
+    get_target_property(_value ${target_name} "IMPORTED_LOCATION_${_cfg_upper}")
+    if (_value AND NOT _value MATCHES "-NOTFOUND$")
+      set(${out_var} "${_value}" PARENT_SCOPE)
+      return()
+    endif()
+  endforeach()
+endfunction()
+
+function(simaneat_find_exported_include_dir out_var target_name relative_header)
+  set(${out_var} "" PARENT_SCOPE)
+  if (NOT TARGET ${target_name})
+    return()
+  endif()
+
+  get_target_property(_dirs ${target_name} INTERFACE_INCLUDE_DIRECTORIES)
+  if (NOT _dirs OR _dirs MATCHES "-NOTFOUND$")
+    return()
+  endif()
+
+  foreach(_dir IN LISTS _dirs)
+    if (_dir MATCHES "^\\$<")
+      continue()
+    endif()
+    if (EXISTS "${_dir}/${relative_header}")
+      set(${out_var} "${_dir}" PARENT_SCOPE)
+      return()
+    endif()
+  endforeach()
+endfunction()
+
+set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
+if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  foreach(_simaneat_internals_target IN ITEMS
+      NeatInternals::simaaineatprofiler
+      NeatInternals::neatprocessmlaruntime
+      NeatInternals::PreparedRuntimeBridge
+      NeatInternals::neattensorbufferfast
+      NeatInternals::gstsimaaimeta)
+    simaneat_imported_target_location(_simaneat_imported_runtime_location
+      ${_simaneat_internals_target})
+    if (_simaneat_imported_runtime_location)
+      get_filename_component(_simaneat_imported_runtime_dir
+        "${_simaneat_imported_runtime_location}" DIRECTORY)
+      list(APPEND SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES
+        "${_simaneat_imported_runtime_dir}")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES)
+endif()
+
+set(SIMANEAT_INSTALLED_NEAT_PLUGIN_DIR_CANDIDATES
+  /usr/lib/aarch64-linux-gnu/neat/gst-plugins
+  /lib/aarch64-linux-gnu/neat/gst-plugins
+  /usr/lib/neat/gst-plugins
+  /lib/neat/gst-plugins
+)
+set(SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES
+  /usr/lib/aarch64-linux-gnu/neat/runtime
+  /lib/aarch64-linux-gnu/neat/runtime
+  /usr/lib/neat/runtime
+  /lib/neat/runtime
+)
+set(SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES
+  ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
+  ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/processmla-runtime
+  ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/metadata
+  ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/profiler
+  ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/utils
+)
+set(SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE OFF)
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal/sima/PreparedRuntimeBuild.cpp")
+  set(SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE ON)
+endif()
+set(SIMANEAT_NEAT_ALLOCATOR_HINTS
+  ${SIMANEAT_INSTALLED_NEAT_PLUGIN_DIR_CANDIDATES}
+)
+list(APPEND SIMANEAT_NEAT_ALLOCATOR_HINTS
+  /usr/lib/aarch64-linux-gnu/gstreamer-1.0
+  /lib/aarch64-linux-gnu/gstreamer-1.0
+  /usr/lib/gstreamer-1.0
+  /lib/gstreamer-1.0
+)
+
+if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  simaneat_imported_target_location(_simaneat_allocator_imported_location
+    NeatInternals::Allocator)
+  if (_simaneat_allocator_imported_location)
+    set(SIMANEAT_NEAT_ALLOCATOR_LIB
+      "${_simaneat_allocator_imported_location}"
+      CACHE FILEPATH "NEAT allocator library from exported NeatInternals package" FORCE)
+  endif()
+
+  simaneat_imported_target_location(_simaneat_bufferpool_imported_location
+    NeatInternals::BufferPool)
+  if (_simaneat_bufferpool_imported_location)
+    set(SIMANEAT_NEAT_BUFFERPOOL_LIB
+      "${_simaneat_bufferpool_imported_location}"
+      CACHE FILEPATH "NEAT buffer pool library from exported NeatInternals package" FORCE)
+  endif()
+
+  simaneat_imported_target_location(_simaneat_tensorbuffer_imported_location
+    NeatInternals::TensorBuffer)
+  if (_simaneat_tensorbuffer_imported_location)
+    set(SIMANEAT_NEAT_TENSORBUFFER_LIB
+      "${_simaneat_tensorbuffer_imported_location}"
+      CACHE FILEPATH "NEAT tensor buffer library from exported NeatInternals package" FORCE)
+  endif()
+
+  if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
+    simaneat_imported_target_location(_simaneat_bridge_imported_location
+      NeatInternals::PreparedRuntimeBridge)
+    if (_simaneat_bridge_imported_location)
+      set(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
+        "${_simaneat_bridge_imported_location}"
+        CACHE FILEPATH "Prepared-runtime bridge library from exported NeatInternals package" FORCE)
+    endif()
+  endif()
+
+  simaneat_find_exported_include_dir(_simaneat_allocator_include_dir
+    NeatInternals::Allocator
+    gstsimaaiallocator.h)
+  if (_simaneat_allocator_include_dir)
+    set(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
+      "${_simaneat_allocator_include_dir}"
+      CACHE PATH "NEAT allocator include directory from exported NeatInternals package" FORCE)
+  endif()
+
+  simaneat_find_exported_include_dir(_simaneat_tensorbuffer_include_dir
+    NeatInternals::TensorBuffer
+    gstsimaaitensorbuffer.h)
+  if (_simaneat_tensorbuffer_include_dir)
+    set(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
+      "${_simaneat_tensorbuffer_include_dir}"
+      CACHE PATH "NEAT tensor buffer include directory from exported NeatInternals package" FORCE)
+  endif()
+
+  simaneat_find_exported_include_dir(_simaneat_public_include_root
+    NeatInternals::Headers
+    neat/PreparedRuntimeBridge.h)
+  if (_simaneat_public_include_root)
+    set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+      "${_simaneat_public_include_root}"
+      CACHE PATH "NEAT public include root from exported NeatInternals package" FORCE)
+  endif()
+endif()
+
+find_library(SIMANEAT_NEAT_ALLOCATOR_LIB
+  NAMES gstneatallocator
+  HINTS ${SIMANEAT_NEAT_ALLOCATOR_HINTS}
+)
+find_path(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
+  NAMES gstsimaaiallocator.h
+  HINTS
+    /usr/include/simaai
+    /usr/local/include/simaai
+    $ENV{HOME}/.local/include/simaai
+)
+
+find_library(SIMANEAT_NEAT_BUFFERPOOL_LIB
+  NAMES gstneatbufferpool
+  HINTS ${SIMANEAT_NEAT_ALLOCATOR_HINTS}
+)
+set(SIMANEAT_NEAT_TENSORBUFFER_HINTS
+  ${SIMANEAT_NEAT_ALLOCATOR_HINTS}
+  $ENV{HOME}/.local/lib/gstreamer-1.0
+  $ENV{HOME}/.local/lib/aarch64-linux-gnu/gstreamer-1.0
+)
+
+find_library(SIMANEAT_NEAT_TENSORBUFFER_LIB
+  NAMES gstneattensorbuffer
+  HINTS ${SIMANEAT_NEAT_TENSORBUFFER_HINTS}
+)
+find_library(SIMANEAT_SIMAAIMEM_LIB
+  NAMES simaaimem
+  HINTS
+    /opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu
+    /usr/lib/aarch64-linux-gnu
+    /lib/aarch64-linux-gnu
+    /usr/lib
+    /lib
+)
+find_path(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
+  NAMES gstsimaaitensorbuffer.h
+  HINTS
+    /usr/include/simaai
+    /usr/local/include/simaai
+    $ENV{HOME}/.local/include/simaai
+)
+
+set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+  "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}"
+  CACHE PATH
+  "Root include directory that contains gst/, ev/, and neat/ headers exported by internals")
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT)
+  find_path(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+    NAMES gst/SimaPreparedRuntimeAbi.h
+    HINTS
+      /usr/include
+      /usr/local/include
+      $ENV{HOME}/.local/include
+  )
+endif()
+
+set(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
+  "${SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB}"
+  CACHE FILEPATH
+  "Path to the internals prepared-runtime bridge library")
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
+  find_library(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
+    NAMES neatpreparedruntimebridge
+    HINTS
+      ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
+      ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+      /usr/lib/aarch64-linux-gnu
+      /lib/aarch64-linux-gnu
+      /usr/lib
+      /lib
+  )
+endif()
+
+set(SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB
+  "${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB}"
+  CACHE FILEPATH
+  "Path to the NEAT processmla runtime library used by the prepared-runtime bridge")
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND
+    NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE AND
+    NOT SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
+  find_library(SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB
+    NAMES neatprocessmlaruntime
+    HINTS
+      ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/processmla-runtime
+      ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+      /usr/lib/aarch64-linux-gnu
+      /lib/aarch64-linux-gnu
+      /usr/lib
+      /lib
+  )
+endif()
+
+if (NOT SIMANEAT_NEAT_ALLOCATOR_LIB)
+  message(FATAL_ERROR
+    "Required NEAT allocator library not found: libgstneatallocator.so. "
+    "Expected under a NEAT/GStreamer plugin directory."
+  )
+endif()
+if (NOT SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR)
+  message(FATAL_ERROR
+    "Required NEAT allocator headers not found: gstsimaaiallocator.h."
+  )
+endif()
+if (NOT SIMANEAT_NEAT_BUFFERPOOL_LIB)
+  message(FATAL_ERROR
+    "Required NEAT buffer pool library not found: libgstneatbufferpool.so. "
+    "Expected under a NEAT/GStreamer plugin directory."
+  )
+endif()
+if (NOT SIMANEAT_NEAT_TENSORBUFFER_LIB)
+  message(FATAL_ERROR
+    "Required NEAT tensor buffer library not found: libgstneattensorbuffer.so. "
+    "Expected under a NEAT/GStreamer plugin directory."
+  )
+endif()
+if (NOT SIMANEAT_SIMAAIMEM_LIB)
+  message(FATAL_ERROR
+    "Required simaai memory library not found: libsimaaimem.so."
+  )
+endif()
+if (NOT SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR)
+  message(FATAL_ERROR
+    "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h."
+  )
+endif()
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT)
+  message(FATAL_ERROR
+    "Prepared-runtime bridge headers not found. Expected an include root containing "
+    "gst/SimaPreparedRuntimeAbi.h, ev/ev_tensor_abi.h, and neat/PreparedRuntimeBridge.h."
+  )
+endif()
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT EXISTS
+      "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h")
+  message(FATAL_ERROR
+    "Prepared-runtime bridge API header not found under "
+    "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h"
+  )
+endif()
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
+  message(FATAL_ERROR
+    "Prepared-runtime bridge library not found: libneatpreparedruntimebridge.so"
+  )
+endif()
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND
+    NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE AND
+    NOT SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
+  message(FATAL_ERROR
+    "Required processmla runtime library not found: libneatprocessmlaruntime.so"
+  )
+endif()
 
 # ------------------------------------------------------------------------------
 # Library: sima_neat (FULL ORIGINAL SOURCE LIST)
@@ -236,9 +600,13 @@ endforeach()
 # ------------------------------------------------------------------------------
 add_library(sima_neat STATIC
   ${SIMANEAT_SOURCES}
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/session/internal/SessionTestHooks.cpp
 )
 
 target_compile_definitions(sima_neat PRIVATE SIMA_NEAT_INTERNAL=1)
+
+set(SIMANEAT_REPO_NEAT_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/include")
+set(SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/gst_plugins/include")
 
 target_include_directories(sima_neat
   PUBLIC
@@ -252,6 +620,22 @@ target_include_directories(sima_neat
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
 )
 
+if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  target_include_directories(sima_neat PRIVATE
+    ${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}
+    ${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}
+    ${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}
+    ${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}
+    ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT})
+endif()
+
+if (GST_FOUND)
+  target_include_directories(sima_neat SYSTEM PUBLIC ${GST_INCLUDE_DIRS})
+endif()
+if (OPENCV_FOUND)
+  target_include_directories(sima_neat SYSTEM PUBLIC ${OPENCV_INCLUDE_DIRS})
+endif()
+
 target_compile_options(sima_neat PRIVATE
 )
 
@@ -262,41 +646,190 @@ if (OPENCV_FOUND)
   target_compile_options(sima_neat PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
 
+if (OPENCV_FOUND)
+  target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
+endif()
+if (GST_FOUND)
+  target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
+endif()
+
 target_link_libraries(sima_neat
   PUBLIC
 )
 
 if (GST_FOUND)
-  target_link_libraries(sima_neat PUBLIC PkgConfig::GST)
+  target_link_libraries(sima_neat PUBLIC ${GST_LIBRARIES})
 endif()
 if (OPENCV_FOUND)
-  target_link_libraries(sima_neat PUBLIC PkgConfig::OPENCV)
+  target_link_libraries(sima_neat PUBLIC ${OPENCV_LIBRARIES})
 endif()
 
 if (SIMA_WITH_OPENCV)
   target_compile_definitions(sima_neat PUBLIC SIMA_WITH_OPENCV)
 endif()
 
-if (SIMAAI_ALLOCATOR_LIB)
-  get_filename_component(SIMAAI_ALLOCATOR_LIBDIR "${SIMAAI_ALLOCATOR_LIB}" DIRECTORY)
-  target_link_directories(sima_neat PRIVATE "${SIMAAI_ALLOCATOR_LIBDIR}")
+if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   target_link_libraries(sima_neat PUBLIC
-    $<BUILD_INTERFACE:${SIMAAI_ALLOCATOR_LIB}>
-    $<INSTALL_INTERFACE:gstsimaallocator>
-  )
+    NeatInternals::Allocator
+    NeatInternals::BufferPool
+    NeatInternals::TensorBuffer)
+else()
+  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_ALLOCATOR_LIB})
+  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
+  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+endif()
+target_link_libraries(sima_neat PUBLIC ${SIMANEAT_SIMAAIMEM_LIB})
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
+  if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+    target_link_libraries(sima_neat PUBLIC NeatInternals::PreparedRuntimeBridge)
+  else()
+    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB})
+    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB})
+  endif()
 endif()
 
-if (SIMAAI_BUFFERPOOL_LIB)
-  get_filename_component(SIMAAI_BUFFERPOOL_LIBDIR "${SIMAAI_BUFFERPOOL_LIB}" DIRECTORY)
-  target_link_directories(sima_neat PRIVATE "${SIMAAI_BUFFERPOOL_LIBDIR}")
-  target_link_libraries(sima_neat PUBLIC
-    $<BUILD_INTERFACE:${SIMAAI_BUFFERPOOL_LIB}>
-    $<INSTALL_INTERFACE:gstsimaaibufferpool>
+# Per-kernel latency profiler event ring (libsimaaineatprofiler.so).  Provides
+# the cross-shared-library event ring that LatencyProfiler drains and that the
+# dispatcher / processcvu plugin emit into.  Optional: gracefully skipped when
+# the .so cannot be found (no profiler support, but builds keep working).
+set(SIMANEAT_NEAT_PROFILER_LIB
+  "${SIMANEAT_NEAT_PROFILER_LIB}"
+  CACHE FILEPATH
+  "Path to libsimaaineatprofiler.so (per-kernel latency profiler event ring)")
+if (NOT SIMANEAT_NEAT_PROFILER_LIB)
+  find_library(SIMANEAT_NEAT_PROFILER_LIB
+    NAMES simaaineatprofiler
+    HINTS
+      ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/profiler
+      ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+      /usr/lib/aarch64-linux-gnu
+      /lib/aarch64-linux-gnu
+      /usr/lib
+      /lib
   )
 endif()
+if (SIMANEAT_NEAT_PROFILER_LIB)
+  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_PROFILER_LIB})
+  target_include_directories(sima_neat PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/profiler>)
+  target_compile_definitions(sima_neat PUBLIC SIMA_HAS_NEAT_PROFILER=1)
+else()
+  message(STATUS
+    "libsimaaineatprofiler.so not found: per-kernel latency profiler "
+    "will be unavailable. Build internals/core/profiler first to enable.")
+endif()
 
-if (SIMAAI_ALLOCATOR_LIB AND SIMAAI_BUFFERPOOL_LIB)
-  target_compile_definitions(sima_neat PUBLIC SIMA_HAS_SIMAAI_POOL=1)
+target_compile_definitions(sima_neat PUBLIC SIMA_HAS_SIMAAI_POOL=1)
+
+get_filename_component(SIMANEAT_NEAT_ALLOCATOR_DIR "${SIMANEAT_NEAT_ALLOCATOR_LIB}" DIRECTORY)
+get_filename_component(SIMANEAT_NEAT_BUFFERPOOL_DIR "${SIMANEAT_NEAT_BUFFERPOOL_LIB}" DIRECTORY)
+get_filename_component(SIMANEAT_NEAT_TENSORBUFFER_DIR "${SIMANEAT_NEAT_TENSORBUFFER_LIB}" DIRECTORY)
+set(SIMANEAT_CTEST_NEAT_PLUGIN_DIR "" CACHE PATH
+  "NEAT plugin directory used by core CTest/tutorial executions")
+if (NOT SIMANEAT_CTEST_NEAT_PLUGIN_DIR AND DEFINED ENV{SIMA_GST_PLUGIN_DIR} AND
+    NOT "$ENV{SIMA_GST_PLUGIN_DIR}" STREQUAL "")
+  set(SIMANEAT_CTEST_NEAT_PLUGIN_DIR "$ENV{SIMA_GST_PLUGIN_DIR}" CACHE PATH
+    "NEAT plugin directory used by core CTest/tutorial executions" FORCE)
+endif()
+if (NOT SIMANEAT_CTEST_NEAT_PLUGIN_DIR)
+  set(SIMANEAT_CTEST_NEAT_PLUGIN_DIR "${SIMANEAT_NEAT_ALLOCATOR_DIR}" CACHE PATH
+    "NEAT plugin directory used by core CTest/tutorial executions" FORCE)
+endif()
+set(_SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIR_CANDIDATES
+  "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}"
+  "${SIMANEAT_NEAT_ALLOCATOR_DIR}"
+  "${SIMANEAT_NEAT_BUFFERPOOL_DIR}"
+  "${SIMANEAT_NEAT_TENSORBUFFER_DIR}"
+  ${SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES}
+  ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+  ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
+)
+set(SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIRS "")
+foreach(_simaneat_runtime_dir IN LISTS _SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIR_CANDIDATES)
+  if (_simaneat_runtime_dir AND EXISTS "${_simaneat_runtime_dir}")
+    list(APPEND SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIRS "${_simaneat_runtime_dir}")
+  endif()
+endforeach()
+if (DEFINED ENV{LD_LIBRARY_PATH} AND NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
+  list(APPEND SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIRS "$ENV{LD_LIBRARY_PATH}")
+endif()
+list(REMOVE_DUPLICATES SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIRS)
+string(JOIN ":" SIMANEAT_CTEST_NEAT_LD_LIBRARY_PATH ${SIMANEAT_CTEST_NEAT_LD_LIBRARY_DIRS})
+
+set(SIMANEAT_TEST_RUNTIME_MANIFEST_DIR "${CMAKE_BINARY_DIR}/test-fixtures")
+set(SIMANEAT_TEST_RUNTIME_MANIFEST "${SIMANEAT_TEST_RUNTIME_MANIFEST_DIR}/runtime_manifest.json")
+file(MAKE_DIRECTORY "${SIMANEAT_TEST_RUNTIME_MANIFEST_DIR}")
+
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SOURCE_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}/tmp")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}/tests/assets/mpk")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}/tests/assets/mpk/fixtures_manifest.json")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+
+set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
+{
+  "format_version": 1,
+  "generator": "core/CMakeLists.txt",
+  "source_root_rel": "@SIMANEAT_TEST_RUNTIME_SOURCE_ROOT_REL@",
+  "repo_tmp_root_rel": "@SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL@",
+  "mpk_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL@",
+  "mpk_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL@",
+  "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@"
+}
+]=])
+string(CONFIGURE "${SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT}"
+  SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT
+  @ONLY)
+file(WRITE "${SIMANEAT_TEST_RUNTIME_MANIFEST}" "${SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT}")
+
+function(simaneat_append_ctest_env test_name)
+  set(_plugin_dir "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}")
+  set(_ld_library_path "${SIMANEAT_CTEST_NEAT_LD_LIBRARY_PATH}")
+  if (DEFINED SIMA_TEST_NEAT_PLUGIN_DIR AND NOT "${SIMA_TEST_NEAT_PLUGIN_DIR}" STREQUAL "")
+    set(_plugin_dir "${SIMA_TEST_NEAT_PLUGIN_DIR}")
+  endif()
+  if (DEFINED SIMA_TEST_NEAT_LD_LIBRARY_PATH AND
+      NOT "${SIMA_TEST_NEAT_LD_LIBRARY_PATH}" STREQUAL "")
+    set(_ld_library_path "${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
+  endif()
+
+  set(_gst_registry "${CMAKE_BINARY_DIR}/sima_gst_registry_${test_name}.bin")
+  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY=${_gst_registry}")
+  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_1_0=${_gst_registry}")
+  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_REUSE_PLUGIN_SCANNER=no")
+  if (NOT "${_plugin_dir}" STREQUAL "")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_PATH=${_plugin_dir}")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_PATH_1_0=${_plugin_dir}")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_SYSTEM_PATH_1_0=")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "SIMA_GST_PLUGIN_DIR=${_plugin_dir}")
+  endif()
+  if (NOT "${_ld_library_path}" STREQUAL "")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "LD_LIBRARY_PATH=${_ld_library_path}")
+  endif()
+  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0")
+endfunction()
+
+if (SIMANEAT_NEAT_ALLOCATOR_DIR)
+  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_ALLOCATOR_DIR}")
+endif()
+if (SIMANEAT_NEAT_BUFFERPOOL_DIR AND
+    NOT SIMANEAT_NEAT_BUFFERPOOL_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR)
+  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_BUFFERPOOL_DIR}")
+endif()
+if (SIMANEAT_NEAT_TENSORBUFFER_DIR AND
+    NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR AND
+    NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_BUFFERPOOL_DIR)
+  target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_TENSORBUFFER_DIR}")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -308,6 +841,14 @@ target_include_directories(sima_neat_internal INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
 )
+if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+  target_include_directories(sima_neat_internal INTERFACE
+    ${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}
+    ${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}
+    ${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}
+    ${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}
+    ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT})
+endif()
 target_compile_definitions(sima_neat_internal INTERFACE SIMA_NEAT_INTERNAL=1)
 
 # ------------------------------------------------------------------------------
@@ -358,46 +899,20 @@ install(
 )
 
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/deps/gst-plugins/
-  DESTINATION ${CMAKE_INSTALL_LIBDIR}/sima-neat/gst-plugins
-  COMPONENT core
-)
-
-install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/distribution/skills/sima-neat/
   DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/skills/sima-neat
   COMPONENT core
 )
 
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/python/tests/
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/python/tests
-  COMPONENT extras
-  FILES_MATCHING
-    PATTERN "*.py"
-)
-
-install(
-  FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/fix_devkit_runtime.sh
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/neat
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/scripts/install_codex_skill.sh
   DESTINATION ${CMAKE_INSTALL_BINDIR}
+  RENAME sima-neat-install-skill
   PERMISSIONS
     OWNER_READ OWNER_WRITE OWNER_EXECUTE
     GROUP_READ GROUP_EXECUTE
     WORLD_READ WORLD_EXECUTE
   COMPONENT core
-)
-
-install(
-  FILES
-    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/neat
-  DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/scripts
-  PERMISSIONS
-    OWNER_READ OWNER_WRITE OWNER_EXECUTE
-    GROUP_READ GROUP_EXECUTE
-    WORLD_READ WORLD_EXECUTE
-  COMPONENT extras
 )
 
 set(SimaNeat_INSTALL_CMAKEDIR
@@ -414,6 +929,15 @@ write_basic_package_version_file(
   ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfigVersion.cmake
   VERSION ${PROJECT_VERSION}
   COMPATIBILITY SameMajorVersion
+)
+
+# Export build-tree package targets as well so external helper binaries built
+# against the active build tree do not silently fall back to ad hoc archive
+# imports that can drift out of sync with the current plugin/runtime build.
+export(
+  EXPORT SimaNeatTargets
+  FILE ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatTargets.cmake
+  NAMESPACE SimaNeat::
 )
 
 install(
@@ -439,15 +963,15 @@ install(
 set(CPACK_PACKAGE_NAME "sima-neat")
 set(CPACK_PACKAGE_VENDOR "SiMa.ai")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-    "SiMa Neat core static library and headers")
+    "SiMa NEAT core static library and headers")
 
-set(CPACK_COMPONENTS_ALL core extras)
+set(CPACK_COMPONENTS_ALL core)
 set(CPACK_DEB_COMPONENT_INSTALL ON)
 
 set(CPACK_COMPONENT_CORE_DESCRIPTION
-    "SiMa Neat core library and headers")
+    "SiMa NEAT core library and headers")
 set(CPACK_COMPONENT_EXTRAS_DESCRIPTION
-    "SiMa Neat samples, tutorials, and tests")
+    "SiMa NEAT samples, tutorials, and tests")
 
 set(CPACK_PACKAGE_VERSION "${SIMANEAT_VERSION}")
 
@@ -461,7 +985,7 @@ set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_DEPENDS
-  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libgstrtspserver-1.0-dev, libglib2.0-0, libopencv-core406, nlohmann-json3-dev"
+  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libglib2.0-0, libopencv-core406, neat-internals-dev, neat-gst-plugins"
 )
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"

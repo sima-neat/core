@@ -4,12 +4,14 @@
 #include <gst/gst.h>
 #include <gst/video/video.h>
 
+#include <algorithm>
 #include <cstring>
 #include <cctype>
 #include <limits>
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace simaai::neat::pipeline_internal {
 namespace {
@@ -95,6 +97,82 @@ bool find_indexed_int_field(const GstStructure* st, const char* base_name, int* 
   return found;
 }
 
+bool parse_shape_csv(const std::string& raw, std::vector<int64_t>* out) {
+  if (!out)
+    return false;
+  out->clear();
+  std::stringstream ss(raw);
+  std::string token;
+  while (std::getline(ss, token, ',')) {
+    token.erase(std::remove_if(token.begin(), token.end(),
+                               [](unsigned char c) { return std::isspace(c) != 0; }),
+                token.end());
+    if (token.empty())
+      return false;
+    try {
+      const long long value = std::stoll(token);
+      if (value <= 0)
+        return false;
+      out->push_back(static_cast<int64_t>(value));
+    } catch (...) {
+      return false;
+    }
+  }
+  return !out->empty();
+}
+
+bool find_tensor_shape(const GstStructure* st, std::vector<int64_t>* out) {
+  if (!st || !out)
+    return false;
+
+  gint rank_i = 0;
+  if (gst_structure_get_int(st, "rank", &rank_i) && rank_i > 0) {
+    const guint rank = static_cast<guint>(rank_i);
+    if (const char* shape_csv = gst_structure_get_string(st, "shape")) {
+      std::vector<int64_t> parsed;
+      if (parse_shape_csv(shape_csv, &parsed) &&
+          parsed.size() == static_cast<std::size_t>(rank)) {
+        *out = std::move(parsed);
+        return true;
+      }
+      return false;
+    }
+
+    out->clear();
+    out->reserve(rank);
+    for (guint i = 0; i < rank; ++i) {
+      const std::string key = "dim" + std::to_string(i);
+      gint dim_i = 0;
+      if (!gst_structure_get_int(st, key.c_str(), &dim_i) || dim_i <= 0) {
+        out->clear();
+        return false;
+      }
+      out->push_back(static_cast<int64_t>(dim_i));
+    }
+    return true;
+  }
+
+  int w = 0;
+  int h = 0;
+  int d = 0;
+  find_indexed_int_field(st, "width", &w);
+  find_indexed_int_field(st, "height", &h);
+  find_indexed_int_field(st, "depth", &d);
+  if (w > 0 && h > 0 && d > 0) {
+    *out = {h, w, d};
+    return true;
+  }
+  if (w > 0 && h > 0) {
+    *out = {h, w};
+    return true;
+  }
+  if (w > 0) {
+    *out = {w};
+    return true;
+  }
+  return false;
+}
+
 const char* dtype_name(TensorDType dtype) {
   switch (dtype) {
   case TensorDType::UInt8:
@@ -148,26 +226,16 @@ simaai::neat::TensorConstraint tensor_constraint_from_caps(GstCaps* caps) {
     return out;
 
   if (std::string(media) == "application/vnd.simaai.tensor") {
-    int w = 0;
-    int h = 0;
-    int d = 0;
-    find_indexed_int_field(st, "width", &w);
-    find_indexed_int_field(st, "height", &h);
-    find_indexed_int_field(st, "depth", &d);
+    if (const char* dt = gst_structure_get_string(st, "dtype")) {
+      out.dtypes.push_back(dtype_from_tensor_format(dt));
+    } else {
+      const char* fmt = gst_structure_get_string(st, "format");
+      const std::string fmt_str = fmt ? fmt : "";
+      out.dtypes.push_back(dtype_from_tensor_format(fmt_str));
+    }
 
-    const char* fmt = gst_structure_get_string(st, "format");
-    const std::string fmt_str = fmt ? fmt : "";
-    out.dtypes.push_back(dtype_from_tensor_format(fmt_str));
-
-    if (w > 0 && h > 0 && d > 0) {
-      out.rank = 3;
-      out.shape = {h, w, d};
-    } else if (w > 0 && h > 0) {
-      out.rank = 2;
-      out.shape = {h, w};
-    } else if (w > 0) {
-      out.rank = 1;
-      out.shape = {w};
+    if (find_tensor_shape(st, &out.shape)) {
+      out.rank = static_cast<int>(out.shape.size());
     }
     return out;
   }

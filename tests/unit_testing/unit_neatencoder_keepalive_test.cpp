@@ -31,7 +31,7 @@ int main() {
 
     simaai::neat::InputOptions src_opt;
     src_opt.media_type = "video/x-raw";
-    src_opt.format = "NV12";
+    src_opt.format = simaai::neat::FormatTag::NV12;
     src_opt.width = width;
     src_opt.height = height;
     src_opt.fps_n = fps;
@@ -52,7 +52,8 @@ int main() {
     simaai::neat::RunOptions opt;
     opt.queue_depth = 1;
 
-    simaai::neat::Run run = p.build(sample, simaai::neat::RunMode::Async, opt);
+    simaai::neat::Run run =
+        p.build(simaai::neat::TensorList{sample}, simaai::neat::RunMode::Async, opt);
     require(run.running(), "Pipeline did not enter running state");
 
     int sleep_ms = 35000;

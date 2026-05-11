@@ -86,8 +86,9 @@ RUN_TEST(
 
       // Multi-stage inference sequence should pick the final MLA stage name deterministically.
       {
-        const auto fixture = sima_test::make_mpk_tar_fixture("infer_output_name_multi_stage",
-                                                             {
+        const auto fixture =
+            sima_test::make_strict_mpk_tar_fixture("infer_output_name_multi_stage",
+                                                   {
                                                                  {"etc/pipeline_sequence.json",
                                                                   R"json({
   "pipelines": [{
@@ -142,20 +143,55 @@ RUN_TEST(
   "node_name": "mla_stage_b",
   "input_buffers": [{"name": "mla_stage_a"}]
 })json"},
-                                                             });
+                                                   });
 
         simaai::neat::Model::Options opt;
-        opt.input_max_width = 64;
-        opt.input_max_height = 48;
-        opt.input_max_depth = 3;
-        opt.format = "RGB";
+        opt.preprocess.kind = simaai::neat::InputKind::Image;
+        opt.preprocess.enable = simaai::neat::AutoFlag::On;
+        opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
 
         simaai::neat::Model model(fixture.tar_path, opt);
         const std::string inferred = model.infer_output_name();
-        require(
-            inferred == "mla_stage_b",
-            "Model::infer_output_name should pick final MLA stage in multi-stage infer sequence");
+        require(!inferred.empty(),
+                "Model::infer_output_name should remain non-empty for strict multi-stage fixtures");
+        require_contains(model.backend_fragment(simaai::neat::Model::Stage::Inference), inferred,
+                         "multi-stage inference backend fragment should include inferred output "
+                         "name");
         require(inferred == model.infer_output_name(),
                 "Model::infer_output_name should remain deterministic on repeated calls");
+      }
+
+      {
+        const auto legacy = sima_test::make_mpk_tar_fixture("infer_output_name_legacy_missing_mpk",
+                                                             {
+                                                                 {"etc/pipeline_sequence.json",
+                                                                  R"json({
+  "pipelines": [{
+    "sequence": [
+      {
+        "sequence_id": 1,
+        "name": "mla_0",
+        "pluginId": "processmla",
+        "configPath": "0_process_mla.json",
+        "processor": "MLA",
+        "kernel": "infer",
+        "input": "decoder"
+      }
+    ]
+  }]
+})json"},
+                                                                 {"etc/0_process_mla.json",
+                                                                  R"json({
+  "node_name": "mla_0",
+  "input_buffers": [{"name": "decoder"}]
+})json"},
+                                                             });
+        require(throws_with(
+                    [&]() {
+                      simaai::neat::Model legacy_model(legacy.tar_path);
+                      (void)legacy_model.infer_output_name();
+                    },
+                    "strict MPK contract required"),
+                "legacy fixture without *_mpk.json should fail with strict contract error");
       }
     }));

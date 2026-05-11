@@ -67,3 +67,28 @@
  * @defgroup diagnostics Diagnostics
  * @brief PipelineReport, debug probes, and observability helpers.
  */
+
+/**
+ * @defgroup model Model
+ * @brief Loaded MPKs, preprocess plans, and the simplified inference entry point.
+ */
+
+/**
+ * @defgroup graph Runtime graph
+ * @brief Actor-style runtime DAG, named-port stages, and the GraphSession/GraphRun pair.
+ */
+
+/**
+ * @defgroup policy Policy
+ * @brief Decoder/encoder/RTSP/memory policy decision helpers used by the builder.
+ */
+
+/**
+ * @defgroup internal_sima Framework internals (SiMa reach-through)
+ * @brief Reach-through layer between core/ and the SiMa SoC pipeline internals.
+ *
+ * NOT public API. Documented for framework engineers — these headers appear in
+ * `core/src/pipeline/internal/sima/` and are deliberately excluded from the
+ * published Docusaurus site. Their `@brief` blocks are still useful in IDE hover
+ * popups (clangd reads them directly).
+ */

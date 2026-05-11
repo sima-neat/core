@@ -11,18 +11,20 @@ using namespace simaai::neat::nodes;
 
 int main() {
   try {
-    // Default: latest frame, no clock sync.
+    // Explicit one-buffer policy: latest frame, no clock sync.
     {
       simaai::neat::Session p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
-      p.add(Output());
+      simaai::neat::OutputOptions opt;
+      opt.max_buffers = 1;
+      p.add(Output(opt));
 
       const std::string gst = p.describe_backend();
       require_contains(gst, "appsink name=mysink", "default Output name mismatch");
       require_contains(gst, "emit-signals=false sync=false max-buffers=1 drop=false",
-                       "default Output settings mismatch");
+                       "explicit one-buffer Output settings mismatch");
     }
 
     // Latest/drop: only the most recent buffer should remain.
@@ -32,6 +34,7 @@ int main() {
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
       simaai::neat::OutputOptions opt;
+      opt.max_buffers = 1;
       opt.drop = true;
       p.add(Output(opt));
 
@@ -73,7 +76,7 @@ int main() {
       p.add_output_tensor(out);
 
       const std::string gst = p.describe_backend();
-      require_contains(gst, "max-buffers=1", "add_output_tensor should use default sink options");
+      require_contains(gst, "max-buffers=4", "add_output_tensor should use default sink options");
       require_contains(gst, "drop=false", "add_output_tensor should keep default drop=false");
     }
 

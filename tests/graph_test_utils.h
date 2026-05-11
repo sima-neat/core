@@ -117,7 +117,7 @@ inline simaai::neat::Sample make_tensor_sample(int frame_id, const std::string& 
 
 inline bool has_field_name(const simaai::neat::Sample& bundle, const std::string& name) {
   for (const auto& field : bundle.fields) {
-    if (field.port_name == name)
+    if (field.stream_label == name || field.port_name == name)
       return true;
   }
   return false;

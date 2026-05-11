@@ -3,6 +3,7 @@
 #include "pipeline/SessionOptions.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/TessellatedTensor.h"
@@ -15,21 +16,41 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <mutex>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace simaai::neat {
 using pipeline_internal::upper_copy;
 namespace {
+
+size_t tensor_dense_bytes_tight(const simaai::neat::Tensor& input);
+
+const char* input_memory_policy_name(InputMemoryPolicy policy) {
+  switch (policy) {
+  case InputMemoryPolicy::Auto:
+    return "auto";
+  case InputMemoryPolicy::Ev74:
+    return "ev74";
+  case InputMemoryPolicy::Dms0:
+    return "dms0";
+  case InputMemoryPolicy::SystemMemory:
+    return "system";
+  }
+  return "auto";
+}
 
 size_t dtype_bytes(TensorDType dtype) {
   switch (dtype) {
@@ -58,6 +79,407 @@ int shape_dim(const std::vector<int64_t>& shape, size_t idx) {
     return -1;
   const int64_t v = shape[idx];
   return (v > 0) ? static_cast<int>(v) : -1;
+}
+
+std::string tensor_shape_csv_local(const std::vector<int64_t>& shape) {
+  std::ostringstream oss;
+  for (size_t i = 0; i < shape.size(); ++i) {
+    if (i)
+      oss << ",";
+    oss << shape[i];
+  }
+  return oss.str();
+}
+
+std::vector<int64_t> tensor_shape_from_compat_dims_local(int width, int height, int depth,
+                                                         TensorLayout layout) {
+  if (width <= 0)
+    return {};
+  if (height <= 0)
+    return {width};
+  if (depth <= 0 || layout == TensorLayout::HW)
+    return {height, width};
+  if (layout == TensorLayout::CHW)
+    return {depth, height, width};
+  return {height, width, depth};
+}
+
+TensorCompatDims tensor_compat_dims_from_shape_local(const std::vector<int64_t>& shape,
+                                                     TensorLayout layout) {
+  TensorCompatDims out;
+  if (shape.empty())
+    return out;
+
+  const auto dim_from_end = [&](size_t from_end) -> int {
+    if (shape.size() < from_end)
+      return -1;
+    const int64_t v = shape[shape.size() - from_end];
+    return v > 0 ? static_cast<int>(v) : -1;
+  };
+
+  if (layout == TensorLayout::HW) {
+    if (shape.size() == 1U) {
+      out.height = 1;
+      out.width = dim_from_end(1);
+      out.depth = (out.width > 0) ? 1 : -1;
+      return out;
+    }
+    out.height = dim_from_end(2);
+    out.width = dim_from_end(1);
+    out.depth = (out.width > 0 && out.height > 0) ? 1 : -1;
+    return out;
+  }
+  if (layout == TensorLayout::CHW) {
+    out.depth = dim_from_end(3);
+    out.height = dim_from_end(2);
+    out.width = dim_from_end(1);
+    return out;
+  }
+  if (layout == TensorLayout::HWC) {
+    out.height = dim_from_end(3);
+    out.width = dim_from_end(2);
+    out.depth = dim_from_end(1);
+    return out;
+  }
+
+  if (shape.size() >= 3U) {
+    out.height = dim_from_end(3);
+    out.width = dim_from_end(2);
+    out.depth = dim_from_end(1);
+  } else if (shape.size() == 2U) {
+    out.height = dim_from_end(2);
+    out.width = dim_from_end(1);
+    out.depth = 1;
+  } else if (shape.size() == 1U) {
+    out.height = 1;
+    out.width = dim_from_end(1);
+    out.depth = 1;
+  }
+  return out;
+}
+
+bool gst_structure_set_int_vector_field_local(GstStructure* s, const char* field,
+                                              const std::vector<int>& values) {
+  if (!s || !field) {
+    return false;
+  }
+  GValue list = G_VALUE_INIT;
+  g_value_init(&list, GST_TYPE_LIST);
+  for (const int value : values) {
+    GValue item = G_VALUE_INIT;
+    g_value_init(&item, G_TYPE_INT);
+    g_value_set_int(&item, value);
+    gst_value_list_append_value(&list, &item);
+    g_value_unset(&item);
+  }
+  gst_structure_set_value(s, field, &list);
+  g_value_unset(&list);
+  return true;
+}
+
+bool gst_structure_get_int_vector_field_local(const GstStructure* s, const char* field,
+                                              std::vector<int>* out) {
+  if (!s || !field || !out) {
+    return false;
+  }
+  const GValue* list = gst_structure_get_value(s, field);
+  if (!list || !GST_VALUE_HOLDS_LIST(list)) {
+    return false;
+  }
+  out->clear();
+  const guint size = gst_value_list_get_size(list);
+  out->reserve(size);
+  for (guint i = 0; i < size; ++i) {
+    const GValue* item = gst_value_list_get_value(list, i);
+    if (!item || !G_VALUE_HOLDS_INT(item)) {
+      return false;
+    }
+    out->push_back(g_value_get_int(item));
+  }
+  return true;
+}
+
+bool ensure_custom_meta_structure_mutable(GstBuffer* buffer, const char* meta_name,
+                                          GstCustomMeta** meta_out, GstStructure** structure_out) {
+  if (!buffer || !meta_name || !meta_out || !structure_out) {
+    return false;
+  }
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, meta_name);
+  bool added_meta = false;
+  if (!meta) {
+    if (!gst_buffer_is_writable(buffer)) {
+      return false;
+    }
+    meta = gst_buffer_add_custom_meta(buffer, meta_name);
+    added_meta = true;
+  }
+  if (!meta) {
+    return false;
+  }
+  GstStructure* s = gst_custom_meta_get_structure(meta);
+  if (!s) {
+    return false;
+  }
+
+  bool structure_mutable = added_meta;
+#if defined(GST_STRUCTURE_IS_MUTABLE)
+  structure_mutable = GST_STRUCTURE_IS_MUTABLE(s);
+#elif defined(GST_STRUCTURE_IS_WRITABLE)
+  structure_mutable = GST_STRUCTURE_IS_WRITABLE(s);
+#endif
+  if (!structure_mutable) {
+    if (!gst_buffer_is_writable(buffer)) {
+      return false;
+    }
+    GstStructure* snapshot = gst_structure_copy(s);
+    gst_buffer_remove_meta(buffer, &meta->meta);
+    meta = gst_buffer_add_custom_meta(buffer, meta_name);
+    s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+    if (!s) {
+      if (snapshot) {
+        gst_structure_free(snapshot);
+      }
+      return false;
+    }
+    if (snapshot) {
+      const gint n_fields = gst_structure_n_fields(snapshot);
+      for (gint i = 0; i < n_fields; ++i) {
+        const char* fname = gst_structure_nth_field_name(snapshot, i);
+        if (!fname) {
+          continue;
+        }
+        const GValue* val = gst_structure_get_value(snapshot, fname);
+        if (val) {
+          gst_structure_set_value(s, fname, val);
+        }
+      }
+      gst_structure_free(snapshot);
+    }
+  }
+
+  *meta_out = meta;
+  *structure_out = s;
+  return true;
+}
+
+std::optional<std::string> validate_axis_perm_vector_local(const std::vector<int>& perm,
+                                                           const char* field) {
+  std::vector<int> sorted = perm;
+  for (const int axis : sorted) {
+    if (axis < 0) {
+      return std::string("invalid preprocess metadata field '") + field +
+             "' (axis_perm must contain only non-negative indices)";
+    }
+  }
+  std::sort(sorted.begin(), sorted.end());
+  if (std::adjacent_find(sorted.begin(), sorted.end()) != sorted.end()) {
+    return std::string("invalid preprocess metadata field '") + field +
+           "' (axis_perm must not contain duplicate indices)";
+  }
+  return std::nullopt;
+}
+
+bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
+  const Tensor* tensor = nullptr;
+  if (sample.kind == SampleKind::TensorSet) {
+    if (sample.tensors.size() != 1U || !sample.fields.empty()) {
+      return false;
+    }
+    tensor = &sample.tensors.front();
+  } else if (sample.kind == SampleKind::Tensor) {
+    if (!sample.tensor.has_value() || !sample.fields.empty()) {
+      return false;
+    }
+    tensor = &*sample.tensor;
+  } else {
+    return false;
+  }
+
+  const bool runtime_tensor_backing =
+      tensor->storage &&
+      (tensor->storage->kind == StorageKind::GstSample || !tensor->storage->sima_segments.empty());
+
+  const auto runtime_view_requires_envelope_transport = [&]() {
+    if (!runtime_tensor_backing) {
+      return false;
+    }
+    if (tensor->byte_offset != 0 || !tensor->planes.empty()) {
+      return true;
+    }
+    const std::size_t tensor_bytes = tensor_dense_bytes_tight(*tensor);
+    if (tensor_bytes == 0U || !tensor->storage) {
+      return false;
+    }
+    int memory_index = tensor->route.memory_index;
+    if (memory_index < 0) {
+      memory_index = tensor->route.physical_index;
+    }
+    if (memory_index >= 0 &&
+        static_cast<std::size_t>(memory_index) < tensor->storage->sima_segments.size()) {
+      const auto& segment = tensor->storage->sima_segments[static_cast<std::size_t>(memory_index)];
+      if (segment.size_bytes > 0U && segment.size_bytes != tensor_bytes) {
+        return true;
+      }
+    }
+    return tensor->storage->size_bytes > 0U && tensor->storage->size_bytes != tensor_bytes;
+  };
+
+  const auto is_plain_dtype_format = [](const std::string& fmt) {
+    return fmt == "UINT8" || fmt == "INT8" || fmt == "UINT16" || fmt == "INT16" ||
+           fmt == "BF16" || fmt == "BFLOAT16" || fmt == "FP32" || fmt == "FLOAT32" ||
+           fmt == "FP64" || fmt == "FLOAT64" || fmt == "INT32" || fmt == "UINT32";
+  };
+  const auto packed_transport_format = [](const std::string& fmt) {
+    const std::string up = upper_copy(fmt);
+    return up == "MLA" || up.find("TESS") != std::string::npos;
+  };
+  const auto caps_transport_format = [&sample]() -> std::string {
+    if (sample.caps_string.empty()) {
+      return {};
+    }
+    GstCaps* caps = gst_caps_from_string(sample.caps_string.c_str());
+    if (!caps) {
+      return {};
+    }
+    const GstStructure* s = gst_caps_get_structure(caps, 0);
+    const char* caps_fmt = s ? gst_structure_get_string(s, "format") : nullptr;
+    const std::string out = caps_fmt ? upper_copy(std::string_view(caps_fmt)) : std::string{};
+    gst_caps_unref(caps);
+    return out;
+  };
+
+  std::string fmt = !sample.payload_tag.empty() ? sample.payload_tag : sample.format;
+  fmt = upper_copy(fmt);
+  if (fmt.empty() && tensor->semantic.tess.has_value()) {
+    fmt = upper_copy(tensor->semantic.tess->format);
+  }
+  const std::string caps_fmt = caps_transport_format();
+  const bool raw_video_sample =
+      sample.media_type.rfind("video/x-raw", 0) == 0 ||
+      (sample.media_type.empty() && tensor->semantic.image.has_value());
+  if (raw_video_sample && !tensor->semantic.tess.has_value()) {
+    return false;
+  }
+  if ((fmt.empty() || is_plain_dtype_format(fmt)) && packed_transport_format(caps_fmt)) {
+    fmt = caps_fmt;
+  }
+  if (tensor->semantic.tess.has_value()) {
+    return true;
+  }
+  if (runtime_view_requires_envelope_transport()) {
+    return true;
+  }
+  if (fmt.empty()) {
+    return false;
+  }
+  if (!packed_transport_format(fmt) && !packed_transport_format(caps_fmt)) {
+    return false;
+  }
+  return runtime_tensor_backing || packed_transport_format(caps_fmt);
+}
+
+bool sample_uses_joined_tensor_envelope_transport(const Sample& sample) {
+  if (!sample_has_tensor_list(sample) || sample.tensors.size() <= 1U || !sample.fields.empty()) {
+    return false;
+  }
+
+  const auto& first = sample.tensors.front();
+  if (!first.storage) {
+    return false;
+  }
+
+  const std::string segment_name =
+      !first.route.segment_name.empty() ? first.route.segment_name : first.route.name;
+  if (segment_name.empty()) {
+    return false;
+  }
+
+  std::size_t running_offset = 0U;
+  for (const auto& tensor : sample.tensors) {
+    if (!tensor.storage || tensor.storage != first.storage) {
+      return false;
+    }
+    const std::string tensor_segment_name =
+        !tensor.route.segment_name.empty() ? tensor.route.segment_name : tensor.route.name;
+    if (tensor_segment_name != segment_name) {
+      return false;
+    }
+    const std::size_t tensor_bytes = tensor.dense_bytes_tight();
+    if (tensor_bytes == 0U || tensor.byte_offset < 0) {
+      return false;
+    }
+    if (static_cast<std::size_t>(tensor.byte_offset) != running_offset) {
+      return false;
+    }
+    running_offset += tensor_bytes;
+  }
+  return running_offset > 0U;
+}
+
+SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const char* where) {
+  const std::string tag = where ? where : "SampleSpec";
+  const TensorList tensors = tensors_from_sample(sample, false);
+  if (tensors.empty()) {
+    throw std::invalid_argument(tag + ": tensor envelope transport missing tensor");
+  }
+
+  InputOptions first_tensor_opt;
+  first_tensor_opt.media_type =
+      sample.media_type.empty() ? std::string("application/vnd.simaai.tensor") : sample.media_type;
+  if (!sample.payload_tag.empty()) {
+    first_tensor_opt.format = sample.payload_tag;
+  } else if (!sample.format.empty()) {
+    first_tensor_opt.format = sample.format;
+  }
+
+  SampleSpec spec = derive_tensor_spec_or_throw(tensors.front(), first_tensor_opt, tag.c_str());
+  spec.tensor_envelope_transport = true;
+
+  pipeline_internal::TensorBufferView view;
+  std::string view_err;
+  if (pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) &&
+      view.buffer) {
+    spec.required_bytes_actual = static_cast<std::size_t>(gst_buffer_get_size(view.buffer));
+  }
+  if (spec.required_bytes_actual == 0U) {
+    std::unordered_set<int> seen_memory_indices;
+    std::size_t total_bytes = 0U;
+    for (const auto& tensor : tensors) {
+      std::size_t segment_bytes = 0U;
+      if (tensor.storage) {
+        const int memory_index =
+            (tensor.route.memory_index >= 0) ? tensor.route.memory_index : tensor.route.physical_index;
+        if (!seen_memory_indices.insert(memory_index).second) {
+          continue;
+        }
+        segment_bytes = tensor.storage->size_bytes;
+        if (memory_index >= 0 &&
+            static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size() &&
+            tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes > 0U) {
+          segment_bytes =
+              tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes;
+        }
+      } else {
+        // Collapsed packed tensors can be CPU-owned but still represent transport bytes.
+        segment_bytes = tensor.dense_bytes_tight();
+      }
+      if (segment_bytes == 0U) {
+        throw std::invalid_argument(tag + ": tensor envelope transport has zero logical bytes");
+      }
+      total_bytes += segment_bytes;
+    }
+    spec.required_bytes_actual = total_bytes;
+  }
+  if (spec.required_bytes_actual == 0U) {
+    throw std::invalid_argument(tag + ": tensor envelope transport has zero runtime bytes");
+  }
+  if (spec.required_bytes_actual >
+      static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument(tag + ": tensor envelope transport exceeds transport size limit");
+  }
+  spec.caps_key = capkey_from_spec(spec);
+  spec.caps_string = caps_string_from_spec(spec);
+  return spec;
 }
 
 int limit_for_axis(const InputStreamOptions::ResolvedShapeLimits& limits, char axis) {
@@ -129,6 +551,47 @@ std::string fmt_from_dtype(TensorDType dtype) {
     return "FP64";
   }
   return {};
+}
+
+std::string layout_caps_value(TensorLayout layout) {
+  switch (layout) {
+  case TensorLayout::HWC:
+    return "HWC";
+  case TensorLayout::CHW:
+    return "CHW";
+  case TensorLayout::HW:
+    return "HW";
+  case TensorLayout::Unknown:
+    return {};
+  }
+  return {};
+}
+
+std::string caps_format_value_from_spec(const SampleSpec& spec) {
+  return normalize_caps_format_for_media(spec.media_type, spec.format);
+}
+
+std::string dtype_caps_value_from_spec(const SampleSpec& spec) {
+  const std::string format = caps_format_value_from_spec(spec);
+  const std::string fmt_up = upper_copy(format);
+  if (!fmt_up.empty()) {
+    // Preserve EVXX and explicit dtype tokens when provided by the route/config.
+    if (fmt_up.find("EVXX_") == 0 || fmt_up.find("INT") != std::string::npos ||
+        fmt_up.find("UINT") != std::string::npos || fmt_up.find("FP") != std::string::npos ||
+        fmt_up.find("FLOAT") != std::string::npos || fmt_up.find("BF16") != std::string::npos ||
+        fmt_up.find("BFLOAT16") != std::string::npos) {
+      return format;
+    }
+  }
+  return fmt_from_dtype(spec.dtype);
+}
+
+uint16_t fp32_to_bf16_rne(float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  const uint32_t lsb = (bits >> 16) & 1u;
+  bits += 0x7FFFu + lsb;
+  return static_cast<uint16_t>(bits >> 16);
 }
 
 bool tensor_plane_is_tight(const simaai::neat::Plane& plane, TensorDType dtype) {
@@ -205,6 +668,23 @@ void debug_pool_log(const char* msg) {
   }
 }
 
+void debug_pool_log_alloc_policy(const InputOptions& opt, bool tensor_media,
+                                 GstMemoryFlags target_flag, const char* source,
+                                 bool use_simaai_pool_effective) {
+  if (!pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) &&
+      !pipeline_internal::env_bool("SIMA_INPUTSTREAM_ALLOC_DEBUG", false)) {
+    return;
+  }
+  std::fprintf(stderr,
+               "[DBG] input_alloc_policy policy=%s use_simaai_pool=%d effective_pool=%d media=%s "
+               "format=%s target=0x%x source=%s buffer_name=%s\n",
+               input_memory_policy_name(opt.memory_policy), opt.use_simaai_pool ? 1 : 0,
+               use_simaai_pool_effective ? 1 : 0, tensor_media ? "tensor" : "other",
+               opt.format.str().c_str(), static_cast<unsigned>(target_flag),
+               source ? source : "unknown",
+               opt.buffer_name.empty() ? "<default>" : opt.buffer_name.c_str());
+}
+
 bool pool_stats_enabled() {
   return pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false) ||
          pipeline_internal::env_bool("SIMA_DEBUG_INPUT_POOL", false) ||
@@ -257,6 +737,16 @@ void log_pool_stats(const char* stage, GstBufferPool* pool, const PoolStats& sta
 }
 
 } // namespace
+
+std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int depth,
+                                                   TensorLayout layout) {
+  return tensor_shape_from_compat_dims_local(width, height, depth, layout);
+}
+
+TensorCompatDims tensor_compat_dims_from_shape(const std::vector<int64_t>& shape,
+                                               TensorLayout layout) {
+  return tensor_compat_dims_from_shape_local(shape, layout);
+}
 
 void track_input_pool_acquire(GstBufferPool* pool, GstBuffer* buffer, size_t bytes,
                               const char* where, double wait_ms, bool ok) {
@@ -412,12 +902,21 @@ std::string caps_string_from_spec(const SampleSpec& spec) {
   }
 
   if (spec.media_type == "application/vnd.simaai.tensor") {
-    if (spec.format.empty() || spec.width <= 0 || spec.height <= 0 || spec.depth <= 0) {
+    const std::vector<int64_t>& tensor_shape = spec.shape;
+    if (spec.format.empty() || tensor_shape.empty()) {
       throw std::runtime_error("SampleSpec: missing tensor caps fields");
     }
+    const std::string caps_format = caps_format_value_from_spec(spec);
     std::ostringstream oss;
-    oss << "application/vnd.simaai.tensor,format=" << spec.format << ",width=" << spec.width
-        << ",height=" << spec.height << ",depth=" << spec.depth;
+    oss << "application/vnd.simaai.tensor,format=" << caps_format;
+    oss << ",rank=" << tensor_shape.size();
+    for (size_t i = 0; i < tensor_shape.size(); ++i) {
+      oss << ",dim" << i << "=" << tensor_shape[i];
+    }
+    const std::string dtype = dtype_caps_value_from_spec(spec);
+    if (!dtype.empty()) {
+      oss << ",dtype=" << dtype;
+    }
     return oss.str();
   }
 
@@ -462,7 +961,6 @@ std::size_t CapKeyHash::operator()(const CapKey& key) const {
     break;
   case SampleMediaKind::Tensor:
     seed = hash_combine(seed, std::hash<int>{}(static_cast<int>(key.dtype)));
-    seed = hash_combine(seed, std::hash<int>{}(static_cast<int>(key.layout)));
     for (const auto& dim : key.shape) {
       seed = hash_combine(seed, std::hash<std::int64_t>{}(dim));
     }
@@ -480,8 +978,10 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
   if (!input.storage) {
     throw std::invalid_argument(tag + ": simaai::neat::Tensor missing storage");
   }
-  if (input.device.type != simaai::neat::DeviceType::CPU) {
-    throw std::invalid_argument(tag + ": simaai::neat::Tensor must be on CPU");
+  if (input.device.type != simaai::neat::DeviceType::CPU &&
+      input.storage->kind != simaai::neat::StorageKind::GstSample) {
+    throw std::invalid_argument(
+        tag + ": non-CPU tensors must be backed by GstSample storage");
   }
   if (input.semantic.encoded.has_value()) {
     throw std::invalid_argument(tag + ": encoded tensors require Sample caps_string");
@@ -687,69 +1187,52 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
     if (!input.is_contiguous()) {
       throw std::invalid_argument(tag + ": tensor input must be contiguous");
     }
-    if (input.layout == TensorLayout::Unknown || input.layout == TensorLayout::Planar) {
-      throw std::invalid_argument(tag + ": tensor layout must be explicit (HWC/CHW/HW)");
-    }
 
     std::vector<int64_t> normalized_shape = input.shape;
+    const bool layout_is_explicit = input.layout != TensorLayout::Unknown;
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
-    if (normalized_shape.size() == expected_rank + 1) {
+    if (layout_is_explicit && normalized_shape.size() == expected_rank + 1) {
       const int64_t batch = normalized_shape.front();
       if (batch <= 0) {
         throw std::invalid_argument(tag + ": invalid leading batch dimension");
       }
       if (batch == 1) {
         normalized_shape.erase(normalized_shape.begin());
-      } else {
-        throw std::invalid_argument(
-            tag + ": batched tensor input is not supported in this pipeline (leading batch=" +
-            std::to_string(batch) + "). Fix: use batch=1 or remove the batch axis.");
       }
     }
 
-    int h = -1;
-    int w = -1;
-    int d = -1;
+    const TensorCompatDims compat = tensor_compat_dims_from_shape(normalized_shape, input.layout);
     if (input.layout == TensorLayout::HWC) {
-      if (normalized_shape.size() != 3) {
-        throw std::invalid_argument(tag + ": HWC tensor must have shape [H,W,C]");
+      if (normalized_shape.size() != 3 && normalized_shape.size() != 4) {
+        throw std::invalid_argument(tag + ": HWC tensor must have shape [H,W,C] or [N,H,W,C]");
       }
-      h = shape_dim(normalized_shape, 0);
-      w = shape_dim(normalized_shape, 1);
-      d = shape_dim(normalized_shape, 2);
     } else if (input.layout == TensorLayout::CHW) {
-      if (normalized_shape.size() != 3) {
-        throw std::invalid_argument(tag + ": CHW tensor must have shape [C,H,W]");
+      if (normalized_shape.size() != 3 && normalized_shape.size() != 4) {
+        throw std::invalid_argument(tag + ": CHW tensor must have shape [C,H,W] or [N,C,H,W]");
       }
-      d = shape_dim(normalized_shape, 0);
-      h = shape_dim(normalized_shape, 1);
-      w = shape_dim(normalized_shape, 2);
     } else if (input.layout == TensorLayout::HW) {
-      if (normalized_shape.size() != 2) {
-        throw std::invalid_argument(tag + ": HW tensor must have shape [H,W]");
+      if (normalized_shape.size() != 1 && normalized_shape.size() != 2 &&
+          normalized_shape.size() != 3) {
+        throw std::invalid_argument(tag + ": HW tensor must have shape [N], [H,W], or [B,H,W]");
       }
-      h = shape_dim(normalized_shape, 0);
-      w = shape_dim(normalized_shape, 1);
-      d = 1;
     }
 
-    if (w <= 0 || h <= 0 || d <= 0) {
-      throw std::invalid_argument(tag + ": tensor input missing width/height/depth");
+    if (compat.width <= 0 || compat.height <= 0 || compat.depth <= 0) {
+      throw std::invalid_argument(tag + ": tensor input missing canonical shape");
     }
     SampleSpec shape_seed = spec;
-    shape_seed.width = w;
-    shape_seed.height = h;
-    shape_seed.depth = d;
+    shape_seed.layout = input.layout;
+    shape_seed.shape = normalized_shape;
     const auto limits = pipeline_internal::resolve_shape_limits(
         pipeline_internal::normalize_shape_bounds(opt), shape_seed);
     validate_dim_with_effective_max(
-        tag, "tensor width", w, limits, 'w',
+        tag, "tensor width", compat.width, limits, 'w',
         "resize input or increase max_width/width (Model::Options::input_max_width).");
     validate_dim_with_effective_max(
-        tag, "tensor height", h, limits, 'h',
+        tag, "tensor height", compat.height, limits, 'h',
         "resize input or increase max_height/height (Model::Options::input_max_height).");
     validate_dim_with_effective_max(
-        tag, "tensor depth", d, limits, 'd',
+        tag, "tensor depth", compat.depth, limits, 'd',
         "reduce channels or increase max_depth/depth (Model::Options::input_max_depth).");
 
     std::string fmt = upper_copy(opt.format);
@@ -763,12 +1246,18 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
       const bool fmt_is_dtype = fmt == "UINT8" || fmt == "INT8" || fmt == "UINT16" ||
                                 fmt == "INT16" || fmt == "INT32" || fmt == "BF16" ||
                                 fmt == "FP32" || fmt == "FP64";
-      const bool fmt_is_tess_i8 = is_tessellated_int8_format(fmt) || fmt == "MLA";
+      const bool fmt_is_mla = fmt == "MLA";
+      const bool fmt_is_tess_i8 = is_tessellated_int8_format(fmt);
       const bool fmt_is_tess_bf16 = is_tessellated_bf16_format(fmt);
       if (fmt_is_dtype && fmt != dtype_fmt) {
         throw std::invalid_argument(tag + ": tensor format does not match dtype");
       }
-      if (fmt_is_tess_i8 && input.dtype != TensorDType::Int8 && input.dtype != TensorDType::UInt8) {
+      if (fmt_is_mla && input.dtype != TensorDType::Int8 && input.dtype != TensorDType::UInt8 &&
+          input.dtype != TensorDType::BFloat16) {
+        throw std::invalid_argument(tag + ": tensor format does not match dtype");
+      }
+      if (fmt_is_tess_i8 && input.dtype != TensorDType::Int8 &&
+          input.dtype != TensorDType::UInt8) {
         throw std::invalid_argument(tag + ": tensor format does not match dtype");
       }
       if (fmt_is_tess_bf16 && input.dtype != TensorDType::BFloat16) {
@@ -786,9 +1275,6 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
         throw std::invalid_argument(tag + ": storage too small for tensor input");
       }
     }
-    spec.width = w;
-    spec.height = h;
-    spec.depth = d;
     spec.shape = std::move(normalized_shape);
     spec.format = fmt;
     spec.required_bytes_actual = bytes;
@@ -842,19 +1328,30 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
       pf = simaai::neat::ImageSpec::PixelFormat::RGB;
     if (fmt == "GRAY8")
       pf = simaai::neat::ImageSpec::PixelFormat::GRAY8;
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
     return simaai::neat::from_cv_mat(mat, pf, true);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
   }
 
   if (media == "application/vnd.simaai.tensor") {
-    if (mat.depth() != CV_32F) {
-      throw std::invalid_argument(tag + ": tensor input must be CV_32F");
-    }
-    if (mat.channels() != 1 && mat.channels() != 3) {
-      throw std::invalid_argument(tag + ": tensor input must be 1 or 3 channels");
+    if (mat.channels() <= 0) {
+      throw std::invalid_argument(tag + ": tensor input must have a positive channel count");
     }
     std::string fmt = upper_copy(opt.format);
-    if (!fmt.empty() && fmt != "FP32") {
-      throw std::invalid_argument(tag + ": tensor format must be FP32");
+    const bool want_fp32 = (fmt.empty() || fmt == "FP32" || fmt == "EVXX_FLOAT32");
+    if (!want_fp32) {
+      throw std::invalid_argument(
+          tag + ": cv::Mat tensor input supports FP32/EVXX_FLOAT32 only and must remain exact; "
+                "pass simaai::neat::Tensor for BF16 or quantized tensor ingress");
+    }
+    if (mat.depth() != CV_32F) {
+      throw std::invalid_argument(
+          tag + ": cv::Mat tensor input must already be CV_32F; implicit numeric conversion is disabled");
     }
 
     auto holder = std::make_shared<cv::Mat>(mat);
@@ -888,72 +1385,197 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
 }
 
 SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
+  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
+    if (sample_uses_single_tensor_envelope_transport(sample)) {
+      return tensor_envelope_spec_from_sample_or_throw(sample, "SampleSpec");
+    }
+
+    const simaai::neat::Tensor& input = *sample.tensor;
+    if (input.semantic.encoded.has_value()) {
+      if (sample.caps_string.empty()) {
+        throw std::invalid_argument("SampleSpec: encoded sample requires caps_string");
+      }
+      if (input.dtype != TensorDType::UInt8) {
+        throw std::invalid_argument("SampleSpec: encoded simaai::neat::Tensor must be UInt8");
+      }
+      if (!input.is_dense() || !input.planes.empty()) {
+        throw std::invalid_argument("SampleSpec: encoded simaai::neat::Tensor must be dense");
+      }
+      if (input.shape.size() != 1 || input.shape[0] <= 0) {
+        throw std::invalid_argument(
+            "SampleSpec: encoded simaai::neat::Tensor must have shape [num_bytes]");
+      }
+      SampleSpec spec;
+      spec.kind = SampleMediaKind::Encoded;
+      if (!sample.media_type.empty()) {
+        spec.media_type = sample.media_type;
+      } else {
+        GstCaps* caps = gst_caps_from_string(sample.caps_string.c_str());
+        if (!caps) {
+          throw std::invalid_argument("SampleSpec: invalid caps_string");
+        }
+        const GstStructure* s = gst_caps_get_structure(caps, 0);
+        const char* name = s ? gst_structure_get_name(s) : nullptr;
+        if (name) {
+          spec.media_type = name;
+        }
+        gst_caps_unref(caps);
+        if (spec.media_type.empty()) {
+          throw std::invalid_argument("SampleSpec: encoded caps missing media_type");
+        }
+      }
+      spec.format = "ENCODED";
+      spec.dtype = input.dtype;
+      spec.layout = input.layout;
+      spec.shape = input.shape;
+      spec.required_bytes_actual = tensor_dense_bytes_tight(input);
+      if (spec.required_bytes_actual == 0) {
+        spec.required_bytes_actual = static_cast<size_t>(input.shape[0]);
+      }
+      spec.caps_string = sample.caps_string;
+      spec.caps_key = capkey_from_spec(spec);
+      return spec;
+    }
+
+    InputOptions opt;
+    opt.media_type = sample.media_type;
+    if (!sample.payload_tag.empty()) {
+      opt.format = sample.payload_tag;
+    } else if (!sample.format.empty()) {
+      opt.format = sample.format;
+    }
+    return derive_tensor_spec_or_throw(input, opt, "SampleSpec");
+  }
+
+  if (sample_has_tensor_list(sample)) {
+    if (sample.tensors.size() > 1U || sample_uses_single_tensor_envelope_transport(sample) ||
+        sample_uses_joined_tensor_envelope_transport(sample)) {
+      return tensor_envelope_spec_from_sample_or_throw(sample, "SampleSpec");
+    }
+    if (sample.tensors.size() > 1U) {
+      // TensorSet transport still pushes a single envelope buffer, but the
+      // logical appsrc caps must match the representative tensor contract used
+      // by downstream stages. The real envelope bytes are tracked separately.
+      InputOptions first_tensor_opt;
+      first_tensor_opt.media_type =
+          sample.media_type.empty() ? std::string("application/vnd.simaai.tensor") : sample.media_type;
+      if (!sample.payload_tag.empty()) {
+        first_tensor_opt.format = sample.payload_tag;
+      } else if (!sample.format.empty()) {
+        first_tensor_opt.format = sample.format;
+      }
+      SampleSpec spec =
+          derive_tensor_spec_or_throw(sample.tensors.front(), first_tensor_opt, "SampleSpec");
+      spec.tensor_envelope_transport = true;
+
+      pipeline_internal::TensorBufferView view;
+      std::string view_err;
+      if (pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) &&
+          view.buffer) {
+        spec.required_bytes_actual = static_cast<std::size_t>(gst_buffer_get_size(view.buffer));
+      }
+      if (spec.required_bytes_actual == 0U) {
+        std::unordered_set<int> seen_memory_indices;
+        std::size_t total_bytes = 0U;
+        for (const auto& tensor : sample.tensors) {
+          if (!tensor.storage) {
+            throw std::invalid_argument(
+                "SampleSpec: tensor-set transport missing storage for runtime segment sizing");
+          }
+          const int memory_index =
+              (tensor.route.memory_index >= 0) ? tensor.route.memory_index : tensor.route.physical_index;
+          if (!seen_memory_indices.insert(memory_index).second) {
+            continue;
+          }
+          std::size_t segment_bytes = tensor.storage->size_bytes;
+          if (memory_index >= 0 &&
+              static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size() &&
+              tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes > 0U) {
+            segment_bytes =
+                tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes;
+          }
+          if (segment_bytes == 0U) {
+            throw std::invalid_argument(
+                "SampleSpec: tensor-set transport missing runtime segment size");
+          }
+          total_bytes += segment_bytes;
+        }
+        spec.required_bytes_actual = total_bytes;
+      }
+      if (spec.required_bytes_actual == 0U) {
+        throw std::invalid_argument("SampleSpec: tensor-set envelope has zero runtime bytes");
+      }
+      if (spec.required_bytes_actual >
+          static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw std::invalid_argument("SampleSpec: tensor-set envelope exceeds transport size limit");
+      }
+      spec.caps_key = capkey_from_spec(spec);
+      spec.caps_string = caps_string_from_spec(spec);
+      return spec;
+    }
+    const simaai::neat::Tensor& input = sample.tensors.front();
+    if (input.semantic.encoded.has_value()) {
+      if (sample.caps_string.empty()) {
+        throw std::invalid_argument("SampleSpec: encoded sample requires caps_string");
+      }
+      if (input.dtype != TensorDType::UInt8) {
+        throw std::invalid_argument("SampleSpec: encoded simaai::neat::Tensor must be UInt8");
+      }
+      if (!input.is_dense() || !input.planes.empty()) {
+        throw std::invalid_argument("SampleSpec: encoded simaai::neat::Tensor must be dense");
+      }
+      if (input.shape.size() != 1 || input.shape[0] <= 0) {
+        throw std::invalid_argument(
+            "SampleSpec: encoded simaai::neat::Tensor must have shape [num_bytes]");
+      }
+      SampleSpec spec;
+      spec.kind = SampleMediaKind::Encoded;
+      if (!sample.media_type.empty()) {
+        spec.media_type = sample.media_type;
+      } else {
+        GstCaps* caps = gst_caps_from_string(sample.caps_string.c_str());
+        if (!caps) {
+          throw std::invalid_argument("SampleSpec: invalid caps_string");
+        }
+        const GstStructure* s = gst_caps_get_structure(caps, 0);
+        const char* name = s ? gst_structure_get_name(s) : nullptr;
+        if (name) {
+          spec.media_type = name;
+        }
+        gst_caps_unref(caps);
+        if (spec.media_type.empty()) {
+          throw std::invalid_argument("SampleSpec: encoded caps missing media_type");
+        }
+      }
+      spec.format = "ENCODED";
+      spec.dtype = input.dtype;
+      spec.layout = input.layout;
+      spec.shape = input.shape;
+      spec.required_bytes_actual = tensor_dense_bytes_tight(input);
+      if (spec.required_bytes_actual == 0) {
+        spec.required_bytes_actual = static_cast<size_t>(input.shape[0]);
+      }
+      spec.caps_string = sample.caps_string;
+      spec.caps_key = capkey_from_spec(spec);
+      return spec;
+    }
+
+    InputOptions opt;
+    opt.media_type = sample.media_type;
+    if (!sample.payload_tag.empty()) {
+      opt.format = sample.payload_tag;
+    } else if (!sample.format.empty()) {
+      opt.format = sample.format;
+    }
+    return derive_tensor_spec_or_throw(input, opt, "SampleSpec");
+  }
   if (sample.kind == SampleKind::Bundle) {
     if (sample.fields.empty()) {
-      throw std::invalid_argument("SampleSpec: bundle samples are empty");
+      throw std::invalid_argument("SampleSpec: bundle sample is empty");
     }
-    return derive_sample_spec_or_throw(sample.fields.front());
+    return tensor_envelope_spec_from_sample_or_throw(sample, "SampleSpec");
   }
-  if (!sample.tensor.has_value()) {
-    throw std::invalid_argument("SampleSpec: missing simaai::neat::Tensor");
-  }
-
-  const simaai::neat::Tensor& input = *sample.tensor;
-  if (input.semantic.encoded.has_value()) {
-    if (sample.caps_string.empty()) {
-      throw std::invalid_argument("SampleSpec: encoded sample requires caps_string");
-    }
-    if (input.dtype != TensorDType::UInt8) {
-      throw std::invalid_argument("SampleSpec: encoded simaai::neat::Tensor must be UInt8");
-    }
-    if (!input.is_dense() || !input.planes.empty()) {
-      throw std::invalid_argument("SampleSpec: encoded simaai::neat::Tensor must be dense");
-    }
-    if (input.shape.size() != 1 || input.shape[0] <= 0) {
-      throw std::invalid_argument(
-          "SampleSpec: encoded simaai::neat::Tensor must have shape [num_bytes]");
-    }
-    SampleSpec spec;
-    spec.kind = SampleMediaKind::Encoded;
-    if (!sample.media_type.empty()) {
-      spec.media_type = sample.media_type;
-    } else {
-      GstCaps* caps = gst_caps_from_string(sample.caps_string.c_str());
-      if (!caps) {
-        throw std::invalid_argument("SampleSpec: invalid caps_string");
-      }
-      const GstStructure* s = gst_caps_get_structure(caps, 0);
-      const char* name = s ? gst_structure_get_name(s) : nullptr;
-      if (name) {
-        spec.media_type = name;
-      }
-      gst_caps_unref(caps);
-      if (spec.media_type.empty()) {
-        throw std::invalid_argument("SampleSpec: encoded caps missing media_type");
-      }
-    }
-    spec.format = "ENCODED";
-    spec.dtype = input.dtype;
-    spec.layout = input.layout;
-    spec.shape = input.shape;
-    spec.required_bytes_actual = tensor_dense_bytes_tight(input);
-    if (spec.required_bytes_actual == 0) {
-      spec.required_bytes_actual = static_cast<size_t>(input.shape[0]);
-    }
-    spec.caps_string = sample.caps_string;
-    spec.caps_key = capkey_from_spec(spec);
-    return spec;
-  }
-
-  InputOptions opt;
-  opt.media_type = sample.media_type;
-  if (!sample.payload_tag.empty()) {
-    opt.format = sample.payload_tag;
-  } else if (!sample.format.empty()) {
-    opt.format = sample.format;
-  }
-  SampleSpec spec = derive_tensor_spec_or_throw(input, opt, "SampleSpec");
-  return spec;
+  throw std::invalid_argument("SampleSpec: tensor payload must be TensorSet");
 }
 
 Expected<SampleSpec, Status> derive_sample_spec_or_error(const Sample& sample) {
@@ -1009,14 +1631,30 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
       gst_caps_set_simple(caps, "framerate", GST_TYPE_FRACTION, spec.fps_n, spec.fps_d, nullptr);
     }
   } else if (spec.media_type == "application/vnd.simaai.tensor") {
-    if (spec.format.empty() || spec.width <= 0 || spec.height <= 0 || spec.depth <= 0) {
+    const std::vector<int64_t>& tensor_shape = spec.shape;
+    if (spec.format.empty() || tensor_shape.empty()) {
       throw std::runtime_error("caps_from_spec: invalid tensor spec");
     }
-    caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
-                               spec.format.c_str(), "width", G_TYPE_INT, spec.width, "height",
-                               G_TYPE_INT, spec.height, "depth", G_TYPE_INT, spec.depth, nullptr);
+    const std::string caps_format = caps_format_value_from_spec(spec);
+    caps = gst_caps_new_empty_simple("application/vnd.simaai.tensor");
     if (!caps) {
       throw std::runtime_error("caps_from_spec: failed to create tensor caps");
+    }
+    GstStructure* st = gst_caps_get_structure(caps, 0);
+    gst_structure_set(st, "format", G_TYPE_STRING, caps_format.c_str(), nullptr);
+    gst_structure_set(st, "rank", G_TYPE_INT, static_cast<int>(tensor_shape.size()), nullptr);
+    for (size_t i = 0; i < tensor_shape.size(); ++i) {
+      const std::string key = "dim" + std::to_string(i);
+      gst_structure_set(st, key.c_str(), G_TYPE_INT,
+                        static_cast<int>(tensor_shape[i]), nullptr);
+    }
+    const std::string shape_csv = tensor_shape_csv_local(tensor_shape);
+    if (!shape_csv.empty()) {
+      gst_structure_set(st, "shape", G_TYPE_STRING, shape_csv.c_str(), nullptr);
+    }
+    const std::string dtype = dtype_caps_value_from_spec(spec);
+    if (!dtype.empty()) {
+      gst_caps_set_simple(caps, "dtype", G_TYPE_STRING, dtype.c_str(), nullptr);
     }
   } else {
     throw std::runtime_error("caps_from_spec: unsupported media_type");
@@ -1036,16 +1674,73 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard) {
 #if SIMA_HAS_SIMAAI_POOL
-  if (opt.use_simaai_pool) {
+  const std::string media_type_up = upper_copy(opt.media_type);
+  const std::string format_up = upper_copy(opt.format.str());
+  const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
+  const bool bf16_tensor = tensor_media &&
+                           (format_up.find("BF16") != std::string::npos ||
+                            format_up.find("BFLOAT16") != std::string::npos);
+  const bool ifm0_hint = upper_copy(opt.buffer_name) == "IFM0";
+  GstMemoryFlags target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
+  const char* target_source = "heuristic";
+  bool force_system_memory = false;
+  bool use_simaai_pool_effective = opt.use_simaai_pool;
+
+  switch (opt.memory_policy) {
+  case InputMemoryPolicy::Ev74:
+    target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
+    target_source = "policy";
+    break;
+  case InputMemoryPolicy::Dms0:
+    target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_DMS0);
+    target_source = "policy";
+    break;
+  case InputMemoryPolicy::SystemMemory:
+    force_system_memory = true;
+    use_simaai_pool_effective = false;
+    target_source = "policy";
+    break;
+  case InputMemoryPolicy::Auto:
+    break;
+  }
+
+  if (!force_system_memory && opt.memory_policy == InputMemoryPolicy::Auto) {
+    const std::string target_override =
+        upper_copy(pipeline_internal::env_str("SIMA_INPUTSTREAM_TENSOR_TARGET", ""));
+    if (target_override == "EV74") {
+      target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
+      target_source = "env";
+    } else if (target_override == "DMS0") {
+      target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_DMS0);
+      target_source = "env";
+    } else {
+      target_flag =
+          static_cast<GstMemoryFlags>((bf16_tensor || ifm0_hint) ? GST_SIMAAI_MEMORY_TARGET_DMS0
+                                                                 : GST_SIMAAI_MEMORY_TARGET_EV74);
+      target_source = "heuristic";
+    }
+  }
+
+  debug_pool_log_alloc_policy(opt, tensor_media, target_flag, target_source,
+                              use_simaai_pool_effective && !force_system_memory);
+
+  if (use_simaai_pool_effective && !force_system_memory) {
     GstBufferPool* pool = guard.pool.get();
     if (!pool) {
       const auto t_create_start = std::chrono::steady_clock::now();
       gst_simaai_segment_memory_init_once();
-      GstMemoryFlags flags = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74 |
-                                                         GST_SIMAAI_MEMORY_FLAG_CACHED);
-      GstBufferPool* new_pool = gst_simaai_allocate_buffer_pool(
-          /*allocator_user_data=*/nullptr, gst_simaai_memory_get_segment_allocator(), bytes,
-          opt.pool_min_buffers, opt.pool_max_buffers, flags);
+      GstMemoryFlags flags =
+          static_cast<GstMemoryFlags>(target_flag | GST_SIMAAI_MEMORY_FLAG_CACHED);
+      const bool tensor_input = tensor_media;
+      const std::string segment_name =
+          !opt.buffer_name.empty() ? opt.buffer_name : (tensor_input ? std::string("ifm0")
+                                                                      : std::string("input"));
+      const gsize segment_size = static_cast<gsize>(bytes);
+      const char* segment_name_cstr = segment_name.c_str();
+      GstBufferPool* new_pool = gst_simaai_allocate_buffer_pool2(
+          /*allocator_user_data=*/nullptr, gst_simaai_memory_get_segment_allocator(),
+          opt.pool_min_buffers, opt.pool_max_buffers, flags,
+          /*num_segments=*/1, &segment_size, &segment_name_cstr);
       if (new_pool) {
         guard.pool =
             std::unique_ptr<GstBufferPool, void (*)(GstBufferPool*)>(new_pool, free_simaai_pool);
@@ -1077,6 +1772,8 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
       pool = nullptr;
     }
     debug_pool_log("Input: simaai pool allocation failed; falling back to system allocator.");
+  } else if (opt.use_simaai_pool && force_system_memory) {
+    debug_pool_log("Input: memory_policy=SystemMemory; bypassing simaai pool.");
   }
 #else
   (void)opt;
@@ -1338,14 +2035,16 @@ bool update_simaai_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& 
   GstStructure* s = gst_custom_meta_get_structure(meta);
   if (!s)
     return false;
-  bool writable = true;
-#if defined(GST_STRUCTURE_IS_WRITABLE)
-  writable = GST_STRUCTURE_IS_WRITABLE(s);
+  bool structure_mutable = true;
+#if defined(GST_STRUCTURE_IS_MUTABLE)
+  structure_mutable = GST_STRUCTURE_IS_MUTABLE(s);
+#elif defined(GST_STRUCTURE_IS_WRITABLE)
+  structure_mutable = GST_STRUCTURE_IS_WRITABLE(s);
 #else
-  writable = false;
+  structure_mutable = false;
 #endif
   GstStructure* snapshot = nullptr;
-  if (!writable) {
+  if (!structure_mutable) {
     if (!gst_buffer_is_writable(buffer)) {
       return false;
     }
@@ -1423,6 +2122,388 @@ bool update_simaai_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& 
 #endif
 }
 
+bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!buffer)
+    return false;
+  if (const auto perm_error = validate_axis_perm_vector_local(meta.axis_perm, "preproc_axis_perm");
+      perm_error.has_value()) {
+    return false;
+  }
+  GstCustomMeta* custom = nullptr;
+  GstStructure* s = nullptr;
+  if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
+    return false;
+  }
+  gst_structure_set(
+      s, "preproc_original_width", G_TYPE_INT, meta.original_width, "preproc_original_height",
+      G_TYPE_INT, meta.original_height, "preproc_resized_width", G_TYPE_INT, meta.resized_width,
+      "preproc_resized_height", G_TYPE_INT, meta.resized_height, "preproc_scaled_width",
+      G_TYPE_INT, meta.scaled_width, "preproc_scaled_height", G_TYPE_INT, meta.scaled_height,
+      "preproc_pad_left", G_TYPE_INT, meta.pad_left, "preproc_pad_right", G_TYPE_INT, meta.pad_right,
+      "preproc_pad_top", G_TYPE_INT, meta.pad_top, "preproc_pad_bottom", G_TYPE_INT,
+      meta.pad_bottom, "preproc_resize_mode", G_TYPE_STRING, meta.resize_mode.c_str(),
+      "preproc_color_in", G_TYPE_STRING, meta.color_in.c_str(), "preproc_color_out", G_TYPE_STRING,
+      meta.color_out.c_str(), "preproc_normalize", G_TYPE_BOOLEAN, meta.normalize,
+      "preproc_quantize", G_TYPE_BOOLEAN, meta.quantize, "preproc_tessellate", G_TYPE_BOOLEAN,
+      meta.tessellate, "preproc_affine_m00", G_TYPE_DOUBLE, meta.affine_m00,
+      "preproc_affine_m01", G_TYPE_DOUBLE, meta.affine_m01, "preproc_affine_m02", G_TYPE_DOUBLE,
+      meta.affine_m02, "preproc_affine_m10", G_TYPE_DOUBLE, meta.affine_m10,
+      "preproc_affine_m11", G_TYPE_DOUBLE, meta.affine_m11, "preproc_affine_m12", G_TYPE_DOUBLE,
+      meta.affine_m12, "preproc_affine_scale_x", G_TYPE_DOUBLE, meta.affine_scale_x,
+      "preproc_affine_scale_y", G_TYPE_DOUBLE, meta.affine_scale_y, "preproc_affine_offset_x",
+      G_TYPE_DOUBLE, meta.affine_offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE,
+      meta.affine_offset_y, nullptr);
+  if (!gst_structure_set_int_vector_field_local(s, "preproc_axis_perm", meta.axis_perm)) {
+    return false;
+  }
+  return true;
+#else
+  (void)buffer;
+  (void)meta;
+  return false;
+#endif
+}
+
+bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>& axis_perm) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!buffer)
+    return false;
+  if (const auto perm_error = validate_axis_perm_vector_local(axis_perm, "preproc_axis_perm");
+      perm_error.has_value()) {
+    return false;
+  }
+  GstCustomMeta* custom = nullptr;
+  GstStructure* s = nullptr;
+  if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
+    return false;
+  }
+  return gst_structure_set_int_vector_field_local(s, "preproc_axis_perm", axis_perm);
+#else
+  (void)buffer;
+  (void)axis_perm;
+  return false;
+#endif
+}
+
+std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!buffer)
+    return std::nullopt;
+  GstCustomMeta* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  GstStructure* s = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  if (!s)
+    return std::nullopt;
+
+  PreprocessRuntimeMeta meta;
+  if (!gst_structure_get_int(s, "preproc_original_width", &meta.original_width) ||
+      !gst_structure_get_int(s, "preproc_original_height", &meta.original_height)) {
+    return std::nullopt;
+  }
+  if (meta.original_width <= 0 || meta.original_height <= 0) {
+    return std::nullopt;
+  }
+
+  gst_structure_get_int(s, "preproc_resized_width", &meta.resized_width);
+  gst_structure_get_int(s, "preproc_resized_height", &meta.resized_height);
+  gst_structure_get_int(s, "preproc_scaled_width", &meta.scaled_width);
+  gst_structure_get_int(s, "preproc_scaled_height", &meta.scaled_height);
+  gst_structure_get_int(s, "preproc_pad_left", &meta.pad_left);
+  gst_structure_get_int(s, "preproc_pad_right", &meta.pad_right);
+  gst_structure_get_int(s, "preproc_pad_top", &meta.pad_top);
+  gst_structure_get_int(s, "preproc_pad_bottom", &meta.pad_bottom);
+
+  const char* resize_mode = gst_structure_get_string(s, "preproc_resize_mode");
+  const char* color_in = gst_structure_get_string(s, "preproc_color_in");
+  const char* color_out = gst_structure_get_string(s, "preproc_color_out");
+  if (resize_mode)
+    meta.resize_mode = resize_mode;
+  if (color_in)
+    meta.color_in = color_in;
+  if (color_out)
+    meta.color_out = color_out;
+  if (!gst_structure_has_field(s, "preproc_axis_perm")) {
+    meta.axis_perm.clear();
+  } else {
+    if (!gst_structure_get_int_vector_field_local(s, "preproc_axis_perm", &meta.axis_perm)) {
+      return std::nullopt;
+    }
+    if (const auto perm_error =
+            validate_axis_perm_vector_local(meta.axis_perm, "preproc_axis_perm");
+        perm_error.has_value()) {
+      return std::nullopt;
+    }
+  }
+
+  gboolean normalize = FALSE;
+  gboolean quantize = FALSE;
+  gboolean tessellate = FALSE;
+  if (gst_structure_get_boolean(s, "preproc_normalize", &normalize)) {
+    meta.normalize = normalize == TRUE;
+  }
+  if (gst_structure_get_boolean(s, "preproc_quantize", &quantize)) {
+    meta.quantize = quantize == TRUE;
+  }
+  if (gst_structure_get_boolean(s, "preproc_tessellate", &tessellate)) {
+    meta.tessellate = tessellate == TRUE;
+  }
+
+  gst_structure_get_double(s, "preproc_affine_m00", &meta.affine_m00);
+  gst_structure_get_double(s, "preproc_affine_m01", &meta.affine_m01);
+  gst_structure_get_double(s, "preproc_affine_m02", &meta.affine_m02);
+  gst_structure_get_double(s, "preproc_affine_m10", &meta.affine_m10);
+  gst_structure_get_double(s, "preproc_affine_m11", &meta.affine_m11);
+  gst_structure_get_double(s, "preproc_affine_m12", &meta.affine_m12);
+  gst_structure_get_double(s, "preproc_affine_scale_x", &meta.affine_scale_x);
+  gst_structure_get_double(s, "preproc_affine_scale_y", &meta.affine_scale_y);
+  gst_structure_get_double(s, "preproc_affine_offset_x", &meta.affine_offset_x);
+  gst_structure_get_double(s, "preproc_affine_offset_y", &meta.affine_offset_y);
+  return meta;
+#else
+  (void)buffer;
+  return std::nullopt;
+#endif
+}
+
+bool has_simaai_preprocess_meta(GstBuffer* buffer) {
+  return read_simaai_preprocess_meta(buffer).has_value();
+}
+
+bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* err) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!dst || !src) {
+    if (err)
+      *err = "copy preprocess metadata: missing source/destination buffer";
+    return false;
+  }
+  const auto meta = read_simaai_preprocess_meta(src);
+  if (!meta.has_value()) {
+    if (err)
+      *err = "copy preprocess metadata: source buffer has no valid preprocess metadata";
+    return false;
+  }
+  if (!write_simaai_preprocess_meta(dst, *meta)) {
+    if (err)
+      *err = "copy preprocess metadata: failed to write GstSimaMeta fields";
+    return false;
+  }
+  return true;
+#else
+  (void)dst;
+  (void)src;
+  if (err)
+    *err = "copy preprocess metadata: GstSimaMeta is unavailable in this build";
+  return false;
+#endif
+}
+
+std::optional<std::string> validate_simaai_preprocess_meta_required_fields(
+    GstBuffer* buffer, const std::vector<std::string>& required_fields,
+    PreprocessRuntimeMeta* out_meta) {
+#if SIMA_HAS_SIMAAI_POOL
+  if (!buffer) {
+    return std::string("missing GstBuffer while reading preprocess metadata");
+  }
+  GstCustomMeta* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  GstStructure* s = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  if (!s) {
+    return std::string("missing GstSimaMeta on input buffer");
+  }
+
+  auto require_int = [&](const char* field, bool positive) -> std::optional<std::string> {
+    int value = 0;
+    if (!gst_structure_get_int(s, field, &value)) {
+      return std::string("missing or invalid int preprocess metadata field '") + field + "'";
+    }
+    if (positive && value <= 0) {
+      return std::string("invalid preprocess metadata field '") + field + "' (must be > 0)";
+    }
+    return std::nullopt;
+  };
+  auto require_bool = [&](const char* field) -> std::optional<std::string> {
+    gboolean value = FALSE;
+    if (!gst_structure_get_boolean(s, field, &value)) {
+      return std::string("missing or invalid bool preprocess metadata field '") + field + "'";
+    }
+    return std::nullopt;
+  };
+  auto require_double = [&](const char* field) -> std::optional<std::string> {
+    double value = 0.0;
+    if (!gst_structure_get_double(s, field, &value)) {
+      return std::string("missing or invalid double preprocess metadata field '") + field + "'";
+    }
+    return std::nullopt;
+  };
+  auto require_string = [&](const char* field) -> std::optional<std::string> {
+    const char* value = gst_structure_get_string(s, field);
+    if (!value) {
+      return std::string("missing or invalid string preprocess metadata field '") + field + "'";
+    }
+    return std::nullopt;
+  };
+  auto require_int_list = [&](const char* field) -> std::optional<std::string> {
+    std::vector<int> values;
+    if (!gst_structure_get_int_vector_field_local(s, field, &values)) {
+      return std::string("missing or invalid int-list preprocess metadata field '") + field + "'";
+    }
+    return validate_axis_perm_vector_local(values, field);
+  };
+
+  for (const auto& field : required_fields) {
+    if (field.empty())
+      continue;
+    if (!gst_structure_has_field(s, field.c_str())) {
+      return std::string("missing required preprocess metadata field '") + field + "'";
+    }
+
+    std::optional<std::string> err;
+    if (field == "preproc_original_width" || field == "preproc_original_height" ||
+        field == "preproc_resized_width" || field == "preproc_resized_height" ||
+        field == "preproc_scaled_width" || field == "preproc_scaled_height") {
+      err = require_int(field.c_str(), /*positive=*/true);
+    } else if (field == "preproc_pad_left" || field == "preproc_pad_right" ||
+               field == "preproc_pad_top" || field == "preproc_pad_bottom") {
+      err = require_int(field.c_str(), /*positive=*/false);
+    } else if (field == "preproc_resize_mode" || field == "preproc_color_in" ||
+               field == "preproc_color_out") {
+      err = require_string(field.c_str());
+    } else if (field == "preproc_axis_perm") {
+      err = require_int_list(field.c_str());
+    } else if (field == "preproc_normalize" || field == "preproc_quantize" ||
+               field == "preproc_tessellate") {
+      err = require_bool(field.c_str());
+    } else if (field == "preproc_affine_m00" || field == "preproc_affine_m01" ||
+               field == "preproc_affine_m02" || field == "preproc_affine_m10" ||
+               field == "preproc_affine_m11" || field == "preproc_affine_m12" ||
+               field == "preproc_affine_scale_x" || field == "preproc_affine_scale_y" ||
+               field == "preproc_affine_offset_x" || field == "preproc_affine_offset_y") {
+      err = require_double(field.c_str());
+    }
+
+    if (err.has_value()) {
+      return err;
+    }
+  }
+
+  const auto parsed = read_simaai_preprocess_meta(buffer);
+  if (!parsed.has_value()) {
+    return std::string("preprocess metadata exists but failed semantic validation");
+  }
+  if (out_meta) {
+    *out_meta = *parsed;
+  }
+  return std::nullopt;
+#else
+  (void)buffer;
+  (void)required_fields;
+  (void)out_meta;
+  return std::string("GstSimaMeta is unavailable in this build");
+#endif
+}
+
+bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions& opt,
+                                           int input_width, int input_height) {
+  if (!buffer || !opt.preprocess_meta.has_value() || !opt.preprocess_meta->enabled)
+    return false;
+  if (input_width <= 0 || input_height <= 0)
+    return false;
+
+  const PreprocessMetaTemplate& tmpl = *opt.preprocess_meta;
+  PreprocessRuntimeMeta meta;
+  meta.original_width = input_width;
+  meta.original_height = input_height;
+  meta.color_in = tmpl.color_in;
+  meta.color_out = tmpl.color_out;
+  meta.axis_perm = tmpl.axis_perm;
+  meta.normalize = tmpl.normalize;
+  meta.quantize = tmpl.quantize;
+  meta.tessellate = tmpl.tessellate;
+
+  const int target_w = (tmpl.target_width > 0) ? tmpl.target_width : input_width;
+  const int target_h = (tmpl.target_height > 0) ? tmpl.target_height : input_height;
+  meta.resized_width = target_w;
+  meta.resized_height = target_h;
+  meta.scaled_width = (tmpl.scaled_width > 0) ? tmpl.scaled_width : target_w;
+  meta.scaled_height = (tmpl.scaled_height > 0) ? tmpl.scaled_height : target_h;
+  meta.resize_mode = tmpl.resize_mode.empty() ? "none" : tmpl.resize_mode;
+
+  const std::string mode = upper_copy(meta.resize_mode);
+  if (mode == "LETTERBOX") {
+    const double sx = static_cast<double>(target_w) / static_cast<double>(input_width);
+    const double sy = static_cast<double>(target_h) / static_cast<double>(input_height);
+    const double scale = std::min(sx, sy);
+    meta.scaled_width = std::max(1, static_cast<int>(std::llround(input_width * scale)));
+    meta.scaled_height = std::max(1, static_cast<int>(std::llround(input_height * scale)));
+    meta.pad_left = std::max(0, (target_w - meta.scaled_width) / 2);
+    meta.pad_top = std::max(0, (target_h - meta.scaled_height) / 2);
+    meta.pad_right = std::max(0, target_w - meta.scaled_width - meta.pad_left);
+    meta.pad_bottom = std::max(0, target_h - meta.scaled_height - meta.pad_top);
+    const double inv = (scale > 0.0) ? (1.0 / scale) : 1.0;
+    meta.affine_m00 = inv;
+    meta.affine_m01 = 0.0;
+    meta.affine_m02 = -static_cast<double>(meta.pad_left) * inv;
+    meta.affine_m10 = 0.0;
+    meta.affine_m11 = inv;
+    meta.affine_m12 = -static_cast<double>(meta.pad_top) * inv;
+    meta.affine_scale_x = inv;
+    meta.affine_scale_y = inv;
+    meta.affine_offset_x = meta.affine_m02;
+    meta.affine_offset_y = meta.affine_m12;
+  } else if (mode == "STRETCH") {
+    const double sx = static_cast<double>(target_w) / static_cast<double>(input_width);
+    const double sy = static_cast<double>(target_h) / static_cast<double>(input_height);
+    const double inv_x = (sx > 0.0) ? (1.0 / sx) : 1.0;
+    const double inv_y = (sy > 0.0) ? (1.0 / sy) : 1.0;
+    meta.pad_left = meta.pad_right = meta.pad_top = meta.pad_bottom = 0;
+    meta.affine_m00 = inv_x;
+    meta.affine_m01 = 0.0;
+    meta.affine_m02 = 0.0;
+    meta.affine_m10 = 0.0;
+    meta.affine_m11 = inv_y;
+    meta.affine_m12 = 0.0;
+    meta.affine_scale_x = inv_x;
+    meta.affine_scale_y = inv_y;
+    meta.affine_offset_x = 0.0;
+    meta.affine_offset_y = 0.0;
+  } else if (mode == "CROP") {
+    const double sx = static_cast<double>(target_w) / static_cast<double>(input_width);
+    const double sy = static_cast<double>(target_h) / static_cast<double>(input_height);
+    const double scale = std::max(sx, sy);
+    const int scaled_w = std::max(1, static_cast<int>(std::llround(input_width * scale)));
+    const int scaled_h = std::max(1, static_cast<int>(std::llround(input_height * scale)));
+    const int crop_left = std::max(0, (scaled_w - target_w) / 2);
+    const int crop_top = std::max(0, (scaled_h - target_h) / 2);
+    const double inv = (scale > 0.0) ? (1.0 / scale) : 1.0;
+    meta.scaled_width = scaled_w;
+    meta.scaled_height = scaled_h;
+    meta.pad_left = meta.pad_right = meta.pad_top = meta.pad_bottom = 0;
+    meta.affine_m00 = inv;
+    meta.affine_m01 = 0.0;
+    meta.affine_m02 = static_cast<double>(crop_left) * inv;
+    meta.affine_m10 = 0.0;
+    meta.affine_m11 = inv;
+    meta.affine_m12 = static_cast<double>(crop_top) * inv;
+    meta.affine_scale_x = inv;
+    meta.affine_scale_y = inv;
+    meta.affine_offset_x = meta.affine_m02;
+    meta.affine_offset_y = meta.affine_m12;
+  } else {
+    meta.pad_left = meta.pad_right = meta.pad_top = meta.pad_bottom = 0;
+    meta.affine_m00 = 1.0;
+    meta.affine_m01 = 0.0;
+    meta.affine_m02 = 0.0;
+    meta.affine_m10 = 0.0;
+    meta.affine_m11 = 1.0;
+    meta.affine_m12 = 0.0;
+    meta.affine_scale_x = 1.0;
+    meta.affine_scale_y = 1.0;
+    meta.affine_offset_x = 0.0;
+    meta.affine_offset_y = 0.0;
+  }
+
+  return write_simaai_preprocess_meta(buffer, meta);
+}
+
 GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt,
                                       InputBufferPoolGuard& guard, const char* label,
                                       const std::optional<int64_t>& frame_id_override,
@@ -1431,42 +2512,37 @@ GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt
 #if SIMA_HAS_SIMAAI_POOL
   if (!buffer)
     return nullptr;
+  buffer = gst_buffer_make_writable(buffer);
+  if (!buffer)
+    return nullptr;
   const std::string name = buffer_name_override.value.value_or(opt.buffer_name);
   dump_sima_meta(buffer, label);
 
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
-  bool writable = true;
-#if defined(GST_STRUCTURE_IS_WRITABLE)
-  writable = s && GST_STRUCTURE_IS_WRITABLE(s);
-#else
-  writable = s != nullptr;
-#endif
-  if (meta && s && writable) {
-    gst_structure_set(s, "buffer-name", G_TYPE_STRING, name.c_str(), nullptr);
-    if (frame_id_override.has_value()) {
-      gst_structure_set(s, "frame-id", G_TYPE_INT64, static_cast<gint64>(*frame_id_override),
-                        nullptr);
-      gst_structure_set(s, "orig-input-seq", G_TYPE_INT64, static_cast<gint64>(*frame_id_override),
-                        nullptr);
-    }
-    if (stream_id_override.value.has_value()) {
-      gst_structure_set(s, "stream-id", G_TYPE_STRING, stream_id_override.value->c_str(), nullptr);
-      gst_structure_set(s, "orig-stream-id", G_TYPE_STRING, stream_id_override.value->c_str(),
-                        nullptr);
-    }
-    dump_sima_meta(buffer, label);
-    return buffer;
-  }
-  if (meta && s && !writable) {
+  GstStructure* old_s = s ? gst_structure_copy(s) : nullptr;
+  if (meta) {
+    // Recycled/pool buffers can carry a previous custom meta whose structure is
+    // immutable.  Replacing the meta avoids gst_structure_set mutability
+    // assertions while preserving any existing preprocess fields below.
     gst_buffer_remove_meta(buffer, &meta->meta);
     meta = nullptr;
     s = nullptr;
   }
-  if (!meta) {
-    meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
-    s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  meta = gst_buffer_add_custom_meta(buffer, "GstSimaMeta");
+  s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  if (old_s && s) {
+    gst_structure_foreach(
+        old_s,
+        +[](GQuark field_id, const GValue* value, gpointer user_data) -> gboolean {
+          auto* dst = static_cast<GstStructure*>(user_data);
+          gst_structure_set_value(dst, g_quark_to_string(field_id), value);
+          return TRUE;
+        },
+        s);
   }
+  if (old_s)
+    gst_structure_free(old_s);
   if (!s) {
     std::fprintf(stderr, "[DBG] %s GstSimaMeta add failed\n", label ? label : "buffer");
     return buffer;

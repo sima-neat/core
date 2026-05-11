@@ -45,19 +45,19 @@ cv::Mat load_rgb(const fs::path& image_path, int size) {
 
 simaai::neat::Model::Options build_options(int size) {
   simaai::neat::Model::Options opt;
-  opt.format = "RGB";
-  opt.input_max_width = size;
-  opt.input_max_height = size;
-  opt.input_max_depth = 3;
-  opt.preproc.channel_mean = {0.485f, 0.456f, 0.406f};
-  opt.preproc.channel_stddev = {0.229f, 0.224f, 0.225f};
+  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+  opt.preprocess.input_max_width = size;
+  opt.preprocess.input_max_height = size;
+  opt.preprocess.input_max_depth = 3;
+  opt.preprocess.normalize.mean = {0.485f, 0.456f, 0.406f};
+  opt.preprocess.normalize.stddev = {0.229f, 0.224f, 0.225f};
   return opt;
 }
 
-int top1_from_output(const simaai::neat::Sample& out) {
-  if (!out.tensor.has_value())
+int top1_from_output(const simaai::neat::TensorList& out) {
+  if (out.empty())
     throw std::runtime_error("no tensor output");
-  const simaai::neat::Mapping m = out.tensor->map_read();
+  const simaai::neat::Mapping m = out.front().map_read();
   const size_t n = m.size_bytes / sizeof(float);
   const float* p = reinterpret_cast<const float*>(m.data);
   int best = 0;
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
     simaai::neat::Model model(mpk, build_options(size));
     cv::Mat input = image.empty() ? cv::Mat(size, size, CV_8UC3, cv::Scalar(99, 99, 99))
                                   : load_rgb(image, size);
-    simaai::neat::Sample sample = model.run(input, /*timeout_ms=*/2000);
+    simaai::neat::TensorList sample = model.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/2000);
     // END CORE LOGIC
 
     std::cout << "top1=" << top1_from_output(sample) << "\n";

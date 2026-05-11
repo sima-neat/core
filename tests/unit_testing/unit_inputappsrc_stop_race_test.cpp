@@ -23,7 +23,7 @@ int main() {
   for (int i = 0; i < iterations; ++i) {
     simaai::neat::Session p;
     simaai::neat::InputOptions in;
-    in.format = "RGB";
+    in.format = simaai::neat::FormatTag::RGB;
     in.width = w;
     in.height = h;
     in.depth = 3;
@@ -35,14 +35,14 @@ int main() {
     simaai::neat::RunOptions run_opt;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
-    auto run =
-        p.build(make_rgb_mat(w, h, cv::Scalar(10, 20, 30)), simaai::neat::RunMode::Async, run_opt);
+    auto run = p.build(std::vector<cv::Mat>{make_rgb_mat(w, h, cv::Scalar(10, 20, 30))},
+                       simaai::neat::RunMode::Async, run_opt);
 
-    run.push(make_rgb_mat(w, h, cv::Scalar(10, 20, 30)));
+    run.push(std::vector<cv::Mat>{make_rgb_mat(w, h, cv::Scalar(10, 20, 30))});
     run.pull(/*timeout_ms=*/1000);
 
     cv::Mat larger = make_rgb_mat(w * 2, h * 2, cv::Scalar(20, 30, 40));
-    run.push(larger);
+    run.push(std::vector<cv::Mat>{larger});
 
     run.close_input();
     run.stop();

@@ -27,19 +27,17 @@ RUN_TEST("unit_input_policy_test", ([] {
                      "model policy: default RGB max depth must be 3");
            }
 
-           // Model preproc-seeded shape without explicit max should promote seed dims to max dims.
+           // Model defaults are independent from dynamic runtime ingress dimensions.
            {
              ModelInputPolicyRequest req;
              req.format = "GRAY";
-             req.preproc_input_width = 640;
-             req.preproc_input_height = 480;
              const ModelInputPolicyResult out = resolve_for_model(req);
 
-             require(out.resolved_input_format == "GRAY", "model policy: preproc format mismatch");
-             require(out.resolved_max_input_width == 640,
-                     "model policy: max width should follow preproc seed width");
-             require(out.resolved_max_input_height == 480,
-                     "model policy: max height should follow preproc seed height");
+             require(out.resolved_input_format == "GRAY", "model policy: format mismatch");
+             require(out.resolved_max_input_width == 1920,
+                     "model policy: default max width must remain 1920");
+             require(out.resolved_max_input_height == 1080,
+                     "model policy: default max height must remain 1080");
              require(out.resolved_max_input_depth == 1,
                      "model policy: GRAY max depth should resolve to 1");
            }
@@ -48,8 +46,6 @@ RUN_TEST("unit_input_policy_test", ([] {
            {
              ModelInputPolicyRequest req;
              req.format = "BGR";
-             req.preproc_input_width = 320;
-             req.preproc_input_height = 240;
              req.input_max_width = 1024;
              req.input_max_height = 768;
              req.input_max_depth = 4;
@@ -151,8 +147,9 @@ RUN_TEST("unit_input_policy_test", ([] {
            {
              ModelInputPolicyRequest mreq;
              mreq.format = "RGB";
-             mreq.preproc_input_width = 640;
-             mreq.preproc_input_height = 480;
+             mreq.input_max_width = 640;
+             mreq.input_max_height = 480;
+             mreq.input_max_depth = 3;
              const ModelInputPolicyResult mout = resolve_for_model(mreq);
 
              InputOptions sopt;

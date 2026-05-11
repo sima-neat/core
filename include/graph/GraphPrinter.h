@@ -16,28 +16,44 @@
 
 namespace simaai::neat::graph {
 
+/**
+ * @brief Pretty-printer for runtime `Graph` instances; emits text, dot, or mermaid.
+ *
+ * Used for diagnostics and design-time visualisation: takes a runtime `Graph` and renders
+ * it as a human-readable text outline, a Graphviz dot string, or a Mermaid flowchart.
+ *
+ * @see Graph
+ * @ingroup graph
+ */
 class GraphPrinter final {
 public:
+  /**
+   * @brief Render options controlling which fields and labels are emitted.
+   *
+   * @ingroup graph
+   */
   struct Options {
-    bool show_index = true;
-    bool show_kind = true;
-    bool show_user_label = true;
-    bool show_backend = true;
-    bool show_ports = true;
+    bool show_index = true;       ///< Prefix each node with its `NodeId`.
+    bool show_kind = true;        ///< Show `Node::kind()`.
+    bool show_user_label = true;  ///< Show `Node::user_label()` when non-empty.
+    bool show_backend = true;     ///< Show the node backend (`pipeline` / `stage`).
+    bool show_ports = true;       ///< Print input/output port lists per node.
 
-    std::size_t max_label_chars = 200;
-    std::size_t max_ports = 16;
+    std::size_t max_label_chars = 200; ///< Truncate user labels longer than this.
+    std::size_t max_ports = 16;        ///< Cap the number of ports printed per node.
 
-    bool dot_rankdir_lr = true;
-    std::string dot_graph_name = "sima_hybrid_graph";
+    bool dot_rankdir_lr = true;                       ///< Use left-to-right layout in dot output.
+    std::string dot_graph_name = "sima_hybrid_graph"; ///< Dot graph identifier.
 
-    bool mermaid_lr = true;
-    std::string mermaid_id_prefix = "n";
+    bool mermaid_lr = true;                ///< Use `flowchart LR` (else `TD`) for mermaid.
+    std::string mermaid_id_prefix = "n";   ///< Mermaid node-id prefix.
   };
 
+  /// Render `g` to a text outline using default options.
   static std::string to_text(const Graph& g) {
     return to_text(g, Options{});
   }
+  /// Render `g` to a text outline using the provided options.
   static std::string to_text(const Graph& g, const Options& opt) {
     std::ostringstream oss;
     for (NodeId id = 0; id < g.node_count(); ++id) {
@@ -69,9 +85,11 @@ public:
     return oss.str();
   }
 
+  /// Render `g` to a Graphviz dot string using default options.
   static std::string to_dot(const Graph& g) {
     return to_dot(g, Options{});
   }
+  /// Render `g` to a Graphviz dot string using the provided options.
   static std::string to_dot(const Graph& g, const Options& opt) {
     std::ostringstream oss;
     oss << "digraph " << dot_id_(opt.dot_graph_name) << " {\n";
@@ -103,9 +121,11 @@ public:
     return oss.str();
   }
 
+  /// Render `g` to a Mermaid flowchart string using default options.
   static std::string to_mermaid(const Graph& g) {
     return to_mermaid(g, Options{});
   }
+  /// Render `g` to a Mermaid flowchart string using the provided options.
   static std::string to_mermaid(const Graph& g, const Options& opt) {
     std::ostringstream oss;
     oss << "flowchart " << (opt.mermaid_lr ? "LR" : "TD") << "\n";

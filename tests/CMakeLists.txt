@@ -9,6 +9,45 @@ enable_testing()
 include(CMakeParseArguments)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+set(SIMA_TEST_NEAT_PLUGIN_DIR "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}" CACHE PATH
+    "NEAT GStreamer plugin directory used by tests")
+if (NOT SIMA_TEST_NEAT_PLUGIN_DIR)
+  set(_SIMA_DEFAULT_NEAT_PLUGIN_DIRS
+    "/usr/lib/aarch64-linux-gnu/neat/gst-plugins"
+    "/lib/aarch64-linux-gnu/neat/gst-plugins"
+    "/usr/lib/neat/gst-plugins"
+    "/lib/neat/gst-plugins"
+  )
+  foreach(_sima_candidate IN LISTS _SIMA_DEFAULT_NEAT_PLUGIN_DIRS)
+    if (EXISTS "${_sima_candidate}")
+      set(SIMA_TEST_NEAT_PLUGIN_DIR "${_sima_candidate}")
+      break()
+    endif()
+  endforeach()
+endif()
+message(STATUS "  [tests] SIMA_TEST_NEAT_PLUGIN_DIR=${SIMA_TEST_NEAT_PLUGIN_DIR}")
+
+set(_SIMA_TEST_NEAT_RUNTIME_DIR_CANDIDATES
+  "${SIMA_TEST_NEAT_PLUGIN_DIR}"
+  ${SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES}
+  ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+  "/usr/lib/aarch64-linux-gnu/neat/runtime"
+  "/lib/aarch64-linux-gnu/neat/runtime"
+  "/usr/lib/neat/runtime"
+  "/lib/neat/runtime")
+set(_SIMA_TEST_NEAT_RUNTIME_DIRS "")
+foreach(_sima_runtime_dir IN LISTS _SIMA_TEST_NEAT_RUNTIME_DIR_CANDIDATES)
+  if (EXISTS "${_sima_runtime_dir}")
+    list(APPEND _SIMA_TEST_NEAT_RUNTIME_DIRS "${_sima_runtime_dir}")
+  endif()
+endforeach()
+if (DEFINED ENV{LD_LIBRARY_PATH} AND NOT "$ENV{LD_LIBRARY_PATH}" STREQUAL "")
+  list(APPEND _SIMA_TEST_NEAT_RUNTIME_DIRS "$ENV{LD_LIBRARY_PATH}")
+endif()
+list(REMOVE_DUPLICATES _SIMA_TEST_NEAT_RUNTIME_DIRS)
+string(JOIN ":" SIMA_TEST_NEAT_LD_LIBRARY_PATH ${_SIMA_TEST_NEAT_RUNTIME_DIRS})
+message(STATUS "  [tests] SIMA_TEST_NEAT_LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
+
 set(PIPELINESESSION_TEST_TARGETS "")
 # ------------------------------------------------------------------------------
 # Test blacklist (by executable name)
@@ -36,6 +75,49 @@ add_custom_target(prepare_test_fixtures
 )
 
 # ------------------------------------------------------------------------------
+# Python test source compilation
+# ------------------------------------------------------------------------------
+#
+# Core test coverage is not limited to CTest-registered C++ executables: keep the
+# Python-side test/tutorial sources syntax-checked during a normal test build too.
+file(GLOB_RECURSE SIMANEAT_PYTHON_TEST_SOURCES
+  CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/python/*.py"
+  "${CMAKE_SOURCE_DIR}/tests/*.py"
+  "${CMAKE_SOURCE_DIR}/tutorials/*.py"
+)
+
+set(SIMANEAT_PYTHON_TEST_COMPILE_DIRS
+  "${CMAKE_SOURCE_DIR}/python"
+  "${CMAKE_SOURCE_DIR}/tests"
+  "${CMAKE_SOURCE_DIR}/tutorials"
+)
+
+set(SIMANEAT_PYTHON_TEST_PYCACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/pycache")
+set(SIMANEAT_PYTHON_TEST_COMPILE_STAMP
+  "${CMAKE_CURRENT_BINARY_DIR}/python_tests_compiled.stamp")
+
+add_custom_command(
+  OUTPUT "${SIMANEAT_PYTHON_TEST_COMPILE_STAMP}"
+  COMMAND ${CMAKE_COMMAND} -E make_directory "${SIMANEAT_PYTHON_TEST_PYCACHE_DIR}"
+  COMMAND ${CMAKE_COMMAND} -E env
+    "PYTHONPYCACHEPREFIX=${SIMANEAT_PYTHON_TEST_PYCACHE_DIR}"
+    ${Python3_EXECUTABLE} -m compileall -q ${SIMANEAT_PYTHON_TEST_COMPILE_DIRS}
+  COMMAND ${CMAKE_COMMAND} -E touch "${SIMANEAT_PYTHON_TEST_COMPILE_STAMP}"
+  DEPENDS ${SIMANEAT_PYTHON_TEST_SOURCES}
+  COMMENT "Compiling core Python test and tutorial sources"
+  VERBATIM
+)
+
+add_custom_target(compile_core_python_tests ALL
+  DEPENDS "${SIMANEAT_PYTHON_TEST_COMPILE_STAMP}"
+)
+
+if (TARGET _pyneat_core)
+  add_dependencies(compile_core_python_tests _pyneat_core)
+endif()
+
+# ------------------------------------------------------------------------------
 # Helper: add strict test executable + ctest entry
 # ------------------------------------------------------------------------------
 function(add_pipeline_test_strict name)
@@ -44,7 +126,7 @@ function(add_pipeline_test_strict name)
     return()
   endif()
 
-  set(options)
+  set(options LOCK_DISPATCHER)
   set(oneValueArgs)
   set(multiValueArgs SOURCES ARGS)
   cmake_parse_arguments(APT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
@@ -77,9 +159,13 @@ function(add_pipeline_test_strict name)
     add_test(NAME ${name} COMMAND ${name})
   endif()
 
-  set_tests_properties(${name} PROPERTIES
-    RESOURCE_LOCK "dispatcher"
-  )
+  simaneat_append_ctest_env(${name})
+
+  if (APT_LOCK_DISPATCHER)
+    set_tests_properties(${name} PROPERTIES
+      RESOURCE_LOCK "dispatcher"
+    )
+  endif()
 
   set_property(TEST ${name} APPEND PROPERTY LABELS "strict")
 
@@ -107,20 +193,36 @@ function(add_pipeline_test name)
   add_pipeline_test_strict(${name} ${ARGN})
 endfunction()
 
+function(append_pipeline_test_env name)
+  simaneat_append_ctest_env(${name})
+endfunction()
+
 # ------------------------------------------------------------------------------
 # Unit tests (1:1 cpp mapping)
 # ------------------------------------------------------------------------------
 set(UNIT_TESTS
-  unit_buffer_name_policy_test
   unit_builder_test
   unit_caps_bridge_test
+  unit_contract_compiler_boxdecode_test
+  unit_contract_compiler_mla_test
+  unit_contract_compiler_processcvu_test
+  unit_contract_architecture_guard_test
+  unit_contract_input_only_rules_test
+  unit_contract_render_manifest_equivalence_test
   unit_contracts_test
+  unit_boxdecode_render_manifest_from_model_test
+  unit_model_route_retarget_helper_test
+  unit_dequant_processcvu_contract_equivalence_test
+  unit_dequant_node_fragment_test
   unit_detection_types_bbox_test
   unit_detessdequant_output_info_test
+  unit_route_capability_mpk_static_contract_test
+  unit_route_plan_detess_adapter_test
   unit_dispatcher_recovery_test
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
   unit_encoded_sample_test
+  unit_env_util_profile_test
   unit_framestream_test
   unit_graph_compiler_determinism_test
   unit_graph_compiler_spec_validation_test
@@ -134,24 +236,19 @@ set(UNIT_TESTS
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
-  unit_header_neat_leaf_compile_test
-  unit_header_neat_graph_compile_test
-  unit_header_neat_models_compile_test
-  unit_header_neat_node_groups_compile_test
-  unit_header_neat_nodes_compile_test
-  unit_header_neat_session_compile_test
-  unit_header_neat_split_compile_test
-  unit_header_neat_umbrella_compile_test
+  unit_header_neat_compile_surface_test
+  unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
   unit_groups_test
   unit_gst_helpers_test
   unit_gst_init_guard_test
   unit_gst_video_meta_test
-  unit_inputstream_format_change_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_input_policy_test
-  unit_inputstream_nv12_renegotiate_test
-  unit_inputstream_renegotiate_test
+  unit_input_planner_semantics_test
+  unit_preprocess_meta_validation_test
+  unit_preprocess_meta_template_dynamic_test
+  unit_preproc_contract_rules_test
   unit_inputstream_stop_timeout_detach_test
   unit_inputappsrc_stop_race_test
   unit_neatdecoder_keepalive_test
@@ -159,67 +256,84 @@ set(UNIT_TESTS
   unit_neatmodel_async_api_test
   unit_neattensor_core_test
   unit_neattensor_cvmat_test
+  unit_tensor_from_cv_mat_exactness_test
+  unit_tensorbuffer_packed_runtime_parent_test
+  unit_tensorbuffer_padded_hwc_gap_inference_test
+  unit_tensorbuffer_runtime_contract_identity_overlay_test
+  unit_tensorbuffer_strided_parent_view_materialize_test
   unit_modelpack_extract_test
-  unit_modelpack_parse_test
+  unit_asset_utils_readable_model_tar_test
   unit_model_infer_output_name_test
   unit_model_input_spec_contract_test
   unit_model_output_spec_contract_test
+  unit_post_region_materialization_test
   unit_model_metadata_test
+  unit_model_route_planner_test
+  unit_resnet50_mla_handoff_segment_test
+  unit_cast_fanout_contract_test
+  unit_mla_boundary_output_contract_test
+  unit_route_graph_slice_kernel_test
+  unit_modelpack_mla_handoff_segment_test
   unit_model_stage_fragments_test
   unit_modalix_contract_preflight_test
+  unit_mpk_graph_dump_test
+  unit_mpk_fuse_sibling_pre_mla_test
+  unit_mpk_contract_legacy_ingress_test
+  unit_mla_elf_io_topology_test
   unit_mpk_loader_test
   unit_mpk_pipeline_adapter_test
-  unit_node_h264_caps_fixup_fragment_test
-  unit_node_optiview_json_output_test
-  unit_node_quanttess_config_test
-  unit_node_udp_output_fragment_test
   unit_outputspec_test
   unit_pcie_nodes_test
-  unit_group_optiview_output_group_failure_test
-  unit_group_udp_h264_output_group_fragment_test
-  unit_group_udp_output_group_g_fragment_test
-  unit_optiview_json_output_udp_test
-  unit_optiview_output_group_test
   pull_timeout_regression_test
   property_config_json_test
   property_pipeline_string_test
-  unit_pipeline_build_wiring_test
   unit_pipeline_internal_build_test
+  unit_power_telemetry_test
   unit_policy_defaults_test
-  unit_run_holder_api_test
+  unit_run_api_matrix_test
   unit_run_lifecycle_teardown_test
-  unit_run_pull_variants_api_test
-  unit_run_try_push_api_test
   unit_run_overflow_policy_parity_test
-  unit_run_sample_message_modes_test
-  unit_run_api_variants_test
+  unit_runtime_metrics_test
   unit_samplespec_test
+  unit_sample_bundle_holder_test
   unit_session_api_surface_test
   unit_session_build_input_strategy_test
-  unit_session_io_roundtrip_test
-  unit_session_io_negative_test
+  unit_session_io_contract_test
   unit_session_naming_transform_test
-  unit_sima_boxdecode_config_test
+  session_stage_contract_equivalence_test
   unit_simaai_guard_test
-  unit_stageconfig_mla_info_test
   unit_simaai_allocator_share_test
-  unit_sima_mla_static_contract_extractor_test
-  unit_boxdecode_resolution_precedence_test
-  unit_boxdecode_required_runtime_fields_test
-  unit_quant_resolution_precedence_test
-  unit_wiring_tensor_index_test
+  unit_static_spec_builders_dtype_token_test
+  unit_sima_boxdecode_static_contract_extractor_test
+  unit_boxdecode_uses_upstream_cast_contract_test
+  unit_sima_boxdecode_node_fragment_test
   unit_kernel200_envelope_guard_test
+  unit_processcvu_binding_table_uses_runtime_outputs_test
+  unit_processcvu_preproc_runtime_vs_exposed_outputs_test
   unit_stage_transform_rule_registry_test
-  unit_sima_plugin_manifest_strict_fallback_test
-  unit_sima_plugin_manifest_strict_model_pipeline_test
   unit_sima_plugin_static_manifest_parse_test
   unit_sima_plugin_static_manifest_contract_test
   unit_sima_plugin_context_injection_test
-  unit_sima_plugin_static_manifest_resolver_test
+  unit_sima_plugin_context_late_child_injection_test
+  unit_sima_plugin_context_copy_test
+  unit_sima_plugin_context_attach_lifetime_test
+  unit_sima_plugin_context_replacement_test
+  unit_sima_plugin_context_destroyed_pipeline_test
   unit_sima_plugins_test
   unit_pipeline_sequence_parse_test
+  unit_processmla_model_load_failure_test
+  unit_processmla_requires_explicit_output_contract_test
+  unit_tensor_set_meta_route_contract_test
+  unit_tensorbuffer_bind_preserve_source_view_test
+  unit_tensorbuffer_publish_view_segment_name_precedence_test
+  unit_sample_tensor_set_materialized_parent_offsets_test
+  unit_yolov8_mla_handoff_segment_test
+  unit_yolov8_contract_subset_test
+  unit_agg_model_managed_no_standalone_json_test
+  unit_tensor_list_api_test
   unit_tensor_conversion_policy_test
   unit_tensor_image_mapping_test
+  unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
   unit_nodes_test
   unit_plugin_failure_messages_test
@@ -236,10 +350,13 @@ foreach(test ${UNIT_TESTS})
   endif()
 endforeach()
 
+if (TARGET unit_power_telemetry_test)
+  target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
+endif()
+
 if (TARGET unit_plugin_failure_messages_test)
-  set(SIMA_TEST_NEAT_PLUGIN_DIR "/usr/lib/aarch64-linux-gnu/neat/gst-plugins")
-  set_tests_properties(unit_plugin_failure_messages_test PROPERTIES
-    ENVIRONMENT "SIMA_GST_PLUGIN_DIR=${SIMA_TEST_NEAT_PLUGIN_DIR};GST_REGISTRY_1_0=${CMAKE_BINARY_DIR}/sima_gst_registry_unit_plugin_failure_messages_test_v2.bin")
+  set_property(TEST unit_plugin_failure_messages_test APPEND PROPERTY
+    ENVIRONMENT "GST_REGISTRY_1_0=${CMAKE_BINARY_DIR}/sima_gst_registry_unit_plugin_failure_messages_test_v2.bin")
 endif()
 
 if (TARGET unit_simaai_allocator_share_test)
@@ -298,13 +415,8 @@ set(E2E_TESTS
   hybrid_graph_fanout_test
   hybrid_graph_multistream_scheduler_test
   hybrid_graph_stage_model_test
-  inputstream_nv12_format_change_test
-  inputstream_nv12_stability_test
-  inputstream_videoconvert_test
-  inputstream_videoscale_test
   output_appsink_policy_test
   gst_data_adapter_runtime_regression_test
-  optiview_json_udp_integration_test
   preproc_standalone_test
   session_naming_pipeline_integration_test
   session_rtsp_lifecycle_regression_test
@@ -323,6 +435,33 @@ foreach(test ${E2E_TESTS})
     set_tests_properties(${test} PROPERTIES LABELS "e2e")
   endif()
 endforeach()
+
+add_pipeline_test_long(
+  preproc_build_input_repro_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/preproc_build_input_repro_test.cpp
+)
+
+if (NOT preproc_build_input_repro_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(preproc_build_input_repro_test PROPERTIES LABELS "e2e")
+endif()
+
+add_pipeline_test_long(
+  mnist_preproc_channels1_accuracy_test
+  e2e_testing/mnist_preproc_channels1_accuracy_test.cpp
+)
+
+if (NOT mnist_preproc_channels1_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(mnist_preproc_channels1_accuracy_test PROPERTIES LABELS "e2e;modelzoo;long")
+endif()
+
+add_pipeline_test_long(
+  mnist_async_consumer_visibility_control_test
+  e2e_testing/mnist_async_consumer_visibility_control_test.cpp
+)
+
+if (NOT mnist_async_consumer_visibility_control_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(mnist_async_consumer_visibility_control_test PROPERTIES LABELS "e2e;modelzoo;long;perf")
+endif()
 
 add_pipeline_test_long(
   modelzoo_bulk_models_test
@@ -380,11 +519,7 @@ endforeach()
 # Security tests (MPK / archive / JSON abuse)
 # ------------------------------------------------------------------------------
 set(SECURITY_TESTS
-  security_modelpack_archive_test
-  security_modelpack_json_test
-  security_modelpack_unicode_path_test
-  security_modelpack_tar_integrity_test
-  security_modelpack_json_robustness_test
+  security_modelpack_matrix_test
 )
 
 foreach(test ${SECURITY_TESTS})
@@ -515,35 +650,27 @@ foreach(test
     unit_graph_join_encoded_with_meta_test
     unit_graph_stamp_frame_id_test
     unit_graph_strict_sync_store_test
-    unit_group_optiview_output_group_failure_test
-    unit_node_optiview_json_output_test
-    unit_modalix_contract_preflight_test
-    unit_run_holder_api_test
-    unit_run_pull_variants_api_test
-    unit_run_try_push_api_test
-    unit_run_sample_message_modes_test
+      unit_modalix_contract_preflight_test
+    unit_run_api_matrix_test
     unit_contracts_test
     unit_detection_types_bbox_test
     unit_gst_data_adapter_edge_test
     unit_nodes_test
     unit_outputspec_test
-    unit_model_input_spec_contract_test
+      unit_model_input_spec_contract_test
     unit_model_output_spec_contract_test
     unit_model_metadata_test
+    unit_model_route_planner_test
     unit_model_stage_fragments_test
-    unit_stageconfig_mla_info_test
     session_naming_pipeline_integration_test
     gst_data_adapter_runtime_regression_test
-    unit_run_api_variants_test
-    unit_modelpack_parse_test
     unit_modelpack_extract_test
     unit_pipeline_sequence_parse_test
     unit_mpk_loader_test
     unit_mpk_pipeline_adapter_test
     session_rtsp_lifecycle_regression_test
     session_validate_report_regression_test
-    security_modelpack_archive_test
-    security_modelpack_json_test)
+    security_modelpack_matrix_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "crash-gate;regression")
   endif()
@@ -553,28 +680,21 @@ endforeach()
 # Runtime-core labels
 # ------------------------------------------------------------------------------
 foreach(test
-    unit_run_try_push_api_test
-    unit_run_holder_api_test
-    unit_run_pull_variants_api_test
-    unit_run_sample_message_modes_test
+    unit_run_api_matrix_test
     unit_model_infer_output_name_test
     unit_model_input_spec_contract_test
     unit_model_output_spec_contract_test
     unit_model_metadata_test
     unit_model_stage_fragments_test
-    unit_session_io_roundtrip_test
-    unit_session_io_negative_test
+    unit_session_io_contract_test
     unit_session_naming_transform_test
-    unit_pipeline_build_wiring_test
     unit_pipeline_internal_build_test
     unit_gst_data_adapter_edge_test
     unit_caps_bridge_test
     unit_simaai_guard_test
     unit_tensor_conversion_policy_test
     unit_tensor_image_mapping_test
-    unit_stageconfig_mla_info_test
     unit_detection_types_bbox_test
-    unit_modelpack_parse_test
     unit_modelpack_extract_test
     unit_pipeline_sequence_parse_test
     unit_mpk_loader_test
@@ -596,21 +716,14 @@ endforeach()
 # Negative-path labels
 # ------------------------------------------------------------------------------
 foreach(test
-    unit_run_try_push_api_test
-    unit_run_holder_api_test
-    unit_run_pull_variants_api_test
-    unit_session_io_roundtrip_test
-    unit_session_io_negative_test
+    unit_run_api_matrix_test
+    unit_session_io_contract_test
     unit_graph_compiler_topology_test
     unit_graph_compiler_spec_validation_test
-    unit_group_optiview_output_group_failure_test
-    unit_node_optiview_json_output_test
-    unit_modelpack_parse_test
-    unit_modelpack_extract_test
+        unit_modelpack_extract_test
     unit_pipeline_sequence_parse_test
     unit_mpk_loader_test
-    security_modelpack_archive_test
-    security_modelpack_json_test
+    security_modelpack_matrix_test
     pull_timeout_regression_test
     session_validate_report_regression_test
     session_rtsp_lifecycle_regression_test
@@ -682,14 +795,28 @@ if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST
 endif()
 
 add_pipeline_test(
-  yolov8_stage_route_test
-  e2e_pipelines/obj_detection/yolov8_stage_route_test.cpp
+  yolov8_variant_route_matrix_test
+  e2e_pipelines/obj_detection/yolov8_variant_route_matrix_test.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
 )
 
-if (NOT yolov8_stage_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(yolov8_stage_route_test
+if (NOT yolov8_variant_route_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(yolov8_variant_route_matrix_test
+    PROPERTIES LABELS "e2e;obj_detection"
+  )
+endif()
+
+add_pipeline_test(
+  preproc_yolov8_matrix_test
+  e2e_pipelines/obj_detection/preproc_yolov8_matrix_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT preproc_yolov8_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(preproc_yolov8_matrix_test
     PROPERTIES LABELS "e2e;obj_detection"
   )
 endif()
@@ -705,57 +832,6 @@ add_pipeline_test(
 if (NOT graphpipes_yolo_optiview_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(graphpipes_yolo_optiview_16stream_test
     PROPERTIES LABELS "e2e;obj_detection"
-  )
-endif()
-
-# ------------------------------------------------------------------------------
-# E2E pipelines – segmentation/depth examples
-# ------------------------------------------------------------------------------
-add_pipeline_test(
-  depth_anything_v2_example_test
-  e2e_pipelines/depth_estimation/depth_anything_v2_example_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT depth_anything_v2_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(depth_anything_v2_example_test
-    PROPERTIES LABELS "e2e;examples;depth"
-  )
-endif()
-
-add_pipeline_test(
-  fcn_hrnet_seg_overlay_example_test
-  e2e_pipelines/segmentation/fcn_hrnet_seg_overlay_example_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT fcn_hrnet_seg_overlay_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(fcn_hrnet_seg_overlay_example_test
-    PROPERTIES LABELS "e2e;examples;segmentation"
-  )
-endif()
-
-add_pipeline_test(
-  yolov5_seg_overlay_example_test
-  e2e_pipelines/segmentation/yolov5_seg_overlay_example_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT yolov5_seg_overlay_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(yolov5_seg_overlay_example_test
-    PROPERTIES LABELS "e2e;examples;segmentation"
-  )
-endif()
-
-add_pipeline_test(
-  yolov8n_seg_detess_simple_example_test
-  e2e_pipelines/segmentation/yolov8n_seg_detess_simple_example_test.cpp
-  ARGS ${CMAKE_SOURCE_DIR}
-)
-
-if (NOT yolov8n_seg_detess_simple_example_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(yolov8n_seg_detess_simple_example_test
-    PROPERTIES LABELS "e2e;examples;segmentation"
   )
 endif()
 
@@ -784,16 +860,21 @@ if (NOT model_unique_names_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   )
 endif()
 
-add_pipeline_test(
-  resnet50_modelpack_test
-  e2e_pipelines/img_classification/resnet50_modelpack_test.cpp
-)
-
 if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST resnet50_modelpack_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-  set_property(TEST resnet50_modelpack_test
-    APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT_BASE=8557"
+  add_executable(
+    resnet50_modelpack_test
+    e2e_pipelines/img_classification/resnet50_modelpack_test.cpp
   )
+  add_dependencies(resnet50_modelpack_test prepare_test_fixtures)
+  target_link_libraries(resnet50_modelpack_test PRIVATE sima_neat_internal)
+  target_include_directories(resnet50_modelpack_test
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+  )
+  list(APPEND PIPELINESESSION_TEST_TARGETS resnet50_modelpack_test)
+
   add_test(
     NAME resnet50_modelpack_direct
     COMMAND resnet50_modelpack_test --goldfish --only-direct
@@ -815,9 +896,32 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
       LABELS "e2e;img_classification"
       RESOURCE_LOCK "dispatcher"
   )
+  append_pipeline_test_env(resnet50_modelpack_direct)
+  append_pipeline_test_env(resnet50_modelpack_jpeg)
+  append_pipeline_test_env(resnet50_modelpack_rtsp)
+  set_property(TEST resnet50_modelpack_direct
+    APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT_BASE=8557"
+  )
+  set_property(TEST resnet50_modelpack_jpeg
+    APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT_BASE=8557"
+  )
   set_property(TEST resnet50_modelpack_rtsp APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_property(TEST resnet50_modelpack_rtsp
     APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT_BASE=8567"
+  )
+endif()
+
+add_pipeline_test_long(
+  resnet50_neatargmax_test
+  e2e_pipelines/img_classification/resnet50_neatargmax_test.cpp
+)
+
+if (NOT resnet50_neatargmax_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_tests_properties(
+    resnet50_neatargmax_test
+    PROPERTIES
+      LABELS "e2e;img_classification;long"
+      SKIP_RETURN_CODE 77
   )
 endif()
 
@@ -846,91 +950,25 @@ if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKL
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
 endif()
 
-set(SIMANEAT_TEST_INSTALL_TARGETS ${PIPELINESESSION_TEST_TARGETS})
-
-if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
-  set(SIMANEAT_SANITIZER_GATE_TESTS
-    unit_modalix_contract_preflight_test
-  )
-
-  if (SIMA_ENABLE_TSAN)
-    list(APPEND SIMANEAT_SANITIZER_GATE_TESTS
-      unit_builder_test
-      unit_contracts_test
-      unit_graph_strict_sync_store_test
-      unit_run_try_push_api_test
-      unit_run_holder_api_test
-      unit_run_api_variants_test
-      unit_session_naming_transform_test
-      session_validate_report_regression_test
-      session_naming_pipeline_integration_test
-      stage_routing_regression_test
-      graph_deterministic_routing_regression_test
-      hybrid_graph_fanout_test
-    )
-  else()
-    list(APPEND SIMANEAT_SANITIZER_GATE_TESTS
-      unit_builder_test
-      unit_caps_bridge_test
-      unit_graph_compiler_topology_test
-      unit_graph_compiler_spec_validation_test
-      unit_graph_join_bundle_test
-      unit_graph_join_encoded_with_meta_test
-      unit_graph_stamp_frame_id_test
-      unit_graph_strict_sync_store_test
-      unit_group_optiview_output_group_failure_test
-      unit_contracts_test
-      unit_detection_types_bbox_test
-      unit_gst_data_adapter_edge_test
-      unit_node_optiview_json_output_test
-      unit_node_udp_output_fragment_test
-      unit_nodes_test
-      unit_outputspec_test
-      unit_pipeline_build_wiring_test
-      unit_model_infer_output_name_test
-      unit_model_input_spec_contract_test
-      unit_model_output_spec_contract_test
-      unit_model_metadata_test
-      unit_model_stage_fragments_test
-      unit_run_holder_api_test
-      unit_run_pull_variants_api_test
-      unit_run_try_push_api_test
-      unit_run_api_variants_test
-      unit_session_io_roundtrip_test
-      unit_session_io_negative_test
-      unit_session_naming_transform_test
-      unit_simaai_guard_test
-      unit_stageconfig_mla_info_test
-      unit_tensor_conversion_policy_test
-      unit_tensor_image_mapping_test
-      caps_negotiation_matrix_regression_test
-      gst_data_adapter_runtime_regression_test
-      pull_timeout_regression_test
-      session_naming_pipeline_integration_test
-      session_rtsp_lifecycle_regression_test
-      session_validate_report_regression_test
-      stage_routing_regression_test
-      graph_deterministic_routing_regression_test
-      hybrid_graph_basic_test
-    )
-  endif()
-
-  set(SIMANEAT_TEST_INSTALL_TARGETS "")
-  foreach(_t IN LISTS SIMANEAT_SANITIZER_GATE_TESTS)
-    if (TARGET "${_t}")
-      list(APPEND SIMANEAT_TEST_INSTALL_TARGETS "${_t}")
-    else()
-      message(WARNING "Sanitizer gate install target not found: ${_t}")
-    endif()
-  endforeach()
-
-  list(REMOVE_DUPLICATES SIMANEAT_TEST_INSTALL_TARGETS)
-  message(STATUS "Sanitizer gate-only extras install enabled (SIMA_ENABLE_TSAN=${SIMA_ENABLE_TSAN})")
-  message(STATUS "Installing ${SIMANEAT_TEST_INSTALL_TARGETS}")
-endif()
+add_executable(
+  tess_a65_vs_ev74_bench
+  e2e_testing/tess_a65_vs_ev74_bench.cpp
+)
+add_dependencies(tess_a65_vs_ev74_bench prepare_test_fixtures)
+target_link_libraries(
+  tess_a65_vs_ev74_bench
+  PRIVATE sima_neat_internal
+)
+target_include_directories(
+  tess_a65_vs_ev74_bench
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
 
 install(
-  TARGETS ${SIMANEAT_TEST_INSTALL_TARGETS}
+  TARGETS ${PIPELINESESSION_TEST_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tests
   COMPONENT extras
 )
@@ -944,34 +982,11 @@ install(
     PATTERN "*.h"
 )
 
+# Install built test binaries from the build tree (for extras packaging)
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/assets/mpk/
-  DESTINATION share/sima-neat/tests/assets/mpk
+  DIRECTORY ${CMAKE_BINARY_DIR}/tests/
+  DESTINATION lib/sima-neat/tests
   COMPONENT extras
   FILES_MATCHING
-    PATTERN "*.json"
-    PATTERN "*.tar"
-    PATTERN "*.mpk"
+    PATTERN "*"
 )
-
-# Keep standard extras behavior (full tests tree install), but trim payload
-# aggressively for sanitizer gate artifact builds.
-if (SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS)
-  install(
-    DIRECTORY ${CMAKE_BINARY_DIR}/tests/
-    DESTINATION lib/sima-neat/tests
-    COMPONENT extras
-    USE_SOURCE_PERMISSIONS
-    FILES_MATCHING
-      PATTERN "CTestTestfile.cmake"
-  )
-else()
-  install(
-    DIRECTORY ${CMAKE_BINARY_DIR}/tests/
-    DESTINATION lib/sima-neat/tests
-    COMPONENT extras
-    USE_SOURCE_PERMISSIONS
-    FILES_MATCHING
-      PATTERN "*"
-  )
-endif()

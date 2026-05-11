@@ -69,7 +69,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
            {
              InputOptions src_opt;
              src_opt.media_type = "video/x-raw";
-             src_opt.format = "BGR";
+             src_opt.format = simaai::neat::FormatTag::BGR;
              src_opt.width = 16;
              src_opt.height = 16;
              src_opt.depth = 3;
@@ -83,15 +83,15 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              // Keep byte-guard out of this case so oversize failure is from effective dims.
              run_opt.advanced.max_input_bytes = 1u << 20;
 
-             Run run = session.build(make_bgr(16, 16), RunMode::Async, run_opt);
-             (void)run.push_and_pull(make_bgr(16, 16), 1000);
-             (void)run.push_and_pull(make_bgr(48, 48), 1000);
+             Run run = session.build(std::vector<cv::Mat>{make_bgr(16, 16)}, RunMode::Async, run_opt);
+             (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
+             (void)run.run(std::vector<cv::Mat>{make_bgr(48, 48)}, 1000);
              require(wait_for_reneg(run, 1, 1000),
                      "bounded dynamic: expected renegotiation up to max bounds");
 
              bool threw = false;
              try {
-               (void)run.push_and_pull(make_bgr(80, 80), 1000);
+               (void)run.run(std::vector<cv::Mat>{make_bgr(80, 80)}, 1000);
              } catch (const std::exception& e) {
                threw = true;
                const std::string emsg = e.what();
@@ -110,22 +110,23 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
 
              InputOptions src_opt;
              src_opt.media_type = "video/x-raw";
-             src_opt.format = "BGR";
+             src_opt.format = simaai::neat::FormatTag::BGR;
              src_opt.use_simaai_pool = false;
 
              Session session = make_basic_video_session(src_opt);
              RunOptions run_opt = make_async_realtime_run_options();
              run_opt.advanced.max_input_bytes = 0;
 
-             Run run = session.build(make_bgr(64, 64), RunMode::Async, run_opt);
-             (void)run.push_and_pull(make_bgr(64, 64), 1000);
-             (void)run.push_and_pull(make_bgr(256, 256), 1000);
+             Run run =
+                 session.build(std::vector<cv::Mat>{make_bgr(64, 64)}, RunMode::Async, run_opt);
+             (void)run.run(std::vector<cv::Mat>{make_bgr(64, 64)}, 1000);
+             (void)run.run(std::vector<cv::Mat>{make_bgr(256, 256)}, 1000);
              require(run.input_stats().alloc_grows > 0,
                      "elastic mode: expected allocation growth for larger in-bound frame");
 
              bool threw_guard = false;
              try {
-               (void)run.push_and_pull(make_bgr(1024, 1024), 1000);
+               (void)run.run(std::vector<cv::Mat>{make_bgr(1024, 1024)}, 1000);
              } catch (const std::exception& e) {
                threw_guard = true;
                const std::string emsg = e.what();
@@ -145,7 +146,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
            {
              InputOptions src_opt;
              src_opt.media_type = "video/x-raw";
-             src_opt.format = "BGR";
+             src_opt.format = simaai::neat::FormatTag::BGR;
              src_opt.caps_override = "video/x-raw,format=BGR,width=16,height=16";
              src_opt.use_simaai_pool = false;
 
@@ -153,12 +154,13 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              RunOptions run_opt = make_async_realtime_run_options();
              run_opt.advanced.max_input_bytes = 0;
 
-             Run run = session.build(make_bgr(16, 16), RunMode::Async, run_opt);
-             (void)run.push_and_pull(make_bgr(16, 16), 1000);
+             Run run =
+                 session.build(std::vector<cv::Mat>{make_bgr(16, 16)}, RunMode::Async, run_opt);
+             (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
 
              bool threw_caps_override = false;
              try {
-               (void)run.push_and_pull(make_bgr(32, 32), 1000);
+               (void)run.run(std::vector<cv::Mat>{make_bgr(32, 32)}, 1000);
              } catch (const std::exception& e) {
                threw_caps_override = true;
                const std::string emsg = e.what();
@@ -180,7 +182,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
            {
              InputOptions src_opt;
              src_opt.media_type = "video/x-raw";
-             src_opt.format = "BGR";
+             src_opt.format = simaai::neat::FormatTag::BGR;
              src_opt.width = 16;
              src_opt.height = 16;
              src_opt.depth = 3;
@@ -198,7 +200,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              bool build_threw = false;
              std::string build_err;
              try {
-               (void)session.build(oversized, RunMode::Async, run_opt);
+               (void)session.build(std::vector<cv::Mat>{oversized}, RunMode::Async, run_opt);
              } catch (const std::exception& e) {
                build_threw = true;
                build_err = e.what();
@@ -207,13 +209,14 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              require(has_expected_oversize_error(build_err),
                      "parity: build(input) unexpected oversize validation message: " + build_err);
 
-             Run run = session.build(make_bgr(16, 16), RunMode::Async, run_opt);
-             (void)run.push_and_pull(make_bgr(16, 16), 1000);
+             Run run =
+                 session.build(std::vector<cv::Mat>{make_bgr(16, 16)}, RunMode::Async, run_opt);
+             (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
 
              bool push_threw = false;
              std::string push_err;
              try {
-               (void)run.push_and_pull(oversized, 1000);
+               (void)run.run(std::vector<cv::Mat>{oversized}, 1000);
              } catch (const std::exception& e) {
                push_threw = true;
                push_err = e.what();
@@ -226,11 +229,11 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
                          push_err + "' last_error='" + push_last_err + "'");
            }
 
-           // 5) Tensor layout ambiguity must fail with deterministic guidance.
+           // 5) Generic tensors without an explicit HWC/CHW/HW hint should still build.
            {
              InputOptions src_opt;
              src_opt.media_type = "application/vnd.simaai.tensor";
-             src_opt.format = "FP32";
+             src_opt.format = simaai::neat::FormatTag::FP32;
              src_opt.use_simaai_pool = false;
 
              Session session;
@@ -240,14 +243,10 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              RunOptions run_opt = make_async_realtime_run_options();
              Tensor ambiguous = make_ambiguous_layout_tensor_chw(16, 16, 3);
 
-             bool threw_layout = false;
              try {
-               (void)session.build(ambiguous, RunMode::Async, run_opt);
+               (void)session.build(TensorList{ambiguous}, RunMode::Async, run_opt);
              } catch (const std::exception& e) {
-               threw_layout = true;
-               require_contains(e.what(), "layout must be explicit",
-                                "tensor layout ambiguity: missing explicit-layout error");
+               require(false, std::string("generic tensor build should not fail: ") + e.what());
              }
-             require(threw_layout, "tensor layout ambiguity: expected build failure");
            }
          }));

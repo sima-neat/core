@@ -1,22 +1,18 @@
-# SiMa Neat Framework
+# SiMa NEAT Framework
 
-[![CI Build](https://github.com/sima-neat/core/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/build.yml)
-[![Sanitization Nightly](https://github.com/sima-neat/core/actions/workflows/sanitizers.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/sanitizers.yml)
-[![Soak Weekly](https://github.com/sima-neat/core/actions/workflows/test-soak-weekly.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/test-soak-weekly.yml)
-[![Fuzz Nightly](https://github.com/sima-neat/core/actions/workflows/test-fuzz-nightly.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/test-fuzz-nightly.yml)
-[![Crash Correctness Nightly](https://github.com/sima-neat/core/actions/workflows/test-crash-correctness-nightly.yml/badge.svg?branch=main)](https://github.com/sima-neat/core/actions/workflows/test-crash-correctness-nightly.yml)
+[![CI Build](https://github.com/manuel-roldan/PipelineSession/actions/workflows/build.yml/badge.svg)](https://github.com/manuel-roldan/PipelineSession/actions/workflows/build.yml)
 ![SDK](https://img.shields.io/badge/SDK-2.0-green)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-informational)
 
-SiMa Neat is a C++20 library for building, validating, running, and debugging GStreamer pipelines with a typed, composable API.
+SiMa NEAT is a C++20 library for building, validating, running, and debugging GStreamer pipelines with a typed, composable API.
 
 It helps teams ship production media/ML pipelines with reproducible pipeline generation, strong diagnostics, and clean C++ integration.
 
-<img src="docs/images/concepts.jpg" alt="Neat concepts diagram" width="80%" />
+<img src="docs/images/concepts.jpg" alt="NEAT concepts diagram" width="80%" />
 
 ## Programming Model
 
-Neat is built around three core concepts:
+NEAT is built around three core concepts:
 
 - `Model`: loads a compiled model pack (`.tar.gz`) and exposes reusable pipeline stages (`preprocess`, `inference`, `postprocess`, or full `session()`).
 - `Session` + `Run`: composes typed `Node`/`NodeGroup` blocks into a deterministic pipeline, then executes it in `Sync` or `Async` mode via push/pull APIs.
@@ -45,7 +41,20 @@ auto run = session.build(input_tensor, simaai::neat::RunMode::Sync);
 auto out = run.push_and_pull(input_tensor);
 ```
 
-## Build Neat
+For unified runtime reporting, use:
+
+```cpp
+simaai::neat::RunOptions run_opt;
+run_opt.enable_board_power();
+
+auto run = session.build(input_tensor, simaai::neat::RunMode::Async, run_opt);
+auto metrics = run.metrics();
+```
+
+That single `metrics()` surface is the preferred way to gather latency, throughput,
+and optional board power. `Model::Runner` and `graph::GraphRun` expose the same API.
+
+## Build NEAT
 
 For source builds, use `build.sh`:
 
@@ -59,14 +68,13 @@ Common build modes:
 ./build.sh --all           # library + samples + tests + docs
 ./build.sh --doc           # docs only
 ./build.sh --all --clean   # clean full build
-./build.sh -h              # print help
 ```
 
 Build output is generated under `build/`.
 
 ## Python Bindings (`pyneat`)
 
-This repository includes a production-oriented Python binding layer powered by `nanobind`.
+This repository now includes a production-oriented Python binding layer powered by `nanobind`.
 
 Key points:
 
@@ -77,10 +85,11 @@ Key points:
 
 Build/install from source:
 
-Running `./build.sh --all` builds both C++ libs and pyneat. If you want to build pyneat specifically do the following. 
-
 ```bash
-./build.sh --python
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install .
 ```
 
 Run Python tests:
@@ -92,9 +101,15 @@ pytest -q
 
 ## Install
 
-If you are installing from release artifacts, follow instructions [here](https://docs.sima-neat.com/getting-started/install).
+If you are installing from release artifacts, install core from `.deb` and extract prebuilt examples, tutorials from `.tar.gz`:
+
+```bash
+sudo apt install ./sima-neat-*-Linux-core.deb
+mkdir -p "${HOME}/sima-neat-extras"
+tar -xzf ./sima-neat-*-Linux-extras.tar.gz -C "${HOME}/sima-neat-extras"
+```
 
 ## Documentation
 
-Full documentation, guides, and API references are published [here](https://docs.sima-neat.com).
-Contributor and agent quality guidance is documented in [AGENTS.md](AGENTS.md).
+Full documentation, guides, and API references are published [here](https://neat.modalix.info).
+Contributor and agent quality guidance is documented in `AGENTS.md` at the repository root.

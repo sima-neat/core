@@ -14,10 +14,24 @@
 
 namespace simaai::neat::graph::runtime {
 
+/**
+ * @brief Thread-safe bounded blocking queue used by the runtime mailboxes.
+ *
+ * Supports blocking and non-blocking enqueue/dequeue with optional millisecond timeouts,
+ * and a `close()` operation that wakes blocked waiters and refuses further pushes. A
+ * capacity of `0` means unbounded.
+ *
+ * @tparam T Element type stored in the queue.
+ *
+ * @see StageMailbox
+ * @ingroup graph
+ */
 template <class T> class BlockingQueue {
 public:
+  /// Construct a queue with the given capacity (0 = unbounded).
   explicit BlockingQueue(std::size_t capacity = 0) : capacity_(capacity) {}
 
+  /// Push `item` (copy). Blocks up to `timeout_ms` (or forever if -1). Returns false on close/timeout.
   bool push(const T& item, int timeout_ms = -1) {
     std::unique_lock<std::mutex> lock(mu_);
     if (closed_)
@@ -37,6 +51,7 @@ public:
     return true;
   }
 
+  /// Push `item` (move). Blocks up to `timeout_ms` (or forever if -1). Returns false on close/timeout.
   bool push(T&& item, int timeout_ms = -1) {
     std::unique_lock<std::mutex> lock(mu_);
     if (closed_)
@@ -56,6 +71,7 @@ public:
     return true;
   }
 
+  /// Non-blocking copy push; returns false if closed or full.
   bool try_push(const T& item) {
     std::lock_guard<std::mutex> lock(mu_);
     if (closed_)
@@ -67,6 +83,7 @@ public:
     return true;
   }
 
+  /// Non-blocking move push; returns false if closed or full.
   bool try_push(T&& item) {
     std::lock_guard<std::mutex> lock(mu_);
     if (closed_)
@@ -78,6 +95,7 @@ public:
     return true;
   }
 
+  /// Pop the next item into `out`. Blocks up to `timeout_ms` (or forever if -1). Returns false if closed and empty (or on timeout).
   bool pop(T& out, int timeout_ms = -1) {
     std::unique_lock<std::mutex> lock(mu_);
     if (timeout_ms < 0) {
@@ -94,6 +112,7 @@ public:
     return true;
   }
 
+  /// Close the queue: wakes blocked threads and refuses further pushes.
   void close() {
     std::lock_guard<std::mutex> lock(mu_);
     closed_ = true;
@@ -101,11 +120,13 @@ public:
     cv_not_full_.notify_all();
   }
 
+  /// Returns true iff the queue has been closed.
   bool closed() const {
     std::lock_guard<std::mutex> lock(mu_);
     return closed_;
   }
 
+  /// Current queue size.
   std::size_t size() const {
     std::lock_guard<std::mutex> lock(mu_);
     return queue_.size();

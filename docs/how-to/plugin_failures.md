@@ -1,6 +1,6 @@
 # How To Debug Plugin Failures
 
-When a plugin fails, Neat raises a `SessionError` whose message contains the
+When a plugin fails, NEAT raises a `SessionError` whose message contains the
 GStreamer error and a structured debug string. Use the fields to locate the
 root cause quickly.
 
@@ -14,7 +14,7 @@ Look for the `debug` key/value fields in the error text:
 - `hint`: actionable fix guidance
 - `detail`: extra context such as missing keys or allocator state
 
-See the [Error Format Reference](/reference/error_format) for the full list.
+See the [Error Format Reference](../reference/error_format.md) for the full list.
 
 ## 2) Confirm the Pipeline Context
 
@@ -41,4 +41,4 @@ Enable diagnostics to gather more context:
 - `SIMA_GST_FLOW_DEBUG` for buffer flow stats
 - `SIMA_GST_ELEMENT_TIMINGS` for per‑element timings
 
-These tools are summarized in [Diagnostics and Debugging](/how-to/diagnostics).
+These tools are summarized in [Diagnostics and Debugging](diagnostics.md).

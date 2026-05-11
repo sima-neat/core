@@ -18,22 +18,15 @@ namespace {
 simaai::neat::Model load_model(const std::string& tar_gz, const InferOptions& opt) {
   simaai::neat::Model::Options model_opt;
 
-  if (!opt.input_format.empty()) {
-    model_opt.format = opt.input_format;
-  }
-  if (opt.input_width > 0) {
-    model_opt.input_max_width = opt.input_width;
-    model_opt.preproc.input_width = opt.input_width;
-  }
-  if (opt.input_height > 0) {
-    model_opt.input_max_height = opt.input_height;
-    model_opt.preproc.input_height = opt.input_height;
+  if (opt.input_format != PreprocessColorFormat::Auto) {
+    model_opt.preprocess.kind = InputKind::Image;
+    model_opt.preprocess.color_convert.input_format = opt.input_format;
   }
   if (!opt.upstream_name.empty()) {
     model_opt.upstream_name = opt.upstream_name;
   }
 
-  model_opt.preproc.normalize = opt.normalize;
+  model_opt.preprocess.normalize.enable = opt.normalize ? AutoFlag::On : AutoFlag::Off;
   if (!opt.mean.empty()) {
     std::array<float, 3> mean = {0.0f, 0.0f, 0.0f};
     if (opt.mean.size() == 1) {
@@ -41,7 +34,9 @@ simaai::neat::Model load_model(const std::string& tar_gz, const InferOptions& op
     } else if (opt.mean.size() >= 3) {
       mean = {opt.mean[0], opt.mean[1], opt.mean[2]};
     }
-    model_opt.preproc.channel_mean = mean;
+    model_opt.preprocess.normalize.enable = AutoFlag::On;
+    model_opt.preprocess.normalize.mean = mean;
+    model_opt.preprocess.normalize.has_explicit_stats = true;
   }
   if (!opt.stddev.empty()) {
     std::array<float, 3> stddev = {1.0f, 1.0f, 1.0f};
@@ -50,7 +45,9 @@ simaai::neat::Model load_model(const std::string& tar_gz, const InferOptions& op
     } else if (opt.stddev.size() >= 3) {
       stddev = {opt.stddev[0], opt.stddev[1], opt.stddev[2]};
     }
-    model_opt.preproc.channel_stddev = stddev;
+    model_opt.preprocess.normalize.enable = AutoFlag::On;
+    model_opt.preprocess.normalize.stddev = stddev;
+    model_opt.preprocess.normalize.has_explicit_stats = true;
   }
 
   return simaai::neat::Model(tar_gz, model_opt);

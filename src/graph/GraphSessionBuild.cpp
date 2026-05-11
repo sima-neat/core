@@ -1,11 +1,29 @@
 #include "internal/GraphRunState.h"
+#include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/internal/UxLogging.h"
 
 namespace simaai::neat::graph {
 GraphSession::GraphSession(Graph graph) : graph_(std::move(graph)) {}
 
+namespace {
+
+bool is_terminal_output_only_segment(const CompiledPipelineSegment& seg) {
+  const auto& nodes = seg.group.nodes();
+  if (nodes.size() != 1U || !nodes.front()) {
+    return false;
+  }
+  return dynamic_cast<const simaai::neat::Output*>(nodes.front().get()) != nullptr;
+}
+
+} // namespace
+
 GraphRun GraphSession::build(const GraphRunOptions& opt) {
+  pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt.verbose);
+  pipeline_internal::ux::ProgressReporter progress(opt.verbose, 4);
+  progress.step("Compiling graph...");
   auto state = std::make_shared<GraphRun::State>();
   state->opt = opt;
+  state->verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(opt.verbose);
   if (state->opt.push_timeout_ms < 0) {
     throw std::invalid_argument(
         "GraphSession::build: GraphRunOptions.push_timeout_ms must be >= 0");
@@ -17,6 +35,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
 
   Compiler compiler;
   state->compiled = compiler.compile(graph_);
+  progress.step("Preparing pipeline segments...");
   state->node_labels.resize(graph_.node_count());
   for (NodeId id = 0; id < graph_.node_count(); ++id) {
     std::string label;
@@ -39,15 +58,27 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
     // Use a shared suffix across graph segments so buffer-name metadata
     // stays consistent between producer/consumer pipelines.
     sess_opt.element_name_suffix = "_graph";
+    sess_opt.verbose = opt.verbose;
+    sess_opt.verbose.progress = false;
 
     Session session(sess_opt);
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes = seg.group.nodes();
 
     if (!seg.source_like && seg.input_edges.empty() && has_internal_source(seg.group) &&
         !has_input_appsrc(seg.group)) {
+      std::string node_names;
+      for (NodeId nid : seg.node_ids) {
+        if (!node_names.empty()) node_names += ", ";
+        node_names += std::to_string(nid);
+        if (nid < state->node_labels.size()) {
+          node_names += "('" + state->node_labels[nid] + "')";
+        }
+      }
       throw std::runtime_error(
-          "GraphSession: pipeline segment has internal source but is not source_like. "
-          "Refusing to inject Input into a source pipeline.");
+          "GraphSession: pipeline segment " + std::to_string(seg.id) +
+          " has internal source but is not source_like."
+          " Refusing to inject Input into a source pipeline."
+          " Segment nodes: [" + node_names + "].");
     }
 
     if (!seg.source_like && !has_input_appsrc(seg.group)) {
@@ -57,6 +88,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
 
     const bool is_graph_sink = graph_.out_degree(seg.node_ids.back()) == 0;
     const bool need_output = !seg.output_edges.empty() || is_graph_sink;
+    const bool direct_graph_sink = is_graph_sink && is_terminal_output_only_segment(seg);
     if (need_output && !has_output_appsink(seg.group)) {
       nodes.push_back(simaai::neat::nodes::Output());
     }
@@ -73,10 +105,6 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
       }
     }
 
-    pipeline_internal::PipelineBuildContext build_ctx(sess_opt);
-    build_ctx.apply_name_transform_to_configs(nodes);
-    build_ctx.check_config_wiring(nodes);
-
     for (const auto& n : nodes) {
       session.add(n);
     }
@@ -84,9 +112,22 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
     auto runtime = std::make_unique<GraphRun::State::PipelineRuntime>();
     runtime->seg = seg;
     runtime->session = std::move(session);
-    runtime->has_input = !seg.source_like;
-    runtime->has_output = need_output;
+    runtime->run_options = state->opt.pipeline;
+    if (!seg.output_edges.empty()) {
+      runtime->run_options.output_memory = simaai::neat::OutputMemory::ZeroCopy;
+      // Graph-internal appsinks are transport edges to downstream stages or
+      // pipeline inputs, not user CPU-read boundaries. Preserve zero-copy
+      // forwarding and leave CPU visibility to the true consumer boundary
+      // (Tensor::map(Read), terminal graph output policy, or A65/CPU plugin).
+      runtime->run_options.advanced.prepare_output_cpu_visible = false;
+    }
+    runtime->has_input = !seg.source_like && !direct_graph_sink;
+    runtime->has_output = need_output && !direct_graph_sink;
+    if (direct_graph_sink) {
+      state->direct_sink_nodes.insert(seg.node_ids.back());
+    }
     if (runtime->has_input && src_node) {
+      const pipeline_internal::PipelineBuildContext build_ctx(sess_opt);
       runtime->expected_buffer_names =
           build_ctx.resolve_expected_buffer_names(src_node->options().buffer_name);
     }
@@ -104,6 +145,9 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
   }
 
   // Build stage runtimes (with optional pooling).
+  progress.detail("segments=" + std::to_string(state->compiled.pipelines.size()) +
+                  " stages=" + std::to_string(state->compiled.stages.size()));
+  progress.step("Starting stage workers...");
   state->stage_groups.reserve(state->compiled.stages.size());
   for (const auto& st : state->compiled.stages) {
     if (!st.node)
@@ -161,8 +205,13 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
     }
     auto it_pipe = state->node_to_pipeline.find(e.to);
     if (it_pipe != state->node_to_pipeline.end()) {
-      outs.push_back(
-          DownstreamTarget{DownstreamTarget::Kind::PipelineInput, it_pipe->second, e.to_port});
+      if (state->direct_sink_nodes.find(e.to) != state->direct_sink_nodes.end()) {
+        outs.push_back(DownstreamTarget{DownstreamTarget::Kind::GraphSink,
+                                        static_cast<std::size_t>(e.to), e.to_port});
+      } else {
+        outs.push_back(
+            DownstreamTarget{DownstreamTarget::Kind::PipelineInput, it_pipe->second, e.to_port});
+      }
       continue;
     }
   }
@@ -272,9 +321,6 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
               state->sanitize_sample_for_pipeline_input(*state->pipelines[target.index], sample);
               auto& input_queue = state->pipelines[target.index]->input_queue;
               if (input_queue) {
-                const std::size_t qsize = input_queue->size();
-                maybe_force_copy_for_backpressure(sample, qsize, "pipeline_input_queue",
-                                                  state->pipelines[target.index]->seg.id);
                 if (!input_queue->push(std::move(sample), state->opt.push_timeout_ms)) {
                   if (!state->stop.load(std::memory_order_relaxed)) {
                     std::ostringstream msg;
@@ -289,15 +335,16 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
               }
               return;
             }
-            auto sink_it = state->sinks.find(st.node_id);
+            const NodeId sink_node = static_cast<NodeId>(target.index);
+            auto sink_it = state->sinks.find(sink_node);
             if (sink_it != state->sinks.end()) {
               const std::size_t qsize = sink_it->second->size();
-              maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", st.node_id);
+              maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", target.index);
               if (!sink_it->second->push(std::move(sample), state->opt.push_timeout_ms)) {
                 if (!state->stop.load(std::memory_order_relaxed)) {
                   std::ostringstream msg;
                   msg << "GraphRun: sink backpressure timeout (node="
-                      << static_cast<std::size_t>(st.node_id)
+                      << static_cast<std::size_t>(sink_node)
                       << ", edge_queue=" << state->opt.edge_queue
                       << ", push_timeout_ms=" << state->opt.push_timeout_ms
                       << "). Increase GraphRunOptions.edge_queue or pull outputs concurrently.";
@@ -329,7 +376,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
       // Source pipeline: build immediately.
       {
         std::lock_guard<std::mutex> lock(rt.mu);
-        rt.run = rt.session.build(state->opt.pipeline);
+        rt.run = rt.session.build(rt.run_options);
         rt.built.store(true, std::memory_order_release);
       }
       rt.cv.notify_all();
@@ -457,7 +504,8 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
             const std::uint64_t key = port_key(pipe.seg.node_ids.back(), out_port);
             const auto it = state->adjacency.find(key);
             if (it == state->adjacency.end() || it->second.empty()) {
-              auto sink_it = state->sinks.find(pipe.seg.node_ids.back());
+              const NodeId sink_node = pipe.seg.node_ids.back();
+              auto sink_it = state->sinks.find(sink_node);
               if (sink_it != state->sinks.end()) {
                 if (graph_debug_enabled()) {
                   std::fprintf(stderr, "[GRAPH] model_output_received seg=%zu\n",
@@ -471,7 +519,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
                   if (!state->stop.load(std::memory_order_relaxed)) {
                     std::ostringstream msg;
                     msg << "GraphRun: sink backpressure timeout (node="
-                        << static_cast<std::size_t>(pipe.seg.node_ids.back())
+                        << static_cast<std::size_t>(sink_node)
                         << ", edge_queue=" << state->opt.edge_queue
                         << ", push_timeout_ms=" << state->opt.push_timeout_ms
                         << "). Increase GraphRunOptions.edge_queue or pull outputs concurrently.";
@@ -497,9 +545,6 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
                 }
                 auto& input_queue = state->pipelines[target.index]->input_queue;
                 if (input_queue) {
-                  const std::size_t qsize = input_queue->size();
-                  maybe_force_copy_for_backpressure(out_sample, qsize, "pipeline_input_queue",
-                                                    state->pipelines[target.index]->seg.id);
                   if (!input_queue->push(std::move(out_sample), state->opt.push_timeout_ms)) {
                     if (!state->stop.load(std::memory_order_relaxed)) {
                       std::ostringstream msg;
@@ -514,7 +559,8 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
                 }
                 return;
               }
-              auto sink_it = state->sinks.find(pipe.seg.node_ids.back());
+              const NodeId sink_node = static_cast<NodeId>(target.index);
+              auto sink_it = state->sinks.find(sink_node);
               if (sink_it != state->sinks.end()) {
                 if (graph_debug_enabled()) {
                   std::fprintf(stderr, "[GRAPH] model_output_received seg=%zu\n",
@@ -527,7 +573,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
                   if (!state->stop.load(std::memory_order_relaxed)) {
                     std::ostringstream msg;
                     msg << "GraphRun: sink backpressure timeout (node="
-                        << static_cast<std::size_t>(pipe.seg.node_ids.back())
+                        << static_cast<std::size_t>(sink_node)
                         << ", edge_queue=" << state->opt.edge_queue
                         << ", push_timeout_ms=" << state->opt.push_timeout_ms
                         << "). Increase GraphRunOptions.edge_queue or pull outputs concurrently.";
@@ -586,7 +632,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
             }
           }
 
-          if (!pipe.run.push(sample)) {
+          if (!pipe.run.push(SampleList{sample})) {
             if (graph_debug_enabled() || graph_push_fail_debug_enabled()) {
               std::fprintf(stderr, "[GRAPH] pipeline_push_failed seg=%zu stop=%d\n",
                            static_cast<std::size_t>(pipe.seg.id),
@@ -631,6 +677,13 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
     }
   }
 
+  if (state->opt.power_monitor.enabled) {
+    state->power_monitor =
+        std::make_unique<simaai::neat::PowerMonitor>(state->opt.power_monitor);
+    state->power_monitor->start();
+  }
+
+  progress.done("Graph ready");
   return GraphRun(std::move(state));
 }
 } // namespace simaai::neat::graph

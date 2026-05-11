@@ -10,6 +10,9 @@ void GraphRun::stop() {
   if (graph_debug_enabled()) {
     std::fprintf(stderr, "[GRAPH] GraphRun::stop called\n");
   }
+  if (state_->power_monitor) {
+    state_->power_monitor->stop();
+  }
   for (auto& pipe : state_->pipelines) {
     if (!pipe)
       continue;

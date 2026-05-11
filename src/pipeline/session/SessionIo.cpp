@@ -7,6 +7,7 @@
  */
 #include "pipeline/Session.h"
 #include "SessionDetail.h"
+#include "internal/SessionBuildInternal.h"
 
 #include "gst/GstInit.h"
 #include "gst/GstParseLaunch.h"
@@ -26,9 +27,6 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "builder/Node.h"
 #include "builder/NodeGroup.h"
-#include "builder/ConfigJsonProvider.h"
-#include "builder/ConfigJsonConsumer.h"
-#include "builder/NextCpuConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
 #include "contracts/ContractRegistry.h"
@@ -511,15 +509,17 @@ private:
 
 std::string Session::describe(const GraphPrinter::Options& opt) const {
   const NameTransform name_transform = make_name_transform(opt_);
+  const std::vector<std::shared_ptr<Node>> describe_nodes =
+      session_build_materialize_model_bound_nodes(nodes_, false);
   if (!name_transform_enabled(name_transform)) {
-    NodeGroup group(nodes_);
+    NodeGroup group(describe_nodes);
     return GraphPrinter::to_text(group, opt);
   }
 
   std::vector<std::shared_ptr<Node>> renamed;
-  renamed.reserve(nodes_.size());
-  for (size_t i = 0; i < nodes_.size(); ++i) {
-    const auto& node = nodes_[i];
+  renamed.reserve(describe_nodes.size());
+  for (size_t i = 0; i < describe_nodes.size(); ++i) {
+    const auto& node = describe_nodes[i];
     if (!node) {
       renamed.push_back(nullptr);
       continue;
@@ -536,9 +536,11 @@ void Session::save(const std::string& path) const {
   std::ostringstream oss;
   oss << "{\n  \"version\": 1,\n  \"nodes\": [\n";
 
+  const std::vector<std::shared_ptr<Node>> save_nodes =
+      session_build_materialize_model_bound_nodes(nodes_, false);
   const NameTransform name_transform = make_name_transform(opt_);
-  for (size_t i = 0; i < nodes_.size(); ++i) {
-    const auto& n = nodes_[i];
+  for (size_t i = 0; i < save_nodes.size(); ++i) {
+    const auto& n = save_nodes[i];
     if (!n)
       continue;
     if (i)

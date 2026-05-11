@@ -1,3 +1,14 @@
+/**
+ * @file
+ * @ingroup builder
+ * @brief Helpers for wiring deterministic buffer names into a Node's JSON config.
+ *
+ * The Builder's wiring pass uses these helpers to set `input_buffers[*].name`
+ * and `buffers.input[*].name` to the deterministic name of the upstream
+ * appsink/element so the Node's MLA / preprocess / postprocess plugin reads
+ * from the right buffer at runtime. All helpers are idempotent and pure;
+ * `SIMA_WIRE_DEBUG=1` enables stderr tracing for debugging the wiring pass.
+ */
 #pragma once
 
 #include <nlohmann/json.hpp>
@@ -8,11 +19,22 @@
 
 namespace simaai::neat {
 
+/// @brief True if `SIMA_WIRE_DEBUG` is set to a non-empty, non-`"0"` value.
 inline bool wire_debug_enabled() {
   const char* env = std::getenv("SIMA_WIRE_DEBUG");
   return env && *env && std::string(env) != "0";
 }
 
+/**
+ * @brief Force-set `input_buffers[*].name` and `buffers.input[*].name` to `name`.
+ *
+ * Creates the arrays/objects if they don't exist. Used during wiring when the
+ * Builder needs to bind a Node to a specific upstream buffer name.
+ *
+ * @param j    JSON config to mutate in place.
+ * @param name Deterministic buffer name (empty string is a no-op).
+ * @return True if any field was changed.
+ */
 inline bool set_input_buffer_names(nlohmann::json& j, const std::string& name) {
   if (name.empty())
     return false;
@@ -69,6 +91,18 @@ inline bool set_input_buffer_names(nlohmann::json& j, const std::string& name) {
   return changed;
 }
 
+/**
+ * @brief Set `input_buffers[*].name` only if the field already exists.
+ *
+ * Unlike `set_input_buffer_names()`, this helper is conservative: it does not
+ * create the arrays and skips singleton entries whose `name` is missing or
+ * empty (treated as a wildcard). Used when the upstream may legitimately not
+ * own this Node's input naming.
+ *
+ * @param j    JSON config to mutate in place.
+ * @param name Deterministic buffer name (empty string is a no-op).
+ * @return True if any pre-existing field was changed.
+ */
 inline bool set_input_buffer_name_if_exists(nlohmann::json& j, const std::string& name) {
   if (name.empty())
     return false;

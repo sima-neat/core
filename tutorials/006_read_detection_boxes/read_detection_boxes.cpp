@@ -40,22 +40,27 @@ int main(int argc, char** argv) {
       throw std::runtime_error("failed to load image: " + image);
 
     simaai::neat::Model::Options opt;
-    opt.format = "BGR";
-    opt.input_max_width = bgr.cols;
-    opt.input_max_height = bgr.rows;
-    opt.input_max_depth = bgr.channels();
+    opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    opt.preprocess.input_max_width = bgr.cols;
+    opt.preprocess.input_max_height = bgr.rows;
+    opt.preprocess.input_max_depth = bgr.channels();
+    opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
 
     simaai::neat::Model model(mpk, opt);
 
     // CORE LOGIC
     // Stage-by-stage: each stages::* call runs one piece of the model pipeline.
-    simaai::neat::Tensor pre = simaai::neat::stages::Preproc(bgr, model);
-    simaai::neat::Tensor infer = simaai::neat::stages::Infer(pre, model);
+    simaai::neat::TensorList pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model);
+    simaai::neat::SampleList infer_samples =
+        simaai::neat::stages::Infer(simaai::neat::SampleList{simaai::neat::sample_from_tensors(pre)}, model);
+    if (infer_samples.empty())
+      throw std::runtime_error("infer stage returned no samples");
+    simaai::neat::Sample infer = infer_samples.front();
 
-    simaai::neat::stages::BoxDecodeOptions box;
-    box.decode_type = "yolov8";
-    box.original_width = bgr.cols;
-    box.original_height = bgr.rows;
+    simaai::neat::stages::BoxDecodeOptions box(simaai::neat::BoxDecodeType::YoloV8);
+    (void)box.decode_type;
+    (void)bgr.cols;
+    (void)bgr.rows;
     box.detection_threshold = 0.55;
     box.nms_iou_threshold = 0.5;
     box.top_k = 100;

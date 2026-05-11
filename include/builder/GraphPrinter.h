@@ -2,6 +2,14 @@
  * @file
  * @ingroup builder
  * @brief Builder/Graph pretty printers (text, DOT, Mermaid).
+ *
+ * `GraphPrinter` produces deterministic, human-readable views of a `NodeGroup`
+ * or `Graph` *before* the Session converts it into a gst-launch string. It
+ * is strictly STL-only — no GStreamer dependencies — so it can be invoked
+ * from CI, dump tools, and Markdown report generators.
+ *
+ * @see NodeGroup
+ * @see Graph
  */
 // include/builder/GraphPrinter.h
 #pragma once
@@ -32,42 +40,50 @@ namespace simaai::neat {
  * - Text list (for NodeGroup / chain)
  * - DOT (Graphviz) for Graph
  * - Mermaid flowchart for Graph
+ *
+ * @ingroup builder
+ * @see NodeGroup
+ * @see Graph
  */
 class GraphPrinter final {
 public:
+  /**
+   * @brief Knobs controlling the printers' verbosity and per-format behavior.
+   */
   struct Options {
     // Common
-    bool show_index = true;
-    bool show_kind = true;
-    bool show_user_label = true;
+    bool show_index = true;       ///< Prepend deterministic Node index (0..N-1).
+    bool show_kind = true;        ///< Print `Node::kind()` for each Node.
+    bool show_user_label = true;  ///< Print user-supplied label when non-empty.
 
     // Extra node info (still builder-only, calls Node::backend_fragment / element_names)
-    bool show_backend_fragment = false;
-    bool show_element_names = false;
+    bool show_backend_fragment = false; ///< Include each Node's gst fragment.
+    bool show_element_names = false;    ///< Include each Node's deterministic element names.
 
     // Truncation controls (avoid huge debug dumps)
-    std::size_t max_user_label_chars = 200;
-    std::size_t max_fragment_chars = 220;
-    std::size_t max_elements_per_node = 16;
+    std::size_t max_user_label_chars = 200; ///< Truncate user labels to this many chars.
+    std::size_t max_fragment_chars = 220;   ///< Truncate gst fragments to this many chars.
+    std::size_t max_elements_per_node = 16; ///< Cap per-Node element list before "...(N more)".
 
     // DOT controls
-    bool dot_rankdir_lr = true; // left-to-right
-    std::string dot_graph_name = "sima_graph";
+    bool dot_rankdir_lr = true;                  ///< Left-to-right layout (vs top-down).
+    std::string dot_graph_name = "sima_graph";   ///< `digraph <name>` identifier.
 
     // Mermaid controls
-    bool mermaid_lr = true; // left-to-right (LR) vs top-down (TD)
-    std::string mermaid_id_prefix = "n";
+    bool mermaid_lr = true;                ///< Left-to-right (LR) vs top-down (TD).
+    std::string mermaid_id_prefix = "n";   ///< Mermaid node id prefix (must be identifier-like).
   };
 
   // --------------------------
   // Text (linear lists)
   // --------------------------
 
-  /// Print a linear NodeGroup in deterministic index order (0..N-1).
+  /// @brief Print a linear NodeGroup in deterministic index order (0..N-1) with default options.
   static std::string to_text(const NodeGroup& group) {
     return to_text(group, Options{});
   }
 
+  /// @brief Print a linear NodeGroup with explicit formatting options.
   static std::string to_text(const NodeGroup& group, const Options& opt) {
     std::ostringstream oss;
     const auto& nodes = group.nodes();
@@ -99,11 +115,12 @@ public:
   // DOT (Graphviz)
   // --------------------------
 
-  /// Produce a DOT digraph for Graphviz.
+  /// @brief Produce a DOT digraph for Graphviz with default options.
   static std::string to_dot(const Graph& g) {
     return to_dot(g, Options{});
   }
 
+  /// @brief Produce a DOT digraph for Graphviz with explicit formatting options.
   static std::string to_dot(const Graph& g, const Options& opt) {
     std::ostringstream oss;
 
@@ -147,11 +164,12 @@ public:
   // Mermaid
   // --------------------------
 
-  /// Produce a Mermaid flowchart (useful in Markdown/Confluence).
+  /// @brief Produce a Mermaid flowchart (useful in Markdown/Confluence) with default options.
   static std::string to_mermaid(const Graph& g) {
     return to_mermaid(g, Options{});
   }
 
+  /// @brief Produce a Mermaid flowchart with explicit formatting options.
   static std::string to_mermaid(const Graph& g, const Options& opt) {
     std::ostringstream oss;
     oss << "flowchart " << (opt.mermaid_lr ? "LR" : "TD") << "\n";

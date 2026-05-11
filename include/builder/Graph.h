@@ -1,7 +1,20 @@
 /**
  * @file
  * @ingroup builder
- * @brief STL-only DAG representation for Node pipelines.
+ * @brief Builder-side `Graph` — STL-only DAG of Nodes used to express fan-in / fan-out shapes.
+ *
+ * This is one of the framework's **two graph systems**. The builder `Graph` is a pure
+ * STL-only DAG of `Node`s; it knows nothing about GStreamer, scheduling, or runtime
+ * threads. It exists to let user code express non-linear pipeline shapes (fan-in, fan-out,
+ * tee/sink branches), validate them (cycle detection, connectivity), and linearize them
+ * into a `NodeGroup` that a `Session` can consume.
+ *
+ * The other graph system — the **runtime** `simaai::neat::graph::Graph` — is a separate
+ * actor-style execution graph used inside the runtime. Don't confuse the two.
+ *
+ * @see Node, NodeGroup
+ * @see graph/Graph.h for the runtime (actor-style) graph
+ * @see "The two graph systems" (§0.14 / §10 / §73 of the design deep dive)
  */
 // include/builder/Graph.h
 #pragma once
@@ -23,28 +36,50 @@ namespace simaai::neat {
 /**
  * @brief Directed acyclic graph of Nodes (STL-only).
  *
- * This is the "graph face" of the builder layer. It deliberately does NOT know
- * anything about GStreamer. It only manages Node objects + dependencies.
+ * The builder `Graph` is the "graph face" of the builder layer. It deliberately does NOT
+ * know anything about GStreamer — it only manages Node objects and the dependency edges
+ * between them. Most pipelines are simple linear chains and don't need this; `Graph` is
+ * here for the cases that do.
  *
- * Most pipelines are linear chains; Graph exists for:
- *  - expressing fan-in / fan-out structure in a type-safe way
- *  - doing validation (cycle detection, connectivity checks)
- *  - optionally linearizing to a NodeGroup (topological order or strict chain)
+ * **Why it exists**:
+ *  - Express fan-in / fan-out structure (multiple inputs, tee outputs) in a type-safe way.
+ *  - Validate the topology before runtime — cycle detection, connectivity checks.
+ *  - Linearize to a `NodeGroup` that a `Session` can consume (today's `Session` accepts a
+ *    linear list).
  *
- * Session consumes a linear list today; Graph can produce that list via:
- *  - to_node_group_topo(): topological order (DAG)
- *  - to_node_group_chain(): requires a strict single chain (each internal node has in=1,out=1)
+ * **Conversion to NodeGroup** — choose the right method:
+ *  - `to_node_group_topo()`: any DAG, returns nodes in topological order.
+ *  - `to_node_group_chain()`: requires a strict single chain (each internal node has
+ *    `in_degree==1` and `out_degree==1`). Use this when you want a hard guarantee that the
+ *    graph is a linear pipeline.
+ *
+ * @code
+ * sima::Graph g;
+ * auto src = g.add(sima::nodes::FileInput("video.mp4"));
+ * auto dec = g.add(sima::nodes::H264Decode());
+ * auto pre = g.add(sima::nodes::Resize(640, 640));
+ * g.add_chain({src, dec, pre});
+ * sess.add(g.to_node_group_chain());
+ * @endcode
+ *
+ * @see NodeGroup
+ * @see graph::Graph for the runtime (actor-style) graph — different type, different role
+ * @ingroup builder
  */
 class Graph final {
 public:
+  /// Shared-pointer type used to hold a `Node` in the graph.
   using NodePtr = std::shared_ptr<Node>;
+  /// Stable identifier for a node in this graph (an index into the internal node list).
   using NodeId = std::size_t;
 
+  /// A single directed edge `from -> to`. Both fields are `NodeId`s in the same `Graph`.
   struct Edge {
-    NodeId from{};
-    NodeId to{};
+    NodeId from{}; ///< Source node id.
+    NodeId to{};   ///< Destination node id.
   };
 
+  /// Sentinel returned by methods that may have no node to report (e.g., empty group add).
   static constexpr NodeId kInvalid = static_cast<NodeId>(-1);
 
   Graph() = default;

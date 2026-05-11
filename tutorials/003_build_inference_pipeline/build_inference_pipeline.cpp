@@ -57,13 +57,13 @@ int main(int argc, char** argv) {
     simaai::neat::Session session;
     session.add(simaai::neat::nodes::Input(in));
     session.add(simaai::neat::nodes::Output());
-    auto run = session.build(input, simaai::neat::RunMode::Sync, run_opt);
-    auto sample = run.push_and_pull(input, /*timeout_ms=*/1000);
+    auto run = session.build(std::vector<cv::Mat>{input}, simaai::neat::RunMode::Sync, run_opt);
+    simaai::neat::TensorList sample = run.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/1000);
     // END CORE LOGIC
 
-    if (!sample.tensor.has_value())
+    if (sample.empty())
       throw std::runtime_error("missing tensor output");
-    std::cout << "tensor_rank=" << sample.tensor->shape.size() << "\n";
+    std::cout << "tensor_rank=" << sample.front().shape.size() << "\n";
     std::cout << "[OK] 003_build_inference_pipeline\n";
     return 0;
   } catch (const std::exception& e) {

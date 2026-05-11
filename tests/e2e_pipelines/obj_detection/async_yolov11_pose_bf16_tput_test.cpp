@@ -72,6 +72,9 @@ std::string resolve_yolov11_pose_bf16_tar_or_skip(const fs::path& root) {
   const char* env = std::getenv("SIMA_YOLO11_POSE_BF16_TAR");
   if (env && *env && file_exists(env))
     return env;
+  const char* generic = std::getenv("SIMA_MODEL_TAR");
+  if (generic && *generic && file_exists(generic))
+    return generic;
 
   const fs::path local = root / "tmp" / "yolov11_mpk_bf16.tar.gz";
   if (fs::exists(local))
@@ -83,7 +86,7 @@ std::string resolve_yolov11_pose_bf16_tar_or_skip(const fs::path& root) {
     return hardcoded.string();
 
   skip_long_test_exception(
-      "Missing yolov11 BF16 tarball. Set SIMA_YOLO11_POSE_BF16_TAR or place "
+      "Missing yolov11 BF16 tarball. Set SIMA_MODEL_TAR (or SIMA_YOLO11_POSE_BF16_TAR) or place "
       "tmp/yolov11_mpk_bf16.tar.gz.");
   return {};
 }
@@ -219,13 +222,13 @@ bool pull_with_timeout(simaai::neat::Run& async, int pull_timeout_ms, int max_ti
 }
 
 void do_warmup(simaai::neat::Run& async, const cv::Mat& input, int warm, int timeout_ms) {
-  (void)async.warmup(input, warm, timeout_ms);
+  (void)async.warmup(std::vector<cv::Mat>{input}, warm, timeout_ms);
 }
 
 void do_warmup(simaai::neat::Run& async, const simaai::neat::Tensor& input, int warm,
                int timeout_ms) {
   for (int i = 0; i < warm; ++i) {
-    if (!async.push(input)) {
+    if (!async.push(simaai::neat::TensorList{input})) {
       throw std::runtime_error("Run::push returned false during tensor warmup");
     }
     simaai::neat::Sample out;
@@ -237,6 +240,19 @@ void do_warmup(simaai::neat::Run& async, const simaai::neat::Tensor& input, int 
     }
   }
 }
+
+const std::vector<cv::Mat>& as_build_inputs(const std::vector<cv::Mat>& inputs) { return inputs; }
+std::vector<cv::Mat> as_build_inputs(const cv::Mat& input) { return {input}; }
+
+const simaai::neat::TensorList& as_build_inputs(const simaai::neat::TensorList& inputs) {
+  return inputs;
+}
+simaai::neat::TensorList as_build_inputs(const simaai::neat::Tensor& input) { return {input}; }
+
+const simaai::neat::SampleList& as_build_inputs(const simaai::neat::SampleList& inputs) {
+  return inputs;
+}
+simaai::neat::SampleList as_build_inputs(const simaai::neat::Sample& input) { return {input}; }
 
 template <typename BuildInputT, typename PushInputT>
 RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& session,
@@ -250,7 +266,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
   step_log((name + ": before build").c_str());
-  auto async = session.build(build_input, simaai::neat::RunMode::Async, run_opt);
+  auto async = session.build(as_build_inputs(build_input), simaai::neat::RunMode::Async, run_opt);
   step_log((name + ": after build").c_str());
 
   try {
@@ -329,7 +345,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
   for (int i = 0; i < cfg.iters; ++i) {
     if (stop_requested.load())
       break;
-    if (!async.push(push_input)) {
+    if (!async.push(as_build_inputs(push_input))) {
       set_error("Run::push returned false");
       break;
     }
@@ -379,7 +395,7 @@ RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories
 
   simaai::neat::InputOptions in;
   in.media_type = "application/vnd.simaai.tensor";
-  in.format = "BF16";
+  in.format = simaai::neat::FormatTag::BF16;
   in.width = model_w;
   in.height = model_h;
   in.depth = 3;
@@ -390,7 +406,7 @@ RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories
   simaai::neat::Session session;
   session.add(simaai::neat::nodes::Input(in));
   session.custom(factories.processcvu +
-                 " name=neattess_1 stage-id=neattess_1 config=\"" + cfgs.tess_cfg +
+                 " name=tessellate_1 stage-id=tessellate_1 config=\"" + cfgs.tess_cfg +
                  "\" num-buffers=4");
   session.custom(factories.processmla +
                  " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
@@ -411,7 +427,7 @@ RunSummary run_preproc_bf16_boxdecode_path(const PipelineConfigs& cfgs,
                                            const cv::Mat& img_bgr, const AsyncTestConfig& cfg) {
   simaai::neat::InputOptions in;
   in.media_type = "video/x-raw";
-  in.format = "BGR";
+  in.format = simaai::neat::FormatTag::BGR;
   in.width = img_bgr.cols;
   in.height = img_bgr.rows;
   in.depth = 3;
@@ -442,7 +458,7 @@ RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs, const Plugi
                                         const cv::Mat& img_bgr, const AsyncTestConfig& cfg) {
   simaai::neat::InputOptions in;
   in.media_type = "video/x-raw";
-  in.format = "BGR";
+  in.format = simaai::neat::FormatTag::BGR;
   in.width = img_bgr.cols;
   in.height = img_bgr.rows;
   in.depth = 3;
@@ -458,8 +474,9 @@ RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs, const Plugi
   session.custom(factories.processmla +
                  " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
                  cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
-  session.custom("detessdequant name=detessdequant_1 config=\"" + cfgs.post_cfg +
-                 "\" silent=true");
+  session.custom(factories.processcvu +
+                 " name=detessdequant_1 stage-id=detessdequant_1 config=\"" + cfgs.post_cfg +
+                 "\" silent=true num-buffers=4");
   session.add(simaai::neat::nodes::Output());
 
   return run_async_pipeline("yolov11_preproc_bf16_detess", session, img_bgr, img_bgr, cfg, false);
@@ -487,19 +504,12 @@ int main(int argc, char** argv) {
     const std::string tar_gz = resolve_yolov11_pose_bf16_tar_or_skip(root);
     cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
     const PipelineConfigs cfgs = extract_and_resolve_configs_or_throw(tar_gz, root);
-    const bool has_detess = simaai::neat::element_exists("detessdequant");
-
     AsyncTestConfig cfg;
 
     RunSummary tess = run_tess_bf16_path(cfgs, factories, img_bgr, cfg);
     RunSummary pre_box = run_preproc_bf16_boxdecode_path(cfgs, factories, img_bgr, cfg);
     RunSummary pre_detess;
-    if (has_detess) {
-      pre_detess = run_preproc_bf16_detess_path(cfgs, factories, img_bgr, cfg);
-    } else {
-      pre_detess.name = "yolov11_preproc_bf16_detess";
-      pre_detess.note = "detessdequant factory missing";
-    }
+    pre_detess = run_preproc_bf16_detess_path(cfgs, factories, img_bgr, cfg);
 
     const bool require_pre = env_flag("SIMA_Y11_REQUIRE_PREPROC_BF16", false);
     const bool require_box = env_flag("SIMA_Y11_REQUIRE_BOXDECODE", false);

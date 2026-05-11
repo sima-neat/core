@@ -70,11 +70,11 @@ int main(int argc, char** argv) {
     opt.output_memory = simaai::neat::OutputMemory::Owned;
     opt.enable_metrics = true;
 
-    auto run = session.build(rgb, simaai::neat::RunMode::Async, opt);
+    auto run = session.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Async, opt);
 
     // try_push never blocks; pair it with close_input + drain pull loop.
     for (int i = 0; i < iters; ++i)
-      (void)run.try_push(rgb);
+      (void)run.try_push(std::vector<cv::Mat>{rgb});
     run.close_input();
 
     int pulled = 0;

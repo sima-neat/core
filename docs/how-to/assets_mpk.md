@@ -28,26 +28,33 @@ Then verify:
 
 ## MPK locations and environment variables
 
+Extraction/runtime placement knobs:
+- `SIMA_MPK_EXTRACT_ROOT=<dir>` sets the base extract directory.
+- `SIMA_MPK_CLEANUP_EXTRACTED=0` preserves extracted `proc_*` model data after process exit.
+- `SIMA_MPK_EXTRACT_GC_STALE_PROC=0` disables dead-`proc_*` cleanup on startup.
+
 ### ResNet50
 
 Search order:
-1) `SIMA_RESNET50_TAR` (absolute or relative path)
-2) `tmp/resnet_50_mpk.tar.gz`
-3) Local files moved into `tmp/` if found:
+1) `SIMA_RESNET50_TAR` (per-model override)
+2) `SIMA_MODEL_TAR` (shared fallback for model-pack tests/examples)
+3) `tmp/resnet_50_mpk.tar.gz`
+4) Local files moved into `tmp/` if found:
    - `resnet_50_mpk.tar.gz`
    - `resnet-50_mpk.tar.gz`
 
 Download (if `sima-cli` is available):
 ```
-sima-cli modelzoo -v 2.0.0 get resnet_50
+sima-cli modelzoo get resnet_50
 ```
 
 ### YOLOv8 (v8s)
 
 Search order:
-1) `SIMA_YOLO_TAR`
-2) `tmp/yolo_v8s_mpk.tar.gz`
-3) Common local names (moved into `tmp/` if found):
+1) `SIMA_YOLO_TAR` (per-model override)
+2) `SIMA_MODEL_TAR` (shared fallback for model-pack tests/examples)
+3) `tmp/yolo_v8s_mpk.tar.gz`
+4) Common local names (moved into `tmp/` if found):
    - `yolo_v8s_mpk.tar.gz`
    - `yolo-v8s_mpk.tar.gz`
    - `yolov8s_mpk.tar.gz`
@@ -55,18 +62,17 @@ Search order:
 
 Download (if `sima-cli` is available):
 ```
-sima-cli modelzoo -v 2.0.0 get yolo_v8s
+sima-cli modelzoo get yolo_v8s
 ```
 
 ## Sample images
 
-Tutorials that need an image accept a `--image <path>` flag. Chapters 001,
-012, and 013 each document the expected format and size in their README.
-If no `--image` is passed, the Python tutorials fall back to a synthetic
-uint8 frame so the path still runs end-to-end.
+Default image candidates used in tutorials/tests:
+- `tmp/coco_sample.jpg` (downloaded if missing)
+- `test.jpg`
+- `tests/assets/preproc_dynamic/ilena_488.jpg`
 
-Test suites may download additional assets under `tmp/` — see their own
-documentation. You can override the COCO image URL used by tests with:
+You can override the COCO image URL used by tests with:
 ```
 SIMA_COCO_URL=<custom_url>
 ```

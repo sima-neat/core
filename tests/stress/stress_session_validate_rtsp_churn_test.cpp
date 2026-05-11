@@ -59,7 +59,7 @@ RUN_TEST("stress_session_validate_rtsp_churn_test", ([] {
              Session session;
              InputOptions src_opt;
              src_opt.media_type = "video/x-raw";
-             src_opt.format = "RGB";
+             src_opt.format = simaai::neat::FormatTag::RGB;
              src_opt.use_simaai_pool = false;
              src_opt.max_width = 96;
              src_opt.max_height = 96;

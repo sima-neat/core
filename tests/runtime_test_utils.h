@@ -55,7 +55,7 @@ inline simaai::neat::Run make_async_rgb_run(const simaai::neat::Tensor& seed,
   Session session;
   InputOptions src_opt;
   src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
@@ -67,7 +67,7 @@ inline simaai::neat::Run make_async_rgb_run(const simaai::neat::Tensor& seed,
   run_opt.queue_depth = std::max(producer_queue_depth, consumer_queue_depth);
   run_opt.overflow_policy = OverflowPolicy::Block;
 
-  return session.build(seed, RunMode::Async, run_opt);
+  return session.build(simaai::neat::TensorList{seed}, RunMode::Async, run_opt);
 }
 
 struct TryPushFillResult {
@@ -82,7 +82,7 @@ inline TryPushFillResult fill_try_push_queue_non_blocking(simaai::neat::Run& run
   TryPushFillResult out;
   for (int i = 0; i < max_attempts; ++i) {
     const auto t0 = std::chrono::steady_clock::now();
-    const bool ok = run.try_push(sample);
+    const bool ok = run.try_push(simaai::neat::TensorList{sample});
     const auto t1 = std::chrono::steady_clock::now();
 
     ++out.attempts;

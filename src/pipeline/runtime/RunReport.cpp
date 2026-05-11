@@ -4,6 +4,7 @@
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 
+#include <chrono>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -37,6 +38,131 @@ InputStreamStats Run::input_stats() const {
   if (!state_)
     return {};
   return state_->stream.stats();
+}
+
+PowerSummary Run::power_summary() const {
+  if (!state_ || !state_->power_monitor)
+    return {};
+  return state_->power_monitor->summary();
+}
+
+RuntimeMetrics Run::metrics(const RuntimeMetricsOptions& opt) const {
+  RuntimeMetrics out;
+  out.source_kind = "run";
+  if (!state_)
+    return out;
+  auto st = state_;
+
+  const RunStats run_stats = stats();
+  out.counters.inputs_enqueued = run_stats.inputs_enqueued;
+  out.counters.inputs_dropped = run_stats.inputs_dropped;
+  out.counters.inputs_pushed = run_stats.inputs_pushed;
+  out.counters.outputs_ready = run_stats.outputs_ready;
+  out.counters.outputs_pulled = run_stats.outputs_pulled;
+  out.counters.outputs_dropped = run_stats.outputs_dropped;
+  out.latency.avg_ms = run_stats.avg_latency_ms;
+  out.latency.min_ms = run_stats.min_latency_ms;
+  out.latency.max_ms = run_stats.max_latency_ms;
+  if (opt.include_power) {
+    out.power = power_summary();
+  }
+
+  std::chrono::steady_clock::time_point start;
+  std::chrono::steady_clock::time_point end;
+  {
+    std::lock_guard<std::mutex> lock(st->latency_mu);
+    start = st->created_at;
+    if (st->pull_timing_init) {
+      end = st->last_pull_at;
+    } else if (st->output_timing_init) {
+      end = st->last_output_at;
+    } else {
+      end = std::chrono::steady_clock::now();
+    }
+  }
+  if (start != std::chrono::steady_clock::time_point{} && end > start) {
+    out.elapsed_seconds = std::chrono::duration<double>(end - start).count();
+    if (out.elapsed_seconds > 0.0) {
+      out.throughput_fps =
+          static_cast<double>(out.counters.outputs_pulled) / out.elapsed_seconds;
+    }
+  }
+
+  const InputStreamStats is = input_stats();
+  RuntimeMetricGroup input_group;
+  input_group.name = "input_stream";
+  input_group.values = {
+      {"push_count", static_cast<double>(is.push_count), "count"},
+      {"push_failures", static_cast<double>(is.push_failures), "count"},
+      {"pull_count", static_cast<double>(is.pull_count), "count"},
+      {"poll_count", static_cast<double>(is.poll_count), "count"},
+      {"dropped_frames", static_cast<double>(is.dropped_frames), "count"},
+      {"avg_push_us", is.avg_push_us, "us"},
+      {"avg_pull_wait_us", is.avg_pull_wait_us, "us"},
+  };
+  out.groups.push_back(std::move(input_group));
+
+  const auto diag = st->stream.diag_ctx();
+  if (opt.include_pipeline && diag && !diag->pipeline_string.empty()) {
+    out.metadata.emplace_back("pipeline", diag->pipeline_string);
+  }
+  if (opt.include_diagnostics) {
+    const RunDiagSnapshot snap = diag_snapshot();
+    for (const auto& stage : snap.stages) {
+      RuntimeMetricGroup group;
+      group.name = "stage:" + stage.stage_name;
+      group.values = {
+          {"samples", static_cast<double>(stage.samples), "count"},
+          {"total_us", static_cast<double>(stage.total_us), "us"},
+          {"max_us", static_cast<double>(stage.max_us), "us"},
+      };
+      if (stage.samples > 0) {
+        group.values.push_back(
+            {"avg_us", static_cast<double>(stage.total_us) / static_cast<double>(stage.samples),
+             "us"});
+      }
+      out.groups.push_back(std::move(group));
+    }
+    for (const auto& elem : snap.element_timings) {
+      RuntimeMetricGroup group;
+      group.name = "element:" + elem.element_name;
+      group.values = {
+          {"samples", static_cast<double>(elem.samples), "count"},
+          {"total_us", static_cast<double>(elem.total_us), "us"},
+          {"min_us", static_cast<double>(elem.min_us), "us"},
+          {"max_us", static_cast<double>(elem.max_us), "us"},
+      };
+      if (elem.samples > 0) {
+        group.values.push_back(
+            {"avg_us", static_cast<double>(elem.total_us) / static_cast<double>(elem.samples),
+             "us"});
+      }
+      out.groups.push_back(std::move(group));
+    }
+  }
+  return out;
+}
+
+std::string Run::metrics_report(const RuntimeMetricsOptions& opt,
+                                RuntimeMetricsFormat format) const {
+  return format_runtime_metrics(metrics(opt), format);
+}
+
+std::string Run::metrics_report(RuntimeMetricsFormat format) const {
+  return metrics_report(RuntimeMetricsOptions{}, format);
+}
+
+RunMeasurementSummary Run::measurement_summary() const {
+  RunMeasurementSummary out;
+  if (!state_)
+    return out;
+  out.stats = stats();
+  out.input_stats = input_stats();
+  const RuntimeMetrics unified = metrics();
+  out.power = unified.power;
+  out.elapsed_seconds = unified.elapsed_seconds;
+  out.throughput_fps = unified.throughput_fps;
+  return out;
 }
 
 RunDiagSnapshot Run::diag_snapshot() const {
@@ -96,6 +222,31 @@ RunDiagSnapshot Run::diag_snapshot() const {
     s.out_bytes = snap.out_bytes;
     s.caps_changes = snap.caps_changes;
     out.element_flows.push_back(std::move(s));
+  }
+
+  // Phase A: per-pad timings.  Hold the diag mutex briefly because the pad
+  // timings vector is appended to lazily on first probe fire (so a buffer
+  // landing on a never-before-seen pad mid-stream must not race with us).
+  {
+    std::lock_guard<std::mutex> lk(diag->element_pad_timings_mu);
+    out.element_pad_timings.reserve(diag->element_pad_timings.size());
+    for (const auto& pad_t : diag->element_pad_timings) {
+      if (!pad_t)
+        continue;
+      const auto snap = pad_t->snapshot();
+      RunElementPadTimingStats s;
+      s.element_name = snap.element_name;
+      s.pad_name = snap.pad_name;
+      s.is_sink = snap.is_sink;
+      s.samples = snap.samples;
+      s.inter_arrival_total_us = snap.inter_arrival_total_us;
+      s.inter_arrival_max_us = snap.inter_arrival_max_us;
+      s.queue_wait_samples = snap.queue_wait_samples;
+      s.queue_wait_total_us = snap.queue_wait_total_us;
+      s.queue_wait_max_us = snap.queue_wait_max_us;
+      s.bytes = snap.bytes;
+      out.element_pad_timings.push_back(std::move(s));
+    }
   }
 
   return out;
@@ -194,7 +345,8 @@ std::string Run::report(const RunReportOptions& opt) const {
   }
 
   if (opt.include_run_stats) {
-    const RunStats run_stats = stats();
+    const RunMeasurementSummary measurement = measurement_summary();
+    const RunStats run_stats = measurement.stats;
     oss << "RunStats: inputs_enqueued=" << run_stats.inputs_enqueued
         << " inputs_dropped=" << run_stats.inputs_dropped
         << " inputs_pushed=" << run_stats.inputs_pushed
@@ -203,7 +355,9 @@ std::string Run::report(const RunReportOptions& opt) const {
         << " outputs_dropped=" << run_stats.outputs_dropped
         << " avg_latency_ms=" << run_stats.avg_latency_ms
         << " min_latency_ms=" << run_stats.min_latency_ms
-        << " max_latency_ms=" << run_stats.max_latency_ms << "\n";
+        << " max_latency_ms=" << run_stats.max_latency_ms
+        << " elapsed_s=" << measurement.elapsed_seconds
+        << " throughput_fps=" << measurement.throughput_fps << "\n";
   }
   if (opt.include_input_stats) {
     const InputStreamStats is = input_stats();
@@ -216,6 +370,12 @@ std::string Run::report(const RunReportOptions& opt) const {
         << " avg_copy_us=" << is.avg_copy_us << " avg_push_us=" << is.avg_push_us
         << " avg_pull_wait_us=" << is.avg_pull_wait_us << " avg_decode_us=" << is.avg_decode_us
         << "\n";
+  }
+  if (opt.include_power && st->power_monitor) {
+    const std::string power = format_power_summary(st->power_monitor->summary());
+    if (!power.empty()) {
+      oss << power;
+    }
   }
   if (opt.include_system_info && !st->diag_sysinfo.empty()) {
     oss << "System: " << st->diag_sysinfo << "\n";

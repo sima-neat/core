@@ -18,9 +18,11 @@
 #include <opencv2/imgcodecs.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -51,6 +53,72 @@ struct RunSummary {
   std::string note;
   std::string diagnostics;
 };
+
+bool detess_deep_debug_enabled() {
+  static int cached = -1;
+  if (cached >= 0) {
+    return cached != 0;
+  }
+  const char* raw = std::getenv("SIMA_DETESS_DEBUG_ALL");
+  if (!raw || !*raw) {
+    cached = 1;
+    return true;
+  }
+  cached = (std::strcmp(raw, "0") == 0) ? 0 : 1;
+  return cached != 0;
+}
+
+void setenv_if_missing(const char* key, const char* value) {
+  if (!key || !*key || !value) {
+    return;
+  }
+  const char* cur = std::getenv(key);
+  if (cur && *cur) {
+    return;
+  }
+  setenv(key, value, 0);
+}
+
+void enable_detess_debug_defaults() {
+  if (!detess_deep_debug_enabled()) {
+    return;
+  }
+  setenv_if_missing("SIMA_STAGE_DEBUG", "1");
+  setenv_if_missing("SIMA_MANIFEST_ROUTE_DEBUG", "1");
+  setenv_if_missing("SIMA_MLA_CONTRACT_DEBUG", "1");
+  setenv_if_missing("SIMA_MPK_CONTRACT_DEBUG", "1");
+  setenv_if_missing("SIMA_ROUTE_DEBUG", "1");
+  setenv_if_missing("SIMA_PULL_TIMEOUT_DIAG", "1");
+  setenv_if_missing("SIMA_PULL_TIMEOUT_POOL_DIAG", "1");
+  setenv_if_missing("SIMA_DISPATCHER_TRACE", "1");
+  setenv_if_missing("SIMA_RPCEVXX_TRACE", "1");
+  setenv_if_missing("SIMA_RPCEVXX_CFG_TRACE", "1");
+  setenv_if_missing("SIMA_RPMSG_OPEN_TRACE", "1");
+  setenv_if_missing("SIMA_RPMSG_RECV_TRACE", "1");
+  setenv_if_missing("SIMA_RPMSG_RECV_SLICE_MS", "250");
+  setenv_if_missing("SIMA_RPMSG_RECV_PROGRESS_MS", "1000");
+  setenv_if_missing("SIMA_RPMSG_SEQ_USE_GRAPH_ID", "1");
+  setenv_if_missing("SIMA_PROCESSCVU_POOL_DEBUG", "1");
+  setenv_if_missing("SIMA_DETESS_CONFIG_DEBUG", "1");
+}
+
+std::string debug_env_snapshot() {
+  static constexpr std::array<const char*, 18> kKeys = {
+      "SIMA_DETESS_DEBUG_ALL",      "SIMA_STAGE_DEBUG",          "SIMA_MANIFEST_ROUTE_DEBUG",
+      "SIMA_MLA_CONTRACT_DEBUG",    "SIMA_MPK_CONTRACT_DEBUG",   "SIMA_ROUTE_DEBUG",
+      "SIMA_PULL_TIMEOUT_DIAG",     "SIMA_PULL_TIMEOUT_POOL_DIAG","SIMA_DISPATCHER_TRACE",
+      "SIMA_RPCEVXX_TRACE",         "SIMA_RPCEVXX_CFG_TRACE",    "SIMA_RPMSG_OPEN_TRACE",     "SIMA_RPMSG_RECV_TRACE",
+      "SIMA_RPMSG_RECV_SLICE_MS",   "SIMA_RPMSG_RECV_PROGRESS_MS",
+      "SIMA_RPMSG_SEQ_USE_GRAPH_ID","SIMA_PROCESSCVU_POOL_DEBUG", "SIMA_DETESS_CONFIG_DEBUG",
+  };
+  std::ostringstream ss;
+  ss << "[DBG] detess debug env";
+  for (const char* key : kKeys) {
+    const char* val = std::getenv(key);
+    ss << " " << key << "=" << ((val && *val) ? val : "<unset>");
+  }
+  return ss.str();
+}
 
 bool detess_zero_copy_enabled() {
   static int cached = -1;
@@ -252,6 +320,9 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
                            const SyncTestConfig& cfg) {
   RunSummary res;
 
+  enable_detess_debug_defaults();
+  std::cerr << debug_env_snapshot() << "\n";
+
   require(!tar_gz.empty(), "Failed to locate yolo_v8s MPK tarball");
 
   const int num_both = env_int("SIMA_SYNC_NUM_BUFFERS", -1);
@@ -272,11 +343,16 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   (void)num_cvu;
   (void)num_mla;
   simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "BGR";
-  model_opt.input_max_width = img.cols;
-  model_opt.input_max_height = img.rows;
-  model_opt.input_max_depth = 3;
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  if (env_bool("SIMA_DETESS_FORCE_STRETCH", false)) {
+    model_opt.preprocess.resize.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.resize.mode = simaai::neat::ResizeMode::Stretch;
+    model_opt.preprocess.resize.width = 640;
+    model_opt.preprocess.resize.height = 640;
+    std::cerr << "[DBG] forcing preprocess stretch resize 640x640\n";
+  }
   model_opt.upstream_name = "decoder";
   auto model = simaai::neat::Model(tar_gz, model_opt);
   const int topk = 100;
@@ -295,7 +371,10 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = 1;
   step_log("sync: before build");
-  simaai::neat::Run runner = p.build(img, simaai::neat::RunMode::Async, run_opt);
+  simaai::neat::Run runner = p.build(
+      simaai::neat::SampleList{
+          simaai::neat::Sample::from_image(img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+      simaai::neat::RunMode::Sync, run_opt);
   step_log("sync: after build");
 
   const auto start = std::chrono::steady_clock::now();
@@ -313,10 +392,20 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     simaai::neat::Sample out;
     try {
       step_log("sync: before run");
-      out = runner.push_and_pull(img, pull_timeout_ms);
+      auto outs = runner.run(
+          simaai::neat::SampleList{
+              simaai::neat::Sample::from_image(img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+          pull_timeout_ms);
+      require(outs.size() == 1, "sync: expected one output sample");
+      out = std::move(outs.front());
       step_log("sync: after run");
     } catch (const std::exception& e) {
       append_note(res.note, "run_error=" + sanitize_note(e.what()));
+      const std::string last = sanitize_note(runner.last_error());
+      if (!last.empty()) {
+        append_note(res.note, "runner_last_error=" + last);
+      }
+      std::cerr << "[DBG] runner.report after run_error\n" << runner.report() << "\n";
       break;
     }
 
@@ -387,6 +476,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
 
 int main(int argc, char** argv) {
   try {
+    enable_detess_debug_defaults();
     const fs::path root = (argc > 1) ? fs::path(argv[1]) : fs::current_path();
     std::error_code ec;
     fs::create_directories(root / "tmp", ec);

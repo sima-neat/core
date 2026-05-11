@@ -1,66 +1,38 @@
 #include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/NodeConfigHelpers.h"
 
 #include "builder/ConfigJsonWire.h"
 #include "gst/GstHelpers.h"
-#include "pipeline/internal/TempJsonFileUtil.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace simaai::neat {
-namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 struct SimaArgMax::ConfigHolder {
   std::string path;
   bool keep = false;
+  int memfd = -1;
   json config;
   bool has_config = false;
   ~ConfigHolder() {
+    if (memfd >= 0) {
+      ::close(memfd);
+      memfd = -1;
+      return;
+    }
     if (!keep && !path.empty()) {
       std::remove(path.c_str());
     }
   }
 };
-
-namespace {
-
-std::string make_temp_json_path(const std::string& dir) {
-  return pipeline_internal::make_temp_json_path(dir, "sima_argmax", "SimaArgMax");
-}
-
-json load_json_file(const std::string& path, const char* label) {
-  std::ifstream in(path);
-  if (!in.is_open()) {
-    throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
-  }
-  json j;
-  in >> j;
-  return j;
-}
-
-void write_json_file(const json& j, const std::string& path, const char* label) {
-  std::ofstream out(path);
-  if (!out.is_open()) {
-    throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
-  }
-  out << j.dump(2);
-}
-
-std::string write_json_temp(const json& j, const std::string& dir) {
-  const std::string path = make_temp_json_path(dir);
-  write_json_file(j, path, "SimaArgMax");
-  return path;
-}
-
-} // namespace
 
 SimaArgMax::SimaArgMax(SimaArgMaxOptions opt) : opt_(std::move(opt)) {
   if (!opt_.config_path.empty()) {
@@ -116,7 +88,7 @@ bool SimaArgMax::wire_input_names(const std::vector<std::string>& upstream_names
   if (!config_holder_->has_config) {
     if (config_holder_->path.empty())
       return false;
-    config_holder_->config = load_json_file(config_holder_->path, "SimaArgMax");
+    config_holder_->config = node_helpers::load_json_file(config_holder_->path, "SimaArgMax");
     config_holder_->has_config = true;
   }
 
@@ -125,12 +97,18 @@ bool SimaArgMax::wire_input_names(const std::vector<std::string>& upstream_names
     return false;
 
   if (config_holder_->keep) {
-    config_path_ = write_json_temp(cfg, /*dir=*/"");
+    config_path_ =
+        node_helpers::write_json_memfd(cfg, &config_holder_->memfd, "SimaArgMax", "sima_argmax_cfg");
     config_holder_->keep = false;
   } else if (!config_path_.empty()) {
-    write_json_file(cfg, config_path_, "SimaArgMax");
+    if (config_holder_->memfd >= 0) {
+      node_helpers::rewrite_json_memfd(config_holder_->memfd, cfg, "SimaArgMax");
+    } else {
+      node_helpers::write_json_file(cfg, config_path_, "SimaArgMax");
+    }
   } else {
-    config_path_ = write_json_temp(cfg, /*dir=*/"");
+    config_path_ =
+        node_helpers::write_json_memfd(cfg, &config_holder_->memfd, "SimaArgMax", "sima_argmax_cfg");
   }
 
   config_holder_->config = std::move(cfg);
