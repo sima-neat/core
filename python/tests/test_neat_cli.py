@@ -187,9 +187,40 @@ def test_sdk_status_parses_sysroot_cache_and_checks_updates(tmp_path: Path) -> N
     assert "PyNeat" in proc.stdout and "0.0.0" in proc.stdout
     assert "neat-insight" in proc.stdout and "0.0.0+main.3333333" in proc.stdout
     assert "status=Running" in proc.stdout
+    assert (
+        proc.stdout.count(
+            "Update available: yellow component versions indicate available updates. "
+            "Run: neat update."
+        )
+        == 1
+    )
     assert "Coding Agent Playbooks" in proc.stdout
     assert "sima-neat" in proc.stdout
     assert "use-neat-insight" in proc.stdout
+
+
+def test_status_update_available_note_is_yellow(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    make_curl(bin_dir)
+    env = base_env(tmp_path, bin_dir)
+    env["NO_COLOR"] = ""
+    sdk_release = tmp_path / "sdk-release"
+    sdk_release.write_text("SDK Version = 10.0.0.244\neLXr Version = 2.0.0\n", encoding="utf-8")
+    sysroot = tmp_path / "sysroot"
+    cache = sysroot / "neat-install-packages"
+    cache.mkdir(parents=True)
+    (cache / "sima-neat-0.0.0+main-1111111-Linux-core.deb").write_text("", encoding="utf-8")
+    env.update({"ELXR_SDK_RELEASE_FILE": str(sdk_release), "SYSROOT": str(sysroot)})
+
+    proc = run_neat(tmp_path, ["--color=always"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "\x1b[0;33m0.0.0+main-1111111" in proc.stdout
+    assert (
+        "\x1b[0;33mUpdate available: yellow component versions indicate "
+        "available updates. Run: neat update.\x1b[0m"
+    ) in proc.stdout
 
 
 def test_sdk_status_prints_exposed_ports_from_port_map(tmp_path: Path) -> None:
@@ -468,6 +499,82 @@ def test_offline_status_does_not_contact_network(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert "Update check       offline" in proc.stdout
     assert "latest=" not in proc.stdout
+
+
+def test_status_update_check_failure_prints_download_reason(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_exe(
+        bin_dir / "curl",
+        """\
+        #!/usr/bin/env bash
+        echo "curl: (28) Operation timed out after 8000 milliseconds" >&2
+        exit 28
+        """,
+    )
+    env = base_env(tmp_path, bin_dir)
+
+    proc = run_neat(tmp_path, ["--color=never"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "update check failed" in proc.stdout
+    assert "Neat core latest tag: https://core.test/" in proc.stdout
+    assert "/latest.tag failed" in proc.stdout
+    assert "neat-insight latest tag: https://insight.test/" in proc.stdout
+    assert "curl: (28) Operation timed out after 8000 milliseconds" in proc.stdout
+    assert "Try --offline to skip update checks" in proc.stdout
+
+
+def test_status_update_check_failure_details_are_yellow(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_exe(
+        bin_dir / "curl",
+        """\
+        #!/usr/bin/env bash
+        printf ''
+        """,
+    )
+    env = base_env(tmp_path, bin_dir)
+    env["NO_COLOR"] = ""
+
+    proc = run_neat(tmp_path, ["--color=always"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "\x1b[0;33mupdate check failed\x1b[0m" in proc.stdout
+    assert "\x1b[0;33mNeat core latest tag: https://core.test/" in proc.stdout
+    assert "/latest.tag returned an empty response\x1b[0m" in proc.stdout
+    assert (
+        "\x1b[0;33mTry --offline to skip update checks when network access is unavailable.\x1b[0m"
+    ) in proc.stdout
+
+
+def test_json_status_update_check_failure_exports_errors(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_exe(
+        bin_dir / "curl",
+        """\
+        #!/usr/bin/env bash
+        echo "curl: (28) Operation timed out after 8000 milliseconds" >&2
+        exit 28
+        """,
+    )
+    env = base_env(tmp_path, bin_dir)
+
+    proc = run_neat(tmp_path, ["--json"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["updateCheck"]["status"] == "failed"
+    assert any(
+        err.startswith("Neat core latest tag: https://core.test/")
+        and "/latest.tag failed" in err
+        for err in payload["updateCheck"]["errors"]
+    )
+    assert any(
+        "curl: (28) Operation timed out" in err for err in payload["updateCheck"]["errors"]
+    )
 
 
 def test_status_infers_non_main_channel_from_core_version(tmp_path: Path) -> None:
