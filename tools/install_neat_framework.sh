@@ -360,7 +360,7 @@ collect_cached_devkit_deploy_files() {
 
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
-  run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
+  run_sudo apt install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"
 }
 
 install_debs_into_sysroot() {

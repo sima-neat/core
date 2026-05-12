@@ -753,7 +753,7 @@ collect_plugin_files_from_debs() {
     if command -v apt >/dev/null 2>&1; then
       mapfile -t deb_abs_files < <(for deb in "${deb_files[@]}"; do realpath "${deb}"; done)
       # Use apt for local .deb install so dependency resolution happens automatically in CI.
-      if ! run_privileged apt install -y --allow-downgrades "${deb_abs_files[@]}"; then
+      if ! run_privileged apt install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${deb_abs_files[@]}"; then
         echo "ERROR: Failed to install neat-internals .deb packages via apt." >&2
         exit 1
       fi
