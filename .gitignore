@@ -17,6 +17,7 @@ _CPack_Packages/
 .venv/
 __pycache__/
 *.pyc
+.env
 dist/
 *.whl
 *.egg-info/
@@ -24,6 +25,7 @@ dist/
 # Editor / IDE
 .vscode/
 .idea/
+.claude/
 
 # OS junk
 .DS_Store
@@ -36,8 +38,8 @@ dist/
 *.dll
 *.exe
 *.out
-neat-internals/*
-!neat-internals/manifest.json
+deps/*
+!deps/manifest.json
 
 # Logs
 *.log
@@ -45,6 +47,8 @@ neat-internals/*
 # Runtime and temporary files
 tmp/
 tmp-*/
+sima-neat-*-extras/
+/install_neat_framework.sh
 core
 core/
 a.out
@@ -67,6 +71,7 @@ rtsp_decoder_direct.nv12
 *.mpk
 downloads/
 models/
+!basic_valid.mpk
 
 # Images (ignored by default outside fixture paths)
 *.jpg
@@ -84,6 +89,7 @@ models/
 !samples/media/**
 !tests/images/**
 !docs/images/**
+!tutorials/assets/**
 
 # Docs output
 docs/doxygen/out/
@@ -99,10 +105,18 @@ website/build/
 website/.docusaurus/
 website/static/api/*
 website/sidebar-category-doxygen.json
-website/package-lock.json
+!website/static/img/*
 
 # Misc
 notes/
 decode_optimizations.txt
 examples/rtsp_list.sample.txt
 pipeline_saved.json
+
+# Sandbox
+sandbox/
+
+_work/
+docs/images/.DS_Store
+python/tests/_platform_version_generated.py
+generated/platform_version.h
