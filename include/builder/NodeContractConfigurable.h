@@ -37,8 +37,7 @@ public:
    * @param contract Compiled contract with concrete shapes/dtypes/etc.
    * @param err On failure, populated with a human-readable diagnostic.
    */
-  virtual void apply_compiled_contract(const CompiledNodeContract& contract,
-                                       std::string* err) = 0;
+  virtual void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) = 0;
 };
 
 } // namespace simaai::neat

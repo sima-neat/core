@@ -52,8 +52,7 @@ public:
    * @param err   On failure, populated with a human-readable diagnostic.
    * @return True on successful compilation.
    */
-  virtual bool compile_node_contract(const ContractCompileInput& input,
-                                     CompiledNodeContract* out,
+  virtual bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                      std::string* err) const {
     (void)input;
     (void)out;

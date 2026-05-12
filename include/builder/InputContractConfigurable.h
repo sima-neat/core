@@ -26,15 +26,15 @@ namespace simaai::neat {
  * @ingroup builder
  */
 struct InputContract {
-  std::string media_type;             ///< e.g., `"video/x-raw"`, `"application/vnd.simaai.tensor"`.
-  std::string format;                 ///< e.g., `"NV12"`, `"RGB"`, `"FP32"`.
-  std::string dtype;                  ///< e.g., `"UInt8"`, `"Float32"`.
-  std::string layout;                 ///< Layout label (e.g., `"NHWC"`).
-  int width = 0;                      ///< Width in pixels / elements; 0 if unspecified.
-  int height = 0;                     ///< Height in pixels / elements; 0 if unspecified.
-  int depth = 0;                      ///< Depth / channels; 0 if unspecified.
-  std::optional<double> q_scale;      ///< Quantization scale, if applicable.
-  std::optional<std::int64_t> q_zp;   ///< Quantization zero-point, if applicable.
+  std::string media_type;           ///< e.g., `"video/x-raw"`, `"application/vnd.simaai.tensor"`.
+  std::string format;               ///< e.g., `"NV12"`, `"RGB"`, `"FP32"`.
+  std::string dtype;                ///< e.g., `"UInt8"`, `"Float32"`.
+  std::string layout;               ///< Layout label (e.g., `"NHWC"`).
+  int width = 0;                    ///< Width in pixels / elements; 0 if unspecified.
+  int height = 0;                   ///< Height in pixels / elements; 0 if unspecified.
+  int depth = 0;                    ///< Depth / channels; 0 if unspecified.
+  std::optional<double> q_scale;    ///< Quantization scale, if applicable.
+  std::optional<std::int64_t> q_zp; ///< Quantization zero-point, if applicable.
 };
 
 /**

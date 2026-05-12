@@ -29,13 +29,13 @@ namespace simaai::neat {
  * @see PreprocessMetaRequirementProvider
  */
 struct PreprocessMetaRequirement {
-  std::string stage_name;                       ///< Logical stage name reporting the requirement.
-  std::string plugin_name;                      ///< Backing GStreamer plugin name.
-  std::vector<std::string> required_fields;     ///< Names of GstSimaMeta fields that must be present.
-  std::optional<bool> expect_resize;            ///< If set, expects an upstream resize stage.
-  std::optional<bool> expect_normalize;         ///< If set, expects an upstream normalize stage.
-  std::optional<bool> expect_quantize;          ///< If set, expects an upstream quantize stage.
-  std::optional<bool> expect_tessellate;        ///< If set, expects an upstream tessellate stage.
+  std::string stage_name;                   ///< Logical stage name reporting the requirement.
+  std::string plugin_name;                  ///< Backing GStreamer plugin name.
+  std::vector<std::string> required_fields; ///< Names of GstSimaMeta fields that must be present.
+  std::optional<bool> expect_resize;        ///< If set, expects an upstream resize stage.
+  std::optional<bool> expect_normalize;     ///< If set, expects an upstream normalize stage.
+  std::optional<bool> expect_quantize;      ///< If set, expects an upstream quantize stage.
+  std::optional<bool> expect_tessellate;    ///< If set, expects an upstream tessellate stage.
 };
 
 /**
