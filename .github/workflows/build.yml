@@ -487,6 +487,13 @@ jobs:
           echo "Building docs..."
           ./build.sh --doc
 
+      - name: Check rendered docs links
+        env:
+          DOCS_LINK_SITE_DIR: ${{ github.workspace }}/website/build
+          DOCS_LINK_START_PATHS: all
+        run: |
+          bash scripts/ci/check_docs_links.sh
+
   cleanup-standard-artifacts:
     if: ${{ always() && needs.resolve-mode.outputs.build_mode == 'standard' }}
     runs-on: ubuntu-latest

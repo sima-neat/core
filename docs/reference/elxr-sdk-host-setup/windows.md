@@ -92,4 +92,4 @@ Add any additional ports required by your NFS server/client setup.
 
 ## Next step
 
-Return to [Neat SDK](../../getting-started/installation/neat-elxr-sdk.mdx) and continue with install/setup.
+Return to [Neat SDK](/getting-started/installation/neat-elxr-sdk/) and continue with install/setup.

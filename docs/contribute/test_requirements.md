@@ -75,7 +75,7 @@ For docs-impacting changes, also run:
 ./build.sh --doc
 ```
 
-See [Build](../getting-started/build) for all supported build/test modes.
+See [Build](/getting-started/build) for all supported build/test modes.
 
 ## Contributor checklist
 
@@ -84,5 +84,5 @@ Before opening or merging a PR:
 - Added/updated tests match the behavioral surface changed.
 - Existing related tests still pass.
 - Docs are updated for user-visible behavior.
-- API/architecture changes are reflected in [Architecture](./architecture).
-- Public API changes comply with the API compatibility policy in [Coding Standard](./coding_standard).
+- API/architecture changes are reflected in [Architecture](/contribute/architecture).
+- Public API changes comply with the API compatibility policy in [Coding Standard](/contribute/coding_standard).

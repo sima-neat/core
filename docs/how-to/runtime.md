@@ -41,4 +41,4 @@ Advanced knobs are opt-in under `RunOptions::advanced`:
 Use `Run::stats()` and `Run::diag_snapshot()` to inspect
 throughput, latency, and flow counters.
 
-See [Runtime Tuning](runtime_tuning) for practical tuning guidance.
+See [Runtime Tuning](/how-to/runtime_tuning) for practical tuning guidance.
