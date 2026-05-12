@@ -347,17 +347,29 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   list(REMOVE_DUPLICATES SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES)
 endif()
 
+set(SIMANEAT_ELXR_SYSROOT /opt/toolchain/aarch64/modalix)
 set(SIMANEAT_INSTALLED_NEAT_PLUGIN_DIR_CANDIDATES
+  ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/neat/gst-plugins
+  ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/gstreamer-1.0
+  ${SIMANEAT_ELXR_SYSROOT}/usr/lib/sima-neat/gst-plugins
   /usr/lib/aarch64-linux-gnu/neat/gst-plugins
   /lib/aarch64-linux-gnu/neat/gst-plugins
   /usr/lib/neat/gst-plugins
   /lib/neat/gst-plugins
 )
 set(SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES
+  ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/neat/runtime
+  ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu
   /usr/lib/aarch64-linux-gnu/neat/runtime
   /lib/aarch64-linux-gnu/neat/runtime
   /usr/lib/neat/runtime
   /lib/neat/runtime
+)
+set(SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES
+  ${SIMANEAT_ELXR_SYSROOT}/usr/include/simaai
+  /usr/include/simaai
+  /usr/local/include/simaai
+  $ENV{HOME}/.local/include/simaai
 )
 set(SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
@@ -451,9 +463,7 @@ find_path(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
   NAMES gstsimaaiallocator.h
   HINTS
     ${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/allocator
-    /usr/include/simaai
-    /usr/local/include/simaai
-    $ENV{HOME}/.local/include/simaai
+    ${SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES}
 )
 
 find_library(SIMANEAT_NEAT_BUFFERPOOL_LIB
@@ -491,9 +501,7 @@ find_path(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   NAMES gstsimaaitensorbuffer.h
   HINTS
     ${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/tensorbuffer
-    /usr/include/simaai
-    /usr/local/include/simaai
-    $ENV{HOME}/.local/include/simaai
+    ${SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES}
 )
 
 set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
