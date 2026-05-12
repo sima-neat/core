@@ -1674,8 +1674,7 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("media_type", &simaai::neat::InputOptions::media_type)
       .def_prop_rw(
-          "format",
-          [](const simaai::neat::InputOptions& options) { return options.format.str(); },
+          "format", [](const simaai::neat::InputOptions& options) { return options.format.str(); },
           [](simaai::neat::InputOptions& options, nb::handle value) {
             options.format = python_to_format_spec(value);
           },
