@@ -9,22 +9,22 @@ import pytest
 import pyneat
 
 PREPROC_OPTION_FIELDS = (
-    "input_width",
-    "input_height",
-    "output_width",
-    "output_height",
+    "input_shape",
+    "output_shape",
+    "slice_shape",
+    "set_input_shape",
+    "set_output_shape",
+    "set_slice_shape",
+    "has_input_shape",
+    "has_output_shape",
+    "has_slice_shape",
     "scaled_width",
     "scaled_height",
-    "input_channels",
-    "output_channels",
     "batch_size",
     "normalize",
     "aspect_ratio",
     "tessellate",
     "dynamic_input_dims",
-    "tile_width",
-    "tile_height",
-    "tile_channels",
     "input_offset",
     "input_stride",
     "output_stride",
@@ -45,20 +45,13 @@ PREPROC_OPTION_FIELDS = (
     "debug",
     "upstream_name",
     "graph_input_name",
-    "output_memory_order",
     "num_buffers",
     "num_buffers_model",
     "num_buffers_locked",
-    "config_path",
-    "config_dir",
-    "keep_config",
-    "config_json",
 )
 
 QUANT_TESS_OPTION_FIELDS = (
     "config_path",
-    "config_dir",
-    "keep_config",
     "config_json",
     "element_name",
     "num_buffers",
@@ -68,8 +61,6 @@ QUANT_TESS_OPTION_FIELDS = (
 
 DETESS_DEQUANT_OPTION_FIELDS = (
     "config_path",
-    "config_dir",
-    "keep_config",
     "config_json",
     "upstream_name",
     "element_name",
@@ -360,15 +351,15 @@ def test_session_pythonic_add_and_describe():
 
 def test_model_option_structs_are_mutable():
   opt = pyneat.ModelOptions()
-  opt.media_type = "video/x-raw"
-  opt.format = "RGB"
-  opt.input_max_width = 1920
-  opt.input_max_height = 1080
+  opt.preprocess.input_max_width = 1920
+  opt.preprocess.input_max_height = 1080
+  opt.boxdecode_original_width = 1280
+  opt.boxdecode_original_height = 720
 
-  assert opt.media_type == "video/x-raw"
-  assert opt.format == "RGB"
-  assert opt.input_max_width == 1920
-  assert opt.input_max_height == 1080
+  assert opt.preprocess.input_max_width == 1920
+  assert opt.preprocess.input_max_height == 1080
+  assert opt.boxdecode_original_width == 1280
+  assert opt.boxdecode_original_height == 720
 
 
 def test_input_stage_option_structs_expose_expected_fields():
@@ -470,27 +461,22 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
 
 def test_input_stage_option_structs_are_mutable():
   pre = pyneat.PreprocOptions()
-  pre.input_width = 320
-  pre.input_height = 240
-  pre.output_memory_order = ["SystemMemory", "SimaAI"]
-  pre.keep_config = True
-  pre.config_json = {"graph_name": "preproc", "input_width": 320}
+  pre.input_shape = [240, 320, 3]
+  pre.output_shape = [640, 640, 3]
+  pre.slice_shape = [32, 128, 3]
 
   quant_tess = pyneat.QuantTessOptions()
   quant_tess.element_name = "qt"
-  quant_tess.keep_config = True
   quant_tess.config_json = {"node_name": "quanttess"}
 
-  assert pre.input_width == 320
-  assert pre.input_height == 240
-  assert pre.output_memory_order == ["SystemMemory", "SimaAI"]
-  assert pre.keep_config is True
-  assert pre.config_json["graph_name"] == "preproc"
-  pre.config_json = None
-  assert pre.config_json is None
+  assert pre.input_shape == [240, 320, 3]
+  assert pre.output_shape == [640, 640, 3]
+  assert pre.slice_shape == [32, 128, 3]
+  assert pre.has_input_shape() is True
+  assert pre.has_output_shape() is True
+  assert pre.has_slice_shape() is True
 
   assert quant_tess.element_name == "qt"
-  assert quant_tess.keep_config is True
   assert quant_tess.config_json["node_name"] == "quanttess"
   quant_tess.config_json = None
   assert quant_tess.config_json is None
@@ -499,8 +485,6 @@ def test_input_stage_option_structs_are_mutable():
 def test_postprocess_stage_option_structs_are_mutable():
   detess = pyneat.DetessDequantOptions()
   detess.config_path = "/tmp/detess.json"
-  detess.config_dir = "/tmp"
-  detess.keep_config = True
   detess.config_json = {"node_name": "detessdequant_0"}
   detess.upstream_name = "mla_0"
   detess.element_name = "detessdequant_0"
@@ -509,8 +493,6 @@ def test_postprocess_stage_option_structs_are_mutable():
   detess.num_buffers_locked = True
 
   assert detess.config_path == "/tmp/detess.json"
-  assert detess.config_dir == "/tmp"
-  assert detess.keep_config is True
   assert detess.config_json["node_name"] == "detessdequant_0"
   detess.config_json = None
   assert detess.config_json is None

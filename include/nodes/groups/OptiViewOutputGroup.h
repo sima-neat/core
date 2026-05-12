@@ -167,6 +167,10 @@ struct OptiViewJsonResult {
  */
 class OptiViewOutputNodeGroup {
 public:
+  OptiViewOutputNodeGroup() = default;
+  OptiViewOutputNodeGroup(const OptiViewOutputNodeGroup&) = delete;
+  OptiViewOutputNodeGroup& operator=(const OptiViewOutputNodeGroup&) = delete;
+
   /**
    * @brief Initialize the video runs and the per-stream JSON senders.
    * @param opt OptiView fan-out configuration (video + JSON).

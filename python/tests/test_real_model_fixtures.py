@@ -214,20 +214,17 @@ def _run_model_on_image(model: pyneat.Model, image: np.ndarray, *parts) -> pynea
 
 def _custom_preproc_node(model: pyneat.Model, image: np.ndarray):
   pre = pyneat.PreprocOptions(model)
-  cfg = dict(pre.config_json)
-  cfg["input_width"] = image.shape[1]
-  cfg["input_height"] = image.shape[0]
-  pre.config_json = cfg
+  channels = image.shape[2] if image.ndim >= 3 else 1
+  pre.input_shape = [image.shape[0], image.shape[1], channels]
   return pyneat.nodes.preproc(pre)
 
 
 def _cpu_quanttess_input(model: pyneat.Model, image: np.ndarray) -> np.ndarray:
   pre = pyneat.PreprocOptions(model)
-  cfg = dict(pre.config_json)
-  dst_w = int(cfg["output_width"])
-  dst_h = int(cfg["output_height"])
-  aspect_ratio = bool(cfg.get("aspect_ratio", False))
-  padding_type = str(cfg.get("padding_type", "CENTER")).upper()
+  dst_h = int(pre.output_shape[0])
+  dst_w = int(pre.output_shape[1])
+  aspect_ratio = bool(pre.aspect_ratio)
+  padding_type = str(pre.padding_type or "CENTER").upper()
   src_h, src_w = image.shape[:2]
 
   if aspect_ratio:
@@ -386,8 +383,9 @@ def test_model_backed_option_structs_preserve_real_fixture_semantics():
   quant = pyneat.QuantTessOptions(resnet_model)
   detess = pyneat.DetessDequantOptions(yolo_model)
 
-  assert pre.config_json is not None
-  assert pre.config_json["node_name"] == "preproc"
+  assert pre.node_name == "preproc"
+  assert pre.has_input_shape()
+  assert pre.has_output_shape()
   assert pre.num_buffers == pre.num_buffers_model == 4
   assert pre.num_buffers_locked is True
 
