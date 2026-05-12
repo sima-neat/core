@@ -42,9 +42,10 @@ enum class StreamDropPolicy {
  * @ingroup graph
  */
 struct StreamSchedulerOptions {
-  std::size_t per_stream_queue = 2;                              ///< Max samples held per stream before drop policy applies.
-  StreamDropPolicy drop_policy = StreamDropPolicy::DropOldest;   ///< Overflow policy when a per-stream queue is full.
-  int max_batch = 1;                                             ///< Scheduling-only batch (emit up to N per input).
+  std::size_t per_stream_queue = 2; ///< Max samples held per stream before drop policy applies.
+  StreamDropPolicy drop_policy =
+      StreamDropPolicy::DropOldest; ///< Overflow policy when a per-stream queue is full.
+  int max_batch = 1;                ///< Scheduling-only batch (emit up to N per input).
 };
 
 /**

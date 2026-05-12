@@ -99,8 +99,8 @@ public:
   explicit ModelPack(const std::string& tar_gz);
   ModelPack(const std::string& tar_gz, const std::string& media_type, const std::string& format,
             int depth, int max_width = 0, int max_height = 0, int max_depth = 0,
-            bool normalize = false, std::vector<float> mean = {},
-            std::vector<float> stddev = {}, const std::string& preproc_next_cpu = {},
+            bool normalize = false, std::vector<float> mean = {}, std::vector<float> stddev = {},
+            const std::string& preproc_next_cpu = {},
             PipelineType requested_pipeline_type = PipelineType::Preproc,
             const std::string& upstream_name = "decoder", int num_buffers_cvu = 4,
             int num_buffers_mla = 4, int queue_max_buffers = 0, int64_t queue_max_time_ns = -1,
@@ -139,9 +139,9 @@ public:
   simaai::neat::NodeGroup to_node_group(ModelStage stage) const;
 
   // Infer block derived from the typed MPK execution plan.
-  simaai::neat::NodeGroup infer_block(
-      const std::string& upstream_name = {},
-      std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) const;
+  simaai::neat::NodeGroup
+  infer_block(const std::string& upstream_name = {},
+              std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) const;
   std::string apply_name_suffix(const std::string& base) const;
   bool has_terminal_policy() const;
 
@@ -195,8 +195,7 @@ private:
   void init_from_config(const std::string& tar_gz, Config cfg);
   std::vector<ModelFragment::StageFacts> build_stage_facts(
       const std::vector<ExecutionStage>& stages,
-      const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract =
-          std::nullopt,
+      const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract = std::nullopt,
       ModelStage stage_context = ModelStage::Full) const;
 
   std::string etc_dir_;

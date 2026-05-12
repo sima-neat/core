@@ -21,13 +21,14 @@
 
 namespace simaai::neat::pipeline_internal::rendered_stage_query {
 
-inline std::optional<sima::SimaPluginStaticManifest> rendered_manifest_from_group(
-    const NodeGroup& group,
-    const char* pipeline_label = "RenderedStageQuery") {
+inline std::optional<sima::SimaPluginStaticManifest>
+rendered_manifest_from_group(const NodeGroup& group,
+                             const char* pipeline_label = "RenderedStageQuery") {
   ContractCompileInput input;
   input.pipeline_label = pipeline_label ? pipeline_label : "RenderedStageQuery";
   sima::ManifestBuildDiagnostics diagnostics;
-  const CompiledPipelineContracts compiled = compile_node_contracts(group.nodes(), input, &diagnostics);
+  const CompiledPipelineContracts compiled =
+      compile_node_contracts(group.nodes(), input, &diagnostics);
   if (!diagnostics.errors.empty()) {
     return std::nullopt;
   }
@@ -41,9 +42,9 @@ inline std::optional<sima::SimaPluginStaticManifest> rendered_manifest_from_grou
   return render_manifest_from_compiled_contracts(compiled, input, &diagnostics);
 }
 
-inline const sima::StageStaticSpec* find_stage_in_manifest(
-    const sima::SimaPluginStaticManifest& manifest,
-    const std::function<bool(const sima::StageStaticSpec&)>& predicate) {
+inline const sima::StageStaticSpec*
+find_stage_in_manifest(const sima::SimaPluginStaticManifest& manifest,
+                       const std::function<bool(const sima::StageStaticSpec&)>& predicate) {
   for (const auto& stage : manifest.stages) {
     if (predicate(stage)) {
       return &stage;
@@ -52,24 +53,22 @@ inline const sima::StageStaticSpec* find_stage_in_manifest(
   return nullptr;
 }
 
-inline const sima::StageStaticSpec* find_preproc_stage(
-    const sima::SimaPluginStaticManifest& manifest) {
+inline const sima::StageStaticSpec*
+find_preproc_stage(const sima::SimaPluginStaticManifest& manifest) {
   return find_stage_in_manifest(manifest, [](const sima::StageStaticSpec& stage) {
     return stage.payload_kind == sima::StagePayloadKind::ProcessCvu &&
            stage.processcvu.graph_family == "preproc";
   });
 }
 
-inline const sima::StageStaticSpec* find_mla_stage(
-    const sima::SimaPluginStaticManifest& manifest) {
+inline const sima::StageStaticSpec* find_mla_stage(const sima::SimaPluginStaticManifest& manifest) {
   return find_stage_in_manifest(manifest, [](const sima::StageStaticSpec& stage) {
     return stage.payload_kind == sima::StagePayloadKind::ProcessMla;
   });
 }
 
-inline const sima::StageStaticSpec* find_processcvu_stage(
-    const sima::SimaPluginStaticManifest& manifest,
-    const std::string& family) {
+inline const sima::StageStaticSpec*
+find_processcvu_stage(const sima::SimaPluginStaticManifest& manifest, const std::string& family) {
   return find_stage_in_manifest(manifest, [&](const sima::StageStaticSpec& stage) {
     return stage.payload_kind == sima::StagePayloadKind::ProcessCvu &&
            stage.processcvu.graph_family == family;
@@ -187,11 +186,10 @@ inline std::vector<int64_t> maybe_strip_batch_axis(std::vector<int64_t> shape,
   return shape;
 }
 
-inline std::vector<int64_t> maybe_strip_batch_axis_from_aligned_values(
-    std::vector<int64_t> values,
-    const std::vector<int64_t>& original_shape,
-    const std::string& format,
-    bool include_batch_axis) {
+inline std::vector<int64_t>
+maybe_strip_batch_axis_from_aligned_values(std::vector<int64_t> values,
+                                           const std::vector<int64_t>& original_shape,
+                                           const std::string& format, bool include_batch_axis) {
   if (include_batch_axis || values.size() <= 1U || values.size() != original_shape.size()) {
     return values;
   }
@@ -202,10 +200,8 @@ inline std::vector<int64_t> maybe_strip_batch_axis_from_aligned_values(
   return values;
 }
 
-inline const sima::LogicalTensorStaticSpec* find_logical_output(
-    const sima::StageStaticSpec& stage,
-    int logical_output_index,
-    int output_slot) {
+inline const sima::LogicalTensorStaticSpec*
+find_logical_output(const sima::StageStaticSpec& stage, int logical_output_index, int output_slot) {
   for (const auto& logical : stage.logical_outputs) {
     if (logical_output_index >= 0 && logical.logical_index == logical_output_index) {
       return &logical;
@@ -222,8 +218,8 @@ inline bool is_packed_blob_logical_output(const sima::LogicalTensorStaticSpec& l
          layout_projection_from_contract_format(logical.layout) == TensorLayout::HW;
 }
 
-inline stages::PreprocOutputTransportKind preproc_transport_kind_from_manifest(
-    sima::ProcessCvuOutputTransportKind kind) {
+inline stages::PreprocOutputTransportKind
+preproc_transport_kind_from_manifest(sima::ProcessCvuOutputTransportKind kind) {
   switch (kind) {
   case sima::ProcessCvuOutputTransportKind::Dense:
     return stages::PreprocOutputTransportKind::Dense;
@@ -235,8 +231,8 @@ inline stages::PreprocOutputTransportKind preproc_transport_kind_from_manifest(
   }
 }
 
-inline stages::PreprocOutputSemanticKind preproc_semantic_kind_from_manifest(
-    sima::ProcessCvuOutputSemanticKind kind) {
+inline stages::PreprocOutputSemanticKind
+preproc_semantic_kind_from_manifest(sima::ProcessCvuOutputSemanticKind kind) {
   switch (kind) {
   case sima::ProcessCvuOutputSemanticKind::Image:
     return stages::PreprocOutputSemanticKind::Image;
@@ -280,7 +276,8 @@ inline stages::PreprocOutputInfo preproc_output_info(const NodeGroup& group) {
 
   const auto* primary_logical = [&]() -> const sima::LogicalTensorStaticSpec* {
     for (const auto& route : stage->output_order) {
-      if (sima::output_name_from_route(route) != info.primary_output_name || route.output_slot < 0) {
+      if (sima::output_name_from_route(route) != info.primary_output_name ||
+          route.output_slot < 0) {
         continue;
       }
       info.primary_route_slot = route.output_slot;
@@ -322,10 +319,10 @@ inline stages::PreprocOutputInfo preproc_output_info(const NodeGroup& group) {
     }
   }
 
-  if (info.logical_dims.width <= 0 || info.logical_dims.height <= 0 || info.logical_dims.depth <= 0) {
+  if (info.logical_dims.width <= 0 || info.logical_dims.height <= 0 ||
+      info.logical_dims.depth <= 0) {
     info.logical_dims = tensor_dims_projection_from_contract_shape(
-        primary_logical->shape,
-        layout_projection_from_contract_format(primary_logical->layout));
+        primary_logical->shape, layout_projection_from_contract_format(primary_logical->layout));
   }
   if (info.logical_layout == TensorLayout::Unknown) {
     info.logical_layout = layout_projection_from_contract_format(primary_logical->layout);
@@ -336,11 +333,10 @@ inline stages::PreprocOutputInfo preproc_output_info(const NodeGroup& group) {
                               : stages::PreprocOutputTransportKind::Dense;
   }
   if (info.semantic_kind == stages::PreprocOutputSemanticKind::Unknown) {
-    info.semantic_kind =
-        (info.transport_kind == stages::PreprocOutputTransportKind::Packed &&
-         info.primary_output_name == "output_tessellated_image")
-            ? stages::PreprocOutputSemanticKind::TessellatedImage
-            : stages::PreprocOutputSemanticKind::Image;
+    info.semantic_kind = (info.transport_kind == stages::PreprocOutputTransportKind::Packed &&
+                          info.primary_output_name == "output_tessellated_image")
+                             ? stages::PreprocOutputSemanticKind::TessellatedImage
+                             : stages::PreprocOutputSemanticKind::Image;
   }
   if (info.output_dtype.empty()) {
     info.output_dtype = primary_logical->dtype;
@@ -396,9 +392,8 @@ inline std::vector<stages::MlaOutputTensorInfo> mla_output_tensors(const NodeGro
     info.data_type = logical.dtype;
     info.output_format = logical.layout;
     info.layout = layout_projection_from_contract_format(info.output_format);
-    info.name = first_non_empty(
-        {logical.logical_name, logical.backend_name, logical.segment_name,
-         std::string("ofm") + std::to_string(i)});
+    info.name = first_non_empty({logical.logical_name, logical.backend_name, logical.segment_name,
+                                 std::string("ofm") + std::to_string(i)});
     info.segment_name = logical.segment_name;
     if (info.segment_name.empty() && logical.physical_index >= 0 &&
         static_cast<std::size_t>(logical.physical_index) < stage->physical_outputs.size()) {
@@ -499,16 +494,15 @@ inline stages::MlaInputInfo mla_input_info(const NodeGroup& group) {
   info.logical_layout = input.logical_layout;
   info.logical_dims =
       tensor_dims_projection_from_contract_shape(input.logical_shape, input.logical_layout);
-  info.dims = input.physical_shape.has_value()
-                  ? tensor_dims_projection_from_contract_shape(*input.physical_shape,
-                                                               input.logical_layout)
-                  : info.logical_dims;
+  info.dims =
+      input.physical_shape.has_value()
+          ? tensor_dims_projection_from_contract_shape(*input.physical_shape, input.logical_layout)
+          : info.logical_dims;
   return info;
 }
 
-inline std::optional<stages::PackedTensorOutputInfo> packed_processcvu_output_info(
-    const sima::StageStaticSpec& stage,
-    bool include_batch_axis) {
+inline std::optional<stages::PackedTensorOutputInfo>
+packed_processcvu_output_info(const sima::StageStaticSpec& stage, bool include_batch_axis) {
   if (stage.logical_outputs.empty()) {
     return std::nullopt;
   }
@@ -529,9 +523,8 @@ inline std::optional<stages::PackedTensorOutputInfo> packed_processcvu_output_in
   return info;
 }
 
-inline std::optional<stages::PackedTensorOutputInfo> packed_stage_output_info(
-    const sima::StageStaticSpec& stage,
-    bool include_batch_axis) {
+inline std::optional<stages::PackedTensorOutputInfo>
+packed_stage_output_info(const sima::StageStaticSpec& stage, bool include_batch_axis) {
   if (stage.logical_outputs.empty()) {
     return std::nullopt;
   }
@@ -593,9 +586,11 @@ inline stages::DequantOutputInfo dequant_output_info(const NodeGroup& group,
       return *info;
     }
   }
-  if (const auto* stage = find_stage_in_manifest(*manifest, [](const sima::StageStaticSpec& stage) {
-        return stage.payload_kind == sima::StagePayloadKind::Dequant;
-      });
+  if (const auto* stage = find_stage_in_manifest(*manifest,
+                                                 [](const sima::StageStaticSpec& stage) {
+                                                   return stage.payload_kind ==
+                                                          sima::StagePayloadKind::Dequant;
+                                                 });
       stage) {
     const auto info = packed_processcvu_output_info(*stage, include_batch_axis);
     if (info.has_value()) {

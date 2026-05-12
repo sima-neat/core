@@ -17,8 +17,7 @@
 namespace {
 
 void require_not_contains(const std::string& haystack, const std::string& needle,
-                          const std::string& msg)
-{
+                          const std::string& msg) {
   if (haystack.find(needle) != std::string::npos) {
     throw std::runtime_error(msg + " (found unexpected: " + needle + ")");
   }
@@ -26,11 +25,9 @@ void require_not_contains(const std::string& haystack, const std::string& needle
 
 } // namespace
 
-int main()
-{
+int main() {
   try {
-    require(simaai::neat::element_exists("neatdequant"),
-            "required plugin missing (neatdequant)");
+    require(simaai::neat::element_exists("neatdequant"), "required plugin missing (neatdequant)");
 
     {
       simaai::neat::DequantOptions opt;
@@ -48,28 +45,27 @@ int main()
       simaai::neat::CompiledRuntimeContract upstream;
       upstream.logical_outputs.push_back(
           simaai::neat::pipeline_internal::sima::specbuilders::build_logical_output_static_spec(
-              0, 0, 0, 0, 0, {80, 80, 64}, "INT8", "HWC", "MLA_0_0", "MLA_0_0", "MLA_0_0", 0,
-              0, quant));
+              0, 0, 0, 0, 0, {80, 80, 64}, "INT8", "HWC", "MLA_0_0", "MLA_0_0", "MLA_0_0", 0, 0,
+              quant));
       upstream.physical_outputs.push_back(
           simaai::neat::pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
               0, 0,
-              simaai::neat::pipeline_internal::sima::specbuilders::tensor_size_bytes_from_shape_dtype(
-                  {80, 80, 64}, "INT8"),
+              simaai::neat::pipeline_internal::sima::specbuilders::
+                  tensor_size_bytes_from_shape_dtype({80, 80, 64}, "INT8"),
               simaai::neat::pipeline_internal::sima::DeviceKind::Mla, "MLA_0_0"));
       std::string error;
-      const auto compiled_contract =
-          simaai::neat::pipeline_internal::sima::stagesemantics::
-              build_dequant_compiled_contract_from_upstream(upstream, facts, &error);
+      const auto compiled_contract = simaai::neat::pipeline_internal::sima::stagesemantics::
+          build_dequant_compiled_contract_from_upstream(upstream, facts, &error);
       require(error.empty(), "model-managed dequant compiled contract error: " + error);
       opt.model_managed = true;
       opt.compiled_contract =
           std::make_shared<const simaai::neat::CompiledDequantContract>(compiled_contract);
       auto node = simaai::neat::nodes::Dequant(opt);
       const std::string frag = node->backend_fragment(7);
-      require_contains(frag, "neatdequant name=n7_dequant",
-                       "model-managed fragment name mismatch");
+      require_contains(frag, "neatdequant name=n7_dequant", "model-managed fragment name mismatch");
       require_contains(frag, "stage-id=n7_dequant", "model-managed fragment stage-id missing");
-      require_not_contains(frag, "q-scale=", "model-managed fragment must not emit standalone quant");
+      require_not_contains(frag,
+                           "q-scale=", "model-managed fragment must not emit standalone quant");
       auto* provider = dynamic_cast<const simaai::neat::NodeContractProvider*>(node.get());
       require(provider != nullptr, "model-managed dequant should expose a contract provider");
       simaai::neat::ContractCompileInput input;
@@ -105,8 +101,7 @@ int main()
               "model-managed dequant output alias mismatch");
       require(logical_output.shape == std::vector<std::int64_t>({80, 80, 64}),
               "model-managed dequant output shape mismatch");
-      require(logical_output.dtype == "FLOAT32",
-              "model-managed dequant output dtype mismatch");
+      require(logical_output.dtype == "FLOAT32", "model-managed dequant output dtype mismatch");
     }
 
     {
@@ -163,7 +158,8 @@ int main()
           std::make_shared<const simaai::neat::CompiledDequantContract>(compiled_contract);
       auto node = simaai::neat::nodes::Dequant(opt);
       auto* provider = dynamic_cast<const simaai::neat::NodeContractProvider*>(node.get());
-      require(provider != nullptr, "multi-input model-managed dequant should expose a contract provider");
+      require(provider != nullptr,
+              "multi-input model-managed dequant should expose a contract provider");
       simaai::neat::ContractCompileInput input;
       simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
       const auto compiled_pipeline =
@@ -191,7 +187,8 @@ int main()
                 "multi-input model-managed dequant should preserve logical input segment name");
         require(compiled.dequant->runtime_contract.input_bindings[i].src_physical_output_index == i,
                 "multi-input model-managed dequant should preserve source physical output index");
-        require(compiled.dequant->runtime_contract.input_bindings[i].source_segment_name == input_name,
+        require(compiled.dequant->runtime_contract.input_bindings[i].source_segment_name ==
+                    input_name,
                 "multi-input model-managed dequant should preserve source segment name");
         require(compiled.dequant->runtime_contract.physical_inputs[i].physical_index == i,
                 "multi-input model-managed dequant should preserve physical input index");
@@ -212,12 +209,10 @@ int main()
       const std::string frag = node->backend_fragment(3);
       require_contains(frag, "neatdequant name=dq0",
                        "standalone dequant fragment should use neatdequant");
-      require_contains(frag, "q-scale=0.125",
-                       "standalone dequant fragment should emit q-scale");
-      require_contains(frag, "q-zp=-7",
-                       "standalone dequant fragment should emit q-zp");
-      require_not_contains(frag, "stage-id=",
-                           "standalone dequant fragment must not emit processcvu stage-id");
+      require_contains(frag, "q-scale=0.125", "standalone dequant fragment should emit q-scale");
+      require_contains(frag, "q-zp=-7", "standalone dequant fragment should emit q-zp");
+      require_not_contains(
+          frag, "stage-id=", "standalone dequant fragment must not emit processcvu stage-id");
       auto* provider = dynamic_cast<const simaai::neat::NodeContractProvider*>(node.get());
       require(provider != nullptr, "standalone dequant should expose a contract provider");
       simaai::neat::ContractCompileInput input;

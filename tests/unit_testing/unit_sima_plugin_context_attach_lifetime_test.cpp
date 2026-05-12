@@ -30,8 +30,7 @@ GstContext* make_context_snapshot() {
   require(attach_manifest_context(pipeline, manifest, &attach_error),
           "attach_manifest_context should succeed: " + attach_error);
 
-  GstContext* context =
-      gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE);
+  GstContext* context = gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE);
   require(context != nullptr, "pipeline should expose manifest context");
   GstContext* copied = gst_context_copy(context);
   require(copied != nullptr, "gst_context_copy should succeed");
@@ -56,8 +55,8 @@ RUN_TEST("unit_sima_plugin_context_attach_lifetime_test", ([] {
 
            SimaPluginManifestLookupStatus status = SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT;
            const auto* stage = sima_plugin_manifest_context_stage_lookup_typed_checked(
-               context, "stage_attach_id", "stage_attach",
-               SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE, &status);
+               context, "stage_attach_id", "stage_attach", SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE,
+               &status);
            require(stage != nullptr, "snapshot should resolve manifest stage");
            require(status == SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_OK,
                    "snapshot lookup status mismatch");

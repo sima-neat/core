@@ -16,9 +16,11 @@
 
 namespace simaai::neat::graph::nodes {
 
-/// Callback invoked by `LambdaStage` for every incoming `StageMsg`; receives the bound `StagePorts`.
+/// Callback invoked by `LambdaStage` for every incoming `StageMsg`; receives the bound
+/// `StagePorts`.
 using LambdaOnInput = std::function<void(StageMsg&&, std::vector<StageOutMsg>&, const StagePorts&)>;
-/// Callback invoked by `LambdaStage` on each periodic tick; gets the current time in nanoseconds and the bound `StagePorts`.
+/// Callback invoked by `LambdaStage` on each periodic tick; gets the current time in nanoseconds
+/// and the bound `StagePorts`.
 using LambdaOnTick =
     std::function<void(std::int64_t, std::vector<StageOutMsg>&, const StagePorts&)>;
 

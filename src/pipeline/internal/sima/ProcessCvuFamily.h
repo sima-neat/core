@@ -28,7 +28,7 @@ namespace simaai::neat::pipeline_internal::sima {
 std::string canonical_processcvu_family_from_kernel(std::string kernel);
 
 /// Returns the canonical process-CVU family token for an internal stage-kind enum.
-std::string processcvu_graph_family_for_stage_kind(
-    ::simaai::neat::internal::ExecutionStageKind kind);
+std::string
+processcvu_graph_family_for_stage_kind(::simaai::neat::internal::ExecutionStageKind kind);
 
 } // namespace simaai::neat::pipeline_internal::sima

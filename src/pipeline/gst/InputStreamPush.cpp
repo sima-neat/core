@@ -142,7 +142,8 @@ void cache_preprocess_meta(InputStream::State& st, const Sample& msg,
   if (!meta.has_value()) {
     if (debug) {
       std::fprintf(stderr,
-                   "[PREPROC_META_TRACE] cache skip=no_meta buffer_meta=%d semantic=%d key_in=%lld key_orig=%lld storage_kind=%d\n",
+                   "[PREPROC_META_TRACE] cache skip=no_meta buffer_meta=%d semantic=%d key_in=%lld "
+                   "key_orig=%lld storage_kind=%d\n",
                    buffer_meta ? 1 : 0, tensor->semantic.preprocess.has_value() ? 1 : 0,
                    static_cast<long long>(input_seq_override.value_or(-1)),
                    static_cast<long long>(orig_input_seq_override.value_or(-1)),
@@ -157,7 +158,8 @@ void cache_preprocess_meta(InputStream::State& st, const Sample& msg,
   if (key < 0) {
     if (debug) {
       std::fprintf(stderr,
-                   "[PREPROC_META_TRACE] cache skip=no_key buffer_meta=%d semantic=%d key_in=%lld key_orig=%lld\n",
+                   "[PREPROC_META_TRACE] cache skip=no_key buffer_meta=%d semantic=%d key_in=%lld "
+                   "key_orig=%lld\n",
                    buffer_meta ? 1 : 0, tensor->semantic.preprocess.has_value() ? 1 : 0,
                    static_cast<long long>(input_seq_override.value_or(-1)),
                    static_cast<long long>(orig_input_seq_override.value_or(-1)));
@@ -166,11 +168,13 @@ void cache_preprocess_meta(InputStream::State& st, const Sample& msg,
   }
 
   std::lock_guard<std::mutex> lock(st.preprocess_meta_mu);
-  const bool inserted = st.preprocess_meta_by_input_seq.find(key) == st.preprocess_meta_by_input_seq.end();
+  const bool inserted =
+      st.preprocess_meta_by_input_seq.find(key) == st.preprocess_meta_by_input_seq.end();
   st.preprocess_meta_by_input_seq[key] = *meta;
   if (debug) {
     std::fprintf(stderr,
-                 "[PREPROC_META_TRACE] cache stored key=%lld buffer_meta=%d semantic=%d orig=%dx%d resized=%dx%d cache_size=%zu\n",
+                 "[PREPROC_META_TRACE] cache stored key=%lld buffer_meta=%d semantic=%d orig=%dx%d "
+                 "resized=%dx%d cache_size=%zu\n",
                  static_cast<long long>(key), buffer_meta ? 1 : 0,
                  tensor->semantic.preprocess.has_value() ? 1 : 0, meta->original_width,
                  meta->original_height, meta->resized_width, meta->resized_height,
@@ -203,8 +207,7 @@ void validate_spec_with_limits(const InputStream::State& st, const SampleSpec& s
     if (value <= 0 || max_val <= 0 || value <= max_val)
       return;
     std::ostringstream oss;
-    oss << tag << ": " << field << " exceeds effective max (" << value << " > " << max_val
-        << ")";
+    oss << tag << ": " << field << " exceeds effective max (" << value << " > " << max_val << ")";
     throw std::invalid_argument(oss.str());
   };
 
@@ -215,13 +218,11 @@ void validate_spec_with_limits(const InputStream::State& st, const SampleSpec& s
   }
 }
 
-std::function<void(GstBuffer**)> make_prepare_for_spec(const SampleSpec& spec, const char* where,
-                                                       GstBuffer* source_preproc_meta_buffer =
-                                                           nullptr,
-                                                       const TensorList* tensor_set_meta_tensors =
-                                                           nullptr,
-                                                       std::optional<PreprocessRuntimeMeta>
-                                                           tensor_preprocess_meta = std::nullopt) {
+std::function<void(GstBuffer**)>
+make_prepare_for_spec(const SampleSpec& spec, const char* where,
+                      GstBuffer* source_preproc_meta_buffer = nullptr,
+                      const TensorList* tensor_set_meta_tensors = nullptr,
+                      std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = std::nullopt) {
   return [spec, where, source_preproc_meta_buffer, tensor_set_meta_tensors,
           tensor_preprocess_meta](GstBuffer** buf) {
     if (!buf || !*buf) {
@@ -468,15 +469,15 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
     const bool has_tensor_set =
         gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
     std::fprintf(stderr,
-                 "[HOLDER] push_holder_buffer_with_appsrc before_push where=%s buffer=%p bytes=%zu mems=%u has_tensor_set=%d\n",
+                 "[HOLDER] push_holder_buffer_with_appsrc before_push where=%s buffer=%p bytes=%zu "
+                 "mems=%u has_tensor_set=%d\n",
                  where ? where : "<null>", static_cast<void*>(buffer),
-                 static_cast<std::size_t>(gst_buffer_get_size(buffer)),
-                 gst_buffer_n_memory(buffer), has_tensor_set ? 1 : 0);
+                 static_cast<std::size_t>(gst_buffer_get_size(buffer)), gst_buffer_n_memory(buffer),
+                 has_tensor_set ? 1 : 0);
   }
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buffer);
   if (holder_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[HOLDER] push_holder_buffer_with_appsrc after_push where=%s ret=%d\n",
+    std::fprintf(stderr, "[HOLDER] push_holder_buffer_with_appsrc after_push where=%s ret=%d\n",
                  where ? where : "<null>", static_cast<int>(ret));
   }
   const auto t_push_end = std::chrono::steady_clock::now();
@@ -492,12 +493,13 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
   if (inputstream_push_timing_enabled()) {
     const auto push_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end - t_push_start).count();
-    std::fprintf(stderr,
-                 "[INPUTSTREAM_PUSH_TIMING] %s holder_push_buffer_ns=%lld bytes=%zu ret=%d record=%d\n",
-                 where ? where : "InputStream::push_holder_buffer_with_appsrc",
-                 static_cast<long long>(push_ns),
-                 static_cast<std::size_t>(buffer ? gst_buffer_get_size(buffer) : 0U),
-                 static_cast<int>(ret), record_timings ? 1 : 0);
+    std::fprintf(
+        stderr,
+        "[INPUTSTREAM_PUSH_TIMING] %s holder_push_buffer_ns=%lld bytes=%zu ret=%d record=%d\n",
+        where ? where : "InputStream::push_holder_buffer_with_appsrc",
+        static_cast<long long>(push_ns),
+        static_cast<std::size_t>(buffer ? gst_buffer_get_size(buffer) : 0U), static_cast<int>(ret),
+        record_timings ? 1 : 0);
   }
   if (ret != GST_FLOW_OK) {
     release_input_buffer_on_push_fail(buffer, push_fail_unref_tag);
@@ -526,8 +528,8 @@ GstSample* holder_as_gstsample(const std::shared_ptr<void>& holder) {
 }
 
 bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, GstBuffer* buffer,
-                                    const char* where, bool record_timings,
-                                    const Sample* fail_msg, const SampleSpec* fail_spec,
+                                    const char* where, bool record_timings, const Sample* fail_msg,
+                                    const SampleSpec* fail_spec,
                                     const std::optional<int64_t>& input_seq_override,
                                     const std::optional<int64_t>& orig_input_seq_override) {
   std::chrono::steady_clock::time_point t_push_start{};
@@ -538,15 +540,15 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
     const bool has_tensor_set =
         buffer && gst_buffer_get_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME) != nullptr;
     std::fprintf(stderr,
-                 "[HOLDER] push_holder_sample_with_appsrc before_push where=%s sample=%p buffer=%p bytes=%zu mems=%u has_tensor_set=%d\n",
+                 "[HOLDER] push_holder_sample_with_appsrc before_push where=%s sample=%p buffer=%p "
+                 "bytes=%zu mems=%u has_tensor_set=%d\n",
                  where ? where : "<null>", static_cast<void*>(sample), static_cast<void*>(buffer),
                  static_cast<std::size_t>(buffer ? gst_buffer_get_size(buffer) : 0U),
                  buffer ? gst_buffer_n_memory(buffer) : 0U, has_tensor_set ? 1 : 0);
   }
   GstFlowReturn ret = gst_app_src_push_sample(GST_APP_SRC(st.appsrc), sample);
   if (holder_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[HOLDER] push_holder_sample_with_appsrc after_push where=%s ret=%d\n",
+    std::fprintf(stderr, "[HOLDER] push_holder_sample_with_appsrc after_push where=%s ret=%d\n",
                  where ? where : "<null>", static_cast<int>(ret));
   }
   const auto t_push_end = std::chrono::steady_clock::now();
@@ -562,12 +564,13 @@ bool push_holder_sample_with_appsrc(InputStream::State& st, GstSample* sample, G
   if (inputstream_push_timing_enabled()) {
     const auto push_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end - t_push_start).count();
-    std::fprintf(stderr,
-                 "[INPUTSTREAM_PUSH_TIMING] %s holder_push_sample_ns=%lld bytes=%zu ret=%d record=%d\n",
-                 where ? where : "InputStream::push_holder_sample_with_appsrc",
-                 static_cast<long long>(push_ns),
-                 static_cast<std::size_t>(buffer ? gst_buffer_get_size(buffer) : 0U),
-                 static_cast<int>(ret), record_timings ? 1 : 0);
+    std::fprintf(
+        stderr,
+        "[INPUTSTREAM_PUSH_TIMING] %s holder_push_sample_ns=%lld bytes=%zu ret=%d record=%d\n",
+        where ? where : "InputStream::push_holder_sample_with_appsrc",
+        static_cast<long long>(push_ns),
+        static_cast<std::size_t>(buffer ? gst_buffer_get_size(buffer) : 0U), static_cast<int>(ret),
+        record_timings ? 1 : 0);
   }
   if (ret != GST_FLOW_OK) {
     if (record_timings) {
@@ -620,7 +623,8 @@ bool sima_meta_fields_need_update(GstBuffer* buffer,
   if (orig_input_seq_override.has_value()) {
     if (int64_mismatch("orig-input-seq", *orig_input_seq_override))
       return true;
-  } else if (input_seq_override.has_value() && int64_mismatch("orig-input-seq", *input_seq_override)) {
+  } else if (input_seq_override.has_value() &&
+             int64_mismatch("orig-input-seq", *input_seq_override)) {
     return true;
   }
   if (stream_id_override.has_value()) {
@@ -636,15 +640,16 @@ bool sima_meta_fields_need_update(GstBuffer* buffer,
   return false;
 }
 
-bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& holder, const char* where,
-                           bool record_timings,
+bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& holder,
+                           const char* where, bool record_timings,
                            const std::optional<int64_t>& frame_id_override,
                            const std::optional<int64_t>& input_seq_override,
                            const std::optional<int64_t>& orig_input_seq_override,
                            const std::optional<std::string>& stream_id_override,
                            const std::optional<std::string>& buffer_name_override,
                            const std::optional<uint64_t>& timestamp_override,
-                           const Sample* fail_msg = nullptr, const SampleSpec* fail_spec = nullptr) {
+                           const Sample* fail_msg = nullptr,
+                           const SampleSpec* fail_spec = nullptr) {
   GstBuffer* buf = pipeline_internal::buffer_from_tensor_holder(holder);
   if (!buf) {
     throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
@@ -654,9 +659,9 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   const bool preproc_trace = pipeline_internal::env_bool("SIMA_PREPROC_META_TRACE", false);
   if (preproc_trace) {
     std::fprintf(stderr,
-                 "[PREPROC_META_TRACE] holder before meta where=%s has_sima_meta=%d has_preproc=%d key_in=%lld key_orig=%lld mems=%u size=%zu\n",
-                 where ? where : "<null>",
-                 gst_buffer_get_custom_meta(buf, "GstSimaMeta") ? 1 : 0,
+                 "[PREPROC_META_TRACE] holder before meta where=%s has_sima_meta=%d has_preproc=%d "
+                 "key_in=%lld key_orig=%lld mems=%u size=%zu\n",
+                 where ? where : "<null>", gst_buffer_get_custom_meta(buf, "GstSimaMeta") ? 1 : 0,
                  has_simaai_preprocess_meta(buf) ? 1 : 0,
                  static_cast<long long>(input_seq_override.value_or(-1)),
                  static_cast<long long>(orig_input_seq_override.value_or(-1)),
@@ -699,11 +704,11 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
     const bool has_orig_input_seq =
         s && gst_structure_get_int64(s, "orig-input-seq", &orig_input_seq);
     std::fprintf(stderr,
-                 "[PREPROC_META_TRACE] holder after meta where=%s has_sima_meta=%d has_preproc=%d has_input_seq=%d input_seq=%lld has_orig=%d orig=%lld\n",
-                 where ? where : "<null>", meta ? 1 : 0,
-                 has_simaai_preprocess_meta(buf) ? 1 : 0, has_input_seq ? 1 : 0,
-                 static_cast<long long>(input_seq), has_orig_input_seq ? 1 : 0,
-                 static_cast<long long>(orig_input_seq));
+                 "[PREPROC_META_TRACE] holder after meta where=%s has_sima_meta=%d has_preproc=%d "
+                 "has_input_seq=%d input_seq=%lld has_orig=%d orig=%lld\n",
+                 where ? where : "<null>", meta ? 1 : 0, has_simaai_preprocess_meta(buf) ? 1 : 0,
+                 has_input_seq ? 1 : 0, static_cast<long long>(input_seq),
+                 has_orig_input_seq ? 1 : 0, static_cast<long long>(orig_input_seq));
   }
   if (st.current_key.has_value()) {
     const CapKey& key = *st.current_key;
@@ -720,7 +725,8 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
     if (has_tensor_set) {
       if (holder_debug_enabled()) {
         std::fprintf(stderr,
-                     "[HOLDER] push_holder_transport tensor-set buffer path where=%s sample=%p buffer=%p bytes=%zu mems=%u\n",
+                     "[HOLDER] push_holder_transport tensor-set buffer path where=%s sample=%p "
+                     "buffer=%p bytes=%zu mems=%u\n",
                      where ? where : "<null>", static_cast<void*>(sample), static_cast<void*>(buf),
                      static_cast<std::size_t>(gst_buffer_get_size(buf)),
                      static_cast<unsigned>(gst_buffer_n_memory(buf)));
@@ -736,8 +742,7 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
     GstSample* writable_sample = nullptr;
     if (gst_sample_get_buffer(sample) != buf) {
       writable_sample =
-          gst_sample_new(buf, gst_sample_get_caps(sample), gst_sample_get_segment(sample),
-                         nullptr);
+          gst_sample_new(buf, gst_sample_get_caps(sample), gst_sample_get_segment(sample), nullptr);
       sample_to_push = writable_sample ? writable_sample : sample;
     }
     const bool pushed =
@@ -961,8 +966,7 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, ts_override, st.src_opt,
-                                          st.pool_guard,
-                                          "InputStream::try_push_message(holder)");
+                                          st.pool_guard, "InputStream::try_push_message(holder)");
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -989,8 +993,7 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, ts_override, st.src_opt,
-                                          st.pool_guard,
-                                          "InputStream::try_push_message(holder)");
+                                          st.pool_guard, "InputStream::try_push_message(holder)");
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -1012,14 +1015,12 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
   return out;
 }
 
-CpuZeroCopyFastPathResult
-try_push_message_cpu_owned_zero_copy_fastpath(
+CpuZeroCopyFastPathResult try_push_message_cpu_owned_zero_copy_fastpath(
     InputStream::State& st, const Sample& msg, const simaai::neat::Tensor& input,
     const SampleSpec& spec, CapsDecision decision, const MessageMetaOverrides& meta,
     const std::optional<int64_t>& input_seq_override,
     const std::optional<int64_t>& orig_input_seq_override,
-    const std::optional<uint64_t>& ts_override,
-    const std::function<void(GstBuffer**)>& prepare) {
+    const std::optional<uint64_t>& ts_override, const std::function<void(GstBuffer**)>& prepare) {
   CpuZeroCopyFastPathResult out;
 
   // Keep v1 surgical: only bypass the memcpy for stable caps/push frames and
@@ -1030,8 +1031,8 @@ try_push_message_cpu_owned_zero_copy_fastpath(
   }
 
   const bool timing = inputstream_push_timing_enabled();
-  const auto t0 = timing ? std::chrono::steady_clock::now()
-                         : std::chrono::steady_clock::time_point{};
+  const auto t0 =
+      timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
 
   GstBuffer* buf = nullptr;
   std::string wrap_err;
@@ -1042,24 +1043,22 @@ try_push_message_cpu_owned_zero_copy_fastpath(
   }
   BufferUnrefGuard guard(&buf, "InputStream::try_push_message:cpu_zc_guard");
 
-  const auto t_wrap = timing ? std::chrono::steady_clock::now()
-                             : std::chrono::steady_clock::time_point{};
+  const auto t_wrap =
+      timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   try {
     if (prepare) {
       prepare(&buf);
     }
 
-    buf = attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard,
-                                     "InputStream::try_push_message(cpu_zc)",
-                                     meta.frame_id, StreamIdOverride{meta.stream_id},
-                                     BufferNameOverride{meta.stream_label});
+    buf = attach_simaai_meta_inplace(
+        buf, st.src_opt, st.pool_guard, "InputStream::try_push_message(cpu_zc)", meta.frame_id,
+        StreamIdOverride{meta.stream_id}, BufferNameOverride{meta.stream_label});
     if (!buf) {
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to attach GstSimaMeta");
     }
-    if (!update_simaai_meta_fields(buf, meta.frame_id, input_seq_override,
-                                   orig_input_seq_override, meta.stream_id, meta.stream_label,
-                                   ts_override)) {
+    if (!update_simaai_meta_fields(buf, meta.frame_id, input_seq_override, orig_input_seq_override,
+                                   meta.stream_id, meta.stream_label, ts_override)) {
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to write GstSimaMeta fields");
     }
@@ -1076,27 +1075,26 @@ try_push_message_cpu_owned_zero_copy_fastpath(
     return out;
   }
 
-  const auto t_meta = timing ? std::chrono::steady_clock::now()
-                             : std::chrono::steady_clock::time_point{};
+  const auto t_meta =
+      timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   guard.release();
   const bool pushed = push_holder_buffer_with_appsrc(
       st, buf, "InputStream::try_push_message(cpu_zc)",
       "InputStream::try_push_message:cpu_zc_push_fail",
       /*record_timings=*/st.timing_enabled, /*log_refcount_on_push=*/false, &msg, &spec,
       input_seq_override, orig_input_seq_override);
-  const auto t_end = timing ? std::chrono::steady_clock::now()
-                            : std::chrono::steady_clock::time_point{};
+  const auto t_end =
+      timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   if (timing) {
-    const auto wrap_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t_wrap - t0).count();
+    const auto wrap_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t_wrap - t0).count();
     const auto meta_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t_meta - t_wrap).count();
     const auto push_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t_meta).count();
-    const auto total_ns =
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t0).count();
+    const auto total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t_end - t0).count();
     std::fprintf(stderr,
-                 "[INPUTSTREAM_PUSH_TIMING] cpu_zc wrap_ns=%lld meta_ns=%lld push_ns=%lld total_ns=%lld bytes=%zu ok=%d\n",
+                 "[INPUTSTREAM_PUSH_TIMING] cpu_zc wrap_ns=%lld meta_ns=%lld push_ns=%lld "
+                 "total_ns=%lld bytes=%zu ok=%d\n",
                  static_cast<long long>(wrap_ns), static_cast<long long>(meta_ns),
                  static_cast<long long>(push_ns), static_cast<long long>(total_ns),
                  static_cast<std::size_t>(spec.required_bytes_actual), pushed ? 1 : 0);
@@ -1185,8 +1183,9 @@ void InputStream::push_message(const Sample& msg) {
 
 bool InputStream::try_push_message(const Sample& msg) {
   const bool inputstream_top_timing = inputstream_push_timing_enabled();
-  const auto inputstream_top_start = inputstream_top_timing ? std::chrono::steady_clock::now()
-                                                            : std::chrono::steady_clock::time_point{};
+  const auto inputstream_top_start = inputstream_top_timing
+                                         ? std::chrono::steady_clock::now()
+                                         : std::chrono::steady_clock::time_point{};
   if (!state_ || !state_->pipeline) {
     throw std::runtime_error("InputStream::try_push_message: stream is closed");
   }
@@ -1212,10 +1211,10 @@ bool InputStream::try_push_message(const Sample& msg) {
       sample_has_tensor_list(transport_msg) && !transport_msg.tensors.empty()
           ? &transport_msg.tensors.front()
           : nullptr;
-  const std::optional<uint64_t> ts_override = transport_msg.pts_ns >= 0
-                                                  ? std::optional<uint64_t>(
-                                                        static_cast<uint64_t>(transport_msg.pts_ns))
-                                                  : std::nullopt;
+  const std::optional<uint64_t> ts_override =
+      transport_msg.pts_ns >= 0
+          ? std::optional<uint64_t>(static_cast<uint64_t>(transport_msg.pts_ns))
+          : std::nullopt;
   cache_preprocess_meta(*st, transport_msg, seq.input_seq, seq.orig_input_seq);
   SampleSpec spec = derive_sample_spec_or_throw(transport_msg);
   const bool use_tensor_envelope_transport = spec.tensor_envelope_transport;
@@ -1255,7 +1254,8 @@ bool InputStream::try_push_message(const Sample& msg) {
 
   if (use_tensor_envelope_transport) {
     if (decision != CapsDecision::Push) {
-      throw std::runtime_error("InputStream::try_push_message: tensor envelope caps change not supported");
+      throw std::runtime_error(
+          "InputStream::try_push_message: tensor envelope caps change not supported");
     }
     Sample envelope = msg;
     if (meta.frame_id.has_value()) {
@@ -1273,33 +1273,40 @@ bool InputStream::try_push_message(const Sample& msg) {
     if (meta.stream_label.has_value() && envelope.stream_label.empty()) {
       envelope.stream_label = *meta.stream_label;
     }
-    const auto inputstream_before_envelope = inputstream_top_timing ? std::chrono::steady_clock::now()
-                                                                    : std::chrono::steady_clock::time_point{};
+    const auto inputstream_before_envelope = inputstream_top_timing
+                                                 ? std::chrono::steady_clock::now()
+                                                 : std::chrono::steady_clock::time_point{};
     std::string err;
-    auto holder = pipeline_internal::sample_to_gst_envelope_holder(
-        envelope, &err, allow_zero_copy_transport);
-    const auto inputstream_after_envelope = inputstream_top_timing ? std::chrono::steady_clock::now()
-                                                                   : std::chrono::steady_clock::time_point{};
+    auto holder =
+        pipeline_internal::sample_to_gst_envelope_holder(envelope, &err, allow_zero_copy_transport);
+    const auto inputstream_after_envelope = inputstream_top_timing
+                                                ? std::chrono::steady_clock::now()
+                                                : std::chrono::steady_clock::time_point{};
     if (!holder) {
       throw std::runtime_error(
           err.empty() ? "InputStream::try_push_message: tensor envelope conversion failed" : err);
     }
-    const bool ok = push_holder_transport(*st, holder, "InputStream::try_push_message(holder_envelope)",
-                                          /*record_timings=*/st->timing_enabled, meta.frame_id,
-                                          seq.input_seq, seq.orig_input_seq, meta.stream_id,
-                                          meta.stream_label, ts_override, &transport_msg, &spec);
+    const bool ok = push_holder_transport(
+        *st, holder, "InputStream::try_push_message(holder_envelope)",
+        /*record_timings=*/st->timing_enabled, meta.frame_id, seq.input_seq, seq.orig_input_seq,
+        meta.stream_id, meta.stream_label, ts_override, &transport_msg, &spec);
     if (inputstream_top_timing) {
       const auto inputstream_end = std::chrono::steady_clock::now();
       const auto pre_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              inputstream_before_envelope - inputstream_top_start).count();
+                              inputstream_before_envelope - inputstream_top_start)
+                              .count();
       const auto envelope_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                   inputstream_after_envelope - inputstream_before_envelope).count();
+                                   inputstream_after_envelope - inputstream_before_envelope)
+                                   .count();
       const auto push_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                               inputstream_end - inputstream_after_envelope).count();
+                               inputstream_end - inputstream_after_envelope)
+                               .count();
       const auto total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                inputstream_end - inputstream_top_start).count();
+                                inputstream_end - inputstream_top_start)
+                                .count();
       std::fprintf(stderr,
-                   "[INPUTSTREAM_PUSH_TIMING] try_push_message_tensor_envelope pre_ns=%lld envelope_ns=%lld push_transport_ns=%lld total_ns=%lld ok=%d\n",
+                   "[INPUTSTREAM_PUSH_TIMING] try_push_message_tensor_envelope pre_ns=%lld "
+                   "envelope_ns=%lld push_transport_ns=%lld total_ns=%lld ok=%d\n",
                    static_cast<long long>(pre_ns), static_cast<long long>(envelope_ns),
                    static_cast<long long>(push_ns), static_cast<long long>(total_ns), ok ? 1 : 0);
     }
@@ -1317,9 +1324,8 @@ bool InputStream::try_push_message(const Sample& msg) {
 
   HolderFastPathResult holder_result;
   if (allow_zero_copy_transport) {
-    holder_result = try_push_message_holder_fastpath(*st, msg, input, spec, decision, meta,
-                                                     seq.input_seq, seq.orig_input_seq,
-                                                     ts_override);
+    holder_result = try_push_message_holder_fastpath(
+        *st, msg, input, spec, decision, meta, seq.input_seq, seq.orig_input_seq, ts_override);
   }
   if (holder_result.handled.has_value()) {
     return *holder_result.handled;
@@ -1341,7 +1347,8 @@ bool InputStream::try_push_message(const Sample& msg) {
   const size_t input_bytes = spec.required_bytes_actual;
   GstBuffer* source_preproc_meta_buffer = nullptr;
   if (input.storage && input.storage->holder) {
-    source_preproc_meta_buffer = pipeline_internal::buffer_from_tensor_holder(input.storage->holder);
+    source_preproc_meta_buffer =
+        pipeline_internal::buffer_from_tensor_holder(input.storage->holder);
   }
   const TensorList* tensor_set_meta_tensors =
       sample_has_tensor_list(transport_msg) ? &transport_msg.tensors : nullptr;
@@ -1392,9 +1399,9 @@ bool InputStream::try_push_message(const Sample& msg) {
         push_fail_context(where, msg, spec, st->src_opt, seq.input_seq, seq.orig_input_seq);
     where = where_detail.c_str();
   }
-  const bool pushed =
-      push_with_fill(where, fill, input_bytes, meta.frame_id, seq.input_seq, seq.orig_input_seq,
-                     meta.stream_id, meta.stream_label, ts_override, prepare, spec.width, spec.height);
+  const bool pushed = push_with_fill(where, fill, input_bytes, meta.frame_id, seq.input_seq,
+                                     seq.orig_input_seq, meta.stream_id, meta.stream_label,
+                                     ts_override, prepare, spec.width, spec.height);
   if (pushed) {
     maybe_drop_holder_after_push(input, "InputStream::try_push_message(copy)");
   }

@@ -23,20 +23,17 @@ struct DequantCanonicalFacts {
   std::optional<QuantStaticSpec> input_quant;
 };
 
-CompiledDequantContract build_dequant_compiled_contract_from_facts(
-    const DequantCanonicalFacts& facts);
-CompiledDequantContract build_dequant_compiled_contract_from_upstream(
-    const CompiledRuntimeContract& upstream,
-    const DequantCanonicalFacts& facts,
-    std::string* err);
+CompiledDequantContract
+build_dequant_compiled_contract_from_facts(const DequantCanonicalFacts& facts);
+CompiledDequantContract
+build_dequant_compiled_contract_from_upstream(const CompiledRuntimeContract& upstream,
+                                              const DequantCanonicalFacts& facts, std::string* err);
 
-bool build_dequant_node_contract(const std::string& node_kind,
-                                 const std::string& plugin_kind,
+bool build_dequant_node_contract(const std::string& node_kind, const std::string& plugin_kind,
                                  const std::string& element_name,
                                  const std::string& logical_stage_id,
                                  const NodeContractDefinition& definition,
-                                 const CompiledDequantContract& compiled,
-                                 CompiledNodeContract* out,
+                                 const CompiledDequantContract& compiled, CompiledNodeContract* out,
                                  std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima::stagesemantics

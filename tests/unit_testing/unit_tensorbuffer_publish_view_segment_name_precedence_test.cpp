@@ -87,64 +87,71 @@ struct PublishStageFixture {
 
 } // namespace
 
-RUN_TEST("unit_tensorbuffer_publish_view_segment_name_precedence_test", ([] {
-  ensure_tensor_set_meta_registered();
+RUN_TEST(
+    "unit_tensorbuffer_publish_view_segment_name_precedence_test", ([] {
+      ensure_tensor_set_meta_registered();
 
-  auto parent = make_source_buffer(48U, 0x11);
-  auto rgb = make_source_buffer(16U, 0x22);
-  auto tess = make_source_buffer(16U, 0x33);
+      auto parent = make_source_buffer(48U, 0x11);
+      auto rgb = make_source_buffer(16U, 0x22);
+      auto tess = make_source_buffer(16U, 0x33);
 
-  std::vector<simaai::gst::TensorBufferBuildSegment> segments = {
-      {"__processcvu_parent__", parent.get(), 48U},
-      {"output_rgb_image", rgb.get(), 16U},
-      {"output_tessellated_image", tess.get(), 16U},
-  };
+      std::vector<simaai::gst::TensorBufferBuildSegment> segments = {
+          {"__processcvu_parent__", parent.get(), 48U},
+          {"output_rgb_image", rgb.get(), 16U},
+          {"output_tessellated_image", tess.get(), 16U},
+      };
 
-  GstBuffer* raw_buffer = nullptr;
-  std::string err;
-  require(simaai::gst::tensor_buffer_build_segmented_buffer(segments, &raw_buffer, &err),
-          std::string("failed to build segmented buffer: ") + err);
-  GstBufferPtr buffer(raw_buffer, &gst_buffer_unref);
+      GstBuffer* raw_buffer = nullptr;
+      std::string err;
+      require(simaai::gst::tensor_buffer_build_segmented_buffer(segments, &raw_buffer, &err),
+              std::string("failed to build segmented buffer: ") + err);
+      GstBufferPtr buffer(raw_buffer, &gst_buffer_unref);
 
-  PublishStageFixture fixture;
-  simaai::gst::TensorBufferView publish_view;
-  err.clear();
-  require(simaai::gst::tensor_buffer_build_publish_view(
-              buffer.get(), fixture.stage,
-              simaai::gst::TensorBufferProducerKind::ProcessCvu, &publish_view, &err),
-          std::string("failed to build publish view: ") + err);
-  require(publish_view.segments.size() == 3U, "publish view should preserve parent/rgb/tess segments");
-  require(publish_view.tensors.size() == 1U, "publish view should expose one logical tensor");
-  require(publish_view.segments[1].name == "output_rgb_image",
-          "publish view should preserve rgb runtime segment name");
-  require(publish_view.segments[2].name == "output_tessellated_image",
-          "publish view should preserve tess runtime segment name");
-  require(publish_view.tensors.front().memory_index == 2,
-          "publish view should resolve exposed tess handoff by runtime segment name before physical index");
-  require(publish_view.tensors.front().segment_name == "output_tessellated_image",
-          "publish view should preserve tess handoff segment name");
+      PublishStageFixture fixture;
+      simaai::gst::TensorBufferView publish_view;
+      err.clear();
+      require(simaai::gst::tensor_buffer_build_publish_view(
+                  buffer.get(), fixture.stage, simaai::gst::TensorBufferProducerKind::ProcessCvu,
+                  &publish_view, &err),
+              std::string("failed to build publish view: ") + err);
+      require(publish_view.segments.size() == 3U,
+              "publish view should preserve parent/rgb/tess segments");
+      require(publish_view.tensors.size() == 1U, "publish view should expose one logical tensor");
+      require(publish_view.segments[1].name == "output_rgb_image",
+              "publish view should preserve rgb runtime segment name");
+      require(publish_view.segments[2].name == "output_tessellated_image",
+              "publish view should preserve tess runtime segment name");
+      require(publish_view.tensors.front().memory_index == 2,
+              "publish view should resolve exposed tess handoff by runtime segment name before "
+              "physical index");
+      require(publish_view.tensors.front().segment_name == "output_tessellated_image",
+              "publish view should preserve tess handoff segment name");
 
-  err.clear();
-  require(simaai::gst::tensor_buffer_attach_meta(buffer.get(), publish_view, &err),
-          std::string("failed to attach tensorbuffer meta: ") + err);
+      err.clear();
+      require(simaai::gst::tensor_buffer_attach_meta(buffer.get(), publish_view, &err),
+              std::string("failed to attach tensorbuffer meta: ") + err);
 
-  simaai::gst::TensorBufferView roundtrip;
-  err.clear();
-  require(simaai::gst::tensor_buffer_create_view(buffer.get(), nullptr, &roundtrip, &err),
-          std::string("failed to recreate tensorbuffer view: ") + err);
-  require(roundtrip.segments.size() == 3U, "roundtrip view should preserve runtime segment count");
-  require(roundtrip.segments[1].name == "output_rgb_image",
-          "roundtrip view should not rename rgb segment to tess handoff");
-  require(roundtrip.segments[2].name == "output_tessellated_image",
-          "roundtrip view should preserve tess runtime segment name");
-  require(roundtrip.tensors.size() == 1U, "roundtrip view should expose one logical tensor");
-  require(roundtrip.tensors.front().memory_index == 2,
+      simaai::gst::TensorBufferView roundtrip;
+      err.clear();
+      require(simaai::gst::tensor_buffer_create_view(buffer.get(), nullptr, &roundtrip, &err),
+              std::string("failed to recreate tensorbuffer view: ") + err);
+      require(roundtrip.segments.size() == 3U,
+              "roundtrip view should preserve runtime segment count");
+      require(roundtrip.segments[1].name == "output_rgb_image",
+              "roundtrip view should not rename rgb segment to tess handoff");
+      require(roundtrip.segments[2].name == "output_tessellated_image",
+              "roundtrip view should preserve tess runtime segment name");
+      require(roundtrip.tensors.size() == 1U, "roundtrip view should expose one logical tensor");
+      require(
+          roundtrip.tensors.front().memory_index == 2,
           "roundtrip view should keep the tess logical tensor bound to the tess runtime segment");
-  require(roundtrip.tensors.front().segment_name == "output_tessellated_image",
-          "roundtrip view should preserve tess logical segment name");
-  require(roundtrip.tensors.front().memory_index >= 0 &&
-              static_cast<std::size_t>(roundtrip.tensors.front().memory_index) < roundtrip.segments.size() &&
-              roundtrip.segments[static_cast<std::size_t>(roundtrip.tensors.front().memory_index)].name ==
-                  roundtrip.tensors.front().segment_name,
+      require(roundtrip.tensors.front().segment_name == "output_tessellated_image",
+              "roundtrip view should preserve tess logical segment name");
+      require(
+          roundtrip.tensors.front().memory_index >= 0 &&
+              static_cast<std::size_t>(roundtrip.tensors.front().memory_index) <
+                  roundtrip.segments.size() &&
+              roundtrip.segments[static_cast<std::size_t>(roundtrip.tensors.front().memory_index)]
+                      .name == roundtrip.tensors.front().segment_name,
           "roundtrip view should keep memory index and segment name aligned");
-}));
+    }));

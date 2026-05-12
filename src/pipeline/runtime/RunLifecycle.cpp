@@ -329,10 +329,10 @@ void Run::close() {
           << " renegotiations=" << is.renegotiations << " alloc_grows=" << is.alloc_grows
           << " growth_blocked=" << is.growth_blocked
           << " renegotiation_blocked=" << is.renegotiation_blocked
-          << " avg_alloc_us=" << is.avg_alloc_us
-          << " avg_map_us=" << is.avg_map_us << " avg_copy_us=" << is.avg_copy_us
-          << " avg_push_us=" << is.avg_push_us << " avg_pull_wait_us=" << is.avg_pull_wait_us
-          << " avg_decode_us=" << is.avg_decode_us << "\n";
+          << " avg_alloc_us=" << is.avg_alloc_us << " avg_map_us=" << is.avg_map_us
+          << " avg_copy_us=" << is.avg_copy_us << " avg_push_us=" << is.avg_push_us
+          << " avg_pull_wait_us=" << is.avg_pull_wait_us << " avg_decode_us=" << is.avg_decode_us
+          << "\n";
 
       if (!st_ref.diag_sysinfo.empty()) {
         oss << "System: " << st_ref.diag_sysinfo << "\n";

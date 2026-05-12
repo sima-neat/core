@@ -28,13 +28,13 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct UdpH264OutputGroupOptions {
-  std::string h264_caps;        ///< Optional caps string applied to the H.264 elementary stream.
-  int payload_type = 96;        ///< RTP payload type number for H.264.
-  int config_interval = 1;      ///< SPS/PPS repeat interval (seconds).
+  std::string h264_caps;   ///< Optional caps string applied to the H.264 elementary stream.
+  int payload_type = 96;   ///< RTP payload type number for H.264.
+  int config_interval = 1; ///< SPS/PPS repeat interval (seconds).
   std::string udp_host = "127.0.0.1"; ///< Destination UDP host.
-  int udp_port = 5000;          ///< Destination UDP port.
-  bool udp_sync = false;        ///< Pass `sync` to the underlying `udpsink` element.
-  bool udp_async = false;       ///< Pass `async` to the underlying `udpsink` element.
+  int udp_port = 5000;                ///< Destination UDP port.
+  bool udp_sync = false;              ///< Pass `sync` to the underlying `udpsink` element.
+  bool udp_async = false;             ///< Pass `async` to the underlying `udpsink` element.
 };
 
 /**

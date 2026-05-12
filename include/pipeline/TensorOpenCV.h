@@ -30,8 +30,8 @@ namespace simaai::neat {
  *             explicitly when CPU placement is intended.
  */
 [[deprecated("Use from_cv_mat(mat, fmt, TensorMemory::EV74/CPU/MLA); "
-             "from_cv_mat(mat, fmt) defaults to EV74 placement.")]]
-Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only);
+             "from_cv_mat(mat, fmt) defaults to EV74 placement.")]] Tensor
+from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only);
 
 Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt = ImageSpec::PixelFormat::BGR,
                    TensorMemory memory = TensorMemory::EV74);

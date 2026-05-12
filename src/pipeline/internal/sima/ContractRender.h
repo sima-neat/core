@@ -34,8 +34,8 @@ namespace simaai::neat {
  * @return The rendered manifest, or `std::nullopt` if a fatal error occurred (see `diagnostics`).
  */
 std::optional<pipeline_internal::sima::SimaPluginStaticManifest>
-render_manifest_from_compiled_contracts(const CompiledPipelineContracts& compiled,
-                                        const ContractCompileInput& compile_input,
-                                        pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics);
+render_manifest_from_compiled_contracts(
+    const CompiledPipelineContracts& compiled, const ContractCompileInput& compile_input,
+    pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics);
 
 } // namespace simaai::neat

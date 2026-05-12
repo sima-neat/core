@@ -50,7 +50,8 @@ RUN_TEST(
         const auto convert =
             g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::VideoConvert(), "convert"));
         const auto stage = g.add(sima_test::make_stage_passthrough("stage"));
-        const auto sink = g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Output(), "sink"));
+        const auto sink =
+            g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Output(), "sink"));
         g.connect(src, convert);
         g.connect(convert, stage);
         g.connect(stage, sink);
@@ -72,7 +73,8 @@ RUN_TEST(
       {
         Graph g;
         const auto stage = g.add(sima_test::make_stage_passthrough("stage"));
-        const auto sink = g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Output(), "sink"));
+        const auto sink =
+            g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Output(), "sink"));
         const auto src = g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Input(), "src"));
         const auto convert =
             g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::VideoConvert(), "convert"));

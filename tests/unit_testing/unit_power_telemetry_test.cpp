@@ -62,8 +62,8 @@ public:
 
 void require_near(double actual, double expected, const std::string& label) {
   const double diff = std::abs(actual - expected);
-  require(diff < 1e-9, label + " expected=" + std::to_string(expected) +
-                           " actual=" + std::to_string(actual));
+  require(diff < 1e-9,
+          label + " expected=" + std::to_string(expected) + " actual=" + std::to_string(actual));
 }
 
 } // namespace
@@ -78,8 +78,7 @@ RUN_TEST("unit_power_telemetry_test", ([] {
                    "expected 0x4f page0 rail first");
            require(rails[0].iout_exponent == -3 && rails[0].pout_exponent == -2,
                    "expected special SoC/DDR current/power exponents");
-           require(rails[4].i2c_addr == 0x4d && rails[4].page == 0x00,
-                   "expected 0x4d page0 rail");
+           require(rails[4].i2c_addr == 0x4d && rails[4].page == 0x00, "expected 0x4d page0 rail");
            require(rails[4].iout_exponent == -3 && rails[4].pout_exponent == -2,
                    "expected special MLA current/power exponents");
            const auto convenience = modalix_som_power_monitor_options(50);
@@ -93,9 +92,9 @@ RUN_TEST("unit_power_telemetry_test", ([] {
            require(dvt_rails[0].i2c_bus == 4 && dvt_rails[0].i2c_addr == 0x4d &&
                        dvt_rails[0].page == 0x00,
                    "expected stable DVT PMIC 0x4d page0 on bus 4");
-           require(dvt_rails[0].pout_exponent == -2,
-                   "expected verified DVT page0 POUT exponent");
-           const auto auto_options = board_power_monitor_options(75, PowerMonitorProfile::ModalixDvt);
+           require(dvt_rails[0].pout_exponent == -2, "expected verified DVT page0 POUT exponent");
+           const auto auto_options =
+               board_power_monitor_options(75, PowerMonitorProfile::ModalixDvt);
            require(auto_options.enabled && auto_options.sample_interval_ms == 75 &&
                        auto_options.profile == PowerMonitorProfile::ModalixDvt &&
                        auto_options.rails.size() == dvt_rails.size(),
@@ -113,7 +112,7 @@ RUN_TEST("unit_power_telemetry_test", ([] {
            options.rails = {rails[0], rails[1]};
 
            auto fake = std::make_shared<FakeI2cBackend>();
-           fake->regs[{3, 0x4f, 0x00, 0x96}] = 8;   // page0: 8 * 2^-2 = 2 W
+           fake->regs[{3, 0x4f, 0x00, 0x96}] = 8; // page0: 8 * 2^-2 = 2 W
 
            const PowerSnapshot snap = read_power_snapshot_with_backend(options, fake);
            require(snap.rails.size() == 2, "expected two rail readings");

@@ -51,8 +51,8 @@ int main(int argc, char** argv) {
     // CORE LOGIC
     // Stage-by-stage: each stages::* call runs one piece of the model pipeline.
     simaai::neat::TensorList pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model);
-    simaai::neat::SampleList infer_samples =
-        simaai::neat::stages::Infer(simaai::neat::SampleList{simaai::neat::sample_from_tensors(pre)}, model);
+    simaai::neat::SampleList infer_samples = simaai::neat::stages::Infer(
+        simaai::neat::SampleList{simaai::neat::sample_from_tensors(pre)}, model);
     if (infer_samples.empty())
       throw std::runtime_error("infer stage returned no samples");
     simaai::neat::Sample infer = infer_samples.front();

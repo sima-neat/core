@@ -104,12 +104,15 @@ void enable_detess_debug_defaults() {
 
 std::string debug_env_snapshot() {
   static constexpr std::array<const char*, 18> kKeys = {
-      "SIMA_DETESS_DEBUG_ALL",      "SIMA_STAGE_DEBUG",          "SIMA_MANIFEST_ROUTE_DEBUG",
-      "SIMA_MLA_CONTRACT_DEBUG",    "SIMA_MPK_CONTRACT_DEBUG",   "SIMA_ROUTE_DEBUG",
-      "SIMA_PULL_TIMEOUT_DIAG",     "SIMA_PULL_TIMEOUT_POOL_DIAG","SIMA_DISPATCHER_TRACE",
-      "SIMA_RPCEVXX_TRACE",         "SIMA_RPCEVXX_CFG_TRACE",    "SIMA_RPMSG_OPEN_TRACE",     "SIMA_RPMSG_RECV_TRACE",
-      "SIMA_RPMSG_RECV_SLICE_MS",   "SIMA_RPMSG_RECV_PROGRESS_MS",
-      "SIMA_RPMSG_SEQ_USE_GRAPH_ID","SIMA_PROCESSCVU_POOL_DEBUG", "SIMA_DETESS_CONFIG_DEBUG",
+      "SIMA_DETESS_DEBUG_ALL",       "SIMA_STAGE_DEBUG",
+      "SIMA_MANIFEST_ROUTE_DEBUG",   "SIMA_MLA_CONTRACT_DEBUG",
+      "SIMA_MPK_CONTRACT_DEBUG",     "SIMA_ROUTE_DEBUG",
+      "SIMA_PULL_TIMEOUT_DIAG",      "SIMA_PULL_TIMEOUT_POOL_DIAG",
+      "SIMA_DISPATCHER_TRACE",       "SIMA_RPCEVXX_TRACE",
+      "SIMA_RPCEVXX_CFG_TRACE",      "SIMA_RPMSG_OPEN_TRACE",
+      "SIMA_RPMSG_RECV_TRACE",       "SIMA_RPMSG_RECV_SLICE_MS",
+      "SIMA_RPMSG_RECV_PROGRESS_MS", "SIMA_RPMSG_SEQ_USE_GRAPH_ID",
+      "SIMA_PROCESSCVU_POOL_DEBUG",  "SIMA_DETESS_CONFIG_DEBUG",
   };
   std::ostringstream ss;
   ss << "[DBG] detess debug env";
@@ -371,10 +374,9 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = 1;
   step_log("sync: before build");
-  simaai::neat::Run runner = p.build(
-      simaai::neat::SampleList{
-          simaai::neat::Sample::from_image(img, simaai::neat::ImageSpec::PixelFormat::BGR)},
-      simaai::neat::RunMode::Sync, run_opt);
+  simaai::neat::Run runner = p.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                                         img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                                     simaai::neat::RunMode::Sync, run_opt);
   step_log("sync: after build");
 
   const auto start = std::chrono::steady_clock::now();
@@ -392,10 +394,9 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     simaai::neat::Sample out;
     try {
       step_log("sync: before run");
-      auto outs = runner.run(
-          simaai::neat::SampleList{
-              simaai::neat::Sample::from_image(img, simaai::neat::ImageSpec::PixelFormat::BGR)},
-          pull_timeout_ms);
+      auto outs = runner.run(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                                 img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                             pull_timeout_ms);
       require(outs.size() == 1, "sync: expected one output sample");
       out = std::move(outs.front());
       step_log("sync: after run");

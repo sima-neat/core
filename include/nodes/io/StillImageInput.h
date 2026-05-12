@@ -33,7 +33,7 @@ class StillImageInput final : public Node, public OutputSpecProvider {
 public:
   /// Strong-typed wrapper for the original content width, in pixels.
   struct ContentWidth {
-    int value = 0;                                ///< Underlying integer value, in pixels.
+    int value = 0; ///< Underlying integer value, in pixels.
     /// Default-construct with value 0.
     constexpr ContentWidth() = default;
     /// Construct from raw integer value.
@@ -42,7 +42,7 @@ public:
 
   /// Strong-typed wrapper for the original content height, in pixels.
   struct ContentHeight {
-    int value = 0;                                ///< Underlying integer value, in pixels.
+    int value = 0; ///< Underlying integer value, in pixels.
     /// Default-construct with value 0.
     constexpr ContentHeight() = default;
     /// Construct from raw integer value.
@@ -51,7 +51,7 @@ public:
 
   /// Strong-typed wrapper for the encoded output width, in pixels.
   struct EncodeWidth {
-    int value = 0;                                ///< Underlying integer value, in pixels.
+    int value = 0; ///< Underlying integer value, in pixels.
     /// Default-construct with value 0.
     constexpr EncodeWidth() = default;
     /// Construct from raw integer value.
@@ -60,7 +60,7 @@ public:
 
   /// Strong-typed wrapper for the encoded output height, in pixels.
   struct EncodeHeight {
-    int value = 0;                                ///< Underlying integer value, in pixels.
+    int value = 0; ///< Underlying integer value, in pixels.
     /// Default-construct with value 0.
     constexpr EncodeHeight() = default;
     /// Construct from raw integer value.
@@ -69,7 +69,7 @@ public:
 
   /// Strong-typed wrapper for the emit framerate, in frames per second.
   struct FramesPerSecond {
-    int value = 30;                               ///< Underlying integer value, in fps.
+    int value = 30; ///< Underlying integer value, in fps.
     /// Default-construct with value 30 fps.
     constexpr FramesPerSecond() = default;
     /// Construct from raw integer value.

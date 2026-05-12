@@ -62,8 +62,7 @@ struct GraphProcessCvuIoData {
   bool c16_packed = false;
 };
 
-bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b,
-                           std::uint64_t* out);
+bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b, std::uint64_t* out);
 
 MpkTensorDims dims_from_mpk_shape(std::vector<std::int64_t> shape) {
   if (shape.size() >= 4U && shape.front() == 1) {
@@ -94,11 +93,10 @@ MpkTensorDims dims_from_mpk_shape(std::vector<std::int64_t> shape) {
 std::string processcvu_canonical_graph_name_local(std::string graph_name);
 GstCaps* processmla_make_transport_caps_from_tensor_local(const CapsTensorSpec& tensor,
                                                           const std::string& transport_format);
-bool processcvu_graph_family_uses_packed_input_transport_local(
-    const std::string& graph_family);
-bool processcvu_tensor_dims_whc_from_shape_layout_local(
-    const std::vector<std::int64_t>& shape, const std::string& layout, int* w, int* h,
-    int* c);
+bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family);
+bool processcvu_tensor_dims_whc_from_shape_layout_local(const std::vector<std::int64_t>& shape,
+                                                        const std::string& layout, int* w, int* h,
+                                                        int* c);
 bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
                                                simaai::gst::PreparedProcessCvuTypedConfig* cfg,
                                                std::string* error_message);
@@ -114,31 +112,32 @@ bool build_processmla_output_descs_from_physical_tensors_local(
     const std::vector<MpkTensorContract>& physical_tensors,
     const std::vector<ProcessMlaLogicalOutputDesc>& logical_outputs,
     std::vector<ProcessMlaOutputDesc>* outputs);
-const LogicalInputStaticSpec* processcvu_find_logical_input_by_index_local(
-    const StageStaticSpec& stage, int logical_index);
-const LogicalTensorStaticSpec* processcvu_find_logical_output_by_index_local(
-    const StageStaticSpec& stage, int logical_index);
-const LogicalTensorStaticSpec* processcvu_find_logical_output_by_index_or_slot_local(
-    const StageStaticSpec& stage, int logical_index, int output_slot);
-const PhysicalBufferStaticSpec* processcvu_find_physical_input_by_index_local(
-    const StageStaticSpec& stage, int physical_index);
-const PhysicalBufferStaticSpec* processcvu_find_physical_output_by_index_local(
-    const StageStaticSpec& stage, int physical_index);
+const LogicalInputStaticSpec*
+processcvu_find_logical_input_by_index_local(const StageStaticSpec& stage, int logical_index);
+const LogicalTensorStaticSpec*
+processcvu_find_logical_output_by_index_local(const StageStaticSpec& stage, int logical_index);
+const LogicalTensorStaticSpec*
+processcvu_find_logical_output_by_index_or_slot_local(const StageStaticSpec& stage,
+                                                      int logical_index, int output_slot);
+const PhysicalBufferStaticSpec*
+processcvu_find_physical_input_by_index_local(const StageStaticSpec& stage, int physical_index);
+const PhysicalBufferStaticSpec*
+processcvu_find_physical_output_by_index_local(const StageStaticSpec& stage, int physical_index);
 std::string preferred_tensor_name_local(const MpkTensorContract& tensor, const std::size_t index,
                                         const std::string& fallback_prefix);
 std::string graph_tensor_semantic_name_local(const MpkTensorContract& tensor);
 
-std::string prepared_input_layout_token_local(
-    const simaai::gst::PreparedProcessCvuTypedConfig& cfg) {
+std::string
+prepared_input_layout_token_local(const simaai::gst::PreparedProcessCvuTypedConfig& cfg) {
   if (!cfg.input_tensors.empty()) {
     return tensorsemantics::layout_token_from_ev_tensor_desc(cfg.input_tensors.front());
   }
   return {};
 }
 
-std::string prepared_output_layout_token_local(
-    const simaai::gst::PreparedProcessCvuTypedConfig& cfg,
-    std::size_t index = 0U) {
+std::string
+prepared_output_layout_token_local(const simaai::gst::PreparedProcessCvuTypedConfig& cfg,
+                                   std::size_t index = 0U) {
   if (index < cfg.output_tensors.size()) {
     return tensorsemantics::layout_token_from_ev_tensor_desc(cfg.output_tensors[index]);
   }
@@ -158,41 +157,46 @@ std::vector<std::int64_t> shape_vector_from_ev_shape_local(const sima_ev_shape_d
   return out;
 }
 
-
-std::optional<std::filesystem::path> discover_pack_root_from_model_path_local(
-    const std::string& model_path);
+std::optional<std::filesystem::path>
+discover_pack_root_from_model_path_local(const std::string& model_path);
 std::string resolve_model_path_from_pack_root_local(const std::filesystem::path& pack_root,
                                                     const std::string& executable);
-bool build_processmla_prepared_stage_from_graph_local(
-    const MpkContract& contract, const MpkGraphNode& graph_node, const std::string& stage_key,
-    simaai::gst::ProcessMlaPreparedStage* out, std::string* error_message);
-std::optional<MpkContract> load_graph_contract_from_manifest_local(
-    const SimaPluginStaticManifest& manifest, std::filesystem::path* pack_root_out,
-    std::string* error_message);
+bool build_processmla_prepared_stage_from_graph_local(const MpkContract& contract,
+                                                      const MpkGraphNode& graph_node,
+                                                      const std::string& stage_key,
+                                                      simaai::gst::ProcessMlaPreparedStage* out,
+                                                      std::string* error_message);
+std::optional<MpkContract>
+load_graph_contract_from_manifest_local(const SimaPluginStaticManifest& manifest,
+                                        std::filesystem::path* pack_root_out,
+                                        std::string* error_message);
 std::optional<MpkContract> load_graph_contract_from_pipeline_elements_local(
-    const std::vector<PipelineElementSpec>& pipeline_elements,
-    std::filesystem::path* pack_root_out, std::string* error_message);
-std::optional<MpkContract> load_graph_contract_from_model_sources_local(
-    const std::vector<std::string>& model_source_paths, std::filesystem::path* pack_root_out,
+    const std::vector<PipelineElementSpec>& pipeline_elements, std::filesystem::path* pack_root_out,
     std::string* error_message);
+std::optional<MpkContract>
+load_graph_contract_from_model_sources_local(const std::vector<std::string>& model_source_paths,
+                                             std::filesystem::path* pack_root_out,
+                                             std::string* error_message);
 std::string resolve_exact_processcvu_graph_stage_key_local(const StageStaticSpec* stage);
-bool build_processcvu_prepared_stage_from_graph_local(
-    const StageStaticSpec& original_stage, const MpkContract& contract,
-    const MpkGraphNode& graph_node, const std::string& stage_key,
-    simaai::gst::ProcessCvuPreparedStage* out, std::string* error_message);
+bool build_processcvu_prepared_stage_from_graph_local(const StageStaticSpec& original_stage,
+                                                      const MpkContract& contract,
+                                                      const MpkGraphNode& graph_node,
+                                                      const std::string& stage_key,
+                                                      simaai::gst::ProcessCvuPreparedStage* out,
+                                                      std::string* error_message);
 bool build_processcvu_prepared_stage_from_stage_contract_local(
     const StageStaticSpec& stage, simaai::gst::ProcessCvuPreparedStage* out,
     std::string* error_message);
-bool build_dequant_prepared_stage_from_stage_contract_local(
-    const StageStaticSpec& stage, simaai::gst::DequantPreparedStage* out,
-    std::string* error_message);
+bool build_dequant_prepared_stage_from_stage_contract_local(const StageStaticSpec& stage,
+                                                            simaai::gst::DequantPreparedStage* out,
+                                                            std::string* error_message);
 
 std::string graph_tensor_semantic_name_local(const MpkTensorContract& tensor) {
   return !tensor.name.empty() ? tensor.name : tensor.segment_name;
 }
 
-simaai::neat::GraphTensorContract bridge_graph_tensor_contract_from_mpk_local(
-    const MpkTensorContract& tensor) {
+simaai::neat::GraphTensorContract
+bridge_graph_tensor_contract_from_mpk_local(const MpkTensorContract& tensor) {
   simaai::neat::GraphTensorContract out;
   out.tensor_index = tensor.tensor_index;
   out.physical_index = tensor.physical_index;
@@ -210,8 +214,7 @@ simaai::neat::GraphTensorContract bridge_graph_tensor_contract_from_mpk_local(
     out.materialization_kind = simaai::neat::GraphTensorMaterializationKind::OffsetView;
     break;
   case MpkTensorMaterializationKind::Bf16LaneSplitRepack:
-    out.materialization_kind =
-        simaai::neat::GraphTensorMaterializationKind::Bf16LaneSplitRepack;
+    out.materialization_kind = simaai::neat::GraphTensorMaterializationKind::Bf16LaneSplitRepack;
     break;
   case MpkTensorMaterializationKind::Unknown:
     out.materialization_kind = simaai::neat::GraphTensorMaterializationKind::Unknown;
@@ -267,8 +270,8 @@ bool stage_is_dequant_local(const StageStaticSpec& stage) {
          upper_copy_local(stage.kernel_kind) == "DEQUANTIZE";
 }
 
-std::optional<simaai::gst::PreparedStageKind> prepared_stage_kind_for_stage_local(
-    const StageStaticSpec& stage) {
+std::optional<simaai::gst::PreparedStageKind>
+prepared_stage_kind_for_stage_local(const StageStaticSpec& stage) {
   if (stage_is_processcvu_local(stage)) {
     return simaai::gst::PreparedStageKind::ProcessCvu;
   }
@@ -350,8 +353,8 @@ void prepared_runtime_warn_log_local(const char* fmt, ...) {
   std::fprintf(stderr, "\n");
 }
 
-std::optional<std::size_t> find_contract_stage_index_local(
-    const MpkContract& contract, const MpkPluginIoContract* stage) {
+std::optional<std::size_t> find_contract_stage_index_local(const MpkContract& contract,
+                                                           const MpkPluginIoContract* stage) {
   if (!stage) {
     return std::nullopt;
   }
@@ -363,8 +366,8 @@ std::optional<std::size_t> find_contract_stage_index_local(
   return std::nullopt;
 }
 
-bool contract_stage_output_feeds_mla_local(const MpkContract& contract, const std::size_t stage_index,
-                                           const int output_index) {
+bool contract_stage_output_feeds_mla_local(const MpkContract& contract,
+                                           const std::size_t stage_index, const int output_index) {
   const auto* mla_stage = get_mla_stage_io_contract(contract);
   const auto mla_stage_index = find_contract_stage_index_local(contract, mla_stage);
   if (!mla_stage_index.has_value()) {
@@ -444,8 +447,8 @@ std::string tensorbuffer_layout_token_local(const int layout) {
 
 std::size_t dtype_size_bytes_local(const std::string& raw) {
   const std::string up = upper_copy_local(raw);
-  if (up == "BF16" || up == "BFLOAT16" || up == "FP16" || up == "FLOAT16" ||
-      up == "INT16" || up == "UINT16") {
+  if (up == "BF16" || up == "BFLOAT16" || up == "FP16" || up == "FLOAT16" || up == "INT16" ||
+      up == "UINT16") {
     return 2U;
   }
   if (up == "FP32" || up == "FLOAT32" || up == "INT32" || up == "UINT32") {
@@ -457,8 +460,8 @@ std::size_t dtype_size_bytes_local(const std::string& raw) {
   return 1U;
 }
 
-std::vector<std::int64_t> contiguous_stride_bytes_local(
-    const std::vector<std::int64_t>& shape, const std::string& dtype) {
+std::vector<std::int64_t> contiguous_stride_bytes_local(const std::vector<std::int64_t>& shape,
+                                                        const std::string& dtype) {
   std::vector<std::int64_t> strides(shape.size(), 0);
   const std::size_t elem_bytes = dtype_size_bytes_local(dtype);
   if (elem_bytes == 0U) {
@@ -467,8 +470,7 @@ std::vector<std::int64_t> contiguous_stride_bytes_local(
   std::int64_t stride = static_cast<std::int64_t>(elem_bytes);
   for (std::size_t i = shape.size(); i-- > 0U;) {
     strides[i] = stride;
-    if (shape[i] > 0 &&
-        stride <= std::numeric_limits<std::int64_t>::max() / shape[i]) {
+    if (shape[i] > 0 && stride <= std::numeric_limits<std::int64_t>::max() / shape[i]) {
       stride *= shape[i];
     }
   }
@@ -548,24 +550,23 @@ CapsTensorSpec caps_tensor_from_logical_output_local(const LogicalTensorStaticSp
   out.shape = output.shape;
   out.dtype = output.dtype;
   out.layout = output.layout;
-  out.max_stride = static_cast<int>(
-      std::min<std::uint64_t>(output.size_bytes,
-                              static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
+  out.max_stride = static_cast<int>(std::min<std::uint64_t>(
+      output.size_bytes, static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
   out.semantic_tag = !output.logical_name.empty() ? output.logical_name : output.segment_name;
   out.size_bytes = output.size_bytes;
   return out;
 }
 
-CapsTensorSpec caps_tensor_from_mpk_tensor_local(const MpkTensorContract& tensor,
-                                                 const std::string& semantic_dtype_override =
-                                                     std::string()) {
+CapsTensorSpec
+caps_tensor_from_mpk_tensor_local(const MpkTensorContract& tensor,
+                                  const std::string& semantic_dtype_override = std::string()) {
   CapsTensorSpec out;
   out.tensor_index = tensor.tensor_index;
   const bool packed_extent =
       tensor.shape_semantics == MpkShapeSemantics::PackedExtent && tensor.logical_shape.empty();
-  out.shape = packed_extent ? std::vector<std::int64_t>{}
-                            : (!tensor.logical_shape.empty() ? tensor.logical_shape
-                                                             : tensor.mpk_shape);
+  out.shape = packed_extent
+                  ? std::vector<std::int64_t>{}
+                  : (!tensor.logical_shape.empty() ? tensor.logical_shape : tensor.mpk_shape);
   out.dtype = !semantic_dtype_override.empty()
                   ? semantic_dtype_override
                   : (!tensor.logical_dtype.empty() ? tensor.logical_dtype : tensor.dtype);
@@ -575,8 +576,7 @@ CapsTensorSpec caps_tensor_from_mpk_tensor_local(const MpkTensorContract& tensor
   // Graph-owned contracts do not currently carry an explicit layout token for every
   // tensor boundary. Keep layout unspecified here instead of fabricating one from rank.
   out.shape_semantics = tensor.shape_semantics;
-  out.semantic_tag =
-      !tensor.name.empty() ? tensor.name : tensor.segment_name;
+  out.semantic_tag = !tensor.name.empty() ? tensor.name : tensor.segment_name;
   out.layout.clear();
   out.size_bytes = tensor.size_bytes;
   if (out.size_bytes == 0U) {
@@ -719,18 +719,17 @@ GstCaps* make_generic_tensor_set_caps_local() {
   if (!caps) {
     return gst_caps_new_any();
   }
-  gst_caps_set_simple(caps, "representation", G_TYPE_STRING, "tensor-set", "storage",
-                      G_TYPE_STRING, "tensorbuffer", nullptr);
+  gst_caps_set_simple(caps, "representation", G_TYPE_STRING, "tensor-set", "storage", G_TYPE_STRING,
+                      "tensorbuffer", nullptr);
   return caps;
 }
 
 GstCaps* processmla_make_tensor_caps_from_tensor_local(const CapsTensorSpec& tensor,
                                                        const std::string& fallback_format,
                                                        bool prefer_tensor_dtype) {
-  const std::string format =
-      processmla_caps_format_from_dtype_local(tensor.dtype, fallback_format);
-  GstCaps* caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format",
-                                      G_TYPE_STRING, format.c_str(), nullptr);
+  const std::string format = processmla_caps_format_from_dtype_local(tensor.dtype, fallback_format);
+  GstCaps* caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
+                                      format.c_str(), nullptr);
   if (!caps) {
     return gst_caps_new_any();
   }
@@ -815,8 +814,8 @@ const simaai::gst::TensorBufferPublishLogicalOutput* single_publish_logical_outp
   return &publish_contract.logical_outputs[static_cast<std::size_t>(logical_pos)];
 }
 
-std::string common_logical_input_dtype_local(
-    const std::vector<LogicalInputStaticSpec>& logical_inputs) {
+std::string
+common_logical_input_dtype_local(const std::vector<LogicalInputStaticSpec>& logical_inputs) {
   std::vector<std::string> values;
   values.reserve(logical_inputs.size());
   for (const auto& logical : logical_inputs) {
@@ -825,8 +824,8 @@ std::string common_logical_input_dtype_local(
   return common_string_or_empty_local(values);
 }
 
-std::string common_logical_input_layout_local(
-    const std::vector<LogicalInputStaticSpec>& logical_inputs) {
+std::string
+common_logical_input_layout_local(const std::vector<LogicalInputStaticSpec>& logical_inputs) {
   std::vector<std::string> values;
   values.reserve(logical_inputs.size());
   for (const auto& logical : logical_inputs) {
@@ -835,8 +834,8 @@ std::string common_logical_input_layout_local(
   return common_string_or_empty_local(values);
 }
 
-std::string common_logical_output_dtype_local(
-    const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
+std::string
+common_logical_output_dtype_local(const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
   std::vector<std::string> values;
   values.reserve(logical_outputs.size());
   for (const auto& logical : logical_outputs) {
@@ -845,8 +844,8 @@ std::string common_logical_output_dtype_local(
   return common_string_or_empty_local(values);
 }
 
-std::string common_logical_output_layout_local(
-    const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
+std::string
+common_logical_output_layout_local(const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
   std::vector<std::string> values;
   values.reserve(logical_outputs.size());
   for (const auto& logical : logical_outputs) {
@@ -855,8 +854,8 @@ std::string common_logical_output_layout_local(
   return common_string_or_empty_local(values);
 }
 
-std::vector<std::int64_t> common_logical_input_shape_local(
-    const std::vector<LogicalInputStaticSpec>& logical_inputs) {
+std::vector<std::int64_t>
+common_logical_input_shape_local(const std::vector<LogicalInputStaticSpec>& logical_inputs) {
   if (logical_inputs.empty()) {
     return {};
   }
@@ -869,8 +868,8 @@ std::vector<std::int64_t> common_logical_input_shape_local(
   return first;
 }
 
-std::vector<std::int64_t> common_logical_output_shape_local(
-    const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
+std::vector<std::int64_t>
+common_logical_output_shape_local(const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
   if (logical_outputs.empty()) {
     return {};
   }
@@ -927,15 +926,13 @@ void processmla_add_shape_fields_to_caps_local(GstCaps* caps, const CapsTensorSp
 
 GstCaps* processmla_make_transport_caps_from_tensor_local(const CapsTensorSpec& tensor,
                                                           const std::string& transport_format) {
-  GstCaps* caps =
-      gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
-                          transport_format.c_str(), nullptr);
+  GstCaps* caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
+                                      transport_format.c_str(), nullptr);
   if (!caps) {
     return gst_caps_new_any();
   }
 
-  const std::string dtype =
-      processmla_caps_format_from_dtype_local(tensor.dtype, std::string{});
+  const std::string dtype = processmla_caps_format_from_dtype_local(tensor.dtype, std::string{});
   if (!dtype.empty()) {
     gst_caps_set_simple(caps, "dtype", G_TYPE_STRING, dtype.c_str(), nullptr);
   }
@@ -997,16 +994,14 @@ bool build_processmla_caps_from_graph_contract_local(
   CapsTensorSpec output_tensor;
   if (processmla_publish_contract_has_precise_single_output_local(output_publish_contract,
                                                                   &output_tensor)) {
-    src_caps =
-        processmla_make_tensor_caps_from_tensor_local(output_tensor, std::string{}, false);
+    src_caps = processmla_make_tensor_caps_from_tensor_local(output_tensor, std::string{}, false);
     processmla_add_shape_fields_to_caps_local(src_caps, output_tensor);
     const std::string output_dtype_up =
         processmla_caps_format_from_dtype_local(output_tensor.dtype, "");
     if (!output_dtype_up.empty() && output_dtype_up != "MLA") {
       gst_caps_set_simple(src_caps, "dtype", G_TYPE_STRING, output_dtype_up.c_str(), nullptr);
     }
-    const bool output_dtype_unspecified =
-        output_dtype_up.empty() || output_dtype_up == "MLA";
+    const bool output_dtype_unspecified = output_dtype_up.empty() || output_dtype_up == "MLA";
     if (src_caps && output_dtype_unspecified && !sink_dtype_up.empty() &&
         !processmla_is_video_format_token_local(sink_dtype_up)) {
       gst_caps_set_simple(src_caps, "format", G_TYPE_STRING, sink_dtype_up.c_str(), "dtype",
@@ -1027,9 +1022,9 @@ bool build_processmla_caps_from_graph_contract_local(
   return true;
 }
 
-bool build_publish_contract_from_manifest_stage_local(
-    const StageStaticSpec& stage, simaai::gst::TensorBufferPublishContract* out,
-    std::string* error_message) {
+bool build_publish_contract_from_manifest_stage_local(const StageStaticSpec& stage,
+                                                      simaai::gst::TensorBufferPublishContract* out,
+                                                      std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "prepared publish contract requires output storage";
@@ -1175,19 +1170,16 @@ bool processcvu_stage_is_dequant_like_local(const StageStaticSpec& stage) {
     return true;
   }
   auto contains_dequant = [](std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-      return static_cast<char>(std::tolower(c));
-    });
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value.find("dequant") != std::string::npos;
   };
   return contains_dequant(stage.processcvu.graph_family) ||
-         contains_dequant(stage.processcvu.graph_name) ||
-         contains_dequant(stage.kernel_kind);
+         contains_dequant(stage.processcvu.graph_name) || contains_dequant(stage.kernel_kind);
 }
 
 void attach_processcvu_dequant_qparams_to_publish_contract_local(
-    const StageStaticSpec& stage,
-    const simaai::gst::PreparedProcessCvuTypedConfig& typed_config,
+    const StageStaticSpec& stage, const simaai::gst::PreparedProcessCvuTypedConfig& typed_config,
     simaai::gst::TensorBufferPublishContract* contract) {
   if (!contract || contract->logical_outputs.empty() ||
       !processcvu_stage_is_dequant_like_local(stage)) {
@@ -1202,8 +1194,7 @@ void attach_processcvu_dequant_qparams_to_publish_contract_local(
   for (std::size_t i = 0; i < contract->logical_outputs.size(); ++i) {
     auto& logical = contract->logical_outputs[i];
     std::size_t q_index = i;
-    if (logical.route_slot >= 0 &&
-        static_cast<std::size_t>(logical.route_slot) < qparam_count) {
+    if (logical.route_slot >= 0 && static_cast<std::size_t>(logical.route_slot) < qparam_count) {
       q_index = static_cast<std::size_t>(logical.route_slot);
     } else if (logical.logical_index >= 0 &&
                static_cast<std::size_t>(logical.logical_index) < qparam_count) {
@@ -1221,12 +1212,12 @@ void attach_processcvu_dequant_qparams_to_publish_contract_local(
   }
 }
 
-simaai::gst::TensorBufferPublishContract build_publish_contract_from_runtime_config_local(
-    const ProcessMlaRuntimeConfig& runtime_cfg);
+simaai::gst::TensorBufferPublishContract
+build_publish_contract_from_runtime_config_local(const ProcessMlaRuntimeConfig& runtime_cfg);
 
-const InputBindingStaticSpec* find_stage_input_binding_for_logical_index_local(
-    const StageStaticSpec& stage,
-    std::size_t logical_request_index) {
+const InputBindingStaticSpec*
+find_stage_input_binding_for_logical_index_local(const StageStaticSpec& stage,
+                                                 std::size_t logical_request_index) {
   const InputBindingStaticSpec* fallback = nullptr;
   for (const auto& candidate : stage.input_bindings) {
     if (candidate.local_logical_input_index >= 0 &&
@@ -1242,10 +1233,8 @@ const InputBindingStaticSpec* find_stage_input_binding_for_logical_index_local(
 }
 
 bool build_processmla_read_request_entry_from_logical_input_local(
-    const LogicalInputStaticSpec& logical_input,
-    const InputBindingStaticSpec* binding,
-    std::size_t request_index,
-    simaai::gst::TensorBufferReadRequestEntry* out,
+    const LogicalInputStaticSpec& logical_input, const InputBindingStaticSpec* binding,
+    std::size_t request_index, simaai::gst::TensorBufferReadRequestEntry* out,
     std::string* error_message) {
   if (!out) {
     if (error_message) {
@@ -1256,8 +1245,8 @@ bool build_processmla_read_request_entry_from_logical_input_local(
 
   *out = simaai::gst::TensorBufferReadRequestEntry{};
   out->request_index = request_index;
-  out->logical_index =
-      logical_input.logical_index >= 0 ? logical_input.logical_index : static_cast<int>(request_index);
+  out->logical_index = logical_input.logical_index >= 0 ? logical_input.logical_index
+                                                        : static_cast<int>(request_index);
   out->logical_name = logical_input.logical_name;
   out->segment_name = logical_input.segment_name;
   out->expected_size_bytes = logical_input.size_bytes;
@@ -1298,10 +1287,8 @@ bool build_processmla_read_request_entry_from_logical_input_local(
 }
 
 bool build_processmla_read_request_entry_from_physical_input_local(
-    const PhysicalBufferStaticSpec& physical_input,
-    const LogicalInputStaticSpec* logical_input,
-    std::size_t request_index,
-    simaai::gst::TensorBufferReadRequestEntry* out,
+    const PhysicalBufferStaticSpec& physical_input, const LogicalInputStaticSpec* logical_input,
+    std::size_t request_index, simaai::gst::TensorBufferReadRequestEntry* out,
     std::string* error_message) {
   if (!out) {
     if (error_message) {
@@ -1313,10 +1300,10 @@ bool build_processmla_read_request_entry_from_physical_input_local(
   *out = simaai::gst::TensorBufferReadRequestEntry{};
   out->request_index = request_index;
   out->physical_carrier = true;
-  out->logical_index =
-      logical_input ? ((logical_input->backend_input_index >= 0) ? logical_input->backend_input_index
-                                                                 : logical_input->logical_index)
-                    : static_cast<int>(request_index);
+  out->logical_index = logical_input ? ((logical_input->backend_input_index >= 0)
+                                            ? logical_input->backend_input_index
+                                            : logical_input->logical_index)
+                                     : static_cast<int>(request_index);
   out->logical_name =
       (logical_input && !logical_input->logical_name.empty())
           ? logical_input->logical_name
@@ -1324,8 +1311,7 @@ bool build_processmla_read_request_entry_from_physical_input_local(
                                                   : ("ifm" + std::to_string(request_index)));
   out->segment_name = physical_input.segment_name;
   out->expected_size_bytes = physical_input.size_bytes;
-  out->byte_offset =
-      physical_input.source_byte_offset >= 0 ? physical_input.source_byte_offset : 0;
+  out->byte_offset = physical_input.source_byte_offset >= 0 ? physical_input.source_byte_offset : 0;
   out->physical_index = physical_input.source_physical_index >= 0
                             ? physical_input.source_physical_index
                             : physical_input.physical_index;
@@ -1372,9 +1358,9 @@ std::int64_t processmla_carrier_byte_offset_from_inputs_local(
     const std::vector<MpkTensorContract>& logical_inputs) {
   std::optional<std::int64_t> min_offset;
   for (const auto& input : logical_inputs) {
-    const std::int64_t candidate =
-        input.source_byte_offset >= 0 ? input.source_byte_offset
-                                      : (input.byte_offset >= 0 ? input.byte_offset : 0);
+    const std::int64_t candidate = input.source_byte_offset >= 0
+                                       ? input.source_byte_offset
+                                       : (input.byte_offset >= 0 ? input.byte_offset : 0);
     if (!min_offset.has_value() || candidate < *min_offset) {
       min_offset = candidate;
     }
@@ -1382,8 +1368,8 @@ std::int64_t processmla_carrier_byte_offset_from_inputs_local(
   return min_offset.value_or(0);
 }
 
-std::size_t processmla_carrier_size_from_inputs_local(
-    const std::vector<MpkTensorContract>& logical_inputs) {
+std::size_t
+processmla_carrier_size_from_inputs_local(const std::vector<MpkTensorContract>& logical_inputs) {
   std::uint64_t total = 0U;
   for (const auto& input : logical_inputs) {
     if (input.size_bytes == 0U) {
@@ -1402,8 +1388,8 @@ std::size_t processmla_carrier_size_from_inputs_local(
 
 bool build_processmla_read_request_entry_from_dispatcher_tensor_local(
     const MpkTensorContract& request_input, const std::vector<MpkTensorContract>& logical_inputs,
-    std::size_t request_index,
-    simaai::gst::TensorBufferReadRequestEntry* out, std::string* error_message) {
+    std::size_t request_index, simaai::gst::TensorBufferReadRequestEntry* out,
+    std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "graph processmla carrier request entry requires output storage";
@@ -1429,20 +1415,20 @@ bool build_processmla_read_request_entry_from_dispatcher_tensor_local(
   if (out->segment_name.empty() && !out->logical_name.empty()) {
     out->segment_name = out->logical_name;
   }
-  out->expected_size_bytes =
-      request_input.size_bytes > 0U ? request_input.size_bytes
-                                    : processmla_carrier_size_from_inputs_local(logical_inputs);
-  out->byte_offset =
-      request_input.source_byte_offset >= 0 ? request_input.source_byte_offset
-      : (request_input.byte_offset >= 0 ? request_input.byte_offset
-                                        : processmla_carrier_byte_offset_from_inputs_local(
-                                              logical_inputs));
-  out->physical_index = request_input.source_physical_index >= 0
-                            ? request_input.source_physical_index
-                            : (request_input.physical_index >= 0
-                                   ? request_input.physical_index
-                                   : processmla_carrier_physical_index_from_inputs_local(
-                                         logical_inputs));
+  out->expected_size_bytes = request_input.size_bytes > 0U
+                                 ? request_input.size_bytes
+                                 : processmla_carrier_size_from_inputs_local(logical_inputs);
+  out->byte_offset = request_input.source_byte_offset >= 0
+                         ? request_input.source_byte_offset
+                         : (request_input.byte_offset >= 0
+                                ? request_input.byte_offset
+                                : processmla_carrier_byte_offset_from_inputs_local(logical_inputs));
+  out->physical_index =
+      request_input.source_physical_index >= 0
+          ? request_input.source_physical_index
+          : (request_input.physical_index >= 0
+                 ? request_input.physical_index
+                 : processmla_carrier_physical_index_from_inputs_local(logical_inputs));
   out->source_physical_size_bytes = out->expected_size_bytes;
   out->source_physical_byte_offset = out->byte_offset;
 
@@ -1452,8 +1438,7 @@ bool build_processmla_read_request_entry_from_dispatcher_tensor_local(
     if (error_message) {
       std::ostringstream oss;
       oss << "graph processmla dispatcher input missing required carrier identity"
-          << " request_index=" << request_index
-          << " logical_name=" << out->logical_name
+          << " request_index=" << request_index << " logical_name=" << out->logical_name
           << " segment_name=" << (out->segment_name.empty() ? "<empty>" : out->segment_name)
           << " physical_index=" << out->physical_index
           << " expected_size_bytes=" << out->expected_size_bytes
@@ -1508,10 +1493,8 @@ bool build_cast_prepared_stage_from_manifest_stage_local(const StageStaticSpec& 
 bool processcvu_primary_output_uses_packed_caps_from_payload_local(
     const ProcessCvuStagePayload& payload) {
   return payload.primary_output_transport_kind == ProcessCvuOutputTransportKind::Packed ||
-         payload.primary_output_semantic_kind ==
-             ProcessCvuOutputSemanticKind::TessellatedImage ||
-         payload.primary_output_semantic_kind ==
-             ProcessCvuOutputSemanticKind::QuantTessTensor;
+         payload.primary_output_semantic_kind == ProcessCvuOutputSemanticKind::TessellatedImage ||
+         payload.primary_output_semantic_kind == ProcessCvuOutputSemanticKind::QuantTessTensor;
 }
 
 bool processcvu_set_input_binding_contract_from_packed_transport_local(
@@ -1561,12 +1544,11 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   simaai::gst::PreparedProcessCvuTypedConfig cfg;
   cfg.graph_name = payload.graph_name;
   cfg.cpu = "CVU";
-  cfg.requested_run_target = payload.requested_run_target.empty() ? payload.run_target
-                                                                  : payload.requested_run_target;
+  cfg.requested_run_target =
+      payload.requested_run_target.empty() ? payload.run_target : payload.requested_run_target;
   cfg.run_target = payload.run_target.empty() ? std::string("AUTO") : payload.run_target;
-  cfg.resolved_exec_backend = payload.resolved_exec_backend.empty()
-                                  ? std::string("EVXX")
-                                  : payload.resolved_exec_backend;
+  cfg.resolved_exec_backend =
+      payload.resolved_exec_backend.empty() ? std::string("EVXX") : payload.resolved_exec_backend;
   cfg.run_target_resolution_reason = payload.run_target_resolution_reason;
   cfg.graph_id = payload.graph_id;
   cfg.default_input_name = payload.default_input_name;
@@ -1669,15 +1651,13 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   } else {
     if (payload.input_tensors.empty() || payload.output_tensors.empty()) {
       if (error_message) {
-        *error_message =
-            "generic EV processcvu manifest requires direct tensor descriptors";
+        *error_message = "generic EV processcvu manifest requires direct tensor descriptors";
       }
       return false;
     }
     if (payload.input_tensors.size() != payload.output_tensors.size()) {
       if (error_message) {
-        *error_message =
-            "generic EV processcvu manifest tensor descriptor count mismatch";
+        *error_message = "generic EV processcvu manifest tensor descriptor count mismatch";
       }
       return false;
     }
@@ -1710,18 +1690,17 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
   }
 
   const auto& payload = stage.processcvu;
-  const std::string graph_family = !payload.graph_family.empty()
-                                       ? payload.graph_family
-                                       : payload.graph_name;
+  const std::string graph_family =
+      !payload.graph_family.empty() ? payload.graph_family : payload.graph_name;
   const std::string canonical_graph_family = processcvu_canonical_graph_name_local(graph_family);
   const bool packed_input_transport =
       processcvu_graph_family_uses_packed_input_transport_local(graph_family);
 
   out->input_bindings.reserve(stage.input_bindings.size());
   for (const auto& binding_spec : stage.input_bindings) {
-    const int logical_index =
-        binding_spec.local_logical_input_index >= 0 ? binding_spec.local_logical_input_index
-                                                    : binding_spec.sink_pad_index;
+    const int logical_index = binding_spec.local_logical_input_index >= 0
+                                  ? binding_spec.local_logical_input_index
+                                  : binding_spec.sink_pad_index;
     const auto* logical = processcvu_find_logical_input_by_index_local(stage, logical_index);
     if (!logical) {
       if (error_message) {
@@ -1739,13 +1718,12 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     binding.source_size_bytes = binding_spec.src_physical_size_bytes;
     binding.source_byte_offset = binding_spec.src_physical_byte_offset;
     binding.group_name = "sink_pad_" + std::to_string(binding_spec.sink_pad_index);
-    binding.segment_name = !binding_spec.source_segment_name.empty()
-                               ? binding_spec.source_segment_name
-                               : "parent";
-    binding.graph_input_name = !binding_spec.cm_input_name.empty()
-                                   ? binding_spec.cm_input_name
-                                   : (!logical->backend_name.empty() ? logical->backend_name
-                                                                     : logical->logical_name);
+    binding.segment_name =
+        !binding_spec.source_segment_name.empty() ? binding_spec.source_segment_name : "parent";
+    binding.graph_input_name =
+        !binding_spec.cm_input_name.empty()
+            ? binding_spec.cm_input_name
+            : (!logical->backend_name.empty() ? logical->backend_name : logical->logical_name);
     if (binding.graph_input_name.empty()) {
       binding.graph_input_name = "input_" + std::to_string(binding.sink_pad_index);
     }
@@ -1802,8 +1780,7 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     return std::nullopt;
   };
 
-  auto find_manifest_output_route =
-      [&](const std::string& output_name) -> const StageOutputRoute* {
+  auto find_manifest_output_route = [&](const std::string& output_name) -> const StageOutputRoute* {
     for (const auto& route : stage.output_order) {
       if (route.cm_output_name == output_name) {
         return &route;
@@ -1825,18 +1802,15 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     const auto* manifest_route = find_manifest_output_route(runtime_output_name);
     simaai::gst::CvuOutputBinding binding;
     binding.dispatcher_name = runtime_output_name;
-    binding.output_slot =
-        i < payload.runtime_output_output_slot_list.size()
-            ? payload.runtime_output_output_slot_list[i]
-            : static_cast<int>(i);
-    binding.logical_output_index =
-        i < payload.runtime_output_logical_index_list.size()
-            ? payload.runtime_output_logical_index_list[i]
-            : binding.output_slot;
-    binding.physical_output_index =
-        i < payload.runtime_output_physical_index_list.size()
-            ? payload.runtime_output_physical_index_list[i]
-            : binding.logical_output_index;
+    binding.output_slot = i < payload.runtime_output_output_slot_list.size()
+                              ? payload.runtime_output_output_slot_list[i]
+                              : static_cast<int>(i);
+    binding.logical_output_index = i < payload.runtime_output_logical_index_list.size()
+                                       ? payload.runtime_output_logical_index_list[i]
+                                       : binding.output_slot;
+    binding.physical_output_index = i < payload.runtime_output_physical_index_list.size()
+                                        ? payload.runtime_output_physical_index_list[i]
+                                        : binding.logical_output_index;
     if (manifest_route) {
       if (manifest_route->output_slot >= 0) {
         binding.output_slot = manifest_route->output_slot;
@@ -1851,25 +1825,25 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     binding.layout = i < payload.runtime_output_logical_layout_list.size()
                          ? payload.runtime_output_logical_layout_list[i]
                          : payload.logical_output_layout_token(i);
-    const auto transport_kind =
-        i < payload.runtime_output_transport_kind_list.size()
-            ? payload.runtime_output_transport_kind_list[i]
-            : ProcessCvuOutputTransportKind::Dense;
+    const auto transport_kind = i < payload.runtime_output_transport_kind_list.size()
+                                    ? payload.runtime_output_transport_kind_list[i]
+                                    : ProcessCvuOutputTransportKind::Dense;
     auto fill_binding_from_payload_desc = [&]() -> bool {
       if (i >= payload.output_tensors.size()) {
         return false;
       }
       const auto& desc = payload.output_tensors[i];
       binding.shape = shape_vector_from_ev_shape_local(desc.shape);
-      if (desc.storage.addr <= static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+      if (desc.storage.addr <=
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
         binding.byte_offset = static_cast<std::int64_t>(desc.storage.addr);
       }
       return !binding.shape.empty();
     };
     if (transport_kind == ProcessCvuOutputTransportKind::Packed) {
       binding.contract_kind = simaai::gst::CvuOutputBinding::ContractKind::Packed;
-      if (const auto* physical =
-              processcvu_find_physical_output_by_index_local(stage, binding.physical_output_index)) {
+      if (const auto* physical = processcvu_find_physical_output_by_index_local(
+              stage, binding.physical_output_index)) {
         binding.segment_name = physical->segment_name;
         binding.size_bytes = physical->size_bytes;
       }
@@ -1884,8 +1858,7 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
         int verify_h = 0;
         int verify_c = 0;
         if (!processcvu_tensor_dims_whc_from_shape_layout_local(logical->shape, logical->layout,
-                                                                &verify_w, &verify_h,
-                                                                &verify_c)) {
+                                                                &verify_w, &verify_h, &verify_c)) {
           if (error_message) {
             *error_message = "processcvu runtime logical packed output geometry missing";
           }
@@ -1906,8 +1879,8 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
               : processcvu_find_logical_output_by_index_or_slot_local(
                     stage, binding.logical_output_index, binding.output_slot);
       if (!logical) {
-        if (const auto* physical =
-                processcvu_find_physical_output_by_index_local(stage, binding.physical_output_index)) {
+        if (const auto* physical = processcvu_find_physical_output_by_index_local(
+                stage, binding.physical_output_index)) {
           binding.segment_name = physical->segment_name;
           binding.size_bytes = physical->size_bytes;
         }
@@ -1944,18 +1917,17 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
       return false;
     }
     if (binding.segment_name.empty()) {
-      if (const auto* physical =
-              processcvu_find_physical_output_by_index_local(stage, binding.physical_output_index)) {
+      if (const auto* physical = processcvu_find_physical_output_by_index_local(
+              stage, binding.physical_output_index)) {
         binding.segment_name = physical->segment_name;
       }
     }
     if (runtime_output_name == "output_tessellated_image") {
-      if (const auto* physical =
-              processcvu_find_physical_output_by_index_local(stage, binding.physical_output_index)) {
+      if (const auto* physical = processcvu_find_physical_output_by_index_local(
+              stage, binding.physical_output_index)) {
         const auto dense_size = shape_size_bytes_local(binding.shape, binding.dtype);
-        if (physical->size_bytes > 0U &&
-            (transport_kind == ProcessCvuOutputTransportKind::Packed ||
-             dense_size == 0U || physical->size_bytes > dense_size)) {
+        if (physical->size_bytes > 0U && (transport_kind == ProcessCvuOutputTransportKind::Packed ||
+                                          dense_size == 0U || physical->size_bytes > dense_size)) {
           binding.contract_kind = simaai::gst::CvuOutputBinding::ContractKind::Packed;
           binding.size_bytes = physical->size_bytes;
           if (binding.segment_name.empty()) {
@@ -1990,12 +1962,11 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     binding.logical_output_index = logical->logical_index;
     binding.physical_output_index = logical->physical_index;
     binding.byte_offset = logical->byte_offset >= 0 ? logical->byte_offset : 0;
-    binding.dispatcher_name = !route.cm_output_name.empty()
-                                  ? route.cm_output_name
-                                  : (!logical->logical_name.empty() ? logical->logical_name
-                                                                    : logical->backend_name);
-    binding.segment_name =
-        !route.segment_name.empty() ? route.segment_name : logical->segment_name;
+    binding.dispatcher_name =
+        !route.cm_output_name.empty()
+            ? route.cm_output_name
+            : (!logical->logical_name.empty() ? logical->logical_name : logical->backend_name);
+    binding.segment_name = !route.segment_name.empty() ? route.segment_name : logical->segment_name;
     binding.dtype = logical->dtype;
     binding.layout = logical->layout;
     int verify_w = 0;
@@ -2013,8 +1984,7 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
   }
   if (strict_preproc_single_output && out->exposed_output_bindings.size() != 1U) {
     if (error_message) {
-      *error_message =
-          "processcvu preproc single-output handoff built unexpected exposed outputs";
+      *error_message = "processcvu preproc single-output handoff built unexpected exposed outputs";
     }
     return false;
   }
@@ -2027,8 +1997,8 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     int first_h = 0;
     int first_c = 0;
     if (!processcvu_tensor_dims_whc_from_shape_layout_local(out->input_bindings[0].shape,
-                                                            out->input_bindings[0].layout,
-                                                            &first_w, &first_h, &first_c)) {
+                                                            out->input_bindings[0].layout, &first_w,
+                                                            &first_h, &first_c)) {
       consistent = false;
     }
     for (const auto& binding : out->input_bindings) {
@@ -2049,8 +2019,7 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
   return true;
 }
 
-GstCaps* build_processcvu_sink_caps_local(
-    const simaai::gst::PreparedProcessCvuTypedConfig& cfg,
+GstCaps* build_processcvu_sink_caps_local(const simaai::gst::PreparedProcessCvuTypedConfig& cfg,
                                           const simaai::gst::CvuRoutingContract& routing) {
   if (routing.is_preproc_graph) {
     GstCaps* caps = gst_caps_new_empty_simple("video/x-raw");
@@ -2059,13 +2028,11 @@ GstCaps* build_processcvu_sink_caps_local(
     }
     return caps;
   }
-  if (routing.input_bindings.size() != 1U ||
-      cfg.input_tensors.size() > 1U ||
+  if (routing.input_bindings.size() != 1U || cfg.input_tensors.size() > 1U ||
       processcvu_graph_family_uses_packed_input_transport_local(cfg.graph_name)) {
     return make_generic_tensor_set_caps_local();
   }
-  const auto* primary_input =
-      routing.input_bindings.empty() ? nullptr : &routing.input_bindings[0];
+  const auto* primary_input = routing.input_bindings.empty() ? nullptr : &routing.input_bindings[0];
   CapsTensorSpec tensor;
   tensor.dtype = primary_input ? primary_input->dtype : cfg.input_dtype;
   if (primary_input && !primary_input->shape.empty()) {
@@ -2088,11 +2055,12 @@ GstCaps* build_processcvu_sink_caps_local(
   return processmla_make_tensor_caps_from_tensor_local(tensor, caps_dtype, false);
 }
 
-GstCaps* build_processcvu_src_caps_local(
-    const simaai::gst::PreparedProcessCvuTypedConfig& cfg,
-    const simaai::gst::CvuRoutingContract& routing,
-    const simaai::gst::TensorBufferPublishContract& publish_contract,
-    const std::string& primary_output_name, const bool primary_output_packed_caps) {
+GstCaps*
+build_processcvu_src_caps_local(const simaai::gst::PreparedProcessCvuTypedConfig& cfg,
+                                const simaai::gst::CvuRoutingContract& routing,
+                                const simaai::gst::TensorBufferPublishContract& publish_contract,
+                                const std::string& primary_output_name,
+                                const bool primary_output_packed_caps) {
   const simaai::gst::CvuOutputBinding* primary = nullptr;
   for (const auto& output : routing.exposed_output_bindings) {
     if (output.dispatcher_name == primary_output_name) {
@@ -2100,16 +2068,13 @@ GstCaps* build_processcvu_src_caps_local(
       break;
     }
   }
-  if (primary_output_packed_caps ||
-      routing.exposed_output_bindings.size() != 1U ||
-      publish_contract.logical_outputs.size() != 1U ||
-      publish_contract.output_order.size() > 1U) {
+  if (primary_output_packed_caps || routing.exposed_output_bindings.size() != 1U ||
+      publish_contract.logical_outputs.size() != 1U || publish_contract.output_order.size() > 1U) {
     return make_generic_tensor_set_caps_local();
   }
-  const std::string dtype =
-      (primary && !primary->dtype.empty()) ? primary->dtype
-                                           : (!cfg.out_dtype.empty() ? cfg.out_dtype
-                                                                     : cfg.output_dtype);
+  const std::string dtype = (primary && !primary->dtype.empty())
+                                ? primary->dtype
+                                : (!cfg.out_dtype.empty() ? cfg.out_dtype : cfg.output_dtype);
   const auto* logical = single_publish_logical_output_local(publish_contract);
   if (!logical) {
     return make_generic_tensor_set_caps_local();
@@ -2161,8 +2126,7 @@ bool build_processcvu_prepared_stage_from_manifest_stage_local(
     input.segment_name = logical.segment_name;
     switch (logical.materialization_kind) {
     case TensorMaterializationKind::OffsetView:
-      input.materialization_kind =
-          simaai::gst::PreparedTensorMaterializationKind::OffsetView;
+      input.materialization_kind = simaai::gst::PreparedTensorMaterializationKind::OffsetView;
       break;
     case TensorMaterializationKind::Bf16LaneSplitRepack:
       input.materialization_kind =
@@ -2171,14 +2135,13 @@ bool build_processcvu_prepared_stage_from_manifest_stage_local(
     case TensorMaterializationKind::Unknown:
     case TensorMaterializationKind::Direct:
     default:
-      input.materialization_kind =
-          simaai::gst::PreparedTensorMaterializationKind::Direct;
+      input.materialization_kind = simaai::gst::PreparedTensorMaterializationKind::Direct;
       break;
     }
     if (logical.quant.has_value()) {
       simaai::gst::TensorBufferQuantView quant;
-      quant.granularity = static_cast<int>(
-          logical.quant->granularity == QuantGranularity::PerAxis ? 1 : 0);
+      quant.granularity =
+          static_cast<int>(logical.quant->granularity == QuantGranularity::PerAxis ? 1 : 0);
       quant.axis = logical.quant->axis;
       quant.scales = logical.quant->scales;
       quant.zero_points = logical.quant->zero_points;
@@ -2196,17 +2159,16 @@ bool build_processcvu_prepared_stage_from_manifest_stage_local(
     input.segment_name = physical.segment_name;
     prepared.physical_inputs.push_back(std::move(input));
   }
-  if (!build_processcvu_routing_contract_from_manifest_stage_local(stage,
-                                                                   &prepared.routing_contract,
-                                                                   error_message)) {
+  if (!build_processcvu_routing_contract_from_manifest_stage_local(
+          stage, &prepared.routing_contract, error_message)) {
     return false;
   }
   if (!build_publish_contract_from_manifest_stage_local(stage, &prepared.output_publish_contract,
                                                         error_message)) {
     return false;
   }
-  attach_processcvu_dequant_qparams_to_publish_contract_local(
-      stage, prepared.typed_config, &prepared.output_publish_contract);
+  attach_processcvu_dequant_qparams_to_publish_contract_local(stage, prepared.typed_config,
+                                                              &prepared.output_publish_contract);
   simaai::gst::TensorBufferPreparedMetaTemplate meta_template;
   if (!simaai::gst::tensor_buffer_prepare_meta_template_from_contract(
           prepared.output_publish_contract, &meta_template, error_message)) {
@@ -2232,8 +2194,7 @@ bool build_processcvu_prepared_stage_from_manifest_stage_local(
       build_processcvu_sink_caps_local(prepared.typed_config, prepared.routing_contract);
   prepared.src_caps = build_processcvu_src_caps_local(
       prepared.typed_config, prepared.routing_contract, prepared.output_publish_contract,
-      prepared.primary_output_name,
-      prepared.primary_output_packed_caps);
+      prepared.primary_output_name, prepared.primary_output_packed_caps);
   *out = std::move(prepared);
   return true;
 }
@@ -2244,12 +2205,9 @@ bool build_processcvu_prepared_stage_from_stage_contract_local(
   return build_processcvu_prepared_stage_from_manifest_stage_local(stage, out, error_message);
 }
 
+constexpr const char* kPreparedRuntimePackedSegmentNameLocal = "__tensorbuffer_packed_parent__";
 
-constexpr const char* kPreparedRuntimePackedSegmentNameLocal =
-    "__tensorbuffer_packed_parent__";
-
-bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b,
-                           std::uint64_t* out);
+bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b, std::uint64_t* out);
 
 std::uint64_t non_negative_u64_local(const std::int64_t value) {
   return value > 0 ? static_cast<std::uint64_t>(value) : 0U;
@@ -2276,8 +2234,7 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
   if (graph_name == "QUANTTESS" || graph_name == "QUANT_TESS") {
     return "quanttess";
   }
-  if (graph_name == "CASTTESS" || graph_name == "CAST_TESS" ||
-      graph_name == "CASTTESSELLATE") {
+  if (graph_name == "CASTTESS" || graph_name == "CAST_TESS" || graph_name == "CASTTESSELLATE") {
     return "casttess";
   }
   if (graph_name == "DEQUANT" || graph_name == "DEQUANTIZE") {
@@ -2298,16 +2255,14 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
   return graph_name;
 }
 
-bool processcvu_graph_family_uses_packed_input_transport_local(
-    const std::string& graph_family) {
+bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family) {
   const std::string canonical = processcvu_canonical_graph_name_local(graph_family);
-  return canonical == "detessellate" || canonical == "detesscast" ||
-         canonical == "detessdequant";
+  return canonical == "detessellate" || canonical == "detesscast" || canonical == "detessdequant";
 }
 
-bool processcvu_tensor_dims_whc_from_shape_layout_local(
-    const std::vector<std::int64_t>& shape, const std::string& layout, int* w, int* h,
-    int* c) {
+bool processcvu_tensor_dims_whc_from_shape_layout_local(const std::vector<std::int64_t>& shape,
+                                                        const std::string& layout, int* w, int* h,
+                                                        int* c) {
   if (!w || !h || !c || shape.empty()) {
     return false;
   }
@@ -2323,10 +2278,8 @@ bool processcvu_tensor_dims_whc_from_shape_layout_local(
     const auto a = shape[shape.size() - 3U];
     const auto b = shape[shape.size() - 2U];
     const auto d = shape[shape.size() - 1U];
-    if (a <= 0 || b <= 0 || d <= 0 ||
-        a > std::numeric_limits<int>::max() ||
-        b > std::numeric_limits<int>::max() ||
-        d > std::numeric_limits<int>::max()) {
+    if (a <= 0 || b <= 0 || d <= 0 || a > std::numeric_limits<int>::max() ||
+        b > std::numeric_limits<int>::max() || d > std::numeric_limits<int>::max()) {
       return false;
     }
     if (norm.find("CHW") != std::string::npos) {
@@ -2341,8 +2294,7 @@ bool processcvu_tensor_dims_whc_from_shape_layout_local(
     return true;
   }
   if (shape.size() == 2U) {
-    if (shape[0] <= 0 || shape[1] <= 0 ||
-        shape[0] > std::numeric_limits<int>::max() ||
+    if (shape[0] <= 0 || shape[1] <= 0 || shape[0] > std::numeric_limits<int>::max() ||
         shape[1] > std::numeric_limits<int>::max()) {
       return false;
     }
@@ -2464,13 +2416,13 @@ bool processcvu_build_dense_tensor_desc_local(const std::vector<std::int64_t>& s
   if (normalized_layout.empty()) {
     if (!tensorsemantics::build_generic_dense_tensor_desc(
             shape, dtype_token, out, error_message,
-            "processcvu dense tensor desc requires output storage",
-            "processcvu shape rank invalid", "processcvu shape dim invalid",
-            "processcvu dense tensor dtype invalid",
+            "processcvu dense tensor desc requires output storage", "processcvu shape rank invalid",
+            "processcvu shape dim invalid", "processcvu dense tensor dtype invalid",
             "processcvu dense stride desc requires output storage")) {
       return false;
     }
-    out->storage.nbytes = size_bytes != 0U ? size_bytes : shape_size_bytes_local(shape, dtype_token);
+    out->storage.nbytes =
+        size_bytes != 0U ? size_bytes : shape_size_bytes_local(shape, dtype_token);
     return true;
   }
   std::memset(out, 0, sizeof(*out));
@@ -2494,15 +2446,11 @@ bool processcvu_build_dense_tensor_desc_local(const std::vector<std::int64_t>& s
                                              "processcvu dense stride dtype invalid");
 }
 
-bool processcvu_build_tiled_tensor_desc_local(const std::vector<std::int64_t>& shape,
-                                              const std::vector<std::int64_t>& tile_shape,
-                                              const std::string& dtype_token,
-                                              const std::string& layout_token,
-                                              const std::uint32_t tile_align_bytes,
-                                              const std::uint64_t size_bytes,
-                                              const bool c16_packed,
-                                              sima_ev_tensor_desc* out,
-                                              std::string* error_message) {
+bool processcvu_build_tiled_tensor_desc_local(
+    const std::vector<std::int64_t>& shape, const std::vector<std::int64_t>& tile_shape,
+    const std::string& dtype_token, const std::string& layout_token,
+    const std::uint32_t tile_align_bytes, const std::uint64_t size_bytes, const bool c16_packed,
+    sima_ev_tensor_desc* out, std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "processcvu tiled tensor desc requires output storage";
@@ -2526,20 +2474,18 @@ bool processcvu_build_tiled_tensor_desc_local(const std::vector<std::int64_t>& s
   if (normalized_layout.empty()) {
     if (!tensorsemantics::build_generic_tiled_tensor_desc(
             shape, tile_shape, dtype_token, tile_align_bytes, out, error_message,
-            "processcvu tiled tensor desc requires output storage",
-            "processcvu shape rank invalid", "processcvu shape dim invalid",
-            "processcvu tiled tensor dtype invalid", "processcvu tiled tensor rank mismatch",
+            "processcvu tiled tensor desc requires output storage", "processcvu shape rank invalid",
+            "processcvu shape dim invalid", "processcvu tiled tensor dtype invalid",
+            "processcvu tiled tensor rank mismatch",
             "processcvu tiled tensor tile shape invalid")) {
       return false;
     }
     if (tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0 && c16_packed) {
-      out->layout.tiled.flags &=
-          ~static_cast<std::uint32_t>(SIMA_EV_TILED_FLAG_COMPACT_CHANNELS);
+      out->layout.tiled.flags &= ~static_cast<std::uint32_t>(SIMA_EV_TILED_FLAG_COMPACT_CHANNELS);
     }
-    out->storage.nbytes =
-        size_bytes != 0U ? size_bytes
-                         : tensorsemantics::generic_fixed_slot_tiled_size_bytes(
-                               shape, tile_shape, dtype_token, tile_align_bytes);
+    out->storage.nbytes = size_bytes != 0U ? size_bytes
+                                           : tensorsemantics::generic_fixed_slot_tiled_size_bytes(
+                                                 shape, tile_shape, dtype_token, tile_align_bytes);
     return out->storage.nbytes != 0U;
   }
   if (!tensorsemantics::fill_shape_desc(shape, normalized_layout, &out->shape, error_message,
@@ -2661,7 +2607,8 @@ bool processmla_prepared_stage_complete_local(const simaai::gst::ProcessMlaPrepa
   if (!tensorbuffer_read_request_complete_local(prepared.input_request, error_message)) {
     return false;
   }
-  if (!tensorbuffer_publish_contract_complete_local(prepared.output_publish_contract, error_message)) {
+  if (!tensorbuffer_publish_contract_complete_local(prepared.output_publish_contract,
+                                                    error_message)) {
     return false;
   }
   if (!prepared.output_meta_template.has_value()) {
@@ -2707,7 +2654,8 @@ bool processcvu_prepared_stage_complete_local(const simaai::gst::ProcessCvuPrepa
       return false;
     }
   }
-  if (!tensorbuffer_publish_contract_complete_local(prepared.output_publish_contract, error_message)) {
+  if (!tensorbuffer_publish_contract_complete_local(prepared.output_publish_contract,
+                                                    error_message)) {
     return false;
   }
   if (!prepared.output_meta_template.has_value()) {
@@ -2721,15 +2669,17 @@ bool processcvu_prepared_stage_complete_local(const simaai::gst::ProcessCvuPrepa
 
 bool dequant_prepared_stage_complete_local(const simaai::gst::DequantPreparedStage& prepared,
                                            std::string* error_message) {
-  if (prepared.input_dtype.empty() || prepared.input_elem_bytes == 0U || prepared.tensor_shape.empty() ||
-      prepared.tensor_layout.empty() || prepared.required_input_bytes == 0U ||
-      prepared.required_output_bytes == 0U || prepared.quant_spans.empty()) {
+  if (prepared.input_dtype.empty() || prepared.input_elem_bytes == 0U ||
+      prepared.tensor_shape.empty() || prepared.tensor_layout.empty() ||
+      prepared.required_input_bytes == 0U || prepared.required_output_bytes == 0U ||
+      prepared.quant_spans.empty()) {
     if (error_message) {
       *error_message = "graph-owned dequant prepared stage incomplete";
     }
     return false;
   }
-  if (!tensorbuffer_publish_contract_complete_local(prepared.identity_publish_contract, error_message)) {
+  if (!tensorbuffer_publish_contract_complete_local(prepared.identity_publish_contract,
+                                                    error_message)) {
     return false;
   }
   if (!prepared.prepared_meta_template.has_value()) {
@@ -2787,9 +2737,10 @@ bool processcvu_build_stage_tensor_descs_local(const StageStaticSpec& stage,
   return true;
 }
 
-bool processcvu_build_graph_io_tensor_descs_local(
-    const std::string& graph_name, const GraphProcessCvuIoData& io,
-    simaai::gst::PreparedProcessCvuTypedConfig* cfg, std::string* error_message) {
+bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
+                                                  const GraphProcessCvuIoData& io,
+                                                  simaai::gst::PreparedProcessCvuTypedConfig* cfg,
+                                                  std::string* error_message) {
   if (!cfg) {
     if (error_message) {
       *error_message = "processcvu graph IO tensor descs require config output";
@@ -2799,8 +2750,8 @@ bool processcvu_build_graph_io_tensor_descs_local(
   cfg->input_tensors.clear();
   cfg->output_tensors.clear();
   const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
-  const bool input_is_tiled = canonical == "detessellate" || canonical == "detesscast" ||
-                              canonical == "detessdequant";
+  const bool input_is_tiled =
+      canonical == "detessellate" || canonical == "detesscast" || canonical == "detessdequant";
   const bool output_is_tiled = canonical == "tessellate" || canonical == "casttess" ||
                                canonical == "quanttess" || canonical == "quantizetessellate";
   if (io.input_tensors.empty() || io.output_tensors.empty()) {
@@ -2823,18 +2774,20 @@ bool processcvu_build_graph_io_tensor_descs_local(
     return io.slice_shapes[io.slice_shapes.size() == 1U ? 0U : index];
   };
 
-  const std::uint32_t output_tile_align = cfg->byte_align > 0 ? static_cast<std::uint32_t>(cfg->byte_align) : 0U;
+  const std::uint32_t output_tile_align =
+      cfg->byte_align > 0 ? static_cast<std::uint32_t>(cfg->byte_align) : 0U;
   for (std::size_t i = 0; i < io.input_tensors.size(); ++i) {
     const auto& input = io.input_tensors[i];
     const auto& output = io.output_tensors[i];
     const auto input_shape = processcvu_tensor_shape_local(input);
     const auto output_shape = processcvu_tensor_shape_local(output);
     const std::string input_dtype = processcvu_tensor_dtype_local(input, io.canonical_input_dtype);
-    const std::string output_dtype = processcvu_tensor_dtype_local(output, io.canonical_output_dtype);
+    const std::string output_dtype =
+        processcvu_tensor_dtype_local(output, io.canonical_output_dtype);
     const std::string input_layout =
         processcvu_tensor_layout_token_local(input_shape, prepared_input_layout_token_local(*cfg));
-    const std::string output_layout =
-        processcvu_tensor_layout_token_local(output_shape, prepared_output_layout_token_local(*cfg));
+    const std::string output_layout = processcvu_tensor_layout_token_local(
+        output_shape, prepared_output_layout_token_local(*cfg));
     sima_ev_tensor_desc input_desc{};
     sima_ev_tensor_desc output_desc{};
     if (input_is_tiled) {
@@ -2842,10 +2795,8 @@ bool processcvu_build_graph_io_tensor_descs_local(
       if (!processcvu_normalize_tile_shape_local(input_shape, pick_slice_shape(i), &tile_shape,
                                                  error_message) ||
           !processcvu_build_tiled_tensor_desc_local(input_shape, tile_shape, input_dtype,
-                                                    input_layout, 0U,
-                                                    input.size_bytes,
-                                                    io.c16_packed,
-                                                    &input_desc, error_message)) {
+                                                    input_layout, 0U, input.size_bytes,
+                                                    io.c16_packed, &input_desc, error_message)) {
         return false;
       }
     } else if (!processcvu_build_dense_tensor_desc_local(input_shape, input_dtype, input_layout,
@@ -2857,11 +2808,9 @@ bool processcvu_build_graph_io_tensor_descs_local(
       std::vector<std::int64_t> tile_shape;
       if (!processcvu_normalize_tile_shape_local(output_shape, pick_slice_shape(i), &tile_shape,
                                                  error_message) ||
-          !processcvu_build_tiled_tensor_desc_local(output_shape, tile_shape, output_dtype,
-                                                    output_layout,
-                                                    output_tile_align, output.size_bytes,
-                                                    io.c16_packed,
-                                                    &output_desc, error_message)) {
+          !processcvu_build_tiled_tensor_desc_local(
+              output_shape, tile_shape, output_dtype, output_layout, output_tile_align,
+              output.size_bytes, io.c16_packed, &output_desc, error_message)) {
         return false;
       }
     } else if (!processcvu_build_dense_tensor_desc_local(output_shape, output_dtype, output_layout,
@@ -2887,9 +2836,10 @@ bool expand_processmla_output_descs_from_logical_outputs_local(
   for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
     const auto& logical = logical_outputs[i];
     ProcessMlaOutputDesc output;
-    output.name = !logical.backend_name.empty()
-                      ? logical.backend_name
-                      : (!logical.logical_name.empty() ? logical.logical_name : logical.segment_name);
+    output.name =
+        !logical.backend_name.empty()
+            ? logical.backend_name
+            : (!logical.logical_name.empty() ? logical.logical_name : logical.segment_name);
     if (output.name.empty()) {
       output.name = "mla_output_" + std::to_string(i);
     }
@@ -2897,7 +2847,8 @@ bool expand_processmla_output_descs_from_logical_outputs_local(
     output.source_output_index = logical.backend_output_index >= 0
                                      ? static_cast<std::size_t>(logical.backend_output_index)
                                      : i;
-    output.source_byte_offset = logical.byte_offset > 0 ? static_cast<std::uint64_t>(logical.byte_offset) : 0U;
+    output.source_byte_offset =
+        logical.byte_offset > 0 ? static_cast<std::uint64_t>(logical.byte_offset) : 0U;
     outputs->push_back(std::move(output));
   }
   return true;
@@ -2928,13 +2879,12 @@ bool build_processmla_output_descs_from_physical_specs_local(
       output.name = !physical.segment_name.empty() ? physical.segment_name
                                                    : ("mla_output_" + std::to_string(slot));
       output.size = static_cast<std::size_t>(physical.size_bytes);
-      output.source_output_index =
-          physical.source_physical_index >= 0
-              ? static_cast<std::size_t>(physical.source_physical_index)
-              : slot;
-      output.source_byte_offset =
-          physical.source_byte_offset > 0 ? static_cast<std::uint64_t>(physical.source_byte_offset)
-                                          : 0U;
+      output.source_output_index = physical.source_physical_index >= 0
+                                       ? static_cast<std::size_t>(physical.source_physical_index)
+                                       : slot;
+      output.source_byte_offset = physical.source_byte_offset > 0
+                                      ? static_cast<std::uint64_t>(physical.source_byte_offset)
+                                      : 0U;
     }
   }
   for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
@@ -2949,12 +2899,13 @@ bool build_processmla_output_descs_from_physical_specs_local(
     }
     auto& output = (*outputs)[slot];
     if (output.name.empty()) {
-      output.name = !logical.segment_name.empty()
-                        ? logical.segment_name
-                        : (!logical.backend_name.empty() ? logical.backend_name
-                                                         : (!logical.logical_name.empty()
-                                                                ? logical.logical_name
-                                                                : ("mla_output_" + std::to_string(slot))));
+      output.name =
+          !logical.segment_name.empty()
+              ? logical.segment_name
+              : (!logical.backend_name.empty()
+                     ? logical.backend_name
+                     : (!logical.logical_name.empty() ? logical.logical_name
+                                                      : ("mla_output_" + std::to_string(slot))));
     }
     if (output.source_output_index == 0U && logical.backend_output_index >= 0 &&
         output.size == 0U) {
@@ -2985,8 +2936,8 @@ bool build_processmla_output_descs_from_physical_tensors_local(
     std::size_t slot_count = physical_tensors.size();
     for (const auto& tensor : physical_tensors) {
       if (tensor.physical_index >= 0) {
-        slot_count = std::max<std::size_t>(slot_count,
-                                           static_cast<std::size_t>(tensor.physical_index) + 1U);
+        slot_count =
+            std::max<std::size_t>(slot_count, static_cast<std::size_t>(tensor.physical_index) + 1U);
       }
     }
     outputs->assign(slot_count, ProcessMlaOutputDesc{});
@@ -2995,18 +2946,17 @@ bool build_processmla_output_descs_from_physical_tensors_local(
       const std::size_t slot =
           tensor.physical_index >= 0 ? static_cast<std::size_t>(tensor.physical_index) : i;
       auto& output = (*outputs)[slot];
-      output.name = !tensor.segment_name.empty()
-                        ? tensor.segment_name
-                        : (!tensor.name.empty() ? tensor.name
-                                                : ("mla_output_" + std::to_string(slot)));
+      output.name =
+          !tensor.segment_name.empty()
+              ? tensor.segment_name
+              : (!tensor.name.empty() ? tensor.name : ("mla_output_" + std::to_string(slot)));
       output.size = tensor.size_bytes;
-      output.source_output_index =
-          tensor.source_physical_index >= 0
-              ? static_cast<std::size_t>(tensor.source_physical_index)
-              : slot;
-      output.source_byte_offset =
-          tensor.source_byte_offset > 0 ? static_cast<std::uint64_t>(tensor.source_byte_offset)
-                                        : 0U;
+      output.source_output_index = tensor.source_physical_index >= 0
+                                       ? static_cast<std::size_t>(tensor.source_physical_index)
+                                       : slot;
+      output.source_byte_offset = tensor.source_byte_offset > 0
+                                      ? static_cast<std::uint64_t>(tensor.source_byte_offset)
+                                      : 0U;
     }
   }
   for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
@@ -3021,12 +2971,13 @@ bool build_processmla_output_descs_from_physical_tensors_local(
     }
     auto& output = (*outputs)[slot];
     if (output.name.empty()) {
-      output.name = !logical.segment_name.empty()
-                        ? logical.segment_name
-                        : (!logical.backend_name.empty() ? logical.backend_name
-                                                         : (!logical.logical_name.empty()
-                                                                ? logical.logical_name
-                                                                : ("mla_output_" + std::to_string(slot))));
+      output.name =
+          !logical.segment_name.empty()
+              ? logical.segment_name
+              : (!logical.backend_name.empty()
+                     ? logical.backend_name
+                     : (!logical.logical_name.empty() ? logical.logical_name
+                                                      : ("mla_output_" + std::to_string(slot))));
     }
     if (output.source_output_index == 0U && logical.backend_output_index >= 0 &&
         output.size == 0U) {
@@ -3045,8 +2996,8 @@ bool build_processmla_output_descs_from_physical_tensors_local(
   return true;
 }
 
-const LogicalInputStaticSpec* processcvu_find_logical_input_by_index_local(
-    const StageStaticSpec& stage, int logical_index) {
+const LogicalInputStaticSpec*
+processcvu_find_logical_input_by_index_local(const StageStaticSpec& stage, int logical_index) {
   const auto it = std::find_if(stage.logical_inputs.begin(), stage.logical_inputs.end(),
                                [&](const LogicalInputStaticSpec& logical) {
                                  return logical.logical_index == logical_index;
@@ -3054,8 +3005,8 @@ const LogicalInputStaticSpec* processcvu_find_logical_input_by_index_local(
   return it == stage.logical_inputs.end() ? nullptr : &*it;
 }
 
-const LogicalTensorStaticSpec* processcvu_find_logical_output_by_index_local(
-    const StageStaticSpec& stage, int logical_index) {
+const LogicalTensorStaticSpec*
+processcvu_find_logical_output_by_index_local(const StageStaticSpec& stage, int logical_index) {
   const auto it = std::find_if(stage.logical_outputs.begin(), stage.logical_outputs.end(),
                                [&](const LogicalTensorStaticSpec& logical) {
                                  return logical.logical_index == logical_index;
@@ -3063,20 +3014,20 @@ const LogicalTensorStaticSpec* processcvu_find_logical_output_by_index_local(
   return it == stage.logical_outputs.end() ? nullptr : &*it;
 }
 
-const LogicalTensorStaticSpec* processcvu_find_logical_output_by_index_or_slot_local(
-    const StageStaticSpec& stage, int logical_index, int output_slot) {
+const LogicalTensorStaticSpec*
+processcvu_find_logical_output_by_index_or_slot_local(const StageStaticSpec& stage,
+                                                      int logical_index, int output_slot) {
   if (const auto* logical = processcvu_find_logical_output_by_index_local(stage, logical_index)) {
     return logical;
   }
-  const auto it = std::find_if(stage.logical_outputs.begin(), stage.logical_outputs.end(),
-                               [&](const LogicalTensorStaticSpec& logical) {
-                                 return logical.output_slot == output_slot;
-                               });
+  const auto it = std::find_if(
+      stage.logical_outputs.begin(), stage.logical_outputs.end(),
+      [&](const LogicalTensorStaticSpec& logical) { return logical.output_slot == output_slot; });
   return it == stage.logical_outputs.end() ? nullptr : &*it;
 }
 
-const PhysicalBufferStaticSpec* processcvu_find_physical_input_by_index_local(
-    const StageStaticSpec& stage, int physical_index) {
+const PhysicalBufferStaticSpec*
+processcvu_find_physical_input_by_index_local(const StageStaticSpec& stage, int physical_index) {
   const auto it = std::find_if(stage.physical_inputs.begin(), stage.physical_inputs.end(),
                                [&](const PhysicalBufferStaticSpec& physical) {
                                  return physical.physical_index == physical_index;
@@ -3084,8 +3035,8 @@ const PhysicalBufferStaticSpec* processcvu_find_physical_input_by_index_local(
   return it == stage.physical_inputs.end() ? nullptr : &*it;
 }
 
-const PhysicalBufferStaticSpec* processcvu_find_physical_output_by_index_local(
-    const StageStaticSpec& stage, int physical_index) {
+const PhysicalBufferStaticSpec*
+processcvu_find_physical_output_by_index_local(const StageStaticSpec& stage, int physical_index) {
   const auto it = std::find_if(stage.physical_outputs.begin(), stage.physical_outputs.end(),
                                [&](const PhysicalBufferStaticSpec& physical) {
                                  return physical.physical_index == physical_index;
@@ -3104,8 +3055,8 @@ std::string preferred_tensor_name_local(const MpkTensorContract& tensor, const s
   return fallback_prefix + std::to_string(index);
 }
 
-simaai::gst::TensorBufferPublishContract build_publish_contract_from_runtime_config_local(
-    const ProcessMlaRuntimeConfig& runtime_cfg) {
+simaai::gst::TensorBufferPublishContract
+build_publish_contract_from_runtime_config_local(const ProcessMlaRuntimeConfig& runtime_cfg) {
   simaai::gst::TensorBufferPublishContract contract;
   contract.stage_key = runtime_cfg.stage_key;
   std::unordered_map<int, std::size_t> physical_index_to_slot;
@@ -3124,19 +3075,21 @@ simaai::gst::TensorBufferPublishContract build_publish_contract_from_runtime_con
     const auto& logical = runtime_cfg.logical_outputs[i];
     simaai::gst::TensorBufferPublishLogicalOutput output;
     output.logical_index = logical.logical_index >= 0 ? logical.logical_index : static_cast<int>(i);
-    output.physical_index = logical.physical_index >= 0 ? logical.physical_index : static_cast<int>(i);
+    output.physical_index =
+        logical.physical_index >= 0 ? logical.physical_index : static_cast<int>(i);
     output.memory_index = logical.memory_index >= 0 ? logical.memory_index : output.physical_index;
     output.backend_output_index =
         logical.backend_output_index >= 0 ? logical.backend_output_index : static_cast<int>(i);
     output.route_slot = logical.route_slot >= 0 ? logical.route_slot : static_cast<int>(i);
     output.logical_name = logical.logical_name;
     output.backend_name = logical.backend_name;
-    output.segment_name = !logical.segment_name.empty()
-                              ? logical.segment_name
-                              : (!logical.logical_name.empty() ? logical.logical_name
-                                                               : (!logical.backend_name.empty()
-                                                                      ? logical.backend_name
-                                                                      : ("mla_output_" + std::to_string(i))));
+    output.segment_name =
+        !logical.segment_name.empty()
+            ? logical.segment_name
+            : (!logical.logical_name.empty()
+                   ? logical.logical_name
+                   : (!logical.backend_name.empty() ? logical.backend_name
+                                                    : ("mla_output_" + std::to_string(i))));
     output.byte_offset = logical.byte_offset;
     output.shape = logical.shape;
     output.stride_bytes = logical.stride_bytes;
@@ -3178,18 +3131,20 @@ simaai::gst::TensorBufferPublishContract build_publish_contract_from_runtime_con
     simaai::gst::TensorBufferPublishOutputRoute route;
     route.output_slot = logical.route_slot;
     route.logical_output_index = static_cast<int>(i);
-    route.cm_output_name = !logical.logical_name.empty() ? logical.logical_name : logical.backend_name;
+    route.cm_output_name =
+        !logical.logical_name.empty() ? logical.logical_name : logical.backend_name;
     route.segment_name = logical.segment_name;
     contract.output_order.push_back(std::move(route));
   }
   return contract;
 }
 
-bool build_processcvu_prepared_stage_from_graph_io_local(
-    const StageStaticSpec& original_stage, const MpkGraphNode& graph_node,
-    const std::string& stage_key,
-    const GraphProcessCvuIoData& io, simaai::gst::ProcessCvuPreparedStage* out,
-    std::string* error_message) {
+bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& original_stage,
+                                                         const MpkGraphNode& graph_node,
+                                                         const std::string& stage_key,
+                                                         const GraphProcessCvuIoData& io,
+                                                         simaai::gst::ProcessCvuPreparedStage* out,
+                                                         std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "graph processcvu prepared stage requires output storage";
@@ -3207,15 +3162,14 @@ bool build_processcvu_prepared_stage_from_graph_io_local(
   simaai::neat::GraphProcessCvuStageRequest request;
   request.stage_key = stage_key;
   request.graph_name = processcvu_canonical_graph_name_local(
-      !payload.graph_name.empty() ? payload.graph_name
-                                  : (!payload.graph_family.empty() ? payload.graph_family
-                                                                   : graph_node.canonical_op));
+      !payload.graph_name.empty()
+          ? payload.graph_name
+          : (!payload.graph_family.empty() ? payload.graph_family : graph_node.canonical_op));
   request.requested_run_target =
       payload.requested_run_target.empty() ? payload.run_target : payload.requested_run_target;
   request.run_target = payload.run_target.empty() ? std::string("AUTO") : payload.run_target;
-  request.resolved_exec_backend = payload.resolved_exec_backend.empty()
-                                      ? std::string("EVXX")
-                                      : payload.resolved_exec_backend;
+  request.resolved_exec_backend =
+      payload.resolved_exec_backend.empty() ? std::string("EVXX") : payload.resolved_exec_backend;
   request.run_target_resolution_reason = payload.run_target_resolution_reason;
   request.graph_id = payload.graph_id;
   request.batch_size = payload.batch_size;
@@ -3260,8 +3214,8 @@ bool build_processcvu_prepared_stage_from_graph_io_local(
   return simaai::neat::build_graph_processcvu_prepared_stage(request, out, error_message);
 }
 
-std::optional<std::filesystem::path> discover_pack_root_from_model_path_local(
-    const std::string& model_path) {
+std::optional<std::filesystem::path>
+discover_pack_root_from_model_path_local(const std::string& model_path) {
   if (model_path.empty()) {
     return std::nullopt;
   }
@@ -3330,9 +3284,11 @@ std::string resolve_model_path_from_pack_root_local(const std::filesystem::path&
   return direct.string();
 }
 
-bool build_processmla_prepared_stage_from_graph_local(
-    const MpkContract& contract, const MpkGraphNode& graph_node, const std::string& stage_key,
-    simaai::gst::ProcessMlaPreparedStage* out, std::string* error_message) {
+bool build_processmla_prepared_stage_from_graph_local(const MpkContract& contract,
+                                                      const MpkGraphNode& graph_node,
+                                                      const std::string& stage_key,
+                                                      simaai::gst::ProcessMlaPreparedStage* out,
+                                                      std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "graph processmla prepared stage requires output storage";
@@ -3436,8 +3392,7 @@ bool build_physical_group_offsets_from_tensor_views_local(
       }
       return false;
     }
-    const int key =
-        tensor.physical_index >= 0 ? tensor.physical_index : static_cast<int>(i);
+    const int key = tensor.physical_index >= 0 ? tensor.physical_index : static_cast<int>(i);
     const std::uint64_t local_offset = non_negative_u64_local(tensor.byte_offset);
     std::uint64_t span_end = 0U;
     if (!checked_add_u64_local(local_offset, tensor.size_bytes, &span_end)) {
@@ -3483,8 +3438,7 @@ bool collapse_batched_mla_tensor_views_to_single_physical_local(
   std::uint64_t total_size_bytes = 0U;
   std::size_t physical_group_count = 0U;
   if (!build_physical_group_offsets_from_tensor_views_local(
-          *tensors, &base_offsets, &total_size_bytes, &physical_group_count,
-          error_message)) {
+          *tensors, &base_offsets, &total_size_bytes, &physical_group_count, error_message)) {
     return false;
   }
   if (physical_group_count <= 1U) {
@@ -3499,10 +3453,10 @@ bool collapse_batched_mla_tensor_views_to_single_physical_local(
 
   for (std::size_t i = 0; i < tensors->size(); ++i) {
     auto& tensor = (*tensors)[i];
-    const int key = tensor.source_physical_index >= 0
-                        ? tensor.source_physical_index
-                        : (tensor.physical_index >= 0 ? tensor.physical_index
-                                                      : static_cast<int>(i));
+    const int key =
+        tensor.source_physical_index >= 0
+            ? tensor.source_physical_index
+            : (tensor.physical_index >= 0 ? tensor.physical_index : static_cast<int>(i));
     const auto it = base_offsets.find(key);
     if (it == base_offsets.end()) {
       if (error_message) {
@@ -3510,13 +3464,11 @@ bool collapse_batched_mla_tensor_views_to_single_physical_local(
       }
       return false;
     }
-    const std::uint64_t local_offset =
-        non_negative_u64_local(tensor.source_byte_offset) +
-        non_negative_u64_local(tensor.byte_offset);
+    const std::uint64_t local_offset = non_negative_u64_local(tensor.source_byte_offset) +
+                                       non_negative_u64_local(tensor.byte_offset);
     std::uint64_t collapsed_offset = 0U;
     if (!checked_add_u64_local(it->second, local_offset, &collapsed_offset) ||
-        collapsed_offset >
-            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        collapsed_offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
       if (error_message) {
         *error_message = "batched MLA tensor collapse offset overflow";
       }
@@ -3531,8 +3483,7 @@ bool collapse_batched_mla_tensor_views_to_single_physical_local(
   return true;
 }
 
-bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b,
-                           std::uint64_t* out) {
+bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b, std::uint64_t* out) {
   if (!out) {
     return false;
   }
@@ -3552,8 +3503,7 @@ std::uint64_t shape_elements_or_zero_local(const std::vector<std::int64_t>& shap
     if (dim <= 0) {
       return 0U;
     }
-    if (elements > (std::numeric_limits<std::uint64_t>::max() /
-                    static_cast<std::uint64_t>(dim))) {
+    if (elements > (std::numeric_limits<std::uint64_t>::max() / static_cast<std::uint64_t>(dim))) {
       return 0U;
     }
     elements *= static_cast<std::uint64_t>(dim);
@@ -3561,8 +3511,9 @@ std::uint64_t shape_elements_or_zero_local(const std::vector<std::int64_t>& shap
   return elements;
 }
 
-std::vector<std::int64_t> contiguous_stride_bytes_for_elem_local(
-    const std::vector<std::int64_t>& shape, const std::int64_t elem_bytes) {
+std::vector<std::int64_t>
+contiguous_stride_bytes_for_elem_local(const std::vector<std::int64_t>& shape,
+                                       const std::int64_t elem_bytes) {
   std::vector<std::int64_t> strides(shape.size(), 0);
   if (shape.empty() || elem_bytes <= 0) {
     return strides;
@@ -3570,17 +3521,17 @@ std::vector<std::int64_t> contiguous_stride_bytes_for_elem_local(
   std::int64_t stride = elem_bytes;
   for (std::size_t i = shape.size(); i-- > 0U;) {
     strides[i] = stride;
-    if (shape[i] > 0 &&
-        stride <= (std::numeric_limits<std::int64_t>::max() / shape[i])) {
+    if (shape[i] > 0 && stride <= (std::numeric_limits<std::int64_t>::max() / shape[i])) {
       stride *= shape[i];
     }
   }
   return strides;
 }
 
-std::vector<std::int64_t> strides_or_contiguous_for_shape_local(
-    const std::vector<std::int64_t>& stride_bytes, const std::vector<std::int64_t>& shape,
-    const std::int64_t elem_bytes) {
+std::vector<std::int64_t>
+strides_or_contiguous_for_shape_local(const std::vector<std::int64_t>& stride_bytes,
+                                      const std::vector<std::int64_t>& shape,
+                                      const std::int64_t elem_bytes) {
   if (!shape.empty() && stride_bytes.size() == shape.size()) {
     return stride_bytes;
   }
@@ -3602,8 +3553,7 @@ bool strides_match_contiguous_local(const std::vector<std::int64_t>& shape,
 
 bool shape_is_subset_compatible_local(const std::vector<std::int64_t>& input_shape,
                                       const std::vector<std::int64_t>& output_shape) {
-  if (input_shape.empty() || output_shape.empty() ||
-      input_shape.size() != output_shape.size()) {
+  if (input_shape.empty() || output_shape.empty() || input_shape.size() != output_shape.size()) {
     return false;
   }
   for (std::size_t i = 0; i < input_shape.size(); ++i) {
@@ -3636,8 +3586,7 @@ bool tensor_physical_span_bytes_local(const std::vector<std::int64_t>& shape,
     }
     const auto dim_extent = static_cast<std::uint64_t>(shape[i] - 1);
     const auto stride = static_cast<std::uint64_t>(stride_bytes[i]);
-    if (dim_extent > 0U &&
-        stride > (std::numeric_limits<std::uint64_t>::max() / dim_extent)) {
+    if (dim_extent > 0U && stride > (std::numeric_limits<std::uint64_t>::max() / dim_extent)) {
       return false;
     }
     const auto term = dim_extent * stride;
@@ -3686,8 +3635,8 @@ bool build_packed_physical_offsets_from_static_specs_local(
 
 bool resolve_packed_logical_offset_local(
     const std::unordered_map<int, std::uint64_t>& physical_offsets, const int physical_index,
-    const int fallback_index, const std::int64_t byte_offset,
-    std::uint64_t* out_byte_offset, std::string* error_message) {
+    const int fallback_index, const std::int64_t byte_offset, std::uint64_t* out_byte_offset,
+    std::string* error_message) {
   if (!out_byte_offset) {
     if (error_message) {
       *error_message = "packed logical offset requires output storage";
@@ -3710,8 +3659,7 @@ bool resolve_packed_logical_offset_local(
     base_offset = it->second;
   }
 
-  const auto local_offset =
-      byte_offset >= 0 ? static_cast<std::uint64_t>(byte_offset) : 0U;
+  const auto local_offset = byte_offset >= 0 ? static_cast<std::uint64_t>(byte_offset) : 0U;
   if (!checked_add_u64_local(base_offset, local_offset, out_byte_offset)) {
     if (error_message) {
       *error_message = "packed logical offset overflow";
@@ -3748,8 +3696,7 @@ bool pack_publish_contract_for_single_runtime_segment_local(
   std::uint64_t total_size_bytes = 0U;
   for (std::size_t i = 0; i < contract.physical_outputs.size(); ++i) {
     const auto& physical = contract.physical_outputs[i];
-    const int key =
-        physical.physical_index >= 0 ? physical.physical_index : static_cast<int>(i);
+    const int key = physical.physical_index >= 0 ? physical.physical_index : static_cast<int>(i);
     if (!physical_offsets.emplace(key, total_size_bytes).second) {
       if (error_message) {
         *error_message = "duplicate physical index in packed publish contract";
@@ -3775,8 +3722,7 @@ bool pack_publish_contract_for_single_runtime_segment_local(
                                              &packed_offset, error_message)) {
       return false;
     }
-    if (packed_offset >
-        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+    if (packed_offset > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
       if (error_message) {
         *error_message = "packed publish contract offset overflow";
       }
@@ -3824,9 +3770,9 @@ bool dequant_publish_contract_has_precise_single_output_local(
   return !out->shape.empty();
 }
 
-bool build_dequant_prepared_stage_from_stage_contract_local(
-    const StageStaticSpec& stage, simaai::gst::DequantPreparedStage* out,
-    std::string* error_message) {
+bool build_dequant_prepared_stage_from_stage_contract_local(const StageStaticSpec& stage,
+                                                            simaai::gst::DequantPreparedStage* out,
+                                                            std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "dequant prepared stage requires output storage";
@@ -3902,7 +3848,8 @@ bool build_dequant_prepared_stage_from_stage_contract_local(
     const auto& logical_input = stage.logical_inputs[i];
     const auto& logical_output = stage.logical_outputs[i];
 
-    const QuantStaticSpec* quant = logical_input.quant.has_value() ? &*logical_input.quant : nullptr;
+    const QuantStaticSpec* quant =
+        logical_input.quant.has_value() ? &*logical_input.quant : nullptr;
     if (!quant && i < stage.output_quant.size()) {
       quant = &stage.output_quant[i];
     }
@@ -3918,20 +3865,18 @@ bool build_dequant_prepared_stage_from_stage_contract_local(
 
     const auto input_shape = logical_input.shape;
     const auto output_shape = logical_output.shape;
-    const auto input_stride_bytes = strides_or_contiguous_for_shape_local(
-        logical_input.stride_bytes, input_shape,
-        static_cast<std::int64_t>(prepared.input_elem_bytes));
+    const auto input_stride_bytes =
+        strides_or_contiguous_for_shape_local(logical_input.stride_bytes, input_shape,
+                                              static_cast<std::int64_t>(prepared.input_elem_bytes));
     const auto output_stride_bytes = strides_or_contiguous_for_shape_local(
         logical_output.stride_bytes, output_shape, static_cast<std::int64_t>(sizeof(float)));
     const std::uint64_t input_size_bytes =
-        logical_input.size_bytes > 0U
-            ? logical_input.size_bytes
-            : shape_size_bytes_local(input_shape, prepared.input_dtype);
+        logical_input.size_bytes > 0U ? logical_input.size_bytes
+                                      : shape_size_bytes_local(input_shape, prepared.input_dtype);
     const std::string output_dtype = !logical_output.dtype.empty() ? logical_output.dtype : "FP32";
     const std::uint64_t output_size_bytes =
-        logical_output.size_bytes > 0U
-            ? logical_output.size_bytes
-            : shape_size_bytes_local(output_shape, output_dtype);
+        logical_output.size_bytes > 0U ? logical_output.size_bytes
+                                       : shape_size_bytes_local(output_shape, output_dtype);
     if (input_size_bytes == 0U || output_size_bytes == 0U) {
       if (error_message) {
         *error_message = "dequant stage requires non-zero logical tensor sizes";
@@ -4010,9 +3955,9 @@ bool build_dequant_prepared_stage_from_stage_contract_local(
       return false;
     }
     std::uint64_t output_physical_span_bytes = 0U;
-    if (!tensor_physical_span_bytes_local(iteration_shape, output_stride_bytes,
-                                          static_cast<std::uint64_t>(sizeof(float)),
-                                          output_iteration_size_bytes, &output_physical_span_bytes)) {
+    if (!tensor_physical_span_bytes_local(
+            iteration_shape, output_stride_bytes, static_cast<std::uint64_t>(sizeof(float)),
+            output_iteration_size_bytes, &output_physical_span_bytes)) {
       if (error_message) {
         *error_message = "dequant stage output physical span overflow";
       }
@@ -4048,12 +3993,10 @@ bool build_dequant_prepared_stage_from_stage_contract_local(
     span.shape = std::move(iteration_shape);
     span.input_stride_bytes = input_stride_bytes;
     span.output_stride_bytes = output_stride_bytes;
-    span.input_contiguous =
-        strides_match_contiguous_local(span.shape, span.input_stride_bytes,
-                                       static_cast<std::int64_t>(prepared.input_elem_bytes));
-    span.output_contiguous =
-        strides_match_contiguous_local(span.shape, span.output_stride_bytes,
-                                       static_cast<std::int64_t>(sizeof(float)));
+    span.input_contiguous = strides_match_contiguous_local(
+        span.shape, span.input_stride_bytes, static_cast<std::int64_t>(prepared.input_elem_bytes));
+    span.output_contiguous = strides_match_contiguous_local(
+        span.shape, span.output_stride_bytes, static_cast<std::int64_t>(sizeof(float)));
     prepared.quant_spans.push_back(std::move(span));
   }
 
@@ -4105,7 +4048,8 @@ const MpkGraphNode* find_graph_node_by_name_local(const std::vector<MpkGraphNode
     if (node.name != name) {
       continue;
     }
-    if (!canonical_op.empty() && upper_copy_local(node.canonical_op) != upper_copy_local(canonical_op)) {
+    if (!canonical_op.empty() &&
+        upper_copy_local(node.canonical_op) != upper_copy_local(canonical_op)) {
       continue;
     }
     return &node;
@@ -4113,8 +4057,9 @@ const MpkGraphNode* find_graph_node_by_name_local(const std::vector<MpkGraphNode
   return nullptr;
 }
 
-std::vector<const MpkGraphNode*> find_graph_raw_nodes_by_op_local(
-    const std::vector<MpkGraphNode>& nodes, const std::string& canonical_op) {
+std::vector<const MpkGraphNode*>
+find_graph_raw_nodes_by_op_local(const std::vector<MpkGraphNode>& nodes,
+                                 const std::string& canonical_op) {
   std::vector<const MpkGraphNode*> out;
   const auto wanted = upper_copy_local(canonical_op);
   for (const auto& node : nodes) {
@@ -4176,8 +4121,7 @@ bool parse_graph_int_field_local(const MpkGraphNode& node, const MpkGraphKernelF
 }
 
 bool parse_graph_int_array_field_local(const MpkGraphNode& node, const MpkGraphKernelFieldKind kind,
-                                       const std::string& name,
-                                       std::vector<int32_t>* values) {
+                                       const std::string& name, std::vector<int32_t>* values) {
   if (!values) {
     return false;
   }
@@ -4206,7 +4150,8 @@ bool parse_graph_int_array_field_local(const MpkGraphNode& node, const MpkGraphK
     }
     char* end = nullptr;
     const long parsed = std::strtol(raw.c_str() + pos, &end, 10);
-    if (end == raw.c_str() + pos || parsed < static_cast<long>(std::numeric_limits<int32_t>::min()) ||
+    if (end == raw.c_str() + pos ||
+        parsed < static_cast<long>(std::numeric_limits<int32_t>::min()) ||
         parsed > static_cast<long>(std::numeric_limits<int32_t>::max())) {
       return false;
     }
@@ -4236,8 +4181,9 @@ bool graph_kernel_argument_matches_tensor_local(const MpkTensorContract& tensor,
          (!tensor.segment_name.empty() && tensor.segment_name == value);
 }
 
-std::string graph_kernel_input_slot_name_local(const MpkGraphNode& node,
-                                               const std::vector<MpkTensorContract>& input_tensors) {
+std::string
+graph_kernel_input_slot_name_local(const MpkGraphNode& node,
+                                   const std::vector<MpkTensorContract>& input_tensors) {
   if (input_tensors.empty()) {
     return {};
   }
@@ -4254,8 +4200,9 @@ std::string graph_kernel_input_slot_name_local(const MpkGraphNode& node,
   return {};
 }
 
-std::vector<std::string> graph_kernel_output_slot_names_local(
-    const MpkGraphNode& node, const std::vector<MpkTensorContract>& output_tensors) {
+std::vector<std::string>
+graph_kernel_output_slot_names_local(const MpkGraphNode& node,
+                                     const std::vector<MpkTensorContract>& output_tensors) {
   std::vector<std::string> names;
   names.reserve(output_tensors.size());
   std::set<std::string> used_slots;
@@ -4293,18 +4240,18 @@ bool graph_node_tensor_name_matches_local(const MpkTensorContract& tensor,
          (!tensor.segment_name.empty() && tensor.segment_name == value);
 }
 
-std::vector<MpkTensorContract> graph_node_select_tensors_local(
-    const std::vector<MpkTensorContract>& tensors, const std::vector<std::string>& node_names) {
+std::vector<MpkTensorContract>
+graph_node_select_tensors_local(const std::vector<MpkTensorContract>& tensors,
+                                const std::vector<std::string>& node_names) {
   if (tensors.empty() || node_names.empty()) {
     return {};
   }
   std::vector<MpkTensorContract> selected;
   selected.reserve(std::min(tensors.size(), node_names.size()));
   for (const auto& node_name : node_names) {
-    auto it = std::find_if(tensors.begin(), tensors.end(),
-                           [&](const MpkTensorContract& tensor) {
-                             return graph_node_tensor_name_matches_local(tensor, node_name);
-                           });
+    auto it = std::find_if(tensors.begin(), tensors.end(), [&](const MpkTensorContract& tensor) {
+      return graph_node_tensor_name_matches_local(tensor, node_name);
+    });
     if (it != tensors.end()) {
       selected.push_back(*it);
     }
@@ -4312,8 +4259,9 @@ std::vector<MpkTensorContract> graph_node_select_tensors_local(
   return selected;
 }
 
-std::vector<MpkTensorContract> graph_node_select_tensors_from_kernel_fields_local(
-    const std::vector<MpkTensorContract>& tensors, const MpkGraphNode& node) {
+std::vector<MpkTensorContract>
+graph_node_select_tensors_from_kernel_fields_local(const std::vector<MpkTensorContract>& tensors,
+                                                   const MpkGraphNode& node) {
   if (tensors.empty()) {
     return {};
   }
@@ -4325,10 +4273,9 @@ std::vector<MpkTensorContract> graph_node_select_tensors_from_kernel_fields_loca
         field.value.empty()) {
       continue;
     }
-    auto it = std::find_if(tensors.begin(), tensors.end(),
-                           [&](const MpkTensorContract& tensor) {
-                             return graph_node_tensor_name_matches_local(tensor, field.value);
-                           });
+    auto it = std::find_if(tensors.begin(), tensors.end(), [&](const MpkTensorContract& tensor) {
+      return graph_node_tensor_name_matches_local(tensor, field.value);
+    });
     if (it == tensors.end()) {
       continue;
     }
@@ -4342,26 +4289,29 @@ std::vector<MpkTensorContract> graph_node_select_tensors_from_kernel_fields_loca
   return selected;
 }
 
-bool processcvu_build_graph_io_tensor_descs_local(
-    const ProcessCvuStagePayload& payload, const std::string& graph_name,
-    const GraphProcessCvuIoData& io, simaai::gst::PreparedProcessCvuTypedConfig* cfg,
-    std::string* error_message);
-bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b,
-                           std::uint64_t* out);
+bool processcvu_build_graph_io_tensor_descs_local(const ProcessCvuStagePayload& payload,
+                                                  const std::string& graph_name,
+                                                  const GraphProcessCvuIoData& io,
+                                                  simaai::gst::PreparedProcessCvuTypedConfig* cfg,
+                                                  std::string* error_message);
+bool checked_add_u64_local(const std::uint64_t a, const std::uint64_t b, std::uint64_t* out);
 bool tensor_physical_span_bytes_local(const std::vector<std::int64_t>& shape,
                                       const std::vector<std::int64_t>& stride_bytes,
                                       const std::uint64_t elem_bytes,
                                       const std::uint64_t logical_size_bytes,
                                       std::uint64_t* out_span_bytes);
-bool build_processcvu_prepared_stage_from_graph_io_local(
-    const StageStaticSpec& original_stage, const MpkGraphNode& graph_node,
-    const std::string& stage_key,
-    const GraphProcessCvuIoData& io, simaai::gst::ProcessCvuPreparedStage* out,
-    std::string* error_message);
-bool build_processcvu_prepared_stage_from_graph_local(
-    const StageStaticSpec& original_stage, const MpkContract& contract,
-    const MpkGraphNode& graph_node, const std::string& stage_key,
-    simaai::gst::ProcessCvuPreparedStage* out, std::string* error_message) {
+bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& original_stage,
+                                                         const MpkGraphNode& graph_node,
+                                                         const std::string& stage_key,
+                                                         const GraphProcessCvuIoData& io,
+                                                         simaai::gst::ProcessCvuPreparedStage* out,
+                                                         std::string* error_message);
+bool build_processcvu_prepared_stage_from_graph_local(const StageStaticSpec& original_stage,
+                                                      const MpkContract& contract,
+                                                      const MpkGraphNode& graph_node,
+                                                      const std::string& stage_key,
+                                                      simaai::gst::ProcessCvuPreparedStage* out,
+                                                      std::string* error_message) {
   const auto* stage = get_stage_io_contract(contract, graph_node.name);
   if (!stage) {
     if (error_message) {
@@ -4370,10 +4320,9 @@ bool build_processcvu_prepared_stage_from_graph_local(
     return false;
   }
   GraphProcessCvuIoData io;
-  const std::string canonical =
-      processcvu_canonical_graph_name_local(!original_stage.processcvu.graph_family.empty()
-                                                ? original_stage.processcvu.graph_family
-                                                : original_stage.processcvu.graph_name);
+  const std::string canonical = processcvu_canonical_graph_name_local(
+      !original_stage.processcvu.graph_family.empty() ? original_stage.processcvu.graph_family
+                                                      : original_stage.processcvu.graph_name);
   if (canonical == "detesscast" && stage->input_tensors.size() > 1U &&
       !stage->output_tensors.empty()) {
     io.input_tensors =
@@ -4401,8 +4350,8 @@ bool build_processcvu_prepared_stage_from_graph_local(
   }
   io.canonical_input_dtype = stage->canonical_input_dtype;
   io.canonical_output_dtype = stage->canonical_output_dtype;
-  io.c16_packed = (stage->has_align_c16 && stage->align_c16) ||
-                  (stage->has_cblock && stage->cblock);
+  io.c16_packed =
+      (stage->has_align_c16 && stage->align_c16) || (stage->has_cblock && stage->cblock);
   if (!stage->slice_shape.empty()) {
     io.slice_shapes.push_back(
         std::vector<int>(stage->slice_shape.begin(), stage->slice_shape.end()));
@@ -4410,8 +4359,8 @@ bool build_processcvu_prepared_stage_from_graph_local(
   io.input_slot_name = graph_kernel_input_slot_name_local(graph_node, io.input_tensors);
   io.runtime_output_slot_names =
       graph_kernel_output_slot_names_local(graph_node, io.output_tensors);
-  return build_processcvu_prepared_stage_from_graph_io_local(
-      original_stage, graph_node, stage_key, io, out, error_message);
+  return build_processcvu_prepared_stage_from_graph_io_local(original_stage, graph_node, stage_key,
+                                                             io, out, error_message);
 }
 
 std::string resolve_exact_processcvu_graph_stage_key_local(const StageStaticSpec* stage) {
@@ -4421,9 +4370,10 @@ std::string resolve_exact_processcvu_graph_stage_key_local(const StageStaticSpec
   return stage->processcvu.exact_stage_name_or_id;
 }
 
-const StageStaticSpec* find_original_stage_for_transformed_key_local(
-    const SimaPluginStaticManifest& original_manifest, const NameTransform& name_transform,
-    const StageStaticSpec& transformed_stage) {
+const StageStaticSpec*
+find_original_stage_for_transformed_key_local(const SimaPluginStaticManifest& original_manifest,
+                                              const NameTransform& name_transform,
+                                              const StageStaticSpec& transformed_stage) {
   const std::string transformed_stage_key = stage_key_from_stage_spec_local(transformed_stage);
   if (transformed_stage_key.empty()) {
     return nullptr;
@@ -4441,9 +4391,9 @@ const StageStaticSpec* find_original_stage_for_transformed_key_local(
   return nullptr;
 }
 
-std::vector<std::string> graph_stage_candidate_keys_local(
-    const StageStaticSpec& transformed_stage, const StageStaticSpec* original_stage,
-    const std::string& exact_stage_key = {}) {
+std::vector<std::string> graph_stage_candidate_keys_local(const StageStaticSpec& transformed_stage,
+                                                          const StageStaticSpec* original_stage,
+                                                          const std::string& exact_stage_key = {}) {
   std::vector<std::string> keys;
   auto append = [&](const std::string& key) {
     if (key.empty()) {
@@ -4480,9 +4430,10 @@ const MpkGraphNode* find_unique_graph_node_by_op_local(const std::vector<MpkGrap
   return matches.size() == 1U ? matches[0] : nullptr;
 }
 
-std::vector<const MpkGraphNode*> find_graph_nodes_matching_stage_keys_local(
-    const std::vector<MpkGraphNode>& nodes, const std::vector<std::string>& stage_keys,
-    const std::string& canonical_op) {
+std::vector<const MpkGraphNode*>
+find_graph_nodes_matching_stage_keys_local(const std::vector<MpkGraphNode>& nodes,
+                                           const std::vector<std::string>& stage_keys,
+                                           const std::string& canonical_op) {
   std::vector<const MpkGraphNode*> matches;
   const std::string wanted = upper_copy_local(canonical_op);
   for (const auto& node : nodes) {
@@ -4509,12 +4460,12 @@ std::vector<const MpkGraphNode*> find_graph_nodes_matching_stage_keys_local(
   return matches;
 }
 
-std::optional<MpkContract> discover_graph_contract_local(
-    const SimaPluginStaticManifest& transformed_manifest,
-    const std::optional<SimaPluginStaticManifest>& original_manifest,
-    const std::vector<PipelineElementSpec>& pipeline_elements,
-    const std::vector<std::string>& model_source_paths,
-    std::filesystem::path* pack_root_out, std::string* error_message) {
+std::optional<MpkContract>
+discover_graph_contract_local(const SimaPluginStaticManifest& transformed_manifest,
+                              const std::optional<SimaPluginStaticManifest>& original_manifest,
+                              const std::vector<PipelineElementSpec>& pipeline_elements,
+                              const std::vector<std::string>& model_source_paths,
+                              std::filesystem::path* pack_root_out, std::string* error_message) {
   if (pack_root_out) {
     *pack_root_out = std::filesystem::path();
   }
@@ -4527,7 +4478,8 @@ std::optional<MpkContract> discover_graph_contract_local(
   std::optional<MpkContract> contract_opt;
 
   if (original_manifest.has_value()) {
-    contract_opt = load_graph_contract_from_manifest_local(*original_manifest, &pack_root, &load_error);
+    contract_opt =
+        load_graph_contract_from_manifest_local(*original_manifest, &pack_root, &load_error);
   }
   if (!contract_opt.has_value()) {
     std::string transformed_error;
@@ -4539,16 +4491,16 @@ std::optional<MpkContract> discover_graph_contract_local(
   }
   if (!contract_opt.has_value()) {
     std::string pipeline_error;
-    contract_opt = load_graph_contract_from_pipeline_elements_local(
-        pipeline_elements, &pack_root, &pipeline_error);
+    contract_opt = load_graph_contract_from_pipeline_elements_local(pipeline_elements, &pack_root,
+                                                                    &pipeline_error);
     if (!contract_opt.has_value() && !pipeline_error.empty()) {
       load_error = pipeline_error;
     }
   }
   if (!contract_opt.has_value()) {
     std::string source_error;
-    contract_opt = load_graph_contract_from_model_sources_local(model_source_paths, &pack_root,
-                                                                &source_error);
+    contract_opt =
+        load_graph_contract_from_model_sources_local(model_source_paths, &pack_root, &source_error);
     if (!contract_opt.has_value() && !source_error.empty()) {
       load_error = source_error;
     }
@@ -4565,10 +4517,12 @@ std::optional<MpkContract> discover_graph_contract_local(
   return contract_opt;
 }
 
-bool build_graph_owned_prepared_stage_local(
-    const StageStaticSpec& transformed_stage, const StageStaticSpec* original_stage,
-    const MpkContract& contract, const std::filesystem::path& pack_root,
-    simaai::gst::PreparedStageSpec* out, std::string* error_message) {
+bool build_graph_owned_prepared_stage_local(const StageStaticSpec& transformed_stage,
+                                            const StageStaticSpec* original_stage,
+                                            const MpkContract& contract,
+                                            const std::filesystem::path& pack_root,
+                                            simaai::gst::PreparedStageSpec* out,
+                                            std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = "graph-owned prepared stage requires output storage";
@@ -4600,8 +4554,8 @@ bool build_graph_owned_prepared_stage_local(
       return false;
     }
     if (!processmla_stage.runtime_cfg.model_path.empty()) {
-      processmla_stage.runtime_cfg.model_path =
-          resolve_model_path_from_pack_root_local(pack_root, processmla_stage.runtime_cfg.model_path);
+      processmla_stage.runtime_cfg.model_path = resolve_model_path_from_pack_root_local(
+          pack_root, processmla_stage.runtime_cfg.model_path);
     }
     out->stage_key = transformed_stage_key;
     out->kind = simaai::gst::PreparedStageKind::ProcessMla;
@@ -4615,8 +4569,8 @@ bool build_graph_owned_prepared_stage_local(
       (stage_is_dequant_local(transformed_stage) ||
        (original_stage && stage_is_dequant_local(*original_stage)))) {
     simaai::gst::DequantPreparedStage dequant_stage;
-    if (!build_dequant_prepared_stage_from_stage_contract_local(
-            transformed_stage, &dequant_stage, error_message)) {
+    if (!build_dequant_prepared_stage_from_stage_contract_local(transformed_stage, &dequant_stage,
+                                                                error_message)) {
       return false;
     }
     out->stage_key = transformed_stage_key;
@@ -4628,20 +4582,18 @@ bool build_graph_owned_prepared_stage_local(
   if (stage_is_processcvu_local(transformed_stage) ||
       (original_stage && stage_is_processcvu_local(*original_stage))) {
     const StageStaticSpec& processcvu_stage_spec = transformed_stage;
-    const std::string graph_family =
-        !processcvu_stage_spec.processcvu.graph_family.empty()
-            ? processcvu_stage_spec.processcvu.graph_family
-            : processcvu_stage_spec.processcvu.graph_name;
+    const std::string graph_family = !processcvu_stage_spec.processcvu.graph_family.empty()
+                                         ? processcvu_stage_spec.processcvu.graph_family
+                                         : processcvu_stage_spec.processcvu.graph_name;
     const std::string canonical_family = processcvu_canonical_graph_name_local(graph_family);
     const std::string exact_stage_key =
         !resolve_exact_processcvu_graph_stage_key_local(&processcvu_stage_spec).empty()
             ? resolve_exact_processcvu_graph_stage_key_local(&processcvu_stage_spec)
             : resolve_exact_processcvu_graph_stage_key_local(original_stage);
-    const bool processcvu_region_contract =
-        transformed_stage.input_bindings.size() > 1U ||
-        transformed_stage.logical_inputs.size() > 1U ||
-        transformed_stage.logical_outputs.size() > 1U ||
-        transformed_stage.output_order.size() > 1U;
+    const bool processcvu_region_contract = transformed_stage.input_bindings.size() > 1U ||
+                                            transformed_stage.logical_inputs.size() > 1U ||
+                                            transformed_stage.logical_outputs.size() > 1U ||
+                                            transformed_stage.output_order.size() > 1U;
 
     simaai::gst::ProcessCvuPreparedStage processcvu_stage;
     if (canonical_family == "detesscast" || canonical_family == "detessdequant" ||
@@ -4657,14 +4609,13 @@ bool build_graph_owned_prepared_stage_local(
                                                                       keys, canonical_family);
       if (matches.size() != 1U) {
         if (error_message) {
-          *error_message =
-              "graph-owned processcvu stage could not resolve a unique graph node";
+          *error_message = "graph-owned processcvu stage could not resolve a unique graph node";
         }
         return false;
       }
-      if (!build_processcvu_prepared_stage_from_graph_local(
-              transformed_stage, contract, *matches[0], transformed_stage_key,
-              &processcvu_stage, error_message)) {
+      if (!build_processcvu_prepared_stage_from_graph_local(transformed_stage, contract,
+                                                            *matches[0], transformed_stage_key,
+                                                            &processcvu_stage, error_message)) {
         return false;
       }
     }
@@ -4680,9 +4631,10 @@ bool build_graph_owned_prepared_stage_local(
   return false;
 }
 
-std::optional<MpkContract> load_graph_contract_from_manifest_local(
-    const SimaPluginStaticManifest& manifest, std::filesystem::path* pack_root_out,
-    std::string* error_message) {
+std::optional<MpkContract>
+load_graph_contract_from_manifest_local(const SimaPluginStaticManifest& manifest,
+                                        std::filesystem::path* pack_root_out,
+                                        std::string* error_message) {
   for (const auto& stage : manifest.stages) {
     if (!stage_is_processmla_local(stage)) {
       continue;
@@ -4721,8 +4673,8 @@ std::optional<MpkContract> load_graph_contract_from_manifest_local(
 }
 
 std::optional<MpkContract> load_graph_contract_from_pipeline_elements_local(
-    const std::vector<PipelineElementSpec>& pipeline_elements,
-    std::filesystem::path* pack_root_out, std::string* error_message) {
+    const std::vector<PipelineElementSpec>& pipeline_elements, std::filesystem::path* pack_root_out,
+    std::string* error_message) {
   for (const auto& element : pipeline_elements) {
     const std::string plugin = upper_copy_local(element.plugin);
     if (plugin.find("PROCESSMLA") == std::string::npos) {
@@ -4738,8 +4690,7 @@ std::optional<MpkContract> load_graph_contract_from_pipeline_elements_local(
         "graph overlay inspect pipeline mla element=%s stage_id=%s model_path=%s",
         element.element_name.c_str(), element.stage_id.c_str(),
         element.model_path_property->c_str());
-    const auto pack_root =
-        discover_pack_root_from_model_path_local(*element.model_path_property);
+    const auto pack_root = discover_pack_root_from_model_path_local(*element.model_path_property);
     if (!pack_root.has_value()) {
       prepared_runtime_debug_log_local(
           "graph overlay pipeline pack_root discovery failed element=%s model_path=%s",
@@ -4767,9 +4718,10 @@ std::optional<MpkContract> load_graph_contract_from_pipeline_elements_local(
   return std::nullopt;
 }
 
-std::optional<MpkContract> load_graph_contract_from_model_sources_local(
-    const std::vector<std::string>& model_source_paths,
-    std::filesystem::path* pack_root_out, std::string* error_message) {
+std::optional<MpkContract>
+load_graph_contract_from_model_sources_local(const std::vector<std::string>& model_source_paths,
+                                             std::filesystem::path* pack_root_out,
+                                             std::string* error_message) {
   for (const auto& source_path : model_source_paths) {
     if (source_path.empty()) {
       continue;
@@ -4780,8 +4732,7 @@ std::optional<MpkContract> load_graph_contract_from_model_sources_local(
       internal::ModelPack pack(source_path);
       if (!pack.mpk_contract().has_value()) {
         prepared_runtime_debug_log_local(
-            "graph overlay model source missing mpk contract source_path=%s",
-            source_path.c_str());
+            "graph overlay model source missing mpk contract source_path=%s", source_path.c_str());
         continue;
       }
       MpkContract contract = *pack.mpk_contract();
@@ -4800,8 +4751,8 @@ std::optional<MpkContract> load_graph_contract_from_model_sources_local(
       return contract;
     } catch (const std::exception& e) {
       prepared_runtime_debug_log_local(
-          "graph overlay model source load failed source_path=%s error=%s",
-          source_path.c_str(), e.what());
+          "graph overlay model source load failed source_path=%s error=%s", source_path.c_str(),
+          e.what());
       if (error_message && error_message->empty()) {
         *error_message = e.what();
       }
@@ -4839,8 +4790,9 @@ std::string runtime_graph_token_local(std::string raw) {
   return raw.empty() ? std::string("mpk") : raw;
 }
 
-std::filesystem::path prepared_runtime_graph_output_path_local(
-    const std::filesystem::path& pack_root, const MpkContract& contract) {
+std::filesystem::path
+prepared_runtime_graph_output_path_local(const std::filesystem::path& pack_root,
+                                         const MpkContract& contract) {
   if (const char* raw = std::getenv("SIMA_PREPARED_RUNTIME_GRAPH_OUTPUT_PATH"); raw && *raw) {
     return std::filesystem::path(raw);
   }
@@ -4858,8 +4810,8 @@ std::filesystem::path prepared_runtime_graph_output_path_local(
   if (!contract.model_name.empty()) {
     base_name = runtime_graph_token_local(contract.model_name);
   } else if (!contract.mpk_json_path.empty()) {
-    base_name = runtime_graph_token_local(
-        std::filesystem::path(contract.mpk_json_path).stem().string());
+    base_name =
+        runtime_graph_token_local(std::filesystem::path(contract.mpk_json_path).stem().string());
   } else {
     base_name = "mpk";
   }
@@ -5020,21 +4972,20 @@ void set_runtime_graph_kernel_field_local(MpkGraphNode* node, const MpkGraphKern
   if (!add_if_missing) {
     return;
   }
-  node->kernel_contract.fields.push_back(MpkGraphKernelField{
-      .name = name, .value = value, .kind = kind, .known = true});
+  node->kernel_contract.fields.push_back(
+      MpkGraphKernelField{.name = name, .value = value, .kind = kind, .known = true});
 }
 
-void overlay_processcvu_runtime_graph_node_local(MpkGraphNode* node,
-                                                 const simaai::gst::ProcessCvuPreparedStage& stage) {
+void overlay_processcvu_runtime_graph_node_local(
+    MpkGraphNode* node, const simaai::gst::ProcessCvuPreparedStage& stage) {
   if (!node) {
     return;
   }
   const auto& cfg = stage.typed_config;
   const std::string canonical_graph_family = processcvu_canonical_graph_name_local(cfg.graph_name);
   if (canonical_graph_family != "detessdequant") {
-    set_runtime_graph_kernel_field_local(
-        node, MpkGraphKernelFieldKind::Value, "num_in_tensor", std::to_string(cfg.num_in_tensor),
-        false);
+    set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Value, "num_in_tensor",
+                                         std::to_string(cfg.num_in_tensor), false);
   }
 
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
@@ -5046,8 +4997,7 @@ void overlay_processcvu_runtime_graph_node_local(MpkGraphNode* node,
                                        "runtime.output_layout",
                                        prepared_output_layout_token_local(cfg), true);
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
-                                       "runtime.default_input_name", cfg.default_input_name,
-                                       true);
+                                       "runtime.default_input_name", cfg.default_input_name, true);
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
                                        "runtime.input_tensors",
                                        ev_tensor_descs_dbg_runtime_local(cfg.input_tensors), true);
@@ -5063,15 +5013,14 @@ void overlay_processcvu_runtime_graph_node_local(MpkGraphNode* node,
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
                                        "runtime.primary_output_name", stage.primary_output_name,
                                        true);
-  set_runtime_graph_kernel_field_local(
-      node, MpkGraphKernelFieldKind::Parameter, "runtime.primary_output_packed_caps",
-      stage.primary_output_packed_caps ? "true" : "false", true);
+  set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
+                                       "runtime.primary_output_packed_caps",
+                                       stage.primary_output_packed_caps ? "true" : "false", true);
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
                                        "runtime.sink_caps", caps_dbg_runtime_local(stage.sink_caps),
                                        true);
-  set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
-                                       "runtime.src_caps", caps_dbg_runtime_local(stage.src_caps),
-                                       true);
+  set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter, "runtime.src_caps",
+                                       caps_dbg_runtime_local(stage.src_caps), true);
 
   if (const auto* logical = single_publish_logical_output_local(stage.output_publish_contract)) {
     node->mpk_shape = logical->shape;
@@ -5084,8 +5033,8 @@ void overlay_processcvu_runtime_graph_node_local(MpkGraphNode* node,
   }
 }
 
-void overlay_processmla_runtime_graph_node_local(MpkGraphNode* node,
-                                                 const simaai::gst::ProcessMlaPreparedStage& stage) {
+void overlay_processmla_runtime_graph_node_local(
+    MpkGraphNode* node, const simaai::gst::ProcessMlaPreparedStage& stage) {
   if (!node) {
     return;
   }
@@ -5103,11 +5052,9 @@ void overlay_processmla_runtime_graph_node_local(MpkGraphNode* node,
                                        "runtime.stage_key", stage.stage_key, true);
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
                                        "runtime.model_path", stage.runtime_cfg.model_path, true);
-  set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
-                                       "runtime.dispatcher_inputs",
-                                       strings_dbg_runtime_local(
-                                           stage.runtime_cfg.dispatcher_input_names),
-                                       true);
+  set_runtime_graph_kernel_field_local(
+      node, MpkGraphKernelFieldKind::Parameter, "runtime.dispatcher_inputs",
+      strings_dbg_runtime_local(stage.runtime_cfg.dispatcher_input_names), true);
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
                                        "runtime.dispatcher_outputs",
                                        strings_dbg_runtime_local(dispatcher_outputs), true);
@@ -5117,9 +5064,8 @@ void overlay_processmla_runtime_graph_node_local(MpkGraphNode* node,
   set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
                                        "runtime.sink_caps", caps_dbg_runtime_local(stage.sink_caps),
                                        true);
-  set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter,
-                                       "runtime.src_caps", caps_dbg_runtime_local(stage.src_caps),
-                                       true);
+  set_runtime_graph_kernel_field_local(node, MpkGraphKernelFieldKind::Parameter, "runtime.src_caps",
+                                       caps_dbg_runtime_local(stage.src_caps), true);
   if (const auto* logical = single_publish_logical_output_local(stage.output_publish_contract)) {
     node->mpk_shape = logical->shape;
     node->size_bytes = logical->size_bytes;
@@ -5132,13 +5078,13 @@ void overlay_processmla_runtime_graph_node_local(MpkGraphNode* node,
 
 } // namespace
 
-std::optional<simaai::neat::PreparedRuntimeDescriptor> build_prepared_runtime_context(
-    const GstContext* static_manifest_context,
-    const SimaPluginStaticManifest& transformed_manifest,
-    const std::optional<SimaPluginStaticManifest>& original_manifest,
-    const std::vector<PipelineElementSpec>& pipeline_elements,
-    const std::vector<std::string>& model_source_paths,
-    const NameTransform& name_transform, std::string* error_message) {
+std::optional<simaai::neat::PreparedRuntimeDescriptor>
+build_prepared_runtime_context(const GstContext* static_manifest_context,
+                               const SimaPluginStaticManifest& transformed_manifest,
+                               const std::optional<SimaPluginStaticManifest>& original_manifest,
+                               const std::vector<PipelineElementSpec>& pipeline_elements,
+                               const std::vector<std::string>& model_source_paths,
+                               const NameTransform& name_transform, std::string* error_message) {
   if (error_message) {
     error_message->clear();
   }
@@ -5148,20 +5094,20 @@ std::optional<simaai::neat::PreparedRuntimeDescriptor> build_prepared_runtime_co
   context.model_id = transformed_manifest.model_id;
   context.stages.reserve(transformed_manifest.stages.size());
 
-  const bool needs_graph_contract = std::any_of(
-      transformed_manifest.stages.begin(), transformed_manifest.stages.end(),
-      [](const StageStaticSpec& stage) { return stage_is_graph_owned_local(stage); });
+  const bool needs_graph_contract =
+      std::any_of(transformed_manifest.stages.begin(), transformed_manifest.stages.end(),
+                  [](const StageStaticSpec& stage) { return stage_is_graph_owned_local(stage); });
   std::optional<MpkContract> graph_contract;
   std::filesystem::path graph_pack_root;
   if (needs_graph_contract) {
     std::string graph_error;
-    graph_contract = discover_graph_contract_local(transformed_manifest, original_manifest,
-                                                   pipeline_elements, model_source_paths,
-                                                   &graph_pack_root, &graph_error);
+    graph_contract =
+        discover_graph_contract_local(transformed_manifest, original_manifest, pipeline_elements,
+                                      model_source_paths, &graph_pack_root, &graph_error);
     if (!graph_contract.has_value()) {
       if (error_message && error_message->empty()) {
-        *error_message = graph_error.empty() ? "graph-owned stages require mpk graph contract"
-                                             : graph_error;
+        *error_message =
+            graph_error.empty() ? "graph-owned stages require mpk graph contract" : graph_error;
       }
       return std::nullopt;
     }
@@ -5207,8 +5153,7 @@ std::optional<simaai::neat::PreparedRuntimeDescriptor> build_prepared_runtime_co
       }
 
       simaai::gst::CastPreparedStage cast_stage;
-      if (!build_cast_prepared_stage_from_manifest_stage_local(stage, &cast_stage,
-                                                               error_message)) {
+      if (!build_cast_prepared_stage_from_manifest_stage_local(stage, &cast_stage, error_message)) {
         return std::nullopt;
       }
       simaai::gst::PreparedStageSpec prepared;

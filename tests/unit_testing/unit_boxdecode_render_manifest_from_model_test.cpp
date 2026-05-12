@@ -14,11 +14,10 @@
 namespace {
 
 sima_test::MpkFixture make_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture(
-      "boxdecode_render_manifest_model",
-      {
-          {"etc/pipeline_sequence.json",
-           R"json({
+  return sima_test::make_strict_mpk_tar_fixture("boxdecode_render_manifest_model",
+                                                {
+                                                    {"etc/pipeline_sequence.json",
+                                                     R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -51,8 +50,8 @@ sima_test::MpkFixture make_fixture() {
     ]
   }]
 })json"},
-          {"etc/0_preproc.json",
-           R"json({
+                                                    {"etc/0_preproc.json",
+                                                     R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -61,8 +60,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": 640,
   "output_img_type": "RGB"
 })json"},
-          {"etc/0_process_mla.json",
-           R"json({
+                                                    {"etc/0_process_mla.json",
+                                                     R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -72,8 +71,8 @@ sima_test::MpkFixture make_fixture() {
   "q_scale": [0.125],
   "q_zp": [-7]
 })json"},
-          {"etc/0_boxdecoder.json",
-           R"json({
+                                                    {"etc/0_boxdecoder.json",
+                                                     R"json({
   "node_name": "boxdecode_0",
   "decode_type": "yolov8",
   "topk": 100,
@@ -89,14 +88,15 @@ sima_test::MpkFixture make_fixture() {
   "dq_scale": [0.5],
   "dq_zp": [1]
 })json"},
-      },
-      true);
+                                                },
+                                                true);
 }
 
-const simaai::neat::CompiledNodeContract* find_first_mla_stage(
-    const simaai::neat::CompiledPipelineContracts& compiled) {
+const simaai::neat::CompiledNodeContract*
+find_first_mla_stage(const simaai::neat::CompiledPipelineContracts& compiled) {
   const simaai::neat::CompiledNodeContract* found = nullptr;
-  const auto visit = [&](const auto& self, const simaai::neat::CompiledNodeContract& stage) -> void {
+  const auto visit = [&](const auto& self,
+                         const simaai::neat::CompiledNodeContract& stage) -> void {
     if (!found && stage.processmla.has_value()) {
       found = &stage;
     }
@@ -110,10 +110,11 @@ const simaai::neat::CompiledNodeContract* find_first_mla_stage(
   return found;
 }
 
-const simaai::neat::CompiledNodeContract* find_first_boxdecode_stage(
-    const simaai::neat::CompiledPipelineContracts& compiled) {
+const simaai::neat::CompiledNodeContract*
+find_first_boxdecode_stage(const simaai::neat::CompiledPipelineContracts& compiled) {
   const simaai::neat::CompiledNodeContract* found = nullptr;
-  const auto visit = [&](const auto& self, const simaai::neat::CompiledNodeContract& stage) -> void {
+  const auto visit = [&](const auto& self,
+                         const simaai::neat::CompiledNodeContract& stage) -> void {
     if (!found && stage.boxdecode.has_value()) {
       found = &stage;
     }
@@ -139,88 +140,88 @@ const simaai::neat::pipeline_internal::sima::StageStaticSpec* find_first_rendere
 
 } // namespace
 
-RUN_TEST("unit_boxdecode_render_manifest_from_model_test", ([] {
-           using namespace simaai::neat;
+RUN_TEST(
+    "unit_boxdecode_render_manifest_from_model_test", ([] {
+      using namespace simaai::neat;
 
-           const auto fixture = make_fixture();
-           const std::string tar_path = fixture.tar_path;
+      const auto fixture = make_fixture();
+      const std::string tar_path = fixture.tar_path;
 
-           Model::Options model_opt;
-           model_opt.preprocess.kind = InputKind::Image;
-           model_opt.preprocess.enable = AutoFlag::On;
-           model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
-           model_opt.decode_type = BoxDecodeType::YoloV8;
-           Model model(tar_path, model_opt);
+      Model::Options model_opt;
+      model_opt.preprocess.kind = InputKind::Image;
+      model_opt.preprocess.enable = AutoFlag::On;
+      model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+      model_opt.decode_type = BoxDecodeType::YoloV8;
+      Model model(tar_path, model_opt);
 
-           // The bundled strict_seed_mpk (yolo_v9c_seg) does not declare an
-           // explicit decode_type, so there is no model-managed boxdecode
-           // available. Constructing a model-managed SimaBoxDecode against
-           // this fixture must fail; this test now validates the negative
-           // path (no decode_type in MPK -> no model-managed boxdecode).
-           bool boxdecode_unavailable = false;
-           try {
-             (void)simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.25, 0.45,
-                                                     100);
-           } catch (const std::exception&) {
-             boxdecode_unavailable = true;
-           }
-           require(boxdecode_unavailable,
-                   "MPK without decode_type should not expose a model-managed boxdecode contract");
-           return;
-           // unreachable: the original render-manifest path required a
-           // model-managed boxdecode contract that no longer exists for this
-           // fixture; coverage should move to a fixture whose MPK declares
-           // decode_type before re-enabling.
+      // The bundled strict_seed_mpk (yolo_v9c_seg) does not declare an
+      // explicit decode_type, so there is no model-managed boxdecode
+      // available. Constructing a model-managed SimaBoxDecode against
+      // this fixture must fail; this test now validates the negative
+      // path (no decode_type in MPK -> no model-managed boxdecode).
+      bool boxdecode_unavailable = false;
+      try {
+        (void)simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.25, 0.45, 100);
+      } catch (const std::exception&) {
+        boxdecode_unavailable = true;
+      }
+      require(boxdecode_unavailable,
+              "MPK without decode_type should not expose a model-managed boxdecode contract");
+      return;
+      // unreachable: the original render-manifest path required a
+      // model-managed boxdecode contract that no longer exists for this
+      // fixture; coverage should move to a fixture whose MPK declares
+      // decode_type before re-enabling.
 
-           const NodeGroup infer = nodes::groups::Infer(model);
-           require(!infer.nodes().empty(), "inference fragment should contain renderable nodes");
+      const NodeGroup infer = nodes::groups::Infer(model);
+      require(!infer.nodes().empty(), "inference fragment should contain renderable nodes");
 
-           std::vector<std::shared_ptr<Node>> nodes = infer.nodes();
-           nodes.push_back(
-               simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.25, 0.45, 100));
+      std::vector<std::shared_ptr<Node>> nodes = infer.nodes();
+      nodes.push_back(
+          simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.25, 0.45, 100));
 
-           pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-           const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
-           require(diagnostics.errors.empty(), "inference + boxdecode contract compile failed");
+      pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+      const auto compiled = compile_node_contracts(nodes, ContractCompileInput{}, &diagnostics);
+      require(diagnostics.errors.empty(), "inference + boxdecode contract compile failed");
 
-           const auto* mla_stage = find_first_mla_stage(compiled);
-           require(mla_stage != nullptr, "compiled inference fragment should include an MLA stage");
+      const auto* mla_stage = find_first_mla_stage(compiled);
+      require(mla_stage != nullptr, "compiled inference fragment should include an MLA stage");
 
-           const auto* boxdecode_stage = find_first_boxdecode_stage(compiled);
-           require(boxdecode_stage != nullptr,
-                   "compiled inference fragment should include a boxdecode stage");
-           require(boxdecode_stage->renderable,
-                   "compiled boxdecode stage should remain renderable for manifest export");
+      const auto* boxdecode_stage = find_first_boxdecode_stage(compiled);
+      require(boxdecode_stage != nullptr,
+              "compiled inference fragment should include a boxdecode stage");
+      require(boxdecode_stage->renderable,
+              "compiled boxdecode stage should remain renderable for manifest export");
 
-           const auto manifest_opt = render_manifest_from_compiled_contracts(
-               compiled, ContractCompileInput{}, &diagnostics);
-           require(diagnostics.errors.empty(), "rendered manifest should not emit diagnostics errors");
-           require(manifest_opt.has_value(), "compiled inference fragment should render a manifest");
+      const auto manifest_opt =
+          render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
+      require(diagnostics.errors.empty(), "rendered manifest should not emit diagnostics errors");
+      require(manifest_opt.has_value(), "compiled inference fragment should render a manifest");
 
-           const auto* rendered_box = find_first_rendered_boxdecode_stage(*manifest_opt);
-           require(rendered_box != nullptr, "rendered manifest should contain a boxdecode stage");
-           require(rendered_box->payload_kind ==
-                       pipeline_internal::sima::StagePayloadKind::BoxDecode,
-                   "rendered stage payload kind should remain boxdecode");
-           require(!rendered_box->element_name.empty(),
-                   "rendered boxdecode stage should preserve element identity");
-           require(!rendered_box->logical_stage_id.empty(),
-                   "rendered boxdecode stage should preserve logical stage identity");
-           require(rendered_box->element_name == boxdecode_stage->element_name,
-                   "rendered boxdecode stage should preserve compiled element name");
-           require(rendered_box->logical_stage_id == boxdecode_stage->logical_stage_id,
-                   "rendered boxdecode stage should preserve compiled logical stage id");
-           require(rendered_box->logical_inputs.size() ==
-                       boxdecode_stage->boxdecode->runtime_contract.logical_inputs.size(),
-                   "rendered boxdecode stage should preserve logical input count");
-           require(rendered_box->input_bindings.size() ==
-                       boxdecode_stage->boxdecode->runtime_contract.input_bindings.size(),
-                   "rendered boxdecode stage should preserve binding count");
-           require(!rendered_box->input_bindings.empty(),
-                   "rendered boxdecode stage should expose upstream MLA bindings");
-           require(!rendered_box->input_bindings.front().source_segment_name.empty(),
-                   "rendered boxdecode stage should preserve a concrete upstream segment identity");
-           require(rendered_box->input_bindings.front().source_segment_name ==
-                       boxdecode_stage->boxdecode->runtime_contract.input_bindings.front().source_segment_name,
-                   "rendered boxdecode stage should preserve upstream packed segment binding");
-         }));
+      const auto* rendered_box = find_first_rendered_boxdecode_stage(*manifest_opt);
+      require(rendered_box != nullptr, "rendered manifest should contain a boxdecode stage");
+      require(rendered_box->payload_kind == pipeline_internal::sima::StagePayloadKind::BoxDecode,
+              "rendered stage payload kind should remain boxdecode");
+      require(!rendered_box->element_name.empty(),
+              "rendered boxdecode stage should preserve element identity");
+      require(!rendered_box->logical_stage_id.empty(),
+              "rendered boxdecode stage should preserve logical stage identity");
+      require(rendered_box->element_name == boxdecode_stage->element_name,
+              "rendered boxdecode stage should preserve compiled element name");
+      require(rendered_box->logical_stage_id == boxdecode_stage->logical_stage_id,
+              "rendered boxdecode stage should preserve compiled logical stage id");
+      require(rendered_box->logical_inputs.size() ==
+                  boxdecode_stage->boxdecode->runtime_contract.logical_inputs.size(),
+              "rendered boxdecode stage should preserve logical input count");
+      require(rendered_box->input_bindings.size() ==
+                  boxdecode_stage->boxdecode->runtime_contract.input_bindings.size(),
+              "rendered boxdecode stage should preserve binding count");
+      require(!rendered_box->input_bindings.empty(),
+              "rendered boxdecode stage should expose upstream MLA bindings");
+      require(!rendered_box->input_bindings.front().source_segment_name.empty(),
+              "rendered boxdecode stage should preserve a concrete upstream segment identity");
+      require(rendered_box->input_bindings.front().source_segment_name ==
+                  boxdecode_stage->boxdecode->runtime_contract.input_bindings.front()
+                      .source_segment_name,
+              "rendered boxdecode stage should preserve upstream packed segment binding");
+    }));

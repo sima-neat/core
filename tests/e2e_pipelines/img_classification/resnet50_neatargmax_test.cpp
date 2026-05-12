@@ -43,21 +43,20 @@ struct BenchResult {
 };
 
 static void usage(const char* prog) {
-  std::cerr
-      << "Usage:\n"
-      << "  " << prog << " --goldfish [--model <model.tar.gz>]\n"
-      << "  " << prog << " --image <path> [--model <model.tar.gz>]\n"
-      << "\n"
-      << "Options:\n"
-      << "  --goldfish             Download ImageNet goldfish sample and run comparison.\n"
-      << "  --goldfish-url <url>   Override goldfish image URL.\n"
-      << "  --image <path>         Input image path.\n"
-      << "  --model <path>         Model pack tar.gz path.\n"
-      << "  --expect-id <int>      Expected top-1 class id.\n"
-      << "  --warmup <int>         Warmup iterations per route (default: 10).\n"
-      << "  --iters <int>          Measured iterations per route (default: 80).\n"
-      << "  --speedup-min <float>  Required baseline/argmax speedup (default: 1.05).\n"
-      << "  --print-pipeline       Print baseline/argmax pipeline strings.\n";
+  std::cerr << "Usage:\n"
+            << "  " << prog << " --goldfish [--model <model.tar.gz>]\n"
+            << "  " << prog << " --image <path> [--model <model.tar.gz>]\n"
+            << "\n"
+            << "Options:\n"
+            << "  --goldfish             Download ImageNet goldfish sample and run comparison.\n"
+            << "  --goldfish-url <url>   Override goldfish image URL.\n"
+            << "  --image <path>         Input image path.\n"
+            << "  --model <path>         Model pack tar.gz path.\n"
+            << "  --expect-id <int>      Expected top-1 class id.\n"
+            << "  --warmup <int>         Warmup iterations per route (default: 10).\n"
+            << "  --iters <int>          Measured iterations per route (default: 80).\n"
+            << "  --speedup-min <float>  Required baseline/argmax speedup (default: 1.05).\n"
+            << "  --print-pipeline       Print baseline/argmax pipeline strings.\n";
 }
 
 static cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
@@ -93,8 +92,7 @@ static bool pipeline_has_fused_classifier_post(const std::string& pipeline) {
   const bool has_fused_processcvu = pipeline.find("! neatprocesscvu ") != std::string::npos;
   const bool has_fused_stage_id = pipeline.find("stage-id=dequantize_") != std::string::npos ||
                                   pipeline.find(" name=dequantize_") != std::string::npos ||
-                                  pipeline.find("stage-id=detessdequant_") !=
-                                      std::string::npos ||
+                                  pipeline.find("stage-id=detessdequant_") != std::string::npos ||
                                   pipeline.find(" name=detessdequant_") != std::string::npos;
   return has_fused_processcvu && has_fused_stage_id;
 }
@@ -110,8 +108,7 @@ static void add_mla_terminal_argmax_route(simaai::neat::Session& session,
   const auto infer = model.inference();
   require(!infer.empty(), "argmax: model.inference() returned an empty group");
   session.add(infer);
-  session.custom(
-      "neatargmax name=neatargmax_1 axis=-1 keepdims=false num-threads=0 silent=true");
+  session.custom("neatargmax name=neatargmax_1 axis=-1 keepdims=false num-threads=0 silent=true");
   session.add(simaai::neat::nodes::Output());
 }
 
@@ -274,9 +271,8 @@ int main(int argc, char** argv) {
     std::vector<std::string> positional;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
-      if (arg == "--image" || arg == "--model" || arg == "--goldfish-url" ||
-          arg == "--expect-id" || arg == "--warmup" || arg == "--iters" ||
-          arg == "--speedup-min") {
+      if (arg == "--image" || arg == "--model" || arg == "--goldfish-url" || arg == "--expect-id" ||
+          arg == "--warmup" || arg == "--iters" || arg == "--speedup-min") {
         ++i;
         continue;
       }
@@ -373,16 +369,15 @@ int main(int argc, char** argv) {
         });
 
     const BenchResult argmax =
-        run_bench(argmax_session, rgb, warmup, iters, "argmax", [](const auto& t) {
-          return top1_from_int32_tensor(t, "argmax");
-        });
+        run_bench(argmax_session, rgb, warmup, iters, "argmax",
+                  [](const auto& t) { return top1_from_int32_tensor(t, "argmax"); });
 
     std::cout << "[baseline] top1=" << baseline.top1 << " avg_ms=" << baseline.avg_ms
               << " p50_ms=" << baseline.p50_ms << " p95_ms=" << baseline.p95_ms
               << " fps=" << baseline.fps << "\n";
     std::cout << "[argmax]   top1=" << argmax.top1 << " avg_ms=" << argmax.avg_ms
-              << " p50_ms=" << argmax.p50_ms << " p95_ms=" << argmax.p95_ms
-              << " fps=" << argmax.fps << "\n";
+              << " p50_ms=" << argmax.p50_ms << " p95_ms=" << argmax.p95_ms << " fps=" << argmax.fps
+              << "\n";
 
     require(argmax.top1 == baseline.top1,
             "top1 mismatch baseline=" + std::to_string(baseline.top1) +
@@ -398,13 +393,12 @@ int main(int argc, char** argv) {
 
     require(argmax.avg_ms > 0.0, "argmax average latency is invalid");
     const double speedup = baseline.avg_ms / argmax.avg_ms;
-    std::cout << "[speedup] baseline_over_argmax=" << speedup
-              << " required_min=" << speedup_min << "\n";
+    std::cout << "[speedup] baseline_over_argmax=" << speedup << " required_min=" << speedup_min
+              << "\n";
     require(speedup >= speedup_min,
             "argmax path is not fast enough baseline_ms=" + std::to_string(baseline.avg_ms) +
-                " argmax_ms=" + std::to_string(argmax.avg_ms) +
-                " speedup=" + std::to_string(speedup) +
-                " required_min=" + std::to_string(speedup_min));
+                " argmax_ms=" + std::to_string(argmax.avg_ms) + " speedup=" +
+                std::to_string(speedup) + " required_min=" + std::to_string(speedup_min));
 
     std::cout << "[OK] resnet50_neatargmax_test passed\n";
     return 0;

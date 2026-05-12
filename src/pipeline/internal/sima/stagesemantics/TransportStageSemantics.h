@@ -26,31 +26,25 @@ enum class TransportCastDirection : std::uint8_t {
   Fp32ToBf16 = 1,
 };
 
-CompiledTransportContract build_transport_compiled_contract_from_facts(
-    const TransportCanonicalFacts& facts);
+CompiledTransportContract
+build_transport_compiled_contract_from_facts(const TransportCanonicalFacts& facts);
 CompiledRuntimeContract build_transport_runtime_contract_from_processcvu_compiled(
     const CompiledProcessCvuContract& compiled);
 
-std::optional<TransportCastDirection> infer_cast_direction_from_upstream_contract(
-    const CompiledRuntimeContract& upstream);
-CompiledRuntimeContract build_cast_runtime_contract_from_external_input(
-    int width,
-    int height,
-    int depth,
-    const std::string& layout,
-    TransportCastDirection direction,
-    std::string* err);
-CompiledRuntimeContract build_cast_runtime_contract_from_upstream(
-    const CompiledRuntimeContract& upstream,
-    TransportCastDirection direction,
-    std::string* err);
+std::optional<TransportCastDirection>
+infer_cast_direction_from_upstream_contract(const CompiledRuntimeContract& upstream);
+CompiledRuntimeContract
+build_cast_runtime_contract_from_external_input(int width, int height, int depth,
+                                                const std::string& layout,
+                                                TransportCastDirection direction, std::string* err);
+CompiledRuntimeContract
+build_cast_runtime_contract_from_upstream(const CompiledRuntimeContract& upstream,
+                                          TransportCastDirection direction, std::string* err);
 
-bool build_transport_node_contract(const std::string& node_kind,
-                                   const std::string& element_name,
+bool build_transport_node_contract(const std::string& node_kind, const std::string& element_name,
                                    const std::string& logical_stage_id,
                                    const NodeContractDefinition& definition,
                                    const CompiledTransportContract& compiled,
-                                   CompiledNodeContract* out,
-                                   std::string* error_message = nullptr);
+                                   CompiledNodeContract* out, std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima::stagesemantics

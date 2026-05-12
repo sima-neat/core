@@ -29,35 +29,35 @@ simaai::neat::PreprocOptions make_binding_preproc_options() {
 } // namespace
 
 RUN_TEST("unit_processcvu_binding_table_uses_runtime_outputs_test", ([] {
-  using namespace simaai::neat;
+           using namespace simaai::neat;
 
-  std::vector<std::shared_ptr<Node>> nodes_to_compile = {nodes::Preproc(make_binding_preproc_options())};
-  pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-  const auto compiled =
-      compile_node_contracts(nodes_to_compile, ContractCompileInput{}, &diagnostics);
-  require(diagnostics.errors.empty(), "compiled contract should not emit errors");
+           std::vector<std::shared_ptr<Node>> nodes_to_compile = {
+               nodes::Preproc(make_binding_preproc_options())};
+           pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+           const auto compiled =
+               compile_node_contracts(nodes_to_compile, ContractCompileInput{}, &diagnostics);
+           require(diagnostics.errors.empty(), "compiled contract should not emit errors");
 
-  const auto manifest_opt =
-      render_manifest_from_compiled_contracts(compiled, ContractCompileInput{}, &diagnostics);
-  require(manifest_opt.has_value(), "compiled contract should render a manifest");
-  require(manifest_opt->stages.size() == 1U, "manifest should contain one stage");
-  const auto& stage = manifest_opt->stages.front();
+           const auto manifest_opt = render_manifest_from_compiled_contracts(
+               compiled, ContractCompileInput{}, &diagnostics);
+           require(manifest_opt.has_value(), "compiled contract should render a manifest");
+           require(manifest_opt->stages.size() == 1U, "manifest should contain one stage");
+           const auto& stage = manifest_opt->stages.front();
 
-  // The runtime now publishes both the RGB and tessellated outputs; the
-  // single_output_handoff selection only narrows the exposed routes below.
-  require(stage.processcvu.default_output_names ==
-              std::vector<std::string>{"output_rgb_image", "output_tessellated_image"},
-          "runtime should expose both runtime outputs");
-  require(stage.output_order.size() == 1U,
-          "exposed output order should stay projected to the selected handoff");
-  require(stage.output_order.front().cm_output_name == "output_tessellated_image",
-          "rendered exposed route should match the selected tessellated handoff");
-  require(!stage.logical_outputs.empty(),
-          "exposed logical outputs should be present");
-  // logical_output_index points into the runtime's full logical-output list
-  // (rgb + tess). The selected handoff is the second runtime output.
-  require(stage.output_order.front().logical_output_index == 1,
-          "exposed route should index the tessellated runtime logical output");
-  require(!stage.physical_outputs.empty(),
-          "runtime should publish at least one physical output");
-}));
+           // The runtime now publishes both the RGB and tessellated outputs; the
+           // single_output_handoff selection only narrows the exposed routes below.
+           require(stage.processcvu.default_output_names ==
+                       std::vector<std::string>{"output_rgb_image", "output_tessellated_image"},
+                   "runtime should expose both runtime outputs");
+           require(stage.output_order.size() == 1U,
+                   "exposed output order should stay projected to the selected handoff");
+           require(stage.output_order.front().cm_output_name == "output_tessellated_image",
+                   "rendered exposed route should match the selected tessellated handoff");
+           require(!stage.logical_outputs.empty(), "exposed logical outputs should be present");
+           // logical_output_index points into the runtime's full logical-output list
+           // (rgb + tess). The selected handoff is the second runtime output.
+           require(stage.output_order.front().logical_output_index == 1,
+                   "exposed route should index the tessellated runtime logical output");
+           require(!stage.physical_outputs.empty(),
+                   "runtime should publish at least one physical output");
+         }));

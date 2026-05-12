@@ -89,10 +89,10 @@ NodeContractDefinition DetessDequant::contract_definition() const {
 }
 
 bool DetessDequant::compile_node_contract(const ContractCompileInput& input,
-                                          CompiledNodeContract* out,
-                                          std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("detessdequant") : element_names(input.node_index).front();
+                                          CompiledNodeContract* out, std::string* err) const {
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("detessdequant")
+                                       : element_names(input.node_index).front();
   if (!config_holder_ || !config_holder_->compiled_contract.has_value()) {
     if (err) {
       *err = "DetessDequant: compiled processcvu contract is required";
@@ -100,8 +100,8 @@ bool DetessDequant::compile_node_contract(const ContractCompileInput& input,
     return false;
   }
   return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
-      kind(), element_name, element_name, contract_definition(),
-      *config_holder_->compiled_contract, out, err);
+      kind(), element_name, element_name, contract_definition(), *config_holder_->compiled_contract,
+      out, err);
 }
 
 void DetessDequant::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

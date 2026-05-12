@@ -68,7 +68,8 @@ Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
             "missing YOLOv8n fixture '" + tar_path.string() +
                 "'. Upload the fixture tarballs to the public test-assets repo and set "
                 "SIMA_YOLOV8N_VARIANTS_BASE_URL (or SIMA_YOLOV8_VARIANTS_BASE_URL) "
-                "to the directory/release URL containing " + stem + ".tar.gz");
+                "to the directory/release URL containing " +
+                stem + ".tar.gz");
 
     const std::string url = base_url + "/" + stem + ".tar.gz";
     require(sima_test::download_file(url, tar_path),
@@ -80,14 +81,12 @@ Yolov8VariantFixture resolve_yolov8_variant_fixture(const std::string& stem) {
     std::filesystem::remove_all(unpack_dir, ec);
     ec.clear();
     std::filesystem::create_directories(unpack_dir, ec);
-    const std::string cmd = "tar -xzf " + sima_test::shell_quote(tar_path.string()) +
-                            " -C " + sima_test::shell_quote(unpack_dir.string());
-    require(std::system(cmd.c_str()) == 0,
-            "failed to unpack YOLOv8n fixture " + tar_path.string() + " into " +
-                unpack_dir.string());
+    const std::string cmd = "tar -xzf " + sima_test::shell_quote(tar_path.string()) + " -C " +
+                            sima_test::shell_quote(unpack_dir.string());
+    require(std::system(cmd.c_str()) == 0, "failed to unpack YOLOv8n fixture " + tar_path.string() +
+                                               " into " + unpack_dir.string());
     require(path_has_yolov8_contract_files(unpack_dir),
-            "YOLOv8n fixture missing expected contract files after unpack: " +
-                unpack_dir.string());
+            "YOLOv8n fixture missing expected contract files after unpack: " + unpack_dir.string());
   }
 
   return Yolov8VariantFixture{tar_path.string(), unpack_dir.string()};
@@ -237,8 +236,7 @@ void verify_yolov8_int8_contract_subset() {
   require(!quanttess_subset.align_c16 && !quanttess_subset.cblock,
           "quanttess subset should preserve untiled align/cblock flags");
 
-  const auto quanttess_runtime =
-      pcs::build_quanttess_runtime_config_from_subset(quanttess_subset);
+  const auto quanttess_runtime = pcs::build_quanttess_runtime_config_from_subset(quanttess_subset);
   const auto quanttess_inputs =
       pss::build_processcvu_compile_inputs_from_runtime_config(quanttess_runtime);
   require(quanttess_inputs.payload.graph_family == "quanttess",
@@ -316,13 +314,11 @@ void verify_yolov8_int8_contract_subset() {
   require(detessdequant_subset.heads.front().frame_shape ==
               std::vector<std::int64_t>({1, 80, 80, 64}),
           "detessdequant subset should preserve frame_shape from detessellate");
-  require(detessdequant_subset.heads.front().slice_shape ==
-              std::vector<std::int64_t>({1, 80, 64}),
+  require(detessdequant_subset.heads.front().slice_shape == std::vector<std::int64_t>({1, 80, 64}),
           "detessdequant subset should preserve slice_shape from detessellate");
   require(detessdequant_subset.heads.front().frame_type == "INT8",
           "detessdequant subset should preserve per-head frame_type");
-  require(detessdequant_subset.heads.front().align_c16 &&
-              detessdequant_subset.heads.front().cblock,
+  require(detessdequant_subset.heads.front().align_c16 && detessdequant_subset.heads.front().cblock,
           "detessdequant subset should preserve detess align/cblock flags");
   require(detessdequant_subset.heads.front().per_head_quant_params.scales.front() ==
               8.084461464679606,
@@ -342,15 +338,18 @@ void verify_yolov8_int8_contract_subset() {
           "detessdequant subset builder should preserve head count");
   require(detessdequant_payload.input_shapes.size() == 6U,
           "detessdequant subset builder should preserve per-head input shapes");
-  require(detessdequant_payload.input_shapes ==
-              (std::vector<std::vector<int>>{{1, 80, 80, 64}, {1, 40, 40, 64}, {1, 20, 20, 64},
-                                             {1, 80, 80, 80}, {1, 40, 40, 80}, {1, 20, 20, 80}}),
+  require(detessdequant_payload.input_shapes == (std::vector<std::vector<int>>{{1, 80, 80, 64},
+                                                                               {1, 40, 40, 64},
+                                                                               {1, 20, 20, 64},
+                                                                               {1, 80, 80, 80},
+                                                                               {1, 40, 40, 80},
+                                                                               {1, 20, 20, 80}}),
           "detessdequant subset builder should preserve per-head input shapes (N,H,W,C)");
   require(detessdequant_payload.slice_shapes.size() == 6U,
           "detessdequant subset builder should preserve per-head slice shapes");
   require(detessdequant_payload.slice_shapes ==
-              (std::vector<std::vector<int>>{{1, 80, 64}, {1, 40, 64}, {1, 20, 64},
-                                             {1, 80, 80}, {1, 40, 80}, {1, 20, 80}}),
+              (std::vector<std::vector<int>>{
+                  {1, 80, 64}, {1, 40, 64}, {1, 20, 64}, {1, 80, 80}, {1, 40, 80}, {1, 20, 80}}),
           "detessdequant subset builder should preserve per-head slice shapes (H,W,C)");
   require(detessdequant_payload.dq_scale_list.front() == 8.084461464679606,
           "detessdequant subset builder should preserve per-head dq scales");
@@ -364,8 +363,7 @@ void verify_yolov8_int8_contract_subset() {
   try {
     (void)pcs::build_detessdequant_runtime_config_from_subset(
         broken_detessdequant, detessdequant_output_names_for_test());
-    throw std::runtime_error(
-        "detessdequant subset builder should reject a missing frame_shape");
+    throw std::runtime_error("detessdequant subset builder should reject a missing frame_shape");
   } catch (const std::invalid_argument& e) {
     require_contains(e.what(), "frame_shape",
                      "detessdequant subset builder should report the missing required field");
@@ -384,8 +382,7 @@ void verify_yolov8_bf16_contract_subset() {
   const auto& cast_decl = pcs::plugin_contract_family_declaration("cast");
   require(cast_decl.required_fields.size() == 3U,
           "cast declaration should expose the 3-field required subset");
-  require(cast_decl.optional_fields.empty(),
-          "cast declaration should not expose optional fields");
+  require(cast_decl.optional_fields.empty(), "cast declaration should not expose optional fields");
   require(!cast_decl.per_head, "cast declaration should be single-stage");
 
   const auto& tess_decl = pcs::plugin_contract_family_declaration("tessellate");
@@ -508,15 +505,18 @@ void verify_yolov8_bf16_contract_subset() {
   require(detess_payload.num_in_tensor == 6, "detess subset builder should preserve head count");
   require(detess_payload.input_shapes.size() == 6U,
           "detess subset builder should preserve per-head input shapes");
-  require(detess_payload.input_shapes ==
-              (std::vector<std::vector<int>>{{1, 80, 80, 64}, {1, 40, 40, 64}, {1, 20, 20, 64},
-                                             {1, 80, 80, 80}, {1, 40, 40, 80}, {1, 20, 20, 80}}),
+  require(detess_payload.input_shapes == (std::vector<std::vector<int>>{{1, 80, 80, 64},
+                                                                        {1, 40, 40, 64},
+                                                                        {1, 20, 20, 64},
+                                                                        {1, 80, 80, 80},
+                                                                        {1, 40, 40, 80},
+                                                                        {1, 20, 20, 80}}),
           "detess subset builder should preserve per-head input shapes (N,H,W,C)");
   require(detess_payload.slice_shapes.size() == 6U,
           "detess subset builder should preserve per-head slice shapes");
   require(detess_payload.slice_shapes ==
-              (std::vector<std::vector<int>>{{16, 16, 16}, {8, 8, 16}, {4, 4, 16},
-                                             {16, 4, 80}, {8, 2, 80}, {4, 1, 80}}),
+              (std::vector<std::vector<int>>{
+                  {16, 16, 16}, {8, 8, 16}, {4, 4, 16}, {16, 4, 80}, {8, 2, 80}, {4, 1, 80}}),
           "detess subset builder should preserve per-head slice shapes (H,W,C)");
   require(detess_payload.output_dtype == "BF16",
           "detess subset builder should preserve BF16 output dtype");
@@ -538,10 +538,8 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
 
   auto verify = [&](const Model& model,
                     const simaai::neat::pipeline_internal::sima::MpkContract& mpk,
-                    internal::ExecutionStageKind kind,
-                    const std::string& expected_stage_name,
-                    int expected_graph_id,
-                    const std::string& label) {
+                    internal::ExecutionStageKind kind, const std::string& expected_stage_name,
+                    int expected_graph_id, const std::string& label) {
     const auto& pack = internal::ModelAccess::pack(model);
     const auto plan = pack.execution_plan();
     const auto pre_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
@@ -555,8 +553,7 @@ void verify_yolov8_pre_stage_facts_match_canonical_contracts() {
     require(pre_facts.front().processcvu_contract.has_value(),
             label + " preprocess stage fact should include a processcvu contract");
 
-    const auto generic =
-        pss::build_processcvu_mpk_compiled_contract_for_stage_kind(mpk, kind);
+    const auto generic = pss::build_processcvu_mpk_compiled_contract_for_stage_kind(mpk, kind);
     const auto& from_fact = *pre_facts.front().processcvu_contract;
     require(from_fact.payload.graph_id == expected_graph_id,
             label + " preprocess stage fact should preserve the expected graph id");

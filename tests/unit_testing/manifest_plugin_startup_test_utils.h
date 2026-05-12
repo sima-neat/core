@@ -28,8 +28,7 @@ inline void require_plugin_or_skip(const char* factory) {
   }
 }
 
-inline void require_not_contains(const std::string& haystack,
-                                 const std::string& needle,
+inline void require_not_contains(const std::string& haystack, const std::string& needle,
                                  const std::string& msg) {
   if (haystack.find(needle) != std::string::npos) {
     throw std::runtime_error(msg + " (found unexpected: " + needle + ")");
@@ -37,11 +36,9 @@ inline void require_not_contains(const std::string& haystack,
 }
 
 inline GstPipelineRunResult run_raw_gst_pipeline(
-    const std::string& label,
-    const std::string& pipeline_desc,
+    const std::string& label, const std::string& pipeline_desc,
     const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest* manifest = nullptr,
-    GstState target = GST_STATE_READY,
-    GstClockTime timeout = 3 * GST_SECOND) {
+    GstState target = GST_STATE_READY, GstClockTime timeout = 3 * GST_SECOND) {
   using simaai::neat::pipeline_internal::sima::attach_manifest_context;
 
   simaai::neat::gst_init_once();

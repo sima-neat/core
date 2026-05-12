@@ -37,16 +37,21 @@ struct DequantOptions {
   /// Initialize options from a loaded `Model` (pulls scale/zp from the model's quant params).
   explicit DequantOptions(const simaai::neat::Model& model);
 
-  std::string element_name;        ///< Optional GStreamer element name (default: auto-generated).
-  std::string stage_id;            ///< Logical stage identifier used for routing/diagnostics.
-  bool model_managed = false;      ///< If true, the bound model owns scale/zp resolution.
+  std::string element_name;   ///< Optional GStreamer element name (default: auto-generated).
+  std::string stage_id;       ///< Logical stage identifier used for routing/diagnostics.
+  bool model_managed = false; ///< If true, the bound model owns scale/zp resolution.
 
-  std::optional<double> q_scale;        ///< Per-tensor dequantization scale; required unless `model_managed`.
-  std::optional<std::int64_t> q_zp;     ///< Per-tensor dequantization zero-point; required unless `model_managed`.
-  std::shared_ptr<const CompiledDequantContract> compiled_contract; ///< Pre-compiled neatdequant contract; bypasses re-compilation.
-  std::shared_ptr<const CompiledProcessCvuContract> processcvu_compiled_contract; ///< Pre-compiled processcvu dequantize contract for model-managed A65/CVU routes.
+  std::optional<double>
+      q_scale; ///< Per-tensor dequantization scale; required unless `model_managed`.
+  std::optional<std::int64_t>
+      q_zp; ///< Per-tensor dequantization zero-point; required unless `model_managed`.
+  std::shared_ptr<const CompiledDequantContract>
+      compiled_contract; ///< Pre-compiled neatdequant contract; bypasses re-compilation.
+  std::shared_ptr<const CompiledProcessCvuContract>
+      processcvu_compiled_contract; ///< Pre-compiled processcvu dequantize contract for
+                                    ///< model-managed A65/CVU routes.
 
-  int num_buffers = 0;             ///< Override for the element's buffer pool size; 0 = use default/model.
+  int num_buffers = 0; ///< Override for the element's buffer pool size; 0 = use default/model.
   int num_buffers_model = 0;       ///< Buffer count derived from the bound model.
   bool num_buffers_locked = false; ///< If true, planner won't override `num_buffers`.
 };
@@ -62,9 +67,7 @@ struct DequantOptions {
  *
  * @ingroup nodes_sima
  */
-class Dequant final : public Node,
-                      public NodeContractProvider,
-                      public NodeContractConfigurable {
+class Dequant final : public Node, public NodeContractProvider, public NodeContractConfigurable {
 public:
   /// Construct with optional `DequantOptions`.
   explicit Dequant(DequantOptions opt = {});
@@ -81,12 +84,10 @@ public:
   /// Structural contract definition for this Node.
   NodeContractDefinition contract_definition() const override;
   /// Compile this Node's contract from the given input.
-  bool compile_node_contract(const ContractCompileInput& input,
-                             CompiledNodeContract* out,
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                              std::string* err) const override;
   /// Apply a compiled contract back into this Node.
-  void apply_compiled_contract(const CompiledNodeContract& contract,
-                               std::string* err) override;
+  void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;
 
   /// GStreamer fragment this Node emits.
   std::string backend_fragment(int node_index) const override;

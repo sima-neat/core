@@ -42,8 +42,7 @@ void reset_tensor_io_stats();
 void record_tensor_holder_fast_path_hit();
 void record_tensor_bundle_projection(std::size_t field_count);
 void record_tensor_packed_view_reuse(std::size_t logical_output_count,
-                                     std::size_t unique_memory_count,
-                                     bool materialize_output);
+                                     std::size_t unique_memory_count, bool materialize_output);
 const char* storage_kind_name(simaai::neat::StorageKind kind);
 
 // Get a ref-counted GstBuffer from a tensor holder (e.g. GstSample holder).

@@ -128,8 +128,7 @@ bool should_suppress_device_line(const std::string& line) {
 }
 
 bool starts_with(const std::string& line, std::string_view prefix) {
-  return line.size() >= prefix.size() &&
-         std::equal(prefix.begin(), prefix.end(), line.begin());
+  return line.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), line.begin());
 }
 
 pipeline_internal::ux::VerboseTopic classify_message_topic(const std::string& line) {
@@ -178,8 +177,7 @@ bool should_suppress_verbosity_line(const std::string& line) {
     return !allow(pipeline_internal::ux::VerboseTopic::GStreamer);
   }
 
-  if (line.find("WARNING **:") != std::string::npos &&
-      should_suppress_known_glib_warning(line) &&
+  if (line.find("WARNING **:") != std::string::npos && should_suppress_known_glib_warning(line) &&
       !allow(pipeline_internal::ux::VerboseTopic::GStreamer) &&
       !allow(pipeline_internal::ux::VerboseTopic::Plugins)) {
     return true;
@@ -202,8 +200,7 @@ bool should_suppress_verbosity_line(const std::string& line) {
 
   if (starts_with(line, "[PIPELINE]") || starts_with(line, "[PIPELINE:") ||
       starts_with(line, "[FLOW:") || starts_with(line, "[rtsp]") ||
-      starts_with(line, "[sync-cache]") ||
-      starts_with(line, "[prepared-runtime-build]") ||
+      starts_with(line, "[sync-cache]") || starts_with(line, "[prepared-runtime-build]") ||
       starts_with(line, "[prepared-runtime-graph]")) {
     return !allow(pipeline_internal::ux::VerboseTopic::Pipeline);
   }
@@ -223,19 +220,16 @@ bool should_suppress_verbosity_line(const std::string& line) {
   }
 
   if (starts_with(line, "[stage]") || starts_with(line, "[manifest-stage-debug]") ||
-      starts_with(line, "[processcvu-stage-debug]") ||
-      starts_with(line, "[processcvu-compare]") ||
-      starts_with(line, "[preproc-mla-compare]") ||
-      starts_with(line, "[preproc-tess-debug]") ||
+      starts_with(line, "[processcvu-stage-debug]") || starts_with(line, "[processcvu-compare]") ||
+      starts_with(line, "[preproc-mla-compare]") || starts_with(line, "[preproc-tess-debug]") ||
       starts_with(line, "[preproc-tensor]") || starts_with(line, "[detess-") ||
       starts_with(line, "[mla-") || starts_with(line, "[model-ingress-debug]") ||
-      starts_with(line, "[neatdec]") ||
-      starts_with(line, "input_track[") || starts_with(line, "neatdecoder init:")) {
+      starts_with(line, "[neatdec]") || starts_with(line, "input_track[") ||
+      starts_with(line, "neatdecoder init:")) {
     return !allow(pipeline_internal::ux::VerboseTopic::Plugins);
   }
 
-  if (starts_with(line, "[DBG]") || starts_with(line, "[TRACE]") ||
-      starts_with(line, "[DIAG]")) {
+  if (starts_with(line, "[DBG]") || starts_with(line, "[TRACE]") || starts_with(line, "[DIAG]")) {
     return !any_detail;
   }
 
@@ -462,7 +456,7 @@ std::unordered_set<std::string> list_plugin_basenames(const std::string& dir) {
 }
 
 bool is_regular_file(const std::string& path) {
-  struct stat st{};
+  struct stat st {};
   if (stat(path.c_str(), &st) != 0)
     return false;
   return S_ISREG(st.st_mode);
@@ -476,7 +470,8 @@ std::string third_party_allocator_path(const std::string& third_party_dir) {
     return neat_allocator;
   throw std::runtime_error("Required NEAT allocator is missing: " + neat_allocator +
                            ". Ensure libgstneatallocator.so is installed in the third-party"
-                           " plugin directory (searched: " + third_party_dir + ").");
+                           " plugin directory (searched: " +
+                           third_party_dir + ").");
 }
 
 std::string canonicalize_path(const std::string& path) {
@@ -506,8 +501,8 @@ bool path_has_prefix(const std::string& path, const std::string& dir) {
 bool same_file_identity(const std::string& lhs, const std::string& rhs) {
   if (lhs.empty() || rhs.empty())
     return false;
-  struct stat l{};
-  struct stat r{};
+  struct stat l {};
+  struct stat r {};
   if (stat(lhs.c_str(), &l) != 0 || stat(rhs.c_str(), &r) != 0)
     return false;
   return l.st_dev == r.st_dev && l.st_ino == r.st_ino;
@@ -535,17 +530,20 @@ std::string resolve_allocator_symbol_path() {
 void preload_third_party_allocator(const std::string& third_party_dir) {
   const std::string allocator_path = canonicalize_path(third_party_allocator_path(third_party_dir));
   if (allocator_path.empty()) {
-    throw std::runtime_error("Required NEAT allocator path resolved empty"
-                             " (third_party_dir='" + third_party_dir +
-                             "'). Check that the directory exists and contains libgstneatallocator.so.");
+    throw std::runtime_error(
+        "Required NEAT allocator path resolved empty"
+        " (third_party_dir='" +
+        third_party_dir +
+        "'). Check that the directory exists and contains libgstneatallocator.so.");
   }
   const std::string expected_dir = canonicalize_path(third_party_dir);
   const std::string loaded_before = resolve_allocator_symbol_path();
   if (!loaded_before.empty()) {
     if (!is_neat_allocator_path(loaded_before)) {
-      throw std::runtime_error("Legacy allocator already loaded before NEAT init: " + loaded_before +
-                               ". Remove the legacy allocator plugin from GST_PLUGIN_PATH or ensure"
-                               " NEAT init runs before any GStreamer pipeline creation.");
+      throw std::runtime_error(
+          "Legacy allocator already loaded before NEAT init: " + loaded_before +
+          ". Remove the legacy allocator plugin from GST_PLUGIN_PATH or ensure"
+          " NEAT init runs before any GStreamer pipeline creation.");
     }
     if (same_file_identity(loaded_before, allocator_path) ||
         path_has_prefix(loaded_before, expected_dir)) {
@@ -580,9 +578,11 @@ void preload_third_party_allocator(const std::string& third_party_dir) {
 void enforce_third_party_allocator(const std::string& third_party_dir) {
   const std::string allocator_path = canonicalize_path(third_party_allocator_path(third_party_dir));
   if (allocator_path.empty()) {
-    throw std::runtime_error("Required NEAT allocator path resolved empty"
-                             " (third_party_dir='" + third_party_dir +
-                             "'). Check that the directory exists and contains libgstneatallocator.so.");
+    throw std::runtime_error(
+        "Required NEAT allocator path resolved empty"
+        " (third_party_dir='" +
+        third_party_dir +
+        "'). Check that the directory exists and contains libgstneatallocator.so.");
   }
 
   void* sym = nullptr;
@@ -612,7 +612,8 @@ void enforce_third_party_allocator(const std::string& third_party_dir) {
     throw std::runtime_error(msg);
   }
 
-  if (!same_file_identity(loaded_path, allocator_path) && !path_has_prefix(loaded_path, expected_dir)) {
+  if (!same_file_identity(loaded_path, allocator_path) &&
+      !path_has_prefix(loaded_path, expected_dir)) {
     std::string msg = "Unexpected allocator loaded: ";
     msg += loaded_path.empty() ? std::string(info.dli_fname) : loaded_path;
     msg += " (expected under ";
@@ -624,8 +625,7 @@ void enforce_third_party_allocator(const std::string& third_party_dir) {
 
 std::string build_filtered_system_dir(const std::vector<std::string>& sys_dirs,
                                       const std::string& third_party_dir,
-                                      std::vector<std::string>* skipped,
-                                      bool strict_neat_only) {
+                                      std::vector<std::string>* skipped, bool strict_neat_only) {
   if (sys_dirs.empty() || third_party_dir.empty())
     return {};
 
@@ -791,11 +791,7 @@ void validate_neat_startup_contract(const std::string& plugin_dir) {
   // Contract: PipelineSession must resolve and instantiate NEAT factories.
   // Legacy SIMAAI factories may still be discoverable in the process.
   const char* required[] = {
-      "neatprocesscvu",
-      "neatprocessmla",
-      "neatboxdecode",
-      "neatdequant",
-      "neatdetess",
+      "neatprocesscvu", "neatprocessmla", "neatboxdecode", "neatdequant", "neatdetess",
   };
   for (const char* factory : required) {
     validate_neat_factory_loaded(factory, plugin_dir.c_str());
@@ -855,7 +851,8 @@ void gst_init_once() {
       if (should_emit_gst_init_detail()) {
         std::fprintf(stderr, "[GST] plugin_dir selected=%s override=%s strict_neat_only=%d\n",
                      third_party.c_str(),
-                     (plugin_dir_override && *plugin_dir_override) ? plugin_dir_override : "<unset>",
+                     (plugin_dir_override && *plugin_dir_override) ? plugin_dir_override
+                                                                   : "<unset>",
                      strict_neat_only ? 1 : 0);
       }
     }

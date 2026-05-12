@@ -32,24 +32,25 @@
  * the plugin has on hand at the failure site — more context means easier triage.
  */
 struct SimaaiGstErrorContext {
-  const char* plugin = nullptr;          ///< Owning plugin name, e.g., `"simaai-process-mla"`.
-  const char* node = nullptr;            ///< Logical node identifier within the pipeline.
-  const char* config_path = nullptr;     ///< Path to the plugin's config JSON, if any.
-  const char* model_path = nullptr;      ///< Path to the model artifact, if any.
-  int graph_id = -1;                     ///< Graph identifier; -1 if unset.
-  std::int64_t frame_id = -1;            ///< Frame counter where the error occurred; -1 if unset.
-  const char* stream_id = nullptr;       ///< GStreamer stream id.
-  const char* input_caps = nullptr;      ///< Input pad caps as a string.
-  const char* output_caps = nullptr;     ///< Output pad caps as a string.
-  const char* input_dims = nullptr;      ///< Input tensor dims summary.
-  const char* output_dims = nullptr;     ///< Output tensor dims summary.
-  const char* allocator = nullptr;       ///< Allocator name in use.
-  const char* dispatcher_err = nullptr;  ///< Dispatcher-layer error string, if any.
-  const char* hint = nullptr;            ///< Free-form actionable hint for the user.
-  const char* stage_key = nullptr;       ///< Stage key that failed.
-  const char* source_used = nullptr;     ///< Origin of the config decision (e.g., `"framework"`).
-  const char* missing_field = nullptr;   ///< Missing required field name, if a config-validation failure.
-  const char* fallback_chain = nullptr;  ///< Comma-separated fallback chain that was tried.
+  const char* plugin = nullptr;         ///< Owning plugin name, e.g., `"simaai-process-mla"`.
+  const char* node = nullptr;           ///< Logical node identifier within the pipeline.
+  const char* config_path = nullptr;    ///< Path to the plugin's config JSON, if any.
+  const char* model_path = nullptr;     ///< Path to the model artifact, if any.
+  int graph_id = -1;                    ///< Graph identifier; -1 if unset.
+  std::int64_t frame_id = -1;           ///< Frame counter where the error occurred; -1 if unset.
+  const char* stream_id = nullptr;      ///< GStreamer stream id.
+  const char* input_caps = nullptr;     ///< Input pad caps as a string.
+  const char* output_caps = nullptr;    ///< Output pad caps as a string.
+  const char* input_dims = nullptr;     ///< Input tensor dims summary.
+  const char* output_dims = nullptr;    ///< Output tensor dims summary.
+  const char* allocator = nullptr;      ///< Allocator name in use.
+  const char* dispatcher_err = nullptr; ///< Dispatcher-layer error string, if any.
+  const char* hint = nullptr;           ///< Free-form actionable hint for the user.
+  const char* stage_key = nullptr;      ///< Stage key that failed.
+  const char* source_used = nullptr;    ///< Origin of the config decision (e.g., `"framework"`).
+  const char* missing_field =
+      nullptr; ///< Missing required field name, if a config-validation failure.
+  const char* fallback_chain = nullptr; ///< Comma-separated fallback chain that was tried.
 };
 
 /// Returns `s` if non-null, or the empty string if null. Convenience for printf-style sites.
@@ -105,15 +106,12 @@ inline std::string simaai_gst_format_context(const SimaaiGstErrorContext& ctx) {
   simaai_gst_append_kv(ss, "hint", ctx.hint);
   simaai_gst_append_kv(ss, "stage_key", ctx.stage_key);
   simaai_gst_append_kv_required(
-      ss, "source_used",
-      (ctx.source_used && *ctx.source_used) ? ctx.source_used : "framework");
-  simaai_gst_append_kv_required(ss, "missing_field",
-                                (ctx.missing_field && *ctx.missing_field) ? ctx.missing_field
-                                                                           : "none");
+      ss, "source_used", (ctx.source_used && *ctx.source_used) ? ctx.source_used : "framework");
   simaai_gst_append_kv_required(
-      ss, "fallback_chain",
-      (ctx.fallback_chain && *ctx.fallback_chain) ? ctx.fallback_chain
-                                                  : "none");
+      ss, "missing_field", (ctx.missing_field && *ctx.missing_field) ? ctx.missing_field : "none");
+  simaai_gst_append_kv_required(ss, "fallback_chain",
+                                (ctx.fallback_chain && *ctx.fallback_chain) ? ctx.fallback_chain
+                                                                            : "none");
   return ss.str();
 }
 

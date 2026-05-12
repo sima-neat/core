@@ -17,14 +17,11 @@ RUN_TEST("unit_header_neat_compile_surface_test", ([] {
            simaai::neat::Model::Options model_opt;
            simaai::neat::Model::SessionOptions model_session_opt;
            simaai::neat::VerboseOptions quiet = simaai::neat::VerboseOptions::quiet();
-           simaai::neat::VerboseOptions production =
-               simaai::neat::VerboseOptions::production();
+           simaai::neat::VerboseOptions production = simaai::neat::VerboseOptions::production();
            simaai::neat::VerboseOptions debug_plugins =
                simaai::neat::VerboseOptions::debug_plugins();
-           simaai::neat::VerboseOptions debug_all =
-               simaai::neat::VerboseOptions::debug_all();
-           simaai::neat::stages::BoxDecodeOptions decode_opt(
-               simaai::neat::BoxDecodeType::YoloV8);
+           simaai::neat::VerboseOptions debug_all = simaai::neat::VerboseOptions::debug_all();
+           simaai::neat::stages::BoxDecodeOptions decode_opt(simaai::neat::BoxDecodeType::YoloV8);
            simaai::neat::graph::Graph graph;
            simaai::neat::graph::GraphRunOptions graph_run_opt;
            simaai::neat::graph::GraphSession* graph_session = nullptr;

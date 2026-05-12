@@ -165,8 +165,8 @@ SessionReport Session::validate(const ValidateOptions& opt) const {
   const std::vector<std::shared_ptr<Node>> validate_nodes =
       session_build_materialize_model_bound_nodes(nodes_, false);
   const NameTransform name_transform = make_name_transform(opt_);
-  BuildResult br =
-      build_pipeline_full(validate_nodes, insert_boundaries, "mysink", false, name_transform, &opt_);
+  BuildResult br = build_pipeline_full(validate_nodes, insert_boundaries, "mysink", false,
+                                       name_transform, &opt_);
   {
     ContractCompileInput compile_input;
     compile_input.pipeline_label = "Session::validate";
@@ -319,15 +319,15 @@ SessionReport Session::validate(const ValidateOptions& opt, const cv::Mat& input
   const std::vector<std::shared_ptr<Node>> validate_nodes =
       session_build_materialize_model_bound_nodes(nodes_, true);
   const NameTransform name_transform = make_name_transform(opt_);
-  BuildResult br =
-      build_pipeline_full(validate_nodes, insert_boundaries, "mysink", false, name_transform, &opt_);
+  BuildResult br = build_pipeline_full(validate_nodes, insert_boundaries, "mysink", false,
+                                       name_transform, &opt_);
   {
     ContractCompileInput compile_input;
     compile_input.pipeline_label = "Session::validate(input)";
     compile_input.processcvu_requested_run_target = opt_.processcvu_requested_run_target;
     compile_input.processcvu = opt_.processcvu;
-    session_build_compile_contracts(&br, validate_nodes, compile_input,
-                                    "Session::validate(input)", nullptr);
+    session_build_compile_contracts(&br, validate_nodes, compile_input, "Session::validate(input)",
+                                    nullptr);
   }
   rep.pipeline_string = br.pipeline_string;
   enforce_mla_pipeline_guard("Session::validate(input)", rep.pipeline_string, this);

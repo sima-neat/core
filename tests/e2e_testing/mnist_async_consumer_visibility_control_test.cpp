@@ -49,7 +49,8 @@ int env_int_value(const char* key, int fallback) {
 
 bool local_env_flag(const char* key) {
   const char* v = std::getenv(key);
-  if (!v || !*v) return false;
+  if (!v || !*v)
+    return false;
   const std::string s(v);
   return s != "0" && s != "false" && s != "FALSE" && s != "off" && s != "OFF";
 }
@@ -61,7 +62,8 @@ std::uint64_t duration_ns(std::chrono::steady_clock::time_point a,
 }
 
 void burn_us(int usec) {
-  if (usec <= 0) return;
+  if (usec <= 0)
+    return;
   const auto start = std::chrono::steady_clock::now();
   const auto target = std::chrono::microseconds(usec);
   std::uint64_t sink = 0;
@@ -85,7 +87,8 @@ std::vector<double> tensor_to_scores(const simaai::neat::Tensor& tensor,
   const auto t0 = std::chrono::steady_clock::now();
   simaai::neat::Mapping map = tensor.map(simaai::neat::MapMode::Read);
   const auto t1 = std::chrono::steady_clock::now();
-  if (map_read_ns) *map_read_ns += duration_ns(t0, t1);
+  if (map_read_ns)
+    *map_read_ns += duration_ns(t0, t1);
   if (!map.data || map.size_bytes == 0) {
     throw std::runtime_error("output tensor map is empty");
   }
@@ -95,13 +98,15 @@ std::vector<double> tensor_to_scores(const simaai::neat::Tensor& tensor,
   case simaai::neat::TensorDType::UInt8: {
     const auto* p = static_cast<const uint8_t*>(map.data);
     out.reserve(map.size_bytes);
-    for (std::size_t i = 0; i < map.size_bytes; ++i) out.push_back(static_cast<double>(p[i]));
+    for (std::size_t i = 0; i < map.size_bytes; ++i)
+      out.push_back(static_cast<double>(p[i]));
     break;
   }
   case simaai::neat::TensorDType::Int8: {
     const auto* p = static_cast<const int8_t*>(map.data);
     out.reserve(map.size_bytes);
-    for (std::size_t i = 0; i < map.size_bytes; ++i) out.push_back(static_cast<double>(p[i]));
+    for (std::size_t i = 0; i < map.size_bytes; ++i)
+      out.push_back(static_cast<double>(p[i]));
     break;
   }
   case simaai::neat::TensorDType::UInt16: {
@@ -142,7 +147,8 @@ std::vector<double> tensor_to_scores(const simaai::neat::Tensor& tensor,
   case simaai::neat::TensorDType::Float64: {
     const auto* p = static_cast<const double*>(map.data);
     out.reserve(map.size_bytes / sizeof(double));
-    for (std::size_t i = 0; i < map.size_bytes / sizeof(double); ++i) out.push_back(p[i]);
+    for (std::size_t i = 0; i < map.size_bytes / sizeof(double); ++i)
+      out.push_back(p[i]);
     break;
   }
   }
@@ -160,13 +166,15 @@ int argmax10(const std::vector<double>& scores) {
 
 std::vector<uint8_t> read_binary_file(const fs::path& path) {
   std::ifstream in(path, std::ios::binary);
-  if (!in) throw std::runtime_error("failed to open " + path.string());
+  if (!in)
+    throw std::runtime_error("failed to open " + path.string());
   in.seekg(0, std::ios::end);
   const std::streamoff size = in.tellg();
   in.seekg(0, std::ios::beg);
   std::vector<uint8_t> data(static_cast<std::size_t>(size));
   in.read(reinterpret_cast<char*>(data.data()), size);
-  if (!in) throw std::runtime_error("failed to read " + path.string());
+  if (!in)
+    throw std::runtime_error("failed to read " + path.string());
   return data;
 }
 
@@ -177,7 +185,8 @@ uint32_t read_be32(const std::vector<uint8_t>& data, std::size_t offset) {
 }
 
 bool ensure_decompressed_gzip(const fs::path& gz_path, const fs::path& out_path) {
-  if (sima_test::is_usable_regular_file(out_path)) return true;
+  if (sima_test::is_usable_regular_file(out_path))
+    return true;
   std::error_code ec;
   fs::create_directories(out_path.parent_path(), ec);
   const fs::path tmp_path = out_path.string() + ".tmp";
@@ -226,7 +235,8 @@ MnistDataset load_mnist_dataset(const fs::path& images_path, const fs::path& lab
   const uint32_t cols = read_be32(image_bytes, 12);
   const uint32_t label_count = read_be32(label_bytes, 4);
   const uint32_t available = std::min(image_count, label_count);
-  if (limit <= 0 || static_cast<uint32_t>(limit) > available) limit = static_cast<int>(available);
+  if (limit <= 0 || static_cast<uint32_t>(limit) > available)
+    limit = static_cast<int>(available);
   MnistDataset out;
   out.rows = static_cast<int>(rows);
   out.cols = static_cast<int>(cols);
@@ -257,11 +267,12 @@ struct Result {
 void print_result(const Result& r) {
   const double sec = static_cast<double>(r.wall_ns) / 1e9;
   const double fps = (sec > 0.0) ? static_cast<double>(r.total) / sec : 0.0;
-  const double acc = r.total > 0 ? static_cast<double>(r.correct) / static_cast<double>(r.total) : 0.0;
-  std::cout << std::fixed << std::setprecision(3)
-            << "[RESULT] mode=" << r.mode << " total=" << r.total << " correct=" << r.correct
-            << " acc=" << acc << " wall_ms=" << (static_cast<double>(r.wall_ns) / 1e6)
-            << " fps=" << fps << " push_ms=" << (static_cast<double>(r.push_ns) / 1e6)
+  const double acc =
+      r.total > 0 ? static_cast<double>(r.correct) / static_cast<double>(r.total) : 0.0;
+  std::cout << std::fixed << std::setprecision(3) << "[RESULT] mode=" << r.mode
+            << " total=" << r.total << " correct=" << r.correct << " acc=" << acc
+            << " wall_ms=" << (static_cast<double>(r.wall_ns) / 1e6) << " fps=" << fps
+            << " push_ms=" << (static_cast<double>(r.push_ns) / 1e6)
             << " pull_ms=" << (static_cast<double>(r.pull_ns) / 1e6)
             << " map_ms=" << (static_cast<double>(r.map_ns) / 1e6) << "\n";
 }
@@ -278,11 +289,13 @@ Result run_sync_inline(simaai::neat::Model& model, const MnistDataset& mnist, in
     simaai::neat::TensorList outs = runner.run(std::vector<cv::Mat>{mnist.images[i]}, timeout_ms);
     const auto t1 = std::chrono::steady_clock::now();
     r.pull_ns += duration_ns(t0, t1);
-    if (outs.empty()) throw std::runtime_error("sync returned no output");
+    if (outs.empty())
+      throw std::runtime_error("sync returned no output");
     const auto scores = tensor_to_scores(outs.front(), &r.map_ns);
     burn_us(consumer_work_us);
     const int pred = argmax10(scores);
-    if (pred == static_cast<int>(mnist.labels[i])) ++r.correct;
+    if (pred == static_cast<int>(mnist.labels[i]))
+      ++r.correct;
     ++r.total;
   }
   const auto end = std::chrono::steady_clock::now();
@@ -296,7 +309,8 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = queue_depth;
   run_opt.enable_metrics = true;
-  auto runner = model.build(std::vector<cv::Mat>{mnist.images.front()}, simaai::neat::Model::SessionOptions{}, run_opt);
+  auto runner = model.build(std::vector<cv::Mat>{mnist.images.front()},
+                            simaai::neat::Model::SessionOptions{}, run_opt);
   Result r;
   r.mode = read_outputs ? "option_c_two_thread_pull_read" : "option_c_two_thread_pull_no_read";
 
@@ -305,7 +319,8 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
   std::string err;
   auto set_err = [&](const std::string& s) {
     std::lock_guard<std::mutex> lk(err_mu);
-    if (err.empty()) err = s;
+    if (err.empty())
+      err = s;
     stop.store(true);
   };
 
@@ -322,7 +337,8 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
           return;
         }
         for (auto& sample : samples) {
-          if (r.total >= static_cast<int>(mnist.images.size())) break;
+          if (r.total >= static_cast<int>(mnist.images.size()))
+            break;
           int sample_index = r.total;
           if (sample.input_seq >= 0 &&
               sample.input_seq < static_cast<int64_t>(mnist.labels.size())) {
@@ -333,11 +349,13 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
           }
           if (read_outputs) {
             simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample);
-            if (tensors.empty()) throw std::runtime_error("async sample has no tensors");
+            if (tensors.empty())
+              throw std::runtime_error("async sample has no tensors");
             const auto scores = tensor_to_scores(tensors.front(), &r.map_ns);
             burn_us(consumer_work_us);
             const int pred = argmax10(scores);
-            if (pred == static_cast<int>(mnist.labels[sample_index])) ++r.correct;
+            if (pred == static_cast<int>(mnist.labels[sample_index]))
+              ++r.correct;
           } else {
             ++r.correct; // no-read mode only checks transport completeness.
           }
@@ -365,7 +383,8 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
   r.wall_ns = duration_ns(start, end);
   runner.close();
 
-  if (!err.empty()) throw std::runtime_error(err);
+  if (!err.empty())
+    throw std::runtime_error(err);
   return r;
 }
 #endif
@@ -407,15 +426,20 @@ int main(int argc, char** argv) {
 
     std::string model_name = env_string("SIMA_MNIST_MODEL_NAME", kDefaultModelName);
     std::string model_path = env_string("SIMA_MNIST_MODEL_TAR");
-    if (sima_test::get_arg(argc, argv, "--model-name", tmp)) model_name = tmp;
-    if (sima_test::get_arg(argc, argv, "--model", tmp)) model_path = tmp;
+    if (sima_test::get_arg(argc, argv, "--model-name", tmp))
+      model_name = tmp;
+    if (sima_test::get_arg(argc, argv, "--model", tmp))
+      model_path = tmp;
 
-    const fs::path images_path = ensure_mnist_file(cache_dir, "t10k-images-idx3-ubyte",
-                                                   env_string("SIMA_MNIST_IMAGES_URL", kDefaultImagesUrl));
-    const fs::path labels_path = ensure_mnist_file(cache_dir, "t10k-labels-idx1-ubyte",
-                                                   env_string("SIMA_MNIST_LABELS_URL", kDefaultLabelsUrl));
+    const fs::path images_path =
+        ensure_mnist_file(cache_dir, "t10k-images-idx3-ubyte",
+                          env_string("SIMA_MNIST_IMAGES_URL", kDefaultImagesUrl));
+    const fs::path labels_path =
+        ensure_mnist_file(cache_dir, "t10k-labels-idx1-ubyte",
+                          env_string("SIMA_MNIST_LABELS_URL", kDefaultLabelsUrl));
     MnistDataset mnist = load_mnist_dataset(images_path, labels_path, limit);
-    if (model_path.empty()) model_path = sima_test::resolve_modelzoo_tar(model_name, root);
+    if (model_path.empty())
+      model_path = sima_test::resolve_modelzoo_tar(model_name, root);
     if (model_path.empty() || !fs::exists(model_path)) {
       throw std::runtime_error("failed to resolve MNIST model tar.gz");
     }
@@ -427,8 +451,7 @@ int main(int argc, char** argv) {
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::GRAY8;
 
     std::cout << "[CONTROL] model=" << model_path << " limit=" << mnist.images.size()
-              << " queue_depth=" << queue_depth << " consumer_work_us=" << consumer_work_us
-              << "\n";
+              << " queue_depth=" << queue_depth << " consumer_work_us=" << consumer_work_us << "\n";
     simaai::neat::Model model(model_path, model_opt);
     std::cout << "[CONTROL] resolved preprocess plan:\n"
               << model.resolved_preprocess_plan().to_debug_string() << "\n";
@@ -441,12 +464,12 @@ int main(int argc, char** argv) {
     print_result(r2);
 
     const double sync_fps = static_cast<double>(r0.total) / (static_cast<double>(r0.wall_ns) / 1e9);
-    const double async_fps = static_cast<double>(r2.total) / (static_cast<double>(r2.wall_ns) / 1e9);
+    const double async_fps =
+        static_cast<double>(r2.total) / (static_cast<double>(r2.wall_ns) / 1e9);
     std::cout << std::fixed << std::setprecision(3)
               << "[CONTROL] option_c_speedup_vs_sync=" << (async_fps / sync_fps)
               << " no_read_upper_bound_fps="
-              << (static_cast<double>(r1.total) / (static_cast<double>(r1.wall_ns) / 1e9))
-              << "\n";
+              << (static_cast<double>(r1.total) / (static_cast<double>(r1.wall_ns) / 1e9)) << "\n";
     return 0;
   } catch (const SkipTest& e) {
     return skip_long_test(e.what());

@@ -33,8 +33,7 @@ std::string env_run_target_override() {
   if (v == "A65" || v == "APU" || v == "CPU" || v == "SIMA_EV_RUN_A65") {
     return "A65";
   }
-  if (v == "EV" || v == "EVXX" || v == "CVU" || v == "EV74" ||
-      v == "SIMA_EV_RUN_EV74") {
+  if (v == "EV" || v == "EVXX" || v == "CVU" || v == "EV74" || v == "SIMA_EV_RUN_EV74") {
     return "EV74";
   }
   if (v == "AUTO" || v == "SIMA_EV_RUN_AUTO") {
@@ -97,8 +96,7 @@ ProcessCvuStageRole processcvu_stage_role(const ProcessCvuStagePayload& payload,
         identity.find("output") != std::string::npos) {
       return ProcessCvuStageRole::Post;
     }
-    if (identity.find("pre") != std::string::npos ||
-        identity.find("input") != std::string::npos) {
+    if (identity.find("pre") != std::string::npos || identity.find("input") != std::string::npos) {
       return ProcessCvuStageRole::Pre;
     }
     const std::string stage = lower_copy(payload.exact_stage_name_or_id);
@@ -119,23 +117,20 @@ struct ExplicitProcessCvuTarget {
   std::string source;
 };
 
-std::optional<ExplicitProcessCvuTarget> explicit_prepost_target(
-    const ProcessCvuStagePayload& payload,
-    const ProcessCvuOptions& options,
-    std::string_view stage_identity = {}) {
+std::optional<ExplicitProcessCvuTarget>
+explicit_prepost_target(const ProcessCvuStagePayload& payload, const ProcessCvuOptions& options,
+                        std::string_view stage_identity = {}) {
   switch (processcvu_stage_role(payload, stage_identity)) {
   case ProcessCvuStageRole::Pre:
     if (explicit_run_target_token(options.pre_run_target)) {
       return ExplicitProcessCvuTarget{
-          normalize_processcvu_run_target_token_no_env(options.pre_run_target),
-          "processcvu_pre"};
+          normalize_processcvu_run_target_token_no_env(options.pre_run_target), "processcvu_pre"};
     }
     break;
   case ProcessCvuStageRole::Post:
     if (explicit_run_target_token(options.post_run_target)) {
       return ExplicitProcessCvuTarget{
-          normalize_processcvu_run_target_token_no_env(options.post_run_target),
-          "processcvu_post"};
+          normalize_processcvu_run_target_token_no_env(options.post_run_target), "processcvu_post"};
     }
     break;
   case ProcessCvuStageRole::Unknown:
@@ -164,8 +159,8 @@ const char* processcvu_resolved_exec_backend_token(ProcessCvuResolvedExecBackend
   }
 }
 
-ProcessCvuBackendCapabilities processcvu_backend_capabilities(
-    const ProcessCvuStagePayload& payload) {
+ProcessCvuBackendCapabilities
+processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
   ProcessCvuBackendCapabilities caps;
   caps.supports_ev74 = true;
   caps.supports_a65 = false;
@@ -249,10 +244,10 @@ ProcessCvuBackendCapabilities processcvu_backend_capabilities(
   return caps;
 }
 
-ProcessCvuBackendDecision resolve_processcvu_backend_decision(
-    const ProcessCvuStagePayload& payload,
-    const ContractCompileInput& compile_input,
-    std::string_view stage_identity) {
+ProcessCvuBackendDecision
+resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
+                                    const ContractCompileInput& compile_input,
+                                    std::string_view stage_identity) {
   ProcessCvuBackendDecision decision;
   std::string requested_source = "legacy_or_env";
   if (explicit_run_target_token(payload.requested_run_target)) {
@@ -340,8 +335,8 @@ void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,
       resolve_processcvu_backend_decision(*payload, compile_input, stage_identity);
   payload->requested_run_target = decision.requested_run_target;
   payload->run_target = decision.effective_run_target;
-  payload->resolved_exec_backend = processcvu_resolved_exec_backend_token(
-      decision.resolved_exec_backend);
+  payload->resolved_exec_backend =
+      processcvu_resolved_exec_backend_token(decision.resolved_exec_backend);
   payload->run_target_resolution_reason = decision.reason;
 }
 

@@ -35,7 +35,8 @@ enum class ErrorClass {
   SizeLimitExceeded,  ///< Archive or one of its entries exceeds a configured size cap.
 };
 
-/// Returns a stable string identifier for an `ErrorClass` (used in error messages and JSON serialization).
+/// Returns a stable string identifier for an `ErrorClass` (used in error messages and JSON
+/// serialization).
 const char* error_class_name(ErrorClass code);
 
 /**
@@ -69,10 +70,11 @@ private:
  * @ingroup mpk
  */
 struct ArchiveEntry {
-  std::string path;            ///< Raw entry path as recorded in the archive.
-  std::string normalized_path; ///< Validated, normalized path (relative, no traversal, valid UTF-8).
-  char type = '?';             ///< Tar entry type code.
-  std::uint64_t size_bytes = 0;///< Uncompressed entry size in bytes.
+  std::string path; ///< Raw entry path as recorded in the archive.
+  std::string
+      normalized_path; ///< Validated, normalized path (relative, no traversal, valid UTF-8).
+  char type = '?';     ///< Tar entry type code.
+  std::uint64_t size_bytes = 0; ///< Uncompressed entry size in bytes.
 };
 
 /**
@@ -85,15 +87,17 @@ struct ArchiveEntry {
  * @ingroup mpk
  */
 struct MpKManifest {
-  std::string archive_path;     ///< Filesystem path the manifest was loaded from.
-  std::string package_name;     ///< Package identifier (typically the archive's top-level directory name).
-  std::string version = "1";    ///< Manifest schema version this archive declares.
+  std::string archive_path; ///< Filesystem path the manifest was loaded from.
+  std::string
+      package_name; ///< Package identifier (typically the archive's top-level directory name).
+  std::string version = "1";            ///< Manifest schema version this archive declares.
   std::uint64_t archive_size_bytes = 0; ///< Compressed archive size on disk.
 
-  bool has_pipeline_sequence = false;   ///< True if the archive contains a `pipeline_sequence.json`.
-  bool has_model_binary = false;        ///< True if the archive contains at least one model binary (`.lm`/`.so`/etc.).
+  bool has_pipeline_sequence = false; ///< True if the archive contains a `pipeline_sequence.json`.
+  bool has_model_binary =
+      false; ///< True if the archive contains at least one model binary (`.lm`/`.so`/etc.).
 
-  std::vector<ArchiveEntry> entries;    ///< All archive entries, in the order encountered.
+  std::vector<ArchiveEntry> entries; ///< All archive entries, in the order encountered.
 };
 
 } // namespace simaai::neat::mpk

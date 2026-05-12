@@ -97,8 +97,8 @@ bool SimaArgMax::wire_input_names(const std::vector<std::string>& upstream_names
     return false;
 
   if (config_holder_->keep) {
-    config_path_ =
-        node_helpers::write_json_memfd(cfg, &config_holder_->memfd, "SimaArgMax", "sima_argmax_cfg");
+    config_path_ = node_helpers::write_json_memfd(cfg, &config_holder_->memfd, "SimaArgMax",
+                                                  "sima_argmax_cfg");
     config_holder_->keep = false;
   } else if (!config_path_.empty()) {
     if (config_holder_->memfd >= 0) {
@@ -107,8 +107,8 @@ bool SimaArgMax::wire_input_names(const std::vector<std::string>& upstream_names
       node_helpers::write_json_file(cfg, config_path_, "SimaArgMax");
     }
   } else {
-    config_path_ =
-        node_helpers::write_json_memfd(cfg, &config_holder_->memfd, "SimaArgMax", "sima_argmax_cfg");
+    config_path_ = node_helpers::write_json_memfd(cfg, &config_holder_->memfd, "SimaArgMax",
+                                                  "sima_argmax_cfg");
   }
 
   config_holder_->config = std::move(cfg);

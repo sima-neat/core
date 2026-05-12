@@ -35,8 +35,7 @@ struct ModelInputPolicyResult {
 };
 
 struct SessionInputPolicyResult {
-  InputStreamOptions::ShapePolicy shape_policy =
-      InputStreamOptions::ShapePolicy::BoundedDynamic;
+  InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
   InputStreamOptions::ResolvedShapeLimits shape_limits{};
   std::size_t max_input_bytes_guard = 0;
   InputStreamOptions::ByteGuardOrigin byte_guard_origin =
@@ -73,8 +72,7 @@ SessionInputPolicyResult resolve_session_input_policy(const InputOptions& opt,
 
 ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest& req);
 
-SessionInputPolicyResult resolve_for_session(const InputOptions& opt,
-                                             const SampleSpec& seed,
+SessionInputPolicyResult resolve_for_session(const InputOptions& opt, const SampleSpec& seed,
                                              std::size_t requested_max_input_bytes,
                                              std::size_t bounded_estimate_bytes);
 

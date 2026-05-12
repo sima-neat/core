@@ -33,22 +33,22 @@ namespace simaai::neat {
  * @ingroup nodes_io
  */
 struct PreprocessMetaTemplate {
-  bool enabled = false;            ///< If false, no preprocess metadata is emitted.
-  int target_width = 0;            ///< Model input width, in pixels.
-  int target_height = 0;           ///< Model input height, in pixels.
-  int scaled_width = 0;            ///< Width of the scaled content within the target frame.
-  int scaled_height = 0;           ///< Height of the scaled content within the target frame.
-  std::string resize_mode = "none";///< Resize/letterbox strategy label (`none`, `fit`, etc.).
-  int pad_value = 0;               ///< Pad fill value used by letterboxing.
+  bool enabled = false;             ///< If false, no preprocess metadata is emitted.
+  int target_width = 0;             ///< Model input width, in pixels.
+  int target_height = 0;            ///< Model input height, in pixels.
+  int scaled_width = 0;             ///< Width of the scaled content within the target frame.
+  int scaled_height = 0;            ///< Height of the scaled content within the target frame.
+  std::string resize_mode = "none"; ///< Resize/letterbox strategy label (`none`, `fit`, etc.).
+  int pad_value = 0;                ///< Pad fill value used by letterboxing.
 
-  std::string color_in;            ///< Input color space label (e.g. `RGB`, `BGR`).
-  std::string color_out;           ///< Output color space label after preprocess.
+  std::string color_in;  ///< Input color space label (e.g. `RGB`, `BGR`).
+  std::string color_out; ///< Output color space label after preprocess.
   /// Axis permutation applied by preprocess `layout_convert`, if any.
   std::vector<int> axis_perm;
 
-  bool normalize = false;          ///< True if preprocess applies normalization.
-  bool quantize = false;           ///< True if preprocess applies quantization.
-  bool tessellate = false;         ///< True if preprocess applies tessellation.
+  bool normalize = false;  ///< True if preprocess applies normalization.
+  bool quantize = false;   ///< True if preprocess applies quantization.
+  bool tessellate = false; ///< True if preprocess applies tessellation.
 };
 
 /**
@@ -60,10 +60,10 @@ struct PreprocessMetaTemplate {
  * @ingroup nodes_io
  */
 enum class InputMemoryPolicy {
-  Auto = 0,        ///< Defer to legacy / session-level target selection.
-  Ev74,            ///< Allocate in EV74-visible memory.
-  Dms0,            ///< Allocate in DMS0 memory.
-  SystemMemory,    ///< Allocate in plain system memory.
+  Auto = 0,     ///< Defer to legacy / session-level target selection.
+  Ev74,         ///< Allocate in EV74-visible memory.
+  Dms0,         ///< Allocate in DMS0 memory.
+  SystemMemory, ///< Allocate in plain system memory.
 };
 
 /**
@@ -72,31 +72,32 @@ enum class InputMemoryPolicy {
  * @ingroup nodes_io
  */
 struct InputOptions {
-  std::string media_type = "video/x-raw"; ///< Top-level GStreamer media type for the negotiated caps.
-  FormatSpec format;                      ///< Pixel/tensor format descriptor.
-  int width = -1;                         ///< Frame width, in pixels. `-1` = unspecified.
-  int height = -1;                        ///< Frame height, in pixels. `-1` = unspecified.
-  int depth = -1;                         ///< Frame depth (e.g. tensor channels). `-1` = unspecified.
+  std::string media_type =
+      "video/x-raw"; ///< Top-level GStreamer media type for the negotiated caps.
+  FormatSpec format; ///< Pixel/tensor format descriptor.
+  int width = -1;    ///< Frame width, in pixels. `-1` = unspecified.
+  int height = -1;   ///< Frame height, in pixels. `-1` = unspecified.
+  int depth = -1;    ///< Frame depth (e.g. tensor channels). `-1` = unspecified.
   /// Optional dynamic-input limits used for validation/pool sizing.
   /// These do not constrain negotiated caps and are only checked at push time.
-  int max_width = -1;                     ///< Max width accepted at push time. `-1` = no cap.
-  int max_height = -1;                    ///< Max height accepted at push time. `-1` = no cap.
-  int max_depth = -1;                     ///< Max depth accepted at push time. `-1` = no cap.
+  int max_width = -1;  ///< Max width accepted at push time. `-1` = no cap.
+  int max_height = -1; ///< Max height accepted at push time. `-1` = no cap.
+  int max_depth = -1;  ///< Max depth accepted at push time. `-1` = no cap.
   /// Optional fixed framerate for caps (0/1 means "unspecified").
-  int fps_n = 0;                          ///< Framerate numerator.
-  int fps_d = 1;                          ///< Framerate denominator.
+  int fps_n = 0; ///< Framerate numerator.
+  int fps_d = 1; ///< Framerate denominator.
   /// Optional full caps string override (used for multi-tensor caps).
   std::string caps_override;
 
-  bool is_live = true;                    ///< Mark the source as live (`appsrc` `is-live`).
-  bool do_timestamp = true;               ///< Let `appsrc` stamp PTS on push.
-  bool block = true;                      ///< Block on pool exhaustion instead of dropping.
-  int stream_type = 0;                    ///< `GST_APP_STREAM_TYPE_STREAM` by default.
-  std::uint64_t max_bytes = 0;            ///< `appsrc` `max-bytes` back-pressure threshold. `0` = unlimited.
+  bool is_live = true;         ///< Mark the source as live (`appsrc` `is-live`).
+  bool do_timestamp = true;    ///< Let `appsrc` stamp PTS on push.
+  bool block = true;           ///< Block on pool exhaustion instead of dropping.
+  int stream_type = 0;         ///< `GST_APP_STREAM_TYPE_STREAM` by default.
+  std::uint64_t max_bytes = 0; ///< `appsrc` `max-bytes` back-pressure threshold. `0` = unlimited.
 
-  bool use_simaai_pool = true;            ///< Allocate from the SiMa-aware buffer pool.
-  int pool_min_buffers = 1;               ///< Minimum buffers held by the pool.
-  int pool_max_buffers = 2;               ///< Maximum buffers held by the pool.
+  bool use_simaai_pool = true; ///< Allocate from the SiMa-aware buffer pool.
+  int pool_min_buffers = 1;    ///< Minimum buffers held by the pool.
+  int pool_max_buffers = 2;    ///< Maximum buffers held by the pool.
   /// Ingress allocation target policy used by appsrc input buffer allocation.
   /// `Auto` keeps legacy target selection unless caller/model/session overrides.
   InputMemoryPolicy memory_policy = InputMemoryPolicy::Auto;
@@ -107,7 +108,6 @@ struct InputOptions {
   /// Optional preprocess runtime metadata template used to annotate `GstSimaMeta`
   /// with geometry/affine context for downstream plugins (e.g. box decode).
   std::optional<PreprocessMetaTemplate> preprocess_meta;
-
 };
 
 /**

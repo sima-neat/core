@@ -18,7 +18,8 @@ void ensure_sima_meta_registered() {
 
 RUN_TEST("unit_preprocess_meta_template_dynamic_test", ([] {
 #if !SIMA_HAS_SIMAAI_POOL
-           skip_test_exception("unit_preprocess_meta_template_dynamic_test requires simaai pool/meta");
+           skip_test_exception(
+               "unit_preprocess_meta_template_dynamic_test requires simaai pool/meta");
 #else
            using namespace simaai::neat;
            gst_init(nullptr, nullptr);

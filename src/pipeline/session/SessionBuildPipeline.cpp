@@ -43,7 +43,8 @@ namespace {
 using pipeline_internal::sima::SimaPluginStaticManifest;
 using pipeline_internal::sima::StageStaticSpec;
 
-void apply_name_transform_to_stage_spec(StageStaticSpec* stage, const NameTransform& name_transform) {
+void apply_name_transform_to_stage_spec(StageStaticSpec* stage,
+                                        const NameTransform& name_transform) {
   if (!stage || !name_transform_enabled(name_transform)) {
     return;
   }
@@ -66,7 +67,8 @@ SimaPluginStaticManifest transform_manifest_stage_names(const SimaPluginStaticMa
   return transformed;
 }
 
-bool pipeline_element_is_boxdecode_plugin(const pipeline_internal::sima::PipelineElementSpec& spec) {
+bool pipeline_element_is_boxdecode_plugin(
+    const pipeline_internal::sima::PipelineElementSpec& spec) {
   return spec.plugin == "neatobjectdecode" || spec.plugin == "neatboxdecode";
 }
 
@@ -94,9 +96,8 @@ const StageStaticSpec* find_boxdecode_manifest_stage(const SimaPluginStaticManif
   return nullptr;
 }
 
-void collect_renderable_boxdecode_stages(
-    const CompiledNodeContract& stage,
-    std::vector<const CompiledNodeContract*>* out) {
+void collect_renderable_boxdecode_stages(const CompiledNodeContract& stage,
+                                         std::vector<const CompiledNodeContract*>* out) {
   if (!out) {
     return;
   }
@@ -110,8 +111,7 @@ void collect_renderable_boxdecode_stages(
 }
 
 void validate_boxdecode_manifest_completeness(
-    const BuildResult& build,
-    const SimaPluginStaticManifest& manifest,
+    const BuildResult& build, const SimaPluginStaticManifest& manifest,
     pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
   if (!diagnostics) {
     return;
@@ -141,7 +141,8 @@ void validate_boxdecode_manifest_completeness(
     }
   }
 
-  for (const auto& element : pipeline_internal::sima::parse_pipeline_elements(build.pipeline_string)) {
+  for (const auto& element :
+       pipeline_internal::sima::parse_pipeline_elements(build.pipeline_string)) {
     if (!pipeline_element_is_boxdecode_plugin(element)) {
       continue;
     }
@@ -197,8 +198,7 @@ GstStateChangeReturn set_state_with_timeout(GstElement* pipeline, GstState targe
 }
 
 int resolve_state_change_timeout_ms(const char* where) {
-  const bool is_build_input =
-      (where && std::strstr(where, "Session::build(input)") != nullptr);
+  const bool is_build_input = (where && std::strstr(where, "Session::build(input)") != nullptr);
   const int default_timeout_ms = is_build_input ? 30000 : 15000;
 
   int timeout_ms = env_int("SIMA_STATE_CHANGE_TIMEOUT_MS", default_timeout_ms);
@@ -305,8 +305,8 @@ void set_state_or_throw(GstElement* pipeline, GstState target, const char* where
 }
 
 namespace {
-static const char* payload_kind_name(
-    simaai::neat::pipeline_internal::sima::StagePayloadKind payload_kind) {
+static const char*
+payload_kind_name(simaai::neat::pipeline_internal::sima::StagePayloadKind payload_kind) {
   using simaai::neat::pipeline_internal::sima::StagePayloadKind;
   switch (payload_kind) {
   case StagePayloadKind::None:
@@ -351,16 +351,13 @@ static void dump_mla_contract_debug(
     return;
   }
   const char* where_name = (where && *where) ? where : "Session::build";
-  std::fprintf(stderr,
-               "[MLA-CONTRACT][Session] where=%s model_id=%s stage_count=%zu\n",
-               where_name,
+  std::fprintf(stderr, "[MLA-CONTRACT][Session] where=%s model_id=%s stage_count=%zu\n", where_name,
                manifest.model_id.empty() ? "<empty>" : manifest.model_id.c_str(),
                manifest.stages.size());
   for (const auto& stage : manifest.stages) {
-    const bool relevant = stage.payload_kind ==
-                              simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessMla ||
-                          stage.payload_kind ==
-                              simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessCvu;
+    const bool relevant =
+        stage.payload_kind == simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessMla ||
+        stage.payload_kind == simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessCvu;
     if (!relevant) {
       continue;
     }
@@ -379,8 +376,7 @@ static void dump_mla_contract_debug(
         stage.physical_inputs.size(), stage.logical_outputs.size(), stage.physical_outputs.size(),
         stage.input_bindings.size(), stage.output_order.size());
 
-    if (stage.payload_kind ==
-        simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessCvu) {
+    if (stage.payload_kind == simaai::neat::pipeline_internal::sima::StagePayloadKind::ProcessCvu) {
       std::fprintf(
           stderr,
           "[MLA-CONTRACT][Session]   processcvu graph_family=%s graph_name=%s input_dtype=%s "
@@ -398,31 +394,30 @@ static void dump_mla_contract_debug(
     for (std::size_t i = 0; i < stage.logical_inputs.size(); ++i) {
       const auto& tensor = stage.logical_inputs[i];
       const std::string shape = tensor_shape_string(tensor.shape);
-      std::fprintf(
-          stderr,
-          "[MLA-CONTRACT][Session]   logical_input[%zu] logical_index=%d backend_index=%d "
-          "physical_index=%d dtype=%s layout=%s shape=%s logical_name=%s backend_name=%s "
-          "segment=%s byte_offset=%lld size_bytes=%llu\n",
-          i, tensor.logical_index, tensor.backend_input_index, tensor.physical_index,
-          tensor.dtype.empty() ? "<empty>" : tensor.dtype.c_str(),
-          tensor.layout.empty() ? "<empty>" : tensor.layout.c_str(), shape.c_str(),
-          tensor.logical_name.empty() ? "<empty>" : tensor.logical_name.c_str(),
-          tensor.backend_name.empty() ? "<empty>" : tensor.backend_name.c_str(),
-          tensor.segment_name.empty() ? "<empty>" : tensor.segment_name.c_str(),
-          static_cast<long long>(tensor.byte_offset),
-          static_cast<unsigned long long>(tensor.size_bytes));
+      std::fprintf(stderr,
+                   "[MLA-CONTRACT][Session]   logical_input[%zu] logical_index=%d backend_index=%d "
+                   "physical_index=%d dtype=%s layout=%s shape=%s logical_name=%s backend_name=%s "
+                   "segment=%s byte_offset=%lld size_bytes=%llu\n",
+                   i, tensor.logical_index, tensor.backend_input_index, tensor.physical_index,
+                   tensor.dtype.empty() ? "<empty>" : tensor.dtype.c_str(),
+                   tensor.layout.empty() ? "<empty>" : tensor.layout.c_str(), shape.c_str(),
+                   tensor.logical_name.empty() ? "<empty>" : tensor.logical_name.c_str(),
+                   tensor.backend_name.empty() ? "<empty>" : tensor.backend_name.c_str(),
+                   tensor.segment_name.empty() ? "<empty>" : tensor.segment_name.c_str(),
+                   static_cast<long long>(tensor.byte_offset),
+                   static_cast<unsigned long long>(tensor.size_bytes));
     }
 
     for (std::size_t i = 0; i < stage.physical_inputs.size(); ++i) {
       const auto& physical = stage.physical_inputs[i];
-      std::fprintf(
-          stderr,
-          "[MLA-CONTRACT][Session]   physical_input[%zu] physical_index=%d allocator=%d "
-          "segment=%s size_bytes=%llu source_physical_index=%d source_byte_offset=%lld\n",
-          i, physical.physical_index, physical.allocator_index,
-          physical.segment_name.empty() ? "<empty>" : physical.segment_name.c_str(),
-          static_cast<unsigned long long>(physical.size_bytes), physical.source_physical_index,
-          static_cast<long long>(physical.source_byte_offset));
+      std::fprintf(stderr,
+                   "[MLA-CONTRACT][Session]   physical_input[%zu] physical_index=%d allocator=%d "
+                   "segment=%s size_bytes=%llu source_physical_index=%d source_byte_offset=%lld\n",
+                   i, physical.physical_index, physical.allocator_index,
+                   physical.segment_name.empty() ? "<empty>" : physical.segment_name.c_str(),
+                   static_cast<unsigned long long>(physical.size_bytes),
+                   physical.source_physical_index,
+                   static_cast<long long>(physical.source_byte_offset));
     }
 
     for (std::size_t i = 0; i < stage.logical_outputs.size(); ++i) {
@@ -461,21 +456,17 @@ static void dump_mla_contract_debug(
 
     for (std::size_t i = 0; i < stage.output_order.size(); ++i) {
       const auto& route = stage.output_order[i];
-      std::fprintf(
-          stderr,
-          "[MLA-CONTRACT][Session]   output_order[%zu] slot=%d logical=%d tensor_index=%d "
-          "cm_output=%s segment=%s\n",
-          i, route.output_slot, route.logical_output_index, route.tensor_index,
-          route.cm_output_name.empty() ? "<empty>" : route.cm_output_name.c_str(),
-          route.segment_name.empty() ? "<empty>" : route.segment_name.c_str());
+      std::fprintf(stderr,
+                   "[MLA-CONTRACT][Session]   output_order[%zu] slot=%d logical=%d tensor_index=%d "
+                   "cm_output=%s segment=%s\n",
+                   i, route.output_slot, route.logical_output_index, route.tensor_index,
+                   route.cm_output_name.empty() ? "<empty>" : route.cm_output_name.c_str(),
+                   route.segment_name.empty() ? "<empty>" : route.segment_name.c_str());
     }
-
   }
 }
 
-static GstElement* parse_pipeline_or_throw(
-    const BuildResult& build,
-    const char* where) {
+static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char* where) {
   GError* err = nullptr;
   GstElement* pipeline = gst_parse_launch(build.pipeline_string.c_str(), &err);
   const bool had_pipeline = (pipeline != nullptr);
@@ -513,8 +504,7 @@ static GstElement* parse_pipeline_or_throw(
         error_codes::kPipelineShape,
         std::string(where ? where : "Session::build") +
             ": compiled manifest is missing; semantic contracts were not rendered",
-        "Compile and render stage contracts before pipeline parse/attach.",
-        build.pipeline_string);
+        "Compile and render stage contracts before pipeline parse/attach.", build.pipeline_string);
   }
   if (build.compiled_contracts && !build.compiled_contracts->fully_renderable) {
     gst_object_unref(pipeline);
@@ -568,8 +558,7 @@ static GstElement* parse_pipeline_or_throw(
           error_codes::kPipelineShape,
           std::string(where ? where : "Session::build") +
               ": failed to attach sima static manifest context: " + attach_error,
-          "Ensure stage contract injection is enabled.",
-          build.pipeline_string);
+          "Ensure stage contract injection is enabled.", build.pipeline_string);
     }
 
     std::string prepared_error;
@@ -577,9 +566,7 @@ static GstElement* parse_pipeline_or_throw(
         gst_element_get_context(pipeline, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE);
     auto prepared_runtime = build_prepared_runtime_context(
         static_manifest_context, manifest, build.rendered_manifest, pipeline_elements,
-        build.model_source_paths,
-        build.name_transform,
-        &prepared_error);
+        build.model_source_paths, build.name_transform, &prepared_error);
     if (static_manifest_context) {
       gst_context_unref(static_manifest_context);
     }
@@ -600,8 +587,7 @@ static GstElement* parse_pipeline_or_throw(
           error_codes::kPipelineShape,
           std::string(where ? where : "Session::build") +
               ": failed to attach sima prepared runtime context: " + attach_prepared_error,
-          "Ensure prepared stage context injection is enabled.",
-          build.pipeline_string);
+          "Ensure prepared stage context injection is enabled.", build.pipeline_string);
     }
   }
 

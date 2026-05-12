@@ -24,8 +24,8 @@ namespace simaai::neat::policy {
  * @ingroup builder
  */
 struct EncoderPolicy {
-  int min_bitrate_kbps = 100;     ///< Lower bound on encoder bitrate (kbit/s).
-  int max_bitrate_kbps = 100000;  ///< Upper bound on encoder bitrate (kbit/s).
+  int min_bitrate_kbps = 100;    ///< Lower bound on encoder bitrate (kbit/s).
+  int max_bitrate_kbps = 100000; ///< Upper bound on encoder bitrate (kbit/s).
 
   /**
    * @brief Validate a requested encoder bitrate against the configured range.

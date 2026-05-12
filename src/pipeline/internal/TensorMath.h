@@ -125,13 +125,13 @@ inline std::vector<int64_t> normalize_strides_rank_to_shape(
       }
     }
     if (can_drop) {
-      return std::vector<int64_t>(
-          strides.begin() + static_cast<std::ptrdiff_t>(drop), strides.end());
+      return std::vector<int64_t>(strides.begin() + static_cast<std::ptrdiff_t>(drop),
+                                  strides.end());
     }
   }
   if (allow_suffix_fallback && strides.size() > target_shape.size()) {
-    return std::vector<int64_t>(
-        strides.end() - static_cast<std::ptrdiff_t>(target_shape.size()), strides.end());
+    return std::vector<int64_t>(strides.end() - static_cast<std::ptrdiff_t>(target_shape.size()),
+                                strides.end());
   }
   return strides;
 }

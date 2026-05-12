@@ -22,10 +22,10 @@ namespace simaai::neat {
  * @ingroup builder
  */
 enum class SpecCertainty {
-  Unknown = 0,        ///< No information (default).
-  Hint,               ///< Educated guess — may be wrong.
-  Derived,            ///< Computed from inputs and Node logic.
-  Authoritative,      ///< Source-of-truth (e.g., set by an Output sink itself).
+  Unknown = 0,   ///< No information (default).
+  Hint,          ///< Educated guess — may be wrong.
+  Derived,       ///< Computed from inputs and Node logic.
+  Authoritative, ///< Source-of-truth (e.g., set by an Output sink itself).
 };
 
 /**
@@ -43,19 +43,19 @@ struct OutputSpec {
   // Boundary/caps metadata only. OutputSpec is not the authoritative generic
   // tensor semantic model; internal tensor truth must live in Tensor,
   // TensorBufferTensorView, or sima_ev_tensor_desc.
-  std::string media_type;       ///< e.g. `"video/x-raw"`, `"application/vnd.simaai.tensor"`.
-  std::string format;           ///< e.g. `"NV12"`, `"RGB"`, `"FP32"`.
-  int width = -1;               ///< Width at the boundary; -1 if unknown.
-  int height = -1;              ///< Height at the boundary; -1 if unknown.
-  int depth = -1;               ///< Depth/channels at the boundary; -1 if unknown.
-  int fps_num = 0;              ///< Framerate numerator.
-  int fps_den = 1;              ///< Framerate denominator.
-  std::string memory;           ///< e.g. `"SystemMemory"`, `"SimaAI"`, `"Unknown"`.
-  std::string layout;           ///< Layout label (compatibility/boundary projection only).
-  std::string dtype;            ///< e.g. `"UInt8"`, `"Float32"`.
-  std::size_t byte_size = 0;    ///< Buffer byte-size estimate; 0 if unknown.
+  std::string media_type;    ///< e.g. `"video/x-raw"`, `"application/vnd.simaai.tensor"`.
+  std::string format;        ///< e.g. `"NV12"`, `"RGB"`, `"FP32"`.
+  int width = -1;            ///< Width at the boundary; -1 if unknown.
+  int height = -1;           ///< Height at the boundary; -1 if unknown.
+  int depth = -1;            ///< Depth/channels at the boundary; -1 if unknown.
+  int fps_num = 0;           ///< Framerate numerator.
+  int fps_den = 1;           ///< Framerate denominator.
+  std::string memory;        ///< e.g. `"SystemMemory"`, `"SimaAI"`, `"Unknown"`.
+  std::string layout;        ///< Layout label (compatibility/boundary projection only).
+  std::string dtype;         ///< e.g. `"UInt8"`, `"Float32"`.
+  std::size_t byte_size = 0; ///< Buffer byte-size estimate; 0 if unknown.
   SpecCertainty certainty = SpecCertainty::Unknown; ///< How trustworthy this spec is.
-  std::string note;             ///< Free-form note (used in diagnostic reports).
+  std::string note; ///< Free-form note (used in diagnostic reports).
 
   /// @brief True if every meaningful field is at its default ("nothing known").
   bool is_unknown() const {

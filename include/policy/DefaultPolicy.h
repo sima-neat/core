@@ -27,10 +27,10 @@ namespace simaai::neat::policy {
  * @ingroup builder
  */
 struct DefaultPolicy {
-  DecoderPolicy decoder{};  ///< Decoder-side limits (resolution caps, etc.).
-  EncoderPolicy encoder{};  ///< Encoder-side limits (bitrate range, etc.).
-  MemoryPolicy memory{};    ///< Memory-pool limits.
-  RtspPolicy rtsp{};        ///< RTSP-specific limits (port range, etc.).
+  DecoderPolicy decoder{}; ///< Decoder-side limits (resolution caps, etc.).
+  EncoderPolicy encoder{}; ///< Encoder-side limits (bitrate range, etc.).
+  MemoryPolicy memory{};   ///< Memory-pool limits.
+  RtspPolicy rtsp{};       ///< RTSP-specific limits (port range, etc.).
 };
 
 /// Returns a `DefaultPolicy` populated with the framework's recommended defaults.

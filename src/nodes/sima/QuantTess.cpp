@@ -86,11 +86,11 @@ NodeContractDefinition QuantTess::contract_definition() const {
   return def;
 }
 
-bool QuantTess::compile_node_contract(const ContractCompileInput& input,
-                                      CompiledNodeContract* out,
+bool QuantTess::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                       std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("quanttess") : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("quanttess")
+                                       : element_names(input.node_index).front();
   try {
     if (config_holder_ && config_holder_->compiled_contract.has_value()) {
       return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
@@ -113,10 +113,10 @@ bool QuantTess::compile_node_contract(const ContractCompileInput& input,
     runtime_options.set_tessellate = true;
     runtime_options.include_q_fields = true;
     runtime_options.include_slice_shapes = true;
-    const auto runtime = node_helpers::build_processcvu_runtime_config(*cfg, std::move(runtime_options));
-    const auto compiled =
-        pipeline_internal::sima::stagesemantics::build_processcvu_compiled_contract_from_runtime_config(
-            runtime);
+    const auto runtime =
+        node_helpers::build_processcvu_runtime_config(*cfg, std::move(runtime_options));
+    const auto compiled = pipeline_internal::sima::stagesemantics::
+        build_processcvu_compiled_contract_from_runtime_config(runtime);
     return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   } catch (const std::exception& ex) {

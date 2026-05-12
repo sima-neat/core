@@ -47,8 +47,7 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
-GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build,
-                                                  const char* where);
+GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);
 void session_build_attach_debug_detess_input_probes(GstElement* pipeline);
 void session_build_attach_debug_appsink_probes(GstElement* pipeline);
@@ -91,8 +90,7 @@ session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,
-                                     const ContractCompileInput& compile_input,
-                                     const char* where,
+                                     const ContractCompileInput& compile_input, const char* where,
                                      std::vector<std::shared_ptr<Node>>* apply_nodes = nullptr);
 
 void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Node>>* nodes);
@@ -100,22 +98,22 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const cv::Mat& sample,
-    const SessionOptions& sess_opt,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode);
 
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const simaai::neat::Tensor& sample,
-    const SessionOptions& sess_opt,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode);
 
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const Sample& sample,
-    const SessionOptions& sess_opt,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode);
 
 } // namespace simaai::neat

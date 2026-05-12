@@ -7,7 +7,6 @@
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
 
-
 #include <algorithm>
 #include <cstddef>
 #include <cctype>
@@ -97,8 +96,8 @@ std::string canonical_dtype_for_signal(std::string raw) {
   return raw;
 }
 
-std::string primary_tensor_dtype(
-    const std::vector<pipeline_internal::sima::MpkTensorContract>& tensors) {
+std::string
+primary_tensor_dtype(const std::vector<pipeline_internal::sima::MpkTensorContract>& tensors) {
   for (const auto& tensor : tensors) {
     if (!tensor.logical_dtype.empty()) {
       return canonical_dtype_for_signal(tensor.logical_dtype);
@@ -159,7 +158,8 @@ std::string canonical_mpk_kernel_kind(const std::string& raw_kernel) {
   if (token.empty()) {
     return {};
   }
-  if (token.find("boxdecode") != std::string::npos || token.find("boxdecoder") != std::string::npos) {
+  if (token.find("boxdecode") != std::string::npos ||
+      token.find("boxdecoder") != std::string::npos) {
     return "boxdecode";
   }
   if (token.find("detess") != std::string::npos && token.find("dequant") != std::string::npos) {
@@ -303,8 +303,8 @@ ParsedTensorShapeContract parse_tensor_shape_contract(const std::vector<std::int
   return out;
 }
 
-std::vector<std::int64_t> preferred_tensor_shape(
-    const pipeline_internal::sima::MpkTensorContract& tensor) {
+std::vector<std::int64_t>
+preferred_tensor_shape(const pipeline_internal::sima::MpkTensorContract& tensor) {
   return tensor.logical_shape;
 }
 
@@ -354,10 +354,10 @@ bool populate_tensor_contract_from_stage_tensors(
   return populate_tensor_contract_from_stage_tensor(tensors.front(), media_type, source_stage, out);
 }
 
-std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
-    const pipeline_internal::sima::MpkContract& contract,
-    const pipeline_internal::sima::RouteGraph& graph,
-    const std::vector<std::size_t>& ordered) {
+std::vector<IngressTensorContract>
+derive_ingress_contracts_from_mpk_contract(const pipeline_internal::sima::MpkContract& contract,
+                                           const pipeline_internal::sima::RouteGraph& graph,
+                                           const std::vector<std::size_t>& ordered) {
   const auto ordered_route_kind_from_graph_kind =
       [](pipeline_internal::sima::RouteGraphKernelKind kind) -> OrderedRouteOp::Kind {
     using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
@@ -396,8 +396,8 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
   };
 
   const auto collect_branch_ops =
-      [&](const std::size_t start_plugin, std::optional<std::size_t>* join_plugin_index)
-      -> std::vector<OrderedRouteOp> {
+      [&](const std::size_t start_plugin,
+          std::optional<std::size_t>* join_plugin_index) -> std::vector<OrderedRouteOp> {
     std::vector<OrderedRouteOp> ops;
     std::unordered_set<std::size_t> visited;
     std::size_t current_plugin = start_plugin;
@@ -425,7 +425,8 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
       }
 
       std::vector<const pipeline_internal::sima::RouteGraphEdge*> outgoing_edges;
-      for (const auto* edge : pipeline_internal::sima::route_graph_outgoing_edges(graph, current_plugin)) {
+      for (const auto* edge :
+           pipeline_internal::sima::route_graph_outgoing_edges(graph, current_plugin)) {
         if (edge) {
           outgoing_edges.push_back(edge);
         }
@@ -437,7 +438,8 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
       const std::size_t next_plugin = outgoing_edges.front()->dst_plugin_index;
       const auto* next_node = pipeline_internal::sima::route_graph_node(graph, next_plugin);
       std::size_t next_incoming_count = 0U;
-      for (const auto* edge : pipeline_internal::sima::route_graph_incoming_edges(graph, next_plugin)) {
+      for (const auto* edge :
+           pipeline_internal::sima::route_graph_incoming_edges(graph, next_plugin)) {
         if (edge) {
           ++next_incoming_count;
         }
@@ -467,10 +469,10 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
 
   std::vector<IngressTensorContract> out;
   out.reserve(contract.ingress_tensors.size());
-  for (std::size_t ingress_index = 0; ingress_index < contract.ingress_tensors.size(); ++ingress_index) {
+  for (std::size_t ingress_index = 0; ingress_index < contract.ingress_tensors.size();
+       ++ingress_index) {
     const auto& ingress = contract.ingress_tensors[ingress_index];
-    const std::string ingress_name =
-        !ingress.name.empty() ? ingress.name : ingress.segment_name;
+    const std::string ingress_name = !ingress.name.empty() ? ingress.name : ingress.segment_name;
     if (ingress_name.empty()) {
       continue;
     }
@@ -515,10 +517,11 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
       const std::string kernel_source =
           !consumer_stage->kernel.empty() ? consumer_stage->kernel : consumer_stage->name;
       const std::string kernel = canonical_mpk_kernel_kind(kernel_source);
-      const std::string media_type = kernel == "preproc" ? std::string("video/x-raw")
-                                                         : std::string("application/vnd.simaai.tensor");
-      (void)populate_tensor_contract_from_stage_tensor(
-          consumer_input, media_type, source_stage, &ingress_contract);
+      const std::string media_type = kernel == "preproc"
+                                         ? std::string("video/x-raw")
+                                         : std::string("application/vnd.simaai.tensor");
+      (void)populate_tensor_contract_from_stage_tensor(consumer_input, media_type, source_stage,
+                                                       &ingress_contract);
       ingress_contract.ingress_index = static_cast<int>(ingress_index);
       ingress_contract.source_tensor_name = ingress_name;
       ingress_contract.dst_plugin_index = consumer_plugin_index;
@@ -526,7 +529,8 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
       ingress_contract.branch_ops =
           collect_branch_ops(consumer_plugin_index, &ingress_contract.join_plugin_index);
       if (ingress_contract.branch_ops.empty()) {
-        const auto* consumer_node = pipeline_internal::sima::route_graph_node(graph, consumer_plugin_index);
+        const auto* consumer_node =
+            pipeline_internal::sima::route_graph_node(graph, consumer_plugin_index);
         if (consumer_node &&
             consumer_node->kind == pipeline_internal::sima::RouteGraphKernelKind::Mla) {
           ingress_contract.join_plugin_index = consumer_plugin_index;
@@ -554,8 +558,8 @@ std::vector<IngressTensorContract> derive_ingress_contracts_from_mpk_contract(
   return out;
 }
 
-std::vector<RouteRegion> ingress_regions_from_contracts(
-    const std::vector<IngressTensorContract>& ingress_contracts) {
+std::vector<RouteRegion>
+ingress_regions_from_contracts(const std::vector<IngressTensorContract>& ingress_contracts) {
   const auto graph_kind_from_ordered_route_kind =
       [](OrderedRouteOp::Kind kind) -> pipeline_internal::sima::RouteGraphKernelKind {
     using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
@@ -671,8 +675,8 @@ std::vector<RouteRegion> ingress_regions_from_contracts(
   return regions;
 }
 
-std::string ingress_contracts_debug_string(
-    const std::vector<IngressTensorContract>& ingress_contracts) {
+std::string
+ingress_contracts_debug_string(const std::vector<IngressTensorContract>& ingress_contracts) {
   std::ostringstream oss;
   oss << "[";
   for (std::size_t i = 0; i < ingress_contracts.size(); ++i) {
@@ -681,16 +685,15 @@ std::string ingress_contracts_debug_string(
     }
     const auto& ingress = ingress_contracts[i];
     oss << "{idx=" << ingress.ingress_index << ",dtype=" << ingress.dtype
-        << ",layout=" << ingress.layout << ",shape=" << ingress.height << "x"
-        << ingress.width << "x" << ingress.depth << ",source=" << ingress.source_stage
+        << ",layout=" << ingress.layout << ",shape=" << ingress.height << "x" << ingress.width
+        << "x" << ingress.depth << ",source=" << ingress.source_stage
         << ",name=" << ingress.source_tensor_name << "}";
   }
   oss << "]";
   return oss.str();
 }
 
-IngressTensorContract make_single_ingress_contract_from_semantics(
-    const ModelSemantics& semantics) {
+IngressTensorContract make_single_ingress_contract_from_semantics(const ModelSemantics& semantics) {
   IngressTensorContract ingress;
   ingress.valid = true;
   ingress.media_type = "application/vnd.simaai.tensor";
@@ -707,8 +710,7 @@ IngressTensorContract make_single_ingress_contract_from_semantics(
 }
 
 bool populate_route_mla_facts_from_mpk_contract(
-    const pipeline_internal::sima::MpkContract& contract,
-    RouteCapability* out,
+    const pipeline_internal::sima::MpkContract& contract, RouteCapability* out,
     std::string* error_message) {
   if (!out) {
     if (error_message) {
@@ -735,17 +737,15 @@ bool populate_route_mla_facts_from_mpk_contract(
   const std::vector<pipeline_internal::sima::MpkTensorContract> physical_outputs =
       pipeline_internal::sima::get_mla_boundary_physical_outputs_contract(contract);
   const std::vector<pipeline_internal::sima::MpkTensorContract>& planning_outputs =
-      !published_outputs.empty() ? published_outputs
-      : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs);
+      !published_outputs.empty()
+          ? published_outputs
+          : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs);
   const std::string node_name_hint =
       !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id;
-  const auto mla_contract =
-      pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
-          *mla_stage,
-          planning_outputs,
-          physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs,
-          node_name_hint,
-          boundary_inputs.empty() ? nullptr : &boundary_inputs);
+  const auto mla_contract = pipeline_internal::sima::build_mla_static_contract_from_mpk_stage(
+      *mla_stage, planning_outputs,
+      physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs, node_name_hint,
+      boundary_inputs.empty() ? nullptr : &boundary_inputs);
 
   if (mla_contract.logical_inputs.empty()) {
     if (error_message) {
@@ -786,8 +786,8 @@ bool populate_route_mla_facts_from_mpk_contract(
 
   const bool input_ok = !out->mla_input_dtype_raw.empty() && !out->mla_input_media_type.empty() &&
                         shape_dims_valid(logical_input.shape);
-  const bool output_ok = !out->mla_output_dtype_raw.empty() &&
-                         shape_dims_valid(logical_output.shape);
+  const bool output_ok =
+      !out->mla_output_dtype_raw.empty() && shape_dims_valid(logical_output.shape);
   if (!input_ok || !output_ok) {
     if (error_message) {
       *error_message = "typed MLA contract is missing required logical tensor shape/dtype facts";
@@ -935,8 +935,9 @@ std::optional<OrderedRouteOp::Kind> ordered_pre_kind_from_session_pre_stage(Sess
   return std::nullopt;
 }
 
-std::vector<OrderedRouteOp> normalize_ingress_branch_ops_for_pre_chain(
-    const std::vector<OrderedRouteOp>& branch_ops, const std::vector<SessionPreStageOp>& pre_chain) {
+std::vector<OrderedRouteOp>
+normalize_ingress_branch_ops_for_pre_chain(const std::vector<OrderedRouteOp>& branch_ops,
+                                           const std::vector<SessionPreStageOp>& pre_chain) {
   if (pre_chain.empty()) {
     return {};
   }
@@ -968,8 +969,7 @@ std::vector<OrderedRouteOp> normalize_ingress_branch_ops_for_pre_chain(
       synthetic.kind = OrderedRouteOp::Kind::QuantTess;
       synthetic.plugin_name =
           !downstream.plugin_name.empty() ? downstream.plugin_name : op.plugin_name;
-      synthetic.plugin_id =
-          !downstream.plugin_id.empty() ? downstream.plugin_id : op.plugin_id;
+      synthetic.plugin_id = !downstream.plugin_id.empty() ? downstream.plugin_id : op.plugin_id;
       synthetic.kernel = !downstream.kernel.empty() ? downstream.kernel : op.kernel;
       synthetic.before_mla = op.before_mla || branch_ops[cursor + 1U].before_mla;
       synthetic.after_mla = op.after_mla || branch_ops[cursor + 1U].after_mla;
@@ -1007,9 +1007,8 @@ std::vector<OrderedRouteOp> normalize_ingress_branch_ops_for_pre_chain(
       continue;
     }
     const std::size_t used = static_cast<std::size_t>(std::count_if(
-        normalized.begin(), normalized.end(), [&](const OrderedRouteOp& normalized_op) {
-          return normalized_op.kind == op.kind;
-        }));
+        normalized.begin(), normalized.end(),
+        [&](const OrderedRouteOp& normalized_op) { return normalized_op.kind == op.kind; }));
     if (used >= allowed_it->second) {
       continue;
     }
@@ -1018,8 +1017,9 @@ std::vector<OrderedRouteOp> normalize_ingress_branch_ops_for_pre_chain(
   return normalized;
 }
 
-void normalize_ingress_contracts_for_pre_chain(std::vector<IngressTensorContract>* ingress_contracts,
-                                               const std::vector<SessionPreStageOp>& pre_chain) {
+void normalize_ingress_contracts_for_pre_chain(
+    std::vector<IngressTensorContract>* ingress_contracts,
+    const std::vector<SessionPreStageOp>& pre_chain) {
   if (!ingress_contracts) {
     return;
   }
@@ -1094,8 +1094,7 @@ bool collapse_adjacent_duplicates(std::vector<OpT>* ops, std::size_t* out_remove
   return true;
 }
 
-template <typename OpT>
-bool has_duplicate_ops(const std::vector<OpT>& ops) {
+template <typename OpT> bool has_duplicate_ops(const std::vector<OpT>& ops) {
   std::unordered_set<int> seen;
   seen.reserve(ops.size());
   for (const auto op : ops) {
@@ -1159,8 +1158,8 @@ bool is_graph_post_stage_kind(const pipeline_internal::sima::RouteGraphKernelKin
   return false;
 }
 
-std::optional<SessionPreStageOp> session_pre_op_from_graph_kind(
-    const pipeline_internal::sima::RouteGraphKernelKind kind) {
+std::optional<SessionPreStageOp>
+session_pre_op_from_graph_kind(const pipeline_internal::sima::RouteGraphKernelKind kind) {
   using Kind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (kind) {
   case Kind::Preproc:
@@ -1189,8 +1188,8 @@ std::optional<SessionPreStageOp> session_pre_op_from_graph_kind(
   return std::nullopt;
 }
 
-std::optional<SessionPostStageOp> session_post_op_from_graph_kind(
-    const pipeline_internal::sima::RouteGraphKernelKind kind) {
+std::optional<SessionPostStageOp>
+session_post_op_from_graph_kind(const pipeline_internal::sima::RouteGraphKernelKind kind) {
   using Kind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (kind) {
   case Kind::Detess:
@@ -1220,8 +1219,8 @@ std::optional<SessionPostStageOp> session_post_op_from_graph_kind(
   return std::nullopt;
 }
 
-PostRouteStageKind post_route_kind_from_graph_kind(
-    const pipeline_internal::sima::RouteGraphKernelKind kind) {
+PostRouteStageKind
+post_route_kind_from_graph_kind(const pipeline_internal::sima::RouteGraphKernelKind kind) {
   using Kind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (kind) {
   case Kind::Detess:
@@ -1272,8 +1271,8 @@ SessionPostAdapterKind post_adapter_from_post_route_kind(const PostRouteStageKin
   return SessionPostAdapterKind::None;
 }
 
-RouteTensorBinding route_tensor_binding_from_edge(
-    const pipeline_internal::sima::RouteGraphEdge& edge) {
+RouteTensorBinding
+route_tensor_binding_from_edge(const pipeline_internal::sima::RouteGraphEdge& edge) {
   RouteTensorBinding binding;
   binding.src_plugin_index = edge.src_plugin_index;
   binding.dst_plugin_index = edge.dst_plugin_index;
@@ -1285,8 +1284,8 @@ RouteTensorBinding route_tensor_binding_from_edge(
   return binding;
 }
 
-std::vector<int> unique_logical_indices_from_bindings(
-    const std::vector<RouteTensorBinding>& bindings) {
+std::vector<int>
+unique_logical_indices_from_bindings(const std::vector<RouteTensorBinding>& bindings) {
   std::vector<int> logical_indices;
   logical_indices.reserve(bindings.size());
   for (const auto& binding : bindings) {
@@ -1386,39 +1385,39 @@ bool can_fuse_detess_and_cast_regions(const RouteRegion& detess, const RouteRegi
   return route_region_bindings_are_lineage_compatible(detess.outputs, cast.inputs);
 }
 
-RouteRegion fuse_adjacent_post_regions(const RouteRegion& lhs, const RouteRegion& rhs,
-                                       const pipeline_internal::sima::RouteGraphKernelKind fused_kind) {
+RouteRegion
+fuse_adjacent_post_regions(const RouteRegion& lhs, const RouteRegion& rhs,
+                           const pipeline_internal::sima::RouteGraphKernelKind fused_kind) {
   RouteRegion fused;
   fused.kind = lhs.kind;
   fused.op_kind = fused_kind;
   fused.producer_plugin_index = lhs.producer_plugin_index;
-  fused.member_plugin_indices = !rhs.member_plugin_indices.empty() ? rhs.member_plugin_indices
-                                                                   : lhs.member_plugin_indices;
-  fused.join_plugin_index = rhs.join_plugin_index.has_value() ? rhs.join_plugin_index
-                                                              : lhs.join_plugin_index;
+  fused.member_plugin_indices =
+      !rhs.member_plugin_indices.empty() ? rhs.member_plugin_indices : lhs.member_plugin_indices;
+  fused.join_plugin_index =
+      rhs.join_plugin_index.has_value() ? rhs.join_plugin_index : lhs.join_plugin_index;
   fused.inputs = lhs.inputs;
   fused.outputs = rhs.outputs;
-  fused.egress_contracts = !rhs.egress_contracts.empty() ? rhs.egress_contracts
-                                                         : lhs.egress_contracts;
+  fused.egress_contracts =
+      !rhs.egress_contracts.empty() ? rhs.egress_contracts : lhs.egress_contracts;
   return fused;
 }
 
-std::vector<EgressTensorContract> stage_output_contracts_from_plugin(
-    const pipeline_internal::sima::MpkPluginIoContract& plugin) {
+std::vector<EgressTensorContract>
+stage_output_contracts_from_plugin(const pipeline_internal::sima::MpkPluginIoContract& plugin) {
   std::vector<EgressTensorContract> outputs;
   const std::string source_stage = !plugin.name.empty() ? plugin.name : plugin.plugin_id;
   for (const auto& tensor : plugin.output_tensors) {
     EgressTensorContract out;
-    if (populate_tensor_contract_from_stage_tensor(
-            tensor, "application/vnd.simaai.tensor", source_stage, &out)) {
+    if (populate_tensor_contract_from_stage_tensor(tensor, "application/vnd.simaai.tensor",
+                                                   source_stage, &out)) {
       outputs.push_back(std::move(out));
     }
   }
   return outputs;
 }
 
-std::string graph_node_source_stage_name_local(
-    const pipeline_internal::sima::MpkGraphNode& node) {
+std::string graph_node_source_stage_name_local(const pipeline_internal::sima::MpkGraphNode& node) {
   if (!node.label.empty()) {
     return node.label;
   }
@@ -1434,8 +1433,8 @@ std::string graph_node_source_stage_name_local(
   return "graph_stage";
 }
 
-pipeline_internal::sima::RouteGraphKernelKind route_graph_kind_from_mpk_node_local(
-    const pipeline_internal::sima::MpkGraphNode& node) {
+pipeline_internal::sima::RouteGraphKernelKind
+route_graph_kind_from_mpk_node_local(const pipeline_internal::sima::MpkGraphNode& node) {
   std::string kernel_source = !node.canonical_op.empty() ? node.canonical_op : node.kernel;
   if (kernel_source.empty()) {
     kernel_source = node.name;
@@ -1460,9 +1459,10 @@ int tensor_name_position_local(const std::vector<std::string>& names, const std:
   return -1;
 }
 
-std::optional<EgressTensorContract> egress_contract_for_tensor_name_local(
-    const pipeline_internal::sima::MpkContract& contract, const std::string& tensor_name,
-    const std::string& source_stage) {
+std::optional<EgressTensorContract>
+egress_contract_for_tensor_name_local(const pipeline_internal::sima::MpkContract& contract,
+                                      const std::string& tensor_name,
+                                      const std::string& source_stage) {
   if (tensor_name.empty()) {
     return std::nullopt;
   }
@@ -1472,8 +1472,8 @@ std::optional<EgressTensorContract> egress_contract_for_tensor_name_local(
         continue;
       }
       EgressTensorContract out;
-      if (populate_tensor_contract_from_stage_tensor(
-              tensor, "application/vnd.simaai.tensor", source_stage, &out)) {
+      if (populate_tensor_contract_from_stage_tensor(tensor, "application/vnd.simaai.tensor",
+                                                     source_stage, &out)) {
         return out;
       }
     }
@@ -1481,10 +1481,11 @@ std::optional<EgressTensorContract> egress_contract_for_tensor_name_local(
   return std::nullopt;
 }
 
-std::vector<EgressTensorContract> stage_output_contracts_from_graph_node_local(
-    const pipeline_internal::sima::MpkContract& contract,
-    const pipeline_internal::sima::MpkGraphNode& node) {
-  if (node.plugin_index != static_cast<std::size_t>(-1) && node.plugin_index < contract.plugins.size()) {
+std::vector<EgressTensorContract>
+stage_output_contracts_from_graph_node_local(const pipeline_internal::sima::MpkContract& contract,
+                                             const pipeline_internal::sima::MpkGraphNode& node) {
+  if (node.plugin_index != static_cast<std::size_t>(-1) &&
+      node.plugin_index < contract.plugins.size()) {
     return stage_output_contracts_from_plugin(contract.plugins[node.plugin_index]);
   }
 
@@ -1563,8 +1564,9 @@ MpkPostGraphView build_mpk_post_graph_view_local(const pipeline_internal::sima::
   return view;
 }
 
-RouteTensorBinding route_tensor_binding_from_mpk_graph_edge_local(
-    const pipeline_internal::sima::MpkGraphEdge& edge, const MpkPostGraphView& view) {
+RouteTensorBinding
+route_tensor_binding_from_mpk_graph_edge_local(const pipeline_internal::sima::MpkGraphEdge& edge,
+                                               const MpkPostGraphView& view) {
   RouteTensorBinding binding;
   if (edge.src_plugin_index != static_cast<std::size_t>(-1)) {
     binding.src_plugin_index = edge.src_plugin_index;
@@ -1602,7 +1604,8 @@ std::vector<std::size_t> sorted_unique_post_predecessors_from_mpk_graph_local(
     if (src_it == view.node_index_by_id.end() ||
         candidate_nodes.find(src_it->second) == candidate_nodes.end() ||
         !view.reachable_from_mla[src_it->second] ||
-        !is_graph_post_stage_kind(route_graph_kind_from_mpk_node_local(graph.nodes[src_it->second]))) {
+        !is_graph_post_stage_kind(
+            route_graph_kind_from_mpk_node_local(graph.nodes[src_it->second]))) {
       continue;
     }
     if (std::find(out.begin(), out.end(), src_it->second) == out.end()) {
@@ -1635,7 +1638,8 @@ std::vector<std::size_t> sorted_unique_post_successors_from_mpk_graph_local(
     if (dst_it == view.node_index_by_id.end() ||
         candidate_nodes.find(dst_it->second) == candidate_nodes.end() ||
         !view.reachable_from_mla[dst_it->second] ||
-        !is_graph_post_stage_kind(route_graph_kind_from_mpk_node_local(graph.nodes[dst_it->second]))) {
+        !is_graph_post_stage_kind(
+            route_graph_kind_from_mpk_node_local(graph.nodes[dst_it->second]))) {
       continue;
     }
     if (std::find(out.begin(), out.end(), dst_it->second) == out.end()) {
@@ -1697,15 +1701,14 @@ std::optional<int> terminal_post_logical_index_hint_from_mpk_graph_local(
     }
     int candidate_index = -1;
     if (dst_it != view.node_index_by_id.end()) {
-      candidate_index =
-          tensor_name_position_local(graph.nodes[dst_it->second].input_tensor_names, edge.tensor_name);
+      candidate_index = tensor_name_position_local(graph.nodes[dst_it->second].input_tensor_names,
+                                                   edge.tensor_name);
     }
     if (candidate_index < 0) {
       candidate_index =
           tensor_name_position_local(graph.nodes[node_index].output_tensor_names, edge.tensor_name);
     }
-    if (candidate_index >= 0 &&
-        (!logical_index.has_value() || candidate_index < *logical_index)) {
+    if (candidate_index >= 0 && (!logical_index.has_value() || candidate_index < *logical_index)) {
       logical_index = candidate_index;
     }
   }
@@ -1726,9 +1729,9 @@ std::optional<std::vector<RouteRegion>> build_post_regions_from_mpk_graph_lineag
   }
 
   const std::size_t max_depth =
-      std::max_element(lineages.begin(), lineages.end(),
-                       [](const auto& lhs, const auto& rhs) { return lhs.size() < rhs.size(); })
-          ->size();
+      std::max_element(lineages.begin(), lineages.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.size() < rhs.size();
+      })->size();
   if (max_depth == 0U) {
     return std::vector<RouteRegion>{};
   }
@@ -1768,9 +1771,10 @@ std::optional<std::vector<RouteRegion>> build_post_regions_from_mpk_graph_lineag
     RouteRegion region;
     const bool terminal_stage = reverse_offset == 0U;
     if (members.size() == 1U) {
-      region.kind = terminal_stage && kind == pipeline_internal::sima::RouteGraphKernelKind::BoxDecode
-                        ? RouteRegionKind::BoxDecodeTerminal
-                        : RouteRegionKind::Linear;
+      region.kind =
+          terminal_stage && kind == pipeline_internal::sima::RouteGraphKernelKind::BoxDecode
+              ? RouteRegionKind::BoxDecodeTerminal
+              : RouteRegionKind::Linear;
     } else {
       if (kind == pipeline_internal::sima::RouteGraphKernelKind::BoxDecode) {
         return std::nullopt;
@@ -1877,11 +1881,11 @@ std::optional<std::vector<RouteRegion>> build_post_regions_from_mpk_graph_lineag
   return regions;
 }
 
-std::optional<RouteRegion> build_linear_region_from_graph_node(
-    const pipeline_internal::sima::RouteGraph& graph,
-    const pipeline_internal::sima::MpkContract& contract,
-    const std::size_t plugin_index,
-    const RouteRegionKind region_kind = RouteRegionKind::Linear) {
+std::optional<RouteRegion>
+build_linear_region_from_graph_node(const pipeline_internal::sima::RouteGraph& graph,
+                                    const pipeline_internal::sima::MpkContract& contract,
+                                    const std::size_t plugin_index,
+                                    const RouteRegionKind region_kind = RouteRegionKind::Linear) {
   const auto* node = pipeline_internal::sima::route_graph_node(graph, plugin_index);
   if (!node || plugin_index >= contract.plugins.size()) {
     return std::nullopt;
@@ -1891,13 +1895,15 @@ std::optional<RouteRegion> build_linear_region_from_graph_node(
   region.op_kind = node->kind;
   region.producer_plugin_index = plugin_index;
   region.member_plugin_indices = {plugin_index};
-  for (const auto* edge : pipeline_internal::sima::route_graph_incoming_edges(graph, plugin_index)) {
+  for (const auto* edge :
+       pipeline_internal::sima::route_graph_incoming_edges(graph, plugin_index)) {
     if (edge) {
       region.inputs.push_back(route_tensor_binding_from_edge(*edge));
       region.producer_plugin_index = edge->src_plugin_index;
     }
   }
-  for (const auto* edge : pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_index)) {
+  for (const auto* edge :
+       pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_index)) {
     if (edge) {
       region.outputs.push_back(route_tensor_binding_from_edge(*edge));
     }
@@ -1906,12 +1912,13 @@ std::optional<RouteRegion> build_linear_region_from_graph_node(
   return region;
 }
 
-std::vector<std::size_t> sorted_unique_post_predecessors(
-    const pipeline_internal::sima::RouteGraph& graph,
-    const std::unordered_set<std::size_t>& candidate_nodes,
-    const std::size_t plugin_index) {
+std::vector<std::size_t>
+sorted_unique_post_predecessors(const pipeline_internal::sima::RouteGraph& graph,
+                                const std::unordered_set<std::size_t>& candidate_nodes,
+                                const std::size_t plugin_index) {
   std::vector<std::size_t> out;
-  for (const auto* edge : pipeline_internal::sima::route_graph_incoming_edges(graph, plugin_index)) {
+  for (const auto* edge :
+       pipeline_internal::sima::route_graph_incoming_edges(graph, plugin_index)) {
     if (!edge || candidate_nodes.find(edge->src_plugin_index) == candidate_nodes.end()) {
       continue;
     }
@@ -1936,12 +1943,13 @@ std::vector<std::size_t> sorted_unique_post_predecessors(
   return out;
 }
 
-std::vector<std::size_t> sorted_unique_post_successors(
-    const pipeline_internal::sima::RouteGraph& graph,
-    const std::unordered_set<std::size_t>& candidate_nodes,
-    const std::size_t plugin_index) {
+std::vector<std::size_t>
+sorted_unique_post_successors(const pipeline_internal::sima::RouteGraph& graph,
+                              const std::unordered_set<std::size_t>& candidate_nodes,
+                              const std::size_t plugin_index) {
   std::vector<std::size_t> out;
-  for (const auto* edge : pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_index)) {
+  for (const auto* edge :
+       pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_index)) {
     if (!edge || candidate_nodes.find(edge->dst_plugin_index) == candidate_nodes.end()) {
       continue;
     }
@@ -1966,10 +1974,10 @@ std::vector<std::size_t> sorted_unique_post_successors(
   return out;
 }
 
-std::optional<std::vector<std::size_t>> trace_post_lineage_from_terminal(
-    const pipeline_internal::sima::RouteGraph& graph,
-    const std::unordered_set<std::size_t>& candidate_nodes,
-    const std::size_t terminal_plugin_index) {
+std::optional<std::vector<std::size_t>>
+trace_post_lineage_from_terminal(const pipeline_internal::sima::RouteGraph& graph,
+                                 const std::unordered_set<std::size_t>& candidate_nodes,
+                                 const std::size_t terminal_plugin_index) {
   std::vector<std::size_t> lineage_rev;
   std::unordered_set<std::size_t> seen;
   std::size_t current = terminal_plugin_index;
@@ -1994,12 +2002,13 @@ std::optional<std::vector<std::size_t>> trace_post_lineage_from_terminal(
   return lineage_rev;
 }
 
-std::optional<int> terminal_post_logical_index_hint(
-    const pipeline_internal::sima::RouteGraph& graph,
-    const std::unordered_set<std::size_t>& candidate_nodes,
-    const std::size_t plugin_index) {
+std::optional<int>
+terminal_post_logical_index_hint(const pipeline_internal::sima::RouteGraph& graph,
+                                 const std::unordered_set<std::size_t>& candidate_nodes,
+                                 const std::size_t plugin_index) {
   std::optional<int> logical_index;
-  for (const auto* edge : pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_index)) {
+  for (const auto* edge :
+       pipeline_internal::sima::route_graph_outgoing_edges(graph, plugin_index)) {
     if (!edge || candidate_nodes.find(edge->dst_plugin_index) != candidate_nodes.end()) {
       continue;
     }
@@ -2015,12 +2024,12 @@ std::optional<int> terminal_post_logical_index_hint(
   return logical_index;
 }
 
-std::optional<std::vector<RouteRegion>> build_post_regions_from_lineages(
-    const pipeline_internal::sima::RouteGraph& graph,
-    const pipeline_internal::sima::MpkContract& contract,
-    const std::unordered_set<std::size_t>& candidate_nodes,
-    const std::vector<std::vector<std::size_t>>& lineages,
-    const std::vector<std::optional<int>>& lineage_logical_indices) {
+std::optional<std::vector<RouteRegion>>
+build_post_regions_from_lineages(const pipeline_internal::sima::RouteGraph& graph,
+                                 const pipeline_internal::sima::MpkContract& contract,
+                                 const std::unordered_set<std::size_t>& candidate_nodes,
+                                 const std::vector<std::vector<std::size_t>>& lineages,
+                                 const std::vector<std::optional<int>>& lineage_logical_indices) {
   if (lineages.empty()) {
     return std::vector<RouteRegion>{};
   }
@@ -2028,11 +2037,9 @@ std::optional<std::vector<RouteRegion>> build_post_regions_from_lineages(
     return std::nullopt;
   }
   const std::size_t max_depth =
-      std::max_element(lineages.begin(), lineages.end(),
-                       [](const auto& lhs, const auto& rhs) {
-                         return lhs.size() < rhs.size();
-                       })
-          ->size();
+      std::max_element(lineages.begin(), lineages.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.size() < rhs.size();
+      })->size();
   if (max_depth == 0U) {
     return std::vector<RouteRegion>{};
   }
@@ -2070,9 +2077,10 @@ std::optional<std::vector<RouteRegion>> build_post_regions_from_lineages(
     RouteRegion region;
     const bool terminal_stage = reverse_offset == 0U;
     if (members.size() == 1U) {
-      region.kind = terminal_stage && kind == pipeline_internal::sima::RouteGraphKernelKind::BoxDecode
-                        ? RouteRegionKind::BoxDecodeTerminal
-                        : RouteRegionKind::Linear;
+      region.kind =
+          terminal_stage && kind == pipeline_internal::sima::RouteGraphKernelKind::BoxDecode
+              ? RouteRegionKind::BoxDecodeTerminal
+              : RouteRegionKind::Linear;
     } else {
       if (kind == pipeline_internal::sima::RouteGraphKernelKind::BoxDecode) {
         return std::nullopt;
@@ -2197,8 +2205,9 @@ std::optional<std::vector<RouteRegion>> build_post_regions_from_lineages(
 //     (logical_inputs.size() == N) and produces a single packed output, the
 //     symmetric counterpart of how the post side's multi-IO detessdequant
 //     element produces a single buffer carrying N logical outputs.
-std::vector<RouteRegion> derive_pre_regions_from_ingress_regions(
-    const std::vector<RouteRegion>& ingress_regions, bool fuse_quant_tess, bool fuse_cast_tess) {
+std::vector<RouteRegion>
+derive_pre_regions_from_ingress_regions(const std::vector<RouteRegion>& ingress_regions,
+                                        bool fuse_quant_tess, bool fuse_cast_tess) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   std::vector<RouteRegion> regions;
   regions.reserve(ingress_regions.size());
@@ -2222,9 +2231,8 @@ std::vector<RouteRegion> derive_pre_regions_from_ingress_regions(
     }
     if (i + 1U < ingress_regions.size()) {
       const auto& next = ingress_regions[i + 1U];
-      const bool same_shape =
-          current.kind == next.kind &&
-          current.member_plugin_indices.size() == next.member_plugin_indices.size();
+      const bool same_shape = current.kind == next.kind && current.member_plugin_indices.size() ==
+                                                               next.member_plugin_indices.size();
       if (same_shape) {
         if (fuse_quant_tess && current.op_kind == GraphKind::Quant &&
             next.op_kind == GraphKind::Tess) {
@@ -2280,8 +2288,9 @@ std::vector<RouteRegion> pre_regions_from_pre_chain(const std::vector<SessionPre
   return regions;
 }
 
-std::vector<RouteRegion> post_regions_from_post_chain(const std::vector<SessionPostStageOp>& chain,
-                                                      const std::vector<EgressTensorContract>& egress) {
+std::vector<RouteRegion>
+post_regions_from_post_chain(const std::vector<SessionPostStageOp>& chain,
+                             const std::vector<EgressTensorContract>& egress) {
   std::vector<RouteRegion> regions;
   regions.reserve(chain.size());
   for (std::size_t i = 0; i < chain.size(); ++i) {
@@ -2366,7 +2375,8 @@ bool is_materialized_post_graph_kind(const pipeline_internal::sima::RouteGraphKe
   return false;
 }
 
-std::vector<RouteRegion> filter_non_materialized_post_regions(const std::vector<RouteRegion>& regions) {
+std::vector<RouteRegion>
+filter_non_materialized_post_regions(const std::vector<RouteRegion>& regions) {
   std::vector<RouteRegion> materialized;
   materialized.reserve(regions.size());
   for (const auto& region : regions) {
@@ -2398,8 +2408,8 @@ std::vector<RouteRegion> filter_non_materialized_post_regions(const std::vector<
   return filtered;
 }
 
-std::vector<EgressTensorContract> terminal_egress_contracts_from_regions(
-    const std::vector<RouteRegion>& regions) {
+std::vector<EgressTensorContract>
+terminal_egress_contracts_from_regions(const std::vector<RouteRegion>& regions) {
   for (auto it = regions.rbegin(); it != regions.rend(); ++it) {
     if (!it->egress_contracts.empty()) {
       return it->egress_contracts;
@@ -2415,8 +2425,8 @@ void finalize_post_summary_from_regions(RouteMaterializationPlan* out) {
 
   out->post_chain = post_chain_from_regions(out->post_regions);
   out->include_post_stage = !out->post_regions.empty();
-  out->post_cast_bf16_to_fp32 =
-      std::any_of(out->post_regions.begin(), out->post_regions.end(), [](const RouteRegion& region) {
+  out->post_cast_bf16_to_fp32 = std::any_of(
+      out->post_regions.begin(), out->post_regions.end(), [](const RouteRegion& region) {
         return region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast;
       });
 
@@ -2507,26 +2517,26 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
       terminal_nodes.push_back(node_index);
     }
   }
-  std::sort(terminal_nodes.begin(), terminal_nodes.end(),
-            [&](const std::size_t lhs, const std::size_t rhs) {
-              const auto lhs_logical =
-                  terminal_post_logical_index_hint_from_mpk_graph_local(graph, view, candidate_set, lhs);
-              const auto rhs_logical =
-                  terminal_post_logical_index_hint_from_mpk_graph_local(graph, view, candidate_set, rhs);
-              if (lhs_logical.has_value() != rhs_logical.has_value()) {
-                return lhs_logical.has_value();
-              }
-              if (lhs_logical.has_value() && rhs_logical.has_value() &&
-                  *lhs_logical != *rhs_logical) {
-                return *lhs_logical < *rhs_logical;
-              }
-              const auto lhs_rank = graph_node_sequence_sort_key_local(graph.nodes[lhs]);
-              const auto rhs_rank = graph_node_sequence_sort_key_local(graph.nodes[rhs]);
-              if (lhs_rank != rhs_rank) {
-                return lhs_rank < rhs_rank;
-              }
-              return lhs < rhs;
-            });
+  std::sort(
+      terminal_nodes.begin(), terminal_nodes.end(),
+      [&](const std::size_t lhs, const std::size_t rhs) {
+        const auto lhs_logical =
+            terminal_post_logical_index_hint_from_mpk_graph_local(graph, view, candidate_set, lhs);
+        const auto rhs_logical =
+            terminal_post_logical_index_hint_from_mpk_graph_local(graph, view, candidate_set, rhs);
+        if (lhs_logical.has_value() != rhs_logical.has_value()) {
+          return lhs_logical.has_value();
+        }
+        if (lhs_logical.has_value() && rhs_logical.has_value() && *lhs_logical != *rhs_logical) {
+          return *lhs_logical < *rhs_logical;
+        }
+        const auto lhs_rank = graph_node_sequence_sort_key_local(graph.nodes[lhs]);
+        const auto rhs_rank = graph_node_sequence_sort_key_local(graph.nodes[rhs]);
+        if (lhs_rank != rhs_rank) {
+          return lhs_rank < rhs_rank;
+        }
+        return lhs < rhs;
+      });
   if (terminal_nodes.empty()) {
     return {};
   }
@@ -2546,16 +2556,15 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
       visited_nodes.insert(member);
     }
     lineages.push_back(*lineage);
-    lineage_logical_indices.push_back(
-        terminal_post_logical_index_hint_from_mpk_graph_local(graph, view, candidate_set, terminal));
+    lineage_logical_indices.push_back(terminal_post_logical_index_hint_from_mpk_graph_local(
+        graph, view, candidate_set, terminal));
   }
   if (visited_nodes.size() != candidate_set.size()) {
     return {};
   }
 
-  if (const auto regions =
-          build_post_regions_from_mpk_graph_lineages_local(graph, view, contract, candidate_set,
-                                                           lineages, lineage_logical_indices);
+  if (const auto regions = build_post_regions_from_mpk_graph_lineages_local(
+          graph, view, contract, candidate_set, lineages, lineage_logical_indices);
       regions.has_value()) {
     return *regions;
   }
@@ -2662,7 +2671,8 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
       out->post_kind = kind;
       return;
     }
-    if (out->post_kind == PostRouteStageKind::None || out->post_kind == PostRouteStageKind::Unknown) {
+    if (out->post_kind == PostRouteStageKind::None ||
+        out->post_kind == PostRouteStageKind::Unknown) {
       out->post_kind = kind;
     }
   };
@@ -2683,7 +2693,8 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     const std::string kernel = canonical_mpk_kernel_kind(kernel_source);
     if (route_debug_enabled()) {
       std::fprintf(stderr,
-                   "[route-debug] mpk_plugin idx=%zu rank=%zu before_mla=%d raw_kernel=%s raw_name=%s canonical=%s\n",
+                   "[route-debug] mpk_plugin idx=%zu rank=%zu before_mla=%d raw_kernel=%s "
+                   "raw_name=%s canonical=%s\n",
                    plugin_idx, rank_it->second, before_mla ? 1 : 0,
                    contract.plugins[plugin_idx].kernel.c_str(),
                    contract.plugins[plugin_idx].name.c_str(), kernel.c_str());
@@ -2695,31 +2706,34 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
       continue;
     }
 
-    const std::string input_dtype = primary_tensor_dtype(contract.plugins[plugin_idx].input_tensors);
-    const std::string output_dtype = primary_tensor_dtype(contract.plugins[plugin_idx].output_tensors);
+    const std::string input_dtype =
+        primary_tensor_dtype(contract.plugins[plugin_idx].input_tensors);
+    const std::string output_dtype =
+        primary_tensor_dtype(contract.plugins[plugin_idx].output_tensors);
     const int input_rank = primary_tensor_rank(contract.plugins[plugin_idx].input_tensors);
     const int output_rank = primary_tensor_rank(contract.plugins[plugin_idx].output_tensors);
     const bool dtype_transition =
         !input_dtype.empty() && !output_dtype.empty() && input_dtype != output_dtype;
-    const bool hint_pre_quant =
-        before_mla && dtype_transition && !dtype_is_quantized_like(input_dtype) &&
-        dtype_is_quantized_like(output_dtype);
+    const bool hint_pre_quant = before_mla && dtype_transition &&
+                                !dtype_is_quantized_like(input_dtype) &&
+                                dtype_is_quantized_like(output_dtype);
     const bool suppress_post_dequant_hint = (kernel == "unpacktransform");
-    const bool hint_post_dequant =
-        !before_mla && !suppress_post_dequant_hint && dtype_transition &&
-        dtype_is_quantized_like(input_dtype) && dtype_is_float_like(output_dtype);
+    const bool hint_post_dequant = !before_mla && !suppress_post_dequant_hint && dtype_transition &&
+                                   dtype_is_quantized_like(input_dtype) &&
+                                   dtype_is_float_like(output_dtype);
     const bool hint_cast = dtype_transition && !hint_pre_quant && !hint_post_dequant;
     const bool hint_pre_tess =
         before_mla && input_rank >= 3 && output_rank > 0 && output_rank < input_rank;
     const bool hint_post_detess =
         !before_mla && input_rank > 0 && input_rank <= 2 && output_rank >= 3;
     if (route_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[route-debug] mpk_plugin_hints idx=%zu in_dtype=%s out_dtype=%s in_rank=%d out_rank=%d "
-                   "pre_quant=%d pre_tess=%d post_dequant=%d post_detess=%d cast=%d\n",
-                   plugin_idx, input_dtype.c_str(), output_dtype.c_str(), input_rank, output_rank,
-                   hint_pre_quant ? 1 : 0, hint_pre_tess ? 1 : 0, hint_post_dequant ? 1 : 0,
-                   hint_post_detess ? 1 : 0, hint_cast ? 1 : 0);
+      std::fprintf(
+          stderr,
+          "[route-debug] mpk_plugin_hints idx=%zu in_dtype=%s out_dtype=%s in_rank=%d out_rank=%d "
+          "pre_quant=%d pre_tess=%d post_dequant=%d post_detess=%d cast=%d\n",
+          plugin_idx, input_dtype.c_str(), output_dtype.c_str(), input_rank, output_rank,
+          hint_pre_quant ? 1 : 0, hint_pre_tess ? 1 : 0, hint_post_dequant ? 1 : 0,
+          hint_post_detess ? 1 : 0, hint_cast ? 1 : 0);
     }
 
     if (before_mla) {
@@ -2727,17 +2741,18 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
           kernel == "packtransform" || kernel == "bufferconcat" || kernel == "pass_through";
       if (implicit_mla_handoff_kernel) {
         if (route_debug_enabled()) {
-          std::fprintf(stderr,
-                       "[route-debug] mpk_plugin idx=%zu canonical=%s treated_as_implicit_mla_handoff=1\n",
-                       plugin_idx, kernel.c_str());
+          std::fprintf(
+              stderr,
+              "[route-debug] mpk_plugin idx=%zu canonical=%s treated_as_implicit_mla_handoff=1\n",
+              plugin_idx, kernel.c_str());
         }
         continue;
       }
       out->has_external_pre = true;
       OrderedRouteOp::Kind ordered_kind = OrderedRouteOp::Kind::Unknown;
-      const bool explicit_pre_kernel =
-          kernel == "quanttess" || kernel == "quantize" || kernel == "tessellate" ||
-          kernel == "casttess" || kernel == "preproc" || kernel == "cast";
+      const bool explicit_pre_kernel = kernel == "quanttess" || kernel == "quantize" ||
+                                       kernel == "tessellate" || kernel == "casttess" ||
+                                       kernel == "preproc" || kernel == "cast";
       bool consumed_by_hint = false;
       if (!explicit_pre_kernel) {
         if (hint_pre_quant) {
@@ -2805,12 +2820,12 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
                                            : std::string("application/vnd.simaai.tensor");
         IngressTensorContract ingress_contract;
         populate_tensor_contract_from_stage_tensors(contract.plugins[plugin_idx].input_tensors,
-                                                    media_type, source_stage,
-                                                    &ingress_contract);
+                                                    media_type, source_stage, &ingress_contract);
         if (ingress_contract.valid) {
           ingress_contract.ingress_index = 0;
-          ingress_contract.source_tensor_name =
-              ingress_contract.source_tensor_name.empty() ? "ifm0" : ingress_contract.source_tensor_name;
+          ingress_contract.source_tensor_name = ingress_contract.source_tensor_name.empty()
+                                                    ? "ifm0"
+                                                    : ingress_contract.source_tensor_name;
           out->ingress_contracts.push_back(std::move(ingress_contract));
           out->ingress_regions = ingress_regions_from_contracts(out->ingress_contracts);
         }
@@ -2818,9 +2833,10 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
     } else {
       out->has_external_post = true;
       OrderedRouteOp::Kind ordered_kind = OrderedRouteOp::Kind::Unknown;
-      const bool explicit_post_kernel =
-          kernel == "detessdequant" || kernel == "detesscast" || kernel == "detessellate" || kernel == "dequantize" ||
-          kernel == "cast" || kernel == "boxdecode" || kernel == "unpacktransform";
+      const bool explicit_post_kernel = kernel == "detessdequant" || kernel == "detesscast" ||
+                                        kernel == "detessellate" || kernel == "dequantize" ||
+                                        kernel == "cast" || kernel == "boxdecode" ||
+                                        kernel == "unpacktransform";
       bool consumed_by_hint = false;
       const bool passthrough_kernel = (kernel == "pass_through");
       if (passthrough_kernel) {
@@ -2847,10 +2863,9 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
           consumed_by_hint = true;
         }
         if (hint_post_detess || hint_post_dequant) {
-          ordered_kind = hint_post_detess
-                             ? (hint_post_dequant ? OrderedRouteOp::Kind::DetessDequant
-                                                  : OrderedRouteOp::Kind::Detess)
-                             : OrderedRouteOp::Kind::Dequantize;
+          ordered_kind = hint_post_detess ? (hint_post_dequant ? OrderedRouteOp::Kind::DetessDequant
+                                                               : OrderedRouteOp::Kind::Detess)
+                                          : OrderedRouteOp::Kind::Dequantize;
           if (hint_post_detess && hint_cast && !hint_post_dequant) {
             ordered_kind = OrderedRouteOp::Kind::DetessCast;
           }
@@ -2901,15 +2916,15 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
         std::vector<EgressTensorContract> stage_outputs;
         for (const auto& tensor : contract.plugins[plugin_idx].output_tensors) {
           EgressTensorContract tensor_contract;
-          if (populate_tensor_contract_from_stage_tensor(
-                  tensor, "application/vnd.simaai.tensor", source_stage, &tensor_contract)) {
+          if (populate_tensor_contract_from_stage_tensor(tensor, "application/vnd.simaai.tensor",
+                                                         source_stage, &tensor_contract)) {
             stage_outputs.push_back(std::move(tensor_contract));
           }
         }
         if (stage_outputs.empty() && ordered_kind != OrderedRouteOp::Kind::Unknown) {
           populate_tensor_contract_from_stage_tensors(contract.plugins[plugin_idx].output_tensors,
-                                                      "application/vnd.simaai.tensor",
-                                                      source_stage, &out->egress_contract);
+                                                      "application/vnd.simaai.tensor", source_stage,
+                                                      &out->egress_contract);
         } else if (!stage_outputs.empty()) {
           out->egress_contract = stage_outputs.front();
           if (passthrough_kernel) {
@@ -2959,7 +2974,9 @@ bool extract_route_capability_from_mpk_graph(const ModelPack& pack, RouteCapabil
   out->has_strict_boxdecode_route = strict_model_managed_boxdecode_available(pack);
   if (route_debug_enabled()) {
     std::fprintf(stderr,
-                 "[route-debug] mpk_summary pre=%s post=%s has_pre=%d has_post=%d tess=%d pre_cast=%d detess=%d dequant=%d post_cast=%d boxdecode=%d strict_boxdecode=%d ordered_pre=%s ordered_post=%s ingress_contracts=%s\n",
+                 "[route-debug] mpk_summary pre=%s post=%s has_pre=%d has_post=%d tess=%d "
+                 "pre_cast=%d detess=%d dequant=%d post_cast=%d boxdecode=%d strict_boxdecode=%d "
+                 "ordered_pre=%s ordered_post=%s ingress_contracts=%s\n",
                  pre_kind_dbg(out->pre_kind), post_kind_dbg(out->post_kind),
                  out->has_external_pre ? 1 : 0, out->has_external_post ? 1 : 0,
                  out->has_external_tess ? 1 : 0, out->has_external_pre_cast ? 1 : 0,
@@ -3169,7 +3186,8 @@ PostRouteStageKind selected_post_kind_for_route(const RouteCapability& capabilit
         capability.post_kind == PostRouteStageKind::Detess ||
         capability.post_kind == PostRouteStageKind::DetessCast ||
         capability.post_kind == PostRouteStageKind::DetessDequant) {
-      return capability.has_external_post_cast || capability.post_kind == PostRouteStageKind::DetessCast
+      return capability.has_external_post_cast ||
+                     capability.post_kind == PostRouteStageKind::DetessCast
                  ? PostRouteStageKind::DetessCast
                  : PostRouteStageKind::Detess;
     }
@@ -3294,27 +3312,26 @@ std::string generic_terminal_pre_stage_name(const RouteCapability& capability) {
     }
     fused.push_back(current);
   }
-  const auto terminal = !fused.empty() ? fused.back()
-                                       : ([&]() {
-                                           switch (capability.pre_kind) {
-                                           case PreRouteStageKind::Preproc:
-                                             return SessionPreStageOp::Preproc;
-                                           case PreRouteStageKind::Quant:
-                                             return SessionPreStageOp::Quant;
-                                           case PreRouteStageKind::Tess:
-                                             return SessionPreStageOp::Tess;
-                                           case PreRouteStageKind::QuantTess:
-                                             return SessionPreStageOp::QuantTess;
-                                           case PreRouteStageKind::Cast:
-                                             return SessionPreStageOp::Cast;
-                                           case PreRouteStageKind::CastTess:
-                                             return SessionPreStageOp::CastTess;
-                                           case PreRouteStageKind::None:
-                                           case PreRouteStageKind::Unknown:
-                                             return SessionPreStageOp::Preproc;
-                                           }
-                                           return SessionPreStageOp::Preproc;
-                                         })();
+  const auto terminal = !fused.empty() ? fused.back() : ([&]() {
+    switch (capability.pre_kind) {
+    case PreRouteStageKind::Preproc:
+      return SessionPreStageOp::Preproc;
+    case PreRouteStageKind::Quant:
+      return SessionPreStageOp::Quant;
+    case PreRouteStageKind::Tess:
+      return SessionPreStageOp::Tess;
+    case PreRouteStageKind::QuantTess:
+      return SessionPreStageOp::QuantTess;
+    case PreRouteStageKind::Cast:
+      return SessionPreStageOp::Cast;
+    case PreRouteStageKind::CastTess:
+      return SessionPreStageOp::CastTess;
+    case PreRouteStageKind::None:
+    case PreRouteStageKind::Unknown:
+      return SessionPreStageOp::Preproc;
+    }
+    return SessionPreStageOp::Preproc;
+  })();
   switch (terminal) {
   case SessionPreStageOp::Preproc:
     return "preproc";
@@ -3373,8 +3390,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
 
   const auto dtype_is_bf16_like = [](const std::string& raw) {
     const std::string token = lower_copy(raw);
-    return token.find("bf16") != std::string::npos ||
-           token.find("bfloat16") != std::string::npos;
+    return token.find("bf16") != std::string::npos || token.find("bfloat16") != std::string::npos;
   };
   const bool mla_output_is_bf16 = dtype_is_bf16_like(semantics.mla_output_dtype_raw);
 
@@ -3431,8 +3447,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
     if (user_requested_preproc) {
       out.pre_chain = {SessionPreStageOp::Preproc};
       out.use_preproc = true;
-      out.diagnostics.push_back(
-          "session-route: pre_fusion=user_preproc(cast+quant+tess)->preproc");
+      out.diagnostics.push_back("session-route: pre_fusion=user_preproc(cast+quant+tess)->preproc");
     } else {
       std::vector<SessionPreStageOp> fused_pre_chain;
       fused_pre_chain.reserve(desired_pre_chain.size());
@@ -3457,9 +3472,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
         fused_pre_chain.push_back(current);
       }
       out.pre_chain = std::move(fused_pre_chain);
-      out.use_preproc =
-          std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::Preproc) !=
-          out.pre_chain.end();
+      out.use_preproc = std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                  SessionPreStageOp::Preproc) != out.pre_chain.end();
       if (fused_quant_tess) {
         out.diagnostics.push_back("session-route: pre_fusion=quant+tess->quanttess");
       }
@@ -3475,23 +3489,20 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
     out.preproc_context.pre_tess_needed = ordered_pre_has_tess;
     out.preproc_context.pre_cast_needed = ordered_pre_has_cast;
 
-    const bool chain_has_quant =
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::Quant) !=
-            out.pre_chain.end() ||
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::QuantTess) !=
-            out.pre_chain.end();
-    const bool chain_has_tess =
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::Tess) !=
-            out.pre_chain.end() ||
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::QuantTess) !=
-            out.pre_chain.end() ||
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::CastTess) !=
-            out.pre_chain.end();
-    const bool chain_has_cast =
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::Cast) !=
-            out.pre_chain.end() ||
-        std::find(out.pre_chain.begin(), out.pre_chain.end(), SessionPreStageOp::CastTess) !=
-            out.pre_chain.end();
+    const bool chain_has_quant = std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                           SessionPreStageOp::Quant) != out.pre_chain.end() ||
+                                 std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                           SessionPreStageOp::QuantTess) != out.pre_chain.end();
+    const bool chain_has_tess = std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                          SessionPreStageOp::Tess) != out.pre_chain.end() ||
+                                std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                          SessionPreStageOp::QuantTess) != out.pre_chain.end() ||
+                                std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                          SessionPreStageOp::CastTess) != out.pre_chain.end();
+    const bool chain_has_cast = std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                          SessionPreStageOp::Cast) != out.pre_chain.end() ||
+                                std::find(out.pre_chain.begin(), out.pre_chain.end(),
+                                          SessionPreStageOp::CastTess) != out.pre_chain.end();
 
     out.pre_cast_fp32_to_bf16 = chain_has_cast;
     if (chain_has_cast && chain_has_tess && !chain_has_quant) {
@@ -3653,9 +3664,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   const bool has_cast_adapter =
       semantics.has_post_cast_adapter || (have_capability && capability->has_external_post_cast);
   const bool has_boxdecode_adapter =
-      semantics.has_post_boxdecode ||
-      (have_capability &&
-       (capability->has_external_boxdecode || capability->has_strict_boxdecode_route));
+      semantics.has_post_boxdecode || (have_capability && (capability->has_external_boxdecode ||
+                                                           capability->has_strict_boxdecode_route));
   const bool post_auto = postprocess_auto_mode(options);
   (void)post_auto;
 
@@ -3675,7 +3685,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
 
     if (out.boxdecode_selected) {
       out.post_chain = {SessionPostStageOp::BoxDecode};
-      out.diagnostics.push_back("session-route: post_fusion=user_boxdecode(cast+detess+dequant)->boxdecode");
+      out.diagnostics.push_back(
+          "session-route: post_fusion=user_boxdecode(cast+detess+dequant)->boxdecode");
     } else {
       std::vector<SessionPostStageOp> filtered_post_chain;
       filtered_post_chain.reserve(desired_post_chain.size());
@@ -3701,7 +3712,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
         const bool has_adjacent_dequant =
             (i + 1U < filtered_post_chain.size()) &&
             (filtered_post_chain[i + 1U] == SessionPostStageOp::Dequantize);
-        if ((current == SessionPostStageOp::Detess || current == SessionPostStageOp::DetessDequant) &&
+        if ((current == SessionPostStageOp::Detess ||
+             current == SessionPostStageOp::DetessDequant) &&
             has_adjacent_dequant) {
           if (needs_quant) {
             fused_post_chain.push_back(SessionPostStageOp::DetessDequant);
@@ -3711,9 +3723,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
           }
           skipped_detess_dequant_fusion = true;
         }
-        const bool has_adjacent_cast =
-            (i + 1U < filtered_post_chain.size()) &&
-            (filtered_post_chain[i + 1U] == SessionPostStageOp::Cast);
+        const bool has_adjacent_cast = (i + 1U < filtered_post_chain.size()) &&
+                                       (filtered_post_chain[i + 1U] == SessionPostStageOp::Cast);
         if ((current == SessionPostStageOp::Detess || current == SessionPostStageOp::DetessCast) &&
             has_adjacent_cast && !needs_quant) {
           fused_post_chain.push_back(SessionPostStageOp::DetessCast);
@@ -3730,8 +3741,9 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
       }
       std::size_t removed_adjacent = 0U;
       if (collapse_adjacent_duplicates(&fused_post_chain, &removed_adjacent)) {
-        out.diagnostics.push_back("session-route: post_normalize=collapse_adjacent_duplicates(removed=" +
-                                  std::to_string(removed_adjacent) + ")");
+        out.diagnostics.push_back(
+            "session-route: post_normalize=collapse_adjacent_duplicates(removed=" +
+            std::to_string(removed_adjacent) + ")");
       }
       if (has_duplicate_ops(desired_post_chain)) {
         std::vector<SessionPostStageOp> canonical_post_chain;
@@ -3755,8 +3767,7 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
         }
         if (!canonical_post_chain.empty()) {
           fused_post_chain = std::move(canonical_post_chain);
-          out.diagnostics.push_back(
-              "session-route: post_normalize=canonicalize_fanout_from_needs");
+          out.diagnostics.push_back("session-route: post_normalize=canonicalize_fanout_from_needs");
         }
       }
       if (!needs_quant) {
@@ -3768,7 +3779,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
           }
         }
         if (downgraded_detess_only) {
-          out.diagnostics.push_back("session-route: post_normalize=demote_detessdequant_to_detess(route_quant_off)");
+          out.diagnostics.push_back(
+              "session-route: post_normalize=demote_detessdequant_to_detess(route_quant_off)");
         }
       }
       out.post_chain = std::move(fused_post_chain);
@@ -3778,15 +3790,16 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
       if (fused_detess_cast) {
         out.diagnostics.push_back("session-route: post_fusion=detess+cast->detesscast");
       } else if (skipped_detess_dequant_fusion) {
-        out.diagnostics.push_back("session-route: post_fusion=detess+dequant_skipped(route_quant_off)");
+        out.diagnostics.push_back(
+            "session-route: post_fusion=detess+dequant_skipped(route_quant_off)");
       }
     }
   } else {
     if (out.boxdecode_selected) {
       out.post_chain.push_back(SessionPostStageOp::BoxDecode);
       if (!has_boxdecode_adapter) {
-        out.diagnostics.push_back(
-            "session-route: requested boxdecode forced despite missing advertised boxdecode capability");
+        out.diagnostics.push_back("session-route: requested boxdecode forced despite missing "
+                                  "advertised boxdecode capability");
       }
     } else {
       bool needs_post_cast = semantics.post_cast_needed || mla_output_is_bf16;
@@ -3797,8 +3810,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
         if (has_detess_adapter || has_dequant_adapter) {
           out.post_chain.push_back(SessionPostStageOp::DetessDequant);
         } else {
-          out.diagnostics.push_back(
-              "session-route: detessdequant required but no post detess/dequant adapter is available");
+          out.diagnostics.push_back("session-route: detessdequant required but no post "
+                                    "detess/dequant adapter is available");
         }
         needs_post_cast = false;
       } else if (!needs_tess && needs_quant) {
@@ -3822,8 +3835,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
 
       if (needs_post_cast) {
         if (!has_cast_adapter && have_capability) {
-          out.diagnostics.push_back(
-              "session-route: post cast requested without explicit cast adapter; using host cast node");
+          out.diagnostics.push_back("session-route: post cast requested without explicit cast "
+                                    "adapter; using host cast node");
         }
         out.post_chain.push_back(SessionPostStageOp::Cast);
       }
@@ -3860,7 +3873,8 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
     out.pre_regions = derive_pre_regions_from_ingress_regions(out.ingress_regions, true, true);
   }
   if (!out.ingress_regions.empty()) {
-    out.diagnostics.push_back("session-route: ingress_regions=" + route_region_csv(out.ingress_regions));
+    out.diagnostics.push_back("session-route: ingress_regions=" +
+                              route_region_csv(out.ingress_regions));
   }
   std::vector<RouteRegion> raw_graph_post_regions;
   if (!out.boxdecode_selected && pack != nullptr) {
@@ -3880,11 +3894,14 @@ SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSema
   finalize_post_summary_from_regions(&out);
   out.infer_only = !out.include_pre_stage && !out.include_post_stage;
 
-  out.diagnostics.push_back("session-route: final_pre_chain=" + session_pre_chain_csv(out.pre_chain));
+  out.diagnostics.push_back("session-route: final_pre_chain=" +
+                            session_pre_chain_csv(out.pre_chain));
   out.diagnostics.push_back("session-route: final_post_chain=" +
                             session_post_chain_csv(out.post_chain));
-  out.diagnostics.push_back("session-route: final_pre_regions=" + route_region_csv(out.pre_regions));
-  out.diagnostics.push_back("session-route: final_post_regions=" + route_region_csv(out.post_regions));
+  out.diagnostics.push_back("session-route: final_pre_regions=" +
+                            route_region_csv(out.pre_regions));
+  out.diagnostics.push_back("session-route: final_post_regions=" +
+                            route_region_csv(out.post_regions));
 
   if (!out.ingress_contracts.empty()) {
     out.diagnostics.push_back("session-route: ingress_contracts=" +
@@ -3924,7 +3941,8 @@ RouteCapability extract_route_capability(const ModelPack& pack,
   if (!populate_route_mla_facts_from_mpk_contract(*pack.mpk_contract(), &out, &mla_fact_error)) {
     throw std::runtime_error(
         "RoutePlanner: strict MPK MLA planning facts are missing required tensor contracts"
-        " (plugins=" + std::to_string(pack.mpk_contract()->plugins.size()) +
+        " (plugins=" +
+        std::to_string(pack.mpk_contract()->plugins.size()) +
         ", edges=" + std::to_string(pack.mpk_contract()->edges.size()) + ")" +
         (mla_fact_error.empty() ? std::string(". No additional detail available.")
                                 : ": " + mla_fact_error));
@@ -3955,12 +3973,12 @@ RouteCapability extract_route_capability(const ModelPack& pack,
     out.evidence.push_back("quant_needed_override=bf16_cast_only_post");
   }
 
-  out.needs.pre_quantization = out.has_external_pre &&
-                               (out.pre_kind == PreRouteStageKind::Quant ||
-                                out.pre_kind == PreRouteStageKind::QuantTess);
-  out.needs.pre_tessellation = out.has_external_tess ||
-                               (out.pre_kind == PreRouteStageKind::Tess ||
-                                out.pre_kind == PreRouteStageKind::QuantTess);
+  out.needs.pre_quantization =
+      out.has_external_pre &&
+      (out.pre_kind == PreRouteStageKind::Quant || out.pre_kind == PreRouteStageKind::QuantTess);
+  out.needs.pre_tessellation =
+      out.has_external_tess ||
+      (out.pre_kind == PreRouteStageKind::Tess || out.pre_kind == PreRouteStageKind::QuantTess);
   out.needs.pre_cast = out.has_external_pre_cast;
   out.needs.post_detessellation = out.tess_needed;
   out.needs.post_dequantization = out.has_external_dequant;
@@ -3969,9 +3987,9 @@ RouteCapability extract_route_capability(const ModelPack& pack,
     out.evidence.push_back("cast_symmetry_unresolved=pre_cast_without_post_cast");
   }
 
-  out.adapter_capabilities.has_pre_quantization = out.has_external_pre &&
-                                                  (out.pre_kind == PreRouteStageKind::Quant ||
-                                                   out.pre_kind == PreRouteStageKind::QuantTess);
+  out.adapter_capabilities.has_pre_quantization =
+      out.has_external_pre &&
+      (out.pre_kind == PreRouteStageKind::Quant || out.pre_kind == PreRouteStageKind::QuantTess);
   out.adapter_capabilities.has_pre_tessellation = out.has_external_tess;
   out.adapter_capabilities.has_pre_cast = out.has_external_pre_cast;
   out.adapter_capabilities.has_post_detessellation = out.has_external_detess;
@@ -4004,8 +4022,7 @@ RouteCapability extract_route_capability(const ModelPack& pack,
   out.evidence.push_back(std::string("fusion_boxdecode_supported=") +
                          (boxdecode_fusion_supported(out) ? "1" : "0"));
   if (route_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[route-debug] capability final pre=%s post=%s has_pre=%d has_post=%d\n",
+    std::fprintf(stderr, "[route-debug] capability final pre=%s post=%s has_pre=%d has_post=%d\n",
                  pre_kind_name(out.pre_kind).c_str(), post_kind_name(out.post_kind).c_str(),
                  out.has_external_pre ? 1 : 0, out.has_external_post ? 1 : 0);
   }
@@ -4048,8 +4065,8 @@ RouteSelection plan_route_selection(const Model::Options& options,
         out.modelpack_format = "FP32";
         if (out.modelpack_input_depth <= 0)
           out.modelpack_input_depth = 3;
-        out.diagnostics.push_back(
-            "auto pre-route: cast-only pre stage detected; use tensor ingress with typed cast node");
+        out.diagnostics.push_back("auto pre-route: cast-only pre stage detected; use tensor "
+                                  "ingress with typed cast node");
       } else {
         effective.pipeline_type = pipeline_type_from_pre_kind(capability.pre_kind);
         effective.include_preprocess_stage = true;
@@ -4082,21 +4099,22 @@ RouteSelection plan_route_selection(const Model::Options& options,
           inferred_w <= 0 || inferred_h <= 0 || inferred_w > 1024 || inferred_h > 1024;
       out.modelpack_max_width = dims_unusable ? 640 : inferred_w;
       out.modelpack_max_height = dims_unusable ? 640 : inferred_h;
-      const int inferred_d = capability.mla_input_dims.depth > 0 ? capability.mla_input_dims.depth : 3;
+      const int inferred_d =
+          capability.mla_input_dims.depth > 0 ? capability.mla_input_dims.depth : 3;
       out.modelpack_input_depth = inferred_d;
       out.modelpack_max_depth = inferred_d;
       // BF16 MLA input is emitted as tensorized BF16 even when upstream MPK media looks video.
       out.modelpack_media_type = "application/vnd.simaai.tensor";
       out.modelpack_format = "BF16";
-      out.diagnostics.push_back("auto pre-route: BF16 MLA ingress with MLA tess -> skip external pre");
+      out.diagnostics.push_back(
+          "auto pre-route: BF16 MLA ingress with MLA tess -> skip external pre");
     }
-
   }
 
   if (post_auto) {
     effective.selected_post_kind = selected_post_kind_for_route(capability, false);
-    effective.include_postprocess_stage =
-        route_has_post_stage(capability) && effective.selected_post_kind != PostRouteStageKind::None;
+    effective.include_postprocess_stage = route_has_post_stage(capability) &&
+                                          effective.selected_post_kind != PostRouteStageKind::None;
     if (!route_has_post_stage(capability)) {
       effective.include_postprocess_stage = false;
       out.diagnostics.push_back("auto post-route: no external post stage found");
@@ -4131,8 +4149,8 @@ RouteSelection plan_route_selection(const Model::Options& options,
       effective.selected_post_kind = selected_post_kind_for_route(capability, false);
       if (effective.selected_post_kind == PostRouteStageKind::None) {
         out.ambiguous = true;
-        out.ambiguity_reason =
-            "route ambiguity: explicit postprocess requested but no compatible post stage was selected";
+        out.ambiguity_reason = "route ambiguity: explicit postprocess requested but no compatible "
+                               "post stage was selected";
         return out;
       }
       effective.include_postprocess_stage = true;
@@ -4144,16 +4162,16 @@ RouteSelection plan_route_selection(const Model::Options& options,
   effective.cast_symmetry_ok = !capability.needs.pre_cast || capability.needs.post_cast;
   if (!effective.cast_symmetry_ok) {
     out.ambiguous = true;
-    out.ambiguity_reason =
-        "route ambiguity: cast symmetry violated (pre cast requires post cast)";
+    out.ambiguity_reason = "route ambiguity: cast symmetry violated (pre cast requires post cast)";
     return out;
   }
 
   if (!effective.include_preprocess_stage && capability.mla_input_quantized && !mla_video_ingress) {
     out.modelpack_media_type = "application/vnd.simaai.tensor";
     const bool internal_quant_only = !capability.has_external_pre;
-    out.modelpack_format =
-        internal_quant_only ? "FP32" : normalize_tensor_format(capability.mla_input_dtype_raw, "INT8");
+    out.modelpack_format = internal_quant_only
+                               ? "FP32"
+                               : normalize_tensor_format(capability.mla_input_dtype_raw, "INT8");
     if (capability.mla_input_dims.depth > 0)
       out.modelpack_input_depth = capability.mla_input_dims.depth;
     if (capability.mla_input_dims.width > 0)
@@ -4182,7 +4200,8 @@ RouteSelection plan_route_selection(const Model::Options& options,
   }
 
   effective.infer_only = effective.mla_tessellation && capability.mla_input_bf16 &&
-                         !effective.include_preprocess_stage && !effective.include_postprocess_stage &&
+                         !effective.include_preprocess_stage &&
+                         !effective.include_postprocess_stage &&
                          out.modelpack_media_type == "application/vnd.simaai.tensor";
   if (effective.infer_only) {
     out.diagnostics.push_back("route selected: infer-only (BF16 + MLA tess + no external post)");
@@ -4194,8 +4213,8 @@ RouteSelection plan_route_selection(const Model::Options& options,
 std::string route_capability_debug_string(const RouteCapability& capability) {
   std::ostringstream oss;
   oss << "RouteCapability{pre=" << pre_kind_name(capability.pre_kind)
-      << ", post=" << post_kind_name(capability.post_kind)
-      << ", mla_tess=" << (capability.tessellation_location == TessellationLocation::MLA ? "1" : "0")
+      << ", post=" << post_kind_name(capability.post_kind) << ", mla_tess="
+      << (capability.tessellation_location == TessellationLocation::MLA ? "1" : "0")
       << ", mla_in=" << capability.mla_input_dtype_raw
       << ", mla_out=" << capability.mla_output_dtype_raw
       << ", has_external_pre=" << (capability.has_external_pre ? "1" : "0")
@@ -4223,8 +4242,8 @@ std::string route_selection_debug_string(const RouteSelection& selection) {
       << ", post_auto=" << (selection.user_intent.post_auto ? "1" : "0")
       << ", cast_symmetry_ok=" << (selection.effective.cast_symmetry_ok ? "1" : "0")
       << ", infer_only=" << (selection.effective.infer_only ? "1" : "0")
-      << ", media_type=" << selection.modelpack_media_type << ", format=" << selection.modelpack_format
-      << "}";
+      << ", media_type=" << selection.modelpack_media_type
+      << ", format=" << selection.modelpack_format << "}";
   return oss.str();
 }
 

@@ -60,7 +60,8 @@ struct TensorBufferView {
 bool tensor_buffer_view_from_tensors(const TensorList& tensors, TensorBufferView* out,
                                      std::string* err);
 bool tensor_buffer_view_from_sample(const Sample& sample, TensorBufferView* out, std::string* err);
-bool tensor_buffer_descriptor_from_sample(GstSample* sample, TensorBufferView* out, std::string* err);
+bool tensor_buffer_descriptor_from_sample(GstSample* sample, TensorBufferView* out,
+                                          std::string* err);
 
 std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::string* err);
 std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tensors,

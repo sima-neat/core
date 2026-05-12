@@ -31,8 +31,7 @@ std::string default_logical_stage_id_local(const Node& node, const std::string& 
 }
 
 std::string tensor_name_from_logical_output_local(
-    const pipeline_internal::sima::LogicalTensorStaticSpec& logical,
-    std::size_t index) {
+    const pipeline_internal::sima::LogicalTensorStaticSpec& logical, std::size_t index) {
   if (!logical.backend_name.empty()) {
     return logical.backend_name;
   }
@@ -84,10 +83,8 @@ std::string cast_output_dtype_local(CastDirection direction) {
   return (direction == CastDirection::Fp32ToBf16) ? std::string("BF16") : std::string("FP32");
 }
 
-bool scale_byte_count_local(std::int64_t in_value,
-                            std::size_t in_elem_bytes,
-                            std::size_t out_elem_bytes,
-                            std::int64_t* out_value) {
+bool scale_byte_count_local(std::int64_t in_value, std::size_t in_elem_bytes,
+                            std::size_t out_elem_bytes, std::int64_t* out_value) {
   if (!out_value || in_elem_bytes == 0U || out_elem_bytes == 0U || in_value < 0) {
     return false;
   }
@@ -99,10 +96,8 @@ bool scale_byte_count_local(std::int64_t in_value,
   return true;
 }
 
-bool scale_size_bytes_local(std::uint64_t in_value,
-                            std::size_t in_elem_bytes,
-                            std::size_t out_elem_bytes,
-                            std::uint64_t* out_value) {
+bool scale_size_bytes_local(std::uint64_t in_value, std::size_t in_elem_bytes,
+                            std::size_t out_elem_bytes, std::uint64_t* out_value) {
   if (!out_value || in_elem_bytes == 0U || out_elem_bytes == 0U) {
     return false;
   }
@@ -114,11 +109,10 @@ bool scale_size_bytes_local(std::uint64_t in_value,
   return true;
 }
 
-bool transform_logical_output_for_cast(
-    const pipeline_internal::sima::LogicalTensorStaticSpec& src,
-    CastDirection direction,
-    pipeline_internal::sima::LogicalTensorStaticSpec* out,
-    std::string* err) {
+bool transform_logical_output_for_cast(const pipeline_internal::sima::LogicalTensorStaticSpec& src,
+                                       CastDirection direction,
+                                       pipeline_internal::sima::LogicalTensorStaticSpec* out,
+                                       std::string* err) {
   if (!out) {
     if (err) {
       *err = "cast contract transform requires output logical tensor";
@@ -166,8 +160,8 @@ bool transform_logical_output_for_cast(
 std::uint64_t logical_tensor_physical_span_bytes_local(
     const pipeline_internal::sima::LogicalTensorStaticSpec& tensor) {
   const std::size_t elem_bytes = runtime_dtype_bytes_local(tensor.dtype);
-  if (tensor.shape.empty() || tensor.stride_bytes.empty() || tensor.shape.size() != tensor.stride_bytes.size() ||
-      elem_bytes == 0U) {
+  if (tensor.shape.empty() || tensor.stride_bytes.empty() ||
+      tensor.shape.size() != tensor.stride_bytes.size() || elem_bytes == 0U) {
     return tensor.size_bytes;
   }
   std::uint64_t max_offset = 0U;
@@ -207,7 +201,8 @@ bool can_pack_cast_fanout_to_single_parent_local(const CompiledRuntimeContract& 
     if (logical.physical_index != physical_index) {
       return false;
     }
-    if (!segment_name.empty() && !logical.segment_name.empty() && logical.segment_name != segment_name) {
+    if (!segment_name.empty() && !logical.segment_name.empty() &&
+        logical.segment_name != segment_name) {
       return false;
     }
   }
@@ -220,8 +215,7 @@ bool can_pack_cast_fanout_to_single_parent_local(const CompiledRuntimeContract& 
 std::uint64_t tensor_logical_size_bytes_local(const Tensor& tensor);
 std::string resolved_tensor_segment_name_local(const Tensor& tensor, std::size_t index);
 
-bool can_pack_cast_fanout_from_sample_local(const TensorList& tensors,
-                                            int* physical_index_out,
+bool can_pack_cast_fanout_from_sample_local(const TensorList& tensors, int* physical_index_out,
                                             std::string* segment_name_out) {
   if (tensors.empty()) {
     return false;
@@ -248,8 +242,9 @@ bool can_pack_cast_fanout_from_sample_local(const TensorList& tensors,
     }
 
     const std::uint64_t logical_size = tensor_logical_size_bytes_local(tensor);
-    const std::int64_t byte_offset =
-        tensor.route.physical_byte_offset >= 0 ? tensor.route.physical_byte_offset : tensor.byte_offset;
+    const std::int64_t byte_offset = tensor.route.physical_byte_offset >= 0
+                                         ? tensor.route.physical_byte_offset
+                                         : tensor.byte_offset;
     if (logical_size == 0U || byte_offset < 0) {
       return false;
     }
@@ -298,8 +293,8 @@ std::string runtime_layout_token_from_tensor_local(const Tensor& tensor) {
   if (!tensor.axis_semantics.empty()) {
     const auto is_exact = [&](std::initializer_list<TensorAxisSemantic> expected) {
       return tensor.axis_semantics.size() == expected.size() &&
-             std::equal(tensor.axis_semantics.begin(), tensor.axis_semantics.end(), expected.begin(),
-                        expected.end());
+             std::equal(tensor.axis_semantics.begin(), tensor.axis_semantics.end(),
+                        expected.begin(), expected.end());
     };
     if (is_exact({TensorAxisSemantic::H, TensorAxisSemantic::W}) ||
         is_exact({TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W})) {
@@ -357,8 +352,8 @@ int resolved_tensor_physical_index_local(const Tensor& tensor, std::size_t index
 std::string resolved_tensor_segment_name_local(const Tensor& tensor, std::size_t index) {
   if (tensor.storage && !tensor.storage->sima_segments.empty()) {
     std::size_t segment_index = 0U;
-    if (tensor.route.memory_index >= 0 &&
-        static_cast<std::size_t>(tensor.route.memory_index) < tensor.storage->sima_segments.size()) {
+    if (tensor.route.memory_index >= 0 && static_cast<std::size_t>(tensor.route.memory_index) <
+                                              tensor.storage->sima_segments.size()) {
       segment_index = static_cast<std::size_t>(tensor.route.memory_index);
     } else if (tensor.route.physical_index >= 0 &&
                static_cast<std::size_t>(tensor.route.physical_index) <
@@ -376,14 +371,12 @@ std::string resolved_tensor_segment_name_local(const Tensor& tensor, std::size_t
   return tensor_name_from_sample_local(tensor, index);
 }
 
-std::uint64_t resolved_tensor_segment_size_bytes_local(
-    const Tensor& tensor,
-    int physical_index,
-    std::uint64_t logical_size_bytes) {
+std::uint64_t resolved_tensor_segment_size_bytes_local(const Tensor& tensor, int physical_index,
+                                                       std::uint64_t logical_size_bytes) {
   if (tensor.storage && !tensor.storage->sima_segments.empty()) {
     std::size_t segment_index = 0U;
-    if (tensor.route.memory_index >= 0 &&
-        static_cast<std::size_t>(tensor.route.memory_index) < tensor.storage->sima_segments.size()) {
+    if (tensor.route.memory_index >= 0 && static_cast<std::size_t>(tensor.route.memory_index) <
+                                              tensor.storage->sima_segments.size()) {
       segment_index = static_cast<std::size_t>(tensor.route.memory_index);
     } else if (physical_index >= 0 &&
                static_cast<std::size_t>(physical_index) < tensor.storage->sima_segments.size()) {
@@ -397,10 +390,9 @@ std::uint64_t resolved_tensor_segment_size_bytes_local(
   return logical_size_bytes;
 }
 
-CompiledRuntimeContract build_cast_runtime_contract_from_upstream_local(
-    const CompiledRuntimeContract& upstream,
-    CastDirection direction,
-    std::string* err) {
+CompiledRuntimeContract
+build_cast_runtime_contract_from_upstream_local(const CompiledRuntimeContract& upstream,
+                                                CastDirection direction, std::string* err) {
   CompiledRuntimeContract runtime;
   runtime.plugin_kind = "cast";
   runtime.logical_inputs.reserve(upstream.logical_outputs.size());
@@ -436,9 +428,9 @@ CompiledRuntimeContract build_cast_runtime_contract_from_upstream_local(
   const bool packed_single_parent =
       can_pack_cast_fanout_to_single_parent_local(upstream, &packed_segment_name);
   if (packed_single_parent) {
-    const auto source_physical =
-        !upstream.physical_outputs.empty() ? upstream.physical_outputs.front()
-                                           : pipeline_internal::sima::PhysicalBufferStaticSpec{};
+    const auto source_physical = !upstream.physical_outputs.empty()
+                                     ? upstream.physical_outputs.front()
+                                     : pipeline_internal::sima::PhysicalBufferStaticSpec{};
     std::uint64_t packed_input_size_bytes = 0U;
     std::uint64_t packed_output_size_bytes = 0U;
     for (auto& logical : runtime.logical_inputs) {
@@ -446,57 +438,59 @@ CompiledRuntimeContract build_cast_runtime_contract_from_upstream_local(
       if (!packed_segment_name.empty()) {
         logical.segment_name = packed_segment_name;
       }
-      packed_input_size_bytes =
-          std::max<std::uint64_t>(packed_input_size_bytes,
-                                  static_cast<std::uint64_t>(std::max<std::int64_t>(logical.byte_offset, 0)) +
-                                      logical_tensor_physical_span_bytes_local(
-                                          pipeline_internal::sima::LogicalTensorStaticSpec{
-                                              .logical_index = logical.logical_index,
-                                              .backend_output_index = logical.backend_input_index,
-                                              .physical_index = logical.physical_index,
-                                              .byte_offset = logical.byte_offset,
-                                              .size_bytes = logical.size_bytes,
-                                              .shape = logical.shape,
-                                              .stride_bytes = logical.stride_bytes,
-                                              .dtype = logical.dtype,
-                                              .layout = logical.layout,
-                                              .logical_name = logical.logical_name,
-                                              .backend_name = logical.backend_name,
-                                              .segment_name = logical.segment_name,
-                                              .quant = logical.quant}));
+      packed_input_size_bytes = std::max<std::uint64_t>(
+          packed_input_size_bytes,
+          static_cast<std::uint64_t>(std::max<std::int64_t>(logical.byte_offset, 0)) +
+              logical_tensor_physical_span_bytes_local(
+                  pipeline_internal::sima::LogicalTensorStaticSpec{
+                      .logical_index = logical.logical_index,
+                      .backend_output_index = logical.backend_input_index,
+                      .physical_index = logical.physical_index,
+                      .byte_offset = logical.byte_offset,
+                      .size_bytes = logical.size_bytes,
+                      .shape = logical.shape,
+                      .stride_bytes = logical.stride_bytes,
+                      .dtype = logical.dtype,
+                      .layout = logical.layout,
+                      .logical_name = logical.logical_name,
+                      .backend_name = logical.backend_name,
+                      .segment_name = logical.segment_name,
+                      .quant = logical.quant}));
     }
     for (auto& logical : runtime.logical_outputs) {
       logical.physical_index = 0;
       if (!packed_segment_name.empty()) {
         logical.segment_name = packed_segment_name;
       }
-      packed_output_size_bytes =
-          std::max<std::uint64_t>(packed_output_size_bytes,
-                                  static_cast<std::uint64_t>(std::max<std::int64_t>(logical.byte_offset, 0)) +
-                                      logical_tensor_physical_span_bytes_local(logical));
+      packed_output_size_bytes = std::max<std::uint64_t>(
+          packed_output_size_bytes,
+          static_cast<std::uint64_t>(std::max<std::int64_t>(logical.byte_offset, 0)) +
+              logical_tensor_physical_span_bytes_local(logical));
     }
     for (auto& route : runtime.output_order) {
       if (!packed_segment_name.empty()) {
         route.segment_name = packed_segment_name;
       }
     }
-    runtime.physical_inputs = {pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
-        0, 0, packed_input_size_bytes, source_physical.device_kind,
-        packed_segment_name.empty() ? source_physical.segment_name : packed_segment_name,
-        source_physical.source_physical_index, source_physical.source_byte_offset)};
-    runtime.physical_outputs = {pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
-        0, 0, packed_output_size_bytes, source_physical.device_kind,
-        packed_segment_name.empty() ? source_physical.segment_name : packed_segment_name,
-        source_physical.source_physical_index, source_physical.source_byte_offset)};
+    runtime.physical_inputs = {
+        pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
+            0, 0, packed_input_size_bytes, source_physical.device_kind,
+            packed_segment_name.empty() ? source_physical.segment_name : packed_segment_name,
+            source_physical.source_physical_index, source_physical.source_byte_offset)};
+    runtime.physical_outputs = {
+        pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
+            0, 0, packed_output_size_bytes, source_physical.device_kind,
+            packed_segment_name.empty() ? source_physical.segment_name : packed_segment_name,
+            source_physical.source_physical_index, source_physical.source_byte_offset)};
   } else {
     runtime.physical_inputs = upstream.physical_outputs;
     runtime.physical_outputs = upstream.physical_outputs;
   }
   for (auto& physical : runtime.physical_outputs) {
-    const std::size_t in_elem_bytes =
-        runtime_dtype_bytes_local(!upstream.logical_outputs.empty() ? upstream.logical_outputs.front().dtype
-                                                                    : std::string());
-    const std::size_t out_elem_bytes = runtime_dtype_bytes_local(cast_output_dtype_local(direction));
+    const std::size_t in_elem_bytes = runtime_dtype_bytes_local(
+        !upstream.logical_outputs.empty() ? upstream.logical_outputs.front().dtype : std::string());
+    const std::size_t out_elem_bytes =
+        runtime_dtype_bytes_local(cast_output_dtype_local(direction));
     if (in_elem_bytes == 0U || out_elem_bytes == 0U) {
       continue;
     }
@@ -504,9 +498,8 @@ CompiledRuntimeContract build_cast_runtime_contract_from_upstream_local(
     std::uint64_t scaled_size = 0U;
     if (!scale_byte_count_local(physical.source_byte_offset, in_elem_bytes, out_elem_bytes,
                                 &scaled_offset) ||
-        (!packed_single_parent &&
-         !scale_size_bytes_local(physical.size_bytes, in_elem_bytes, out_elem_bytes,
-                                 &scaled_size))) {
+        (!packed_single_parent && !scale_size_bytes_local(physical.size_bytes, in_elem_bytes,
+                                                          out_elem_bytes, &scaled_size))) {
       if (err) {
         *err = "cast contract transform encountered non-aligned physical byte facts";
       }
@@ -521,10 +514,9 @@ CompiledRuntimeContract build_cast_runtime_contract_from_upstream_local(
   return runtime;
 }
 
-CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
-    const Sample& sample,
-    CastDirection direction,
-    std::string* err) {
+CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(const Sample& sample,
+                                                                      CastDirection direction,
+                                                                      std::string* err) {
   struct PhysicalSeed {
     int physical_index = -1;
     std::string segment_name;
@@ -542,10 +534,10 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
   std::vector<PhysicalSeed> physical_seeds;
   auto find_or_create_physical_seed = [&](int physical_index,
                                           const std::string& segment_name) -> PhysicalSeed& {
-    auto it = std::find_if(physical_seeds.begin(), physical_seeds.end(),
-                           [&](const PhysicalSeed& seed) {
-                             return seed.physical_index == physical_index;
-                           });
+    auto it =
+        std::find_if(physical_seeds.begin(), physical_seeds.end(), [&](const PhysicalSeed& seed) {
+          return seed.physical_index == physical_index;
+        });
     if (it != physical_seeds.end()) {
       if (it->segment_name.empty()) {
         it->segment_name = segment_name;
@@ -561,12 +553,13 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
   runtime.output_order.reserve(tensors.size());
   int packed_physical_index = 0;
   std::string packed_segment_name;
-  const bool packed_single_parent = can_pack_cast_fanout_from_sample_local(
-      tensors, &packed_physical_index, &packed_segment_name);
+  const bool packed_single_parent =
+      can_pack_cast_fanout_from_sample_local(tensors, &packed_physical_index, &packed_segment_name);
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const auto& tensor = tensors[i];
     const std::size_t in_elem_bytes = pipeline_internal::dtype_bytes(tensor.dtype);
-    const std::size_t out_elem_bytes = runtime_dtype_bytes_local(cast_output_dtype_local(direction));
+    const std::size_t out_elem_bytes =
+        runtime_dtype_bytes_local(cast_output_dtype_local(direction));
     if (in_elem_bytes == 0U || out_elem_bytes == 0U) {
       if (err) {
         *err = "cast contract compile requires typed ingress tensor element size";
@@ -590,8 +583,9 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
             : (logical_size * static_cast<std::uint64_t>(in_elem_bytes));
     logical_size *= static_cast<std::uint64_t>(out_elem_bytes);
 
-    const std::int64_t input_byte_offset =
-        tensor.route.physical_byte_offset >= 0 ? tensor.route.physical_byte_offset : tensor.byte_offset;
+    const std::int64_t input_byte_offset = tensor.route.physical_byte_offset >= 0
+                                               ? tensor.route.physical_byte_offset
+                                               : tensor.byte_offset;
     std::int64_t scaled_offset = 0;
     if (!scale_byte_count_local(input_byte_offset, in_elem_bytes, out_elem_bytes, &scaled_offset)) {
       if (err) {
@@ -599,8 +593,9 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
       }
       return {};
     }
-    const int physical_index =
-        packed_single_parent ? packed_physical_index : resolved_tensor_physical_index_local(tensor, i);
+    const int physical_index = packed_single_parent
+                                   ? packed_physical_index
+                                   : resolved_tensor_physical_index_local(tensor, i);
     const std::string logical_name = tensor_name_from_sample_local(tensor, i);
     const std::string backend_name =
         !tensor.route.backend_name.empty() ? tensor.route.backend_name : logical_name;
@@ -618,9 +613,9 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
     pipeline_internal::sima::LogicalInputStaticSpec input_logical;
     input_logical.logical_index =
         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
-    input_logical.backend_input_index =
-        tensor.route.backend_output_index >= 0 ? tensor.route.backend_output_index
-                                               : static_cast<int>(i);
+    input_logical.backend_input_index = tensor.route.backend_output_index >= 0
+                                            ? tensor.route.backend_output_index
+                                            : static_cast<int>(i);
     input_logical.physical_index = physical_index;
     input_logical.shape = tensor.shape;
     input_logical.stride_bytes = tensor.strides_bytes;
@@ -635,9 +630,9 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
 
     pipeline_internal::sima::LogicalTensorStaticSpec logical;
     logical.logical_index = runtime.logical_inputs.back().logical_index;
-    logical.backend_output_index =
-        tensor.route.backend_output_index >= 0 ? tensor.route.backend_output_index
-                                               : static_cast<int>(i);
+    logical.backend_output_index = tensor.route.backend_output_index >= 0
+                                       ? tensor.route.backend_output_index
+                                       : static_cast<int>(i);
     logical.physical_index = physical_index;
     logical.output_slot =
         tensor.route.route_slot >= 0 ? tensor.route.route_slot : static_cast<int>(i);
@@ -680,9 +675,8 @@ CompiledRuntimeContract build_cast_runtime_contract_from_sample_local(
         std::max(physical.input_size_bytes,
                  std::max(input_segment_size,
                           static_cast<std::uint64_t>(input_byte_offset) + input_logical_size));
-    physical.output_size_bytes =
-        std::max(physical.output_size_bytes,
-                 static_cast<std::uint64_t>(scaled_offset) + logical.size_bytes);
+    physical.output_size_bytes = std::max(
+        physical.output_size_bytes, static_cast<std::uint64_t>(scaled_offset) + logical.size_bytes);
   }
 
   runtime.physical_inputs.reserve(physical_seeds.size());
@@ -783,8 +777,7 @@ NodeContractDefinition Cast::contract_definition() const {
   return def;
 }
 
-bool Cast::compile_node_contract(const ContractCompileInput& input,
-                                 CompiledNodeContract* out,
+bool Cast::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                  std::string* err) const {
   const std::string element_name = element_names(input.node_index).empty()
                                        ? std::string("cast")
@@ -792,10 +785,11 @@ bool Cast::compile_node_contract(const ContractCompileInput& input,
   const std::string logical_stage_id = default_logical_stage_id_local(*this, element_name);
   if (!opt_.compiled_contract) {
     CompiledRuntimeContract runtime;
-    if (const auto* upstream_runtime = compiled_runtime_contract_from_stage(input.immediate_upstream);
+    if (const auto* upstream_runtime =
+            compiled_runtime_contract_from_stage(input.immediate_upstream);
         upstream_runtime && !upstream_runtime->logical_outputs.empty()) {
-      runtime = build_cast_runtime_contract_from_upstream_local(*upstream_runtime, opt_.direction,
-                                                                err);
+      runtime =
+          build_cast_runtime_contract_from_upstream_local(*upstream_runtime, opt_.direction, err);
     } else if (input.ingress.ingress_sample.has_value()) {
       runtime = build_cast_runtime_contract_from_sample_local(*input.ingress.ingress_sample,
                                                               opt_.direction, err);
@@ -822,8 +816,8 @@ bool Cast::compile_node_contract(const ContractCompileInput& input,
         kind(), element_name, logical_stage_id, contract_definition(), compiled, out, err);
   }
   return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
-      kind(), element_name, logical_stage_id, contract_definition(), *opt_.compiled_contract,
-      out, err);
+      kind(), element_name, logical_stage_id, contract_definition(), *opt_.compiled_contract, out,
+      err);
 }
 
 void Cast::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

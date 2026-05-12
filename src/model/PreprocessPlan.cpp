@@ -82,10 +82,9 @@ std::string ResolvedPreprocessPlan::to_debug_string() const {
   ss << "ResolvedPreprocessPlan{"
      << "requested.kind=" << input_kind_name(requested.kind)
      << ", requested.enable=" << auto_flag_name(requested.enable)
-     << ", requested.preset=" << normalize_preset_name(requested.preset)
-     << ", requested.resize=(" << auto_flag_name(requested.resize.enable) << ", "
-     << requested.resize.width << "x" << requested.resize.height << ", "
-     << resize_mode_name(requested.resize.mode) << ")"
+     << ", requested.preset=" << normalize_preset_name(requested.preset) << ", requested.resize=("
+     << auto_flag_name(requested.resize.enable) << ", " << requested.resize.width << "x"
+     << requested.resize.height << ", " << resize_mode_name(requested.resize.mode) << ")"
      << ", requested.normalize=" << auto_flag_name(requested.normalize.enable)
      << ", requested.quantize=" << auto_flag_name(requested.quantize.enable)
      << ", requested.tessellate=" << auto_flag_name(requested.tessellate.enable)
@@ -103,8 +102,9 @@ std::string ResolvedPreprocessPlan::to_debug_string() const {
      << ", effective.enable=" << auto_flag_name(effective.enable)
      << ", effective.preset=" << normalize_preset_name(effective.preset)
      << ", graph_family=" << graph_family_name(graph_family) << ", graph_kernel=" << graph_kernel
-     << ", graph_config_path=" << graph_config_path << ", resolved_kind="
-     << input_kind_name(resolved_kind) << ", enabled=" << (enabled ? "true" : "false")
+     << ", graph_config_path=" << graph_config_path
+     << ", resolved_kind=" << input_kind_name(resolved_kind)
+     << ", enabled=" << (enabled ? "true" : "false")
      << ", transforms_override=" << (transforms_override ? "true" : "false")
      << ", ingress_contracts=[";
   for (size_t i = 0; i < ingress_contracts.size(); ++i) {

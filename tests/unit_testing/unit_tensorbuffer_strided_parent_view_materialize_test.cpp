@@ -36,10 +36,7 @@ RUN_TEST("unit_tensorbuffer_strided_parent_view_materialize_test", ([] {
            ensure_gst_ready();
 
            const std::vector<std::uint8_t> parent_bytes = {
-               0, 1, 2, 3,
-               4, 5, 6, 7,
-               8, 9, 10, 11,
-               12, 13, 14, 15,
+               0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
            };
            auto parent = make_parent_buffer(parent_bytes);
 

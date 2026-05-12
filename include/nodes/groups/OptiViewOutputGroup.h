@@ -36,14 +36,14 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct UdpOutputNodeGroupOptions {
-  std::string h264_caps;        ///< Optional caps string applied to the H.264 elementary stream.
-  int payload_type = 96;        ///< RTP payload type number for H.264.
-  int config_interval = 1;      ///< SPS/PPS repeat interval (seconds).
-  bool enable_timings = false;  ///< Attach timing metadata to outgoing buffers.
+  std::string h264_caps;          ///< Optional caps string applied to the H.264 elementary stream.
+  int payload_type = 96;          ///< RTP payload type number for H.264.
+  int config_interval = 1;        ///< SPS/PPS repeat interval (seconds).
+  bool enable_timings = false;    ///< Attach timing metadata to outgoing buffers.
   std::string host = "127.0.0.1"; ///< Destination UDP host (shared across streams).
-  int video_port_base = 9000;   ///< First UDP port; stream `i` is sent to `video_port_base + i`.
-  bool udp_sync = false;        ///< Pass `sync` to the underlying `udpsink` element.
-  bool udp_async = false;       ///< Pass `async` to the underlying `udpsink` element.
+  int video_port_base = 9000;     ///< First UDP port; stream `i` is sent to `video_port_base + i`.
+  bool udp_sync = false;          ///< Pass `sync` to the underlying `udpsink` element.
+  bool udp_async = false;         ///< Pass `async` to the underlying `udpsink` element.
 };
 
 /**
@@ -108,16 +108,16 @@ private:
  * @ingroup nodes_groups
  */
 struct OptiViewOutputNodeGroupOptions {
-  UdpOutputNodeGroupOptions udp{};       ///< Embedded options for the H.264 video side.
-  bool send_json = true;                 ///< If false, the JSON side is not initialized.
-  int json_port_base = 9100;             ///< First JSON UDP port; stream `i` uses `json_port_base + i`.
-  int frame_w = 0;                       ///< Frame width reported in the JSON (0 = unknown).
-  int frame_h = 0;                       ///< Frame height reported in the JSON (0 = unknown).
-  int topk = 100;                        ///< Maximum number of detections emitted per frame.
-  bool parse_debug = false;              ///< Enable verbose parse-side diagnostics.
-  int json_delay_ms = 0;                 ///< Optional delay applied to JSON emission.
-  int video_delay_ms = 0;                ///< Optional delay applied to video emission.
-  std::vector<std::string> labels;       ///< Class label table consulted when emitting JSON.
+  UdpOutputNodeGroupOptions udp{}; ///< Embedded options for the H.264 video side.
+  bool send_json = true;           ///< If false, the JSON side is not initialized.
+  int json_port_base = 9100;       ///< First JSON UDP port; stream `i` uses `json_port_base + i`.
+  int frame_w = 0;                 ///< Frame width reported in the JSON (0 = unknown).
+  int frame_h = 0;                 ///< Frame height reported in the JSON (0 = unknown).
+  int topk = 100;                  ///< Maximum number of detections emitted per frame.
+  bool parse_debug = false;        ///< Enable verbose parse-side diagnostics.
+  int json_delay_ms = 0;           ///< Optional delay applied to JSON emission.
+  int video_delay_ms = 0;          ///< Optional delay applied to video emission.
+  std::vector<std::string> labels; ///< Class label table consulted when emitting JSON.
 };
 
 /**
@@ -130,14 +130,15 @@ struct OptiViewOutputNodeGroupOptions {
  * @ingroup nodes_groups
  */
 struct OptiViewJsonInput {
-  size_t stream_idx = 0;                 ///< Index into the OptiView group's parallel streams.
-  std::string stream_id;                 ///< Logical stream identifier reported in the JSON.
-  int64_t frame_id = -1;                 ///< Source-side frame counter.
-  int64_t capture_ms = -1;               ///< Capture timestamp in ms (-1 if unknown).
-  int64_t yolo_ms = -1;                  ///< Detector completion timestamp in ms (-1 if unknown).
-  int output_frame_id = -1;              ///< Output-side frame counter (-1 if unknown).
-  const simaai::neat::Sample* yolo_sample = nullptr;    ///< Detector output sample (boxes/scores).
-  const simaai::neat::Sample* decoded_sample = nullptr; ///< Decoded image sample paired with the result.
+  size_t stream_idx = 0;    ///< Index into the OptiView group's parallel streams.
+  std::string stream_id;    ///< Logical stream identifier reported in the JSON.
+  int64_t frame_id = -1;    ///< Source-side frame counter.
+  int64_t capture_ms = -1;  ///< Capture timestamp in ms (-1 if unknown).
+  int64_t yolo_ms = -1;     ///< Detector completion timestamp in ms (-1 if unknown).
+  int output_frame_id = -1; ///< Output-side frame counter (-1 if unknown).
+  const simaai::neat::Sample* yolo_sample = nullptr; ///< Detector output sample (boxes/scores).
+  const simaai::neat::Sample* decoded_sample =
+      nullptr; ///< Decoded image sample paired with the result.
 };
 
 /**
@@ -146,10 +147,10 @@ struct OptiViewJsonInput {
  * @ingroup nodes_groups
  */
 struct OptiViewJsonResult {
-  bool ok = false;          ///< True if the JSON was sent without error.
-  bool nonempty = false;    ///< True if at least one detection was emitted.
-  int boxes = 0;            ///< Number of detection boxes included in the message.
-  std::string error;        ///< Diagnostic string when `ok == false`.
+  bool ok = false;       ///< True if the JSON was sent without error.
+  bool nonempty = false; ///< True if at least one detection was emitted.
+  int boxes = 0;         ///< Number of detection boxes included in the message.
+  std::string error;     ///< Diagnostic string when `ok == false`.
 };
 
 /**

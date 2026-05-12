@@ -32,7 +32,7 @@ namespace simaai::neat::graph {
  */
 struct StageMsg {
   PortId in_port = kInvalidPort; ///< Input port id this sample arrived on.
-  Sample sample;                  ///< The sample payload.
+  Sample sample;                 ///< The sample payload.
 };
 
 /**
@@ -43,7 +43,7 @@ struct StageMsg {
  */
 struct StageOutMsg {
   PortId out_port = kInvalidPort; ///< Output port id to emit on.
-  Sample sample;                   ///< The sample payload.
+  Sample sample;                  ///< The sample payload.
 };
 
 /**

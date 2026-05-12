@@ -44,8 +44,8 @@ std::string build_model_contract_report(const ModelPack& pack,
                                         const ModelContractReportOptions& options,
                                         const ModelContractReportContext& context = {});
 
-ModelContractInspectionResult inspect_model_contract_archive(
-    const std::string& tar_gz,
-    const ModelContractReportOptions& options);
+ModelContractInspectionResult
+inspect_model_contract_archive(const std::string& tar_gz,
+                               const ModelContractReportOptions& options);
 
 } // namespace simaai::neat::internal

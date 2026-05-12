@@ -43,11 +43,10 @@ simaai::neat::Tensor make_fp32_tensor(int w, int h, int d) {
 }
 
 sima_test::MpkFixture make_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture(
-      "hybrid_graph_stage_model",
-      {
-          {"etc/pipeline_sequence.json",
-           R"json({
+  return sima_test::make_strict_mpk_tar_fixture("hybrid_graph_stage_model",
+                                                {
+                                                    {"etc/pipeline_sequence.json",
+                                                     R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -71,8 +70,8 @@ sima_test::MpkFixture make_fixture() {
     ]
   }]
 })json"},
-          {"etc/0_preproc.json",
-           R"json({
+                                                    {"etc/0_preproc.json",
+                                                     R"json({
   "node_name": "preproc_0",
   "input_width": 64,
   "input_height": 48,
@@ -81,8 +80,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": 48,
   "output_img_type": "RGB"
 })json"},
-          {"etc/0_process_mla.json",
-           R"json({
+                                                    {"etc/0_process_mla.json",
+                                                     R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -90,8 +89,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": [48],
   "output_depth": [3]
 })json"},
-      },
-      true);
+                                                },
+                                                true);
 }
 
 } // namespace

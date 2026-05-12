@@ -33,22 +33,22 @@ enum class BoxDecodeType : std::int32_t {
   // Internal sentinel; runtime decode requires a concrete value.
   Unspecified = 0, ///< Sentinel: no decode family selected (fails fast at runtime).
   // YOLO-family (generic token).
-  Yolo = 1,         ///< Generic YOLO family token.
-  YoloV5 = 2,       ///< YOLOv5 detection.
-  YoloV5Seg = 3,    ///< YOLOv5 segmentation.
-  YoloV7 = 4,       ///< YOLOv7 detection.
-  YoloV7Seg = 5,    ///< YOLOv7 segmentation.
-  YoloV8 = 6,       ///< YOLOv8 detection.
-  YoloV8Seg = 7,    ///< YOLOv8 segmentation.
-  YoloV8Pose = 8,   ///< YOLOv8 pose-estimation heads.
-  YoloV9 = 9,       ///< YOLOv9 detection.
-  YoloV9Seg = 10,   ///< YOLOv9 segmentation.
-  YoloV10 = 11,     ///< YOLOv10 detection.
-  YoloV10Seg = 12,  ///< YOLOv10 segmentation.
-  Detr = 13,        ///< DETR-style transformer detection.
-  EffDet = 14,      ///< EfficientDet detection.
-  RcnnStage1 = 15,  ///< Region-proposal stage of two-stage R-CNN models.
-  Centernet = 16,   ///< CenterNet keypoint-style detection.
+  Yolo = 1,        ///< Generic YOLO family token.
+  YoloV5 = 2,      ///< YOLOv5 detection.
+  YoloV5Seg = 3,   ///< YOLOv5 segmentation.
+  YoloV7 = 4,      ///< YOLOv7 detection.
+  YoloV7Seg = 5,   ///< YOLOv7 segmentation.
+  YoloV8 = 6,      ///< YOLOv8 detection.
+  YoloV8Seg = 7,   ///< YOLOv8 segmentation.
+  YoloV8Pose = 8,  ///< YOLOv8 pose-estimation heads.
+  YoloV9 = 9,      ///< YOLOv9 detection.
+  YoloV9Seg = 10,  ///< YOLOv9 segmentation.
+  YoloV10 = 11,    ///< YOLOv10 detection.
+  YoloV10Seg = 12, ///< YOLOv10 segmentation.
+  Detr = 13,       ///< DETR-style transformer detection.
+  EffDet = 14,     ///< EfficientDet detection.
+  RcnnStage1 = 15, ///< Region-proposal stage of two-stage R-CNN models.
+  Centernet = 16,  ///< CenterNet keypoint-style detection.
 };
 
 /**
@@ -62,16 +62,16 @@ enum class BoxDecodeType : std::int32_t {
  * @ingroup pipeline
  */
 enum class BoxDecodeTypeOption : std::int32_t {
-  Auto = 0,                          ///< Backend infers the layout from tensor shapes.
-  PackedPerHead = 1,                 ///< Each head holds a single packed tensor (box+obj+cls).
-  InterleavedByHead = 2,             ///< Heads interleaved within tensors.
-  GroupedByRole = 3,                 ///< Tensors grouped by role (box, score, class).
-  Split3Interleaved = 4,             ///< Three split tensors, head-interleaved.
-  Split3Grouped = 5,                 ///< Three split tensors, grouped by role.
-  InterleavedByHeadProbability = 6,  ///< Interleaved-by-head, class scores as probabilities.
-  InterleavedByHeadLogit = 7,        ///< Interleaved-by-head, class scores as logits.
-  GroupedByRoleProbability = 8,      ///< Grouped-by-role, class scores as probabilities.
-  GroupedByRoleLogit = 9,            ///< Grouped-by-role, class scores as logits.
+  Auto = 0,                         ///< Backend infers the layout from tensor shapes.
+  PackedPerHead = 1,                ///< Each head holds a single packed tensor (box+obj+cls).
+  InterleavedByHead = 2,            ///< Heads interleaved within tensors.
+  GroupedByRole = 3,                ///< Tensors grouped by role (box, score, class).
+  Split3Interleaved = 4,            ///< Three split tensors, head-interleaved.
+  Split3Grouped = 5,                ///< Three split tensors, grouped by role.
+  InterleavedByHeadProbability = 6, ///< Interleaved-by-head, class scores as probabilities.
+  InterleavedByHeadLogit = 7,       ///< Interleaved-by-head, class scores as logits.
+  GroupedByRoleProbability = 8,     ///< Grouped-by-role, class scores as probabilities.
+  GroupedByRoleLogit = 9,           ///< Grouped-by-role, class scores as logits.
 };
 
 /// @brief Stable lower-case token for a decode family (used in caps, manifests, logs).

@@ -151,9 +151,8 @@ std::vector<simaai::neat::Segment> extract_runtime_segments_from_buffer(GstBuffe
     gsize offset = 0;
     gsize maxsize = 0;
     const gsize size = memory ? gst_memory_get_sizes(memory, &offset, &maxsize) : 0U;
-    segments.push_back(
-        simaai::neat::Segment{"memory" + std::to_string(static_cast<std::size_t>(i)),
-                              static_cast<std::size_t>(size)});
+    segments.push_back(simaai::neat::Segment{"memory" + std::to_string(static_cast<std::size_t>(i)),
+                                             static_cast<std::size_t>(size)});
   }
   return segments;
 }
@@ -198,8 +197,7 @@ SimaMemApi& sima_mem_api() {
       reinterpret_cast<SimaMemApi::InvalidateFn>(dlsym(handle, "simaai_memory_invalidate_cache"));
   api.invalidate_part = reinterpret_cast<SimaMemApi::InvalidatePartFn>(
       dlsym(handle, "simaai_memory_invalidate_cache_part"));
-  api.flush =
-      reinterpret_cast<SimaMemApi::FlushFn>(dlsym(handle, "simaai_memory_flush_cache"));
+  api.flush = reinterpret_cast<SimaMemApi::FlushFn>(dlsym(handle, "simaai_memory_flush_cache"));
   api.map = reinterpret_cast<SimaMemApi::MapFn>(dlsym(handle, "simaai_memory_map"));
   api.unmap = reinterpret_cast<SimaMemApi::UnmapFn>(dlsym(handle, "simaai_memory_unmap"));
   api.get_phys =
@@ -283,8 +281,8 @@ bool query_buffer_cpu_dirty(GstBuffer* buffer, bool* out_dirty) {
   if (!buffer || !out_dirty) {
     return false;
   }
-  gpointer value = gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
-                                             sima_buffer_cpu_dirty_quark_local());
+  gpointer value =
+      gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer), sima_buffer_cpu_dirty_quark_local());
   if (!value) {
     return false;
   }
@@ -303,10 +301,9 @@ bool query_buffer_producer(GstBuffer* buffer, LocalSimaBufferProducer* out_produ
     return false;
   }
   unsigned decoded = 0U;
-  if (!decode_small_uint_local(
-          gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
-                                    sima_buffer_producer_quark_local()),
-          &decoded)) {
+  if (!decode_small_uint_local(gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
+                                                         sima_buffer_producer_quark_local()),
+                               &decoded)) {
     return false;
   }
   *out_producer = static_cast<LocalSimaBufferProducer>(decoded);
@@ -317,8 +314,7 @@ void mark_buffer_cpu_read_clean(GstBuffer* buffer) {
   if (!buffer) {
     return;
   }
-  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(buffer),
-                            sima_buffer_cpu_dirty_quark_local(),
+  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(buffer), sima_buffer_cpu_dirty_quark_local(),
                             reinterpret_cast<gpointer>(static_cast<intptr_t>(2)), nullptr);
   gst_mini_object_set_qdata(
       GST_MINI_OBJECT_CAST(buffer), sima_buffer_producer_quark_local(),
@@ -348,8 +344,8 @@ std::size_t invalidate_buffer_segment_backing_for_cpu_read(GstBuffer* buffer,
     }
     const gsize seg_count = gst_simaai_memory_get_segment_count(gst_mem);
     for (gsize si = 0; si < seg_count; ++si) {
-      auto* segment = reinterpret_cast<simaai_memory_t*>(
-          gst_simaai_memory_get_segment_at(gst_mem, si));
+      auto* segment =
+          reinterpret_cast<simaai_memory_t*>(gst_simaai_memory_get_segment_at(gst_mem, si));
       if (!segment || seen_sima_segment(seen, segment)) {
         continue;
       }
@@ -678,10 +674,8 @@ make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_
       auto holder = storage->holder;
       const std::size_t segment_size = segment.size_bytes;
       storage->size_bytes = segment_size > 0U ? segment_size : storage->size_bytes;
-      storage->map_fn = [holder, map_state, segment_mem, segment_size,
-                         invalidate = api.invalidate,
-                         map = api.map,
-                         unmap = api.unmap](simaai::neat::MapMode mode) {
+      storage->map_fn = [holder, map_state, segment_mem, segment_size, invalidate = api.invalidate,
+                         map = api.map, unmap = api.unmap](simaai::neat::MapMode mode) {
         if (mode != simaai::neat::MapMode::Read && mode != simaai::neat::MapMode::ReadWrite &&
             mode != simaai::neat::MapMode::Write) {
           return simaai::neat::Mapping{};
@@ -693,7 +687,8 @@ make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_
         bool needs_cpu_invalidate = false;
         if (mode == simaai::neat::MapMode::Read || mode == simaai::neat::MapMode::ReadWrite) {
           GstSample* sample = static_cast<GstSample*>(holder.get());
-          GstBuffer* buffer = (sample && GST_IS_SAMPLE(sample)) ? gst_sample_get_buffer(sample) : nullptr;
+          GstBuffer* buffer =
+              (sample && GST_IS_SAMPLE(sample)) ? gst_sample_get_buffer(sample) : nullptr;
           needs_cpu_invalidate = buffer_cpu_read_requires_invalidate(buffer);
         }
         if (needs_cpu_invalidate && invalidate) {
@@ -822,10 +817,9 @@ make_gst_sample_storage_impl(GstSample* sample,
   storage->data = nullptr;
   storage->sima_mem_target_flags = mem_info.target_flags;
   storage->sima_mem_flags = mem_info.mem_flags;
-  storage->sima_segments =
-      (cached_segments && !cached_segments->empty())
-          ? *cached_segments
-          : extract_runtime_segments_from_buffer(buffer);
+  storage->sima_segments = (cached_segments && !cached_segments->empty())
+                               ? *cached_segments
+                               : extract_runtime_segments_from_buffer(buffer);
   const std::uint64_t mem_flags = mem_info.mem_flags;
   const std::uint64_t target_flags = mem_info.target_flags;
   storage->map_fn = [holder, map_state, mem_flags, target_flags](simaai::neat::MapMode mode) {
@@ -916,8 +910,7 @@ void record_tensor_bundle_projection(std::size_t field_count) {
 }
 
 void record_tensor_packed_view_reuse(std::size_t logical_output_count,
-                                     std::size_t unique_memory_count,
-                                     bool materialize_output) {
+                                     std::size_t unique_memory_count, bool materialize_output) {
   if (logical_output_count == 0U || unique_memory_count == 0U ||
       logical_output_count <= unique_memory_count) {
     return;
@@ -960,15 +953,14 @@ std::size_t resolve_tensor_runtime_segment_size(const simaai::neat::Tensor& tens
   }
   if (tensor.route.memory_index >= 0 &&
       static_cast<std::size_t>(tensor.route.memory_index) < tensor.storage->sima_segments.size()) {
-    return tensor.storage->sima_segments[static_cast<std::size_t>(tensor.route.memory_index)].size_bytes;
+    return tensor.storage->sima_segments[static_cast<std::size_t>(tensor.route.memory_index)]
+        .size_bytes;
   }
   return tensor.storage->size_bytes;
 }
 
-simaai::neat::Mapping map_tensor_from_buffer_memory(GstBuffer* buffer,
-                                                    guint memory_index,
-                                                    std::size_t offset,
-                                                    std::size_t size,
+simaai::neat::Mapping map_tensor_from_buffer_memory(GstBuffer* buffer, guint memory_index,
+                                                    std::size_t offset, std::size_t size,
                                                     const std::shared_ptr<void>& keepalive) {
   if (!buffer) {
     return {};
@@ -1059,9 +1051,9 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
   if (gst_buffer_n_memory(buffer) == 1U) {
     const GstMemory* root_memory = gst_buffer_peek_memory(buffer, 0U);
     const std::string segment_name = resolve_tensor_runtime_segment_name(tensor);
-      if (root_memory && buffer_memory_uses_segment_allocator(root_memory) && !segment_name.empty()) {
-        auto* segment_mem = reinterpret_cast<simaai_memory_t*>(
-            gst_simaai_memory_get_segment(root_memory, segment_name.c_str()));
+    if (root_memory && buffer_memory_uses_segment_allocator(root_memory) && !segment_name.empty()) {
+      auto* segment_mem = reinterpret_cast<simaai_memory_t*>(
+          gst_simaai_memory_get_segment(root_memory, segment_name.c_str()));
       if (segment_mem) {
         std::size_t size = resolve_tensor_runtime_segment_size(tensor, segment_name);
         const std::size_t required_bytes = dense_tensor_physical_span_bytes(tensor);
@@ -1082,13 +1074,13 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
         const bool needs_cpu_invalidate = buffer_cpu_read_requires_invalidate(buffer);
         if (tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
           const CpuVisibleBufferState dbg_state = cpu_visible_buffer_state(buffer);
-          std::fprintf(stderr,
-                       "[tensor-map][debug] visibility logical=%d needs_invalidate=%d sample_prepared=%d has_producer=%d producer=%u has_dirty=%d dirty=%d buffer=%p\n",
-                       tensor.route.logical_index, needs_cpu_invalidate ? 1 : 0,
-                       sample_cpu_prepared ? 1 : 0,
-                       dbg_state.has_producer ? 1 : 0, dbg_state.producer,
-                       dbg_state.has_cpu_dirty ? 1 : 0, dbg_state.cpu_dirty ? 1 : 0,
-                       static_cast<void*>(buffer));
+          std::fprintf(
+              stderr,
+              "[tensor-map][debug] visibility logical=%d needs_invalidate=%d sample_prepared=%d "
+              "has_producer=%d producer=%u has_dirty=%d dirty=%d buffer=%p\n",
+              tensor.route.logical_index, needs_cpu_invalidate ? 1 : 0, sample_cpu_prepared ? 1 : 0,
+              dbg_state.has_producer ? 1 : 0, dbg_state.producer, dbg_state.has_cpu_dirty ? 1 : 0,
+              dbg_state.cpu_dirty ? 1 : 0, static_cast<void*>(buffer));
         }
         if (needs_cpu_invalidate && api.invalidate) {
           // Segment-backed CPU reads must invalidate the segment backing, not
@@ -1102,9 +1094,10 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
           if (tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
             const auto* bytes = static_cast<const uint8_t*>(base);
             const std::size_t sample_count = std::min<std::size_t>(8U, size);
-            std::fprintf(stderr,
-                         "[tensor-map][debug] segment-path logical=%d segment=%s offset=%zu size=%zu head=",
-                         tensor.route.logical_index, segment_name.c_str(), offset, size);
+            std::fprintf(
+                stderr,
+                "[tensor-map][debug] segment-path logical=%d segment=%s offset=%zu size=%zu head=",
+                tensor.route.logical_index, segment_name.c_str(), offset, size);
             for (std::size_t bi = 0; bi < sample_count; ++bi) {
               if (bi > 0U) {
                 std::fprintf(stderr, ",");
@@ -1116,8 +1109,9 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
           simaai::neat::Mapping mapping;
           mapping.data = static_cast<uint8_t*>(base) + offset;
           mapping.size_bytes = size;
-          mapping.keepalive = tensor.storage->holder ? tensor.storage->holder
-                                                     : std::static_pointer_cast<void>(tensor.storage);
+          mapping.keepalive = tensor.storage->holder
+                                  ? tensor.storage->holder
+                                  : std::static_pointer_cast<void>(tensor.storage);
           mapping.unmap = [segment_mem, unmap = api.unmap]() {
             if (unmap) {
               unmap(segment_mem);
@@ -1127,8 +1121,7 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
         }
       }
       if (tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
-        std::fprintf(stderr,
-                     "[tensor-map][debug] segment-path-miss logical=%d segment=%s\n",
+        std::fprintf(stderr, "[tensor-map][debug] segment-path-miss logical=%d segment=%s\n",
                      tensor.route.logical_index, segment_name.c_str());
       }
     }
@@ -1136,10 +1129,9 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
 
   if (tensor.route.memory_index >= 0) {
     const guint memory_count = gst_buffer_n_memory(buffer);
-    if (memory_count > 1U &&
-        static_cast<guint>(tensor.route.memory_index) < memory_count) {
-      std::size_t size = resolve_tensor_runtime_segment_size(
-          tensor, resolve_tensor_runtime_segment_name(tensor));
+    if (memory_count > 1U && static_cast<guint>(tensor.route.memory_index) < memory_count) {
+      std::size_t size =
+          resolve_tensor_runtime_segment_size(tensor, resolve_tensor_runtime_segment_name(tensor));
       const std::size_t required_bytes = dense_tensor_physical_span_bytes(tensor);
       std::size_t offset =
           (tensor.byte_offset > 0) ? static_cast<std::size_t>(tensor.byte_offset) : 0U;
@@ -1154,11 +1146,10 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
       if (required_bytes > 0U && required_bytes < size) {
         size = required_bytes;
       }
-      return map_tensor_from_buffer_memory(buffer, static_cast<guint>(tensor.route.memory_index),
-                                           offset, size,
-                                           tensor.storage->holder
-                                               ? tensor.storage->holder
-                                               : std::static_pointer_cast<void>(tensor.storage));
+      return map_tensor_from_buffer_memory(
+          buffer, static_cast<guint>(tensor.route.memory_index), offset, size,
+          tensor.storage->holder ? tensor.storage->holder
+                                 : std::static_pointer_cast<void>(tensor.storage));
     }
   }
 
@@ -1198,10 +1189,10 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
   if (tensor_map_debug_enabled() && tensor.route.logical_index == 0) {
     const auto* bytes = static_cast<const uint8_t*>(base);
     const std::size_t sample_count = std::min<std::size_t>(8U, size);
-    std::fprintf(stderr,
-                 "[tensor-map][debug] attach-path logical=%d buffer_id=0x%llx offset=%zu size=%zu head=",
-                 tensor.route.logical_index,
-                 static_cast<unsigned long long>(buffer_id), offset, size);
+    std::fprintf(
+        stderr,
+        "[tensor-map][debug] attach-path logical=%d buffer_id=0x%llx offset=%zu size=%zu head=",
+        tensor.route.logical_index, static_cast<unsigned long long>(buffer_id), offset, size);
     for (std::size_t bi = 0; bi < sample_count; ++bi) {
       if (bi > 0U) {
         std::fprintf(stderr, ",");
@@ -1308,7 +1299,8 @@ simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& 
 
   if (holder_debug_enabled()) {
     std::fprintf(stderr,
-                 "[HOLDER] copy_tensor_from_sample_memory: n_mems=%u requested=%d auto=%d selected=%u keep_holder=%d\n",
+                 "[HOLDER] copy_tensor_from_sample_memory: n_mems=%u requested=%d auto=%d "
+                 "selected=%u keep_holder=%d\n",
                  static_cast<unsigned>(n_mems), memory_index, selection.auto_selected ? 1 : 0,
                  static_cast<unsigned>(index), keep_holder ? 1 : 0);
     for (guint i = 0; i < n_mems; ++i) {
@@ -1362,9 +1354,9 @@ simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& 
   simaai::neat::Tensor out;
   out.storage = std::move(storage);
   if (keep_holder && ref.storage && ref.storage->holder) {
-    out.storage->holder = std::shared_ptr<void>(
-        new CompositeHolder{out.storage->holder, ref.storage->holder},
-        [](void* p) { delete static_cast<CompositeHolder*>(p); });
+    out.storage->holder =
+        std::shared_ptr<void>(new CompositeHolder{out.storage->holder, ref.storage->holder},
+                              [](void* p) { delete static_cast<CompositeHolder*>(p); });
   } else if (!keep_holder) {
     out.storage->holder = make_preprocess_meta_holder(buffer);
   }

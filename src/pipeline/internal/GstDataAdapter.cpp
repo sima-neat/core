@@ -702,10 +702,9 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
       *err = "field spec: missing output spec";
     return false;
   }
-  const Sample normalized =
-      (field.kind == SampleKind::Tensor && field.tensor.has_value())
-          ? canonicalize_tensor_transport_sample(field)
-          : field;
+  const Sample normalized = (field.kind == SampleKind::Tensor && field.tensor.has_value())
+                                ? canonicalize_tensor_transport_sample(field)
+                                : field;
   if (!sample_has_tensor_list(normalized) || normalized.tensors.empty()) {
     if (err)
       *err = "field spec: missing tensor";
@@ -740,7 +739,8 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
     if (data_adapter_debug_enabled()) {
       const auto& tensor = normalized.tensors.front();
       std::fprintf(stderr,
-                   "[GstDataAdapter] derive_field_spec failure name=%s segment=%s media=%s format=%s tensor=%s error=%s\n",
+                   "[GstDataAdapter] derive_field_spec failure name=%s segment=%s media=%s "
+                   "format=%s tensor=%s error=%s\n",
                    normalized.stream_label.empty() ? "<empty>" : normalized.stream_label.c_str(),
                    normalized.segment_name.empty() ? "<empty>" : normalized.segment_name.c_str(),
                    normalized.media_type.empty() ? "<empty>" : normalized.media_type.c_str(),

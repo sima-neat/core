@@ -74,8 +74,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
     auto view = current.map_cv_mat_view(fmt);
     if (!view.has_value()) {
       throw std::runtime_error("StageModelExecutor: failed to map simaai::neat::Tensor to cv::Mat"
-                               " (dtype='" + std::to_string(static_cast<int>(current.dtype)) +
-                               "', shape=[" +
+                               " (dtype='" +
+                               std::to_string(static_cast<int>(current.dtype)) + "', shape=[" +
                                std::to_string(current.height()) + "x" +
                                std::to_string(current.width()) + "x" +
                                std::to_string(current.channels()) + "])");
@@ -83,7 +83,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
     TensorList pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{view->mat}, *opt_.model);
     if (pre.size() != 1) {
       throw std::runtime_error("StageModelExecutor: preproc returned unexpected tensor count"
-                               " (expected=1, actual=" + std::to_string(pre.size()) + ")");
+                               " (expected=1, actual=" +
+                               std::to_string(pre.size()) + ")");
     }
     current = std::move(pre.front());
     current_sample = sample_from_tensors(TensorList{current});
@@ -99,7 +100,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
     SampleList mla_out = simaai::neat::stages::MLA(SampleList{current_sample}, *opt_.model);
     if (mla_out.size() != 1) {
       throw std::runtime_error("StageModelExecutor: MLA returned unexpected sample count"
-                               " (expected=1, actual=" + std::to_string(mla_out.size()) + ")");
+                               " (expected=1, actual=" +
+                               std::to_string(mla_out.size()) + ")");
     }
     current_sample = std::move(mla_out.front());
     current = require_single_tensor(current_sample, "StageModelExecutor MLA output");
@@ -111,7 +113,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
         simaai::neat::stages::BoxDecode(SampleList{current_sample}, *opt_.model, opt_.box_opt);
     if (decoded.size() != 1) {
       throw std::runtime_error("StageModelExecutor: boxdecode returned unexpected sample count"
-                               " (expected=1, actual=" + std::to_string(decoded.size()) + ")");
+                               " (expected=1, actual=" +
+                               std::to_string(decoded.size()) + ")");
     }
     out_sample = std::move(decoded.front());
     if (out_sample.payload_tag == "BBOX" && !sample_tensor_list(out_sample).empty()) {
@@ -134,7 +137,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
     out_sample.orig_input_seq = msg.sample.orig_input_seq;
   }
 
-  out_sample = simaai::neat::pipeline_internal::collapse_single_tensor_sample(std::move(out_sample));
+  out_sample =
+      simaai::neat::pipeline_internal::collapse_single_tensor_sample(std::move(out_sample));
 
   const PortId out_port = (out_port_ == kInvalidPort) ? kInvalidPort : out_port_;
   out.push_back(StageOutMsg{.out_port = out_port, .sample = std::move(out_sample)});

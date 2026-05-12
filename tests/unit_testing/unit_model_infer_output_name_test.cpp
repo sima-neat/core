@@ -86,11 +86,10 @@ RUN_TEST(
 
       // Multi-stage inference sequence should pick the final MLA stage name deterministically.
       {
-        const auto fixture =
-            sima_test::make_strict_mpk_tar_fixture("infer_output_name_multi_stage",
-                                                   {
-                                                                 {"etc/pipeline_sequence.json",
-                                                                  R"json({
+        const auto fixture = sima_test::make_strict_mpk_tar_fixture(
+            "infer_output_name_multi_stage", {
+                                                 {"etc/pipeline_sequence.json",
+                                                  R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -123,8 +122,8 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                 {"etc/0_preproc.json",
-                                                                  R"json({
+                                                 {"etc/0_preproc.json",
+                                                  R"json({
   "node_name": "preproc_0",
   "input_width": 64,
   "input_height": 48,
@@ -133,17 +132,17 @@ RUN_TEST(
   "output_height": 48,
   "output_img_type": "RGB"
 })json"},
-                                                                 {"etc/0_process_mla_a.json",
-                                                                  R"json({
+                                                 {"etc/0_process_mla_a.json",
+                                                  R"json({
   "node_name": "mla_stage_a",
   "input_buffers": [{"name": "preproc_0"}]
 })json"},
-                                                                 {"etc/0_process_mla_b.json",
-                                                                  R"json({
+                                                 {"etc/0_process_mla_b.json",
+                                                  R"json({
   "node_name": "mla_stage_b",
   "input_buffers": [{"name": "mla_stage_a"}]
 })json"},
-                                                   });
+                                             });
 
         simaai::neat::Model::Options opt;
         opt.preprocess.kind = simaai::neat::InputKind::Image;
@@ -163,9 +162,9 @@ RUN_TEST(
 
       {
         const auto legacy = sima_test::make_mpk_tar_fixture("infer_output_name_legacy_missing_mpk",
-                                                             {
-                                                                 {"etc/pipeline_sequence.json",
-                                                                  R"json({
+                                                            {
+                                                                {"etc/pipeline_sequence.json",
+                                                                 R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -180,12 +179,12 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                 {"etc/0_process_mla.json",
-                                                                  R"json({
+                                                                {"etc/0_process_mla.json",
+                                                                 R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-                                                             });
+                                                            });
         require(throws_with(
                     [&]() {
                       simaai::neat::Model legacy_model(legacy.tar_path);

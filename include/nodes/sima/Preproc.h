@@ -47,51 +47,51 @@ struct PreprocOptions {
   /// Initialize options from a loaded `Model` (pulls input/output shapes, dtype, scale/zp).
   explicit PreprocOptions(const simaai::neat::Model& model);
 
-  std::vector<int> input_shape;   ///< Input image shape (H, W, C).
-  std::vector<int> output_shape;  ///< Output tensor shape after resize/normalize.
-  std::vector<int> slice_shape;   ///< Optional slice/tile shape used for batched processing.
+  std::vector<int> input_shape;  ///< Input image shape (H, W, C).
+  std::vector<int> output_shape; ///< Output tensor shape after resize/normalize.
+  std::vector<int> slice_shape;  ///< Optional slice/tile shape used for batched processing.
 
-  int scaled_width = 0;           ///< Intermediate scaled width (before crop/pad), pixels.
-  int scaled_height = 0;          ///< Intermediate scaled height (before crop/pad), pixels.
+  int scaled_width = 0;  ///< Intermediate scaled width (before crop/pad), pixels.
+  int scaled_height = 0; ///< Intermediate scaled height (before crop/pad), pixels.
 
-  int batch_size = 1;             ///< Batch size processed per invocation.
+  int batch_size = 1; ///< Batch size processed per invocation.
 
-  bool normalize = true;          ///< Apply mean/stddev normalization.
-  bool aspect_ratio = true;       ///< Preserve aspect ratio during resize (letterbox).
-  bool tessellate = true;         ///< Tessellate output into MLA tile geometry.
-  bool dynamic_input_dims = true; ///< Allow dynamic input dimensions at runtime.
+  bool normalize = true;             ///< Apply mean/stddev normalization.
+  bool aspect_ratio = true;          ///< Preserve aspect ratio during resize (letterbox).
+  bool tessellate = true;            ///< Tessellate output into MLA tile geometry.
+  bool dynamic_input_dims = true;    ///< Allow dynamic input dimensions at runtime.
   bool single_output_handoff = true; ///< Hand off a single output buffer per cycle (vs. ping-pong).
 
-  int input_offset = 0;           ///< Byte offset into the input buffer.
-  int input_stride = 1;           ///< Element stride for input addressing.
-  int output_stride = 1;          ///< Element stride for output addressing.
+  int input_offset = 0;  ///< Byte offset into the input buffer.
+  int input_stride = 1;  ///< Element stride for input addressing.
+  int output_stride = 1; ///< Element stride for output addressing.
 
-  std::optional<std::int64_t> q_zp;   ///< Output quantization zero-point (when emitting INT8/INT16).
-  std::optional<double> q_scale;      ///< Output quantization scale (when emitting INT8/INT16).
+  std::optional<std::int64_t> q_zp; ///< Output quantization zero-point (when emitting INT8/INT16).
+  std::optional<double> q_scale;    ///< Output quantization scale (when emitting INT8/INT16).
 
   std::vector<float> channel_mean = {0.0f, 0.0f, 0.0f};   ///< Per-channel mean used by normalize.
   std::vector<float> channel_stddev = {1.0f, 1.0f, 1.0f}; ///< Per-channel stddev used by normalize.
 
-  std::string input_img_type;             ///< Input pixel format (e.g. `"NV12"`, `"RGB"`).
-  std::string output_img_type = "RGB";    ///< Output color space.
-  std::string output_dtype = "INT16";     ///< Output element dtype (e.g. `"INT16"`, `"BF16"`).
-  std::string scaling_type = "BILINEAR";  ///< Resize interpolation (`"BILINEAR"`, `"NEAREST"`).
-  std::string padding_type = "CENTER";    ///< Letterbox padding mode (`"CENTER"`, `"TOPLEFT"`).
+  std::string input_img_type;            ///< Input pixel format (e.g. `"NV12"`, `"RGB"`).
+  std::string output_img_type = "RGB";   ///< Output color space.
+  std::string output_dtype = "INT16";    ///< Output element dtype (e.g. `"INT16"`, `"BF16"`).
+  std::string scaling_type = "BILINEAR"; ///< Resize interpolation (`"BILINEAR"`, `"NEAREST"`).
+  std::string padding_type = "CENTER";   ///< Letterbox padding mode (`"CENTER"`, `"TOPLEFT"`).
 
-  std::string graph_name = "preproc";     ///< CVU graph name in the kernel config.
-  std::string node_name = "preproc";      ///< CVU node name in the kernel config.
-  std::string element_name;               ///< Optional GStreamer element name.
-  std::string cpu = "CVU";                ///< CPU/accelerator this stage runs on.
-  std::string next_cpu = "CVU";           ///< CPU/accelerator the downstream stage runs on.
+  std::string graph_name = "preproc";      ///< CVU graph name in the kernel config.
+  std::string node_name = "preproc";       ///< CVU node name in the kernel config.
+  std::string element_name;                ///< Optional GStreamer element name.
+  std::string cpu = "CVU";                 ///< CPU/accelerator this stage runs on.
+  std::string next_cpu = "CVU";            ///< CPU/accelerator the downstream stage runs on.
   std::string debug = "EVXX_DBG_DISABLED"; ///< Debug-output flag passed to the CVU kernel.
 
-  std::string upstream_name = "decoder";       ///< Name of the upstream element for tag wiring.
+  std::string upstream_name = "decoder";        ///< Name of the upstream element for tag wiring.
   std::string graph_input_name = "input_image"; ///< Input tensor name within the CVU graph.
 
-  int num_buffers = 0;                  ///< Override for the element's buffer pool size.
-  int num_buffers_model = 0;            ///< Buffer count derived from the bound model.
-  bool num_buffers_locked = false;      ///< If true, planner won't override `num_buffers`.
-  bool model_managed_contract = false;  ///< If true, the model owns the node contract resolution.
+  int num_buffers = 0;                 ///< Override for the element's buffer pool size.
+  int num_buffers_model = 0;           ///< Buffer count derived from the bound model.
+  bool num_buffers_locked = false;     ///< If true, planner won't override `num_buffers`.
+  bool model_managed_contract = false; ///< If true, the model owns the node contract resolution.
 #ifdef SIMA_NEAT_INTERNAL
   std::shared_ptr<const simaai::neat::internal::ModelLineageBinding> model_lineage;
 #endif
@@ -218,8 +218,7 @@ public:
   /// Structural contract definition for this Node.
   NodeContractDefinition contract_definition() const override;
   /// Compile this Node's contract from the given input.
-  bool compile_node_contract(const ContractCompileInput& input,
-                             CompiledNodeContract* out,
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                              std::string* err) const override;
   /// Apply a compiled contract back into this Node.
   void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;

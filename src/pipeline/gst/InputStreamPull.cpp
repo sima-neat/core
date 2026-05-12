@@ -70,8 +70,7 @@ void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sam
     return;
   }
 
-  if (st.src_opt.preprocess_meta.has_value() &&
-      !st.src_opt.preprocess_meta->axis_perm.empty()) {
+  if (st.src_opt.preprocess_meta.has_value() && !st.src_opt.preprocess_meta->axis_perm.empty()) {
     merge_simaai_preprocess_axis_perm(buffer, st.src_opt.preprocess_meta->axis_perm);
   }
 
@@ -98,7 +97,8 @@ void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sam
   if (key < 0) {
     if (debug) {
       std::fprintf(stderr,
-                   "[PREPROC_META_TRACE] pull-buffer restore skip=no_key has_input=%d input=%lld has_orig=%d orig=%lld cache_size=%zu\n",
+                   "[PREPROC_META_TRACE] pull-buffer restore skip=no_key has_input=%d input=%lld "
+                   "has_orig=%d orig=%lld cache_size=%zu\n",
                    has_input_seq ? 1 : 0, static_cast<long long>(input_seq),
                    has_orig_input_seq ? 1 : 0, static_cast<long long>(orig_input_seq),
                    st.preprocess_meta_by_input_seq.size());
@@ -110,20 +110,21 @@ void maybe_restore_cached_preprocess_meta(InputStream::State& st, GstSample* sam
   const auto it = st.preprocess_meta_by_input_seq.find(key);
   if (it == st.preprocess_meta_by_input_seq.end()) {
     if (debug) {
-      std::fprintf(stderr,
-                   "[PREPROC_META_TRACE] pull-buffer restore skip=cache_miss key=%lld cache_size=%zu\n",
-                   static_cast<long long>(key), st.preprocess_meta_by_input_seq.size());
+      std::fprintf(
+          stderr,
+          "[PREPROC_META_TRACE] pull-buffer restore skip=cache_miss key=%lld cache_size=%zu\n",
+          static_cast<long long>(key), st.preprocess_meta_by_input_seq.size());
     }
     return;
   }
 
   (void)write_simaai_preprocess_meta(buffer, it->second);
   if (debug) {
-    std::fprintf(stderr,
-                 "[PREPROC_META_TRACE] pull-buffer restore wrote key=%lld orig=%dx%d resized=%dx%d\n",
-                 static_cast<long long>(key), it->second.original_width,
-                 it->second.original_height, it->second.resized_width,
-                 it->second.resized_height);
+    std::fprintf(
+        stderr,
+        "[PREPROC_META_TRACE] pull-buffer restore wrote key=%lld orig=%dx%d resized=%dx%d\n",
+        static_cast<long long>(key), it->second.original_width, it->second.original_height,
+        it->second.resized_width, it->second.resized_height);
   }
 }
 
@@ -162,7 +163,8 @@ void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Samp
   if (key < 0) {
     if (debug) {
       std::fprintf(stderr,
-                   "[PREPROC_META_TRACE] pull-sample restore skip=no_key sample_input=%lld sample_orig=%lld\n",
+                   "[PREPROC_META_TRACE] pull-sample restore skip=no_key sample_input=%lld "
+                   "sample_orig=%lld\n",
                    static_cast<long long>(sample->input_seq),
                    static_cast<long long>(sample->orig_input_seq));
     }
@@ -175,19 +177,21 @@ void maybe_restore_cached_preprocess_meta_on_sample(InputStream::State& st, Samp
     const auto it = st.preprocess_meta_by_input_seq.find(key);
     if (it == st.preprocess_meta_by_input_seq.end()) {
       if (debug) {
-        std::fprintf(stderr,
-                     "[PREPROC_META_TRACE] pull-sample restore skip=cache_miss key=%lld cache_size=%zu\n",
-                     static_cast<long long>(key), st.preprocess_meta_by_input_seq.size());
+        std::fprintf(
+            stderr,
+            "[PREPROC_META_TRACE] pull-sample restore skip=cache_miss key=%lld cache_size=%zu\n",
+            static_cast<long long>(key), st.preprocess_meta_by_input_seq.size());
       }
       return;
     }
     cached = it->second;
   }
   if (debug) {
-    std::fprintf(stderr,
-                 "[PREPROC_META_TRACE] pull-sample restore found key=%lld orig=%dx%d resized=%dx%d\n",
-                 static_cast<long long>(key), cached->original_width,
-                 cached->original_height, cached->resized_width, cached->resized_height);
+    std::fprintf(
+        stderr,
+        "[PREPROC_META_TRACE] pull-sample restore found key=%lld orig=%dx%d resized=%dx%d\n",
+        static_cast<long long>(key), cached->original_width, cached->original_height,
+        cached->resized_width, cached->resized_height);
   }
 
   const bool restore_buffer_meta = inputstream_restore_preproc_buffer_meta_enabled();
@@ -304,9 +308,8 @@ bool inputstream_restore_preproc_buffer_meta_enabled() {
   if (cached >= 0) {
     return cached != 0;
   }
-  cached = pipeline_internal::env_bool("SIMA_INPUTSTREAM_RESTORE_PREPROC_BUFFER_META", false)
-               ? 1
-               : 0;
+  cached =
+      pipeline_internal::env_bool("SIMA_INPUTSTREAM_RESTORE_PREPROC_BUFFER_META", false) ? 1 : 0;
   return cached != 0;
 }
 
@@ -324,9 +327,7 @@ bool inputstream_fast_minimal_output_meta_enabled() {
   if (cached >= 0) {
     return cached != 0;
   }
-  cached = pipeline_internal::env_bool("SIMA_INPUTSTREAM_FAST_MINIMAL_OUTPUT_META", true)
-               ? 1
-               : 0;
+  cached = pipeline_internal::env_bool("SIMA_INPUTSTREAM_FAST_MINIMAL_OUTPUT_META", true) ? 1 : 0;
   return cached != 0;
 }
 
@@ -340,9 +341,7 @@ bool inputstream_fast_static_preprocess_meta_enabled() {
   // first cached tensor semantic made the fast TensorSet decode cheaper, but it
   // produced stale preprocess values and broke boxdecode correctness. Keep this
   // as an explicit experiment-only opt-in.
-  cached = pipeline_internal::env_bool("SIMA_INPUTSTREAM_FAST_STATIC_PREPROC_META", false)
-               ? 1
-               : 0;
+  cached = pipeline_internal::env_bool("SIMA_INPUTSTREAM_FAST_STATIC_PREPROC_META", false) ? 1 : 0;
   return cached != 0;
 }
 
@@ -375,8 +374,7 @@ struct InputStreamDecodeProfileSample {
 
 thread_local InputStreamDecodeProfileSample* g_inputstream_decode_profile = nullptr;
 
-double inputstream_decode_profile_ms(
-    const InputStreamDecodeProfileClock::duration& duration) {
+double inputstream_decode_profile_ms(const InputStreamDecodeProfileClock::duration& duration) {
   return std::chrono::duration<double, std::milli>(duration).count();
 }
 
@@ -434,25 +432,25 @@ void log_inputstream_decode_profile(const InputStreamDecodeProfileSample& sample
   const auto max_field = [](double& dst, double value) { dst = std::max(dst, value); };
   std::lock_guard<std::mutex> lock(mutex);
   acc.samples++;
-#define SIMA_INPUTSTREAM_DECODE_PROFILE_FOR_EACH(F) \
-  F(restore_buffer_meta_ms);                        \
-  F(envelope_ms);                                   \
-  F(restore_sample_meta_ms);                        \
-  F(apply_port_ms);                                 \
-  F(total_decode_ms);                               \
-  F(tensor_sig_ms);                                 \
-  F(tensor_cache_lock_ms);                          \
-  F(tensor_cache_instantiate_ms);                   \
-  F(tensor_slow_ms);                                \
-  F(tensor_cache_store_ms);                         \
-  F(fast_make_storage_ms);                          \
-  F(fast_sample_copy_template_ms);                  \
-  F(fast_sample_meta_ms);                           \
-  F(fast_tensor_clear_ms);                          \
-  F(fast_tensor_loop_ms);                           \
-  F(fast_tensor_view_ms);                           \
-  F(slow_descriptor_ms);                            \
-  F(slow_base_ms);                                  \
+#define SIMA_INPUTSTREAM_DECODE_PROFILE_FOR_EACH(F)                                                \
+  F(restore_buffer_meta_ms);                                                                       \
+  F(envelope_ms);                                                                                  \
+  F(restore_sample_meta_ms);                                                                       \
+  F(apply_port_ms);                                                                                \
+  F(total_decode_ms);                                                                              \
+  F(tensor_sig_ms);                                                                                \
+  F(tensor_cache_lock_ms);                                                                         \
+  F(tensor_cache_instantiate_ms);                                                                  \
+  F(tensor_slow_ms);                                                                               \
+  F(tensor_cache_store_ms);                                                                        \
+  F(fast_make_storage_ms);                                                                         \
+  F(fast_sample_copy_template_ms);                                                                 \
+  F(fast_sample_meta_ms);                                                                          \
+  F(fast_tensor_clear_ms);                                                                         \
+  F(fast_tensor_loop_ms);                                                                          \
+  F(fast_tensor_view_ms);                                                                          \
+  F(slow_descriptor_ms);                                                                           \
+  F(slow_base_ms);                                                                                 \
   F(slow_tensor_loop_ms)
 #define SIMA_INPUTSTREAM_DECODE_ADD(field) add_field(acc.sum.field, sample.field)
 #define SIMA_INPUTSTREAM_DECODE_MAX(field) max_field(acc.max.field, sample.field)
@@ -464,58 +462,47 @@ void log_inputstream_decode_profile(const InputStreamDecodeProfileSample& sample
     return;
   }
   const double n = static_cast<double>(acc.samples);
-  std::fprintf(
-      stderr,
-      "[runtime-profile] component=inputstream_decode samples=%llu "
-      "avg_ms{restore_buffer_meta=%.4f,envelope=%.4f,restore_sample_meta=%.4f,apply_port=%.4f,total_decode=%.4f,"
-      "tensor_sig=%.4f,tensor_cache_lock=%.4f,tensor_cache_instantiate=%.4f,tensor_slow=%.4f,tensor_cache_store=%.4f,"
-      "fast_make_storage=%.4f,fast_sample_copy_template=%.4f,fast_sample_meta=%.4f,fast_tensor_clear=%.4f,fast_tensor_loop=%.4f,fast_tensor_view=%.4f,"
-      "slow_descriptor=%.4f,slow_base=%.4f,slow_tensor_loop=%.4f} "
-      "max_ms{total_decode=%.4f,envelope=%.4f,tensor_sig=%.4f,tensor_cache_instantiate=%.4f,tensor_slow=%.4f,"
-      "fast_make_storage=%.4f,fast_tensor_loop=%.4f,slow_descriptor=%.4f,slow_base=%.4f,slow_tensor_loop=%.4f}\n",
-      static_cast<unsigned long long>(acc.samples),
-      acc.sum.restore_buffer_meta_ms / n,
-      acc.sum.envelope_ms / n,
-      acc.sum.restore_sample_meta_ms / n,
-      acc.sum.apply_port_ms / n,
-      acc.sum.total_decode_ms / n,
-      acc.sum.tensor_sig_ms / n,
-      acc.sum.tensor_cache_lock_ms / n,
-      acc.sum.tensor_cache_instantiate_ms / n,
-      acc.sum.tensor_slow_ms / n,
-      acc.sum.tensor_cache_store_ms / n,
-      acc.sum.fast_make_storage_ms / n,
-      acc.sum.fast_sample_copy_template_ms / n,
-      acc.sum.fast_sample_meta_ms / n,
-      acc.sum.fast_tensor_clear_ms / n,
-      acc.sum.fast_tensor_loop_ms / n,
-      acc.sum.fast_tensor_view_ms / n,
-      acc.sum.slow_descriptor_ms / n,
-      acc.sum.slow_base_ms / n,
-      acc.sum.slow_tensor_loop_ms / n,
-      acc.max.total_decode_ms,
-      acc.max.envelope_ms,
-      acc.max.tensor_sig_ms,
-      acc.max.tensor_cache_instantiate_ms,
-      acc.max.tensor_slow_ms,
-      acc.max.fast_make_storage_ms,
-      acc.max.fast_tensor_loop_ms,
-      acc.max.slow_descriptor_ms,
-      acc.max.slow_base_ms,
-      acc.max.slow_tensor_loop_ms);
+  std::fprintf(stderr,
+               "[runtime-profile] component=inputstream_decode samples=%llu "
+               "avg_ms{restore_buffer_meta=%.4f,envelope=%.4f,restore_sample_meta=%.4f,apply_port=%"
+               ".4f,total_decode=%.4f,"
+               "tensor_sig=%.4f,tensor_cache_lock=%.4f,tensor_cache_instantiate=%.4f,tensor_slow=%."
+               "4f,tensor_cache_store=%.4f,"
+               "fast_make_storage=%.4f,fast_sample_copy_template=%.4f,fast_sample_meta=%.4f,fast_"
+               "tensor_clear=%.4f,fast_tensor_loop=%.4f,fast_tensor_view=%.4f,"
+               "slow_descriptor=%.4f,slow_base=%.4f,slow_tensor_loop=%.4f} "
+               "max_ms{total_decode=%.4f,envelope=%.4f,tensor_sig=%.4f,tensor_cache_instantiate=%."
+               "4f,tensor_slow=%.4f,"
+               "fast_make_storage=%.4f,fast_tensor_loop=%.4f,slow_descriptor=%.4f,slow_base=%.4f,"
+               "slow_tensor_loop=%.4f}\n",
+               static_cast<unsigned long long>(acc.samples), acc.sum.restore_buffer_meta_ms / n,
+               acc.sum.envelope_ms / n, acc.sum.restore_sample_meta_ms / n,
+               acc.sum.apply_port_ms / n, acc.sum.total_decode_ms / n, acc.sum.tensor_sig_ms / n,
+               acc.sum.tensor_cache_lock_ms / n, acc.sum.tensor_cache_instantiate_ms / n,
+               acc.sum.tensor_slow_ms / n, acc.sum.tensor_cache_store_ms / n,
+               acc.sum.fast_make_storage_ms / n, acc.sum.fast_sample_copy_template_ms / n,
+               acc.sum.fast_sample_meta_ms / n, acc.sum.fast_tensor_clear_ms / n,
+               acc.sum.fast_tensor_loop_ms / n, acc.sum.fast_tensor_view_ms / n,
+               acc.sum.slow_descriptor_ms / n, acc.sum.slow_base_ms / n,
+               acc.sum.slow_tensor_loop_ms / n, acc.max.total_decode_ms, acc.max.envelope_ms,
+               acc.max.tensor_sig_ms, acc.max.tensor_cache_instantiate_ms, acc.max.tensor_slow_ms,
+               acc.max.fast_make_storage_ms, acc.max.fast_tensor_loop_ms,
+               acc.max.slow_descriptor_ms, acc.max.slow_base_ms, acc.max.slow_tensor_loop_ms);
 #undef SIMA_INPUTSTREAM_DECODE_PROFILE_FOR_EACH
 }
 
-void log_sample_tensor_state(const char* where, const char* label, const simaai::neat::Tensor& tensor) {
+void log_sample_tensor_state(const char* where, const char* label,
+                             const simaai::neat::Tensor& tensor) {
   if (!sample_storage_debug_enabled())
     return;
   const auto* storage = tensor.storage.get();
   const void* holder_ptr = (storage && storage->holder) ? storage->holder.get() : nullptr;
-  std::fprintf(stderr,
-               "[SAMPLE][tensor] %s %s storage=%p kind=%d holder=%p read_only=%d planes=%zu shape=%s\n",
-               where ? where : "unknown", label ? label : "tensor", static_cast<const void*>(storage),
-               storage ? static_cast<int>(storage->kind) : -1, holder_ptr, tensor.read_only ? 1 : 0,
-               tensor.planes.size(), tensor.debug_string().c_str());
+  std::fprintf(
+      stderr,
+      "[SAMPLE][tensor] %s %s storage=%p kind=%d holder=%p read_only=%d planes=%zu shape=%s\n",
+      where ? where : "unknown", label ? label : "tensor", static_cast<const void*>(storage),
+      storage ? static_cast<int>(storage->kind) : -1, holder_ptr, tensor.read_only ? 1 : 0,
+      tensor.planes.size(), tensor.debug_string().c_str());
 }
 
 static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const char* where,
@@ -601,8 +588,7 @@ bool tensor_set_descriptor_uses_byte_addressed_shape(
     if (dim <= 0) {
       return false;
     }
-    if (flat_extent > (std::numeric_limits<std::size_t>::max() /
-                       static_cast<std::size_t>(dim))) {
+    if (flat_extent > (std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(dim))) {
       return false;
     }
     flat_extent *= static_cast<std::size_t>(dim);
@@ -615,8 +601,7 @@ bool tensor_set_descriptor_uses_byte_addressed_shape(
 
 void normalize_tensor_set_descriptor_shape(
     const pipeline_internal::TensorBufferTensorDescriptor& descriptor,
-    std::vector<int64_t>* out_shape,
-    std::vector<int64_t>* out_strides_bytes) {
+    std::vector<int64_t>* out_shape, std::vector<int64_t>* out_strides_bytes) {
   if (!out_shape || !out_strides_bytes) {
     return;
   }
@@ -636,9 +621,10 @@ void normalize_tensor_set_descriptor_shape(
   }
 }
 
-Tensor apply_tensor_set_descriptor(const Tensor& base,
-                                   const pipeline_internal::TensorBufferTensorDescriptor& descriptor,
-                                   const std::string& stage_key, bool materialize_output) {
+Tensor
+apply_tensor_set_descriptor(const Tensor& base,
+                            const pipeline_internal::TensorBufferTensorDescriptor& descriptor,
+                            const std::string& stage_key, bool materialize_output) {
   Tensor out = base;
   const bool gst_sample_backed =
       base.storage && base.storage->kind == simaai::neat::StorageKind::GstSample;
@@ -653,8 +639,7 @@ Tensor apply_tensor_set_descriptor(const Tensor& base,
   }
   std::vector<int64_t> normalized_shape;
   std::vector<int64_t> normalized_strides_bytes;
-  normalize_tensor_set_descriptor_shape(descriptor, &normalized_shape,
-                                        &normalized_strides_bytes);
+  normalize_tensor_set_descriptor_shape(descriptor, &normalized_shape, &normalized_strides_bytes);
 
   out.shape.clear();
   out.strides_bytes.clear();
@@ -1061,8 +1046,7 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   const bool is_raw = media && (std::string(media).rfind("video/x-raw", 0) == 0 ||
                                 std::string(media) == "application/vnd.simaai.tensor");
   if (sample_storage_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[SAMPLE] %s media=%s is_raw=%d copy_output=%d caps=%s\n",
+    std::fprintf(stderr, "[SAMPLE] %s media=%s is_raw=%d copy_output=%d caps=%s\n",
                  where ? where : "unknown", media ? media : "<none>", is_raw ? 1 : 0,
                  copy_output ? 1 : 0, out.caps_string.c_str());
   }
@@ -1089,8 +1073,9 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
       if (is_tensor_media && neat.storage &&
           neat.storage->kind == simaai::neat::StorageKind::GstSample && neat.planes.empty()) {
         try {
-          const int memory_index =
-              (out.memory_index >= 0) ? out.memory_index : ((out.output_index >= 0) ? out.output_index : -1);
+          const int memory_index = (out.memory_index >= 0)
+                                       ? out.memory_index
+                                       : ((out.output_index >= 0) ? out.output_index : -1);
           out.tensors = TensorList{pipeline_internal::copy_tensor_from_sample_memory(
               neat, memory_index, keep_holder_for_tensor_copy)};
           out.owned = true;
@@ -1139,10 +1124,9 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
   gst_buffer_unmap(buffer, &map);
 
   if (sample_storage_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[SAMPLE] %s non_raw_path bytes=%zu media=%s caps=%s (make_encoded_sample)\n",
-                 where ? where : "unknown", bytes.size(), out.media_type.c_str(),
-                 out.caps_string.c_str());
+    std::fprintf(
+        stderr, "[SAMPLE] %s non_raw_path bytes=%zu media=%s caps=%s (make_encoded_sample)\n",
+        where ? where : "unknown", bytes.size(), out.media_type.c_str(), out.caps_string.c_str());
   }
 
   Sample enc = make_encoded_sample(std::move(bytes), out.caps_string, out.pts_ns, out.dts_ns,
@@ -1193,8 +1177,7 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
     }
     return out;
   }
-  Sample out = output_from_sample_stream_inner(sample, where,
-                                               has_override ? false : copy_output,
+  Sample out = output_from_sample_stream_inner(sample, where, has_override ? false : copy_output,
                                                /*keep_holder_for_tensor_copy=*/has_override);
   if (has_override) {
     out = apply_output_tensor_override(out, **override_opt, copy_output);
@@ -1378,10 +1361,10 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
     }
 
     if (sample_debug_enabled() || sample_bytes_enabled()) {
-      const char* name = !field_out.stream_label.empty()
-                             ? field_out.stream_label.c_str()
-                             : (field_out.segment_name.empty() ? "field"
-                                                               : field_out.segment_name.c_str());
+      const char* name =
+          !field_out.stream_label.empty()
+              ? field_out.stream_label.c_str()
+              : (field_out.segment_name.empty() ? "field" : field_out.segment_name.c_str());
       if (sample_debug_enabled()) {
         std::fprintf(stderr, "[SAMPLE] %s: field[%u] name=%s caps=%s\n", where, i, name,
                      field_out.caps_string.empty() ? "<none>" : field_out.caps_string.c_str());
@@ -1410,8 +1393,7 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
 
   pipeline_internal::record_tensor_bundle_projection(out.fields.size());
   pipeline_internal::record_tensor_packed_view_reuse(out.fields.size(),
-                                                     projected_memory_indices.size(),
-                                                     copy_output);
+                                                     projected_memory_indices.size(), copy_output);
 
   return out;
 }
@@ -1441,27 +1423,26 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
                                                                &tensor_buffer_err) ||
       tensor_buffer_view.tensors.empty()) {
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->slow_descriptor_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - descriptor_start);
+      g_inputstream_decode_profile->slow_descriptor_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - descriptor_start);
     }
     if (tensor_set_debug_enabled() || sample_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[tensor-set][debug] %s: descriptor_from_sample failed err=%s\n",
+      std::fprintf(stderr, "[tensor-set][debug] %s: descriptor_from_sample failed err=%s\n",
                    where ? where : "<unknown>",
                    tensor_buffer_err.empty() ? "<empty>" : tensor_buffer_err.c_str());
     }
     return std::nullopt;
   }
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->slow_descriptor_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - descriptor_start);
+    g_inputstream_decode_profile->slow_descriptor_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - descriptor_start);
   }
 
   const auto base_start = InputStreamDecodeProfileClock::now();
   Sample base = output_from_sample_stream_inner(sample, where, false, /*keep_holder=*/true);
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->slow_base_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - base_start);
+    g_inputstream_decode_profile->slow_base_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - base_start);
   }
   if (base.kind != SampleKind::TensorSet || base.tensors.empty()) {
     return std::nullopt;
@@ -1473,10 +1454,11 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
     const std::size_t buffer_size =
         debug_buffer ? static_cast<std::size_t>(gst_buffer_get_size(debug_buffer)) : 0U;
     std::fprintf(stderr,
-                 "[tensor-set][debug] where=%s tensors=%u buffer=%p memories=%u buffer_size=%zu storage=%p storage_size=%zu segments=%zu\n",
-                 where ? where : "<unknown>", static_cast<unsigned>(tensor_buffer_view.tensors.size()),
-                 static_cast<void*>(debug_buffer),
-                 static_cast<unsigned>(memory_count), buffer_size,
+                 "[tensor-set][debug] where=%s tensors=%u buffer=%p memories=%u buffer_size=%zu "
+                 "storage=%p storage_size=%zu segments=%zu\n",
+                 where ? where : "<unknown>",
+                 static_cast<unsigned>(tensor_buffer_view.tensors.size()),
+                 static_cast<void*>(debug_buffer), static_cast<unsigned>(memory_count), buffer_size,
                  static_cast<const void*>(base_tensor.storage.get()),
                  base_tensor.storage ? base_tensor.storage->size_bytes : 0U,
                  base_tensor.storage ? base_tensor.storage->sima_segments.size() : 0U);
@@ -1530,23 +1512,22 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
       const bool has_quant = descriptor.quant.has_value();
       const double first_scale =
           (has_quant && !descriptor.quant->scales.empty()) ? descriptor.quant->scales.front() : 0.0;
-      const long long first_zp =
-          (has_quant && !descriptor.quant->zero_points.empty())
-              ? static_cast<long long>(descriptor.quant->zero_points.front())
-              : 0LL;
+      const long long first_zp = (has_quant && !descriptor.quant->zero_points.empty())
+                                     ? static_cast<long long>(descriptor.quant->zero_points.front())
+                                     : 0LL;
       std::fprintf(
           stderr,
           "[tensor-set][debug]   desc logical=%d physical=%d backend=%d route_slot=%d memory=%d "
-          "byte_offset=%zu size=%zu name=%s backend_name=%s segment=%s has_quant=%d scale=%.9f zp=%lld\n",
+          "byte_offset=%zu size=%zu name=%s backend_name=%s segment=%s has_quant=%d scale=%.9f "
+          "zp=%lld\n",
           descriptor.logical_index, descriptor.physical_index, descriptor.backend_output_index,
           descriptor.route_slot, descriptor.memory_index,
           static_cast<size_t>(descriptor.byte_offset), descriptor.size_bytes,
           descriptor.logical_name.c_str(), descriptor.backend_name.c_str(),
           descriptor.segment_name.c_str(), has_quant ? 1 : 0, first_scale, first_zp);
     }
-    Tensor tensor =
-        apply_tensor_set_descriptor(base_tensor, descriptor, tensor_buffer_view.stage_key,
-                                    copy_output);
+    Tensor tensor = apply_tensor_set_descriptor(base_tensor, descriptor,
+                                                tensor_buffer_view.stage_key, copy_output);
     if (tensor_set_debug_enabled()) {
       std::fprintf(stderr,
                    "[tensor-set][debug]     tensor route logical=%d memory=%d slot=%d name=%s "
@@ -1554,8 +1535,7 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
                    tensor.route.logical_index, tensor.route.memory_index, tensor.route.route_slot,
                    tensor.route.name.c_str(), tensor.route.segment_name.c_str());
       for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
-        std::fprintf(stderr, "%s%lld", i == 0 ? "" : "x",
-                     static_cast<long long>(tensor.shape[i]));
+        std::fprintf(stderr, "%s%lld", i == 0 ? "" : "x", static_cast<long long>(tensor.shape[i]));
       }
       std::fprintf(stderr, "\n");
       try {
@@ -1584,8 +1564,8 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
     }
   }
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->slow_tensor_loop_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - tensor_loop_start);
+    g_inputstream_decode_profile->slow_tensor_loop_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - tensor_loop_start);
   }
   if (out.segment_name.empty() && !out.tensors.empty()) {
     out.segment_name = out.tensors.front().route.segment_name;
@@ -1594,17 +1574,16 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
     out.stream_label = out.tensors.front().route.name;
   }
 
-  pipeline_internal::record_tensor_packed_view_reuse(out.tensors.size(), unique_memory_indices.size(),
-                                                     copy_output);
+  pipeline_internal::record_tensor_packed_view_reuse(out.tensors.size(),
+                                                     unique_memory_indices.size(), copy_output);
   if (sample_debug_enabled()) {
-      std::fprintf(stderr, "[SAMPLE] %s: tensor-set meta tensors=%zu\n", where,
-                   tensor_buffer_view.tensors.size());
+    std::fprintf(stderr, "[SAMPLE] %s: tensor-set meta tensors=%zu\n", where,
+                 tensor_buffer_view.tensors.size());
   }
   return out;
 }
 
-std::uint64_t tensor_set_decode_hash_bytes(std::uint64_t h, const void* data,
-                                           std::size_t size) {
+std::uint64_t tensor_set_decode_hash_bytes(std::uint64_t h, const void* data, std::size_t size) {
   constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
   const auto* bytes = static_cast<const std::uint8_t*>(data);
   for (std::size_t i = 0; i < size; ++i) {
@@ -1728,8 +1707,8 @@ bool read_tensor_set_output_decode_signature(GstSample* sample, bool copy_output
   return true;
 }
 
-bool tensor_set_output_decode_fast_key_matches(
-    GstSample* sample, bool copy_output, const TensorSetOutputDecodeSignature& cached) {
+bool tensor_set_output_decode_fast_key_matches(GstSample* sample, bool copy_output,
+                                               const TensorSetOutputDecodeSignature& cached) {
   if (!inputstream_fast_static_decode_enabled()) {
     return false;
   }
@@ -1753,8 +1732,7 @@ bool tensor_set_output_decode_fast_key_matches(
   gst_structure_get_uint(s, SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, &descriptor_size);
   if (version != SIMA_TENSOR_SET_META_VERSION || tensor_count != cached.tensor_count ||
       descriptor_size != cached.descriptor_size ||
-      gst_buffer_n_memory(buffer) != cached.memory_count ||
-      copy_output != cached.copy_output) {
+      gst_buffer_n_memory(buffer) != cached.memory_count || copy_output != cached.copy_output) {
     return false;
   }
   const char* stage_key = gst_structure_get_string(s, SIMA_TENSOR_SET_META_FIELD_STAGE_KEY);
@@ -1784,8 +1762,9 @@ void strip_tensor_storage_for_decode_template(Tensor* tensor) {
   }
 }
 
-std::optional<Sample> instantiate_tensor_set_from_cached_decode(
-    GstSample* sample, const char* where, const CachedTensorSetOutputDecode& cache) {
+std::optional<Sample>
+instantiate_tensor_set_from_cached_decode(GstSample* sample, const char* where,
+                                          const CachedTensorSetOutputDecode& cache) {
   if (!sample || !cache.valid || cache.tensor_templates.empty()) {
     return std::nullopt;
   }
@@ -1793,11 +1772,11 @@ std::optional<Sample> instantiate_tensor_set_from_cached_decode(
   std::shared_ptr<simaai::neat::Storage> base_storage;
   try {
     const auto make_storage_start = InputStreamDecodeProfileClock::now();
-    base_storage = pipeline_internal::make_gst_sample_storage_with_segments(
-        sample, cache.runtime_segments);
+    base_storage =
+        pipeline_internal::make_gst_sample_storage_with_segments(sample, cache.runtime_segments);
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->fast_make_storage_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - make_storage_start);
+      g_inputstream_decode_profile->fast_make_storage_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - make_storage_start);
     }
   } catch (const std::exception& e) {
     if (tensor_set_debug_enabled() || sample_debug_enabled()) {
@@ -1814,8 +1793,7 @@ std::optional<Sample> instantiate_tensor_set_from_cached_decode(
   Sample out = cache.sample_template;
   if (g_inputstream_decode_profile) {
     g_inputstream_decode_profile->fast_sample_copy_template_ms +=
-        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() -
-                                      copy_template_start);
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - copy_template_start);
   }
   clear_dynamic_sample_fields_for_decode_template(&out);
   const auto sample_meta_start = InputStreamDecodeProfileClock::now();
@@ -1825,14 +1803,14 @@ std::optional<Sample> instantiate_tensor_set_from_cached_decode(
     fill_output_meta_from_sample(sample, &out);
   }
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->fast_sample_meta_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - sample_meta_start);
+    g_inputstream_decode_profile->fast_sample_meta_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - sample_meta_start);
   }
   const auto tensor_clear_start = InputStreamDecodeProfileClock::now();
   out.tensors = cache.tensor_templates;
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->fast_tensor_clear_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - tensor_clear_start);
+    g_inputstream_decode_profile->fast_tensor_clear_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - tensor_clear_start);
   }
   int first_memory_index = -1;
   std::size_t unique_memory_count = 0U;
@@ -1879,8 +1857,8 @@ std::optional<Sample> instantiate_tensor_set_from_cached_decode(
     }
   }
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->fast_tensor_loop_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - tensor_loop_start);
+    g_inputstream_decode_profile->fast_tensor_loop_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - tensor_loop_start);
   }
 
   if (out.segment_name.empty() && !out.tensors.empty()) {
@@ -1915,12 +1893,12 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
     const auto cache_lock_start = InputStreamDecodeProfileClock::now();
     std::lock_guard<std::mutex> lock(st->output_decode_mu);
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->tensor_cache_lock_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - cache_lock_start);
+      g_inputstream_decode_profile->tensor_cache_lock_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - cache_lock_start);
     }
     if (st->tensor_set_output_decode_cache.valid &&
-        tensor_set_output_decode_fast_key_matches(
-            sample, copy_output, st->tensor_set_output_decode_cache.signature)) {
+        tensor_set_output_decode_fast_key_matches(sample, copy_output,
+                                                  st->tensor_set_output_decode_cache.signature)) {
       const auto instantiate_start = InputStreamDecodeProfileClock::now();
       if (auto fast = instantiate_tensor_set_from_cached_decode(
               sample, where, st->tensor_set_output_decode_cache)) {
@@ -1933,8 +1911,7 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
       }
       if (g_inputstream_decode_profile) {
         g_inputstream_decode_profile->tensor_cache_instantiate_ms +=
-            inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() -
-                                          instantiate_start);
+            inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - instantiate_start);
       }
       st->tensor_set_output_decode_cache.valid = false;
     }
@@ -1944,28 +1921,28 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
   const auto sig_start = InputStreamDecodeProfileClock::now();
   if (!read_tensor_set_output_decode_signature(sample, copy_output, &sig)) {
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->tensor_sig_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - sig_start);
+      g_inputstream_decode_profile->tensor_sig_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - sig_start);
     }
     const auto slow_start = InputStreamDecodeProfileClock::now();
     auto slow = tensor_set_from_meta_slow(sample, where, copy_output);
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->tensor_slow_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - slow_start);
+      g_inputstream_decode_profile->tensor_slow_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
     }
     return slow;
   }
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->tensor_sig_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - sig_start);
+    g_inputstream_decode_profile->tensor_sig_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - sig_start);
   }
 
   {
     const auto cache_lock_start = InputStreamDecodeProfileClock::now();
     std::lock_guard<std::mutex> lock(st->output_decode_mu);
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->tensor_cache_lock_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - cache_lock_start);
+      g_inputstream_decode_profile->tensor_cache_lock_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - cache_lock_start);
     }
     if (st->tensor_set_output_decode_cache.valid &&
         st->tensor_set_output_decode_cache.signature == sig) {
@@ -1981,8 +1958,7 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
       }
       if (g_inputstream_decode_profile) {
         g_inputstream_decode_profile->tensor_cache_instantiate_ms +=
-            inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() -
-                                          instantiate_start);
+            inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - instantiate_start);
       }
       st->tensor_set_output_decode_cache.valid = false;
     }
@@ -1991,8 +1967,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
   const auto slow_start = InputStreamDecodeProfileClock::now();
   auto slow = tensor_set_from_meta_slow(sample, where, copy_output);
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->tensor_slow_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - slow_start);
+    g_inputstream_decode_profile->tensor_slow_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - slow_start);
   }
   if (!slow || !sample_has_tensor_list(*slow)) {
     return slow;
@@ -2016,8 +1992,8 @@ static std::optional<Sample> tensor_set_from_meta(GstSample* sample, const char*
     std::lock_guard<std::mutex> lock(st->output_decode_mu);
     st->tensor_set_output_decode_cache = std::move(cache);
     if (g_inputstream_decode_profile) {
-      g_inputstream_decode_profile->tensor_cache_store_ms += inputstream_decode_profile_ms(
-          InputStreamDecodeProfileClock::now() - cache_store_start);
+      g_inputstream_decode_profile->tensor_cache_store_ms +=
+          inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - cache_store_start);
     }
   }
   return slow;
@@ -2027,8 +2003,8 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
                                             const char* where) {
   const bool decode_profile_enabled = inputstream_decode_profile_enabled();
   InputStreamDecodeProfileSample decode_profile{};
-  InputStreamDecodeProfileScope decode_profile_scope(
-      decode_profile_enabled ? &decode_profile : nullptr);
+  InputStreamDecodeProfileScope decode_profile_scope(decode_profile_enabled ? &decode_profile
+                                                                            : nullptr);
   const auto decode_start = InputStreamDecodeProfileClock::now();
 
   const auto restore_buffer_meta_start = InputStreamDecodeProfileClock::now();
@@ -2039,11 +2015,11 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   }
 
   const auto envelope_start = InputStreamDecodeProfileClock::now();
-  Sample out = sample_from_gst_envelope(sample, where, st.opt.copy_output,
-                                        &st.opt.output_override, &st);
+  Sample out =
+      sample_from_gst_envelope(sample, where, st.opt.copy_output, &st.opt.output_override, &st);
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->envelope_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - envelope_start);
+    g_inputstream_decode_profile->envelope_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);
   }
 
   const auto restore_sample_meta_start = InputStreamDecodeProfileClock::now();
@@ -2056,10 +2032,10 @@ Sample decode_sample_from_inputstream_state(InputStream::State& st, GstSample* s
   const auto apply_port_start = InputStreamDecodeProfileClock::now();
   apply_default_port_name(out, st.src_opt);
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->apply_port_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - apply_port_start);
-    g_inputstream_decode_profile->total_decode_ms = inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - decode_start);
+    g_inputstream_decode_profile->apply_port_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - apply_port_start);
+    g_inputstream_decode_profile->total_decode_ms =
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - decode_start);
   }
 
   if (decode_profile_enabled) {
@@ -2101,8 +2077,8 @@ Sample InputStream::pull(int timeout_ms) {
   if (timings || decode_profile_enabled)
     t_decode_start = std::chrono::steady_clock::now();
   InputStreamDecodeProfileSample decode_profile{};
-  InputStreamDecodeProfileScope decode_profile_scope(
-      decode_profile_enabled ? &decode_profile : nullptr);
+  InputStreamDecodeProfileScope decode_profile_scope(decode_profile_enabled ? &decode_profile
+                                                                            : nullptr);
   const auto restore_buffer_meta_start = InputStreamDecodeProfileClock::now();
   maybe_restore_cached_preprocess_meta(*state_, sample);
   if (g_inputstream_decode_profile) {
@@ -2113,8 +2089,8 @@ Sample InputStream::pull(int timeout_ms) {
   Sample out = sample_from_gst_envelope(sample, "InputStream::pull", state_->opt.copy_output,
                                         &state_->opt.output_override, state_.get());
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->envelope_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - envelope_start);
+    g_inputstream_decode_profile->envelope_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - envelope_start);
   }
   const auto restore_sample_meta_start = InputStreamDecodeProfileClock::now();
   maybe_restore_cached_preprocess_meta_on_sample(*state_, &out);
@@ -2125,8 +2101,8 @@ Sample InputStream::pull(int timeout_ms) {
   const auto apply_port_start = InputStreamDecodeProfileClock::now();
   apply_default_port_name(out, state_->src_opt);
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->apply_port_ms += inputstream_decode_profile_ms(
-        InputStreamDecodeProfileClock::now() - apply_port_start);
+    g_inputstream_decode_profile->apply_port_ms +=
+        inputstream_decode_profile_ms(InputStreamDecodeProfileClock::now() - apply_port_start);
   }
   if (pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false)) {
     auto log_tensor_storage = [](const simaai::neat::Sample& s) {
@@ -2139,11 +2115,12 @@ Sample InputStream::pull(int timeout_ms) {
         }
         const auto& first = s.tensors.front();
         const bool has_holder = first.storage && static_cast<bool>(first.storage->holder);
-        std::fprintf(stderr,
-                     "[INPUTSTREAM] out tensors=%zu gstsample_tensors=%zu first_storage_kind=%d holder=%s\n",
-                     s.tensors.size(), gst_tensors,
-                     first.storage ? static_cast<int>(first.storage->kind) : -1,
-                     has_holder ? "true" : "false");
+        std::fprintf(
+            stderr,
+            "[INPUTSTREAM] out tensors=%zu gstsample_tensors=%zu first_storage_kind=%d holder=%s\n",
+            s.tensors.size(), gst_tensors,
+            first.storage ? static_cast<int>(first.storage->kind) : -1,
+            has_holder ? "true" : "false");
         return;
       }
       if (!s.tensor || !s.tensor->storage)
@@ -2173,8 +2150,8 @@ Sample InputStream::pull(int timeout_ms) {
   if (timings || decode_profile_enabled)
     t_decode_end = std::chrono::steady_clock::now();
   if (g_inputstream_decode_profile) {
-    g_inputstream_decode_profile->total_decode_ms = inputstream_decode_profile_ms(
-        t_decode_end - t_decode_start);
+    g_inputstream_decode_profile->total_decode_ms =
+        inputstream_decode_profile_ms(t_decode_end - t_decode_start);
   }
   const bool pool_dbg = pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false);
   GstBuffer* buf = gst_sample_get_buffer(sample);

@@ -26,8 +26,8 @@ namespace simaai::neat::policy {
  * @ingroup builder
  */
 struct DecoderPolicy {
-  int max_width = 3840;          ///< Maximum accepted frame width in pixels.
-  int max_height = 2160;         ///< Maximum accepted frame height in pixels.
+  int max_width = 3840;           ///< Maximum accepted frame width in pixels.
+  int max_height = 2160;          ///< Maximum accepted frame height in pixels.
   bool allow_dynamic_caps = true; ///< If false, decoder caps must be statically known.
 
   /**

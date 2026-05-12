@@ -31,11 +31,11 @@ struct PCIeSrcOptions {
 
   /// Optional caps enforcement — when format, width, and height are all
   /// set, a capsfilter is appended to lock the negotiated format.
-  std::string format;     ///< Pixel format (e.g. `"NV12"`); empty = no caps lock.
-  int width = -1;         ///< Frame width in pixels; `-1` = no caps lock.
-  int height = -1;        ///< Frame height in pixels; `-1` = no caps lock.
-  int fps_n = 0;          ///< Framerate numerator (caps lock); `0` = unset.
-  int fps_d = 1;          ///< Framerate denominator (caps lock).
+  std::string format; ///< Pixel format (e.g. `"NV12"`); empty = no caps lock.
+  int width = -1;     ///< Frame width in pixels; `-1` = no caps lock.
+  int height = -1;    ///< Frame height in pixels; `-1` = no caps lock.
+  int fps_n = 0;      ///< Framerate numerator (caps lock); `0` = unset.
+  int fps_d = 1;      ///< Framerate denominator (caps lock).
 };
 
 /**

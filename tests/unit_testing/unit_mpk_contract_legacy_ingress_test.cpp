@@ -8,8 +8,7 @@
 namespace {
 
 std::filesystem::path make_temp_pack_root(const std::string& name) {
-  const auto root =
-      std::filesystem::temp_directory_path() / ("sima_mpk_legacy_ingress_" + name);
+  const auto root = std::filesystem::temp_directory_path() / ("sima_mpk_legacy_ingress_" + name);
   std::error_code ec;
   std::filesystem::remove_all(root, ec);
   std::filesystem::create_directories(root, ec);

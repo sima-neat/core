@@ -57,8 +57,7 @@ struct MlaElfIoTopology {
 // Implementation reads only the ELF header, the section header table, and
 // the .shstrtab — it never loads the bulk code/data sections. For a typical
 // ~23 MB SiMa MLA .elf the on-disk read footprint is ~10 KB.
-bool read_mla_elf_io_topology(const std::filesystem::path& elf_path,
-                              MlaElfIoTopology* out);
+bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTopology* out);
 
 // True iff the .elf's IFM layout demands per-physical-input dispatch (i.e.
 // there are >=2 placeholder slots and no monolithic data.ifm.b0 carrier).

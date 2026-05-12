@@ -1,7 +1,8 @@
 /**
  * @file
  * @ingroup tensors
- * @brief `TensorConstraint` (alias `TensorSpec`) — declarative shape/dtype/device contract for tensors.
+ * @brief `TensorConstraint` (alias `TensorSpec`) — declarative shape/dtype/device contract for
+ * tensors.
  *
  * `TensorConstraint` (typedef'd as `TensorSpec` from `Model.h`) is the declarative description
  * of *what kind of tensor a function expects or produces*. Used by `Model::input_spec()` /
@@ -23,7 +24,8 @@
 namespace simaai::neat {
 
 /**
- * @brief Declarative tensor contract — describes the shape/dtype/device/format a tensor must satisfy.
+ * @brief Declarative tensor contract — describes the shape/dtype/device/format a tensor must
+ * satisfy.
  *
  * Used by `Model::input_spec()`/`output_spec()` to advertise what the model expects/produces,
  * and by validation code to verify a tensor meets the contract via `matches()`. Empty fields
@@ -40,17 +42,19 @@ namespace simaai::neat {
  * @ingroup tensors
  */
 struct TensorConstraint {
-  std::vector<simaai::neat::TensorDType> dtypes;        ///< Acceptable dtypes (empty = any).
-  int rank = -1;                                         ///< Required rank (-1 = any).
-  std::vector<int64_t> shape;                            ///< Required shape; `-1` in any position means dynamic.
-  std::optional<Device> device;                          ///< Required device (empty = any).
-  std::vector<Device> allowed_devices;                   ///< Acceptable devices (empty = any).
-  std::optional<Device> preferred_device;                ///< Preferred device for placement (informational).
+  std::vector<simaai::neat::TensorDType> dtypes; ///< Acceptable dtypes (empty = any).
+  int rank = -1;                                 ///< Required rank (-1 = any).
+  std::vector<int64_t> shape;             ///< Required shape; `-1` in any position means dynamic.
+  std::optional<Device> device;           ///< Required device (empty = any).
+  std::vector<Device> allowed_devices;    ///< Acceptable devices (empty = any).
+  std::optional<Device> preferred_device; ///< Preferred device for placement (informational).
 
-  std::optional<ImageSpec::PixelFormat> image_format;   ///< Required image pixel format (only meaningful for image tensors).
-  std::vector<Segment> required_segments;                ///< Exact required memory-segment layout (advanced).
-  std::vector<std::string> required_segment_names;       ///< Required memory-segment names (must all be present).
-  bool allow_composite = true;                           ///< If false, reject composite (multi-plane) tensors like NV12.
+  std::optional<ImageSpec::PixelFormat>
+      image_format; ///< Required image pixel format (only meaningful for image tensors).
+  std::vector<Segment> required_segments; ///< Exact required memory-segment layout (advanced).
+  std::vector<std::string>
+      required_segment_names;  ///< Required memory-segment names (must all be present).
+  bool allow_composite = true; ///< If false, reject composite (multi-plane) tensors like NV12.
 
   /**
    * @brief Returns `true` if `t` satisfies every non-empty constraint in this spec.

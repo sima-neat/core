@@ -49,8 +49,8 @@ std::string step_prefix(int current, int total) {
 }
 
 long long elapsed_ms_since(const std::chrono::steady_clock::time_point& start) {
-  return std::chrono::duration_cast<std::chrono::milliseconds>(
-             std::chrono::steady_clock::now() - start)
+  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
+                                                               start)
       .count();
 }
 
@@ -60,15 +60,13 @@ bool parse_bool_literal(const char* raw, bool* out) {
   }
   if (std::strcmp(raw, "1") == 0 || std::strcmp(raw, "true") == 0 ||
       std::strcmp(raw, "TRUE") == 0 || std::strcmp(raw, "yes") == 0 ||
-      std::strcmp(raw, "YES") == 0 || std::strcmp(raw, "on") == 0 ||
-      std::strcmp(raw, "ON") == 0) {
+      std::strcmp(raw, "YES") == 0 || std::strcmp(raw, "on") == 0 || std::strcmp(raw, "ON") == 0) {
     *out = true;
     return true;
   }
   if (std::strcmp(raw, "0") == 0 || std::strcmp(raw, "false") == 0 ||
       std::strcmp(raw, "FALSE") == 0 || std::strcmp(raw, "no") == 0 ||
-      std::strcmp(raw, "NO") == 0 || std::strcmp(raw, "off") == 0 ||
-      std::strcmp(raw, "OFF") == 0) {
+      std::strcmp(raw, "NO") == 0 || std::strcmp(raw, "off") == 0 || std::strcmp(raw, "OFF") == 0) {
     *out = false;
     return true;
   }
@@ -91,12 +89,10 @@ bool env_truthy(const char* key) {
 }
 
 bool token_sep(char c) {
-  return c == ',' || c == ';' || c == '|' ||
-         std::isspace(static_cast<unsigned char>(c));
+  return c == ',' || c == ';' || c == '|' || std::isspace(static_cast<unsigned char>(c));
 }
 
-bool token_equals_ci(const char* token, std::size_t token_len,
-                     std::string_view probe) {
+bool token_equals_ci(const char* token, std::size_t token_len, std::string_view probe) {
   if (!token || token_len != probe.size()) {
     return false;
   }
@@ -158,10 +154,9 @@ bool topic_enabled_from_env(const char* raw, std::string_view topic) {
 }
 
 VerboseOptions manual_verbose_options() {
-  const char* saved_topics =
-      (g_saved_verbose_topics_env && !g_saved_verbose_topics_env->empty())
-          ? g_saved_verbose_topics_env->c_str()
-          : nullptr;
+  const char* saved_topics = (g_saved_verbose_topics_env && !g_saved_verbose_topics_env->empty())
+                                 ? g_saved_verbose_topics_env->c_str()
+                                 : nullptr;
   int level = 0;
   if (g_saved_verbose_level_env && !g_saved_verbose_level_env->empty()) {
     level = parse_verbose_level(g_saved_verbose_level_env->c_str(), 0);
@@ -171,8 +166,7 @@ VerboseOptions manual_verbose_options() {
 
   VerboseOptions opt = quiet_verbose_options();
   opt.level = (level <= 0) ? VerbosityLevel::Quiet
-                           : (level == 1 ? VerbosityLevel::Production
-                                         : VerbosityLevel::Verbose);
+                           : (level == 1 ? VerbosityLevel::Production : VerbosityLevel::Verbose);
   opt.gstreamer = topic_enabled_from_env(saved_topics, "gstreamer");
   opt.planner = topic_enabled_from_env(saved_topics, "planner");
   opt.graph = topic_enabled_from_env(saved_topics, "graph");
@@ -215,8 +209,7 @@ bool topic_enabled_direct(const VerboseOptions& opt, VerboseTopic topic) {
   return false;
 }
 
-VerboseOptions merge_verbose_options(const VerboseOptions& lhs,
-                                     const VerboseOptions& rhs) {
+VerboseOptions merge_verbose_options(const VerboseOptions& lhs, const VerboseOptions& rhs) {
   VerboseOptions out = lhs;
   if (verbosity_level_value(rhs.level) > verbosity_level_value(out.level)) {
     out.level = rhs.level;
@@ -437,8 +430,7 @@ void ProgressReporter::step(const std::string& message) {
     return;
   }
   current_step_ = std::min(total_steps_, current_step_ + 1);
-  std::fprintf(stderr, "%s%s\n", step_prefix(current_step_, total_steps_).c_str(),
-               message.c_str());
+  std::fprintf(stderr, "%s%s\n", step_prefix(current_step_, total_steps_).c_str(), message.c_str());
 }
 
 void ProgressReporter::detail(const std::string& message) {

@@ -24,11 +24,11 @@ namespace simaai::neat {
  * @ingroup nodes_sima
  */
 struct SimaArgMaxOptions {
-  std::string config_path;        ///< Optional path to an external argmax config JSON.
-  int sima_allocator_type = 2;    ///< SiMa DMA allocator selector (board-specific; default `2`).
-  bool silent = true;             ///< If true, suppress element-level diagnostic logging.
-  bool emit_signals = false;      ///< Enable GStreamer signal emission for buffer hand-off.
-  bool transmit = false;          ///< If true, transmit results downstream via the element's transport.
+  std::string config_path;     ///< Optional path to an external argmax config JSON.
+  int sima_allocator_type = 2; ///< SiMa DMA allocator selector (board-specific; default `2`).
+  bool silent = true;          ///< If true, suppress element-level diagnostic logging.
+  bool emit_signals = false;   ///< Enable GStreamer signal emission for buffer hand-off.
+  bool transmit = false; ///< If true, transmit results downstream via the element's transport.
 };
 
 /**

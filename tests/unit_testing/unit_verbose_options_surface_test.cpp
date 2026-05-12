@@ -24,7 +24,8 @@ RUN_TEST("unit_verbose_options_surface_test", ([] {
            if (session_opt.verbose.planner || session_opt.verbose.graph ||
                session_opt.verbose.pipeline || session_opt.verbose.inputstream ||
                session_opt.verbose.tensor || session_opt.verbose.plugins) {
-             throw std::runtime_error("SessionOptions.verbose detail topics should default to false");
+             throw std::runtime_error(
+                 "SessionOptions.verbose detail topics should default to false");
            }
 
            session_opt.verbose.level = VerbosityLevel::Verbose;
@@ -45,9 +46,9 @@ RUN_TEST("unit_verbose_options_surface_test", ([] {
            }
 
            const auto quiet = simaai::neat::VerboseOptions::quiet();
-           if (quiet.level != VerbosityLevel::Quiet || quiet.progress ||
-               quiet.progress_force || quiet.gstreamer || quiet.planner || quiet.graph ||
-               quiet.pipeline || quiet.inputstream || quiet.tensor || quiet.plugins) {
+           if (quiet.level != VerbosityLevel::Quiet || quiet.progress || quiet.progress_force ||
+               quiet.gstreamer || quiet.planner || quiet.graph || quiet.pipeline ||
+               quiet.inputstream || quiet.tensor || quiet.plugins) {
              throw std::runtime_error("VerboseOptions::quiet preset mismatch");
            }
 
@@ -61,10 +62,9 @@ RUN_TEST("unit_verbose_options_surface_test", ([] {
 
            const auto debug_plugins = simaai::neat::VerboseOptions::debug_plugins();
            if (debug_plugins.level != VerbosityLevel::Production || !debug_plugins.progress ||
-               debug_plugins.progress_force || !debug_plugins.gstreamer ||
-               debug_plugins.planner || debug_plugins.graph || debug_plugins.pipeline ||
-               debug_plugins.inputstream || debug_plugins.tensor ||
-               !debug_plugins.plugins) {
+               debug_plugins.progress_force || !debug_plugins.gstreamer || debug_plugins.planner ||
+               debug_plugins.graph || debug_plugins.pipeline || debug_plugins.inputstream ||
+               debug_plugins.tensor || !debug_plugins.plugins) {
              throw std::runtime_error("VerboseOptions::debug_plugins preset mismatch");
            }
 

@@ -34,7 +34,8 @@ std::optional<BoxDecodeTypeOption> parse_box_decode_type_option_token(std::strin
 /// True when `type` is anything other than `BoxDecodeType::Unspecified`.
 bool is_box_decode_type_specified(BoxDecodeType type);
 
-/// True when the option implies all class-score channels live in the same domain (e.g., post-sigmoid).
+/// True when the option implies all class-score channels live in the same domain (e.g.,
+/// post-sigmoid).
 bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption option);
 
 /// Stable string token for a `BoxDecodeType` (e.g., `"yolov5"`); empty for `Unspecified`.

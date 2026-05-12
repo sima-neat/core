@@ -35,9 +35,9 @@ namespace simaai::neat {
  * @ingroup builder
  */
 enum class InputRole {
-  None,    ///< Internal node; doesn't accept external input directly.
-  Push,    ///< Node receives input via `Run::push()` (appsrc-style).
-  Source,  ///< Node generates its own input (e.g., file source, RTSP source, image freeze).
+  None,   ///< Internal node; doesn't accept external input directly.
+  Push,   ///< Node receives input via `Run::push()` (appsrc-style).
+  Source, ///< Node generates its own input (e.g., file source, RTSP source, image freeze).
 };
 
 /**
@@ -49,8 +49,8 @@ enum class InputRole {
  * @ingroup builder
  */
 enum class NodeCapsBehavior {
-  Static,   ///< Output caps are fixed; don't depend on upstream caps.
-  Dynamic,  ///< Output caps are derived from upstream caps at build/runtime.
+  Static,  ///< Output caps are fixed; don't depend on upstream caps.
+  Dynamic, ///< Output caps are derived from upstream caps at build/runtime.
 };
 
 /// Returns a stable string for a `NodeCapsBehavior` (for diagnostics and reports).
@@ -94,7 +94,8 @@ class Node {
 public:
   virtual ~Node() = default;
 
-  /// Deterministic type label used in reports and diagnostics (e.g., `"FileInput"`, `"H264Decode"`).
+  /// Deterministic type label used in reports and diagnostics (e.g., `"FileInput"`,
+  /// `"H264Decode"`).
   virtual std::string kind() const = 0;
 
   /// Optional human-readable label set by the user; default is empty.
@@ -140,7 +141,8 @@ public:
     return InputRole::None;
   }
 
-  /// Whether this Node is configured by a JSON file. Used by legacy wiring paths; new framework builds don't rewrite JSON.
+  /// Whether this Node is configured by a JSON file. Used by legacy wiring paths; new framework
+  /// builds don't rewrite JSON.
   virtual bool has_config_json() const {
     return false;
   }

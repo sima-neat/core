@@ -123,8 +123,9 @@ inline fs::path repo_root_for_modelzoo() {
   return fs::current_path();
 }
 
-inline fs::path resolve_real_mpk_json_from_modelzoo(const fs::path& root_in = {},
-                                                    const std::string& model_name = "yolo_v9c_seg") {
+inline fs::path
+resolve_real_mpk_json_from_modelzoo(const fs::path& root_in = {},
+                                    const std::string& model_name = "yolo_v9c_seg") {
   const fs::path root = root_in.empty() ? repo_root_for_modelzoo() : root_in;
 
   const std::string tar = sima_test::resolve_modelzoo_tar(model_name, root);
@@ -135,7 +136,8 @@ inline fs::path resolve_real_mpk_json_from_modelzoo(const fs::path& root_in = {}
 
   const std::string extract_root = make_fixture_temp_dir("real_mpk_seed");
   const fs::path extract_path(extract_root);
-  const std::string cmd = "tar -xzf " + mpk_shell_quote(tar) + " -C " + mpk_shell_quote(extract_root);
+  const std::string cmd =
+      "tar -xzf " + mpk_shell_quote(tar) + " -C " + mpk_shell_quote(extract_root);
   if (std::system(cmd.c_str()) != 0) {
     throw std::runtime_error("mpk_fixture_utils: failed to extract modelzoo tar: " + tar);
   }
@@ -163,11 +165,9 @@ inline std::pair<std::string, std::string> strict_mpk_json_entry_from_modelzoo()
   return cached;
 }
 
-inline MpkFixture
-make_strict_mpk_tar_fixture(const std::string& tag,
-                            const std::vector<std::pair<std::string, std::string>>& text_files,
-                            bool include_placeholder_elf = true,
-                            const std::string& model_name = "yolo_v9c_seg") {
+inline MpkFixture make_strict_mpk_tar_fixture(
+    const std::string& tag, const std::vector<std::pair<std::string, std::string>>& text_files,
+    bool include_placeholder_elf = true, const std::string& model_name = "yolo_v9c_seg") {
   std::vector<std::pair<std::string, std::string>> files = text_files;
   (void)model_name;
   const auto strict_mpk = strict_mpk_json_entry_from_modelzoo();

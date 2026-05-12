@@ -45,9 +45,9 @@ enum class ConversionKind {
  * @ingroup tensors
  */
 enum class ConversionPolicy {
-  Strict = 0,        ///< Refuse implicit conversions; require explicit user code.
-  AllowWithTrace,    ///< Allow but record each conversion to a trace collector.
-  AllowSilent,       ///< Allow without tracking.
+  Strict = 0,     ///< Refuse implicit conversions; require explicit user code.
+  AllowWithTrace, ///< Allow but record each conversion to a trace collector.
+  AllowSilent,    ///< Allow without tracking.
 };
 
 /// Cost estimate for a conversion: bytes moved + a coarse compute-class bucket (low/med/high).
@@ -66,10 +66,11 @@ struct ConversionCost {
 struct ConversionTrace {
   std::string stage;                                 ///< Which stage/Node performed the conversion.
   ConversionKind kind = ConversionKind::Reinterpret; ///< What kind of conversion occurred.
-  std::string src_desc;                              ///< Human description of the source tensor (e.g., `"FP32 HWC 1×640×640×3 CPU"`).
-  std::string dst_desc;                              ///< Human description of the destination tensor.
-  std::uint64_t bytes_copied = 0;                    ///< Bytes actually moved.
-  std::uint64_t elapsed_us = 0;                      ///< Wall-clock time spent on the conversion.
+  std::string
+      src_desc; ///< Human description of the source tensor (e.g., `"FP32 HWC 1×640×640×3 CPU"`).
+  std::string dst_desc;           ///< Human description of the destination tensor.
+  std::uint64_t bytes_copied = 0; ///< Bytes actually moved.
+  std::uint64_t elapsed_us = 0;   ///< Wall-clock time spent on the conversion.
   ConversionPolicy policy = ConversionPolicy::Strict; ///< Policy that authorized the conversion.
 };
 
@@ -87,7 +88,8 @@ struct ConversionTraceCollector {
   }
 };
 
-/// Estimate the cost (bytes + compute class) of a conversion of the given kind moving `bytes_copied` bytes.
+/// Estimate the cost (bytes + compute class) of a conversion of the given kind moving
+/// `bytes_copied` bytes.
 ConversionCost estimate_conversion_cost(ConversionKind kind, std::uint64_t bytes_copied);
 /// Returns `true` if the policy allows a conversion of this kind (without performing it).
 bool conversion_allowed(ConversionPolicy policy, ConversionKind kind);

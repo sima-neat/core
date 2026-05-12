@@ -80,10 +80,9 @@ static void require_node_field(const std::string& err, const std::string& node) 
   const std::string needle2 = "node=" + node;
   const std::string elem1 = "element='" + node + "'";
   const std::string elem2 = "element=" + node;
-  const bool exact = (err.find(needle1) != std::string::npos) ||
-                     (err.find(needle2) != std::string::npos) ||
-                     (err.find(elem1) != std::string::npos) ||
-                     (err.find(elem2) != std::string::npos);
+  const bool exact =
+      (err.find(needle1) != std::string::npos) || (err.find(needle2) != std::string::npos) ||
+      (err.find(elem1) != std::string::npos) || (err.find(elem2) != std::string::npos);
   if (exact) {
     return;
   }
@@ -92,8 +91,7 @@ static void require_node_field(const std::string& err, const std::string& node) 
   const std::string elem_suffix1 = "element='" + node + "_";
   const std::string elem_suffix2 = "element=" + node + "_";
   if (err.find(suffix1) == std::string::npos && err.find(suffix2) == std::string::npos &&
-      err.find(elem_suffix1) == std::string::npos &&
-      err.find(elem_suffix2) == std::string::npos) {
+      err.find(elem_suffix1) == std::string::npos && err.find(elem_suffix2) == std::string::npos) {
     throw std::runtime_error("missing node field for '" + node + "' in error: " + err);
   }
 }
@@ -325,10 +323,8 @@ static void test_boxdecode_failure() {
   maybe_dump_error("boxdecode", err);
   require_gst_error(err);
   require_node_field(err, "box_fail");
-  require_contains(err, "Missing",
-                   "expected manifest-context failure");
-  require_contains(err, "missing_field=",
-                   "expected missing manifest-context field");
+  require_contains(err, "Missing", "expected manifest-context failure");
+  require_contains(err, "missing_field=", "expected missing manifest-context field");
   require_contains(err, "no_fallback=true", "expected explicit no-fallback marker");
 }
 
@@ -338,15 +334,14 @@ static void test_boxdecode_missing_manifest_context_failure() {
   const std::string err = expect_raw_gst_pipeline_error("boxdecode_missing_context", pipeline);
 
   maybe_dump_error("boxdecode_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_contains(err, "missing_field=", "missing manifest detail");
   require_contains(err, "no_fallback=true", "expected explicit no-fallback marker");
 }
 
 static void test_boxdecode_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatboxdecode name=box_stage_fail stage-id=stage_box_missing ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatboxdecode name=box_stage_fail "
+                               "stage-id=stage_box_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-missing-stage",
     "stages": [
@@ -358,12 +353,11 @@ static void test_boxdecode_missing_manifest_stage_failure() {
       }
     ]
   })";
-  const std::string err =
-      expect_raw_gst_pipeline_error_with_manifest_context("boxdecode_missing_stage", pipeline, manifest);
+  const std::string err = expect_raw_gst_pipeline_error_with_manifest_context(
+      "boxdecode_missing_stage", pipeline, manifest);
 
   maybe_dump_error("boxdecode_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail");
   require_contains(err, "no_fallback=true", "expected explicit no-fallback marker");
 }
@@ -449,15 +443,14 @@ static void test_processcvu_missing_manifest_context_failure() {
   const std::string err = expect_raw_gst_pipeline_error("processcvu_missing_context", pipeline);
 
   maybe_dump_error("processcvu_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_contains(err, "missing_field=", "missing context field marker");
   require_resolution_fields(err);
 }
 
 static void test_processcvu_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=cvu_stage_fail stage-id=stage_cvu_missing ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=cvu_stage_fail "
+                               "stage-id=stage_cvu_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-cvu-missing-stage",
     "stages": [
@@ -473,8 +466,7 @@ static void test_processcvu_missing_manifest_stage_failure() {
       "processcvu_missing_stage", pipeline, manifest);
 
   maybe_dump_error("processcvu_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail field marker");
   require_resolution_fields(err);
 }
@@ -482,18 +474,17 @@ static void test_processcvu_missing_manifest_stage_failure() {
 static void test_processmla_missing_manifest_context_failure() {
   const std::string pipeline =
       "fakesrc num-buffers=1 ! neatprocessmla name=mla_ctx_fail stage-id=stage_mla_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("processmla_missing_context", pipeline,
-                                                         GST_STATE_PAUSED);
+  const std::string err =
+      expect_raw_gst_pipeline_error("processmla_missing_context", pipeline, GST_STATE_PAUSED);
 
   maybe_dump_error("processmla_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_resolution_fields(err);
 }
 
 static void test_processmla_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocessmla name=mla_stage_fail stage-id=stage_mla_missing ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocessmla name=mla_stage_fail "
+                               "stage-id=stage_mla_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-mla-missing-stage",
     "stages": [
@@ -509,27 +500,25 @@ static void test_processmla_missing_manifest_stage_failure() {
       "processmla_missing_stage", pipeline, manifest, GST_STATE_PAUSED);
 
   maybe_dump_error("processmla_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail field marker");
   require_resolution_fields(err);
 }
 
 static void test_detessdequant_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=detess_ctx_fail stage-id=stage_detessdequant_ctx ! fakesink";
-  const std::string err = expect_raw_gst_pipeline_error("detessdequant_missing_context", pipeline,
-                                                         GST_STATE_PAUSED);
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=detess_ctx_fail "
+                               "stage-id=stage_detessdequant_ctx ! fakesink";
+  const std::string err =
+      expect_raw_gst_pipeline_error("detessdequant_missing_context", pipeline, GST_STATE_PAUSED);
 
   maybe_dump_error("detessdequant_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_resolution_fields(err);
 }
 
 static void test_detessdequant_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=detess_stage_fail stage-id=stage_detessdequant_missing ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=detess_stage_fail "
+                               "stage-id=stage_detessdequant_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-detess-missing-stage",
     "stages": [
@@ -545,26 +534,24 @@ static void test_detessdequant_missing_manifest_stage_failure() {
       "detessdequant_missing_stage", pipeline, manifest, GST_STATE_PAUSED);
 
   maybe_dump_error("detessdequant_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail field marker");
   require_resolution_fields(err);
 }
 
 static void test_quantize_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=quant_ctx_fail stage-id=stage_quantize_ctx ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=quant_ctx_fail "
+                               "stage-id=stage_quantize_ctx ! fakesink";
   const std::string err = expect_raw_gst_pipeline_error("quantize_missing_context", pipeline);
 
   maybe_dump_error("quantize_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_resolution_fields(err);
 }
 
 static void test_quantize_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=quant_stage_fail stage-id=stage_quantize_missing ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=quant_stage_fail "
+                               "stage-id=stage_quantize_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-quant-missing-stage",
     "stages": [
@@ -580,27 +567,25 @@ static void test_quantize_missing_manifest_stage_failure() {
       "quantize_missing_stage", pipeline, manifest);
 
   maybe_dump_error("quantize_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail field marker");
   require_resolution_fields(err);
 }
 
 static void test_detessellate_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=detessellate_ctx_fail stage-id=stage_detessellate_ctx ! fakesink";
-  const std::string err =
-      expect_raw_gst_pipeline_error("detessellate_missing_context", pipeline);
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=detessellate_ctx_fail "
+                               "stage-id=stage_detessellate_ctx ! fakesink";
+  const std::string err = expect_raw_gst_pipeline_error("detessellate_missing_context", pipeline);
 
   maybe_dump_error("detessellate_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_resolution_fields(err);
 }
 
 static void test_detessellate_missing_manifest_stage_failure() {
   const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=detessellate_stage_fail stage-id=stage_detessellate_missing ! fakesink";
+      "fakesrc num-buffers=1 ! neatprocesscvu name=detessellate_stage_fail "
+      "stage-id=stage_detessellate_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-detessellate-missing-stage",
     "stages": [
@@ -616,27 +601,24 @@ static void test_detessellate_missing_manifest_stage_failure() {
       "detessellate_missing_stage", pipeline, manifest);
 
   maybe_dump_error("detessellate_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail field marker");
   require_resolution_fields(err);
 }
 
 static void test_dequantize_missing_manifest_context_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=dequantize_ctx_fail stage-id=stage_dequantize_ctx ! fakesink";
-  const std::string err =
-      expect_raw_gst_pipeline_error("dequantize_missing_context", pipeline);
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=dequantize_ctx_fail "
+                               "stage-id=stage_dequantize_ctx ! fakesink";
+  const std::string err = expect_raw_gst_pipeline_error("dequantize_missing_context", pipeline);
 
   maybe_dump_error("dequantize_missing_context", err);
-  require_contains(err, "Missing",
-                   "missing context error summary");
+  require_contains(err, "Missing", "missing context error summary");
   require_resolution_fields(err);
 }
 
 static void test_dequantize_missing_manifest_stage_failure() {
-  const std::string pipeline =
-      "fakesrc num-buffers=1 ! neatprocesscvu name=dequantize_stage_fail stage-id=stage_dequantize_missing ! fakesink";
+  const std::string pipeline = "fakesrc num-buffers=1 ! neatprocesscvu name=dequantize_stage_fail "
+                               "stage-id=stage_dequantize_missing ! fakesink";
   const std::string manifest = R"({
     "session_id": "sess-dequantize-missing-stage",
     "stages": [
@@ -652,8 +634,7 @@ static void test_dequantize_missing_manifest_stage_failure() {
       "dequantize_missing_stage", pipeline, manifest);
 
   maybe_dump_error("dequantize_missing_stage", err);
-  require_contains(err, "Missing",
-                   "missing stage error summary");
+  require_contains(err, "Missing", "missing stage error summary");
   require_contains(err, "missing_field=", "missing stage detail field marker");
   require_resolution_fields(err);
 }

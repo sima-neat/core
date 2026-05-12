@@ -49,9 +49,8 @@ inline bool env_bool(const char* key, bool fallback = false) {
     return fallback;
   }
   std::string text(value);
-  std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return text == "1" || text == "true" || text == "yes" || text == "on";
 }
 
@@ -78,7 +77,7 @@ inline double percentile(std::vector<double> values, double p) {
 }
 
 inline double rss_peak_kb() {
-  struct rusage usage{};
+  struct rusage usage {};
   if (::getrusage(RUSAGE_SELF, &usage) != 0) {
     return 0.0;
   }
@@ -124,8 +123,7 @@ inline void emit_metrics_json(const std::string& scenario_id, int iterations,
   } else {
     std::cout << "\n";
   }
-  std::cout
-            << "}\n";
+  std::cout << "}\n";
 }
 
 inline double elapsed_seconds(Clock::time_point start, Clock::time_point end) {

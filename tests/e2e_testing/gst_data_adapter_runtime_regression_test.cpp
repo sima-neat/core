@@ -38,7 +38,8 @@ RUN_TEST("gst_data_adapter_runtime_regression_test", ([] {
              }
              throw;
            }
-           require(tensor_run.push(TensorList{seed_tensor}), "GstDataAdapter tensor path push failed");
+           require(tensor_run.push(TensorList{seed_tensor}),
+                   "GstDataAdapter tensor path push failed");
            auto tensor_out = tensor_run.pull_tensors(1000);
            require(!tensor_out.empty(), "GstDataAdapter tensor path pull timed out");
            tensor_run.stop();

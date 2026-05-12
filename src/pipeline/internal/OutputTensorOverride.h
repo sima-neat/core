@@ -36,10 +36,10 @@ struct OutputTensorOverride {
 
 inline simaai::neat::Tensor
 apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
-                                   const OutputTensorOverrideEntry& entry,
-                                   bool materialize_output);
+                                   const OutputTensorOverrideEntry& entry, bool materialize_output);
 
-inline Sample build_output_tensor_override_bundle(const Sample& canonical, const Tensor& base_tensor,
+inline Sample build_output_tensor_override_bundle(const Sample& canonical,
+                                                  const Tensor& base_tensor,
                                                   const OutputTensorOverride& override,
                                                   bool materialize_output) {
   std::unordered_set<int> unique_memory_indices;
@@ -76,20 +76,18 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical, const
   bundle.tensors.reserve(override.outputs.size());
   for (size_t i = 0; i < override.outputs.size(); ++i) {
     const OutputTensorOverrideEntry& entry = override.outputs[i];
-    Tensor tensor =
-        apply_output_tensor_override_entry(base_tensor, entry, materialize_output);
+    Tensor tensor = apply_output_tensor_override_entry(base_tensor, entry, materialize_output);
     tensor.route.logical_index =
         (entry.logical_output_index >= 0) ? entry.logical_output_index : static_cast<int>(i);
     tensor.route.memory_index = entry.memory_index;
     tensor.route.physical_index =
         (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
     tensor.route.physical_byte_offset = entry.byte_offset;
-    tensor.route.segment_name = !entry.segment_name.empty()
-                                    ? entry.segment_name
-                                    : (!entry.name.empty() ? entry.name
-                                                           : ("output" + std::to_string(i)));
-    tensor.route.name =
-        !entry.name.empty() ? entry.name : ("output" + std::to_string(i));
+    tensor.route.segment_name =
+        !entry.segment_name.empty()
+            ? entry.segment_name
+            : (!entry.name.empty() ? entry.name : ("output" + std::to_string(i)));
+    tensor.route.name = !entry.name.empty() ? entry.name : ("output" + std::to_string(i));
     bundle.tensors.emplace_back(std::move(tensor));
   }
   return bundle;
@@ -166,8 +164,7 @@ inline void overlay_output_tensor_override_entry(simaai::neat::Tensor& out,
   }
 }
 
-inline Sample apply_output_tensor_override(const Sample& base,
-                                           const OutputTensorOverride& override,
+inline Sample apply_output_tensor_override(const Sample& base, const OutputTensorOverride& override,
                                            bool materialize_output) {
   if (override.outputs.empty())
     return base;
@@ -221,9 +218,10 @@ inline Sample apply_output_tensor_override(const Sample& base,
       tensor.route.physical_index =
           (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
       tensor.route.physical_byte_offset = entry.byte_offset;
-      tensor.route.segment_name = !entry.segment_name.empty()
-                                      ? entry.segment_name
-                                      : (!entry.name.empty() ? entry.name : tensor.route.segment_name);
+      tensor.route.segment_name =
+          !entry.segment_name.empty()
+              ? entry.segment_name
+              : (!entry.name.empty() ? entry.name : tensor.route.segment_name);
       if (!entry.name.empty()) {
         tensor.route.name = entry.name;
       }

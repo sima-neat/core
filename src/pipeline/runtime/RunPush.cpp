@@ -27,7 +27,8 @@ bool run_push_timing_enabled() {
 }
 
 int run_push_timing_limit() {
-  static const int limit = std::max(0, pipeline_internal::env_int("SIMA_RUN_PUSH_TIMING_LIMIT", 32));
+  static const int limit =
+      std::max(0, pipeline_internal::env_int("SIMA_RUN_PUSH_TIMING_LIMIT", 32));
   return limit;
 }
 
@@ -38,8 +39,8 @@ std::string decorate_with_error_code(const std::string& code, const std::string&
 void validate_image_inputs(const std::vector<cv::Mat>& inputs, const char* where) {
   const char* tag = where ? where : "Run";
   if (inputs.empty()) {
-    throw std::runtime_error(
-        decorate_with_error_code(error_codes::kRuntimePull, std::string(tag) + ": empty image list"));
+    throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull,
+                                                      std::string(tag) + ": empty image list"));
   }
   for (std::size_t i = 0; i < inputs.size(); ++i) {
     if (inputs[i].empty()) {
@@ -262,7 +263,8 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
         error_codes::kRuntimePull, "Run::push: pipeline has no Input (push not supported)"));
   }
   const bool timing = run_push_timing_enabled();
-  const auto t0 = timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+  const auto t0 =
+      timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   std::size_t q_before = 0;
   std::size_t q_after = 0;
   std::chrono::steady_clock::time_point t_admit{};
@@ -311,8 +313,7 @@ bool Run::push_message_impl(const Sample& msg, bool block) {
           std::chrono::duration_cast<std::chrono::nanoseconds>(t_admit - t0).count();
       const auto copy_ns =
           std::chrono::duration_cast<std::chrono::nanoseconds>(t_copy - t_admit).count();
-      const auto total_ns =
-          std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+      const auto total_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
       std::fprintf(stderr,
                    "[RUN_PUSH_TIMING] Run::push_message_impl idx=%d q_before=%zu q_after=%zu "
                    "admit_ns=%lld copy_ns=%lld total_ns=%lld block=%d\n",
@@ -386,7 +387,8 @@ bool Run::push(const TensorList& inputs) {
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: empty tensor list"));
   }
   if (state_ && state_->input_route_processor) {
-    return push_message_impl(state_->input_route_processor->process_tensors(inputs, "Run::push"), true);
+    return push_message_impl(state_->input_route_processor->process_tensors(inputs, "Run::push"),
+                             true);
   }
   if (state_ && state_->tensor_input_opt_for_cv.has_value()) {
     return push_message_impl(
@@ -403,8 +405,8 @@ bool Run::try_push(const TensorList& inputs) {
         decorate_with_error_code(error_codes::kRuntimePull, "Run::try_push: empty tensor list"));
   }
   if (state_ && state_->input_route_processor) {
-    return push_message_impl(state_->input_route_processor->process_tensors(inputs, "Run::try_push"),
-                             false);
+    return push_message_impl(
+        state_->input_route_processor->process_tensors(inputs, "Run::try_push"), false);
   }
   if (state_ && state_->tensor_input_opt_for_cv.has_value()) {
     return push_message_impl(
@@ -431,7 +433,8 @@ bool Run::push(const SampleList& msgs) {
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push: empty sample list"));
   }
   if (state_ && state_->input_route_processor) {
-    return push_message_impl(state_->input_route_processor->process_samples(msgs, "Run::push"), true);
+    return push_message_impl(state_->input_route_processor->process_samples(msgs, "Run::push"),
+                             true);
   }
   for (const auto& msg : msgs) {
     if (!push_sample_impl(msg, true)) {

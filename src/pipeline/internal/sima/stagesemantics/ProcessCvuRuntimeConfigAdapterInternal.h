@@ -26,8 +26,7 @@ struct CompiledProcessCvuRuntimeConfig {
   bool single_output_handoff = false;
   ProcessCvuOutputTransportKind primary_output_transport_kind =
       ProcessCvuOutputTransportKind::Unknown;
-  ProcessCvuOutputSemanticKind primary_output_semantic_kind =
-      ProcessCvuOutputSemanticKind::Unknown;
+  ProcessCvuOutputSemanticKind primary_output_semantic_kind = ProcessCvuOutputSemanticKind::Unknown;
 
   int scaled_width = 0;
   int scaled_height = 0;
@@ -85,11 +84,11 @@ ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_internal(
 ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_unchecked_internal(
     const CompiledProcessCvuRuntimeConfig& config);
 
-ProcessCvuCanonicalFacts build_processcvu_facts_from_runtime_config_internal(
-    const CompiledProcessCvuRuntimeConfig& config);
+ProcessCvuCanonicalFacts
+build_processcvu_facts_from_runtime_config_internal(const CompiledProcessCvuRuntimeConfig& config);
 
-ProcessCvuCanonicalCompileInputs build_processcvu_compile_inputs_from_runtime_config(
-    const CompiledProcessCvuRuntimeConfig& config);
+ProcessCvuCanonicalCompileInputs
+build_processcvu_compile_inputs_from_runtime_config(const CompiledProcessCvuRuntimeConfig& config);
 
 CompiledProcessCvuContract build_processcvu_compiled_contract_from_runtime_config(
     const CompiledProcessCvuRuntimeConfig& config);

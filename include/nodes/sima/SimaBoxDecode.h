@@ -70,11 +70,10 @@ public:
    * @param model_height         Input height the model was trained for.
    * @param decode_type_option   Decoder sub-variant selector (`Auto` to defer to the model).
    */
-  explicit SimaBoxDecode(BoxDecodeType decode_type,
-                         double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
-                         int top_k = 0, const std::string& element_name = "",
-                         int original_width = 0, int original_height = 0, int model_width = 0,
-                         int model_height = 0,
+  explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
+                         double nms_iou_threshold = 0.0, int top_k = 0,
+                         const std::string& element_name = "", int original_width = 0,
+                         int original_height = 0, int model_width = 0, int model_height = 0,
                          BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
   /**
    * @brief Construct from a bound `Model` — pulls geometry and routing flags from the model.
@@ -91,8 +90,7 @@ public:
    * @param original_height      Height of the unscaled source frame.
    * @param decode_type_option   Decoder sub-variant selector.
    */
-  explicit SimaBoxDecode(const simaai::neat::Model& model,
-                         BoxDecodeType decode_type,
+  explicit SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
                          double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
                          int top_k = 0, const std::string& element_name = "",
                          std::optional<bool> route_tess_needed = std::nullopt,
@@ -102,8 +100,7 @@ public:
 #ifdef SIMA_NEAT_INTERNAL
   /// Internal constructor: takes a pre-extracted static contract (used by the planner).
   explicit SimaBoxDecode(
-      const pipeline_internal::sima::BoxDecodeStaticContract& contract,
-      BoxDecodeType decode_type,
+      const pipeline_internal::sima::BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
       double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
       const std::string& element_name = {},
       const std::vector<std::string>& required_preprocess_meta_fields = {},
@@ -113,9 +110,8 @@ public:
       std::optional<bool> expect_resize = std::nullopt,
       std::optional<bool> expect_normalize = std::nullopt,
       std::optional<bool> expect_quantize = std::nullopt,
-      std::optional<bool> expect_tessellate = std::nullopt,
-      int original_width = 0, int original_height = 0, int model_width = 0,
-      int model_height = 0,
+      std::optional<bool> expect_tessellate = std::nullopt, int original_width = 0,
+      int original_height = 0, int model_width = 0, int model_height = 0,
       BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 #endif
 
@@ -138,8 +134,7 @@ public:
   /// Structural contract definition for this Node.
   NodeContractDefinition contract_definition() const override;
   /// Compile this Node's contract from the given input.
-  bool compile_node_contract(const ContractCompileInput& input,
-                             CompiledNodeContract* out,
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                              std::string* err) const override;
   /// Apply a compiled contract back into this Node.
   void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;
@@ -162,8 +157,8 @@ public:
   const std::optional<pipeline_internal::sima::BoxDecodeStaticContract>&
   model_static_contract_internal() const;
   const std::vector<std::string>& required_preprocess_meta_fields_internal() const;
-  const std::shared_ptr<const internal::ModelLineageBinding>& model_lineage_binding_internal()
-      const;
+  const std::shared_ptr<const internal::ModelLineageBinding>&
+  model_lineage_binding_internal() const;
   internal::RequestedPostRouteKind requested_post_route_internal() const;
 #endif
 
@@ -176,43 +171,33 @@ private:
 
 namespace simaai::neat::nodes {
 /// Convenience factory for `SimaBoxDecode` from raw geometry — see the class constructor docs.
-std::shared_ptr<simaai::neat::Node> SimaBoxDecode(BoxDecodeType decode_type,
-                                                  double detection_threshold = 0.0,
-                                                  double nms_iou_threshold = 0.0, int top_k = 0,
-                                                  const std::string& element_name = "",
-                                                  int original_width = 0, int original_height = 0,
-                                                  int model_width = 0, int model_height = 0,
-                                                  BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
+              double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = "",
+              int original_width = 0, int original_height = 0, int model_width = 0,
+              int model_height = 0,
+              BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 /// Convenience factory for `SimaBoxDecode` from a bound `Model` — see the class constructor docs.
-std::shared_ptr<simaai::neat::Node> SimaBoxDecode(const simaai::neat::Model& model,
-                                                  BoxDecodeType decode_type,
-                                                  double detection_threshold = 0.0,
-                                                  double nms_iou_threshold = 0.0, int top_k = 0,
-                                                  const std::string& element_name = "",
-                                                  std::optional<bool> route_tess_needed =
-                                                      std::nullopt,
-                                                  std::optional<bool> route_quant_needed =
-                                                      std::nullopt,
-                                                  int original_width = 0, int original_height = 0,
-                                                  BoxDecodeTypeOption decode_type_option =
-                                                      BoxDecodeTypeOption::Auto);
+std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
+    const simaai::neat::Model& model, BoxDecodeType decode_type, double detection_threshold = 0.0,
+    double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = "",
+    std::optional<bool> route_tess_needed = std::nullopt,
+    std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,
+    int original_height = 0, BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 #ifdef SIMA_NEAT_INTERNAL
 /// Internal-only factory used by the route planner with a pre-extracted static contract.
 std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
-    const pipeline_internal::sima::BoxDecodeStaticContract& contract,
-    BoxDecodeType decode_type,
-    double detection_threshold = 0.0,
-    double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = {},
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
+    double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
+    const std::string& element_name = {},
     const std::vector<std::string>& required_preprocess_meta_fields = {},
     std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags = std::nullopt,
-    std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics =
-        std::nullopt,
+    std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics = std::nullopt,
     std::optional<bool> expect_resize = std::nullopt,
     std::optional<bool> expect_normalize = std::nullopt,
     std::optional<bool> expect_quantize = std::nullopt,
-    std::optional<bool> expect_tessellate = std::nullopt,
-    int original_width = 0, int original_height = 0, int model_width = 0,
-    int model_height = 0,
+    std::optional<bool> expect_tessellate = std::nullopt, int original_width = 0,
+    int original_height = 0, int model_width = 0, int model_height = 0,
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 #endif
 } // namespace simaai::neat::nodes

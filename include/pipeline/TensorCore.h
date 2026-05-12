@@ -54,17 +54,17 @@ namespace simaai::neat {
  * @ingroup tensors
  */
 enum class DeviceType {
-  CPU = 0,    ///< Host A65 (general-purpose CPU).
-  SIMA_APU,   ///< Audio Processing Unit.
-  SIMA_CVU,   ///< Compute/Vector Unit (EV74).
-  SIMA_MLA,   ///< Machine Learning Accelerator.
-  UNKNOWN,    ///< Placement not specified.
+  CPU = 0,  ///< Host A65 (general-purpose CPU).
+  SIMA_APU, ///< Audio Processing Unit.
+  SIMA_CVU, ///< Compute/Vector Unit (EV74).
+  SIMA_MLA, ///< Machine Learning Accelerator.
+  UNKNOWN,  ///< Placement not specified.
 };
 
 /// Device descriptor: type + numeric ID (for multi-device boards).
 struct Device {
   DeviceType type = DeviceType::CPU; ///< Which processor this device refers to.
-  int id = 0;                        ///< Numeric ID disambiguating multiple devices of the same type.
+  int id = 0; ///< Numeric ID disambiguating multiple devices of the same type.
 };
 
 /**
@@ -78,10 +78,10 @@ struct Device {
  * @ingroup tensors
  */
 enum class StorageKind {
-  CpuOwned = 0,  ///< Framework allocated; freed when the storage refcount hits zero.
-  CpuExternal,   ///< Wraps a foreign pointer; lifetime tracked via `holder`.
-  GstSample,     ///< References a GStreamer pool sample; refcounted via GStreamer.
-  DeviceHandle,  ///< Lives in accelerator memory; CPU access requires an explicit transfer.
+  CpuOwned = 0, ///< Framework allocated; freed when the storage refcount hits zero.
+  CpuExternal,  ///< Wraps a foreign pointer; lifetime tracked via `holder`.
+  GstSample,    ///< References a GStreamer pool sample; refcounted via GStreamer.
+  DeviceHandle, ///< Lives in accelerator memory; CPU access requires an explicit transfer.
   Unknown,
 };
 
@@ -110,17 +110,19 @@ enum class TensorMemory {
  */
 enum class PlaneRole {
   Unknown = 0,
-  Y,   ///< Luminance plane.
-  U,   ///< Chrominance-U plane (I420).
-  V,   ///< Chrominance-V plane (I420).
-  UV,  ///< Interleaved chrominance plane (NV12).
+  Y,  ///< Luminance plane.
+  U,  ///< Chrominance-U plane (I420).
+  V,  ///< Chrominance-V plane (I420).
+  UV, ///< Interleaved chrominance plane (NV12).
 };
 
-/// Access mode for `TensorBuffer::map()`. Affects whether the framework treats the mapping as read or write.
+/// Access mode for `TensorBuffer::map()`. Affects whether the framework treats the mapping as read
+/// or write.
 enum class MapMode {
-  Read = 0,   ///< Read-only map; framework may skip cache invalidation if known clean.
-  Write,      ///< Write-only map; framework may skip read-back; flushes cache on unmap.
-  ReadWrite,  ///< Both directions; framework treats as full ownership transfer for the mapping's lifetime.
+  Read = 0,  ///< Read-only map; framework may skip cache invalidation if known clean.
+  Write,     ///< Write-only map; framework may skip read-back; flushes cache on unmap.
+  ReadWrite, ///< Both directions; framework treats as full ownership transfer for the mapping's
+             ///< lifetime.
 };
 
 /**
@@ -133,11 +135,11 @@ enum class MapMode {
 struct ImageSpec {
   /// Pixel format enumeration covering the framework's supported image layouts.
   enum class PixelFormat {
-    RGB = 0,    ///< Packed RGB, 3 channels, 8 bits per channel.
-    BGR,        ///< Packed BGR (OpenCV's native default), 3 channels, 8 bpp.
-    GRAY8,      ///< Single-channel 8-bit grayscale.
-    NV12,       ///< 4:2:0 chroma with interleaved UV plane (camera-native on most chips).
-    I420,       ///< 4:2:0 chroma with separate U and V planes.
+    RGB = 0, ///< Packed RGB, 3 channels, 8 bits per channel.
+    BGR,     ///< Packed BGR (OpenCV's native default), 3 channels, 8 bpp.
+    GRAY8,   ///< Single-channel 8-bit grayscale.
+    NV12,    ///< 4:2:0 chroma with interleaved UV plane (camera-native on most chips).
+    I420,    ///< 4:2:0 chroma with separate U and V planes.
     UNKNOWN,
   };
 
@@ -147,9 +149,10 @@ struct ImageSpec {
 
 /// Audio-tensor metadata: sample rate, channel count, interleaving.
 struct AudioSpec {
-  int sample_rate = 0;     ///< Hz.
-  int channels = 0;        ///< Channel count (1 = mono, 2 = stereo).
-  bool interleaved = true; ///< If `true`, channels are interleaved (LRLRLR…); if `false`, planar (LL…RR…).
+  int sample_rate = 0; ///< Hz.
+  int channels = 0;    ///< Channel count (1 = mono, 2 = stereo).
+  bool interleaved =
+      true; ///< If `true`, channels are interleaved (LRLRLR…); if `false`, planar (LL…RR…).
 };
 
 /// Token-tensor metadata for NLP-style tensors.
@@ -167,11 +170,11 @@ struct TokensSpec {
 struct EncodedSpec {
   /// Codec identifier for an encoded media bitstream.
   enum class Codec {
-    H264 = 0,   ///< Raw H.264 Annex-B bitstream.
-    H265,       ///< Raw H.265 / HEVC bitstream.
-    RTP_H264,   ///< RTP-packetized H.264.
-    RTP_H265,   ///< RTP-packetized H.265.
-    JPEG,       ///< JPEG-encoded image.
+    H264 = 0, ///< Raw H.264 Annex-B bitstream.
+    H265,     ///< Raw H.265 / HEVC bitstream.
+    RTP_H264, ///< RTP-packetized H.264.
+    RTP_H265, ///< RTP-packetized H.265.
+    JPEG,     ///< JPEG-encoded image.
     UNKNOWN,
   };
 
@@ -187,11 +190,11 @@ struct EncodedSpec {
  * @ingroup tensors
  */
 struct QuantSpec {
-  float scale = 1.0f;                 ///< Per-tensor scale (`x_real = (x_int - zero_point) * scale`).
-  int32_t zero_point = 0;             ///< Per-tensor zero point.
-  int axis = -1;                      ///< Channel axis for per-channel quantization (-1 = per-tensor).
-  std::vector<float> scales;          ///< Per-channel scales (used when `axis >= 0`).
-  std::vector<int32_t> zero_points;   ///< Per-channel zero points (used when `axis >= 0`).
+  float scale = 1.0f;        ///< Per-tensor scale (`x_real = (x_int - zero_point) * scale`).
+  int32_t zero_point = 0;    ///< Per-tensor zero point.
+  int axis = -1;             ///< Channel axis for per-channel quantization (-1 = per-tensor).
+  std::vector<float> scales; ///< Per-channel scales (used when `axis >= 0`).
+  std::vector<int32_t> zero_points; ///< Per-channel zero points (used when `axis >= 0`).
 };
 
 /**
@@ -205,7 +208,7 @@ struct QuantSpec {
  */
 struct TessSpec {
   std::vector<int64_t> slice_shape; ///< Per-axis tile dimensions.
-  std::string format;               ///< Tessellation format token (specific to the MLA hardware revision).
+  std::string format; ///< Tessellation format token (specific to the MLA hardware revision).
 
   /// Replace the slice shape (move-friendly).
   void set_slice_shape(std::vector<int64_t> shape) {
@@ -226,37 +229,37 @@ struct TessSpec {
  * @ingroup tensors
  */
 struct PreprocessRuntimeMeta {
-  int original_width = 0;   ///< Width of the source frame in pixels before preprocess.
-  int original_height = 0;  ///< Height of the source frame in pixels before preprocess.
-  int resized_width = 0;    ///< Width after the resize step (before any padding).
-  int resized_height = 0;   ///< Height after the resize step (before any padding).
-  int scaled_width = 0;     ///< Width after scaling (resize × additional scale factor).
-  int scaled_height = 0;    ///< Height after scaling (resize × additional scale factor).
-  int pad_left = 0;         ///< Letterbox padding added on the left edge, in pixels.
-  int pad_right = 0;        ///< Letterbox padding added on the right edge, in pixels.
-  int pad_top = 0;          ///< Letterbox padding added on the top edge, in pixels.
-  int pad_bottom = 0;       ///< Letterbox padding added on the bottom edge, in pixels.
+  int original_width = 0;  ///< Width of the source frame in pixels before preprocess.
+  int original_height = 0; ///< Height of the source frame in pixels before preprocess.
+  int resized_width = 0;   ///< Width after the resize step (before any padding).
+  int resized_height = 0;  ///< Height after the resize step (before any padding).
+  int scaled_width = 0;    ///< Width after scaling (resize × additional scale factor).
+  int scaled_height = 0;   ///< Height after scaling (resize × additional scale factor).
+  int pad_left = 0;        ///< Letterbox padding added on the left edge, in pixels.
+  int pad_right = 0;       ///< Letterbox padding added on the right edge, in pixels.
+  int pad_top = 0;         ///< Letterbox padding added on the top edge, in pixels.
+  int pad_bottom = 0;      ///< Letterbox padding added on the bottom edge, in pixels.
 
-  std::string resize_mode;  ///< Resize policy token (e.g., `"letterbox"`, `"stretch"`).
-  std::string color_in;     ///< Input color format token (e.g., `"bgr"`, `"nv12"`).
-  std::string color_out;    ///< Output color format token after color-convert.
+  std::string resize_mode; ///< Resize policy token (e.g., `"letterbox"`, `"stretch"`).
+  std::string color_in;    ///< Input color format token (e.g., `"bgr"`, `"nv12"`).
+  std::string color_out;   ///< Output color format token after color-convert.
   /// Axis permutation applied by preprocess layout_convert, if any.
   std::vector<int> axis_perm;
 
-  bool normalize = false;   ///< True if a normalize step (mean/scale) was applied.
-  bool quantize = false;    ///< True if an INT8/INT16 quantize step was applied.
-  bool tessellate = false;  ///< True if a tessellate step (tile-block layout) was applied.
+  bool normalize = false;  ///< True if a normalize step (mean/scale) was applied.
+  bool quantize = false;   ///< True if an INT8/INT16 quantize step was applied.
+  bool tessellate = false; ///< True if a tessellate step (tile-block layout) was applied.
 
-  double affine_m00 = 1.0;       ///< 2×3 affine matrix element (row 0, col 0): x scale.
-  double affine_m01 = 0.0;       ///< 2×3 affine matrix element (row 0, col 1): x shear.
-  double affine_m02 = 0.0;       ///< 2×3 affine matrix element (row 0, col 2): x translation.
-  double affine_m10 = 0.0;       ///< 2×3 affine matrix element (row 1, col 0): y shear.
-  double affine_m11 = 1.0;       ///< 2×3 affine matrix element (row 1, col 1): y scale.
-  double affine_m12 = 0.0;       ///< 2×3 affine matrix element (row 1, col 2): y translation.
-  double affine_scale_x = 1.0;   ///< Scalar X scale factor from original to model coordinates.
-  double affine_scale_y = 1.0;   ///< Scalar Y scale factor from original to model coordinates.
-  double affine_offset_x = 0.0;  ///< Scalar X offset (typically pad_left) in model coordinates.
-  double affine_offset_y = 0.0;  ///< Scalar Y offset (typically pad_top) in model coordinates.
+  double affine_m00 = 1.0;      ///< 2×3 affine matrix element (row 0, col 0): x scale.
+  double affine_m01 = 0.0;      ///< 2×3 affine matrix element (row 0, col 1): x shear.
+  double affine_m02 = 0.0;      ///< 2×3 affine matrix element (row 0, col 2): x translation.
+  double affine_m10 = 0.0;      ///< 2×3 affine matrix element (row 1, col 0): y shear.
+  double affine_m11 = 1.0;      ///< 2×3 affine matrix element (row 1, col 1): y scale.
+  double affine_m12 = 0.0;      ///< 2×3 affine matrix element (row 1, col 2): y translation.
+  double affine_scale_x = 1.0;  ///< Scalar X scale factor from original to model coordinates.
+  double affine_scale_y = 1.0;  ///< Scalar Y scale factor from original to model coordinates.
+  double affine_offset_x = 0.0; ///< Scalar X offset (typically pad_left) in model coordinates.
+  double affine_offset_y = 0.0; ///< Scalar Y offset (typically pad_top) in model coordinates.
 
   /// True iff `axis_perm` is non-empty (a layout permutation was recorded).
   bool has_axis_perm() const noexcept {
@@ -282,13 +285,14 @@ struct PreprocessRuntimeMeta {
  * @ingroup tensors
  */
 struct Semantic {
-  std::optional<ImageSpec> image;                   ///< Set for image tensors.
-  std::optional<AudioSpec> audio;                   ///< Set for audio tensors.
-  std::optional<TokensSpec> tokens;                 ///< Set for token-stream tensors (NLP).
-  std::optional<TessSpec> tess;                     ///< Set for tessellated tile-layout tensors.
-  std::optional<EncodedSpec> encoded;               ///< Set for encoded-stream tensors (H.264, etc.).
-  std::optional<QuantSpec> quant;                   ///< Set for quantized integer tensors.
-  std::optional<PreprocessRuntimeMeta> preprocess;  ///< Set when the tensor was produced by a preprocess stage.
+  std::optional<ImageSpec> image;     ///< Set for image tensors.
+  std::optional<AudioSpec> audio;     ///< Set for audio tensors.
+  std::optional<TokensSpec> tokens;   ///< Set for token-stream tensors (NLP).
+  std::optional<TessSpec> tess;       ///< Set for tessellated tile-layout tensors.
+  std::optional<EncodedSpec> encoded; ///< Set for encoded-stream tensors (H.264, etc.).
+  std::optional<QuantSpec> quant;     ///< Set for quantized integer tensors.
+  std::optional<PreprocessRuntimeMeta>
+      preprocess; ///< Set when the tensor was produced by a preprocess stage.
 };
 
 /**
@@ -307,10 +311,13 @@ struct Semantic {
  * @ingroup tensors
  */
 struct Mapping {
-  void* data = nullptr;             ///< Pointer to mapped memory (CPU-readable for the duration of the Mapping).
-  std::size_t size_bytes = 0;       ///< Size of the mapped region in bytes.
-  std::function<void()> unmap;      ///< Cleanup callback invoked on destructor (cache flush, refcount decrement).
-  std::shared_ptr<void> keepalive;  ///< Optional lifetime guard; ensures the underlying storage outlives the Mapping.
+  void* data =
+      nullptr; ///< Pointer to mapped memory (CPU-readable for the duration of the Mapping).
+  std::size_t size_bytes = 0; ///< Size of the mapped region in bytes.
+  std::function<void()>
+      unmap; ///< Cleanup callback invoked on destructor (cache flush, refcount decrement).
+  std::shared_ptr<void>
+      keepalive; ///< Optional lifetime guard; ensures the underlying storage outlives the Mapping.
 
   /// Construct an empty (unmapped) Mapping; assignable from a real mapping later.
   Mapping() = default;
@@ -356,8 +363,8 @@ struct CvMatView {
 
 /// One named memory segment within a multi-segment tensor buffer (e.g., separate Y / UV planes).
 struct Segment {
-  std::string name;             ///< Segment label (e.g., `"Y"`, `"UV"`, `"weights"`).
-  std::size_t size_bytes = 0;   ///< Size of this segment in bytes.
+  std::string name;           ///< Segment label (e.g., `"Y"`, `"UV"`, `"weights"`).
+  std::size_t size_bytes = 0; ///< Size of this segment in bytes.
 };
 
 /**
@@ -375,15 +382,21 @@ struct Segment {
  * @ingroup tensors
  */
 struct TensorBuffer {
-  StorageKind kind = StorageKind::Unknown; ///< How the storage was acquired (CPU-owned, external, GstSample, device).
-  Device device{};                          ///< Where the buffer is accessible.
-  std::size_t size_bytes = 0;               ///< Total backing-memory size in bytes.
-  std::shared_ptr<void> holder;             ///< Lifetime guard (shared_ptr that owns/refcounts the underlying memory).
-  void* data = nullptr;                     ///< Optional direct pointer (some storage kinds set this; others rely on `map_fn`).
-  std::function<Mapping(MapMode)> map_fn;   ///< Custom map function (set for non-trivial storage kinds).
-  std::uint64_t sima_mem_target_flags = 0;  ///< SIMA memory target flags (advanced; for accelerator-aware allocators).
-  std::uint64_t sima_mem_flags = 0;         ///< SIMA memory flags (cache, alignment, etc.).
-  std::vector<Segment> sima_segments;       ///< Named segments for multi-region buffers (composite formats, packed outputs).
+  StorageKind kind = StorageKind::Unknown; ///< How the storage was acquired (CPU-owned, external,
+                                           ///< GstSample, device).
+  Device device{};                         ///< Where the buffer is accessible.
+  std::size_t size_bytes = 0;              ///< Total backing-memory size in bytes.
+  std::shared_ptr<void>
+      holder; ///< Lifetime guard (shared_ptr that owns/refcounts the underlying memory).
+  void* data =
+      nullptr; ///< Optional direct pointer (some storage kinds set this; others rely on `map_fn`).
+  std::function<Mapping(MapMode)>
+      map_fn; ///< Custom map function (set for non-trivial storage kinds).
+  std::uint64_t sima_mem_target_flags =
+      0; ///< SIMA memory target flags (advanced; for accelerator-aware allocators).
+  std::uint64_t sima_mem_flags = 0;   ///< SIMA memory flags (cache, alignment, etc.).
+  std::vector<Segment> sima_segments; ///< Named segments for multi-region buffers (composite
+                                      ///< formats, packed outputs).
 
   /**
    * @brief Map the buffer for read/write access; returns a scoped `Mapping`.
@@ -432,44 +445,44 @@ std::shared_ptr<TensorBuffer> make_cpu_external_storage(void* data, std::size_t 
  * @ingroup tensors
  */
 struct Plane {
-  PlaneRole role = PlaneRole::Unknown;     ///< Role of this plane (Y / U / V / UV / Unknown).
-  std::vector<int64_t> shape;              ///< Per-dimension sizes of this plane's pixel grid.
-  std::vector<int64_t> strides_bytes;      ///< Per-dimension byte strides within this plane.
-  int64_t byte_offset = 0;                 ///< Offset of this plane's first byte from the parent storage start.
+  PlaneRole role = PlaneRole::Unknown; ///< Role of this plane (Y / U / V / UV / Unknown).
+  std::vector<int64_t> shape;          ///< Per-dimension sizes of this plane's pixel grid.
+  std::vector<int64_t> strides_bytes;  ///< Per-dimension byte strides within this plane.
+  int64_t byte_offset = 0; ///< Offset of this plane's first byte from the parent storage start.
 };
 
 /// Non-owning view into NV12 pixel data: Y plane + interleaved UV plane.
 struct Nv12View {
-  int width = 0;             ///< Image width in pixels.
-  int height = 0;            ///< Image height in pixels.
-  const uint8_t* y = nullptr;     ///< Pointer to the Y (luminance) plane's first byte.
-  int64_t y_stride = 0;           ///< Row stride of the Y plane in bytes.
-  const uint8_t* uv = nullptr;    ///< Pointer to the interleaved UV plane's first byte.
-  int64_t uv_stride = 0;          ///< Row stride of the UV plane in bytes.
+  int width = 0;               ///< Image width in pixels.
+  int height = 0;              ///< Image height in pixels.
+  const uint8_t* y = nullptr;  ///< Pointer to the Y (luminance) plane's first byte.
+  int64_t y_stride = 0;        ///< Row stride of the Y plane in bytes.
+  const uint8_t* uv = nullptr; ///< Pointer to the interleaved UV plane's first byte.
+  int64_t uv_stride = 0;       ///< Row stride of the UV plane in bytes.
 };
 
 /// Bundles an NV12 view with the `Mapping` that keeps its underlying buffer alive.
 struct Nv12Mapped {
-  Mapping mapping;  ///< Underlying buffer mapping; keeps `view` pointers valid.
-  Nv12View view;    ///< NV12 plane pointers and strides into `mapping.data`.
+  Mapping mapping; ///< Underlying buffer mapping; keeps `view` pointers valid.
+  Nv12View view;   ///< NV12 plane pointers and strides into `mapping.data`.
 };
 
 /// Non-owning view into I420 pixel data: separate Y, U, V planes.
 struct I420View {
-  int width = 0;             ///< Image width in pixels.
-  int height = 0;            ///< Image height in pixels.
-  const uint8_t* y = nullptr;     ///< Pointer to the Y (luminance) plane's first byte.
-  int64_t y_stride = 0;           ///< Row stride of the Y plane in bytes.
-  const uint8_t* u = nullptr;     ///< Pointer to the U (chrominance) plane's first byte.
-  int64_t u_stride = 0;           ///< Row stride of the U plane in bytes.
-  const uint8_t* v = nullptr;     ///< Pointer to the V (chrominance) plane's first byte.
-  int64_t v_stride = 0;           ///< Row stride of the V plane in bytes.
+  int width = 0;              ///< Image width in pixels.
+  int height = 0;             ///< Image height in pixels.
+  const uint8_t* y = nullptr; ///< Pointer to the Y (luminance) plane's first byte.
+  int64_t y_stride = 0;       ///< Row stride of the Y plane in bytes.
+  const uint8_t* u = nullptr; ///< Pointer to the U (chrominance) plane's first byte.
+  int64_t u_stride = 0;       ///< Row stride of the U plane in bytes.
+  const uint8_t* v = nullptr; ///< Pointer to the V (chrominance) plane's first byte.
+  int64_t v_stride = 0;       ///< Row stride of the V plane in bytes.
 };
 
 /// Bundles an I420 view with the `Mapping` that keeps its underlying buffer alive.
 struct I420Mapped {
-  Mapping mapping;  ///< Underlying buffer mapping; keeps `view` pointers valid.
-  I420View view;    ///< I420 plane pointers and strides into `mapping.data`.
+  Mapping mapping; ///< Underlying buffer mapping; keeps `view` pointers valid.
+  I420View view;   ///< I420 plane pointers and strides into `mapping.data`.
 };
 
 /**
@@ -483,16 +496,16 @@ struct I420Mapped {
  * @ingroup tensors
  */
 struct TensorRouteMeta {
-  std::string stage_key;        ///< Producing stage's identifier.
-  int logical_index = -1;       ///< Logical output index (user-facing).
-  int backend_output_index = -1;///< Backend output index (per-stage; may differ from logical).
-  int route_slot = -1;          ///< Internal route-graph slot ID.
-  int physical_index = -1;      ///< Physical memory index for packed outputs.
-  int memory_index = -1;        ///< Underlying memory pool index.
+  std::string stage_key;            ///< Producing stage's identifier.
+  int logical_index = -1;           ///< Logical output index (user-facing).
+  int backend_output_index = -1;    ///< Backend output index (per-stage; may differ from logical).
+  int route_slot = -1;              ///< Internal route-graph slot ID.
+  int physical_index = -1;          ///< Physical memory index for packed outputs.
+  int memory_index = -1;            ///< Underlying memory pool index.
   int64_t physical_byte_offset = 0; ///< Byte offset within the physical allocation.
-  std::string name;             ///< Logical (user-facing) name of this output tensor.
-  std::string backend_name;     ///< Backend (kernel-side) name of this output.
-  std::string segment_name;     ///< Memory segment name when packed outputs share an allocation.
+  std::string name;                 ///< Logical (user-facing) name of this output tensor.
+  std::string backend_name;         ///< Backend (kernel-side) name of this output.
+  std::string segment_name; ///< Memory segment name when packed outputs share an allocation.
 };
 
 /**
@@ -501,10 +514,13 @@ struct TensorRouteMeta {
  * A `Tensor` is the framework's fundamental data type. It carries:
  *   - **Storage** — a shared `TensorBuffer` describing where the bytes live and how to access them.
  *   - **Type** — `dtype` (the element type) and `layout` (legacy coarse token).
- *   - **Shape & strides** — `shape[]` (per-dimension sizes), `strides_bytes[]` (per-dimension byte strides).
- *   - **Axis semantics** — `axis_semantics[]` tagging each axis (N/D/H/W/C); the long-term layout vocabulary.
+ *   - **Shape & strides** — `shape[]` (per-dimension sizes), `strides_bytes[]` (per-dimension byte
+ * strides).
+ *   - **Axis semantics** — `axis_semantics[]` tagging each axis (N/D/H/W/C); the long-term layout
+ * vocabulary.
  *   - **Device** — where the tensor logically lives.
- *   - **Semantic** — what the numbers represent (image, audio, tessellated, encoded, quantized, etc.).
+ *   - **Semantic** — what the numbers represent (image, audio, tessellated, encoded, quantized,
+ * etc.).
  *   - **Planes** — for composite formats (NV12, I420), per-plane sub-region records.
  *   - **Route metadata** — for multi-output models, identifies which output this tensor is.
  *
@@ -524,18 +540,24 @@ struct TensorRouteMeta {
  * @ingroup tensors
  */
 struct Tensor {
-  std::shared_ptr<TensorBuffer> storage; ///< Shared storage handle (one tensor may have copies pointing at the same storage).
-  simaai::neat::TensorDType dtype = simaai::neat::TensorDType::UInt8;       ///< Element type.
-  simaai::neat::TensorLayout layout = simaai::neat::TensorLayout::Unknown;  ///< Coarse legacy layout token (transitional; prefer axis_semantics).
-  std::vector<int64_t> shape;            ///< Per-dimension sizes.
-  std::vector<int64_t> strides_bytes;    ///< Per-dimension strides in bytes (empty = compact row-major derived from shape+dtype).
-  int64_t byte_offset = 0;               ///< Offset from the start of `storage->data` to the first element of this tensor view.
+  std::shared_ptr<TensorBuffer>
+      storage; ///< Shared storage handle (one tensor may have copies pointing at the same storage).
+  simaai::neat::TensorDType dtype = simaai::neat::TensorDType::UInt8; ///< Element type.
+  simaai::neat::TensorLayout layout =
+      simaai::neat::TensorLayout::Unknown; ///< Coarse legacy layout token (transitional; prefer
+                                           ///< axis_semantics).
+  std::vector<int64_t> shape;              ///< Per-dimension sizes.
+  std::vector<int64_t> strides_bytes; ///< Per-dimension strides in bytes (empty = compact row-major
+                                      ///< derived from shape+dtype).
+  int64_t byte_offset =
+      0; ///< Offset from the start of `storage->data` to the first element of this tensor view.
   std::vector<TensorAxisSemantic> axis_semantics; ///< Per-axis role tags (N/D/H/W/C/Unknown).
-  Device device{};                       ///< Where the tensor lives.
-  Semantic semantic{};                   ///< What the numbers represent (image, audio, tess, etc.).
-  std::vector<Plane> planes;             ///< Per-plane sub-region records for composite formats (empty for dense tensors).
-  bool read_only = true;                 ///< If true, framework refuses mutable `data_ptr<T>()` access.
-  TensorRouteMeta route{};               ///< Routing metadata (output identity in multi-output models).
+  Device device{};                                ///< Where the tensor lives.
+  Semantic semantic{}; ///< What the numbers represent (image, audio, tess, etc.).
+  std::vector<Plane>
+      planes; ///< Per-plane sub-region records for composite formats (empty for dense tensors).
+  bool read_only = true;   ///< If true, framework refuses mutable `data_ptr<T>()` access.
+  TensorRouteMeta route{}; ///< Routing metadata (output identity in multi-output models).
 
   /// True iff this tensor is single-plane (no composite plane records).
   bool is_dense() const {
@@ -641,7 +663,8 @@ struct Tensor {
   Tensor mla(bool force = false) const;
   /// Return a CPU copy if not already on CPU; otherwise return `*this`.
   Tensor to_cpu_if_needed() const;
-  /// Validate internal invariants; on failure writes a message to `*err` (if non-null) and returns false.
+  /// Validate internal invariants; on failure writes a message to `*err` (if non-null) and returns
+  /// false.
   bool validate(std::string* err) const;
 
   /// Map this tensor as an NV12 view (Y + UV); returns nullopt if not NV12.
@@ -696,8 +719,8 @@ struct Tensor {
   ///             now creates an EV74-placed tensor; pass TensorMemory::CPU/A65
   ///             explicitly when CPU placement is intended.
   [[deprecated("Use Tensor::from_cv_mat(mat, fmt, TensorMemory::EV74/CPU/MLA); "
-               "Tensor::from_cv_mat(mat, fmt) defaults to EV74 placement.")]]
-  static Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only);
+               "Tensor::from_cv_mat(mat, fmt) defaults to EV74 placement.")]] static Tensor
+  from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only);
   /// Construct a Tensor from a `cv::Mat` in the requested memory placement.
   static Tensor from_cv_mat(const cv::Mat& mat,
                             ImageSpec::PixelFormat fmt = ImageSpec::PixelFormat::BGR,

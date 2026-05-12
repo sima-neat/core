@@ -92,8 +92,7 @@ int main() {
     run_opt.queue_depth = 1;
     const int timeout_ms = env_int("SIMA_INPUT_TIMEOUT_MS", 20000);
 
-    auto run = p.build(simaai::neat::TensorList{tensor_rgb}, simaai::neat::RunMode::Async,
-                       run_opt);
+    auto run = p.build(simaai::neat::TensorList{tensor_rgb}, simaai::neat::RunMode::Async, run_opt);
     simaai::neat::TensorList outs = run.run(simaai::neat::TensorList{tensor_rgb}, timeout_ms);
     run.close();
 

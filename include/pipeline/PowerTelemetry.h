@@ -33,13 +33,13 @@ enum class PowerMonitorProfile {
  * @ingroup diagnostics
  */
 struct PowerRailConfig {
-  std::string name;              ///< Human-readable rail name.
-  int i2c_bus = 3;               ///< Linux I2C bus number (`/dev/i2c-<bus>`).
-  std::uint8_t i2c_addr = 0;     ///< 7-bit PMIC I2C address.
-  std::uint8_t page = 0;         ///< PMBus page selected through register 0x00.
-  int vout_exponent = -8;        ///< Scaling exponent for VOUT (register 0x8b).
-  int iout_exponent = -6;        ///< Scaling exponent for IOUT (register 0x8c).
-  int pout_exponent = -5;        ///< Scaling exponent for POUT (register 0x96).
+  std::string name;          ///< Human-readable rail name.
+  int i2c_bus = 3;           ///< Linux I2C bus number (`/dev/i2c-<bus>`).
+  std::uint8_t i2c_addr = 0; ///< 7-bit PMIC I2C address.
+  std::uint8_t page = 0;     ///< PMBus page selected through register 0x00.
+  int vout_exponent = -8;    ///< Scaling exponent for VOUT (register 0x8b).
+  int iout_exponent = -6;    ///< Scaling exponent for IOUT (register 0x8c).
+  int pout_exponent = -5;    ///< Scaling exponent for POUT (register 0x96).
 };
 
 /**
@@ -47,10 +47,10 @@ struct PowerRailConfig {
  * @ingroup diagnostics
  */
 struct PowerFieldReading {
-  bool available = false;          ///< True when `value` was read successfully.
-  std::uint8_t raw = 0;            ///< Raw byte returned by the PMIC register.
-  double value = 0.0;              ///< Scaled value in V, A, or W depending on field.
-  std::string error;               ///< Non-empty on read failure.
+  bool available = false; ///< True when `value` was read successfully.
+  std::uint8_t raw = 0;   ///< Raw byte returned by the PMIC register.
+  double value = 0.0;     ///< Scaled value in V, A, or W depending on field.
+  std::string error;      ///< Non-empty on read failure.
 };
 
 /**
@@ -62,10 +62,10 @@ struct PowerFieldReading {
  * @ingroup diagnostics
  */
 struct PowerRailReading {
-  PowerRailConfig config;          ///< Rail configuration used for this read.
-  PowerFieldReading voltage_v;     ///< VOUT register value scaled to volts.
-  PowerFieldReading current_a;     ///< IOUT register value scaled to amps.
-  PowerFieldReading power_w;       ///< POUT register value scaled to watts.
+  PowerRailConfig config;      ///< Rail configuration used for this read.
+  PowerFieldReading voltage_v; ///< VOUT register value scaled to volts.
+  PowerFieldReading current_a; ///< IOUT register value scaled to amps.
+  PowerFieldReading power_w;   ///< POUT register value scaled to watts.
 };
 
 /**
@@ -84,10 +84,12 @@ struct PowerSnapshot {
  * @ingroup diagnostics
  */
 struct PowerMonitorOptions {
-  bool enabled = false;          ///< Disabled by default to avoid I2C overhead.
-  int sample_interval_ms = 100;  ///< Periodic sampling interval while running.
-  PowerMonitorProfile profile = PowerMonitorProfile::Auto; ///< Built-in board profile when `rails` is empty.
-  std::vector<PowerRailConfig> rails; ///< Empty means use the selected built-in profile when enabled.
+  bool enabled = false;         ///< Disabled by default to avoid I2C overhead.
+  int sample_interval_ms = 100; ///< Periodic sampling interval while running.
+  PowerMonitorProfile profile =
+      PowerMonitorProfile::Auto; ///< Built-in board profile when `rails` is empty.
+  std::vector<PowerRailConfig>
+      rails; ///< Empty means use the selected built-in profile when enabled.
 };
 
 /**
@@ -95,11 +97,11 @@ struct PowerMonitorOptions {
  * @ingroup diagnostics
  */
 struct PowerFieldSummary {
-  std::uint64_t samples = 0;      ///< Successful samples.
-  std::uint64_t errors = 0;       ///< Failed read attempts.
-  double avg = 0.0;               ///< Average successful value.
-  double min = 0.0;               ///< Minimum successful value.
-  double max = 0.0;               ///< Maximum successful value.
+  std::uint64_t samples = 0; ///< Successful samples.
+  std::uint64_t errors = 0;  ///< Failed read attempts.
+  double avg = 0.0;          ///< Average successful value.
+  double min = 0.0;          ///< Minimum successful value.
+  double max = 0.0;          ///< Maximum successful value.
 };
 
 /**
@@ -107,10 +109,10 @@ struct PowerFieldSummary {
  * @ingroup diagnostics
  */
 struct PowerRailSummary {
-  PowerRailConfig config;       ///< Rail configuration.
-  PowerFieldSummary voltage_v;  ///< VOUT summary.
-  PowerFieldSummary current_a;  ///< IOUT summary.
-  PowerFieldSummary power_w;    ///< POUT summary.
+  PowerRailConfig config;      ///< Rail configuration.
+  PowerFieldSummary voltage_v; ///< VOUT summary.
+  PowerFieldSummary current_a; ///< IOUT summary.
+  PowerFieldSummary power_w;   ///< POUT summary.
 };
 
 /**
@@ -118,13 +120,13 @@ struct PowerRailSummary {
  * @ingroup diagnostics
  */
 struct PowerSummary {
-  bool enabled = false;             ///< True when the monitor was configured to sample.
-  std::uint64_t samples = 0;        ///< Snapshot samples collected.
-  double duration_seconds = 0.0;    ///< Wall-clock monitor duration.
-  double total_avg_watts = 0.0;     ///< Average total SOM rail power.
-  double total_min_watts = 0.0;     ///< Minimum total SOM rail power.
-  double total_max_watts = 0.0;     ///< Maximum total SOM rail power.
-  double energy_joules = 0.0;       ///< Estimated energy: avg watts * duration seconds.
+  bool enabled = false;                ///< True when the monitor was configured to sample.
+  std::uint64_t samples = 0;           ///< Snapshot samples collected.
+  double duration_seconds = 0.0;       ///< Wall-clock monitor duration.
+  double total_avg_watts = 0.0;        ///< Average total SOM rail power.
+  double total_min_watts = 0.0;        ///< Minimum total SOM rail power.
+  double total_max_watts = 0.0;        ///< Maximum total SOM rail power.
+  double energy_joules = 0.0;          ///< Estimated energy: avg watts * duration seconds.
   std::vector<PowerRailSummary> rails; ///< Per-rail summaries.
 };
 
@@ -165,9 +167,9 @@ std::vector<PowerRailConfig> power_rails_for_profile(PowerMonitorProfile profile
  * @brief Convenience options enabling board power monitoring with optional auto-detect.
  * @ingroup diagnostics
  */
-PowerMonitorOptions board_power_monitor_options(int sample_interval_ms = 100,
-                                                PowerMonitorProfile profile =
-                                                    PowerMonitorProfile::Auto);
+PowerMonitorOptions
+board_power_monitor_options(int sample_interval_ms = 100,
+                            PowerMonitorProfile profile = PowerMonitorProfile::Auto);
 
 /**
  * @brief Convenience options enabling Modalix SOM power monitoring.

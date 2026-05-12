@@ -110,9 +110,8 @@ struct AtomicNsStats {
     count.fetch_add(1, std::memory_order_relaxed);
     total_ns.fetch_add(ns, std::memory_order_relaxed);
     std::uint64_t prev = max_ns.load(std::memory_order_relaxed);
-    while (ns > prev &&
-           !max_ns.compare_exchange_weak(prev, ns, std::memory_order_relaxed,
-                                         std::memory_order_relaxed)) {
+    while (ns > prev && !max_ns.compare_exchange_weak(prev, ns, std::memory_order_relaxed,
+                                                      std::memory_order_relaxed)) {
     }
   }
 };
@@ -176,7 +175,6 @@ std::string bbox_payload_summary(const std::vector<uint8_t>& payload, int expect
   return ss.str();
 }
 
-
 cv::Mat maybe_resize_benchmark_input(const cv::Mat& img, const AsyncTestConfig& cfg) {
   if (cfg.input_width <= 0 || cfg.input_height <= 0 || img.empty()) {
     return img;
@@ -185,15 +183,14 @@ cv::Mat maybe_resize_benchmark_input(const cv::Mat& img, const AsyncTestConfig& 
     return img;
   }
   cv::Mat resized;
-  cv::resize(img, resized, cv::Size(cfg.input_width, cfg.input_height), 0.0, 0.0,
-             cv::INTER_AREA);
+  cv::resize(img, resized, cv::Size(cfg.input_width, cfg.input_height), 0.0, 0.0, cv::INTER_AREA);
   return resized;
 }
 
-std::vector<objdet::ExpectedBox> scale_expected_boxes(
-    const std::vector<objdet::ExpectedBox>& expected, int src_w, int src_h, int dst_w, int dst_h) {
-  if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0 ||
-      (src_w == dst_w && src_h == dst_h)) {
+std::vector<objdet::ExpectedBox>
+scale_expected_boxes(const std::vector<objdet::ExpectedBox>& expected, int src_w, int src_h,
+                     int dst_w, int dst_h) {
+  if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0 || (src_w == dst_w && src_h == dst_h)) {
     return expected;
   }
   const float sx = static_cast<float>(dst_w) / static_cast<float>(src_w);
@@ -209,8 +206,8 @@ std::vector<objdet::ExpectedBox> scale_expected_boxes(
 }
 
 bool pull_with_timeout(simaai::neat::Run& async, int pull_timeout_ms, int max_timeouts,
-                       int& timeout_count, std::optional<simaai::neat::Sample>& out, std::string& err,
-                       AsyncProfileStats* profile) {
+                       int& timeout_count, std::optional<simaai::neat::Sample>& out,
+                       std::string& err, AsyncProfileStats* profile) {
   while (true) {
     simaai::neat::Sample temp;
     simaai::neat::PullError perr;
@@ -281,10 +278,9 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   p.add(simaai::neat::nodes::Output());
 
   const std::vector<objdet::ExpectedBox> expected =
-      cfg.skip_boxdecode
-          ? std::vector<objdet::ExpectedBox>{}
-          : scale_expected_boxes(objdet::expected_people_boxes(), source_img.cols, source_img.rows,
-                                 img.cols, img.rows);
+      cfg.skip_boxdecode ? std::vector<objdet::ExpectedBox>{}
+                         : scale_expected_boxes(objdet::expected_people_boxes(), source_img.cols,
+                                                source_img.rows, img.cols, img.rows);
 
   step_log("async: before build");
   const auto build_start = std::chrono::steady_clock::now();
@@ -335,9 +331,9 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
                            primer_err, nullptr) ||
         !primer_out.has_value()) {
       res.ok = false;
-      append_note(res.note, "primer_pull_error=" + sanitize_note(primer_err.empty()
-                                                                      ? "missing_primer_output"
-                                                                      : primer_err));
+      append_note(res.note,
+                  "primer_pull_error=" +
+                      sanitize_note(primer_err.empty() ? "missing_primer_output" : primer_err));
       res.diagnostics = maybe_collect_run_report(async, cfg.profile_emit_run_report);
       return res;
     }
@@ -363,7 +359,8 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
           objdet::match_expected_boxes(boxes, expected, cfg.min_score, cfg.min_iou);
       if (!match.ok) {
         res.ok = false;
-        append_note(res.note, "primer_verify_mismatch iter=" + std::to_string(i) + " " + match.note);
+        append_note(res.note,
+                    "primer_verify_mismatch iter=" + std::to_string(i) + " " + match.note);
         res.diagnostics = maybe_collect_run_report(async, cfg.profile_emit_run_report);
         return res;
       }
@@ -547,22 +544,20 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     const std::uint64_t pull_calls = profile.pull_call.count.load(std::memory_order_relaxed);
     const std::uint64_t extract_calls =
         profile.extract_payload.count.load(std::memory_order_relaxed);
-    std::cout << "ASYNC_TPUT_PROFILE window inflight=" << inflight << " pushed=" << pushed_count << " measured=" << measured_count << "\n";
+    std::cout << "ASYNC_TPUT_PROFILE window inflight=" << inflight << " pushed=" << pushed_count
+              << " measured=" << measured_count << "\n";
     std::cout << "ASYNC_TPUT_PROFILE phases build_ms=" << profile.build_ms
-              << " warmup_ms=" << profile.warmup_ms
-              << " push_loop_ms=" << profile.push_loop_ms
+              << " warmup_ms=" << profile.warmup_ms << " push_loop_ms=" << profile.push_loop_ms
               << " drain_wait_ms=" << profile.drain_wait_ms
-              << " measured_ms=" << (elapsed_s * 1000.0)
-              << " verify_ms=" << profile.verify_ms << "\n";
+              << " measured_ms=" << (elapsed_s * 1000.0) << " verify_ms=" << profile.verify_ms
+              << "\n";
     std::cout << "ASYNC_TPUT_PROFILE push calls=" << push_calls
-              << " avg_ms=" << avg_ms(profile.push_call)
-              << " max_ms=" << max_ms(profile.push_call)
+              << " avg_ms=" << avg_ms(profile.push_call) << " max_ms=" << max_ms(profile.push_call)
               << " slow(>=" << profile.push_slow_ms
               << "ms)=" << profile.slow_pushes.load(std::memory_order_relaxed)
               << " failures=" << profile.push_failures.load(std::memory_order_relaxed) << "\n";
     std::cout << "ASYNC_TPUT_PROFILE pull calls=" << pull_calls
-              << " avg_ms=" << avg_ms(profile.pull_call)
-              << " max_ms=" << max_ms(profile.pull_call)
+              << " avg_ms=" << avg_ms(profile.pull_call) << " max_ms=" << max_ms(profile.pull_call)
               << " timeouts=" << profile.pull_timeouts.load(std::memory_order_relaxed) << "\n";
     std::cout << "ASYNC_TPUT_PROFILE extract calls=" << extract_calls
               << " avg_ms=" << avg_ms(profile.extract_payload)
@@ -601,8 +596,9 @@ int main(int argc, char** argv) {
     cfg.iters = std::max(1, env_int("SIMA_ASYNC_YOLOV8_ITERS", cfg.iters));
     cfg.warm = std::max(0, env_int("SIMA_ASYNC_YOLOV8_WARM", cfg.warm));
     cfg.inflight = std::max(1, env_int("SIMA_ASYNC_YOLOV8_INFLIGHT", cfg.inflight));
-    cfg.excluded_preproc_dispatches = std::max(
-        0, env_int("SIMA_ASYNC_YOLOV8_EXCLUDE_PREPROC_DISPATCHES", cfg.excluded_preproc_dispatches));
+    cfg.excluded_preproc_dispatches =
+        std::max(0, env_int("SIMA_ASYNC_YOLOV8_EXCLUDE_PREPROC_DISPATCHES",
+                            cfg.excluded_preproc_dispatches));
     cfg.topk = std::max(1, env_int("SIMA_ASYNC_YOLOV8_TOPK", cfg.topk));
     cfg.min_fps = std::max(0.0, env_double("SIMA_ASYNC_YOLOV8_MIN_FPS", cfg.min_fps));
     cfg.skip_boxdecode = env_bool("SIMA_ASYNC_YOLOV8_SKIP_BOXDECODE", false);

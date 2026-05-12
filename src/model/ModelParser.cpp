@@ -128,8 +128,8 @@ bool dtype_is_quantized_like_local(const std::string& raw_dtype) {
          dtype == "INT32" || dtype == "UINT32";
 }
 
-std::string primary_tensor_dtype(
-    const std::vector<pipeline_internal::sima::MpkTensorContract>& tensors) {
+std::string
+primary_tensor_dtype(const std::vector<pipeline_internal::sima::MpkTensorContract>& tensors) {
   for (const auto& tensor : tensors) {
     if (!tensor.logical_dtype.empty()) {
       return canonical_dtype_for_signal(tensor.logical_dtype);
@@ -199,8 +199,7 @@ void parse_mpk_mla_io(const pipeline_internal::sima::MpkContract& contract, Pars
     return;
   }
 
-  auto mla_idx =
-      pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->name);
+  auto mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->name);
   if (!mla_idx.has_value() && !mla->plugin_id.empty()) {
     mla_idx = pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, mla->plugin_id);
   }
@@ -233,10 +232,10 @@ void parse_mpk_mla_io(const pipeline_internal::sima::MpkContract& contract, Pars
     dst.physical_index = src.tensor_index;
     if (dst.physical_index < 0 ||
         static_cast<std::size_t>(dst.physical_index) >= out->outputs.physical.size()) {
-      dst.physical_index = out->outputs.physical.empty()
-                               ? -1
-                               : static_cast<int>(std::min<std::size_t>(
-                                     i, out->outputs.physical.size() - 1U));
+      dst.physical_index =
+          out->outputs.physical.empty()
+              ? -1
+              : static_cast<int>(std::min<std::size_t>(i, out->outputs.physical.size() - 1U));
     }
     out->outputs.logical.push_back(std::move(dst));
   }
@@ -275,8 +274,8 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     }
     const auto kind = canonical_kernel_kind(kernel_source);
     const auto rank_it = rank_by_index.find(plugin_idx);
-    const std::size_t rank = (rank_it == rank_by_index.end()) ? out->execution_order.size()
-                                                               : rank_it->second;
+    const std::size_t rank =
+        (rank_it == rank_by_index.end()) ? out->execution_order.size() : rank_it->second;
 
     ParsedKernelStage dst;
     dst.name = src.name;
@@ -294,21 +293,18 @@ void parse_mpk_plugins(const pipeline_internal::sima::MpkContract& contract, Par
     const std::string out_dtype = primary_tensor_dtype(src.output_tensors);
     const int in_rank = primary_tensor_rank(src.input_tensors);
     const int out_rank = primary_tensor_rank(src.output_tensors);
-    const bool dtype_transition =
-        !in_dtype.empty() && !out_dtype.empty() && in_dtype != out_dtype;
+    const bool dtype_transition = !in_dtype.empty() && !out_dtype.empty() && in_dtype != out_dtype;
 
-    const bool hint_pre_quant =
-        dst.before_mla && dtype_transition && !dtype_is_quantized_like_local(in_dtype) &&
-        dtype_is_quantized_like_local(out_dtype);
+    const bool hint_pre_quant = dst.before_mla && dtype_transition &&
+                                !dtype_is_quantized_like_local(in_dtype) &&
+                                dtype_is_quantized_like_local(out_dtype);
     const bool suppress_post_dequant_hint = (canonical == "unpacktransform");
-    const bool hint_post_dequant =
-        dst.after_mla && !suppress_post_dequant_hint && dtype_transition &&
-        dtype_is_quantized_like_local(in_dtype) && dtype_is_float_like_local(out_dtype);
-    const bool hint_cast =
-        dtype_transition && !hint_pre_quant && !hint_post_dequant;
+    const bool hint_post_dequant = dst.after_mla && !suppress_post_dequant_hint &&
+                                   dtype_transition && dtype_is_quantized_like_local(in_dtype) &&
+                                   dtype_is_float_like_local(out_dtype);
+    const bool hint_cast = dtype_transition && !hint_pre_quant && !hint_post_dequant;
     const bool hint_pre_tess = dst.before_mla && in_rank >= 3 && out_rank > 0 && out_rank < in_rank;
-    const bool hint_post_detess =
-        dst.after_mla && in_rank > 0 && in_rank <= 2 && out_rank >= 3;
+    const bool hint_post_detess = dst.after_mla && in_rank > 0 && in_rank <= 2 && out_rank >= 3;
 
     if (dst.before_mla) {
       bool emitted_pre_signal = false;
@@ -461,16 +457,14 @@ void parse_mla_config_consistency(const ModelPack& pack, ParsedModelInfo* out) {
   const std::size_t physical_outputs = out->outputs.physical.size();
 
   if (physical_outputs > 0U && params_outputs > 0U && params_outputs != physical_outputs) {
-    out->warnings.push_back("model-parser: MLA config outputs count (" +
-                            std::to_string(params_outputs) +
-                            ") differs from MPK physical output count (" +
-                            std::to_string(physical_outputs) + ")");
+    out->warnings.push_back(
+        "model-parser: MLA config outputs count (" + std::to_string(params_outputs) +
+        ") differs from MPK physical output count (" + std::to_string(physical_outputs) + ")");
   }
   if (params_dtypes > 0U && params_outputs > 0U && params_dtypes != params_outputs) {
-    out->warnings.push_back("model-parser: MLA config data_type count (" +
-                            std::to_string(params_dtypes) +
-                            ") differs from MLA config outputs count (" +
-                            std::to_string(params_outputs) + ")");
+    out->warnings.push_back(
+        "model-parser: MLA config data_type count (" + std::to_string(params_dtypes) +
+        ") differs from MLA config outputs count (" + std::to_string(params_outputs) + ")");
   }
 }
 
@@ -568,8 +562,7 @@ bool parse_model_semantics_from_pack(const ModelPack& pack, ModelSemantics* out)
     const auto logical_outputs =
         pipeline_internal::sima::get_mla_logical_outputs_contract(*maybe_contract);
     if (!logical_outputs.empty()) {
-      out->mla_output_dtype_raw =
-          canonical_dtype_for_signal(logical_outputs.front().dtype);
+      out->mla_output_dtype_raw = canonical_dtype_for_signal(logical_outputs.front().dtype);
     }
     const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(*maybe_contract);
     if (mla) {

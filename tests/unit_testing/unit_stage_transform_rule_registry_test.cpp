@@ -7,8 +7,7 @@ RUN_TEST("unit_stage_transform_rule_registry_test", ([] {
 
            const StageTransformRuleRegistry& rules = default_stage_transform_rules();
 
-           require(rules.is_pre_adapter("preproc"),
-                   "preproc should be classified as pre-adapter");
+           require(rules.is_pre_adapter("preproc"), "preproc should be classified as pre-adapter");
            require(rules.is_pre_adapter("QuantTess"),
                    "QuantTess case-insensitive pre-adapter classification failed");
 
@@ -17,10 +16,8 @@ RUN_TEST("unit_stage_transform_rule_registry_test", ([] {
            require(rules.is_post_adapter("DetessDequant"),
                    "DetessDequant case-insensitive post-adapter classification failed");
 
-           require(!rules.is_pre_adapter("processmla"),
-                   "processmla must not be pre-adapter");
-           require(!rules.is_post_adapter("processmla"),
-                   "processmla must not be post-adapter");
+           require(!rules.is_pre_adapter("processmla"), "processmla must not be pre-adapter");
+           require(!rules.is_post_adapter("processmla"), "processmla must not be post-adapter");
 
            const auto pre_rule = rules.lookup("preproc");
            require(pre_rule.has_value(), "preproc lookup must return a transform rule");
@@ -28,8 +25,7 @@ RUN_TEST("unit_stage_transform_rule_registry_test", ([] {
                    "preproc output source should be MLA inputs");
            require(pre_rule->input_source == StageTensorSource::None,
                    "preproc input source should remain None");
-           require(!pre_rule->propagate_output_quant,
-                   "preproc should not propagate output quant");
+           require(!pre_rule->propagate_output_quant, "preproc should not propagate output quant");
 
            const auto post_rule = rules.lookup("detessdequant");
            require(post_rule.has_value(), "detessdequant lookup must return a transform rule");

@@ -46,13 +46,13 @@ public:
 
   /// Per-stream counters tracking pending depth, hits, and misses.
   struct StreamStats {
-    int64_t enqueued = 0;          ///< Total frames enqueued.
-    int64_t matched = 0;           ///< Frames successfully taken by a matching token.
-    int64_t miss = 0;              ///< `take()` calls that found no matching frame.
-    size_t pending_depth = 0;      ///< Current number of pending frames.
-    size_t pending_bytes = 0;      ///< Current bytes held in the store.
-    size_t max_pending_depth = 0;  ///< High-watermark of `pending_depth`.
-    size_t max_pending_bytes = 0;  ///< High-watermark of `pending_bytes`.
+    int64_t enqueued = 0;         ///< Total frames enqueued.
+    int64_t matched = 0;          ///< Frames successfully taken by a matching token.
+    int64_t miss = 0;             ///< `take()` calls that found no matching frame.
+    size_t pending_depth = 0;     ///< Current number of pending frames.
+    size_t pending_bytes = 0;     ///< Current bytes held in the store.
+    size_t max_pending_depth = 0; ///< High-watermark of `pending_depth`.
+    size_t max_pending_bytes = 0; ///< High-watermark of `pending_bytes`.
   };
 
   /// Create a store sized for `streams` distinct stream slots.
@@ -71,11 +71,11 @@ public:
 private:
   /// Per-stream internal state: pending frames keyed by frame_id plus accounting.
   struct StreamState {
-    mutable std::mutex mu;                              ///< Guards the per-stream state.
-    std::unordered_map<int64_t, PendingFrame> pending;  ///< Pending frames keyed by frame_id.
-    std::deque<int64_t> order;                          ///< Frame ids in arrival order.
-    size_t bytes_total = 0;                             ///< Current bytes held in the store.
-    StreamStats stats;                                  ///< Per-stream counters.
+    mutable std::mutex mu;                             ///< Guards the per-stream state.
+    std::unordered_map<int64_t, PendingFrame> pending; ///< Pending frames keyed by frame_id.
+    std::deque<int64_t> order;                         ///< Frame ids in arrival order.
+    size_t bytes_total = 0;                            ///< Current bytes held in the store.
+    StreamStats stats;                                 ///< Per-stream counters.
   };
 
   std::vector<StreamState> states_;
@@ -95,24 +95,24 @@ class YoloTokenStore {
 public:
   /// Per-stream token: a `frame_id` plus the time it was enqueued.
   struct Token {
-    int64_t frame_id = -1;     ///< Frame id this token refers to.
-    int64_t enqueued_ms = 0;   ///< Wall-clock time (ms) the token was enqueued.
+    int64_t frame_id = -1;   ///< Frame id this token refers to.
+    int64_t enqueued_ms = 0; ///< Wall-clock time (ms) the token was enqueued.
   };
 
   /// Globally-ordered token: same as `Token` plus the originating stream index.
   struct OrderedToken {
-    size_t stream_idx = 0;     ///< Index of the originating stream.
-    int64_t frame_id = -1;     ///< Frame id this token refers to.
-    int64_t enqueued_ms = 0;   ///< Wall-clock time (ms) the token was enqueued.
+    size_t stream_idx = 0;   ///< Index of the originating stream.
+    int64_t frame_id = -1;   ///< Frame id this token refers to.
+    int64_t enqueued_ms = 0; ///< Wall-clock time (ms) the token was enqueued.
   };
 
   /// Per-stream counters tracking depth, hits, and misses.
   struct Stats {
-    int64_t enqueued = 0;     ///< Total tokens enqueued.
-    int64_t dequeued = 0;     ///< Total tokens taken successfully.
-    int64_t miss = 0;         ///< `take()` calls with nothing to return.
-    size_t depth = 0;         ///< Current queue depth.
-    size_t max_depth = 0;     ///< High-watermark of `depth`.
+    int64_t enqueued = 0; ///< Total tokens enqueued.
+    int64_t dequeued = 0; ///< Total tokens taken successfully.
+    int64_t miss = 0;     ///< `take()` calls with nothing to return.
+    size_t depth = 0;     ///< Current queue depth.
+    size_t max_depth = 0; ///< High-watermark of `depth`.
   };
 
   /// Create a store sized for `streams` distinct stream slots.
@@ -130,9 +130,9 @@ public:
 private:
   /// Per-stream internal state: token queue plus counters.
   struct State {
-    mutable std::mutex mu;     ///< Guards the per-stream state.
-    std::deque<Token> q;       ///< FIFO of tokens awaiting a matching frame.
-    Stats stats;               ///< Per-stream counters.
+    mutable std::mutex mu; ///< Guards the per-stream state.
+    std::deque<Token> q;   ///< FIFO of tokens awaiting a matching frame.
+    Stats stats;           ///< Per-stream counters.
   };
 
   static int64_t now_ms_i64();
@@ -157,11 +157,11 @@ class ReleasePacer {
 public:
   /// Per-stream counters tracking sent/dropped/fail counts and queue depth.
   struct Stats {
-    int64_t enqueued = 0;          ///< Total samples enqueued.
-    int64_t sent = 0;              ///< Total samples successfully sent downstream.
-    int64_t dropped = 0;           ///< Total samples dropped due to overflow.
-    int64_t send_fail = 0;         ///< Total send attempts that failed.
-    int64_t max_queue_depth = 0;   ///< High-watermark of queue depth.
+    int64_t enqueued = 0;        ///< Total samples enqueued.
+    int64_t sent = 0;            ///< Total samples successfully sent downstream.
+    int64_t dropped = 0;         ///< Total samples dropped due to overflow.
+    int64_t send_fail = 0;       ///< Total send attempts that failed.
+    int64_t max_queue_depth = 0; ///< High-watermark of queue depth.
   };
 
   /// Callback fired after each downstream send attempt; `ok` indicates success.
@@ -198,18 +198,18 @@ public:
 private:
   /// Per-stream internal state: queue, worker thread, and live counters.
   struct State {
-    mutable std::mutex mu;                  ///< Guards the per-stream state.
-    std::condition_variable cv;             ///< Condition variable used to signal queue state changes.
+    mutable std::mutex mu;      ///< Guards the per-stream state.
+    std::condition_variable cv; ///< Condition variable used to signal queue state changes.
     std::deque<simaai::neat::Sample> queue; ///< Pending samples awaiting paced release.
     std::thread worker;                     ///< Per-stream pacing worker thread.
     bool stop = false;                      ///< Worker stop flag.
 
-    int64_t next_release_ms = -1;           ///< Wall-clock deadline (ms) for the next release.
-    int64_t enqueued = 0;                   ///< Total samples enqueued.
-    int64_t sent = 0;                       ///< Total samples successfully sent downstream.
-    int64_t dropped = 0;                    ///< Total samples dropped due to overflow.
-    int64_t send_fail = 0;                  ///< Total send attempts that failed.
-    int64_t max_queue_depth = 0;            ///< High-watermark of queue depth.
+    int64_t next_release_ms = -1; ///< Wall-clock deadline (ms) for the next release.
+    int64_t enqueued = 0;         ///< Total samples enqueued.
+    int64_t sent = 0;             ///< Total samples successfully sent downstream.
+    int64_t dropped = 0;          ///< Total samples dropped due to overflow.
+    int64_t send_fail = 0;        ///< Total send attempts that failed.
+    int64_t max_queue_depth = 0;  ///< High-watermark of queue depth.
   };
 
   static int64_t now_ms_i64();

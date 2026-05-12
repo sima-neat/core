@@ -19,10 +19,8 @@ public:
   ~TempDirGuard() {
     std::error_code ec;
     const fs::path tmp_tar = path_ / "tmp" / "yolo_v8s_mpk.tar.gz";
-    fs::permissions(tmp_tar,
-                    fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
-                    fs::perm_options::replace,
-                    ec);
+    fs::permissions(tmp_tar, fs::perms::owner_all | fs::perms::group_all | fs::perms::others_all,
+                    fs::perm_options::replace, ec);
     ec.clear();
     fs::remove_all(path_, ec);
   }

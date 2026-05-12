@@ -43,12 +43,13 @@ enum class JoinKeyPolicy {
  * @ingroup graph
  */
 struct JoinBundleOptions {
-  std::vector<std::string> inputs;            ///< Names of input ports participating in the join.
-  std::unordered_set<std::string> required;   ///< Inputs required for emission; default: all inputs.
+  std::vector<std::string> inputs;          ///< Names of input ports participating in the join.
+  std::unordered_set<std::string> required; ///< Inputs required for emission; default: all inputs.
   JoinKeyPolicy key_policy = JoinKeyPolicy::StreamFrame; ///< How samples are keyed for joining.
-  bool emit_partial = false;                  ///< If true, emit a bundle even when only required inputs are present.
-  std::size_t max_pending_keys = 4096;        ///< Upper bound on keys held in flight before evicting oldest.
-  int timeout_ms = 0;                         ///< Per-key timeout (ms); 0 disables timeout-based eviction.
+  bool emit_partial = false; ///< If true, emit a bundle even when only required inputs are present.
+  std::size_t max_pending_keys =
+      4096;           ///< Upper bound on keys held in flight before evicting oldest.
+  int timeout_ms = 0; ///< Per-key timeout (ms); 0 disables timeout-based eviction.
 };
 
 /**
@@ -78,8 +79,9 @@ public:
 private:
   /// Per-key in-flight bundle being assembled — one entry per pending join key.
   struct Pending {
-    std::unordered_map<PortId, Sample> samples; ///< Samples received per input port for this bundle.
-    std::int64_t last_seen_ns = 0;                ///< Timestamp (ns) of the most recent sample on any port.
+    std::unordered_map<PortId, Sample>
+        samples;                   ///< Samples received per input port for this bundle.
+    std::int64_t last_seen_ns = 0; ///< Timestamp (ns) of the most recent sample on any port.
   };
 
   std::string make_key_(const Sample& sample) const;

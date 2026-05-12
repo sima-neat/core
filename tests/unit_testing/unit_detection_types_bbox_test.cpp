@@ -44,8 +44,7 @@ simaai::neat::Tensor make_bbox_tensor(const std::vector<uint8_t>& payload,
   tensor.shape = {static_cast<int64_t>(payload.size())};
   tensor.device = {DeviceType::CPU, 0};
   tensor.read_only = true;
-  tensor.semantic.tess =
-      TessSpec{.slice_shape = {}, .format = format};
+  tensor.semantic.tess = TessSpec{.slice_shape = {}, .format = format};
   return tensor;
 }
 

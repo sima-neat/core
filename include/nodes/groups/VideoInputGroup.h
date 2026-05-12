@@ -32,28 +32,29 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct VideoInputGroupOptions {
-  std::string path;                 ///< Filesystem path to the video file to read.
-  int demux_video_pad_index = 0;    ///< Index of the demuxed video pad to follow.
-  bool insert_queue = true;         ///< Insert a queue between demux and the parser.
-  bool sync_mode = false;           ///< If true, sink elements run in sync (real-time) mode.
+  std::string path;              ///< Filesystem path to the video file to read.
+  int demux_video_pad_index = 0; ///< Index of the demuxed video pad to follow.
+  bool insert_queue = true;      ///< Insert a queue between demux and the parser.
+  bool sync_mode = false;        ///< If true, sink elements run in sync (real-time) mode.
 
-  int parse_config_interval = 1;    ///< H.264 parser SPS/PPS repeat interval (seconds).
-  bool parse_enforce_au = true;     ///< Have the parser align output on access-unit boundaries.
+  int parse_config_interval = 1; ///< H.264 parser SPS/PPS repeat interval (seconds).
+  bool parse_enforce_au = true;  ///< Have the parser align output on access-unit boundaries.
 
-  int sima_allocator_type = 2;      ///< SiMa allocator type for decoder output buffers.
+  int sima_allocator_type = 2;             ///< SiMa allocator type for decoder output buffers.
   FormatSpec out_format = FormatTag::NV12; ///< Pixel format produced by the decoder.
 
-  bool use_videoconvert = false;    ///< Insert `videoconvert` after decode for format adaptation.
-  bool use_videoscale = false;      ///< Insert `videoscale` after decode for resolution adaptation.
+  bool use_videoconvert = false; ///< Insert `videoconvert` after decode for format adaptation.
+  bool use_videoscale = false;   ///< Insert `videoscale` after decode for resolution adaptation.
 
   /// Optional explicit output caps applied at the group's tail.
   struct OutputCaps {
-    bool enable = false;            ///< If false, no caps filter is inserted.
+    bool enable = false;                 ///< If false, no caps filter is inserted.
     FormatSpec format = FormatTag::NV12; ///< Pixel format the group should advertise.
-    int width = -1;                 ///< Output width (-1 = leave unspecified).
-    int height = -1;                ///< Output height (-1 = leave unspecified).
-    int fps = -1;                   ///< Output frame rate (-1 = leave unspecified).
-    simaai::neat::CapsMemory memory = simaai::neat::CapsMemory::SystemMemory; ///< Buffer memory domain.
+    int width = -1;                      ///< Output width (-1 = leave unspecified).
+    int height = -1;                     ///< Output height (-1 = leave unspecified).
+    int fps = -1;                        ///< Output frame rate (-1 = leave unspecified).
+    simaai::neat::CapsMemory memory =
+        simaai::neat::CapsMemory::SystemMemory; ///< Buffer memory domain.
   } output_caps; ///< Optional explicit output caps applied at the group's tail.
 
   /// Optional raw GStreamer fragment inserted into the group (advanced use).

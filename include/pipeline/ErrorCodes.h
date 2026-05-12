@@ -1,7 +1,8 @@
 /**
  * @file
  * @ingroup diagnostics
- * @brief Canonical framework error code constants used in `SessionReport::error_code` and `PullError::code`.
+ * @brief Canonical framework error code constants used in `SessionReport::error_code` and
+ * `PullError::code`.
  *
  * Error codes follow a `domain.reason` taxonomy: the domain identifies the failure category
  * (`misconfig`, `build`, `runtime`, `io`, `infra`); the reason is a snake_case token. This
@@ -24,7 +25,8 @@ namespace simaai::neat::error_codes {
 // ── Misconfiguration classes ──────────────────────────────────────────────────────────────
 /// Pipeline graph geometry mismatch (e.g., wrong number of sinks, cycles, missing terminal Output).
 inline constexpr const char* kPipelineShape = "misconfig.pipeline_shape";
-/// Caps/format negotiation failed between adjacent elements (resolution, format, framerate, layout).
+/// Caps/format negotiation failed between adjacent elements (resolution, format, framerate,
+/// layout).
 inline constexpr const char* kCaps = "misconfig.caps";
 /// Input tensor shape violates the model's contract (rank, spatial dims, channel count).
 inline constexpr const char* kInputShape = "misconfig.input_shape";

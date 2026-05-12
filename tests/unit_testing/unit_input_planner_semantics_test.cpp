@@ -18,9 +18,9 @@ using simaai::neat::ResizeMode;
 using simaai::neat::Transform;
 using simaai::neat::TransformType;
 using simaai::neat::internal::GraphFamilyCapabilities;
+using simaai::neat::internal::plan_preprocess;
 using simaai::neat::internal::PreprocessCapabilities;
 using simaai::neat::internal::PreprocessPlannerResult;
-using simaai::neat::internal::plan_preprocess;
 
 GraphFamilyCapabilities all_ops_family(bool available) {
   GraphFamilyCapabilities fam;
@@ -107,7 +107,8 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
              opt.preprocess.transforms.push_back(t);
 
              const PreprocessPlannerResult out = plan_preprocess(opt, caps);
-             require(out.resolved_plan.enabled, "planner: transforms should keep preprocess enabled");
+             require(out.resolved_plan.enabled,
+                     "planner: transforms should keep preprocess enabled");
              require(has_warning(out, "enable=Off with non-empty transforms"),
                      "planner: expected enable-off transform warning");
              require(out.resolved_plan.effective.normalize.enable == AutoFlag::On,
@@ -181,8 +182,8 @@ RUN_TEST("unit_input_planner_semantics_test", ([] {
 
              PreprocessCapabilities limited = caps;
              limited.quant.supports_color_convert = false;
-             require_throws_contains([&]() { (void)plan_preprocess(opt, limited); }, "color_convert",
-                                     "planner: unsupported op should throw");
+             require_throws_contains([&]() { (void)plan_preprocess(opt, limited); },
+                                     "color_convert", "planner: unsupported op should throw");
            }
 
            // Meta contract fields should include conversion + normalize context.

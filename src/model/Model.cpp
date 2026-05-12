@@ -67,16 +67,27 @@ simaai::neat::SessionOptions
 session_options_from_model_session_options(const Model::SessionOptions& opt,
                                            const Model::Options* model_opt = nullptr);
 
-struct SliceDims { int d = 1, h = 0, w = 0, c = 0; };
+struct SliceDims {
+  int d = 1, h = 0, w = 0, c = 0;
+};
 SliceDims dims_from_slice_shape(const std::vector<std::int64_t>& s) {
   SliceDims r;
-  if (s.size() == 4) { r.d = s[0]; r.h = s[1]; r.w = s[2]; r.c = s[3]; }
-  else if (s.size() == 3) { r.d = 1; r.h = s[0]; r.w = s[1]; r.c = s[2]; }
+  if (s.size() == 4) {
+    r.d = s[0];
+    r.h = s[1];
+    r.w = s[2];
+    r.c = s[3];
+  } else if (s.size() == 3) {
+    r.d = 1;
+    r.h = s[0];
+    r.w = s[1];
+    r.c = s[2];
+  }
   return r;
 }
 
-pipeline_internal::sima::ModelManagedRouteFlags convert_model_managed_route_flags(
-    const internal::SessionRoutePlan::ModelManagedRouteFlags& src) {
+pipeline_internal::sima::ModelManagedRouteFlags
+convert_model_managed_route_flags(const internal::SessionRoutePlan::ModelManagedRouteFlags& src) {
   pipeline_internal::sima::ModelManagedRouteFlags flags;
   flags.quant_needed = src.quant_needed;
   flags.tess_needed = src.tess_needed;
@@ -121,8 +132,7 @@ int clamp_positive_contract_dim(std::int64_t value) {
 // MPK logical shapes are emitted in canonical geometry order, not as a tensor layout
 // promise.  Keep this intentionally narrow: only use it for rank-3/rank-4 logical
 // model-input geometry when the contract no longer carries an explicit layout token.
-stages::TensorDims dims_from_canonical_mpk_logical_shape(
-    const std::vector<std::int64_t>& shape) {
+stages::TensorDims dims_from_canonical_mpk_logical_shape(const std::vector<std::int64_t>& shape) {
   stages::TensorDims dims;
   if (shape.size() >= 4U) {
     dims.height = clamp_positive_contract_dim(shape[shape.size() - 3U]);
@@ -136,8 +146,8 @@ stages::TensorDims dims_from_canonical_mpk_logical_shape(
   return dims;
 }
 
-stages::TensorDims dims_from_mla_logical_contract_shape(
-    const std::vector<std::int64_t>& shape, TensorLayout layout) {
+stages::TensorDims dims_from_mla_logical_contract_shape(const std::vector<std::int64_t>& shape,
+                                                        TensorLayout layout) {
   if (layout == TensorLayout::Unknown) {
     const stages::TensorDims canonical = dims_from_canonical_mpk_logical_shape(shape);
     if (canonical.width > 0 && canonical.height > 0 && canonical.depth > 0) {
@@ -153,17 +163,16 @@ bool preproc_output_dtype_is_quantized(const std::string& raw) {
 }
 
 std::string route_mla_input_dtype_from_diagnostics(const internal::PreprocessPlannerResult& plan);
-const pipeline_internal::sima::MpkPluginIoContract* find_pre_mla_processcvu_stage(
-    const internal::ModelPack& pack, std::initializer_list<const char*> preferred_families);
+const pipeline_internal::sima::MpkPluginIoContract*
+find_pre_mla_processcvu_stage(const internal::ModelPack& pack,
+                              std::initializer_list<const char*> preferred_families);
 PreprocOptions make_preproc_options_from_typed_adapter(
     const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
     const std::string& element_name, const std::string& upstream_name, bool sync);
-QuantOptions make_quant_options_from_typed_adapter(const Model& model,
-                                                   const internal::PreprocessPlannerResult& plan,
-                                                   const InputInfo* input,
-                                                   const std::string& element_name, bool sync,
-                                                   const internal::OrderedRouteOp* route_op = nullptr,
-                                                   bool allow_multi_io_contract = false);
+QuantOptions make_quant_options_from_typed_adapter(
+    const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
+    const std::string& element_name, bool sync, const internal::OrderedRouteOp* route_op = nullptr,
+    bool allow_multi_io_contract = false);
 TessOptions make_tess_options_from_typed_adapter(const Model& model,
                                                  const internal::PreprocessPlannerResult& plan,
                                                  const InputInfo* input,
@@ -172,15 +181,14 @@ TessOptions make_tess_options_from_typed_adapter(const Model& model,
                                                  bool allow_multi_io_contract = false);
 QuantTessOptions make_quanttess_options_from_typed_adapter(
     const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
-    const std::string& element_name, bool sync,
-    const internal::OrderedRouteOp* route_op = nullptr,
+    const std::string& element_name, bool sync, const internal::OrderedRouteOp* route_op = nullptr,
     bool allow_multi_io_contract = false);
 CastTessOptions make_casttess_options_from_typed_adapter(
     const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
-    const std::string& element_name, bool sync,
-    const internal::OrderedRouteOp* route_op = nullptr,
+    const std::string& element_name, bool sync, const internal::OrderedRouteOp* route_op = nullptr,
     bool allow_multi_io_contract = false);
-CastOptions make_cast_options_from_typed_adapter(const Model* model, const std::string& element_name,
+CastOptions make_cast_options_from_typed_adapter(const Model* model,
+                                                 const std::string& element_name,
                                                  CastDirection direction,
                                                  internal::ModelLineageStageRole stage_role,
                                                  const internal::OrderedRouteOp* route_op = nullptr,
@@ -212,51 +220,66 @@ void emit_model_planner_messages(const VerboseOptions& verbose,
   if (verbose.level == VerbosityLevel::Quiet) {
     return;
   }
-  std::fprintf(
-      stderr,
-      "[WARN] Model preprocess planner produced %zu advisory message%s; "
-      "set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true "
-      "to inspect details.\n",
-      warnings.size(), (warnings.size() == 1U) ? "" : "s");
+  std::fprintf(stderr,
+               "[WARN] Model preprocess planner produced %zu advisory message%s; "
+               "set Model::Options.verbose.level=Verbose or Model::Options.verbose.planner=true "
+               "to inspect details.\n",
+               warnings.size(), (warnings.size() == 1U) ? "" : "s");
 }
 
-
-
 int route_op_exact_stage_score(const pipeline_internal::sima::MpkPluginIoContract& stage,
-                              internal::ExecutionStageKind want_kind) {
+                               internal::ExecutionStageKind want_kind) {
   const auto graph_kind = pipeline_internal::sima::canonical_route_graph_kernel_kind(
       !stage.kernel.empty() ? stage.kernel : stage.name);
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (want_kind) {
   case internal::ExecutionStageKind::Quant:
     switch (graph_kind) {
-    case GraphKind::Quant: return 4;
-    case GraphKind::QuantTess: return 3;
-    case GraphKind::Preproc: return 1;
-    default: return -1;
+    case GraphKind::Quant:
+      return 4;
+    case GraphKind::QuantTess:
+      return 3;
+    case GraphKind::Preproc:
+      return 1;
+    default:
+      return -1;
     }
   case internal::ExecutionStageKind::Tess:
     switch (graph_kind) {
-    case GraphKind::Tess: return 4;
-    case GraphKind::QuantTess: return 3;
-    case GraphKind::Preproc: return 1;
-    default: return -1;
+    case GraphKind::Tess:
+      return 4;
+    case GraphKind::QuantTess:
+      return 3;
+    case GraphKind::Preproc:
+      return 1;
+    default:
+      return -1;
     }
   case internal::ExecutionStageKind::QuantTess:
     switch (graph_kind) {
-    case GraphKind::QuantTess: return 5;
-    case GraphKind::Tess: return 4;
-    case GraphKind::Quant: return 3;
-    case GraphKind::Preproc: return 1;
-    default: return -1;
+    case GraphKind::QuantTess:
+      return 5;
+    case GraphKind::Tess:
+      return 4;
+    case GraphKind::Quant:
+      return 3;
+    case GraphKind::Preproc:
+      return 1;
+    default:
+      return -1;
     }
   case internal::ExecutionStageKind::CastTess:
     switch (graph_kind) {
-    case GraphKind::CastTess: return 5;
-    case GraphKind::Tess: return 4;
-    case GraphKind::Cast: return 3;
-    case GraphKind::Preproc: return 1;
-    default: return -1;
+    case GraphKind::CastTess:
+      return 5;
+    case GraphKind::Tess:
+      return 4;
+    case GraphKind::Cast:
+      return 3;
+    case GraphKind::Preproc:
+      return 1;
+    default:
+      return -1;
     }
   case internal::ExecutionStageKind::Cast:
     return graph_kind == GraphKind::Cast ? 4 : -1;
@@ -264,10 +287,14 @@ int route_op_exact_stage_score(const pipeline_internal::sima::MpkPluginIoContrac
     return graph_kind == GraphKind::Detess ? 4 : -1;
   case internal::ExecutionStageKind::DetessCast:
     switch (graph_kind) {
-    case GraphKind::DetessCast: return 5;
-    case GraphKind::Detess: return 4;
-    case GraphKind::Cast: return 3;
-    default: return -1;
+    case GraphKind::DetessCast:
+      return 5;
+    case GraphKind::Detess:
+      return 4;
+    case GraphKind::Cast:
+      return 3;
+    default:
+      return -1;
     }
   case internal::ExecutionStageKind::DetessDequant:
     return graph_kind == GraphKind::DetessDequant ? 4 : -1;
@@ -283,10 +310,10 @@ int route_op_exact_stage_score(const pipeline_internal::sima::MpkPluginIoContrac
   return -1;
 }
 
-std::optional<std::string> resolve_exact_route_stage_name_or_id(
-    const internal::ModelPack& pack,
-    internal::ExecutionStageKind want_kind,
-    const internal::OrderedRouteOp* route_op) {
+std::optional<std::string>
+resolve_exact_route_stage_name_or_id(const internal::ModelPack& pack,
+                                     internal::ExecutionStageKind want_kind,
+                                     const internal::OrderedRouteOp* route_op) {
   if (!route_op || !pack.mpk_contract().has_value()) {
     return std::nullopt;
   }
@@ -307,11 +334,10 @@ std::optional<std::string> resolve_exact_route_stage_name_or_id(
     }
   }
   if (!direct_matches.empty()) {
-    std::sort(direct_matches.begin(), direct_matches.end(),
-              [&](const auto* lhs, const auto* rhs) {
-                return route_op_exact_stage_score(*lhs, want_kind) >
-                       route_op_exact_stage_score(*rhs, want_kind);
-              });
+    std::sort(direct_matches.begin(), direct_matches.end(), [&](const auto* lhs, const auto* rhs) {
+      return route_op_exact_stage_score(*lhs, want_kind) >
+             route_op_exact_stage_score(*rhs, want_kind);
+    });
     const std::string token = stage_token(*direct_matches.front());
     if (!token.empty()) {
       return token;
@@ -333,18 +359,17 @@ std::optional<std::string> resolve_exact_route_stage_name_or_id(
   if (seq_matches.empty()) {
     return std::nullopt;
   }
-  std::sort(seq_matches.begin(), seq_matches.end(),
-            [&](const auto* lhs, const auto* rhs) {
-              return route_op_exact_stage_score(*lhs, want_kind) >
-                     route_op_exact_stage_score(*rhs, want_kind);
-            });
+  std::sort(seq_matches.begin(), seq_matches.end(), [&](const auto* lhs, const auto* rhs) {
+    return route_op_exact_stage_score(*lhs, want_kind) >
+           route_op_exact_stage_score(*rhs, want_kind);
+  });
   const std::string token = stage_token(*seq_matches.front());
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
-    std::fprintf(stderr,
-                 "[typed-adapter] resolved exact route stage kind=%d route{name=%s id=%s seq=%d} -> %s\n",
-                 static_cast<int>(want_kind), route_op->plugin_name.c_str(),
-                 route_op->plugin_id.c_str(), route_op->sequence,
-                 token.empty() ? "<empty>" : token.c_str());
+    std::fprintf(
+        stderr,
+        "[typed-adapter] resolved exact route stage kind=%d route{name=%s id=%s seq=%d} -> %s\n",
+        static_cast<int>(want_kind), route_op->plugin_name.c_str(), route_op->plugin_id.c_str(),
+        route_op->sequence, token.empty() ? "<empty>" : token.c_str());
   }
   return token.empty() ? std::nullopt : std::optional<std::string>(token);
 }
@@ -417,23 +442,23 @@ std::string normalize_processcvu_dtype_token(std::string raw, const std::string&
 }
 
 CompiledProcessCvuContract require_model_managed_preadapter_contract(
-    const internal::ModelPack& pack,
-    internal::ExecutionStageKind kind,
-    const char* stage_label,
+    const internal::ModelPack& pack, internal::ExecutionStageKind kind, const char* stage_label,
     const internal::OrderedRouteOp* route_op = nullptr) {
   const auto pre_plan = pack.execution_plan().pre;
   const auto stage_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Preprocess);
   if (pre_plan.size() != stage_facts.size()) {
     throw std::runtime_error(
         "Model-managed pre-process stage facts are out of sync with execution plan (plan_count=" +
-        std::to_string(pre_plan.size()) + ", fact_count=" + std::to_string(stage_facts.size()) + ")");
+        std::to_string(pre_plan.size()) + ", fact_count=" + std::to_string(stage_facts.size()) +
+        ")");
   }
 
   if (const auto exact_stage = resolve_exact_route_stage_name_or_id(pack, kind, route_op);
       exact_stage.has_value() && pack.mpk_contract().has_value()) {
     try {
-      return pipeline_internal::sima::stagesemantics::build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
-          *pack.mpk_contract(), kind, *exact_stage);
+      return pipeline_internal::sima::stagesemantics::
+          build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(*pack.mpk_contract(),
+                                                                           kind, *exact_stage);
     } catch (const std::exception& ex) {
       if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
         std::fprintf(stderr,
@@ -449,7 +474,8 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
     }
 
     std::unordered_set<std::string> wanted_names;
-    const std::array<std::string, 2> exact_candidates = {route_op->plugin_name, route_op->plugin_id};
+    const std::array<std::string, 2> exact_candidates = {route_op->plugin_name,
+                                                         route_op->plugin_id};
     for (const auto& candidate : exact_candidates) {
       if (candidate.empty()) {
         continue;
@@ -485,14 +511,12 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
       if (route_op->sequence >= 0 && pack.mpk_contract().has_value() &&
           pre_plan[index].mpk_plugin_index.has_value() &&
           *pre_plan[index].mpk_plugin_index < pack.mpk_contract()->plugins.size()) {
-        sequence_match =
-            pack.mpk_contract()->plugins[*pre_plan[index].mpk_plugin_index].sequence ==
-            route_op->sequence;
+        sequence_match = pack.mpk_contract()->plugins[*pre_plan[index].mpk_plugin_index].sequence ==
+                         route_op->sequence;
       }
-      const bool name_match =
-          wanted_names.count(pre_plan[index].stage_name) > 0U ||
-          wanted_names.count(pre_plan[index].plugin_id) > 0U ||
-          wanted_names.count(fact.stage_name) > 0U;
+      const bool name_match = wanted_names.count(pre_plan[index].stage_name) > 0U ||
+                              wanted_names.count(pre_plan[index].plugin_id) > 0U ||
+                              wanted_names.count(fact.stage_name) > 0U;
       if (!(name_match || sequence_match)) {
         continue;
       }
@@ -502,8 +526,7 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
             " stage resolved multiple canonical compiled contracts for route op '" +
             (!route_op->plugin_name.empty() ? route_op->plugin_name : route_op->plugin_id) +
             "' (matched stage='" + pre_plan[index].stage_name +
-            "', index=" + std::to_string(index) +
-            "); ensure only one stage matches the route op");
+            "', index=" + std::to_string(index) + "); ensure only one stage matches the route op");
       }
       matched = *fact.processcvu_contract;
     }
@@ -516,14 +539,16 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
 
   if (route_op && (!route_op->plugin_name.empty() || !route_op->plugin_id.empty())) {
     if (pack.mpk_contract().has_value()) {
-      const std::array<std::string, 2> exact_candidates = {route_op->plugin_name, route_op->plugin_id};
+      const std::array<std::string, 2> exact_candidates = {route_op->plugin_name,
+                                                           route_op->plugin_id};
       for (const auto& candidate : exact_candidates) {
         if (candidate.empty()) {
           continue;
         }
         try {
-          return pipeline_internal::sima::stagesemantics::build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
-              *pack.mpk_contract(), kind, candidate);
+          return pipeline_internal::sima::stagesemantics::
+              build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(*pack.mpk_contract(),
+                                                                               kind, candidate);
         } catch (const std::exception&) {
         }
       }
@@ -531,16 +556,15 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
   }
 
   const auto* mpk_stage = find_pre_mla_processcvu_stage(
-      pack,
-      kind == internal::ExecutionStageKind::Quant
-          ? std::initializer_list<const char*>{"quant", "quanttess", "preproc"}
-      : kind == internal::ExecutionStageKind::Tess
-          ? std::initializer_list<const char*>{"tess", "quanttess", "preproc"}
-      : kind == internal::ExecutionStageKind::CastTess
-          ? std::initializer_list<const char*>{"casttess", "tess", "preproc"}
-      : kind == internal::ExecutionStageKind::Cast
-          ? std::initializer_list<const char*>{"cast"}
-          : std::initializer_list<const char*>{"quanttess", "preproc"});
+      pack, kind == internal::ExecutionStageKind::Quant
+                ? std::initializer_list<const char*>{"quant", "quanttess", "preproc"}
+            : kind == internal::ExecutionStageKind::Tess
+                ? std::initializer_list<const char*>{"tess", "quanttess", "preproc"}
+            : kind == internal::ExecutionStageKind::CastTess
+                ? std::initializer_list<const char*>{"casttess", "tess", "preproc"}
+            : kind == internal::ExecutionStageKind::Cast
+                ? std::initializer_list<const char*>{"cast"}
+                : std::initializer_list<const char*>{"quanttess", "preproc"});
 
   // Locate the (single) plan entry of the requested kind. For fan-in routes
   // the MPK exposes separate per-ingress plugins (e.g. cast_0+tess_0 / cast_1+
@@ -576,8 +600,8 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
       throw std::runtime_error(std::string("Model-managed ") +
                                (stage_label ? stage_label : "processcvu") +
                                " stage resolved multiple canonical compiled contracts"
-                               " (duplicate at stage='" + fact.stage_name +
-                               "'); ensure only one pre-process stage matches");
+                               " (duplicate at stage='" +
+                               fact.stage_name + "'); ensure only one pre-process stage matches");
     }
     matched = *fact.processcvu_contract;
   }
@@ -592,15 +616,17 @@ CompiledProcessCvuContract require_model_managed_preadapter_contract(
   return *matched;
 }
 
-CompiledProcessCvuContract require_model_managed_postprocess_contract(
-    const internal::ModelPack& pack,
-    internal::ExecutionStageKind kind) {
+CompiledProcessCvuContract
+require_model_managed_postprocess_contract(const internal::ModelPack& pack,
+                                           internal::ExecutionStageKind kind) {
   const auto post_plan = pack.execution_plan().post;
   const auto post_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Postprocess);
   if (post_plan.size() != post_facts.size()) {
-    throw std::runtime_error("Model-managed post-process stage facts are out of sync with execution plan"
-                             " (plan_count=" + std::to_string(post_plan.size()) +
-                             ", fact_count=" + std::to_string(post_facts.size()) + ")");
+    throw std::runtime_error(
+        "Model-managed post-process stage facts are out of sync with execution plan"
+        " (plan_count=" +
+        std::to_string(post_plan.size()) + ", fact_count=" + std::to_string(post_facts.size()) +
+        ")");
   }
 
   std::vector<std::string> matched_stage_names;
@@ -614,29 +640,26 @@ CompiledProcessCvuContract require_model_managed_postprocess_contract(
     }
     matched_stage_names.push_back(post_plan[index].stage_name);
     if (matched_stage_names.size() > 1U) {
-      throw std::runtime_error(
-          "Model-managed post-process stage '" + post_plan[index].stage_name + "' has duplicate entries");
+      throw std::runtime_error("Model-managed post-process stage '" + post_plan[index].stage_name +
+                               "' has duplicate entries");
     }
     return *fact.processcvu_contract;
   }
   if (matched_stage_names.empty()) {
-    const auto stage_name = kind == internal::ExecutionStageKind::Detess
-                               ? std::string("detess")
-                               : kind == internal::ExecutionStageKind::DetessCast
-                                   ? std::string("detesscast")
-                               : kind == internal::ExecutionStageKind::DetessDequant
-                                   ? std::string("detessdequant")
-                                   : kind == internal::ExecutionStageKind::Dequant
-                                       ? std::string("dequant")
-                                       : std::string("processcvu");
+    const auto stage_name =
+        kind == internal::ExecutionStageKind::Detess          ? std::string("detess")
+        : kind == internal::ExecutionStageKind::DetessCast    ? std::string("detesscast")
+        : kind == internal::ExecutionStageKind::DetessDequant ? std::string("detessdequant")
+        : kind == internal::ExecutionStageKind::Dequant       ? std::string("dequant")
+                                                              : std::string("processcvu");
     throw std::runtime_error("Model-managed " + stage_name +
                              " stage requires a canonical compiled contract");
   }
   return {};
 }
 
-CompiledBoxDecodeContract require_model_managed_boxdecode_contract(
-    const internal::ModelPack& pack) {
+CompiledBoxDecodeContract
+require_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
   const auto post_plan = pack.execution_plan().post;
   const auto post_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Postprocess);
   if (post_plan.size() != post_facts.size()) {
@@ -660,8 +683,9 @@ CompiledBoxDecodeContract require_model_managed_boxdecode_contract(
 // Legacy processcvu wrappers removed; post-process model-managed stages now use canonical
 // processcvu facts and contracts from stage facts directly.
 
-const pipeline_internal::sima::MpkPluginIoContract* find_pre_mla_processcvu_stage(
-    const internal::ModelPack& pack, std::initializer_list<const char*> preferred_families) {
+const pipeline_internal::sima::MpkPluginIoContract*
+find_pre_mla_processcvu_stage(const internal::ModelPack& pack,
+                              std::initializer_list<const char*> preferred_families) {
   const auto& mpk_opt = pack.mpk_contract();
   if (!mpk_opt.has_value()) {
     return nullptr;
@@ -692,10 +716,12 @@ const pipeline_internal::sima::MpkPluginIoContract* find_pre_mla_processcvu_stag
       if (upper_copy(stage.processor) == "MLA") {
         continue;
       }
-      if (pipeline_internal::sima::canonical_processcvu_family_from_kernel(stage.kernel) != wanted) {
+      if (pipeline_internal::sima::canonical_processcvu_family_from_kernel(stage.kernel) !=
+          wanted) {
         continue;
       }
-      if (!best || (stage.sequence >= 0 && (best->sequence < 0 || stage.sequence < best->sequence))) {
+      if (!best ||
+          (stage.sequence >= 0 && (best->sequence < 0 || stage.sequence < best->sequence))) {
         best = &stage;
       }
     }
@@ -717,13 +743,11 @@ void populate_effective_model_managed_contract_fields(internal::PreprocessPlanne
   auto& effective = plan->resolved_plan.effective;
 
   if (flags.tess_needed) {
-    const auto* tess_stage =
-        find_pre_mla_processcvu_stage(pack, {"quanttess", "tess", "preproc"});
+    const auto* tess_stage = find_pre_mla_processcvu_stage(pack, {"quanttess", "tess", "preproc"});
     if (tess_stage) {
       const auto sd = dims_from_slice_shape(tess_stage->slice_shape);
-      int ch = tess_stage->slice_shape.empty()
-                   ? 0
-                   : static_cast<int>(tess_stage->slice_shape.back());
+      int ch =
+          tess_stage->slice_shape.empty() ? 0 : static_cast<int>(tess_stage->slice_shape.back());
       if (ch <= 0 && !tess_stage->input_tensors.empty()) {
         const auto& shape = !tess_stage->input_tensors.front().logical_shape.empty()
                                 ? tess_stage->input_tensors.front().logical_shape
@@ -1006,10 +1030,9 @@ const char* stage_node_kind_name(internal::StageNodeKind kind) {
 bool route_contains_stage(const internal::SessionRoutePlan& route, internal::StageNodeKind kind) {
   const auto route_contains_post_region =
       [&](const pipeline_internal::sima::RouteGraphKernelKind kernel_kind) {
-        return std::any_of(route.post_regions.begin(), route.post_regions.end(),
-                           [&](const internal::RouteRegion& region) {
-                             return region.op_kind == kernel_kind;
-                           });
+        return std::any_of(
+            route.post_regions.begin(), route.post_regions.end(),
+            [&](const internal::RouteRegion& region) { return region.op_kind == kernel_kind; });
       };
   switch (kind) {
   case internal::StageNodeKind::Preproc:
@@ -1035,8 +1058,7 @@ bool route_contains_stage(const internal::SessionRoutePlan& route, internal::Sta
                      internal::SessionPostStageOp::Detess) != route.post_chain.end();
   case internal::StageNodeKind::DetessCast:
     if (!route.post_regions.empty()) {
-      return route_contains_post_region(
-          pipeline_internal::sima::RouteGraphKernelKind::DetessCast);
+      return route_contains_post_region(pipeline_internal::sima::RouteGraphKernelKind::DetessCast);
     }
     return std::find(route.post_chain.begin(), route.post_chain.end(),
                      internal::SessionPostStageOp::DetessCast) != route.post_chain.end();
@@ -1049,8 +1071,7 @@ bool route_contains_stage(const internal::SessionRoutePlan& route, internal::Sta
                      internal::SessionPostStageOp::DetessDequant) != route.post_chain.end();
   case internal::StageNodeKind::Dequant:
     if (!route.post_regions.empty()) {
-      return route_contains_post_region(
-          pipeline_internal::sima::RouteGraphKernelKind::Dequantize);
+      return route_contains_post_region(pipeline_internal::sima::RouteGraphKernelKind::Dequantize);
     }
     return std::find(route.post_chain.begin(), route.post_chain.end(),
                      internal::SessionPostStageOp::Dequantize) != route.post_chain.end();
@@ -1402,8 +1423,8 @@ std::string input_info_debug_string(const InputInfo* input) {
   }
   std::ostringstream oss;
   oss << "{media=" << (input->media_type.empty() ? "<empty>" : input->media_type)
-      << ",format=" << (input->format.empty() ? "<empty>" : input->format)
-      << ",w=" << input->width << ",h=" << input->height << ",d=" << input->depth
+      << ",format=" << (input->format.empty() ? "<empty>" : input->format) << ",w=" << input->width
+      << ",h=" << input->height << ",d=" << input->depth
       << ",format_source=" << static_cast<int>(input->format_source) << "}";
   return oss.str();
 }
@@ -1451,14 +1472,13 @@ cv::Mat maybe_resize_mat_to_tensor_caps(const cv::Mat& input, const InputOptions
   if (runner_debug_enabled()) {
     const int target_w = (src_opt.width > 0) ? src_opt.width : src_opt.max_width;
     const int target_h = (src_opt.height > 0) ? src_opt.height : src_opt.max_height;
-    if (target_w > 0 && target_h > 0 &&
-        (input.cols != target_w || input.rows != target_h)) {
+    if (target_w > 0 && target_h > 0 && (input.cols != target_w || input.rows != target_h)) {
       std::fprintf(stderr,
                    "[model-route-debug] tensor_ingress_resize_disabled input=%dx%dx%d "
                    "src_opt{w=%d h=%d max=%dx%d format=%s} requested_target=%dx%d action=keep\n",
                    input.cols, input.rows, input.channels(), src_opt.width, src_opt.height,
-                   src_opt.max_width, src_opt.max_height, src_opt.format.str().c_str(),
-                   target_w, target_h);
+                   src_opt.max_width, src_opt.max_height, src_opt.format.str().c_str(), target_w,
+                   target_h);
     }
   }
   return input;
@@ -1503,16 +1523,15 @@ maybe_resize_tensor_ingress_mat_for_pre_adapter(const cv::Mat& input,
 
   if (runner_debug_enabled()) {
     const char* action =
-        (target_w > 0 && target_h > 0 &&
-         (input.cols != target_w || input.rows != target_h))
+        (target_w > 0 && target_h > 0 && (input.cols != target_w || input.rows != target_h))
             ? "keep_resize_disabled"
             : "keep";
     std::fprintf(stderr,
                  "[model-route-debug] tensor_ingress_resize first_pre=%s input=%dx%dx%d "
                  "src_opt{w=%d h=%d max=%dx%d format=%s} target=%dx%d action=%s\n",
-                 first_pre, input.cols, input.rows, input.channels(), src_opt.width,
-                 src_opt.height, src_opt.max_width, src_opt.max_height,
-                 src_opt.format.str().c_str(), target_w, target_h, action);
+                 first_pre, input.cols, input.rows, input.channels(), src_opt.width, src_opt.height,
+                 src_opt.max_width, src_opt.max_height, src_opt.format.str().c_str(), target_w,
+                 target_h, action);
   }
   return input;
 }
@@ -1680,12 +1699,10 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
 
   const int depth = (pix == ImageSpec::PixelFormat::GRAY8) ? 1 : 3;
   t.shape = (depth == 1) ? std::vector<int64_t>{h, w} : std::vector<int64_t>{h, w, depth};
-  t.axis_semantics = (depth == 1)
-                         ? std::vector<TensorAxisSemantic>{TensorAxisSemantic::H,
-                                                           TensorAxisSemantic::W}
-                         : std::vector<TensorAxisSemantic>{TensorAxisSemantic::H,
-                                                           TensorAxisSemantic::W,
-                                                           TensorAxisSemantic::C};
+  t.axis_semantics =
+      (depth == 1) ? std::vector<TensorAxisSemantic>{TensorAxisSemantic::H, TensorAxisSemantic::W}
+                   : std::vector<TensorAxisSemantic>{TensorAxisSemantic::H, TensorAxisSemantic::W,
+                                                     TensorAxisSemantic::C};
   const std::size_t bytes =
       static_cast<std::size_t>(w) * static_cast<std::size_t>(h) * static_cast<std::size_t>(depth);
   t.storage = make_cpu_owned_storage(bytes);
@@ -1697,8 +1714,8 @@ simaai::neat::Sample make_bundle_from_tensors(const std::vector<Tensor>& inputs)
   return sample_from_tensors(inputs);
 }
 
-std::vector<internal::IngressTensorContract> normalized_ingress_contracts(
-    const internal::SessionRoutePlan& route) {
+std::vector<internal::IngressTensorContract>
+normalized_ingress_contracts(const internal::SessionRoutePlan& route) {
   return route.ingress_contracts;
 }
 
@@ -1707,13 +1724,13 @@ const internal::IngressTensorContract* maybe_single_ingress_contract(
   return ingress_contracts.size() == 1U ? &ingress_contracts.front() : nullptr;
 }
 
-const PreprocessContract* maybe_single_preprocess_ingress_contract(
-    const std::vector<PreprocessContract>& ingress_contracts) {
+const PreprocessContract*
+maybe_single_preprocess_ingress_contract(const std::vector<PreprocessContract>& ingress_contracts) {
   return ingress_contracts.size() == 1U ? &ingress_contracts.front() : nullptr;
 }
 
-std::string unify_ingress_dtype(
-    const std::vector<internal::IngressTensorContract>& ingress_contracts) {
+std::string
+unify_ingress_dtype(const std::vector<internal::IngressTensorContract>& ingress_contracts) {
   std::string dtype;
   for (const auto& ingress : ingress_contracts) {
     if (ingress.dtype.empty()) {
@@ -1745,10 +1762,9 @@ std::vector<std::string> ingress_names_from_contracts(
   return names;
 }
 
-void require_exact_ingress_count(std::size_t actual,
-                                 const std::vector<internal::IngressTensorContract>& ingress_contracts,
-                                 const char* where,
-                                 const char* kind) {
+void require_exact_ingress_count(
+    std::size_t actual, const std::vector<internal::IngressTensorContract>& ingress_contracts,
+    const char* where, const char* kind) {
   const std::size_t expected = ingress_contracts.empty() ? 1U : ingress_contracts.size();
   if (actual == expected) {
     return;
@@ -1761,8 +1777,9 @@ void require_exact_ingress_count(std::size_t actual,
       if (i) {
         oss << ",";
       }
-      oss << (!ingress_contracts[i].source_tensor_name.empty() ? ingress_contracts[i].source_tensor_name
-                                                               : ("ifm" + std::to_string(i)));
+      oss << (!ingress_contracts[i].source_tensor_name.empty()
+                  ? ingress_contracts[i].source_tensor_name
+                  : ("ifm" + std::to_string(i)));
     }
     oss << ")";
   }
@@ -1770,14 +1787,13 @@ void require_exact_ingress_count(std::size_t actual,
   throw std::invalid_argument(oss.str());
 }
 
-void require_single_ingress_api(const std::vector<internal::IngressTensorContract>& ingress_contracts,
-                                const char* where) {
+void require_single_ingress_api(
+    const std::vector<internal::IngressTensorContract>& ingress_contracts, const char* where) {
   if (ingress_contracts.size() <= 1U) {
     return;
   }
   std::ostringstream oss;
-  oss << (where ? where : "Model")
-      << ": multi-ingress model requires plural ingress API";
+  oss << (where ? where : "Model") << ": multi-ingress model requires plural ingress API";
   oss << " (use input_specs()/input_appsrc_options_list())";
   throw std::runtime_error(oss.str());
 }
@@ -1797,11 +1813,10 @@ std::string ingress_expected_format_token(const internal::IngressTensorContract&
 }
 
 void validate_single_tensor_ingress_expectation(const internal::IngressTensorContract& ingress,
-                                                const InputInfo& info,
-                                                const char* where) {
-  const std::string expected_media =
-      ingress.valid && !ingress.media_type.empty() ? upper_copy(ingress.media_type)
-                                                   : std::string("APPLICATION/VND.SIMAAI.TENSOR");
+                                                const InputInfo& info, const char* where) {
+  const std::string expected_media = ingress.valid && !ingress.media_type.empty()
+                                         ? upper_copy(ingress.media_type)
+                                         : std::string("APPLICATION/VND.SIMAAI.TENSOR");
   const std::string actual_media = upper_copy(info.media_type);
   const std::string expected_format = ingress_expected_format_token(ingress);
   const std::string actual_format = upper_copy(info.format);
@@ -1810,12 +1825,10 @@ void validate_single_tensor_ingress_expectation(const internal::IngressTensorCon
   const bool expects_bf16 = expected_format.find("BF16") != std::string::npos ||
                             expected_format.find("BFLOAT16") != std::string::npos;
   const bool format_ok = expected_format.empty() ||
-                         (expects_fp32 &&
-                          (actual_format.find("FP32") != std::string::npos ||
-                           actual_format.find("FLOAT32") != std::string::npos)) ||
-                         (expects_bf16 &&
-                          (actual_format.find("BF16") != std::string::npos ||
-                           actual_format.find("BFLOAT16") != std::string::npos)) ||
+                         (expects_fp32 && (actual_format.find("FP32") != std::string::npos ||
+                                           actual_format.find("FLOAT32") != std::string::npos)) ||
+                         (expects_bf16 && (actual_format.find("BF16") != std::string::npos ||
+                                           actual_format.find("BFLOAT16") != std::string::npos)) ||
                          (!expects_fp32 && !expects_bf16 && actual_format == expected_format);
   const bool media_ok = actual_media == expected_media;
   const bool width_ok = ingress.width <= 0 || ingress.width == info.width;
@@ -1831,8 +1844,8 @@ void validate_single_tensor_ingress_expectation(const internal::IngressTensorCon
   if (!ingress.source_tensor_name.empty()) {
     oss << " (" << ingress.source_tensor_name << ")";
   }
-  oss << " expects media=" << (ingress.media_type.empty() ? "application/vnd.simaai.tensor"
-                                                           : ingress.media_type);
+  oss << " expects media="
+      << (ingress.media_type.empty() ? "application/vnd.simaai.tensor" : ingress.media_type);
   if (!ingress.dtype.empty()) {
     oss << " format=" << ingress.dtype;
   }
@@ -1845,8 +1858,8 @@ void validate_single_tensor_ingress_expectation(const internal::IngressTensorCon
   if (!ingress.layout.empty()) {
     oss << " layout=" << ingress.layout;
   }
-  oss << ". Received media=" << info.media_type << " format=" << info.format << " shape="
-      << info.width << "x" << info.height << "x" << info.depth;
+  oss << ". Received media=" << info.media_type << " format=" << info.format
+      << " shape=" << info.width << "x" << info.height << "x" << info.depth;
   throw std::invalid_argument(oss.str());
 }
 
@@ -1856,9 +1869,9 @@ Tensor apply_ingress_tensor_identity(Tensor tensor,
       !ingress.source_tensor_name.empty()
           ? ingress.source_tensor_name
           : ("ifm" + std::to_string(std::max(ingress.ingress_index, 0)));
-  const bool has_explicit_branch_stage =
-      !ingress.branch_ops.empty() && !ingress.source_stage.empty() &&
-      ingress.source_stage != "session_ingress";
+  const bool has_explicit_branch_stage = !ingress.branch_ops.empty() &&
+                                         !ingress.source_stage.empty() &&
+                                         ingress.source_stage != "session_ingress";
   const std::string segment_name = has_explicit_branch_stage ? ingress.source_stage : ingress_name;
   tensor.route.name = ingress_name;
   tensor.route.segment_name = segment_name;
@@ -1866,18 +1879,19 @@ Tensor apply_ingress_tensor_identity(Tensor tensor,
     tensor.route.backend_name = segment_name;
   }
   if (ingress.ingress_index >= 0) {
-    tensor = internal::remap_tensor_to_consumer_identity(
-        std::move(tensor), internal::IngressConsumerTensorIdentity{
-                              .logical_index = ingress.ingress_index,
-                              .route_slot = ingress.ingress_index,
-                          });
+    tensor = internal::remap_tensor_to_consumer_identity(std::move(tensor),
+                                                         internal::IngressConsumerTensorIdentity{
+                                                             .logical_index = ingress.ingress_index,
+                                                             .route_slot = ingress.ingress_index,
+                                                         });
   }
   return tensor;
 }
 
-TensorList prepare_ingress_tensors(const TensorList& inputs,
-                                   const std::vector<internal::IngressTensorContract>& ingress_contracts,
-                                   const char* where) {
+TensorList
+prepare_ingress_tensors(const TensorList& inputs,
+                        const std::vector<internal::IngressTensorContract>& ingress_contracts,
+                        const char* where) {
   require_exact_ingress_count(inputs.size(), ingress_contracts, where, "tensor inputs");
   TensorList prepared;
   prepared.reserve(inputs.size());
@@ -1901,9 +1915,9 @@ Sample apply_ingress_sample_identity(Sample sample,
       !ingress.source_tensor_name.empty()
           ? ingress.source_tensor_name
           : ("ifm" + std::to_string(std::max(ingress.ingress_index, 0)));
-  const bool has_explicit_branch_stage =
-      !ingress.branch_ops.empty() && !ingress.source_stage.empty() &&
-      ingress.source_stage != "session_ingress";
+  const bool has_explicit_branch_stage = !ingress.branch_ops.empty() &&
+                                         !ingress.source_stage.empty() &&
+                                         ingress.source_stage != "session_ingress";
   const std::string segment_name = has_explicit_branch_stage ? ingress.source_stage : ingress_name;
   if (sample.stream_label.empty()) {
     sample.stream_label = ingress_name;
@@ -1914,7 +1928,8 @@ Sample apply_ingress_sample_identity(Sample sample,
   if (sample.tensor.has_value()) {
     sample.tensor = apply_ingress_tensor_identity(std::move(*sample.tensor), ingress);
   } else if (sample_has_tensor_list(sample) && sample.tensors.size() == 1U) {
-    sample.tensors.front() = apply_ingress_tensor_identity(std::move(sample.tensors.front()), ingress);
+    sample.tensors.front() =
+        apply_ingress_tensor_identity(std::move(sample.tensors.front()), ingress);
   }
   return sample;
 }
@@ -1943,8 +1958,8 @@ bool sample_represents_multi_ingress_item(const Sample& sample) {
 
 InputOptions input_options_from_ingress_contract(const internal::IngressTensorContract& ingress) {
   InputOptions opt;
-  opt.media_type =
-      ingress.media_type.empty() ? std::string("application/vnd.simaai.tensor") : ingress.media_type;
+  opt.media_type = ingress.media_type.empty() ? std::string("application/vnd.simaai.tensor")
+                                              : ingress.media_type;
   if (!ingress.dtype.empty()) {
     opt.format = ingress.dtype;
   }
@@ -1960,9 +1975,9 @@ InputOptions input_options_from_ingress_contract(const internal::IngressTensorCo
   return opt;
 }
 
-InputOptions overlay_input_options_from_ingress_contract(
-    InputOptions opt,
-    const internal::IngressTensorContract& ingress) {
+InputOptions
+overlay_input_options_from_ingress_contract(InputOptions opt,
+                                            const internal::IngressTensorContract& ingress) {
   const InputOptions route_opt = input_options_from_ingress_contract(ingress);
   if (!route_opt.media_type.empty()) {
     opt.media_type = route_opt.media_type;
@@ -1994,7 +2009,8 @@ InputOptions overlay_input_options_from_ingress_contract(
   return opt;
 }
 
-InputOptions override_input_options_from_contract(InputOptions opt, const PreprocessContract& contract) {
+InputOptions override_input_options_from_contract(InputOptions opt,
+                                                  const PreprocessContract& contract) {
   if (!contract.media_type.empty()) {
     opt.media_type = contract.media_type;
   }
@@ -2114,8 +2130,8 @@ route_graph_kind_from_ordered_op(const internal::OrderedRouteOp& op) {
   return GraphKind::Unknown;
 }
 
-std::string ingress_stage_name_from_op(const internal::OrderedRouteOp& op, std::size_t ingress_index,
-                                       std::size_t op_index) {
+std::string ingress_stage_name_from_op(const internal::OrderedRouteOp& op,
+                                       std::size_t ingress_index, std::size_t op_index) {
   const auto graph_kind = route_graph_kind_from_ordered_op(op);
   if (graph_kind != pipeline_internal::sima::RouteGraphKernelKind::Unknown) {
     // Route ops intentionally retain source MPK plugin name/id in `op` so exact contract lookup
@@ -2140,8 +2156,8 @@ std::shared_ptr<Node> build_ingress_node_from_op(const Model& model,
                                                  const std::string& upstream_name) {
   switch (op.kind) {
   case internal::OrderedRouteOp::Kind::Preproc: {
-    PreprocOptions pre_opt =
-        make_preproc_options_from_typed_adapter(model, plan, nullptr, stage_name, upstream_name, false);
+    PreprocOptions pre_opt = make_preproc_options_from_typed_adapter(
+        model, plan, nullptr, stage_name, upstream_name, false);
     return simaai::neat::nodes::Preproc(std::move(pre_opt));
   }
   case internal::OrderedRouteOp::Kind::Quant: {
@@ -2165,10 +2181,9 @@ std::shared_ptr<Node> build_ingress_node_from_op(const Model& model,
     return simaai::neat::nodes::CastTess(std::move(ct_opt));
   }
   case internal::OrderedRouteOp::Kind::Cast: {
-    CastOptions cast_opt =
-        make_cast_options_from_typed_adapter(&model, stage_name, CastDirection::Fp32ToBf16,
-                                             internal::ModelLineageStageRole::Preprocess, &op,
-                                             false);
+    CastOptions cast_opt = make_cast_options_from_typed_adapter(
+        &model, stage_name, CastDirection::Fp32ToBf16, internal::ModelLineageStageRole::Preprocess,
+        &op, false);
     return simaai::neat::nodes::Cast(std::move(cast_opt));
   }
   case internal::OrderedRouteOp::Kind::Unknown:
@@ -2212,33 +2227,31 @@ Session build_ingress_branch_session(const Model& model,
   return branch;
 }
 
-Sample run_ingress_branch(Session& branch,
-                          Run& runner,
+Sample run_ingress_branch(Session& branch, Run& runner,
                           const internal::IngressTensorContract& ingress, Sample sample,
                           const char* where) {
   sample = apply_ingress_sample_identity(std::move(sample), ingress);
   if (ingress.branch_ops.empty()) {
     return sample;
   }
-  sample = internal::remap_sample_to_consumer_identity(
-      std::move(sample), internal::IngressConsumerTensorIdentity{
-                            .logical_index = 0,
-                            .physical_index = 0,
-                            .route_slot = 0,
-                        });
+  sample = internal::remap_sample_to_consumer_identity(std::move(sample),
+                                                       internal::IngressConsumerTensorIdentity{
+                                                           .logical_index = 0,
+                                                           .physical_index = 0,
+                                                           .route_slot = 0,
+                                                       });
   if (runner_debug_enabled()) {
     const TensorList branch_inputs = tensors_from_sample(sample, true);
-    std::fprintf(stderr,
-                 "[model-ingress-debug] branch_input ingress=%d tensors=%zu\n",
+    std::fprintf(stderr, "[model-ingress-debug] branch_input ingress=%d tensors=%zu\n",
                  std::max(ingress.ingress_index, 0), branch_inputs.size());
     for (std::size_t i = 0; i < branch_inputs.size(); ++i) {
       const auto& tensor = branch_inputs[i];
       std::fprintf(stderr,
-                   "[model-ingress-debug] branch_input.tensor[%zu] logical=%d physical=%d slot=%d memory=%d name=%s segment=%s backend=%s\n",
+                   "[model-ingress-debug] branch_input.tensor[%zu] logical=%d physical=%d slot=%d "
+                   "memory=%d name=%s segment=%s backend=%s\n",
                    i, tensor.route.logical_index, tensor.route.physical_index,
-                   tensor.route.route_slot, tensor.route.memory_index,
-                   tensor.route.name.c_str(), tensor.route.segment_name.c_str(),
-                   tensor.route.backend_name.c_str());
+                   tensor.route.route_slot, tensor.route.memory_index, tensor.route.name.c_str(),
+                   tensor.route.segment_name.c_str(), tensor.route.backend_name.c_str());
     }
   }
 
@@ -2268,8 +2281,8 @@ Tensor stabilize_ingress_branch_tensor(Tensor tensor) {
   const auto original_route = tensor.route;
   const auto original_layout = tensor.layout;
   const auto original_planes = tensor.planes;
-  Tensor view = pipeline_internal::tensor_view_from_sample_memory(
-      tensor, tensor.route.memory_index, /*keep_holder=*/true);
+  Tensor view = pipeline_internal::tensor_view_from_sample_memory(tensor, tensor.route.memory_index,
+                                                                  /*keep_holder=*/true);
   view.route = original_route;
   view.layout = original_layout;
   view.planes = original_planes;
@@ -2371,8 +2384,8 @@ internal::IngressConsumerTensorIdentity joined_tensor_identity_or_fallback(
   return identity;
 }
 
-std::vector<internal::IngressConsumerTensorIdentity> main_session_joined_input_identities(
-    const Model& model) {
+std::vector<internal::IngressConsumerTensorIdentity>
+main_session_joined_input_identities(const Model& model) {
   const auto identities_from_static_contract =
       [](const pipeline_internal::sima::MlaStaticContract& contract) {
         std::vector<internal::IngressConsumerTensorIdentity> out;
@@ -2391,8 +2404,7 @@ std::vector<internal::IngressConsumerTensorIdentity> main_session_joined_input_i
         for (std::size_t i = 0; i < out.size(); ++i) {
           auto& identity = out[i];
           identity.logical_index = static_cast<int>(i);
-          identity.physical_index =
-              contract.physical_inputs.size() == 1U ? 0 : static_cast<int>(i);
+          identity.physical_index = contract.physical_inputs.size() == 1U ? 0 : static_cast<int>(i);
           identity.route_slot = static_cast<int>(i);
         }
         for (const auto& binding : contract.input_bindings) {
@@ -2435,7 +2447,7 @@ std::vector<internal::IngressConsumerTensorIdentity> main_session_joined_input_i
       };
 
   const auto& pack = internal::ModelAccess::pack(model);
-    if (const auto& mpk_opt = pack.mpk_contract(); mpk_opt.has_value()) {
+  if (const auto& mpk_opt = pack.mpk_contract(); mpk_opt.has_value()) {
     if (const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_opt)) {
       const auto boundary_inputs =
           pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_opt);
@@ -2478,9 +2490,9 @@ std::vector<internal::IngressConsumerTensorIdentity> main_session_joined_input_i
   int max_local_input_index = -1;
   for (std::size_t i = 0; i < stage->logical_inputs.size(); ++i) {
     const auto& logical = stage->logical_inputs[i];
-    max_local_input_index = std::max(
-        max_local_input_index,
-        logical.logical_index >= 0 ? logical.logical_index : static_cast<int>(i));
+    max_local_input_index =
+        std::max(max_local_input_index,
+                 logical.logical_index >= 0 ? logical.logical_index : static_cast<int>(i));
   }
   for (const auto& binding : stage->input_bindings) {
     max_local_input_index = std::max(max_local_input_index, binding.local_logical_input_index);
@@ -2618,10 +2630,10 @@ std::vector<internal::IngressConsumerTensorIdentity> joined_ingress_transport_id
   return out;
 }
 
-TensorList materialize_joined_ingress_tensors_impl(const TensorList& tensors,
-                                                   const std::vector<internal::IngressConsumerTensorIdentity>& consumer_identities,
-                                                   const std::string& segment_name,
-                                                   const char* where) {
+TensorList materialize_joined_ingress_tensors_impl(
+    const TensorList& tensors,
+    const std::vector<internal::IngressConsumerTensorIdentity>& consumer_identities,
+    const std::string& segment_name, const char* where) {
   if (tensors.empty()) {
     return tensors;
   }
@@ -2632,8 +2644,8 @@ TensorList materialize_joined_ingress_tensors_impl(const TensorList& tensors,
             ? static_cast<std::size_t>(tensor.route.physical_byte_offset)
             : (tensor.byte_offset >= 0 ? static_cast<std::size_t>(tensor.byte_offset) : 0U);
     if (tensor.storage) {
-      const int memory_index =
-          (tensor.route.memory_index >= 0) ? tensor.route.memory_index : tensor.route.physical_index;
+      const int memory_index = (tensor.route.memory_index >= 0) ? tensor.route.memory_index
+                                                                : tensor.route.physical_index;
       if (memory_index >= 0 &&
           static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size()) {
         const auto& segment = tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)];
@@ -2716,10 +2728,8 @@ TensorList materialize_joined_ingress_tensors_impl(const TensorList& tensors,
     joined_tensor.byte_offset = static_cast<std::int64_t>(running_offset);
     joined_tensor.route.physical_byte_offset = joined_tensor.byte_offset;
     joined_tensor.route.memory_index = 0;
-    const auto identity =
-        joined_tensor_identity_or_fallback(joined_tensor, i, consumer_identities);
-    joined_tensor = internal::remap_tensor_to_consumer_identity(
-        std::move(joined_tensor), identity);
+    const auto identity = joined_tensor_identity_or_fallback(joined_tensor, i, consumer_identities);
+    joined_tensor = internal::remap_tensor_to_consumer_identity(std::move(joined_tensor), identity);
     joined_tensor.route.memory_index = 0;
     if (!segment_name.empty()) {
       joined_tensor.route.name = segment_name;
@@ -2747,8 +2757,7 @@ bool mla_handoff_contract_is_packed_1d(const internal::PreprocessPlannerResult& 
 
 bool tensor_has_runtime_backing(const Tensor& tensor) {
   return tensor.storage &&
-         (tensor.storage->kind == StorageKind::GstSample ||
-          !tensor.storage->sima_segments.empty());
+         (tensor.storage->kind == StorageKind::GstSample || !tensor.storage->sima_segments.empty());
 }
 
 bool maybe_align_tensor_to_packed_mla_handoff(Tensor* tensor,
@@ -2783,8 +2792,7 @@ bool maybe_align_tensor_to_packed_mla_handoff(Tensor* tensor,
 
 std::string ingress_tensor_debug_string(const Tensor& tensor) {
   std::ostringstream oss;
-  oss << "dtype=" << static_cast<int>(tensor.dtype)
-      << " layout=" << static_cast<int>(tensor.layout)
+  oss << "dtype=" << static_cast<int>(tensor.dtype) << " layout=" << static_cast<int>(tensor.layout)
       << " shape=[";
   for (std::size_t i = 0; i < tensor.shape.size(); ++i) {
     if (i > 0U) {
@@ -2846,7 +2854,8 @@ public:
       // a TensorSet sample. No branch-session run, no clone, no join.
       return build_fan_in_sample(inputs, where);
     }
-    if (ingress_contracts_.size() > 1U || session_route_has_ingress_join(plan_.session_route_plan)) {
+    if (ingress_contracts_.size() > 1U ||
+        session_route_has_ingress_join(plan_.session_route_plan)) {
       // For joined multi-ingress routes, the exact main-session handoff shape is
       // determined by the real ingress-branch outputs. Seed from the real
       // processed sample, then deep-clone it into CPU-owned storage so the
@@ -2864,7 +2873,8 @@ public:
     if (is_fan_in_route_) {
       return build_fan_in_sample_from_samples(inputs, where);
     }
-    if (ingress_contracts_.size() > 1U || session_route_has_ingress_join(plan_.session_route_plan)) {
+    if (ingress_contracts_.size() > 1U ||
+        session_route_has_ingress_join(plan_.session_route_plan)) {
       Sample processed = process_samples(inputs, where);
       Sample seed = make_owned_seed_sample(processed, where);
       reset_branch_runners();
@@ -3025,9 +3035,11 @@ private:
     out.orig_input_seq = sample.orig_input_seq;
     if (runner_debug_enabled()) {
       std::fprintf(stderr,
-                   "[model-ingress-debug] owned-seed %s tensors=%zu media=%s format=%s payload=%s segment=%s\n",
-                   where ? where : "InputRouteProcessor::seed", owned.size(), out.media_type.c_str(),
-                   out.format.c_str(), out.payload_tag.c_str(), out.segment_name.c_str());
+                   "[model-ingress-debug] owned-seed %s tensors=%zu media=%s format=%s payload=%s "
+                   "segment=%s\n",
+                   where ? where : "InputRouteProcessor::seed", owned.size(),
+                   out.media_type.c_str(), out.format.c_str(), out.payload_tag.c_str(),
+                   out.segment_name.c_str());
     }
     return out;
   }
@@ -3054,8 +3066,8 @@ private:
     tensor.route.backend_name = segment_name;
     (void)maybe_align_tensor_to_packed_mla_handoff(&tensor, plan_);
     if (!joined_consumer_identities_.empty()) {
-      tensor = internal::remap_tensor_to_consumer_identity(
-          std::move(tensor), joined_consumer_identities_.front());
+      tensor = internal::remap_tensor_to_consumer_identity(std::move(tensor),
+                                                           joined_consumer_identities_.front());
       tensor.route.memory_index = 0;
       if (!segment_name.empty()) {
         tensor.route.name = segment_name;
@@ -3089,9 +3101,8 @@ private:
           ingress_contracts_[i]));
       if (runner_debug_enabled()) {
         const TensorList branch_tensors = tensors_from_sample(branch_outputs.back(), true);
-        std::fprintf(stderr,
-                     "[model-ingress-debug] branch[%zu] source=%s tensors=%zu\n",
-                     i, ingress_contracts_[i].source_tensor_name.c_str(), branch_tensors.size());
+        std::fprintf(stderr, "[model-ingress-debug] branch[%zu] source=%s tensors=%zu\n", i,
+                     ingress_contracts_[i].source_tensor_name.c_str(), branch_tensors.size());
         for (std::size_t tensor_index = 0; tensor_index < branch_tensors.size(); ++tensor_index) {
           const std::string desc = ingress_tensor_debug_string(branch_tensors[tensor_index]);
           std::fprintf(stderr, "[model-ingress-debug] branch[%zu].tensor[%zu] %s\n", i,
@@ -3121,8 +3132,7 @@ private:
     // below will preserve each tensor's per-input memory_index instead.
     const bool packed_joined_handoff =
         joined_tensors.size() > 1U && session_route_has_ingress_join(plan_.session_route_plan) &&
-        !joined_packed_segment_name_.empty() &&
-        !consumer_keeps_distinct_physical_inputs_;
+        !joined_packed_segment_name_.empty() && !consumer_keeps_distinct_physical_inputs_;
     if (packed_joined_handoff) {
       const auto transport_identities =
           packed_joined_ingress_identities(joined_tensors, joined_tensor_identities);
@@ -3137,9 +3147,8 @@ private:
           joined_tensors[i].route.backend_name = joined_packed_segment_name_;
         }
       }
-    } else if (joined_tensors.size() > 1U &&
-               ingress_consumer_identities_share_one_physical_input(joined_tensor_identities,
-                                                                    joined_tensors.size())) {
+    } else if (joined_tensors.size() > 1U && ingress_consumer_identities_share_one_physical_input(
+                                                 joined_tensor_identities, joined_tensors.size())) {
       const auto transport_identities =
           joined_ingress_transport_identities(joined_tensors, joined_tensor_identities);
       for (std::size_t i = 0; i < joined_tensors.size() && i < transport_identities.size(); ++i) {
@@ -3423,8 +3432,7 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   if (plan.session_route_plan.include_pre_stage && !plan.session_route_plan.pre_chain.empty()) {
     const auto first_pre_stage = plan.session_route_plan.pre_chain.front();
     if (first_pre_stage != internal::SessionPreStageOp::Preproc) {
-      const auto route_ingress_contracts =
-          normalized_ingress_contracts(plan.session_route_plan);
+      const auto route_ingress_contracts = normalized_ingress_contracts(plan.session_route_plan);
       const auto* single_ingress = maybe_single_ingress_contract(route_ingress_contracts);
       const std::string unified_ingress_dtype = unify_ingress_dtype(route_ingress_contracts);
       const auto dtype_is_fp32 = [](const std::string& raw) {
@@ -3438,10 +3446,9 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
                token.find("BFLOAT16") != std::string::npos;
       };
 
-      plan.modelpack_media_type =
-          (single_ingress != nullptr && !single_ingress->media_type.empty())
-              ? single_ingress->media_type
-              : "application/vnd.simaai.tensor";
+      plan.modelpack_media_type = (single_ingress != nullptr && !single_ingress->media_type.empty())
+                                      ? single_ingress->media_type
+                                      : "application/vnd.simaai.tensor";
       // Quantized pre-adapter chains ingest FP32 and own quantization in-kernel.
       // Tess-only BF16 chains ingest BF16 directly.
       const bool needs_fp32_ingress =
@@ -3493,10 +3500,9 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
       const int prior_max_h = plan.modelpack_max_height;
       bool widened_w = false;
       bool widened_h = false;
-      const int ingress_width_for_limits =
-          (single_ingress != nullptr && single_ingress->width > 0)
-              ? single_ingress->width
-              : capability.mla_input_dims.width;
+      const int ingress_width_for_limits = (single_ingress != nullptr && single_ingress->width > 0)
+                                               ? single_ingress->width
+                                               : capability.mla_input_dims.width;
       const int ingress_height_for_limits =
           (single_ingress != nullptr && single_ingress->height > 0)
               ? single_ingress->height
@@ -3575,13 +3581,13 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
   }
 
   plan.resolved_plan.ingress_contracts.clear();
-  const auto route_ingress_contracts =
-      normalized_ingress_contracts(plan.session_route_plan);
+  const auto route_ingress_contracts = normalized_ingress_contracts(plan.session_route_plan);
   if (!route_ingress_contracts.empty()) {
     plan.resolved_plan.ingress_contracts.reserve(route_ingress_contracts.size());
     for (const auto& ingress : route_ingress_contracts) {
       PreprocessContract contract;
-      contract.media_type = !ingress.media_type.empty() ? ingress.media_type : plan.modelpack_media_type;
+      contract.media_type =
+          !ingress.media_type.empty() ? ingress.media_type : plan.modelpack_media_type;
       contract.format = !ingress.dtype.empty() ? ingress.dtype : plan.modelpack_format;
       contract.width = ingress.width;
       contract.height = ingress.height;
@@ -3601,11 +3607,9 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
       ",include_post=" + (plan.session_route_plan.include_post_stage ? "1" : "0") +
       ",boxdecode_selected=" + (plan.session_route_plan.boxdecode_selected ? "1" : "0") +
       ",pre_quant_needed=" +
-      (plan.session_route_plan.preproc_context.pre_quant_needed ? "1" : "0") +
-      ",pre_tess_needed=" + (plan.session_route_plan.preproc_context.pre_tess_needed ? "1" : "0") +
-      ",pre_cast_needed=" +
-          (plan.session_route_plan.model_managed_route_flags.pre_cast_needed ? "1" : "0") +
-      "}");
+      (plan.session_route_plan.preproc_context.pre_quant_needed ? "1" : "0") + ",pre_tess_needed=" +
+      (plan.session_route_plan.preproc_context.pre_tess_needed ? "1" : "0") + ",pre_cast_needed=" +
+      (plan.session_route_plan.model_managed_route_flags.pre_cast_needed ? "1" : "0") + "}");
   plan.route_diagnostics.push_back(std::string("session_route_plan_pre_chain_size=") +
                                    std::to_string(plan.session_route_plan.pre_chain.size()));
   plan.route_diagnostics.push_back(std::string("session_route_plan_post_chain_size=") +
@@ -3641,8 +3645,7 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
 }
 
 internal::PreprocessPlannerResult
-build_preprocess_plan_with_verbosity(const std::string& tar_gz,
-                                     const Model::Options& options) {
+build_preprocess_plan_with_verbosity(const std::string& tar_gz, const Model::Options& options) {
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(options.verbose);
   auto verbose_guard = pipeline_internal::ux::acquire_runtime_verbosity(options.verbose);
   return build_preprocess_plan(tar_gz, options);
@@ -3697,7 +3700,8 @@ struct Model::Impl {
     }();
     pack.set_model_managed_stage_facts(
         /*processcvu_preproc_single_output_handoff=*/processcvu_pre_stage_selected,
-        convert_model_managed_route_flags(preprocess_plan.session_route_plan.model_managed_route_flags));
+        convert_model_managed_route_flags(
+            preprocess_plan.session_route_plan.model_managed_route_flags));
     auto& rp = preprocess_plan.resolved_plan;
     const std::string pre_name = resolved_pre_stage_name(pack, preprocess_plan);
     const std::string infer_upstream = preprocess_plan.session_route_plan.include_pre_stage
@@ -3708,7 +3712,8 @@ struct Model::Impl {
     stages::TensorDims mla_dims;
     const auto infer_stage_facts = pack.stage_facts_for_model_stage(internal::ModelStage::MlaOnly);
     for (const auto& fact : infer_stage_facts) {
-      if (!fact.mla_compiled.has_value() || fact.mla_compiled->runtime_contract.logical_inputs.empty()) {
+      if (!fact.mla_compiled.has_value() ||
+          fact.mla_compiled->runtime_contract.logical_inputs.empty()) {
         continue;
       }
       const auto& logical_input = fact.mla_compiled->runtime_contract.logical_inputs.front();
@@ -3717,8 +3722,7 @@ struct Model::Impl {
       }
       mla_input_layout =
           rendered_stage_query::layout_projection_from_contract_format(logical_input.layout);
-      mla_dims = dims_from_mla_logical_contract_shape(
-          logical_input.shape, mla_input_layout);
+      mla_dims = dims_from_mla_logical_contract_shape(logical_input.shape, mla_input_layout);
       break;
     }
     if (mla_dims.width <= 0 || mla_dims.height <= 0 || mla_dims.depth <= 0 ||
@@ -3726,8 +3730,8 @@ struct Model::Impl {
       const auto& mpk_opt = pack.mpk_contract();
       if (!mpk_opt.has_value()) {
         // fall through to rendered infer-block fallback below
-      } else
-      if (const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_opt)) {
+      } else if (const auto* mla_stage =
+                     pipeline_internal::sima::get_mla_stage_io_contract(*mpk_opt)) {
         const auto boundary_inputs =
             pipeline_internal::sima::get_mla_boundary_physical_inputs_contract(*mpk_opt);
         const auto published_outputs =
@@ -3749,8 +3753,7 @@ struct Model::Impl {
           mla_input_dtype = logical_input.dtype;
           mla_input_layout =
               rendered_stage_query::layout_projection_from_contract_format(logical_input.layout);
-          mla_dims = dims_from_mla_logical_contract_shape(
-              logical_input.shape, mla_input_layout);
+          mla_dims = dims_from_mla_logical_contract_shape(logical_input.shape, mla_input_layout);
         }
       }
     }
@@ -3765,8 +3768,8 @@ struct Model::Impl {
         mla_input_layout = mla_input_tensor_info.logical_layout;
       }
       if (mla_dims.width <= 0 || mla_dims.height <= 0 || mla_dims.depth <= 0) {
-        mla_dims = dims_from_mla_logical_contract_shape(
-            mla_input_tensor_info.logical_shape, mla_input_tensor_info.logical_layout);
+        mla_dims = dims_from_mla_logical_contract_shape(mla_input_tensor_info.logical_shape,
+                                                        mla_input_tensor_info.logical_layout);
       }
     }
     rp.mla_contract.media_type = "application/vnd.simaai.tensor";
@@ -4099,7 +4102,8 @@ std::string resolve_preproc_input_format(const internal::PreprocessPlannerResult
   if (input && !input->format.empty()) {
     return upper_copy(input->format);
   }
-  const auto* ingress = maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
+  const auto* ingress =
+      maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
   if (ingress != nullptr && !ingress->format.empty()) {
     return ingress->format;
   }
@@ -4119,8 +4123,8 @@ std::string resolve_preproc_output_format(const internal::PreprocessPlannerResul
       effective.input_max_depth == 1) {
     return "GRAY8";
   }
-  const auto* ingress = maybe_single_ingress_contract(normalized_ingress_contracts(
-      plan.session_route_plan));
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
   if (ingress != nullptr && ingress->depth == 1) {
     return "GRAY8";
   }
@@ -4183,8 +4187,8 @@ int resolve_preproc_input_width(const internal::PreprocessPlannerResult& plan,
   if (input && input->width > 0) {
     return input->width;
   }
-  const auto* ingress = maybe_single_ingress_contract(normalized_ingress_contracts(
-      plan.session_route_plan));
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
   if (ingress != nullptr && ingress->width > 0) {
     return ingress->width;
   }
@@ -4201,7 +4205,8 @@ int resolve_preproc_input_width(const internal::PreprocessPlannerResult& plan,
   if (plan.modelpack_max_width > 0) {
     return plan.modelpack_max_width;
   }
-  return (plan.resolved_plan.effective.resize.width > 0) ? plan.resolved_plan.effective.resize.width : 0;
+  return (plan.resolved_plan.effective.resize.width > 0) ? plan.resolved_plan.effective.resize.width
+                                                         : 0;
 }
 
 int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
@@ -4209,8 +4214,8 @@ int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
   if (input && input->height > 0) {
     return input->height;
   }
-  const auto* ingress = maybe_single_ingress_contract(normalized_ingress_contracts(
-      plan.session_route_plan));
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
   if (ingress != nullptr && ingress->height > 0) {
     return ingress->height;
   }
@@ -4224,7 +4229,9 @@ int resolve_preproc_input_height(const internal::PreprocessPlannerResult& plan,
   if (plan.modelpack_max_height > 0) {
     return plan.modelpack_max_height;
   }
-  return (plan.resolved_plan.effective.resize.height > 0) ? plan.resolved_plan.effective.resize.height : 0;
+  return (plan.resolved_plan.effective.resize.height > 0)
+             ? plan.resolved_plan.effective.resize.height
+             : 0;
 }
 
 int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
@@ -4232,8 +4239,8 @@ int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
   if (input && input->depth > 0) {
     return input->depth;
   }
-  const auto* ingress = maybe_single_ingress_contract(normalized_ingress_contracts(
-      plan.session_route_plan));
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
   if (ingress != nullptr && ingress->depth > 0) {
     return ingress->depth;
   }
@@ -4274,16 +4281,16 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
         << " resolved={width=" << opt->input_width() << ",height=" << opt->input_height()
         << ",format=" << (opt->input_img_type.empty() ? "<empty>" : opt->input_img_type) << "}"
         << " input=" << input_info_debug_string(input)
-        << " route=" << route_stage_summary(plan.session_route_plan)
-        << " route_ingress="
-        << vector_debug_string(route_ingress, [](const auto& ingress) {
-             return ingress_tensor_contract_debug_string(ingress);
-           })
+        << " route=" << route_stage_summary(plan.session_route_plan) << " route_ingress="
+        << vector_debug_string(
+               route_ingress,
+               [](const auto& ingress) { return ingress_tensor_contract_debug_string(ingress); })
         << " resolved_ingress="
-        << vector_debug_string(plan.resolved_plan.ingress_contracts, [](const auto& ingress) {
-             return preprocess_contract_debug_string(ingress);
-           })
-        << " modelpack={format=" << (plan.modelpack_format.empty() ? "<empty>" : plan.modelpack_format)
+        << vector_debug_string(
+               plan.resolved_plan.ingress_contracts,
+               [](const auto& ingress) { return preprocess_contract_debug_string(ingress); })
+        << " modelpack={format="
+        << (plan.modelpack_format.empty() ? "<empty>" : plan.modelpack_format)
         << ",max_w=" << plan.modelpack_max_width << ",max_h=" << plan.modelpack_max_height
         << ",max_d=" << plan.modelpack_max_depth << "}"
         << " route_diagnostics=" << route_diagnostics_debug_string(plan.route_diagnostics);
@@ -4295,8 +4302,8 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
     std::vector<int> output_shape = {
         (effective.resize.height > 0) ? effective.resize.height : opt->input_height(),
         (effective.resize.width > 0) ? effective.resize.width : opt->input_width()};
-    const int output_depth = pipeline_internal::default_depth_for_image_format(opt->output_img_type,
-                                                                               opt->input_channels());
+    const int output_depth = pipeline_internal::default_depth_for_image_format(
+        opt->output_img_type, opt->input_channels());
     if (output_depth > 0) {
       output_shape.push_back(output_depth);
     }
@@ -4342,9 +4349,8 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   if (flags.tess_needed) {
     opt->slice_shape = effective.tessellate.slice_shape;
     if (!effective.tessellate.has_slice_shape() || !opt->has_slice_shape()) {
-      throw std::runtime_error(
-          "PreprocOptions(Model): model-managed preproc stage requires "
-          "slice_shape from the resolved route contract.");
+      throw std::runtime_error("PreprocOptions(Model): model-managed preproc stage requires "
+                               "slice_shape from the resolved route contract.");
     }
   } else {
     opt->slice_shape.clear();
@@ -4410,7 +4416,8 @@ PreprocOptions make_preproc_options_from_typed_adapter(
     const std::string& element_name, const std::string& upstream_name, bool sync) {
   PreprocOptions opt = make_model_managed_preproc_options_base(model, sync);
 #ifdef SIMA_NEAT_INTERNAL
-  opt.model_lineage = make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
+  opt.model_lineage =
+      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
 #endif
   opt.element_name = element_name;
   opt.node_name = element_name.empty() ? opt.node_name : element_name;
@@ -4431,11 +4438,12 @@ QuantOptions make_quant_options_from_typed_adapter(const Model& model,
   (void)plan;
   QuantOptions opt = make_model_managed_quant_options_base(model, sync);
 #ifdef SIMA_NEAT_INTERNAL
-  opt.model_lineage = make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
+  opt.model_lineage =
+      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
 #endif
   opt.element_name = element_name;
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model),
           internal::ExecutionStageKind::Quant, "quant",
           allow_multi_io_contract ? nullptr : route_op));
@@ -4452,14 +4460,16 @@ TessOptions make_tess_options_from_typed_adapter(const Model& model,
   (void)plan;
   TessOptions opt = make_model_managed_tess_options_base(model, sync);
 #ifdef SIMA_NEAT_INTERNAL
-  opt.model_lineage = make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
+  opt.model_lineage =
+      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
 #endif
   opt.element_name = element_name;
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
-    std::fprintf(stderr, "[typed-adapter] make_tess_options element_name=%s\n", element_name.c_str());
+    std::fprintf(stderr, "[typed-adapter] make_tess_options element_name=%s\n",
+                 element_name.c_str());
   }
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model),
           internal::ExecutionStageKind::Tess, "tess",
           allow_multi_io_contract ? nullptr : route_op));
@@ -4468,18 +4478,18 @@ TessOptions make_tess_options_from_typed_adapter(const Model& model,
 
 QuantTessOptions make_quanttess_options_from_typed_adapter(
     const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
-    const std::string& element_name, bool sync,
-    const internal::OrderedRouteOp* route_op,
+    const std::string& element_name, bool sync, const internal::OrderedRouteOp* route_op,
     bool allow_multi_io_contract) {
   (void)input;
   (void)plan;
   QuantTessOptions opt = make_model_managed_quanttess_options_base(model, sync);
 #ifdef SIMA_NEAT_INTERNAL
-  opt.model_lineage = make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
+  opt.model_lineage =
+      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
 #endif
   opt.element_name = element_name;
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model),
           internal::ExecutionStageKind::QuantTess, "quanttess",
           allow_multi_io_contract ? nullptr : route_op));
@@ -4488,18 +4498,18 @@ QuantTessOptions make_quanttess_options_from_typed_adapter(
 
 CastTessOptions make_casttess_options_from_typed_adapter(
     const Model& model, const internal::PreprocessPlannerResult& plan, const InputInfo* input,
-    const std::string& element_name, bool sync,
-    const internal::OrderedRouteOp* route_op,
+    const std::string& element_name, bool sync, const internal::OrderedRouteOp* route_op,
     bool allow_multi_io_contract) {
   (void)input;
   (void)plan;
   CastTessOptions opt = make_model_managed_casttess_options_base(model, sync);
 #ifdef SIMA_NEAT_INTERNAL
-  opt.model_lineage = make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
+  opt.model_lineage =
+      make_stage_lineage_binding(model, internal::ModelLineageStageRole::Preprocess);
 #endif
   opt.element_name = element_name;
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? internal::ModelAccess::pack_for_sync(model) : internal::ModelAccess::pack(model),
           internal::ExecutionStageKind::CastTess, "casttess",
           allow_multi_io_contract ? nullptr : route_op));
@@ -4514,41 +4524,39 @@ DetessOptions make_detess_options_from_typed_adapter(const Model& model,
   if (!element_name.empty()) {
     opt.element_name = element_name;
   }
-  auto compiled = require_model_managed_postprocess_contract(
-      pack, internal::ExecutionStageKind::Detess);
+  auto compiled =
+      require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
   compiled.runtime_contract.plugin_kind = "neatdetess";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   lock_buffers_for_sync(&opt, sync);
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
     std::fprintf(stderr, "[typed-adapter] post kind=detess include_post=1\n");
-    const auto& rc = opt.compiled_contract ? opt.compiled_contract->runtime_contract
-                                            : CompiledRuntimeContract{};
-    std::fprintf(stderr, "[typed-adapter] detess plugin_kind=%s logical_outputs=%zu "
-                         "logical_inputs=%zu physical_outputs=%zu\n",
-                 rc.plugin_kind.c_str(),
-                 rc.logical_outputs.size(),
-                 rc.logical_inputs.size(),
+    const auto& rc =
+        opt.compiled_contract ? opt.compiled_contract->runtime_contract : CompiledRuntimeContract{};
+    std::fprintf(stderr,
+                 "[typed-adapter] detess plugin_kind=%s logical_outputs=%zu "
+                 "logical_inputs=%zu physical_outputs=%zu\n",
+                 rc.plugin_kind.c_str(), rc.logical_outputs.size(), rc.logical_inputs.size(),
                  rc.physical_outputs.size());
     for (std::size_t di = 0; di < rc.logical_outputs.size(); ++di) {
       const auto& lo = rc.logical_outputs[di];
-      std::fprintf(stderr, "[typed-adapter] detess[%zu] segment=%s offset=%lld "
-                           "size=%llu dtype=%s shape=[",
-                   di, lo.segment_name.c_str(),
-                   static_cast<long long>(lo.byte_offset),
-                   static_cast<unsigned long long>(lo.size_bytes),
-                   lo.dtype.c_str());
+      std::fprintf(stderr,
+                   "[typed-adapter] detess[%zu] segment=%s offset=%lld "
+                   "size=%llu dtype=%s shape=[",
+                   di, lo.segment_name.c_str(), static_cast<long long>(lo.byte_offset),
+                   static_cast<unsigned long long>(lo.size_bytes), lo.dtype.c_str());
       for (std::size_t si = 0; si < lo.shape.size(); ++si) {
-        std::fprintf(stderr, "%s%lld", si ? "," : "",
-                     static_cast<long long>(lo.shape[si]));
+        std::fprintf(stderr, "%s%lld", si ? "," : "", static_cast<long long>(lo.shape[si]));
       }
       std::fprintf(stderr, "]\n");
     }
     if (opt.compiled_contract) {
       const auto& p = opt.compiled_contract->payload;
-      std::fprintf(stderr, "[typed-adapter] detess payload graph_family=%s "
-                           "canonical=%d input_shapes=%zu output_shapes=%zu\n",
-                   p.graph_family.c_str(), p.canonical_contract,
-                   p.input_shapes.size(), p.output_shapes.size());
+      std::fprintf(stderr,
+                   "[typed-adapter] detess payload graph_family=%s "
+                   "canonical=%d input_shapes=%zu output_shapes=%zu\n",
+                   p.graph_family.c_str(), p.canonical_contract, p.input_shapes.size(),
+                   p.output_shapes.size());
     }
   }
   return opt;
@@ -4578,8 +4586,9 @@ DetessDequantOptions make_detessdequant_options_from_typed_adapter(const Model& 
   if (!element_name.empty()) {
     opt.element_name = element_name;
   }
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::DetessDequant));
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_postprocess_contract(
+          pack, internal::ExecutionStageKind::DetessDequant));
   lock_buffers_for_sync(&opt, sync);
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
     std::fprintf(stderr, "[typed-adapter] post kind=detessdequant include_post=1\n");
@@ -4605,7 +4614,8 @@ DequantOptions make_dequant_options_from_typed_adapter(const Model& model,
   return opt;
 }
 
-CastOptions make_cast_options_from_typed_adapter(const Model* model, const std::string& element_name,
+CastOptions make_cast_options_from_typed_adapter(const Model* model,
+                                                 const std::string& element_name,
                                                  CastDirection direction,
                                                  internal::ModelLineageStageRole stage_role,
                                                  const internal::OrderedRouteOp* route_op,
@@ -4623,11 +4633,11 @@ CastOptions make_cast_options_from_typed_adapter(const Model* model, const std::
     const bool is_pre = stage_role == internal::ModelLineageStageRole::Preprocess;
     const auto& pack = internal::ModelAccess::pack(*model);
     opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-        is_pre ? require_model_managed_preadapter_contract(
-                     pack, internal::ExecutionStageKind::Cast, "cast",
-                     allow_multi_io_contract ? nullptr : route_op)
-               : require_model_managed_postprocess_contract(pack,
-                                                            internal::ExecutionStageKind::Cast));
+        is_pre
+            ? require_model_managed_preadapter_contract(
+                  pack, internal::ExecutionStageKind::Cast, "cast",
+                  allow_multi_io_contract ? nullptr : route_op)
+            : require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Cast));
     opt.num_buffers = pack.num_buffers_cvu();
   }
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
@@ -4637,8 +4647,8 @@ CastOptions make_cast_options_from_typed_adapter(const Model* model, const std::
   return opt;
 }
 
-std::optional<internal::ExecutionStageKind> execution_stage_kind_from_post_region(
-    const internal::RouteRegion& region) {
+std::optional<internal::ExecutionStageKind>
+execution_stage_kind_from_post_region(const internal::RouteRegion& region) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (region.op_kind) {
   case GraphKind::Detess:
@@ -4705,7 +4715,8 @@ std::string stage_name_for_post_region(const internal::ModelPack& pack,
   if (region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast) {
     return default_post_region_stage_name(region, region_index);
   }
-  if (const auto stage_kind = execution_stage_kind_from_post_region(region); stage_kind.has_value()) {
+  if (const auto stage_kind = execution_stage_kind_from_post_region(region);
+      stage_kind.has_value()) {
     for (const auto& stage : pack.execution_plan().post) {
       if (stage.kind == *stage_kind && !stage.stage_name.empty()) {
         return stage.stage_name;
@@ -4725,8 +4736,7 @@ std::size_t model_managed_mla_logical_output_count(const internal::ModelPack& pa
   return 0U;
 }
 
-std::vector<int> logical_indices_from_runtime_contract(
-    const CompiledRuntimeContract& runtime) {
+std::vector<int> logical_indices_from_runtime_contract(const CompiledRuntimeContract& runtime) {
   std::vector<int> indices;
   indices.reserve(runtime.logical_outputs.size());
   for (const auto& logical : runtime.logical_outputs) {
@@ -4737,8 +4747,8 @@ std::vector<int> logical_indices_from_runtime_contract(
   return indices;
 }
 
-std::vector<int> unique_logical_indices_from_bindings(
-    const std::vector<internal::RouteTensorBinding>& bindings) {
+std::vector<int>
+unique_logical_indices_from_bindings(const std::vector<internal::RouteTensorBinding>& bindings) {
   std::vector<int> indices;
   std::unordered_set<int> seen;
   indices.reserve(bindings.size());
@@ -4775,10 +4785,12 @@ std::size_t post_region_compiled_logical_output_count(const internal::ModelPack&
     return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess)
         .runtime_contract.logical_outputs.size();
   case GraphKind::DetessCast:
-    return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::DetessCast)
+    return require_model_managed_postprocess_contract(pack,
+                                                      internal::ExecutionStageKind::DetessCast)
         .runtime_contract.logical_outputs.size();
   case GraphKind::DetessDequant:
-    return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::DetessDequant)
+    return require_model_managed_postprocess_contract(pack,
+                                                      internal::ExecutionStageKind::DetessDequant)
         .runtime_contract.logical_outputs.size();
   case GraphKind::Dequantize:
     return require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Dequant)
@@ -4814,7 +4826,8 @@ std::vector<int> post_region_compiled_logical_output_indices(const internal::Mod
             .runtime_contract);
   case GraphKind::DetessDequant:
     return logical_indices_from_runtime_contract(
-        require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::DetessDequant)
+        require_model_managed_postprocess_contract(pack,
+                                                   internal::ExecutionStageKind::DetessDequant)
             .runtime_contract);
   case GraphKind::Dequantize:
     return logical_indices_from_runtime_contract(
@@ -4836,10 +4849,10 @@ std::vector<int> post_region_compiled_logical_output_indices(const internal::Mod
   return {};
 }
 
-std::vector<int> upstream_logical_indices_for_post_region(
-    const internal::ModelPack& pack,
-    const std::vector<internal::RouteRegion>& regions,
-    const std::size_t region_index) {
+std::vector<int>
+upstream_logical_indices_for_post_region(const internal::ModelPack& pack,
+                                         const std::vector<internal::RouteRegion>& regions,
+                                         const std::size_t region_index) {
   if (region_index == 0U) {
     return model_managed_mla_logical_output_indices(pack);
   }
@@ -4876,24 +4889,26 @@ void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
     upstream_outputs = post_region_compiled_logical_output_count(pack, regions[region_index - 1U]);
   }
   if (upstream_outputs != 0U && upstream_outputs != expected_outputs) {
-    throw std::runtime_error("Model post region upstream logical output count mismatch for fanout stage.");
+    throw std::runtime_error(
+        "Model post region upstream logical output count mismatch for fanout stage.");
   }
 
   const std::size_t compiled_outputs = post_region_compiled_logical_output_count(pack, region);
   if (compiled_outputs != 0U && compiled_outputs != expected_outputs) {
-    throw std::runtime_error("Model post region compiled logical output count mismatch for fanout stage.");
+    throw std::runtime_error(
+        "Model post region compiled logical output count mismatch for fanout stage.");
   }
 
   const auto expected_input_order = unique_logical_indices_from_bindings(region.inputs);
-  const auto upstream_input_order = upstream_logical_indices_for_post_region(pack, regions, region_index);
+  const auto upstream_input_order =
+      upstream_logical_indices_for_post_region(pack, regions, region_index);
   if (!expected_input_order.empty() && !upstream_input_order.empty()) {
     const bool require_exact_input_order =
         region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast;
-    const bool inputs_match =
-        require_exact_input_order
-            ? (expected_input_order == upstream_input_order)
-            : (sorted_logical_index_set(expected_input_order) ==
-               sorted_logical_index_set(upstream_input_order));
+    const bool inputs_match = require_exact_input_order
+                                  ? (expected_input_order == upstream_input_order)
+                                  : (sorted_logical_index_set(expected_input_order) ==
+                                     sorted_logical_index_set(upstream_input_order));
     if (!inputs_match) {
       throw std::runtime_error(
           "Model post region upstream logical output ordering mismatch for fanout stage.");
@@ -4905,11 +4920,10 @@ void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
   if (!expected_output_order.empty() && !compiled_output_order.empty()) {
     const bool require_exact_output_order =
         region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast;
-    const bool outputs_match =
-        require_exact_output_order
-            ? (expected_output_order == compiled_output_order)
-            : (sorted_logical_index_set(expected_output_order) ==
-               sorted_logical_index_set(compiled_output_order));
+    const bool outputs_match = require_exact_output_order
+                                   ? (expected_output_order == compiled_output_order)
+                                   : (sorted_logical_index_set(expected_output_order) ==
+                                      sorted_logical_index_set(compiled_output_order));
     if (!outputs_match) {
       throw std::runtime_error(
           "Model post region compiled logical output ordering mismatch for fanout stage.");
@@ -4917,12 +4931,10 @@ void validate_fanout_region_contract_alignment(const internal::ModelPack& pack,
   }
 }
 
-std::shared_ptr<Node> build_postprocess_node_from_region(const Model& model,
-                                                         const internal::ModelPack& pack,
-                                                         const Model::Options& opt, bool sync,
-                                                         const internal::SessionRoutePlan& route_plan,
-                                                         const internal::RouteRegion& region,
-                                                         const std::size_t region_index) {
+std::shared_ptr<Node> build_postprocess_node_from_region(
+    const Model& model, const internal::ModelPack& pack, const Model::Options& opt, bool sync,
+    const internal::SessionRoutePlan& route_plan, const internal::RouteRegion& region,
+    const std::size_t region_index) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
 
   const std::string stage_name = stage_name_for_post_region(pack, region, region_index);
@@ -4940,18 +4952,16 @@ std::shared_ptr<Node> build_postprocess_node_from_region(const Model& model,
     float nms_iou_threshold = opt.nms_iou_threshold;
     int top_k = opt.top_k;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
-    return simaai::neat::nodes::SimaBoxDecode(model, decode_type, detection_threshold,
-                                              nms_iou_threshold, top_k, stage_name,
-                                              route_tess_needed, route_quant_needed, 0, 0,
-                                              decode_type_option);
+    return simaai::neat::nodes::SimaBoxDecode(
+        model, decode_type, detection_threshold, nms_iou_threshold, top_k, stage_name,
+        route_tess_needed, route_quant_needed, 0, 0, decode_type_option);
   }
   case GraphKind::Detess: {
     DetessOptions det_opt = make_detess_options_from_typed_adapter(model, stage_name, sync);
     return simaai::neat::nodes::Detess(std::move(det_opt));
   }
   case GraphKind::DetessCast: {
-    DetessCastOptions det_opt =
-        make_detesscast_options_from_typed_adapter(model, stage_name, sync);
+    DetessCastOptions det_opt = make_detesscast_options_from_typed_adapter(model, stage_name, sync);
     return simaai::neat::nodes::DetessCast(std::move(det_opt));
   }
   case GraphKind::DetessDequant: {
@@ -4964,9 +4974,8 @@ std::shared_ptr<Node> build_postprocess_node_from_region(const Model& model,
     return simaai::neat::nodes::Dequant(std::move(deq_opt));
   }
   case GraphKind::Cast: {
-    CastOptions cast_opt =
-        make_cast_options_from_typed_adapter(&model, stage_name, CastDirection::Bf16ToFp32,
-                                             internal::ModelLineageStageRole::ManualPost);
+    CastOptions cast_opt = make_cast_options_from_typed_adapter(
+        &model, stage_name, CastDirection::Bf16ToFp32, internal::ModelLineageStageRole::ManualPost);
     return simaai::neat::nodes::Cast(std::move(cast_opt));
   }
   case GraphKind::Unknown:
@@ -4992,29 +5001,29 @@ std::shared_ptr<Node> build_postprocess_node_from_region(const Model& model,
 // single-IO node and a FanoutMap region produces a multi-input node — both via
 // the SAME builder call. This keeps materialization symmetric between the pre
 // and post sides and avoids any per-stage exact-name plumbing.
-std::shared_ptr<Node> build_preprocess_node_from_region(
-    const Model& model, const internal::ModelPack& /*pack*/,
-    const internal::PreprocessPlannerResult& plan, const InputInfo* input, bool sync,
-    const internal::RouteRegion& region, const std::string& stage_name,
-    const std::string& upstream_name) {
+std::shared_ptr<Node>
+build_preprocess_node_from_region(const Model& model, const internal::ModelPack& /*pack*/,
+                                  const internal::PreprocessPlannerResult& plan,
+                                  const InputInfo* input, bool sync,
+                                  const internal::RouteRegion& region,
+                                  const std::string& stage_name, const std::string& upstream_name) {
   using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
   switch (region.op_kind) {
   case GraphKind::Preproc: {
-    PreprocOptions pre_opt = make_preproc_options_from_typed_adapter(
-        model, plan, input, stage_name, upstream_name, sync);
+    PreprocOptions pre_opt = make_preproc_options_from_typed_adapter(model, plan, input, stage_name,
+                                                                     upstream_name, sync);
     return simaai::neat::nodes::Preproc(std::move(pre_opt));
   }
   case GraphKind::Quant: {
     const bool allow_multi_io_contract = region.kind == internal::RouteRegionKind::FanoutMap;
-    QuantOptions q_opt =
-        make_quant_options_from_typed_adapter(model, plan, input, stage_name, sync,
-                                              nullptr, allow_multi_io_contract);
+    QuantOptions q_opt = make_quant_options_from_typed_adapter(model, plan, input, stage_name, sync,
+                                                               nullptr, allow_multi_io_contract);
     return simaai::neat::nodes::Quant(std::move(q_opt));
   }
   case GraphKind::Tess: {
     const bool allow_multi_io_contract = region.kind == internal::RouteRegionKind::FanoutMap;
-    TessOptions t_opt = make_tess_options_from_typed_adapter(
-        model, plan, input, stage_name, sync, nullptr, allow_multi_io_contract);
+    TessOptions t_opt = make_tess_options_from_typed_adapter(model, plan, input, stage_name, sync,
+                                                             nullptr, allow_multi_io_contract);
     return simaai::neat::nodes::Tess(std::move(t_opt));
   }
   case GraphKind::QuantTess: {
@@ -5032,8 +5041,8 @@ std::shared_ptr<Node> build_preprocess_node_from_region(
   case GraphKind::Cast: {
     const bool allow_multi_io_contract = region.kind == internal::RouteRegionKind::FanoutMap;
     CastOptions cast_opt = make_cast_options_from_typed_adapter(
-        &model, stage_name, CastDirection::Fp32ToBf16,
-        internal::ModelLineageStageRole::Preprocess, nullptr, allow_multi_io_contract);
+        &model, stage_name, CastDirection::Fp32ToBf16, internal::ModelLineageStageRole::Preprocess,
+        nullptr, allow_multi_io_contract);
     return simaai::neat::nodes::Cast(std::move(cast_opt));
   }
   case GraphKind::Unknown:
@@ -5077,7 +5086,7 @@ NodeGroup build_preprocess_group_impl(const Model& model, const internal::ModelP
   nodes.reserve(pre_regions.size());
 
   auto region_element_name = [&](std::size_t index,
-                                  pipeline_internal::sima::RouteGraphKernelKind op_kind) {
+                                 pipeline_internal::sima::RouteGraphKernelKind op_kind) {
     const bool is_last = index + 1U == pre_regions.size();
     if (is_last && !element_name.empty()) {
       return element_name;
@@ -5088,21 +5097,23 @@ NodeGroup build_preprocess_group_impl(const Model& model, const internal::ModelP
   };
 
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
-    std::fprintf(stderr,
-                 "[typed-adapter] build_preprocess_group_impl element_name=%s pre_regions_size=%zu\n",
-                 element_name.c_str(), pre_regions.size());
+    std::fprintf(
+        stderr,
+        "[typed-adapter] build_preprocess_group_impl element_name=%s pre_regions_size=%zu\n",
+        element_name.c_str(), pre_regions.size());
   }
 
   for (std::size_t i = 0; i < pre_regions.size(); ++i) {
     const auto& region = pre_regions[i];
     const std::string stage_name = region_element_name(i, region.op_kind);
     if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
-      std::fprintf(stderr, "[typed-adapter] pre_region[%zu] kind=%d op=%d members=%zu stage_name=%s\n",
-                   i, static_cast<int>(region.kind), static_cast<int>(region.op_kind),
+      std::fprintf(stderr,
+                   "[typed-adapter] pre_region[%zu] kind=%d op=%d members=%zu stage_name=%s\n", i,
+                   static_cast<int>(region.kind), static_cast<int>(region.op_kind),
                    region.member_plugin_indices.size(), stage_name.c_str());
     }
     nodes.push_back(build_preprocess_node_from_region(model, pack, plan, input, sync, region,
-                                                       stage_name, upstream_name));
+                                                      stage_name, upstream_name));
   }
 
   return NodeGroup(std::move(nodes));
@@ -5123,7 +5134,8 @@ NodeGroup build_postprocess_group_impl(const Model& model, const internal::Model
   for (std::size_t i = 0; i < post_regions.size(); ++i) {
     const auto& region = post_regions[i];
     if (region.kind == internal::RouteRegionKind::FaninJoin) {
-      throw std::runtime_error("Model postprocess materialization does not support fanin join regions.");
+      throw std::runtime_error(
+          "Model postprocess materialization does not support fanin join regions.");
     }
     if (region.kind == internal::RouteRegionKind::FanoutMap) {
       using GraphKind = pipeline_internal::sima::RouteGraphKernelKind;
@@ -5150,7 +5162,8 @@ NodeGroup build_postprocess_group_impl(const Model& model, const internal::Model
       }
       validate_fanout_region_contract_alignment(pack, post_regions, i);
     }
-    nodes.push_back(build_postprocess_node_from_region(model, pack, opt, sync, route_plan, region, i));
+    nodes.push_back(
+        build_postprocess_node_from_region(model, pack, opt, sync, route_plan, region, i));
   }
   return NodeGroup(std::move(nodes));
 }
@@ -5341,9 +5354,8 @@ NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pa
       // the bundled multi-memory GstBuffer flows through. Single-ingress
       // and non-fan-in routes are unaffected.
       if (plan_uses_bundled_fan_in(plan)) {
-        src_opt.caps_override =
-            "application/vnd.simaai.tensor, representation=(string)tensor-set, "
-            "storage=(string)tensorbuffer";
+        src_opt.caps_override = "application/vnd.simaai.tensor, representation=(string)tensor-set, "
+                                "storage=(string)tensorbuffer";
       }
     }
     if (!popt.buffer_name.empty()) {
@@ -5510,8 +5522,8 @@ NodeGroup Model::inference() const {
   const std::string upstream = impl_->preprocess_plan.session_route_plan.include_pre_stage
                                    ? (pre_name.empty() ? std::string("decoder") : pre_name)
                                    : std::string("decoder");
-  return pack.infer_block(upstream,
-                          make_stage_lineage_binding(*this, internal::ModelLineageStageRole::Infer));
+  return pack.infer_block(
+      upstream, make_stage_lineage_binding(*this, internal::ModelLineageStageRole::Infer));
 }
 
 NodeGroup Model::postprocess() const {
@@ -5569,8 +5581,7 @@ std::vector<TensorSpec> Model::input_specs() const {
       specs.reserve(ingress_contracts.size());
       for (std::size_t i = 0; i < ingress_contracts.size(); ++i) {
         TensorSpec ingress_spec = tensor_spec_from_ingress_contract(ingress_contracts[i]);
-        const InputOptions& opt =
-            i < input_opts.size() ? input_opts[i] : input_opts.front();
+        const InputOptions& opt = i < input_opts.size() ? input_opts[i] : input_opts.front();
         if (ingress_spec.dtypes.empty()) {
           ingress_spec.dtypes = {dtype_from_format(opt.format)};
         }
@@ -5593,9 +5604,8 @@ std::vector<TensorSpec> Model::input_specs() const {
     const InputOptions opt = impl_->pack.input_appsrc_options(true);
     if (spec.shape.empty()) {
       const auto mla_input_tensor_info = rendered_stage_query::mla_input_tensor_info(inference());
-      const stages::TensorDims mla_dims =
-          dims_from_mla_logical_contract_shape(
-              mla_input_tensor_info.logical_shape, mla_input_tensor_info.logical_layout);
+      const stages::TensorDims mla_dims = dims_from_mla_logical_contract_shape(
+          mla_input_tensor_info.logical_shape, mla_input_tensor_info.logical_layout);
       int d = (mla_dims.depth > 0) ? mla_dims.depth : 0;
       if (d <= 0)
         d = (opt.depth > 0) ? opt.depth : opt.max_depth;
@@ -5917,8 +5927,8 @@ Model::ModelInfo Model::info() const {
   out.selection.infer_only = impl_->preprocess_plan.infer_only_route;
   out.selection.preprocess_graph =
       preprocess_graph_family_name(impl_->preprocess_plan.resolved_plan.graph_family);
-  out.selection.selected_post_kind = post_route_stage_kind_name(
-      impl_->preprocess_plan.session_route_plan.selected_post_kind);
+  out.selection.selected_post_kind =
+      post_route_stage_kind_name(impl_->preprocess_plan.session_route_plan.selected_post_kind);
 
   out.output_topology.physical_outputs = parsed.outputs.physical.size();
   out.output_topology.logical_outputs = parsed.outputs.logical.size();
@@ -6055,12 +6065,9 @@ const simaai::neat::RunOptions& Model::default_run_options() {
   return opt;
 }
 
-namespace {
+namespace {} // namespace
 
-} // namespace
-
-Model::Runner::Runner(simaai::neat::Run run)
-    : run_(std::move(run)), ingress_names_({"ifm0"}) {}
+Model::Runner::Runner(simaai::neat::Run run) : run_(std::move(run)), ingress_names_({"ifm0"}) {}
 
 Model::Runner::Runner(simaai::neat::Run run, const simaai::neat::InputOptions& tensor_input_opt)
     : run_(std::move(run)), tensor_input_opt_for_cv_(tensor_input_opt), ingress_names_({"ifm0"}) {}
@@ -6211,7 +6218,9 @@ void Model::Runner::close() {
   run_.close();
 }
 
-simaai::neat::RunStats Model::Runner::stats() const { return run_.stats(); }
+simaai::neat::RunStats Model::Runner::stats() const {
+  return run_.stats();
+}
 
 simaai::neat::RunMeasurementSummary Model::Runner::measurement_summary() const {
   return run_.measurement_summary();
@@ -6241,7 +6250,9 @@ std::string Model::Runner::report(const simaai::neat::RunReportOptions& opt) con
   return run_.report(opt);
 }
 
-void Model::Runner::close_input() { run_.close_input(); }
+void Model::Runner::close_input() {
+  run_.close_input();
+}
 
 Model::Runner Model::build() {
   return build(Model::SessionOptions{}, simaai::neat::RunOptions{});
@@ -6318,10 +6329,10 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   const InputOptions src_opt =
       !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
   if (runner_debug_enabled()) {
-    std::fprintf(
-        stderr, "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",
-        src_opt.media_type.c_str(), src_opt.format.str().c_str(), src_opt.width, src_opt.height,
-        src_opt.depth);
+    std::fprintf(stderr,
+                 "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",
+                 src_opt.media_type.c_str(), src_opt.format.str().c_str(), src_opt.width,
+                 src_opt.height, src_opt.depth);
   }
   return Runner(std::move(run), src_opt, ingress_names);
 }
@@ -6393,9 +6404,8 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Sess
       info.format_source = InputInfo::FormatSource::Explicit;
     }
   }
-  NodeGroup group =
-      build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt, &info, false,
-                           false);
+  NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
+                                         &info, false, false);
   Session p(session_options_from_model_session_options(opt, &impl_->options));
   p.add(group);
   Run run = p.build(inputs, RunMode::Async, run_opt);
@@ -6468,10 +6478,10 @@ Sample remap_sample_to_consumer_identity(Sample sample,
   return sample;
 }
 
-TensorList materialize_joined_ingress_tensors(const TensorList& tensors,
-                                              const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
-                                              const std::string& segment_name,
-                                              const char* where) {
+TensorList materialize_joined_ingress_tensors(
+    const TensorList& tensors,
+    const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
+    const std::string& segment_name, const char* where) {
   return materialize_joined_ingress_tensors_impl(tensors, consumer_identities, segment_name, where);
 }
 
@@ -6554,8 +6564,8 @@ PreprocOptions ModelAccess::build_preprocess_stage_options(const Model& model, b
 QuantOptions ModelAccess::build_quant_stage_options(const Model& model, bool sync) {
   require_model_managed_stage(model, StageNodeKind::Quant, "QuantOptions(Model)");
   QuantOptions opt = make_model_managed_quant_options_base(model, sync);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? model.impl_->pack_for_sync() : model.impl_->pack,
           internal::ExecutionStageKind::Quant, "quant"));
   return opt;
@@ -6564,8 +6574,8 @@ QuantOptions ModelAccess::build_quant_stage_options(const Model& model, bool syn
 TessOptions ModelAccess::build_tess_stage_options(const Model& model, bool sync) {
   require_model_managed_stage(model, StageNodeKind::Tess, "TessOptions(Model)");
   TessOptions opt = make_model_managed_tess_options_base(model, sync);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? model.impl_->pack_for_sync() : model.impl_->pack,
           internal::ExecutionStageKind::Tess, "tess"));
   return opt;
@@ -6574,8 +6584,8 @@ TessOptions ModelAccess::build_tess_stage_options(const Model& model, bool sync)
 QuantTessOptions ModelAccess::build_quanttess_stage_options(const Model& model, bool sync) {
   require_model_managed_stage(model, StageNodeKind::QuantTess, "QuantTessOptions(Model)");
   QuantTessOptions opt = make_model_managed_quanttess_options_base(model, sync);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? model.impl_->pack_for_sync() : model.impl_->pack,
           internal::ExecutionStageKind::QuantTess, "quanttess"));
   return opt;
@@ -6584,8 +6594,8 @@ QuantTessOptions ModelAccess::build_quanttess_stage_options(const Model& model, 
 CastTessOptions ModelAccess::build_casttess_stage_options(const Model& model, bool sync) {
   require_model_managed_stage(model, StageNodeKind::CastTess, "CastTessOptions(Model)");
   CastTessOptions opt = make_model_managed_casttess_options_base(model, sync);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_preadapter_contract(
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_preadapter_contract(
           sync ? model.impl_->pack_for_sync() : model.impl_->pack,
           internal::ExecutionStageKind::CastTess, "casttess"));
   return opt;
@@ -6600,7 +6610,8 @@ DetessOptions ModelAccess::build_detess_stage_options(const Model& model, bool s
   if (std::getenv("SIMA_KEEP_DETESS_CONFIG")) {
     opt.keep_config = true;
   }
-  auto compiled = require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
+  auto compiled =
+      require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::Detess);
   compiled.runtime_contract.plugin_kind = "neatdetess";
   opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(std::move(compiled));
   const auto plan = pack.execution_plan();
@@ -6641,8 +6652,9 @@ DetessDequantOptions ModelAccess::build_detessdequant_stage_options(const Model&
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   DetessDequantOptions opt;
   init_model_managed_processcvu_buffers(&opt, pack, sync);
-  opt.compiled_contract = std::make_shared<const CompiledProcessCvuContract>(
-      require_model_managed_postprocess_contract(pack, internal::ExecutionStageKind::DetessDequant));
+  opt.compiled_contract =
+      std::make_shared<const CompiledProcessCvuContract>(require_model_managed_postprocess_contract(
+          pack, internal::ExecutionStageKind::DetessDequant));
   const auto plan = pack.execution_plan();
   if (!plan.infer.empty()) {
     opt.upstream_name = plan.infer.back().stage_name;

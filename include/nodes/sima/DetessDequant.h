@@ -41,14 +41,16 @@ struct DetessDequantOptions {
   /// Initialize options from a loaded `Model` (pulls tile geometry, scale/zp, etc.).
   explicit DetessDequantOptions(const simaai::neat::Model& model);
 
-  std::string config_path;                                          ///< Path to the kernel config JSON, if loaded from disk.
-  std::optional<nlohmann::json> config_json;                        ///< Inline kernel config; takes precedence over `config_path`.
-  std::string upstream_name;                                        ///< Name of the upstream MLA element (used for tag wiring).
-  std::string element_name;                                         ///< Optional GStreamer element name (default: auto-generated).
-  std::shared_ptr<const CompiledProcessCvuContract> compiled_contract; ///< Pre-compiled CVU contract; bypasses re-compilation.
-  int num_buffers = 0;                                              ///< Override for the element's buffer pool size; 0 = use default/model.
-  int num_buffers_model = 0;                                        ///< Buffer count derived from the bound model.
-  bool num_buffers_locked = false;                                  ///< If true, planner won't override `num_buffers`.
+  std::string config_path; ///< Path to the kernel config JSON, if loaded from disk.
+  std::optional<nlohmann::json>
+      config_json;           ///< Inline kernel config; takes precedence over `config_path`.
+  std::string upstream_name; ///< Name of the upstream MLA element (used for tag wiring).
+  std::string element_name;  ///< Optional GStreamer element name (default: auto-generated).
+  std::shared_ptr<const CompiledProcessCvuContract>
+      compiled_contract; ///< Pre-compiled CVU contract; bypasses re-compilation.
+  int num_buffers = 0;   ///< Override for the element's buffer pool size; 0 = use default/model.
+  int num_buffers_model = 0;       ///< Buffer count derived from the bound model.
+  bool num_buffers_locked = false; ///< If true, planner won't override `num_buffers`.
 };
 
 /**
@@ -82,12 +84,10 @@ public:
   /// Structural contract definition for this Node.
   NodeContractDefinition contract_definition() const override;
   /// Compile this Node's contract from the given input.
-  bool compile_node_contract(const ContractCompileInput& input,
-                             CompiledNodeContract* out,
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                              std::string* err) const override;
   /// Apply a compiled contract back into this Node.
-  void apply_compiled_contract(const CompiledNodeContract& contract,
-                               std::string* err) override;
+  void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;
   /// GStreamer fragment this Node emits.
   std::string backend_fragment(int node_index) const override;
   /// Deterministic element names this Node will create.

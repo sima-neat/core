@@ -111,8 +111,7 @@ std::string tensor_runtime_segment_name(const Tensor& tensor) {
   const int memory_index = tensor_runtime_memory_index(tensor);
   if (tensor.storage && !tensor.storage->sima_segments.empty() && memory_index >= 0 &&
       static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size()) {
-    const auto& segment =
-        tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)];
+    const auto& segment = tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)];
     if (!segment.name.empty()) {
       return segment.name;
     }
@@ -174,7 +173,8 @@ bool copy_tensor_transport_payload_to(const Tensor& tensor, std::uint8_t* dst,
     return false;
   }
 
-  GstMemory* memory = gst_buffer_peek_memory(source_buffer, static_cast<guint>(source_memory_index));
+  GstMemory* memory =
+      gst_buffer_peek_memory(source_buffer, static_cast<guint>(source_memory_index));
   if (!memory) {
     gst_buffer_unref(source_buffer);
     if (err) {
@@ -241,8 +241,8 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t /*index*/) {
   field.kind = SampleKind::TensorSet;
   field.owned = true;
   field.tensors = TensorList{tensor};
-  field.media_type = tensor.semantic.image.has_value() ? "video/x-raw"
-                                                       : "application/vnd.simaai.tensor";
+  field.media_type =
+      tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   if (tensor.semantic.image.has_value()) {
     field.format = Sample::image_format_string(tensor.semantic.image->format);
     field.payload_tag = field.format;
@@ -288,7 +288,8 @@ void log_bundle_field(const Sample& field) {
 
 void log_bundle(const Sample& bundle) {
   std::ostringstream ss;
-  const std::size_t count = sample_has_tensor_list(bundle) ? bundle.tensors.size() : bundle.fields.size();
+  const std::size_t count =
+      sample_has_tensor_list(bundle) ? bundle.tensors.size() : bundle.fields.size();
   ss << "[SAMPLE] bundle fields=" << count << " frame_id=" << bundle.frame_id;
   if (!bundle.stream_id.empty()) {
     ss << " stream_id=" << bundle.stream_id;
@@ -359,8 +360,7 @@ std::string tensor_set_stage_key_from_tensors(const TensorList& tensors) {
   return stage_key;
 }
 
-bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors,
-                                           TensorBufferView* out,
+bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors, TensorBufferView* out,
                                            std::string* err) {
   if (!out) {
     if (err) {
@@ -409,9 +409,9 @@ bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors,
         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
     descriptor_tensor.physical_index =
         tensor.route.physical_index >= 0 ? tensor.route.physical_index : memory_index;
-    descriptor_tensor.backend_output_index =
-        tensor.route.backend_output_index >= 0 ? tensor.route.backend_output_index
-                                               : descriptor_tensor.logical_index;
+    descriptor_tensor.backend_output_index = tensor.route.backend_output_index >= 0
+                                                 ? tensor.route.backend_output_index
+                                                 : descriptor_tensor.logical_index;
     descriptor_tensor.route_slot =
         tensor.route.route_slot >= 0 ? tensor.route.route_slot : descriptor_tensor.logical_index;
     descriptor_tensor.memory_index = memory_index;
@@ -419,9 +419,9 @@ bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors,
         !tensor.route.name.empty() ? tensor.route.name
                                    : ("output" + std::to_string(descriptor_tensor.logical_index));
     descriptor_tensor.backend_name = tensor.route.backend_name;
-    descriptor_tensor.segment_name =
-        !segment_name.empty() ? segment_name
-                              : ("memory" + std::to_string(static_cast<std::size_t>(i)));
+    descriptor_tensor.segment_name = !segment_name.empty()
+                                         ? segment_name
+                                         : ("memory" + std::to_string(static_cast<std::size_t>(i)));
     descriptor_tensor.byte_offset = tensor.byte_offset;
     descriptor_tensor.size_bytes = tensor_bytes;
     descriptor_tensor.dtype = tensor_set_dtype_from_tensor(tensor);
@@ -450,8 +450,8 @@ bool tensor_buffer_descriptor_from_tensors(const TensorList& tensors,
   return true;
 }
 
-bool tensor_buffer_view_from_handle(simaai::gst::SimaTensorBufferHandle* handle, TensorBufferView* out,
-                                    std::string* err) {
+bool tensor_buffer_view_from_handle(simaai::gst::SimaTensorBufferHandle* handle,
+                                    TensorBufferView* out, std::string* err) {
   if (!handle || !out) {
     if (err) {
       *err = "tensor buffer view: missing tensorbuffer handle";
@@ -485,15 +485,18 @@ bool tensor_buffer_view_from_handle(simaai::gst::SimaTensorBufferHandle* handle,
     local.backend_output_index = descriptor.backend_output_index;
     local.route_slot = descriptor.route_slot;
     local.memory_index = descriptor.memory_index;
-    local.logical_name = simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.logical_name_id)
-                             ? simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.logical_name_id)
-                             : "";
-    local.backend_name = simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.backend_name_id)
-                             ? simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.backend_name_id)
-                             : "";
-    local.segment_name = simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.segment_name_id)
-                             ? simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.segment_name_id)
-                             : "";
+    local.logical_name =
+        simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.logical_name_id)
+            ? simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.logical_name_id)
+            : "";
+    local.backend_name =
+        simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.backend_name_id)
+            ? simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.backend_name_id)
+            : "";
+    local.segment_name =
+        simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.segment_name_id)
+            ? simaai::gst::sima_tensor_buffer_handle_name_at(handle, descriptor.segment_name_id)
+            : "";
     local.byte_offset = descriptor.byte_offset;
     local.size_bytes = descriptor.size_bytes;
     local.dtype = descriptor.dtype;
@@ -644,9 +647,8 @@ bool tensor_buffer_descriptor_from_sample_impl(GstSample* sample, TensorBufferVi
     }
     return false;
   }
-  out->holder = std::shared_ptr<void>(gst_sample_ref(sample), [](void* p) {
-    gst_sample_unref(static_cast<GstSample*>(p));
-  });
+  out->holder = std::shared_ptr<void>(
+      gst_sample_ref(sample), [](void* p) { gst_sample_unref(static_cast<GstSample*>(p)); });
   out->sample = sample;
   out->buffer = gst_sample_get_buffer(sample);
   out->caps = gst_sample_get_caps(sample);
@@ -707,8 +709,8 @@ bool attach_tensor_set_meta_from_descriptor_view_impl(GstBuffer* buffer,
     flat.size_bytes = tensor.size_bytes;
     flat.dtype = tensor.dtype;
     flat.layout = tensor.layout;
-    flat.rank = static_cast<guint>(
-        std::min<std::size_t>(tensor.shape.size(), SIMA_TENSOR_SET_MAX_RANK));
+    flat.rank =
+        static_cast<guint>(std::min<std::size_t>(tensor.shape.size(), SIMA_TENSOR_SET_MAX_RANK));
     for (guint dim = 0; dim < flat.rank; ++dim) {
       flat.shape[dim] = tensor.shape[dim];
       if (dim < tensor.stride_bytes.size()) {
@@ -723,7 +725,8 @@ bool attach_tensor_set_meta_from_descriptor_view_impl(GstBuffer* buffer,
       flat.quant_scales_len = static_cast<guint>(tensor.quant->scales.size());
       flat.quant_zero_points_offset = static_cast<guint>(quant_zero_points.size());
       flat.quant_zero_points_len = static_cast<guint>(tensor.quant->zero_points.size());
-      quant_scales.insert(quant_scales.end(), tensor.quant->scales.begin(), tensor.quant->scales.end());
+      quant_scales.insert(quant_scales.end(), tensor.quant->scales.begin(),
+                          tensor.quant->scales.end());
       quant_zero_points.insert(quant_zero_points.end(), tensor.quant->zero_points.begin(),
                                tensor.quant->zero_points.end());
     }
@@ -769,8 +772,8 @@ void attach_tensor_set_meta_from_tensors_impl(GstBuffer* buffer, const TensorLis
   (void)attach_tensor_set_meta_from_descriptor_view_impl(buffer, descriptor, &attach_err);
 }
 
-GstBuffer* buffer_from_tensor_or_copy(const Sample& field, const SampleSpec& spec,
-                                      std::string* err, bool allow_zero_copy = true) {
+GstBuffer* buffer_from_tensor_or_copy(const Sample& field, const SampleSpec& spec, std::string* err,
+                                      bool allow_zero_copy = true) {
   if (!sample_has_tensor_list(field) || field.tensors.empty()) {
     if (err)
       *err = "Sample field missing tensor";
@@ -861,9 +864,10 @@ bool add_field_to_list(GValue* list, const Sample& field, GstBuffer* buf,
                        const std::string& buffer_name) {
   if (!list || !buf)
     return false;
-  const char* field_name = !field.stream_label.empty()
-                               ? field.stream_label.c_str()
-                               : (field.segment_name.empty() ? "field" : field.segment_name.c_str());
+  const char* field_name =
+      !field.stream_label.empty()
+          ? field.stream_label.c_str()
+          : (field.segment_name.empty() ? "field" : field.segment_name.c_str());
   const char* caps = field.caps_string.empty() ? nullptr : field.caps_string.c_str();
 
   GstStructure* entry = gst_structure_new("simaai-sample-field", "name", G_TYPE_STRING, field_name,
@@ -990,8 +994,7 @@ bool try_collect_shared_bundle_backing(const Sample& bundle, GstBuffer** out_buf
   return true;
 }
 
-bool build_tensor_set_envelope_caps(const Sample& bundle, GstCaps** out_caps,
-                                    std::string* err) {
+bool build_tensor_set_envelope_caps(const Sample& bundle, GstCaps** out_caps, std::string* err) {
   if (!out_caps) {
     if (err) {
       *err = "tensor-set envelope caps require output storage";
@@ -1218,9 +1221,10 @@ void release_tensor_set_segments(std::vector<TensorSetSegmentMaterialization>* f
   }
 }
 
-std::string unique_tensor_set_segment_name(const std::string& requested_name,
-                                           const std::vector<TensorSetSegmentMaterialization>& existing,
-                                           std::size_t index) {
+std::string
+unique_tensor_set_segment_name(const std::string& requested_name,
+                               const std::vector<TensorSetSegmentMaterialization>& existing,
+                               std::size_t index) {
   const std::string base =
       requested_name.empty() ? ("memory" + std::to_string(index)) : requested_name;
   auto is_taken = [&](const std::string& candidate) {
@@ -1277,8 +1281,7 @@ std::optional<std::string> packed_tensor_set_parent_segment_name(const Sample& b
 
 bool tensor_buffer_descriptor_from_packed_tensors(const TensorList& tensors,
                                                   const std::string& parent_segment_name,
-                                                  TensorBufferView* out,
-                                                  std::string* err) {
+                                                  TensorBufferView* out, std::string* err) {
   if (!out) {
     if (err) {
       *err = "tensor buffer descriptor: missing packed output storage";
@@ -1313,9 +1316,9 @@ bool tensor_buffer_descriptor_from_packed_tensors(const TensorList& tensors,
     descriptor_tensor.logical_index =
         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
     descriptor_tensor.physical_index = shared_physical_index;
-    descriptor_tensor.backend_output_index =
-        tensor.route.backend_output_index >= 0 ? tensor.route.backend_output_index
-                                               : descriptor_tensor.logical_index;
+    descriptor_tensor.backend_output_index = tensor.route.backend_output_index >= 0
+                                                 ? tensor.route.backend_output_index
+                                                 : descriptor_tensor.logical_index;
     descriptor_tensor.route_slot =
         tensor.route.route_slot >= 0 ? tensor.route.route_slot : descriptor_tensor.logical_index;
     descriptor_tensor.memory_index = 0;
@@ -1374,8 +1377,7 @@ bool attach_tensor_set_meta_from_packed_tensors(GstBuffer* buffer, const TensorL
 }
 
 bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& parent_segment_name,
-                                     GstBuffer** out_buffer, GstCaps** out_caps,
-                                     std::string* err) {
+                                     GstBuffer** out_buffer, GstCaps** out_caps, std::string* err) {
   if (!out_buffer || !out_caps) {
     if (err) {
       *err = "tensor-set packed backing missing output pointers";
@@ -1477,8 +1479,8 @@ bool build_packed_tensor_set_backing(const Sample& bundle, const std::string& pa
 
   GstBuffer* segmented = nullptr;
   char* c_err = nullptr;
-  const gboolean ok = simaai::gst::sima_tensor_buffer_build_segmented_buffer(
-      &segment, 1U, &segmented, &c_err);
+  const gboolean ok =
+      simaai::gst::sima_tensor_buffer_build_segmented_buffer(&segment, 1U, &segmented, &c_err);
   gst_buffer_unref(source_buffer);
   if (!ok || !segmented) {
     if (*out_caps) {
@@ -1561,7 +1563,8 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
       return false;
     }
 
-    GstBuffer* source_buffer = gst_buffer_new_allocate(nullptr, static_cast<gsize>(tensor_bytes), nullptr);
+    GstBuffer* source_buffer =
+        gst_buffer_new_allocate(nullptr, static_cast<gsize>(tensor_bytes), nullptr);
     if (!source_buffer) {
       release_tensor_set_segments(&fields);
       if (*out_caps) {
@@ -1587,7 +1590,8 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
       return false;
     }
     std::string copy_err;
-    if (!copy_tensor_payload_to(tensor, static_cast<std::uint8_t*>(map.data), tensor_bytes, &copy_err)) {
+    if (!copy_tensor_payload_to(tensor, static_cast<std::uint8_t*>(map.data), tensor_bytes,
+                                &copy_err)) {
       gst_buffer_unmap(source_buffer, &map);
       gst_buffer_unref(source_buffer);
       release_tensor_set_segments(&fields);
@@ -1596,8 +1600,7 @@ bool build_materialized_tensor_set_backing(const Sample& bundle, GstBuffer** out
         *out_caps = nullptr;
       }
       if (err) {
-        *err = copy_err.empty() ? "tensor-set materialized backing tensor copy failed"
-                                : copy_err;
+        *err = copy_err.empty() ? "tensor-set materialized backing tensor copy failed" : copy_err;
       }
       return false;
     }
@@ -1694,8 +1697,8 @@ std::string unique_segment_name(const std::string& requested_name,
 
 bool tensor_buffer_descriptor_from_materialized_fields(
     GstBuffer* buffer, const Sample& bundle,
-    const std::vector<BundleTensorFieldMaterialization>& fields,
-    TensorBufferView* out, std::string* err) {
+    const std::vector<BundleTensorFieldMaterialization>& fields, TensorBufferView* out,
+    std::string* err) {
   if (!out) {
     if (err) {
       *err = "tensor buffer descriptor: missing output storage";
@@ -1723,8 +1726,9 @@ bool tensor_buffer_descriptor_from_materialized_fields(
   // GStreamer represents that backing with a single GstMemory, the consumer-
   // visible tensor contract still needs one memory/segment slot per field.
   const bool use_parent_span_layout = false;
-  const std::string parent_segment_name =
-      (!fields.empty() && !fields.front().buffer_name.empty()) ? fields.front().buffer_name : "memory0";
+  const std::string parent_segment_name = (!fields.empty() && !fields.front().buffer_name.empty())
+                                              ? fields.front().buffer_name
+                                              : "memory0";
   std::size_t running_offset = 0U;
   for (std::size_t i = 0; i < bundle.tensors.size(); ++i) {
     const Tensor& tensor = bundle.tensors[i];
@@ -1741,9 +1745,9 @@ bool tensor_buffer_descriptor_from_materialized_fields(
         tensor.route.logical_index >= 0 ? tensor.route.logical_index : static_cast<int>(i);
     descriptor_tensor.physical_index =
         tensor.route.physical_index >= 0 ? tensor.route.physical_index : static_cast<int>(i);
-    descriptor_tensor.backend_output_index =
-        tensor.route.backend_output_index >= 0 ? tensor.route.backend_output_index
-                                               : descriptor_tensor.logical_index;
+    descriptor_tensor.backend_output_index = tensor.route.backend_output_index >= 0
+                                                 ? tensor.route.backend_output_index
+                                                 : descriptor_tensor.logical_index;
     descriptor_tensor.route_slot =
         tensor.route.route_slot >= 0 ? tensor.route.route_slot : descriptor_tensor.logical_index;
     descriptor_tensor.memory_index = use_parent_span_layout ? 0 : static_cast<int>(i);
@@ -1751,7 +1755,8 @@ bool tensor_buffer_descriptor_from_materialized_fields(
         !tensor.route.name.empty() ? tensor.route.name
                                    : ("output" + std::to_string(descriptor_tensor.logical_index));
     descriptor_tensor.backend_name = tensor.route.backend_name;
-    descriptor_tensor.segment_name = use_parent_span_layout ? parent_segment_name : field.buffer_name;
+    descriptor_tensor.segment_name =
+        use_parent_span_layout ? parent_segment_name : field.buffer_name;
     descriptor_tensor.byte_offset = use_parent_span_layout ? running_offset : 0U;
     descriptor_tensor.size_bytes = static_cast<std::size_t>(field.spec.required_bytes_actual);
     descriptor_tensor.dtype = tensor_set_dtype_from_tensor(tensor);
@@ -1835,8 +1840,8 @@ bool attach_tensor_set_meta_from_materialized_fields(
     flat.size_bytes = tensor.size_bytes;
     flat.dtype = tensor.dtype;
     flat.layout = tensor.layout;
-    flat.rank = static_cast<guint>(
-        std::min<std::size_t>(tensor.shape.size(), SIMA_TENSOR_SET_MAX_RANK));
+    flat.rank =
+        static_cast<guint>(std::min<std::size_t>(tensor.shape.size(), SIMA_TENSOR_SET_MAX_RANK));
     for (guint dim = 0; dim < flat.rank; ++dim) {
       flat.shape[dim] = tensor.shape[dim];
       if (dim < tensor.stride_bytes.size()) {
@@ -1851,7 +1856,8 @@ bool attach_tensor_set_meta_from_materialized_fields(
       flat.quant_scales_len = static_cast<guint>(tensor.quant->scales.size());
       flat.quant_zero_points_offset = static_cast<guint>(quant_zero_points.size());
       flat.quant_zero_points_len = static_cast<guint>(tensor.quant->zero_points.size());
-      quant_scales.insert(quant_scales.end(), tensor.quant->scales.begin(), tensor.quant->scales.end());
+      quant_scales.insert(quant_scales.end(), tensor.quant->scales.begin(),
+                          tensor.quant->scales.end());
       quant_zero_points.insert(quant_zero_points.end(), tensor.quant->zero_points.begin(),
                                tensor.quant->zero_points.end());
     }
@@ -1898,8 +1904,7 @@ void release_bundle_tensor_fields(std::vector<BundleTensorFieldMaterialization>*
 
 bool collect_bundle_tensor_fields(const Sample& bundle,
                                   std::vector<BundleTensorFieldMaterialization>* out_fields,
-                                  GstCaps** out_caps,
-                                  std::string* err, bool allow_zero_copy) {
+                                  GstCaps** out_caps, std::string* err, bool allow_zero_copy) {
   if (!out_fields) {
     if (err) {
       *err = "bundle field collection missing output vector";
@@ -1958,8 +1963,8 @@ bool collect_bundle_tensor_fields(const Sample& bundle,
     for (const auto& tensor : bundle.tensors) {
       Sample field = tensor_sample_from_tensor(tensor, 0);
       field.owned = bundle.owned;
-      field.media_type = tensor.semantic.image.has_value() ? "video/x-raw"
-                                                           : "application/vnd.simaai.tensor";
+      field.media_type =
+          tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
       if (!append_field(std::move(field))) {
         return false;
       }
@@ -1976,8 +1981,9 @@ bool collect_bundle_tensor_fields(const Sample& bundle,
   return true;
 }
 
-bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer, GstCaps** out_caps,
-                                    std::string* err, bool allow_zero_copy = true) {
+bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer,
+                                    GstCaps** out_caps, std::string* err,
+                                    bool allow_zero_copy = true) {
   if (!out_buffer || !out_caps) {
     if (err) {
       *err = "bundle segmented backing missing output pointers";
@@ -2017,8 +2023,8 @@ bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer
 
   GstBuffer* segmented = nullptr;
   char* c_err = nullptr;
-  if (!simaai::gst::sima_tensor_buffer_build_segmented_buffer(segments.data(), segments.size(), &segmented,
-                                                 &c_err) ||
+  if (!simaai::gst::sima_tensor_buffer_build_segmented_buffer(segments.data(), segments.size(),
+                                                              &segmented, &c_err) ||
       !segmented) {
     release_bundle_tensor_fields(&fields);
     if (*out_caps) {
@@ -2047,8 +2053,8 @@ bool build_segmented_bundle_backing(const Sample& bundle, GstBuffer** out_buffer
           *out_caps = nullptr;
         }
         if (err) {
-          *err = copy_err.empty() ? "bundle segmented backing preprocess meta copy failed"
-                                  : copy_err;
+          *err =
+              copy_err.empty() ? "bundle segmented backing preprocess meta copy failed" : copy_err;
         }
         return false;
       }
@@ -2128,8 +2134,8 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
     }
     if (!t.is_dense() || !t.is_contiguous()) {
       if (err)
-        *err = std::string("bundled input: tensor ") + std::to_string(i) +
-               " is not dense/contiguous";
+        *err =
+            std::string("bundled input: tensor ") + std::to_string(i) + " is not dense/contiguous";
       return false;
     }
     const std::size_t bytes = t.dense_bytes_tight();
@@ -2162,9 +2168,8 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
       *err = "bundled input: simaai segment allocator unavailable";
     return false;
   }
-  GstBuffer* assembled =
-      gst_buffer_new_allocate(allocator, total_size,
-                              reinterpret_cast<GstAllocationParams*>(&params));
+  GstBuffer* assembled = gst_buffer_new_allocate(allocator, total_size,
+                                                 reinterpret_cast<GstAllocationParams*>(&params));
   gst_object_unref(allocator);
   if (!assembled) {
     if (err)
@@ -2179,8 +2184,7 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
     return false;
   }
   if (multi_io_bundled_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[bundled] assembled buf=%p mem=%p total=%zu n_mem=%u tensors=%zu\n",
+    std::fprintf(stderr, "[bundled] assembled buf=%p mem=%p total=%zu n_mem=%u tensors=%zu\n",
                  static_cast<void*>(assembled), static_cast<void*>(assembled_memory),
                  static_cast<std::size_t>(total_size), gst_buffer_n_memory(assembled),
                  tensors.size());
@@ -2193,8 +2197,7 @@ bool build_bundled_input_gst_buffer(const TensorList& tensors, GstBuffer** out_b
 
   // 3. Copy each tensor's bytes into the matching segment by name.
   for (std::size_t i = 0; i < tensors.size(); ++i) {
-    void* segment =
-        gst_simaai_memory_get_segment(assembled_memory, segment_names[i].c_str());
+    void* segment = gst_simaai_memory_get_segment(assembled_memory, segment_names[i].c_str());
     if (!segment) {
       gst_buffer_unref(assembled);
       if (err)
@@ -2226,8 +2229,7 @@ bool tensor_buffer_view_from_tensors(const TensorList& tensors, TensorBufferView
   return tensor_buffer_view_from_tensors_impl(tensors, out, err);
 }
 
-bool tensor_buffer_view_from_sample(const Sample& sample, TensorBufferView* out,
-                                    std::string* err) {
+bool tensor_buffer_view_from_sample(const Sample& sample, TensorBufferView* out, std::string* err) {
   return tensor_buffer_view_from_sample_impl(sample, out, err);
 }
 
@@ -2257,7 +2259,8 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
   if (sample_has_tensor_list(bundle)) {
     GstBuffer* shared_buffer = nullptr;
     GstCaps* shared_caps = nullptr;
-    if (allow_zero_copy && try_collect_shared_bundle_backing(bundle, &shared_buffer, &shared_caps)) {
+    if (allow_zero_copy &&
+        try_collect_shared_bundle_backing(bundle, &shared_buffer, &shared_caps)) {
       sample_buf = gst_buffer_ref(shared_buffer);
       gst_buffer_unref(shared_buffer);
       sample_caps = shared_caps;
@@ -2296,8 +2299,8 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         }
         return {};
       }
-      sample_buf = buffer_from_tensor_or_copy(first_field, direct_spec, &direct_err,
-                                              allow_zero_copy);
+      sample_buf =
+          buffer_from_tensor_or_copy(first_field, direct_spec, &direct_err, allow_zero_copy);
       if (!sample_buf) {
         if (err) {
           *err = direct_err.empty() ? "Sample single tensor buffer materialization failed"
@@ -2323,19 +2326,18 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
                                                             : "<nullopt>");
         for (std::size_t i = 0; i < bundle.tensors.size(); ++i) {
           const auto& t = bundle.tensors[i];
-          std::fprintf(stderr,
-                       "[bundled-path]   tensor[%zu] segment='%s' name='%s' phys=%d mem=%d log=%d\n",
-                       i, t.route.segment_name.c_str(), t.route.name.c_str(),
-                       t.route.physical_index, t.route.memory_index, t.route.logical_index);
+          std::fprintf(
+              stderr, "[bundled-path]   tensor[%zu] segment='%s' name='%s' phys=%d mem=%d log=%d\n",
+              i, t.route.segment_name.c_str(), t.route.name.c_str(), t.route.physical_index,
+              t.route.memory_index, t.route.logical_index);
         }
       }
-      const bool built = packed_parent_segment_name.has_value()
-                             ? build_packed_tensor_set_backing(bundle, *packed_parent_segment_name,
-                                                               &sample_buf, &sample_caps,
-                                                               &materialized_err)
-                             : build_materialized_tensor_set_backing(bundle, &sample_buf,
-                                                                     &sample_caps,
-                                                                     &materialized_err);
+      const bool built =
+          packed_parent_segment_name.has_value()
+              ? build_packed_tensor_set_backing(bundle, *packed_parent_segment_name, &sample_buf,
+                                                &sample_caps, &materialized_err)
+              : build_materialized_tensor_set_backing(bundle, &sample_buf, &sample_caps,
+                                                      &materialized_err);
       if (!built) {
         if (err) {
           *err = materialized_err.empty() ? "Sample tensor-set materialized backing failed"
@@ -2344,8 +2346,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
         return {};
       }
       if (sample_debug_enabled() && sample_buf) {
-        std::fprintf(stderr,
-                     "[SAMPLE] tensor-set %s tensor backing bytes=%zu\n",
+        std::fprintf(stderr, "[SAMPLE] tensor-set %s tensor backing bytes=%zu\n",
                      packed_parent_segment_name.has_value() ? "packed" : "materialized",
                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
       }
@@ -2357,8 +2358,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     if (build_segmented_bundle_backing(bundle, &sample_buf, &sample_caps, &segmented_err,
                                        allow_zero_copy)) {
       if (sample_debug_enabled() && sample_buf) {
-        std::fprintf(stderr,
-                     "[SAMPLE] bundle materialized segmented backing bytes=%zu\n",
+        std::fprintf(stderr, "[SAMPLE] bundle materialized segmented backing bytes=%zu\n",
                      static_cast<size_t>(gst_buffer_get_size(sample_buf)));
       }
     } else if (allow_zero_copy &&
@@ -2506,8 +2506,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
       std::fprintf(stderr,
                    "[SAMPLE] tensor-set final buffer memories=%u bytes=%zu accessor_ok=%d err=%s\n",
                    static_cast<unsigned>(gst_buffer_n_memory(sample_buf)),
-                   static_cast<size_t>(gst_buffer_get_size(sample_buf)),
-                   accessor.valid() ? 1 : 0,
+                   static_cast<size_t>(gst_buffer_get_size(sample_buf)), accessor.valid() ? 1 : 0,
                    accessor_err.empty() ? "<empty>" : accessor_err.c_str());
     }
   } else {
@@ -2645,8 +2644,7 @@ std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::s
 
 std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tensors,
                                                          const Sample& envelope_meta,
-                                                         std::string* err,
-                                                         bool allow_zero_copy) {
+                                                         std::string* err, bool allow_zero_copy) {
   if (tensors.empty()) {
     if (err) {
       *err = "TensorList envelope payload is empty";
@@ -2736,8 +2734,8 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t index) {
   field.kind = SampleKind::TensorSet;
   field.owned = true;
   field.tensors = TensorList{tensor};
-  field.media_type = tensor.semantic.image.has_value() ? "video/x-raw"
-                                                       : "application/vnd.simaai.tensor";
+  field.media_type =
+      tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   if (tensor.semantic.image.has_value()) {
     field.format = Sample::image_format_string(tensor.semantic.image->format);
     field.payload_tag = field.format;
@@ -2817,8 +2815,8 @@ Sample pipeline_internal::canonicalize_tensor_transport_sample(const Sample& sam
   out.fields.clear();
   out.tensors = TensorList{tensor};
   if (out.media_type.empty()) {
-    out.media_type = tensor.semantic.image.has_value() ? "video/x-raw"
-                                                       : "application/vnd.simaai.tensor";
+    out.media_type =
+        tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   }
   if (out.payload_tag.empty() && tensor.semantic.image.has_value()) {
     out.payload_tag = Sample::image_format_string(tensor.semantic.image->format);
@@ -2909,15 +2907,16 @@ Sample sample_from_tensors(const TensorList& tensors) {
       }
     }
   }
-  const bool all_image_tensors = std::all_of(
-      out.tensors.begin(), out.tensors.end(),
-      [](const Tensor& tensor) { return tensor.semantic.image.has_value(); });
+  const bool all_image_tensors =
+      std::all_of(out.tensors.begin(), out.tensors.end(),
+                  [](const Tensor& tensor) { return tensor.semantic.image.has_value(); });
   out.media_type = all_image_tensors ? "video/x-raw" : "application/vnd.simaai.tensor";
   return out;
 }
 
 Sample pipeline_internal::collapse_single_tensor_sample(Sample sample) {
-  if (sample.kind != SampleKind::TensorSet || sample.tensors.size() != 1U || !sample.fields.empty()) {
+  if (sample.kind != SampleKind::TensorSet || sample.tensors.size() != 1U ||
+      !sample.fields.empty()) {
     return sample;
   }
 
@@ -2927,8 +2926,8 @@ Sample pipeline_internal::collapse_single_tensor_sample(Sample sample) {
   sample.tensor = std::move(tensor);
 
   if (sample.media_type.empty()) {
-    sample.media_type = sample.tensor->semantic.image.has_value() ? "video/x-raw"
-                                                                  : "application/vnd.simaai.tensor";
+    sample.media_type =
+        sample.tensor->semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   }
   if (sample.payload_tag.empty() && sample.tensor->semantic.image.has_value()) {
     sample.payload_tag = Sample::image_format_string(sample.tensor->semantic.image->format);
@@ -2962,8 +2961,7 @@ Sample pipeline_internal::sample_from_tensors_for_input(const TensorList& tensor
   Sample out = sample_from_tensors(tensors);
   if (out.media_type == "application/vnd.simaai.tensor" &&
       lower_copy(opt.media_type) == "application/vnd.simaai.tensor") {
-    const std::string format =
-        normalize_caps_format_for_media(out.media_type, opt.format.str());
+    const std::string format = normalize_caps_format_for_media(out.media_type, opt.format.str());
     if (!format.empty()) {
       out.format = format;
     }

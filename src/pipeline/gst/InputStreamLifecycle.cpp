@@ -17,8 +17,7 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->shape_policy = opt.shape_policy;
   state->shape_limits = opt.shape_limits;
   state->byte_guard_origin = opt.byte_guard_origin;
-  state->allow_ingress_cvu_format_renegotiation =
-      opt.allow_ingress_cvu_format_renegotiation;
+  state->allow_ingress_cvu_format_renegotiation = opt.allow_ingress_cvu_format_renegotiation;
   state->allow_dynamic_growth =
       (state->dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) &&
       (state->shape_policy != InputStreamOptions::ShapePolicy::LockedByCapsOverride);
@@ -334,15 +333,15 @@ void InputStream::start(std::function<void(Sample)> on_output) {
           if (out.kind == SampleKind::TensorSet && !out.tensors.empty()) {
             std::size_t gst_tensors = 0;
             for (const auto& tensor : out.tensors) {
-              if (tensor.storage &&
-                  tensor.storage->kind == simaai::neat::StorageKind::GstSample) {
+              if (tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample) {
                 gst_tensors++;
               }
             }
             const auto& first = out.tensors.front();
             const bool has_holder = first.storage && static_cast<bool>(first.storage->holder);
             std::fprintf(stderr,
-                         "[INPUTSTREAM] out tensors=%zu gstsample_tensors=%zu first_storage_kind=%d holder=%s\n",
+                         "[INPUTSTREAM] out tensors=%zu gstsample_tensors=%zu "
+                         "first_storage_kind=%d holder=%s\n",
                          out.tensors.size(), gst_tensors,
                          first.storage ? static_cast<int>(first.storage->kind) : -1,
                          has_holder ? "true" : "false");

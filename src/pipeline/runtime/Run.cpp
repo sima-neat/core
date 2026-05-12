@@ -392,11 +392,12 @@ Run Run::create(InputStream stream, const RunOptions& opt, const InputStreamOpti
             const auto t1 = std::chrono::steady_clock::now();
             const auto push_ns =
                 std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-            std::fprintf(stderr,
-                         "[RUN_INPUT_THREAD_TIMING] Run::input_thread idx=%d kind=%s q_after_pop=%zu "
-                         "stream_push_ns=%lld\n",
-                         idx, queued_input_kind_name(item.kind), q_after_pop,
-                         static_cast<long long>(push_ns));
+            std::fprintf(
+                stderr,
+                "[RUN_INPUT_THREAD_TIMING] Run::input_thread idx=%d kind=%s q_after_pop=%zu "
+                "stream_push_ns=%lld\n",
+                idx, queued_input_kind_name(item.kind), q_after_pop,
+                static_cast<long long>(push_ns));
           }
         }
       } catch (const std::exception& e) {

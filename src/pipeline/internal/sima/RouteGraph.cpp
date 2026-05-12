@@ -8,9 +8,8 @@ namespace simaai::neat::pipeline_internal::sima {
 namespace {
 
 std::string lower_copy(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return s;
 }
 
@@ -34,13 +33,16 @@ RouteGraphKernelKind canonical_route_graph_kernel_kind(const std::string& raw_ke
   if (kernel.empty()) {
     return RouteGraphKernelKind::Unknown;
   }
-  if (kernel.find("detesscast") != std::string::npos || kernel.find("detess_cast") != std::string::npos || kernel.find("detessellatecast") != std::string::npos) {
+  if (kernel.find("detesscast") != std::string::npos ||
+      kernel.find("detess_cast") != std::string::npos ||
+      kernel.find("detessellatecast") != std::string::npos) {
     return RouteGraphKernelKind::DetessCast;
   }
   if (kernel.find("detessdequant") != std::string::npos) {
     return RouteGraphKernelKind::DetessDequant;
   }
-  if (kernel.find("detessellate" ) != std::string::npos || kernel.find("detess") != std::string::npos) {
+  if (kernel.find("detessellate") != std::string::npos ||
+      kernel.find("detess") != std::string::npos) {
     return RouteGraphKernelKind::Detess;
   }
   if (kernel.find("dequant") != std::string::npos) {
@@ -49,7 +51,9 @@ RouteGraphKernelKind canonical_route_graph_kernel_kind(const std::string& raw_ke
   if (kernel.find("boxdecode") != std::string::npos) {
     return RouteGraphKernelKind::BoxDecode;
   }
-  if (kernel.find("casttess") != std::string::npos || kernel.find("cast_tess") != std::string::npos || kernel.find("casttessellate") != std::string::npos) {
+  if (kernel.find("casttess") != std::string::npos ||
+      kernel.find("cast_tess") != std::string::npos ||
+      kernel.find("casttessellate") != std::string::npos) {
     return RouteGraphKernelKind::CastTess;
   }
   if (kernel.find("quanttess") != std::string::npos ||
@@ -65,7 +69,8 @@ RouteGraphKernelKind canonical_route_graph_kernel_kind(const std::string& raw_ke
   if (kernel.find("cast") != std::string::npos) {
     return RouteGraphKernelKind::Cast;
   }
-  if (kernel.find("preproc") != std::string::npos || kernel.find("preprocess") != std::string::npos) {
+  if (kernel.find("preproc") != std::string::npos ||
+      kernel.find("preprocess") != std::string::npos) {
     return RouteGraphKernelKind::Preproc;
   }
   if (kernel.find("unpack") != std::string::npos) {
@@ -79,7 +84,8 @@ RouteGraphKernelKind canonical_route_graph_kernel_kind(const std::string& raw_ke
       kernel.find("concatenat") != std::string::npos) {
     return RouteGraphKernelKind::PassThrough;
   }
-  if (kernel.find("pass_through") != std::string::npos || kernel.find("passthrough") != std::string::npos) {
+  if (kernel.find("pass_through") != std::string::npos ||
+      kernel.find("passthrough") != std::string::npos) {
     return RouteGraphKernelKind::PassThrough;
   }
   if (kernel.find("mla") != std::string::npos || kernel.find("infer") != std::string::npos) {
@@ -144,8 +150,8 @@ RouteGraph build_route_graph(const MpkContract& contract) {
 
   const auto* mla_stage = get_mla_stage_io_contract(contract);
   if (mla_stage) {
-    const auto mla_idx = find_plugin_index_by_name_or_id(contract, !mla_stage->name.empty() ? mla_stage->name
-                                                                                            : mla_stage->plugin_id);
+    const auto mla_idx = find_plugin_index_by_name_or_id(
+        contract, !mla_stage->name.empty() ? mla_stage->name : mla_stage->plugin_id);
     if (mla_idx.has_value()) {
       out.mla_plugin_index = static_cast<int>(*mla_idx);
     }
@@ -170,7 +176,8 @@ RouteGraph build_route_graph(const MpkContract& contract) {
       kernel_source = plugin.name;
     }
     const auto rank_it = rank_by_index.find(plugin_idx);
-    const std::size_t rank = rank_it == rank_by_index.end() ? out.execution_order.size() : rank_it->second;
+    const std::size_t rank =
+        rank_it == rank_by_index.end() ? out.execution_order.size() : rank_it->second;
 
     RouteGraphNode node;
     node.plugin_index = plugin_idx;
@@ -200,12 +207,12 @@ RouteGraph build_route_graph(const MpkContract& contract) {
     graph_edge.dst_plugin = edge.dst_plugin;
     graph_edge.tensor_name = edge.tensor_name;
     if (edge.src_plugin_index < contract.plugins.size()) {
-      graph_edge.src_tensor_name =
-          tensor_name_at_index(contract.plugins[edge.src_plugin_index].output_tensors, edge.src_output_index);
+      graph_edge.src_tensor_name = tensor_name_at_index(
+          contract.plugins[edge.src_plugin_index].output_tensors, edge.src_output_index);
     }
     if (edge.dst_plugin_index < contract.plugins.size()) {
-      graph_edge.dst_tensor_name =
-          tensor_name_at_index(contract.plugins[edge.dst_plugin_index].input_tensors, edge.dst_input_index);
+      graph_edge.dst_tensor_name = tensor_name_at_index(
+          contract.plugins[edge.dst_plugin_index].input_tensors, edge.dst_input_index);
     }
     out.edges.push_back(std::move(graph_edge));
   }

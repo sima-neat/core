@@ -29,12 +29,11 @@ bool has_stuck_remoteproc_stop_task() {
 bool rpmsg_channels_idle() {
   // Require no active RPMsg users before hard remoteproc reset.
   // fuser returns 0 when at least one process uses the path.
-  return run_cmd(
-             "printf '%s\\n' edgeai | sudo -S -p '' sh -c 'for p in /dev/rpmsg[0-9]* "
-             "/tmp/rpmsg_lock /tmp/rpmsg_lock_rpmsg*; do "
-             "[ -e \"$p\" ] || continue; "
-             "if fuser -s \"$p\" 2>/dev/null; then echo busy:$p; exit 1; fi; "
-             "done; exit 0'") == 0;
+  return run_cmd("printf '%s\\n' edgeai | sudo -S -p '' sh -c 'for p in /dev/rpmsg[0-9]* "
+                 "/tmp/rpmsg_lock /tmp/rpmsg_lock_rpmsg*; do "
+                 "[ -e \"$p\" ] || continue; "
+                 "if fuser -s \"$p\" 2>/dev/null; then echo busy:$p; exit 1; fi; "
+                 "done; exit 0'") == 0;
 }
 
 void append_note(SessionReport* report, const std::string& line) {
@@ -69,8 +68,9 @@ bool attempt_dispatcher_recovery(SessionReport* report, bool auto_recover) {
   const bool unsafe_hard_reset = env_truthy("SIMA_NEAT_RECOVERY_ALLOW_UNSAFE_RESET");
   bool do_hard_reset = hard_reset_requested;
 
-  std::fprintf(stderr, "[WARN] dispatcher_recovery: attempting recovery (services + MLA init); "
-                       "hard remoteproc reset is %s.\n",
+  std::fprintf(stderr,
+               "[WARN] dispatcher_recovery: attempting recovery (services + MLA init); "
+               "hard remoteproc reset is %s.\n",
                do_hard_reset ? "enabled" : "disabled");
 
   bool ok = true;
@@ -82,9 +82,8 @@ bool attempt_dispatcher_recovery(SessionReport* report, bool auto_recover) {
           "|| true'");
 
   if (do_hard_reset && has_stuck_remoteproc_stop_task()) {
-    append_note(report,
-                "DispatcherUnavailable: found stuck remoteproc stop task (kernel D-state). "
-                "Skipping hard reset to avoid wedge; reboot recommended.");
+    append_note(report, "DispatcherUnavailable: found stuck remoteproc stop task (kernel D-state). "
+                        "Skipping hard reset to avoid wedge; reboot recommended.");
     do_hard_reset = false;
   }
   if (do_hard_reset && !unsafe_hard_reset && !rpmsg_channels_idle()) {
@@ -133,10 +132,8 @@ bool attempt_dispatcher_recovery(SessionReport* report, bool auto_recover) {
     ok &= (run_cmd("printf '%s\n' edgeai | sudo -S -p '' sh -c 'echo enabled > "
                    "/sys/class/remoteproc/remoteproc1/recovery'") == 0);
   } else {
-    append_note(
-        report,
-        "DispatcherUnavailable: skipping hard remoteproc reset (safe mode). "
-        "Enable SIMA_NEAT_RECOVERY_HARD_RESET=1 for explicit hard reset.");
+    append_note(report, "DispatcherUnavailable: skipping hard remoteproc reset (safe mode). "
+                        "Enable SIMA_NEAT_RECOVERY_HARD_RESET=1 for explicit hard reset.");
   }
 
   ok &= (run_cmd("printf '%s\n' edgeai | sudo -S -p '' sh -c 'sleep 1'") == 0);

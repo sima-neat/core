@@ -272,9 +272,10 @@ void run_preproc_pipeline_once(const cv::Mat& img_bgr, const simaai::neat::Model
 
   step_log("preproc_pipeline: before p.run");
   auto runner = p.build(simaai::neat::SampleList{wire}, simaai::neat::RunMode::Sync);
-  const simaai::neat::SampleList out_samples = run_with_report(
-      runner, "preproc_pipeline p.run",
-      [&]() { return runner.run(simaai::neat::SampleList{wire}, kStageTimeoutMs); });
+  const simaai::neat::SampleList out_samples =
+      run_with_report(runner, "preproc_pipeline p.run", [&]() {
+        return runner.run(simaai::neat::SampleList{wire}, kStageTimeoutMs);
+      });
   require(out_samples.size() == 1U, "preproc pipeline should return exactly one sample");
   const simaai::neat::Sample out = out_samples.front();
   step_log("preproc_pipeline: after p.run");

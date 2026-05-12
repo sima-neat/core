@@ -35,8 +35,7 @@ std::shared_ptr<Dequant::ConfigHolder> init_config_holder(const DequantOptions& 
 
 } // namespace
 
-DequantOptions::DequantOptions(const simaai::neat::Model& model)
-{
+DequantOptions::DequantOptions(const simaai::neat::Model& model) {
   simaai::neat::internal::ModelAccess::require_model_managed_stage(
       model, simaai::neat::internal::StageNodeKind::Dequant, "DequantOptions(Model)");
   const auto& pack = simaai::neat::internal::ModelAccess::pack(model);
@@ -46,22 +45,19 @@ DequantOptions::DequantOptions(const simaai::neat::Model& model)
   num_buffers_locked = true;
 }
 
-Dequant::Dequant(DequantOptions opt) : opt_(std::move(opt))
-{
+Dequant::Dequant(DequantOptions opt) : opt_(std::move(opt)) {
   if (opt_.num_buffers_locked) {
     if (opt_.num_buffers != opt_.num_buffers_model) {
-      throw std::runtime_error(
-        "Dequant: num_buffers override is not allowed; must match model.");
+      throw std::runtime_error("Dequant: num_buffers override is not allowed; must match model.");
     }
     if (opt_.num_buffers != 4 && opt_.num_buffers != 1) {
       throw std::runtime_error(
-        "Dequant: num_buffers must be 4 (async) or 1 (sync) for model pipelines.");
+          "Dequant: num_buffers must be 4 (async) or 1 (sync) for model pipelines.");
     }
   }
   if (!opt_.compiled_contract && !opt_.processcvu_compiled_contract &&
       (!opt_.q_scale.has_value() || !opt_.q_zp.has_value())) {
-    throw std::runtime_error(
-      "Dequant: standalone neatdequant requires explicit q_scale and q_zp.");
+    throw std::runtime_error("Dequant: standalone neatdequant requires explicit q_scale and q_zp.");
   }
   config_holder_ = init_config_holder(opt_);
 }
@@ -89,12 +85,11 @@ NodeContractDefinition Dequant::contract_definition() const {
 }
 
 bool Dequant::compile_node_contract(const ContractCompileInput& compile_input,
-                                    CompiledNodeContract* out,
-                                    std::string* err) const {
-  const std::string element_name =
-      element_names(compile_input.node_index).empty() ? std::string("dequant") : element_names(compile_input.node_index).front();
-  const std::string logical_stage_id =
-      !opt_.stage_id.empty() ? opt_.stage_id : element_name;
+                                    CompiledNodeContract* out, std::string* err) const {
+  const std::string element_name = element_names(compile_input.node_index).empty()
+                                       ? std::string("dequant")
+                                       : element_names(compile_input.node_index).front();
+  const std::string logical_stage_id = !opt_.stage_id.empty() ? opt_.stage_id : element_name;
   if (config_holder_ && config_holder_->processcvu_compiled_contract.has_value()) {
     return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
         kind(), element_name, logical_stage_id, contract_definition(),
@@ -114,7 +109,8 @@ bool Dequant::compile_node_contract(const ContractCompileInput& compile_input,
     }
     auto compiled =
         pipeline_internal::sima::stagesemantics::build_dequant_compiled_contract_from_facts(facts);
-    if (const auto* upstream = compiled_runtime_contract_from_stage(compile_input.immediate_upstream);
+    if (const auto* upstream =
+            compiled_runtime_contract_from_stage(compile_input.immediate_upstream);
         upstream && !upstream->logical_outputs.empty()) {
       compiled =
           pipeline_internal::sima::stagesemantics::build_dequant_compiled_contract_from_upstream(
@@ -138,17 +134,16 @@ void Dequant::apply_compiled_contract(const CompiledNodeContract&, std::string* 
   }
 }
 
-std::string Dequant::backend_fragment(int node_index) const
-{
+std::string Dequant::backend_fragment(int node_index) const {
   std::ostringstream ss;
   const bool processcvu = opt_.processcvu_compiled_contract != nullptr;
   const bool standalone = !opt_.compiled_contract && !processcvu;
   const char* backend = processcvu ? "neatprocesscvu" : "neatdequant";
   require_element(backend, "Dequant::backend_fragment");
 
-  const std::string name =
-    opt_.element_name.empty() ? ("n" + std::to_string(node_index) + "_dequant")
-                              : opt_.element_name;
+  const std::string name = opt_.element_name.empty()
+                               ? ("n" + std::to_string(node_index) + "_dequant")
+                               : opt_.element_name;
   const std::string stage_id = opt_.stage_id.empty() ? name : opt_.stage_id;
 
   ss << backend << " name=" << name;
@@ -163,8 +158,7 @@ std::string Dequant::backend_fragment(int node_index) const
   return ss.str();
 }
 
-std::vector<std::string> Dequant::element_names(int node_index) const
-{
+std::vector<std::string> Dequant::element_names(int node_index) const {
   if (!opt_.element_name.empty()) {
     return {opt_.element_name};
   }
@@ -181,8 +175,7 @@ const std::optional<CompiledDequantContract>& Dequant::compiled_contract_interna
 } // namespace simaai::neat
 
 namespace simaai::neat::nodes {
-std::shared_ptr<simaai::neat::Node> Dequant(DequantOptions opt)
-{
+std::shared_ptr<simaai::neat::Node> Dequant(DequantOptions opt) {
   return std::make_shared<simaai::neat::Dequant>(std::move(opt));
 }
 } // namespace simaai::neat::nodes

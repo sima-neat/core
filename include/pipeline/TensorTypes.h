@@ -35,7 +35,7 @@ enum class DLDeviceType : int {
 /// DLPack device descriptor: type + numeric ID.
 struct DLDevice {
   DLDeviceType device_type; ///< Device family; one of the DLPack DeviceType codes.
-  int device_id;            ///< Device-local index; meaningful only for accelerators with multiple instances.
+  int device_id; ///< Device-local index; meaningful only for accelerators with multiple instances.
 };
 
 /// DLPack data-type category (signed int / unsigned int / floating-point).
@@ -54,20 +54,20 @@ struct DLDataType {
 
 /// DLPack non-owning tensor view: pointer + shape + strides + dtype + device.
 struct DLTensor {
-  void* data;          ///< Raw data pointer (aligned per DLPack spec).
-  DLDevice device;     ///< Where the data lives.
-  int ndim;            ///< Number of dimensions.
-  DLDataType dtype;    ///< Element dtype.
-  int64_t* shape;      ///< Per-dimension sizes (length `ndim`).
-  int64_t* strides;    ///< Per-dimension strides in elements (may be null for compact row-major).
+  void* data;           ///< Raw data pointer (aligned per DLPack spec).
+  DLDevice device;      ///< Where the data lives.
+  int ndim;             ///< Number of dimensions.
+  DLDataType dtype;     ///< Element dtype.
+  int64_t* shape;       ///< Per-dimension sizes (length `ndim`).
+  int64_t* strides;     ///< Per-dimension strides in elements (may be null for compact row-major).
   uint64_t byte_offset; ///< Offset from `data` in bytes to the first element.
 };
 
 /// DLPack managed tensor: owning wrapper that calls `deleter` on destruction.
 struct DLManagedTensor {
-  DLTensor dl_tensor;                              ///< The non-owning view.
-  void* manager_ctx;                               ///< Opaque handle for the producer.
-  void (*deleter)(DLManagedTensor* self);          ///< Function to destroy the managed view.
+  DLTensor dl_tensor;                     ///< The non-owning view.
+  void* manager_ctx;                      ///< Opaque handle for the producer.
+  void (*deleter)(DLManagedTensor* self); ///< Function to destroy the managed view.
 };
 
 } // namespace dlpack

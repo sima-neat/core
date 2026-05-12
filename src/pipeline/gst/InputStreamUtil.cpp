@@ -325,9 +325,9 @@ bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
   };
 
   const auto is_plain_dtype_format = [](const std::string& fmt) {
-    return fmt == "UINT8" || fmt == "INT8" || fmt == "UINT16" || fmt == "INT16" ||
-           fmt == "BF16" || fmt == "BFLOAT16" || fmt == "FP32" || fmt == "FLOAT32" ||
-           fmt == "FP64" || fmt == "FLOAT64" || fmt == "INT32" || fmt == "UINT32";
+    return fmt == "UINT8" || fmt == "INT8" || fmt == "UINT16" || fmt == "INT16" || fmt == "BF16" ||
+           fmt == "BFLOAT16" || fmt == "FP32" || fmt == "FLOAT32" || fmt == "FP64" ||
+           fmt == "FLOAT64" || fmt == "INT32" || fmt == "UINT32";
   };
   const auto packed_transport_format = [](const std::string& fmt) {
     const std::string up = upper_copy(fmt);
@@ -354,9 +354,8 @@ bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
     fmt = upper_copy(tensor->semantic.tess->format);
   }
   const std::string caps_fmt = caps_transport_format();
-  const bool raw_video_sample =
-      sample.media_type.rfind("video/x-raw", 0) == 0 ||
-      (sample.media_type.empty() && tensor->semantic.image.has_value());
+  const bool raw_video_sample = sample.media_type.rfind("video/x-raw", 0) == 0 ||
+                                (sample.media_type.empty() && tensor->semantic.image.has_value());
   if (raw_video_sample && !tensor->semantic.tess.has_value()) {
     return false;
   }
@@ -437,8 +436,7 @@ SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const
 
   pipeline_internal::TensorBufferView view;
   std::string view_err;
-  if (pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) &&
-      view.buffer) {
+  if (pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) && view.buffer) {
     spec.required_bytes_actual = static_cast<std::size_t>(gst_buffer_get_size(view.buffer));
   }
   if (spec.required_bytes_actual == 0U) {
@@ -447,8 +445,8 @@ SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const
     for (const auto& tensor : tensors) {
       std::size_t segment_bytes = 0U;
       if (tensor.storage) {
-        const int memory_index =
-            (tensor.route.memory_index >= 0) ? tensor.route.memory_index : tensor.route.physical_index;
+        const int memory_index = (tensor.route.memory_index >= 0) ? tensor.route.memory_index
+                                                                  : tensor.route.physical_index;
         if (!seen_memory_indices.insert(memory_index).second) {
           continue;
         }
@@ -473,8 +471,7 @@ SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const
   if (spec.required_bytes_actual == 0U) {
     throw std::invalid_argument(tag + ": tensor envelope transport has zero runtime bytes");
   }
-  if (spec.required_bytes_actual >
-      static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+  if (spec.required_bytes_actual > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument(tag + ": tensor envelope transport exceeds transport size limit");
   }
   spec.caps_key = capkey_from_spec(spec);
@@ -495,16 +492,15 @@ int limit_for_axis(const InputStreamOptions::ResolvedShapeLimits& limits, char a
   }
 }
 
-void validate_dim_with_effective_max(
-    const std::string& tag, const char* field, int value,
-    const InputStreamOptions::ResolvedShapeLimits& limits, char axis, const char* fix_hint) {
+void validate_dim_with_effective_max(const std::string& tag, const char* field, int value,
+                                     const InputStreamOptions::ResolvedShapeLimits& limits,
+                                     char axis, const char* fix_hint) {
   const int limit = limit_for_axis(limits, axis);
   if (value <= 0 || limit <= 0 || value <= limit)
     return;
 
   std::ostringstream oss;
-  oss << tag << ": " << field << " exceeds effective max (" << value << " > " << limit
-      << ")";
+  oss << tag << ": " << field << " exceeds effective max (" << value << " > " << limit << ")";
   if (fix_hint && *fix_hint) {
     oss << ". Fix: " << fix_hint;
   }
@@ -980,8 +976,7 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
   }
   if (input.device.type != simaai::neat::DeviceType::CPU &&
       input.storage->kind != simaai::neat::StorageKind::GstSample) {
-    throw std::invalid_argument(
-        tag + ": non-CPU tensors must be backed by GstSample storage");
+    throw std::invalid_argument(tag + ": non-CPU tensors must be backed by GstSample storage");
   }
   if (input.semantic.encoded.has_value()) {
     throw std::invalid_argument(tag + ": encoded tensors require Sample caps_string");
@@ -1256,8 +1251,7 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
           input.dtype != TensorDType::BFloat16) {
         throw std::invalid_argument(tag + ": tensor format does not match dtype");
       }
-      if (fmt_is_tess_i8 && input.dtype != TensorDType::Int8 &&
-          input.dtype != TensorDType::UInt8) {
+      if (fmt_is_tess_i8 && input.dtype != TensorDType::Int8 && input.dtype != TensorDType::UInt8) {
         throw std::invalid_argument(tag + ": tensor format does not match dtype");
       }
       if (fmt_is_tess_bf16 && input.dtype != TensorDType::BFloat16) {
@@ -1351,7 +1345,8 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     }
     if (mat.depth() != CV_32F) {
       throw std::invalid_argument(
-          tag + ": cv::Mat tensor input must already be CV_32F; implicit numeric conversion is disabled");
+          tag +
+          ": cv::Mat tensor input must already be CV_32F; implicit numeric conversion is disabled");
     }
 
     auto holder = std::make_shared<cv::Mat>(mat);
@@ -1457,8 +1452,9 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
       // logical appsrc caps must match the representative tensor contract used
       // by downstream stages. The real envelope bytes are tracked separately.
       InputOptions first_tensor_opt;
-      first_tensor_opt.media_type =
-          sample.media_type.empty() ? std::string("application/vnd.simaai.tensor") : sample.media_type;
+      first_tensor_opt.media_type = sample.media_type.empty()
+                                        ? std::string("application/vnd.simaai.tensor")
+                                        : sample.media_type;
       if (!sample.payload_tag.empty()) {
         first_tensor_opt.format = sample.payload_tag;
       } else if (!sample.format.empty()) {
@@ -1482,15 +1478,16 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
             throw std::invalid_argument(
                 "SampleSpec: tensor-set transport missing storage for runtime segment sizing");
           }
-          const int memory_index =
-              (tensor.route.memory_index >= 0) ? tensor.route.memory_index : tensor.route.physical_index;
+          const int memory_index = (tensor.route.memory_index >= 0) ? tensor.route.memory_index
+                                                                    : tensor.route.physical_index;
           if (!seen_memory_indices.insert(memory_index).second) {
             continue;
           }
           std::size_t segment_bytes = tensor.storage->size_bytes;
           if (memory_index >= 0 &&
               static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size() &&
-              tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes > 0U) {
+              tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes >
+                  0U) {
             segment_bytes =
                 tensor.storage->sima_segments[static_cast<std::size_t>(memory_index)].size_bytes;
           }
@@ -1505,8 +1502,7 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
       if (spec.required_bytes_actual == 0U) {
         throw std::invalid_argument("SampleSpec: tensor-set envelope has zero runtime bytes");
       }
-      if (spec.required_bytes_actual >
-          static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+      if (spec.required_bytes_actual > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
         throw std::invalid_argument("SampleSpec: tensor-set envelope exceeds transport size limit");
       }
       spec.caps_key = capkey_from_spec(spec);
@@ -1645,8 +1641,7 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
     gst_structure_set(st, "rank", G_TYPE_INT, static_cast<int>(tensor_shape.size()), nullptr);
     for (size_t i = 0; i < tensor_shape.size(); ++i) {
       const std::string key = "dim" + std::to_string(i);
-      gst_structure_set(st, key.c_str(), G_TYPE_INT,
-                        static_cast<int>(tensor_shape[i]), nullptr);
+      gst_structure_set(st, key.c_str(), G_TYPE_INT, static_cast<int>(tensor_shape[i]), nullptr);
     }
     const std::string shape_csv = tensor_shape_csv_local(tensor_shape);
     if (!shape_csv.empty()) {
@@ -1677,9 +1672,8 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
   const std::string media_type_up = upper_copy(opt.media_type);
   const std::string format_up = upper_copy(opt.format.str());
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
-  const bool bf16_tensor = tensor_media &&
-                           (format_up.find("BF16") != std::string::npos ||
-                            format_up.find("BFLOAT16") != std::string::npos);
+  const bool bf16_tensor = tensor_media && (format_up.find("BF16") != std::string::npos ||
+                                            format_up.find("BFLOAT16") != std::string::npos);
   const bool ifm0_hint = upper_copy(opt.buffer_name) == "IFM0";
   GstMemoryFlags target_flag = static_cast<GstMemoryFlags>(GST_SIMAAI_MEMORY_TARGET_EV74);
   const char* target_source = "heuristic";
@@ -1733,8 +1727,8 @@ GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
           static_cast<GstMemoryFlags>(target_flag | GST_SIMAAI_MEMORY_FLAG_CACHED);
       const bool tensor_input = tensor_media;
       const std::string segment_name =
-          !opt.buffer_name.empty() ? opt.buffer_name : (tensor_input ? std::string("ifm0")
-                                                                      : std::string("input"));
+          !opt.buffer_name.empty() ? opt.buffer_name
+                                   : (tensor_input ? std::string("ifm0") : std::string("input"));
       const gsize segment_size = static_cast<gsize>(bytes);
       const char* segment_name_cstr = segment_name.c_str();
       GstBufferPool* new_pool = gst_simaai_allocate_buffer_pool2(
@@ -1833,8 +1827,8 @@ bool maybe_add_simaai_meta(GstBuffer* buffer, int64_t frame_id, const InputOptio
                     name.c_str(), "buffer-offset", G_TYPE_INT64, static_cast<gint64>(0), "frame-id",
                     G_TYPE_INT64, static_cast<gint64>(frame_id), "orig-input-seq", G_TYPE_INT64,
                     static_cast<gint64>(frame_id), "stream-id", G_TYPE_STRING, "0",
-                    "origin_stage_id", G_TYPE_STRING, name.c_str(), "origin_output_slot", G_TYPE_INT,
-                    0, "timestamp", G_TYPE_UINT64, static_cast<guint64>(0), nullptr);
+                    "origin_stage_id", G_TYPE_STRING, name.c_str(), "origin_output_slot",
+                    G_TYPE_INT, 0, "timestamp", G_TYPE_UINT64, static_cast<guint64>(0), nullptr);
   if (pipeline_internal::env_bool("SIMA_INPUTSTREAM_META_DEBUG", false)) {
     std::fprintf(stderr, "[DBG] GstSimaMeta set name=%s phys=%lld frame=%lld\n", name.c_str(),
                  static_cast<long long>(phys_addr), static_cast<long long>(frame_id));
@@ -1865,8 +1859,8 @@ void maybe_update_simaai_meta_name(GstBuffer* buffer, const std::string& name) {
 #else
   return;
 #endif
-  gst_structure_set(s, "buffer-name", G_TYPE_STRING, name.c_str(), "origin_stage_id",
-                    G_TYPE_STRING, name.c_str(), nullptr);
+  gst_structure_set(s, "buffer-name", G_TYPE_STRING, name.c_str(), "origin_stage_id", G_TYPE_STRING,
+                    name.c_str(), nullptr);
 #else
   (void)buffer;
   (void)name;
@@ -2138,22 +2132,22 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
   gst_structure_set(
       s, "preproc_original_width", G_TYPE_INT, meta.original_width, "preproc_original_height",
       G_TYPE_INT, meta.original_height, "preproc_resized_width", G_TYPE_INT, meta.resized_width,
-      "preproc_resized_height", G_TYPE_INT, meta.resized_height, "preproc_scaled_width",
-      G_TYPE_INT, meta.scaled_width, "preproc_scaled_height", G_TYPE_INT, meta.scaled_height,
-      "preproc_pad_left", G_TYPE_INT, meta.pad_left, "preproc_pad_right", G_TYPE_INT, meta.pad_right,
-      "preproc_pad_top", G_TYPE_INT, meta.pad_top, "preproc_pad_bottom", G_TYPE_INT,
+      "preproc_resized_height", G_TYPE_INT, meta.resized_height, "preproc_scaled_width", G_TYPE_INT,
+      meta.scaled_width, "preproc_scaled_height", G_TYPE_INT, meta.scaled_height,
+      "preproc_pad_left", G_TYPE_INT, meta.pad_left, "preproc_pad_right", G_TYPE_INT,
+      meta.pad_right, "preproc_pad_top", G_TYPE_INT, meta.pad_top, "preproc_pad_bottom", G_TYPE_INT,
       meta.pad_bottom, "preproc_resize_mode", G_TYPE_STRING, meta.resize_mode.c_str(),
       "preproc_color_in", G_TYPE_STRING, meta.color_in.c_str(), "preproc_color_out", G_TYPE_STRING,
       meta.color_out.c_str(), "preproc_normalize", G_TYPE_BOOLEAN, meta.normalize,
       "preproc_quantize", G_TYPE_BOOLEAN, meta.quantize, "preproc_tessellate", G_TYPE_BOOLEAN,
-      meta.tessellate, "preproc_affine_m00", G_TYPE_DOUBLE, meta.affine_m00,
-      "preproc_affine_m01", G_TYPE_DOUBLE, meta.affine_m01, "preproc_affine_m02", G_TYPE_DOUBLE,
-      meta.affine_m02, "preproc_affine_m10", G_TYPE_DOUBLE, meta.affine_m10,
-      "preproc_affine_m11", G_TYPE_DOUBLE, meta.affine_m11, "preproc_affine_m12", G_TYPE_DOUBLE,
-      meta.affine_m12, "preproc_affine_scale_x", G_TYPE_DOUBLE, meta.affine_scale_x,
-      "preproc_affine_scale_y", G_TYPE_DOUBLE, meta.affine_scale_y, "preproc_affine_offset_x",
-      G_TYPE_DOUBLE, meta.affine_offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE,
-      meta.affine_offset_y, nullptr);
+      meta.tessellate, "preproc_affine_m00", G_TYPE_DOUBLE, meta.affine_m00, "preproc_affine_m01",
+      G_TYPE_DOUBLE, meta.affine_m01, "preproc_affine_m02", G_TYPE_DOUBLE, meta.affine_m02,
+      "preproc_affine_m10", G_TYPE_DOUBLE, meta.affine_m10, "preproc_affine_m11", G_TYPE_DOUBLE,
+      meta.affine_m11, "preproc_affine_m12", G_TYPE_DOUBLE, meta.affine_m12,
+      "preproc_affine_scale_x", G_TYPE_DOUBLE, meta.affine_scale_x, "preproc_affine_scale_y",
+      G_TYPE_DOUBLE, meta.affine_scale_y, "preproc_affine_offset_x", G_TYPE_DOUBLE,
+      meta.affine_offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE, meta.affine_offset_y,
+      nullptr);
   if (!gst_structure_set_int_vector_field_local(s, "preproc_axis_perm", meta.axis_perm)) {
     return false;
   }
@@ -2297,9 +2291,10 @@ bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* er
 #endif
 }
 
-std::optional<std::string> validate_simaai_preprocess_meta_required_fields(
-    GstBuffer* buffer, const std::vector<std::string>& required_fields,
-    PreprocessRuntimeMeta* out_meta) {
+std::optional<std::string>
+validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
+                                                const std::vector<std::string>& required_fields,
+                                                PreprocessRuntimeMeta* out_meta) {
 #if SIMA_HAS_SIMAAI_POOL
   if (!buffer) {
     return std::string("missing GstBuffer while reading preprocess metadata");

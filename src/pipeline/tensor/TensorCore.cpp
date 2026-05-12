@@ -392,10 +392,9 @@ Tensor Tensor::clone() const {
     // physical_inputs.size_bytes carries the padded sum).
     std::size_t alloc_bytes = bytes;
     if (storage) {
-      const int memory_index =
-          (route.memory_index >= 0)
-              ? route.memory_index
-              : (route.physical_index >= 0 ? route.physical_index : 0);
+      const int memory_index = (route.memory_index >= 0)
+                                   ? route.memory_index
+                                   : (route.physical_index >= 0 ? route.physical_index : 0);
       if (memory_index >= 0 &&
           static_cast<std::size_t>(memory_index) < storage->sima_segments.size()) {
         const auto& segment = storage->sima_segments[static_cast<std::size_t>(memory_index)];
@@ -981,13 +980,11 @@ Tensor make_dense_tensor_from_bytes(const void* data, std::size_t bytes, TensorD
 
   std::vector<Segment> segments{{"ifm0", bytes}};
   if (memory == TensorMemory::EV74) {
-    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_CVU, 0},
-                                                 &segments,
+    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_CVU, 0}, &segments,
                                                  /*required_segment_names=*/nullptr);
   }
   if (memory == TensorMemory::MLA) {
-    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_MLA, 0},
-                                                 &segments,
+    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_MLA, 0}, &segments,
                                                  /*required_segment_names=*/nullptr);
   }
   throw std::invalid_argument("Tensor::from_vector: unsupported TensorMemory placement");
@@ -1009,8 +1006,8 @@ Tensor Tensor::from_vector(const std::vector<uint8_t>& data, std::vector<int64_t
 
 Tensor Tensor::from_vector(const std::vector<int8_t>& data, std::vector<int64_t> shape,
                            TensorMemory memory) {
-  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(int8_t),
-                                      TensorDType::Int8, std::move(shape), memory);
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(int8_t), TensorDType::Int8,
+                                      std::move(shape), memory);
 }
 
 Tensor Tensor::from_vector(const std::vector<uint16_t>& data, std::vector<int64_t> shape,

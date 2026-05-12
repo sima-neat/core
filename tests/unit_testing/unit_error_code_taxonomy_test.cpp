@@ -18,8 +18,7 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
              missing_input.add(nodes::Output(OutputOptions::Latest()));
              require_session_error(
                  [&]() { (void)missing_input.build(TensorList{seed}, RunMode::Sync); },
-                                  error_codes::kPipelineShape, "misconfig.pipeline_shape",
-                                  "Session::build(input)");
+                 error_codes::kPipelineShape, "misconfig.pipeline_shape", "Session::build(input)");
            }
 
            // misconfig.caps: invalid caps_override should be rejected with the offending value.
@@ -35,7 +34,7 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
 
              require_session_error(
                  [&]() { (void)invalid_caps.build(TensorList{seed}, RunMode::Sync); },
-                                  error_codes::kCaps, "misconfig.caps", "invalid caps_override");
+                 error_codes::kCaps, "misconfig.caps", "invalid caps_override");
            }
 
            // misconfig.input_shape: malformed input tensor should carry input-shape taxonomy.

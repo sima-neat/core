@@ -68,17 +68,18 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
         !has_input_appsrc(seg.group)) {
       std::string node_names;
       for (NodeId nid : seg.node_ids) {
-        if (!node_names.empty()) node_names += ", ";
+        if (!node_names.empty())
+          node_names += ", ";
         node_names += std::to_string(nid);
         if (nid < state->node_labels.size()) {
           node_names += "('" + state->node_labels[nid] + "')";
         }
       }
-      throw std::runtime_error(
-          "GraphSession: pipeline segment " + std::to_string(seg.id) +
-          " has internal source but is not source_like."
-          " Refusing to inject Input into a source pipeline."
-          " Segment nodes: [" + node_names + "].");
+      throw std::runtime_error("GraphSession: pipeline segment " + std::to_string(seg.id) +
+                               " has internal source but is not source_like."
+                               " Refusing to inject Input into a source pipeline."
+                               " Segment nodes: [" +
+                               node_names + "].");
     }
 
     if (!seg.source_like && !has_input_appsrc(seg.group)) {
@@ -678,8 +679,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
   }
 
   if (state->opt.power_monitor.enabled) {
-    state->power_monitor =
-        std::make_unique<simaai::neat::PowerMonitor>(state->opt.power_monitor);
+    state->power_monitor = std::make_unique<simaai::neat::PowerMonitor>(state->opt.power_monitor);
     state->power_monitor->start();
   }
 

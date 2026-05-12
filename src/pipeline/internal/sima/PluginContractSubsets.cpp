@@ -231,10 +231,8 @@ std::uint32_t resolve_tile_align_bytes_local(int byte_align) {
   return byte_align == 1 ? 16U : static_cast<std::uint32_t>(byte_align);
 }
 
-bool build_dense_desc_local(const std::vector<int>& shape,
-                            const std::string& dtype,
-                            const std::string& layout,
-                            sima_ev_tensor_desc* out) {
+bool build_dense_desc_local(const std::vector<int>& shape, const std::string& dtype,
+                            const std::string& layout, sima_ev_tensor_desc* out) {
   std::string error_detail;
   const std::string normalized_layout = normalize_layout_token_local(layout);
   if (!layout.empty() && normalized_layout.empty()) {
@@ -247,17 +245,14 @@ bool build_dense_desc_local(const std::vector<int>& shape,
         "subset_dense_stride_output_missing");
   }
   return tensorsemantics::build_dense_tensor_desc(
-      shape, dtype, normalized_layout, out, &error_detail, "subset_dense_tensor_desc_output_missing",
-      "subset_shape_rank_invalid", "subset_shape_dim_invalid", "subset_dtype_invalid",
-      "subset_dense_stride_output_missing");
+      shape, dtype, normalized_layout, out, &error_detail,
+      "subset_dense_tensor_desc_output_missing", "subset_shape_rank_invalid",
+      "subset_shape_dim_invalid", "subset_dtype_invalid", "subset_dense_stride_output_missing");
 }
 
-bool build_tiled_desc_local(const std::vector<int>& shape,
-                            const std::vector<int>& tile_shape,
-                            const std::string& dtype,
-                            const std::string& layout,
-                            std::uint32_t tile_align_bytes,
-                            sima_ev_tensor_desc* out) {
+bool build_tiled_desc_local(const std::vector<int>& shape, const std::vector<int>& tile_shape,
+                            const std::string& dtype, const std::string& layout,
+                            std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out) {
   std::string error_detail;
   return tensorsemantics::build_tiled_tensor_desc(
       shape, tile_shape, dtype, layout, tile_align_bytes, out, &error_detail,
@@ -267,10 +262,8 @@ bool build_tiled_desc_local(const std::vector<int>& shape,
 }
 
 bool build_generic_tiled_desc_local(const std::vector<int>& shape,
-                                    const std::vector<int>& tile_shape,
-                                    const std::string& dtype,
-                                    std::uint32_t tile_align_bytes,
-                                    sima_ev_tensor_desc* out) {
+                                    const std::vector<int>& tile_shape, const std::string& dtype,
+                                    std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out) {
   std::string error_detail;
   return tensorsemantics::build_generic_tiled_tensor_desc(
       shape, tile_shape, dtype, tile_align_bytes, out, &error_detail,
@@ -324,10 +317,8 @@ void apply_tiled_channel_storage_policy_local(sima_ev_tensor_desc* desc, bool c1
 }
 
 bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
-                                   const std::vector<int>& tile_shape,
-                                   const std::string& dtype,
-                                   std::uint32_t tile_align_bytes,
-                                   bool c16_packed,
+                                   const std::vector<int>& tile_shape, const std::string& dtype,
+                                   std::uint32_t tile_align_bytes, bool c16_packed,
                                    sima_ev_tensor_desc* out) {
   if (!build_tiled_desc_local(shape, tile_shape, dtype, "", tile_align_bytes, out)) {
     return false;
@@ -338,16 +329,12 @@ bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
 }
 
 bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
-                                   const std::vector<int>& tile_shape,
-                                   const std::string& dtype,
-                                   std::uint32_t tile_align_bytes,
-                                   sima_ev_tensor_desc* out) {
-  return build_tensor_tiled_desc_local(shape, tile_shape, dtype, tile_align_bytes,
-                                      false, out);
+                                   const std::vector<int>& tile_shape, const std::string& dtype,
+                                   std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out) {
+  return build_tensor_tiled_desc_local(shape, tile_shape, dtype, tile_align_bytes, false, out);
 }
 
-bool build_tensor_dense_desc_local(const std::vector<int>& shape,
-                                   const std::string& dtype,
+bool build_tensor_dense_desc_local(const std::vector<int>& shape, const std::string& dtype,
                                    sima_ev_tensor_desc* out) {
   if (!build_dense_desc_local(shape, dtype, "", out)) {
     return false;
@@ -364,11 +351,8 @@ struct ShapeDims {
   std::string layout;
 };
 
-bool canonical_slice_dhwc_from_shape(const std::vector<std::int64_t>& shape,
-                                     int* out_d,
-                                     int* out_h,
-                                     int* out_w,
-                                     int* out_c);
+bool canonical_slice_dhwc_from_shape(const std::vector<std::int64_t>& shape, int* out_d, int* out_h,
+                                     int* out_w, int* out_c);
 
 ShapeDims dims_from_shape(std::vector<std::int64_t> shape) {
   ShapeDims dims;
@@ -410,8 +394,7 @@ ShapeDims dims_from_shape(std::vector<std::int64_t> shape) {
 // (hypothetical 5D-per-frame stage) a 6D shape returns shape[0] as batch.
 //
 // Returns 0 on overflow or when the shape is empty.
-int inferred_batch_size_from_shape(const std::vector<std::int64_t>& shape,
-                                   int per_frame_rank = 3) {
+int inferred_batch_size_from_shape(const std::vector<std::int64_t>& shape, int per_frame_rank = 3) {
   if (shape.empty()) {
     return 0;
   }
@@ -422,8 +405,8 @@ int inferred_batch_size_from_shape(const std::vector<std::int64_t>& shape,
     return 1;
   }
   std::int64_t batch = 1;
-  for (std::size_t i = 0;
-       static_cast<int>(i) + per_frame_rank < static_cast<int>(shape.size()); ++i) {
+  for (std::size_t i = 0; static_cast<int>(i) + per_frame_rank < static_cast<int>(shape.size());
+       ++i) {
     batch *= std::max<std::int64_t>(shape[i], 1);
     if (batch > std::numeric_limits<int>::max()) {
       return 0;
@@ -435,8 +418,7 @@ int inferred_batch_size_from_shape(const std::vector<std::int64_t>& shape,
   return static_cast<int>(batch);
 }
 
-void require_matching_batch_size(const int expected,
-                                 const int actual,
+void require_matching_batch_size(const int expected, const int actual,
                                  const std::string_view family) {
   if (expected > 0 && actual > 0 && expected != actual) {
     throw std::invalid_argument("plugin contract subset '" + std::string(family) +
@@ -444,8 +426,7 @@ void require_matching_batch_size(const int expected,
   }
 }
 
-std::uint64_t round_up_to_multiple_local(const std::uint64_t value,
-                                         const std::uint64_t multiple) {
+std::uint64_t round_up_to_multiple_local(const std::uint64_t value, const std::uint64_t multiple) {
   if (multiple == 0U) {
     return value;
   }
@@ -462,10 +443,10 @@ struct DetessBoundaryShapeView {
   std::uint64_t transport_size_bytes = 0U;
 };
 
-DetessBoundaryShapeView detess_boundary_shape_view_from_stage(
-    const MpkPluginIoContract& stage,
-    const MpkTensorContract* transport_tensor,
-    std::uint64_t transport_size_bytes) {
+DetessBoundaryShapeView
+detess_boundary_shape_view_from_stage(const MpkPluginIoContract& stage,
+                                      const MpkTensorContract* transport_tensor,
+                                      std::uint64_t transport_size_bytes) {
   if (stage.frame_shape.empty()) {
     throw std::runtime_error("detess boundary contract requires frame_shape for '" + stage.name +
                              "'");
@@ -502,21 +483,18 @@ DetessBoundaryShapeView detess_boundary_shape_view_from_stage(
   view.transport_shape = transport_tensor->mpk_shape;
   view.transport_size_bytes = transport_size_bytes;
   if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
-    const std::uint64_t packed_channels = static_cast<std::uint64_t>(
-        view.transport_shape.empty() ? 0 : view.transport_shape.back());
+    const std::uint64_t packed_channels =
+        static_cast<std::uint64_t>(view.transport_shape.empty() ? 0 : view.transport_shape.back());
     if (packed_channels == 0U || (packed_channels % 16U) != 0U) {
-      throw std::runtime_error("detess boundary contract expected c16-aligned packed channels for '" +
-                               stage.name + "'");
+      throw std::runtime_error(
+          "detess boundary contract expected c16-aligned packed channels for '" + stage.name + "'");
     }
   }
   return view;
 }
 
-bool canonical_slice_dhwc_from_shape(const std::vector<std::int64_t>& shape,
-                                     int* out_d,
-                                     int* out_h,
-                                     int* out_w,
-                                     int* out_c) {
+bool canonical_slice_dhwc_from_shape(const std::vector<std::int64_t>& shape, int* out_d, int* out_h,
+                                     int* out_w, int* out_c) {
   if (!out_d || !out_h || !out_w || !out_c || shape.empty()) {
     return false;
   }
@@ -556,9 +534,8 @@ bool canonical_slice_dhwc_from_shape(const std::vector<std::int64_t>& shape,
   return true;
 }
 
-std::vector<int> tensor_desc_tile_shape_from_slice_shape(
-    const std::vector<int>& tensor_shape,
-    const std::vector<int>& slice_shape) {
+std::vector<int> tensor_desc_tile_shape_from_slice_shape(const std::vector<int>& tensor_shape,
+                                                         const std::vector<int>& slice_shape) {
   if (tensor_shape.empty() || slice_shape.empty() || slice_shape.size() == tensor_shape.size()) {
     return slice_shape;
   }
@@ -586,8 +563,8 @@ ShapeDims dims_from_detess_shape(const std::vector<std::int64_t>& shape,
                                  const std::string& context) {
   const auto dims = dims_from_shape(shape);
   if (dims.width <= 0 || dims.height <= 0 || dims.depth <= 0 || dims.channels <= 0) {
-    throw std::invalid_argument("detess runtime config requires canonical geometry for '" + context +
-                                "'");
+    throw std::invalid_argument("detess runtime config requires canonical geometry for '" +
+                                context + "'");
   }
   return dims;
 }
@@ -599,8 +576,8 @@ ShapeDims dims_from_detess_transport_shape(const std::vector<std::int64_t>& shap
   int width = 0;
   int channels = 0;
   if (!canonical_slice_dhwc_from_shape(shape, &depth, &height, &width, &channels)) {
-    throw std::invalid_argument("detess runtime config requires canonical packed transport geometry for '" +
-                                context + "'");
+    throw std::invalid_argument(
+        "detess runtime config requires canonical packed transport geometry for '" + context + "'");
   }
   ShapeDims dims;
   dims.width = width;
@@ -613,7 +590,8 @@ ShapeDims dims_from_detess_transport_shape(const std::vector<std::int64_t>& shap
 void validate_detessdequant_head_contract_local(const MpkPluginIoContract& detess,
                                                 const MpkPluginIoContract& dequant,
                                                 const DetessDequantHeadContractSubset& head) {
-  if (detess.input_tensors.empty() || detess.output_tensors.empty() || dequant.output_tensors.empty()) {
+  if (detess.input_tensors.empty() || detess.output_tensors.empty() ||
+      dequant.output_tensors.empty()) {
     throw std::runtime_error("detessdequant validation requires detess/dequant tensors for '" +
                              detess.name + "'");
   }
@@ -631,8 +609,9 @@ void validate_detessdequant_head_contract_local(const MpkPluginIoContract& detes
   }
   const int logical_slice_channels = std::max(slice_c, 1);
   if (logical_slice_channels != frame_dims.channels) {
-    throw std::runtime_error("detessdequant validation found mismatched detess frame/slice geometry for '" +
-                             detess.name + "'");
+    throw std::runtime_error(
+        "detessdequant validation found mismatched detess frame/slice geometry for '" +
+        detess.name + "'");
   }
   if (logical_input_dims.width <= 0 || logical_input_dims.height <= 0 ||
       logical_input_dims.channels <= 0) {
@@ -673,15 +652,11 @@ std::uint64_t dense_size_bytes(const std::vector<std::int64_t>& shape, const std
   return total;
 }
 
-std::uint64_t tessellated_output_size_bytes_local(const ShapeDims& dims,
-                                                  int tile_w,
-                                                  int tile_h,
-                                                  int tile_d,
-                                                  int tile_c,
-                                                  const std::string& dtype,
+std::uint64_t tessellated_output_size_bytes_local(const ShapeDims& dims, int tile_w, int tile_h,
+                                                  int tile_d, int tile_c, const std::string& dtype,
                                                   const bool byte_align) {
-  if (dims.width <= 0 || dims.height <= 0 || dims.depth <= 0 || dims.channels <= 0 ||
-      tile_w <= 0 || tile_h <= 0 || tile_d <= 0 || tile_c <= 0 || dtype.empty()) {
+  if (dims.width <= 0 || dims.height <= 0 || dims.depth <= 0 || dims.channels <= 0 || tile_w <= 0 ||
+      tile_h <= 0 || tile_d <= 0 || tile_c <= 0 || dtype.empty()) {
     return 0U;
   }
   const std::uint64_t elem_bytes = dtype_size_bytes(dtype);
@@ -699,17 +674,13 @@ std::uint64_t tessellated_output_size_bytes_local(const ShapeDims& dims,
 
   std::uint64_t total = 0U;
   for (int c = 0; c < num_c_tiles; ++c) {
-    const int t_channels =
-        (c + 1 < num_c_tiles) ? tile_c : (dims.channels - c * tile_c);
+    const int t_channels = (c + 1 < num_c_tiles) ? tile_c : (dims.channels - c * tile_c);
     for (int d = 0; d < num_d_tiles; ++d) {
-      const int t_depth =
-          (d + 1 < num_d_tiles) ? tile_d : (dims.depth - d * tile_d);
+      const int t_depth = (d + 1 < num_d_tiles) ? tile_d : (dims.depth - d * tile_d);
       for (int h = 0; h < num_h_tiles; ++h) {
-        const int t_height =
-            (h + 1 < num_h_tiles) ? tile_h : (dims.height - h * tile_h);
+        const int t_height = (h + 1 < num_h_tiles) ? tile_h : (dims.height - h * tile_h);
         for (int w = 0; w < num_w_tiles; ++w) {
-          const int t_width =
-              (w + 1 < num_w_tiles) ? tile_w : (dims.width - w * tile_w);
+          const int t_width = (w + 1 < num_w_tiles) ? tile_w : (dims.width - w * tile_w);
           std::uint64_t tile_bytes = static_cast<std::uint64_t>(t_channels) *
                                      static_cast<std::uint64_t>(t_depth) *
                                      static_cast<std::uint64_t>(t_height) *
@@ -729,9 +700,8 @@ std::vector<std::int64_t> preferred_shape_from_tensor(const MpkTensorContract& t
   return !tensor.mpk_shape.empty() ? tensor.mpk_shape : tensor.logical_shape;
 }
 
-std::vector<std::int64_t> preferred_stage_input_tensor_shape(
-    const MpkPluginIoContract& stage,
-    const MpkTensorContract& tensor) {
+std::vector<std::int64_t> preferred_stage_input_tensor_shape(const MpkPluginIoContract& stage,
+                                                             const MpkTensorContract& tensor) {
   if (!tensor.logical_shape.empty()) {
     return tensor.logical_shape;
   }
@@ -741,10 +711,10 @@ std::vector<std::int64_t> preferred_stage_input_tensor_shape(
   return preferred_shape_from_tensor(tensor);
 }
 
-std::vector<std::int64_t> preferred_geometry_shape_from_stage_tensor(
-    const MpkPluginIoContract& stage,
-    const MpkTensorContract* tensor,
-    bool prefer_output_shape_fallback) {
+std::vector<std::int64_t>
+preferred_geometry_shape_from_stage_tensor(const MpkPluginIoContract& stage,
+                                           const MpkTensorContract* tensor,
+                                           bool prefer_output_shape_fallback) {
   if (tensor) {
     if (!tensor->logical_shape.empty()) {
       return tensor->logical_shape;
@@ -819,7 +789,8 @@ std::string canonical_stage_family(const MpkPluginIoContract& stage) {
   if (raw_kernel.find("mla") != std::string::npos) {
     return "mla";
   }
-  if (raw_kernel.find("cast_") != std::string::npos || raw_kernel.find(" cast") != std::string::npos ||
+  if (raw_kernel.find("cast_") != std::string::npos ||
+      raw_kernel.find(" cast") != std::string::npos ||
       raw_kernel.find("cast_transform") != std::string::npos) {
     return "cast";
   }
@@ -886,8 +857,7 @@ build_outgoing_edges_local(const MpkContract& contract) {
 }
 
 const MpkPluginIoContract* resolve_dequant_stage_for_detess_local(
-    const MpkContract& contract,
-    const MpkPluginIoContract& detess,
+    const MpkContract& contract, const MpkPluginIoContract& detess,
     const std::unordered_map<std::uint64_t, std::vector<const MpkContractEdge*>>& outgoing_edges) {
   const auto detess_index = plugin_index_from_stage_ptr_local(contract, &detess);
   if (!detess_index.has_value()) {
@@ -962,12 +932,9 @@ constexpr auto kTessellateOptional = std::array{
     PluginContractFieldKey::Cblock,
 };
 constexpr auto kQuantTessRequired = std::array{
-    PluginContractFieldKey::QuantParams,
-    PluginContractFieldKey::InputShape,
-    PluginContractFieldKey::InputDtype,
-    PluginContractFieldKey::OutputDtype,
-    PluginContractFieldKey::SliceShape,
-    PluginContractFieldKey::FrameType,
+    PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
+    PluginContractFieldKey::InputDtype,  PluginContractFieldKey::OutputDtype,
+    PluginContractFieldKey::SliceShape,  PluginContractFieldKey::FrameType,
 };
 constexpr auto kQuantTessOptional = std::array{
     PluginContractFieldKey::AlignC16,
@@ -984,10 +951,8 @@ constexpr auto kDetessellateOptional = std::array{
     PluginContractFieldKey::Cblock,
 };
 constexpr auto kDequantizeRequired = std::array{
-    PluginContractFieldKey::QuantParams,
-    PluginContractFieldKey::InputShape,
-    PluginContractFieldKey::OutputShape,
-    PluginContractFieldKey::InputDtype,
+    PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
+    PluginContractFieldKey::OutputShape, PluginContractFieldKey::InputDtype,
     PluginContractFieldKey::OutputDtype,
 };
 constexpr auto kDequantizeOptional = std::array<PluginContractFieldKey, 0>{};
@@ -1001,12 +966,9 @@ constexpr auto kProcessMlaOptional = std::array{
     PluginContractFieldKey::DispatcherOutputNames,
 };
 constexpr auto kDetessDequantRequired = std::array{
-    PluginContractFieldKey::PerHeadInputShape,
-    PluginContractFieldKey::PerHeadQuantParams,
-    PluginContractFieldKey::FrameShape,
-    PluginContractFieldKey::FrameType,
-    PluginContractFieldKey::SliceShape,
-    PluginContractFieldKey::OutputDtype,
+    PluginContractFieldKey::PerHeadInputShape, PluginContractFieldKey::PerHeadQuantParams,
+    PluginContractFieldKey::FrameShape,        PluginContractFieldKey::FrameType,
+    PluginContractFieldKey::SliceShape,        PluginContractFieldKey::OutputDtype,
 };
 constexpr auto kDetessDequantOptional = std::array{
     PluginContractFieldKey::AlignC16,
@@ -1051,9 +1013,7 @@ void validate_present_fields(std::string_view family,
 }
 
 template <typename T>
-void require_non_empty_value(const T& value,
-                             std::string_view family,
-                             PluginContractFieldKey field,
+void require_non_empty_value(const T& value, std::string_view family, PluginContractFieldKey field,
                              const std::string& stage_name) {
   if constexpr (requires { value.empty(); }) {
     if (!value.empty()) {
@@ -1066,10 +1026,9 @@ void require_non_empty_value(const T& value,
   } else if constexpr (std::is_same_v<T, bool>) {
     return;
   }
-  throw std::invalid_argument("plugin contract subset '" + std::string(family) +
-                              "' missing required field '" +
-                              std::string(plugin_contract_field_key_name(field)) + "' for stage '" +
-                              stage_name + "'");
+  throw std::invalid_argument(
+      "plugin contract subset '" + std::string(family) + "' missing required field '" +
+      std::string(plugin_contract_field_key_name(field)) + "' for stage '" + stage_name + "'");
 }
 
 std::string default_boxdecode_tensor_name(const BoxDecodeStaticContract& contract,
@@ -1139,9 +1098,9 @@ std::vector<std::int64_t> default_boxdecode_shape(const BoxDecodeTensorStaticCon
   return shape;
 }
 
-LogicalInputStaticSpec logical_input_from_boxdecode_static_contract(
-    const BoxDecodeStaticContract& contract,
-    std::size_t index) {
+LogicalInputStaticSpec
+logical_input_from_boxdecode_static_contract(const BoxDecodeStaticContract& contract,
+                                             std::size_t index) {
   const auto& tensor = contract.tensors[index];
   auto logical = specbuilders::build_logical_input_static_spec(
       static_cast<int>(index), static_cast<int>(index), tensor.source_physical_index,
@@ -1162,10 +1121,10 @@ LogicalInputStaticSpec logical_input_from_boxdecode_static_contract(
   return logical;
 }
 
-InputBindingStaticSpec input_binding_from_boxdecode_static_contract(
-    const BoxDecodeStaticContract& contract,
-    const LogicalInputStaticSpec& logical,
-    std::size_t index) {
+InputBindingStaticSpec
+input_binding_from_boxdecode_static_contract(const BoxDecodeStaticContract& contract,
+                                             const LogicalInputStaticSpec& logical,
+                                             std::size_t index) {
   auto binding = specbuilders::build_input_binding_static_spec(
       0, logical.logical_index, logical.backend_name,
       default_boxdecode_runtime_segment_name(contract, index));
@@ -1193,8 +1152,8 @@ InputBindingStaticSpec input_binding_from_boxdecode_static_contract(
 // ProcessCvuStageSemantics.cpp) can apply the same per-frame normalization
 // without each rebuilding the convention. These delegate verbatim — see the
 // in-anon-namespace definitions for documentation.
-std::vector<std::int64_t> semantic_shape_without_batch_public(
-    std::vector<std::int64_t> shape, int per_frame_rank) {
+std::vector<std::int64_t> semantic_shape_without_batch_public(std::vector<std::int64_t> shape,
+                                                              int per_frame_rank) {
   return semantic_shape_without_batch(std::move(shape), per_frame_rank);
 }
 
@@ -1223,16 +1182,15 @@ bool unit_axis_shape_alias_public(const std::vector<std::int64_t>& lhs,
   return strip_unit_axes(lhs) == strip_unit_axes(rhs);
 }
 
-std::vector<std::int64_t> canonical_value_transform_shape_public(
-    std::string_view family,
-    const std::vector<std::int64_t>& input_shape,
-    const std::vector<std::int64_t>& output_shape,
-    const std::vector<std::int64_t>& preferred_semantic_shape) {
+std::vector<std::int64_t>
+canonical_value_transform_shape_public(std::string_view family,
+                                       const std::vector<std::int64_t>& input_shape,
+                                       const std::vector<std::int64_t>& output_shape,
+                                       const std::vector<std::int64_t>& preferred_semantic_shape) {
   auto is_value_transform_family = [](std::string_view raw_family) {
     const std::string family = lower_copy(std::string(raw_family));
-    return family == "cast" || family == "quant" || family == "quantize" ||
-           family == "dequant" || family == "dequantize" ||
-           family == "detess" || family == "detessellate" ||
+    return family == "cast" || family == "quant" || family == "quantize" || family == "dequant" ||
+           family == "dequantize" || family == "detess" || family == "detessellate" ||
            family == "detesscast" || family == "detessdequant";
   };
 
@@ -1251,7 +1209,8 @@ std::vector<std::int64_t> canonical_value_transform_shape_public(
     const bool preferred_matches_input =
         input_shape.empty() || unit_axis_shape_alias_public(preferred_semantic_shape, input_shape);
     const bool preferred_matches_output =
-        output_shape.empty() || unit_axis_shape_alias_public(preferred_semantic_shape, output_shape);
+        output_shape.empty() ||
+        unit_axis_shape_alias_public(preferred_semantic_shape, output_shape);
     if (preferred_matches_input && preferred_matches_output) {
       return preferred_semantic_shape;
     }
@@ -1353,8 +1312,7 @@ std::optional<PluginContractFieldKey> plugin_contract_field_key_from_name(std::s
   return std::nullopt;
 }
 
-const PluginContractFamilyDeclaration& plugin_contract_family_declaration(
-    std::string_view family) {
+const PluginContractFamilyDeclaration& plugin_contract_family_declaration(std::string_view family) {
   for (const auto& declaration : kDeclarations) {
     if (declaration.family == family) {
       return declaration;
@@ -1371,9 +1329,11 @@ QuantizeContractSubset extract_quantize_contract_subset_from_mpk(const MpkContra
   return extract_quantize_contract_subset_from_stage(*stage);
 }
 
-QuantizeContractSubset extract_quantize_contract_subset_from_stage(const MpkPluginIoContract& stage) {
+QuantizeContractSubset
+extract_quantize_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   if (canonical_stage_family(stage) != "quant" && canonical_stage_family(stage) != "quanttess") {
-    throw std::runtime_error("quantize contract subset extraction requires a quant/quanttess stage");
+    throw std::runtime_error(
+        "quantize contract subset extraction requires a quant/quanttess stage");
   }
   if (stage.input_tensors.empty() || stage.output_tensors.empty()) {
     throw std::runtime_error("quantize contract subset extraction missing tensor metadata");
@@ -1383,12 +1343,12 @@ QuantizeContractSubset extract_quantize_contract_subset_from_stage(const MpkPlug
   QuantizeContractSubset subset;
   subset.quant_params = stage.quant.value_or(MpkQuantContract{});
   subset.input_shape = preferred_stage_input_tensor_shape(stage, stage.input_tensors.front());
-  subset.input_dtype = normalize_dtype_token(
-      !stage.canonical_input_dtype.empty() ? stage.canonical_input_dtype
-                                           : stage.input_tensors.front().dtype);
-  subset.output_dtype = normalize_dtype_token(
-      !stage.canonical_output_dtype.empty() ? stage.canonical_output_dtype
-                                            : stage.output_tensors.front().dtype);
+  subset.input_dtype = normalize_dtype_token(!stage.canonical_input_dtype.empty()
+                                                 ? stage.canonical_input_dtype
+                                                 : stage.input_tensors.front().dtype);
+  subset.output_dtype = normalize_dtype_token(!stage.canonical_output_dtype.empty()
+                                                  ? stage.canonical_output_dtype
+                                                  : stage.output_tensors.front().dtype);
   subset.round_off = normalize_round_off_token(stage.round_off, stage.name);
 
   const std::array present = {
@@ -1397,8 +1357,8 @@ QuantizeContractSubset extract_quantize_contract_subset_from_stage(const MpkPlug
       PluginContractFieldKey::RoundOff,
   };
   validate_present_fields("quantize", present, stage.name);
-  require_non_empty_value(subset.quant_params.scales, "quantize", PluginContractFieldKey::QuantParams,
-                          stage.name);
+  require_non_empty_value(subset.quant_params.scales, "quantize",
+                          PluginContractFieldKey::QuantParams, stage.name);
   require_non_empty_value(subset.quant_params.zero_points, "quantize",
                           PluginContractFieldKey::QuantParams, stage.name);
   require_non_empty_value(subset.input_shape, "quantize", PluginContractFieldKey::InputShape,
@@ -1410,7 +1370,8 @@ QuantizeContractSubset extract_quantize_contract_subset_from_stage(const MpkPlug
   return subset;
 }
 
-std::vector<CastContractSubset> extract_cast_contract_subsets_from_mpk(const MpkContract& contract) {
+std::vector<CastContractSubset>
+extract_cast_contract_subsets_from_mpk(const MpkContract& contract) {
   const auto stages = collect_stages_for_family(contract, "cast");
   if (stages.empty()) {
     throw std::runtime_error("cast contract subset extraction requires at least one cast stage");
@@ -1437,14 +1398,14 @@ CastContractSubset extract_cast_contract_subset_from_stage(const MpkPluginIoCont
   require_single_batch_stage(stage, "cast");
 
   CastContractSubset subset;
-  subset.input_shape = preferred_geometry_shape_from_stage_tensor(
-      stage, &stage.input_tensors.front(), false);
-  subset.input_dtype = normalize_dtype_token(
-      !stage.canonical_input_dtype.empty() ? stage.canonical_input_dtype
-                                           : stage.input_tensors.front().dtype);
-  subset.output_dtype = normalize_dtype_token(
-      !stage.canonical_output_dtype.empty() ? stage.canonical_output_dtype
-                                            : stage.output_tensors.front().dtype);
+  subset.input_shape =
+      preferred_geometry_shape_from_stage_tensor(stage, &stage.input_tensors.front(), false);
+  subset.input_dtype = normalize_dtype_token(!stage.canonical_input_dtype.empty()
+                                                 ? stage.canonical_input_dtype
+                                                 : stage.input_tensors.front().dtype);
+  subset.output_dtype = normalize_dtype_token(!stage.canonical_output_dtype.empty()
+                                                  ? stage.canonical_output_dtype
+                                                  : stage.output_tensors.front().dtype);
 
   const std::array present = {
       PluginContractFieldKey::InputShape,
@@ -1469,9 +1430,11 @@ TessellateContractSubset extract_tessellate_contract_subset_from_mpk(const MpkCo
   return extract_tessellate_contract_subset_from_stage(*stage);
 }
 
-TessellateContractSubset extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage) {
+TessellateContractSubset
+extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   if (canonical_stage_family(stage) != "tess" && canonical_stage_family(stage) != "quanttess") {
-    throw std::runtime_error("tessellate contract subset extraction requires a tess/quanttess stage");
+    throw std::runtime_error(
+        "tessellate contract subset extraction requires a tess/quanttess stage");
   }
   if (stage.input_tensors.empty()) {
     throw std::runtime_error("tessellate contract subset extraction missing input tensor");
@@ -1490,15 +1453,12 @@ TessellateContractSubset extract_tessellate_contract_subset_from_stage(const Mpk
   subset.align_c16 = stage.has_align_c16 && stage.align_c16;
   subset.cblock = stage.has_cblock && stage.cblock;
   if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes =
-        static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
+    subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
   }
 
   const std::array present = {
-      PluginContractFieldKey::InputShape,
-      PluginContractFieldKey::FrameType,
-      PluginContractFieldKey::SliceShape,
-      PluginContractFieldKey::AlignC16,
+      PluginContractFieldKey::InputShape, PluginContractFieldKey::FrameType,
+      PluginContractFieldKey::SliceShape, PluginContractFieldKey::AlignC16,
       PluginContractFieldKey::Cblock,
   };
   validate_present_fields("tessellate", present, stage.name);
@@ -1529,18 +1489,18 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
   subset.input_shape =
       preferred_stage_input_tensor_shape(*quant_stage, quant_stage->input_tensors.front());
   subset.output_shape = preferred_geometry_shape_from_stage_tensor(
-      *tess_stage, tess_stage->output_tensors.empty() ? nullptr : &tess_stage->output_tensors.front(),
-      true);
+      *tess_stage,
+      tess_stage->output_tensors.empty() ? nullptr : &tess_stage->output_tensors.front(), true);
   if (!tess_stage->output_tensors.empty() && tess_stage->output_tensors.front().size_bytes > 0U) {
     subset.output_size_bytes =
         static_cast<std::uint64_t>(tess_stage->output_tensors.front().size_bytes);
   }
-  subset.input_dtype = normalize_dtype_token(
-      !quant_stage->canonical_input_dtype.empty() ? quant_stage->canonical_input_dtype
-                                                  : quant_stage->input_tensors.front().dtype);
-  subset.output_dtype = normalize_dtype_token(
-      !quant_stage->canonical_output_dtype.empty() ? quant_stage->canonical_output_dtype
-                                                   : quant_stage->output_tensors.front().dtype);
+  subset.input_dtype = normalize_dtype_token(!quant_stage->canonical_input_dtype.empty()
+                                                 ? quant_stage->canonical_input_dtype
+                                                 : quant_stage->input_tensors.front().dtype);
+  subset.output_dtype = normalize_dtype_token(!quant_stage->canonical_output_dtype.empty()
+                                                  ? quant_stage->canonical_output_dtype
+                                                  : quant_stage->output_tensors.front().dtype);
   subset.round_off = normalize_round_off_token(quant_stage->round_off, quant_stage->name);
   subset.slice_shape = tess_stage->slice_shape;
   subset.frame_type = normalize_dtype_token(tess_stage->frame_type);
@@ -1551,12 +1511,12 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
       PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
       PluginContractFieldKey::InputDtype,  PluginContractFieldKey::OutputDtype,
       PluginContractFieldKey::RoundOff,    PluginContractFieldKey::SliceShape,
-      PluginContractFieldKey::FrameType,
-      PluginContractFieldKey::AlignC16,    PluginContractFieldKey::Cblock,
+      PluginContractFieldKey::FrameType,   PluginContractFieldKey::AlignC16,
+      PluginContractFieldKey::Cblock,
   };
   validate_present_fields("quanttess", present, quant_stage->name);
-  require_non_empty_value(subset.quant_params.scales, "quanttess", PluginContractFieldKey::QuantParams,
-                          quant_stage->name);
+  require_non_empty_value(subset.quant_params.scales, "quanttess",
+                          PluginContractFieldKey::QuantParams, quant_stage->name);
   require_non_empty_value(subset.input_shape, "quanttess", PluginContractFieldKey::InputShape,
                           quant_stage->name);
   require_non_empty_value(subset.input_dtype, "quanttess", PluginContractFieldKey::InputDtype,
@@ -1585,7 +1545,8 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
   return subset;
 }
 
-QuantTessContractSubset extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage) {
+QuantTessContractSubset
+extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   if (canonical_stage_family(stage) != "quanttess") {
     throw std::runtime_error("quanttess contract subset extraction requires a quanttess stage");
   }
@@ -1599,15 +1560,14 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_stage(const MpkPl
   subset.output_shape = preferred_geometry_shape_from_stage_tensor(
       stage, stage.output_tensors.empty() ? nullptr : &stage.output_tensors.front(), true);
   if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
-    subset.output_size_bytes =
-        static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
+    subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
   }
-  subset.input_dtype = normalize_dtype_token(
-      !stage.canonical_input_dtype.empty() ? stage.canonical_input_dtype
-                                           : stage.input_tensors.front().dtype);
-  subset.output_dtype = normalize_dtype_token(
-      !stage.canonical_output_dtype.empty() ? stage.canonical_output_dtype
-                                            : stage.output_tensors.front().dtype);
+  subset.input_dtype = normalize_dtype_token(!stage.canonical_input_dtype.empty()
+                                                 ? stage.canonical_input_dtype
+                                                 : stage.input_tensors.front().dtype);
+  subset.output_dtype = normalize_dtype_token(!stage.canonical_output_dtype.empty()
+                                                  ? stage.canonical_output_dtype
+                                                  : stage.output_tensors.front().dtype);
   subset.round_off = normalize_round_off_token(stage.round_off, stage.name);
   subset.slice_shape = stage.slice_shape;
   subset.frame_type = normalize_dtype_token(stage.frame_type);
@@ -1618,12 +1578,12 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_stage(const MpkPl
       PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
       PluginContractFieldKey::InputDtype,  PluginContractFieldKey::OutputDtype,
       PluginContractFieldKey::RoundOff,    PluginContractFieldKey::SliceShape,
-      PluginContractFieldKey::FrameType,
-      PluginContractFieldKey::AlignC16,    PluginContractFieldKey::Cblock,
+      PluginContractFieldKey::FrameType,   PluginContractFieldKey::AlignC16,
+      PluginContractFieldKey::Cblock,
   };
   validate_present_fields("quanttess", present, stage.name);
-  require_non_empty_value(subset.quant_params.scales, "quanttess", PluginContractFieldKey::QuantParams,
-                          stage.name);
+  require_non_empty_value(subset.quant_params.scales, "quanttess",
+                          PluginContractFieldKey::QuantParams, stage.name);
   require_non_empty_value(subset.input_shape, "quanttess", PluginContractFieldKey::InputShape,
                           stage.name);
   require_non_empty_value(subset.input_dtype, "quanttess", PluginContractFieldKey::InputDtype,
@@ -1648,8 +1608,8 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_stage(const MpkPl
   return subset;
 }
 
-std::vector<DequantizeContractSubset> extract_dequantize_contract_subsets_from_mpk(
-    const MpkContract& contract) {
+std::vector<DequantizeContractSubset>
+extract_dequantize_contract_subsets_from_mpk(const MpkContract& contract) {
   const auto stages = collect_stages_for_family(contract, "dequant");
   if (stages.empty()) {
     throw std::runtime_error(
@@ -1671,12 +1631,12 @@ std::vector<DequantizeContractSubset> extract_dequantize_contract_subsets_from_m
     subset.quant_params = stage->quant.value_or(MpkQuantContract{});
     subset.input_shape = preferred_shape_from_tensor(stage->input_tensors.front());
     subset.output_shape = preferred_shape_from_tensor(stage->output_tensors.front());
-    subset.input_dtype = normalize_dtype_token(
-        !stage->canonical_input_dtype.empty() ? stage->canonical_input_dtype
-                                              : stage->input_tensors.front().dtype);
-    subset.output_dtype = normalize_dtype_token(
-        !stage->canonical_output_dtype.empty() ? stage->canonical_output_dtype
-                                               : stage->output_tensors.front().dtype);
+    subset.input_dtype = normalize_dtype_token(!stage->canonical_input_dtype.empty()
+                                                   ? stage->canonical_input_dtype
+                                                   : stage->input_tensors.front().dtype);
+    subset.output_dtype = normalize_dtype_token(!stage->canonical_output_dtype.empty()
+                                                    ? stage->canonical_output_dtype
+                                                    : stage->output_tensors.front().dtype);
 
     const std::array present = {
         PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
@@ -1694,16 +1654,15 @@ std::vector<DequantizeContractSubset> extract_dequantize_contract_subsets_from_m
                             stage->name);
     require_non_empty_value(subset.input_dtype, "dequantize", PluginContractFieldKey::InputDtype,
                             stage->name);
-    require_non_empty_value(subset.output_dtype, "dequantize",
-                            PluginContractFieldKey::OutputDtype, stage->name);
+    require_non_empty_value(subset.output_dtype, "dequantize", PluginContractFieldKey::OutputDtype,
+                            stage->name);
     subsets.push_back(std::move(subset));
   }
   return subsets;
 }
 
 ProcessMlaContractSubset extract_processmla_contract_subset_from_static_contract(
-    const MlaStaticContract& contract,
-    const bool include_dispatcher_output_names) {
+    const MlaStaticContract& contract, const bool include_dispatcher_output_names) {
   ProcessMlaContractSubset subset;
   subset.model_path = contract.model_path;
   subset.batch_size = contract.batch_size;
@@ -1720,23 +1679,25 @@ ProcessMlaContractSubset extract_processmla_contract_subset_from_static_contract
   }
 
   const std::array present = {
-      PluginContractFieldKey::ModelPath, PluginContractFieldKey::BatchSize,
-      PluginContractFieldKey::BatchSzModel, PluginContractFieldKey::DispatcherOutputSizes,
+      PluginContractFieldKey::ModelPath,
+      PluginContractFieldKey::BatchSize,
+      PluginContractFieldKey::BatchSzModel,
+      PluginContractFieldKey::DispatcherOutputSizes,
   };
   validate_present_fields("processmla", present, contract.node_name);
   require_non_empty_value(subset.model_path, "processmla", PluginContractFieldKey::ModelPath,
                           contract.node_name);
   require_non_empty_value(subset.batch_size, "processmla", PluginContractFieldKey::BatchSize,
                           contract.node_name);
-  require_non_empty_value(subset.batch_sz_model, "processmla",
-                          PluginContractFieldKey::BatchSzModel, contract.node_name);
+  require_non_empty_value(subset.batch_sz_model, "processmla", PluginContractFieldKey::BatchSzModel,
+                          contract.node_name);
   require_non_empty_value(subset.dispatcher_output_sizes, "processmla",
                           PluginContractFieldKey::DispatcherOutputSizes, contract.node_name);
   return subset;
 }
 
-std::vector<DetessellateContractSubset> extract_detessellate_contract_subsets_from_mpk(
-    const MpkContract& contract) {
+std::vector<DetessellateContractSubset>
+extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract) {
   const auto stages = collect_stages_for_family(contract, "detess");
   if (stages.empty()) {
     throw std::runtime_error(
@@ -1757,7 +1718,8 @@ std::vector<DetessellateContractSubset> extract_detessellate_contract_subsets_fr
     }
     require_single_batch_stage(*stage, "detessellate");
     if (stage->input_tensors.empty()) {
-      throw std::runtime_error("detessellate contract subset extraction requires one packed input tensor");
+      throw std::runtime_error(
+          "detessellate contract subset extraction requires one packed input tensor");
     }
 
     DetessellateContractSubset subset;
@@ -1774,33 +1736,31 @@ std::vector<DetessellateContractSubset> extract_detessellate_contract_subsets_fr
     subset.cblock = stage->has_cblock && stage->cblock;
 
     const std::array present = {
-        PluginContractFieldKey::InputShape,
-        PluginContractFieldKey::FrameShape,
-        PluginContractFieldKey::FrameType,
-        PluginContractFieldKey::SliceShape,
-        PluginContractFieldKey::AlignC16,
-        PluginContractFieldKey::Cblock,
+        PluginContractFieldKey::InputShape, PluginContractFieldKey::FrameShape,
+        PluginContractFieldKey::FrameType,  PluginContractFieldKey::SliceShape,
+        PluginContractFieldKey::AlignC16,   PluginContractFieldKey::Cblock,
     };
     validate_present_fields("detessellate", present, stage->name);
-    require_non_empty_value(subset.input_shape, "detessellate",
-                            PluginContractFieldKey::InputShape, stage->name);
-    require_non_empty_value(subset.frame_shape, "detessellate",
-                            PluginContractFieldKey::FrameShape, stage->name);
-    require_non_empty_value(subset.frame_type, "detessellate",
-                            PluginContractFieldKey::FrameType, stage->name);
-    require_non_empty_value(subset.slice_shape, "detessellate",
-                            PluginContractFieldKey::SliceShape, stage->name);
+    require_non_empty_value(subset.input_shape, "detessellate", PluginContractFieldKey::InputShape,
+                            stage->name);
+    require_non_empty_value(subset.frame_shape, "detessellate", PluginContractFieldKey::FrameShape,
+                            stage->name);
+    require_non_empty_value(subset.frame_type, "detessellate", PluginContractFieldKey::FrameType,
+                            stage->name);
+    require_non_empty_value(subset.slice_shape, "detessellate", PluginContractFieldKey::SliceShape,
+                            stage->name);
     if (subset.input_transport_shape.empty() || subset.input_transport_size_bytes == 0U) {
-      throw std::runtime_error("detessellate contract subset extraction requires packed input bytes for stage '" +
-                               stage->name + "'");
+      throw std::runtime_error(
+          "detessellate contract subset extraction requires packed input bytes for stage '" +
+          stage->name + "'");
     }
     subsets.push_back(std::move(subset));
   }
   return subsets;
 }
 
-std::vector<DetessDequantStagePair> resolve_detessdequant_stage_pairs_from_mpk(
-    const MpkContract& contract) {
+std::vector<DetessDequantStagePair>
+resolve_detessdequant_stage_pairs_from_mpk(const MpkContract& contract) {
   std::vector<DetessDequantStagePair> pairs;
   const auto ordered = plugins_in_execution_order(contract);
   const auto outgoing_edges = build_outgoing_edges_local(contract);
@@ -1822,9 +1782,9 @@ std::vector<DetessDequantStagePair> resolve_detessdequant_stage_pairs_from_mpk(
 
     const auto* dequant = resolve_dequant_stage_for_detess_local(contract, stage, outgoing_edges);
     if (!dequant) {
-      throw std::runtime_error(
-          "detessdequant contract subset extraction requires one downstream dequant stage for detess '" +
-          stage.name + "'");
+      throw std::runtime_error("detessdequant contract subset extraction requires one downstream "
+                               "dequant stage for detess '" +
+                               stage.name + "'");
     }
     pairs.push_back(DetessDequantStagePair{&stage, dequant});
   }
@@ -1832,11 +1792,12 @@ std::vector<DetessDequantStagePair> resolve_detessdequant_stage_pairs_from_mpk(
   return pairs;
 }
 
-DetessDequantContractSubset extract_detessdequant_contract_subset_from_mpk(
-    const MpkContract& contract) {
+DetessDequantContractSubset
+extract_detessdequant_contract_subset_from_mpk(const MpkContract& contract) {
   const auto stage_pairs = resolve_detessdequant_stage_pairs_from_mpk(contract);
   if (stage_pairs.empty()) {
-    throw std::runtime_error("detessdequant contract subset extraction requires detess/dequant heads");
+    throw std::runtime_error(
+        "detessdequant contract subset extraction requires detess/dequant heads");
   }
   const std::size_t count = stage_pairs.size();
   const auto mla_published_outputs = get_mla_published_outputs_contract(contract);
@@ -1866,15 +1827,19 @@ DetessDequantContractSubset extract_detessdequant_contract_subset_from_mpk(
     head.slice_shape = detess.slice_shape;
     head.align_c16 = detess.has_align_c16 && detess.align_c16;
     head.cblock = detess.has_cblock && detess.cblock;
-    head.output_dtype = normalize_dtype_token(
-        !dequant.canonical_output_dtype.empty() ? dequant.canonical_output_dtype
-                                                : dequant.output_tensors.front().dtype);
+    head.output_dtype = normalize_dtype_token(!dequant.canonical_output_dtype.empty()
+                                                  ? dequant.canonical_output_dtype
+                                                  : dequant.output_tensors.front().dtype);
 
     const std::array present = {
-        PluginContractFieldKey::PerHeadInputShape, PluginContractFieldKey::PerHeadQuantParams,
-        PluginContractFieldKey::FrameShape,        PluginContractFieldKey::FrameType,
-        PluginContractFieldKey::SliceShape,        PluginContractFieldKey::AlignC16,
-        PluginContractFieldKey::Cblock,            PluginContractFieldKey::OutputDtype,
+        PluginContractFieldKey::PerHeadInputShape,
+        PluginContractFieldKey::PerHeadQuantParams,
+        PluginContractFieldKey::FrameShape,
+        PluginContractFieldKey::FrameType,
+        PluginContractFieldKey::SliceShape,
+        PluginContractFieldKey::AlignC16,
+        PluginContractFieldKey::Cblock,
+        PluginContractFieldKey::OutputDtype,
     };
     validate_present_fields("detessdequant", present, detess.name);
     require_non_empty_value(head.per_head_input_shape, "detessdequant",
@@ -1887,42 +1852,43 @@ DetessDequantContractSubset extract_detessdequant_contract_subset_from_mpk(
                             detess.name);
     require_non_empty_value(head.slice_shape, "detessdequant", PluginContractFieldKey::SliceShape,
                             detess.name);
-    require_non_empty_value(head.output_dtype, "detessdequant",
-                            PluginContractFieldKey::OutputDtype, dequant.name);
+    require_non_empty_value(head.output_dtype, "detessdequant", PluginContractFieldKey::OutputDtype,
+                            dequant.name);
     if (head.input_transport_shape.empty() || head.input_transport_size_bytes == 0U) {
       throw std::runtime_error("detessdequant contract subset extraction requires packed transport "
-                               "geometry for '" + detess.name + "'");
+                               "geometry for '" +
+                               detess.name + "'");
     }
     const std::string published_dtype = normalize_dtype_token(
         !published_input.dtype.empty() ? published_input.dtype : head.frame_type);
     const std::uint64_t published_size = static_cast<std::uint64_t>(published_input.size_bytes);
     if (published_dtype != head.frame_type || published_size == 0U ||
         published_size != head.input_transport_size_bytes) {
-      throw std::runtime_error("detessdequant contract subset extraction requires the published MLA "
-                               "transport view to match detess input '" +
-                               detess.name + "'");
+      throw std::runtime_error(
+          "detessdequant contract subset extraction requires the published MLA "
+          "transport view to match detess input '" +
+          detess.name + "'");
     }
     validate_detessdequant_head_contract_local(detess, dequant, head);
     if (detess_layout_debug_enabled_local()) {
-      std::fprintf(
-          stderr,
-          "[detess-layout-debug] where=subset.extract index=%zu detess=%s dequant=%s "
-          "logical_input_shape=%s transport_shape=%s frame_shape=%s slice_shape=%s "
-          "frame_type=%s output_dtype=%s published_name=%s published_size=%" PRIu64 "\n",
-          i, detess.name.c_str(), dequant.name.c_str(),
-          join_i64_debug_local(head.per_head_input_shape).c_str(),
-          join_i64_debug_local(head.input_transport_shape).c_str(),
-          join_i64_debug_local(head.frame_shape).c_str(),
-          join_i64_debug_local(head.slice_shape).c_str(), head.frame_type.c_str(),
-          head.output_dtype.c_str(), published_input.name.c_str(), published_size);
+      std::fprintf(stderr,
+                   "[detess-layout-debug] where=subset.extract index=%zu detess=%s dequant=%s "
+                   "logical_input_shape=%s transport_shape=%s frame_shape=%s slice_shape=%s "
+                   "frame_type=%s output_dtype=%s published_name=%s published_size=%" PRIu64 "\n",
+                   i, detess.name.c_str(), dequant.name.c_str(),
+                   join_i64_debug_local(head.per_head_input_shape).c_str(),
+                   join_i64_debug_local(head.input_transport_shape).c_str(),
+                   join_i64_debug_local(head.frame_shape).c_str(),
+                   join_i64_debug_local(head.slice_shape).c_str(), head.frame_type.c_str(),
+                   head.output_dtype.c_str(), published_input.name.c_str(), published_size);
     }
     subset.heads.push_back(std::move(head));
   }
   return subset;
 }
 
-BoxDecodeContractSubset extract_boxdecode_contract_subset_from_static_contract(
-    const BoxDecodeStaticContract& contract) {
+BoxDecodeContractSubset
+extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticContract& contract) {
   BoxDecodeContractSubset subset;
   subset.logical_inputs.reserve(contract.tensors.size());
   subset.input_bindings.reserve(contract.tensors.size());
@@ -1936,8 +1902,7 @@ BoxDecodeContractSubset extract_boxdecode_contract_subset_from_static_contract(
   subset.score_activation = contract.score_activation;
   subset.num_classes = contract.num_classes;
 
-  auto fill_shape_desc = [](const std::vector<int>& shape,
-                            sima_ev_shape_desc* out) -> bool {
+  auto fill_shape_desc = [](const std::vector<int>& shape, sima_ev_shape_desc* out) -> bool {
     if (!out || shape.empty() || shape.size() > SIMA_EV_MAX_RANK) {
       return false;
     }
@@ -1959,8 +1924,7 @@ BoxDecodeContractSubset extract_boxdecode_contract_subset_from_static_contract(
     subset.logical_inputs.push_back(std::move(logical));
     sima_ev_shape_desc slice_shape_desc{};
     if (!fill_shape_desc(contract.tensors[i].slice_shape, &slice_shape_desc)) {
-      throw std::invalid_argument(
-          "boxdecode static contract requires positive slice_shape dims");
+      throw std::invalid_argument("boxdecode static contract requires positive slice_shape dims");
     }
     subset.slice_shapes.push_back(slice_shape_desc);
   }
@@ -1968,12 +1932,10 @@ BoxDecodeContractSubset extract_boxdecode_contract_subset_from_static_contract(
 }
 
 std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mpk(
-    const MpkContract& contract,
-    const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage,
-    std::string* error_message) {
-  const auto extracted =
-      build_boxdecode_static_contract_from_mpk(contract, route_flags, terminal_stage, error_message);
+    const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
+    const MpkPluginIoContract* terminal_stage, std::string* error_message) {
+  const auto extracted = build_boxdecode_static_contract_from_mpk(contract, route_flags,
+                                                                  terminal_stage, error_message);
   if (!extracted.has_value()) {
     return std::nullopt;
   }
@@ -1991,10 +1953,10 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
   validate_present_fields("boxdecode", present, stage_name);
   require_non_empty_value(subset.logical_inputs, "boxdecode", PluginContractFieldKey::LogicalInputs,
                           stage_name);
-  require_non_empty_value(subset.input_bindings, "boxdecode",
-                          PluginContractFieldKey::InputBindings, stage_name);
-  require_non_empty_value(subset.slice_shapes, "boxdecode",
-                          PluginContractFieldKey::SliceGeometry, stage_name);
+  require_non_empty_value(subset.input_bindings, "boxdecode", PluginContractFieldKey::InputBindings,
+                          stage_name);
+  require_non_empty_value(subset.slice_shapes, "boxdecode", PluginContractFieldKey::SliceGeometry,
+                          stage_name);
   if (subset.logical_inputs.size() != subset.input_bindings.size() ||
       subset.logical_inputs.size() != subset.slice_shapes.size()) {
     throw std::invalid_argument("plugin contract subset 'boxdecode' requires aligned logical "
@@ -2019,16 +1981,13 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
     require_non_empty_value(binding.source_segment_name, "boxdecode",
                             PluginContractFieldKey::InputBindings, stage_name);
     const auto& slice_shape = subset.slice_shapes[i];
-    if (slice_shape.rank == 0U ||
-        slice_shape.rank > static_cast<uint32_t>(SIMA_EV_MAX_RANK) ||
-        std::any_of(slice_shape.sizes,
-                    slice_shape.sizes + slice_shape.rank,
+    if (slice_shape.rank == 0U || slice_shape.rank > static_cast<uint32_t>(SIMA_EV_MAX_RANK) ||
+        std::any_of(slice_shape.sizes, slice_shape.sizes + slice_shape.rank,
                     [](int64_t d) { return d <= 0; })) {
-      throw std::invalid_argument("plugin contract subset 'boxdecode' missing required field '" +
-                                  std::string(
-                                      plugin_contract_field_key_name(
-                                          PluginContractFieldKey::SliceGeometry)) +
-                                  "' for stage '" + stage_name + "'");
+      throw std::invalid_argument(
+          "plugin contract subset 'boxdecode' missing required field '" +
+          std::string(plugin_contract_field_key_name(PluginContractFieldKey::SliceGeometry)) +
+          "' for stage '" + stage_name + "'");
     }
     if (subset.quant_needed) {
       if (!logical.quant.has_value() || logical.quant->scales.empty() ||
@@ -2042,11 +2001,11 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
   }
 }
 
-CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
-    const QuantTessContractSubset& subset,
-    const std::string& published_output_name) {
-  require_non_empty_value(subset.quant_params.scales, "quanttess", PluginContractFieldKey::QuantParams,
-                          "quanttess");
+CompiledProcessCvuRuntimeConfig
+build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset,
+                                           const std::string& published_output_name) {
+  require_non_empty_value(subset.quant_params.scales, "quanttess",
+                          PluginContractFieldKey::QuantParams, "quanttess");
   require_non_empty_value(subset.input_shape, "quanttess", PluginContractFieldKey::InputShape,
                           "quanttess");
   if (subset.output_shape.empty()) {
@@ -2070,9 +2029,8 @@ CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
   // the descriptor builders consume the subset. Logs a diagnostic warning on
   // violation; does NOT throw or alter control flow. Intended to surface the
   // very class of bug that caci bs=10 hit (4D shape vs 3D slice).
-  check_per_frame_geometric_invariants("quanttess", "quanttess",
-                                       subset.input_shape, subset.output_shape,
-                                       subset.slice_shape, subset.batch_size);
+  check_per_frame_geometric_invariants("quanttess", "quanttess", subset.input_shape,
+                                       subset.output_shape, subset.slice_shape, subset.batch_size);
 
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "quanttess";
@@ -2099,8 +2057,7 @@ CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
   // form (rank == per-frame rank + leading batch dims). Caps fields take the
   // batched shape verbatim; the kernel descriptors below take per-frame
   // shapes so their rank matches `slice_shape`.
-  const int per_frame_rank =
-      derive_per_frame_rank(subset.slice_shape, /*peer_per_frame_shape=*/{});
+  const int per_frame_rank = derive_per_frame_rank(subset.slice_shape, /*peer_per_frame_shape=*/{});
   const auto input_shape_per_frame =
       semantic_shape_without_batch(subset.input_shape, per_frame_rank);
   const auto output_shape_per_frame =
@@ -2114,7 +2071,8 @@ CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
     sima_ev_tensor_desc input_desc{};
     if (!build_tensor_dense_desc_local(input_shape_per_frame_int,
                                        normalize_dtype_token(subset.input_dtype), &input_desc)) {
-      throw std::invalid_argument("quanttess runtime config could not synthesize typed input tensor");
+      throw std::invalid_argument(
+          "quanttess runtime config could not synthesize typed input tensor");
     }
     runtime.input_tensors = {input_desc};
   }
@@ -2133,7 +2091,8 @@ CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
     if (!build_tensor_tiled_desc_local(output_shape_per_frame_int, tile_shape_int,
                                        runtime.output_dtype, tile_align,
                                        subset.align_c16 || subset.cblock, &output_desc)) {
-      throw std::invalid_argument("quanttess runtime config could not synthesize typed output tensor");
+      throw std::invalid_argument(
+          "quanttess runtime config could not synthesize typed output tensor");
     }
     int slice_d = 0;
     int slice_h = 0;
@@ -2179,10 +2138,8 @@ CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
 }
 
 CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
-    const CastContractSubset& cast_subset,
-    const TessellateContractSubset& tess_subset,
-    const std::string& physical_output_name,
-    const std::string& published_output_name) {
+    const CastContractSubset& cast_subset, const TessellateContractSubset& tess_subset,
+    const std::string& physical_output_name, const std::string& published_output_name) {
   require_non_empty_value(cast_subset.input_shape, "cast", PluginContractFieldKey::InputShape,
                           "cast");
   require_non_empty_value(cast_subset.input_dtype, "cast", PluginContractFieldKey::InputDtype,
@@ -2203,7 +2160,8 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
     throw std::invalid_argument("tessellate runtime config requires a normalized cast input dtype");
   }
   if (cast_output_dtype.empty()) {
-    throw std::invalid_argument("tessellate runtime config requires a normalized cast output dtype");
+    throw std::invalid_argument(
+        "tessellate runtime config requires a normalized cast output dtype");
   }
   if (frame_type.empty()) {
     throw std::invalid_argument("tessellate runtime config requires a normalized frame_type");
@@ -2223,19 +2181,19 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
     throw std::invalid_argument("tessellate runtime config missing canonical slice geometry");
   }
   const std::uint64_t synthesized_packed_output_bytes = tessellated_output_size_bytes_local(
-      dims, slice_w, slice_h, slice_d > 0 ? slice_d : 1, slice_c > 0 ? slice_c : 1,
-      frame_type, tess_subset.align_c16 || tess_subset.cblock);
-  const std::uint64_t packed_output_bytes =
-      tess_subset.output_size_bytes > 0U ? tess_subset.output_size_bytes
-                                         : synthesized_packed_output_bytes;
+      dims, slice_w, slice_h, slice_d > 0 ? slice_d : 1, slice_c > 0 ? slice_c : 1, frame_type,
+      tess_subset.align_c16 || tess_subset.cblock);
+  const std::uint64_t packed_output_bytes = tess_subset.output_size_bytes > 0U
+                                                ? tess_subset.output_size_bytes
+                                                : synthesized_packed_output_bytes;
   if (packed_output_bytes == 0U) {
     throw std::invalid_argument("tessellate runtime config could not compute packed output size");
   }
 
   // Phase 1 invariants: cast.input.rank == tess.input.rank == tess.slice.rank.
-  check_per_frame_geometric_invariants("tessellate", "tessellate",
-                                       tess_subset.input_shape, tess_subset.input_shape,
-                                       tess_subset.slice_shape, /*expected_batch_size=*/0);
+  check_per_frame_geometric_invariants("tessellate", "tessellate", tess_subset.input_shape,
+                                       tess_subset.input_shape, tess_subset.slice_shape,
+                                       /*expected_batch_size=*/0);
 
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "tessellate";
@@ -2250,15 +2208,15 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
   runtime.published_output_names = {published_output_name.empty() ? std::string("output_tensor")
                                                                   : published_output_name};
   if (tess_segment_debug_enabled_local()) {
-    std::fprintf(
-        stderr,
-        "[tess-segment-debug] where=build_tess_runtime published_output_name=%s "
-        "runtime_output_name=%s physical_output_name=%s input_shape=%s slice_shape=%s "
-        "output_size_bytes=%" PRIu64 "\n",
-        runtime.published_output_names.front().c_str(), runtime.runtime_output_names.front().c_str(),
-        runtime.physical_output_names.front().c_str(),
-        join_i64_debug_local(cast_subset.input_shape).c_str(),
-        join_i64_debug_local(tess_subset.slice_shape).c_str(), packed_output_bytes);
+    std::fprintf(stderr,
+                 "[tess-segment-debug] where=build_tess_runtime published_output_name=%s "
+                 "runtime_output_name=%s physical_output_name=%s input_shape=%s slice_shape=%s "
+                 "output_size_bytes=%" PRIu64 "\n",
+                 runtime.published_output_names.front().c_str(),
+                 runtime.runtime_output_names.front().c_str(),
+                 runtime.physical_output_names.front().c_str(),
+                 join_i64_debug_local(cast_subset.input_shape).c_str(),
+                 join_i64_debug_local(tess_subset.slice_shape).c_str(), packed_output_bytes);
   }
   runtime.primary_output_name = runtime.published_output_names.front();
   runtime.batch_size = inferred_batch_size_from_shape(cast_subset.input_shape);
@@ -2268,11 +2226,13 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
   runtime.byte_align = 1;
   runtime.tessellate = 1;
   {
-    std::vector<int> input_shape_int(cast_subset.input_shape.begin(), cast_subset.input_shape.end());
+    std::vector<int> input_shape_int(cast_subset.input_shape.begin(),
+                                     cast_subset.input_shape.end());
     runtime.input_shapes = {input_shape_int};
     sima_ev_tensor_desc input_desc{};
     if (!build_tensor_dense_desc_local(input_shape_int, cast_input_dtype, &input_desc)) {
-      throw std::invalid_argument("tessellate runtime config could not synthesize typed input tensor");
+      throw std::invalid_argument(
+          "tessellate runtime config could not synthesize typed input tensor");
     }
     runtime.input_tensors = {input_desc};
   }
@@ -2284,9 +2244,9 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
     sima_ev_tensor_desc output_desc{};
     const std::uint32_t tile_align = resolve_tile_align_bytes_local(runtime.byte_align);
     if (!build_tensor_tiled_desc_local(output_shape_int, tile_shape_int, frame_type, tile_align,
-                                       tess_subset.align_c16 || tess_subset.cblock,
-                                       &output_desc)) {
-      throw std::invalid_argument("tessellate runtime config could not synthesize typed output tensor");
+                                       tess_subset.align_c16 || tess_subset.cblock, &output_desc)) {
+      throw std::invalid_argument(
+          "tessellate runtime config could not synthesize typed output tensor");
     }
     output_desc.storage.nbytes = packed_output_bytes;
     runtime.output_tensors = {output_desc};
@@ -2297,7 +2257,8 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
   runtime.output_dtype = frame_type;
   runtime.out_dtype = frame_type;
   {
-    std::vector<int> slice_shape_int(tess_subset.slice_shape.begin(), tess_subset.slice_shape.end());
+    std::vector<int> slice_shape_int(tess_subset.slice_shape.begin(),
+                                     tess_subset.slice_shape.end());
     runtime.slice_shapes = {slice_shape_int};
   }
   runtime.runtime_output_logical_index_list = {0};
@@ -2314,10 +2275,10 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
   return runtime;
 }
 
-CompiledProcessCvuRuntimeConfig build_quantize_runtime_config_from_subset(
-    const QuantizeContractSubset& subset,
-    const std::string& physical_output_name,
-    const std::string& published_output_name) {
+CompiledProcessCvuRuntimeConfig
+build_quantize_runtime_config_from_subset(const QuantizeContractSubset& subset,
+                                          const std::string& physical_output_name,
+                                          const std::string& published_output_name) {
   require_non_empty_value(subset.quant_params.scales, "quantize",
                           PluginContractFieldKey::QuantParams, "quantize");
   require_non_empty_value(subset.quant_params.zero_points, "quantize",
@@ -2329,8 +2290,7 @@ CompiledProcessCvuRuntimeConfig build_quantize_runtime_config_from_subset(
   require_non_empty_value(subset.output_dtype, "quantize", PluginContractFieldKey::OutputDtype,
                           "quantize");
   if (subset.round_off < 0) {
-    throw std::invalid_argument(
-        "quantize runtime config requires an explicit round_off");
+    throw std::invalid_argument("quantize runtime config requires an explicit round_off");
   }
 
   const std::string input_dtype = normalize_dtype_token(subset.input_dtype);
@@ -2343,15 +2303,16 @@ CompiledProcessCvuRuntimeConfig build_quantize_runtime_config_from_subset(
   }
 
   // Phase 1 invariants: dense-only stage. Same input/output rank; no slice.
-  check_per_frame_geometric_invariants("quantize", "quantize",
-                                       subset.input_shape, subset.input_shape,
+  check_per_frame_geometric_invariants("quantize", "quantize", subset.input_shape,
+                                       subset.input_shape,
                                        /*slice_shape=*/std::vector<std::int64_t>{},
                                        /*expected_batch_size=*/0);
 
   CompiledProcessCvuRuntimeConfig runtime;
   runtime.graph_family = "quantize";
   runtime.graph_name = "quantize";
-  runtime.graph_id = 222;  /* SIMA_GRAPH_QUANTIZE — graph 220 is header-only with no kernel impl in cvu-sw */
+  runtime.graph_id =
+      222; /* SIMA_GRAPH_QUANTIZE — graph 220 is header-only with no kernel impl in cvu-sw */
   runtime.default_input_name = "input_tensor";
   runtime.runtime_input_names = {"input_tensor"};
   runtime.runtime_output_names = {"output_tensor"};
@@ -2393,13 +2354,14 @@ CompiledProcessCvuRuntimeConfig build_quantize_runtime_config_from_subset(
   return runtime;
 }
 
-ProcessMlaStagePayload build_processmla_payload_from_subset(const ProcessMlaContractSubset& subset) {
+ProcessMlaStagePayload
+build_processmla_payload_from_subset(const ProcessMlaContractSubset& subset) {
   require_non_empty_value(subset.model_path, "processmla", PluginContractFieldKey::ModelPath,
                           "processmla");
   require_non_empty_value(subset.batch_size, "processmla", PluginContractFieldKey::BatchSize,
                           "processmla");
-  require_non_empty_value(subset.batch_sz_model, "processmla",
-                          PluginContractFieldKey::BatchSzModel, "processmla");
+  require_non_empty_value(subset.batch_sz_model, "processmla", PluginContractFieldKey::BatchSzModel,
+                          "processmla");
   require_non_empty_value(subset.dispatcher_output_sizes, "processmla",
                           PluginContractFieldKey::DispatcherOutputSizes, "processmla");
 
@@ -2444,11 +2406,11 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
     // Phase 1 invariants for each per-output detess subset. detess uses
     // frame_shape (not input_shape) as the per-frame logical view; output
     // shape is the dense view it produces. Slice rank should match frame.
-    check_per_frame_geometric_invariants("detessellate", "detessellate",
-                                         subset.frame_shape, subset.frame_shape,
-                                         subset.slice_shape, /*expected_batch_size=*/0);
-    require_non_empty_value(subset.frame_shape, "detessellate",
-                            PluginContractFieldKey::FrameShape, "detessellate");
+    check_per_frame_geometric_invariants("detessellate", "detessellate", subset.frame_shape,
+                                         subset.frame_shape, subset.slice_shape,
+                                         /*expected_batch_size=*/0);
+    require_non_empty_value(subset.frame_shape, "detessellate", PluginContractFieldKey::FrameShape,
+                            "detessellate");
     if (subset.input_transport_shape.empty() || subset.input_transport_size_bytes == 0U) {
       throw std::invalid_argument("detessellate runtime config requires packed transport view");
     }
@@ -2468,13 +2430,11 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
       require_matching_batch_size(runtime.batch_size, subset_batch_size, "detessellate");
     }
 
-    const auto transport_input_dims =
-        dims_from_detess_transport_shape(subset.input_transport_shape,
-                                         "detessellate transport input");
+    const auto transport_input_dims = dims_from_detess_transport_shape(
+        subset.input_transport_shape, "detessellate transport input");
     if (transport_input_dims.width <= 0 || transport_input_dims.height <= 0 ||
         transport_input_dims.depth <= 0 || transport_input_dims.channels <= 0) {
-      throw std::invalid_argument(
-          "detessellate runtime config requires packed transport geometry");
+      throw std::invalid_argument("detessellate runtime config requires packed transport geometry");
     }
     const auto output_dims = dims_from_detess_shape(subset.frame_shape, "detessellate output");
     int slice_d = 0;
@@ -2483,8 +2443,7 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
     int slice_c = 0;
     if (!canonical_slice_dhwc_from_shape(subset.slice_shape, &slice_d, &slice_h, &slice_w,
                                          &slice_c)) {
-      throw std::invalid_argument(
-          "detessellate runtime config missing canonical slice geometry");
+      throw std::invalid_argument("detessellate runtime config missing canonical slice geometry");
     }
     const std::string frame_type = normalize_dtype_token(subset.frame_type);
     if (frame_type.empty()) {
@@ -2499,10 +2458,9 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
         i < published_output_names.size() && !published_output_names[i].empty()
             ? published_output_names[i]
             : output_name;
-    const int output_channels =
-        output_dims.layout.empty() || upper_copy(output_dims.layout) != "HW"
-            ? std::max(output_dims.channels, 1)
-            : 1;
+    const int output_channels = output_dims.layout.empty() || upper_copy(output_dims.layout) != "HW"
+                                    ? std::max(output_dims.channels, 1)
+                                    : 1;
 
     const std::string semantic_layout;
     if (runtime.default_input_name.empty()) {
@@ -2588,8 +2546,8 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
   for (std::size_t i = 0; i < subsets.size(); ++i) {
     const auto& subset = subsets[i];
     // Phase 1 invariants: dequantize is dense-only — no slice; in/out ranks match.
-    check_per_frame_geometric_invariants("dequantize", "dequantize",
-                                         subset.input_shape, subset.output_shape,
+    check_per_frame_geometric_invariants("dequantize", "dequantize", subset.input_shape,
+                                         subset.output_shape,
                                          /*slice_shape=*/std::vector<std::int64_t>{},
                                          /*expected_batch_size=*/0);
     require_non_empty_value(subset.quant_params.scales, "dequantize",
@@ -2602,8 +2560,8 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
                             "dequantize");
     require_non_empty_value(subset.input_dtype, "dequantize", PluginContractFieldKey::InputDtype,
                             "dequantize");
-    require_non_empty_value(subset.output_dtype, "dequantize",
-                            PluginContractFieldKey::OutputDtype, "dequantize");
+    require_non_empty_value(subset.output_dtype, "dequantize", PluginContractFieldKey::OutputDtype,
+                            "dequantize");
     const int subset_batch_size = inferred_batch_size_from_shape(subset.input_shape);
     if (subset_batch_size <= 0) {
       throw std::invalid_argument("dequantize runtime config requires a positive batch_size");
@@ -2621,14 +2579,13 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
           "dequantize runtime config requires INT8/INT16/INT32 input dtype");
     }
     if (output_dtype != "FP16" && output_dtype != "FP32") {
-      throw std::invalid_argument(
-          "dequantize runtime config requires FP16/FP32 output dtype");
+      throw std::invalid_argument("dequantize runtime config requires FP16/FP32 output dtype");
     }
 
-    runtime.published_output_names.push_back(
-        i < published_output_names.size() && !published_output_names[i].empty()
-            ? published_output_names[i]
-            : ("output_tensor_" + std::to_string(i)));
+    runtime.published_output_names.push_back(i < published_output_names.size() &&
+                                                     !published_output_names[i].empty()
+                                                 ? published_output_names[i]
+                                                 : ("output_tensor_" + std::to_string(i)));
     {
       std::vector<int> input_shape_int(subset.input_shape.begin(), subset.input_shape.end());
       runtime.input_shapes.push_back(input_shape_int);
@@ -2641,8 +2598,7 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
     }
     const auto canonical_output_shape = canonical_value_transform_shape_public(
         "dequantize", subset.input_shape, subset.output_shape, subset.input_shape);
-    std::vector<int> output_shape_int(canonical_output_shape.begin(),
-                                      canonical_output_shape.end());
+    std::vector<int> output_shape_int(canonical_output_shape.begin(), canonical_output_shape.end());
     runtime.output_shapes.push_back(output_shape_int);
     runtime.runtime_output_logical_shapes.push_back(output_shape_int);
     sima_ev_tensor_desc output_desc{};
@@ -2673,8 +2629,7 @@ CompiledProcessCvuRuntimeConfig build_dequantize_runtime_config_from_subsets(
 }
 
 CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
-    const DetessDequantContractSubset& subset,
-    const std::vector<std::string>& runtime_output_names,
+    const DetessDequantContractSubset& subset, const std::vector<std::string>& runtime_output_names,
     const std::vector<std::string>& published_output_names) {
   if (subset.heads.empty()) {
     throw std::invalid_argument("detessdequant runtime config requires at least one head");
@@ -2694,14 +2649,14 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
   runtime.runtime_output_names.reserve(subset.heads.size());
   runtime.published_output_names.reserve(subset.heads.size());
   for (std::size_t i = 0; i < subset.heads.size(); ++i) {
-    runtime.runtime_output_names.push_back(
-        i < runtime_output_names.size() && !runtime_output_names[i].empty()
-            ? runtime_output_names[i]
-            : ("output_tensor_" + std::to_string(i)));
-    runtime.published_output_names.push_back(
-        i < published_output_names.size() && !published_output_names[i].empty()
-            ? published_output_names[i]
-            : runtime.runtime_output_names.back());
+    runtime.runtime_output_names.push_back(i < runtime_output_names.size() &&
+                                                   !runtime_output_names[i].empty()
+                                               ? runtime_output_names[i]
+                                               : ("output_tensor_" + std::to_string(i)));
+    runtime.published_output_names.push_back(i < published_output_names.size() &&
+                                                     !published_output_names[i].empty()
+                                                 ? published_output_names[i]
+                                                 : runtime.runtime_output_names.back());
   }
   runtime.primary_output_name = runtime.published_output_names.front();
 
@@ -2724,14 +2679,13 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
   for (std::size_t i = 0; i < subset.heads.size(); ++i) {
     const auto& head = subset.heads[i];
     // Phase 1 invariants for each detessdequant head: frame_shape vs slice_shape.
-    check_per_frame_geometric_invariants("detessdequant", "detessdequant",
-                                         head.frame_shape, head.frame_shape,
-                                         head.slice_shape, /*expected_batch_size=*/0);
+    check_per_frame_geometric_invariants("detessdequant", "detessdequant", head.frame_shape,
+                                         head.frame_shape, head.slice_shape,
+                                         /*expected_batch_size=*/0);
     require_non_empty_value(head.per_head_input_shape, "detessdequant",
                             PluginContractFieldKey::PerHeadInputShape, "detessdequant");
     if (head.input_transport_shape.empty() || head.input_transport_size_bytes == 0U) {
-      throw std::invalid_argument(
-          "detessdequant runtime config requires packed transport view");
+      throw std::invalid_argument("detessdequant runtime config requires packed transport view");
     }
     require_non_empty_value(head.per_head_quant_params.scales, "detessdequant",
                             PluginContractFieldKey::PerHeadQuantParams, "detessdequant");
@@ -2741,8 +2695,8 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
                             "detessdequant");
     require_non_empty_value(head.slice_shape, "detessdequant", PluginContractFieldKey::SliceShape,
                             "detessdequant");
-    require_non_empty_value(head.output_dtype, "detessdequant",
-                            PluginContractFieldKey::OutputDtype, "detessdequant");
+    require_non_empty_value(head.output_dtype, "detessdequant", PluginContractFieldKey::OutputDtype,
+                            "detessdequant");
     const int head_batch_size = inferred_batch_size_from_shape(head.frame_shape);
     if (head_batch_size <= 0) {
       throw std::invalid_argument("detessdequant runtime config requires a positive batch_size");
@@ -2753,9 +2707,8 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
       require_matching_batch_size(runtime.batch_size, head_batch_size, "detessdequant");
     }
 
-    const auto transport_input_dims =
-        dims_from_detess_transport_shape(head.input_transport_shape,
-                                         "detessdequant transport input");
+    const auto transport_input_dims = dims_from_detess_transport_shape(
+        head.input_transport_shape, "detessdequant transport input");
     if (transport_input_dims.width <= 0 || transport_input_dims.height <= 0 ||
         transport_input_dims.depth <= 0 || transport_input_dims.channels <= 0) {
       throw std::invalid_argument(
@@ -2803,9 +2756,9 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
       // per-frame transport size when batch>1), so divide it by batch to keep
       // required == actual. For batch==1 this is a no-op.
       const std::uint64_t per_frame_transport_size =
-          head_batch_size > 0 ? head.input_transport_size_bytes /
-                                    static_cast<std::uint64_t>(head_batch_size)
-                              : head.input_transport_size_bytes;
+          head_batch_size > 0
+              ? head.input_transport_size_bytes / static_cast<std::uint64_t>(head_batch_size)
+              : head.input_transport_size_bytes;
       input_desc.storage.nbytes = per_frame_transport_size;
       runtime.input_tensors.push_back(input_desc);
     }
@@ -2814,9 +2767,10 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
       runtime.slice_shapes.push_back(slice_shape_int);
     }
     runtime.dq_scale_list.push_back(head.per_head_quant_params.scales.front());
-    runtime.dq_zp_list.push_back(head.per_head_quant_params.zero_points.empty()
-                                     ? 0
-                                     : static_cast<int>(head.per_head_quant_params.zero_points.front()));
+    runtime.dq_zp_list.push_back(
+        head.per_head_quant_params.zero_points.empty()
+            ? 0
+            : static_cast<int>(head.per_head_quant_params.zero_points.front()));
     const std::string output_dtype = normalize_dtype_token(head.output_dtype);
     std::vector<int> output_shape_int(head.frame_shape.begin(), head.frame_shape.end());
     runtime.output_shapes.push_back(output_shape_int);
@@ -2835,18 +2789,18 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     runtime.runtime_output_semantic_kind_list.push_back(ProcessCvuOutputSemanticKind::Tensor);
     runtime.runtime_output_logical_layout_list.push_back(semantic_input_layout);
     if (detess_layout_debug_enabled_local()) {
-      std::fprintf(
-          stderr,
-          "[detess-layout-debug] where=subset.runtime.head index=%zu input_shape=%s "
-          "transport_shape=%s frame_shape=%s input_dims={layout=%s,w=%d,h=%d,d=%d,c=%d} "
-          "transport_dims={layout=%s,w=%d,h=%d,d=%d,c=%d}\n",
-          i, join_i64_debug_local(head.input_transport_shape).c_str(),
-          join_i64_debug_local(head.input_transport_shape).c_str(),
-          join_i64_debug_local(head.frame_shape).c_str(), transport_input_dims.layout.c_str(),
-          transport_input_dims.width, transport_input_dims.height, transport_input_dims.depth,
-          transport_input_dims.channels, transport_input_dims.layout.c_str(),
-          transport_input_dims.width, transport_input_dims.height, transport_input_dims.depth,
-          transport_input_dims.channels);
+      std::fprintf(stderr,
+                   "[detess-layout-debug] where=subset.runtime.head index=%zu input_shape=%s "
+                   "transport_shape=%s frame_shape=%s input_dims={layout=%s,w=%d,h=%d,d=%d,c=%d} "
+                   "transport_dims={layout=%s,w=%d,h=%d,d=%d,c=%d}\n",
+                   i, join_i64_debug_local(head.input_transport_shape).c_str(),
+                   join_i64_debug_local(head.input_transport_shape).c_str(),
+                   join_i64_debug_local(head.frame_shape).c_str(),
+                   transport_input_dims.layout.c_str(), transport_input_dims.width,
+                   transport_input_dims.height, transport_input_dims.depth,
+                   transport_input_dims.channels, transport_input_dims.layout.c_str(),
+                   transport_input_dims.width, transport_input_dims.height,
+                   transport_input_dims.depth, transport_input_dims.channels);
     }
   }
 
@@ -2861,10 +2815,12 @@ CompiledProcessCvuRuntimeConfig build_detessdequant_runtime_config_from_subset(
     std::fprintf(
         stderr,
         "[detess-layout-debug] where=subset.runtime.final heads=%zu input_layout=%s "
-        "output_layout=%s input_shape0=%s output_shape0=%s first_output_dims={w=%d,h=%d,d=%d,c=%d,layout=%s}\n",
+        "output_layout=%s input_shape0=%s output_shape0=%s "
+        "first_output_dims={w=%d,h=%d,d=%d,c=%d,layout=%s}\n",
         subset.heads.size(), first_input_dims.layout.c_str(), first_output_dims.layout.c_str(),
-        subset.heads.empty() ? "<none>"
-                             : join_i64_debug_local(subset.heads.front().input_transport_shape).c_str(),
+        subset.heads.empty()
+            ? "<none>"
+            : join_i64_debug_local(subset.heads.front().input_transport_shape).c_str(),
         subset.heads.empty() ? "<none>"
                              : join_i64_debug_local(subset.heads.front().frame_shape).c_str(),
         first_output_dims.width, first_output_dims.height, first_output_dims.depth,

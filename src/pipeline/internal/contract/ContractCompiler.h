@@ -13,9 +13,9 @@
 
 namespace simaai::neat {
 
-CompiledPipelineContracts compile_node_contracts(
-    const std::vector<std::shared_ptr<Node>>& nodes,
-    const ContractCompileInput& input,
-    pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics);
+CompiledPipelineContracts
+compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
+                       const ContractCompileInput& input,
+                       pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics);
 
 } // namespace simaai::neat

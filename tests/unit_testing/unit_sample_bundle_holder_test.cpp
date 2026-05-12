@@ -33,8 +33,8 @@ GstSample* make_tensor_sample_with_contract_meta() {
 
   GstCaps* caps =
       gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING, "MLA", "width",
-                          G_TYPE_INT, 4, "height", G_TYPE_INT, 4, "depth", G_TYPE_INT, 1,
-                          "dtype", G_TYPE_STRING, "INT8", "layout", G_TYPE_STRING, "HW", nullptr);
+                          G_TYPE_INT, 4, "height", G_TYPE_INT, 4, "depth", G_TYPE_INT, 1, "dtype",
+                          G_TYPE_STRING, "INT8", "layout", G_TYPE_STRING, "HW", nullptr);
   require(caps != nullptr, "failed to allocate GstCaps");
 
   GstCustomMeta* meta = gst_buffer_add_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME);
@@ -83,20 +83,17 @@ GstSample* make_tensor_sample_with_contract_meta() {
       g_bytes_new(descriptors.data(), descriptors.size() * sizeof(SimaTensorDescriptorV2));
   require(descriptor_bytes != nullptr, "failed to allocate descriptor bytes");
 
-  const char* raw_names[] = {"boxes", "ofm0", "boxes_seg", "scores", "ofm1", "scores_seg",
-                             nullptr};
+  const char* raw_names[] = {"boxes", "ofm0", "boxes_seg", "scores", "ofm1", "scores_seg", nullptr};
   gchar** name_table = g_strdupv(const_cast<gchar**>(raw_names));
   require(name_table != nullptr, "failed to duplicate tensor-set name table");
 
-  gst_structure_set(s,
-                    SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT, SIMA_TENSOR_SET_META_VERSION,
-                    SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, G_TYPE_UINT,
-                    static_cast<guint>(descriptors.size()),
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
-                    static_cast<guint>(sizeof(SimaTensorDescriptorV2)),
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS, G_TYPE_BYTES, descriptor_bytes,
-                    SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING, "mla.stage.bundle",
-                    SIMA_TENSOR_SET_META_FIELD_NAME_TABLE, G_TYPE_STRV, name_table, nullptr);
+  gst_structure_set(
+      s, SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT, SIMA_TENSOR_SET_META_VERSION,
+      SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, G_TYPE_UINT, static_cast<guint>(descriptors.size()),
+      SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
+      static_cast<guint>(sizeof(SimaTensorDescriptorV2)), SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS,
+      G_TYPE_BYTES, descriptor_bytes, SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING,
+      "mla.stage.bundle", SIMA_TENSOR_SET_META_FIELD_NAME_TABLE, G_TYPE_STRV, name_table, nullptr);
   g_strfreev(name_table);
   g_bytes_unref(descriptor_bytes);
 

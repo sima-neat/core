@@ -110,17 +110,16 @@ InputStreamOptions::ResolvedShapeLimits resolve_shape_limits(const InputOptions&
 std::optional<std::string>
 validate_shape_limits(const InputStreamOptions::ResolvedShapeLimits& limits) {
   if (limits.max_width > 0 && limits.seed_width > 0 && limits.seed_width > limits.max_width) {
-    return std::string("input width seed exceeds max_width (") +
-           std::to_string(limits.seed_width) + " > " + std::to_string(limits.max_width) + ")";
+    return std::string("input width seed exceeds max_width (") + std::to_string(limits.seed_width) +
+           " > " + std::to_string(limits.max_width) + ")";
   }
   if (limits.max_height > 0 && limits.seed_height > 0 && limits.seed_height > limits.max_height) {
     return std::string("input height seed exceeds max_height (") +
-           std::to_string(limits.seed_height) + " > " + std::to_string(limits.max_height) +
-           ")";
+           std::to_string(limits.seed_height) + " > " + std::to_string(limits.max_height) + ")";
   }
   if (limits.max_depth > 0 && limits.seed_depth > 0 && limits.seed_depth > limits.max_depth) {
-    return std::string("input depth seed exceeds max_depth (") +
-           std::to_string(limits.seed_depth) + " > " + std::to_string(limits.max_depth) + ")";
+    return std::string("input depth seed exceeds max_depth (") + std::to_string(limits.seed_depth) +
+           " > " + std::to_string(limits.max_depth) + ")";
   }
   return std::nullopt;
 }
@@ -167,9 +166,8 @@ SessionInputPolicyResult resolve_session_input_policy(const InputOptions& opt,
   SessionInputPolicyResult out;
   out.shape_policy = resolve_shape_policy(opt);
   out.shape_limits = resolve_shape_limits(opt, seed);
-  out.max_input_bytes_guard = resolve_input_bytes_guard(requested_max_input_bytes, out.shape_policy,
-                                                        bounded_estimate_bytes,
-                                                        &out.byte_guard_origin);
+  out.max_input_bytes_guard = resolve_input_bytes_guard(
+      requested_max_input_bytes, out.shape_policy, bounded_estimate_bytes, &out.byte_guard_origin);
   return out;
 }
 
@@ -201,15 +199,15 @@ ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest&
     out.resolved_max_input_depth = req.input_max_depth;
   } else {
     const int by_format = default_depth_for_image_format(out.resolved_input_format, 3);
-    out.resolved_max_input_depth = (out.resolved_input_depth > 0) ? out.resolved_input_depth : by_format;
+    out.resolved_max_input_depth =
+        (out.resolved_input_depth > 0) ? out.resolved_input_depth : by_format;
   }
 
   out.resolved_normalize = req.preproc_normalize.value_or(false);
   return out;
 }
 
-SessionInputPolicyResult resolve_for_session(const InputOptions& opt,
-                                             const SampleSpec& seed,
+SessionInputPolicyResult resolve_for_session(const InputOptions& opt, const SampleSpec& seed,
                                              std::size_t requested_max_input_bytes,
                                              std::size_t bounded_estimate_bytes) {
   return resolve_session_input_policy(opt, seed, requested_max_input_bytes, bounded_estimate_bytes);

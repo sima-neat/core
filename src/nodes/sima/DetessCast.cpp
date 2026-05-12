@@ -56,8 +56,7 @@ DetessCast::DetessCast(DetessCastOptions opt) : opt_(std::move(opt)) {
         "DetessCast: num_buffers must be model-managed (use DetessCastOptions(Model)).");
   }
   if (opt_.num_buffers != opt_.num_buffers_model) {
-    throw std::runtime_error(
-        "DetessCast: num_buffers override is not allowed; must match model.");
+    throw std::runtime_error("DetessCast: num_buffers override is not allowed; must match model.");
   }
   if (opt_.num_buffers != 4 && opt_.num_buffers != 1) {
     throw std::runtime_error(
@@ -85,11 +84,11 @@ NodeContractDefinition DetessCast::contract_definition() const {
   return def;
 }
 
-bool DetessCast::compile_node_contract(const ContractCompileInput& input,
-                                       CompiledNodeContract* out,
+bool DetessCast::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                        std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("detesscast") : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("detesscast")
+                                       : element_names(input.node_index).front();
   if (!config_holder_ || !config_holder_->compiled_contract.has_value()) {
     if (err) {
       *err = "DetessCast: compiled processcvu contract is required";
@@ -97,8 +96,8 @@ bool DetessCast::compile_node_contract(const ContractCompileInput& input,
     return false;
   }
   return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
-      kind(), element_name, element_name, contract_definition(),
-      *config_holder_->compiled_contract, out, err);
+      kind(), element_name, element_name, contract_definition(), *config_holder_->compiled_contract,
+      out, err);
 }
 
 void DetessCast::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

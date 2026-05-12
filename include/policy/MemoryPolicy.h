@@ -23,7 +23,8 @@ namespace simaai::neat::policy {
  * @ingroup builder
  */
 struct MemoryPolicy {
-  std::size_t max_pool_bytes = 1ULL << 30; ///< Maximum bytes a single pool may request (default 1 GiB).
+  std::size_t max_pool_bytes = 1ULL
+                               << 30; ///< Maximum bytes a single pool may request (default 1 GiB).
 
   /**
    * @brief Validate a requested pool size against the configured ceiling.

@@ -15,8 +15,8 @@ namespace {
 RuntimeMetricGroup graph_snapshot_group(const GraphRunStats::Snapshot& snap,
                                         const std::string& label) {
   RuntimeMetricGroup group;
-  group.name = label.empty() ? ("graph_node:" + std::to_string(snap.node_id))
-                             : ("graph_node:" + label);
+  group.name =
+      label.empty() ? ("graph_node:" + std::to_string(snap.node_id)) : ("graph_node:" + label);
   const double secs =
       std::chrono::duration_cast<std::chrono::duration<double>>(snap.last - snap.first).count();
   const double fps = (secs > 0.0) ? (static_cast<double>(snap.total) / secs) : 0.0;

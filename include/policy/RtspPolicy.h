@@ -21,8 +21,8 @@ namespace simaai::neat::policy {
  * @ingroup builder
  */
 struct RtspPolicy {
-  int min_port = 1024;   ///< Lowest allowed RTSP port (excludes privileged ports).
-  int max_port = 65535;  ///< Highest allowed RTSP port.
+  int min_port = 1024;  ///< Lowest allowed RTSP port (excludes privileged ports).
+  int max_port = 65535; ///< Highest allowed RTSP port.
 
   /**
    * @brief Validate a requested RTSP port against the configured range.

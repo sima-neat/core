@@ -159,24 +159,24 @@ struct ElementFlowCounters {
 struct ElementPadTimingStats {
   std::string element_name;
   std::string pad_name;
-  bool        is_sink = false;
-  uint64_t    samples = 0;
-  uint64_t    inter_arrival_total_us = 0;
-  uint64_t    inter_arrival_max_us = 0;
-  uint64_t    queue_wait_samples = 0;
-  uint64_t    queue_wait_total_us = 0;
-  uint64_t    queue_wait_max_us = 0;
-  uint64_t    bytes = 0;
+  bool is_sink = false;
+  uint64_t samples = 0;
+  uint64_t inter_arrival_total_us = 0;
+  uint64_t inter_arrival_max_us = 0;
+  uint64_t queue_wait_samples = 0;
+  uint64_t queue_wait_total_us = 0;
+  uint64_t queue_wait_max_us = 0;
+  uint64_t bytes = 0;
 };
 
 struct ElementPadTimingCounters {
   std::string element_name;
   std::string pad_name;
-  bool        is_sink = false;
+  bool is_sink = false;
   std::atomic<uint64_t> samples{0};
   std::atomic<uint64_t> inter_arrival_total_us{0};
   std::atomic<uint64_t> inter_arrival_max_us{0};
-  std::atomic<int64_t>  last_arrival_us{-1};
+  std::atomic<int64_t> last_arrival_us{-1};
   std::atomic<uint64_t> queue_wait_samples{0};
   std::atomic<uint64_t> queue_wait_total_us{0};
   std::atomic<uint64_t> queue_wait_max_us{0};
@@ -225,7 +225,7 @@ struct DiagCtx {
   // breakdown so we can attribute the 50–60% non-kernel overhead to specific
   // pads (multibuff sink_0 vs sink_1, queue waits between elements, etc.).
   std::vector<std::unique_ptr<ElementPadTimingCounters>> element_pad_timings;
-  std::mutex element_pad_timings_mu;  // guards lazy-creation of new pad rows
+  std::mutex element_pad_timings_mu; // guards lazy-creation of new pad rows
 
   bool has_build_adaptation = false;
   BuildAdaptationSummary build_adaptation;

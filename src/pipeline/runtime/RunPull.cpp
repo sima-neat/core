@@ -47,8 +47,8 @@ std::string with_hint(const std::string& message, const std::string& hint) {
 void validate_run_image_inputs(const std::vector<cv::Mat>& inputs, const char* where) {
   const char* tag = where ? where : "Run::run";
   if (inputs.empty()) {
-    throw std::runtime_error(
-        decorate_with_error_code(error_codes::kRuntimePull, std::string(tag) + ": empty image list"));
+    throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull,
+                                                      std::string(tag) + ": empty image list"));
   }
   for (std::size_t i = 0; i < inputs.size(); ++i) {
     if (inputs[i].empty()) {
@@ -214,17 +214,16 @@ bool is_preproc_segment(const SegmentInfo& seg) {
   const std::string nl = lower_copy(seg.name);
   const std::string cl = lower_copy(seg.config);
   return (pl.find("processcvu") != std::string::npos) &&
-         ((nl.find("preproc") != std::string::npos) ||
-          (cl.find("preproc") != std::string::npos) ||
-          (cl.find("quant") != std::string::npos) ||
-          (cl.find("tess") != std::string::npos));
+         ((nl.find("preproc") != std::string::npos) || (cl.find("preproc") != std::string::npos) ||
+          (cl.find("quant") != std::string::npos) || (cl.find("tess") != std::string::npos));
 }
 
 bool is_mla_segment(const SegmentInfo& seg) {
   const std::string pl = lower_copy(seg.plugin);
   const std::string nl = lower_copy(seg.name);
   const std::string cl = lower_copy(seg.config);
-  return (pl.find("processmla") != std::string::npos) || (nl.find("processmla") != std::string::npos) ||
+  return (pl.find("processmla") != std::string::npos) ||
+         (nl.find("processmla") != std::string::npos) ||
          (cl.find("process_mla") != std::string::npos);
 }
 
@@ -345,8 +344,7 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
       st->out_cv.wait_for(lock, kPullWaitPollQuantum);
     }
   } else {
-    const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::milliseconds(timeout_ms);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (!wait_ready()) {
       const std::string loop_err = last_error();
       if (!loop_err.empty()) {
@@ -392,15 +390,13 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
                     const char* label =
                         detess ? "detess_config" : (preproc ? "preproc_config" : "mla_config");
                     std::fprintf(stderr, "[DIAG] %s plugin=%s name=%s config=%s\n%s\n", label,
-                                 seg.plugin.c_str(),
-                                 seg.name.empty() ? "<none>" : seg.name.c_str(),
+                                 seg.plugin.c_str(), seg.name.empty() ? "<none>" : seg.name.c_str(),
                                  seg.config.c_str(), j.dump(2).c_str());
                   } else {
                     const char* label =
                         detess ? "detess_config" : (preproc ? "preproc_config" : "mla_config");
-                    std::fprintf(stderr,
-                                 "[DIAG] %s plugin=%s name=%s config=%s read_failed\n", label,
-                                 seg.plugin.c_str(),
+                    std::fprintf(stderr, "[DIAG] %s plugin=%s name=%s config=%s read_failed\n",
+                                 label, seg.plugin.c_str(),
                                  seg.name.empty() ? "<none>" : seg.name.c_str(),
                                  seg.config.c_str());
                   }
@@ -464,9 +460,8 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
 void Run::require_async_pull_mode(const char* where) const {
   if (state_ && state_->mode == RunMode::Sync) {
     throw std::runtime_error(decorate_with_error_code(
-        error_codes::kRuntimePull,
-        std::string(where ? where : "Run") +
-            ": pull is not allowed in sync mode; use run(...) instead"));
+        error_codes::kRuntimePull, std::string(where ? where : "Run") +
+                                       ": pull is not allowed in sync mode; use run(...) instead"));
   }
 }
 
@@ -619,15 +614,16 @@ void Run::enqueue_run_tensors(const TensorList& inputs) {
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: empty tensor list"));
   }
   if (state_ && state_->input_route_processor) {
-    if (!push_message_impl(state_->input_route_processor->process_tensors(inputs, "Run::run"), true)) {
+    if (!push_message_impl(state_->input_route_processor->process_tensors(inputs, "Run::run"),
+                           true)) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;
   }
-  const Sample sample =
-      (state_ && state_->tensor_input_opt_for_cv.has_value())
-          ? pipeline_internal::sample_from_tensors_for_input(inputs, *state_->tensor_input_opt_for_cv)
-          : sample_from_tensors(inputs);
+  const Sample sample = (state_ && state_->tensor_input_opt_for_cv.has_value())
+                            ? pipeline_internal::sample_from_tensors_for_input(
+                                  inputs, *state_->tensor_input_opt_for_cv)
+                            : sample_from_tensors(inputs);
   if (!push_message_impl(sample, true)) {
     throw_push_returned_false("Run::run", last_error());
   }
@@ -639,7 +635,8 @@ void Run::enqueue_run_samples(const SampleList& inputs) {
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: empty sample list"));
   }
   if (state_ && state_->input_route_processor) {
-    if (!push_message_impl(state_->input_route_processor->process_samples(inputs, "Run::run"), true)) {
+    if (!push_message_impl(state_->input_route_processor->process_samples(inputs, "Run::run"),
+                           true)) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;
@@ -670,8 +667,7 @@ SampleList Run::run(const SampleList& inputs, int timeout_ms) {
   out.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
     SampleList batch = pull_samples_strict(timeout_ms);
-    out.insert(out.end(),
-               std::make_move_iterator(batch.begin()),
+    out.insert(out.end(), std::make_move_iterator(batch.begin()),
                std::make_move_iterator(batch.end()));
   }
   return out;

@@ -396,13 +396,13 @@ struct SimaPluginStaticManifestAccessor {
   guint (*stage_count)(gpointer user_data);
   const SimaPluginStageSpec* (*stage_by_index)(gpointer user_data, guint index);
   const SimaPluginStageSpec* (*stage_by_element_name)(gpointer user_data,
-                                                        const gchar* element_name);
-  const SimaPluginStageSpec* (*stage_by_logical_stage_id)(
-      gpointer user_data, const gchar* logical_stage_id);
+                                                      const gchar* element_name);
+  const SimaPluginStageSpec* (*stage_by_logical_stage_id)(gpointer user_data,
+                                                          const gchar* logical_stage_id);
 };
 
-static inline const gchar* sima_plugin_manifest_lookup_status_name(
-    SimaPluginManifestLookupStatus status) {
+static inline const gchar*
+sima_plugin_manifest_lookup_status_name(SimaPluginManifestLookupStatus status) {
   switch (status) {
   case SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_OK:
     return "ok";
@@ -427,8 +427,8 @@ static inline const gchar* sima_plugin_manifest_lookup_status_name(
   }
 }
 
-static inline const gchar* sima_plugin_manifest_lookup_status_error_message(
-    SimaPluginManifestLookupStatus status) {
+static inline const gchar*
+sima_plugin_manifest_lookup_status_error_message(SimaPluginManifestLookupStatus status) {
   switch (status) {
   case SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT:
     return "Missing sima.model.manifest context";
@@ -451,8 +451,8 @@ static inline const gchar* sima_plugin_manifest_lookup_status_error_message(
   }
 }
 
-static inline const gchar* sima_plugin_manifest_lookup_status_missing_field(
-    SimaPluginManifestLookupStatus status) {
+static inline const gchar*
+sima_plugin_manifest_lookup_status_missing_field(SimaPluginManifestLookupStatus status) {
   switch (status) {
   case SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT:
   case SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_WRONG_CONTEXT_TYPE:
@@ -494,14 +494,12 @@ static inline GType sima_plugin_static_manifest_handle_get_type(void) {
   if (type != 0) {
     return type;
   }
-  return g_boxed_type_register_static(kTypeName,
-                                      sima_plugin_static_manifest_handle_boxed_copy,
+  return g_boxed_type_register_static(kTypeName, sima_plugin_static_manifest_handle_boxed_copy,
                                       sima_plugin_static_manifest_handle_boxed_free);
 }
 
-static inline void sima_plugin_manifest_set_lookup_status(
-    SimaPluginManifestLookupStatus* status,
-    SimaPluginManifestLookupStatus value) {
+static inline void sima_plugin_manifest_set_lookup_status(SimaPluginManifestLookupStatus* status,
+                                                          SimaPluginManifestLookupStatus value) {
   if (status) {
     *status = value;
   }
@@ -545,14 +543,12 @@ sima_plugin_manifest_context_handle(const GstContext* context) {
 static inline const SimaPluginStaticManifestAccessor*
 sima_plugin_manifest_context_accessor_checked(const GstContext* context,
                                               SimaPluginManifestLookupStatus* status) {
-  const bool debug_manifest_context =
-      ([]() -> bool {
-        const char* raw = getenv("SIMA_MANIFEST_CONTEXT_DEBUG");
-        return raw && *raw && strcmp(raw, "0") != 0;
-      })();
+  const bool debug_manifest_context = ([]() -> bool {
+    const char* raw = getenv("SIMA_MANIFEST_CONTEXT_DEBUG");
+    return raw && *raw && strcmp(raw, "0") != 0;
+  })();
   if (!context) {
-    sima_plugin_manifest_set_lookup_status(status,
-                                           SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT);
+    sima_plugin_manifest_set_lookup_status(status, SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT);
     return NULL;
   }
   if (!sima_plugin_manifest_context_matches(context)) {
@@ -571,14 +567,12 @@ sima_plugin_manifest_context_accessor_checked(const GstContext* context,
       fprintf(stderr,
               "[manifest-context-debug] lookup=handle_abi_mismatch context=%p "
               "handle=%p handle_abi=%u expected_abi=%u user_data=%p\n",
-              static_cast<const void*>(context),
-              static_cast<const void*>(handle),
+              static_cast<const void*>(context), static_cast<const void*>(handle),
               static_cast<unsigned>(handle->abi_version),
-              static_cast<unsigned>(SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION),
-              handle->user_data);
+              static_cast<unsigned>(SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION), handle->user_data);
     }
-    sima_plugin_manifest_set_lookup_status(
-        status, SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ABI_MISMATCH);
+    sima_plugin_manifest_set_lookup_status(status,
+                                           SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ABI_MISMATCH);
     return NULL;
   }
   if (!handle->ref || !handle->unref || !handle->accessor) {
@@ -588,8 +582,8 @@ sima_plugin_manifest_context_accessor_checked(const GstContext* context,
   }
   const auto* accessor = handle->accessor(handle->user_data);
   if (!accessor) {
-    sima_plugin_manifest_set_lookup_status(
-        status, SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ACCESSOR_NULL);
+    sima_plugin_manifest_set_lookup_status(status,
+                                           SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ACCESSOR_NULL);
     return NULL;
   }
   if (accessor->abi_version != SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION) {
@@ -597,15 +591,12 @@ sima_plugin_manifest_context_accessor_checked(const GstContext* context,
       fprintf(stderr,
               "[manifest-context-debug] lookup=accessor_abi_mismatch context=%p "
               "handle=%p accessor=%p accessor_abi=%u expected_abi=%u user_data=%p\n",
-              static_cast<const void*>(context),
-              static_cast<const void*>(handle),
-              static_cast<const void*>(accessor),
-              static_cast<unsigned>(accessor->abi_version),
-              static_cast<unsigned>(SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION),
-              accessor->user_data);
+              static_cast<const void*>(context), static_cast<const void*>(handle),
+              static_cast<const void*>(accessor), static_cast<unsigned>(accessor->abi_version),
+              static_cast<unsigned>(SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION), accessor->user_data);
     }
-    sima_plugin_manifest_set_lookup_status(
-        status, SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ABI_MISMATCH);
+    sima_plugin_manifest_set_lookup_status(status,
+                                           SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_HANDLE_ABI_MISMATCH);
     return NULL;
   }
   sima_plugin_manifest_set_lookup_status(status, SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_OK);
@@ -617,8 +608,7 @@ sima_plugin_manifest_context_accessor(const GstContext* context) {
   return sima_plugin_manifest_context_accessor_checked(context, NULL);
 }
 
-static inline const gchar* sima_plugin_manifest_stage_key(
-    const SimaPluginStageSpec* stage) {
+static inline const gchar* sima_plugin_manifest_stage_key(const SimaPluginStageSpec* stage) {
   if (!stage) {
     return NULL;
   }
@@ -631,9 +621,9 @@ static inline const gchar* sima_plugin_manifest_stage_key(
   return NULL;
 }
 
-static inline gboolean sima_plugin_manifest_stage_matches_payload_kind(
-    const SimaPluginStageSpec* stage,
-    SimaPluginStagePayloadKind expected_payload_kind) {
+static inline gboolean
+sima_plugin_manifest_stage_matches_payload_kind(const SimaPluginStageSpec* stage,
+                                                SimaPluginStagePayloadKind expected_payload_kind) {
   if (!stage) {
     return FALSE;
   }
@@ -641,16 +631,18 @@ static inline gboolean sima_plugin_manifest_stage_matches_payload_kind(
          stage->payload_kind == expected_payload_kind;
 }
 
-static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_by_element_name(
-    const SimaPluginStaticManifestAccessor* accessor, const gchar* element_name) {
+static inline const SimaPluginStageSpec*
+sima_plugin_manifest_stage_by_element_name(const SimaPluginStaticManifestAccessor* accessor,
+                                           const gchar* element_name) {
   if (!accessor || !accessor->stage_by_element_name || !element_name || !*element_name) {
     return NULL;
   }
   return accessor->stage_by_element_name(accessor->user_data, element_name);
 }
 
-static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_by_logical_id(
-    const SimaPluginStaticManifestAccessor* accessor, const gchar* logical_stage_id) {
+static inline const SimaPluginStageSpec*
+sima_plugin_manifest_stage_by_logical_id(const SimaPluginStaticManifestAccessor* accessor,
+                                         const gchar* logical_stage_id) {
   if (!accessor || !accessor->stage_by_logical_stage_id || !logical_stage_id ||
       !*logical_stage_id) {
     return NULL;
@@ -658,9 +650,10 @@ static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_by_logical_i
   return accessor->stage_by_logical_stage_id(accessor->user_data, logical_stage_id);
 }
 
-static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_lookup(
-    const SimaPluginStaticManifestAccessor* accessor, const gchar* stage_id_or_name,
-    const gchar* element_name_fallback) {
+static inline const SimaPluginStageSpec*
+sima_plugin_manifest_stage_lookup(const SimaPluginStaticManifestAccessor* accessor,
+                                  const gchar* stage_id_or_name,
+                                  const gchar* element_name_fallback) {
   const SimaPluginStageSpec* out = NULL;
   if (stage_id_or_name && *stage_id_or_name) {
     out = sima_plugin_manifest_stage_by_logical_id(accessor, stage_id_or_name);
@@ -676,8 +669,7 @@ static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_lookup(
 
 static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_lookup_typed(
     const SimaPluginStaticManifestAccessor* accessor, const gchar* stage_id_or_name,
-    const gchar* element_name_fallback,
-    SimaPluginStagePayloadKind expected_payload_kind) {
+    const gchar* element_name_fallback, SimaPluginStagePayloadKind expected_payload_kind) {
   const SimaPluginStageSpec* stage =
       sima_plugin_manifest_stage_lookup(accessor, stage_id_or_name, element_name_fallback);
   if (!sima_plugin_manifest_stage_matches_payload_kind(stage, expected_payload_kind)) {
@@ -687,24 +679,19 @@ static inline const SimaPluginStageSpec* sima_plugin_manifest_stage_lookup_typed
 }
 
 static inline const SimaPluginStageSpec* sima_plugin_manifest_context_stage_lookup_typed_checked(
-    const GstContext* context, const gchar* stage_id_or_name,
-    const gchar* element_name_fallback,
-    SimaPluginStagePayloadKind expected_payload_kind,
-    SimaPluginManifestLookupStatus* status);
+    const GstContext* context, const gchar* stage_id_or_name, const gchar* element_name_fallback,
+    SimaPluginStagePayloadKind expected_payload_kind, SimaPluginManifestLookupStatus* status);
 
 static inline const SimaPluginStageSpec* sima_plugin_manifest_context_stage_lookup_typed(
-    const GstContext* context, const gchar* stage_id_or_name,
-    const gchar* element_name_fallback,
+    const GstContext* context, const gchar* stage_id_or_name, const gchar* element_name_fallback,
     SimaPluginStagePayloadKind expected_payload_kind) {
   return sima_plugin_manifest_context_stage_lookup_typed_checked(
       context, stage_id_or_name, element_name_fallback, expected_payload_kind, NULL);
 }
 
 static inline const SimaPluginStageSpec* sima_plugin_manifest_context_stage_lookup_typed_checked(
-    const GstContext* context, const gchar* stage_id_or_name,
-    const gchar* element_name_fallback,
-    SimaPluginStagePayloadKind expected_payload_kind,
-    SimaPluginManifestLookupStatus* status) {
+    const GstContext* context, const gchar* stage_id_or_name, const gchar* element_name_fallback,
+    SimaPluginStagePayloadKind expected_payload_kind, SimaPluginManifestLookupStatus* status) {
   const SimaPluginStaticManifestAccessor* accessor =
       sima_plugin_manifest_context_accessor_checked(context, status);
   if (!accessor) {
@@ -726,8 +713,8 @@ static inline const SimaPluginStageSpec* sima_plugin_manifest_context_stage_look
   return stage;
 }
 
-static inline const gchar* sima_plugin_manifest_stage_name_from_id(
-    const SimaPluginStageSpec* stage, gint name_id) {
+static inline const gchar* sima_plugin_manifest_stage_name_from_id(const SimaPluginStageSpec* stage,
+                                                                   gint name_id) {
   if (!stage || !stage->name_table || name_id < 0 ||
       static_cast<guint>(name_id) >= stage->name_table_len) {
     return NULL;
@@ -735,8 +722,9 @@ static inline const gchar* sima_plugin_manifest_stage_name_from_id(
   return stage->name_table[name_id];
 }
 
-static inline gint sima_plugin_stage_output_route_physical_index(
-    const SimaPluginStageSpec* stage, gint logical_index, gint output_slot) {
+static inline gint sima_plugin_stage_output_route_physical_index(const SimaPluginStageSpec* stage,
+                                                                 gint logical_index,
+                                                                 gint output_slot) {
   if (!stage || !stage->logical_outputs || stage->logical_outputs_len == 0U) {
     return -1;
   }
@@ -752,9 +740,10 @@ static inline gint sima_plugin_stage_output_route_physical_index(
   return -1;
 }
 
-static inline gint sima_plugin_stage_output_route_logical_index(
-    const SimaPluginStageSpec* stage, gint output_slot, const gchar* cm_output_name,
-    const gchar* segment_name) {
+static inline gint sima_plugin_stage_output_route_logical_index(const SimaPluginStageSpec* stage,
+                                                                gint output_slot,
+                                                                const gchar* cm_output_name,
+                                                                const gchar* segment_name) {
   if (!stage || !stage->logical_outputs || stage->logical_outputs_len == 0U) {
     return -1;
   }
@@ -788,7 +777,6 @@ static inline gint sima_plugin_stage_output_route_logical_index(
 
   return -1;
 }
-
 
 #ifdef __cplusplus
 } /* extern "C" */

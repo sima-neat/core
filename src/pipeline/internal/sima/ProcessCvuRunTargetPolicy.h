@@ -22,8 +22,8 @@ namespace simaai::neat::pipeline_internal::sima {
 
 /// Which executor a process-CVU stage actually runs on after policy resolution.
 enum class ProcessCvuResolvedExecBackend : std::uint8_t {
-  Evxx = 0,  ///< Run on the on-die EVxx CVU.
-  A65 = 1,   ///< Run on the A65 host fallback.
+  Evxx = 0, ///< Run on the on-die EVxx CVU.
+  A65 = 1,  ///< Run on the A65 host fallback.
 };
 
 /**
@@ -33,11 +33,12 @@ enum class ProcessCvuResolvedExecBackend : std::uint8_t {
  * `AUTO` policy resolves to for this stage.
  */
 struct ProcessCvuBackendCapabilities {
-  bool supports_ev74 = true;  ///< Stage has an EV74 path.
-  bool supports_a65 = true;   ///< Stage has an A65 path.
-  std::string auto_run_target = "AUTO";  ///< Run-target token chosen by `AUTO`.
-  ProcessCvuResolvedExecBackend auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;  ///< Backend chosen by `AUTO`.
-  std::string reason;  ///< Why `AUTO` resolved this way (diagnostics).
+  bool supports_ev74 = true;            ///< Stage has an EV74 path.
+  bool supports_a65 = true;             ///< Stage has an A65 path.
+  std::string auto_run_target = "AUTO"; ///< Run-target token chosen by `AUTO`.
+  ProcessCvuResolvedExecBackend auto_exec_backend =
+      ProcessCvuResolvedExecBackend::Evxx; ///< Backend chosen by `AUTO`.
+  std::string reason;                      ///< Why `AUTO` resolved this way (diagnostics).
 };
 
 /**
@@ -47,11 +48,12 @@ struct ProcessCvuBackendCapabilities {
  * and whether a fallback path was taken.
  */
 struct ProcessCvuBackendDecision {
-  std::string requested_run_target = "AUTO";   ///< What the user asked for.
-  std::string effective_run_target = "AUTO";   ///< The token actually applied.
-  ProcessCvuResolvedExecBackend resolved_exec_backend = ProcessCvuResolvedExecBackend::Evxx;  ///< Resolved backend.
-  std::string reason;       ///< Human-readable reason for the decision (for diagnostics).
-  bool used_fallback = false;  ///< True if the requested target was unavailable and we fell back.
+  std::string requested_run_target = "AUTO"; ///< What the user asked for.
+  std::string effective_run_target = "AUTO"; ///< The token actually applied.
+  ProcessCvuResolvedExecBackend resolved_exec_backend =
+      ProcessCvuResolvedExecBackend::Evxx; ///< Resolved backend.
+  std::string reason;         ///< Human-readable reason for the decision (for diagnostics).
+  bool used_fallback = false; ///< True if the requested target was unavailable and we fell back.
 };
 
 /// Normalize a run-target token (case-fold, alias collapse) — e.g., `"a65"` -> `"A65"`.
@@ -61,14 +63,14 @@ std::string normalize_processcvu_run_target_token(std::string value);
 const char* processcvu_resolved_exec_backend_token(ProcessCvuResolvedExecBackend backend);
 
 /// Inspect a stage payload and report what backends it can run on.
-ProcessCvuBackendCapabilities processcvu_backend_capabilities(
-    const ProcessCvuStagePayload& payload);
+ProcessCvuBackendCapabilities
+processcvu_backend_capabilities(const ProcessCvuStagePayload& payload);
 
 /// Compute the final run-target decision for a stage given the compile input.
-ProcessCvuBackendDecision resolve_processcvu_backend_decision(
-    const ProcessCvuStagePayload& payload,
-    const ContractCompileInput& compile_input,
-    std::string_view stage_identity = {});
+ProcessCvuBackendDecision
+resolve_processcvu_backend_decision(const ProcessCvuStagePayload& payload,
+                                    const ContractCompileInput& compile_input,
+                                    std::string_view stage_identity = {});
 
 /// Resolve the run-target and stamp the result back onto the stage payload in place.
 void resolve_processcvu_run_target(ProcessCvuStagePayload* payload,

@@ -86,8 +86,9 @@ RUN_TEST("unit_tensorbuffer_packed_runtime_parent_test", ([] {
                    "packed runtime publish view should expose the canonical packed parent name");
            require(view.tensors.size() == 2U,
                    "packed runtime publish view should preserve both logical outputs");
-           require(view.tensors[0].memory_index == 0 && view.tensors[1].memory_index == 0,
-                   "packed runtime publish view should bind all logical outputs to one runtime memory");
+           require(
+               view.tensors[0].memory_index == 0 && view.tensors[1].memory_index == 0,
+               "packed runtime publish view should bind all logical outputs to one runtime memory");
            require(view.tensors[0].byte_offset == 0,
                    "first packed logical output should start at the head of the runtime buffer");
            require(view.tensors[1].byte_offset == 4,

@@ -117,8 +117,8 @@ std::vector<double> tensor_to_scores(const simaai::neat::Tensor& tensor) {
   auto reserve_count = [&](std::size_t elem_size) {
     if (elem_size == 0 || (map.size_bytes % elem_size) != 0) {
       throw std::runtime_error("output tensor byte size is incompatible with dtype " +
-                               dtype_name(tensor.dtype) + ": bytes=" +
-                               std::to_string(map.size_bytes));
+                               dtype_name(tensor.dtype) +
+                               ": bytes=" + std::to_string(map.size_bytes));
     }
     out.reserve(map.size_bytes / elem_size);
   };
@@ -270,8 +270,7 @@ uint32_t read_be32(const std::vector<uint8_t>& data, std::size_t offset, const s
   }
   return (static_cast<uint32_t>(data[offset]) << 24) |
          (static_cast<uint32_t>(data[offset + 1]) << 16) |
-         (static_cast<uint32_t>(data[offset + 2]) << 8) |
-         static_cast<uint32_t>(data[offset + 3]);
+         (static_cast<uint32_t>(data[offset + 2]) << 8) | static_cast<uint32_t>(data[offset + 3]);
 }
 
 #if defined(SIMA_WITH_OPENCV)
@@ -360,8 +359,7 @@ int main(int argc, char** argv) {
   try {
     const bool run_flag = sima_test::has_flag(argc, argv, "--run");
     if (!run_flag && !env_flag("SIMA_RUN_MNIST_PREPROC_CHANNELS1")) {
-      return skip_long_test(
-          "set SIMA_RUN_MNIST_PREPROC_CHANNELS1=1 or pass --run to execute");
+      return skip_long_test("set SIMA_RUN_MNIST_PREPROC_CHANNELS1=1 or pass --run to execute");
     }
 
     simaai::neat::gst_init_once();

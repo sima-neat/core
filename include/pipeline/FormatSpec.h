@@ -33,26 +33,26 @@ namespace simaai::neat {
  * @see FormatSpec
  */
 enum class FormatTag {
-  Auto = 0,         ///< Unset / framework decides.
-  RGB,              ///< Packed RGB, 8 bits per channel.
-  BGR,              ///< Packed BGR, 8 bits per channel (OpenCV default).
-  GRAY8,            ///< Single-plane 8-bit grayscale.
-  NV12,             ///< YUV 4:2:0, Y plane + interleaved UV plane.
-  I420,             ///< YUV 4:2:0, three planes (Y, U, V).
-  YUYV,             ///< YUV 4:2:2 packed (Y0 U Y1 V).
-  ENCODED,          ///< Generic encoded payload (codec from caps).
-  H264,             ///< H.264 access unit / NAL stream.
-  MLA,              ///< MLA-tessellated tensor payload.
-  BBOX,             ///< Decoded bounding-box byte stream.
-  ARGMAX,           ///< Argmax/segmentation map.
-  DETESSDEQUANT,    ///< Detessellated + dequantized tensor payload.
-  FP32,             ///< IEEE-754 32-bit float tensor.
-  INT8,             ///< Signed 8-bit integer tensor.
-  UINT8,            ///< Unsigned 8-bit integer tensor.
-  BF16,             ///< bfloat16 tensor.
-  EVXX_FLOAT32,     ///< EV-side alias for FP32.
-  EVXX_INT8,        ///< EV-side alias for INT8.
-  EVXX_BFLOAT16,    ///< EV-side alias for BF16.
+  Auto = 0,      ///< Unset / framework decides.
+  RGB,           ///< Packed RGB, 8 bits per channel.
+  BGR,           ///< Packed BGR, 8 bits per channel (OpenCV default).
+  GRAY8,         ///< Single-plane 8-bit grayscale.
+  NV12,          ///< YUV 4:2:0, Y plane + interleaved UV plane.
+  I420,          ///< YUV 4:2:0, three planes (Y, U, V).
+  YUYV,          ///< YUV 4:2:2 packed (Y0 U Y1 V).
+  ENCODED,       ///< Generic encoded payload (codec from caps).
+  H264,          ///< H.264 access unit / NAL stream.
+  MLA,           ///< MLA-tessellated tensor payload.
+  BBOX,          ///< Decoded bounding-box byte stream.
+  ARGMAX,        ///< Argmax/segmentation map.
+  DETESSDEQUANT, ///< Detessellated + dequantized tensor payload.
+  FP32,          ///< IEEE-754 32-bit float tensor.
+  INT8,          ///< Signed 8-bit integer tensor.
+  UINT8,         ///< Unsigned 8-bit integer tensor.
+  BF16,          ///< bfloat16 tensor.
+  EVXX_FLOAT32,  ///< EV-side alias for FP32.
+  EVXX_INT8,     ///< EV-side alias for INT8.
+  EVXX_BFLOAT16, ///< EV-side alias for BF16.
 };
 
 /// @brief Stable, canonical string token for @p tag (empty string for `Auto`).
@@ -249,9 +249,8 @@ inline bool is_raw_video_format(FormatTag tag) {
 inline bool is_tensor_payload_format(FormatTag tag) {
   return tag == FormatTag::MLA || tag == FormatTag::BBOX || tag == FormatTag::ARGMAX ||
          tag == FormatTag::DETESSDEQUANT || tag == FormatTag::FP32 || tag == FormatTag::INT8 ||
-         tag == FormatTag::UINT8 || tag == FormatTag::BF16 ||
-         tag == FormatTag::EVXX_FLOAT32 || tag == FormatTag::EVXX_INT8 ||
-         tag == FormatTag::EVXX_BFLOAT16;
+         tag == FormatTag::UINT8 || tag == FormatTag::BF16 || tag == FormatTag::EVXX_FLOAT32 ||
+         tag == FormatTag::EVXX_INT8 || tag == FormatTag::EVXX_BFLOAT16;
 }
 
 /**
@@ -266,7 +265,7 @@ inline bool is_tensor_payload_format(FormatTag tag) {
  * @see FormatTag
  */
 struct FormatSpec {
-  FormatTag tag = FormatTag::Auto;  ///< Underlying tag (defaults to unset).
+  FormatTag tag = FormatTag::Auto; ///< Underlying tag (defaults to unset).
 
   /// @brief Default-construct as unset (`Auto`).
   constexpr FormatSpec() = default;
@@ -275,7 +274,8 @@ struct FormatSpec {
   /// @brief Parse from a string token (case-insensitive); unknown tokens become `Auto`.
   FormatSpec(const std::string& value) : tag(format_tag_from_string(value)) {}
   /// @brief Parse from a C string token; null pointer treated as empty.
-  FormatSpec(const char* value) : tag(format_tag_from_string(value ? std::string(value) : std::string{})) {}
+  FormatSpec(const char* value)
+      : tag(format_tag_from_string(value ? std::string(value) : std::string{})) {}
 
   /// @brief Assign from a `FormatTag`.
   FormatSpec& operator=(FormatTag value) {

@@ -22,12 +22,9 @@ selectors_for_logical_inputs(const CompiledRuntimeContract& contract);
 
 bool prepare_physical_inputs(const CompiledRuntimeContract& contract,
                              const simaai::gst::TensorBufferView& upstream_view,
-                             std::vector<std::uint8_t>* out_bytes,
-                             std::string* err);
+                             std::vector<std::uint8_t>* out_bytes, std::string* err);
 
-bool publish_logical_outputs(const CompiledRuntimeContract& contract,
-                             const std::string& stage_key,
-                             simaai::gst::TensorBufferView* out,
-                             std::string* err);
+bool publish_logical_outputs(const CompiledRuntimeContract& contract, const std::string& stage_key,
+                             simaai::gst::TensorBufferView* out, std::string* err);
 
 } // namespace simaai::neat::pipeline_internal::packedio

@@ -25,26 +25,27 @@ namespace simaai::neat {
  */
 struct PCIeSinkOptions {
   // Core properties (simaaipciesink)
-  std::string config_file;                  ///< Optional simaaipciesink config file path.
-  std::string data_buf_name = "overlay";    ///< Name of the host-side buffer that receives data.
-  int data_buffer_size = 4194304;           ///< Data buffer size in bytes (default 4 MiB).
-  int num_buffers = 5;                      ///< Number of buffers in the pool.
-  int queue = 0;                            ///< Queue depth for outgoing samples.
+  std::string config_file;               ///< Optional simaaipciesink config file path.
+  std::string data_buf_name = "overlay"; ///< Name of the host-side buffer that receives data.
+  int data_buffer_size = 4194304;        ///< Data buffer size in bytes (default 4 MiB).
+  int num_buffers = 5;                   ///< Number of buffers in the pool.
+  int queue = 0;                         ///< Queue depth for outgoing samples.
 
   // Multi-buffer mode
-  std::string param_buf_name = "camera_params"; ///< Auxiliary parameter buffer name (multi-buffer mode).
-  int param_buffer_size = 48;                   ///< Parameter buffer size in bytes (multi-buffer mode).
-  bool use_multi_buffers = false;               ///< Enable the multi-buffer (data + params) protocol.
+  std::string param_buf_name =
+      "camera_params";            ///< Auxiliary parameter buffer name (multi-buffer mode).
+  int param_buffer_size = 48;     ///< Parameter buffer size in bytes (multi-buffer mode).
+  bool use_multi_buffers = false; ///< Enable the multi-buffer (data + params) protocol.
 
   // Timing controls
-  bool sync = true;                  ///< Sync to pipeline clock when delivering buffers.
-  bool async_state = true;           ///< Allow async state changes on this sink.
-  int64_t max_lateness_ns = -1;      ///< Max lateness in ns; `-1` = unlimited (no late-frame drop).
+  bool sync = true;             ///< Sync to pipeline clock when delivering buffers.
+  bool async_state = true;      ///< Allow async state changes on this sink.
+  int64_t max_lateness_ns = -1; ///< Max lateness in ns; `-1` = unlimited (no late-frame drop).
   uint64_t processing_deadline_ns = 20000000; ///< Processing deadline in ns (default 20 ms).
 
   // Optional diagnostics
-  bool transmit_kpi = false;         ///< If true, transmit KPI/diagnostic packets alongside data.
-  bool qos = false;                  ///< Enable QoS reporting on this sink.
+  bool transmit_kpi = false; ///< If true, transmit KPI/diagnostic packets alongside data.
+  bool qos = false;          ///< Enable QoS reporting on this sink.
 };
 
 /**

@@ -19,13 +19,14 @@
 namespace simaai::neat::graph {
 
 /**
- * @brief Per-edge spec captured by the compiler — the propagated `OutputSpec` and a completeness flag.
+ * @brief Per-edge spec captured by the compiler — the propagated `OutputSpec` and a completeness
+ * flag.
  *
  * @ingroup graph
  */
 struct EdgeSpec {
-  OutputSpec spec;        ///< Propagated output spec on this edge.
-  bool complete = false;  ///< True iff the spec is fully specified after propagation.
+  OutputSpec spec;       ///< Propagated output spec on this edge.
+  bool complete = false; ///< True iff the spec is fully specified after propagation.
 };
 
 /**
@@ -37,16 +38,18 @@ struct EdgeSpec {
  * @ingroup graph
  */
 struct CompiledPipelineSegment {
-  int id = -1;                                  ///< Stable segment id.
-  std::vector<NodeId> node_ids;                 ///< Runtime-graph node ids merged into this segment.
-  simaai::neat::NodeGroup group;                ///< Builder `NodeGroup` representing the merged segment.
-  std::vector<std::size_t> input_edges;         ///< Indices into `CompiledGraph::edges` feeding the segment.
-  std::vector<std::size_t> output_edges;        ///< Indices into `CompiledGraph::edges` leaving the segment.
-  bool source_like = false;                     ///< True iff the segment starts with a source-like node.
-  OutputSpec input_spec;                        ///< Spec entering the segment.
-  bool input_complete = false;                  ///< True iff `input_spec` is fully specified.
-  OutputSpec output_spec;                       ///< Spec leaving the segment.
-  bool output_complete = false;                 ///< True iff `output_spec` is fully specified.
+  int id = -1;                   ///< Stable segment id.
+  std::vector<NodeId> node_ids;  ///< Runtime-graph node ids merged into this segment.
+  simaai::neat::NodeGroup group; ///< Builder `NodeGroup` representing the merged segment.
+  std::vector<std::size_t>
+      input_edges; ///< Indices into `CompiledGraph::edges` feeding the segment.
+  std::vector<std::size_t>
+      output_edges;             ///< Indices into `CompiledGraph::edges` leaving the segment.
+  bool source_like = false;     ///< True iff the segment starts with a source-like node.
+  OutputSpec input_spec;        ///< Spec entering the segment.
+  bool input_complete = false;  ///< True iff `input_spec` is fully specified.
+  OutputSpec output_spec;       ///< Spec leaving the segment.
+  bool output_complete = false; ///< True iff `output_spec` is fully specified.
 };
 
 /**
@@ -55,8 +58,8 @@ struct CompiledPipelineSegment {
  * @ingroup graph
  */
 struct CompiledStageNode {
-  NodeId node_id = kInvalidNode;                       ///< Runtime-graph node id.
-  std::shared_ptr<graph::nodes::StageNode> node;       ///< The stage node itself.
+  NodeId node_id = kInvalidNode;                 ///< Runtime-graph node id.
+  std::shared_ptr<graph::nodes::StageNode> node; ///< The stage node itself.
 };
 
 /**

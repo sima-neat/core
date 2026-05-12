@@ -55,20 +55,15 @@ bool manifest_context_debug_relevant_element(GstElement* element) {
          factory.find("neatboxdecode") != std::string::npos;
 }
 
-void manifest_context_debug_log(const char* action,
-                                GstElement* element,
-                                GstContext* context,
+void manifest_context_debug_log(const char* action, GstElement* element, GstContext* context,
                                 const char* extra = nullptr) {
   if (!manifest_context_debug_enabled() || !manifest_context_debug_relevant_element(element)) {
     return;
   }
   std::fprintf(stderr,
                "[manifest-context-debug] action=%s element=%s factory=%s context=%p extra=%s\n",
-               action ? action : "<unset>",
-               element ? GST_ELEMENT_NAME(element) : "<null>",
-               element_factory_name(element),
-               static_cast<void*>(context),
-               extra ? extra : "");
+               action ? action : "<unset>", element ? GST_ELEMENT_NAME(element) : "<null>",
+               element_factory_name(element), static_cast<void*>(context), extra ? extra : "");
 }
 
 std::string trim_copy_local(const std::string& s) {
@@ -335,7 +330,8 @@ std::vector<PipelineElementSpec> parse_pipeline_elements(const std::string& pipe
                batch_snake.has_value()) {
       spec.batch_size_property = *batch_snake;
     }
-    if (const auto batch_model = parse_int_property(seg, "batch-sz-model"); batch_model.has_value()) {
+    if (const auto batch_model = parse_int_property(seg, "batch-sz-model");
+        batch_model.has_value()) {
       spec.batch_sz_model_property = *batch_model;
     } else if (const auto batch_model_snake = parse_int_property(seg, "batch_sz_model");
                batch_model_snake.has_value()) {
@@ -530,8 +526,7 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
     j["elf_ofm_symbol_names"] = spec.elf_ofm_symbol_names;
   }
 
-  if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
-      !spec.processcvu.run_target.empty()) {
+  if (spec.payload_kind == StagePayloadKind::ProcessCvu && !spec.processcvu.run_target.empty()) {
     j["processcvu_run_target"] = spec.processcvu.run_target;
   }
   if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
@@ -544,11 +539,9 @@ nlohmann::json to_json(const StageStaticSpec& spec) {
   }
   if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
       !spec.processcvu.run_target_resolution_reason.empty()) {
-    j["processcvu_run_target_resolution_reason"] =
-        spec.processcvu.run_target_resolution_reason;
+    j["processcvu_run_target_resolution_reason"] = spec.processcvu.run_target_resolution_reason;
   }
-  if (spec.payload_kind == StagePayloadKind::ProcessCvu &&
-      spec.processcvu.opt_flags != 0U) {
+  if (spec.payload_kind == StagePayloadKind::ProcessCvu && spec.processcvu.opt_flags != 0U) {
     j["processcvu_opt_flags"] = spec.processcvu.opt_flags;
   }
 
@@ -652,8 +645,7 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         {
           int materialization_kind = static_cast<int>(TensorMaterializationKind::Direct);
           read_int_key(in_j, "materialization_kind", materialization_kind);
-          input.materialization_kind =
-              static_cast<TensorMaterializationKind>(materialization_kind);
+          input.materialization_kind = static_cast<TensorMaterializationKind>(materialization_kind);
         }
         if (in_j.contains("quant") && in_j["quant"].is_object()) {
           QuantStaticSpec quant;
@@ -718,7 +710,8 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         if (in_j.contains("memory_flags") && in_j["memory_flags"].is_number_unsigned()) {
           physical.memory_flags = in_j["memory_flags"].get<std::uint64_t>();
         } else if (in_j.contains("memory_flags") && in_j["memory_flags"].is_number_integer()) {
-          physical.memory_flags = static_cast<std::uint64_t>(in_j["memory_flags"].get<std::int64_t>());
+          physical.memory_flags =
+              static_cast<std::uint64_t>(in_j["memory_flags"].get<std::int64_t>());
         }
         read_int_key(in_j, "segment_name_id", physical.segment_name_id);
         read_string_key(in_j, "segment_name", physical.segment_name);
@@ -739,9 +732,11 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         } else if (out_j.contains("size_bytes") && out_j["size_bytes"].is_number_integer()) {
           physical.size_bytes = static_cast<std::uint64_t>(out_j["size_bytes"].get<std::int64_t>());
         }
-        if (out_j.contains("source_byte_offset") && out_j["source_byte_offset"].is_number_integer()) {
+        if (out_j.contains("source_byte_offset") &&
+            out_j["source_byte_offset"].is_number_integer()) {
           physical.source_byte_offset = out_j["source_byte_offset"].get<std::int64_t>();
-        } else if (out_j.contains("source_byte_offset") && out_j["source_byte_offset"].is_number()) {
+        } else if (out_j.contains("source_byte_offset") &&
+                   out_j["source_byte_offset"].is_number()) {
           physical.source_byte_offset =
               static_cast<std::int64_t>(out_j["source_byte_offset"].get<double>());
         }
@@ -751,7 +746,8 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         if (out_j.contains("memory_flags") && out_j["memory_flags"].is_number_unsigned()) {
           physical.memory_flags = out_j["memory_flags"].get<std::uint64_t>();
         } else if (out_j.contains("memory_flags") && out_j["memory_flags"].is_number_integer()) {
-          physical.memory_flags = static_cast<std::uint64_t>(out_j["memory_flags"].get<std::int64_t>());
+          physical.memory_flags =
+              static_cast<std::uint64_t>(out_j["memory_flags"].get<std::int64_t>());
         }
         read_int_key(out_j, "segment_name_id", physical.segment_name_id);
         read_string_key(out_j, "segment_name", physical.segment_name);
@@ -885,8 +881,7 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
       int processcvu_opt_flags = 0;
       if (read_int_key(stage_j, "processcvu_opt_flags", processcvu_opt_flags) &&
           processcvu_opt_flags >= 0) {
-        stage.processcvu.opt_flags =
-            static_cast<std::uint32_t>(processcvu_opt_flags);
+        stage.processcvu.opt_flags = static_cast<std::uint32_t>(processcvu_opt_flags);
       }
     }
 
@@ -1043,8 +1038,7 @@ private:
     }
   }
 
-  static SimaPluginProcessCvuGraphFamily processcvu_family_to_abi(
-      ProcessCvuGraphFamily family) {
+  static SimaPluginProcessCvuGraphFamily processcvu_family_to_abi(ProcessCvuGraphFamily family) {
     switch (family) {
     case ProcessCvuGraphFamily::Preproc:
       return SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_PREPROC;
@@ -1072,8 +1066,8 @@ private:
     }
   }
 
-  static SimaPluginProcessCvuOutputTransportKind processcvu_output_transport_to_abi(
-      ProcessCvuOutputTransportKind kind) {
+  static SimaPluginProcessCvuOutputTransportKind
+  processcvu_output_transport_to_abi(ProcessCvuOutputTransportKind kind) {
     switch (kind) {
     case ProcessCvuOutputTransportKind::Dense:
       return SIMA_PLUGIN_PROCESSCVU_OUTPUT_TRANSPORT_DENSE;
@@ -1085,8 +1079,8 @@ private:
     }
   }
 
-  static SimaPluginProcessCvuOutputSemanticKind processcvu_output_semantic_to_abi(
-      ProcessCvuOutputSemanticKind kind) {
+  static SimaPluginProcessCvuOutputSemanticKind
+  processcvu_output_semantic_to_abi(ProcessCvuOutputSemanticKind kind) {
     switch (kind) {
     case ProcessCvuOutputSemanticKind::Image:
       return SIMA_PLUGIN_PROCESSCVU_OUTPUT_SEMANTIC_IMAGE;
@@ -1109,13 +1103,14 @@ private:
 
     if (pipeline_internal::env_bool("SIMA_RENDER_STAGE_DEBUG", false) &&
         stage.logical_stage_id.find("post_dequant") != std::string::npos) {
-      std::fprintf(stderr,
-                   "[stage-storage-debug] stage=%s id=%s payload_kind=%d logical_inputs=%zu "
-                   "logical_outputs=%zu output_order=%zu physical_inputs=%zu physical_outputs=%zu\n",
-                   stage.element_name.c_str(), stage.logical_stage_id.c_str(),
-                   static_cast<int>(stage.payload_kind), stage.logical_inputs.size(),
-                   stage.logical_outputs.size(), stage.output_order.size(),
-                   stage.physical_inputs.size(), stage.physical_outputs.size());
+      std::fprintf(
+          stderr,
+          "[stage-storage-debug] stage=%s id=%s payload_kind=%d logical_inputs=%zu "
+          "logical_outputs=%zu output_order=%zu physical_inputs=%zu physical_outputs=%zu\n",
+          stage.element_name.c_str(), stage.logical_stage_id.c_str(),
+          static_cast<int>(stage.payload_kind), stage.logical_inputs.size(),
+          stage.logical_outputs.size(), stage.output_order.size(), stage.physical_inputs.size(),
+          stage.physical_outputs.size());
     }
     if (pipeline_internal::env_bool("SIMA_MLA_STAGE_STORAGE_DEBUG", false) &&
         stage.payload_kind == StagePayloadKind::ProcessMla) {
@@ -1125,13 +1120,13 @@ private:
                    stage.physical_outputs.size(), stage.logical_outputs.size());
       for (std::size_t i = 0; i < stage.physical_outputs.size(); ++i) {
         const auto& physical = stage.physical_outputs[i];
-        std::fprintf(stderr,
-                     "[stage-storage-mla]   physical[%zu] idx=%d seg=%s size=%llu src_idx=%d src_off=%lld\n",
-                     i, physical.physical_index,
-                     physical.segment_name.empty() ? "<empty>" : physical.segment_name.c_str(),
-                     static_cast<unsigned long long>(physical.size_bytes),
-                     physical.source_physical_index,
-                     static_cast<long long>(physical.source_byte_offset));
+        std::fprintf(
+            stderr,
+            "[stage-storage-mla]   physical[%zu] idx=%d seg=%s size=%llu src_idx=%d src_off=%lld\n",
+            i, physical.physical_index,
+            physical.segment_name.empty() ? "<empty>" : physical.segment_name.c_str(),
+            static_cast<unsigned long long>(physical.size_bytes), physical.source_physical_index,
+            static_cast<long long>(physical.source_byte_offset));
       }
     }
 
@@ -1213,8 +1208,8 @@ private:
       abi.backend_name = input.backend_name.empty() ? nullptr : input.backend_name.c_str();
       abi.segment_name_id = input.segment_name_id;
       abi.segment_name = input.segment_name.empty() ? nullptr : input.segment_name.c_str();
-      abi.materialization_kind = static_cast<SimaPluginTensorMaterializationKind>(
-          input.materialization_kind);
+      abi.materialization_kind =
+          static_cast<SimaPluginTensorMaterializationKind>(input.materialization_kind);
       abi.quant = quant_ptr;
       out.logical_inputs.push_back(abi);
     }
@@ -1451,9 +1446,9 @@ private:
           stage.processcvu.run_target_resolution_reason.empty()
               ? nullptr
               : stage.processcvu.run_target_resolution_reason.c_str();
-      out.spec.payload.processcvu.default_input_name = stage.processcvu.default_input_name.empty()
-                                                           ? nullptr
-                                                           : stage.processcvu.default_input_name.c_str();
+      out.spec.payload.processcvu.default_input_name =
+          stage.processcvu.default_input_name.empty() ? nullptr
+                                                      : stage.processcvu.default_input_name.c_str();
       out.processcvu_default_output_name_storage.clear();
       out.processcvu_default_output_name_storage.reserve(
           stage.processcvu.default_output_names.size());
@@ -1469,17 +1464,20 @@ private:
                                                       : out.processcvu_default_output_names.data();
       out.spec.payload.processcvu.default_output_names_len =
           static_cast<guint>(out.processcvu_default_output_names.size());
-      out.spec.payload.processcvu.primary_output_name = stage.processcvu.primary_output_name.empty()
-                                                            ? nullptr
-                                                            : stage.processcvu.primary_output_name.c_str();
+      out.spec.payload.processcvu.primary_output_name =
+          stage.processcvu.primary_output_name.empty()
+              ? nullptr
+              : stage.processcvu.primary_output_name.c_str();
       out.spec.payload.processcvu.primary_output_transport_kind =
           processcvu_output_transport_to_abi(stage.processcvu.primary_output_transport_kind);
       out.spec.payload.processcvu.primary_output_semantic_kind =
           processcvu_output_semantic_to_abi(stage.processcvu.primary_output_semantic_kind);
-      out.spec.payload.processcvu.input_img_type =
-          stage.processcvu.input_img_type.empty() ? nullptr : stage.processcvu.input_img_type.c_str();
-      out.spec.payload.processcvu.output_img_type =
-          stage.processcvu.output_img_type.empty() ? nullptr : stage.processcvu.output_img_type.c_str();
+      out.spec.payload.processcvu.input_img_type = stage.processcvu.input_img_type.empty()
+                                                       ? nullptr
+                                                       : stage.processcvu.input_img_type.c_str();
+      out.spec.payload.processcvu.output_img_type = stage.processcvu.output_img_type.empty()
+                                                        ? nullptr
+                                                        : stage.processcvu.output_img_type.c_str();
       out.spec.payload.processcvu.scaling_type =
           stage.processcvu.scaling_type.empty() ? nullptr : stage.processcvu.scaling_type.c_str();
       out.spec.payload.processcvu.padding_type =
@@ -1588,7 +1586,8 @@ private:
       out.processcvu_runtime_output_dtype_array.reserve(
           stage.processcvu.runtime_output_dtype_list.size());
       for (const auto& value : stage.processcvu.runtime_output_dtype_list) {
-        out.processcvu_runtime_output_dtype_array.push_back(value.empty() ? nullptr : value.c_str());
+        out.processcvu_runtime_output_dtype_array.push_back(value.empty() ? nullptr
+                                                                          : value.c_str());
       }
       out.spec.payload.processcvu.runtime_output_dtype_array =
           out.processcvu_runtime_output_dtype_array.empty()
@@ -1671,7 +1670,8 @@ private:
       out.spec.payload.processmla.batch_size = stage.processmla.batch_size;
       out.spec.payload.processmla.batch_sz_model = stage.processmla.batch_sz_model;
       out.processmla_dispatcher_output_names.clear();
-      out.processmla_dispatcher_output_names.reserve(stage.processmla.dispatcher_output_names.size());
+      out.processmla_dispatcher_output_names.reserve(
+          stage.processmla.dispatcher_output_names.size());
       for (const auto& name : stage.processmla.dispatcher_output_names) {
         out.processmla_dispatcher_output_names.push_back(name.empty() ? nullptr : name.c_str());
       }
@@ -1682,7 +1682,8 @@ private:
       out.spec.payload.processmla.dispatcher_output_names_len =
           static_cast<guint>(out.processmla_dispatcher_output_names.size());
       out.processmla_dispatcher_output_sizes.clear();
-      out.processmla_dispatcher_output_sizes.reserve(stage.processmla.dispatcher_output_sizes.size());
+      out.processmla_dispatcher_output_sizes.reserve(
+          stage.processmla.dispatcher_output_sizes.size());
       for (const auto value : stage.processmla.dispatcher_output_sizes) {
         out.processmla_dispatcher_output_sizes.push_back(static_cast<guint64>(value));
       }
@@ -1695,10 +1696,9 @@ private:
       break;
     case StagePayloadKind::BoxDecode:
       set_boxdecode_decode_type_token_abi_safe(
-          out.spec.payload.boxdecode,
-          is_box_decode_type_specified(stage.boxdecode.decode_type)
-              ? box_decode_type_token(stage.boxdecode.decode_type)
-              : nullptr);
+          out.spec.payload.boxdecode, is_box_decode_type_specified(stage.boxdecode.decode_type)
+                                          ? box_decode_type_token(stage.boxdecode.decode_type)
+                                          : nullptr);
       out.spec.payload.boxdecode.decode_type_option =
           stage.boxdecode.decode_type_option.has_value()
               ? box_decode_type_option_token(*stage.boxdecode.decode_type_option)
@@ -1756,14 +1756,10 @@ private:
                    static_cast<const void*>(&out.spec), static_cast<const void*>(&payload),
                    payload.graph_name ? payload.graph_name : "<null>",
                    payload.graph_family ? payload.graph_family : "<null>",
-                   static_cast<const void*>(payload.input_tensors),
-                   payload.input_tensors_len,
-                   static_cast<const void*>(payload.output_tensors),
-                   payload.output_tensors_len,
-                   static_cast<const void*>(payload.dq_scale_array),
-                   payload.dq_scale_array_len,
-                   static_cast<const void*>(payload.dq_zp_array),
-                   payload.dq_zp_array_len,
+                   static_cast<const void*>(payload.input_tensors), payload.input_tensors_len,
+                   static_cast<const void*>(payload.output_tensors), payload.output_tensors_len,
+                   static_cast<const void*>(payload.dq_scale_array), payload.dq_scale_array_len,
+                   static_cast<const void*>(payload.dq_zp_array), payload.dq_zp_array_len,
                    static_cast<const void*>(payload.default_output_names),
                    payload.default_output_names_len);
     }
@@ -1813,21 +1809,16 @@ private:
                      "graph=%s family=%s input_tensors=%p len=%u output_tensors=%p len=%u "
                      "dq_scale_array=%p len=%u "
                      "dq_zp_array=%p len=%u default_output_names=%p len=%u\n",
-                     index,
-                     stage->element_name ? stage->element_name : "<null>",
+                     index, stage->element_name ? stage->element_name : "<null>",
                      stage->logical_stage_id ? stage->logical_stage_id : "<null>",
                      static_cast<const void*>(stage), static_cast<const void*>(&payload),
                      stage->logical_outputs_len, stage->output_order_len,
                      payload.graph_name ? payload.graph_name : "<null>",
                      payload.graph_family ? payload.graph_family : "<null>",
-                     static_cast<const void*>(payload.input_tensors),
-                     payload.input_tensors_len,
-                     static_cast<const void*>(payload.output_tensors),
-                     payload.output_tensors_len,
-                     static_cast<const void*>(payload.dq_scale_array),
-                     payload.dq_scale_array_len,
-                     static_cast<const void*>(payload.dq_zp_array),
-                     payload.dq_zp_array_len,
+                     static_cast<const void*>(payload.input_tensors), payload.input_tensors_len,
+                     static_cast<const void*>(payload.output_tensors), payload.output_tensors_len,
+                     static_cast<const void*>(payload.dq_scale_array), payload.dq_scale_array_len,
+                     static_cast<const void*>(payload.dq_zp_array), payload.dq_zp_array_len,
                      static_cast<const void*>(payload.default_output_names),
                      payload.default_output_names_len);
       }
@@ -1836,7 +1827,7 @@ private:
   }
 
   static const SimaPluginStageSpec* stage_by_element_cb(gpointer user_data,
-                                                          const gchar* element_name) {
+                                                        const gchar* element_name) {
     if (!user_data || !element_name || !*element_name) {
       return nullptr;
     }
@@ -1844,8 +1835,7 @@ private:
     const auto it = self->stage_by_element_.find(element_name);
     const bool debug_lookup = pipeline_internal::env_bool("SIMA_MLA_CONTRACT_DEBUG", false);
     if (debug_lookup) {
-      std::fprintf(stderr,
-                   "[MLA-CONTRACT][Accessor] lookup_by_element key=%s hit=%d\n",
+      std::fprintf(stderr, "[MLA-CONTRACT][Accessor] lookup_by_element key=%s hit=%d\n",
                    element_name, it == self->stage_by_element_.end() ? 0 : 1);
     }
     if (it == self->stage_by_element_.end()) {
@@ -1853,8 +1843,7 @@ private:
     }
     if (debug_lookup) {
       const auto& spec = self->stage_storage_[it->second].spec;
-      std::fprintf(stderr,
-                   "[MLA-CONTRACT][Accessor]   stage=%s id=%s payload_kind=%d\n",
+      std::fprintf(stderr, "[MLA-CONTRACT][Accessor]   stage=%s id=%s payload_kind=%d\n",
                    spec.element_name ? spec.element_name : "<null>",
                    spec.logical_stage_id ? spec.logical_stage_id : "<null>",
                    static_cast<int>(spec.payload_kind));
@@ -1863,7 +1852,7 @@ private:
   }
 
   static const SimaPluginStageSpec* stage_by_id_cb(gpointer user_data,
-                                                     const gchar* logical_stage_id) {
+                                                   const gchar* logical_stage_id) {
     if (!user_data || !logical_stage_id || !*logical_stage_id) {
       return nullptr;
     }
@@ -1871,8 +1860,7 @@ private:
     const auto it = self->stage_by_id_.find(logical_stage_id);
     const bool debug_lookup = pipeline_internal::env_bool("SIMA_MLA_CONTRACT_DEBUG", false);
     if (debug_lookup) {
-      std::fprintf(stderr,
-                   "[MLA-CONTRACT][Accessor] lookup_by_id key=%s hit=%d\n",
+      std::fprintf(stderr, "[MLA-CONTRACT][Accessor] lookup_by_id key=%s hit=%d\n",
                    logical_stage_id, it == self->stage_by_id_.end() ? 0 : 1);
     }
     if (it == self->stage_by_id_.end()) {
@@ -1880,8 +1868,7 @@ private:
     }
     if (debug_lookup) {
       const auto& spec = self->stage_storage_[it->second].spec;
-      std::fprintf(stderr,
-                   "[MLA-CONTRACT][Accessor]   stage=%s id=%s payload_kind=%d\n",
+      std::fprintf(stderr, "[MLA-CONTRACT][Accessor]   stage=%s id=%s payload_kind=%d\n",
                    spec.element_name ? spec.element_name : "<null>",
                    spec.logical_stage_id ? spec.logical_stage_id : "<null>",
                    static_cast<int>(spec.payload_kind));
@@ -1963,8 +1950,7 @@ struct ManifestContextRegistration {
 static constexpr const char* kManifestContextDeepAddedHookKey =
     "sima-plugin-static-manifest-deep-element-added-hook";
 
-void pipeline_deep_element_added_cb(GstBin* pipeline_bin, GstBin*, GstElement* element,
-                                    gpointer);
+void pipeline_deep_element_added_cb(GstBin* pipeline_bin, GstBin*, GstElement* element, gpointer);
 
 void install_manifest_context_deep_added_hook(GstElement* element) {
   if (!element || !GST_IS_BIN(element)) {
@@ -1973,10 +1959,9 @@ void install_manifest_context_deep_added_hook(GstElement* element) {
   if (g_object_get_data(G_OBJECT(element), kManifestContextDeepAddedHookKey)) {
     return;
   }
-  g_object_set_data(G_OBJECT(element), kManifestContextDeepAddedHookKey,
-                    const_cast<char*>("1"));
-  g_signal_connect(element, "deep-element-added",
-                   G_CALLBACK(pipeline_deep_element_added_cb), nullptr);
+  g_object_set_data(G_OBJECT(element), kManifestContextDeepAddedHookKey, const_cast<char*>("1"));
+  g_signal_connect(element, "deep-element-added", G_CALLBACK(pipeline_deep_element_added_cb),
+                   nullptr);
 }
 
 void manifest_context_registration_destroy(gpointer data) {
@@ -1984,12 +1969,11 @@ void manifest_context_registration_destroy(gpointer data) {
   if (!registration) {
     return;
   }
-  if (registration->deep_element_added_handler != 0 &&
-      registration->pipeline && G_IS_OBJECT(registration->pipeline) &&
+  if (registration->deep_element_added_handler != 0 && registration->pipeline &&
+      G_IS_OBJECT(registration->pipeline) &&
       g_signal_handler_is_connected(registration->pipeline,
                                     registration->deep_element_added_handler)) {
-    g_signal_handler_disconnect(registration->pipeline,
-                                registration->deep_element_added_handler);
+    g_signal_handler_disconnect(registration->pipeline, registration->deep_element_added_handler);
   }
   if (registration->context) {
     gst_context_unref(registration->context);
@@ -2003,17 +1987,15 @@ bool element_has_equivalent_manifest_context(GstElement* element, GstContext* co
     return false;
   }
 
-  GstContext* existing =
-      gst_element_get_context(element, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE);
+  GstContext* existing = gst_element_get_context(element, SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE);
   if (!existing) {
     return false;
   }
 
   const auto* existing_handle = sima_plugin_manifest_context_handle(existing);
   const auto* requested_handle = sima_plugin_manifest_context_handle(context);
-  const bool equivalent =
-      existing == context ||
-      (existing_handle && requested_handle && existing_handle == requested_handle);
+  const bool equivalent = existing == context || (existing_handle && requested_handle &&
+                                                  existing_handle == requested_handle);
   gst_context_unref(existing);
   return equivalent;
 }
@@ -2072,8 +2054,7 @@ void apply_manifest_context_recursive(GstElement* element, GstContext* context) 
   gst_iterator_free(it);
 }
 
-void pipeline_deep_element_added_cb(GstBin* pipeline_bin, GstBin*, GstElement* element,
-                                    gpointer) {
+void pipeline_deep_element_added_cb(GstBin* pipeline_bin, GstBin*, GstElement* element, gpointer) {
   auto* pipeline = GST_ELEMENT(pipeline_bin);
   if (!pipeline || !element) {
     return;
@@ -2121,8 +2102,7 @@ bool attach_manifest_context(GstElement* pipeline, const SimaPluginStaticManifes
 
   GValue handle_value = G_VALUE_INIT;
   g_value_init(&handle_value, sima_plugin_static_manifest_handle_get_type());
-  g_value_take_boxed(&handle_value,
-                     const_cast<SimaPluginStaticManifestHandle*>(owner->handle()));
+  g_value_take_boxed(&handle_value, const_cast<SimaPluginStaticManifestHandle*>(owner->handle()));
   gst_structure_take_value(structure, SIMA_PLUGIN_STATIC_MANIFEST_KEY_HANDLE, &handle_value);
   if (!manifest.session_id.empty()) {
     gst_structure_set(structure, SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID, G_TYPE_STRING,
@@ -2144,18 +2124,15 @@ bool attach_manifest_context(GstElement* pipeline, const SimaPluginStaticManifes
   registration->pipeline = pipeline;
   registration->context = gst_context_ref(context);
   if (GST_IS_BIN(pipeline)) {
-    registration->deep_element_added_handler =
-        g_signal_connect(pipeline, "deep-element-added",
-                         G_CALLBACK(pipeline_deep_element_added_cb), nullptr);
+    registration->deep_element_added_handler = g_signal_connect(
+        pipeline, "deep-element-added", G_CALLBACK(pipeline_deep_element_added_cb), nullptr);
   }
   g_object_set_qdata_full(G_OBJECT(pipeline), manifest_context_registration_quark(), registration,
                           manifest_context_registration_destroy);
   if (manifest_context_debug_enabled()) {
     std::fprintf(stderr,
                  "[manifest-context-debug] action=attach pipeline=%s context=%p stages=%zu\n",
-                 GST_ELEMENT_NAME(pipeline),
-                 static_cast<void*>(context),
-                 manifest.stages.size());
+                 GST_ELEMENT_NAME(pipeline), static_cast<void*>(context), manifest.stages.size());
   }
   apply_manifest_context_recursive(pipeline, context);
   gst_context_unref(context);

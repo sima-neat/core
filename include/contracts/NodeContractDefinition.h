@@ -42,8 +42,8 @@ enum class ContractFieldSource {
  * @ingroup contracts
  */
 enum class ContractOverridePolicy {
-  Forbidden,     ///< Field cannot be overridden; attempts are validation errors.
-  BuilderOnly,   ///< Builder code may override; user-facing API may not.
+  Forbidden,   ///< Field cannot be overridden; attempts are validation errors.
+  BuilderOnly, ///< Builder code may override; user-facing API may not.
 };
 
 /**
@@ -56,14 +56,15 @@ enum class ContractOverridePolicy {
  * @ingroup contracts
  */
 struct ContractPortSpec {
-  std::string port_id;                                       ///< Stable port identifier.
-  std::string media_type;                                    ///< Constraint on media type (may be empty).
-  std::string format;                                        ///< Constraint on format (may be empty).
-  std::string dtype;                                         ///< Constraint on dtype (may be empty).
-  std::string layout;                                        ///< Constraint on layout (may be empty).
-  std::vector<std::string> required_segment_names;           ///< Segment names that must be present.
-  std::vector<std::string> required_preprocess_meta_fields;  ///< Preprocess-meta fields that must be present.
-  bool require_quant = false;                                ///< If true, port requires quantization metadata.
+  std::string port_id;                             ///< Stable port identifier.
+  std::string media_type;                          ///< Constraint on media type (may be empty).
+  std::string format;                              ///< Constraint on format (may be empty).
+  std::string dtype;                               ///< Constraint on dtype (may be empty).
+  std::string layout;                              ///< Constraint on layout (may be empty).
+  std::vector<std::string> required_segment_names; ///< Segment names that must be present.
+  std::vector<std::string>
+      required_preprocess_meta_fields; ///< Preprocess-meta fields that must be present.
+  bool require_quant = false;          ///< If true, port requires quantization metadata.
 };
 
 /**
@@ -71,10 +72,10 @@ struct ContractPortSpec {
  * @ingroup contracts
  */
 struct ContractFieldSpec {
-  std::string field_id;                                                  ///< Stable field identifier.
-  ContractFieldSource source = ContractFieldSource::Fixed;               ///< Source of the value.
+  std::string field_id;                                    ///< Stable field identifier.
+  ContractFieldSource source = ContractFieldSource::Fixed; ///< Source of the value.
   ContractOverridePolicy override_policy = ContractOverridePolicy::Forbidden; ///< Override policy.
-  bool required = false;                                                 ///< If true, field must be set after resolution.
+  bool required = false; ///< If true, field must be set after resolution.
 };
 
 /**
@@ -87,11 +88,11 @@ struct ContractFieldSpec {
  * @see NodeContractProvider
  */
 struct NodeContractDefinition {
-  std::string node_kind;                       ///< Node kind label (matches `Node::kind()`).
-  std::string plugin_kind;                     ///< Backing plugin/element kind (for diagnostics).
-  std::vector<ContractPortSpec> inputs;        ///< Per-input-port contracts.
-  std::vector<ContractPortSpec> outputs;       ///< Per-output-port contracts.
-  std::vector<ContractFieldSpec> fields;       ///< Per-field contracts.
+  std::string node_kind;                 ///< Node kind label (matches `Node::kind()`).
+  std::string plugin_kind;               ///< Backing plugin/element kind (for diagnostics).
+  std::vector<ContractPortSpec> inputs;  ///< Per-input-port contracts.
+  std::vector<ContractPortSpec> outputs; ///< Per-output-port contracts.
+  std::vector<ContractFieldSpec> fields; ///< Per-field contracts.
 };
 
 } // namespace simaai::neat

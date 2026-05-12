@@ -67,10 +67,8 @@ RUN_TEST("unit_sima_plugin_context_injection_test", ([] {
            const auto* child_accessor = sima_plugin_manifest_context_accessor(child_context);
            require(child_accessor != nullptr,
                    "child manifest context should expose ABI-safe accessor");
-           const SimaPluginStageSpec* child_stage =
-               sima_plugin_manifest_context_stage_lookup_typed(
-                   child_context, "stage_a_id", "stage_a",
-                   SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE);
+           const SimaPluginStageSpec* child_stage = sima_plugin_manifest_context_stage_lookup_typed(
+               child_context, "stage_a_id", "stage_a", SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE);
            require(child_stage == stage_payload,
                    "child manifest context should resolve the same stage payload");
            const gchar* stage_key = sima_plugin_manifest_stage_key(child_stage);

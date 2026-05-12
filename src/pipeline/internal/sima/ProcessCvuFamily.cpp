@@ -11,7 +11,8 @@ namespace simaai::neat::pipeline_internal::sima {
 std::string canonical_processcvu_family_from_kernel(std::string kernel) {
   std::transform(kernel.begin(), kernel.end(), kernel.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-  if (kernel.find("detesscast") != std::string::npos || kernel.find("casttess") != std::string::npos) {
+  if (kernel.find("detesscast") != std::string::npos ||
+      kernel.find("casttess") != std::string::npos) {
     return kernel.find("detesscast") != std::string::npos ? "detesscast" : "casttess";
   }
   if (kernel.find("detess") != std::string::npos || kernel.find("dequant") != std::string::npos ||
@@ -23,7 +24,8 @@ std::string canonical_processcvu_family_from_kernel(std::string kernel) {
       kernel.find("quantize_tessellate") != std::string::npos) {
     return "quanttess";
   }
-  if (kernel.find("preprocess") != std::string::npos || kernel.find("preproc") != std::string::npos) {
+  if (kernel.find("preprocess") != std::string::npos ||
+      kernel.find("preproc") != std::string::npos) {
     return "preproc";
   }
   if (kernel.find("tess") != std::string::npos) {
@@ -38,8 +40,8 @@ std::string canonical_processcvu_family_from_kernel(std::string kernel) {
   return {};
 }
 
-std::string processcvu_graph_family_for_stage_kind(
-    ::simaai::neat::internal::ExecutionStageKind kind) {
+std::string
+processcvu_graph_family_for_stage_kind(::simaai::neat::internal::ExecutionStageKind kind) {
   using ::simaai::neat::internal::ExecutionStageKind;
   switch (kind) {
   case ExecutionStageKind::Preproc:

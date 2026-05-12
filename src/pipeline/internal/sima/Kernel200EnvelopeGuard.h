@@ -26,10 +26,10 @@ namespace simaai::neat::pipeline_internal::sima {
  * must fit within these limits or the guard rejects it.
  */
 struct Kernel200EnvelopeLimits {
-  int max_w = 0;             ///< Maximum width (pixels) the envelope was sized for.
-  int max_h = 0;             ///< Maximum height (rows) the envelope was sized for.
-  int max_stride = 0;        ///< Maximum row stride (bytes) the envelope was sized for.
-  std::size_t allocated_bytes = 0;  ///< Total bytes allocated for the envelope buffer.
+  int max_w = 0;                   ///< Maximum width (pixels) the envelope was sized for.
+  int max_h = 0;                   ///< Maximum height (rows) the envelope was sized for.
+  int max_stride = 0;              ///< Maximum row stride (bytes) the envelope was sized for.
+  std::size_t allocated_bytes = 0; ///< Total bytes allocated for the envelope buffer.
 };
 
 /**
@@ -39,16 +39,16 @@ struct Kernel200EnvelopeLimits {
  * `Kernel200EnvelopeLimits` by `validate_kernel200_envelope`.
  */
 struct Kernel200EnvelopeActual {
-  int actual_w = 0;          ///< Actual width of the frame being submitted.
-  int actual_h = 0;          ///< Actual height of the frame being submitted.
-  int actual_stride = 0;     ///< Actual row stride of the frame being submitted.
-  std::size_t required_bytes = 0;  ///< Bytes the actual frame requires.
+  int actual_w = 0;               ///< Actual width of the frame being submitted.
+  int actual_h = 0;               ///< Actual height of the frame being submitted.
+  int actual_stride = 0;          ///< Actual row stride of the frame being submitted.
+  std::size_t required_bytes = 0; ///< Bytes the actual frame requires.
 };
 
 /// Structured violation returned when actuals don't fit the envelope limits.
 struct Kernel200EnvelopeViolation {
-  std::string code;     ///< Short stable code identifying the failure (e.g., `"width_overflow"`).
-  std::string message;  ///< Human-readable description of the violation.
+  std::string code;    ///< Short stable code identifying the failure (e.g., `"width_overflow"`).
+  std::string message; ///< Human-readable description of the violation.
 };
 
 /**
@@ -64,4 +64,3 @@ bool validate_kernel200_envelope(const Kernel200EnvelopeLimits& limits,
                                  Kernel200EnvelopeViolation* violation = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima
-

@@ -51,10 +51,10 @@ SimaMemApi& sima_mem_api() {
   }
 
   api.attach = reinterpret_cast<SimaMemApi::AttachFn>(dlsym(handle, "simaai_memory_attach"));
-  api.invalidate = reinterpret_cast<SimaMemApi::InvalidateFn>(
-      dlsym(handle, "simaai_memory_invalidate_cache"));
-  api.get_phys = reinterpret_cast<SimaMemApi::GetPhysFn>(
-      dlsym(handle, "gst_simaai_memory_get_phys_addr"));
+  api.invalidate =
+      reinterpret_cast<SimaMemApi::InvalidateFn>(dlsym(handle, "simaai_memory_invalidate_cache"));
+  api.get_phys =
+      reinterpret_cast<SimaMemApi::GetPhysFn>(dlsym(handle, "gst_simaai_memory_get_phys_addr"));
   return api;
 }
 
@@ -145,8 +145,8 @@ bool query_buffer_cpu_dirty(GstBuffer* buffer, bool* out_dirty) {
   if (!buffer || !out_dirty) {
     return false;
   }
-  gpointer value = gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
-                                             sima_buffer_cpu_dirty_quark());
+  gpointer value =
+      gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer), sima_buffer_cpu_dirty_quark());
   if (!value) {
     return false;
   }
@@ -159,9 +159,9 @@ bool query_buffer_producer(GstBuffer* buffer, SimaBufferProducer* out_producer) 
     return false;
   }
   unsigned decoded = 0U;
-  if (!decode_small_uint(gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer),
-                                                   sima_buffer_producer_quark()),
-                         &decoded)) {
+  if (!decode_small_uint(
+          gst_mini_object_get_qdata(GST_MINI_OBJECT_CAST(buffer), sima_buffer_producer_quark()),
+          &decoded)) {
     return false;
   }
   *out_producer = static_cast<SimaBufferProducer>(decoded);
@@ -174,17 +174,16 @@ void mark_buffer_cpu_read_clean(GstBuffer* buffer) {
   }
   gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(buffer), sima_buffer_cpu_dirty_quark(),
                             reinterpret_cast<gpointer>(static_cast<intptr_t>(2)), nullptr);
-  gst_mini_object_set_qdata(
-      GST_MINI_OBJECT_CAST(buffer), sima_buffer_producer_quark(),
-      encode_small_uint(static_cast<unsigned>(SimaBufferProducer::Unknown)), nullptr);
+  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(buffer), sima_buffer_producer_quark(),
+                            encode_small_uint(static_cast<unsigned>(SimaBufferProducer::Unknown)),
+                            nullptr);
 }
 
 void mark_sample_cpu_read_prepared(GstSample* sample) {
   if (!sample || !GST_IS_SAMPLE(sample)) {
     return;
   }
-  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(sample),
-                            sima_sample_cpu_visible_prepared_quark(),
+  gst_mini_object_set_qdata(GST_MINI_OBJECT_CAST(sample), sima_sample_cpu_visible_prepared_quark(),
                             reinterpret_cast<gpointer>(static_cast<intptr_t>(1)), nullptr);
 }
 
@@ -257,8 +256,8 @@ std::size_t invalidate_buffer_segment_backing_for_cpu_read(GstBuffer* buffer,
     }
     const gsize seg_count = gst_simaai_memory_get_segment_count(gst_mem);
     for (gsize si = 0; si < seg_count; ++si) {
-      auto* segment = reinterpret_cast<simaai_memory_t*>(
-          gst_simaai_memory_get_segment_at(gst_mem, si));
+      auto* segment =
+          reinterpret_cast<simaai_memory_t*>(gst_simaai_memory_get_segment_at(gst_mem, si));
       if (!segment || seen_sima_segment(seen, segment)) {
         continue;
       }

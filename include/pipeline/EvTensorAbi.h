@@ -39,21 +39,21 @@ enum {
 
 /// @brief Operation-type tag carried in `sima_ev_abi_header::op_type`.
 enum sima_ev_op_type {
-  SIMA_EV_OP_INVALID = 0,        ///< Invalid/unset.
-  SIMA_EV_OP_TESS = 1,           ///< Tessellate.
-  SIMA_EV_OP_DETESS = 2,         ///< Detessellate.
-  SIMA_EV_OP_QUANTIZE = 3,       ///< Quantize.
-  SIMA_EV_OP_DEQUANTIZE = 4,     ///< Dequantize.
-  SIMA_EV_OP_QUANTTESS = 5,      ///< Fused quantize + tessellate.
-  SIMA_EV_OP_DETESSDEQUANT = 6,  ///< Fused detessellate + dequantize.
-  SIMA_EV_OP_PREPROC = 7,        ///< Image preprocessing.
-  SIMA_EV_OP_CAST = 8,           ///< Element-type cast (e.g., BF16 ↔ FP32).
+  SIMA_EV_OP_INVALID = 0,       ///< Invalid/unset.
+  SIMA_EV_OP_TESS = 1,          ///< Tessellate.
+  SIMA_EV_OP_DETESS = 2,        ///< Detessellate.
+  SIMA_EV_OP_QUANTIZE = 3,      ///< Quantize.
+  SIMA_EV_OP_DEQUANTIZE = 4,    ///< Dequantize.
+  SIMA_EV_OP_QUANTTESS = 5,     ///< Fused quantize + tessellate.
+  SIMA_EV_OP_DETESSDEQUANT = 6, ///< Fused detessellate + dequantize.
+  SIMA_EV_OP_PREPROC = 7,       ///< Image preprocessing.
+  SIMA_EV_OP_CAST = 8,          ///< Element-type cast (e.g., BF16 ↔ FP32).
 };
 
 /// @brief Address-space selector for `sima_ev_storage_desc::addr`.
 enum sima_ev_addr_space {
-  SIMA_EV_ADDR_BUS = 0,   ///< Bus address (canonical long-term).
-  SIMA_EV_ADDR_PHYS = 1,  ///< Physical address (transitional).
+  SIMA_EV_ADDR_BUS = 0,  ///< Bus address (canonical long-term).
+  SIMA_EV_ADDR_PHYS = 1, ///< Physical address (transitional).
 };
 
 /// @brief Element types the ABI can describe.
@@ -80,18 +80,18 @@ enum sima_ev_layout_kind {
 /// @brief Optional per-axis semantic tag (advisory metadata).
 enum sima_ev_axis_semantic {
   SIMA_EV_AXIS_UNKNOWN = 0,
-  SIMA_EV_AXIS_N = 1,  ///< Batch.
-  SIMA_EV_AXIS_C = 2,  ///< Channel.
-  SIMA_EV_AXIS_D = 3,  ///< Depth.
-  SIMA_EV_AXIS_H = 4,  ///< Height.
-  SIMA_EV_AXIS_W = 5,  ///< Width.
+  SIMA_EV_AXIS_N = 1, ///< Batch.
+  SIMA_EV_AXIS_C = 2, ///< Channel.
+  SIMA_EV_AXIS_D = 3, ///< Depth.
+  SIMA_EV_AXIS_H = 4, ///< Height.
+  SIMA_EV_AXIS_W = 5, ///< Width.
 };
 
 /// @brief Quantization scheme tag for `sima_ev_quant_desc::scheme`.
 enum sima_ev_quant_scheme {
-  SIMA_EV_QUANT_NONE = 0,                ///< No quantization (other fields zeroed).
-  SIMA_EV_QUANT_PER_TENSOR_AFFINE = 1,   ///< Single (scale, zero-point) for the whole tensor.
-  SIMA_EV_QUANT_PER_AXIS_AFFINE = 2,     ///< Per-axis (scale, zero-point) arrays.
+  SIMA_EV_QUANT_NONE = 0,              ///< No quantization (other fields zeroed).
+  SIMA_EV_QUANT_PER_TENSOR_AFFINE = 1, ///< Single (scale, zero-point) for the whole tensor.
+  SIMA_EV_QUANT_PER_AXIS_AFFINE = 2,   ///< Per-axis (scale, zero-point) arrays.
 };
 
 /// @brief Rounding mode used by quantize/cast kernels.
@@ -110,12 +110,12 @@ enum sima_ev_round_mode {
  * payloads generically before touching op-specific fields.
  */
 struct sima_ev_abi_header {
-  uint16_t abi_version;   ///< One of `SIMA_EV_ABI_VERSION_*`.
-  uint16_t op_type;       ///< `sima_ev_op_type` value.
-  uint32_t flags;         ///< Op-specific flags.
-  uint32_t num_inputs;    ///< Number of input tensors in this dispatch.
-  uint32_t num_outputs;   ///< Number of output tensors in this dispatch.
-  uint32_t reserved[2];   ///< Reserved for future use; zero on write.
+  uint16_t abi_version; ///< One of `SIMA_EV_ABI_VERSION_*`.
+  uint16_t op_type;     ///< `sima_ev_op_type` value.
+  uint32_t flags;       ///< Op-specific flags.
+  uint32_t num_inputs;  ///< Number of input tensors in this dispatch.
+  uint32_t num_outputs; ///< Number of output tensors in this dispatch.
+  uint32_t reserved[2]; ///< Reserved for future use; zero on write.
 };
 
 /*
@@ -130,12 +130,12 @@ struct sima_ev_abi_header {
  * legacy callers.
  */
 struct sima_ev_storage_desc {
-  uint64_t addr;                  ///< Bus or physical address (per `addr_space`).
-  uint64_t nbytes;                ///< Size of the backing region in bytes.
-  uint32_t addr_space;            ///< `sima_ev_addr_space` selector.
-  uint32_t alignment_bytes;       ///< Required alignment of `addr`.
-  int64_t storage_offset_bytes;   ///< Signed offset from `addr` to logical origin.
-  uint64_t reserved0;             ///< Reserved for future use; zero on write.
+  uint64_t addr;                ///< Bus or physical address (per `addr_space`).
+  uint64_t nbytes;              ///< Size of the backing region in bytes.
+  uint32_t addr_space;          ///< `sima_ev_addr_space` selector.
+  uint32_t alignment_bytes;     ///< Required alignment of `addr`.
+  int64_t storage_offset_bytes; ///< Signed offset from `addr` to logical origin.
+  uint64_t reserved0;           ///< Reserved for future use; zero on write.
 };
 
 /*
@@ -151,11 +151,11 @@ struct sima_ev_storage_desc {
  * debugging, and kernels that want explicit N/C/D/H/W naming.
  */
 struct sima_ev_strided_desc {
-  uint32_t rank;                                  ///< Number of valid entries in sizes/strides.
-  uint8_t axis_semantics[SIMA_EV_MAX_RANK];       ///< Per-axis `sima_ev_axis_semantic` tags.
-  uint8_t reserved0[4];                           ///< Padding to align the int64 arrays that follow.
-  int64_t sizes[SIMA_EV_MAX_RANK];                ///< Per-axis size, in elements.
-  int64_t strides_bytes[SIMA_EV_MAX_RANK];        ///< Per-axis stride, in bytes.
+  uint32_t rank;                            ///< Number of valid entries in sizes/strides.
+  uint8_t axis_semantics[SIMA_EV_MAX_RANK]; ///< Per-axis `sima_ev_axis_semantic` tags.
+  uint8_t reserved0[4];                     ///< Padding to align the int64 arrays that follow.
+  int64_t sizes[SIMA_EV_MAX_RANK];          ///< Per-axis size, in elements.
+  int64_t strides_bytes[SIMA_EV_MAX_RANK];  ///< Per-axis stride, in bytes.
 };
 
 /*
@@ -171,14 +171,14 @@ struct sima_ev_strided_desc {
  * addition to size/stride.
  */
 struct sima_ev_tiled_desc {
-  uint32_t rank;                                  ///< Number of valid axes.
-  uint8_t axis_semantics[SIMA_EV_MAX_RANK];       ///< Per-axis semantic tags.
-  uint8_t tile_axis_order[SIMA_EV_MAX_RANK];      ///< Tile traversal order across axes.
-  uint8_t inner_block[SIMA_EV_MAX_RANK];          ///< Per-axis inner blocking factor.
-  uint8_t reserved0[4];                           ///< Padding to align the int64 arrays that follow.
-  int64_t tile_sizes[SIMA_EV_MAX_RANK];           ///< Per-axis tile size, in elements.
-  uint32_t tile_align_bytes;                      ///< Required per-tile alignment, in bytes.
-  uint32_t flags;                                 ///< Tiling-specific flags.
+  uint32_t rank;                             ///< Number of valid axes.
+  uint8_t axis_semantics[SIMA_EV_MAX_RANK];  ///< Per-axis semantic tags.
+  uint8_t tile_axis_order[SIMA_EV_MAX_RANK]; ///< Tile traversal order across axes.
+  uint8_t inner_block[SIMA_EV_MAX_RANK];     ///< Per-axis inner blocking factor.
+  uint8_t reserved0[4];                      ///< Padding to align the int64 arrays that follow.
+  int64_t tile_sizes[SIMA_EV_MAX_RANK];      ///< Per-axis tile size, in elements.
+  uint32_t tile_align_bytes;                 ///< Required per-tile alignment, in bytes.
+  uint32_t flags;                            ///< Tiling-specific flags.
 };
 
 /*
@@ -193,14 +193,14 @@ struct sima_ev_tiled_desc {
  * `zero_point_addr` arrays of length `param_count`.
  */
 struct sima_ev_quant_desc {
-  uint32_t scheme;            ///< `sima_ev_quant_scheme` value.
-  uint32_t quant_axis;        ///< Axis along which quantization is per-axis.
-  float scale;                ///< Per-tensor scale (when scheme=PER_TENSOR_AFFINE).
-  int32_t zero_point;         ///< Per-tensor zero-point.
-  uint64_t scale_addr;        ///< Bus address of per-axis scale array (if used).
-  uint64_t zero_point_addr;   ///< Bus address of per-axis zero-point array (if used).
-  uint32_t param_count;       ///< Length of per-axis arrays.
-  uint32_t reserved0;         ///< Reserved for future use; zero on write.
+  uint32_t scheme;          ///< `sima_ev_quant_scheme` value.
+  uint32_t quant_axis;      ///< Axis along which quantization is per-axis.
+  float scale;              ///< Per-tensor scale (when scheme=PER_TENSOR_AFFINE).
+  int32_t zero_point;       ///< Per-tensor zero-point.
+  uint64_t scale_addr;      ///< Bus address of per-axis scale array (if used).
+  uint64_t zero_point_addr; ///< Bus address of per-axis zero-point array (if used).
+  uint32_t param_count;     ///< Length of per-axis arrays.
+  uint32_t reserved0;       ///< Reserved for future use; zero on write.
 };
 
 /**
@@ -211,17 +211,17 @@ struct sima_ev_quant_desc {
  * metadata. The `physical` union is selected by `physical_kind`.
  */
 struct sima_ev_tensor_desc {
-  uint32_t dtype;                              ///< `sima_ev_dtype` value.
-  uint32_t logical_kind;                       ///< Always `SIMA_EV_LAYOUT_STRIDED` today.
-  uint32_t physical_kind;                      ///< `sima_ev_layout_kind` selecting `physical`.
-  uint32_t flags;                              ///< Tensor-specific flags.
-  struct sima_ev_storage_desc storage;         ///< Backing storage region.
-  struct sima_ev_strided_desc logical;         ///< Logical view (rank/sizes/strides).
+  uint32_t dtype;                      ///< `sima_ev_dtype` value.
+  uint32_t logical_kind;               ///< Always `SIMA_EV_LAYOUT_STRIDED` today.
+  uint32_t physical_kind;              ///< `sima_ev_layout_kind` selecting `physical`.
+  uint32_t flags;                      ///< Tensor-specific flags.
+  struct sima_ev_storage_desc storage; ///< Backing storage region.
+  struct sima_ev_strided_desc logical; ///< Logical view (rank/sizes/strides).
   union {
-    struct sima_ev_strided_desc strided;       ///< Physical view, when STRIDED.
-    struct sima_ev_tiled_desc tiled;           ///< Physical view, when TILED.
-  } physical;                                  ///< Physical view (selected by physical_kind).
-  struct sima_ev_quant_desc quant;             ///< Optional quantization metadata.
+    struct sima_ev_strided_desc strided; ///< Physical view, when STRIDED.
+    struct sima_ev_tiled_desc tiled;     ///< Physical view, when TILED.
+  } physical;                            ///< Physical view (selected by physical_kind).
+  struct sima_ev_quant_desc quant;       ///< Optional quantization metadata.
 };
 
 /*
@@ -229,34 +229,34 @@ struct sima_ev_tensor_desc {
  */
 /// @brief Tess (tessellate) op config: 1 input, 1 output.
 struct sima_ev_tess_config_v1 {
-  struct sima_ev_abi_header hdr;       ///< ABI header (op type, version, IO arity).
-  struct sima_ev_tensor_desc input;    ///< Input tensor descriptor.
-  struct sima_ev_tensor_desc output;   ///< Output tensor descriptor.
+  struct sima_ev_abi_header hdr;     ///< ABI header (op type, version, IO arity).
+  struct sima_ev_tensor_desc input;  ///< Input tensor descriptor.
+  struct sima_ev_tensor_desc output; ///< Output tensor descriptor.
 };
 
 /// @brief Detess (detessellate) op config: 1 input, 1 output.
 struct sima_ev_detess_config_v1 {
-  struct sima_ev_abi_header hdr;       ///< ABI header (op type, version, IO arity).
-  struct sima_ev_tensor_desc input;    ///< Input tensor descriptor.
-  struct sima_ev_tensor_desc output;   ///< Output tensor descriptor.
+  struct sima_ev_abi_header hdr;     ///< ABI header (op type, version, IO arity).
+  struct sima_ev_tensor_desc input;  ///< Input tensor descriptor.
+  struct sima_ev_tensor_desc output; ///< Output tensor descriptor.
 };
 
 /// @brief Quantize op config: 1 input, 1 output, plus rounding/saturation modes.
 struct sima_ev_quantize_config_v1 {
-  struct sima_ev_abi_header hdr;       ///< ABI header (op type, version, IO arity).
-  struct sima_ev_tensor_desc input;    ///< Input tensor descriptor.
-  struct sima_ev_tensor_desc output;   ///< Output tensor descriptor.
-  uint32_t round_mode;                 ///< `sima_ev_round_mode` value.
-  uint32_t saturate_mode;              ///< Saturation mode (op-specific encoding).
-  uint32_t reserved[2];                ///< Reserved for future use; zero on write.
+  struct sima_ev_abi_header hdr;     ///< ABI header (op type, version, IO arity).
+  struct sima_ev_tensor_desc input;  ///< Input tensor descriptor.
+  struct sima_ev_tensor_desc output; ///< Output tensor descriptor.
+  uint32_t round_mode;               ///< `sima_ev_round_mode` value.
+  uint32_t saturate_mode;            ///< Saturation mode (op-specific encoding).
+  uint32_t reserved[2];              ///< Reserved for future use; zero on write.
 };
 
 /// @brief Dequantize op config: 1 input, 1 output.
 struct sima_ev_dequantize_config_v1 {
-  struct sima_ev_abi_header hdr;       ///< ABI header (op type, version, IO arity).
-  struct sima_ev_tensor_desc input;    ///< Input tensor descriptor.
-  struct sima_ev_tensor_desc output;   ///< Output tensor descriptor.
-  uint32_t reserved[4];                ///< Reserved for future use; zero on write.
+  struct sima_ev_abi_header hdr;     ///< ABI header (op type, version, IO arity).
+  struct sima_ev_tensor_desc input;  ///< Input tensor descriptor.
+  struct sima_ev_tensor_desc output; ///< Output tensor descriptor.
+  uint32_t reserved[4];              ///< Reserved for future use; zero on write.
 };
 
 /*
@@ -276,16 +276,16 @@ struct sima_ev_tensor_list_v1 {
 
 /// @brief Per-output detessdequant parameters.
 struct sima_ev_detessdequant_params_v1 {
-  uint32_t fp16_output;       ///< Non-zero to emit FP16 instead of FP32 (where supported).
-  uint32_t round_mode;        ///< `sima_ev_round_mode` value.
-  uint32_t reserved[2];       ///< Reserved for future use; zero on write.
+  uint32_t fp16_output; ///< Non-zero to emit FP16 instead of FP32 (where supported).
+  uint32_t round_mode;  ///< `sima_ev_round_mode` value.
+  uint32_t reserved[2]; ///< Reserved for future use; zero on write.
 };
 
 /// @brief DetessDequant op config: many inputs, many outputs, per-output params.
 struct sima_ev_detessdequant_config_v1 {
-  struct sima_ev_abi_header hdr;                                 ///< ABI header (op type, version, IO arity).
-  struct sima_ev_tensor_list_v1 inputs;                          ///< Input tensor list.
-  struct sima_ev_tensor_list_v1 outputs;                         ///< Output tensor list.
+  struct sima_ev_abi_header hdr;         ///< ABI header (op type, version, IO arity).
+  struct sima_ev_tensor_list_v1 inputs;  ///< Input tensor list.
+  struct sima_ev_tensor_list_v1 outputs; ///< Output tensor list.
   struct sima_ev_detessdequant_params_v1 params[SIMA_EV_MAX_IO]; ///< Per-output parameters.
 };
 
@@ -296,10 +296,10 @@ struct sima_ev_detessdequant_config_v1 {
  */
 /// @brief Region-of-interest rectangle, in pixels.
 struct sima_ev_roi_v1 {
-  int32_t x;       ///< Top-left X (pixels).
-  int32_t y;       ///< Top-left Y (pixels).
-  int32_t width;   ///< ROI width (pixels).
-  int32_t height;  ///< ROI height (pixels).
+  int32_t x;      ///< Top-left X (pixels).
+  int32_t y;      ///< Top-left Y (pixels).
+  int32_t width;  ///< ROI width (pixels).
+  int32_t height; ///< ROI height (pixels).
 };
 
 /**

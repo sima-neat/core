@@ -46,39 +46,39 @@ enum class InputKind {
 /// How the resize stage maps non-matching input dimensions to the model's input shape.
 /// @ingroup model
 enum class ResizeMode {
-  Stretch = 0,    ///< Anisotropic scale to fit; aspect ratio not preserved.
-  Letterbox = 1,  ///< Scale to fit while preserving aspect; pad the rest with `pad_value`.
-  Crop = 2,       ///< Center-crop to the target shape after isotropic scale.
+  Stretch = 0,   ///< Anisotropic scale to fit; aspect ratio not preserved.
+  Letterbox = 1, ///< Scale to fit while preserving aspect; pad the rest with `pad_value`.
+  Crop = 2,      ///< Center-crop to the target shape after isotropic scale.
 };
 
 /// Color format hint for the color-convert stage.
 /// @ingroup model
 enum class PreprocessColorFormat {
-  Auto = 0,   ///< Planner picks based on caps/contract.
-  RGB = 1,    ///< Packed 8-bit RGB.
-  BGR = 2,    ///< Packed 8-bit BGR.
-  GRAY8 = 3,  ///< 8-bit single-channel grayscale.
-  NV12 = 4,   ///< Y plane + interleaved UV plane (semi-planar 4:2:0).
-  I420 = 5,   ///< Y, U, V planes (planar 4:2:0).
+  Auto = 0,  ///< Planner picks based on caps/contract.
+  RGB = 1,   ///< Packed 8-bit RGB.
+  BGR = 2,   ///< Packed 8-bit BGR.
+  GRAY8 = 3, ///< 8-bit single-channel grayscale.
+  NV12 = 4,  ///< Y plane + interleaved UV plane (semi-planar 4:2:0).
+  I420 = 5,  ///< Y, U, V planes (planar 4:2:0).
 };
 
 /// Common normalize presets — convenient shorthand for famous mean/stddev pairs.
 /// @ingroup model
 enum class NormalizePreset {
-  None = 0,        ///< Use the explicit `mean`/`stddev` fields.
-  ImageNet = 1,    ///< Standard ImageNet stats.
-  COCO_YOLO = 2,   ///< Stats commonly used by YOLO-family detectors trained on COCO.
+  None = 0,      ///< Use the explicit `mean`/`stddev` fields.
+  ImageNet = 1,  ///< Standard ImageNet stats.
+  COCO_YOLO = 2, ///< Stats commonly used by YOLO-family detectors trained on COCO.
 };
 
 /// Which preprocess graph family the planner selected. The four variants correspond to
 /// the four corners of the dtype-contract decision tree (BF16/INT8 × inside/outside MLA tess).
 /// @ingroup model
 enum class PreprocessGraphFamily {
-  Disabled = 0,   ///< No preprocess graph (model accepts raw tensors).
-  Preproc = 1,    ///< Preprocess only; quant/tess happen inside the MLA.
-  Quant = 2,      ///< Preprocess + quant; tess happens inside the MLA.
-  Tess = 3,       ///< Preprocess + tess; quant happens inside the MLA.
-  QuantTess = 4,  ///< Preprocess + quant + tess; nothing happens inside the MLA.
+  Disabled = 0,  ///< No preprocess graph (model accepts raw tensors).
+  Preproc = 1,   ///< Preprocess only; quant/tess happen inside the MLA.
+  Quant = 2,     ///< Preprocess + quant; tess happens inside the MLA.
+  Tess = 3,      ///< Preprocess + tess; quant happens inside the MLA.
+  QuantTess = 4, ///< Preprocess + quant + tess; nothing happens inside the MLA.
 };
 
 /// Which transformation a `Transform` represents — used in user-supplied transform lists.
@@ -95,27 +95,30 @@ enum class TransformType {
 /// Resize / letterbox / crop parameters.
 /// @ingroup model
 struct ResizeSpec {
-  AutoFlag enable = AutoFlag::Auto;             ///< On/off/auto.
-  int width = 0;                                ///< Target width (px). `0` = inferred from contract.
-  int height = 0;                               ///< Target height (px). `0` = inferred from contract.
-  ResizeMode mode = ResizeMode::Letterbox;      ///< How to handle aspect-ratio mismatch.
-  int pad_value = 114;                          ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
-  std::string scaling_type = "BILINEAR";        ///< Sampler kind: `"BILINEAR"`, `"NEAREST"`, etc.
+  AutoFlag enable = AutoFlag::Auto;        ///< On/off/auto.
+  int width = 0;                           ///< Target width (px). `0` = inferred from contract.
+  int height = 0;                          ///< Target height (px). `0` = inferred from contract.
+  ResizeMode mode = ResizeMode::Letterbox; ///< How to handle aspect-ratio mismatch.
+  int pad_value = 114; ///< Pad fill value when `mode == Letterbox` (default 114, YOLO convention).
+  std::string scaling_type = "BILINEAR"; ///< Sampler kind: `"BILINEAR"`, `"NEAREST"`, etc.
 };
 
 /// Color-format conversion parameters.
 /// @ingroup model
 struct ColorConvertSpec {
-  AutoFlag enable = AutoFlag::Auto;                                       ///< On/off/auto.
-  PreprocessColorFormat input_format = PreprocessColorFormat::Auto;       ///< Source color format (or `Auto` to infer from caps).
-  PreprocessColorFormat output_format = PreprocessColorFormat::Auto;      ///< Target color format (or `Auto` to use the contract).
+  AutoFlag enable = AutoFlag::Auto; ///< On/off/auto.
+  PreprocessColorFormat input_format =
+      PreprocessColorFormat::Auto; ///< Source color format (or `Auto` to infer from caps).
+  PreprocessColorFormat output_format =
+      PreprocessColorFormat::Auto; ///< Target color format (or `Auto` to use the contract).
 };
 
 /// Axis-permutation parameters for HWC↔CHW-style layout conversions.
 /// @ingroup model
 struct LayoutConvertSpec {
   AutoFlag enable = AutoFlag::Auto; ///< On/off/auto.
-  std::vector<int> perm;            ///< Permutation indices applied to input axes (e.g., `{2,0,1}` for HWC→CHW).
+  std::vector<int>
+      perm; ///< Permutation indices applied to input axes (e.g., `{2,0,1}` for HWC→CHW).
 
   /// True iff `perm` was explicitly set.
   bool has_perm() const {
@@ -126,10 +129,11 @@ struct LayoutConvertSpec {
 /// Mean/stddev normalization parameters.
 /// @ingroup model
 struct NormalizeSpec {
-  AutoFlag enable = AutoFlag::Auto;                            ///< On/off/auto.
-  std::array<float, 3> mean = {0.0f, 0.0f, 0.0f};              ///< Per-channel mean to subtract.
-  std::array<float, 3> stddev = {1.0f, 1.0f, 1.0f};            ///< Per-channel stddev to divide by.
-  bool has_explicit_stats = false;                              ///< True iff the application set these explicitly (vs. preset/default).
+  AutoFlag enable = AutoFlag::Auto;                 ///< On/off/auto.
+  std::array<float, 3> mean = {0.0f, 0.0f, 0.0f};   ///< Per-channel mean to subtract.
+  std::array<float, 3> stddev = {1.0f, 1.0f, 1.0f}; ///< Per-channel stddev to divide by.
+  bool has_explicit_stats =
+      false; ///< True iff the application set these explicitly (vs. preset/default).
 };
 
 /// INT8 (or other low-precision) quantization parameters.
@@ -145,7 +149,8 @@ struct QuantizeSpec {
 /// @ingroup model
 struct TessellateSpec {
   AutoFlag enable = AutoFlag::Auto; ///< On/off/auto.
-  std::vector<int> slice_shape;     ///< Tile shape (typically `{H, W, C}`); empty means "use the contract's geometry".
+  std::vector<int> slice_shape;     ///< Tile shape (typically `{H, W, C}`); empty means "use the
+                                    ///< contract's geometry".
 
   /// Replace `slice_shape` with the given shape.
   void set_slice_shape(std::vector<int> shape) {
@@ -225,22 +230,24 @@ struct Transform {
  * @ingroup model
  */
 struct PreprocessOptions {
-  InputKind kind = InputKind::Auto;   ///< Whether inputs are images or pre-shaped tensors.
-  AutoFlag enable = AutoFlag::Auto;   ///< Master switch — set `Off` to skip preprocess entirely.
+  InputKind kind = InputKind::Auto; ///< Whether inputs are images or pre-shaped tensors.
+  AutoFlag enable = AutoFlag::Auto; ///< Master switch — set `Off` to skip preprocess entirely.
 
-  int input_max_width = 0;            ///< Upper bound on input width (px); `0` = no bound.
-  int input_max_height = 0;           ///< Upper bound on input height (px); `0` = no bound.
-  int input_max_depth = 0;            ///< Upper bound on input channel count; `0` = no bound.
+  int input_max_width = 0;  ///< Upper bound on input width (px); `0` = no bound.
+  int input_max_height = 0; ///< Upper bound on input height (px); `0` = no bound.
+  int input_max_depth = 0;  ///< Upper bound on input channel count; `0` = no bound.
 
-  ResizeSpec resize;                  ///< Resize / letterbox / crop intent.
-  ColorConvertSpec color_convert;     ///< Color-format conversion intent.
-  LayoutConvertSpec layout_convert;   ///< Axis-permutation intent.
-  NormalizeSpec normalize;            ///< Normalize intent.
-  QuantizeSpec quantize;              ///< Quantize intent.
-  TessellateSpec tessellate;          ///< Tessellate intent.
+  ResizeSpec resize;                ///< Resize / letterbox / crop intent.
+  ColorConvertSpec color_convert;   ///< Color-format conversion intent.
+  LayoutConvertSpec layout_convert; ///< Axis-permutation intent.
+  NormalizeSpec normalize;          ///< Normalize intent.
+  QuantizeSpec quantize;            ///< Quantize intent.
+  TessellateSpec tessellate;        ///< Tessellate intent.
 
-  std::vector<Transform> transforms;          ///< Ordered explicit transforms; if non-empty, overrides the per-stage specs above.
-  NormalizePreset preset = NormalizePreset::None; ///< If non-`None`, supplies `mean`/`stddev` defaults.
+  std::vector<Transform> transforms; ///< Ordered explicit transforms; if non-empty, overrides the
+                                     ///< per-stage specs above.
+  NormalizePreset preset =
+      NormalizePreset::None; ///< If non-`None`, supplies `mean`/`stddev` defaults.
 };
 
 /**
@@ -268,7 +275,7 @@ struct PreprocessContract {
  * @ingroup model
  */
 struct PreprocessMetaContract {
-  std::string meta_name = "GstSimaMeta";   ///< Metadata struct name (defaults to GstSimaMeta).
+  std::string meta_name = "GstSimaMeta";    ///< Metadata struct name (defaults to GstSimaMeta).
   std::vector<std::string> required_fields; ///< Field names that must be present on every buffer.
 };
 
@@ -284,22 +291,26 @@ struct PreprocessMetaContract {
  * @ingroup model
  */
 struct ResolvedPreprocessPlan {
-  PreprocessOptions requested;             ///< Original options as supplied by the application.
-  PreprocessOptions effective;             ///< Post-planning options — defaults filled in, conflicts resolved.
-  PreprocessExplicitKnobs explicit_knobs;  ///< Which fields the application set explicitly.
+  PreprocessOptions requested; ///< Original options as supplied by the application.
+  PreprocessOptions effective; ///< Post-planning options — defaults filled in, conflicts resolved.
+  PreprocessExplicitKnobs explicit_knobs; ///< Which fields the application set explicitly.
 
   InputKind resolved_kind = InputKind::Image; ///< Concrete input kind chosen by the planner.
-  bool transforms_override = false;            ///< True iff `requested.transforms` was non-empty and used.
-  bool enabled = true;                          ///< False iff preprocess was disabled entirely.
-  PreprocessGraphFamily graph_family = PreprocessGraphFamily::Preproc; ///< Which preprocess graph family was selected.
-  std::string graph_kernel;                     ///< Kernel name backing the graph (CVU/EV74 entry point).
-  std::string graph_config_path;                ///< Filesystem path to the compiled graph config (inside the unpacked MPK).
+  bool transforms_override = false; ///< True iff `requested.transforms` was non-empty and used.
+  bool enabled = true;              ///< False iff preprocess was disabled entirely.
+  PreprocessGraphFamily graph_family =
+      PreprocessGraphFamily::Preproc; ///< Which preprocess graph family was selected.
+  std::string graph_kernel;           ///< Kernel name backing the graph (CVU/EV74 entry point).
+  std::string graph_config_path;      ///< Filesystem path to the compiled graph config (inside the
+                                      ///< unpacked MPK).
 
-  std::vector<PreprocessContract> ingress_contracts; ///< Per-input ingress contracts (multi-input models have multiple).
-  PreprocessContract mla_contract;                    ///< Contract describing the tensor handed to the MLA.
-  PreprocessMetaContract meta_contract;               ///< Required GstSimaMeta fields.
+  std::vector<PreprocessContract>
+      ingress_contracts; ///< Per-input ingress contracts (multi-input models have multiple).
+  PreprocessContract mla_contract;      ///< Contract describing the tensor handed to the MLA.
+  PreprocessMetaContract meta_contract; ///< Required GstSimaMeta fields.
 
-  std::vector<std::string> warnings; ///< Non-fatal advisories (e.g., "preset overridden by explicit stats").
+  std::vector<std::string>
+      warnings; ///< Non-fatal advisories (e.g., "preset overridden by explicit stats").
 
   /// Render a multi-line debug summary of the plan — used in `Session::describe()` and reports.
   std::string to_debug_string() const;

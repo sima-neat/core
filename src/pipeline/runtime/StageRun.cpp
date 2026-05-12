@@ -83,19 +83,20 @@ void log_stage_tensor_stats(const char* label, const Sample& sample) {
   if (!stage_tensor_stats_enabled() || !sample_has_tensor_list(sample)) {
     return;
   }
-  const TensorList& tensors = sample_tensor_list(const_cast<Sample&>(sample),
-                                                 label ? label : "StageRun::tensor_stats");
+  const TensorList& tensors =
+      sample_tensor_list(const_cast<Sample&>(sample), label ? label : "StageRun::tensor_stats");
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const Tensor& tensor = tensors[i];
     std::vector<std::uint8_t> bytes;
     try {
       bytes = tensor.copy_payload_bytes();
     } catch (const std::exception& e) {
-      std::fprintf(stderr,
-                   "[stage][tensor-stats] %s tensor=%zu logical=%d segment=%s bytes=<error> detail=%s\n",
-                   label ? label : "StageRun", i, tensor.route.logical_index,
-                   tensor.route.segment_name.empty() ? "<empty>" : tensor.route.segment_name.c_str(),
-                   e.what());
+      std::fprintf(
+          stderr,
+          "[stage][tensor-stats] %s tensor=%zu logical=%d segment=%s bytes=<error> detail=%s\n",
+          label ? label : "StageRun", i, tensor.route.logical_index,
+          tensor.route.segment_name.empty() ? "<empty>" : tensor.route.segment_name.c_str(),
+          e.what());
       continue;
     }
 
@@ -122,8 +123,10 @@ void log_stage_tensor_stats(const char* label, const Sample& sample) {
     const double zero_ratio =
         bytes.empty() ? 1.0 : static_cast<double>(zero_count) / static_cast<double>(bytes.size());
     std::fprintf(stderr,
-                 "[stage][tensor-stats] %s tensor=%zu logical=%d mem=%d segment=%s offset=%lld bytes=%zu zero_ratio=%.6f hash=0x%016llx samples=%s\n",
-                 label ? label : "StageRun", i, tensor.route.logical_index, tensor.route.memory_index,
+                 "[stage][tensor-stats] %s tensor=%zu logical=%d mem=%d segment=%s offset=%lld "
+                 "bytes=%zu zero_ratio=%.6f hash=0x%016llx samples=%s\n",
+                 label ? label : "StageRun", i, tensor.route.logical_index,
+                 tensor.route.memory_index,
                  tensor.route.segment_name.empty() ? "<empty>" : tensor.route.segment_name.c_str(),
                  static_cast<long long>(tensor.byte_offset), bytes.size(), zero_ratio,
                  static_cast<unsigned long long>(hash), samples.str().c_str());
@@ -424,7 +427,8 @@ void propagate_preprocess_meta_to_sample_if_missing(const simaai::neat::Tensor& 
     }
     return;
   }
-  if (source_buf && !has_simaai_preprocess_meta(source_buf) && !source.semantic.preprocess.has_value()) {
+  if (source_buf && !has_simaai_preprocess_meta(source_buf) &&
+      !source.semantic.preprocess.has_value()) {
     gst_buffer_unref(source_buf);
     return;
   }
@@ -440,8 +444,8 @@ bool sample_requires_message_path(const Sample& sample) {
   }
   if (!sample_has_tensor_list(sample)) {
     return !sample.media_type.empty() || !sample.format.empty() || !sample.payload_tag.empty() ||
-           !sample.caps_string.empty() || !sample.port_name.empty() || !sample.segment_name.empty() ||
-           sample.memory_index >= 0 || sample.route_slot >= 0 ||
+           !sample.caps_string.empty() || !sample.port_name.empty() ||
+           !sample.segment_name.empty() || sample.memory_index >= 0 || sample.route_slot >= 0 ||
            sample.logical_output_index >= 0 || sample.frame_id >= 0 || sample.pts_ns >= 0 ||
            sample.dts_ns >= 0 || sample.duration_ns >= 0;
   }
@@ -603,8 +607,7 @@ void log_stage_holder_buffer_memories(const char* label, const simaai::neat::Ten
   }
   GstBuffer* buf = pipeline_internal::buffer_from_tensor_holder(holder);
   if (!buf) {
-    std::fprintf(stderr,
-                 "[stage][holder] %s holder present but buffer_from_tensor_holder failed\n",
+    std::fprintf(stderr, "[stage][holder] %s holder present but buffer_from_tensor_holder failed\n",
                  label ? label : "tensor");
     return;
   }
@@ -619,8 +622,7 @@ void log_stage_holder_buffer_memories(const char* label, const simaai::neat::Ten
     const gsize size = mem ? gst_memory_get_sizes(mem, &offset, &maxsize) : 0;
     const char* allocator_name =
         (mem && mem->allocator && mem->allocator->mem_type) ? mem->allocator->mem_type : "<null>";
-    std::fprintf(stderr,
-                 "[stage][holder]   mem[%u] allocator=%s size=%zu offset=%zu max=%zu\n",
+    std::fprintf(stderr, "[stage][holder]   mem[%u] allocator=%s size=%zu offset=%zu max=%zu\n",
                  static_cast<unsigned>(i), allocator_name, static_cast<size_t>(size),
                  static_cast<size_t>(offset), static_cast<size_t>(maxsize));
   }
@@ -660,8 +662,8 @@ const simaai::neat::Tensor* find_gst_sample_backed_tensor_for_memory_view(const 
     if (!first_backed) {
       first_backed = &tensor;
     }
-    if (memory_index >= 0 &&
-        (tensor.route.memory_index == memory_index || tensor.route.physical_index == memory_index)) {
+    if (memory_index >= 0 && (tensor.route.memory_index == memory_index ||
+                              tensor.route.physical_index == memory_index)) {
       return &tensor;
     }
   }
@@ -763,11 +765,12 @@ simaai::neat::Tensor require_supported_tessellated_dtype(simaai::neat::Tensor te
   const std::string fmt = format_from_tensor(tensor);
   const bool fmt_int8 = is_tessellated_int8_format(fmt);
   const bool fmt_bf16 = is_tessellated_bf16_format(fmt);
-  const bool fmt_int16 =
-      (!fmt.empty() && (fmt.find("INT16") != std::string::npos || fmt.find("EVXX_INT16") != std::string::npos));
+  const bool fmt_int16 = (!fmt.empty() && (fmt.find("INT16") != std::string::npos ||
+                                           fmt.find("EVXX_INT16") != std::string::npos));
   const bool dtype_int8 = (tensor.dtype == TensorDType::Int8 || tensor.dtype == TensorDType::UInt8);
   const bool dtype_bf16 = (tensor.dtype == TensorDType::BFloat16);
-  const bool dtype_int16 = (tensor.dtype == TensorDType::Int16 || tensor.dtype == TensorDType::UInt16);
+  const bool dtype_int16 =
+      (tensor.dtype == TensorDType::Int16 || tensor.dtype == TensorDType::UInt16);
 
   if (!(fmt_int8 || fmt_bf16 || fmt_int16 || dtype_int8 || dtype_bf16 || dtype_int16)) {
     throw std::runtime_error(prefix + "tessellated tensor: unsupported dtype/format: dtype=" +
@@ -1048,16 +1051,16 @@ int resolve_preproc_selected_memory_index(const Sample& sample, const PreprocOut
   }
   pipeline_internal::TensorBufferView view;
   std::string view_err;
-  if (!pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) || !view.buffer) {
+  if (!pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) ||
+      !view.buffer) {
     throw std::runtime_error("Preproc: tensor buffer descriptor unavailable: " + view_err);
   }
-  const auto it = std::find_if(
-      view.tensors.begin(), view.tensors.end(),
-      [&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
-        return tensor.route_slot == info.primary_route_slot &&
-               tensor.logical_name == info.primary_output_name &&
-               tensor.segment_name == info.primary_output_name;
-      });
+  const auto it = std::find_if(view.tensors.begin(), view.tensors.end(),
+                               [&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+                                 return tensor.route_slot == info.primary_route_slot &&
+                                        tensor.logical_name == info.primary_output_name &&
+                                        tensor.segment_name == info.primary_output_name;
+                               });
   if (it == view.tensors.end()) {
     throw std::runtime_error("Preproc: failed to resolve selected output '" +
                              info.primary_output_name + "'");
@@ -1128,8 +1131,7 @@ bool mla_info_indicates_packed_envelope(const MlaOutputInfo& info) {
 
 void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_input,
                                        const NodeGroup& infer_group,
-                                       const simaai::neat::Model& model,
-                                       const char* stage_name) {
+                                       const simaai::neat::Model& model, const char* stage_name) {
   if (!shadow_change_env_enabled()) {
     return;
   }
@@ -1137,8 +1139,7 @@ void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_inpu
   const int64_t contract_logical_bytes = mla_input.span_size_bytes;
   const std::string contract_input_dtype = mla_input.logical_dtype;
   if (contract_logical_bytes <= 0 || contract_input_dtype.empty()) {
-    throw std::runtime_error(
-        "StageRun: missing strict MLA input contract from rendered manifest");
+    throw std::runtime_error("StageRun: missing strict MLA input contract from rendered manifest");
   }
 
   // Byte-contract semantics:
@@ -1172,20 +1173,18 @@ void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_inpu
                  "model_id=%s selected_tensor=%s handle_bytes=%lld runtime_logical_bytes=%lld "
                  "contract_logical_bytes=%lld runtime_dtype=%s contract_dtype=%s "
                  "contract_input_dtype=%s holder_memories=%u quant_needed=%d tess_needed=%d\n",
-                 code ? code : "PRE_MLA_INPUT_GUARD_FAILED",
-                 stage_name ? stage_name : "Infer", detail ? detail : "byte_contract_failure",
-                 model_id.c_str(), selected_tensor.c_str(), static_cast<long long>(handle_bytes),
+                 code ? code : "PRE_MLA_INPUT_GUARD_FAILED", stage_name ? stage_name : "Infer",
+                 detail ? detail : "byte_contract_failure", model_id.c_str(),
+                 selected_tensor.c_str(), static_cast<long long>(handle_bytes),
                  static_cast<long long>(runtime_logical_bytes),
                  static_cast<long long>(contract_logical_bytes), dtype_family_name(runtime_dtype),
                  dtype_family_name(contract_dtype), contract_input_dtype.c_str(),
-                 static_cast<unsigned>(holder_memories),
-                 route_flags.quant_needed ? 1 : 0, route_flags.tess_needed ? 1 : 0);
+                 static_cast<unsigned>(holder_memories), route_flags.quant_needed ? 1 : 0,
+                 route_flags.tess_needed ? 1 : 0);
     std::ostringstream oss;
-    oss << "StageRun pre-MLA guard failed: code="
-        << (code ? code : "PRE_MLA_INPUT_GUARD_FAILED") << " stage="
-        << (stage_name ? stage_name : "Infer") << " model_id=" << model_id
-        << " selected_tensor=" << selected_tensor
-        << " handle_bytes=" << handle_bytes
+    oss << "StageRun pre-MLA guard failed: code=" << (code ? code : "PRE_MLA_INPUT_GUARD_FAILED")
+        << " stage=" << (stage_name ? stage_name : "Infer") << " model_id=" << model_id
+        << " selected_tensor=" << selected_tensor << " handle_bytes=" << handle_bytes
         << " runtime_logical_bytes=" << runtime_logical_bytes
         << " contract_logical_bytes=" << contract_logical_bytes
         << " runtime_dtype=" << dtype_family_name(runtime_dtype)
@@ -1193,9 +1192,8 @@ void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_inpu
         << " contract_input_dtype=" << contract_input_dtype
         << " holder_memories=" << holder_memories
         << " detail=" << (detail ? detail : "byte_contract_failure")
-        << " quant_needed="
-        << (route_flags.quant_needed ? 1 : 0) << " tess_needed="
-        << (route_flags.tess_needed ? 1 : 0);
+        << " quant_needed=" << (route_flags.quant_needed ? 1 : 0)
+        << " tess_needed=" << (route_flags.tess_needed ? 1 : 0);
     throw std::runtime_error(oss.str());
   };
 
@@ -1223,11 +1221,12 @@ void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_inpu
                  "contract_dtype=%s contract_input_dtype=%s holder_memories=%u quant_needed=%d "
                  "tess_needed=%d\n",
                  stage_name ? stage_name : "Infer", model_id.c_str(), selected_tensor.c_str(),
-                 static_cast<long long>(handle_bytes), static_cast<long long>(runtime_logical_bytes),
+                 static_cast<long long>(handle_bytes),
+                 static_cast<long long>(runtime_logical_bytes),
                  static_cast<long long>(contract_logical_bytes), dtype_family_name(runtime_dtype),
                  dtype_family_name(contract_dtype), contract_input_dtype.c_str(),
-                 static_cast<unsigned>(holder_memories),
-                 route_flags.quant_needed ? 1 : 0, route_flags.tess_needed ? 1 : 0);
+                 static_cast<unsigned>(holder_memories), route_flags.quant_needed ? 1 : 0,
+                 route_flags.tess_needed ? 1 : 0);
   }
 }
 
@@ -1251,10 +1250,8 @@ void apply_mla_output_override(simaai::neat::Tensor& tensor, const MlaOutputInfo
   }
 }
 
-WireCaps build_wire_caps_from_tensor(const NodeGroup& group,
-                                     const simaai::neat::Tensor& input,
-                                     const TensorDims* dims_override,
-                                     const char* media_type,
+WireCaps build_wire_caps_from_tensor(const NodeGroup& group, const simaai::neat::Tensor& input,
+                                     const TensorDims* dims_override, const char* media_type,
                                      const char* default_format) {
   WireCaps wire;
   wire.media_type = media_type ? media_type : "application/vnd.simaai.tensor";
@@ -1330,13 +1327,12 @@ WireCaps build_mla_wire_caps_from_contract_or_tensor(const NodeGroup& group,
                                                      const simaai::neat::Tensor& input) {
   const MlaInputTensorInfo mla_input = stage_mla_input_tensor_info(group);
   if (mla_input.span_size_bytes <= 0 || mla_input.logical_dtype.empty()) {
-    throw std::runtime_error(
-        "StageRun: missing strict MLA wire contract in rendered manifest");
+    throw std::runtime_error("StageRun: missing strict MLA wire contract in rendered manifest");
   }
 
   WireCaps wire;
-  wire.media_type = !mla_input.media_type.empty() ? mla_input.media_type
-                                                  : "application/vnd.simaai.tensor";
+  wire.media_type =
+      !mla_input.media_type.empty() ? mla_input.media_type : "application/vnd.simaai.tensor";
   wire.format =
       wire_caps_format_from_dtype_token(mla_input.logical_dtype, format_from_tensor(input));
   wire.dims = mla_input.physical_shape.has_value()
@@ -1528,7 +1524,7 @@ InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const Wir
 }
 
 StageInputKey make_input_key(const InputOptions& opt,
-                            const simaai::neat::Tensor* tensor = nullptr) {
+                             const simaai::neat::Tensor* tensor = nullptr) {
   StageInputKey key;
   key.media_type = opt.media_type;
   key.format = upper_copy(opt.format);
@@ -1654,7 +1650,8 @@ std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sa
                                                                 int img_h, int expected_topk) {
   if (sample_is_bbox_tensor(sample)) {
     BoxDecodeResult out;
-    out.raw = require_single_tensor(sample, "try_decode_bbox_sample_recursive").copy_payload_bytes();
+    out.raw =
+        require_single_tensor(sample, "try_decode_bbox_sample_recursive").copy_payload_bytes();
     out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, expected_topk, true);
     return out;
   }
@@ -1670,8 +1667,7 @@ std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sa
       field.memory_index = tensor.route.memory_index;
       field.segment_name = tensor.route.segment_name;
       field.stream_label = tensor.route.name;
-      if (auto decoded =
-              try_decode_bbox_sample_recursive(field, img_w, img_h, expected_topk);
+      if (auto decoded = try_decode_bbox_sample_recursive(field, img_w, img_h, expected_topk);
           decoded.has_value()) {
         return decoded;
       }
@@ -1680,8 +1676,7 @@ std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sa
   }
   if (sample.kind == SampleKind::Bundle) {
     for (const auto& field : sample.fields) {
-      if (auto decoded =
-              try_decode_bbox_sample_recursive(field, img_w, img_h, expected_topk);
+      if (auto decoded = try_decode_bbox_sample_recursive(field, img_w, img_h, expected_topk);
           decoded.has_value()) {
         return decoded;
       }
@@ -1691,8 +1686,8 @@ std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sa
   return std::nullopt;
 }
 
-std::optional<BoxDecodeResult> try_decode_bbox_payload_tensor_sample(const Sample& sample, int img_w,
-                                                                     int img_h,
+std::optional<BoxDecodeResult> try_decode_bbox_payload_tensor_sample(const Sample& sample,
+                                                                     int img_w, int img_h,
                                                                      int expected_topk) {
   if (sample.kind != SampleKind::TensorSet || sample.tensors.size() != 1U) {
     return std::nullopt;
@@ -1843,10 +1838,12 @@ SelectedTensorSample select_tensor_sample(const Sample& out, const char* where) 
     selected.route_slot = first_tensor->route_slot;
     if (stage_debug_enabled()) {
       std::fprintf(stderr,
-                   "[stage][bundle] %s: no explicit bundle field identity matched; tensor_fields=%zu fallback=first logical=%d route_slot=%d segment=%s\n",
-                   where ? where : "StageRun", tensor_field_count,
-                   selected.logical_output_index, selected.route_slot,
-                   first_tensor->segment_name.empty() ? "<empty>" : first_tensor->segment_name.c_str());
+                   "[stage][bundle] %s: no explicit bundle field identity matched; "
+                   "tensor_fields=%zu fallback=first logical=%d route_slot=%d segment=%s\n",
+                   where ? where : "StageRun", tensor_field_count, selected.logical_output_index,
+                   selected.route_slot,
+                   first_tensor->segment_name.empty() ? "<empty>"
+                                                      : first_tensor->segment_name.c_str());
     }
     return selected;
   }
@@ -1906,10 +1903,12 @@ SelectedTensorSampleMutable select_tensor_sample_mutable(Sample& out, const char
     selected.route_slot = first_tensor->route_slot;
     if (stage_debug_enabled()) {
       std::fprintf(stderr,
-                   "[stage][bundle] %s: no explicit bundle field identity matched; tensor_fields=%zu fallback=first logical=%d route_slot=%d segment=%s\n",
-                   where ? where : "StageRun", tensor_field_count,
-                   selected.logical_output_index, selected.route_slot,
-                   first_tensor->segment_name.empty() ? "<empty>" : first_tensor->segment_name.c_str());
+                   "[stage][bundle] %s: no explicit bundle field identity matched; "
+                   "tensor_fields=%zu fallback=first logical=%d route_slot=%d segment=%s\n",
+                   where ? where : "StageRun", tensor_field_count, selected.logical_output_index,
+                   selected.route_slot,
+                   first_tensor->segment_name.empty() ? "<empty>"
+                                                      : first_tensor->segment_name.c_str());
     }
     return selected;
   }
@@ -1917,8 +1916,7 @@ SelectedTensorSampleMutable select_tensor_sample_mutable(Sample& out, const char
 }
 
 simaai::neat::Tensor select_stage_output_tensor_view(const Sample& sample, int memory_index,
-                                                     const char* where,
-                                                     const char* source_label,
+                                                     const char* where, const char* source_label,
                                                      const char* selected_label,
                                                      const char* direct_label) {
   if (const Tensor* sample_tensor =
@@ -1931,8 +1929,7 @@ simaai::neat::Tensor select_stage_output_tensor_view(const Sample& sample, int m
   }
   if (sample_has_tensor_list(sample) && !sample.tensors.empty() &&
       sample.tensors.front().planes.empty() && stage_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[stage][holder] %s: skipping sample-memory copy (not GstSample-backed)\n",
+    std::fprintf(stderr, "[stage][holder] %s: skipping sample-memory copy (not GstSample-backed)\n",
                  where ? where : "StageRun");
   }
   simaai::neat::Tensor tensor = take_tensor(sample, where);
@@ -1967,12 +1964,12 @@ Sample push_and_pull_tensor_preferring_holder(Run& runner, const simaai::neat::T
     }
   }
   if (holder && stage_debug_enabled() && !gst_sample_backed) {
-    std::fprintf(
-        stderr,
-        "[stage][holder] %s: skipping push_and_pull_holder fast path (storage kind=%d, using tensor "
-        "payload path)\n",
-        stage_name ? stage_name : "StageRun",
-        input.storage ? static_cast<int>(input.storage->kind) : -1);
+    std::fprintf(stderr,
+                 "[stage][holder] %s: skipping push_and_pull_holder fast path (storage kind=%d, "
+                 "using tensor "
+                 "payload path)\n",
+                 stage_name ? stage_name : "StageRun",
+                 input.storage ? static_cast<int>(input.storage->kind) : -1);
   }
   return sample_from_tensors(runner.run(TensorList{input}, timeout_ms));
 }
@@ -2025,12 +2022,12 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
     if (resolved_preproc.effective.resize.enable == AutoFlag::On) {
       meta.target_width = resolved_preproc.effective.resize.width;
       meta.target_height = resolved_preproc.effective.resize.height;
-      meta.scaled_width =
-          (resolved_preproc.effective.resize.width > 0) ? resolved_preproc.effective.resize.width
-                                                        : preproc_info.logical_dims.width;
-      meta.scaled_height =
-          (resolved_preproc.effective.resize.height > 0) ? resolved_preproc.effective.resize.height
-                                                         : preproc_info.logical_dims.height;
+      meta.scaled_width = (resolved_preproc.effective.resize.width > 0)
+                              ? resolved_preproc.effective.resize.width
+                              : preproc_info.logical_dims.width;
+      meta.scaled_height = (resolved_preproc.effective.resize.height > 0)
+                               ? resolved_preproc.effective.resize.height
+                               : preproc_info.logical_dims.height;
       switch (resolved_preproc.effective.resize.mode) {
       case ResizeMode::Stretch:
         meta.resize_mode = "stretch";
@@ -2046,18 +2043,21 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
     } else {
       meta.resize_mode = "none";
     }
-    const auto out_fmt_spec =
-        preprocess_color_format_to_format_spec(resolved_preproc.effective.color_convert.output_format);
-    meta.color_in = (resolved_preproc.effective.color_convert.input_format == PreprocessColorFormat::Auto)
-                        ? src_opt.format.str()
-                        : in_fmt_spec.str();
-    meta.color_out = (resolved_preproc.effective.color_convert.output_format == PreprocessColorFormat::Auto)
-                         ? std::string{}
-                         : out_fmt_spec.str();
+    const auto out_fmt_spec = preprocess_color_format_to_format_spec(
+        resolved_preproc.effective.color_convert.output_format);
+    meta.color_in =
+        (resolved_preproc.effective.color_convert.input_format == PreprocessColorFormat::Auto)
+            ? src_opt.format.str()
+            : in_fmt_spec.str();
+    meta.color_out =
+        (resolved_preproc.effective.color_convert.output_format == PreprocessColorFormat::Auto)
+            ? std::string{}
+            : out_fmt_spec.str();
     meta.axis_perm = resolved_preproc.effective.layout_convert.perm;
     if (stage_debug_enabled()) {
       std::fprintf(stderr,
-                   "[stage][preproc-meta] source=route_contract quant=%d tess=%d effective_quant=%d effective_tess=%d\n",
+                   "[stage][preproc-meta] source=route_contract quant=%d tess=%d "
+                   "effective_quant=%d effective_tess=%d\n",
                    meta.quantize ? 1 : 0, meta.tessellate ? 1 : 0,
                    resolved_preproc.effective.quantize.enable == AutoFlag::On ? 1 : 0,
                    resolved_preproc.effective.tessellate.enable == AutoFlag::On ? 1 : 0);
@@ -2100,15 +2100,13 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
       tensor_is_gst_sample_backed(out.tensors.front())) {
     const int mem_index = resolve_preproc_selected_memory_index(out, preproc_info);
     if (stage_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[stage][preproc-select] primary_output=%s selected_index=%d\n",
+      std::fprintf(stderr, "[stage][preproc-select] primary_output=%s selected_index=%d\n",
                    selected_output_name.empty() ? "<empty>" : selected_output_name.c_str(),
                    mem_index);
     }
-    tensor = select_stage_output_tensor_view(out, mem_index, "Preproc",
-                                             "Preproc: source before tensor_view_from_sample_memory",
-                                             "Preproc: selected tensor view",
-                                             "Preproc: direct tensor");
+    tensor = select_stage_output_tensor_view(
+        out, mem_index, "Preproc", "Preproc: source before tensor_view_from_sample_memory",
+        "Preproc: selected tensor view", "Preproc: direct tensor");
   } else {
     tensor = take_tensor(out, "Preproc");
     log_stage_tensor_holder_state("Preproc: direct tensor", tensor);
@@ -2126,10 +2124,11 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
       if (out_buf) {
         const auto meta = read_simaai_preprocess_meta(out_buf);
         if (meta.has_value()) {
-          std::fprintf(stderr,
-                       "[stage][holder] Preproc output meta original=%dx%d resized=%dx%d scaled=%dx%d\n",
-                       meta->original_width, meta->original_height, meta->resized_width,
-                       meta->resized_height, meta->scaled_width, meta->scaled_height);
+          std::fprintf(
+              stderr,
+              "[stage][holder] Preproc output meta original=%dx%d resized=%dx%d scaled=%dx%d\n",
+              meta->original_width, meta->original_height, meta->resized_width,
+              meta->resized_height, meta->scaled_width, meta->scaled_height);
         } else {
           std::fprintf(stderr, "[stage][holder] Preproc output meta missing\n");
         }
@@ -2170,8 +2169,8 @@ simaai::neat::Sample InferSample(const simaai::neat::Sample& input,
   log_stage_group_nodes("Infer", group);
   const std::vector<MlaOutputTensorInfo> infer_outputs = stage_mla_output_tensors_info(group);
   if (infer_outputs.empty()) {
-    throw std::runtime_error(
-        "Infer: MLA contract preflight failed: missing MLA output tensor contract from strict MPK metadata");
+    throw std::runtime_error("Infer: MLA contract preflight failed: missing MLA output tensor "
+                             "contract from strict MPK metadata");
   }
   MlaOutputInfo infer_info = mla_output_info_from_contract_tensor(infer_outputs.front());
   if (infer_info.data_type.empty() || infer_info.size_bytes <= 0) {
@@ -2270,8 +2269,8 @@ simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat
   NodeGroup group = simaai::neat::internal::ModelAccess::build_infer_group(model, true);
   const std::vector<MlaOutputTensorInfo> infer_outputs = stage_mla_output_tensors_info(group);
   if (infer_outputs.empty()) {
-    throw std::runtime_error(
-        "Infer: MLA contract preflight failed: missing MLA output tensor contract from strict MPK metadata");
+    throw std::runtime_error("Infer: MLA contract preflight failed: missing MLA output tensor "
+                             "contract from strict MPK metadata");
   }
   MlaOutputInfo infer_info = mla_output_info_from_contract_tensor(infer_outputs.front());
   if (infer_info.data_type.empty() || infer_info.size_bytes <= 0) {
@@ -2286,13 +2285,12 @@ simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat
       (selected.logical_output_index >= 0) ? selected.logical_output_index : 0;
   simaai::neat::Tensor tensor;
   if (static_cast<std::size_t>(logical_output_index) < infer_outputs.size()) {
-    infer_info =
-        mla_output_info_from_contract_tensor(infer_outputs[static_cast<std::size_t>(logical_output_index)]);
+    infer_info = mla_output_info_from_contract_tensor(
+        infer_outputs[static_cast<std::size_t>(logical_output_index)]);
   }
   tensor = select_stage_output_tensor_view(selected_sample, selected.memory_index, "Infer",
                                            "Infer: source before tensor_view_from_sample_memory",
-                                           "Infer: selected tensor view",
-                                           "Infer: direct tensor");
+                                           "Infer: selected tensor view", "Infer: direct tensor");
   const std::string infer_fmt = upper_copy(format_from_tensor(tensor));
   if (stage_debug_enabled()) {
     const int64_t actual_bytes = tensor_total_bytes(tensor);
@@ -2318,14 +2316,13 @@ simaai::neat::Sample MLASample(const simaai::neat::Sample& input,
   log_stage_group_nodes("MLA", group);
   const std::vector<MlaOutputTensorInfo> mla_outputs = stage_mla_output_tensors_info(group);
   if (mla_outputs.empty()) {
-    throw std::runtime_error(
-        "MLA: contract preflight failed: missing MLA output tensor contract from strict MPK metadata");
+    throw std::runtime_error("MLA: contract preflight failed: missing MLA output tensor contract "
+                             "from strict MPK metadata");
   }
   MlaOutputInfo mla_info = mla_output_info_from_contract_tensor(mla_outputs.front());
   if (mla_info.data_type.empty() || mla_info.size_bytes <= 0) {
-    throw std::runtime_error(
-        "MLA: contract preflight failed: missing physical output contract "
-        "(dtype/size_bytes) from strict MPK metadata");
+    throw std::runtime_error("MLA: contract preflight failed: missing physical output contract "
+                             "(dtype/size_bytes) from strict MPK metadata");
   }
   const SelectedTensorSample selected_input = select_tensor_sample(input, "MLA input");
   const simaai::neat::Tensor& selected_tensor =
@@ -2417,13 +2414,12 @@ simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::
       (selected.logical_output_index >= 0) ? selected.logical_output_index : 0;
   simaai::neat::Tensor tensor;
   if (static_cast<std::size_t>(logical_output_index) < mla_outputs.size()) {
-    mla_info =
-        mla_output_info_from_contract_tensor(mla_outputs[static_cast<std::size_t>(logical_output_index)]);
+    mla_info = mla_output_info_from_contract_tensor(
+        mla_outputs[static_cast<std::size_t>(logical_output_index)]);
   }
   tensor = select_stage_output_tensor_view(selected_sample, selected.memory_index, "MLA",
                                            "MLA: source before tensor_view_from_sample_memory",
-                                           "MLA: selected tensor view",
-                                           "MLA: direct tensor");
+                                           "MLA: selected tensor view", "MLA: direct tensor");
   const std::string mla_fmt = upper_copy(format_from_tensor(tensor));
   if (stage_debug_enabled()) {
     const int64_t actual_bytes = tensor_total_bytes(tensor);
@@ -2475,12 +2471,13 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
     }
   }
 
-  const SelectedTensorSample selected_input = select_tensor_sample(stage_input, "Postprocess input");
+  const SelectedTensorSample selected_input =
+      select_tensor_sample(stage_input, "Postprocess input");
   const TensorList& selected_input_tensors =
       sample_tensor_list(const_cast<Sample&>(*selected_input.sample), "Postprocess input");
   const simaai::neat::Tensor& selected_tensor = selected_input_tensors.front();
-  const WireCaps wire = build_wire_caps_from_tensor(
-      group, selected_tensor, nullptr, "application/vnd.simaai.tensor", nullptr);
+  const WireCaps wire = build_wire_caps_from_tensor(group, selected_tensor, nullptr,
+                                                    "application/vnd.simaai.tensor", nullptr);
   WireCaps stage_wire = wire;
   if (!sample_is_multi_output(stage_input)) {
     apply_stage_source_segment_name(&stage_wire, *selected_input.sample);
@@ -2611,7 +2608,8 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   NodeGroup group(std::vector<std::shared_ptr<Node>>{node});
   log_stage_group_nodes("BoxDecode", group);
   if (const auto req = collect_preprocess_meta_requirement(group, "boxdecode")) {
-    const PreprocessRuntimeMeta meta = enforce_required_preprocess_meta(selected_input_tensor, *req);
+    const PreprocessRuntimeMeta meta =
+        enforce_required_preprocess_meta(selected_input_tensor, *req);
     original_width = meta.original_width;
     original_height = meta.original_height;
   }
@@ -2664,7 +2662,8 @@ BoxDecodeResult BoxDecode(const simaai::neat::Sample& input, const simaai::neat:
     }
   }
   Sample out = BoxDecodeSample(input, model, opt);
-  if (auto decoded = try_decode_bbox_sample_recursive(out, original_width, original_height, opt.top_k);
+  if (auto decoded =
+          try_decode_bbox_sample_recursive(out, original_width, original_height, opt.top_k);
       decoded.has_value()) {
     return *decoded;
   }

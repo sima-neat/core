@@ -40,11 +40,11 @@ struct RuntimeMetricsOptions {
  * @ingroup diagnostics
  */
 struct RuntimeLatencyMetrics {
-  double avg_ms = 0.0;  ///< Average latency.
-  double min_ms = 0.0;  ///< Minimum latency.
-  double max_ms = 0.0;  ///< Maximum latency.
-  double p50_ms = 0.0;  ///< Optional p50 latency.
-  double p95_ms = 0.0;  ///< Optional p95 latency.
+  double avg_ms = 0.0;          ///< Average latency.
+  double min_ms = 0.0;          ///< Minimum latency.
+  double max_ms = 0.0;          ///< Maximum latency.
+  double p50_ms = 0.0;          ///< Optional p50 latency.
+  double p95_ms = 0.0;          ///< Optional p95 latency.
   bool has_percentiles = false; ///< True iff percentile fields are populated.
 };
 
@@ -66,9 +66,9 @@ struct RuntimeCounters {
  * @ingroup diagnostics
  */
 struct RuntimeMetricValue {
-  std::string name; ///< Metric name.
+  std::string name;   ///< Metric name.
   double value = 0.0; ///< Scalar value.
-  std::string unit; ///< Optional unit, e.g. "ms", "fps", "count".
+  std::string unit;   ///< Optional unit, e.g. "ms", "fps", "count".
 };
 
 /**
@@ -76,7 +76,7 @@ struct RuntimeMetricValue {
  * @ingroup diagnostics
  */
 struct RuntimeMetricGroup {
-  std::string name; ///< Group name.
+  std::string name;                       ///< Group name.
   std::vector<RuntimeMetricValue> values; ///< Metrics in this group.
 };
 
@@ -85,15 +85,15 @@ struct RuntimeMetricGroup {
  * @ingroup diagnostics
  */
 struct RuntimeMetrics {
-  std::string source_kind; ///< Producer kind: "run", "model", "graph", "perf", ...
-  std::string source_name; ///< Optional producer label.
-  double elapsed_seconds = 0.0; ///< Measurement duration.
-  double throughput_fps = 0.0;  ///< Headline throughput.
+  std::string source_kind;       ///< Producer kind: "run", "model", "graph", "perf", ...
+  std::string source_name;       ///< Optional producer label.
+  double elapsed_seconds = 0.0;  ///< Measurement duration.
+  double throughput_fps = 0.0;   ///< Headline throughput.
   RuntimeLatencyMetrics latency; ///< Headline latency.
   RuntimeCounters counters;      ///< Common counters.
   PowerSummary power;            ///< Optional power summary.
   std::vector<std::pair<std::string, std::string>> metadata; ///< String metadata.
-  std::vector<RuntimeMetricGroup> groups; ///< Adapter-specific details.
+  std::vector<RuntimeMetricGroup> groups;                    ///< Adapter-specific details.
 };
 
 /**

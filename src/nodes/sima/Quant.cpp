@@ -86,11 +86,11 @@ NodeContractDefinition Quant::contract_definition() const {
   return def;
 }
 
-bool Quant::compile_node_contract(const ContractCompileInput& input,
-                                  CompiledNodeContract* out,
+bool Quant::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                   std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("quant") : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("quant")
+                                       : element_names(input.node_index).front();
   try {
     if (config_holder_ && config_holder_->compiled_contract.has_value()) {
       return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
@@ -106,7 +106,8 @@ bool Quant::compile_node_contract(const ContractCompileInput& input,
     }
     node_helpers::ProcessCvuRuntimeConfigOptions runtime_options;
     runtime_options.graph_family = "quantize";
-    runtime_options.graph_id = 222;  /* SIMA_GRAPH_QUANTIZE — graph 220 was a header-only stub with no kernel impl */
+    runtime_options.graph_id =
+        222; /* SIMA_GRAPH_QUANTIZE — graph 220 was a header-only stub with no kernel impl */
     runtime_options.input_dtype_default = "FP32";
     runtime_options.output_dtype_default = "EVXX_INT8";
     runtime_options.allow_shape_only_tensor_desc = true;
@@ -114,9 +115,8 @@ bool Quant::compile_node_contract(const ContractCompileInput& input,
     if (runtime.graph_name.empty() || runtime.graph_name == runtime.graph_family) {
       runtime.graph_name = "quantize";
     }
-    const auto compiled =
-        pipeline_internal::sima::stagesemantics::build_processcvu_compiled_contract_from_runtime_config(
-            runtime);
+    const auto compiled = pipeline_internal::sima::stagesemantics::
+        build_processcvu_compiled_contract_from_runtime_config(runtime);
     return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   } catch (const std::exception& ex) {

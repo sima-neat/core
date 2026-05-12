@@ -31,9 +31,9 @@ namespace simaai::neat::pipeline_internal::sima {
 
 /// Whether an MPK shape describes raw geometry or a packed transport extent.
 enum class MpkShapeSemantics {
-  Unknown = 0,     ///< Not specified in the MPK.
-  Geometry,        ///< Logical geometry (raw rank/dims).
-  PackedExtent,    ///< Packed-transport byte extent expressed as a shape.
+  Unknown = 0,  ///< Not specified in the MPK.
+  Geometry,     ///< Logical geometry (raw rank/dims).
+  PackedExtent, ///< Packed-transport byte extent expressed as a shape.
 };
 
 /// How an MPK tensor materializes into runtime memory.
@@ -65,8 +65,7 @@ struct MpkTensorContract {
   std::string logical_source_plugin;
   std::string logical_source_kernel;
   int logical_source_sequence = -1;
-  MpkTensorMaterializationKind materialization_kind =
-      MpkTensorMaterializationKind::Direct;
+  MpkTensorMaterializationKind materialization_kind = MpkTensorMaterializationKind::Direct;
 };
 
 /// Quantization parameters captured from the MPK (per-tensor or per-axis).
@@ -79,14 +78,14 @@ struct MpkQuantContract {
 /// Reasons MPK contract loading can fail.
 enum class MpkContractErrorCode {
   None = 0,
-  InvalidPackageRoot,           ///< Package root path is missing or invalid.
-  MissingMpkJson,               ///< `mpk.json` was not found in the package root.
-  ParseFailed,                  ///< JSON parse failure.
-  MissingPluginsArray,          ///< `mpk.json` lacks the `plugins` array.
-  MissingProducerForTensor,     ///< A tensor consumer references a producer that doesn't exist.
-  AmbiguousProducerForTensor,   ///< Multiple producers claim the same tensor name.
-  InvalidMlaTopology,           ///< MLA stage topology violates expected invariants.
-  GraphFillFailed,              ///< Fused graph construction failed.
+  InvalidPackageRoot,         ///< Package root path is missing or invalid.
+  MissingMpkJson,             ///< `mpk.json` was not found in the package root.
+  ParseFailed,                ///< JSON parse failure.
+  MissingPluginsArray,        ///< `mpk.json` lacks the `plugins` array.
+  MissingProducerForTensor,   ///< A tensor consumer references a producer that doesn't exist.
+  AmbiguousProducerForTensor, ///< Multiple producers claim the same tensor name.
+  InvalidMlaTopology,         ///< MLA stage topology violates expected invariants.
+  GraphFillFailed,            ///< Fused graph construction failed.
 };
 
 /// One error captured during MPK contract loading.
@@ -97,24 +96,24 @@ struct MpkContractError {
 
 /// One raw producer-to-consumer edge in the MPK plugin chain.
 struct MpkContractEdge {
-  std::size_t src_plugin_index = 0U;  ///< Producer plugin index.
-  int src_output_index = -1;          ///< Producer output slot.
-  std::size_t dst_plugin_index = 0U;  ///< Consumer plugin index.
-  int dst_input_index = -1;           ///< Consumer input slot.
-  std::string src_plugin;             ///< Producer plugin name.
-  std::string dst_plugin;             ///< Consumer plugin name.
-  std::string tensor_name;            ///< Tensor name on the wire.
+  std::size_t src_plugin_index = 0U; ///< Producer plugin index.
+  int src_output_index = -1;         ///< Producer output slot.
+  std::size_t dst_plugin_index = 0U; ///< Consumer plugin index.
+  int dst_input_index = -1;          ///< Consumer input slot.
+  std::string src_plugin;            ///< Producer plugin name.
+  std::string dst_plugin;            ///< Consumer plugin name.
+  std::string tensor_name;           ///< Tensor name on the wire.
 };
 
 /// Kind of node in the fused MPK graph.
 enum class MpkGraphNodeKind {
   Unknown = 0,
-  IngressTensor,        ///< External input tensor (graph source).
-  Plugin,               ///< A single MPK plugin.
-  FusedPreproc,         ///< Fused preprocess group.
-  FusedBoxDecode,       ///< Fused box-decode terminal group.
-  FusedQuantTess,       ///< Fused quantize+tessellate group.
-  FusedDetessDequant,   ///< Fused detess+dequantize group.
+  IngressTensor,      ///< External input tensor (graph source).
+  Plugin,             ///< A single MPK plugin.
+  FusedPreproc,       ///< Fused preprocess group.
+  FusedBoxDecode,     ///< Fused box-decode terminal group.
+  FusedQuantTess,     ///< Fused quantize+tessellate group.
+  FusedDetessDequant, ///< Fused detess+dequantize group.
 };
 
 /// Kind of edge in the fused MPK graph.
@@ -127,9 +126,9 @@ enum class MpkGraphEdgeKind {
 /// Origin (in MPK terms) of a kernel-contract field.
 enum class MpkGraphKernelFieldKind {
   Unknown = 0,
-  Argument,    ///< Kernel argument from the MPK spec.
-  Value,       ///< Inline literal value.
-  Parameter,   ///< Bound parameter (e.g., from a parent template).
+  Argument,  ///< Kernel argument from the MPK spec.
+  Value,     ///< Inline literal value.
+  Parameter, ///< Bound parameter (e.g., from a parent template).
 };
 
 /// One field in a kernel contract carried by an MPK graph node.
@@ -142,33 +141,33 @@ struct MpkGraphKernelField {
 
 /// Kernel contract attached to an MPK graph node.
 struct MpkGraphKernelContract {
-  std::string kernel_name;                  ///< Name of the kernel (e.g., `"preproc_v2"`).
-  std::string contract_type;                ///< Contract type tag.
-  std::vector<MpkGraphKernelField> fields;  ///< Field bindings.
+  std::string kernel_name;                 ///< Name of the kernel (e.g., `"preproc_v2"`).
+  std::string contract_type;               ///< Contract type tag.
+  std::vector<MpkGraphKernelField> fields; ///< Field bindings.
 };
 
 /// Which fused-stage requirements the route around this node must satisfy.
 struct MpkGraphFusionRequirements {
-  bool preproc = false;         ///< Requires a preprocess fusion target.
-  bool boxdecode = false;       ///< Requires a box-decode fusion target.
-  bool quantization = false;    ///< Requires quant.
-  bool tessellation = false;    ///< Requires tess.
-  bool detessellation = false;  ///< Requires detess.
-  bool dequantization = false;  ///< Requires dequant.
-  bool cast = false;            ///< Requires cast.
+  bool preproc = false;        ///< Requires a preprocess fusion target.
+  bool boxdecode = false;      ///< Requires a box-decode fusion target.
+  bool quantization = false;   ///< Requires quant.
+  bool tessellation = false;   ///< Requires tess.
+  bool detessellation = false; ///< Requires detess.
+  bool dequantization = false; ///< Requires dequant.
+  bool cast = false;           ///< Requires cast.
 };
 
 /// MLA unpack metadata: where N output tensors are sliced from a packed MLA OFM.
 struct MpkGraphMlaUnpackMetadata {
-  bool present = false;                                 ///< Set when unpack metadata exists.
-  bool explicit_from_mpk = false;                       ///< True when MPK specified unpack explicitly.
-  std::string source_stage;                             ///< Source MLA stage name.
-  std::vector<std::int64_t> input_shape;                ///< Packed input shape.
-  std::vector<std::string> output_names;                ///< Per-slice output names.
-  std::vector<std::vector<std::int64_t>> output_shapes; ///< Per-slice shapes.
-  std::vector<std::vector<std::int64_t>> output_slice_begins;  ///< Per-slice begin offsets.
-  std::vector<std::size_t> output_sizes;                ///< Per-slice byte sizes.
-  int output_count = 0;                                 ///< Total number of slices.
+  bool present = false;                  ///< Set when unpack metadata exists.
+  bool explicit_from_mpk = false;        ///< True when MPK specified unpack explicitly.
+  std::string source_stage;              ///< Source MLA stage name.
+  std::vector<std::int64_t> input_shape; ///< Packed input shape.
+  std::vector<std::string> output_names; ///< Per-slice output names.
+  std::vector<std::vector<std::int64_t>> output_shapes;       ///< Per-slice shapes.
+  std::vector<std::vector<std::int64_t>> output_slice_begins; ///< Per-slice begin offsets.
+  std::vector<std::size_t> output_sizes;                      ///< Per-slice byte sizes.
+  int output_count = 0;                                       ///< Total number of slices.
 };
 
 /// MLA pack metadata (placeholder; current presence flag only).
@@ -217,26 +216,27 @@ struct MpkGraphNode {
 
 /// One edge in the fused MPK graph.
 struct MpkGraphEdge {
-  std::string edge_id;       ///< Stable edge identifier.
-  std::string src_node_id;   ///< Source node id.
-  std::string dst_node_id;   ///< Destination node id.
-  std::string tensor_name;   ///< Tensor flowing along the edge.
-  MpkGraphEdgeKind kind = MpkGraphEdgeKind::Unknown;  ///< Candidate match vs. confirmed routing.
-  std::size_t src_plugin_index = static_cast<std::size_t>(-1);  ///< Source plugin index (when present).
-  std::size_t dst_plugin_index = static_cast<std::size_t>(-1);  ///< Destination plugin index.
-  int src_tensor_index = -1;  ///< Source tensor index within the producer.
-  int dst_tensor_index = -1;  ///< Destination tensor index within the consumer.
+  std::string edge_id;                               ///< Stable edge identifier.
+  std::string src_node_id;                           ///< Source node id.
+  std::string dst_node_id;                           ///< Destination node id.
+  std::string tensor_name;                           ///< Tensor flowing along the edge.
+  MpkGraphEdgeKind kind = MpkGraphEdgeKind::Unknown; ///< Candidate match vs. confirmed routing.
+  std::size_t src_plugin_index =
+      static_cast<std::size_t>(-1); ///< Source plugin index (when present).
+  std::size_t dst_plugin_index = static_cast<std::size_t>(-1); ///< Destination plugin index.
+  int src_tensor_index = -1; ///< Source tensor index within the producer.
+  int dst_tensor_index = -1; ///< Destination tensor index within the consumer.
 };
 
 /// Full graph view of an MPK: raw plugin/tensor nodes plus the fused, route-ready view.
 struct MpkGraph {
-  std::string mpk_json_path;            ///< Path the MPK was loaded from.
-  std::string model_name;               ///< Model name from the manifest.
-  std::string model_path;               ///< Model artifact path.
-  std::vector<MpkGraphNode> raw_nodes;  ///< Pre-fusion node list.
-  std::vector<MpkGraphEdge> raw_edges;  ///< Pre-fusion edge list (candidate matches).
-  std::vector<MpkGraphNode> nodes;      ///< Post-fusion node list.
-  std::vector<MpkGraphEdge> edges;      ///< Post-fusion edge list (confirmed routes).
+  std::string mpk_json_path;           ///< Path the MPK was loaded from.
+  std::string model_name;              ///< Model name from the manifest.
+  std::string model_path;              ///< Model artifact path.
+  std::vector<MpkGraphNode> raw_nodes; ///< Pre-fusion node list.
+  std::vector<MpkGraphEdge> raw_edges; ///< Pre-fusion edge list (candidate matches).
+  std::vector<MpkGraphNode> nodes;     ///< Post-fusion node list.
+  std::vector<MpkGraphEdge> edges;     ///< Post-fusion edge list (confirmed routes).
 };
 
 /**
@@ -284,14 +284,14 @@ struct MpkPluginIoContract {
  * any errors collected during loading.
  */
 struct MpkContract {
-  std::string mpk_json_path;                       ///< Source `mpk.json` path.
-  std::string model_name;                          ///< Model name from the manifest.
-  std::string model_path;                          ///< Model artifact path.
-  std::vector<MpkTensorContract> ingress_tensors;  ///< External input tensors.
-  std::vector<MpkPluginIoContract> plugins;        ///< Plugin chain.
-  std::vector<MpkContractEdge> edges;              ///< Raw producer-consumer edges.
-  MpkGraph graph;                                  ///< Fused graph (filled by `fill_graph_from_mpk`).
-  std::vector<MpkContractError> errors;            ///< Errors collected during load.
+  std::string mpk_json_path;                      ///< Source `mpk.json` path.
+  std::string model_name;                         ///< Model name from the manifest.
+  std::string model_path;                         ///< Model artifact path.
+  std::vector<MpkTensorContract> ingress_tensors; ///< External input tensors.
+  std::vector<MpkPluginIoContract> plugins;       ///< Plugin chain.
+  std::vector<MpkContractEdge> edges;             ///< Raw producer-consumer edges.
+  MpkGraph graph;                       ///< Fused graph (filled by `fill_graph_from_mpk`).
+  std::vector<MpkContractError> errors; ///< Errors collected during load.
 };
 
 /**
@@ -343,16 +343,19 @@ bool mla_consumer_keeps_distinct_physical_inputs(const MpkContract& contract);
 const std::vector<MpkTensorContract>* get_mla_input_contract(const MpkContract& contract);
 
 /// Returns the logical-input contracts at the MLA boundary (post-pre-stage rewrites).
-std::vector<MpkTensorContract> get_mla_boundary_logical_inputs_contract(const MpkContract& contract);
+std::vector<MpkTensorContract>
+get_mla_boundary_logical_inputs_contract(const MpkContract& contract);
 
 /// Returns the physical-input contracts at the MLA boundary.
-std::vector<MpkTensorContract> get_mla_boundary_physical_inputs_contract(const MpkContract& contract);
+std::vector<MpkTensorContract>
+get_mla_boundary_physical_inputs_contract(const MpkContract& contract);
 
 /// Returns a pointer to the MLA stage's output tensor contracts, or null if no MLA stage.
 const std::vector<MpkTensorContract>* get_mla_outputs_contract(const MpkContract& contract);
 
 /// Returns the physical-output contracts at the MLA boundary.
-std::vector<MpkTensorContract> get_mla_boundary_physical_outputs_contract(const MpkContract& contract);
+std::vector<MpkTensorContract>
+get_mla_boundary_physical_outputs_contract(const MpkContract& contract);
 
 /// Returns the published-output contracts at the MLA boundary (post-unpack/dequant).
 std::vector<MpkTensorContract> get_mla_published_outputs_contract(const MpkContract& contract);
@@ -366,7 +369,7 @@ std::optional<MpkQuantContract> get_quant_params_contract(const MpkContract& con
 
 /// Find a plugin's index by name or id.
 std::optional<std::size_t> find_plugin_index_by_name_or_id(const MpkContract& contract,
-                                                            const std::string& plugin_name_or_id);
+                                                           const std::string& plugin_name_or_id);
 
 /// Return the plugin indices in execution order (topologically sorted).
 std::vector<std::size_t> plugins_in_execution_order(const MpkContract& contract);

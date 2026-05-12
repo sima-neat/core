@@ -34,10 +34,8 @@ std::string upper_copy_local(std::string value) {
   return value;
 }
 
-void set_tensor_wh_from_shape(const std::vector<std::int64_t>& shape,
-                              const std::string& layout,
-                              int* out_w,
-                              int* out_h) {
+void set_tensor_wh_from_shape(const std::vector<std::int64_t>& shape, const std::string& layout,
+                              int* out_w, int* out_h) {
   if (out_w) {
     *out_w = 0;
   }
@@ -48,7 +46,8 @@ void set_tensor_wh_from_shape(const std::vector<std::int64_t>& shape,
     return;
   }
 
-  const std::string up_layout = pipeline_internal::sima::tensorsemantics::normalize_layout_token(layout);
+  const std::string up_layout =
+      pipeline_internal::sima::tensorsemantics::normalize_layout_token(layout);
   auto positive_or_zero = [](std::int64_t value) {
     return value > 0 ? static_cast<int>(value) : 0;
   };
@@ -110,16 +109,16 @@ TensorStaticSpec tensor_from_logical_output(const LogicalTensorStaticSpec& logic
   tensor.shape = logical.shape;
   tensor.dtype = logical.dtype;
   tensor.layout = logical.layout;
-  tensor.semantic_tag = !logical.logical_name.empty()
-                            ? logical.logical_name
-                            : (!logical.backend_name.empty() ? logical.backend_name
-                                                             : logical.segment_name);
+  tensor.semantic_tag =
+      !logical.logical_name.empty()
+          ? logical.logical_name
+          : (!logical.backend_name.empty() ? logical.backend_name : logical.segment_name);
   set_tensor_wh_from_shape(tensor.shape, tensor.layout, &tensor.max_w, &tensor.max_h);
   return tensor;
 }
 
-std::vector<TensorStaticSpec> tensors_from_logical_inputs(
-    const std::vector<LogicalInputStaticSpec>& logical_inputs) {
+std::vector<TensorStaticSpec>
+tensors_from_logical_inputs(const std::vector<LogicalInputStaticSpec>& logical_inputs) {
   std::vector<TensorStaticSpec> tensors;
   tensors.reserve(logical_inputs.size());
   for (const auto& logical : logical_inputs) {
@@ -128,8 +127,8 @@ std::vector<TensorStaticSpec> tensors_from_logical_inputs(
   return tensors;
 }
 
-std::vector<TensorStaticSpec> tensors_from_logical_outputs(
-    const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
+std::vector<TensorStaticSpec>
+tensors_from_logical_outputs(const std::vector<LogicalTensorStaticSpec>& logical_outputs) {
   std::vector<TensorStaticSpec> tensors;
   tensors.reserve(logical_outputs.size());
   for (const auto& logical : logical_outputs) {
@@ -138,15 +137,14 @@ std::vector<TensorStaticSpec> tensors_from_logical_outputs(
   return tensors;
 }
 
-std::vector<StageOutputRoute> require_exposed_output_routes(const CompiledExposedView& exposed_view) {
+std::vector<StageOutputRoute>
+require_exposed_output_routes(const CompiledExposedView& exposed_view) {
   if (exposed_view.exposed_output_order.empty()) {
-    throw std::invalid_argument(
-        "processcvu exposed view missing explicit output_order for render");
+    throw std::invalid_argument("processcvu exposed view missing explicit output_order for render");
   }
   for (const auto& route : exposed_view.exposed_output_order) {
     if (route.cm_output_name.empty() && route.segment_name.empty()) {
-      throw std::invalid_argument(
-          "processcvu exposed view output_order route missing output name");
+      throw std::invalid_argument("processcvu exposed view output_order route missing output name");
     }
   }
   return exposed_view.exposed_output_order;
@@ -159,11 +157,11 @@ bool stage_is_cast_transport(const StageStaticSpec& stage) {
 
 bool stage_is_distinct_mla_consumer(const StageStaticSpec& stage) {
   return stage.consumer_keeps_distinct_physical_inputs &&
-         upper_copy_local(stage.kernel_kind) == "MLA" &&
-         stage.physical_inputs.size() > 1U;
+         upper_copy_local(stage.kernel_kind) == "MLA" && stage.physical_inputs.size() > 1U;
 }
 
-std::string physical_segment_name(const pipeline_internal::sima::PhysicalBufferStaticSpec& physical) {
+std::string
+physical_segment_name(const pipeline_internal::sima::PhysicalBufferStaticSpec& physical) {
   return physical.segment_name;
 }
 
@@ -174,9 +172,8 @@ bool logical_matches_segment_name(const LogicalTensorStaticSpec& logical,
           logical.logical_name == segment_name);
 }
 
-void normalize_cast_outputs_for_distinct_mla_boundary(
-    StageStaticSpec* producer,
-    const StageStaticSpec& consumer) {
+void normalize_cast_outputs_for_distinct_mla_boundary(StageStaticSpec* producer,
+                                                      const StageStaticSpec& consumer) {
   if (!producer || !stage_is_cast_transport(*producer) ||
       !stage_is_distinct_mla_consumer(consumer) ||
       producer->logical_outputs.size() != consumer.physical_inputs.size()) {
@@ -213,8 +210,8 @@ void normalize_cast_outputs_for_distinct_mla_boundary(
   }
 
   const auto old_physical_outputs = producer->physical_outputs;
-  const auto fallback_device =
-      old_physical_outputs.empty() ? pipeline_internal::sima::DeviceKind::Cpu
+  const auto fallback_device = old_physical_outputs.empty()
+                                   ? pipeline_internal::sima::DeviceKind::Cpu
                                    : old_physical_outputs.front().device_kind;
   producer->physical_outputs.clear();
   producer->physical_outputs.reserve(consumer.physical_inputs.size());
@@ -223,10 +220,8 @@ void normalize_cast_outputs_for_distinct_mla_boundary(
     const auto& consumer_physical = consumer.physical_inputs[physical_idx];
     producer->physical_outputs.push_back(
         pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
-            static_cast<int>(physical_idx),
-            static_cast<int>(physical_idx),
-            consumer_physical.size_bytes,
-            fallback_device,
+            static_cast<int>(physical_idx), static_cast<int>(physical_idx),
+            consumer_physical.size_bytes, fallback_device,
             physical_segment_name(consumer_physical)));
     auto& logical = producer->logical_outputs[logical_by_physical[physical_idx]];
     logical.physical_index = static_cast<int>(physical_idx);
@@ -238,11 +233,10 @@ void normalize_cast_outputs_for_distinct_mla_boundary(
     if (route.logical_output_index < 0) {
       continue;
     }
-    const auto it = std::find_if(
-        producer->logical_outputs.begin(), producer->logical_outputs.end(),
-        [&](const LogicalTensorStaticSpec& logical) {
-          return logical.logical_index == route.logical_output_index;
-        });
+    const auto it = std::find_if(producer->logical_outputs.begin(), producer->logical_outputs.end(),
+                                 [&](const LogicalTensorStaticSpec& logical) {
+                                   return logical.logical_index == route.logical_output_index;
+                                 });
     if (it != producer->logical_outputs.end()) {
       route.segment_name = it->segment_name;
     }
@@ -266,8 +260,7 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
     return;
   }
   const bool preproc_graph = upper_copy_local(payload->graph_family) == "PREPROC";
-  const bool preproc_single_output =
-      preproc_graph && payload->preproc_single_output_handoff;
+  const bool preproc_single_output = preproc_graph && payload->preproc_single_output_handoff;
   // Payload runtime outputs describe the CM/runtime boundary, not the exposed
   // logical publication fanout. For routes like detessdequant, many logical
   // published outputs can alias one runtime output / physical buffer.
@@ -280,8 +273,7 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
   const auto existing_output_shapes = payload->output_shapes;
   const auto existing_runtime_output_logical_index_list =
       payload->runtime_output_logical_index_list;
-  const auto existing_runtime_output_output_slot_list =
-      payload->runtime_output_output_slot_list;
+  const auto existing_runtime_output_output_slot_list = payload->runtime_output_output_slot_list;
   const auto existing_runtime_output_physical_index_list =
       payload->runtime_output_physical_index_list;
   const auto existing_runtime_output_dtype_list = payload->runtime_output_dtype_list;
@@ -289,8 +281,7 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
       payload->runtime_output_transport_kind_list;
   const auto existing_runtime_output_semantic_kind_list =
       payload->runtime_output_semantic_kind_list;
-  const auto existing_runtime_output_logical_shapes =
-      payload->runtime_output_logical_shapes;
+  const auto existing_runtime_output_logical_shapes = payload->runtime_output_logical_shapes;
   const auto existing_runtime_output_logical_layout_list =
       payload->runtime_output_logical_layout_list;
   const bool already_complete =
@@ -322,25 +313,22 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
     return shape;
   };
 
-  auto append_runtime_output = [&](std::vector<int> output_shape,
-                                   const LogicalTensorStaticSpec& logical,
-                                   int fallback_output_slot,
-                                   const std::string& dtype,
-                                   ProcessCvuOutputTransportKind transport_kind,
-                                   ProcessCvuOutputSemanticKind semantic_kind,
-                                   std::vector<int> logical_shape,
-                                   const std::string& logical_layout) {
-    payload->output_shapes.push_back(std::move(output_shape));
-    payload->runtime_output_logical_index_list.push_back(logical.logical_index);
-    payload->runtime_output_output_slot_list.push_back(
-        logical.output_slot >= 0 ? logical.output_slot : fallback_output_slot);
-    payload->runtime_output_physical_index_list.push_back(logical.physical_index);
-    payload->runtime_output_dtype_list.push_back(dtype);
-    payload->runtime_output_transport_kind_list.push_back(transport_kind);
-    payload->runtime_output_semantic_kind_list.push_back(semantic_kind);
-    payload->runtime_output_logical_shapes.push_back(std::move(logical_shape));
-    payload->runtime_output_logical_layout_list.push_back(logical_layout);
-  };
+  auto append_runtime_output =
+      [&](std::vector<int> output_shape, const LogicalTensorStaticSpec& logical,
+          int fallback_output_slot, const std::string& dtype,
+          ProcessCvuOutputTransportKind transport_kind, ProcessCvuOutputSemanticKind semantic_kind,
+          std::vector<int> logical_shape, const std::string& logical_layout) {
+        payload->output_shapes.push_back(std::move(output_shape));
+        payload->runtime_output_logical_index_list.push_back(logical.logical_index);
+        payload->runtime_output_output_slot_list.push_back(
+            logical.output_slot >= 0 ? logical.output_slot : fallback_output_slot);
+        payload->runtime_output_physical_index_list.push_back(logical.physical_index);
+        payload->runtime_output_dtype_list.push_back(dtype);
+        payload->runtime_output_transport_kind_list.push_back(transport_kind);
+        payload->runtime_output_semantic_kind_list.push_back(semantic_kind);
+        payload->runtime_output_logical_shapes.push_back(std::move(logical_shape));
+        payload->runtime_output_logical_layout_list.push_back(logical_layout);
+      };
 
   auto transport_kind_from_logical = [](const LogicalTensorStaticSpec& logical) {
     if (logical.shape.size() == 1U && logical.size_bytes > 0U &&
@@ -362,15 +350,13 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
     return ProcessCvuOutputSemanticKind::Tensor;
   };
 
-  auto payload_transport_kind_at = [&](std::size_t index,
-                                       ProcessCvuOutputTransportKind fallback) {
+  auto payload_transport_kind_at = [&](std::size_t index, ProcessCvuOutputTransportKind fallback) {
     return index < existing_runtime_output_transport_kind_list.size()
                ? existing_runtime_output_transport_kind_list[index]
                : fallback;
   };
 
-  auto payload_semantic_kind_at = [&](std::size_t index,
-                                      ProcessCvuOutputSemanticKind fallback) {
+  auto payload_semantic_kind_at = [&](std::size_t index, ProcessCvuOutputSemanticKind fallback) {
     return index < existing_runtime_output_semantic_kind_list.size()
                ? existing_runtime_output_semantic_kind_list[index]
                : fallback;
@@ -416,12 +402,9 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
       return payload_output_npos;
     };
 
-    for (const auto& candidate : {preferred_name,
-                                  route ? route->cm_output_name : std::string(),
-                                  route ? route->segment_name : std::string(),
-                                  logical.logical_name,
-                                  logical.backend_name,
-                                  logical.segment_name}) {
+    for (const auto& candidate : {preferred_name, route ? route->cm_output_name : std::string(),
+                                  route ? route->segment_name : std::string(), logical.logical_name,
+                                  logical.backend_name, logical.segment_name}) {
       const std::size_t index = find_name(candidate);
       if (index != payload_output_npos) {
         return index;
@@ -449,8 +432,8 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
     return payload_output_npos;
   };
 
-  auto find_runtime_logical_by_name = [&](const std::string& output_name)
-      -> const LogicalTensorStaticSpec* {
+  auto find_runtime_logical_by_name =
+      [&](const std::string& output_name) -> const LogicalTensorStaticSpec* {
     for (const auto& logical : runtime.logical_outputs) {
       if (logical.logical_name == output_name || logical.backend_name == output_name ||
           logical.segment_name == output_name) {
@@ -461,10 +444,10 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
   };
 
   if (preproc_graph && !preproc_single_output) {
-    const auto payload_outputs = !payload->default_output_names.empty()
-                                     ? payload->default_output_names
-                                     : std::vector<std::string>{"output_rgb_image",
-                                                                "output_tessellated_image"};
+    const auto payload_outputs =
+        !payload->default_output_names.empty()
+            ? payload->default_output_names
+            : std::vector<std::string>{"output_rgb_image", "output_tessellated_image"};
     payload->output_shapes.reserve(payload_outputs.size());
     payload->runtime_output_logical_index_list.reserve(payload_outputs.size());
     payload->runtime_output_output_slot_list.reserve(payload_outputs.size());
@@ -483,9 +466,10 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
             "processcvu preproc runtime output could not resolve a logical output");
       }
       const auto logical_shape = shape_i64_to_int(logical->shape);
-      const std::string dtype = !payload->output_dtype.empty() ? payload->output_dtype
-                                : (!payload->out_dtype.empty() ? payload->out_dtype
-                                                               : logical->dtype);
+      const std::string dtype =
+          !payload->output_dtype.empty()
+              ? payload->output_dtype
+              : (!payload->out_dtype.empty() ? payload->out_dtype : logical->dtype);
       const std::string layout = payload->logical_output_layout_token(i);
       const auto transport_kind =
           payload_transport_kind_at(i, transport_kind_from_logical(*logical));
@@ -495,8 +479,7 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
       const auto runtime_logical_shape = payload_logical_shape_at(i, logical_shape);
       const std::string logical_layout = payload_logical_layout_at(i, layout);
       append_runtime_output(output_shape, *logical,
-                            logical->output_slot >= 0 ? logical->output_slot
-                                                       : static_cast<int>(i),
+                            logical->output_slot >= 0 ? logical->output_slot : static_cast<int>(i),
                             dtype, transport_kind, semantic_kind, runtime_logical_shape,
                             logical_layout);
     }
@@ -513,8 +496,7 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
   payload->runtime_output_logical_shapes.reserve(runtime.logical_outputs.size());
   payload->runtime_output_logical_layout_list.reserve(runtime.logical_outputs.size());
 
-  auto find_runtime_logical =
-      [&](const StageOutputRoute& route) -> const LogicalTensorStaticSpec* {
+  auto find_runtime_logical = [&](const StageOutputRoute& route) -> const LogicalTensorStaticSpec* {
     for (const auto& logical : runtime.logical_outputs) {
       if (route.logical_output_index >= 0 && logical.logical_index == route.logical_output_index) {
         return &logical;
@@ -548,36 +530,30 @@ void populate_processcvu_runtime_output_contract(ProcessCvuStagePayload* payload
           "processcvu runtime contract output_order could not resolve a logical output");
     }
     const auto logical_shape = shape_i64_to_int(logical->shape);
-    const auto transport_kind =
-        payload_transport_kind_at(payload_output_index_for(
-                                      *logical,
-                                      &route,
-                                      !route.cm_output_name.empty() ? route.cm_output_name
-                                                                    : route.segment_name),
-                                  transport_kind_from_logical(*logical));
-    const auto semantic_kind =
-        payload_semantic_kind_at(payload_output_index_for(
-                                     *logical,
-                                     &route,
-                                     !route.cm_output_name.empty() ? route.cm_output_name
-                                                                   : route.segment_name),
-                                 semantic_kind_from_output_name(
-                                     !route.cm_output_name.empty() ? route.cm_output_name
-                                                                   : route.segment_name,
-                                     transport_kind));
+    const auto transport_kind = payload_transport_kind_at(
+        payload_output_index_for(*logical, &route,
+                                 !route.cm_output_name.empty() ? route.cm_output_name
+                                                               : route.segment_name),
+        transport_kind_from_logical(*logical));
+    const auto semantic_kind = payload_semantic_kind_at(
+        payload_output_index_for(*logical, &route,
+                                 !route.cm_output_name.empty() ? route.cm_output_name
+                                                               : route.segment_name),
+        semantic_kind_from_output_name(!route.cm_output_name.empty() ? route.cm_output_name
+                                                                     : route.segment_name,
+                                       transport_kind));
     const std::size_t payload_index = payload_output_index_for(
-        *logical, &route, !route.cm_output_name.empty() ? route.cm_output_name : route.segment_name);
+        *logical, &route,
+        !route.cm_output_name.empty() ? route.cm_output_name : route.segment_name);
     const auto output_shape = payload_output_shape_at(payload_index, logical_shape);
     const auto runtime_logical_shape = payload_logical_shape_at(payload_index, logical_shape);
     const std::string logical_layout = payload_logical_layout_at(payload_index, logical->layout);
-    append_runtime_output(output_shape, *logical,
-                          route.output_slot >= 0 ? route.output_slot : static_cast<int>(i),
-                          logical->dtype, transport_kind, semantic_kind, runtime_logical_shape,
-                          logical_layout);
+    append_runtime_output(
+        output_shape, *logical, route.output_slot >= 0 ? route.output_slot : static_cast<int>(i),
+        logical->dtype, transport_kind, semantic_kind, runtime_logical_shape, logical_layout);
   }
   if (payload->output_shapes.size() != runtime.output_order.size()) {
-    throw std::invalid_argument(
-        "processcvu runtime contract output_order render count mismatch");
+    throw std::invalid_argument("processcvu runtime contract output_order render count mismatch");
   }
 }
 
@@ -611,8 +587,9 @@ StageStaticSpec render_processcvu_stage(const CompiledNodeContract& compiled_sta
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.model_managed_stage = true;
-  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty() ? "processcvu"
-                                                                    : compiled.runtime_contract.plugin_kind;
+  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty()
+                          ? "processcvu"
+                          : compiled.runtime_contract.plugin_kind;
   stage.kernel_kind = !compiled.payload.graph_family.empty() ? compiled.payload.graph_family
                                                              : compiled.payload.graph_name;
   stage.payload_kind = StagePayloadKind::ProcessCvu;
@@ -645,8 +622,9 @@ StageStaticSpec render_processmla_stage(const CompiledNodeContract& compiled_sta
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.model_managed_stage = true;
-  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty() ? "processmla"
-                                                                    : compiled.runtime_contract.plugin_kind;
+  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty()
+                          ? "processmla"
+                          : compiled.runtime_contract.plugin_kind;
   stage.kernel_kind = "mla";
   stage.payload_kind = StagePayloadKind::ProcessMla;
   stage.processmla = compiled.payload;
@@ -671,8 +649,9 @@ StageStaticSpec render_boxdecode_stage(const CompiledNodeContract& compiled_stag
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.model_managed_stage = true;
-  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty() ? "boxdecode"
-                                                                    : compiled.runtime_contract.plugin_kind;
+  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty()
+                          ? "boxdecode"
+                          : compiled.runtime_contract.plugin_kind;
   stage.kernel_kind = "boxdecode";
   stage.payload_kind = StagePayloadKind::BoxDecode;
   stage.boxdecode = compiled.payload;
@@ -692,8 +671,9 @@ StageStaticSpec render_dequant_stage(const CompiledNodeContract& compiled_stage)
   stage.element_name = compiled_stage.element_name;
   stage.logical_stage_id = compiled_stage.logical_stage_id;
   stage.model_managed_stage = false;
-  stage.plugin_kind =
-      compiled.runtime_contract.plugin_kind.empty() ? "dequant" : compiled.runtime_contract.plugin_kind;
+  stage.plugin_kind = compiled.runtime_contract.plugin_kind.empty()
+                          ? "dequant"
+                          : compiled.runtime_contract.plugin_kind;
   stage.kernel_kind = "dequant";
   stage.payload_kind = StagePayloadKind::Dequant;
   stage.logical_inputs = compiled.runtime_contract.logical_inputs;
@@ -724,10 +704,12 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
   stage.required_preprocess_meta_fields = compiled.runtime_contract.required_preprocess_meta_fields;
   stage.consumer_keeps_distinct_physical_inputs =
       compiled.runtime_contract.consumer_keeps_distinct_physical_inputs;
-  if (compiled.payload_kind == StagePayloadKind::ProcessCvu && compiled.processcvu_payload.has_value()) {
+  if (compiled.payload_kind == StagePayloadKind::ProcessCvu &&
+      compiled.processcvu_payload.has_value()) {
     stage.processcvu = *compiled.processcvu_payload;
     populate_processcvu_runtime_output_contract(&stage.processcvu, compiled.runtime_contract);
-    if (stage.processcvu.primary_output_name.empty() && !compiled.runtime_contract.output_order.empty()) {
+    if (stage.processcvu.primary_output_name.empty() &&
+        !compiled.runtime_contract.output_order.empty()) {
       const std::string primary_name =
           output_name_from_route(compiled.runtime_contract.output_order.front());
       if (!primary_name.empty()) {
@@ -736,27 +718,28 @@ StageStaticSpec render_transport_stage(const CompiledNodeContract& compiled_stag
     }
   }
   if (pipeline_internal::env_bool("SIMA_TRANSPORT_CONTRACT_DEBUG", false)) {
-    std::fprintf(stderr,
-                 "[render-transport-debug] stage=%s id=%s plugin=%s kernel=%s phys=%zu logical=%zu routes=%zu first_segment=%s\n",
-                 stage.element_name.c_str(), stage.logical_stage_id.c_str(),
-                 stage.plugin_kind.c_str(), stage.kernel_kind.c_str(),
-                 stage.physical_outputs.size(), stage.logical_outputs.size(),
-                 stage.output_order.size(),
-                 (!stage.physical_outputs.empty() && !stage.physical_outputs.front().segment_name.empty())
-                     ? stage.physical_outputs.front().segment_name.c_str()
-                     : "<empty>");
+    std::fprintf(
+        stderr,
+        "[render-transport-debug] stage=%s id=%s plugin=%s kernel=%s phys=%zu logical=%zu "
+        "routes=%zu first_segment=%s\n",
+        stage.element_name.c_str(), stage.logical_stage_id.c_str(), stage.plugin_kind.c_str(),
+        stage.kernel_kind.c_str(), stage.physical_outputs.size(), stage.logical_outputs.size(),
+        stage.output_order.size(),
+        (!stage.physical_outputs.empty() && !stage.physical_outputs.front().segment_name.empty())
+            ? stage.physical_outputs.front().segment_name.c_str()
+            : "<empty>");
   }
   return stage;
 }
 
-std::vector<StageStaticSpec> render_stages_from_compiled_contract(
-    const CompiledNodeContract& stage, ManifestBuildDiagnostics* diagnostics) {
+std::vector<StageStaticSpec>
+render_stages_from_compiled_contract(const CompiledNodeContract& stage,
+                                     ManifestBuildDiagnostics* diagnostics) {
   if (!stage.child_stages.empty()) {
     std::vector<StageStaticSpec> rendered;
     for (const auto& child : stage.child_stages) {
       auto child_rendered = render_stages_from_compiled_contract(child, diagnostics);
-      rendered.insert(rendered.end(),
-                      std::make_move_iterator(child_rendered.begin()),
+      rendered.insert(rendered.end(), std::make_move_iterator(child_rendered.begin()),
                       std::make_move_iterator(child_rendered.end()));
     }
     return rendered;
@@ -766,8 +749,8 @@ std::vector<StageStaticSpec> render_stages_from_compiled_contract(
       return {render_processcvu_stage(stage)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
-        diagnostics->errors.push_back("contract render: processcvu stage '" +
-                                      stage.node_kind + "' failed: " + ex.what());
+        diagnostics->errors.push_back("contract render: processcvu stage '" + stage.node_kind +
+                                      "' failed: " + ex.what());
       }
       return {};
     }
@@ -777,8 +760,8 @@ std::vector<StageStaticSpec> render_stages_from_compiled_contract(
       return {render_processmla_stage(stage)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
-        diagnostics->errors.push_back("contract render: processmla stage '" +
-                                      stage.node_kind + "' failed: " + ex.what());
+        diagnostics->errors.push_back("contract render: processmla stage '" + stage.node_kind +
+                                      "' failed: " + ex.what());
       }
       return {};
     }
@@ -788,8 +771,8 @@ std::vector<StageStaticSpec> render_stages_from_compiled_contract(
       return {render_boxdecode_stage(stage)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
-        diagnostics->errors.push_back("contract render: boxdecode stage '" +
-                                      stage.node_kind + "' failed: " + ex.what());
+        diagnostics->errors.push_back("contract render: boxdecode stage '" + stage.node_kind +
+                                      "' failed: " + ex.what());
       }
       return {};
     }
@@ -799,8 +782,8 @@ std::vector<StageStaticSpec> render_stages_from_compiled_contract(
       return {render_dequant_stage(stage)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
-        diagnostics->errors.push_back("contract render: dequant stage '" +
-                                      stage.node_kind + "' failed: " + ex.what());
+        diagnostics->errors.push_back("contract render: dequant stage '" + stage.node_kind +
+                                      "' failed: " + ex.what());
       }
       return {};
     }
@@ -810,8 +793,8 @@ std::vector<StageStaticSpec> render_stages_from_compiled_contract(
       return {render_transport_stage(stage)};
     } catch (const std::exception& ex) {
       if (diagnostics) {
-        diagnostics->errors.push_back("contract render: transport stage '" +
-                                      stage.node_kind + "' failed: " + ex.what());
+        diagnostics->errors.push_back("contract render: transport stage '" + stage.node_kind +
+                                      "' failed: " + ex.what());
       }
       return {};
     }
@@ -826,9 +809,9 @@ std::vector<StageStaticSpec> render_stages_from_compiled_contract(
 } // namespace
 
 std::optional<pipeline_internal::sima::SimaPluginStaticManifest>
-render_manifest_from_compiled_contracts(const CompiledPipelineContracts& compiled,
-                                        const ContractCompileInput& compile_input,
-                                        pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
+render_manifest_from_compiled_contracts(
+    const CompiledPipelineContracts& compiled, const ContractCompileInput& compile_input,
+    pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
   SimaPluginStaticManifest manifest;
 
   for (const auto& stage : compiled.stages) {
@@ -836,8 +819,7 @@ render_manifest_from_compiled_contracts(const CompiledPipelineContracts& compile
       StageStaticSpec resolved = rendered;
       if (resolved.payload_kind == StagePayloadKind::ProcessCvu) {
         const std::string stage_identity =
-            !resolved.logical_stage_id.empty() ? resolved.logical_stage_id
-                                               : resolved.element_name;
+            !resolved.logical_stage_id.empty() ? resolved.logical_stage_id : resolved.element_name;
         resolve_processcvu_run_target(&resolved.processcvu, compile_input, stage_identity);
       }
       manifest.stages.push_back(std::move(resolved));
@@ -852,8 +834,8 @@ render_manifest_from_compiled_contracts(const CompiledPipelineContracts& compile
 
   if (manifest.stages.empty()) {
     if (diagnostics && !compiled.fully_renderable) {
-      diagnostics->warnings.push_back(
-          "contract render: compiled contract set is partial and no renderable stages were produced");
+      diagnostics->warnings.push_back("contract render: compiled contract set is partial and no "
+                                      "renderable stages were produced");
     }
     return std::nullopt;
   }

@@ -43,8 +43,7 @@ inline simaai::neat::Sample make_bbox_tensor_sample(const std::vector<uint8_t>& 
   tensor.shape = {static_cast<int64_t>(payload.size())};
   tensor.device = {DeviceType::CPU, 0};
   tensor.read_only = true;
-  tensor.semantic.tess =
-      TessSpec{.slice_shape = {}, .format = fmt};
+  tensor.semantic.tess = TessSpec{.slice_shape = {}, .format = fmt};
 
   Sample sample = sample_from_tensors(TensorList{std::move(tensor)});
   sample.frame_id = 7;

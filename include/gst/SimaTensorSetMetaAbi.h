@@ -11,7 +11,7 @@
 #pragma once
 
 #if defined(__GNUC__) || defined(__clang__)
-#  include_next <gst/SimaTensorSetMetaAbi.h>
+#include_next <gst/SimaTensorSetMetaAbi.h>
 #else
-#  error "SimaTensorSetMetaAbi.h must be provided by the installed internals SDK."
+#error "SimaTensorSetMetaAbi.h must be provided by the installed internals SDK."
 #endif

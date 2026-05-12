@@ -100,54 +100,45 @@ struct ProcessCvuCanonicalCompileInputs {
 
 std::string canonical_processcvu_graph_family(const std::string& graph_family);
 
-ProcessCvuCanonicalCompileInputs build_processcvu_compile_inputs_from_options(
-    const ::simaai::neat::PreprocOptions& opt);
+ProcessCvuCanonicalCompileInputs
+build_processcvu_compile_inputs_from_options(const ::simaai::neat::PreprocOptions& opt);
 
-CompiledProcessCvuContract build_processcvu_compiled_contract_from_options(
-    const ::simaai::neat::PreprocOptions& opt);
+CompiledProcessCvuContract
+build_processcvu_compiled_contract_from_options(const ::simaai::neat::PreprocOptions& opt);
 
-CompiledProcessCvuContract build_processcvu_compiled_contract_from_facts(
-    const ProcessCvuStagePayload& payload,
-    const ProcessCvuCanonicalFacts& facts);
+CompiledProcessCvuContract
+build_processcvu_compiled_contract_from_facts(const ProcessCvuStagePayload& payload,
+                                              const ProcessCvuCanonicalFacts& facts);
 
-CompiledProcessCvuContract build_processcvu_compiled_contract(
-    const ProcessCvuCanonicalCompileInputs& inputs);
-
+CompiledProcessCvuContract
+build_processcvu_compiled_contract(const ProcessCvuCanonicalCompileInputs& inputs);
 
 CompiledProcessCvuContract build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
-    const MpkContract& contract,
-    ::simaai::neat::internal::ExecutionStageKind stage_kind,
+    const MpkContract& contract, ::simaai::neat::internal::ExecutionStageKind stage_kind,
     const std::optional<std::string>& exact_stage_name_or_id = std::nullopt,
     const std::optional<std::string>& canonical_handoff_segment_name = std::nullopt);
 CompiledProcessCvuContract build_processcvu_mpk_compiled_contract_for_stage_kind(
-    const MpkContract& contract,
-    ::simaai::neat::internal::ExecutionStageKind stage_kind,
+    const MpkContract& contract, ::simaai::neat::internal::ExecutionStageKind stage_kind,
     const std::optional<std::string>& exact_stage_name_or_id = std::nullopt,
     const std::optional<std::string>& canonical_handoff_segment_name = std::nullopt,
     const std::optional<bool>& preproc_single_output_handoff = std::nullopt,
-    const std::string& input_format = {},
-    int input_depth = 0,
-    int max_input_width = 0,
-    int max_input_height = 0,
-    bool normalize = false,
-    const std::vector<float>& mean = {},
+    const std::string& input_format = {}, int input_depth = 0, int max_input_width = 0,
+    int max_input_height = 0, bool normalize = false, const std::vector<float>& mean = {},
     const std::vector<float>& stddev = {});
 
-std::string resolve_preproc_primary_output_name(
-    const std::vector<std::string>& runtime_output_names,
-    bool tessellate,
-    const std::string& requested_primary_output_name = {});
+std::string
+resolve_preproc_primary_output_name(const std::vector<std::string>& runtime_output_names,
+                                    bool tessellate,
+                                    const std::string& requested_primary_output_name = {});
 
 std::uint64_t processcvu_dtype_size_bytes_from_token(const std::string& raw_dtype);
 
 std::uint64_t processcvu_tensor_size_bytes_from_spec(const TensorStaticSpec& tensor);
 
-bool build_processcvu_node_contract(const std::string& node_kind,
-                                    const std::string& element_name,
+bool build_processcvu_node_contract(const std::string& node_kind, const std::string& element_name,
                                     const std::string& logical_stage_id,
                                     const NodeContractDefinition& definition,
                                     const CompiledProcessCvuContract& compiled,
-                                    CompiledNodeContract* out,
-                                    std::string* err = nullptr);
+                                    CompiledNodeContract* out, std::string* err = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima::stagesemantics

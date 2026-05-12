@@ -364,9 +364,9 @@ std::string lower_copy(std::string s) {
 // Canonical allow-list shared by loader validation and pipeline sequence validation.
 bool is_supported_kernel_impl(const std::string& kernel) {
   static const std::unordered_set<std::string> kSupportedKernels = {
-      "preproc", "quant", "tess", "tessellate", "quanttess", "cast",
-      "infer",   "mla",   "detessdequant", "detessellate", "dequantize",
-      "boxdecode", "buffer_concat",
+      "preproc",    "quant",     "tess",          "tessellate",    "quanttess",
+      "cast",       "infer",     "mla",           "detessdequant", "detessellate",
+      "dequantize", "boxdecode", "buffer_concat",
   };
   return kSupportedKernels.find(lower_copy(kernel)) != kSupportedKernels.end();
 }

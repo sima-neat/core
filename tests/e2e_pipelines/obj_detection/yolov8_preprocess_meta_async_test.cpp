@@ -101,7 +101,8 @@ int main(int argc, char** argv) {
 
     cv::Mat frame0 = img_bgr.clone();
     cv::Mat frame1;
-    cv::resize(img_bgr, frame1, cv::Size(std::max(96, img_bgr.cols / 2), std::max(96, img_bgr.rows / 2)));
+    cv::resize(img_bgr, frame1,
+               cv::Size(std::max(96, img_bgr.cols / 2), std::max(96, img_bgr.rows / 2)));
 
     simaai::neat::Session session;
     simaai::neat::InputOptions in_opt;
@@ -117,10 +118,9 @@ int main(int argc, char** argv) {
     // Dynamic-geometry test: disable stability gating so one frame per regime
     // is enough to trigger caps update and produce output.
     run_opt.preset = simaai::neat::RunPreset::Realtime;
-    auto run = session.build(
-        simaai::neat::SampleList{simaai::neat::Sample::from_image(
-            frame0, simaai::neat::ImageSpec::PixelFormat::BGR)},
-        simaai::neat::RunMode::Async, run_opt);
+    auto run = session.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                                 frame0, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                             simaai::neat::RunMode::Async, run_opt);
     require(run.push(simaai::neat::SampleList{simaai::neat::Sample::from_image(
                 frame0, simaai::neat::ImageSpec::PixelFormat::BGR)}),
             "async-meta: failed to push frame0");
@@ -133,7 +133,8 @@ int main(int argc, char** argv) {
     box_opt.nms_iou_threshold = 0.5;
     box_opt.top_k = 100;
 
-    std::set<std::pair<int, int>> expected = {{frame0.cols, frame0.rows}, {frame1.cols, frame1.rows}};
+    std::set<std::pair<int, int>> expected = {{frame0.cols, frame0.rows},
+                                              {frame1.cols, frame1.rows}};
     for (int i = 0; i < 2; ++i) {
       auto samples = run.pull_samples(10000);
       require(!samples.empty(), "async-meta: missing output sample");

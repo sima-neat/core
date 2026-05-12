@@ -41,7 +41,7 @@ struct Elf64Header {
 
 struct Elf64SectionHeader {
   std::uint32_t sh_name = 0;
-  std::uint32_t sh_type = 1;     // SHT_PROGBITS
+  std::uint32_t sh_type = 1; // SHT_PROGBITS
   std::uint64_t sh_flags = 0;
   std::uint64_t sh_addr = 0;
   std::uint64_t sh_offset = 0;
@@ -118,16 +118,16 @@ void check(bool cond, const char* what) {
 }
 
 void test_multi_ifm_topology() {
-  const auto path = write_minimal_elf("multi_ifm", {
-      "code.r0.c0",
-      "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0",
-      "data.ifm.persistent.input_01/MLA_0/placeholder_1_0.b0",
-      "data.ofm.persistent.output_00/MLA_0/sigmoid_64.b0",
-      "data.ofm.persistent.output_01/MLA_0/conv2d_add_68.b0",
-  });
+  const auto path =
+      write_minimal_elf("multi_ifm", {
+                                         "code.r0.c0",
+                                         "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0",
+                                         "data.ifm.persistent.input_01/MLA_0/placeholder_1_0.b0",
+                                         "data.ofm.persistent.output_00/MLA_0/sigmoid_64.b0",
+                                         "data.ofm.persistent.output_01/MLA_0/conv2d_add_68.b0",
+                                     });
   simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
-  const bool ok =
-      simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+  const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
   check(ok, "multi_ifm: parser returned ok");
   check(topology.valid, "multi_ifm: topology.valid");
   check(!topology.monolithic_ifm, "multi_ifm: !monolithic_ifm");
@@ -138,42 +138,40 @@ void test_multi_ifm_topology() {
         "multi_ifm: ifm[0] is placeholder_0_0");
   check(topology.ifm_symbol_names[1].find("placeholder_1_0") != std::string::npos,
         "multi_ifm: ifm[1] is placeholder_1_0");
-  check(simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(
-            topology),
-        "multi_ifm: requires_distinct_ifm_segments == true");
+  check(
+      simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology),
+      "multi_ifm: requires_distinct_ifm_segments == true");
   std::filesystem::remove(path);
 }
 
 void test_monolithic_topology() {
   const auto path = write_minimal_elf("monolithic", {
-      "code.r0.c0",
-      "data.ifm.b0",
-      "data.ofm.b0",
-  });
+                                                        "code.r0.c0",
+                                                        "data.ifm.b0",
+                                                        "data.ofm.b0",
+                                                    });
   simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
-  const bool ok =
-      simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+  const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
   check(ok, "monolithic: parser returned ok");
   check(topology.valid, "monolithic: topology.valid");
   check(topology.monolithic_ifm, "monolithic: monolithic_ifm");
   check(topology.monolithic_ofm, "monolithic: monolithic_ofm");
   check(topology.ifm_symbol_names.empty(), "monolithic: no IFM placeholders");
   check(topology.ofm_symbol_names.empty(), "monolithic: no OFM placeholders");
-  check(!simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(
-            topology),
-        "monolithic: requires_distinct_ifm_segments == false");
+  check(
+      !simaai::neat::pipeline_internal::sima::elf_topology_requires_distinct_ifm_segments(topology),
+      "monolithic: requires_distinct_ifm_segments == false");
   std::filesystem::remove(path);
 }
 
 void test_unknown_topology_fails_cleanly() {
   const auto path = write_minimal_elf("unknown", {
-      "code.r0.c0",
-      "checksums",
-      "tile.latencies",
-  });
+                                                     "code.r0.c0",
+                                                     "checksums",
+                                                     "tile.latencies",
+                                                 });
   simaai::neat::pipeline_internal::sima::MlaElfIoTopology topology;
-  const bool ok =
-      simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
+  const bool ok = simaai::neat::pipeline_internal::sima::read_mla_elf_io_topology(path, &topology);
   check(!ok, "unknown: parser reports failure");
   check(!topology.valid, "unknown: topology.valid is false");
   check(!topology.error.empty(), "unknown: error message populated");

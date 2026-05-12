@@ -89,14 +89,12 @@ static bool env_truthy_local(const char* name) {
 static bool processcvu_family_is_fused_local(std::string family) {
   family = to_lower(std::move(family));
   return family.find("tess") != std::string::npos &&
-         (family.find("quant") != std::string::npos ||
-          family.find("cast") != std::string::npos);
+         (family.find("quant") != std::string::npos || family.find("cast") != std::string::npos);
 }
 
 static std::string canonical_processcvu_stage_name_local(const std::string& stage_name,
                                                          ExecutionStageKind kind) {
-  const std::string family =
-      pipeline_internal::sima::processcvu_graph_family_for_stage_kind(kind);
+  const std::string family = pipeline_internal::sima::processcvu_graph_family_for_stage_kind(kind);
   if (family.empty() || !processcvu_family_is_fused_local(family)) {
     return stage_name;
   }
@@ -222,10 +220,10 @@ static std::string require_stage_factory(ExecutionStageKind kind) {
                              "); no GStreamer element is mapped for this stage kind");
   }
   if (!simaai::neat::element_exists(factory)) {
-    throw std::runtime_error(std::string("ModelFragment: required NEAT factory not found: '") +
-                             factory + "' (typed stage kind=" +
-                             std::to_string(static_cast<int>(kind)) +
-                             "). Ensure the NEAT plugin .so is installed and GST_PLUGIN_PATH includes it.");
+    throw std::runtime_error(
+        std::string("ModelFragment: required NEAT factory not found: '") + factory +
+        "' (typed stage kind=" + std::to_string(static_cast<int>(kind)) +
+        "). Ensure the NEAT plugin .so is installed and GST_PLUGIN_PATH includes it.");
   }
   return factory;
 }
@@ -251,9 +249,8 @@ static bool output_name_looks_generic_local(std::string raw_name) {
   if (raw_name.empty()) {
     return true;
   }
-  std::transform(raw_name.begin(), raw_name.end(), raw_name.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(raw_name.begin(), raw_name.end(), raw_name.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return raw_name.rfind("pass_through_out_", 0U) == 0U ||
          raw_name.rfind("output_tensor_", 0U) == 0U || raw_name == "output_tensor" ||
          raw_name.rfind("output_", 0U) == 0U;
@@ -425,9 +422,8 @@ read_mla_runtime_properties_from_config(const std::string& cfg_path) {
         } else if (out.is_string()) {
           out_name = out.get<std::string>();
         }
-        dbg << " out[" << i << "]={name="
-            << (out_name.empty() ? std::string("<empty>") : out_name) << ",size=" << out_size
-            << "}";
+        dbg << " out[" << i << "]={name=" << (out_name.empty() ? std::string("<empty>") : out_name)
+            << ",size=" << out_size << "}";
       }
     } else {
       dbg << " outputs_len=0";
@@ -442,15 +438,14 @@ read_mla_runtime_properties_from_config(const std::string& cfg_path) {
   return props;
 }
 
-static std::optional<MlaRuntimeProperties>
-read_mla_runtime_properties_from_mpk_contract(
+static std::optional<MlaRuntimeProperties> read_mla_runtime_properties_from_mpk_contract(
     const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract) {
   if (!mpk_contract.has_value()) {
     return std::nullopt;
   }
 
-  auto resolve_package_relative_path =
-      [&](const std::string& raw_path, bool prefer_share_dir) -> std::string {
+  auto resolve_package_relative_path = [&](const std::string& raw_path,
+                                           bool prefer_share_dir) -> std::string {
     if (raw_path.empty()) {
       return {};
     }
@@ -504,9 +499,9 @@ read_mla_runtime_properties_from_mpk_contract(
   return props;
 }
 
-static void apply_mla_runtime_properties_to_contract(
-    const MlaRuntimeProperties& props,
-    pipeline_internal::sima::MlaStaticContract* contract) {
+static void
+apply_mla_runtime_properties_to_contract(const MlaRuntimeProperties& props,
+                                         pipeline_internal::sima::MlaStaticContract* contract) {
   if (!contract) {
     return;
   }
@@ -516,9 +511,9 @@ static void apply_mla_runtime_properties_to_contract(
 }
 
 static CompiledTransportContract build_model_managed_transport_contract(
-    const std::string& plugin_kind,
-    const std::string& kernel_kind,
-    std::optional<pipeline_internal::sima::ProcessCvuStagePayload> processcvu_payload = std::nullopt,
+    const std::string& plugin_kind, const std::string& kernel_kind,
+    std::optional<pipeline_internal::sima::ProcessCvuStagePayload> processcvu_payload =
+        std::nullopt,
     std::optional<CompiledRuntimeContract> runtime_contract = std::nullopt) {
   pipeline_internal::sima::stagesemantics::TransportCanonicalFacts facts;
   facts.plugin_kind = plugin_kind;
@@ -538,8 +533,8 @@ static std::uint64_t tensor_physical_span_bytes(const std::vector<std::int64_t>&
                                                 const std::uint64_t logical_size_bytes,
                                                 const std::uint64_t elem_bytes);
 
-static std::uint64_t tensor_static_logical_size_bytes_local(
-    const pipeline_internal::sima::TensorStaticSpec& tensor) {
+static std::uint64_t
+tensor_static_logical_size_bytes_local(const pipeline_internal::sima::TensorStaticSpec& tensor) {
   if (tensor.shape.empty()) {
     return tensor.max_stride > 0 ? static_cast<std::uint64_t>(tensor.max_stride) : 0U;
   }
@@ -550,15 +545,13 @@ static std::uint64_t tensor_static_logical_size_bytes_local(
     }
     elems *= static_cast<std::uint64_t>(dim);
   }
-  return elems *
-         pipeline_internal::sima::specbuilders::dtype_size_bytes_from_token(tensor.dtype);
+  return elems * pipeline_internal::sima::specbuilders::dtype_size_bytes_from_token(tensor.dtype);
 }
 
-static CompiledRuntimeContract transport_runtime_contract_from_processcvu_compiled(
-    const CompiledProcessCvuContract& compiled) {
-  CompiledRuntimeContract runtime =
-      pipeline_internal::sima::stagesemantics::build_transport_runtime_contract_from_processcvu_compiled(
-          compiled);
+static CompiledRuntimeContract
+transport_runtime_contract_from_processcvu_compiled(const CompiledProcessCvuContract& compiled) {
+  CompiledRuntimeContract runtime = pipeline_internal::sima::stagesemantics::
+      build_transport_runtime_contract_from_processcvu_compiled(compiled);
   if (env_truthy_local("SIMA_TRANSPORT_CONTRACT_DEBUG")) {
     const std::string graph_family =
         pipeline_internal::sima::stagesemantics::canonical_processcvu_graph_family(
@@ -568,8 +561,7 @@ static CompiledRuntimeContract transport_runtime_contract_from_processcvu_compil
                  "exposed_logical=%zu output_routes=%zu first_segment=%s\n",
                  graph_family.c_str(), runtime.physical_outputs.size(),
                  runtime.logical_outputs.size(),
-                 compiled.exposed_view.exposed_logical_outputs.size(),
-                 runtime.output_order.size(),
+                 compiled.exposed_view.exposed_logical_outputs.size(), runtime.output_order.size(),
                  (!runtime.physical_outputs.empty() &&
                   !runtime.physical_outputs.front().segment_name.empty())
                      ? runtime.physical_outputs.front().segment_name.c_str()
@@ -578,9 +570,9 @@ static CompiledRuntimeContract transport_runtime_contract_from_processcvu_compil
   return runtime;
 }
 
-static const CompiledRuntimeContract* resolve_stage_facts_runtime_contract(
-    const ModelFragment::StageFacts& entry,
-    CompiledRuntimeContract* scratch) {
+static const CompiledRuntimeContract*
+resolve_stage_facts_runtime_contract(const ModelFragment::StageFacts& entry,
+                                     CompiledRuntimeContract* scratch) {
   if (!scratch) {
     return nullptr;
   }
@@ -603,14 +595,14 @@ static const CompiledRuntimeContract* resolve_stage_facts_runtime_contract(
   return nullptr;
 }
 
-static const pipeline_internal::sima::MpkPluginIoContract*
-find_mpk_stage_for_execution_stage(
+static const pipeline_internal::sima::MpkPluginIoContract* find_mpk_stage_for_execution_stage(
     const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract,
     const ExecutionStage& stage) {
   if (!mpk_contract.has_value()) {
     return nullptr;
   }
-  if (stage.mpk_plugin_index.has_value() && *stage.mpk_plugin_index < mpk_contract->plugins.size()) {
+  if (stage.mpk_plugin_index.has_value() &&
+      *stage.mpk_plugin_index < mpk_contract->plugins.size()) {
     return &mpk_contract->plugins[*stage.mpk_plugin_index];
   }
   if (!stage.stage_name.empty()) {
@@ -889,9 +881,8 @@ static std::string extract_and_organize(const std::string& tar_path,
       return found->second;
     }
 
-    const auto extracted =
-        simaai::neat::mpk::MpKLoader::extract(
-            tar_path, modelpack_output_root(cleanup_extracted_model_data), opt);
+    const auto extracted = simaai::neat::mpk::MpKLoader::extract(
+        tar_path, modelpack_output_root(cleanup_extracted_model_data), opt);
     const fs::path target_dir(extracted.package_root);
 
     // Preserve existing behavior: materialize model-relative paths as absolute paths
@@ -1036,13 +1027,13 @@ static std::string make_temp_json_path(const std::string& dir, const std::string
   return pipeline_internal::make_temp_json_path(dir, prefix, "ModelPack");
 }
 
-static bool mpk_quant_contract_complete(
-    const std::optional<pipeline_internal::sima::MpkQuantContract>& quant) {
+static bool
+mpk_quant_contract_complete(const std::optional<pipeline_internal::sima::MpkQuantContract>& quant) {
   return quant.has_value() && !quant->scales.empty() && !quant->zero_points.empty();
 }
 
-static pipeline_internal::sima::QuantStaticSpec quant_static_spec_from_mpk_contract(
-    const pipeline_internal::sima::MpkQuantContract& quant) {
+static pipeline_internal::sima::QuantStaticSpec
+quant_static_spec_from_mpk_contract(const pipeline_internal::sima::MpkQuantContract& quant) {
   pipeline_internal::sima::QuantStaticSpec out;
   out.granularity = (quant.scales.size() > 1U || quant.zero_points.size() > 1U)
                         ? pipeline_internal::sima::QuantGranularity::PerAxis
@@ -1062,8 +1053,8 @@ resolve_model_managed_dequant_quant_contract(
   }
 
   const auto ordered = pipeline_internal::sima::plugins_in_execution_order(mpk_contract);
-  auto find_position = [&](const pipeline_internal::sima::MpkPluginIoContract* want)
-      -> std::optional<std::size_t> {
+  auto find_position =
+      [&](const pipeline_internal::sima::MpkPluginIoContract* want) -> std::optional<std::size_t> {
     if (!want) {
       return std::nullopt;
     }
@@ -1105,28 +1096,29 @@ resolve_model_managed_dequant_quant_contract(
   return std::nullopt;
 }
 
-static std::pair<double, std::int64_t> require_uniform_dequant_params(
-    const pipeline_internal::sima::MpkPluginIoContract& stage) {
+static std::pair<double, std::int64_t>
+require_uniform_dequant_params(const pipeline_internal::sima::MpkPluginIoContract& stage) {
   if (!stage.quant.has_value() || stage.quant->scales.empty() || stage.quant->zero_points.empty()) {
-    throw std::runtime_error("ModelFragment: dequant stage '" + stage.name +
-                             "' is missing MPK quant facts (expected non-empty 'scales' and 'zero_points'"
-                             " in the MPK plugin quant contract).");
+    throw std::runtime_error(
+        "ModelFragment: dequant stage '" + stage.name +
+        "' is missing MPK quant facts (expected non-empty 'scales' and 'zero_points'"
+        " in the MPK plugin quant contract).");
   }
 
   const double scale = stage.quant->scales.front();
   const std::int64_t zp = stage.quant->zero_points.front();
-  const auto scale_differs = [&](double candidate) {
-    return std::abs(candidate - scale) > 1e-12;
-  };
+  const auto scale_differs = [&](double candidate) { return std::abs(candidate - scale) > 1e-12; };
   const auto zp_differs = [&](std::int64_t candidate) { return candidate != zp; };
   if (std::any_of(stage.quant->scales.begin(), stage.quant->scales.end(), scale_differs) ||
       std::any_of(stage.quant->zero_points.begin(), stage.quant->zero_points.end(), zp_differs)) {
-    throw std::runtime_error("ModelFragment: dequant stage '" + stage.name +
-                             "' requires unsupported per-channel quant facts"
-                             " (scales_count=" + std::to_string(stage.quant->scales.size()) +
-                             ", zp_count=" + std::to_string(stage.quant->zero_points.size()) +
-                             "). Only uniform (single scale/zp) dequantization is supported."
-                             " Consider using a post-processing stage that handles per-channel dequant.");
+    throw std::runtime_error(
+        "ModelFragment: dequant stage '" + stage.name +
+        "' requires unsupported per-channel quant facts"
+        " (scales_count=" +
+        std::to_string(stage.quant->scales.size()) +
+        ", zp_count=" + std::to_string(stage.quant->zero_points.size()) +
+        "). Only uniform (single scale/zp) dequantization is supported."
+        " Consider using a post-processing stage that handles per-channel dequant.");
   }
   return {scale, zp};
 }
@@ -1221,13 +1213,11 @@ mla_rank_in_order(const pipeline_internal::sima::MpkContract& contract,
   return std::nullopt;
 }
 
-static std::vector<std::size_t> collect_plugin_indices_by_kind(
-    const pipeline_internal::sima::MpkContract& contract,
-    const std::vector<std::size_t>& ordered,
-    std::optional<std::size_t> mla_rank,
-    bool before_mla,
-    bool after_mla,
-    std::initializer_list<ExecutionStageKind> wanted) {
+static std::vector<std::size_t>
+collect_plugin_indices_by_kind(const pipeline_internal::sima::MpkContract& contract,
+                               const std::vector<std::size_t>& ordered,
+                               std::optional<std::size_t> mla_rank, bool before_mla, bool after_mla,
+                               std::initializer_list<ExecutionStageKind> wanted) {
   std::vector<std::size_t> matches;
   for (std::size_t rank = 0; rank < ordered.size(); ++rank) {
     if (mla_rank.has_value()) {
@@ -1333,28 +1323,25 @@ static std::string kernel_for_stage_kind(ExecutionStageKind kind) {
   return {};
 }
 
-static std::optional<ExecutionStage> make_pre_stage_from_contract(
-    const pipeline_internal::sima::MpkContract& contract,
-    const std::vector<std::size_t>& ordered,
-    std::optional<std::size_t> mla_rank,
-    PipelineType requested_pipeline_type,
-    std::size_t order_index) {
+static std::optional<ExecutionStage>
+make_pre_stage_from_contract(const pipeline_internal::sima::MpkContract& contract,
+                             const std::vector<std::size_t>& ordered,
+                             std::optional<std::size_t> mla_rank,
+                             PipelineType requested_pipeline_type, std::size_t order_index) {
   const auto quant_indices =
       collect_plugin_indices_by_kind(contract, ordered, mla_rank, true, false,
                                      {ExecutionStageKind::Quant, ExecutionStageKind::QuantTess});
-  const auto tess_indices =
-      collect_plugin_indices_by_kind(contract, ordered, mla_rank, true, false,
-                                     {ExecutionStageKind::Tess, ExecutionStageKind::QuantTess,
-                                      ExecutionStageKind::CastTess});
+  const auto tess_indices = collect_plugin_indices_by_kind(
+      contract, ordered, mla_rank, true, false,
+      {ExecutionStageKind::Tess, ExecutionStageKind::QuantTess, ExecutionStageKind::CastTess});
   const auto cast_indices =
       collect_plugin_indices_by_kind(contract, ordered, mla_rank, true, false,
                                      {ExecutionStageKind::Cast, ExecutionStageKind::CastTess});
-  const auto preproc_indices =
-      collect_plugin_indices_by_kind(contract, ordered, mla_rank, true, false,
-                                     {ExecutionStageKind::Preproc});
+  const auto preproc_indices = collect_plugin_indices_by_kind(contract, ordered, mla_rank, true,
+                                                              false, {ExecutionStageKind::Preproc});
 
-  const bool has_pre_any = !quant_indices.empty() || !tess_indices.empty() || !cast_indices.empty() ||
-                           !preproc_indices.empty();
+  const bool has_pre_any = !quant_indices.empty() || !tess_indices.empty() ||
+                           !cast_indices.empty() || !preproc_indices.empty();
   if (!has_pre_any) {
     return std::nullopt;
   }
@@ -1422,8 +1409,9 @@ static std::optional<ExecutionStage> make_pre_stage_from_contract(
   return stage;
 }
 
-static std::optional<ExecutionStage> make_mla_stage_from_contract(
-    const pipeline_internal::sima::MpkContract& contract, std::size_t order_index) {
+static std::optional<ExecutionStage>
+make_mla_stage_from_contract(const pipeline_internal::sima::MpkContract& contract,
+                             std::size_t order_index) {
   const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(contract);
   if (!mla_stage) {
     return std::nullopt;
@@ -1433,7 +1421,9 @@ static std::optional<ExecutionStage> make_mla_stage_from_contract(
   ExecutionStage stage;
   stage.order_index = order_index;
   stage.mpk_plugin_index = mla_idx;
-  stage.stage_name = !mla_stage->name.empty() ? mla_stage->name : std::string(default_stage_name(ExecutionStageKind::Mla));
+  stage.stage_name = !mla_stage->name.empty()
+                         ? mla_stage->name
+                         : std::string(default_stage_name(ExecutionStageKind::Mla));
   stage.factory_name = require_stage_factory(ExecutionStageKind::Mla);
   stage.plugin_id = plugin_id_for_stage_kind(ExecutionStageKind::Mla);
   stage.processor = processor_for_stage_kind(ExecutionStageKind::Mla);
@@ -1443,8 +1433,7 @@ static std::optional<ExecutionStage> make_mla_stage_from_contract(
 }
 
 static std::vector<ExecutionStage> make_post_stages_from_contract(
-    const pipeline_internal::sima::MpkContract& contract,
-    const std::vector<std::size_t>& ordered,
+    const pipeline_internal::sima::MpkContract& contract, const std::vector<std::size_t>& ordered,
     std::optional<std::size_t> mla_rank,
     const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
     std::size_t order_index) {
@@ -1453,20 +1442,17 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
       collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
                                      {ExecutionStageKind::Detess, ExecutionStageKind::DetessCast,
                                       ExecutionStageKind::DetessDequant});
-  const auto dequant_indices =
-      collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
-                                     {ExecutionStageKind::Dequant, ExecutionStageKind::DetessDequant});
-  const auto boxdecode_indices =
-      collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
-                                     {ExecutionStageKind::BoxDecode});
-  const auto cast_indices =
-      collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
-                                     {ExecutionStageKind::Cast});
+  const auto dequant_indices = collect_plugin_indices_by_kind(
+      contract, ordered, mla_rank, false, true,
+      {ExecutionStageKind::Dequant, ExecutionStageKind::DetessDequant});
+  const auto boxdecode_indices = collect_plugin_indices_by_kind(
+      contract, ordered, mla_rank, false, true, {ExecutionStageKind::BoxDecode});
+  const auto cast_indices = collect_plugin_indices_by_kind(contract, ordered, mla_rank, false, true,
+                                                           {ExecutionStageKind::Cast});
 
   ExecutionStageKind kind = ExecutionStageKind::Unknown;
   std::vector<std::size_t> candidates;
-  const bool route_requests_boxdecode =
-      route_flags.has_value() && route_flags->boxdecode_selected;
+  const bool route_requests_boxdecode = route_flags.has_value() && route_flags->boxdecode_selected;
   if (!boxdecode_indices.empty() || route_requests_boxdecode) {
     kind = ExecutionStageKind::BoxDecode;
     if (!boxdecode_indices.empty()) {
@@ -1508,15 +1494,14 @@ static std::vector<ExecutionStage> make_post_stages_from_contract(
 }
 
 static ExecutionPlan build_execution_plan_from_mpk_contract(
-    const pipeline_internal::sima::MpkContract& contract,
-    PipelineType requested_pipeline_type,
+    const pipeline_internal::sima::MpkContract& contract, PipelineType requested_pipeline_type,
     const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags) {
   ExecutionPlan plan;
   const auto ordered = ordered_plugin_indices(contract);
   const auto mla_rank = mla_rank_in_order(contract, ordered);
   std::size_t stage_order = 0U;
-  if (const auto pre =
-          make_pre_stage_from_contract(contract, ordered, mla_rank, requested_pipeline_type, stage_order);
+  if (const auto pre = make_pre_stage_from_contract(contract, ordered, mla_rank,
+                                                    requested_pipeline_type, stage_order);
       pre.has_value()) {
     plan.pre.push_back(*pre);
     ++stage_order;
@@ -1584,14 +1569,16 @@ static std::uint64_t packed_tensor_size_bytes(const std::vector<std::int64_t>& s
     }
     elems *= static_cast<std::uint64_t>(dim);
   }
-  return elems * pipeline_internal::sima::stagesemantics::processcvu_dtype_size_bytes_from_token(dtype);
+  return elems *
+         pipeline_internal::sima::stagesemantics::processcvu_dtype_size_bytes_from_token(dtype);
 }
 
 static std::uint64_t tensor_physical_span_bytes(const std::vector<std::int64_t>& shape,
                                                 const std::vector<std::int64_t>& stride_bytes,
                                                 const std::uint64_t logical_size_bytes,
                                                 const std::uint64_t elem_bytes) {
-  if (shape.empty() || stride_bytes.empty() || shape.size() != stride_bytes.size() || elem_bytes == 0U) {
+  if (shape.empty() || stride_bytes.empty() || shape.size() != stride_bytes.size() ||
+      elem_bytes == 0U) {
     return logical_size_bytes;
   }
 
@@ -1620,9 +1607,9 @@ static std::uint64_t tensor_physical_span_bytes(const std::vector<std::int64_t>&
   return std::max(logical_size_bytes, max_offset + elem_bytes);
 }
 
-static std::uint64_t preferred_mpk_tensor_size_bytes(
-    const pipeline_internal::sima::MpkTensorContract& tensor,
-    const std::string& dtype) {
+static std::uint64_t
+preferred_mpk_tensor_size_bytes(const pipeline_internal::sima::MpkTensorContract& tensor,
+                                const std::string& dtype) {
   if (tensor.size_bytes > 0U) {
     return static_cast<std::uint64_t>(tensor.size_bytes);
   }
@@ -1638,11 +1625,13 @@ static std::uint64_t preferred_mpk_tensor_size_bytes(
 static int positive_tile_channels(const pipeline_internal::sima::MpkPluginIoContract& stage) {
   if (!stage.slice_shape.empty()) {
     int ch = static_cast<int>(stage.slice_shape.back());
-    if (ch > 0) return ch;
+    if (ch > 0)
+      return ch;
     // fall back to depth dim if present (4-element shape)
     if (stage.slice_shape.size() >= 4) {
       int d = static_cast<int>(stage.slice_shape[0]);
-      if (d > 0) return d;
+      if (d > 0)
+        return d;
     }
   }
   if (!stage.input_tensors.empty()) {
@@ -1668,10 +1657,9 @@ static int logical_depth_from_dims(const MpkTensorDims& dims) {
   return logical_channels_from_dims(dims);
 }
 
-static const pipeline_internal::sima::MpkTensorContract* terminal_output_tensor_for_index(
-    const pipeline_internal::sima::MpkPluginIoContract* terminal_stage,
-    std::size_t index,
-    std::size_t expected_count) {
+static const pipeline_internal::sima::MpkTensorContract*
+terminal_output_tensor_for_index(const pipeline_internal::sima::MpkPluginIoContract* terminal_stage,
+                                 std::size_t index, std::size_t expected_count) {
   if (!terminal_stage || terminal_stage->output_tensors.empty()) {
     return nullptr;
   }
@@ -1681,9 +1669,9 @@ static const pipeline_internal::sima::MpkTensorContract* terminal_output_tensor_
   return &terminal_stage->output_tensors[index];
 }
 
-static const pipeline_internal::sima::MpkPluginIoContract* find_pre_stage_for_family(
-    const pipeline_internal::sima::MpkContract& contract,
-    std::initializer_list<ExecutionStageKind> preferred) {
+static const pipeline_internal::sima::MpkPluginIoContract*
+find_pre_stage_for_family(const pipeline_internal::sima::MpkContract& contract,
+                          std::initializer_list<ExecutionStageKind> preferred) {
   const auto ordered = ordered_plugin_indices(contract);
   const auto mla_rank = mla_rank_in_order(contract, ordered);
   for (const ExecutionStageKind kind : preferred) {
@@ -1696,9 +1684,9 @@ static const pipeline_internal::sima::MpkPluginIoContract* find_pre_stage_for_fa
   return nullptr;
 }
 
-static std::vector<const pipeline_internal::sima::MpkPluginIoContract*> collect_post_stages_for_family(
-    const pipeline_internal::sima::MpkContract& contract,
-    std::initializer_list<ExecutionStageKind> preferred) {
+static std::vector<const pipeline_internal::sima::MpkPluginIoContract*>
+collect_post_stages_for_family(const pipeline_internal::sima::MpkContract& contract,
+                               std::initializer_list<ExecutionStageKind> preferred) {
   const auto ordered = ordered_plugin_indices(contract);
   const auto mla_rank = mla_rank_in_order(contract, ordered);
   std::vector<const pipeline_internal::sima::MpkPluginIoContract*> matches;
@@ -1737,8 +1725,7 @@ struct DequantPublishedPhysicalInput {
 };
 
 static std::string resolve_dequant_published_segment_name(
-    const pipeline_internal::sima::MpkTensorContract& published_input,
-    std::size_t fallback_index) {
+    const pipeline_internal::sima::MpkTensorContract& published_input, std::size_t fallback_index) {
   if (!published_input.segment_name.empty()) {
     return published_input.segment_name;
   }
@@ -1749,8 +1736,7 @@ static std::string resolve_dequant_published_segment_name(
 }
 
 static int resolve_dequant_boundary_physical_index(
-    const pipeline_internal::sima::MpkTensorContract& published_input,
-    std::size_t fallback_index) {
+    const pipeline_internal::sima::MpkTensorContract& published_input, std::size_t fallback_index) {
   if (published_input.materialization_kind ==
           pipeline_internal::sima::MpkTensorMaterializationKind::OffsetView &&
       published_input.source_physical_index >= 0) {
@@ -1765,10 +1751,9 @@ static int resolve_dequant_boundary_physical_index(
   return static_cast<int>(fallback_index);
 }
 
-static DequantPublishedPhysicalInput* find_dequant_physical_input(
-    std::vector<DequantPublishedPhysicalInput>* physical_inputs,
-    int upstream_physical_index,
-    std::int64_t upstream_source_offset) {
+static DequantPublishedPhysicalInput*
+find_dequant_physical_input(std::vector<DequantPublishedPhysicalInput>* physical_inputs,
+                            int upstream_physical_index, std::int64_t upstream_source_offset) {
   if (!physical_inputs) {
     return nullptr;
   }
@@ -1780,9 +1765,9 @@ static DequantPublishedPhysicalInput* find_dequant_physical_input(
   return it == physical_inputs->end() ? nullptr : &(*it);
 }
 
-static std::optional<std::size_t> find_contract_plugin_index_local(
-    const pipeline_internal::sima::MpkContract& contract,
-    const pipeline_internal::sima::MpkPluginIoContract& stage) {
+static std::optional<std::size_t>
+find_contract_plugin_index_local(const pipeline_internal::sima::MpkContract& contract,
+                                 const pipeline_internal::sima::MpkPluginIoContract& stage) {
   for (std::size_t i = 0; i < contract.plugins.size(); ++i) {
     if (&contract.plugins[i] == &stage) {
       return i;
@@ -1794,10 +1779,9 @@ static std::optional<std::size_t> find_contract_plugin_index_local(
   return pipeline_internal::sima::find_plugin_index_by_name_or_id(contract, stage.name);
 }
 
-static const pipeline_internal::sima::MpkContractEdge* find_stage_input_edge_local(
-    const pipeline_internal::sima::MpkContract& contract,
-    std::size_t dst_plugin_index,
-    int dst_input_index) {
+static const pipeline_internal::sima::MpkContractEdge*
+find_stage_input_edge_local(const pipeline_internal::sima::MpkContract& contract,
+                            std::size_t dst_plugin_index, int dst_input_index) {
   const pipeline_internal::sima::MpkContractEdge* fallback = nullptr;
   for (const auto& edge : contract.edges) {
     if (edge.dst_plugin_index != dst_plugin_index) {
@@ -1813,9 +1797,8 @@ static const pipeline_internal::sima::MpkContractEdge* find_stage_input_edge_loc
   return fallback;
 }
 
-static std::vector<std::int64_t> contiguous_stride_bytes_local(
-    const std::vector<std::int64_t>& shape,
-    const std::string& dtype) {
+static std::vector<std::int64_t>
+contiguous_stride_bytes_local(const std::vector<std::int64_t>& shape, const std::string& dtype) {
   std::vector<std::int64_t> strides;
   if (shape.empty()) {
     return strides;
@@ -1829,8 +1812,7 @@ static std::vector<std::int64_t> contiguous_stride_bytes_local(
   for (std::size_t i = shape.size(); i-- > 0;) {
     strides[i] = running;
     const auto dim = shape[i];
-    if (dim > 0 &&
-        running <= std::numeric_limits<std::int64_t>::max() / dim) {
+    if (dim > 0 && running <= std::numeric_limits<std::int64_t>::max() / dim) {
       running *= dim;
     } else if (dim > 0) {
       running = std::numeric_limits<std::int64_t>::max();
@@ -1839,19 +1821,18 @@ static std::vector<std::int64_t> contiguous_stride_bytes_local(
   return strides;
 }
 
-static std::vector<std::int64_t> normalize_stride_rank_to_shape_local(
-    const std::vector<std::int64_t>& strides,
-    const std::vector<std::int64_t>& source_shape,
-    const std::vector<std::int64_t>& target_shape) {
-  return pipeline_internal::normalize_strides_rank_to_shape(strides, source_shape,
-                                                            target_shape);
+static std::vector<std::int64_t>
+normalize_stride_rank_to_shape_local(const std::vector<std::int64_t>& strides,
+                                     const std::vector<std::int64_t>& source_shape,
+                                     const std::vector<std::int64_t>& target_shape) {
+  return pipeline_internal::normalize_strides_rank_to_shape(strides, source_shape, target_shape);
 }
 
-static std::vector<std::int64_t> normalize_view_stride_to_shape_local(
-    const std::vector<std::int64_t>& strides,
-    const std::vector<std::int64_t>& source_shape,
-    const std::vector<std::int64_t>& alternate_source_shape,
-    const std::vector<std::int64_t>& target_shape) {
+static std::vector<std::int64_t>
+normalize_view_stride_to_shape_local(const std::vector<std::int64_t>& strides,
+                                     const std::vector<std::int64_t>& source_shape,
+                                     const std::vector<std::int64_t>& alternate_source_shape,
+                                     const std::vector<std::int64_t>& target_shape) {
   if (strides.empty() || target_shape.empty() || strides.size() == target_shape.size()) {
     return strides;
   }
@@ -1871,13 +1852,12 @@ static std::vector<std::int64_t> normalize_view_stride_to_shape_local(
   // tensor-view equivalent of dropping those leading singleton dimensions.  This
   // keeps the consumer strided over the packed parent buffer instead of silently
   // falling back to a dense copy/interpretation.
-  return pipeline_internal::normalize_strides_rank_to_shape(
-      strides, {}, target_shape, true);
+  return pipeline_internal::normalize_strides_rank_to_shape(strides, {}, target_shape, true);
 }
 
-static std::int64_t projected_slice_begin_offset_bytes_local(
-    const std::vector<std::int64_t>& begin,
-    const std::vector<std::int64_t>& stride_bytes) {
+static std::int64_t
+projected_slice_begin_offset_bytes_local(const std::vector<std::int64_t>& begin,
+                                         const std::vector<std::int64_t>& stride_bytes) {
   if (begin.empty() || stride_bytes.empty()) {
     return 0;
   }
@@ -1900,8 +1880,7 @@ static std::int64_t projected_slice_begin_offset_bytes_local(
 }
 
 static std::int64_t cumulative_mla_output_source_offset_bytes_local(
-    const pipeline_internal::sima::MpkContract& contract,
-    int output_index) {
+    const pipeline_internal::sima::MpkContract& contract, int output_index) {
   if (output_index <= 0) {
     return 0;
   }
@@ -1925,9 +1904,9 @@ static std::int64_t cumulative_mla_output_source_offset_bytes_local(
   return static_cast<std::int64_t>(running);
 }
 
-static std::uint64_t mla_output_slot_size_bytes_local(
-    const pipeline_internal::sima::MpkContract& contract,
-    int output_index) {
+static std::uint64_t
+mla_output_slot_size_bytes_local(const pipeline_internal::sima::MpkContract& contract,
+                                 int output_index) {
   if (output_index < 0) {
     return 0U;
   }
@@ -1952,10 +1931,8 @@ static std::optional<ResolvedDequantInputView> resolve_slice_backed_dequant_inpu
     const pipeline_internal::sima::MpkContract& contract,
     const pipeline_internal::sima::MpkPluginIoContract& stage,
     const pipeline_internal::sima::MpkTensorContract& published_input,
-    const std::vector<std::int64_t>& input_shape,
-    const std::string& input_dtype,
-    std::uint64_t logical_size_bytes,
-    std::size_t fallback_index) {
+    const std::vector<std::int64_t>& input_shape, const std::string& input_dtype,
+    std::uint64_t logical_size_bytes, std::size_t fallback_index) {
   const auto stage_index = find_contract_plugin_index_local(contract, stage);
   if (!stage_index.has_value()) {
     return std::nullopt;
@@ -2010,17 +1987,14 @@ static std::optional<ResolvedDequantInputView> resolve_slice_backed_dequant_inpu
   }
 
   return ResolvedDequantInputView{
-      upstream_physical_index,
-      upstream_source_offset,
-      slice_byte_offset,
-      logical_stride_bytes,
-      physical_span_bytes,
+      upstream_physical_index, upstream_source_offset, slice_byte_offset,
+      logical_stride_bytes,    physical_span_bytes,
   };
 }
 
-static std::optional<CompiledDequantContract> build_model_managed_dequant_compiled_contract_from_mpk(
-    const pipeline_internal::sima::MpkContract& contract,
-    std::string* err = nullptr) {
+static std::optional<CompiledDequantContract>
+build_model_managed_dequant_compiled_contract_from_mpk(
+    const pipeline_internal::sima::MpkContract& contract, std::string* err = nullptr) {
   const auto dequant_stages =
       collect_post_stages_for_family(contract, {ExecutionStageKind::Dequant});
   if (dequant_stages.empty()) {
@@ -2065,10 +2039,13 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
     }
     const double scale = quant_contract->scales.front();
     const std::int64_t zp = quant_contract->zero_points.front();
-    const auto scale_differs = [&](double candidate) { return std::abs(candidate - scale) > 1e-12; };
+    const auto scale_differs = [&](double candidate) {
+      return std::abs(candidate - scale) > 1e-12;
+    };
     const auto zp_differs = [&](std::int64_t candidate) { return candidate != zp; };
     if (std::any_of(quant_contract->scales.begin(), quant_contract->scales.end(), scale_differs) ||
-        std::any_of(quant_contract->zero_points.begin(), quant_contract->zero_points.end(), zp_differs)) {
+        std::any_of(quant_contract->zero_points.begin(), quant_contract->zero_points.end(),
+                    zp_differs)) {
       if (err) {
         *err = "unsupported_per_channel_dequant_quant";
       }
@@ -2087,42 +2064,40 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
     const auto* terminal_output_tensor =
         terminal_output_tensor_for_index(terminal_stage, i, dequant_stages.size());
 
-    const std::string input_dtype =
-        preferred_tensor_dtype(published_input, preferred_tensor_dtype(input_tensor, stage.canonical_input_dtype));
+    const std::string input_dtype = preferred_tensor_dtype(
+        published_input, preferred_tensor_dtype(input_tensor, stage.canonical_input_dtype));
     std::string output_dtype = normalize_dtype_token(
         terminal_output_tensor && !terminal_output_tensor->logical_dtype.empty()
             ? terminal_output_tensor->logical_dtype
         : terminal_output_tensor && !terminal_output_tensor->dtype.empty()
             ? terminal_output_tensor->dtype
-        : preferred_tensor_dtype(output_tensor, stage.canonical_output_dtype));
+            : preferred_tensor_dtype(output_tensor, stage.canonical_output_dtype));
     if (output_dtype != "FP16" && output_dtype != "FP32") {
       output_dtype = "FP32";
     }
-    const auto input_dims =
-        mpk_dims_from_shape(!input_tensor.logical_shape.empty() ? input_tensor.logical_shape
-                                                                : input_tensor.mpk_shape);
-    const auto output_dims = terminal_output_tensor
-                                 ? mpk_dims_from_shape(terminal_output_tensor->logical_shape)
-                                 : mpk_dims_from_shape(!output_tensor.logical_shape.empty()
-                                                           ? output_tensor.logical_shape
-                                                           : output_tensor.mpk_shape);
+    const auto input_dims = mpk_dims_from_shape(
+        !input_tensor.logical_shape.empty() ? input_tensor.logical_shape : input_tensor.mpk_shape);
+    const auto output_dims =
+        terminal_output_tensor
+            ? mpk_dims_from_shape(terminal_output_tensor->logical_shape)
+            : mpk_dims_from_shape(!output_tensor.logical_shape.empty() ? output_tensor.logical_shape
+                                                                       : output_tensor.mpk_shape);
     const std::string input_layout =
         input_dims.format.empty() ? std::string{} : normalize_format(input_dims.format);
     const std::string output_layout =
         output_dims.format.empty() ? std::string{} : normalize_format(output_dims.format);
     const std::vector<std::int64_t> input_shape =
-        !input_tensor.logical_shape.empty() ? input_tensor.logical_shape
-        : !input_tensor.mpk_shape.empty()    ? input_tensor.mpk_shape
-        : !published_input.logical_shape.empty()
-            ? published_input.logical_shape
-            : published_input.mpk_shape;
+        !input_tensor.logical_shape.empty()      ? input_tensor.logical_shape
+        : !input_tensor.mpk_shape.empty()        ? input_tensor.mpk_shape
+        : !published_input.logical_shape.empty() ? published_input.logical_shape
+                                                 : published_input.mpk_shape;
     const std::vector<std::int64_t> output_shape =
         terminal_output_tensor && !terminal_output_tensor->logical_shape.empty()
             ? terminal_output_tensor->logical_shape
-        : !output_tensor.logical_shape.empty()
-            ? output_tensor.logical_shape
-            : output_tensor.mpk_shape;
-    if (input_shape.empty() || output_shape.empty() || input_dtype.empty() || output_dtype.empty()) {
+        : !output_tensor.logical_shape.empty() ? output_tensor.logical_shape
+                                               : output_tensor.mpk_shape;
+    if (input_shape.empty() || output_shape.empty() || input_dtype.empty() ||
+        output_dtype.empty()) {
       if (err) {
         *err = "dequant_stage_missing_shape_or_dtype";
       }
@@ -2135,7 +2110,8 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
       return std::nullopt;
     }
 
-    const std::string input_segment_name = resolve_dequant_published_segment_name(published_input, i);
+    const std::string input_segment_name =
+        resolve_dequant_published_segment_name(published_input, i);
     const std::string physical_segment_name =
         !published_input.segment_name.empty() ? published_input.segment_name : input_segment_name;
     const std::string output_name =
@@ -2143,13 +2119,13 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
             ? terminal_output_tensor->name
         : !output_tensor.name.empty() && !output_name_looks_generic_local(output_tensor.name)
             ? output_tensor.name
-        : !published_input.name.empty() ? published_input.name : input_segment_name;
+        : !published_input.name.empty() ? published_input.name
+                                        : input_segment_name;
     const std::uint64_t input_size_bytes =
         preferred_mpk_tensor_size_bytes(input_tensor, input_dtype) > 0U
             ? preferred_mpk_tensor_size_bytes(input_tensor, input_dtype)
-        : published_input.size_bytes > 0U
-            ? static_cast<std::uint64_t>(published_input.size_bytes)
-            : 0U;
+        : published_input.size_bytes > 0U ? static_cast<std::uint64_t>(published_input.size_bytes)
+                                          : 0U;
     const std::uint64_t output_size_bytes =
         terminal_output_tensor
             ? preferred_mpk_tensor_size_bytes(*terminal_output_tensor, output_dtype)
@@ -2177,11 +2153,12 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
             ? resolved_input_view->upstream_physical_index
             : resolve_dequant_boundary_physical_index(published_input, i);
     const std::int64_t upstream_source_offset =
-        (!has_unpack_stage && resolved_input_view.has_value()) ? resolved_input_view->upstream_source_offset
-                                                               : published_input.source_byte_offset;
-    const std::int64_t logical_byte_offset =
-        use_slice_logical_view ? resolved_input_view->logical_byte_offset
-                               : published_input.byte_offset;
+        (!has_unpack_stage && resolved_input_view.has_value())
+            ? resolved_input_view->upstream_source_offset
+            : published_input.source_byte_offset;
+    const std::int64_t logical_byte_offset = use_slice_logical_view
+                                                 ? resolved_input_view->logical_byte_offset
+                                                 : published_input.byte_offset;
     const std::vector<std::int64_t> input_stride_source_shape =
         !published_input.mpk_shape.empty()
             ? published_input.mpk_shape
@@ -2194,13 +2171,11 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
                                                    : published_input.logical_shape);
     const std::vector<std::int64_t> input_stride_bytes =
         use_slice_logical_view
-            ? normalize_view_stride_to_shape_local(resolved_input_view->stride_bytes,
-                                                   input_shape, input_stride_source_shape,
-                                                   input_shape)
-            : normalize_view_stride_to_shape_local(published_input.stride_bytes,
-                                                   input_stride_source_shape,
-                                                   input_stride_alternate_source_shape,
-                                                   input_shape);
+            ? normalize_view_stride_to_shape_local(resolved_input_view->stride_bytes, input_shape,
+                                                   input_stride_source_shape, input_shape)
+            : normalize_view_stride_to_shape_local(
+                  published_input.stride_bytes, input_stride_source_shape,
+                  input_stride_alternate_source_shape, input_shape);
     const std::uint64_t input_physical_span_bytes =
         use_slice_logical_view
             ? resolved_input_view->physical_span_bytes
@@ -2215,9 +2190,8 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
     }
     const std::uint64_t upstream_physical_size_bytes =
         mla_output_slot_size_bytes_local(contract, upstream_physical_index);
-    DequantPublishedPhysicalInput* physical_input =
-        find_dequant_physical_input(&physical_inputs, upstream_physical_index,
-                                    upstream_source_offset);
+    DequantPublishedPhysicalInput* physical_input = find_dequant_physical_input(
+        &physical_inputs, upstream_physical_index, upstream_source_offset);
     if (!physical_input) {
       physical_inputs.push_back(DequantPublishedPhysicalInput{
           static_cast<int>(physical_inputs.size()),
@@ -2232,9 +2206,8 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
     }
     const std::uint64_t logical_end =
         static_cast<std::uint64_t>(logical_byte_offset) + input_physical_span_bytes;
-    physical_input->size_bytes = std::max(
-        physical_input->size_bytes,
-        std::max(logical_end, upstream_physical_size_bytes));
+    physical_input->size_bytes =
+        std::max(physical_input->size_bytes, std::max(logical_end, upstream_physical_size_bytes));
 
     const int logical_index = static_cast<int>(i);
     const auto input_materialization_kind =
@@ -2246,12 +2219,13 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
             ? pipeline_internal::sima::TensorMaterializationKind::Bf16LaneSplitRepack
             : pipeline_internal::sima::TensorMaterializationKind::Direct;
     auto logical_input = pipeline_internal::sima::specbuilders::build_logical_input_static_spec(
-        logical_index, logical_index, physical_input->local_physical_index, input_shape, input_dtype,
-        input_layout,
-        !input_tensor.name.empty() ? input_tensor.name
+        logical_index, logical_index, physical_input->local_physical_index, input_shape,
+        input_dtype, input_layout,
+        !input_tensor.name.empty()      ? input_tensor.name
         : !published_input.name.empty() ? published_input.name
-                                        : input_segment_name, "input_tensor",
-        input_segment_name, logical_byte_offset, 0U, input_materialization_kind, input_quant);
+                                        : input_segment_name,
+        "input_tensor", input_segment_name, logical_byte_offset, 0U, input_materialization_kind,
+        input_quant);
     logical_input.size_bytes = input_size_bytes;
     if (!input_stride_bytes.empty()) {
       logical_input.stride_bytes = input_stride_bytes;
@@ -2269,7 +2243,8 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
         logical_index, logical_index, 0, logical_index, logical_index, output_shape, output_dtype,
         output_layout, output_name, output_name, "output_tensor",
         static_cast<std::int64_t>(packed_output_total_bytes), output_size_bytes);
-    if (input_materialization_kind == pipeline_internal::sima::TensorMaterializationKind::OffsetView &&
+    if (input_materialization_kind ==
+            pipeline_internal::sima::TensorMaterializationKind::OffsetView &&
         !input_stride_bytes.empty()) {
       logical_output.stride_bytes = contiguous_stride_bytes_local(output_shape, output_dtype);
     }
@@ -2295,17 +2270,18 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
           0, 0, packed_output_total_bytes, pipeline_internal::sima::DeviceKind::Cpu,
           "output_tensor"));
   std::string normalize_err;
-  if (!pipeline_internal::packedio::normalize_shared_parent_input_views(
-          &compiled.runtime_contract, &normalize_err)) {
+  if (!pipeline_internal::packedio::normalize_shared_parent_input_views(&compiled.runtime_contract,
+                                                                        &normalize_err)) {
     if (err) {
-      *err = normalize_err.empty() ? "invalid_model_managed_dequant_parent_view_contract"
-                                   : "invalid_model_managed_dequant_parent_view_contract: " +
-                                         normalize_err;
+      *err = normalize_err.empty()
+                 ? "invalid_model_managed_dequant_parent_view_contract"
+                 : "invalid_model_managed_dequant_parent_view_contract: " + normalize_err;
     }
     return std::nullopt;
   }
   std::string packed_err;
-  if (!pipeline_internal::packedio::validate_packed_contract(compiled.runtime_contract, &packed_err)) {
+  if (!pipeline_internal::packedio::validate_packed_contract(compiled.runtime_contract,
+                                                             &packed_err)) {
     if (err) {
       *err = "invalid_model_managed_dequant_contract: " + packed_err;
     }
@@ -2317,10 +2293,10 @@ static std::optional<CompiledDequantContract> build_model_managed_dequant_compil
   return compiled;
 }
 
-static bool remap_model_managed_dequant_inputs_from_upstream(
-    const CompiledRuntimeContract& upstream_runtime,
-    CompiledDequantContract* compiled,
-    std::string* err = nullptr) {
+static bool
+remap_model_managed_dequant_inputs_from_upstream(const CompiledRuntimeContract& upstream_runtime,
+                                                 CompiledDequantContract* compiled,
+                                                 std::string* err = nullptr) {
   if (!compiled) {
     if (err) {
       *err = "null_compiled_dequant_contract";
@@ -2348,11 +2324,10 @@ static bool remap_model_managed_dequant_inputs_from_upstream(
     auto& binding = runtime.input_bindings[i];
 
     logical_input.logical_index =
-        upstream_output.logical_index >= 0 ? upstream_output.logical_index
-                                           : static_cast<int>(i);
-    logical_input.backend_input_index =
-        upstream_output.backend_output_index >= 0 ? upstream_output.backend_output_index
-                                                  : static_cast<int>(i);
+        upstream_output.logical_index >= 0 ? upstream_output.logical_index : static_cast<int>(i);
+    logical_input.backend_input_index = upstream_output.backend_output_index >= 0
+                                            ? upstream_output.backend_output_index
+                                            : static_cast<int>(i);
     logical_input.physical_index = upstream_output.physical_index;
     logical_input.shape = upstream_output.shape;
     logical_input.stride_bytes = upstream_output.stride_bytes;
@@ -2377,14 +2352,13 @@ static bool remap_model_managed_dequant_inputs_from_upstream(
       logical_input.quant = upstream_output.quant;
     }
 
-    const auto physical_it =
-        std::find_if(runtime.physical_inputs.begin(), runtime.physical_inputs.end(),
-                     [&](const auto& physical) {
-                       return physical.physical_index == upstream_output.physical_index;
-                     });
-    const std::uint64_t physical_size_bytes =
-        physical_it != runtime.physical_inputs.end() ? physical_it->size_bytes
-                                                     : upstream_output.size_bytes;
+    const auto physical_it = std::find_if(
+        runtime.physical_inputs.begin(), runtime.physical_inputs.end(), [&](const auto& physical) {
+          return physical.physical_index == upstream_output.physical_index;
+        });
+    const std::uint64_t physical_size_bytes = physical_it != runtime.physical_inputs.end()
+                                                  ? physical_it->size_bytes
+                                                  : upstream_output.size_bytes;
 
     binding.local_logical_input_index = logical_input.logical_index;
     binding.src_logical_output_index = upstream_output.logical_index;
@@ -2418,13 +2392,10 @@ static const pipeline_internal::sima::MpkPluginIoContract* find_terminal_stage_a
     const std::vector<const pipeline_internal::sima::MpkPluginIoContract*>& producers);
 
 static bool should_publish_mla_outputs_as_packed_parent_for_boxdecode(
-    const std::vector<ExecutionStage>& stages,
-    std::size_t stage_index,
-    const pipeline_internal::sima::MlaStaticContract& contract,
-    bool direct_mla_to_boxdecode) {
-  const bool adjacent_boxdecode =
-      stage_index + 1U < stages.size() &&
-      stages[stage_index + 1U].kind == ExecutionStageKind::BoxDecode;
+    const std::vector<ExecutionStage>& stages, std::size_t stage_index,
+    const pipeline_internal::sima::MlaStaticContract& contract, bool direct_mla_to_boxdecode) {
+  const bool adjacent_boxdecode = stage_index + 1U < stages.size() &&
+                                  stages[stage_index + 1U].kind == ExecutionStageKind::BoxDecode;
   if (stages[stage_index].kind != ExecutionStageKind::Mla ||
       (!adjacent_boxdecode && !direct_mla_to_boxdecode)) {
     return false;
@@ -2463,8 +2434,8 @@ static bool should_publish_mla_outputs_as_packed_parent_for_boxdecode(
   return true;
 }
 
-static bool publish_mla_outputs_as_packed_parent(
-    pipeline_internal::sima::MlaStaticContract* contract) {
+static bool
+publish_mla_outputs_as_packed_parent(pipeline_internal::sima::MlaStaticContract* contract) {
   if (!contract || contract->dispatcher_physical_outputs.size() <= 1U ||
       contract->logical_outputs.empty()) {
     return false;
@@ -2502,8 +2473,7 @@ static bool publish_mla_outputs_as_packed_parent(
     auto& logical = contract->logical_outputs[i];
     const int backend_index =
         logical.backend_output_index >= 0 ? logical.backend_output_index : logical.logical_index;
-    if (backend_index < 0 ||
-        static_cast<std::size_t>(backend_index) >= dispatcher_offsets.size()) {
+    if (backend_index < 0 || static_cast<std::size_t>(backend_index) >= dispatcher_offsets.size()) {
       return false;
     }
     const auto dispatcher_index = static_cast<std::size_t>(backend_index);
@@ -2517,25 +2487,19 @@ static bool publish_mla_outputs_as_packed_parent(
   return true;
 }
 
-static std::vector<ModelFragment::StageFacts>
-build_stage_facts_from_execution_plan(
+static std::vector<ModelFragment::StageFacts> build_stage_facts_from_execution_plan(
     const std::vector<ExecutionStage>& stages,
     const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract,
     const std::optional<bool>& processcvu_preproc_single_output_handoff,
     const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& model_managed_route_flags,
-    const std::string& input_format,
-    int input_depth,
-    int max_input_width,
-    int max_input_height,
-    bool normalize,
-    const std::vector<float>& mean,
-    const std::vector<float>& stddev,
+    const std::string& input_format, int input_depth, int max_input_width, int max_input_height,
+    bool normalize, const std::vector<float>& mean, const std::vector<float>& stddev,
     const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract,
-    ModelStage stage_context,
-    bool direct_mla_to_boxdecode = false) {
+    ModelStage stage_context, bool direct_mla_to_boxdecode = false) {
   (void)upstream_handoff_contract;
   if (!mpk_contract.has_value()) {
-    throw std::runtime_error("ModelFragment: strict MPK contract required for typed execution plan");
+    throw std::runtime_error(
+        "ModelFragment: strict MPK contract required for typed execution plan");
   }
 
   std::vector<ModelFragment::StageFacts> facts;
@@ -2550,14 +2514,13 @@ build_stage_facts_from_execution_plan(
     if (execution_stage_uses_processcvu_contract(stage.kind)) {
       if (stage.kind == ExecutionStageKind::Preproc) {
         if (!processcvu_preproc_single_output_handoff.has_value()) {
-          throw std::runtime_error(
-              "ModelFragment: model-managed preproc stage '" + stage.stage_name +
-              "' is missing typed preproc_single_output_handoff fact");
+          throw std::runtime_error("ModelFragment: model-managed preproc stage '" +
+                                   stage.stage_name +
+                                   "' is missing typed preproc_single_output_handoff fact");
         }
-        entry.processcvu_preproc_single_output_handoff =
-            *processcvu_preproc_single_output_handoff;
-        entry.processcvu_contract =
-            pipeline_internal::sima::stagesemantics::build_processcvu_mpk_compiled_contract_for_stage_kind(
+        entry.processcvu_preproc_single_output_handoff = *processcvu_preproc_single_output_handoff;
+        entry.processcvu_contract = pipeline_internal::sima::stagesemantics::
+            build_processcvu_mpk_compiled_contract_for_stage_kind(
                 *mpk_contract, ExecutionStageKind::Preproc, std::nullopt, std::nullopt,
                 processcvu_preproc_single_output_handoff, input_format, input_depth,
                 max_input_width, max_input_height, normalize, mean, stddev);
@@ -2568,8 +2531,8 @@ build_stage_facts_from_execution_plan(
         } else if (!stage.plugin_id.empty()) {
           exact_processcvu_stage_name_or_id = stage.plugin_id;
         }
-        entry.processcvu_contract =
-            pipeline_internal::sima::stagesemantics::build_processcvu_mpk_compiled_contract_for_stage_kind(
+        entry.processcvu_contract = pipeline_internal::sima::stagesemantics::
+            build_processcvu_mpk_compiled_contract_for_stage_kind(
                 *mpk_contract, stage.kind, exact_processcvu_stage_name_or_id);
       } else {
         // Determine whether this pre-MLA stage is part of a fan-in topology
@@ -2583,8 +2546,7 @@ build_stage_facts_from_execution_plan(
         // by-exact-name graph node lookup, which the generic family fallback
         // does not cover for every family — e.g. casttess).
         const auto pre_mla_branch_count = [&]() -> std::size_t {
-          const auto* mla =
-              pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
+          const auto* mla = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
           if (mla == nullptr) {
             return 1U;
           }
@@ -2592,8 +2554,7 @@ build_stage_facts_from_execution_plan(
             // Native multi-IFM: MLA itself consumes N distinct physical inputs.
             return mla->input_tensors.size();
           }
-          if (pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(
-                  *mpk_contract)) {
+          if (pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_contract)) {
             return mla->input_tensors.size();
           }
           // Packer-style: a single upstream pre-MLA stage with input_tensors.size()
@@ -2615,11 +2576,10 @@ build_stage_facts_from_execution_plan(
           }
           return 1U;
         }();
-        const bool is_pre_mla_family = stage.kind == ExecutionStageKind::Quant ||
-                                       stage.kind == ExecutionStageKind::Tess ||
-                                       stage.kind == ExecutionStageKind::QuantTess ||
-                                       stage.kind == ExecutionStageKind::Cast ||
-                                       stage.kind == ExecutionStageKind::CastTess;
+        const bool is_pre_mla_family =
+            stage.kind == ExecutionStageKind::Quant || stage.kind == ExecutionStageKind::Tess ||
+            stage.kind == ExecutionStageKind::QuantTess || stage.kind == ExecutionStageKind::Cast ||
+            stage.kind == ExecutionStageKind::CastTess;
         const bool fan_in_path = is_pre_mla_family && pre_mla_branch_count > 1U;
         std::optional<std::string> exact_processcvu_stage_name_or_id;
         if (!fan_in_path) {
@@ -2639,8 +2599,8 @@ build_stage_facts_from_execution_plan(
             }
           }
         }
-        entry.processcvu_contract =
-            pipeline_internal::sima::stagesemantics::build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
+        entry.processcvu_contract = pipeline_internal::sima::stagesemantics::
+            build_processcvu_mpk_preadapter_compiled_contract_for_stage_kind(
                 *mpk_contract, stage.kind, exact_processcvu_stage_name_or_id, std::nullopt);
       }
     }
@@ -2648,10 +2608,10 @@ build_stage_facts_from_execution_plan(
     if (stage.kind == ExecutionStageKind::Mla) {
       const auto* mla_stage = pipeline_internal::sima::get_mla_stage_io_contract(*mpk_contract);
       if (!mla_stage) {
-        throw std::runtime_error("ModelFragment: strict MPK MLA contract missing for stage '" +
-                                 stage.stage_name +
-                                 "'. Ensure the MPK manifest includes an MLA plugin with"
-                                 " input/output tensor contracts (processor='MLA' or kernel='infer').");
+        throw std::runtime_error(
+            "ModelFragment: strict MPK MLA contract missing for stage '" + stage.stage_name +
+            "'. Ensure the MPK manifest includes an MLA plugin with"
+            " input/output tensor contracts (processor='MLA' or kernel='infer').");
       }
       const auto published_outputs =
           pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_contract);
@@ -2666,17 +2626,16 @@ build_stage_facts_from_execution_plan(
           !published_outputs.empty()
               ? published_outputs
               : (logical_outputs.empty() ? mla_stage->output_tensors : logical_outputs),
-          physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs,
-          stage.stage_name,
+          physical_outputs.empty() ? mla_stage->output_tensors : physical_outputs, stage.stage_name,
           boundary_inputs.empty() ? nullptr : &boundary_inputs);
       mla_contract.consumer_keeps_distinct_physical_inputs =
           pipeline_internal::sima::mla_consumer_keeps_distinct_physical_inputs(*mpk_contract);
       const auto mla_props = read_mla_runtime_properties_from_mpk_contract(mpk_contract);
       if (!mla_props.has_value() || mla_props->model_path.empty()) {
-        throw std::runtime_error("ModelFragment: strict MPK MLA runtime payload missing for stage '" +
-                                 stage.stage_name +
-                                 "' (expected 'model_path', 'batch_size' fields in the MPK MLA"
-                                 " config or simaai__params section).");
+        throw std::runtime_error(
+            "ModelFragment: strict MPK MLA runtime payload missing for stage '" + stage.stage_name +
+            "' (expected 'model_path', 'batch_size' fields in the MPK MLA"
+            " config or simaai__params section).");
       }
       apply_mla_runtime_properties_to_contract(*mla_props, &mla_contract);
       if (should_publish_mla_outputs_as_packed_parent_for_boxdecode(
@@ -2730,8 +2689,7 @@ build_stage_facts_from_execution_plan(
         }
         compile_options.score_activation = boxdecode_subset->score_activation;
         compile_options.model_owned_flags = true;
-        compile_options.required_preprocess_meta_fields =
-            default_preprocess_meta_required_fields();
+        compile_options.required_preprocess_meta_fields = default_preprocess_meta_required_fields();
         entry.boxdecode_compiled =
             pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract_from_subset(
                 *boxdecode_subset, compile_options);
@@ -2782,10 +2740,8 @@ build_stage_facts_from_execution_plan(
         runtime_contract->plugin_kind = "neatdetess";
         processcvu_payload = entry.processcvu_contract->payload;
       }
-      entry.transport_compiled =
-          build_model_managed_transport_contract("neatdetess", "detess",
-                                                 std::move(processcvu_payload),
-                                                 std::move(runtime_contract));
+      entry.transport_compiled = build_model_managed_transport_contract(
+          "neatdetess", "detess", std::move(processcvu_payload), std::move(runtime_contract));
     }
 
     facts.push_back(std::move(entry));
@@ -2887,8 +2843,8 @@ private:
     }
     std::vector<CompiledNodeContract> stages;
     const auto elements = parse_pipeline_elements(fragment_);
-    auto resolve_stage_facts = [&](const PipelineElementSpec& element)
-        -> const ModelFragment::StageFacts* {
+    auto resolve_stage_facts =
+        [&](const PipelineElementSpec& element) -> const ModelFragment::StageFacts* {
       if (!element.stage_id.empty()) {
         if (const auto* entry = find_stage_facts(element.stage_id)) {
           return entry;
@@ -2913,12 +2869,14 @@ private:
     for (const auto& element : elements) {
       const std::string plugin = to_lower(element.plugin);
       const std::string stage_id =
-          !element.stage_id.empty() ? element.stage_id
-                                    : (!element.element_name.empty() ? element.element_name : label_);
+          !element.stage_id.empty()
+              ? element.stage_id
+              : (!element.element_name.empty() ? element.element_name : label_);
       const std::string element_name =
           !element.element_name.empty() ? element.element_name : stage_id;
       CompiledNodeContract compiled_stage;
-      if (plugin.find("queue") != std::string::npos || plugin.find("capsfilter") != std::string::npos ||
+      if (plugin.find("queue") != std::string::npos ||
+          plugin.find("capsfilter") != std::string::npos ||
           plugin.find("funnel") != std::string::npos) {
         continue;
       }
@@ -2978,18 +2936,18 @@ private:
         continue;
       }
 
-      if (plugin.find("boxdecode") != std::string::npos || plugin.find("objectdecode") != std::string::npos) {
+      if (plugin.find("boxdecode") != std::string::npos ||
+          plugin.find("objectdecode") != std::string::npos) {
         const ModelFragment::StageFacts* entry = resolve_stage_facts(element);
         if (!entry) {
           if (err) {
-            *err = "ModelFragment contract compile: missing boxdecode config for '" +
-                   element_name + "'";
+            *err = "ModelFragment contract compile: missing boxdecode config for '" + element_name +
+                   "'";
           }
           return {};
         }
-        const std::string plugin_kind = plugin.find("objectdecode") != std::string::npos
-                                            ? "neatobjectdecode"
-                                            : "neatboxdecode";
+        const std::string plugin_kind =
+            plugin.find("objectdecode") != std::string::npos ? "neatobjectdecode" : "neatboxdecode";
         if (!entry->boxdecode_compiled.has_value()) {
           if (err) {
             *err = "ModelFragment contract compile: missing cached boxdecode contract for '" +
@@ -3001,10 +2959,11 @@ private:
                 kind_, plugin_kind, element_name, stage_id, fragment_stage_definition(plugin_kind),
                 *entry->boxdecode_compiled, &compiled_stage, err)) {
           if (err) {
-            *err = err->empty()
-                       ? "ModelFragment contract compile: failed to build boxdecode contract for '" +
-                             element_name + "'"
-                       : *err;
+            *err =
+                err->empty()
+                    ? "ModelFragment contract compile: failed to build boxdecode contract for '" +
+                          element_name + "'"
+                    : *err;
           }
           return {};
         }
@@ -3012,18 +2971,21 @@ private:
         continue;
       }
 
-      if (plugin.find("dequant") != std::string::npos && plugin.find("processcvu") == std::string::npos) {
+      if (plugin.find("dequant") != std::string::npos &&
+          plugin.find("processcvu") == std::string::npos) {
         const ModelFragment::StageFacts* entry = resolve_stage_facts(element);
         if (!entry) {
           if (err) {
-            *err = "ModelFragment contract compile: missing dequant config for '" + element_name + "'";
+            *err =
+                "ModelFragment contract compile: missing dequant config for '" + element_name + "'";
           }
           return {};
         }
         if (!entry->dequant_compiled.has_value()) {
           if (err) {
-            *err = "ModelFragment contract compile: missing cached standalone dequant contract for '" +
-                   element_name + "'";
+            *err =
+                "ModelFragment contract compile: missing cached standalone dequant contract for '" +
+                element_name + "'";
           }
           return {};
         }
@@ -3040,8 +3002,9 @@ private:
         const ModelFragment::StageFacts* entry = resolve_stage_facts(element);
         if (!entry || !entry->transport_compiled.has_value()) {
           if (err) {
-            *err = "ModelFragment contract compile: missing cached detess transport contract for '" +
-                   element_name + "'";
+            *err =
+                "ModelFragment contract compile: missing cached detess transport contract for '" +
+                element_name + "'";
           }
           return {};
         }
@@ -3065,13 +3028,12 @@ private:
   std::shared_ptr<const ModelLineageBinding> model_lineage_;
 };
 
-static NodeGroup make_fragment_group(const ModelFragment& frag, const std::string& label,
-                                    std::shared_ptr<const ModelLineageBinding> model_lineage =
-                                        nullptr) {
+static NodeGroup
+make_fragment_group(const ModelFragment& frag, const std::string& label,
+                    std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) {
   std::vector<std::shared_ptr<Node>> nodes;
-  nodes.push_back(std::make_shared<ModelFragmentNode>("ModelFragment", label, frag.gst,
-                                                      frag.elements, frag.stage_facts,
-                                                      std::move(model_lineage)));
+  nodes.push_back(std::make_shared<ModelFragmentNode>(
+      "ModelFragment", label, frag.gst, frag.elements, frag.stage_facts, std::move(model_lineage)));
   return NodeGroup(std::move(nodes));
 }
 
@@ -3099,13 +3061,14 @@ static bool validate_terminal_mla_metadata(
       pipeline_internal::sima::get_mla_published_outputs_contract(*mpk_contract);
   const auto logical_outputs =
       pipeline_internal::sima::get_mla_logical_outputs_contract(*mpk_contract);
-  const auto& effective_outputs = !published_outputs.empty()
-                                      ? published_outputs
-                                      : (!logical_outputs.empty() ? logical_outputs
-                                                                  : mla_stage->output_tensors);
+  const auto& effective_outputs =
+      !published_outputs.empty()
+          ? published_outputs
+          : (!logical_outputs.empty() ? logical_outputs : mla_stage->output_tensors);
   if (effective_outputs.empty()) {
-    throw std::runtime_error("Terminal MLA contract missing output tensors after infer trimming: '" +
-                             terminal.stage_name + "'");
+    throw std::runtime_error(
+        "Terminal MLA contract missing output tensors after infer trimming: '" +
+        terminal.stage_name + "'");
   }
 
   const auto shape_dbg = [](const std::vector<std::int64_t>& shape) {
@@ -3134,9 +3097,8 @@ static bool validate_terminal_mla_metadata(
       std::ostringstream msg;
       msg << "Terminal MLA contract incomplete after infer trimming"
           << " stage='" << terminal.stage_name << "'"
-          << " output_index=" << i
-          << " resolved={w=" << dims.width << ",h=" << dims.height << ",d=" << dims.depth
-          << ",dtype=" << (dtype.empty() ? "<empty>" : dtype) << "}"
+          << " output_index=" << i << " resolved={w=" << dims.width << ",h=" << dims.height
+          << ",d=" << dims.depth << ",dtype=" << (dtype.empty() ? "<empty>" : dtype) << "}"
           << " logical_shape=" << shape_dbg(tensor.logical_shape)
           << " mpk_shape=" << shape_dbg(tensor.mpk_shape)
           << " shape_semantics=" << static_cast<int>(tensor.shape_semantics);
@@ -3427,13 +3389,12 @@ static std::string upstream_name_for_stage(const ExecutionPlan& plan, ModelStage
   return kDefaultPreviousNodeName;
 }
 
-static ModelFragment build_fragment_linear(const std::vector<ExecutionStage>& stages,
-                                           const std::string& initial_input_name,
-                                           int num_buffers_cvu,
-                                           int num_buffers_mla,
-                                           const std::string& name_suffix,
-                                           const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract,
-                                           std::vector<ModelFragment::StageFacts> stage_facts) {
+static ModelFragment
+build_fragment_linear(const std::vector<ExecutionStage>& stages,
+                      const std::string& initial_input_name, int num_buffers_cvu,
+                      int num_buffers_mla, const std::string& name_suffix,
+                      const std::optional<pipeline_internal::sima::MpkContract>& mpk_contract,
+                      std::vector<ModelFragment::StageFacts> stage_facts) {
   ModelFragment frag;
   if (stages.empty())
     return frag;
@@ -3455,10 +3416,10 @@ static ModelFragment build_fragment_linear(const std::vector<ExecutionStage>& st
 
   for (std::size_t i = 0; i < stages.size(); ++i) {
     const auto& stage = stages[i];
-    const std::string plugin = stage.factory_name.empty() ? require_stage_factory(stage.kind)
-                                                          : stage.factory_name;
-    const std::string base_name = stage.stage_name.empty() ? std::string(default_stage_name(stage.kind))
-                                                           : stage.stage_name;
+    const std::string plugin =
+        stage.factory_name.empty() ? require_stage_factory(stage.kind) : stage.factory_name;
+    const std::string base_name =
+        stage.stage_name.empty() ? std::string(default_stage_name(stage.kind)) : stage.stage_name;
     const std::string name = name_suffix.empty() ? base_name : (base_name + name_suffix);
 
     if (i)
@@ -3518,11 +3479,10 @@ ModelPack::ModelPack(const std::string& tar_gz, const std::string& media_type,
                      const std::string& format, int depth, int max_width, int max_height,
                      int max_depth, bool normalize, std::vector<float> mean,
                      std::vector<float> stddev, const std::string& preproc_next_cpu,
-                     PipelineType requested_pipeline_type,
-                     const std::string& upstream_name, int num_buffers_cvu, int num_buffers_mla,
-                     int queue_max_buffers, int64_t queue_max_time_ns,
-                     const std::string& queue_leaky, const std::string& name_suffix,
-                     const InferenceTerminalPolicy& terminal_policy,
+                     PipelineType requested_pipeline_type, const std::string& upstream_name,
+                     int num_buffers_cvu, int num_buffers_mla, int queue_max_buffers,
+                     int64_t queue_max_time_ns, const std::string& queue_leaky,
+                     const std::string& name_suffix, const InferenceTerminalPolicy& terminal_policy,
                      bool cleanup_extracted_model_data) {
   Config cfg;
   cfg.normalize = normalize;
@@ -3561,11 +3521,10 @@ ModelPack::ModelPack(const std::string& tar_gz, const std::string& media_type,
 ModelPack::ModelPack(const std::string& tar_gz, const cv::Mat& mat, int max_width, int max_height,
                      int max_depth, bool normalize, std::vector<float> mean,
                      std::vector<float> stddev, const std::string& preproc_next_cpu,
-                     PipelineType requested_pipeline_type,
-                     const std::string& upstream_name, int num_buffers_cvu, int num_buffers_mla,
-                     int queue_max_buffers, int64_t queue_max_time_ns,
-                     const std::string& queue_leaky, const std::string& name_suffix,
-                     const InferenceTerminalPolicy& terminal_policy,
+                     PipelineType requested_pipeline_type, const std::string& upstream_name,
+                     int num_buffers_cvu, int num_buffers_mla, int queue_max_buffers,
+                     int64_t queue_max_time_ns, const std::string& queue_leaky,
+                     const std::string& name_suffix, const InferenceTerminalPolicy& terminal_policy,
                      bool cleanup_extracted_model_data)
     : ModelPack(tar_gz, "video/x-raw", (mat.channels() == 1) ? "GRAY" : "BGR", mat.channels(),
                 max_width, max_height, max_depth, normalize, std::move(mean), std::move(stddev),
@@ -3641,8 +3600,8 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
           simaai::neat::pipeline_internal::sima::plugins_in_execution_order(*mpk_contract_);
       std::cerr << "[MPK-CONTRACT][ModelPack] root=" << extracted
                 << " parse_status=ok plugins=" << mpk_contract_->plugins.size()
-                << " edges=" << mpk_contract_->edges.size()
-                << " order_len=" << ordered.size() << "\n";
+                << " edges=" << mpk_contract_->edges.size() << " order_len=" << ordered.size()
+                << "\n";
     }
     if (!mpk_contract_.has_value() && env_truthy_local("SIMA_MPK_CONTRACT_DEBUG") &&
         !contract_error.empty()) {
@@ -3672,10 +3631,11 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
             "ModelPack: strict MPK contract required for MLA stage but *_mpk.json is missing");
       }
       if (env_truthy_local("SIMA_ROUTE_DEBUG") || env_truthy_local("SIMA_MPK_CONTRACT_DEBUG")) {
-        std::fprintf(stderr,
-                     "[ModelPack] strict MPK MLA contract will be sourced directly from MPK for %s; "
-                     "skipping legacy config patch\n",
-                     mla_cfg.c_str());
+        std::fprintf(
+            stderr,
+            "[ModelPack] strict MPK MLA contract will be sourced directly from MPK for %s; "
+            "skipping legacy config patch\n",
+            mla_cfg.c_str());
       }
     }
   }
@@ -3697,10 +3657,11 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
     const fs::path cfg_path = fs::path(etc_dir_) / config_name;
     if (fs::exists(cfg_path)) {
       if (env_truthy_local("SIMA_ROUTE_DEBUG") || env_truthy_local("SIMA_MPK_CONTRACT_DEBUG")) {
-        std::fprintf(stderr,
-                     "[ModelPack] MPK shadow geometry enabled: skipping legacy frontend rewrite/patch "
-                     "for kernel='%s' config=%s\n",
-                     kernel.c_str(), cfg_path.string().c_str());
+        std::fprintf(
+            stderr,
+            "[ModelPack] MPK shadow geometry enabled: skipping legacy frontend rewrite/patch "
+            "for kernel='%s' config=%s\n",
+            kernel.c_str(), cfg_path.string().c_str());
       }
     } else {
       // Typed/manifest routing no longer requires legacy 0_quant*.json files to
@@ -3717,9 +3678,10 @@ void ModelPack::init_from_config(const std::string& tar_gz, Config cfg) {
     const fs::path preproc_cfg = fs::path(etc_dir_) / "0_preproc.json";
     if (fs::exists(preproc_cfg)) {
       if (env_truthy_local("SIMA_ROUTE_DEBUG") || env_truthy_local("SIMA_MPK_CONTRACT_DEBUG")) {
-        std::fprintf(stderr,
-                     "[ModelPack] MPK shape-only mode: skipping legacy preproc frontend rewrite %s\n",
-                     preproc_cfg.string().c_str());
+        std::fprintf(
+            stderr,
+            "[ModelPack] MPK shape-only mode: skipping legacy preproc frontend rewrite %s\n",
+            preproc_cfg.string().c_str());
       }
     }
   }
@@ -3747,8 +3709,7 @@ std::string ModelPack::find_config_path_by_processor(const std::string& processo
 
 const pipeline_internal::sima::RouteGraph& ModelPack::route_graph() const {
   if (!mpk_contract_.has_value()) {
-    throw std::runtime_error(
-        "ModelPack: strict MPK contract required to derive the route graph");
+    throw std::runtime_error("ModelPack: strict MPK contract required to derive the route graph");
   }
   if (!route_graph_.has_value()) {
     route_graph_ = pipeline_internal::sima::build_route_graph(*mpk_contract_);
@@ -3770,13 +3731,14 @@ std::vector<ModelFragment::StageFacts> ModelPack::build_stage_facts(
     const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract,
     ModelStage stage_context) const {
   return build_stage_facts_from_execution_plan(
-      stages, mpk_contract_, processcvu_preproc_single_output_handoff_,
-      model_managed_route_flags_, options_.input_format, options_.input_depth, options_.max_input_width,
+      stages, mpk_contract_, processcvu_preproc_single_output_handoff_, model_managed_route_flags_,
+      options_.input_format, options_.input_depth, options_.max_input_width,
       options_.max_input_height, options_.normalize, options_.mean, options_.stddev,
       upstream_handoff_contract, stage_context);
 }
 
-std::vector<ModelFragment::StageFacts> ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
+std::vector<ModelFragment::StageFacts>
+ModelPack::stage_facts_for_model_stage(ModelStage stage) const {
   const ExecutionPlan plan = execution_plan();
   if (stage == ModelStage::Preprocess) {
     return build_stage_facts(plan.pre, std::nullopt, ModelStage::Preprocess);
@@ -3797,8 +3759,7 @@ std::vector<ModelFragment::StageFacts> ModelPack::stage_facts_for_model_stage(Mo
         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
         model_managed_route_flags_, options_.input_format, options_.input_depth,
         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
-        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
-        direct_mla_to_boxdecode);
+        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
   }
   if (stage == ModelStage::Postprocess) {
     return build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
@@ -3822,8 +3783,7 @@ std::vector<ModelFragment::StageFacts> ModelPack::stage_facts_for_model_stage(Mo
         plan.infer, mpk_contract_, processcvu_preproc_single_output_handoff_,
         model_managed_route_flags_, options_.input_format, options_.input_depth,
         options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
-        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
-        direct_mla_to_boxdecode);
+        options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
     auto post_facts = build_stage_facts(plan.post, std::nullopt, ModelStage::Postprocess);
 
     out.reserve(pre_facts.size() + infer_facts.size() + post_facts.size());
@@ -3855,9 +3815,8 @@ ModelFragment ModelPack::fragment(ModelStage stage) const {
   } else {
     stage_facts = build_stage_facts(sel, std::nullopt, stage);
   }
-  return build_fragment_linear(sel, upstream, options_.num_buffers_cvu,
-                               options_.num_buffers_mla, options_.name_suffix, mpk_contract_,
-                               std::move(stage_facts));
+  return build_fragment_linear(sel, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
+                               options_.name_suffix, mpk_contract_, std::move(stage_facts));
 }
 
 std::string ModelPack::backend_fragment(ModelStage stage) const {
@@ -3926,12 +3885,10 @@ NodeGroup ModelPack::infer_block(const std::string& upstream_name,
       infer_seq, mpk_contract_, processcvu_preproc_single_output_handoff_,
       model_managed_route_flags_, options_.input_format, options_.input_depth,
       options_.max_input_width, options_.max_input_height, options_.normalize, options_.mean,
-      options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly,
-      direct_mla_to_boxdecode);
+      options_.stddev, upstream_handoff_contract, ModelStage::MlaOnly, direct_mla_to_boxdecode);
   ModelFragment frag =
-      build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu,
-                            options_.num_buffers_mla, options_.name_suffix, mpk_contract_,
-                            std::move(stage_facts));
+      build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
+                            options_.name_suffix, mpk_contract_, std::move(stage_facts));
   if (frag.gst.empty())
     return NodeGroup{};
   return make_fragment_group(frag, "infer", std::move(model_lineage));
@@ -3953,15 +3910,13 @@ InputOptions ModelPack::input_appsrc_options(bool tensor_mode) const {
   if (tensor_mode) {
     const bool quant_like_pre =
         pipeline_type_ == PipelineType::Quant || pipeline_type_ == PipelineType::Tess ||
-        pipeline_type_ == PipelineType::QuantTess ||
-        pipeline_type_ == PipelineType::CastTess ||
+        pipeline_type_ == PipelineType::QuantTess || pipeline_type_ == PipelineType::CastTess ||
         pipeline_type_ == PipelineType::Cast;
-    std::string tensor_format = options_.input_format.empty() ? std::string("FP32")
-                                                              : options_.input_format;
+    std::string tensor_format =
+        options_.input_format.empty() ? std::string("FP32") : options_.input_format;
     const std::string tensor_format_up = to_upper(tensor_format);
-    if (quant_like_pre &&
-        (tensor_format_up == "FP32" || tensor_format_up == "FLOAT32" ||
-         tensor_format_up == "EVXX_FLOAT32")) {
+    if (quant_like_pre && (tensor_format_up == "FP32" || tensor_format_up == "FLOAT32" ||
+                           tensor_format_up == "EVXX_FLOAT32")) {
       // processcvu model-managed quant-like stages negotiate EVXX float tokens on sink caps.
       tensor_format = "EVXX_FLOAT32";
     }
@@ -3984,12 +3939,10 @@ InputOptions ModelPack::input_appsrc_options(bool tensor_mode) const {
     fmt = "RGB";
   const std::string fmt_upper = to_upper(fmt);
   const bool tensor_like_format =
-      fmt_upper.find("FP") != std::string::npos ||
-      fmt_upper.find("FLOAT") != std::string::npos ||
+      fmt_upper.find("FP") != std::string::npos || fmt_upper.find("FLOAT") != std::string::npos ||
       fmt_upper.find("BF16") != std::string::npos ||
       fmt_upper.find("BFLOAT16") != std::string::npos ||
-      fmt_upper.find("INT8") != std::string::npos ||
-      fmt_upper.find("INT16") != std::string::npos ||
+      fmt_upper.find("INT8") != std::string::npos || fmt_upper.find("INT16") != std::string::npos ||
       fmt_upper.find("INT32") != std::string::npos ||
       fmt_upper.find("UINT8") != std::string::npos ||
       fmt_upper.find("UINT16") != std::string::npos ||

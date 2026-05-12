@@ -35,14 +35,14 @@ simaai::neat::PreprocOptions make_non_tess_render_preproc_options() {
   return opt;
 }
 
-const simaai::neat::pipeline_internal::sima::StageStaticSpec& only_stage(
-    const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
+const simaai::neat::pipeline_internal::sima::StageStaticSpec&
+only_stage(const simaai::neat::pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
   require(manifest.stages.size() == 1U, "manifest should contain exactly one stage");
   return manifest.stages.front();
 }
 
-std::string join_errors(
-    const simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics& diagnostics) {
+std::string
+join_errors(const simaai::neat::pipeline_internal::sima::ManifestBuildDiagnostics& diagnostics) {
   std::ostringstream oss;
   for (std::size_t i = 0; i < diagnostics.errors.size(); ++i) {
     if (i > 0) {
@@ -56,7 +56,8 @@ std::string join_errors(
 void verify_render_manifest_equivalence() {
   using namespace simaai::neat;
 
-  std::vector<std::shared_ptr<Node>> nodes_to_compile = {nodes::Preproc(make_render_preproc_options())};
+  std::vector<std::shared_ptr<Node>> nodes_to_compile = {
+      nodes::Preproc(make_render_preproc_options())};
   pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
   const auto compiled =
       compile_node_contracts(nodes_to_compile, ContractCompileInput{}, &diagnostics);
@@ -98,14 +99,8 @@ void verify_runtime_output_order_rendering() {
   using namespace simaai::neat;
   using namespace simaai::neat::pipeline_internal::sima;
 
-  auto make_logical = [](int logical_index,
-                         int physical_index,
-                         int output_slot,
-                         int tensor_index,
-                         std::string name,
-                         int width,
-                         int height,
-                         int depth) {
+  auto make_logical = [](int logical_index, int physical_index, int output_slot, int tensor_index,
+                         std::string name, int width, int height, int depth) {
     LogicalTensorStaticSpec logical;
     logical.logical_index = logical_index;
     logical.backend_output_index = logical_index;
@@ -203,7 +198,8 @@ void verify_runtime_output_order_rendering() {
           "manual multi-output runtime contract should preserve runtime output order");
   require(stage.processcvu.default_output_names[0] == "output_rgb_image" &&
               stage.processcvu.default_output_names[1] == "output_tessellated_image",
-          "manual multi-output runtime names should follow runtime output_order, not logical storage order");
+          "manual multi-output runtime names should follow runtime output_order, not logical "
+          "storage order");
   require(stage.processcvu.runtime_output_logical_index_list.size() == 2U,
           "runtime output route metadata should be rendered for each runtime output");
   require(stage.processcvu.runtime_output_logical_index_list[0] == 0 &&
@@ -216,8 +212,10 @@ void verify_runtime_output_order_rendering() {
               stage.processcvu.runtime_output_physical_index_list[1] == 1,
           "runtime output physical indices should align with runtime output_order");
   require(stage.processcvu.runtime_output_transport_kind_list.size() == 2U &&
-              stage.processcvu.runtime_output_transport_kind_list[0] == ProcessCvuOutputTransportKind::Dense &&
-              stage.processcvu.runtime_output_transport_kind_list[1] == ProcessCvuOutputTransportKind::Dense,
+              stage.processcvu.runtime_output_transport_kind_list[0] ==
+                  ProcessCvuOutputTransportKind::Dense &&
+              stage.processcvu.runtime_output_transport_kind_list[1] ==
+                  ProcessCvuOutputTransportKind::Dense,
           "manual multi-output runtime contract should default runtime transports to dense");
   require(stage.processcvu.runtime_output_logical_shapes.size() == 2U,
           "manual multi-output runtime contract should default logical shapes from runtime dims");
@@ -273,7 +271,7 @@ void verify_non_tess_preproc_semantic_rendering() {
 } // namespace
 
 RUN_TEST("unit_contract_render_manifest_equivalence_test", ([] {
-  verify_render_manifest_equivalence();
-  verify_runtime_output_order_rendering();
-  verify_non_tess_preproc_semantic_rendering();
-}));
+           verify_render_manifest_equivalence();
+           verify_runtime_output_order_rendering();
+           verify_non_tess_preproc_semantic_rendering();
+         }));

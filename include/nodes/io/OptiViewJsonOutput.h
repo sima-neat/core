@@ -23,12 +23,12 @@ namespace simaai::neat {
  * @ingroup nodes_io
  */
 struct OptiViewObject {
-  int x = 0;            ///< Bounding-box top-left x, in pixels.
-  int y = 0;            ///< Bounding-box top-left y, in pixels.
-  int w = 0;            ///< Bounding-box width, in pixels.
-  int h = 0;            ///< Bounding-box height, in pixels.
-  float score = 0.0f;   ///< Detection confidence in `[0, 1]`.
-  int class_id = -1;    ///< Class index into the labels table. `-1` = unknown.
+  int x = 0;          ///< Bounding-box top-left x, in pixels.
+  int y = 0;          ///< Bounding-box top-left y, in pixels.
+  int w = 0;          ///< Bounding-box width, in pixels.
+  int h = 0;          ///< Bounding-box height, in pixels.
+  float score = 0.0f; ///< Detection confidence in `[0, 1]`.
+  int class_id = -1;  ///< Class index into the labels table. `-1` = unknown.
 };
 
 /**

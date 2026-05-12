@@ -111,8 +111,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            const int stop_ms = sima_test::elapsed_ms(t0, t1);
            require(stop_ms < 5000, "Run::stop teardown exceeded expected bound");
 
-           require(!run.try_push(TensorList{seed}),
-                   "Run::try_push should fail after stop()");
+           require(!run.try_push(TensorList{seed}), "Run::try_push should fail after stop()");
            (void)pushes.load(std::memory_order_relaxed);
            (void)pulls.load(std::memory_order_relaxed);
          }));

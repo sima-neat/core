@@ -17,6 +17,5 @@ namespace simaai::neat::nodes {
  * @brief Repeat one input frame as a continuous stream.
  * @param num_buffers Number of frames to emit. `-1` means unlimited (until EOS).
  */
-std::shared_ptr<simaai::neat::Node>
-ImageFreeze(int num_buffers = -1);
+std::shared_ptr<simaai::neat::Node> ImageFreeze(int num_buffers = -1);
 } // namespace simaai::neat::nodes

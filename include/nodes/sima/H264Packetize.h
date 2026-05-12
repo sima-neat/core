@@ -26,14 +26,14 @@ class H264Packetize final : public Node, public OutputSpecProvider {
 public:
   /// RTP dynamic payload type (default `96`, the conventional value for H.264 over RTP).
   struct PayloadType {
-    int value;                                      ///< Underlying integer payload type.
+    int value; ///< Underlying integer payload type.
     /// Construct from raw integer value (defaults to 96).
     constexpr PayloadType(int v = 96) : value(v) {}
   };
 
   /// SPS/PPS re-injection interval in seconds (default `1`).
   struct ConfigInterval {
-    int value;                                          ///< Underlying integer interval, in seconds.
+    int value; ///< Underlying integer interval, in seconds.
     /// Construct from raw integer value (defaults to 1).
     constexpr ConfigInterval(int v = 1) : value(v) {}
   };

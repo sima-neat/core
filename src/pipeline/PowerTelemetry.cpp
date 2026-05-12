@@ -74,9 +74,8 @@ std::string escape_json(const std::string& input) {
 }
 
 std::string lowercase_ascii(std::string value) {
-  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return value;
 }
 
@@ -224,7 +223,7 @@ private:
 
   static bool smbus_write_byte_data(int fd, std::uint8_t reg, std::uint8_t value,
                                     std::string& error) {
-    SmbusData data {};
+    SmbusData data{};
     data.byte = value;
     if (smbus_access(fd, I2C_SMBUS_WRITE, reg, I2C_SMBUS_BYTE_DATA, &data) < 0) {
       error = std::strerror(errno);
@@ -235,7 +234,7 @@ private:
 
   static bool smbus_read_byte_data(int fd, std::uint8_t reg, std::uint8_t& value,
                                    std::string& error) {
-    SmbusData data {};
+    SmbusData data{};
     if (smbus_access(fd, I2C_SMBUS_READ, reg, I2C_SMBUS_BYTE_DATA, &data) < 0) {
       error = std::strerror(errno);
       return false;
@@ -368,7 +367,8 @@ std::vector<PowerRailConfig> power_rails_for_profile(PowerMonitorProfile profile
   return {};
 }
 
-PowerMonitorOptions board_power_monitor_options(int sample_interval_ms, PowerMonitorProfile profile) {
+PowerMonitorOptions board_power_monitor_options(int sample_interval_ms,
+                                                PowerMonitorProfile profile) {
   PowerMonitorOptions options;
   options.enabled = true;
   options.sample_interval_ms = std::max(1, sample_interval_ms);
@@ -405,7 +405,9 @@ public:
     }
   }
 
-  ~Impl() { stop(); }
+  ~Impl() {
+    stop();
+  }
 
   void start() {
     if (!options_.enabled)
@@ -475,7 +477,9 @@ public:
     return out;
   }
 
-  bool running() const { return running_.load(); }
+  bool running() const {
+    return running_.load();
+  }
 
 private:
   void run_loop() {
@@ -483,7 +487,8 @@ private:
     const int interval = std::max(1, options_.sample_interval_ms);
     while (running_.load()) {
       std::unique_lock<std::mutex> lock(wait_mu_);
-      cv_.wait_for(lock, std::chrono::milliseconds(interval), [this]() { return !running_.load(); });
+      cv_.wait_for(lock, std::chrono::milliseconds(interval),
+                   [this]() { return !running_.load(); });
       if (!running_.load())
         break;
       sample_once();
@@ -563,21 +568,16 @@ std::string format_power_summary(const PowerSummary& summary) {
     return {};
   }
   std::ostringstream oss;
-  oss << "PowerStats: samples=" << summary.samples
-      << " duration_s=" << summary.duration_seconds
-      << " total_avg_w=" << summary.total_avg_watts
-      << " total_min_w=" << summary.total_min_watts
-      << " total_max_w=" << summary.total_max_watts
-      << " energy_j=" << summary.energy_joules << "\n";
+  oss << "PowerStats: samples=" << summary.samples << " duration_s=" << summary.duration_seconds
+      << " total_avg_w=" << summary.total_avg_watts << " total_min_w=" << summary.total_min_watts
+      << " total_max_w=" << summary.total_max_watts << " energy_j=" << summary.energy_joules
+      << "\n";
   for (const auto& rail : summary.rails) {
-    oss << "  RailPower: name=\"" << rail.config.name << "\" addr=" << hex_byte(rail.config.i2c_addr)
-        << " page=" << hex_byte(rail.config.page)
-        << " v_avg=" << rail.voltage_v.avg
-        << " i_avg=" << rail.current_a.avg
-        << " p_avg_w=" << rail.power_w.avg
-        << " p_min_w=" << rail.power_w.min
-        << " p_max_w=" << rail.power_w.max
-        << " p_samples=" << rail.power_w.samples
+    oss << "  RailPower: name=\"" << rail.config.name
+        << "\" addr=" << hex_byte(rail.config.i2c_addr) << " page=" << hex_byte(rail.config.page)
+        << " v_avg=" << rail.voltage_v.avg << " i_avg=" << rail.current_a.avg
+        << " p_avg_w=" << rail.power_w.avg << " p_min_w=" << rail.power_w.min
+        << " p_max_w=" << rail.power_w.max << " p_samples=" << rail.power_w.samples
         << " errors=" << (rail.voltage_v.errors + rail.current_a.errors + rail.power_w.errors)
         << "\n";
   }

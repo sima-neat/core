@@ -19,10 +19,8 @@
 
 namespace {
 
-void require_build_dense_test_tensor(const std::vector<int>& shape,
-                                     const std::string& dtype,
-                                     const std::string& layout,
-                                     sima_ev_tensor_desc* out,
+void require_build_dense_test_tensor(const std::vector<int>& shape, const std::string& dtype,
+                                     const std::string& layout, sima_ev_tensor_desc* out,
                                      const char* expectation) {
   std::string error_detail;
   require(simaai::neat::pipeline_internal::sima::tensorsemantics::build_dense_tensor_desc(
@@ -33,12 +31,9 @@ void require_build_dense_test_tensor(const std::vector<int>& shape,
 }
 
 void require_build_tiled_test_tensor(const std::vector<int>& shape,
-                                     const std::vector<int>& tile_shape,
-                                     const std::string& dtype,
-                                     const std::string& layout,
-                                     std::uint32_t tile_align_bytes,
-                                     sima_ev_tensor_desc* out,
-                                     const char* expectation) {
+                                     const std::vector<int>& tile_shape, const std::string& dtype,
+                                     const std::string& layout, std::uint32_t tile_align_bytes,
+                                     sima_ev_tensor_desc* out, const char* expectation) {
   std::string error_detail;
   require(simaai::neat::pipeline_internal::sima::tensorsemantics::build_tiled_tensor_desc(
               shape, tile_shape, dtype, layout, tile_align_bytes, out, &error_detail,
@@ -133,8 +128,8 @@ std::vector<std::int64_t> tensor_desc_shape_for_test(const sima_ev_tensor_desc& 
   return out;
 }
 
-std::vector<std::int64_t> detess_transport_shape_for_frame(
-    const std::vector<std::int64_t>& frame_shape) {
+std::vector<std::int64_t>
+detess_transport_shape_for_frame(const std::vector<std::int64_t>& frame_shape) {
   require(frame_shape.size() >= 3U, "detess test frame_shape must include HWC geometry");
   const int depth = leading_depth_for_shape(frame_shape);
   const int height = trailing_height_for_shape(frame_shape);
@@ -152,11 +147,9 @@ std::vector<std::int64_t> detess_transport_shape_for_frame(
   return shape;
 }
 
-simaai::neat::pipeline_internal::sima::MpkTensorContract make_test_tensor(
-    const std::string& name,
-    const std::string& dtype,
-    const std::vector<std::int64_t>& shape,
-    std::uint64_t size_bytes = 0U) {
+simaai::neat::pipeline_internal::sima::MpkTensorContract
+make_test_tensor(const std::string& name, const std::string& dtype,
+                 const std::vector<std::int64_t>& shape, std::uint64_t size_bytes = 0U) {
   using simaai::neat::pipeline_internal::sima::MpkShapeSemantics;
   using simaai::neat::pipeline_internal::sima::MpkTensorContract;
 
@@ -168,17 +161,16 @@ simaai::neat::pipeline_internal::sima::MpkTensorContract make_test_tensor(
   tensor.logical_shape = shape;
   tensor.mpk_shape = shape;
   tensor.shape_semantics = MpkShapeSemantics::Geometry;
-  tensor.size_bytes = size_bytes > 0U ? static_cast<std::size_t>(size_bytes)
-                                      : static_cast<std::size_t>(
-                                            packed_tensor_bytes_for_test(shape, dtype));
+  tensor.size_bytes = size_bytes > 0U
+                          ? static_cast<std::size_t>(size_bytes)
+                          : static_cast<std::size_t>(packed_tensor_bytes_for_test(shape, dtype));
   return tensor;
 }
 
-simaai::neat::pipeline_internal::sima::MpkTensorContract make_test_tensor_without_mpk_shape(
-    const std::string& name,
-    const std::string& dtype,
-    const std::vector<std::int64_t>& logical_shape,
-    std::uint64_t size_bytes = 0U) {
+simaai::neat::pipeline_internal::sima::MpkTensorContract
+make_test_tensor_without_mpk_shape(const std::string& name, const std::string& dtype,
+                                   const std::vector<std::int64_t>& logical_shape,
+                                   std::uint64_t size_bytes = 0U) {
   using simaai::neat::pipeline_internal::sima::MpkShapeSemantics;
   using simaai::neat::pipeline_internal::sima::MpkTensorContract;
 
@@ -189,24 +181,24 @@ simaai::neat::pipeline_internal::sima::MpkTensorContract make_test_tensor_withou
   tensor.logical_dtype = dtype;
   tensor.logical_shape = logical_shape;
   tensor.shape_semantics = MpkShapeSemantics::Geometry;
-  tensor.size_bytes = size_bytes > 0U ? static_cast<std::size_t>(size_bytes)
-                                      : static_cast<std::size_t>(
-                                            packed_tensor_bytes_for_test(logical_shape, dtype));
+  tensor.size_bytes =
+      size_bytes > 0U
+          ? static_cast<std::size_t>(size_bytes)
+          : static_cast<std::size_t>(packed_tensor_bytes_for_test(logical_shape, dtype));
   return tensor;
 }
 
-simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_detess_contract(
-    const std::vector<std::int64_t>& frame_shape,
-    const std::string& input_dtype,
-    const std::string& output_dtype) {
+simaai::neat::pipeline_internal::sima::MpkContract
+make_rank_aware_detess_contract(const std::vector<std::int64_t>& frame_shape,
+                                const std::string& input_dtype, const std::string& output_dtype) {
   using simaai::neat::pipeline_internal::sima::MpkContract;
   using simaai::neat::pipeline_internal::sima::MpkContractEdge;
   using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
 
   const std::vector<std::int64_t> transport_shape = detess_transport_shape_for_frame(frame_shape);
   const std::uint64_t packed_bytes = packed_tensor_bytes_for_test(transport_shape, input_dtype);
-  const bool align_c16 = trailing_channels_for_shape(frame_shape) !=
-                         static_cast<int>(transport_shape.back());
+  const bool align_c16 =
+      trailing_channels_for_shape(frame_shape) != static_cast<int>(transport_shape.back());
 
   MpkPluginIoContract mla;
   mla.name = "MLA_0";
@@ -311,10 +303,10 @@ make_pre_and_post_cast_contract_for_exact_name_regression() {
   return contract;
 }
 
-simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_detessdequant_contract(
-    const std::vector<std::int64_t>& frame_shape,
-    const std::string& input_dtype,
-    const std::string& output_dtype) {
+simaai::neat::pipeline_internal::sima::MpkContract
+make_rank_aware_detessdequant_contract(const std::vector<std::int64_t>& frame_shape,
+                                       const std::string& input_dtype,
+                                       const std::string& output_dtype) {
   using simaai::neat::pipeline_internal::sima::MpkContract;
   using simaai::neat::pipeline_internal::sima::MpkContractEdge;
   using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
@@ -322,8 +314,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_detessdequant
 
   const std::vector<std::int64_t> transport_shape = detess_transport_shape_for_frame(frame_shape);
   const std::uint64_t packed_bytes = packed_tensor_bytes_for_test(transport_shape, input_dtype);
-  const bool align_c16 = trailing_channels_for_shape(frame_shape) !=
-                         static_cast<int>(transport_shape.back());
+  const bool align_c16 =
+      trailing_channels_for_shape(frame_shape) != static_cast<int>(transport_shape.back());
 
   MpkPluginIoContract mla;
   mla.name = "MLA_0";
@@ -353,7 +345,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_detessdequant
   detess.canonical_input_dtype = input_dtype;
   detess.canonical_output_dtype = input_dtype;
   detess.input_tensors = {make_test_tensor("ofm0", input_dtype, transport_shape, packed_bytes)};
-  detess.output_tensors = {make_test_tensor("detess_0_out", input_dtype, frame_shape, packed_bytes)};
+  detess.output_tensors = {
+      make_test_tensor("detess_0_out", input_dtype, frame_shape, packed_bytes)};
 
   MpkPluginIoContract dequant;
   dequant.name = "dequant_0";
@@ -361,7 +354,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_detessdequant
   dequant.sequence = 3;
   dequant.canonical_input_dtype = input_dtype;
   dequant.canonical_output_dtype = output_dtype;
-  dequant.input_tensors = {make_test_tensor("detess_0_out", input_dtype, frame_shape, packed_bytes)};
+  dequant.input_tensors = {
+      make_test_tensor("detess_0_out", input_dtype, frame_shape, packed_bytes)};
   dequant.output_tensors = {make_test_tensor("head0_fp32", output_dtype, frame_shape)};
   dequant.quant = MpkQuantContract{{0.5}, {7}, -1};
 
@@ -393,8 +387,7 @@ simaai::neat::pipeline_internal::sima::MpkContract make_resnet_flatten_detessdeq
   mla.processor = "mla";
   mla.kernel = "mla";
   mla.sequence = 0;
-  mla.output_tensors = {
-      make_test_tensor("MLA_0", "INT8", transport_shape, kTransportBytes)};
+  mla.output_tensors = {make_test_tensor("MLA_0", "INT8", transport_shape, kTransportBytes)};
 
   MpkPluginIoContract detess;
   detess.name = "detessellate_MLA_0_detessellation_transform";
@@ -411,9 +404,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_resnet_flatten_detessdeq
   detess.canonical_input_dtype = "INT8";
   detess.canonical_output_dtype = "INT8";
   detess.input_tensors = {make_test_tensor("MLA_0", "INT8", transport_shape, kTransportBytes)};
-  detess.output_tensors = {
-      make_test_tensor("detessellate_MLA_0_detessellation_transform", "INT8", frame_shape,
-                       kInt8Bytes)};
+  detess.output_tensors = {make_test_tensor("detessellate_MLA_0_detessellation_transform", "INT8",
+                                            frame_shape, kInt8Bytes)};
 
   MpkPluginIoContract flatten;
   flatten.name = "EV_1/batch_flatten_0";
@@ -422,9 +414,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_resnet_flatten_detessdeq
   flatten.sequence = 2;
   flatten.canonical_input_dtype = "INT8";
   flatten.canonical_output_dtype = "INT8";
-  flatten.input_tensors = {
-      make_test_tensor("detessellate_MLA_0_detessellation_transform", "INT8", frame_shape,
-                       kInt8Bytes)};
+  flatten.input_tensors = {make_test_tensor("detessellate_MLA_0_detessellation_transform", "INT8",
+                                            frame_shape, kInt8Bytes)};
   flatten.output_tensors = {
       make_test_tensor("EV_1/batch_flatten_0", "INT8", flattened_shape, kInt8Bytes)};
 
@@ -447,19 +438,15 @@ simaai::neat::pipeline_internal::sima::MpkContract make_resnet_flatten_detessdeq
       MpkContractEdge{0U, 0, 1U, 0, "MLA_0", "detessellate_MLA_0_detessellation_transform",
                       "MLA_0"},
       MpkContractEdge{1U, 0, 2U, 0, "detessellate_MLA_0_detessellation_transform",
-                      "EV_1/batch_flatten_0",
-                      "detessellate_MLA_0_detessellation_transform"},
-      MpkContractEdge{2U, 0, 3U, 0, "EV_1/batch_flatten_0", "dequantize_1",
-                      "EV_1/batch_flatten_0"},
+                      "EV_1/batch_flatten_0", "detessellate_MLA_0_detessellation_transform"},
+      MpkContractEdge{2U, 0, 3U, 0, "EV_1/batch_flatten_0", "dequantize_1", "EV_1/batch_flatten_0"},
   };
   return contract;
 }
 
 simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_tess_preadapter_contract(
-    const std::vector<std::int64_t>& canonical_shape,
-    const std::vector<std::int64_t>& slice_shape,
-    const std::string& cast_input_dtype,
-    const std::string& tess_frame_dtype) {
+    const std::vector<std::int64_t>& canonical_shape, const std::vector<std::int64_t>& slice_shape,
+    const std::string& cast_input_dtype, const std::string& tess_frame_dtype) {
   using simaai::neat::pipeline_internal::sima::MpkContract;
   using simaai::neat::pipeline_internal::sima::MpkContractEdge;
   using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
@@ -478,7 +465,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_tess_preadapt
   cast.input_tensors = {make_test_tensor("image_0", cast_input_dtype, canonical_shape)};
   cast.output_tensors = {make_test_tensor("cast_0_out", tess_frame_dtype, canonical_shape)};
 
-  const std::uint64_t packed_bytes = packed_tensor_bytes_for_test(canonical_shape, tess_frame_dtype);
+  const std::uint64_t packed_bytes =
+      packed_tensor_bytes_for_test(canonical_shape, tess_frame_dtype);
   MpkPluginIoContract tess;
   tess.name = "tess_0";
   tess.kernel = "tessellation_transform";
@@ -493,7 +481,8 @@ simaai::neat::pipeline_internal::sima::MpkContract make_rank_aware_tess_preadapt
   tess.has_cblock = true;
   tess.cblock = false;
   tess.input_tensors = {make_test_tensor("cast_0_out", tess_frame_dtype, canonical_shape)};
-  tess.output_tensors = {make_test_tensor("tess_0_out", tess_frame_dtype, canonical_shape, packed_bytes)};
+  tess.output_tensors = {
+      make_test_tensor("tess_0_out", tess_frame_dtype, canonical_shape, packed_bytes)};
 
   MpkContract contract;
   contract.plugins = {cast, tess};
@@ -522,12 +511,8 @@ void require_packed_input_projection(const simaai::neat::CompiledProcessCvuContr
 }
 
 void require_runtime_packed_logical_input_shape(
-    const simaai::neat::CompiledProcessCvuContract& compiled,
-    int width,
-    int height,
-    int depth,
-    int channels,
-    const char* expectation) {
+    const simaai::neat::CompiledProcessCvuContract& compiled, int width, int height, int depth,
+    int channels, const char* expectation) {
   require(!compiled.runtime_contract.logical_inputs.empty(), expectation);
   std::vector<std::int64_t> expected;
   if (depth > 1) {
@@ -541,498 +526,508 @@ void require_runtime_packed_logical_input_shape(
 
 } // namespace
 
-RUN_TEST("unit_contract_compiler_processcvu_test", ([] {
-  using namespace simaai::neat;
-  using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
+RUN_TEST(
+    "unit_contract_compiler_processcvu_test", ([] {
+      using namespace simaai::neat;
+      using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
 
-  auto node = nodes::Preproc(make_preproc_options());
-  std::vector<std::shared_ptr<Node>> nodes_to_compile = {node};
-  pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-  ContractCompileInput input;
-  input.pipeline_label = "unit_contract_compiler_processcvu_test";
+      auto node = nodes::Preproc(make_preproc_options());
+      std::vector<std::shared_ptr<Node>> nodes_to_compile = {node};
+      pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
+      ContractCompileInput input;
+      input.pipeline_label = "unit_contract_compiler_processcvu_test";
 
-  const CompiledPipelineContracts compiled =
-      compile_node_contracts(nodes_to_compile, input, &diagnostics);
+      const CompiledPipelineContracts compiled =
+          compile_node_contracts(nodes_to_compile, input, &diagnostics);
 
-  require(diagnostics.errors.empty(), "compile_node_contracts should not emit errors");
-  require(compiled.fully_renderable, "compiled contract set should be renderable");
-  require(compiled.stages.size() == 1U, "compiled contract should contain one stage");
-  require(compiled.stages.front().processcvu.has_value(),
-          "preproc should compile to a processcvu contract");
+      require(diagnostics.errors.empty(), "compile_node_contracts should not emit errors");
+      require(compiled.fully_renderable, "compiled contract set should be renderable");
+      require(compiled.stages.size() == 1U, "compiled contract should contain one stage");
+      require(compiled.stages.front().processcvu.has_value(),
+              "preproc should compile to a processcvu contract");
 
-  const auto& processcvu = *compiled.stages.front().processcvu;
-  require(processcvu.runtime_contract.logical_inputs.size() == 1U,
-          "preproc runtime contract should expose one logical input");
-  // Runtime contract publishes both rgb and tess outputs; the exposed view
-  // narrows to the selected tessellated handoff.
-  const auto tess_runtime_it =
-      std::find_if(processcvu.runtime_contract.logical_outputs.begin(),
-                   processcvu.runtime_contract.logical_outputs.end(),
-                   [](const auto& logical) { return logical.logical_name == "output_tessellated_image"; });
-  require(tess_runtime_it != processcvu.runtime_contract.logical_outputs.end(),
-          "preproc runtime contract should preserve the tessellated handoff name");
-  require(tess_runtime_it->shape == std::vector<std::int64_t>({640, 640, 3}),
-          "preproc tessellated handoff should preserve the semantic output shape");
-  require(tess_runtime_it->size_bytes == 640U * 640U * 3U,
-          "preproc tessellated handoff should preserve the packed MLA ingress byte size");
-  {
-    std::vector<std::shared_ptr<Node>> indexed_nodes = {
-        nodes::Input(InputOptions{}),
-        nodes::Preproc(make_preproc_options()),
-        nodes::Output(OutputOptions{}),
-    };
-    pipeline_internal::sima::ManifestBuildDiagnostics indexed_diagnostics;
-    const CompiledPipelineContracts indexed =
-        compile_node_contracts(indexed_nodes, ContractCompileInput{}, &indexed_diagnostics);
-    require(indexed_diagnostics.errors.empty(),
-            "indexed compile_node_contracts should not emit errors");
-    require(indexed.stages.size() == 1U, "indexed compile should contain one semantic stage");
-    require(indexed.stages.front().element_name == "n1_preproc",
-            "standalone preproc contract should use actual node index for element identity");
-    require(indexed.stages.front().logical_stage_id == "n1_preproc",
-            "standalone preproc contract should use actual node index for logical stage id");
-  }
-  require(processcvu.exposed_view.exposed_logical_outputs.size() == 1U,
-          "preproc exposed view should expose one selected output");
-  require(processcvu.preproc_single_output_handoff,
-          "preproc single-output handoff flag should be preserved");
+      const auto& processcvu = *compiled.stages.front().processcvu;
+      require(processcvu.runtime_contract.logical_inputs.size() == 1U,
+              "preproc runtime contract should expose one logical input");
+      // Runtime contract publishes both rgb and tess outputs; the exposed view
+      // narrows to the selected tessellated handoff.
+      const auto tess_runtime_it =
+          std::find_if(processcvu.runtime_contract.logical_outputs.begin(),
+                       processcvu.runtime_contract.logical_outputs.end(), [](const auto& logical) {
+                         return logical.logical_name == "output_tessellated_image";
+                       });
+      require(tess_runtime_it != processcvu.runtime_contract.logical_outputs.end(),
+              "preproc runtime contract should preserve the tessellated handoff name");
+      require(tess_runtime_it->shape == std::vector<std::int64_t>({640, 640, 3}),
+              "preproc tessellated handoff should preserve the semantic output shape");
+      require(tess_runtime_it->size_bytes == 640U * 640U * 3U,
+              "preproc tessellated handoff should preserve the packed MLA ingress byte size");
+      {
+        std::vector<std::shared_ptr<Node>> indexed_nodes = {
+            nodes::Input(InputOptions{}),
+            nodes::Preproc(make_preproc_options()),
+            nodes::Output(OutputOptions{}),
+        };
+        pipeline_internal::sima::ManifestBuildDiagnostics indexed_diagnostics;
+        const CompiledPipelineContracts indexed =
+            compile_node_contracts(indexed_nodes, ContractCompileInput{}, &indexed_diagnostics);
+        require(indexed_diagnostics.errors.empty(),
+                "indexed compile_node_contracts should not emit errors");
+        require(indexed.stages.size() == 1U, "indexed compile should contain one semantic stage");
+        require(indexed.stages.front().element_name == "n1_preproc",
+                "standalone preproc contract should use actual node index for element identity");
+        require(indexed.stages.front().logical_stage_id == "n1_preproc",
+                "standalone preproc contract should use actual node index for logical stage id");
+      }
+      require(processcvu.exposed_view.exposed_logical_outputs.size() == 1U,
+              "preproc exposed view should expose one selected output");
+      require(processcvu.preproc_single_output_handoff,
+              "preproc single-output handoff flag should be preserved");
 
-  const auto direct_inputs = build_processcvu_compile_inputs_from_options(make_preproc_options());
-  require(direct_inputs.payload.primary_output_name == direct_inputs.facts.primary_output_name,
-          "direct preproc compile inputs should preserve primary output selection");
-  require(!direct_inputs.facts.published_output_names.empty() &&
-              direct_inputs.facts.published_output_names.front() == direct_inputs.payload.primary_output_name,
-          "direct preproc compile inputs should preserve the selected published output");
-  require(!direct_inputs.payload.default_output_names.empty() &&
-              std::find(direct_inputs.payload.default_output_names.begin(),
-                        direct_inputs.payload.default_output_names.end(),
-                        std::string("output_tessellated_image")) !=
-                  direct_inputs.payload.default_output_names.end(),
-          "direct preproc compile inputs should publish the tessellated runtime output");
-  require(direct_inputs.facts.inputs.size() == 1U,
-          "direct preproc compile inputs should preserve input count");
-  require(direct_inputs.facts.inputs.front().shape == std::vector<std::int64_t>({720, 1280, 3}),
-          "direct preproc compile inputs should preserve the authored single input shape");
-  require(direct_inputs.payload.input_tensors.size() == 1U &&
-              simaai::neat::pipeline_internal::sima::tensorsemantics::
-                      layout_token_from_ev_tensor_desc(direct_inputs.payload.input_tensors.front()) ==
-                  "HWC",
-          "direct preproc compile inputs should synthesize semantic typed input descriptor");
-  const auto direct_tess_it =
-      std::find_if(direct_inputs.facts.outputs.begin(), direct_inputs.facts.outputs.end(),
-                   [](const auto& output) { return output.logical_name == "output_tessellated_image"; });
-  require(direct_tess_it != direct_inputs.facts.outputs.end(),
-          "direct preproc compile inputs should preserve the tessellated runtime output");
-  require(direct_tess_it->representation == ProcessCvuOutputRepresentation::PackedBlob,
-          "direct preproc compile inputs should keep packed MLA handoff semantics");
-  require(direct_tess_it->size_bytes == 640U * 640U * 3U,
-          "direct preproc compile inputs should preserve packed MLA ingress byte size");
-  require(!direct_inputs.payload.output_tensors.empty() &&
-              std::any_of(direct_inputs.payload.output_tensors.begin(),
-                          direct_inputs.payload.output_tensors.end(),
-                          [](const auto& t) { return t.layout_kind == SIMA_EV_LAYOUT_TILED; }),
-          "direct preproc compile inputs should synthesize tiled typed output descriptor");
-  {
-    const auto tiled_it =
-        std::find_if(direct_inputs.payload.output_tensors.begin(),
-                     direct_inputs.payload.output_tensors.end(),
-                     [](const auto& t) { return t.layout_kind == SIMA_EV_LAYOUT_TILED; });
-    require(tiled_it != direct_inputs.payload.output_tensors.end(),
-            "direct preproc compile inputs should include a tiled output descriptor");
-    require(sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_H, 0) == 32 &&
-                sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_W, 0) == 128 &&
-                sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_C, 0) == 3,
-            "direct preproc compile inputs should preserve typed output tile geometry");
-  }
-  {
-    auto invalid_preproc = direct_inputs.payload;
-    invalid_preproc.input_shapes.push_back({1, 1, 1});
-    invalid_preproc.num_in_tensor = 2;
-    bool threw = false;
-    try {
-      (void)build_preproc_facts_from_payload_internal(invalid_preproc);
-    } catch (const std::invalid_argument& ex) {
-      threw = std::string(ex.what()) == "processcvu preproc payload requires exactly one input";
-    }
-    require(threw,
-            "direct preproc facts builder should reject multi-input preproc payloads");
-  }
+      const auto direct_inputs =
+          build_processcvu_compile_inputs_from_options(make_preproc_options());
+      require(direct_inputs.payload.primary_output_name == direct_inputs.facts.primary_output_name,
+              "direct preproc compile inputs should preserve primary output selection");
+      require(!direct_inputs.facts.published_output_names.empty() &&
+                  direct_inputs.facts.published_output_names.front() ==
+                      direct_inputs.payload.primary_output_name,
+              "direct preproc compile inputs should preserve the selected published output");
+      require(!direct_inputs.payload.default_output_names.empty() &&
+                  std::find(direct_inputs.payload.default_output_names.begin(),
+                            direct_inputs.payload.default_output_names.end(),
+                            std::string("output_tessellated_image")) !=
+                      direct_inputs.payload.default_output_names.end(),
+              "direct preproc compile inputs should publish the tessellated runtime output");
+      require(direct_inputs.facts.inputs.size() == 1U,
+              "direct preproc compile inputs should preserve input count");
+      require(direct_inputs.facts.inputs.front().shape == std::vector<std::int64_t>({720, 1280, 3}),
+              "direct preproc compile inputs should preserve the authored single input shape");
+      require(direct_inputs.payload.input_tensors.size() == 1U &&
+                  simaai::neat::pipeline_internal::sima::tensorsemantics::
+                          layout_token_from_ev_tensor_desc(
+                              direct_inputs.payload.input_tensors.front()) == "HWC",
+              "direct preproc compile inputs should synthesize semantic typed input descriptor");
+      const auto direct_tess_it = std::find_if(
+          direct_inputs.facts.outputs.begin(), direct_inputs.facts.outputs.end(),
+          [](const auto& output) { return output.logical_name == "output_tessellated_image"; });
+      require(direct_tess_it != direct_inputs.facts.outputs.end(),
+              "direct preproc compile inputs should preserve the tessellated runtime output");
+      require(direct_tess_it->representation == ProcessCvuOutputRepresentation::PackedBlob,
+              "direct preproc compile inputs should keep packed MLA handoff semantics");
+      require(direct_tess_it->size_bytes == 640U * 640U * 3U,
+              "direct preproc compile inputs should preserve packed MLA ingress byte size");
+      require(!direct_inputs.payload.output_tensors.empty() &&
+                  std::any_of(direct_inputs.payload.output_tensors.begin(),
+                              direct_inputs.payload.output_tensors.end(),
+                              [](const auto& t) { return t.layout_kind == SIMA_EV_LAYOUT_TILED; }),
+              "direct preproc compile inputs should synthesize tiled typed output descriptor");
+      {
+        const auto tiled_it =
+            std::find_if(direct_inputs.payload.output_tensors.begin(),
+                         direct_inputs.payload.output_tensors.end(),
+                         [](const auto& t) { return t.layout_kind == SIMA_EV_LAYOUT_TILED; });
+        require(tiled_it != direct_inputs.payload.output_tensors.end(),
+                "direct preproc compile inputs should include a tiled output descriptor");
+        require(sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_H, 0) == 32 &&
+                    sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_W, 0) == 128 &&
+                    sima_ev_tensor_tile_axis_size(&*tiled_it, SIMA_EV_AXIS_C, 0) == 3,
+                "direct preproc compile inputs should preserve typed output tile geometry");
+      }
+      {
+        auto invalid_preproc = direct_inputs.payload;
+        invalid_preproc.input_shapes.push_back({1, 1, 1});
+        invalid_preproc.num_in_tensor = 2;
+        bool threw = false;
+        try {
+          (void)build_preproc_facts_from_payload_internal(invalid_preproc);
+        } catch (const std::invalid_argument& ex) {
+          threw = std::string(ex.what()) == "processcvu preproc payload requires exactly one input";
+        }
+        require(threw, "direct preproc facts builder should reject multi-input preproc payloads");
+      }
 
-  const auto direct_compiled = build_processcvu_compiled_contract(direct_inputs);
-  require(direct_compiled.runtime_contract.logical_outputs.size() == processcvu.runtime_contract.logical_outputs.size(),
-          "shared processcvu compiled-contract adapter should preserve runtime logical output count");
-  const auto direct_compiled_tess_it =
-      std::find_if(direct_compiled.runtime_contract.logical_outputs.begin(),
-                   direct_compiled.runtime_contract.logical_outputs.end(),
-                   [](const auto& logical) { return logical.logical_name == "output_tessellated_image"; });
-  require(direct_compiled_tess_it != direct_compiled.runtime_contract.logical_outputs.end(),
+      const auto direct_compiled = build_processcvu_compiled_contract(direct_inputs);
+      require(direct_compiled.runtime_contract.logical_outputs.size() ==
+                  processcvu.runtime_contract.logical_outputs.size(),
+              "shared processcvu compiled-contract adapter should preserve runtime logical output "
+              "count");
+      const auto direct_compiled_tess_it = std::find_if(
+          direct_compiled.runtime_contract.logical_outputs.begin(),
+          direct_compiled.runtime_contract.logical_outputs.end(),
+          [](const auto& logical) { return logical.logical_name == "output_tessellated_image"; });
+      require(
+          direct_compiled_tess_it != direct_compiled.runtime_contract.logical_outputs.end(),
           "shared processcvu compiled-contract adapter should preserve tessellated runtime output");
-  require(direct_compiled_tess_it->size_bytes == tess_runtime_it->size_bytes,
-          "shared processcvu compiled-contract adapter should preserve packed handoff bytes");
+      require(direct_compiled_tess_it->size_bytes == tess_runtime_it->size_bytes,
+              "shared processcvu compiled-contract adapter should preserve packed handoff bytes");
 
-  {
-    auto unsupported = make_preproc_options();
-    unsupported.single_output_handoff = false;
-    bool ctor_threw = false;
-    try {
-      simaai::neat::Preproc unsupported_node(unsupported);
-      (void)unsupported_node;
-    } catch (const std::runtime_error& ex) {
-      ctor_threw = std::string(ex.what()) ==
-                   "Preproc dual-output contract is currently unsupported; use single_output_handoff=true.";
-    }
-    require(ctor_threw,
-            "preproc construction should reject unsupported dual-output handoff");
+      {
+        auto unsupported = make_preproc_options();
+        unsupported.single_output_handoff = false;
+        bool ctor_threw = false;
+        try {
+          simaai::neat::Preproc unsupported_node(unsupported);
+          (void)unsupported_node;
+        } catch (const std::runtime_error& ex) {
+          ctor_threw = std::string(ex.what()) == "Preproc dual-output contract is currently "
+                                                 "unsupported; use single_output_handoff=true.";
+        }
+        require(ctor_threw, "preproc construction should reject unsupported dual-output handoff");
 
-    bool threw = false;
-    try {
-      (void)build_processcvu_compile_inputs_from_options(unsupported);
-    } catch (const std::invalid_argument& ex) {
-      threw = std::string(ex.what()) ==
-              "Preproc dual-output contract is currently unsupported; use single_output_handoff=true.";
-    }
-    require(threw,
-            "processcvu preproc compile inputs should reject unsupported dual-output handoff");
-  }
+        bool threw = false;
+        try {
+          (void)build_processcvu_compile_inputs_from_options(unsupported);
+        } catch (const std::invalid_argument& ex) {
+          threw = std::string(ex.what()) == "Preproc dual-output contract is currently "
+                                            "unsupported; use single_output_handoff=true.";
+        }
+        require(threw,
+                "processcvu preproc compile inputs should reject unsupported dual-output handoff");
+      }
 
-  simaai::neat::pipeline_internal::sima::stagesemantics::CompiledProcessCvuRuntimeConfig packed_tess_runtime;
-  packed_tess_runtime.graph_family = "tessellate";
-  packed_tess_runtime.graph_name = "tessellate";
-  packed_tess_runtime.graph_id = 2;
-  packed_tess_runtime.default_input_name = "input_tensor";
-  packed_tess_runtime.runtime_input_names = {"input_tensor"};
-  packed_tess_runtime.runtime_output_names = {"output_tensor"};
-  packed_tess_runtime.published_output_names = {"output_tensor"};
-  packed_tess_runtime.physical_input_names = {"input_tensor"};
-  packed_tess_runtime.physical_output_names = {"output_tensor"};
-  packed_tess_runtime.primary_output_name = "output_tensor";
-  packed_tess_runtime.input_shapes = {{192, 832, 2}};
-  packed_tess_runtime.output_shapes = {{192, 832, 2}};
-  packed_tess_runtime.slice_shapes = {{42, 39, 2}};
-  packed_tess_runtime.input_dtype = "BF16";
-  packed_tess_runtime.output_dtype = "BF16";
-  packed_tess_runtime.out_dtype = "BF16";
-  packed_tess_runtime.runtime_output_logical_shapes = {{192, 832, 2}};
-  packed_tess_runtime.runtime_output_logical_index_list = {0};
-  packed_tess_runtime.runtime_output_output_slot_list = {0};
-  packed_tess_runtime.runtime_output_physical_index_list = {0};
-  packed_tess_runtime.runtime_output_dtype_list = {"BF16"};
-  packed_tess_runtime.runtime_output_logical_layout_list = {"HWC"};
-  packed_tess_runtime.runtime_output_transport_kind_list = {
-      simaai::neat::pipeline_internal::sima::ProcessCvuOutputTransportKind::Packed};
-  {
-    sima_ev_tensor_desc input_desc{};
-    sima_ev_tensor_desc output_desc{};
-    require_build_dense_test_tensor(packed_tess_runtime.input_shapes.front(),
-                                    packed_tess_runtime.input_dtype, "HWC", &input_desc,
-                                    "packed tess runtime should synthesize typed input tensor");
-    require_build_tiled_test_tensor(packed_tess_runtime.output_shapes.front(),
-                                    packed_tess_runtime.slice_shapes.front(),
-                                    packed_tess_runtime.output_dtype, "HWC", 16U, &output_desc,
-                                    "packed tess runtime should synthesize typed output tensor");
-    packed_tess_runtime.input_tensors = {input_desc};
-    packed_tess_runtime.output_tensors = {output_desc};
-  }
-  const std::uint64_t packed_tess_expected_bytes =
-      639616U * dtype_size_bytes_for_test("BF16");
+      simaai::neat::pipeline_internal::sima::stagesemantics::CompiledProcessCvuRuntimeConfig
+          packed_tess_runtime;
+      packed_tess_runtime.graph_family = "tessellate";
+      packed_tess_runtime.graph_name = "tessellate";
+      packed_tess_runtime.graph_id = 2;
+      packed_tess_runtime.default_input_name = "input_tensor";
+      packed_tess_runtime.runtime_input_names = {"input_tensor"};
+      packed_tess_runtime.runtime_output_names = {"output_tensor"};
+      packed_tess_runtime.published_output_names = {"output_tensor"};
+      packed_tess_runtime.physical_input_names = {"input_tensor"};
+      packed_tess_runtime.physical_output_names = {"output_tensor"};
+      packed_tess_runtime.primary_output_name = "output_tensor";
+      packed_tess_runtime.input_shapes = {{192, 832, 2}};
+      packed_tess_runtime.output_shapes = {{192, 832, 2}};
+      packed_tess_runtime.slice_shapes = {{42, 39, 2}};
+      packed_tess_runtime.input_dtype = "BF16";
+      packed_tess_runtime.output_dtype = "BF16";
+      packed_tess_runtime.out_dtype = "BF16";
+      packed_tess_runtime.runtime_output_logical_shapes = {{192, 832, 2}};
+      packed_tess_runtime.runtime_output_logical_index_list = {0};
+      packed_tess_runtime.runtime_output_output_slot_list = {0};
+      packed_tess_runtime.runtime_output_physical_index_list = {0};
+      packed_tess_runtime.runtime_output_dtype_list = {"BF16"};
+      packed_tess_runtime.runtime_output_logical_layout_list = {"HWC"};
+      packed_tess_runtime.runtime_output_transport_kind_list = {
+          simaai::neat::pipeline_internal::sima::ProcessCvuOutputTransportKind::Packed};
+      {
+        sima_ev_tensor_desc input_desc{};
+        sima_ev_tensor_desc output_desc{};
+        require_build_dense_test_tensor(packed_tess_runtime.input_shapes.front(),
+                                        packed_tess_runtime.input_dtype, "HWC", &input_desc,
+                                        "packed tess runtime should synthesize typed input tensor");
+        require_build_tiled_test_tensor(
+            packed_tess_runtime.output_shapes.front(), packed_tess_runtime.slice_shapes.front(),
+            packed_tess_runtime.output_dtype, "HWC", 16U, &output_desc,
+            "packed tess runtime should synthesize typed output tensor");
+        packed_tess_runtime.input_tensors = {input_desc};
+        packed_tess_runtime.output_tensors = {output_desc};
+      }
+      const std::uint64_t packed_tess_expected_bytes = 639616U * dtype_size_bytes_for_test("BF16");
 
-  const auto packed_tess_inputs =
-      build_processcvu_compile_inputs_from_runtime_config(packed_tess_runtime);
-  require(packed_tess_inputs.facts.outputs.size() == 1U,
-          "packed tess runtime config should emit one canonical output fact");
-  require(packed_tess_inputs.facts.outputs.front().representation ==
-              simaai::neat::pipeline_internal::sima::stagesemantics::ProcessCvuOutputRepresentation::PackedTensor,
-          "packed tess runtime config should preserve packed output representation");
-  // Packed-tensor outputs no longer carry an explicit size_bytes on the
-  // canonical fact — geometric size is derived from shape+dtype downstream.
-  (void)packed_tess_expected_bytes;
+      const auto packed_tess_inputs =
+          build_processcvu_compile_inputs_from_runtime_config(packed_tess_runtime);
+      require(packed_tess_inputs.facts.outputs.size() == 1U,
+              "packed tess runtime config should emit one canonical output fact");
+      require(packed_tess_inputs.facts.outputs.front().representation ==
+                  simaai::neat::pipeline_internal::sima::stagesemantics::
+                      ProcessCvuOutputRepresentation::PackedTensor,
+              "packed tess runtime config should preserve packed output representation");
+      // Packed-tensor outputs no longer carry an explicit size_bytes on the
+      // canonical fact — geometric size is derived from shape+dtype downstream.
+      (void)packed_tess_expected_bytes;
 
-  const auto packed_tess_compiled =
-      build_processcvu_compiled_contract_from_runtime_config(packed_tess_runtime);
-  require(packed_tess_compiled.runtime_contract.logical_outputs.size() == 1U,
-          "packed tess runtime config should compile one logical output");
-  // Logical-output size_bytes for packed-tensor representation is no longer
-  // populated on the compiled contract; downstream consumers derive it from
-  // shape+dtype directly.
-  require(packed_tess_compiled.runtime_contract.logical_outputs.front().shape ==
-              std::vector<std::int64_t>({192, 832, 2}),
-          "packed tess compiled contract should preserve the semantic output shape");
+      const auto packed_tess_compiled =
+          build_processcvu_compiled_contract_from_runtime_config(packed_tess_runtime);
+      require(packed_tess_compiled.runtime_contract.logical_outputs.size() == 1U,
+              "packed tess runtime config should compile one logical output");
+      // Logical-output size_bytes for packed-tensor representation is no longer
+      // populated on the compiled contract; downstream consumers derive it from
+      // shape+dtype directly.
+      require(packed_tess_compiled.runtime_contract.logical_outputs.front().shape ==
+                  std::vector<std::int64_t>({192, 832, 2}),
+              "packed tess compiled contract should preserve the semantic output shape");
 
-  {
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::CastContractSubset;
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::build_quanttess_runtime_config_from_subset;
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::extract_quanttess_contract_subset_from_stage;
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::extract_tessellate_contract_subset_from_stage;
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::QuantTessContractSubset;
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::TessellateContractSubset;
-    using simaai::neat::pipeline_internal::sima::plugin_contracts::
-        build_tessellate_runtime_config_from_subsets;
-    using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
+      {
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::CastContractSubset;
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::
+            build_quanttess_runtime_config_from_subset;
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::
+            extract_quanttess_contract_subset_from_stage;
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::
+            extract_tessellate_contract_subset_from_stage;
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::QuantTessContractSubset;
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::TessellateContractSubset;
+        using simaai::neat::pipeline_internal::sima::plugin_contracts::
+            build_tessellate_runtime_config_from_subsets;
+        using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
 
-    // The previous build_tessellate_runtime_config_from_subsets sub-test that
-    // hand-built a CastContractSubset/TessellateContractSubset combo no longer
-    // composes under the new tile-desc synthesizer (which requires per-frame
-    // shape ranks and dtype/tile rules that the manual fixture didn't satisfy).
-    // The path is exercised by the MPK-driven extraction below and by
-    // unit_yolov8_contract_subset_test, so the manual sub-test is dropped.
-    (void)build_tessellate_runtime_config_from_subsets;
-    (void)CastContractSubset{};
-    (void)TessellateContractSubset{};
+        // The previous build_tessellate_runtime_config_from_subsets sub-test that
+        // hand-built a CastContractSubset/TessellateContractSubset combo no longer
+        // composes under the new tile-desc synthesizer (which requires per-frame
+        // shape ranks and dtype/tile rules that the manual fixture didn't satisfy).
+        // The path is exercised by the MPK-driven extraction below and by
+        // unit_yolov8_contract_subset_test, so the manual sub-test is dropped.
+        (void)build_tessellate_runtime_config_from_subsets;
+        (void)CastContractSubset{};
+        (void)TessellateContractSubset{};
 
-    MpkPluginIoContract exact_tess_stage;
-    exact_tess_stage.name = "tess_exact";
-    exact_tess_stage.kernel = "tessellation_transform";
-    exact_tess_stage.processor = "EV74";
-    exact_tess_stage.sequence = 2;
-    exact_tess_stage.batch_size = 1;
-    exact_tess_stage.batch_sz_model = 1;
-    exact_tess_stage.frame_type = "BF16";
-    exact_tess_stage.slice_shape = {384, 17, 1};
-    exact_tess_stage.has_align_c16 = true;
-    exact_tess_stage.align_c16 = false;
-    exact_tess_stage.has_cblock = true;
-    exact_tess_stage.cblock = false;
-    exact_tess_stage.input_tensors = {
-        make_test_tensor_without_mpk_shape("cast_0", "BF16", {384, 1664, 1})};
+        MpkPluginIoContract exact_tess_stage;
+        exact_tess_stage.name = "tess_exact";
+        exact_tess_stage.kernel = "tessellation_transform";
+        exact_tess_stage.processor = "EV74";
+        exact_tess_stage.sequence = 2;
+        exact_tess_stage.batch_size = 1;
+        exact_tess_stage.batch_sz_model = 1;
+        exact_tess_stage.frame_type = "BF16";
+        exact_tess_stage.slice_shape = {384, 17, 1};
+        exact_tess_stage.has_align_c16 = true;
+        exact_tess_stage.align_c16 = false;
+        exact_tess_stage.has_cblock = true;
+        exact_tess_stage.cblock = false;
+        exact_tess_stage.input_tensors = {
+            make_test_tensor_without_mpk_shape("cast_0", "BF16", {384, 1664, 1})};
 
-    const auto exact_tess_subset = extract_tessellate_contract_subset_from_stage(exact_tess_stage);
-    require(exact_tess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
+        const auto exact_tess_subset =
+            extract_tessellate_contract_subset_from_stage(exact_tess_stage);
+        require(
+            exact_tess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
             "tess subset extraction should preserve the authored rank-3 logical input shape when "
             "no mpk_shape is present");
 
-    exact_tess_stage.input_tensors = {make_test_tensor("cast_0", "BF16", {384, 1664, 1})};
-    exact_tess_stage.input_tensors.front().mpk_shape = {384, 1664, 1};
-    exact_tess_stage.input_tensors.front().logical_shape = {384, 1664, 1};
-    const auto rank3_tess_subset = extract_tessellate_contract_subset_from_stage(exact_tess_stage);
-    require(rank3_tess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
-            "tess subset extraction should preserve the MPK-authored rank-3 input shape");
+        exact_tess_stage.input_tensors = {make_test_tensor("cast_0", "BF16", {384, 1664, 1})};
+        exact_tess_stage.input_tensors.front().mpk_shape = {384, 1664, 1};
+        exact_tess_stage.input_tensors.front().logical_shape = {384, 1664, 1};
+        const auto rank3_tess_subset =
+            extract_tessellate_contract_subset_from_stage(exact_tess_stage);
+        require(rank3_tess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
+                "tess subset extraction should preserve the MPK-authored rank-3 input shape");
 
-    MpkPluginIoContract exact_quanttess_stage;
-    exact_quanttess_stage.name = "quanttess_exact";
-    exact_quanttess_stage.kernel = "quanttess";
-    exact_quanttess_stage.processor = "EV74";
-    exact_quanttess_stage.sequence = 2;
-    exact_quanttess_stage.batch_size = 1;
-    exact_quanttess_stage.batch_sz_model = 1;
-    exact_quanttess_stage.frame_type = "INT8";
-    exact_quanttess_stage.slice_shape = {384, 84, 1};
-    exact_quanttess_stage.has_align_c16 = true;
-    exact_quanttess_stage.align_c16 = false;
-    exact_quanttess_stage.has_cblock = true;
-    exact_quanttess_stage.cblock = false;
-    exact_quanttess_stage.canonical_input_dtype = "INT8";
-    exact_quanttess_stage.canonical_output_dtype = "INT8";
-    exact_quanttess_stage.round_off = "TONEAREST";
-    simaai::neat::pipeline_internal::sima::MpkQuantContract quant;
-    quant.scales = {0.25};
-    quant.zero_points = {-7};
-    exact_quanttess_stage.quant = quant;
-    exact_quanttess_stage.input_tensors = {
-        make_test_tensor_without_mpk_shape("quantize_0", "INT8", {384, 1664, 1})};
-    exact_quanttess_stage.output_tensors = {
-        make_test_tensor("tess_out", "INT8", {384, 1664, 1}, 638976U)};
+        MpkPluginIoContract exact_quanttess_stage;
+        exact_quanttess_stage.name = "quanttess_exact";
+        exact_quanttess_stage.kernel = "quanttess";
+        exact_quanttess_stage.processor = "EV74";
+        exact_quanttess_stage.sequence = 2;
+        exact_quanttess_stage.batch_size = 1;
+        exact_quanttess_stage.batch_sz_model = 1;
+        exact_quanttess_stage.frame_type = "INT8";
+        exact_quanttess_stage.slice_shape = {384, 84, 1};
+        exact_quanttess_stage.has_align_c16 = true;
+        exact_quanttess_stage.align_c16 = false;
+        exact_quanttess_stage.has_cblock = true;
+        exact_quanttess_stage.cblock = false;
+        exact_quanttess_stage.canonical_input_dtype = "INT8";
+        exact_quanttess_stage.canonical_output_dtype = "INT8";
+        exact_quanttess_stage.round_off = "TONEAREST";
+        simaai::neat::pipeline_internal::sima::MpkQuantContract quant;
+        quant.scales = {0.25};
+        quant.zero_points = {-7};
+        exact_quanttess_stage.quant = quant;
+        exact_quanttess_stage.input_tensors = {
+            make_test_tensor_without_mpk_shape("quantize_0", "INT8", {384, 1664, 1})};
+        exact_quanttess_stage.output_tensors = {
+            make_test_tensor("tess_out", "INT8", {384, 1664, 1}, 638976U)};
 
-    const QuantTessContractSubset exact_quanttess_subset =
-        extract_quanttess_contract_subset_from_stage(exact_quanttess_stage);
-    require(exact_quanttess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
-            "quanttess subset extraction should preserve the authored rank-3 input shape when "
-            "no mpk_shape is present");
-    require(exact_quanttess_subset.output_shape == std::vector<std::int64_t>({384, 1664, 1}),
-            "quanttess subset extraction should preserve the semantic output shape");
-    const auto exact_quanttess_runtime =
-        build_quanttess_runtime_config_from_subset(exact_quanttess_subset, "tess_out");
-    require(exact_quanttess_runtime.output_shapes.size() == 1U,
-            "quanttess runtime config should expose one fused output shape");
-    require(exact_quanttess_runtime.output_shapes.front() == std::vector<int>({384, 1664, 1}),
+        const QuantTessContractSubset exact_quanttess_subset =
+            extract_quanttess_contract_subset_from_stage(exact_quanttess_stage);
+        require(exact_quanttess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
+                "quanttess subset extraction should preserve the authored rank-3 input shape when "
+                "no mpk_shape is present");
+        require(exact_quanttess_subset.output_shape == std::vector<std::int64_t>({384, 1664, 1}),
+                "quanttess subset extraction should preserve the semantic output shape");
+        const auto exact_quanttess_runtime =
+            build_quanttess_runtime_config_from_subset(exact_quanttess_subset, "tess_out");
+        require(exact_quanttess_runtime.output_shapes.size() == 1U,
+                "quanttess runtime config should expose one fused output shape");
+        require(
+            exact_quanttess_runtime.output_shapes.front() == std::vector<int>({384, 1664, 1}),
             "quanttess runtime config should keep the semantic output shape instead of rewriting "
             "it to packed bytes");
-    require(exact_quanttess_runtime.runtime_output_logical_shapes.size() == 1U,
-            "quanttess runtime config should expose one logical output shape");
-    require(exact_quanttess_runtime.runtime_output_logical_shapes.front() ==
-                std::vector<int>({384, 1664, 1}),
-            "quanttess runtime config logical outputs should stay faithful to the semantic MPK "
-            "output shape");
-    require(exact_quanttess_runtime.output_tensors.size() == 1U &&
-                exact_quanttess_runtime.output_tensors.front().storage.nbytes == 638976U,
-            "quanttess runtime config should preserve the MPK packed output byte count instead "
-            "of using fixed full-tile slots");
+        require(exact_quanttess_runtime.runtime_output_logical_shapes.size() == 1U,
+                "quanttess runtime config should expose one logical output shape");
+        require(exact_quanttess_runtime.runtime_output_logical_shapes.front() ==
+                    std::vector<int>({384, 1664, 1}),
+                "quanttess runtime config logical outputs should stay faithful to the semantic MPK "
+                "output shape");
+        require(exact_quanttess_runtime.output_tensors.size() == 1U &&
+                    exact_quanttess_runtime.output_tensors.front().storage.nbytes == 638976U,
+                "quanttess runtime config should preserve the MPK packed output byte count instead "
+                "of using fixed full-tile slots");
 
-    exact_quanttess_stage.input_tensors = {make_test_tensor("quantize_0", "INT8", {384, 1664, 1})};
-    exact_quanttess_stage.input_tensors.front().mpk_shape = {384, 1664, 1};
-    exact_quanttess_stage.input_tensors.front().logical_shape = {384, 1664, 1};
-    const QuantTessContractSubset rank3_quanttess_subset =
-        extract_quanttess_contract_subset_from_stage(exact_quanttess_stage);
-    require(rank3_quanttess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
-            "quanttess subset extraction should preserve the MPK-authored rank-3 input shape");
+        exact_quanttess_stage.input_tensors = {
+            make_test_tensor("quantize_0", "INT8", {384, 1664, 1})};
+        exact_quanttess_stage.input_tensors.front().mpk_shape = {384, 1664, 1};
+        exact_quanttess_stage.input_tensors.front().logical_shape = {384, 1664, 1};
+        const QuantTessContractSubset rank3_quanttess_subset =
+            extract_quanttess_contract_subset_from_stage(exact_quanttess_stage);
+        require(rank3_quanttess_subset.input_shape == std::vector<std::int64_t>({384, 1664, 1}),
+                "quanttess subset extraction should preserve the MPK-authored rank-3 input shape");
 
-    // The non-exact tess preadapter sub-test exercised
-    // build_processcvu_mpk_compiled_contract_for_stage_kind with a rank-4
-    // batched input fixture; the new tile-desc synthesizer requires
-    // tile_shape rank to match input_shape rank, which the rank-aware
-    // preadapter fixture no longer satisfies. Coverage is preserved via the
-    // MPK-driven path in unit_yolov8_contract_subset_test.
-  }
+        // The non-exact tess preadapter sub-test exercised
+        // build_processcvu_mpk_compiled_contract_for_stage_kind with a rank-4
+        // batched input fixture; the new tile-desc synthesizer requires
+        // tile_shape rank to match input_shape rank, which the rank-aware
+        // preadapter fixture no longer satisfies. Coverage is preserved via the
+        // MPK-driven path in unit_yolov8_contract_subset_test.
+      }
 
-  CompiledProcessCvuRuntimeConfig invalid_runtime;
-  invalid_runtime.graph_family = "dequantize";
-  invalid_runtime.graph_name = "dequantize";
-  invalid_runtime.default_input_name = "input_tensor";
-  invalid_runtime.published_output_names = {"output_tensor"};
-  invalid_runtime.primary_output_name = "output_tensor";
-  invalid_runtime.input_dtype = "INT8";
-  invalid_runtime.output_dtype = "FP32";
-  invalid_runtime.out_dtype = "FP32";
+      CompiledProcessCvuRuntimeConfig invalid_runtime;
+      invalid_runtime.graph_family = "dequantize";
+      invalid_runtime.graph_name = "dequantize";
+      invalid_runtime.default_input_name = "input_tensor";
+      invalid_runtime.published_output_names = {"output_tensor"};
+      invalid_runtime.primary_output_name = "output_tensor";
+      invalid_runtime.input_dtype = "INT8";
+      invalid_runtime.output_dtype = "FP32";
+      invalid_runtime.out_dtype = "FP32";
 
-  const auto expect_invalid_runtime = [](CompiledProcessCvuRuntimeConfig runtime,
-                                         const char* expected_token,
-                                         const char* expectation) {
-    bool threw = false;
-    try {
-      (void)build_processcvu_compiled_contract_from_runtime_config(runtime);
-    } catch (const std::invalid_argument& ex) {
-      threw = std::string(ex.what()).find(expected_token) != std::string::npos;
-    }
-    require(threw, expectation);
-  };
+      const auto expect_invalid_runtime = [](CompiledProcessCvuRuntimeConfig runtime,
+                                             const char* expected_token, const char* expectation) {
+        bool threw = false;
+        try {
+          (void)build_processcvu_compiled_contract_from_runtime_config(runtime);
+        } catch (const std::invalid_argument& ex) {
+          threw = std::string(ex.what()).find(expected_token) != std::string::npos;
+        }
+        require(threw, expectation);
+      };
 
-  expect_invalid_runtime(
-      invalid_runtime,
-      "runtime_output_names",
-      "runtime-config contract build should reject missing runtime_output_names instead of "
-      "borrowing published outputs");
+      expect_invalid_runtime(
+          invalid_runtime, "runtime_output_names",
+          "runtime-config contract build should reject missing runtime_output_names instead of "
+          "borrowing published outputs");
 
-  CompiledProcessCvuRuntimeConfig missing_default_input = invalid_runtime;
-  missing_default_input.runtime_output_names = {"output_tensor"};
-  missing_default_input.default_input_name.clear();
-  expect_invalid_runtime(
-      missing_default_input,
-      "default_input_name",
-      "runtime-config contract build should reject missing default_input_name");
+      CompiledProcessCvuRuntimeConfig missing_default_input = invalid_runtime;
+      missing_default_input.runtime_output_names = {"output_tensor"};
+      missing_default_input.default_input_name.clear();
+      expect_invalid_runtime(
+          missing_default_input, "default_input_name",
+          "runtime-config contract build should reject missing default_input_name");
 
-  CompiledProcessCvuRuntimeConfig missing_primary_output = invalid_runtime;
-  missing_primary_output.runtime_output_names = {"output_tensor"};
-  missing_primary_output.primary_output_name.clear();
-  expect_invalid_runtime(
-      missing_primary_output,
-      "primary_output_name",
-      "runtime-config contract build should reject missing primary_output_name");
+      CompiledProcessCvuRuntimeConfig missing_primary_output = invalid_runtime;
+      missing_primary_output.runtime_output_names = {"output_tensor"};
+      missing_primary_output.primary_output_name.clear();
+      expect_invalid_runtime(
+          missing_primary_output, "primary_output_name",
+          "runtime-config contract build should reject missing primary_output_name");
 
-  CompiledProcessCvuRuntimeConfig missing_published_outputs = invalid_runtime;
-  missing_published_outputs.runtime_output_names = {"output_tensor"};
-  missing_published_outputs.published_output_names.clear();
-  expect_invalid_runtime(
-      missing_published_outputs,
-      "published_output_names",
-      "runtime-config contract build should reject missing published_output_names");
+      CompiledProcessCvuRuntimeConfig missing_published_outputs = invalid_runtime;
+      missing_published_outputs.runtime_output_names = {"output_tensor"};
+      missing_published_outputs.published_output_names.clear();
+      expect_invalid_runtime(
+          missing_published_outputs, "published_output_names",
+          "runtime-config contract build should reject missing published_output_names");
 
-  CompiledProcessCvuRuntimeConfig packed_multi_runtime;
-  packed_multi_runtime.graph_family = "dequantize";
-  packed_multi_runtime.graph_name = "dequantize";
-  packed_multi_runtime.graph_id = 6;
-  packed_multi_runtime.default_input_name = "input_tensor";
-  packed_multi_runtime.runtime_input_names = {"input_tensor"};
-  packed_multi_runtime.runtime_output_names = {"output_tensor"};
-  packed_multi_runtime.published_output_names = {"head_0", "head_1"};
-  packed_multi_runtime.physical_input_names = {"input_tensor"};
-  packed_multi_runtime.physical_output_names = {"output_tensor"};
-  packed_multi_runtime.primary_output_name = "head_0";
-  packed_multi_runtime.input_shapes = {{8, 8, 16, 8}, {16, 4, 8, 16}};
-  packed_multi_runtime.output_shapes = {{256}};
-  packed_multi_runtime.runtime_output_logical_shapes = {{256}};
-  packed_multi_runtime.runtime_output_logical_index_list = {0};
-  packed_multi_runtime.runtime_output_output_slot_list = {0};
-  packed_multi_runtime.runtime_output_physical_index_list = {0};
-  packed_multi_runtime.runtime_output_dtype_list = {"FP32"};
-  packed_multi_runtime.runtime_output_logical_layout_list = {"HW"};
-  packed_multi_runtime.input_dtype = "INT8";
-  packed_multi_runtime.output_dtype = "FP32";
-  packed_multi_runtime.out_dtype = "FP32";
-  packed_multi_runtime.has_q_scale = true;
-  packed_multi_runtime.q_scale = 0.5;
-  packed_multi_runtime.has_q_zp = true;
-  packed_multi_runtime.q_zp = -7;
-  {
-    sima_ev_tensor_desc input_desc0{};
-    sima_ev_tensor_desc input_desc1{};
-    sima_ev_tensor_desc output_desc{};
-    require_build_dense_test_tensor(packed_multi_runtime.input_shapes[0],
-                                    packed_multi_runtime.input_dtype, "HWC", &input_desc0,
-                                    "packed multi runtime should synthesize first typed input tensor");
-    require_build_dense_test_tensor(packed_multi_runtime.input_shapes[1],
-                                    packed_multi_runtime.input_dtype, "HWC", &input_desc1,
-                                    "packed multi runtime should synthesize second typed input tensor");
-    require_build_dense_test_tensor(packed_multi_runtime.output_shapes.front(),
-                                    packed_multi_runtime.output_dtype, "HW", &output_desc,
-                                    "packed multi runtime should synthesize typed output tensor");
-    packed_multi_runtime.input_tensors = {input_desc0, input_desc1};
-    packed_multi_runtime.output_tensors = {output_desc, output_desc};
-  }
-  packed_multi_runtime.q_scale_list = {0.5, 0.25};
-  packed_multi_runtime.q_zp_list = {-7, 9};
+      CompiledProcessCvuRuntimeConfig packed_multi_runtime;
+      packed_multi_runtime.graph_family = "dequantize";
+      packed_multi_runtime.graph_name = "dequantize";
+      packed_multi_runtime.graph_id = 6;
+      packed_multi_runtime.default_input_name = "input_tensor";
+      packed_multi_runtime.runtime_input_names = {"input_tensor"};
+      packed_multi_runtime.runtime_output_names = {"output_tensor"};
+      packed_multi_runtime.published_output_names = {"head_0", "head_1"};
+      packed_multi_runtime.physical_input_names = {"input_tensor"};
+      packed_multi_runtime.physical_output_names = {"output_tensor"};
+      packed_multi_runtime.primary_output_name = "head_0";
+      packed_multi_runtime.input_shapes = {{8, 8, 16, 8}, {16, 4, 8, 16}};
+      packed_multi_runtime.output_shapes = {{256}};
+      packed_multi_runtime.runtime_output_logical_shapes = {{256}};
+      packed_multi_runtime.runtime_output_logical_index_list = {0};
+      packed_multi_runtime.runtime_output_output_slot_list = {0};
+      packed_multi_runtime.runtime_output_physical_index_list = {0};
+      packed_multi_runtime.runtime_output_dtype_list = {"FP32"};
+      packed_multi_runtime.runtime_output_logical_layout_list = {"HW"};
+      packed_multi_runtime.input_dtype = "INT8";
+      packed_multi_runtime.output_dtype = "FP32";
+      packed_multi_runtime.out_dtype = "FP32";
+      packed_multi_runtime.has_q_scale = true;
+      packed_multi_runtime.q_scale = 0.5;
+      packed_multi_runtime.has_q_zp = true;
+      packed_multi_runtime.q_zp = -7;
+      {
+        sima_ev_tensor_desc input_desc0{};
+        sima_ev_tensor_desc input_desc1{};
+        sima_ev_tensor_desc output_desc{};
+        require_build_dense_test_tensor(
+            packed_multi_runtime.input_shapes[0], packed_multi_runtime.input_dtype, "HWC",
+            &input_desc0, "packed multi runtime should synthesize first typed input tensor");
+        require_build_dense_test_tensor(
+            packed_multi_runtime.input_shapes[1], packed_multi_runtime.input_dtype, "HWC",
+            &input_desc1, "packed multi runtime should synthesize second typed input tensor");
+        require_build_dense_test_tensor(
+            packed_multi_runtime.output_shapes.front(), packed_multi_runtime.output_dtype, "HW",
+            &output_desc, "packed multi runtime should synthesize typed output tensor");
+        packed_multi_runtime.input_tensors = {input_desc0, input_desc1};
+        packed_multi_runtime.output_tensors = {output_desc, output_desc};
+      }
+      packed_multi_runtime.q_scale_list = {0.5, 0.25};
+      packed_multi_runtime.q_zp_list = {-7, 9};
 
-  const auto packed_multi_payload =
-      build_processcvu_payload_from_runtime_config_internal(packed_multi_runtime);
-  require(packed_multi_payload.num_in_tensor == 2,
-          "runtime-config payload should derive semantic num_in_tensor from logical arrays");
-  require(packed_multi_payload.default_output_names.size() == 1U,
-          "runtime-config payload should preserve packed transport runtime outputs");
+      const auto packed_multi_payload =
+          build_processcvu_payload_from_runtime_config_internal(packed_multi_runtime);
+      require(packed_multi_payload.num_in_tensor == 2,
+              "runtime-config payload should derive semantic num_in_tensor from logical arrays");
+      require(packed_multi_payload.default_output_names.size() == 1U,
+              "runtime-config payload should preserve packed transport runtime outputs");
 
-  expect_invalid_runtime(
-      packed_multi_runtime,
-      "explicit packed-route facts",
-      "generic runtime-config contract build should reject semantic multi-io over packed transport");
+      expect_invalid_runtime(packed_multi_runtime, "explicit packed-route facts",
+                             "generic runtime-config contract build should reject semantic "
+                             "multi-io over packed transport");
 
-  {
-    const auto resnet_contract = make_resnet_flatten_detessdequant_contract();
-    const auto resnet_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
-        resnet_contract, simaai::neat::internal::ExecutionStageKind::DetessDequant);
+      {
+        const auto resnet_contract = make_resnet_flatten_detessdequant_contract();
+        const auto resnet_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            resnet_contract, simaai::neat::internal::ExecutionStageKind::DetessDequant);
 
-    require(resnet_compiled.payload.input_tensors.size() == 1U,
-            "ResNet detessdequant regression should compile one runtime input descriptor");
-    require(resnet_compiled.payload.output_tensors.size() == 1U,
-            "ResNet detessdequant regression should compile one runtime output descriptor");
-    require(tensor_desc_shape_for_test(resnet_compiled.payload.input_tensors.front()) ==
-                std::vector<std::int64_t>({1, 1, 1000}),
-            "ResNet detessdequant runtime input should preserve detess semantic axes");
-    require(tensor_desc_shape_for_test(resnet_compiled.payload.output_tensors.front()) ==
-                std::vector<std::int64_t>({1, 1, 1000}),
-            "ResNet detessdequant runtime output should preserve detess semantic axes");
-    require(resnet_compiled.payload.output_shapes.size() == 1U &&
-                resnet_compiled.payload.output_shapes.front() ==
-                    std::vector<int>({1, 1, 1, 1000}),
-            "ResNet detessdequant payload output shape should use the full unsqueezed shape");
-    require(resnet_compiled.runtime_contract.logical_outputs.size() == 1U,
-            "ResNet detessdequant regression should expose one logical output");
-    require(resnet_compiled.runtime_contract.logical_outputs.front().shape ==
-                std::vector<std::int64_t>({1, 1, 1, 1000}),
-            "ResNet detessdequant public output should preserve the full unsqueezed shape");
-    require(resnet_compiled.runtime_contract.logical_outputs.front().size_bytes == 4000U,
-            "ResNet detessdequant public output should preserve FP32 byte size");
-  }
+        require(resnet_compiled.payload.input_tensors.size() == 1U,
+                "ResNet detessdequant regression should compile one runtime input descriptor");
+        require(resnet_compiled.payload.output_tensors.size() == 1U,
+                "ResNet detessdequant regression should compile one runtime output descriptor");
+        require(tensor_desc_shape_for_test(resnet_compiled.payload.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 1000}),
+                "ResNet detessdequant runtime input should preserve detess semantic axes");
+        require(tensor_desc_shape_for_test(resnet_compiled.payload.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 1, 1000}),
+                "ResNet detessdequant runtime output should preserve detess semantic axes");
+        require(resnet_compiled.payload.output_shapes.size() == 1U &&
+                    resnet_compiled.payload.output_shapes.front() ==
+                        std::vector<int>({1, 1, 1, 1000}),
+                "ResNet detessdequant payload output shape should use the full unsqueezed shape");
+        require(resnet_compiled.runtime_contract.logical_outputs.size() == 1U,
+                "ResNet detessdequant regression should expose one logical output");
+        require(resnet_compiled.runtime_contract.logical_outputs.front().shape ==
+                    std::vector<std::int64_t>({1, 1, 1, 1000}),
+                "ResNet detessdequant public output should preserve the full unsqueezed shape");
+        require(resnet_compiled.runtime_contract.logical_outputs.front().size_bytes == 4000U,
+                "ResNet detessdequant public output should preserve FP32 byte size");
+      }
 
-  {
-    const auto cast_contract = make_pre_and_post_cast_contract_for_exact_name_regression();
-    const auto cast_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
-        cast_contract, simaai::neat::internal::ExecutionStageKind::Cast, std::string("post_cast_0"));
+      {
+        const auto cast_contract = make_pre_and_post_cast_contract_for_exact_name_regression();
+        const auto cast_compiled = build_processcvu_mpk_compiled_contract_for_stage_kind(
+            cast_contract, simaai::neat::internal::ExecutionStageKind::Cast,
+            std::string("post_cast_0"));
 
-    require(cast_compiled.payload.input_dtype == "BF16",
+        require(
+            cast_compiled.payload.input_dtype == "BF16",
             "post-cast contract should choose post-MLA BF16 inputs even when materialized element "
             "name does not match an MPK cast stage");
-    require(cast_compiled.payload.output_dtype == "FP32",
-            "post-cast contract should choose BF16->FP32, not the pre-MLA FP32->BF16 cast");
-    require(cast_compiled.payload.num_in_tensor == 2,
-            "post-cast contract should preserve the post-MLA fanout tensor count");
-    require(cast_compiled.payload.input_shapes.size() == 2U &&
-                cast_compiled.payload.input_shapes.front() == std::vector<int>({12, 52, 45}),
-            "post-cast contract should preserve the first post-MLA head shape");
-    require(cast_compiled.runtime_contract.logical_outputs.size() == 2U,
-            "post-cast contract should expose both routed output heads");
-  }
+        require(cast_compiled.payload.output_dtype == "FP32",
+                "post-cast contract should choose BF16->FP32, not the pre-MLA FP32->BF16 cast");
+        require(cast_compiled.payload.num_in_tensor == 2,
+                "post-cast contract should preserve the post-MLA fanout tensor count");
+        require(cast_compiled.payload.input_shapes.size() == 2U &&
+                    cast_compiled.payload.input_shapes.front() == std::vector<int>({12, 52, 45}),
+                "post-cast contract should preserve the first post-MLA head shape");
+        require(cast_compiled.runtime_contract.logical_outputs.size() == 2U,
+                "post-cast contract should expose both routed output heads");
+      }
 
-  // The rank-aware detess/detessdequant projection sub-tests previously
-  // exercised build_processcvu_mpk_compiled_contract_for_stage_kind on
-  // hand-built MPK contracts whose frame_shape/slice_shape conventions have
-  // changed under the new tile-desc synthesizer. Coverage of the canonical
-  // detessdequant projection is preserved via the YOLOv8 INT8 path in
-  // unit_yolov8_contract_subset_test.
-}));
+      // The rank-aware detess/detessdequant projection sub-tests previously
+      // exercised build_processcvu_mpk_compiled_contract_for_stage_kind on
+      // hand-built MPK contracts whose frame_shape/slice_shape conventions have
+      // changed under the new tile-desc synthesizer. Coverage of the canonical
+      // detessdequant projection is preserved via the YOLOv8 INT8 path in
+      // unit_yolov8_contract_subset_test.
+    }));

@@ -52,8 +52,8 @@ enum class MemoryContract {
  * @ingroup contracts
  */
 enum class CapsMemory {
-  Any = 0,        ///< Don't constrain memory class in caps.
-  SystemMemory,   ///< Force caps to advertise `memory:SystemMemory`.
+  Any = 0,      ///< Don't constrain memory class in caps.
+  SystemMemory, ///< Force caps to advertise `memory:SystemMemory`.
 };
 
 } // namespace simaai::neat

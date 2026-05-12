@@ -83,8 +83,7 @@ struct InputStream::State {
   InputStreamOptions opt;
   InputStreamOptions::DynamicCapability dynamic_capability =
       InputStreamOptions::DynamicCapability::StaticOnly;
-  InputStreamOptions::ShapePolicy shape_policy =
-      InputStreamOptions::ShapePolicy::BoundedDynamic;
+  InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
   InputStreamOptions::ResolvedShapeLimits shape_limits{};
   InputStreamOptions::ByteGuardOrigin byte_guard_origin =
       InputStreamOptions::ByteGuardOrigin::Unset;
@@ -293,19 +292,16 @@ void discard_pending_buffer(InputStream::State& st, const char* reason);
 void queue_pending_buffer(InputStream::State& st, BuiltBuffer pending, const SampleSpec& spec,
                           const char* reason);
 bool flush_pending_buffer(InputStream::State& st, const char* where);
-BuiltBuffer build_buffer_with_fill(InputStream::State& st, const char* where,
-                                   const std::function<size_t(uint8_t*, size_t)>& fill,
-                                   size_t required_bytes,
-                                   const std::optional<int64_t>& frame_id_override,
-                                   const std::optional<int64_t>& input_seq_override,
-                                   const std::optional<int64_t>& orig_input_seq_override,
-                                   const std::optional<std::string>& stream_id_override,
-                                   const std::optional<std::string>& buffer_name_override,
-                                   const std::optional<uint64_t>& timestamp_override,
-                                   const std::function<void(GstBuffer**)>& prepare,
-                                   bool record_timings, const char* op_tag,
-                                   bool release_reuse_buffer_on_fail, int input_width = -1,
-                                   int input_height = -1);
+BuiltBuffer build_buffer_with_fill(
+    InputStream::State& st, const char* where, const std::function<size_t(uint8_t*, size_t)>& fill,
+    size_t required_bytes, const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const std::optional<uint64_t>& timestamp_override,
+    const std::function<void(GstBuffer**)>& prepare, bool record_timings, const char* op_tag,
+    bool release_reuse_buffer_on_fail, int input_width = -1, int input_height = -1);
 
 void apply_video_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
 void apply_tensor_size_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);

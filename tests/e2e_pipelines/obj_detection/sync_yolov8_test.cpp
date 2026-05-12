@@ -98,10 +98,9 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
 
   step_log("sync: before build");
-  auto run = p.build(
-      simaai::neat::SampleList{
-          simaai::neat::Sample::from_image(img, simaai::neat::ImageSpec::PixelFormat::BGR)},
-      simaai::neat::RunMode::Sync);
+  auto run = p.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                         img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                     simaai::neat::RunMode::Sync);
   step_log("sync: after build");
 
   const auto start = std::chrono::steady_clock::now();
@@ -111,10 +110,10 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     simaai::neat::Sample out;
     try {
       step_log("sync: before run");
-      simaai::neat::SampleList outs = run.run(
-          simaai::neat::SampleList{
-              simaai::neat::Sample::from_image(img, simaai::neat::ImageSpec::PixelFormat::BGR)},
-          30000);
+      simaai::neat::SampleList outs =
+          run.run(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                      img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                  30000);
       require(!outs.empty(), "sync run expected at least one sample");
       out = outs.front();
       step_log("sync: after run");

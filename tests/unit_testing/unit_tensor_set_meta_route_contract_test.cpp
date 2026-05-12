@@ -38,8 +38,8 @@ GstSample* make_tensor_sample_with_contract_meta(std::size_t descriptor_count = 
 
   GstCaps* caps =
       gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING, "MLA", "width",
-                          G_TYPE_INT, 4, "height", G_TYPE_INT, 4, "depth", G_TYPE_INT, 1,
-                          "dtype", G_TYPE_STRING, "INT8", "layout", G_TYPE_STRING, "HW", nullptr);
+                          G_TYPE_INT, 4, "height", G_TYPE_INT, 4, "depth", G_TYPE_INT, 1, "dtype",
+                          G_TYPE_STRING, "INT8", "layout", G_TYPE_STRING, "HW", nullptr);
   require(caps != nullptr, "failed to allocate GstCaps");
 
   GstCustomMeta* meta = gst_buffer_add_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME);
@@ -108,24 +108,20 @@ GstSample* make_tensor_sample_with_contract_meta(std::size_t descriptor_count = 
       g_bytes_new(quant_zero_points.data(), quant_zero_points.size() * sizeof(gint64));
   require(quant_zero_point_bytes != nullptr, "failed to allocate quant zero-point bytes");
 
-  const char* raw_names[] = {"boxes",       "ofm11",        "seg_boxes",
-                             "scores",      "ofm13",        "seg_scores",
-                             nullptr};
+  const char* raw_names[] = {"boxes", "ofm11",      "seg_boxes", "scores",
+                             "ofm13", "seg_scores", nullptr};
   gchar** name_table = g_strdupv(const_cast<gchar**>(raw_names));
   require(name_table != nullptr, "failed to duplicate tensor-set name table");
 
-  gst_structure_set(s,
-                    SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT, SIMA_TENSOR_SET_META_VERSION,
-                    SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, G_TYPE_UINT,
-                    static_cast<guint>(descriptors.size()),
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
-                    static_cast<guint>(sizeof(SimaTensorDescriptorV2)),
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS, G_TYPE_BYTES, descriptor_bytes,
-                    SIMA_TENSOR_SET_META_FIELD_QUANT_SCALES, G_TYPE_BYTES, quant_scale_bytes,
-                    SIMA_TENSOR_SET_META_FIELD_QUANT_ZERO_POINTS, G_TYPE_BYTES,
-                    quant_zero_point_bytes,
-                    SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING, "mla.stage.main",
-                    SIMA_TENSOR_SET_META_FIELD_NAME_TABLE, G_TYPE_STRV, name_table, nullptr);
+  gst_structure_set(
+      s, SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT, SIMA_TENSOR_SET_META_VERSION,
+      SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, G_TYPE_UINT, static_cast<guint>(descriptors.size()),
+      SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
+      static_cast<guint>(sizeof(SimaTensorDescriptorV2)), SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS,
+      G_TYPE_BYTES, descriptor_bytes, SIMA_TENSOR_SET_META_FIELD_QUANT_SCALES, G_TYPE_BYTES,
+      quant_scale_bytes, SIMA_TENSOR_SET_META_FIELD_QUANT_ZERO_POINTS, G_TYPE_BYTES,
+      quant_zero_point_bytes, SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING, "mla.stage.main",
+      SIMA_TENSOR_SET_META_FIELD_NAME_TABLE, G_TYPE_STRV, name_table, nullptr);
   g_strfreev(name_table);
   g_bytes_unref(descriptor_bytes);
   g_bytes_unref(quant_scale_bytes);
@@ -149,10 +145,10 @@ GstSample* make_bf16_byte_addressed_tensor_sample() {
   }
   gst_buffer_unmap(buffer, &map);
 
-  GstCaps* caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
-                                      "MLA", "width", G_TYPE_INT, 8, "height", G_TYPE_INT, 1,
-                                      "depth", G_TYPE_INT, 1, "dtype", G_TYPE_STRING, "BF16",
-                                      "layout", G_TYPE_STRING, "HW", nullptr);
+  GstCaps* caps =
+      gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING, "MLA", "width",
+                          G_TYPE_INT, 8, "height", G_TYPE_INT, 1, "depth", G_TYPE_INT, 1, "dtype",
+                          G_TYPE_STRING, "BF16", "layout", G_TYPE_STRING, "HW", nullptr);
   require(caps != nullptr, "failed to allocate BF16 tensor GstCaps");
 
   GstCustomMeta* meta = gst_buffer_add_custom_meta(buffer, SIMA_TENSOR_SET_META_NAME);
@@ -184,10 +180,9 @@ GstSample* make_bf16_byte_addressed_tensor_sample() {
   gchar** name_table = g_strdupv(const_cast<gchar**>(raw_names));
   require(name_table != nullptr, "failed to duplicate BF16 tensor-set name table");
 
-  gst_structure_set(s,
-                    SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT, SIMA_TENSOR_SET_META_VERSION,
-                    SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT, G_TYPE_UINT, 1U,
-                    SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
+  gst_structure_set(s, SIMA_TENSOR_SET_META_FIELD_VERSION, G_TYPE_UINT,
+                    SIMA_TENSOR_SET_META_VERSION, SIMA_TENSOR_SET_META_FIELD_TENSOR_COUNT,
+                    G_TYPE_UINT, 1U, SIMA_TENSOR_SET_META_FIELD_DESCRIPTOR_SIZE, G_TYPE_UINT,
                     static_cast<guint>(sizeof(SimaTensorDescriptorV2)),
                     SIMA_TENSOR_SET_META_FIELD_DESCRIPTORS, G_TYPE_BYTES, descriptor_bytes,
                     SIMA_TENSOR_SET_META_FIELD_STAGE_KEY, G_TYPE_STRING, "tess.stage.test",
@@ -244,10 +239,9 @@ int main() {
     override.outputs.push_back(scores_override);
 
     const std::optional<simaai::neat::OutputTensorOverride> override_opt{override};
-    simaai::neat::Sample expanded =
-        simaai::neat::output_from_sample_stream(single_tensor_sample,
-                                                "unit_tensor_set_meta_route_contract_override_test",
-                                                /*copy_output=*/false, &override_opt);
+    simaai::neat::Sample expanded = simaai::neat::output_from_sample_stream(
+        single_tensor_sample, "unit_tensor_set_meta_route_contract_override_test",
+        /*copy_output=*/false, &override_opt);
     gst_sample_unref(single_tensor_sample);
     // Override-driven TensorSet expansion was retired with the broader
     // tensor-set conversion change above.
@@ -256,10 +250,9 @@ int main() {
     GstSample* bf16_sample = make_bf16_byte_addressed_tensor_sample();
     require(bf16_sample != nullptr, "BF16 byte-addressed sample creation failed");
 
-    simaai::neat::Sample bf16_out =
-        simaai::neat::output_from_sample_stream(bf16_sample,
-                                                "unit_tensor_set_meta_byte_addressed_bf16_test",
-                                                /*copy_output=*/true, nullptr);
+    simaai::neat::Sample bf16_out = simaai::neat::output_from_sample_stream(
+        bf16_sample, "unit_tensor_set_meta_byte_addressed_bf16_test",
+        /*copy_output=*/true, nullptr);
     gst_sample_unref(bf16_sample);
 
     // The BF16 byte-addressed TensorSet path was retired alongside the

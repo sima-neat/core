@@ -155,8 +155,8 @@ bool read_u16_le(const std::vector<std::uint8_t>& bytes, std::size_t off, std::u
   if (!out || off + 2U > bytes.size()) {
     return false;
   }
-  *out = static_cast<std::uint16_t>(bytes[off]) |
-         (static_cast<std::uint16_t>(bytes[off + 1U]) << 8U);
+  *out =
+      static_cast<std::uint16_t>(bytes[off]) | (static_cast<std::uint16_t>(bytes[off + 1U]) << 8U);
   return true;
 }
 
@@ -221,9 +221,8 @@ std::optional<int> parse_output_index_from_ofm_section_name(const std::string& n
   const std::string b_key = "data.ofm.b";
   if (name.rfind(b_key, 0) == 0U) {
     const std::string suffix = name.substr(b_key.size());
-    if (!suffix.empty() &&
-        std::all_of(suffix.begin(), suffix.end(),
-                    [](unsigned char c) { return std::isdigit(c) != 0; })) {
+    if (!suffix.empty() && std::all_of(suffix.begin(), suffix.end(),
+                                       [](unsigned char c) { return std::isdigit(c) != 0; })) {
       try {
         return std::stoi(suffix);
       } catch (const std::exception&) {
@@ -439,8 +438,8 @@ std::vector<std::int64_t> normalize_tensor_shape_local(std::vector<std::int64_t>
   return shape;
 }
 
-std::vector<std::int64_t> mla_input_logical_shape_from_mpk_tensor_local(
-    const MpkTensorContract& src) {
+std::vector<std::int64_t>
+mla_input_logical_shape_from_mpk_tensor_local(const MpkTensorContract& src) {
   const std::vector<std::int64_t> physical_shape = normalize_tensor_shape_local(src.mpk_shape);
   const std::vector<std::int64_t> logical_shape = normalize_tensor_shape_local(src.logical_shape);
   const bool has_logical_shape = !logical_shape.empty();
@@ -484,9 +483,9 @@ std::uint64_t tensor_logical_size_bytes_from_static_spec_local(const TensorStati
   if (tensor.shape.empty()) {
     return tensor.max_stride > 0 ? static_cast<std::uint64_t>(tensor.max_stride) : 0U;
   }
-  const std::size_t elem_bytes = pipeline_internal::dtype_bytes(
-      tensor_dtype_from_contract_token_local(tensor.dtype.empty() ? std::string("INT8")
-                                                                  : tensor.dtype));
+  const std::size_t elem_bytes =
+      pipeline_internal::dtype_bytes(tensor_dtype_from_contract_token_local(
+          tensor.dtype.empty() ? std::string("INT8") : tensor.dtype));
   if (elem_bytes == 0U) {
     return tensor.max_stride > 0 ? static_cast<std::uint64_t>(tensor.max_stride) : 0U;
   }
@@ -508,29 +507,27 @@ std::uint64_t tensor_logical_size_bytes_from_static_spec_local(const TensorStati
   return static_cast<std::uint64_t>(total_bytes);
 }
 
-std::vector<std::int64_t> tensor_stride_bytes_from_static_spec_local(const TensorStaticSpec& tensor) {
+std::vector<std::int64_t>
+tensor_stride_bytes_from_static_spec_local(const TensorStaticSpec& tensor) {
   if (tensor.shape.empty()) {
     return {};
   }
   return pipeline_internal::contiguous_strides_bytes(
-      tensor.shape,
-      pipeline_internal::dtype_bytes(
-          tensor_dtype_from_contract_token_local(tensor.dtype.empty() ? std::string("INT8")
-                                                                      : tensor.dtype)));
+      tensor.shape, pipeline_internal::dtype_bytes(tensor_dtype_from_contract_token_local(
+                        tensor.dtype.empty() ? std::string("INT8") : tensor.dtype)));
 }
 
-std::vector<std::int64_t> tensor_stride_bytes_from_mpk_tensor_local(const MpkTensorContract& src,
-                                                                    const TensorStaticSpec& tensor) {
+std::vector<std::int64_t>
+tensor_stride_bytes_from_mpk_tensor_local(const MpkTensorContract& src,
+                                          const TensorStaticSpec& tensor) {
   if (!src.stride_bytes.empty()) {
-    auto normalized =
-        pipeline_internal::normalize_strides_rank_to_shape(src.stride_bytes, src.mpk_shape,
-                                                           tensor.shape, true);
+    auto normalized = pipeline_internal::normalize_strides_rank_to_shape(
+        src.stride_bytes, src.mpk_shape, tensor.shape, true);
     if (normalized.size() == tensor.shape.size()) {
       return normalized;
     }
-    normalized =
-        pipeline_internal::normalize_strides_rank_to_shape(src.stride_bytes, src.logical_shape,
-                                                           tensor.shape, true);
+    normalized = pipeline_internal::normalize_strides_rank_to_shape(
+        src.stride_bytes, src.logical_shape, tensor.shape, true);
     if (normalized.size() == tensor.shape.size()) {
       return normalized;
     }
@@ -539,10 +536,10 @@ std::vector<std::int64_t> tensor_stride_bytes_from_mpk_tensor_local(const MpkTen
   return tensor_stride_bytes_from_static_spec_local(tensor);
 }
 
-std::uint64_t tensor_physical_span_bytes_from_shape_strides_local(
-    const std::vector<std::int64_t>& shape,
-    const std::vector<std::int64_t>& stride_bytes,
-    const std::string& dtype) {
+std::uint64_t
+tensor_physical_span_bytes_from_shape_strides_local(const std::vector<std::int64_t>& shape,
+                                                    const std::vector<std::int64_t>& stride_bytes,
+                                                    const std::string& dtype) {
   if (shape.empty() || stride_bytes.empty()) {
     return 0U;
   }
@@ -574,8 +571,7 @@ std::uint64_t tensor_physical_span_bytes_from_shape_strides_local(
   return span;
 }
 
-TensorStaticSpec tensor_spec_from_mpk_tensor(const MpkTensorContract& src,
-                                             int tensor_index,
+TensorStaticSpec tensor_spec_from_mpk_tensor(const MpkTensorContract& src, int tensor_index,
                                              const std::string& default_name,
                                              const std::string& default_dtype) {
   TensorStaticSpec t;
@@ -592,7 +588,8 @@ TensorStaticSpec tensor_spec_from_mpk_tensor(const MpkTensorContract& src,
   return t;
 }
 
-void assign_output_quant(MlaStaticContract* contract, const std::optional<MpkQuantContract>& quant) {
+void assign_output_quant(MlaStaticContract* contract,
+                         const std::optional<MpkQuantContract>& quant) {
   if (!contract || !quant.has_value() || quant->scales.empty() || quant->zero_points.empty()) {
     return;
   }
@@ -636,7 +633,8 @@ bool validate_output_contracts(const MlaStaticContract& contract) {
         physical.size_bytes == 0U || physical.source_byte_offset < 0) {
       if (mla_contract_debug_enabled()) {
         std::fprintf(stderr,
-                     "[mla-contract] invalid physical_output idx=%d src_physical_index=%d size_bytes=%llu source_byte_offset=%lld dispatcher_count=%zu\n",
+                     "[mla-contract] invalid physical_output idx=%d src_physical_index=%d "
+                     "size_bytes=%llu source_byte_offset=%lld dispatcher_count=%zu\n",
                      physical.physical_index, physical.source_physical_index,
                      static_cast<unsigned long long>(physical.size_bytes),
                      static_cast<long long>(physical.source_byte_offset),
@@ -645,12 +643,14 @@ bool validate_output_contracts(const MlaStaticContract& contract) {
       return false;
     }
     const auto& dispatcher =
-        contract.dispatcher_physical_outputs[static_cast<std::size_t>(physical.source_physical_index)];
+        contract
+            .dispatcher_physical_outputs[static_cast<std::size_t>(physical.source_physical_index)];
     const auto source_offset = static_cast<std::uint64_t>(physical.source_byte_offset);
     if (source_offset > std::numeric_limits<std::uint64_t>::max() - physical.size_bytes) {
       if (mla_contract_debug_enabled()) {
         std::fprintf(stderr,
-                     "[mla-contract] invalid physical_output idx=%d overflow source_offset=%llu size_bytes=%llu\n",
+                     "[mla-contract] invalid physical_output idx=%d overflow source_offset=%llu "
+                     "size_bytes=%llu\n",
                      physical.physical_index, static_cast<unsigned long long>(source_offset),
                      static_cast<unsigned long long>(physical.size_bytes));
       }
@@ -660,7 +660,8 @@ bool validate_output_contracts(const MlaStaticContract& contract) {
     if (source_end > dispatcher.size_bytes) {
       if (mla_contract_debug_enabled()) {
         std::fprintf(stderr,
-                     "[mla-contract] invalid physical_output idx=%d source_end=%llu dispatcher_size=%llu segment=%s source_segment=%s\n",
+                     "[mla-contract] invalid physical_output idx=%d source_end=%llu "
+                     "dispatcher_size=%llu segment=%s source_segment=%s\n",
                      physical.physical_index, static_cast<unsigned long long>(source_end),
                      static_cast<unsigned long long>(dispatcher.size_bytes),
                      debug_string_or_empty(physical.segment_name),
@@ -682,66 +683,70 @@ bool validate_output_contracts(const MlaStaticContract& contract) {
     if (logical.physical_index < 0 ||
         static_cast<std::size_t>(logical.physical_index) >= contract.physical_outputs.size()) {
       if (mla_contract_debug_enabled()) {
-        std::fprintf(stderr,
-                     "[mla-contract] invalid logical_output idx=%zu physical_index=%d physical_count=%zu\n",
-                     i, logical.physical_index, contract.physical_outputs.size());
+        std::fprintf(
+            stderr,
+            "[mla-contract] invalid logical_output idx=%zu physical_index=%d physical_count=%zu\n",
+            i, logical.physical_index, contract.physical_outputs.size());
       }
       return false;
     }
     if (logical.size_bytes == 0U || logical.byte_offset < 0) {
       if (mla_contract_debug_enabled()) {
-        std::fprintf(stderr,
-                     "[mla-contract] invalid logical_output idx=%zu size_bytes=%llu byte_offset=%lld\n",
-                     i, static_cast<unsigned long long>(logical.size_bytes),
-                     static_cast<long long>(logical.byte_offset));
+        std::fprintf(
+            stderr,
+            "[mla-contract] invalid logical_output idx=%zu size_bytes=%llu byte_offset=%lld\n", i,
+            static_cast<unsigned long long>(logical.size_bytes),
+            static_cast<long long>(logical.byte_offset));
       }
       return false;
     }
-    const auto& physical = contract.physical_outputs[static_cast<std::size_t>(logical.physical_index)];
+    const auto& physical =
+        contract.physical_outputs[static_cast<std::size_t>(logical.physical_index)];
     if (!logical.segment_name.empty() && !physical.segment_name.empty() &&
         logical.segment_name != physical.segment_name) {
       if (mla_contract_debug_enabled()) {
         std::fprintf(stderr,
-                     "[mla-contract] invalid logical_output idx=%zu segment_mismatch logical=%s physical=%s\n",
+                     "[mla-contract] invalid logical_output idx=%zu segment_mismatch logical=%s "
+                     "physical=%s\n",
                      i, debug_string_or_empty(logical.segment_name),
                      debug_string_or_empty(physical.segment_name));
       }
       return false;
     }
-    const std::uint64_t logical_physical_span =
-        tensor_physical_span_bytes_from_shape_strides_local(logical.shape, logical.stride_bytes,
-                                                            logical.dtype);
+    const std::uint64_t logical_physical_span = tensor_physical_span_bytes_from_shape_strides_local(
+        logical.shape, logical.stride_bytes, logical.dtype);
     const std::uint64_t span_bytes =
         logical_physical_span > 0U ? logical_physical_span : logical.size_bytes;
-    const std::uint64_t logical_end =
-        static_cast<std::uint64_t>(logical.byte_offset) + span_bytes;
+    const std::uint64_t logical_end = static_cast<std::uint64_t>(logical.byte_offset) + span_bytes;
     if (logical_end > physical.size_bytes) {
       if (mla_contract_debug_enabled()) {
-        std::fprintf(stderr,
-                     "[mla-contract] invalid logical_output idx=%zu logical_end=%llu physical_size=%llu byte_offset=%lld span_bytes=%llu logical_size=%llu dtype=%s layout=%s segment=%s\n",
-                     i, static_cast<unsigned long long>(logical_end),
-                     static_cast<unsigned long long>(physical.size_bytes),
-                     static_cast<long long>(logical.byte_offset),
-                     static_cast<unsigned long long>(span_bytes),
-                     static_cast<unsigned long long>(logical.size_bytes),
-                     debug_string_or_empty(logical.dtype),
-                     debug_string_or_empty(logical.layout),
-                     debug_string_or_empty(logical.segment_name));
+        std::fprintf(
+            stderr,
+            "[mla-contract] invalid logical_output idx=%zu logical_end=%llu physical_size=%llu "
+            "byte_offset=%lld span_bytes=%llu logical_size=%llu dtype=%s layout=%s segment=%s\n",
+            i, static_cast<unsigned long long>(logical_end),
+            static_cast<unsigned long long>(physical.size_bytes),
+            static_cast<long long>(logical.byte_offset),
+            static_cast<unsigned long long>(span_bytes),
+            static_cast<unsigned long long>(logical.size_bytes),
+            debug_string_or_empty(logical.dtype), debug_string_or_empty(logical.layout),
+            debug_string_or_empty(logical.segment_name));
       }
       return false;
     }
     if (packed_single_physical) {
       if (i > 0U && static_cast<std::uint64_t>(logical.byte_offset) < previous_end) {
         if (mla_contract_debug_enabled()) {
-          std::fprintf(stderr,
-                       "[mla-contract] invalid logical_output idx=%zu packed overlap byte_offset=%lld previous_end=%llu span_bytes=%llu logical_size=%llu dtype=%s layout=%s segment=%s\n",
-                       i, static_cast<long long>(logical.byte_offset),
-                       static_cast<unsigned long long>(previous_end),
-                       static_cast<unsigned long long>(span_bytes),
-                       static_cast<unsigned long long>(logical.size_bytes),
-                       debug_string_or_empty(logical.dtype),
-                       debug_string_or_empty(logical.layout),
-                       debug_string_or_empty(logical.segment_name));
+          std::fprintf(
+              stderr,
+              "[mla-contract] invalid logical_output idx=%zu packed overlap byte_offset=%lld "
+              "previous_end=%llu span_bytes=%llu logical_size=%llu dtype=%s layout=%s segment=%s\n",
+              i, static_cast<long long>(logical.byte_offset),
+              static_cast<unsigned long long>(previous_end),
+              static_cast<unsigned long long>(span_bytes),
+              static_cast<unsigned long long>(logical.size_bytes),
+              debug_string_or_empty(logical.dtype), debug_string_or_empty(logical.layout),
+              debug_string_or_empty(logical.segment_name));
         }
         return false;
       }
@@ -751,11 +756,10 @@ bool validate_output_contracts(const MlaStaticContract& contract) {
   return true;
 }
 
-std::optional<int> resolve_logical_output_physical_index(
-    const MpkTensorContract& logical_src,
-    const std::vector<PhysicalBufferStaticSpec>& physical_outputs,
-    std::size_t logical_index,
-    bool packed_single_physical) {
+std::optional<int>
+resolve_logical_output_physical_index(const MpkTensorContract& logical_src,
+                                      const std::vector<PhysicalBufferStaticSpec>& physical_outputs,
+                                      std::size_t logical_index, bool packed_single_physical) {
   if (logical_src.physical_index >= 0 &&
       static_cast<std::size_t>(logical_src.physical_index) < physical_outputs.size()) {
     return logical_src.physical_index;
@@ -804,10 +808,10 @@ void build_output_contracts(MlaStaticContract* contract,
     physical.source_physical_index = static_cast<int>(i);
     physical.source_byte_offset = 0;
     physical.device_kind = DeviceKind::Mla;
-    physical.segment_name = src.name.empty()
-                                ? ((physical_outputs.size() == 1U) ? "mla_output_tensor"
-                                                                   : ("ofm" + std::to_string(i)))
-                                : src.name;
+    physical.segment_name =
+        src.name.empty()
+            ? ((physical_outputs.size() == 1U) ? "mla_output_tensor" : ("ofm" + std::to_string(i)))
+            : src.name;
     physical.size_bytes = src.size_bytes;
     contract->dispatcher_physical_outputs.push_back(std::move(physical));
   }
@@ -824,8 +828,7 @@ void build_output_contracts(MlaStaticContract* contract,
   std::vector<PublishedPhysicalSeed> published_seed;
   published_seed.reserve(logical_outputs.size());
   std::vector<int> published_index_for_logical(logical_outputs.size(), -1);
-  const bool packed_single_parent =
-      physical_outputs.size() == 1U && logical_outputs.size() > 1U;
+  const bool packed_single_parent = physical_outputs.size() == 1U && logical_outputs.size() > 1U;
   if (packed_single_parent) {
     std::string packed_segment_name;
     std::uint64_t packed_size_bytes = 0U;
@@ -854,13 +857,12 @@ void build_output_contracts(MlaStaticContract* contract,
       const int requested_physical =
           src.physical_index >= 0 ? src.physical_index : static_cast<int>(i);
       const std::string segment_name =
-          !src.segment_name.empty() ? src.segment_name
-                                    : ((logical_outputs.size() == 1U)
-                                           ? std::string("mla_output_tensor")
-                                           : ("ofm" + std::to_string(i)));
+          !src.segment_name.empty()
+              ? src.segment_name
+              : ((logical_outputs.size() == 1U) ? std::string("mla_output_tensor")
+                                                : ("ofm" + std::to_string(i)));
       auto existing = std::find_if(
-          published_seed.begin(), published_seed.end(),
-          [&](const PublishedPhysicalSeed& seed) {
+          published_seed.begin(), published_seed.end(), [&](const PublishedPhysicalSeed& seed) {
             return seed.published_index == requested_physical ||
                    (!segment_name.empty() && seed.segment_name == segment_name);
           });
@@ -868,17 +870,16 @@ void build_output_contracts(MlaStaticContract* contract,
         PublishedPhysicalSeed seed;
         seed.published_index = requested_physical;
         seed.allocator_index = requested_physical;
-        seed.source_physical_index =
-            src.source_physical_index >= 0 ? src.source_physical_index
-                                           : (src.physical_index >= 0 ? src.physical_index : 0);
+        seed.source_physical_index = src.source_physical_index >= 0
+                                         ? src.source_physical_index
+                                         : (src.physical_index >= 0 ? src.physical_index : 0);
         seed.source_byte_offset =
             src.source_byte_offset != 0 ? src.source_byte_offset : src.byte_offset;
         if (seed.source_physical_index >= 0 &&
             static_cast<std::size_t>(seed.source_physical_index) <
                 contract->dispatcher_physical_outputs.size()) {
-          const auto& dispatcher =
-              contract->dispatcher_physical_outputs[static_cast<std::size_t>(
-                  seed.source_physical_index)];
+          const auto& dispatcher = contract->dispatcher_physical_outputs[static_cast<std::size_t>(
+              seed.source_physical_index)];
           const auto source_offset =
               static_cast<std::uint64_t>(std::max<std::int64_t>(seed.source_byte_offset, 0));
           if (dispatcher.size_bytes > source_offset) {
@@ -920,11 +921,10 @@ void build_output_contracts(MlaStaticContract* contract,
   for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
     const auto& src = logical_outputs[i];
     const std::string default_name =
-        (logical_outputs.size() == 1U) ? "mla_output_tensor"
-                                       : ("mla_output_" + std::to_string(i));
-    const bool packed_byte_view =
-        packed_single_parent && src.shape_semantics == MpkShapeSemantics::PackedExtent &&
-        src.logical_shape.empty();
+        (logical_outputs.size() == 1U) ? "mla_output_tensor" : ("mla_output_" + std::to_string(i));
+    const bool packed_byte_view = packed_single_parent &&
+                                  src.shape_semantics == MpkShapeSemantics::PackedExtent &&
+                                  src.logical_shape.empty();
     const std::string logical_output_dtype =
         packed_byte_view ? std::string("INT8") : canonical_output_dtype;
     TensorStaticSpec tensor =
@@ -946,8 +946,7 @@ void build_output_contracts(MlaStaticContract* contract,
     const bool packed_extent_output =
         src.shape_semantics == MpkShapeSemantics::PackedExtent && src.logical_shape.empty();
     logical.logical_index = static_cast<int>(i);
-    logical.backend_output_index =
-        (src.tensor_index >= 0) ? src.tensor_index : static_cast<int>(i);
+    logical.backend_output_index = (src.tensor_index >= 0) ? src.tensor_index : static_cast<int>(i);
     logical.physical_index = published_it->second;
     logical.output_slot = static_cast<int>(i);
     logical.tensor_index = logical.backend_output_index;
@@ -965,8 +964,8 @@ void build_output_contracts(MlaStaticContract* contract,
         logical.stride_bytes = src.stride_bytes;
       } else {
         logical.stride_bytes = pipeline_internal::contiguous_strides_bytes(
-            logical.shape, pipeline_internal::dtype_bytes(
-                             tensor_dtype_from_contract_token_local(logical.dtype)));
+            logical.shape,
+            pipeline_internal::dtype_bytes(tensor_dtype_from_contract_token_local(logical.dtype)));
       }
     } else {
       logical.stride_bytes = tensor_stride_bytes_from_mpk_tensor_local(src, tensor);
@@ -980,15 +979,12 @@ void build_output_contracts(MlaStaticContract* contract,
 
     auto& physical = contract->physical_outputs[static_cast<std::size_t>(published_it->second)];
     const auto& logical_ref = contract->logical_outputs.back();
-    const std::uint64_t logical_physical_span =
-        tensor_physical_span_bytes_from_shape_strides_local(logical_ref.shape,
-                                                            logical_ref.stride_bytes,
-                                                            logical_ref.dtype);
+    const std::uint64_t logical_physical_span = tensor_physical_span_bytes_from_shape_strides_local(
+        logical_ref.shape, logical_ref.stride_bytes, logical_ref.dtype);
     const std::uint64_t logical_published_span =
         std::max<std::uint64_t>(logical_physical_span, logical_ref.size_bytes);
     const std::uint64_t logical_end =
-        static_cast<std::uint64_t>(logical_ref.byte_offset) +
-        logical_published_span;
+        static_cast<std::uint64_t>(logical_ref.byte_offset) + logical_published_span;
     if (!packed_single_parent) {
       physical.size_bytes = std::max<std::uint64_t>(physical.size_bytes, logical_end);
     }
@@ -997,7 +993,8 @@ void build_output_contracts(MlaStaticContract* contract,
   if (!validate_output_contracts(*contract)) {
     if (mla_contract_debug_enabled()) {
       std::fprintf(stderr,
-                   "[mla-contract] rejecting invalid MLA output contract logical_outputs=%zu physical_outputs=%zu\n",
+                   "[mla-contract] rejecting invalid MLA output contract logical_outputs=%zu "
+                   "physical_outputs=%zu\n",
                    contract->logical_outputs.size(), contract->physical_outputs.size());
     }
     contract->physical_outputs.clear();
@@ -1021,7 +1018,8 @@ void build_output_contracts(MlaStaticContract* contract,
     for (std::size_t i = 0; i < contract->physical_outputs.size(); ++i) {
       const auto& physical = contract->physical_outputs[i];
       std::fprintf(stderr,
-                   "[mla-contract] published_output idx=%zu physical_index=%d segment=%s size_bytes=%llu source_physical_index=%d source_byte_offset=%lld\n",
+                   "[mla-contract] published_output idx=%zu physical_index=%d segment=%s "
+                   "size_bytes=%llu source_physical_index=%d source_byte_offset=%lld\n",
                    i, physical.physical_index, debug_string_or_empty(physical.segment_name),
                    static_cast<unsigned long long>(physical.size_bytes),
                    physical.source_physical_index,
@@ -1031,10 +1029,8 @@ void build_output_contracts(MlaStaticContract* contract,
 }
 
 MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
-    const MpkPluginIoContract& mla,
-    const std::vector<MpkTensorContract>& logical_outputs,
-    const std::vector<MpkTensorContract>& physical_outputs,
-    const std::string& node_name_hint,
+    const MpkPluginIoContract& mla, const std::vector<MpkTensorContract>& logical_outputs,
+    const std::vector<MpkTensorContract>& physical_outputs, const std::string& node_name_hint,
     const std::vector<MpkTensorContract>* boundary_inputs_override) {
   MlaStaticContract contract;
   contract.node_name = node_name_hint.empty() ? mla.name : node_name_hint;
@@ -1043,8 +1039,7 @@ MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
   contract.batch_size = mla.batch_size;
   contract.batch_sz_model = mla.batch_sz_model;
 
-  auto build_input_spec = [&](const MpkTensorContract& src,
-                              const std::vector<std::int64_t>& shape,
+  auto build_input_spec = [&](const MpkTensorContract& src, const std::vector<std::int64_t>& shape,
                               const std::string& dtype) {
     TensorStaticSpec spec;
     spec.dtype = dtype.empty() ? "FP32" : normalize_tensor_dtype_token(dtype);
@@ -1052,14 +1047,14 @@ MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
     assign_tensor_dims_from_shape(spec.shape, &spec);
     spec.semantic_tag = src.name.empty() ? "mla_input" : src.name;
     if (src.size_bytes > 0U) {
-      spec.max_stride =
-          to_non_negative_int(static_cast<std::int64_t>(std::min<std::size_t>(
-              src.size_bytes, static_cast<std::size_t>(std::numeric_limits<int>::max()))));
+      spec.max_stride = to_non_negative_int(static_cast<std::int64_t>(std::min<std::size_t>(
+          src.size_bytes, static_cast<std::size_t>(std::numeric_limits<int>::max()))));
     }
     return spec;
   };
 
-  const auto& input_tensors = boundary_inputs_override ? *boundary_inputs_override : mla.input_tensors;
+  const auto& input_tensors =
+      boundary_inputs_override ? *boundary_inputs_override : mla.input_tensors;
   contract.inputs.reserve(input_tensors.size());
   contract.logical_inputs.reserve(input_tensors.size());
   contract.physical_inputs.reserve(input_tensors.size());
@@ -1074,15 +1069,14 @@ MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
     physical_input.physical_index = static_cast<int>(i);
     physical_input.allocator_index = static_cast<int>(i);
     physical_input.source_physical_index =
-        src.source_physical_index >= 0 ? src.source_physical_index
-                                       : (src.physical_index >= 0 ? src.physical_index
-                                                                  : static_cast<int>(i));
-    physical_input.source_byte_offset =
-        src.source_byte_offset != 0 ? src.source_byte_offset
-                                    : std::max<std::int64_t>(0, src.byte_offset);
+        src.source_physical_index >= 0
+            ? src.source_physical_index
+            : (src.physical_index >= 0 ? src.physical_index : static_cast<int>(i));
+    physical_input.source_byte_offset = src.source_byte_offset != 0
+                                            ? src.source_byte_offset
+                                            : std::max<std::int64_t>(0, src.byte_offset);
     physical_input.device_kind = DeviceKind::Unknown;
-    physical_input.segment_name =
-        !src.segment_name.empty() ? src.segment_name : src.name;
+    physical_input.segment_name = !src.segment_name.empty() ? src.segment_name : src.name;
     physical_input.size_bytes =
         src.size_bytes > 0U
             ? static_cast<std::uint64_t>(src.size_bytes)
@@ -1091,8 +1085,7 @@ MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
 
     const std::vector<std::int64_t> logical_shape =
         mla_input_logical_shape_from_mpk_tensor_local(src);
-    const std::string& logical_dtype =
-        !src.logical_dtype.empty() ? src.logical_dtype : src.dtype;
+    const std::string& logical_dtype = !src.logical_dtype.empty() ? src.logical_dtype : src.dtype;
     TensorStaticSpec logical = build_input_spec(src, logical_shape, logical_dtype);
     logical.tensor_index = static_cast<int>(i);
     contract.logical_inputs.push_back(std::move(logical));
@@ -1116,8 +1109,7 @@ MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
                    "source_physical_index=%d source_byte_offset=%lld\n",
                    i, debug_string_or_empty(contract.node_name), debug_string_or_empty(src.dtype),
                    debug_string_or_empty(src.logical_dtype), shape_csv(src.mpk_shape).c_str(),
-                   shape_csv(src.logical_shape).c_str(),
-                   shape_csv(logical_shape).c_str(),
+                   shape_csv(src.logical_shape).c_str(), shape_csv(logical_shape).c_str(),
                    shape_csv(contract.inputs.back().shape).c_str(),
                    shape_csv(contract.logical_inputs.back().shape).c_str(),
                    static_cast<unsigned long long>(contract.physical_inputs.back().size_bytes),
@@ -1136,13 +1128,11 @@ MlaStaticContract build_mla_static_contract_from_mpk_stage_local(
 } // namespace
 
 MlaStaticContract build_mla_static_contract_from_mpk_stage(
-    const MpkPluginIoContract& mla,
-    const std::vector<MpkTensorContract>& logical_outputs,
-    const std::vector<MpkTensorContract>& physical_outputs,
-    const std::string& node_name_hint,
+    const MpkPluginIoContract& mla, const std::vector<MpkTensorContract>& logical_outputs,
+    const std::vector<MpkTensorContract>& physical_outputs, const std::string& node_name_hint,
     const std::vector<MpkTensorContract>* boundary_inputs_override) {
-  return build_mla_static_contract_from_mpk_stage_local(
-      mla, logical_outputs, physical_outputs, node_name_hint, boundary_inputs_override);
+  return build_mla_static_contract_from_mpk_stage_local(mla, logical_outputs, physical_outputs,
+                                                        node_name_hint, boundary_inputs_override);
 }
 
 } // namespace simaai::neat::pipeline_internal::sima

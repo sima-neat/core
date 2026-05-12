@@ -60,9 +60,9 @@ RUN_TEST("unit_sima_plugin_context_late_child_injection_test", ([] {
            require(late_accessor != nullptr,
                    "late child manifest context should expose ABI-safe accessor");
            const SimaPluginStageSpec* late_payload =
-               sima_plugin_manifest_context_stage_lookup_typed(
-                   late_context, "late_stage_id", "late_stage",
-                   SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE);
+               sima_plugin_manifest_context_stage_lookup_typed(late_context, "late_stage_id",
+                                                               "late_stage",
+                                                               SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE);
            require(late_payload != nullptr,
                    "late child manifest context should resolve the newly added stage");
            require(late_payload->payload.boxdecode.topk == 50,

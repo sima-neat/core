@@ -7,7 +7,8 @@
  * `Sample` type that flows out of `Run::pull()`. Key types here:
  *   - `VerboseOptions` / `VerbosityLevel` — diagnostic verbosity controls (per topic).
  *   - `SessionOptions` — per-Session knobs (callback timeout, naming, processor preference).
- *   - `RtspServerOptions` / `ValidateOptions` / `OutputTensorOptions` — option packs for specific calls.
+ *   - `RtspServerOptions` / `ValidateOptions` / `OutputTensorOptions` — option packs for specific
+ * calls.
  *   - `RunMode` — Async vs Sync timing mode.
  *   - `Sample` / `SampleKind` — the typed payload `pull()` returns; can be a Tensor, a
  *     TensorSet (multiple physical outputs), or a Bundle (recursive multi-logical-output).
@@ -121,7 +122,8 @@ struct VerboseOptions {
     return opt;
   }
 
-  /// Preset: production messages plus GStreamer and plugin-internal traces. For debugging plugin behavior.
+  /// Preset: production messages plus GStreamer and plugin-internal traces. For debugging plugin
+  /// behavior.
   [[nodiscard]] static VerboseOptions debug_plugins() {
     VerboseOptions opt = production();
     opt.gstreamer = true;
@@ -151,8 +153,9 @@ struct VerboseOptions {
  * @ingroup pipeline
  */
 struct RtspServerOptions {
-  std::string mount = "image"; ///< RTSP path component (e.g., `"image"` → `rtsp://host:port/image`).
-  int port = 8554;             ///< RTSP server TCP port.
+  std::string mount =
+      "image";     ///< RTSP path component (e.g., `"image"` → `rtsp://host:port/image`).
+  int port = 8554; ///< RTSP server TCP port.
   /**
    * @brief Optional RTP/RTCP UDP port range.
    *
@@ -160,8 +163,8 @@ struct RtspServerOptions {
    * `[rtp_port_base, rtp_port_base + rtp_port_count - 1]`. Useful when firewall rules require
    * a fixed port range. Leave at the defaults (`-1`, `0`) for unrestricted port allocation.
    */
-  int rtp_port_base = -1;  ///< First UDP port for RTP/RTCP allocation; `-1` = no restriction.
-  int rtp_port_count = 0;  ///< Size of the RTP/RTCP port range; `0` = no restriction.
+  int rtp_port_base = -1; ///< First UDP port for RTP/RTCP allocation; `-1` = no restriction.
+  int rtp_port_count = 0; ///< Size of the RTP/RTCP port range; `0` = no restriction.
 };
 
 /**
@@ -274,7 +277,8 @@ struct PreparedRunnerOptions {
  * @ingroup pipeline
  */
 struct SessionOptions {
-  int callback_timeout_ms = 1000;            ///< Maximum time a user callback (e.g., `set_tensor_callback`) may take before the framework intervenes.
+  int callback_timeout_ms = 1000; ///< Maximum time a user callback (e.g., `set_tensor_callback`)
+                                  ///< may take before the framework intervenes.
   /// Prefix prepended to every generated GStreamer element name (sanitized to valid characters).
   std::string element_name_prefix;
   /// Suffix appended to every generated GStreamer element name (sanitized to valid characters).
@@ -314,8 +318,8 @@ struct SessionOptions {
  * @ingroup pipeline
  */
 struct OutputTensorOptions {
-  FormatSpec format = FormatTag::RGB;       ///< Target pixel/data format (RGB, NV12, FP32, etc.).
-  TensorDType dtype = TensorDType::UInt8;   ///< Target dtype.
+  FormatSpec format = FormatTag::RGB;     ///< Target pixel/data format (RGB, NV12, FP32, etc.).
+  TensorDType dtype = TensorDType::UInt8; ///< Target dtype.
 
   int target_width = -1;  ///< Target output width in pixels (-1 = no resize).
   int target_height = -1; ///< Target output height in pixels (-1 = no resize).
@@ -358,9 +362,9 @@ enum class PullStatus {
  * @ingroup diagnostics
  */
 struct PullError {
-  std::string message;                  ///< Human-readable error string (often prefixed with `[code]`).
-  std::string code;                     ///< Canonical machine-triage code (see `pipeline/ErrorCodes.h`).
-  std::optional<SessionReport> report;  ///< Optional structured report for runtime/plugin failures.
+  std::string message; ///< Human-readable error string (often prefixed with `[code]`).
+  std::string code;    ///< Canonical machine-triage code (see `pipeline/ErrorCodes.h`).
+  std::optional<SessionReport> report; ///< Optional structured report for runtime/plugin failures.
 };
 
 /**
@@ -374,35 +378,40 @@ struct PullError {
  */
 struct Sample {
   SampleKind kind = SampleKind::Unknown; ///< Discriminator: which payload field is meaningful.
-  bool owned = true;                     ///< If `false`, the framework holds a borrowed reference to the underlying buffer.
+  bool owned =
+      true; ///< If `false`, the framework holds a borrowed reference to the underlying buffer.
 
   std::optional<simaai::neat::Tensor> tensor; ///< Set when `kind == Tensor`.
-  TensorList tensors;                          ///< Set when `kind == TensorSet`.
-  std::vector<Sample> fields;                  ///< Set when `kind == Bundle` (recursive multi-logical-output).
+  TensorList tensors;                         ///< Set when `kind == TensorSet`.
+  std::vector<Sample> fields; ///< Set when `kind == Bundle` (recursive multi-logical-output).
 
-  std::string caps_string; ///< Caps string from the source GStreamer buffer (for media-typed payloads).
-  std::string media_type;  ///< MIME-style media type (e.g., `"video/x-raw"`, `"application/vnd.simaai.tensor"`).
-  std::string payload_tag; ///< Subformat tag (e.g., `"NV12"`, `"FP32"`, `"INT8"`). Replaces deprecated `format`.
+  std::string
+      caps_string; ///< Caps string from the source GStreamer buffer (for media-typed payloads).
+  std::string media_type;  ///< MIME-style media type (e.g., `"video/x-raw"`,
+                           ///< `"application/vnd.simaai.tensor"`).
+  std::string payload_tag; ///< Subformat tag (e.g., `"NV12"`, `"FP32"`, `"INT8"`). Replaces
+                           ///< deprecated `format`.
   /// Subformat tag for the payload.
   /// @deprecated Use `payload_tag`. Kept for transition.
   std::string format;
 
-  int64_t frame_id = -1;       ///< Source-assigned frame ID, when carried.
-  std::string stream_id;       ///< Stream identifier (multi-stream pipelines).
-  std::string stream_label;    ///< Human-readable stream label.
-  std::string port_name;       ///< Ingress port name (multi-input models).
+  int64_t frame_id = -1;    ///< Source-assigned frame ID, when carried.
+  std::string stream_id;    ///< Stream identifier (multi-stream pipelines).
+  std::string stream_label; ///< Human-readable stream label.
+  std::string port_name;    ///< Ingress port name (multi-input models).
   /// Logical output index this sample corresponds to.
   /// @deprecated Legacy alias for `logical_output_index`.
   int output_index = -1;
   int logical_output_index = -1; ///< Logical output index this sample corresponds to.
-  int memory_index = -1;       ///< Underlying memory segment index (advanced; for zero-copy routing).
-  int route_slot = -1;         ///< Route-graph slot identifier (advanced).
-  std::string segment_name;    ///< Memory segment name (advanced).
-  int64_t input_seq = -1;      ///< Input sequence number assigned at push time (lets pull match push).
-  int64_t orig_input_seq = -1; ///< Original input sequence (when re-numbered through a sub-pipeline).
-  int64_t pts_ns = -1;         ///< Presentation timestamp in nanoseconds (-1 if absent).
-  int64_t dts_ns = -1;         ///< Decoding timestamp in nanoseconds (-1 if absent).
-  int64_t duration_ns = -1;    ///< Sample duration in nanoseconds (-1 if absent).
+  int memory_index = -1;    ///< Underlying memory segment index (advanced; for zero-copy routing).
+  int route_slot = -1;      ///< Route-graph slot identifier (advanced).
+  std::string segment_name; ///< Memory segment name (advanced).
+  int64_t input_seq = -1;   ///< Input sequence number assigned at push time (lets pull match push).
+  int64_t orig_input_seq =
+      -1;                   ///< Original input sequence (when re-numbered through a sub-pipeline).
+  int64_t pts_ns = -1;      ///< Presentation timestamp in nanoseconds (-1 if absent).
+  int64_t dts_ns = -1;      ///< Decoding timestamp in nanoseconds (-1 if absent).
+  int64_t duration_ns = -1; ///< Sample duration in nanoseconds (-1 if absent).
 
 #if defined(SIMA_WITH_OPENCV)
   static const char* image_format_string(ImageSpec::PixelFormat fmt) {

@@ -45,8 +45,9 @@ struct H264ParseOptions {
   /// Byte-stream vs. AVC framing to enforce on the downstream caps.
   enum class StreamFormat { Auto, AVC, ByteStream };
 
-  Alignment alignment = Alignment::Auto;       ///< Alignment to enforce when `enforce_caps` is true.
-  StreamFormat stream_format = StreamFormat::Auto; ///< Stream-format to enforce when `enforce_caps` is true.
+  Alignment alignment = Alignment::Auto; ///< Alignment to enforce when `enforce_caps` is true.
+  StreamFormat stream_format =
+      StreamFormat::Auto; ///< Stream-format to enforce when `enforce_caps` is true.
 
   /// If true, append a named capsfilter after h264parse with the non-`Auto` fields applied.
   bool enforce_caps = false;
@@ -101,7 +102,8 @@ inline std::shared_ptr<simaai::neat::Node> H264Parse(int config_interval = 1) {
   return H264Parse(opt);
 }
 
-/// Convenience preset: AU-aligned access units. Default for demux→decode paths where AU boundaries matter.
+/// Convenience preset: AU-aligned access units. Default for demux→decode paths where AU boundaries
+/// matter.
 inline std::shared_ptr<simaai::neat::Node> H264ParseAu(int config_interval = 1) {
   simaai::neat::H264ParseOptions opt;
   opt.config_interval = config_interval;
@@ -111,7 +113,8 @@ inline std::shared_ptr<simaai::neat::Node> H264ParseAu(int config_interval = 1) 
   return H264Parse(opt);
 }
 
-/// Convenience preset: streaming-safe defaults for RTP/RTSP publishing where late-joiners need SPS/PPS.
+/// Convenience preset: streaming-safe defaults for RTP/RTSP publishing where late-joiners need
+/// SPS/PPS.
 inline std::shared_ptr<simaai::neat::Node> H264ParseForRtp(int config_interval = 1) {
   simaai::neat::H264ParseOptions opt;
   opt.config_interval = config_interval; // usually 1

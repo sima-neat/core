@@ -35,8 +35,7 @@ inline json load_json_file(const std::string& path, const char* label) {
   return j;
 }
 
-template <typename T>
-inline T json_or(const json& cfg, const char* key, T fallback) {
+template <typename T> inline T json_or(const json& cfg, const char* key, T fallback) {
   const auto it = cfg.find(key);
   if (it == cfg.end() || it->is_null()) {
     return fallback;
@@ -44,8 +43,7 @@ inline T json_or(const json& cfg, const char* key, T fallback) {
   return it->get<T>();
 }
 
-template <typename T>
-inline std::vector<T> json_vector_or(const json& cfg, const char* key) {
+template <typename T> inline std::vector<T> json_vector_or(const json& cfg, const char* key) {
   const auto it = cfg.find(key);
   if (it == cfg.end() || it->is_null()) {
     return {};
@@ -53,8 +51,8 @@ inline std::vector<T> json_vector_or(const json& cfg, const char* key) {
   return it->get<std::vector<T>>();
 }
 
-inline std::vector<std::vector<int>> json_shape_list_or(
-    const json& cfg, std::initializer_list<const char*> keys) {
+inline std::vector<std::vector<int>> json_shape_list_or(const json& cfg,
+                                                        std::initializer_list<const char*> keys) {
   for (const char* key : keys) {
     const auto it = cfg.find(key);
     if (it == cfg.end() || it->is_null() || !it->is_array()) {
@@ -88,8 +86,7 @@ inline std::string write_json_memfd(const json& j, int* out_fd, const char* labe
 #ifdef SYS_memfd_create
   const int fd = static_cast<int>(::syscall(SYS_memfd_create, memfd_name, MFD_CLOEXEC));
   if (fd < 0) {
-    throw std::runtime_error(std::string(label) + ": memfd_create failed: " +
-                             std::strerror(errno));
+    throw std::runtime_error(std::string(label) + ": memfd_create failed: " + std::strerror(errno));
   }
   const std::string payload = j.dump(2);
   const char* ptr = payload.data();
@@ -127,12 +124,11 @@ inline void rewrite_json_memfd(int fd, const json& j, const char* label) {
     throw std::runtime_error(std::string(label) + ": invalid memfd");
   }
   if (::ftruncate(fd, 0) != 0) {
-    throw std::runtime_error(std::string(label) + ": memfd truncate failed: " +
-                             std::strerror(errno));
+    throw std::runtime_error(std::string(label) +
+                             ": memfd truncate failed: " + std::strerror(errno));
   }
   if (::lseek(fd, 0, SEEK_SET) < 0) {
-    throw std::runtime_error(std::string(label) + ": memfd seek failed: " +
-                             std::strerror(errno));
+    throw std::runtime_error(std::string(label) + ": memfd seek failed: " + std::strerror(errno));
   }
   const std::string payload = j.dump(2);
   const char* ptr = payload.data();
@@ -140,8 +136,8 @@ inline void rewrite_json_memfd(int fd, const json& j, const char* label) {
   while (remaining > 0U) {
     const ssize_t wrote = ::write(fd, ptr, remaining);
     if (wrote < 0) {
-      throw std::runtime_error(std::string(label) + ": memfd write failed: " +
-                               std::strerror(errno));
+      throw std::runtime_error(std::string(label) +
+                               ": memfd write failed: " + std::strerror(errno));
     }
     ptr += static_cast<std::size_t>(wrote);
     remaining -= static_cast<std::size_t>(wrote);
@@ -204,8 +200,8 @@ build_processcvu_runtime_config(const json& cfg, ProcessCvuRuntimeConfigOptions 
     throw std::runtime_error("build_processcvu_runtime_config: invalid input_layout/output_layout");
   }
   if (!options.allow_shape_only_tensor_desc && (input_layout.empty() || output_layout.empty())) {
-    throw std::runtime_error(
-        "build_processcvu_runtime_config: explicit input_layout/output_layout are required to synthesize typed tensors");
+    throw std::runtime_error("build_processcvu_runtime_config: explicit input_layout/output_layout "
+                             "are required to synthesize typed tensors");
   }
   runtime.byte_align = json_or<int>(cfg, "byte_align", 1);
   runtime.input_stride = json_or<int>(cfg, "input_stride", 0);
@@ -219,20 +215,22 @@ build_processcvu_runtime_config(const json& cfg, ProcessCvuRuntimeConfigOptions 
   for (const auto& shape : runtime.input_shapes) {
     sima_ev_tensor_desc desc{};
     std::string error_detail;
-    const bool ok = input_layout.empty()
-        ? tensorsemantics::build_generic_dense_tensor_desc(
-              shape, runtime.input_dtype, &desc, &error_detail,
-              "node_config_input_tensor_output_missing", "node_config_input_shape_rank_invalid",
-              "node_config_input_shape_dim_invalid", "node_config_input_dtype_invalid",
-              "node_config_input_dense_stride_output_missing")
-        : tensorsemantics::build_dense_tensor_desc(
-              shape, runtime.input_dtype, input_layout, &desc, &error_detail,
-              "node_config_input_tensor_output_missing", "node_config_input_shape_rank_invalid",
-              "node_config_input_shape_dim_invalid", "node_config_input_dtype_invalid",
-              "node_config_input_dense_stride_output_missing");
+    const bool ok =
+        input_layout.empty()
+            ? tensorsemantics::build_generic_dense_tensor_desc(
+                  shape, runtime.input_dtype, &desc, &error_detail,
+                  "node_config_input_tensor_output_missing", "node_config_input_shape_rank_invalid",
+                  "node_config_input_shape_dim_invalid", "node_config_input_dtype_invalid",
+                  "node_config_input_dense_stride_output_missing")
+            : tensorsemantics::build_dense_tensor_desc(
+                  shape, runtime.input_dtype, input_layout, &desc, &error_detail,
+                  "node_config_input_tensor_output_missing", "node_config_input_shape_rank_invalid",
+                  "node_config_input_shape_dim_invalid", "node_config_input_dtype_invalid",
+                  "node_config_input_dense_stride_output_missing");
     if (!ok) {
-      throw std::runtime_error("build_processcvu_runtime_config: could not synthesize typed input tensor" +
-                               (error_detail.empty() ? std::string() : std::string(": ") + error_detail));
+      throw std::runtime_error(
+          "build_processcvu_runtime_config: could not synthesize typed input tensor" +
+          (error_detail.empty() ? std::string() : std::string(": ") + error_detail));
     }
     runtime.input_tensors.push_back(desc);
   }
@@ -240,20 +238,24 @@ build_processcvu_runtime_config(const json& cfg, ProcessCvuRuntimeConfigOptions 
   for (const auto& shape : runtime.output_shapes) {
     sima_ev_tensor_desc desc{};
     std::string error_detail;
-    const bool ok = output_layout.empty()
-        ? tensorsemantics::build_generic_dense_tensor_desc(
-              shape, runtime.output_dtype, &desc, &error_detail,
-              "node_config_output_tensor_output_missing", "node_config_output_shape_rank_invalid",
-              "node_config_output_shape_dim_invalid", "node_config_output_dtype_invalid",
-              "node_config_output_dense_stride_output_missing")
-        : tensorsemantics::build_dense_tensor_desc(
-              shape, runtime.output_dtype, output_layout, &desc, &error_detail,
-              "node_config_output_tensor_output_missing", "node_config_output_shape_rank_invalid",
-              "node_config_output_shape_dim_invalid", "node_config_output_dtype_invalid",
-              "node_config_output_dense_stride_output_missing");
+    const bool ok =
+        output_layout.empty()
+            ? tensorsemantics::build_generic_dense_tensor_desc(
+                  shape, runtime.output_dtype, &desc, &error_detail,
+                  "node_config_output_tensor_output_missing",
+                  "node_config_output_shape_rank_invalid", "node_config_output_shape_dim_invalid",
+                  "node_config_output_dtype_invalid",
+                  "node_config_output_dense_stride_output_missing")
+            : tensorsemantics::build_dense_tensor_desc(
+                  shape, runtime.output_dtype, output_layout, &desc, &error_detail,
+                  "node_config_output_tensor_output_missing",
+                  "node_config_output_shape_rank_invalid", "node_config_output_shape_dim_invalid",
+                  "node_config_output_dtype_invalid",
+                  "node_config_output_dense_stride_output_missing");
     if (!ok) {
-      throw std::runtime_error("build_processcvu_runtime_config: could not synthesize typed output tensor" +
-                               (error_detail.empty() ? std::string() : std::string(": ") + error_detail));
+      throw std::runtime_error(
+          "build_processcvu_runtime_config: could not synthesize typed output tensor" +
+          (error_detail.empty() ? std::string() : std::string(": ") + error_detail));
     }
     runtime.output_tensors.push_back(desc);
   }

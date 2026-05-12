@@ -21,10 +21,10 @@ namespace simaai::neat {
  * @ingroup builder
  */
 enum class NextCpuDomain {
-  APU,      ///< Application processor (general-purpose CPU).
-  CVU,      ///< Computer-Vision Unit (EV74 vector cores).
-  MLA,      ///< Machine-Learning Accelerator.
-  Unknown   ///< Domain could not be determined.
+  APU,    ///< Application processor (general-purpose CPU).
+  CVU,    ///< Computer-Vision Unit (EV74 vector cores).
+  MLA,    ///< Machine-Learning Accelerator.
+  Unknown ///< Domain could not be determined.
 };
 
 /**
@@ -36,7 +36,7 @@ enum class NextCpuDomain {
  * @ingroup builder
  */
 struct NextCpuValue {
-  int cpu_int = 0;            ///< Integer domain code.
+  int cpu_int = 0;             ///< Integer domain code.
   const char* cpu_str = "APU"; ///< String domain label.
 };
 

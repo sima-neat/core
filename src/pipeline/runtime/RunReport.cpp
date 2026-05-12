@@ -83,8 +83,7 @@ RuntimeMetrics Run::metrics(const RuntimeMetricsOptions& opt) const {
   if (start != std::chrono::steady_clock::time_point{} && end > start) {
     out.elapsed_seconds = std::chrono::duration<double>(end - start).count();
     if (out.elapsed_seconds > 0.0) {
-      out.throughput_fps =
-          static_cast<double>(out.counters.outputs_pulled) / out.elapsed_seconds;
+      out.throughput_fps = static_cast<double>(out.counters.outputs_pulled) / out.elapsed_seconds;
     }
   }
 

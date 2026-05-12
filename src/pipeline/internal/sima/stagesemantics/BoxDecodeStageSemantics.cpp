@@ -15,13 +15,11 @@ bool boxdecode_bypass_mla_unpack_enabled() {
   return raw && *raw && std::strcmp(raw, "0") != 0;
 }
 
-std::string resolve_boxdecode_input_dtype(
-    const plugin_contracts::BoxDecodeContractSubset& subset) {
+std::string resolve_boxdecode_input_dtype(const plugin_contracts::BoxDecodeContractSubset& subset) {
   std::string dtype;
   for (const auto& logical : subset.logical_inputs) {
     if (logical.dtype.empty()) {
-      throw std::invalid_argument(
-          "boxdecode compiled contract requires logical input dtype");
+      throw std::invalid_argument("boxdecode compiled contract requires logical input dtype");
     }
     if (dtype.empty()) {
       dtype = logical.dtype;
@@ -35,13 +33,10 @@ std::string resolve_boxdecode_input_dtype(
   return dtype;
 }
 
-void populate_boxdecode_node_contract_common(const std::string& node_kind,
-                                             const std::string& plugin_kind,
-                                             const std::string& element_name,
-                                             const std::string& logical_stage_id,
-                                             const NodeContractDefinition& definition,
-                                             CompiledBoxDecodeContract compiled,
-                                             CompiledNodeContract* out) {
+void populate_boxdecode_node_contract_common(
+    const std::string& node_kind, const std::string& plugin_kind, const std::string& element_name,
+    const std::string& logical_stage_id, const NodeContractDefinition& definition,
+    CompiledBoxDecodeContract compiled, CompiledNodeContract* out) {
   out->node_kind = node_kind;
   out->plugin_kind = plugin_kind.empty() ? "boxdecode" : plugin_kind;
   out->element_name = element_name;
@@ -55,16 +50,11 @@ void populate_boxdecode_node_contract_common(const std::string& node_kind,
 } // namespace
 
 BoxDecodeStaticContract finalize_boxdecode_static_contract(
-    const BoxDecodeStaticContract& contract,
-    BoxDecodeType decode_type,
+    const BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
     const std::optional<ModelBoxdecodeSemantics>& model_semantics,
     const std::optional<ModelManagedRouteFlags>& model_route_flags,
-    BoxDecodeTypeOption decode_type_option,
-    double detection_threshold,
-    double nms_iou_threshold,
-    int topk,
-    int num_classes,
-    const std::vector<std::string>& required_preprocess_meta_fields) {
+    BoxDecodeTypeOption decode_type_option, double detection_threshold, double nms_iou_threshold,
+    int topk, int num_classes, const std::vector<std::string>& required_preprocess_meta_fields) {
   BoxDecodeStaticContract finalized = contract;
   finalized.decode_type = decode_type;
   finalized.decode_type_option = decode_type_option != BoxDecodeTypeOption::Auto
@@ -100,16 +90,14 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.decode_type =
       is_box_decode_type_specified(options.decode_type) ? options.decode_type : subset.decode_type;
   if (!is_box_decode_type_specified(compiled.payload.decode_type)) {
-    throw std::invalid_argument(
-        "boxdecode compiled contract requires an explicit decode_type");
+    throw std::invalid_argument("boxdecode compiled contract requires an explicit decode_type");
   }
-  compiled.payload.decode_type_option =
-      options.decode_type_option.has_value() ? options.decode_type_option
-                                             : subset.decode_type_option;
-  compiled.payload.score_activation =
-      options.score_activation != BoxDecodeScoreActivation::Unknown
-          ? options.score_activation
-          : subset.score_activation;
+  compiled.payload.decode_type_option = options.decode_type_option.has_value()
+                                            ? options.decode_type_option
+                                            : subset.decode_type_option;
+  compiled.payload.score_activation = options.score_activation != BoxDecodeScoreActivation::Unknown
+                                          ? options.score_activation
+                                          : subset.score_activation;
   compiled.payload.input_dtype = resolve_boxdecode_input_dtype(subset);
   compiled.payload.tess_needed = subset.tess_needed;
   compiled.payload.quant_needed = subset.quant_needed;
@@ -129,10 +117,10 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   return compiled;
 }
 
-CompiledBoxDecodeContract build_boxdecode_compiled_contract(
-    const BoxDecodeStaticContract& contract) {
-  const auto subset = plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(
-      contract);
+CompiledBoxDecodeContract
+build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
+  const auto subset =
+      plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(contract);
   BoxDecodeCompiledContractOptions options;
   options.decode_type = contract.decode_type;
   if (contract.decode_type_option != BoxDecodeTypeOption::Auto) {
@@ -149,14 +137,12 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract(
   return build_boxdecode_compiled_contract_from_subset(subset, options);
 }
 
-bool build_boxdecode_node_contract(const std::string& node_kind,
-                                   const std::string& plugin_kind,
+bool build_boxdecode_node_contract(const std::string& node_kind, const std::string& plugin_kind,
                                    const std::string& element_name,
                                    const std::string& logical_stage_id,
                                    const NodeContractDefinition& definition,
                                    const CompiledBoxDecodeContract& compiled,
-                                   CompiledNodeContract* out,
-                                   std::string* error_message) {
+                                   CompiledNodeContract* out, std::string* error_message) {
   if (!out) {
     if (error_message) {
       *error_message = node_kind + " contract compile: output is null";

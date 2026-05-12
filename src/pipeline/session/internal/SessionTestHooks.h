@@ -11,7 +11,6 @@ namespace simaai::neat::session_test {
 
 void reset_rendered_manifests();
 std::vector<pipeline_internal::sima::SimaPluginStaticManifest> get_rendered_manifests();
-void record_rendered_manifest(
-    const pipeline_internal::sima::SimaPluginStaticManifest& manifest);
+void record_rendered_manifest(const pipeline_internal::sima::SimaPluginStaticManifest& manifest);
 
 } // namespace simaai::neat::session_test

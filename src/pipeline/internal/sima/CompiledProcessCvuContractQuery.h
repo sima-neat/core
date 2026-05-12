@@ -45,8 +45,7 @@ inline std::string output_name_from_route(const StageOutputRoute& route) {
  */
 inline bool processcvu_contract_primary_output_uses_packed_transport(
     const CompiledProcessCvuContract& contract) {
-  return contract.payload.primary_output_transport_kind ==
-             ProcessCvuOutputTransportKind::Packed ||
+  return contract.payload.primary_output_transport_kind == ProcessCvuOutputTransportKind::Packed ||
          contract.payload.primary_output_semantic_kind ==
              ProcessCvuOutputSemanticKind::TessellatedImage ||
          contract.payload.primary_output_semantic_kind ==
@@ -62,7 +61,8 @@ inline bool processcvu_contract_primary_output_uses_packed_transport(
  * inputs, mismatched sizes).
  */
 inline bool preserve_mla_input_for_packed_handoff(MlaStaticContract* mla_contract) {
-  if (!mla_contract || mla_contract->logical_inputs.empty() || mla_contract->physical_inputs.empty()) {
+  if (!mla_contract || mla_contract->logical_inputs.empty() ||
+      mla_contract->physical_inputs.empty()) {
     return false;
   }
 
@@ -91,8 +91,7 @@ inline bool preserve_mla_input_for_packed_handoff(MlaStaticContract* mla_contrac
  * packed). Returns false when the exposed view lacks the required fields.
  */
 inline bool rewrite_mla_input_from_processcvu_dense_handoff(
-    const CompiledProcessCvuContract& upstream_handoff_contract,
-    MlaStaticContract* mla_contract) {
+    const CompiledProcessCvuContract& upstream_handoff_contract, MlaStaticContract* mla_contract) {
   if (!mla_contract || mla_contract->physical_inputs.empty() ||
       upstream_handoff_contract.exposed_view.exposed_logical_outputs.empty()) {
     return false;
@@ -112,13 +111,12 @@ inline bool rewrite_mla_input_from_processcvu_dense_handoff(
   logical.tensor_index = 0;
   logical.shape = exposed.shape;
   logical.dtype = exposed.dtype;
-  logical.layout =
-      !exposed.layout.empty()
-          ? tensorsemantics::normalize_layout_token(exposed.layout)
-          : upstream_handoff_contract.payload.logical_output_layout_token();
-  logical.max_stride = static_cast<int>(std::min<std::uint64_t>(
-      exposed.size_bytes > 0U ? exposed.size_bytes : physical.size_bytes,
-      static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
+  logical.layout = !exposed.layout.empty()
+                       ? tensorsemantics::normalize_layout_token(exposed.layout)
+                       : upstream_handoff_contract.payload.logical_output_layout_token();
+  logical.max_stride = static_cast<int>(
+      std::min<std::uint64_t>(exposed.size_bytes > 0U ? exposed.size_bytes : physical.size_bytes,
+                              static_cast<std::uint64_t>(std::numeric_limits<int>::max())));
   if (exposed.shape.size() >= 3U) {
     logical.max_h =
         static_cast<int>(std::max<std::int64_t>(0, exposed.shape[exposed.shape.size() - 3U]));
@@ -131,10 +129,10 @@ inline bool rewrite_mla_input_from_processcvu_dense_handoff(
     logical.max_w = static_cast<int>(std::max<std::int64_t>(0, exposed.shape.front()));
     logical.max_h = 1;
   }
-  logical.semantic_tag = !exposed.logical_name.empty()
-                             ? exposed.logical_name
-                             : (!physical.segment_name.empty() ? physical.segment_name
-                                                               : std::string("mla_input_0"));
+  logical.semantic_tag =
+      !exposed.logical_name.empty()
+          ? exposed.logical_name
+          : (!physical.segment_name.empty() ? physical.segment_name : std::string("mla_input_0"));
   return true;
 }
 
@@ -145,12 +143,12 @@ inline bool rewrite_mla_input_from_processcvu_dense_handoff(
  * offset / size needed to bind a downstream MLA's first input.
  */
 struct ProcessCvuSingleHandoffOutput {
-  std::string segment_name;            ///< Source segment name on the upstream stage.
-  int logical_output_index = -1;       ///< Upstream logical-output index.
-  int output_slot = -1;                ///< Upstream output slot.
-  int physical_index = -1;             ///< Upstream physical-output index.
-  std::int64_t byte_offset = 0;        ///< Byte offset within the upstream physical buffer.
-  std::uint64_t size_bytes = 0U;       ///< Size in bytes of the handoff slice.
+  std::string segment_name;      ///< Source segment name on the upstream stage.
+  int logical_output_index = -1; ///< Upstream logical-output index.
+  int output_slot = -1;          ///< Upstream output slot.
+  int physical_index = -1;       ///< Upstream physical-output index.
+  std::int64_t byte_offset = 0;  ///< Byte offset within the upstream physical buffer.
+  std::uint64_t size_bytes = 0U; ///< Size in bytes of the handoff slice.
 };
 
 /**
@@ -161,8 +159,8 @@ struct ProcessCvuSingleHandoffOutput {
  * `std::runtime_error` when the contract is malformed (e.g., missing primary output name in
  * a strict-handoff configuration).
  */
-inline std::optional<ProcessCvuSingleHandoffOutput> resolve_processcvu_single_handoff_output(
-    const CompiledProcessCvuContract& contract) {
+inline std::optional<ProcessCvuSingleHandoffOutput>
+resolve_processcvu_single_handoff_output(const CompiledProcessCvuContract& contract) {
   const bool explicit_single_handoff = contract.preproc_single_output_handoff;
   const bool single_exposed_output = contract.exposed_view.exposed_output_order.size() == 1U &&
                                      contract.exposed_view.exposed_logical_outputs.size() == 1U;
@@ -206,8 +204,8 @@ inline std::optional<ProcessCvuSingleHandoffOutput> resolve_processcvu_single_ha
   handoff.output_slot = route.output_slot >= 0 ? route.output_slot : logical.output_slot;
   handoff.physical_index = logical.physical_index;
   handoff.byte_offset = logical.byte_offset;
-  if (logical.physical_index >= 0 &&
-      static_cast<std::size_t>(logical.physical_index) < contract.runtime_contract.physical_outputs.size()) {
+  if (logical.physical_index >= 0 && static_cast<std::size_t>(logical.physical_index) <
+                                         contract.runtime_contract.physical_outputs.size()) {
     handoff.size_bytes =
         contract.runtime_contract.physical_outputs[static_cast<std::size_t>(logical.physical_index)]
             .size_bytes;
@@ -234,16 +232,16 @@ inline std::optional<ProcessCvuSingleHandoffOutput> resolve_processcvu_single_ha
  */
 inline void apply_processcvu_single_handoff_to_mla_contract(
     const std::optional<CompiledProcessCvuContract>& upstream_handoff_contract,
-    MlaStaticContract* mla_contract,
-    const std::string& stage_name,
+    MlaStaticContract* mla_contract, const std::string& stage_name,
     const std::string& upstream_stage_id = {}) {
   if (!mla_contract) {
     throw std::runtime_error(
         "ModelFragment: strict MLA handoff rewrite requires a valid MLA contract");
   }
   if (mla_contract->physical_inputs.empty()) {
-    throw std::runtime_error("ModelFragment: strict MLA contract missing physical inputs for stage '" +
-                             stage_name + "'");
+    throw std::runtime_error(
+        "ModelFragment: strict MLA contract missing physical inputs for stage '" + stage_name +
+        "'");
   }
   if (!upstream_handoff_contract.has_value()) {
     return;
@@ -254,8 +252,9 @@ inline void apply_processcvu_single_handoff_to_mla_contract(
 
   const auto handoff = resolve_processcvu_single_handoff_output(*upstream_handoff_contract);
   if (!handoff.has_value()) {
-    throw std::runtime_error("ModelFragment: strict processcvu handoff facts missing for MLA stage '" +
-                             stage_name + "'");
+    throw std::runtime_error(
+        "ModelFragment: strict processcvu handoff facts missing for MLA stage '" + stage_name +
+        "'");
   }
 
   auto& mla_input = mla_contract->physical_inputs.front();

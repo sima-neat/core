@@ -106,7 +106,6 @@ RUN_TEST("unit_tensorbuffer_padded_hwc_gap_inference_test", ([] {
            require(simaai::gst::tensor_buffer_materialize(view, std::vector<std::size_t>{6U, 4U},
                                                           &materialized, &err),
                    std::string("failed to materialize padded publish view: ") + err);
-           require(materialized ==
-                       std::vector<std::uint8_t>({1, 2, 3, 4, 5, 6, 8, 9, 10, 11}),
+           require(materialized == std::vector<std::uint8_t>({1, 2, 3, 4, 5, 6, 8, 9, 10, 11}),
                    "materialized bytes should skip padded channel slots and preserve tensor order");
          }));

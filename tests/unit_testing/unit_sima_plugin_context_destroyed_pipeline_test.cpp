@@ -38,14 +38,13 @@ RUN_TEST("unit_sima_plugin_context_destroyed_pipeline_test", ([] {
 
            SimaPluginManifestLookupStatus status = SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT;
            const auto* resolved = sima_plugin_manifest_context_stage_lookup_typed_checked(
-               context, "stage_destroy_id", "stage_destroy",
-               SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE, &status);
+               context, "stage_destroy_id", "stage_destroy", SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE,
+               &status);
            require(resolved != nullptr,
                    "context should remain valid after original pipeline teardown");
            require(status == SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_OK,
                    "destroyed pipeline lookup status mismatch");
-           require(resolved->payload.boxdecode.topk == 55,
-                   "destroyed pipeline payload mismatch");
+           require(resolved->payload.boxdecode.topk == 55, "destroyed pipeline payload mismatch");
 
            gst_context_unref(context);
          }));

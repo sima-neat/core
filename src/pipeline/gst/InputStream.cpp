@@ -53,8 +53,7 @@ struct InputStream::State {
   InputStreamOptions opt;
   InputStreamOptions::DynamicCapability dynamic_capability =
       InputStreamOptions::DynamicCapability::StaticOnly;
-  InputStreamOptions::ShapePolicy shape_policy =
-      InputStreamOptions::ShapePolicy::BoundedDynamic;
+  InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
   InputStreamOptions::ResolvedShapeLimits shape_limits{};
   InputStreamOptions::ByteGuardOrigin byte_guard_origin =
       InputStreamOptions::ByteGuardOrigin::Unset;
@@ -753,19 +752,16 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   return true;
 }
 
-BuiltBuffer build_buffer_with_fill(InputStream::State& st, const char* where,
-                                   const std::function<size_t(uint8_t*, size_t)>& fill,
-                                   size_t required_bytes,
-                                   const std::optional<int64_t>& frame_id_override,
-                                   const std::optional<int64_t>& input_seq_override,
-                                   const std::optional<int64_t>& orig_input_seq_override,
-                                   const std::optional<std::string>& stream_id_override,
-                                   const std::optional<std::string>& buffer_name_override,
-                                   const std::optional<uint64_t>& timestamp_override,
-                                   const std::function<void(GstBuffer**)>& prepare,
-                                   bool record_timings, const char* op_tag,
-                                   bool release_reuse_buffer_on_fail, int input_width,
-                                   int input_height) {
+BuiltBuffer build_buffer_with_fill(
+    InputStream::State& st, const char* where, const std::function<size_t(uint8_t*, size_t)>& fill,
+    size_t required_bytes, const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const std::optional<uint64_t>& timestamp_override,
+    const std::function<void(GstBuffer**)>& prepare, bool record_timings, const char* op_tag,
+    bool release_reuse_buffer_on_fail, int input_width, int input_height) {
   const char* tag = (op_tag && *op_tag) ? op_tag : "build_buffer_with_fill";
   verify_buffer_name_override(st.src_opt, buffer_name_override, where);
   std::chrono::steady_clock::time_point t_alloc_start{};
@@ -895,8 +891,7 @@ bool tensor_spec_matches(const SampleSpec& a, const SampleSpec& b) {
     return false;
   const std::string a_format = normalize_caps_format_for_media(a.media_type, a.format);
   const std::string b_format = normalize_caps_format_for_media(b.media_type, b.format);
-  return upper_copy(a_format) == upper_copy(b_format) && a.dtype == b.dtype &&
-         a.shape == b.shape;
+  return upper_copy(a_format) == upper_copy(b_format) && a.dtype == b.dtype && a.shape == b.shape;
 }
 
 void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* where) {
@@ -986,14 +981,14 @@ bool InputStream::push_with_fill(const char* where,
   const bool timings = st->timing_enabled;
   const bool push_timing = inputstream_debug_flags().push_timing;
 
-  const auto t_build_start = push_timing ? std::chrono::steady_clock::now()
-                                           : std::chrono::steady_clock::time_point{};
+  const auto t_build_start =
+      push_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   BuiltBuffer built = build_buffer_with_fill(
       *st, where, fill, required_bytes, frame_id_override, input_seq_override,
       orig_input_seq_override, stream_id_override, buffer_name_override, timestamp_override,
       prepare, timings || push_timing, "push_with_fill", true, input_width, input_height);
-  const auto t_build_end = push_timing ? std::chrono::steady_clock::now()
-                                       : std::chrono::steady_clock::time_point{};
+  const auto t_build_end =
+      push_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   GstBuffer* buf = built.buffer;
   GstBuffer* push_src = buf;
 
@@ -1023,16 +1018,16 @@ bool InputStream::push_with_fill(const char* where,
   if (push_timing) {
     const auto push_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end - t_push_start).count();
-    const auto build_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                              t_build_end - t_build_start).count();
+    const auto build_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t_build_end - t_build_start).count();
     std::fprintf(stderr,
-                 "[INPUTSTREAM_PUSH_TIMING] %s build_ns=%lld alloc_ns=%llu map_ns=%llu copy_ns=%llu appsrc_push_ns=%lld bytes=%zu ret=%d\n",
-                 where ? where : "InputStream::push_with_fill",
-                 static_cast<long long>(build_ns),
+                 "[INPUTSTREAM_PUSH_TIMING] %s build_ns=%lld alloc_ns=%llu map_ns=%llu "
+                 "copy_ns=%llu appsrc_push_ns=%lld bytes=%zu ret=%d\n",
+                 where ? where : "InputStream::push_with_fill", static_cast<long long>(build_ns),
                  static_cast<unsigned long long>(built.alloc_ns),
                  static_cast<unsigned long long>(built.map_ns),
-                 static_cast<unsigned long long>(built.copy_ns),
-                 static_cast<long long>(push_ns), buf_bytes, static_cast<int>(ret));
+                 static_cast<unsigned long long>(built.copy_ns), static_cast<long long>(push_ns),
+                 buf_bytes, static_cast<int>(ret));
   }
 
   if (ret != GST_FLOW_OK) {

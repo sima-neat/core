@@ -20,9 +20,9 @@ namespace simaai::neat::pipeline_internal::sima {
 
 /// Where a stage's tensors come from relative to the MLA core.
 enum class StageTensorSource {
-  None = 0,        ///< Stage is not anchored to the MLA.
-  MlaInputs = 1,   ///< Stage feeds (or is fed by) the MLA's input tensors.
-  MlaOutputs = 2,  ///< Stage feeds (or is fed by) the MLA's output tensors.
+  None = 0,       ///< Stage is not anchored to the MLA.
+  MlaInputs = 1,  ///< Stage feeds (or is fed by) the MLA's input tensors.
+  MlaOutputs = 2, ///< Stage feeds (or is fed by) the MLA's output tensors.
 };
 
 /**
@@ -32,9 +32,10 @@ enum class StageTensorSource {
  * whether to propagate the MLA's output quant parameters across the stage.
  */
 struct StageTransformRule {
-  StageTensorSource input_source = StageTensorSource::None;   ///< Where this stage's inputs come from.
-  StageTensorSource output_source = StageTensorSource::None;  ///< Where this stage's outputs go.
-  bool propagate_output_quant = false;                        ///< Carry MLA output-quant params across.
+  StageTensorSource input_source =
+      StageTensorSource::None; ///< Where this stage's inputs come from.
+  StageTensorSource output_source = StageTensorSource::None; ///< Where this stage's outputs go.
+  bool propagate_output_quant = false; ///< Carry MLA output-quant params across.
 };
 
 /**

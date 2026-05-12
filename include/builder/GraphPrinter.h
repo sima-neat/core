@@ -52,9 +52,9 @@ public:
    */
   struct Options {
     // Common
-    bool show_index = true;       ///< Prepend deterministic Node index (0..N-1).
-    bool show_kind = true;        ///< Print `Node::kind()` for each Node.
-    bool show_user_label = true;  ///< Print user-supplied label when non-empty.
+    bool show_index = true;      ///< Prepend deterministic Node index (0..N-1).
+    bool show_kind = true;       ///< Print `Node::kind()` for each Node.
+    bool show_user_label = true; ///< Print user-supplied label when non-empty.
 
     // Extra node info (still builder-only, calls Node::backend_fragment / element_names)
     bool show_backend_fragment = false; ///< Include each Node's gst fragment.
@@ -66,12 +66,12 @@ public:
     std::size_t max_elements_per_node = 16; ///< Cap per-Node element list before "...(N more)".
 
     // DOT controls
-    bool dot_rankdir_lr = true;                  ///< Left-to-right layout (vs top-down).
-    std::string dot_graph_name = "sima_graph";   ///< `digraph <name>` identifier.
+    bool dot_rankdir_lr = true;                ///< Left-to-right layout (vs top-down).
+    std::string dot_graph_name = "sima_graph"; ///< `digraph <name>` identifier.
 
     // Mermaid controls
-    bool mermaid_lr = true;                ///< Left-to-right (LR) vs top-down (TD).
-    std::string mermaid_id_prefix = "n";   ///< Mermaid node id prefix (must be identifier-like).
+    bool mermaid_lr = true;              ///< Left-to-right (LR) vs top-down (TD).
+    std::string mermaid_id_prefix = "n"; ///< Mermaid node id prefix (must be identifier-like).
   };
 
   // --------------------------

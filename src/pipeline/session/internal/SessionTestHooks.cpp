@@ -28,8 +28,7 @@ std::vector<pipeline_internal::sima::SimaPluginStaticManifest> get_rendered_mani
   return manifest_store();
 }
 
-void record_rendered_manifest(
-    const pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
+void record_rendered_manifest(const pipeline_internal::sima::SimaPluginStaticManifest& manifest) {
   std::lock_guard<std::mutex> lock(manifest_mutex());
   manifest_store().push_back(manifest);
 }

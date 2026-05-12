@@ -381,8 +381,7 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
         t.strides_bytes = contiguous_strides_bytes(t.shape, 1);
       } else {
         t.shape = {h, w, 3};
-        t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W,
-                            TensorAxisSemantic::C};
+        t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
         t.strides_bytes = contiguous_strides_bytes(t.shape, 1);
       }
     }
@@ -421,12 +420,10 @@ std::optional<Sample> sample_from_input_spec(const OutputSpec& spec, std::string
     const int64_t d = spec.depth;
     if (layout == TensorLayout::HWC) {
       t.shape = {h, w, d};
-      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W,
-                          TensorAxisSemantic::C};
+      t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
     } else if (layout == TensorLayout::CHW) {
       t.shape = {d, h, w};
-      t.axis_semantics = {TensorAxisSemantic::C, TensorAxisSemantic::H,
-                          TensorAxisSemantic::W};
+      t.axis_semantics = {TensorAxisSemantic::C, TensorAxisSemantic::H, TensorAxisSemantic::W};
     } else {
       t.shape = {h, w};
       t.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};

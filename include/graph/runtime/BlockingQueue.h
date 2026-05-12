@@ -31,7 +31,8 @@ public:
   /// Construct a queue with the given capacity (0 = unbounded).
   explicit BlockingQueue(std::size_t capacity = 0) : capacity_(capacity) {}
 
-  /// Push `item` (copy). Blocks up to `timeout_ms` (or forever if -1). Returns false on close/timeout.
+  /// Push `item` (copy). Blocks up to `timeout_ms` (or forever if -1). Returns false on
+  /// close/timeout.
   bool push(const T& item, int timeout_ms = -1) {
     std::unique_lock<std::mutex> lock(mu_);
     if (closed_)
@@ -51,7 +52,8 @@ public:
     return true;
   }
 
-  /// Push `item` (move). Blocks up to `timeout_ms` (or forever if -1). Returns false on close/timeout.
+  /// Push `item` (move). Blocks up to `timeout_ms` (or forever if -1). Returns false on
+  /// close/timeout.
   bool push(T&& item, int timeout_ms = -1) {
     std::unique_lock<std::mutex> lock(mu_);
     if (closed_)
@@ -95,7 +97,8 @@ public:
     return true;
   }
 
-  /// Pop the next item into `out`. Blocks up to `timeout_ms` (or forever if -1). Returns false if closed and empty (or on timeout).
+  /// Pop the next item into `out`. Blocks up to `timeout_ms` (or forever if -1). Returns false if
+  /// closed and empty (or on timeout).
   bool pop(T& out, int timeout_ms = -1) {
     std::unique_lock<std::mutex> lock(mu_);
     if (timeout_ms < 0) {

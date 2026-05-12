@@ -26,16 +26,16 @@ namespace simaai::neat::graph {
  * @ingroup graph
  */
 struct StreamMetadataDefaults {
-  std::string stream_id;            ///< Default stream id; used if the sample has none and `fill_stream_id`.
-  std::string caps_string;          ///< Default GStreamer caps string.
-  std::string stream_label;         ///< Default stream label.
-  std::string port_name;            ///< Default port name.
-  std::string media_type;           ///< Default media type (e.g., `"video/x-raw"`).
-  std::string format;               ///< Default format (e.g., `"NV12"`).
-  std::string payload_tag;          ///< Default payload tag.
-  bool fill_stream_id = true;       ///< Auto-assign `stream_id` when missing.
-  bool fill_input_seq = true;       ///< Auto-assign `input_seq` when missing.
-  bool fill_orig_input_seq = true;  ///< Auto-assign `orig_input_seq` when missing.
+  std::string stream_id;   ///< Default stream id; used if the sample has none and `fill_stream_id`.
+  std::string caps_string; ///< Default GStreamer caps string.
+  std::string stream_label;        ///< Default stream label.
+  std::string port_name;           ///< Default port name.
+  std::string media_type;          ///< Default media type (e.g., `"video/x-raw"`).
+  std::string format;              ///< Default format (e.g., `"NV12"`).
+  std::string payload_tag;         ///< Default payload tag.
+  bool fill_stream_id = true;      ///< Auto-assign `stream_id` when missing.
+  bool fill_input_seq = true;      ///< Auto-assign `input_seq` when missing.
+  bool fill_orig_input_seq = true; ///< Auto-assign `orig_input_seq` when missing.
 };
 
 /**

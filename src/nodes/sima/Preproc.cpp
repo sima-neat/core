@@ -146,9 +146,7 @@ int preproc_shape_channel_or_default(const std::vector<int>& shape, int fallback
   return fallback;
 }
 
-void preproc_apply_shape_hwc(const std::vector<int>& shape,
-                             int* out_height,
-                             int* out_width,
+void preproc_apply_shape_hwc(const std::vector<int>& shape, int* out_height, int* out_width,
                              int* out_channels) {
   if (out_height) {
     *out_height = shape.size() >= 1 ? shape[0] : 0;
@@ -270,11 +268,10 @@ json build_preproc_json(const PreprocOptions& opt) {
   const std::vector<float> std3 = ensure_three(opt.channel_stddev, 1.0f);
   const int input_channels =
       opt.input_channels() > 0 ? opt.input_channels() : channels_from_format(opt.input_img_type, 0);
-  const int output_channels =
-      opt.output_channels() > 0 ? opt.output_channels()
-                              : channels_from_format(opt.output_img_type, input_channels);
-  const std::vector<int> input_shape =
-      opt.has_input_shape() ? opt.input_shape : std::vector<int>{};
+  const int output_channels = opt.output_channels() > 0
+                                  ? opt.output_channels()
+                                  : channels_from_format(opt.output_img_type, input_channels);
+  const std::vector<int> input_shape = opt.has_input_shape() ? opt.input_shape : std::vector<int>{};
   const std::vector<int> output_shape =
       opt.has_output_shape() ? opt.output_shape : std::vector<int>{};
   const std::vector<int> slice_shape = opt.tessellate ? opt.slice_shape : std::vector<int>{};
@@ -418,19 +415,16 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   if (!opt_.has_input_shape() || opt_.input_img_type.empty()) {
     throw std::runtime_error("Preproc: invalid model-managed input contract");
   }
-  if (!opt_.has_output_shape() ||
-      opt_.scaled_width <= 0 || opt_.scaled_height <= 0) {
+  if (!opt_.has_output_shape() || opt_.scaled_width <= 0 || opt_.scaled_height <= 0) {
     throw std::runtime_error(
         "Preproc: model-managed preproc requires explicit output/scaled geometry.");
   }
   if (opt_.output_dtype.empty()) {
-    throw std::runtime_error(
-        "Preproc: model-managed preproc requires explicit output_dtype.");
+    throw std::runtime_error("Preproc: model-managed preproc requires explicit output_dtype.");
   }
   if (opt_.input_channels() <= 0) {
-    opt_.set_input_shape(
-        compact_shape({opt_.input_height(), opt_.input_width(),
-                       channels_from_format(opt_.input_img_type, 0)}));
+    opt_.set_input_shape(compact_shape(
+        {opt_.input_height(), opt_.input_width(), channels_from_format(opt_.input_img_type, 0)}));
   }
   if (opt_.output_img_type.empty()) {
     opt_.output_img_type = opt_.input_img_type;
@@ -442,8 +436,7 @@ Preproc::Preproc(PreprocOptions opt) : opt_(std::move(opt)) {
   }
   if (opt_.tessellate) {
     if (!opt_.has_slice_shape()) {
-      throw std::runtime_error(
-          "Preproc: tessellate=true requires explicit slice_shape.");
+      throw std::runtime_error("Preproc: tessellate=true requires explicit slice_shape.");
     }
   } else if (tile_geometry_present(opt_)) {
     warn_preproc_option("tile geometry was provided while tessellate=false; it will be ignored.");
@@ -478,14 +471,12 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
          (contract.depth > 0) ? contract.depth : channels_from_format(opt_.input_img_type, 0)}));
   }
   if (opt_.model_managed_contract) {
-    if (!opt_.has_output_shape() ||
-        opt_.scaled_width <= 0 || opt_.scaled_height <= 0) {
+    if (!opt_.has_output_shape() || opt_.scaled_width <= 0 || opt_.scaled_height <= 0) {
       throw std::runtime_error(
           "Preproc: model-managed preproc requires explicit output/scaled geometry.");
     }
     if (opt_.output_dtype.empty()) {
-      throw std::runtime_error(
-          "Preproc: model-managed preproc requires explicit output_dtype.");
+      throw std::runtime_error("Preproc: model-managed preproc requires explicit output_dtype.");
     }
   } else {
     if (opt_.output_width() <= 0 || opt_.output_height() <= 0) {
@@ -513,8 +504,7 @@ void Preproc::materialize_config_from_input_contract(const InputContract& contra
   const bool quantize_enabled = dtype_is_quantized(opt_.output_dtype);
   if (opt_.tessellate) {
     if (!opt_.has_slice_shape()) {
-      throw std::runtime_error(
-          "Preproc: tessellate=true requires explicit slice_shape.");
+      throw std::runtime_error("Preproc: tessellate=true requires explicit slice_shape.");
     }
   } else if (tile_geometry_present(opt_)) {
     warn_preproc_option("tile geometry was provided while tessellate=false; it will be ignored.");
@@ -568,19 +558,18 @@ NodeContractDefinition Preproc::contract_definition() const {
   def.inputs.push_back(std::move(input));
 
   ContractPortSpec output;
-  output.port_id = opt_.single_output_handoff
-                       ? resolved_preproc_primary_output_name(opt_)
-                       : std::string("preproc_outputs");
+  output.port_id = opt_.single_output_handoff ? resolved_preproc_primary_output_name(opt_)
+                                              : std::string("preproc_outputs");
   output.media_type = "video/x-raw";
   output.format = upper_copy(opt_.output_img_type);
   output.dtype = upper_copy(opt_.output_dtype);
   output.layout = layout_from_format(opt_.output_img_type, opt_.output_channels());
   def.outputs.push_back(std::move(output));
 
-  def.fields.push_back({"input_shape", ContractFieldSource::InputOnly,
-                        ContractOverridePolicy::Forbidden, true});
-  def.fields.push_back({"input_img_type", ContractFieldSource::InputOnly,
-                        ContractOverridePolicy::Forbidden, true});
+  def.fields.push_back(
+      {"input_shape", ContractFieldSource::InputOnly, ContractOverridePolicy::Forbidden, true});
+  def.fields.push_back(
+      {"input_img_type", ContractFieldSource::InputOnly, ContractOverridePolicy::Forbidden, true});
   def.fields.push_back({"output_shapes", ContractFieldSource::BuilderOption,
                         ContractOverridePolicy::BuilderOnly, true});
   def.fields.push_back({"output_img_type", ContractFieldSource::BuilderOption,
@@ -592,11 +581,11 @@ NodeContractDefinition Preproc::contract_definition() const {
   return def;
 }
 
-bool Preproc::compile_node_contract(const ContractCompileInput& input,
-                                    CompiledNodeContract* out,
+bool Preproc::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                     std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("preproc") : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("preproc")
+                                       : element_names(input.node_index).front();
   try {
     require_supported_single_output_handoff(opt_);
     const auto compiled =
@@ -626,8 +615,7 @@ void Preproc::apply_compiled_contract(const CompiledNodeContract& contract, std:
   if (payload.tessellate == 1) {
     const int output_height =
         payload.scaled_height > 0 ? payload.scaled_height : opt_.input_height();
-    const int output_width =
-        payload.scaled_width > 0 ? payload.scaled_width : opt_.input_width();
+    const int output_width = payload.scaled_width > 0 ? payload.scaled_width : opt_.input_width();
     opt_.set_output_shape(compact_shape({output_height, output_width, opt_.output_channels()}));
     if (!payload.output_shapes.empty()) {
       const int output_channels = preproc_shape_channel_or_default(payload.output_shapes[0], 0);

@@ -130,8 +130,7 @@ bool find_tensor_shape(const GstStructure* st, std::vector<int64_t>* out) {
     const guint rank = static_cast<guint>(rank_i);
     if (const char* shape_csv = gst_structure_get_string(st, "shape")) {
       std::vector<int64_t> parsed;
-      if (parse_shape_csv(shape_csv, &parsed) &&
-          parsed.size() == static_cast<std::size_t>(rank)) {
+      if (parse_shape_csv(shape_csv, &parsed) && parsed.size() == static_cast<std::size_t>(rank)) {
         *out = std::move(parsed);
         return true;
       }

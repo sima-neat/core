@@ -52,8 +52,9 @@ PhysicalBufferStaticSpec synthesize_mla_physical_input(const TensorStaticSpec& t
 LogicalInputStaticSpec mla_logical_input_from_facts(const TensorStaticSpec& tensor,
                                                     const PhysicalBufferStaticSpec& physical,
                                                     int index) {
-  const std::string logical_name =
-      !tensor.semantic_tag.empty() ? tensor.semantic_tag : ("input_tensor_" + std::to_string(index));
+  const std::string logical_name = !tensor.semantic_tag.empty()
+                                       ? tensor.semantic_tag
+                                       : ("input_tensor_" + std::to_string(index));
   return specbuilders::build_logical_input_static_spec(
       index, tensor.tensor_index >= 0 ? tensor.tensor_index : index,
       physical.physical_index >= 0 ? physical.physical_index : index, tensor.shape, tensor.dtype,
@@ -66,48 +67,39 @@ LogicalInputStaticSpec mla_logical_input_from_facts(const TensorStaticSpec& tens
 // use it (e.g. "data.ifm.persistent.input_00/MLA_0/placeholder_0_0.b0");
 // otherwise fall back to the legacy synthesized "ifmN" naming. This keeps
 // the carrier path correct for both monolithic and native-multi-IFM .elfs.
-std::string mla_ifm_backend_name_for_index(
-    const std::vector<std::string>& elf_ifm_symbol_names, std::size_t index) {
+std::string mla_ifm_backend_name_for_index(const std::vector<std::string>& elf_ifm_symbol_names,
+                                           std::size_t index) {
   if (index < elf_ifm_symbol_names.size() && !elf_ifm_symbol_names[index].empty()) {
     return elf_ifm_symbol_names[index];
   }
   return "ifm" + std::to_string(index);
 }
 
-LogicalInputStaticSpec mla_carrier_logical_input_from_physical(
-    const PhysicalBufferStaticSpec& physical,
-    int index,
-    const std::vector<std::string>& elf_ifm_symbol_names) {
+LogicalInputStaticSpec
+mla_carrier_logical_input_from_physical(const PhysicalBufferStaticSpec& physical, int index,
+                                        const std::vector<std::string>& elf_ifm_symbol_names) {
   const std::string backend_name =
       mla_ifm_backend_name_for_index(elf_ifm_symbol_names, static_cast<std::size_t>(index));
   const std::string logical_name =
       !physical.segment_name.empty() ? physical.segment_name : backend_name;
   return specbuilders::build_logical_input_static_spec(
-      index,
-      index,
-      physical.physical_index >= 0 ? physical.physical_index : index,
-      {},
-      "INT8",
-      {},
-      logical_name,
-      backend_name,
-      physical.segment_name,
-      0,
-      physical.size_bytes);
+      index, index, physical.physical_index >= 0 ? physical.physical_index : index, {}, "INT8", {},
+      logical_name, backend_name, physical.segment_name, 0, physical.size_bytes);
 }
 
 InputBindingStaticSpec mla_input_binding_from_facts(const LogicalInputStaticSpec& logical,
                                                     const PhysicalBufferStaticSpec& physical) {
   return specbuilders::build_input_binding_static_spec(
       0, logical.logical_index, logical.backend_name, physical.segment_name, -1, -1,
-      physical.source_physical_index >= 0 ? physical.source_physical_index : physical.physical_index,
+      physical.source_physical_index >= 0 ? physical.source_physical_index
+                                          : physical.physical_index,
       physical.size_bytes, std::max<std::int64_t>(0, physical.source_byte_offset), true);
 }
 
-InputBindingStaticSpec mla_input_binding_with_defaults(
-    const LogicalInputStaticSpec& logical,
-    const PhysicalBufferStaticSpec& physical,
-    const InputBindingStaticSpec* explicit_binding) {
+InputBindingStaticSpec
+mla_input_binding_with_defaults(const LogicalInputStaticSpec& logical,
+                                const PhysicalBufferStaticSpec& physical,
+                                const InputBindingStaticSpec* explicit_binding) {
   InputBindingStaticSpec binding =
       explicit_binding ? *explicit_binding : mla_input_binding_from_facts(logical, physical);
   if (binding.local_logical_input_index < 0) {
@@ -120,17 +112,17 @@ InputBindingStaticSpec mla_input_binding_with_defaults(
     binding.source_segment_name = physical.segment_name;
   }
   if (binding.src_physical_output_index < 0) {
-    binding.src_physical_output_index =
-        physical.source_physical_index >= 0 ? physical.source_physical_index : physical.physical_index;
+    binding.src_physical_output_index = physical.source_physical_index >= 0
+                                            ? physical.source_physical_index
+                                            : physical.physical_index;
   }
   const std::uint64_t logical_or_physical_size =
       logical.size_bytes > 0U ? logical.size_bytes : physical.size_bytes;
   if (binding.src_physical_size_bytes == 0U) {
     binding.src_physical_size_bytes = logical_or_physical_size;
   }
-  if (physical.size_bytes > 0U &&
-      (binding.src_physical_size_bytes == 0U ||
-       binding.src_physical_size_bytes > physical.size_bytes)) {
+  if (physical.size_bytes > 0U && (binding.src_physical_size_bytes == 0U ||
+                                   binding.src_physical_size_bytes > physical.size_bytes)) {
     binding.src_physical_size_bytes = physical.size_bytes;
   }
   if (binding.src_physical_byte_offset < 0) {
@@ -144,15 +136,15 @@ StageOutputRoute mla_output_route_from_logical(const LogicalTensorStaticSpec& lo
   return specbuilders::build_output_route_static_spec(
       logical.output_slot >= 0 ? logical.output_slot : fallback_index,
       logical.logical_index >= 0 ? logical.logical_index : fallback_index, logical.tensor_index,
-      !logical.backend_name.empty() ? logical.backend_name : logical.segment_name, logical.segment_name);
+      !logical.backend_name.empty() ? logical.backend_name : logical.segment_name,
+      logical.segment_name);
 }
 
 void populate_mla_node_contract_common(const std::string& node_kind,
                                        const std::string& element_name,
                                        const std::string& logical_stage_id,
                                        const NodeContractDefinition& definition,
-                                       CompiledMlaContract compiled,
-                                       CompiledNodeContract* out) {
+                                       CompiledMlaContract compiled, CompiledNodeContract* out) {
   out->node_kind = node_kind;
   out->plugin_kind = "processmla";
   out->element_name = element_name;
@@ -171,9 +163,9 @@ CompiledMlaContract build_mla_compiled_contract(const MlaStaticContract& contrac
   return build_mla_compiled_contract_from_subset(subset, contract);
 }
 
-CompiledMlaContract build_mla_compiled_contract_from_subset(
-    const plugin_contracts::ProcessMlaContractSubset& subset,
-    const MlaStaticContract& contract) {
+CompiledMlaContract
+build_mla_compiled_contract_from_subset(const plugin_contracts::ProcessMlaContractSubset& subset,
+                                        const MlaStaticContract& contract) {
   CompiledMlaContract compiled;
   compiled.payload = plugin_contracts::build_processmla_payload_from_subset(subset);
   compiled.inputs = contract.inputs;
@@ -208,22 +200,24 @@ CompiledMlaContract build_mla_compiled_contract_from_subset(
       }
     }
   } else if (!compiled.runtime_contract.physical_inputs.empty()) {
-    compiled.runtime_contract.logical_inputs.reserve(compiled.runtime_contract.physical_inputs.size());
+    compiled.runtime_contract.logical_inputs.reserve(
+        compiled.runtime_contract.physical_inputs.size());
     for (std::size_t i = 0; i < compiled.runtime_contract.physical_inputs.size(); ++i) {
-      compiled.runtime_contract.logical_inputs.push_back(
-          mla_carrier_logical_input_from_physical(
-              compiled.runtime_contract.physical_inputs[i], static_cast<int>(i),
-              compiled.runtime_contract.elf_ifm_symbol_names));
+      compiled.runtime_contract.logical_inputs.push_back(mla_carrier_logical_input_from_physical(
+          compiled.runtime_contract.physical_inputs[i], static_cast<int>(i),
+          compiled.runtime_contract.elf_ifm_symbol_names));
     }
   }
 
   const bool explicit_bindings_align_with_carriers =
       contract.input_bindings.size() == compiled.runtime_contract.physical_inputs.size();
-  compiled.runtime_contract.input_bindings.reserve(compiled.runtime_contract.physical_inputs.size());
+  compiled.runtime_contract.input_bindings.reserve(
+      compiled.runtime_contract.physical_inputs.size());
   for (std::size_t i = 0; i < compiled.runtime_contract.physical_inputs.size(); ++i) {
     const auto& physical = compiled.runtime_contract.physical_inputs[i];
-    const auto& logical = compiled.runtime_contract.logical_inputs[
-        std::min(i, compiled.runtime_contract.logical_inputs.size() - 1U)];
+    const auto& logical =
+        compiled.runtime_contract
+            .logical_inputs[std::min(i, compiled.runtime_contract.logical_inputs.size() - 1U)];
     const InputBindingStaticSpec* explicit_binding =
         explicit_bindings_align_with_carriers ? &contract.input_bindings[i] : nullptr;
     compiled.runtime_contract.input_bindings.push_back(
@@ -240,12 +234,10 @@ CompiledMlaContract build_mla_compiled_contract_from_subset(
   return compiled;
 }
 
-bool build_mla_node_contract(const std::string& node_kind,
-                             const std::string& element_name,
+bool build_mla_node_contract(const std::string& node_kind, const std::string& element_name,
                              const std::string& logical_stage_id,
                              const NodeContractDefinition& definition,
-                             const CompiledMlaContract& compiled,
-                             CompiledNodeContract* out,
+                             const CompiledMlaContract& compiled, CompiledNodeContract* out,
                              std::string* error_message) {
   if (!out) {
     if (error_message) {

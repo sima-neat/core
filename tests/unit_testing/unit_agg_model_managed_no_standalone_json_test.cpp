@@ -50,12 +50,11 @@ RUN_TEST("unit_agg_model_managed_no_standalone_json_test", ([] {
                "fakesrc num-buffers=1 ! neatboxdecode name=boxdecode_model_managed "
                "stage-id=stage_boxdecode_model_managed config=/tmp/does_not_exist_boxdecode.json "
                "silent=true ! fakesink",
-               &manifest,
-               GST_STATE_READY);
+               &manifest, GST_STATE_READY);
 
-           require(result.error.empty(),
-                   "model-managed startup should not require legacy standalone config when stage contract is present: " +
-                       result.error);
+           require(result.error.empty(), "model-managed startup should not require legacy "
+                                         "standalone config when stage contract is present: " +
+                                             result.error);
            require(result.set_state_result != GST_STATE_CHANGE_FAILURE,
                    "model-managed startup should not fail during NULL->READY");
            require(result.wait_state_result != GST_STATE_CHANGE_FAILURE,

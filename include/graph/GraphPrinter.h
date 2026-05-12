@@ -33,11 +33,11 @@ public:
    * @ingroup graph
    */
   struct Options {
-    bool show_index = true;       ///< Prefix each node with its `NodeId`.
-    bool show_kind = true;        ///< Show `Node::kind()`.
-    bool show_user_label = true;  ///< Show `Node::user_label()` when non-empty.
-    bool show_backend = true;     ///< Show the node backend (`pipeline` / `stage`).
-    bool show_ports = true;       ///< Print input/output port lists per node.
+    bool show_index = true;      ///< Prefix each node with its `NodeId`.
+    bool show_kind = true;       ///< Show `Node::kind()`.
+    bool show_user_label = true; ///< Show `Node::user_label()` when non-empty.
+    bool show_backend = true;    ///< Show the node backend (`pipeline` / `stage`).
+    bool show_ports = true;      ///< Print input/output port lists per node.
 
     std::size_t max_label_chars = 200; ///< Truncate user labels longer than this.
     std::size_t max_ports = 16;        ///< Cap the number of ports printed per node.
@@ -45,8 +45,8 @@ public:
     bool dot_rankdir_lr = true;                       ///< Use left-to-right layout in dot output.
     std::string dot_graph_name = "sima_hybrid_graph"; ///< Dot graph identifier.
 
-    bool mermaid_lr = true;                ///< Use `flowchart LR` (else `TD`) for mermaid.
-    std::string mermaid_id_prefix = "n";   ///< Mermaid node-id prefix.
+    bool mermaid_lr = true;              ///< Use `flowchart LR` (else `TD`) for mermaid.
+    std::string mermaid_id_prefix = "n"; ///< Mermaid node-id prefix.
   };
 
   /// Render `g` to a text outline using default options.

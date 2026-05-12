@@ -38,8 +38,7 @@ bool processmla_runtime_unavailable(const std::string& error) {
 }
 
 TempModelFile write_invalid_model_file() {
-  const std::string path =
-      "/tmp/processmla_invalid_model_" + std::to_string(::getpid()) + ".elf";
+  const std::string path = "/tmp/processmla_invalid_model_" + std::to_string(::getpid()) + ".elf";
   std::ofstream out(path, std::ios::binary);
   require(out.is_open(), "failed to create invalid MLA model file");
   out << "not-a-valid-mla-model";

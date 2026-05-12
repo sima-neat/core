@@ -263,8 +263,8 @@ std::string stage_payload_kind_name(const pipeline_internal::sima::StagePayloadK
   return "none";
 }
 
-std::string output_transport_kind_name(
-    const pipeline_internal::sima::ProcessCvuOutputTransportKind kind) {
+std::string
+output_transport_kind_name(const pipeline_internal::sima::ProcessCvuOutputTransportKind kind) {
   switch (kind) {
   case pipeline_internal::sima::ProcessCvuOutputTransportKind::Dense:
     return "dense";
@@ -276,8 +276,8 @@ std::string output_transport_kind_name(
   return "unknown";
 }
 
-std::string output_semantic_kind_name(
-    const pipeline_internal::sima::ProcessCvuOutputSemanticKind kind) {
+std::string
+output_semantic_kind_name(const pipeline_internal::sima::ProcessCvuOutputSemanticKind kind) {
   switch (kind) {
   case pipeline_internal::sima::ProcessCvuOutputSemanticKind::Image:
     return "image";
@@ -417,8 +417,7 @@ bool stage_group_selected(const ModelContractStageFilter filter, const ModelStag
   return true;
 }
 
-bool raw_plugin_selected(const ModelContractStageFilter filter,
-                         const std::size_t plugin_index,
+bool raw_plugin_selected(const ModelContractStageFilter filter, const std::size_t plugin_index,
                          const std::optional<std::size_t>& mla_plugin_index) {
   switch (filter) {
   case ModelContractStageFilter::All:
@@ -449,9 +448,7 @@ void append_quant(std::ostringstream& oss, const int indent, const QuantStaticSp
   append_kv(oss, indent, "quant.zero_points", quant_zero_points_string(quant.zero_points));
 }
 
-void append_quant_with_prefix(std::ostringstream& oss,
-                              const int indent,
-                              const std::string& prefix,
+void append_quant_with_prefix(std::ostringstream& oss, const int indent, const std::string& prefix,
                               const QuantStaticSpec& quant) {
   append_kv(oss, indent, prefix + ".granularity", quant_granularity_name(quant.granularity));
   append_kv_num(oss, indent, prefix + ".axis", quant.axis);
@@ -555,9 +552,11 @@ void append_input_binding(std::ostringstream& oss, const int indent, const std::
   append_kv_num(oss, indent, prefix + ".src_stage_index", binding.src_stage_index);
   append_kv(oss, indent, prefix + ".src_stage_id",
             binding.src_stage_id.empty() ? "<empty>" : binding.src_stage_id);
-  append_kv_num(oss, indent, prefix + ".src_logical_output_index", binding.src_logical_output_index);
+  append_kv_num(oss, indent, prefix + ".src_logical_output_index",
+                binding.src_logical_output_index);
   append_kv_num(oss, indent, prefix + ".src_output_slot", binding.src_output_slot);
-  append_kv_num(oss, indent, prefix + ".src_physical_output_index", binding.src_physical_output_index);
+  append_kv_num(oss, indent, prefix + ".src_physical_output_index",
+                binding.src_physical_output_index);
   append_kv_num(oss, indent, prefix + ".src_physical_size_bytes", binding.src_physical_size_bytes);
   append_kv_num(oss, indent, prefix + ".src_physical_byte_offset",
                 binding.src_physical_byte_offset);
@@ -590,7 +589,8 @@ void append_mpk_tensor(std::ostringstream& oss, const int indent, const std::str
   append_kv(oss, indent, prefix + ".kind", tensor.kind.empty() ? "<empty>" : tensor.kind);
   append_kv(oss, indent, prefix + ".dtype", tensor.dtype.empty() ? "<empty>" : tensor.dtype);
   append_kv(oss, indent, prefix + ".mpk_shape", shape_string(tensor.mpk_shape));
-  append_kv(oss, indent, prefix + ".shape_semantics", mpk_shape_semantics_name(tensor.shape_semantics));
+  append_kv(oss, indent, prefix + ".shape_semantics",
+            mpk_shape_semantics_name(tensor.shape_semantics));
   append_kv_num(oss, indent, prefix + ".size_bytes", tensor.size_bytes);
   append_kv_num(oss, indent, prefix + ".byte_offset", tensor.byte_offset);
   append_kv_num(oss, indent, prefix + ".source_byte_offset", tensor.source_byte_offset);
@@ -697,8 +697,7 @@ void append_archive_summary(std::ostringstream& oss, const mpk::MpKManifest& man
   oss << "\n";
 }
 
-void append_route_summary(std::ostringstream& oss,
-                          const ModelPack& pack,
+void append_route_summary(std::ostringstream& oss, const ModelPack& pack,
                           const ModelContractReportContext& context) {
   append_section_header(oss, "Route Summary");
   const ParsedModelInfo parsed = parse_model_from_pack(pack);
@@ -711,7 +710,8 @@ void append_route_summary(std::ostringstream& oss,
               bool_name(info.selection.include_postprocess_stage));
     append_kv(oss, 0, "infer_only", bool_name(info.selection.infer_only));
     append_kv(oss, 0, "preprocess_graph",
-              info.selection.preprocess_graph.empty() ? "<empty>" : info.selection.preprocess_graph);
+              info.selection.preprocess_graph.empty() ? "<empty>"
+                                                      : info.selection.preprocess_graph);
     append_kv(oss, 0, "selected_post_kind",
               context.selected_post_kind.empty() ? "<unknown>" : context.selected_post_kind);
     append_kv_num(oss, 0, "output_topology.physical", info.output_topology.physical_outputs);
@@ -739,8 +739,7 @@ void append_route_summary(std::ostringstream& oss,
       const std::string prefix = "ingress[" + std::to_string(i) + "]";
       append_kv(oss, 0, prefix + ".media_type",
                 ingress.media_type.empty() ? "<empty>" : ingress.media_type);
-      append_kv(oss, 0, prefix + ".format",
-                ingress.format.empty() ? "<empty>" : ingress.format);
+      append_kv(oss, 0, prefix + ".format", ingress.format.empty() ? "<empty>" : ingress.format);
       append_kv_num(oss, 0, prefix + ".width", ingress.width);
       append_kv_num(oss, 0, prefix + ".height", ingress.height);
       append_kv_num(oss, 0, prefix + ".depth", ingress.depth);
@@ -764,10 +763,8 @@ void append_route_summary(std::ostringstream& oss,
   oss << "\n";
 }
 
-void append_raw_mpk_graph(std::ostringstream& oss,
-                          const ModelPack& pack,
-                          const ModelContractReportOptions& options,
-                          ReportStats* stats) {
+void append_raw_mpk_graph(std::ostringstream& oss, const ModelPack& pack,
+                          const ModelContractReportOptions& options, ReportStats* stats) {
   const auto& maybe_contract = pack.mpk_contract();
   if (!maybe_contract.has_value()) {
     return;
@@ -846,33 +843,30 @@ void append_raw_mpk_graph(std::ostringstream& oss,
 }
 
 template <typename T>
-void append_named_collection(std::ostringstream& oss,
-                             const int indent,
-                             const std::string& base,
-                             const std::vector<T>& items,
-                             const std::function<void(std::ostringstream&, int, const std::string&, const T&)>& fn) {
+void append_named_collection(
+    std::ostringstream& oss, const int indent, const std::string& base, const std::vector<T>& items,
+    const std::function<void(std::ostringstream&, int, const std::string&, const T&)>& fn) {
   for (std::size_t i = 0; i < items.size(); ++i) {
     fn(oss, indent, base + "[" + std::to_string(i) + "]", items[i]);
   }
 }
 
-void append_compiled_runtime_contract(std::ostringstream& oss,
-                                      const int indent,
+void append_compiled_runtime_contract(std::ostringstream& oss, const int indent,
                                       const CompiledRuntimeContract& runtime) {
   append_kv(oss, indent, "runtime.plugin_kind",
             runtime.plugin_kind.empty() ? "<empty>" : runtime.plugin_kind);
-  append_named_collection<LogicalInputStaticSpec>(
-      oss, indent, "runtime.logical_input", runtime.logical_inputs, append_logical_input);
-  append_named_collection<InputBindingStaticSpec>(
-      oss, indent, "runtime.input_binding", runtime.input_bindings, append_input_binding);
+  append_named_collection<LogicalInputStaticSpec>(oss, indent, "runtime.logical_input",
+                                                  runtime.logical_inputs, append_logical_input);
+  append_named_collection<InputBindingStaticSpec>(oss, indent, "runtime.input_binding",
+                                                  runtime.input_bindings, append_input_binding);
   append_named_collection<PhysicalBufferStaticSpec>(
       oss, indent, "runtime.physical_input", runtime.physical_inputs, append_physical_buffer);
   append_named_collection<PhysicalBufferStaticSpec>(
       oss, indent, "runtime.physical_output", runtime.physical_outputs, append_physical_buffer);
-  append_named_collection<LogicalTensorStaticSpec>(
-      oss, indent, "runtime.logical_output", runtime.logical_outputs, append_logical_tensor);
-  append_named_collection<StageOutputRoute>(
-      oss, indent, "runtime.output_route", runtime.output_order, append_stage_output_route);
+  append_named_collection<LogicalTensorStaticSpec>(oss, indent, "runtime.logical_output",
+                                                   runtime.logical_outputs, append_logical_tensor);
+  append_named_collection<StageOutputRoute>(oss, indent, "runtime.output_route",
+                                            runtime.output_order, append_stage_output_route);
   for (std::size_t i = 0; i < runtime.output_quant.size(); ++i) {
     append_quant_with_prefix(oss, indent, "runtime.output_quant[" + std::to_string(i) + "]",
                              runtime.output_quant[i]);
@@ -881,8 +875,7 @@ void append_compiled_runtime_contract(std::ostringstream& oss,
             csv_or_none(runtime.required_preprocess_meta_fields));
 }
 
-void append_processcvu_contract(std::ostringstream& oss,
-                                const int indent,
+void append_processcvu_contract(std::ostringstream& oss, const int indent,
                                 const CompiledProcessCvuContract& compiled) {
   const auto& payload = compiled.payload;
   append_kv(oss, indent, "contract_type", "processcvu");
@@ -922,17 +915,19 @@ void append_processcvu_contract(std::ostringstream& oss,
             bool_name(compiled.preproc_single_output_handoff));
   append_compiled_runtime_contract(oss, indent, compiled.runtime_contract);
   append_kv(oss, indent, "exposed.primary_output_name",
-            compiled.exposed_view.primary_output_name.empty() ? "<empty>"
-                                                              : compiled.exposed_view.primary_output_name);
-  append_named_collection<StageOutputRoute>(
-      oss, indent, "exposed.output_route", compiled.exposed_view.exposed_output_order,
-      append_stage_output_route);
-  append_named_collection<LogicalTensorStaticSpec>(
-      oss, indent, "exposed.logical_output", compiled.exposed_view.exposed_logical_outputs,
-      append_logical_tensor);
+            compiled.exposed_view.primary_output_name.empty()
+                ? "<empty>"
+                : compiled.exposed_view.primary_output_name);
+  append_named_collection<StageOutputRoute>(oss, indent, "exposed.output_route",
+                                            compiled.exposed_view.exposed_output_order,
+                                            append_stage_output_route);
+  append_named_collection<LogicalTensorStaticSpec>(oss, indent, "exposed.logical_output",
+                                                   compiled.exposed_view.exposed_logical_outputs,
+                                                   append_logical_tensor);
 }
 
-void append_mla_contract(std::ostringstream& oss, const int indent, const CompiledMlaContract& compiled) {
+void append_mla_contract(std::ostringstream& oss, const int indent,
+                         const CompiledMlaContract& compiled) {
   append_kv(oss, indent, "contract_type", "processmla");
   append_kv(oss, indent, "payload.model_path",
             compiled.payload.model_path.empty() ? "<empty>" : compiled.payload.model_path);
@@ -965,8 +960,7 @@ void append_boxdecode_contract(std::ostringstream& oss, const int indent,
             bool_name(compiled.payload.model_owned_flags));
   append_kv(oss, indent, "payload.quant_contract_required",
             bool_name(compiled.payload.quant_contract_required));
-  append_kv_num(oss, indent, "payload.detection_threshold",
-                compiled.payload.detection_threshold);
+  append_kv_num(oss, indent, "payload.detection_threshold", compiled.payload.detection_threshold);
   append_kv_num(oss, indent, "payload.nms_iou_threshold", compiled.payload.nms_iou_threshold);
   append_kv_num(oss, indent, "payload.topk", compiled.payload.topk);
   append_kv(oss, indent, "payload.slice_shapes", shape_descs_string(compiled.payload.slice_shapes));
@@ -986,18 +980,14 @@ void append_transport_contract(std::ostringstream& oss, const int indent,
             compiled.plugin_kind.empty() ? "<empty>" : compiled.plugin_kind);
   append_kv(oss, indent, "transport.kernel_kind",
             compiled.kernel_kind.empty() ? "<empty>" : compiled.kernel_kind);
-  append_kv(oss, indent, "transport.payload_kind",
-            stage_payload_kind_name(compiled.payload_kind));
-  append_kv(oss, indent, "transport.model_managed_stage",
-            bool_name(compiled.model_managed_stage));
+  append_kv(oss, indent, "transport.payload_kind", stage_payload_kind_name(compiled.payload_kind));
+  append_kv(oss, indent, "transport.model_managed_stage", bool_name(compiled.model_managed_stage));
   append_compiled_runtime_contract(oss, indent, compiled.runtime_contract);
 }
 
 template <typename StageVec>
-void append_stage_plan_group(std::ostringstream& oss,
-                             const std::string& group_name,
-                             const StageVec& stages,
-                             const ModelContractReportOptions& options,
+void append_stage_plan_group(std::ostringstream& oss, const std::string& group_name,
+                             const StageVec& stages, const ModelContractReportOptions& options,
                              ReportStats* stats) {
   oss << "[" << group_name << "]\n";
   std::size_t emitted = 0U;
@@ -1019,8 +1009,7 @@ void append_stage_plan_group(std::ostringstream& oss,
     } else {
       append_kv(oss, 4, "mpk_plugin_index", "<none>");
     }
-    append_kv(oss, 4, "factory_name",
-              stage.factory_name.empty() ? "<empty>" : stage.factory_name);
+    append_kv(oss, 4, "factory_name", stage.factory_name.empty() ? "<empty>" : stage.factory_name);
     append_kv(oss, 4, "plugin_id", stage.plugin_id.empty() ? "<empty>" : stage.plugin_id);
     append_kv(oss, 4, "processor", stage.processor.empty() ? "<empty>" : stage.processor);
     append_kv(oss, 4, "kernel", stage.kernel.empty() ? "<empty>" : stage.kernel);
@@ -1032,12 +1021,10 @@ void append_stage_plan_group(std::ostringstream& oss,
 }
 
 template <typename StageVec>
-void append_typed_contract_group(std::ostringstream& oss,
-                                 const std::string& group_name,
+void append_typed_contract_group(std::ostringstream& oss, const std::string& group_name,
                                  const StageVec& stages,
                                  const std::vector<ModelFragment::StageFacts>& facts,
-                                 const ModelContractReportOptions& options,
-                                 ReportStats* stats) {
+                                 const ModelContractReportOptions& options, ReportStats* stats) {
   oss << "[" << group_name << "]\n";
   std::size_t emitted = 0U;
   for (std::size_t i = 0; i < stages.size(); ++i) {
@@ -1088,10 +1075,8 @@ void append_typed_contract_group(std::ostringstream& oss,
   }
 }
 
-void append_planned_model_stages(std::ostringstream& oss,
-                                 const ModelPack& pack,
-                                 const ModelContractReportOptions& options,
-                                 ReportStats* stats) {
+void append_planned_model_stages(std::ostringstream& oss, const ModelPack& pack,
+                                 const ModelContractReportOptions& options, ReportStats* stats) {
   append_section_header(oss, "Planned Model Stages");
   const ExecutionPlan plan = pack.execution_plan();
   if (stage_group_selected(options.stage_filter, ModelStage::Preprocess)) {
@@ -1106,10 +1091,8 @@ void append_planned_model_stages(std::ostringstream& oss,
   oss << "\n";
 }
 
-void append_typed_runtime_contracts(std::ostringstream& oss,
-                                    const ModelPack& pack,
-                                    const ModelContractReportOptions& options,
-                                    ReportStats* stats) {
+void append_typed_runtime_contracts(std::ostringstream& oss, const ModelPack& pack,
+                                    const ModelContractReportOptions& options, ReportStats* stats) {
   append_section_header(oss, "Typed Runtime/Static Contracts");
   const ExecutionPlan plan = pack.execution_plan();
   if (stage_group_selected(options.stage_filter, ModelStage::Preprocess)) {
@@ -1127,10 +1110,8 @@ void append_typed_runtime_contracts(std::ostringstream& oss,
   oss << "\n";
 }
 
-void append_gst_fragments(std::ostringstream& oss,
-                          const ModelPack& pack,
-                          const ModelContractReportOptions& options,
-                          ReportStats* stats) {
+void append_gst_fragments(std::ostringstream& oss, const ModelPack& pack,
+                          const ModelContractReportOptions& options, ReportStats* stats) {
   if (!options.show_gst) {
     return;
   }
@@ -1190,8 +1171,7 @@ std::string selected_post_kind_name_from_model(const Model& model) {
   return "none";
 }
 
-std::string build_raw_only_report(const mpk::MpKManifest& manifest,
-                                  const ModelPack& pack,
+std::string build_raw_only_report(const mpk::MpKManifest& manifest, const ModelPack& pack,
                                   const ModelContractReportOptions& options,
                                   const std::string& error_section_title,
                                   const std::string& error_message) {
@@ -1231,9 +1211,9 @@ std::string build_model_contract_report(const ModelPack& pack,
   return oss.str();
 }
 
-ModelContractInspectionResult inspect_model_contract_archive(
-    const std::string& tar_gz,
-    const ModelContractReportOptions& options) {
+ModelContractInspectionResult
+inspect_model_contract_archive(const std::string& tar_gz,
+                               const ModelContractReportOptions& options) {
   ModelContractInspectionResult result;
   mpk::MpKManifest manifest;
   try {
@@ -1276,8 +1256,7 @@ ModelContractInspectionResult inspect_model_contract_archive(
     context.model_info = &model_info;
     context.preprocess_plan = &preprocess_plan;
     context.selected_post_kind = selected_post_kind_name_from_model(model);
-    result.report =
-        build_model_contract_report(ModelAccess::pack(model), options, context);
+    result.report = build_model_contract_report(ModelAccess::pack(model), options, context);
     return result;
   } catch (const std::exception& e) {
     result.report =

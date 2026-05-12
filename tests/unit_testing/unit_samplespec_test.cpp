@@ -327,7 +327,9 @@ int main() {
       // SampleSpec width/height/depth scalars are no longer populated for
       // tensor-set inputs; the dims live on each tensor in the list.
       require(spec.layout == TensorLayout::HWC, "HWC layout mismatch");
-      (void)w; (void)h; (void)c;
+      (void)w;
+      (void)h;
+      (void)c;
     }
 
     {
@@ -344,7 +346,9 @@ int main() {
       require(spec.format == "FP32", "CHW format mismatch");
       // Dims now live on the tensor entries, not on the spec scalars.
       require(spec.layout == TensorLayout::CHW, "CHW layout mismatch");
-      (void)w; (void)h; (void)c;
+      (void)w;
+      (void)h;
+      (void)c;
     }
 
     {

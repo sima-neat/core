@@ -232,11 +232,10 @@ bool can_use_neon_fast_path(const TessBenchCase&) {
 std::vector<std::uint8_t> tessellate_host_generic(const TessBenchCase& c,
                                                   const std::vector<std::uint8_t>& input) {
   const TileGrid grid = build_tile_grid(c);
-  const std::size_t expected_input_bytes = static_cast<std::size_t>(c.input_width) *
-                                           static_cast<std::size_t>(c.input_height) *
-                                           static_cast<std::size_t>(c.input_depth) *
-                                           static_cast<std::size_t>(c.input_channels) *
-                                           static_cast<std::size_t>(c.elem_bytes);
+  const std::size_t expected_input_bytes =
+      static_cast<std::size_t>(c.input_width) * static_cast<std::size_t>(c.input_height) *
+      static_cast<std::size_t>(c.input_depth) * static_cast<std::size_t>(c.input_channels) *
+      static_cast<std::size_t>(c.elem_bytes);
   require(input.size() == expected_input_bytes, "host tess input size mismatch");
 
   std::vector<std::uint8_t> output(grid.aligned_bytes, 0);
@@ -258,15 +257,14 @@ std::vector<std::uint8_t> tessellate_host_generic(const TessBenchCase& c,
                   static_cast<std::size_t>(tw) * static_cast<std::size_t>(tc) *
                   static_cast<std::size_t>(c.elem_bytes);
               std::uint8_t* dst_row = tile_dst + tile_row_offset;
-              const std::size_t src_row_offset =
-                  ((((static_cast<std::size_t>(depth_start + d) *
-                       static_cast<std::size_t>(c.input_height)) +
-                      static_cast<std::size_t>(y_start + y)) *
-                         static_cast<std::size_t>(c.input_width) +
-                     static_cast<std::size_t>(x_start)) *
-                        static_cast<std::size_t>(c.input_channels) +
-                    static_cast<std::size_t>(channel_start)) *
-                  static_cast<std::size_t>(c.elem_bytes);
+              const std::size_t src_row_offset = ((((static_cast<std::size_t>(depth_start + d) *
+                                                     static_cast<std::size_t>(c.input_height)) +
+                                                    static_cast<std::size_t>(y_start + y)) *
+                                                       static_cast<std::size_t>(c.input_width) +
+                                                   static_cast<std::size_t>(x_start)) *
+                                                      static_cast<std::size_t>(c.input_channels) +
+                                                  static_cast<std::size_t>(channel_start)) *
+                                                 static_cast<std::size_t>(c.elem_bytes);
               const std::uint8_t* src_row = input.data() + src_row_offset;
 
               for (int x = 0; x < tw; ++x) {
@@ -312,10 +310,10 @@ std::vector<std::uint8_t> tessellate_host_neon(const TessBenchCase& c,
              static_cast<std::size_t>(x_start)) *
             static_cast<std::size_t>(c.input_channels) * static_cast<std::size_t>(c.elem_bytes);
         const std::uint8_t* src_row = input.data() + src_row_offset;
-        std::uint8_t* dst_row =
-            tile_dst + static_cast<std::size_t>(y) * static_cast<std::size_t>(tw) *
-                           static_cast<std::size_t>(c.input_channels) *
-                           static_cast<std::size_t>(c.elem_bytes);
+        std::uint8_t* dst_row = tile_dst + static_cast<std::size_t>(y) *
+                                               static_cast<std::size_t>(tw) *
+                                               static_cast<std::size_t>(c.input_channels) *
+                                               static_cast<std::size_t>(c.elem_bytes);
 #if defined(__aarch64__) || defined(__ARM_NEON)
         tessellate_neon_tile_row(c, dst_row, src_row, tw);
 #else
@@ -421,10 +419,9 @@ TimingSummary summarize_timings(const std::vector<double>& ms, std::size_t moved
 }
 
 std::vector<std::uint8_t> make_input_bytes(const TessBenchCase& c, std::uint32_t seed) {
-  const std::size_t elem_count = static_cast<std::size_t>(c.input_width) *
-                                 static_cast<std::size_t>(c.input_height) *
-                                 static_cast<std::size_t>(c.input_depth) *
-                                 static_cast<std::size_t>(c.input_channels);
+  const std::size_t elem_count =
+      static_cast<std::size_t>(c.input_width) * static_cast<std::size_t>(c.input_height) *
+      static_cast<std::size_t>(c.input_depth) * static_cast<std::size_t>(c.input_channels);
   std::vector<std::uint8_t> out(elem_count * static_cast<std::size_t>(c.elem_bytes), 0);
 
   std::uint32_t state = seed;
@@ -499,7 +496,8 @@ std::string input_caps_format_for_dtype(std::string dtype) {
   return dtype;
 }
 
-simaai::neat::Tensor make_dense_tensor(const TessBenchCase& c, const std::vector<std::uint8_t>& bytes) {
+simaai::neat::Tensor make_dense_tensor(const TessBenchCase& c,
+                                       const std::vector<std::uint8_t>& bytes) {
   using namespace simaai::neat;
 
   auto storage = make_cpu_owned_storage(bytes.size());
@@ -512,9 +510,9 @@ simaai::neat::Tensor make_dense_tensor(const TessBenchCase& c, const std::vector
   tensor.dtype = tensor_dtype_for(c.dtype);
   tensor.layout = TensorLayout::HWC;
   tensor.shape = {c.input_height, c.input_width, c.input_channels};
-  tensor.strides_bytes = {static_cast<std::int64_t>(c.input_width) * c.input_channels * c.elem_bytes,
-                          static_cast<std::int64_t>(c.input_channels) * c.elem_bytes,
-                          c.elem_bytes};
+  tensor.strides_bytes = {static_cast<std::int64_t>(c.input_width) * c.input_channels *
+                              c.elem_bytes,
+                          static_cast<std::int64_t>(c.input_channels) * c.elem_bytes, c.elem_bytes};
   tensor.device = {DeviceType::CPU, 0};
   tensor.read_only = true;
   tensor.byte_offset = 0;
@@ -568,9 +566,8 @@ simaai::neat::TessOptions make_tess_options_for_case(const TessBenchCase& c) {
   tess_subset.cblock = false;
   tess_subset.output_size_bytes = build_tile_grid(c).aligned_bytes;
 
-  const auto runtime =
-      pss::build_tessellate_runtime_config_from_subsets(cast_subset, tess_subset, "output_tensor",
-                                                        "output_tensor");
+  const auto runtime = pss::build_tessellate_runtime_config_from_subsets(
+      cast_subset, tess_subset, "output_tensor", "output_tensor");
   auto compiled = pssm::build_processcvu_compiled_contract_from_runtime_config(runtime);
   normalize_packed_tess_compiled_contract(&compiled, build_tile_grid(c).aligned_bytes);
 
@@ -708,8 +705,8 @@ std::string preview_bytes(const std::vector<std::uint8_t>& bytes, std::size_t co
 }
 
 void print_timing_line(std::string_view label, const TimingSummary& summary) {
-  std::cout << "  " << label << ": avg_ms=" << std::fixed << std::setprecision(4)
-            << summary.avg_ms << " min_ms=" << summary.min_ms << " max_ms=" << summary.max_ms
+  std::cout << "  " << label << ": avg_ms=" << std::fixed << std::setprecision(4) << summary.avg_ms
+            << " min_ms=" << summary.min_ms << " max_ms=" << summary.max_ms
             << " approx_gbps=" << summary.approx_gbps << "\n";
 }
 
@@ -741,9 +738,8 @@ void run_case(const TessBenchCase& c, const BenchOptions& opt) {
   const bool ev74_payload_stable =
       std::adjacent_find(ev74.payload_hashes.begin(), ev74.payload_hashes.end(),
                          std::not_equal_to<>()) == ev74.payload_hashes.end();
-  const bool ev74_full_stable =
-      std::adjacent_find(ev74.full_hashes.begin(), ev74.full_hashes.end(), std::not_equal_to<>()) ==
-      ev74.full_hashes.end();
+  const bool ev74_full_stable = std::adjacent_find(ev74.full_hashes.begin(), ev74.full_hashes.end(),
+                                                   std::not_equal_to<>()) == ev74.full_hashes.end();
 
   print_timing_line("host_generic", host_generic);
   print_timing_line("host_neon", host_neon);
@@ -789,9 +785,8 @@ BenchOptions parse_args(int argc, char** argv) {
     } else if (arg == "--seed") {
       opt.seed = static_cast<std::uint32_t>(std::stoul(require_value("--seed")));
     } else if (arg == "--help" || arg == "-h") {
-      std::cout
-          << "Usage: tess_a65_vs_ev74_bench [--case all|evo-bf16-luma|evo-bf16-uv]"
-          << " [--iterations N] [--warmup N] [--timeout-ms N] [--seed N]\n";
+      std::cout << "Usage: tess_a65_vs_ev74_bench [--case all|evo-bf16-luma|evo-bf16-uv]"
+                << " [--iterations N] [--warmup N] [--timeout-ms N] [--seed N]\n";
       std::exit(0);
     } else {
       throw std::runtime_error("unknown argument: " + arg);
@@ -823,8 +818,7 @@ TessBenchCase make_case(std::string name, int input_width, int input_height, int
 std::vector<TessBenchCase> selected_cases(const BenchOptions& opt) {
   const TessBenchCase evo_luma =
       make_case("evo-bf16-luma", 1664, 384, 1, 17, 384, 1, 2, "BF16", "BF16");
-  const TessBenchCase evo_uv =
-      make_case("evo-bf16-uv", 832, 192, 2, 42, 39, 2, 2, "BF16", "BF16");
+  const TessBenchCase evo_uv = make_case("evo-bf16-uv", 832, 192, 2, 42, 39, 2, 2, "BF16", "BF16");
   if (opt.case_name == "all") {
     return {evo_luma, evo_uv};
   }

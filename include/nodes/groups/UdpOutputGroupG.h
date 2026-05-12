@@ -28,18 +28,18 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct UdpOutputGroupGOptions {
-  std::string render_config;     ///< Render-stage configuration string (group-specific).
-  int width = 0;                 ///< Encoder input width (0 = inherit from upstream caps).
-  int height = 0;                ///< Encoder input height (0 = inherit from upstream caps).
-  int fps = 30;                  ///< Encoder input frame rate.
-  int bitrate_kbps = 4000;       ///< Target encoder bitrate in kbps.
-  int payload_type = 96;         ///< RTP payload type number.
-  int config_interval = 1;       ///< SPS/PPS repeat interval (seconds).
-  bool sync_mode = false;        ///< If true, sink elements run in sync (real-time) mode.
+  std::string render_config;          ///< Render-stage configuration string (group-specific).
+  int width = 0;                      ///< Encoder input width (0 = inherit from upstream caps).
+  int height = 0;                     ///< Encoder input height (0 = inherit from upstream caps).
+  int fps = 30;                       ///< Encoder input frame rate.
+  int bitrate_kbps = 4000;            ///< Target encoder bitrate in kbps.
+  int payload_type = 96;              ///< RTP payload type number.
+  int config_interval = 1;            ///< SPS/PPS repeat interval (seconds).
+  bool sync_mode = false;             ///< If true, sink elements run in sync (real-time) mode.
   std::string udp_host = "127.0.0.1"; ///< Destination UDP host.
-  int udp_port = 5000;           ///< Destination UDP port.
-  bool udp_sync = false;         ///< Pass `sync` to the underlying `udpsink` element.
-  bool udp_async = false;        ///< Pass `async` to the underlying `udpsink` element.
+  int udp_port = 5000;                ///< Destination UDP port.
+  bool udp_sync = false;              ///< Pass `sync` to the underlying `udpsink` element.
+  bool udp_async = false;             ///< Pass `async` to the underlying `udpsink` element.
 };
 
 /**

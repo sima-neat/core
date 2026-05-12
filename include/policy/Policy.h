@@ -25,8 +25,8 @@ namespace simaai::neat::policy {
  * @ingroup builder
  */
 enum class Decision {
-  Allow,  ///< Parameter is acceptable; the framework may proceed.
-  Deny,   ///< Parameter is rejected; build/run should fail with `reason`.
+  Allow, ///< Parameter is acceptable; the framework may proceed.
+  Deny,  ///< Parameter is rejected; build/run should fail with `reason`.
 };
 
 /**
@@ -37,8 +37,8 @@ enum class Decision {
  * @ingroup builder
  */
 struct Evaluation {
-  Decision decision = Decision::Allow;  ///< Allow or deny outcome; defaults to Allow.
-  std::string reason;                   ///< Human-readable diagnostic when denied.
+  Decision decision = Decision::Allow; ///< Allow or deny outcome; defaults to Allow.
+  std::string reason;                  ///< Human-readable diagnostic when denied.
 
   /// True if the policy allowed the parameter; false if it denied.
   bool ok() const noexcept {

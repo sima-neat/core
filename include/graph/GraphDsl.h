@@ -25,10 +25,10 @@ namespace simaai::neat::graph::dsl {
  * @ingroup graph
  */
 struct PortRef {
-  Graph* g = nullptr;            ///< Non-owning pointer to the host graph.
-  NodeId node = kInvalidNode;    ///< Node this port belongs to.
-  PortId port = kInvalidPort;    ///< Interned port id within the graph.
-  bool is_output = true;         ///< True for output ports, false for inputs.
+  Graph* g = nullptr;         ///< Non-owning pointer to the host graph.
+  NodeId node = kInvalidNode; ///< Node this port belongs to.
+  PortId port = kInvalidPort; ///< Interned port id within the graph.
+  bool is_output = true;      ///< True for output ports, false for inputs.
 };
 
 /**
@@ -41,8 +41,8 @@ struct PortRef {
  * @ingroup graph
  */
 struct NodeRef {
-  Graph* g = nullptr;          ///< Non-owning pointer to the host graph.
-  NodeId id = kInvalidNode;    ///< Underlying node id.
+  Graph* g = nullptr;       ///< Non-owning pointer to the host graph.
+  NodeId id = kInvalidNode; ///< Underlying node id.
 
   /// Implicit conversion to the underlying `NodeId`.
   operator NodeId() const {

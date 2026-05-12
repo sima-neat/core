@@ -117,7 +117,7 @@ int run_case(const fs::path& root) {
   pipeline.add(simaai::neat::nodes::groups::Preprocess(model));
   pipeline.add(simaai::neat::nodes::groups::Infer(model));
   pipeline.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
-                                                   kMinScore, 0.5f, kTopK));
+                                                  kMinScore, 0.5f, kTopK));
   pipeline.add(simaai::neat::nodes::Output());
 
   simaai::neat::RunOptions run_opt;
@@ -125,10 +125,9 @@ int run_case(const fs::path& root) {
   run_opt.queue_depth = 1;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
-  simaai::neat::Run run = pipeline.build(
-      simaai::neat::SampleList{simaai::neat::Sample::from_image(
-          img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)},
-      simaai::neat::RunMode::Async, run_opt);
+  simaai::neat::Run run = pipeline.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                                             img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                                         simaai::neat::RunMode::Async, run_opt);
   guard.run = &run;
 
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();

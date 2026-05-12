@@ -36,18 +36,29 @@ namespace simaai::neat::mpk {
  * @ingroup mpk
  */
 struct MpKLoaderOptions {
-  std::size_t max_archive_bytes = 512ULL * 1024ULL * 1024ULL;     ///< Hard cap on the on-disk archive size (default 512 MiB).
-  std::size_t max_entry_bytes = 256ULL * 1024ULL * 1024ULL;       ///< Hard cap on any single extracted entry (default 256 MiB).
-  std::size_t max_total_json_bytes = 32ULL * 1024ULL * 1024ULL;   ///< Hard cap on aggregate JSON size across all manifest/config files.
-  std::size_t max_entries = 2048;                                  ///< Hard cap on the number of entries the archive may contain.
-  std::size_t max_json_depth = 64;                                 ///< Hard cap on JSON nesting depth (defends against parser-stack exhaustion).
+  std::size_t max_archive_bytes =
+      512ULL * 1024ULL * 1024ULL; ///< Hard cap on the on-disk archive size (default 512 MiB).
+  std::size_t max_entry_bytes =
+      256ULL * 1024ULL * 1024ULL; ///< Hard cap on any single extracted entry (default 256 MiB).
+  std::size_t max_total_json_bytes =
+      32ULL * 1024ULL *
+      1024ULL; ///< Hard cap on aggregate JSON size across all manifest/config files.
+  std::size_t max_entries = 2048; ///< Hard cap on the number of entries the archive may contain.
+  std::size_t max_json_depth =
+      64; ///< Hard cap on JSON nesting depth (defends against parser-stack exhaustion).
 
-  bool require_pipeline_sequence = true;       ///< If true, reject packs that lack a `pipeline_sequence` manifest section.
-  bool require_model_binary = true;            ///< If true, reject packs that don't ship a model binary.
-  bool reject_unsupported_file_types = true;   ///< If true, reject packs containing file types outside the allowlist.
-  bool reject_duplicate_json_keys = true;      ///< If true, reject manifests with duplicate keys at any nesting level.
-  bool reject_invalid_utf8_paths = true;       ///< If true, reject archive entries whose paths aren't valid UTF-8.
-  bool reject_unicode_path_confusables = true; ///< If true, reject paths containing visually-confusable Unicode (defends against typosquatting).
+  bool require_pipeline_sequence =
+      true; ///< If true, reject packs that lack a `pipeline_sequence` manifest section.
+  bool require_model_binary = true; ///< If true, reject packs that don't ship a model binary.
+  bool reject_unsupported_file_types =
+      true; ///< If true, reject packs containing file types outside the allowlist.
+  bool reject_duplicate_json_keys =
+      true; ///< If true, reject manifests with duplicate keys at any nesting level.
+  bool reject_invalid_utf8_paths =
+      true; ///< If true, reject archive entries whose paths aren't valid UTF-8.
+  bool reject_unicode_path_confusables =
+      true; ///< If true, reject paths containing visually-confusable Unicode (defends against
+            ///< typosquatting).
 };
 
 /**
@@ -68,7 +79,7 @@ struct MpKExtractResult {
   std::string lib_dir;      ///< `<package_root>/lib/` — kernel binaries and runtime libraries.
   std::string share_dir;    ///< `<package_root>/share/` — model weights and shared assets.
 
-  MpKManifest manifest;     ///< Parsed manifest (the only authoritative JSON in the pack).
+  MpKManifest manifest; ///< Parsed manifest (the only authoritative JSON in the pack).
 };
 
 /**

@@ -79,8 +79,7 @@ RUN_TEST(
         require(tc.shape == std::vector<int64_t>({2, 3, 4, 5, 6}),
                 "rank-first tensor caps shape mismatch");
         require(!tc.dtypes.empty(), "rank-first tensor caps should report dtype");
-        require(tc.dtypes.front() == TensorDType::Int8,
-                "rank-first tensor caps dtype mismatch");
+        require(tc.dtypes.front() == TensorDType::Int8, "rank-first tensor caps dtype mismatch");
 
         gst_caps_unref(caps);
       }

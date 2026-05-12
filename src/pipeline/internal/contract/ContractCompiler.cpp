@@ -20,11 +20,9 @@ std::string default_logical_stage_id(const Node& node, const std::string& elemen
   return user_label.empty() ? element_name : user_label;
 }
 
-bool compile_child_stage_contracts(const Node& node,
-                                   const NodeContractDefinition& definition,
+bool compile_child_stage_contracts(const Node& node, const NodeContractDefinition& definition,
                                    const CompiledChildStageProvider& provider,
-                                   const ContractCompileInput& input,
-                                   CompiledNodeContract* out,
+                                   const ContractCompileInput& input, CompiledNodeContract* out,
                                    std::string* err) {
   if (!out) {
     if (err) {
@@ -47,10 +45,8 @@ bool compile_child_stage_contracts(const Node& node,
 
 bool compile_known_node_contract(const std::shared_ptr<Node>& node,
                                  const NodeContractDefinition& definition,
-                                 const ContractCompileInput& input,
-                                 CompiledNodeContract* out,
-                                 std::string* err,
-                                 bool* handled) {
+                                 const ContractCompileInput& input, CompiledNodeContract* out,
+                                 std::string* err, bool* handled) {
   if (const auto* child_stage_provider =
           dynamic_cast<const CompiledChildStageProvider*>(node.get())) {
     if (handled) {
@@ -66,10 +62,10 @@ bool compile_known_node_contract(const std::shared_ptr<Node>& node,
 
 } // namespace
 
-CompiledPipelineContracts compile_node_contracts(
-    const std::vector<std::shared_ptr<Node>>& nodes,
-    const ContractCompileInput& input,
-    pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
+CompiledPipelineContracts
+compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
+                       const ContractCompileInput& input,
+                       pipeline_internal::sima::ManifestBuildDiagnostics* diagnostics) {
   CompiledPipelineContracts compiled;
   compiled.fully_renderable = true;
   const CompiledNodeContract* immediate_upstream = nullptr;
@@ -99,8 +95,8 @@ CompiledPipelineContracts compile_node_contracts(
       if (node_kind_requires_contract_provider(node->kind())) {
         compiled.fully_renderable = false;
         if (diagnostics) {
-          diagnostics->warnings.push_back("contract compiler: no provider for semantic node kind '" +
-                                          node->kind() + "'");
+          diagnostics->warnings.push_back(
+              "contract compiler: no provider for semantic node kind '" + node->kind() + "'");
         }
       }
       continue;
@@ -117,9 +113,8 @@ CompiledPipelineContracts compile_node_contracts(
     }
 
     bool handled_directly = false;
-    const bool direct_ok =
-        compile_known_node_contract(node, stage.definition, stage_input, &stage, &err,
-                                    &handled_directly);
+    const bool direct_ok = compile_known_node_contract(node, stage.definition, stage_input, &stage,
+                                                       &err, &handled_directly);
     bool compile_ok = direct_ok;
     if (!handled_directly) {
       err = "no direct compiler path registered for node kind '" + node->kind() + "'";

@@ -81,10 +81,10 @@ enum class PluginContractFieldKey : std::uint8_t {
  * a flag for whether the family is per-head (e.g., DetessDequant has one entry per output head).
  */
 struct PluginContractFamilyDeclaration {
-  std::string_view family;                                       ///< Family identifier.
-  std::span<const PluginContractFieldKey> required_fields;       ///< Fields the family requires.
-  std::span<const PluginContractFieldKey> optional_fields;       ///< Fields the family may carry.
-  bool per_head = false;                                         ///< True for per-head families.
+  std::string_view family;                                 ///< Family identifier.
+  std::span<const PluginContractFieldKey> required_fields; ///< Fields the family requires.
+  std::span<const PluginContractFieldKey> optional_fields; ///< Fields the family may carry.
+  bool per_head = false;                                   ///< True for per-head families.
 };
 
 /**
@@ -107,7 +107,7 @@ struct QuantTessContractSubset {
   std::string input_dtype;
   std::string output_dtype;
   int round_off = -1;
-  std::vector<std::int64_t> slice_shape;  // Per-frame tile geometry; rank == per-frame rank.
+  std::vector<std::int64_t> slice_shape; // Per-frame tile geometry; rank == per-frame rank.
   std::string frame_type;
   bool align_c16 = false;
   bool cblock = false;
@@ -224,8 +224,8 @@ struct BoxDecodeContractSubset {
 // explicit batch_size scalar; the residual shape is per-frame.
 
 /// Strip leading batch-only dims from `shape`; residual is per-frame at `per_frame_rank`.
-std::vector<std::int64_t> semantic_shape_without_batch_public(
-    std::vector<std::int64_t> shape, int per_frame_rank = 3);
+std::vector<std::int64_t> semantic_shape_without_batch_public(std::vector<std::int64_t> shape,
+                                                              int per_frame_rank = 3);
 
 /// Derive the per-frame rank from a slice-shape hint and a peer's per-frame shape.
 int derive_per_frame_rank_public(const std::vector<std::int64_t>& slice_shape_hint,
@@ -241,8 +241,7 @@ bool unit_axis_shape_alias_public(const std::vector<std::int64_t>& lhs,
 
 /// Pick the runtime descriptor shape for elementwise/value transforms.
 std::vector<std::int64_t> canonical_value_transform_shape_public(
-    std::string_view family,
-    const std::vector<std::int64_t>& input_shape,
+    std::string_view family, const std::vector<std::int64_t>& input_shape,
     const std::vector<std::int64_t>& output_shape,
     const std::vector<std::int64_t>& preferred_semantic_shape = {});
 
@@ -258,7 +257,8 @@ const PluginContractFamilyDeclaration& plugin_contract_family_declaration(std::s
 /// Extract the (single) Quantize subset from an MPK that contains a quantize stage.
 QuantizeContractSubset extract_quantize_contract_subset_from_mpk(const MpkContract& contract);
 /// Extract a Quantize subset directly from one stage's I/O contract.
-QuantizeContractSubset extract_quantize_contract_subset_from_stage(const MpkPluginIoContract& stage);
+QuantizeContractSubset
+extract_quantize_contract_subset_from_stage(const MpkPluginIoContract& stage);
 
 /// Extract all Cast subsets from an MPK (one per cast stage).
 std::vector<CastContractSubset> extract_cast_contract_subsets_from_mpk(const MpkContract& contract);
@@ -268,12 +268,14 @@ CastContractSubset extract_cast_contract_subset_from_stage(const MpkPluginIoCont
 /// Extract the Tessellate subset from an MPK that contains a tessellate stage.
 TessellateContractSubset extract_tessellate_contract_subset_from_mpk(const MpkContract& contract);
 /// Extract a Tessellate subset from one stage's I/O contract.
-TessellateContractSubset extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage);
+TessellateContractSubset
+extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage);
 
 /// Extract the QuantTess subset from an MPK with a fused quanttess stage.
 QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkContract& contract);
 /// Extract a QuantTess subset from one stage's I/O contract.
-QuantTessContractSubset extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage);
+QuantTessContractSubset
+extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage);
 
 /**
  * @brief Extract a ProcessMla subset from an `MlaStaticContract`.
@@ -282,42 +284,40 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_stage(const MpkPl
  * @param include_dispatcher_output_names When true, also fills `dispatcher_output_names`.
  */
 ProcessMlaContractSubset extract_processmla_contract_subset_from_static_contract(
-    const MlaStaticContract& contract,
-    bool include_dispatcher_output_names = false);
+    const MlaStaticContract& contract, bool include_dispatcher_output_names = false);
 
 /// Extract all Detessellate subsets from an MPK (one per detess stage).
-std::vector<DetessellateContractSubset> extract_detessellate_contract_subsets_from_mpk(
-    const MpkContract& contract);
+std::vector<DetessellateContractSubset>
+extract_detessellate_contract_subsets_from_mpk(const MpkContract& contract);
 
 /// Extract all Dequantize subsets from an MPK (one per dequant stage).
-std::vector<DequantizeContractSubset> extract_dequantize_contract_subsets_from_mpk(
-    const MpkContract& contract);
+std::vector<DequantizeContractSubset>
+extract_dequantize_contract_subsets_from_mpk(const MpkContract& contract);
 
 /// Resolve all Detess+Dequant pairs in an MPK that participate in a fused detessdequant.
-std::vector<DetessDequantStagePair> resolve_detessdequant_stage_pairs_from_mpk(
-    const MpkContract& contract);
+std::vector<DetessDequantStagePair>
+resolve_detessdequant_stage_pairs_from_mpk(const MpkContract& contract);
 
 /// Extract the fused DetessDequant subset (per-head) from an MPK.
-DetessDequantContractSubset extract_detessdequant_contract_subset_from_mpk(
-    const MpkContract& contract);
+DetessDequantContractSubset
+extract_detessdequant_contract_subset_from_mpk(const MpkContract& contract);
 
 /// Build a BoxDecode subset from an already-built `BoxDecodeStaticContract`.
-BoxDecodeContractSubset extract_boxdecode_contract_subset_from_static_contract(
-    const BoxDecodeStaticContract& contract);
+BoxDecodeContractSubset
+extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticContract& contract);
 
 /**
  * @brief Build a BoxDecode subset directly from MPK + route flags.
  *
  * @param contract       Parsed MPK contract.
- * @param route_flags    Route flags computed from the MPK (see `BoxDecodeStaticContractExtractor.h`).
+ * @param route_flags    Route flags computed from the MPK (see
+ * `BoxDecodeStaticContractExtractor.h`).
  * @param terminal_stage Optional explicit box-decode terminal stage.
  * @param error_message  Optional out-parameter for failure diagnostics.
  */
 std::optional<BoxDecodeContractSubset> extract_boxdecode_contract_subset_from_mpk(
-    const MpkContract& contract,
-    const ModelManagedRouteFlags& route_flags,
-    const MpkPluginIoContract* terminal_stage = nullptr,
-    std::string* error_message = nullptr);
+    const MpkContract& contract, const ModelManagedRouteFlags& route_flags,
+    const MpkPluginIoContract* terminal_stage = nullptr, std::string* error_message = nullptr);
 
 /// Validate a BoxDecode subset; throws `std::runtime_error` on contract violations.
 void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
@@ -325,27 +325,25 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
 
 /// Build a runtime config for a standalone Quantize stage.
 stagesemantics::CompiledProcessCvuRuntimeConfig build_quantize_runtime_config_from_subset(
-    const QuantizeContractSubset& subset,
-    const std::string& physical_output_name,
+    const QuantizeContractSubset& subset, const std::string& physical_output_name,
     const std::string& published_output_name = "output_tensor");
 
 /// Build a runtime config for the Cast+Tessellate fused path.
 stagesemantics::CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
-    const CastContractSubset& cast_subset,
-    const TessellateContractSubset& tess_subset,
+    const CastContractSubset& cast_subset, const TessellateContractSubset& tess_subset,
     const std::string& physical_output_name,
     const std::string& published_output_name = "output_tensor");
 
 /// Build a runtime config for a standalone Cast stage.
-stagesemantics::CompiledProcessCvuRuntimeConfig build_cast_runtime_config_from_subset(
-    const CastContractSubset& subset,
-    const std::string& physical_output_name,
-    const std::string& published_output_name = "output_tensor");
+stagesemantics::CompiledProcessCvuRuntimeConfig
+build_cast_runtime_config_from_subset(const CastContractSubset& subset,
+                                      const std::string& physical_output_name,
+                                      const std::string& published_output_name = "output_tensor");
 
 /// Build a runtime config for one or more standalone Cast output heads.
-stagesemantics::CompiledProcessCvuRuntimeConfig build_cast_runtime_config_from_subsets(
-    const std::vector<CastContractSubset>& subsets,
-    const std::vector<std::string>& published_output_names = {});
+stagesemantics::CompiledProcessCvuRuntimeConfig
+build_cast_runtime_config_from_subsets(const std::vector<CastContractSubset>& subsets,
+                                       const std::vector<std::string>& published_output_names = {});
 
 /// Build a runtime config for the fused QuantTess stage.
 stagesemantics::CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_from_subset(
@@ -353,8 +351,7 @@ stagesemantics::CompiledProcessCvuRuntimeConfig build_quanttess_runtime_config_f
     const std::string& published_output_name = "output_tensor");
 
 /// Construct a `ProcessMlaStagePayload` from a ProcessMla subset.
-ProcessMlaStagePayload build_processmla_payload_from_subset(
-    const ProcessMlaContractSubset& subset);
+ProcessMlaStagePayload build_processmla_payload_from_subset(const ProcessMlaContractSubset& subset);
 
 /// Build a runtime config for a Detessellate stage (one or more output heads).
 stagesemantics::CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(

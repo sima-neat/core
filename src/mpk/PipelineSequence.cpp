@@ -229,13 +229,13 @@ void validate_sorted_records(const std::vector<StageRecord>& records) {
       if (names.find(dep) == names.end()) {
         std::string available;
         for (const auto& n : names) {
-          if (!available.empty()) available += ", ";
+          if (!available.empty())
+            available += ", ";
           available += "'" + n + "'";
         }
-        throw std::runtime_error("schema_error: dependency '" + dep +
-                                 "' in stage '" + rec.entry.name +
-                                 "' references unknown stage. Available stages: [" +
-                                 available + "].");
+        throw std::runtime_error(
+            "schema_error: dependency '" + dep + "' in stage '" + rec.entry.name +
+            "' references unknown stage. Available stages: [" + available + "].");
       }
     }
   }
@@ -297,8 +297,7 @@ std::vector<SequenceEntry> synthesize_mla_only_sequence(const std::string& etc_d
 
   std::vector<SequenceEntry> out;
   out.reserve(1);
-  SequenceEntry mla =
-      make_entry(1, "simaaiprocessmla_1", "processmla", "MLA", "mla", *mla_cfg);
+  SequenceEntry mla = make_entry(1, "simaaiprocessmla_1", "processmla", "MLA", "mla", *mla_cfg);
   ensure_safe_relative_path(mla.config_path);
   out.push_back(std::move(mla));
   return out;

@@ -33,12 +33,12 @@ namespace simaai::neat {
  * @see BoxDecodeResult
  */
 struct Box {
-  float x1 = 0.0f;     ///< Top-left corner X, in pixels.
-  float y1 = 0.0f;     ///< Top-left corner Y, in pixels.
-  float x2 = 0.0f;     ///< Bottom-right corner X, in pixels.
-  float y2 = 0.0f;     ///< Bottom-right corner Y, in pixels.
-  float score = 0.0f;  ///< Class confidence in [0, 1].
-  int class_id = -1;   ///< Predicted class index; -1 means unset.
+  float x1 = 0.0f;    ///< Top-left corner X, in pixels.
+  float y1 = 0.0f;    ///< Top-left corner Y, in pixels.
+  float x2 = 0.0f;    ///< Bottom-right corner X, in pixels.
+  float y2 = 0.0f;    ///< Bottom-right corner Y, in pixels.
+  float score = 0.0f; ///< Class confidence in [0, 1].
+  int class_id = -1;  ///< Predicted class index; -1 means unset.
 };
 
 /**
@@ -50,8 +50,8 @@ struct Box {
  * @ingroup pipeline
  */
 struct BoxDecodeResult {
-  std::vector<Box> boxes;     ///< Parsed detections.
-  std::vector<uint8_t> raw;   ///< Source bytes the boxes were parsed from.
+  std::vector<Box> boxes;   ///< Parsed detections.
+  std::vector<uint8_t> raw; ///< Source bytes the boxes were parsed from.
 };
 
 /**

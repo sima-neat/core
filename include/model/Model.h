@@ -86,52 +86,63 @@ public:
   struct ModelInfo {
     /// What the model fundamentally needs in its pre/post chain (derived from manifest dtypes).
     struct RouteNeeds {
-      bool pre_quantization = false;   ///< MLA expects INT8 input; FP32→INT8 conversion required somewhere.
-      bool pre_tessellation = false;   ///< MLA expects tessellated layout; row-major→tile transform required.
-      bool pre_cast = false;           ///< Floating-point dtype conversion required (e.g., FP32→BF16).
-      bool post_detessellation = false; ///< MLA produces tessellated output; tile→row-major transform required.
-      bool post_dequantization = false; ///< MLA produces INT8 output; INT8→FP32 conversion required.
-      bool post_cast = false;           ///< Output dtype conversion required (e.g., BF16→FP32).
+      bool pre_quantization =
+          false; ///< MLA expects INT8 input; FP32→INT8 conversion required somewhere.
+      bool pre_tessellation =
+          false; ///< MLA expects tessellated layout; row-major→tile transform required.
+      bool pre_cast = false; ///< Floating-point dtype conversion required (e.g., FP32→BF16).
+      bool post_detessellation =
+          false; ///< MLA produces tessellated output; tile→row-major transform required.
+      bool post_dequantization =
+          false;              ///< MLA produces INT8 output; INT8→FP32 conversion required.
+      bool post_cast = false; ///< Output dtype conversion required (e.g., BF16→FP32).
     };
 
     /// What pre/post adapters the MPK provides (read from manifest stages).
     struct RouteCapabilities {
-      bool has_pre_quantization = false;   ///< MPK provides a preprocess quantize (FP→INT8) stage.
-      bool has_pre_tessellation = false;   ///< MPK provides a preprocess tessellate (tile-layout) stage.
-      bool has_pre_cast = false;           ///< MPK provides a preprocess cast (FP dtype convert) stage.
-      bool has_post_detessellation = false;///< MPK provides a post detessellate (tile→row-major) stage.
-      bool has_post_dequantization = false;///< MPK provides a post dequantize (INT8→FP) stage.
-      bool has_post_cast = false;          ///< MPK provides a post cast (FP dtype convert) stage.
-      bool has_post_boxdecode = false; ///< Manifest includes a fused detection-decode stage (YOLO BoxDecode).
+      bool has_pre_quantization = false; ///< MPK provides a preprocess quantize (FP→INT8) stage.
+      bool has_pre_tessellation =
+          false;                 ///< MPK provides a preprocess tessellate (tile-layout) stage.
+      bool has_pre_cast = false; ///< MPK provides a preprocess cast (FP dtype convert) stage.
+      bool has_post_detessellation =
+          false; ///< MPK provides a post detessellate (tile→row-major) stage.
+      bool has_post_dequantization = false; ///< MPK provides a post dequantize (INT8→FP) stage.
+      bool has_post_cast = false;           ///< MPK provides a post cast (FP dtype convert) stage.
+      bool has_post_boxdecode =
+          false; ///< Manifest includes a fused detection-decode stage (YOLO BoxDecode).
     };
 
     /// What the planner actually included in the materialized route.
     struct RouteSelection {
-      bool include_preprocess_stage = true;   ///< True if a preprocess NodeGroup is attached.
-      bool include_postprocess_stage = true;  ///< True if a postprocess NodeGroup is attached.
-      bool infer_only = false;                ///< True if only the MLA inference stage runs (no pre/post).
-      std::string preprocess_graph;           ///< Name of the chosen preprocess CVU graph (e.g., `preproc`, `quanttess`).
-      std::string selected_post_kind;         ///< Name of the chosen post stage (e.g., `detessdequant`, `boxdecode`).
+      bool include_preprocess_stage = true;  ///< True if a preprocess NodeGroup is attached.
+      bool include_postprocess_stage = true; ///< True if a postprocess NodeGroup is attached.
+      bool infer_only = false;        ///< True if only the MLA inference stage runs (no pre/post).
+      std::string preprocess_graph;   ///< Name of the chosen preprocess CVU graph (e.g., `preproc`,
+                                      ///< `quanttess`).
+      std::string selected_post_kind; ///< Name of the chosen post stage (e.g., `detessdequant`,
+                                      ///< `boxdecode`).
     };
 
     /// Output topology: how many tensors the model emits, and whether they're physically packed.
     struct OutputTopology {
       std::size_t physical_outputs = 0U; ///< Number of distinct memory buffers emitted.
-      std::size_t logical_outputs = 0U;  ///< Number of user-facing output tensors (may exceed physical when packed).
-      bool packed_outputs = false;       ///< True if logical outputs share underlying memory buffers.
+      std::size_t logical_outputs =
+          0U; ///< Number of user-facing output tensors (may exceed physical when packed).
+      bool packed_outputs = false; ///< True if logical outputs share underlying memory buffers.
     };
 
-    std::string mpk_json_path;          ///< Filesystem path to the manifest JSON inside the extracted MPK.
-    std::string model_name;             ///< Human-readable model name (from manifest, when present).
+    std::string mpk_json_path; ///< Filesystem path to the manifest JSON inside the extracted MPK.
+    std::string model_name;    ///< Human-readable model name (from manifest, when present).
 
-    RouteNeeds needs;                   ///< @copydoc RouteNeeds
-    RouteCapabilities capabilities;     ///< @copydoc RouteCapabilities
-    RouteSelection selection;           ///< @copydoc RouteSelection
-    OutputTopology output_topology;     ///< @copydoc OutputTopology
+    RouteNeeds needs;               ///< @copydoc RouteNeeds
+    RouteCapabilities capabilities; ///< @copydoc RouteCapabilities
+    RouteSelection selection;       ///< @copydoc RouteSelection
+    OutputTopology output_topology; ///< @copydoc OutputTopology
 
-    std::vector<std::string> pre_kernels;   ///< Names of pre-MLA kernels in the route, in order.
-    std::vector<std::string> post_kernels;  ///< Names of post-MLA kernels in the route, in order.
-    std::vector<std::string> warnings;      ///< Non-fatal planner warnings (e.g., missing optional adapters).
+    std::vector<std::string> pre_kernels;  ///< Names of pre-MLA kernels in the route, in order.
+    std::vector<std::string> post_kernels; ///< Names of post-MLA kernels in the route, in order.
+    std::vector<std::string>
+        warnings; ///< Non-fatal planner warnings (e.g., missing optional adapters).
   };
 
   /**
@@ -143,10 +154,13 @@ public:
    */
   struct InferenceTerminalPolicy {
     bool mla_only = false; ///< If true, terminate at the MLA stage; skip postprocess entirely.
-    std::optional<std::size_t> last_stage_index; ///< Stop after this stage index (0-based, inclusive).
-    std::optional<std::string> last_stage_name;  ///< Stop after the named stage (matches MPK manifest stage name).
-    std::optional<std::string> last_plugin_id;   ///< Stop after the first stage using this plugin ID.
-    std::optional<std::string> last_processor;   ///< Stop after the first stage running on this processor (CVU/MLA/APU).
+    std::optional<std::size_t>
+        last_stage_index; ///< Stop after this stage index (0-based, inclusive).
+    std::optional<std::string>
+        last_stage_name; ///< Stop after the named stage (matches MPK manifest stage name).
+    std::optional<std::string> last_plugin_id; ///< Stop after the first stage using this plugin ID.
+    std::optional<std::string>
+        last_processor; ///< Stop after the first stage running on this processor (CVU/MLA/APU).
   };
 
   /**
@@ -157,18 +171,20 @@ public:
    * doesn't natively support and the user wants to apply identical resize/quantize/normalize).
    */
   struct PreprocessRequirements {
-    bool has_preproc_stage = false;   ///< True if the route includes a preprocess stage.
-    bool quant_needed = false;        ///< True if FP32→INT8 quantization is part of preprocess.
-    bool tess_needed = false;         ///< True if tessellation (tile layout) is part of preprocess.
-    std::string input_media_type;     ///< Expected input media type (e.g., `"video/x-raw"`, `"application/vnd.simaai.tensor"`).
-    std::string input_format;         ///< Expected input format token (e.g., `"NV12"`, `"RGB"`, `"FP32"`).
-    std::string output_format;        ///< Format produced after preprocess (handed to MLA).
-    std::string output_dtype;         ///< Dtype produced after preprocess (e.g., `"INT8"`, `"BF16"`).
+    bool has_preproc_stage = false; ///< True if the route includes a preprocess stage.
+    bool quant_needed = false;      ///< True if FP32→INT8 quantization is part of preprocess.
+    bool tess_needed = false;       ///< True if tessellation (tile layout) is part of preprocess.
+    std::string input_media_type;   ///< Expected input media type (e.g., `"video/x-raw"`,
+                                    ///< `"application/vnd.simaai.tensor"`).
+    std::string input_format;  ///< Expected input format token (e.g., `"NV12"`, `"RGB"`, `"FP32"`).
+    std::string output_format; ///< Format produced after preprocess (handed to MLA).
+    std::string output_dtype;  ///< Dtype produced after preprocess (e.g., `"INT8"`, `"BF16"`).
     /// Axis permutation applied by `layout_convert`, if any (empty if no permutation).
     std::vector<int> axis_perm;
-    std::vector<int> output_shape;    ///< Output tensor shape after preprocess.
-    std::vector<int> slice_shape;     ///< Tile geometry when `tess_needed` is true; empty otherwise.
-    std::optional<double> q_scale;    ///< Per-tensor quant scale when `quant_needed` is true (per-channel scales live in manifest).
+    std::vector<int> output_shape; ///< Output tensor shape after preprocess.
+    std::vector<int> slice_shape;  ///< Tile geometry when `tess_needed` is true; empty otherwise.
+    std::optional<double> q_scale; ///< Per-tensor quant scale when `quant_needed` is true
+                                   ///< (per-channel scales live in manifest).
     std::optional<std::int64_t> q_zp; ///< Per-tensor quant zero-point.
   };
 
@@ -198,20 +214,25 @@ public:
      * supported topologies (YoloV5, YoloV8, DETR, EffDet, …) when loading a detection model.
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
-    float score_threshold = 0.0f;     ///< BoxDecode score threshold; 0 keeps all candidates.
-    float nms_iou_threshold = 0.0f;   ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
-    int top_k = 0;                    ///< BoxDecode top-K cap; 0 means no cap.
+    float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
+    float nms_iou_threshold =
+        0.0f;      ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
+    int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
     /// Original-image width hint for BoxDecode coordinate inversion.
-    /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for transition.
+    /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
+    /// transition.
     int boxdecode_original_width = 0;
     /// Original-image height hint for BoxDecode coordinate inversion.
-    /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for transition.
+    /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
+    /// transition.
     int boxdecode_original_height = 0;
 
     // ── Naming / wiring ────────────────────────────────────────────────────────────────────
-    /// Name of the upstream Node feeding preprocess input (default: `"decoder"` — i.e., a video decoder).
+    /// Name of the upstream Node feeding preprocess input (default: `"decoder"` — i.e., a video
+    /// decoder).
     std::string upstream_name = "decoder";
-    /// Optional suffix appended to every generated GStreamer element name (use to disambiguate concurrent Sessions).
+    /// Optional suffix appended to every generated GStreamer element name (use to disambiguate
+    /// concurrent Sessions).
     std::string name_suffix;
 
     // ── Extraction lifecycle ───────────────────────────────────────────────────────────────
@@ -252,12 +273,14 @@ public:
    * Nodes. The defaults are right for the convenience `Model::run()` path.
    */
   struct SessionOptions {
-    bool include_appsrc = true;    ///< Include an appsrc input Node at the head of the NodeGroup.
-    bool include_appsink = true;   ///< Include an appsink output Node at the tail.
-    std::string upstream_name;     ///< Element name of the upstream Node feeding the model (default: `"decoder"`).
-    std::string name_suffix;       ///< Suffix appended to generated element names.
-    std::string buffer_name;       ///< Optional buffer pool name (used by advanced memory configurations).
-    VerboseOptions verbose;        ///< Diagnostic verbosity during NodeGroup construction.
+    bool include_appsrc = true;  ///< Include an appsrc input Node at the head of the NodeGroup.
+    bool include_appsink = true; ///< Include an appsink output Node at the tail.
+    std::string upstream_name;   ///< Element name of the upstream Node feeding the model (default:
+                                 ///< `"decoder"`).
+    std::string name_suffix;     ///< Suffix appended to generated element names.
+    std::string
+        buffer_name;        ///< Optional buffer pool name (used by advanced memory configurations).
+    VerboseOptions verbose; ///< Diagnostic verbosity during NodeGroup construction.
     /**
      * @brief Requested backend for model-managed `processcvu` generic-EV stages.
      *
@@ -290,10 +313,10 @@ public:
    * Lets advanced users grab one specific portion of the model's pipeline.
    */
   enum class Stage {
-    Preprocess,   ///< Pre-MLA portion only (resize, color-convert, normalize, quant, tess).
-    Inference,    ///< MLA inference stage only.
-    Postprocess,  ///< Post-MLA portion only (detess, dequant, cast, BoxDecode if applicable).
-    Full          ///< Full pipeline: Preprocess + Inference + Postprocess.
+    Preprocess,  ///< Pre-MLA portion only (resize, color-convert, normalize, quant, tess).
+    Inference,   ///< MLA inference stage only.
+    Postprocess, ///< Post-MLA portion only (detess, dequant, cast, BoxDecode if applicable).
+    Full         ///< Full pipeline: Preprocess + Inference + Postprocess.
   };
 
   /**
@@ -311,14 +334,15 @@ public:
    * @brief Load and validate an MPK with explicit options.
    *
    * @param mpk_path Filesystem path to a `.tar.gz` / `.tgz` / `.mpk` / `.tar` file.
-   * @param opt     Options controlling preprocess, postprocess decode, naming, lifecycle, and verbosity.
+   * @param opt     Options controlling preprocess, postprocess decode, naming, lifecycle, and
+   * verbosity.
    * @throws SessionError on archive validation failure, manifest parse error, or unsupported route.
    */
   explicit Model(const std::string& mpk_path, const Options& opt);
 
   Model(Model&&) noexcept;            ///< Move-constructible.
   Model& operator=(Model&&) noexcept; ///< Move-assignable. (Models are not copyable.)
-  ~Model();                           ///< Destructor; releases the impl and (optionally) cleans up extracted MPK data.
+  ~Model(); ///< Destructor; releases the impl and (optionally) cleans up extracted MPK data.
 
   // ── Stage composition ────────────────────────────────────────────────────────────────────
   /// Returns the preprocess portion of the model's pipeline as a `NodeGroup`.
@@ -327,11 +351,13 @@ public:
   simaai::neat::NodeGroup inference() const;
   /// Returns the postprocess portion of the model's pipeline as a `NodeGroup`.
   simaai::neat::NodeGroup postprocess() const;
-  /// Returns the model's full pipeline as a single `NodeGroup` (preprocess + inference + postprocess).
+  /// Returns the model's full pipeline as a single `NodeGroup` (preprocess + inference +
+  /// postprocess).
   simaai::neat::NodeGroup session() const;
   /**
    * @brief Returns the model's full pipeline as a `NodeGroup` with custom session options.
-   * @param opt Per-call overrides for appsrc/appsink inclusion, naming, and CVU run-target preference.
+   * @param opt Per-call overrides for appsrc/appsink inclusion, naming, and CVU run-target
+   * preference.
    */
   simaai::neat::NodeGroup session(SessionOptions opt) const;
 
@@ -352,7 +378,8 @@ public:
    * to `input_specs()[i].shape` when batch > 1.
    */
   int compiled_batch_size() const;
-  /// Returns the full resolved preprocess plan (intent-driven; richer than `preprocess_requirements()`).
+  /// Returns the full resolved preprocess plan (intent-driven; richer than
+  /// `preprocess_requirements()`).
   ResolvedPreprocessPlan resolved_preprocess_plan() const;
   /// Returns concrete preprocess parameters (resize, color, quant, tess) the model needs.
   PreprocessRequirements preprocess_requirements() const;
@@ -364,7 +391,8 @@ public:
   // ── Advanced / graph composition ─────────────────────────────────────────────────────────
   /// Returns one specific stage of the pipeline as a `NodeGroup`.
   NodeGroup fragment(Stage stage) const;
-  /// Returns the GStreamer launch fragment for one specific stage (debugging / `Session::custom()` use).
+  /// Returns the GStreamer launch fragment for one specific stage (debugging / `Session::custom()`
+  /// use).
   std::string backend_fragment(Stage stage) const;
 
   /// Returns the appsrc input options the planner derived for a given input mode (tensor or media).
@@ -375,7 +403,8 @@ public:
   std::string find_config_path_by_plugin(const std::string& plugin_id) const;
   /// Find the path to a per-stage config file in the extracted MPK by processor name (CVU/MLA/APU).
   std::string find_config_path_by_processor(const std::string& processor) const;
-  /// Returns the canonical output element name for the inference stage (used in pipeline string emission).
+  /// Returns the canonical output element name for the inference stage (used in pipeline string
+  /// emission).
   std::string infer_output_name() const;
 
   /**
@@ -405,7 +434,8 @@ public:
     explicit Runner(simaai::neat::Run run);
     /// Wrap a Run handle that was built for tensor-mode input with the given InputOptions.
     Runner(simaai::neat::Run run, const simaai::neat::InputOptions& tensor_input_opt);
-    /// Wrap a Run handle with tensor input options and explicit ingress port names (multi-input models).
+    /// Wrap a Run handle with tensor input options and explicit ingress port names (multi-input
+    /// models).
     Runner(simaai::neat::Run run, const simaai::neat::InputOptions& tensor_input_opt,
            std::vector<std::string> ingress_names);
     /// Wrap a Run handle with explicit ingress port names (multi-input, non-tensor mode).
@@ -426,7 +456,8 @@ public:
     bool push(const simaai::neat::SampleList& inputs);
     /**
      * @brief Pull the next produced output Sample list.
-     * @param timeout_ms Maximum time to wait, in milliseconds; `-1` means wait forever; `0` is non-blocking.
+     * @param timeout_ms Maximum time to wait, in milliseconds; `-1` means wait forever; `0` is
+     * non-blocking.
      * @return The next `SampleList`. Empty if the timeout elapsed or the pipeline closed.
      */
     simaai::neat::SampleList pull(int timeout_ms = -1);
@@ -455,8 +486,7 @@ public:
     /// Latency, throughput, input stats, and optional power telemetry (forwards to Run).
     simaai::neat::RunMeasurementSummary measurement_summary() const;
     /// Unified latency/throughput/power/counter metrics (forwards to underlying Run).
-    simaai::neat::RuntimeMetrics metrics(
-        const simaai::neat::RuntimeMetricsOptions& opt = {}) const;
+    simaai::neat::RuntimeMetrics metrics(const simaai::neat::RuntimeMetricsOptions& opt = {}) const;
     /// Render unified runtime metrics (forwards to underlying Run).
     std::string metrics_report(
         const simaai::neat::RuntimeMetricsOptions& opt = {},
@@ -505,7 +535,8 @@ public:
    * input is compatible. The `BuildAdaptationSummary` in the resulting `SessionReport` records
    * what adaptations were applied.
    *
-   * @param inputs    One Tensor per ingress port. For single-input models pass a single-element list.
+   * @param inputs    One Tensor per ingress port. For single-input models pass a single-element
+   * list.
    * @param opt       Session options (defaults are sensible).
    * @param run_opt   Runtime options (queue depth, overflow policy, async/sync mode).
    */

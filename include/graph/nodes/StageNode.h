@@ -30,8 +30,8 @@ namespace simaai::neat::graph::nodes {
  * @ingroup graph
  */
 enum class StageKeyBy {
-  None = 0,  ///< No keying — round-robin or unconstrained dispatch.
-  StreamId,  ///< Key on `Sample::stream_id` so all messages for a stream go to the same instance.
+  None = 0, ///< No keying — round-robin or unconstrained dispatch.
+  StreamId, ///< Key on `Sample::stream_id` so all messages for a stream go to the same instance.
 };
 
 /**
@@ -40,9 +40,10 @@ enum class StageKeyBy {
  * @ingroup graph
  */
 struct StageNodeOptions {
-  int instances = 1;                     ///< Number of executor instances to spawn.
-  StageKeyBy key_by = StageKeyBy::None;  ///< Keying policy for multi-instance dispatch.
-  std::size_t max_inflight = 0;          ///< Max in-flight messages per node; 0 defers to `GraphRunOptions::edge_queue`.
+  int instances = 1;                    ///< Number of executor instances to spawn.
+  StageKeyBy key_by = StageKeyBy::None; ///< Keying policy for multi-instance dispatch.
+  std::size_t max_inflight =
+      0; ///< Max in-flight messages per node; 0 defers to `GraphRunOptions::edge_queue`.
 };
 
 /**
@@ -97,7 +98,8 @@ public:
     return outputs_;
   }
 
-  /// Resolves an output port's spec via the user-supplied resolver, falling back to the single output's static spec.
+  /// Resolves an output port's spec via the user-supplied resolver, falling back to the single
+  /// output's static spec.
   OutputSpec output_spec(const std::vector<OutputSpec>& inputs, PortId out_port) const override {
     if (output_spec_fn_)
       return output_spec_fn_(inputs, out_port);

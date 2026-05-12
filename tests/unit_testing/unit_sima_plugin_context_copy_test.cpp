@@ -9,9 +9,7 @@ namespace {
 
 using namespace simaai::neat::pipeline_internal::sima;
 
-SimaPluginStaticManifest make_manifest(const char* element_name,
-                                       const char* stage_id,
-                                       int topk) {
+SimaPluginStaticManifest make_manifest(const char* element_name, const char* stage_id, int topk) {
   SimaPluginStaticManifest manifest;
   manifest.session_id = "ctx-copy";
   manifest.model_id = "model-copy";
@@ -37,8 +35,8 @@ RUN_TEST("unit_sima_plugin_context_copy_test", ([] {
            require(pipeline != nullptr, "pipeline must be created");
 
            std::string attach_error;
-           require(attach_manifest_context(pipeline, make_manifest("stage_copy", "stage_copy_id", 77),
-                                          &attach_error),
+           require(attach_manifest_context(
+                       pipeline, make_manifest("stage_copy", "stage_copy_id", 77), &attach_error),
                    "attach_manifest_context should succeed: " + attach_error);
 
            GstContext* context =
@@ -53,8 +51,7 @@ RUN_TEST("unit_sima_plugin_context_copy_test", ([] {
 
            SimaPluginManifestLookupStatus status = SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_NO_CONTEXT;
            const auto* stage = sima_plugin_manifest_context_stage_lookup_typed_checked(
-               copied, "stage_copy_id", "stage_copy", SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE,
-               &status);
+               copied, "stage_copy_id", "stage_copy", SIMA_PLUGIN_STAGE_PAYLOAD_BOXDECODE, &status);
            require(stage != nullptr, "copied context should resolve stage after pipeline teardown");
            require(status == SIMA_PLUGIN_MANIFEST_LOOKUP_STATUS_OK,
                    "copied context lookup status mismatch");

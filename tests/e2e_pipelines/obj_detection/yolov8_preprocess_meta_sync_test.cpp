@@ -97,7 +97,8 @@ int main(int argc, char** argv) {
 
     cv::Mat frame0 = img_bgr.clone();
     cv::Mat frame1;
-    cv::resize(img_bgr, frame1, cv::Size(std::max(64, img_bgr.cols / 2), std::max(64, img_bgr.rows / 2)));
+    cv::resize(img_bgr, frame1,
+               cv::Size(std::max(64, img_bgr.cols / 2), std::max(64, img_bgr.rows / 2)));
 
     simaai::neat::stages::BoxDecodeOptions box_opt(simaai::neat::BoxDecodeType::YoloV8);
     box_opt.detection_threshold = 0.25;

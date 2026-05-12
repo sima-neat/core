@@ -176,8 +176,8 @@ cv::Mat load_rgb_image(const fs::path& path, const std::string& name) {
 }
 
 simaai::neat::Tensor make_rgb_tensor(const cv::Mat& rgb) {
-  return simaai::neat::Tensor::from_cv_mat(
-      rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
+  return simaai::neat::Tensor::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB,
+                                           simaai::neat::TensorMemory::EV74);
 }
 
 } // namespace

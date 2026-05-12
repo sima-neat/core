@@ -78,7 +78,7 @@ public:
   /// Destructor; stops the server and tears down the underlying pipeline.
   ~RtspServerHandle();
 
-  RtspServerHandle(const RtspServerHandle&) = delete;            ///< Non-copyable: server ownership is unique.
+  RtspServerHandle(const RtspServerHandle&) = delete; ///< Non-copyable: server ownership is unique.
   RtspServerHandle& operator=(const RtspServerHandle&) = delete; ///< Non-copyable.
 
   RtspServerHandle(RtspServerHandle&&) noexcept;            ///< Move-constructible.
@@ -139,7 +139,8 @@ private:
  */
 class Session {
 public:
-  /// Callback signature used by source-mode pipelines (no input pushed; pipeline produces tensors continuously).
+  /// Callback signature used by source-mode pipelines (no input pushed; pipeline produces tensors
+  /// continuously).
   using TensorCallback = std::function<bool(const simaai::neat::Tensor&)>;
 
   /// Construct an empty Session with the given options (or defaults).
@@ -148,13 +149,14 @@ public:
   ~Session();
   Session(const Session&) = delete;            ///< Non-copyable.
   Session& operator=(const Session&) = delete; ///< Non-copyable.
-  Session(Session&&) noexcept;                  ///< Move-constructible.
-  Session& operator=(Session&&) noexcept;       ///< Move-assignable.
+  Session(Session&&) noexcept;                 ///< Move-constructible.
+  Session& operator=(Session&&) noexcept;      ///< Move-assignable.
 
   // ── Core: add Nodes / NodeGroups ─────────────────────────────────────────────────────────
   /**
    * @brief Append a single Node to the Session.
-   * @param node Shared pointer (typically returned by a Node factory like `sima::nodes::common::Queue()`).
+   * @param node Shared pointer (typically returned by a Node factory like
+   * `sima::nodes::common::Queue()`).
    * @return `*this` to allow chaining.
    */
   Session& add(std::shared_ptr<Node> node);
@@ -302,9 +304,9 @@ private:
    * @ingroup pipeline
    */
   struct BuiltState {
-    GstElement* pipeline = nullptr;     ///< Materialised GStreamer pipeline element.
-    GstElement* sink = nullptr;         ///< Terminal sink element of the pipeline.
-    std::shared_ptr<void> diag;         ///< Opaque diagnostics payload from build time.
+    GstElement* pipeline = nullptr; ///< Materialised GStreamer pipeline element.
+    GstElement* sink = nullptr;     ///< Terminal sink element of the pipeline.
+    std::shared_ptr<void> diag;     ///< Opaque diagnostics payload from build time.
   };
   struct RunCache;
   /**
@@ -317,10 +319,10 @@ private:
    * @ingroup pipeline
    */
   struct GroupMeta {
-    std::size_t start = 0;                                          ///< Inclusive start index in `nodes_`.
-    std::size_t end = 0;                                            ///< Exclusive end index in `nodes_`.
-    NodeCapsBehavior caps_behavior = NodeCapsBehavior::Dynamic;     ///< Caps behavior for the group.
-    std::string label;                                              ///< Optional group label for diagnostics.
+    std::size_t start = 0; ///< Inclusive start index in `nodes_`.
+    std::size_t end = 0;   ///< Exclusive end index in `nodes_`.
+    NodeCapsBehavior caps_behavior = NodeCapsBehavior::Dynamic; ///< Caps behavior for the group.
+    std::string label; ///< Optional group label for diagnostics.
   };
 
   std::vector<std::shared_ptr<Node>> nodes_;

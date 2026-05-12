@@ -97,11 +97,11 @@ struct SessionBuildInputDebugFlags {
   bool pipeline_state_debug = env_bool("SIMA_PIPELINE_STATE_DEBUG", false);
   bool preproc_debug_config = env_bool("SIMA_PREPROC_DEBUG_CONFIG", false);
   bool gst_enforce_names = env_bool("SIMA_GST_ENFORCE_NAMES", false);
-  bool detess_override_debug =
-      env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false) || env_bool("SIMA_DETESS_DISPATCH_DEBUG", false);
-  bool session_sync_cache_debug =
-      env_bool("SIMA_SESSION_SYNC_CACHE_DEBUG", false) ||
-      env_bool("SIMA_DETESS_DISPATCH_DEBUG", false) || env_bool("SIMA_DETESS_LIFECYCLE_DEBUG", false);
+  bool detess_override_debug = env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false) ||
+                               env_bool("SIMA_DETESS_DISPATCH_DEBUG", false);
+  bool session_sync_cache_debug = env_bool("SIMA_SESSION_SYNC_CACHE_DEBUG", false) ||
+                                  env_bool("SIMA_DETESS_DISPATCH_DEBUG", false) ||
+                                  env_bool("SIMA_DETESS_LIFECYCLE_DEBUG", false);
 };
 
 const SessionBuildInputDebugFlags& session_build_input_debug_flags() {
@@ -212,8 +212,8 @@ const char* input_memory_policy_name(InputMemoryPolicy policy) {
   return "auto";
 }
 
-InputMemoryPolicy resolve_memory_policy_from_first_downstream_node(
-    const std::vector<std::shared_ptr<Node>>& nodes) {
+InputMemoryPolicy
+resolve_memory_policy_from_first_downstream_node(const std::vector<std::shared_ptr<Node>>& nodes) {
   if (nodes.size() <= 1U) {
     return InputMemoryPolicy::SystemMemory;
   }
@@ -449,8 +449,7 @@ build_detess_output_override(const std::vector<std::shared_ptr<Node>>& nodes) {
 
   if (detess_override_debug_enabled()) {
     const std::size_t elem_bytes = pipeline_internal::dtype_bytes(info.dtype);
-    std::fprintf(stderr,
-                 "[detess-override] outputs=%zu elem_bytes=%zu dtype=%d layout=%d\n",
+    std::fprintf(stderr, "[detess-override] outputs=%zu elem_bytes=%zu dtype=%d layout=%d\n",
                  info.outputs.size(), elem_bytes, static_cast<int>(info.dtype),
                  static_cast<int>(info.layout));
     for (std::size_t i = 0; i < info.outputs.size(); ++i) {
@@ -466,8 +465,7 @@ build_detess_output_override(const std::vector<std::shared_ptr<Node>>& nodes) {
         bytes *= tensor.shape[j];
       }
       shape_ss << "]";
-      std::fprintf(stderr,
-                   "[detess-override]   output[%zu] shape=%s byte_offset=%lld bytes=%lld\n",
+      std::fprintf(stderr, "[detess-override]   output[%zu] shape=%s byte_offset=%lld bytes=%lld\n",
                    i, shape_ss.str().c_str(), static_cast<long long>(tensor.byte_offset),
                    static_cast<long long>(bytes));
     }
@@ -728,14 +726,13 @@ void apply_input_contract_to_nodes(const std::vector<std::shared_ptr<Node>>& nod
   }
 }
 
-void maybe_compile_build_result_contracts(
-    BuildResult* build_result,
-    std::vector<std::shared_ptr<Node>>* nodes,
-    const SessionOptions& sess_opt,
-    const InputContract& ingress_contract,
-    const SampleSpec& ingress_spec,
-    const std::optional<Sample>& ingress_sample,
-    const char* where) {
+void maybe_compile_build_result_contracts(BuildResult* build_result,
+                                          std::vector<std::shared_ptr<Node>>* nodes,
+                                          const SessionOptions& sess_opt,
+                                          const InputContract& ingress_contract,
+                                          const SampleSpec& ingress_spec,
+                                          const std::optional<Sample>& ingress_sample,
+                                          const char* where) {
   if (!build_result || !nodes) {
     return;
   }
@@ -825,8 +822,8 @@ build_mla_output_override(const std::vector<std::shared_ptr<Node>>& nodes) {
       }
       shape_ss << "]";
       std::fprintf(stderr,
-                   "[output-override]   output[%zu] name=%s mem=%d shape=%s byte_offset=%lld\n",
-                   i, entry.name.c_str(), entry.memory_index, shape_ss.str().c_str(),
+                   "[output-override]   output[%zu] name=%s mem=%d shape=%s byte_offset=%lld\n", i,
+                   entry.name.c_str(), entry.memory_index, shape_ss.str().c_str(),
                    static_cast<long long>(entry.byte_offset));
     }
   }
@@ -1012,9 +1009,10 @@ void validate_shape_limits_or_throw(const InputStreamOptions::ResolvedShapeLimit
       "Set depth <= max_depth (or clear depth to infer seed dynamically).");
 }
 
-InputStreamOptions::DynamicCapability detect_dynamic_capability(
-    const std::vector<std::shared_ptr<Node>>& nodes, const InputOptions& src_opt,
-    const SampleSpec& seed, InputStreamOptions::ShapePolicy policy) {
+InputStreamOptions::DynamicCapability
+detect_dynamic_capability(const std::vector<std::shared_ptr<Node>>& nodes,
+                          const InputOptions& src_opt, const SampleSpec& seed,
+                          InputStreamOptions::ShapePolicy policy) {
   if (policy == InputStreamOptions::ShapePolicy::LockedByCapsOverride) {
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
@@ -1023,7 +1021,8 @@ InputStreamOptions::DynamicCapability detect_dynamic_capability(
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
 
-  const std::string media = lower_copy(src_opt.media_type.empty() ? seed.media_type : src_opt.media_type);
+  const std::string media =
+      lower_copy(src_opt.media_type.empty() ? seed.media_type : src_opt.media_type);
   if (media != "video/x-raw") {
     return InputStreamOptions::DynamicCapability::StaticOnly;
   }
@@ -1166,19 +1165,18 @@ OutputSpec make_ingress_spec_for_format(const SampleSpec& seed, const std::strin
 
 bool output_contract_equal(const OutputSpec& a, const OutputSpec& b) {
   return a.media_type == b.media_type && a.format == b.format && a.width == b.width &&
-         a.height == b.height && a.depth == b.depth && a.layout == b.layout &&
-         a.dtype == b.dtype;
+         a.height == b.height && a.depth == b.depth && a.layout == b.layout && a.dtype == b.dtype;
 }
 
-bool derive_downstream_contract_for_ingress_format(
-    const std::vector<std::shared_ptr<Node>>& nodes, std::size_t start_idx, const SampleSpec& seed,
-    const std::string& fmt, OutputSpec* out) {
+bool derive_downstream_contract_for_ingress_format(const std::vector<std::shared_ptr<Node>>& nodes,
+                                                   std::size_t start_idx, const SampleSpec& seed,
+                                                   const std::string& fmt, OutputSpec* out) {
   if (!out || seed.width <= 0 || seed.height <= 0)
     return false;
   if (start_idx >= nodes.size())
     return false;
-  std::vector<std::shared_ptr<Node>> downstream(nodes.begin() + static_cast<std::ptrdiff_t>(start_idx),
-                                                nodes.end());
+  std::vector<std::shared_ptr<Node>> downstream(
+      nodes.begin() + static_cast<std::ptrdiff_t>(start_idx), nodes.end());
   if (downstream.empty())
     return false;
 
@@ -1191,10 +1189,10 @@ bool derive_downstream_contract_for_ingress_format(
   }
 }
 
-bool detect_allow_ingress_format_renegotiation(
-    const std::vector<std::shared_ptr<Node>>& nodes, const InputOptions& src_opt,
-    const SampleSpec& seed, InputStreamOptions::ShapePolicy policy,
-    InputStreamOptions::DynamicCapability capability) {
+bool detect_allow_ingress_format_renegotiation(const std::vector<std::shared_ptr<Node>>& nodes,
+                                               const InputOptions& src_opt, const SampleSpec& seed,
+                                               InputStreamOptions::ShapePolicy policy,
+                                               InputStreamOptions::DynamicCapability capability) {
   if (policy == InputStreamOptions::ShapePolicy::LockedByCapsOverride)
     return false;
   if (capability != InputStreamOptions::DynamicCapability::IngressDynamicCvuOnly)
@@ -1225,9 +1223,8 @@ bool detect_allow_ingress_format_renegotiation(
   add_unique_ingress_format(formats, src_opt.format);
   add_unique_ingress_format(formats, pre_opt.input_img_type);
 
-  const std::string baseline = !formats.empty()
-                                   ? formats.front()
-                                   : canonical_raw_format(seed.format);
+  const std::string baseline =
+      !formats.empty() ? formats.front() : canonical_raw_format(seed.format);
   if (!is_supported_raw_ingress_format(baseline))
     return false;
 
@@ -1281,9 +1278,8 @@ InputOptions seed_input_options_from_spec(const InputOptions& opt, const SampleS
     return out;
   }
 
-  const bool default_media_seed =
-      (out.media_type == defaults.media_type) && out.format.empty() && out.width <= 0 &&
-      out.height <= 0 && out.depth <= 0;
+  const bool default_media_seed = (out.media_type == defaults.media_type) && out.format.empty() &&
+                                  out.width <= 0 && out.height <= 0 && out.depth <= 0;
   if ((out.media_type.empty() || default_media_seed) && !seed.media_type.empty()) {
     out.media_type = seed.media_type;
   }
@@ -1319,15 +1315,15 @@ InputOptions seed_input_options_from_spec(const InputOptions& opt, const SampleS
   return out;
 }
 
-std::vector<std::shared_ptr<Node>> replace_first_input_node_for_build(
-    const std::vector<std::shared_ptr<Node>>& nodes, const InputOptions& seeded_input_opt) {
+std::vector<std::shared_ptr<Node>>
+replace_first_input_node_for_build(const std::vector<std::shared_ptr<Node>>& nodes,
+                                   const InputOptions& seeded_input_opt) {
   std::vector<std::shared_ptr<Node>> patched = nodes;
   if (!patched.empty()) {
     patched.front() = nodes::Input(seeded_input_opt);
   }
   return patched;
 }
-
 
 RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
   RunOptions out = opt;
@@ -1472,29 +1468,27 @@ void install_input_contract_caps_change_callback(InputStream& stream,
     }
   }
   std::string last_format = initial_spec.format;
-  stream.set_on_caps_change(
-      [nodes, snapshot_paths, last_format](const SampleSpec& old_spec,
-                                           const SampleSpec& new_spec) mutable {
-        (void)old_spec;
+  stream.set_on_caps_change([nodes, snapshot_paths, last_format](
+                                const SampleSpec& old_spec, const SampleSpec& new_spec) mutable {
+    (void)old_spec;
 
-        apply_input_contract_to_nodes(nodes, input_contract_from_sample_spec(new_spec));
+    apply_input_contract_to_nodes(nodes, input_contract_from_sample_spec(new_spec));
 
-        if (new_spec.kind != SampleMediaKind::RawVideo)
-          return;
-        if (new_spec.format.empty())
-          return;
-        if (!last_format.empty() && new_spec.format == last_format)
-          return;
-        if (preproc_debug_config_enabled()) {
-          std::fprintf(stderr,
-                       "[DBG] preproc snapshot update format=%s width=%d height=%d depth=%d\n",
-                       new_spec.format.c_str(), new_spec.width, new_spec.height, new_spec.depth);
-        }
-        for (const auto& path : snapshot_paths) {
-          update_preproc_snapshot_format(path, new_spec.format);
-        }
-        last_format = new_spec.format;
-      });
+    if (new_spec.kind != SampleMediaKind::RawVideo)
+      return;
+    if (new_spec.format.empty())
+      return;
+    if (!last_format.empty() && new_spec.format == last_format)
+      return;
+    if (preproc_debug_config_enabled()) {
+      std::fprintf(stderr, "[DBG] preproc snapshot update format=%s width=%d height=%d depth=%d\n",
+                   new_spec.format.c_str(), new_spec.width, new_spec.height, new_spec.depth);
+    }
+    for (const auto& path : snapshot_paths) {
+      update_preproc_snapshot_format(path, new_spec.format);
+    }
+    last_format = new_spec.format;
+  });
 }
 
 bool resolve_startup_preflight(const InputStreamOptions& opt) {
@@ -1543,9 +1537,8 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 }
 
 std::string infer_error_node_name(const std::string& pipeline) {
-  for (const char* element :
-       {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla", "neatboxdecode",
-        "neatdequant", "neatdetess"}) {
+  for (const char* element : {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla",
+                              "neatboxdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
       return name;
@@ -1584,8 +1577,7 @@ bool supports_single_sample_preflight(const std::string& pipeline) {
   return true;
 }
 
-template <typename InputT>
-bool supports_single_sample_preflight_input(const InputT&) {
+template <typename InputT> bool supports_single_sample_preflight_input(const InputT&) {
   return true;
 }
 
@@ -1732,7 +1724,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   const Input* src_node = nullptr;
   require_input_appsrc(nodes, "Session::build(input)", &src_node);
-  const InputOptions normalized_input_opt = pipeline_internal::normalize_shape_bounds(src_node->options());
+  const InputOptions normalized_input_opt =
+      pipeline_internal::normalize_shape_bounds(src_node->options());
   const SampleSpec seed_spec =
       infer_input_spec(normalized_input_opt, sample, "Session::build(input)");
   InputOptions seeded_input_opt = seed_input_options_from_spec(src_node->options(), seed_spec);
@@ -1750,12 +1743,11 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   const bool insert_boundaries =
       should_insert_boundaries_for_mode("SIMA_GST_RUN_INSERT_BOUNDARIES", false);
 
-  BuildResult br =
-      build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2, name_transform, &sess_opt);
-  maybe_compile_build_result_contracts(&br, &build_nodes, sess_opt,
-                                       input_contract_from_input(sample),
-                                       seed_spec, contract_compile_sample_from_input(sample),
-                                       "Session::build(input)");
+  BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
+                                       name_transform, &sess_opt);
+  maybe_compile_build_result_contracts(
+      &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
+      contract_compile_sample_from_input(sample), "Session::build(input)");
   if (sync_mode) {
     br.pipeline_string =
         session_build_clamp_sync_pipeline(std::move(br.pipeline_string), sync_num_buffers_override);
@@ -1835,9 +1827,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   InputStreamOptions stream_opt = opt;
   const std::size_t bounded_estimate_bytes =
       static_cast<std::size_t>(session_build_estimate_frame_bytes_limit(src_opt, spec));
-  const auto resolved_input_policy =
-      pipeline_internal::resolve_session_input_policy(src_opt, spec, stream_opt.max_input_bytes,
-                                                     bounded_estimate_bytes);
+  const auto resolved_input_policy = pipeline_internal::resolve_session_input_policy(
+      src_opt, spec, stream_opt.max_input_bytes, bounded_estimate_bytes);
   stream_opt.shape_policy = resolved_input_policy.shape_policy;
   stream_opt.shape_limits = resolved_input_policy.shape_limits;
   stream_opt.max_input_bytes = resolved_input_policy.max_input_bytes_guard;
@@ -1847,9 +1838,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       detect_dynamic_capability(nodes, src_opt, spec, stream_opt.shape_policy);
   stream_opt.allow_ingress_cvu_format_renegotiation = detect_allow_ingress_format_renegotiation(
       nodes, src_opt, spec, stream_opt.shape_policy, stream_opt.dynamic_capability);
-  stream_opt.require_device_visible_input =
-      (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
-       src_opt.memory_policy == InputMemoryPolicy::Dms0);
+  stream_opt.require_device_visible_input = (src_opt.memory_policy == InputMemoryPolicy::Ev74 ||
+                                             src_opt.memory_policy == InputMemoryPolicy::Dms0);
 
   BuildAdaptationSummary adaptation;
   adaptation.shape_policy = shape_policy_name(stream_opt.shape_policy);
@@ -1877,14 +1867,12 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     add_build_adaptation_action(adaptation, "input_constraints", true, detail.str());
   }
 
-  add_build_adaptation_action(
-      adaptation, "dynamic_capability", true,
-      std::string("shape_policy=") + adaptation.shape_policy + " capability=" +
-          adaptation.dynamic_capability);
+  add_build_adaptation_action(adaptation, "dynamic_capability", true,
+                              std::string("shape_policy=") + adaptation.shape_policy +
+                                  " capability=" + adaptation.dynamic_capability);
 
   add_build_adaptation_action(
-      adaptation, "format_renegotiation_gate",
-      stream_opt.allow_ingress_cvu_format_renegotiation,
+      adaptation, "format_renegotiation_gate", stream_opt.allow_ingress_cvu_format_renegotiation,
       stream_opt.allow_ingress_cvu_format_renegotiation
           ? "ingress raw format changes allowed for this graph"
           : "ingress format changes are rebuild-only for this graph",
@@ -1908,16 +1896,14 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 
   adaptation.max_input_bytes_guard = stream_opt.max_input_bytes;
   adaptation.byte_guard_origin = byte_guard_origin_name(stream_opt.byte_guard_origin);
-  add_build_adaptation_action(adaptation, "byte_guard", true,
-                              std::string("max_input_bytes=") +
-                                  std::to_string(stream_opt.max_input_bytes),
-                              std::string());
+  add_build_adaptation_action(
+      adaptation, "byte_guard", true,
+      std::string("max_input_bytes=") + std::to_string(stream_opt.max_input_bytes), std::string());
 
   add_build_adaptation_action(
       adaptation, "appsrc_caps_seed", src_opt.caps_override.empty(),
-      src_opt.caps_override.empty()
-          ? std::string("caps derived from resolved seed input")
-          : std::string("caps_override=") + src_opt.caps_override,
+      src_opt.caps_override.empty() ? std::string("caps derived from resolved seed input")
+                                    : std::string("caps_override=") + src_opt.caps_override,
       src_opt.caps_override.empty() ? std::string()
                                     : std::string("caps_override is authoritative"));
 
@@ -1926,11 +1912,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     detail << "policy=" << input_memory_policy_name(src_opt.memory_policy)
            << " use_simaai_pool=" << (src_opt.use_simaai_pool ? 1 : 0)
            << " first_downstream=" << first_effective_downstream_kind;
-    add_build_adaptation_action(
-        adaptation, "appsrc_memory_policy", true, detail.str(),
-        memory_policy_auto_applied
-            ? "auto policy resolved from first downstream node"
-            : "policy already explicit (not auto-overridden)");
+    add_build_adaptation_action(adaptation, "appsrc_memory_policy", true, detail.str(),
+                                memory_policy_auto_applied
+                                    ? "auto policy resolved from first downstream node"
+                                    : "policy already explicit (not auto-overridden)");
   }
 
   if (br.diag) {
@@ -2036,8 +2021,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
 InputStream run_input_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
                                       const std::shared_ptr<void>& guard, const void* owner,
                                       std::string& last_pipeline, const cv::Mat& sample,
-                                      const SessionOptions& sess_opt,
-                                      const InputStreamOptions& opt,
+                                      const SessionOptions& sess_opt, const InputStreamOptions& opt,
                                       const NameTransform& name_transform, bool insert_queue2,
                                       int sync_num_buffers_override, bool sync_mode) {
   return run_input_stream_internal_typed(nodes, guard, owner, last_pipeline, sample, sess_opt, opt,
@@ -2049,8 +2033,7 @@ InputStream run_input_stream_internal(const std::vector<std::shared_ptr<Node>>& 
                                       const std::shared_ptr<void>& guard, const void* owner,
                                       std::string& last_pipeline,
                                       const simaai::neat::Tensor& sample,
-                                      const SessionOptions& sess_opt,
-                                      const InputStreamOptions& opt,
+                                      const SessionOptions& sess_opt, const InputStreamOptions& opt,
                                       const NameTransform& name_transform, bool insert_queue2,
                                       int sync_num_buffers_override, bool sync_mode) {
   return run_input_stream_internal_typed(nodes, guard, owner, last_pipeline, sample, sess_opt, opt,
@@ -2061,8 +2044,7 @@ InputStream run_input_stream_internal(const std::vector<std::shared_ptr<Node>>& 
 InputStream run_input_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
                                       const std::shared_ptr<void>& guard, const void* owner,
                                       std::string& last_pipeline, const Sample& sample,
-                                      const SessionOptions& sess_opt,
-                                      const InputStreamOptions& opt,
+                                      const SessionOptions& sess_opt, const InputStreamOptions& opt,
                                       const NameTransform& name_transform, bool insert_queue2,
                                       int sync_num_buffers_override, bool sync_mode) {
   return run_input_stream_internal_typed(nodes, guard, owner, last_pipeline, sample, sess_opt, opt,
@@ -2222,9 +2204,8 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
   const Input* src_node = nullptr;
   require_input_appsrc(nodes, "Session::run(input)", &src_node);
 
-  const SampleSpec spec =
-      infer_input_spec(pipeline_internal::normalize_shape_bounds(src_node->options()), input,
-                       "Session::run(input)");
+  const SampleSpec spec = infer_input_spec(
+      pipeline_internal::normalize_shape_bounds(src_node->options()), input, "Session::run(input)");
   const uint64_t version = nodes_version.load(std::memory_order_relaxed);
   const RunOptions run_opt = session_build_resolve_build_opt(RunMode::Sync, opt);
   const int timeout_ms = resolved_input_timeout_ms(run_opt);
@@ -2255,36 +2236,37 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
     set_sync_cache(run_cache, std::forward<BuildFn>(build_sync_runner)(run_opt), spec.caps_key,
                    run_opt, version, kind);
     if (session_sync_cache_debug_enabled()) {
-      std::fprintf(
-          stderr,
-          "[sync-cache] build_new kind=%s run_cache=%p runner_obj=%p nodes_version=%llu "
-          "sync_prefill_warmed=%d\n",
-          run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
-          run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr,
-          static_cast<unsigned long long>(version),
-          run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
+      std::fprintf(stderr,
+                   "[sync-cache] build_new kind=%s run_cache=%p runner_obj=%p nodes_version=%llu "
+                   "sync_prefill_warmed=%d\n",
+                   run_input_kind_name(kind),
+                   run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+                   run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr,
+                   static_cast<unsigned long long>(version),
+                   run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
     }
   } else if (session_sync_cache_debug_enabled()) {
-    std::fprintf(stderr,
-                 "[sync-cache] reuse kind=%s run_cache=%p runner_obj=%p sync_prefill_warmed=%d\n",
-                 run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
-                 run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr,
-                 run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
+    std::fprintf(
+        stderr, "[sync-cache] reuse kind=%s run_cache=%p runner_obj=%p sync_prefill_warmed=%d\n",
+        run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+        run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr,
+        run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
   }
   auto run_with_current_runner = [&]() -> Sample {
     const int max_buffers = max_num_buffers_in_pipeline_local(last_pipeline);
     if (session_sync_cache_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[sync-cache] run kind=%s run_cache=%p runner_obj=%p max_buffers=%d timeout_ms=%d "
-                   "prefill_warmed=%d\n",
-                   run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
-                   run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr,
-                   max_buffers, timeout_ms, run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
+      std::fprintf(
+          stderr,
+          "[sync-cache] run kind=%s run_cache=%p runner_obj=%p max_buffers=%d timeout_ms=%d "
+          "prefill_warmed=%d\n",
+          run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+          run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr, max_buffers,
+          timeout_ms, run_cache && run_cache->sync_prefill_warmed ? 1 : 0);
     }
     if (max_buffers > 1) {
       const bool allow_startup_lag = !run_cache->sync_prefill_warmed;
-      Sample out = run_sync_prefill(run_cache->runner, input, timeout_ms, max_buffers,
-                                    allow_startup_lag);
+      Sample out =
+          run_sync_prefill(run_cache->runner, input, timeout_ms, max_buffers, allow_startup_lag);
       run_cache->sync_prefill_warmed = true;
       return out;
     }
@@ -2299,21 +2281,24 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
       throw;
     }
     if (session_sync_cache_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[sync-cache] rebuild_after_session_error kind=%s old_run_cache=%p old_runner_obj=%p\n",
-                   run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
-                   run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr);
+      std::fprintf(
+          stderr,
+          "[sync-cache] rebuild_after_session_error kind=%s old_run_cache=%p old_runner_obj=%p\n",
+          run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+          run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr);
     }
     if (inputstream_debug_enabled_for_build()) {
-      std::fprintf(stderr,
-                   "[DBG] Session::run(input): cached sync runner failed; rebuilding and retrying\n");
+      std::fprintf(
+          stderr,
+          "[DBG] Session::run(input): cached sync runner failed; rebuilding and retrying\n");
     }
     pipeline_internal::ScopedSyncBuild sync_guard(true);
     set_sync_cache(run_cache, std::forward<BuildFn>(build_sync_runner)(run_opt), spec.caps_key,
                    run_opt, version, kind);
     if (session_sync_cache_debug_enabled()) {
       std::fprintf(stderr, "[sync-cache] rebuilt kind=%s new_run_cache=%p new_runner_obj=%p\n",
-                   run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+                   run_input_kind_name(kind),
+                   run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
                    run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr);
     }
     return run_with_current_runner();
@@ -2322,21 +2307,23 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
       throw;
     }
     if (session_sync_cache_debug_enabled()) {
-      std::fprintf(stderr,
-                   "[sync-cache] rebuild_after_std_exception kind=%s old_run_cache=%p old_runner_obj=%p\n",
-                   run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
-                   run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr);
+      std::fprintf(
+          stderr,
+          "[sync-cache] rebuild_after_std_exception kind=%s old_run_cache=%p old_runner_obj=%p\n",
+          run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+          run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr);
     }
     if (inputstream_debug_enabled_for_build()) {
-      std::fprintf(stderr,
-                   "[DBG] Session::run(input): cached sync runner std::exception; rebuilding and retrying\n");
+      std::fprintf(stderr, "[DBG] Session::run(input): cached sync runner std::exception; "
+                           "rebuilding and retrying\n");
     }
     pipeline_internal::ScopedSyncBuild sync_guard(true);
     set_sync_cache(run_cache, std::forward<BuildFn>(build_sync_runner)(run_opt), spec.caps_key,
                    run_opt, version, kind);
     if (session_sync_cache_debug_enabled()) {
       std::fprintf(stderr, "[sync-cache] rebuilt kind=%s new_run_cache=%p new_runner_obj=%p\n",
-                   run_input_kind_name(kind), run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
+                   run_input_kind_name(kind),
+                   run_cache ? static_cast<void*>(run_cache.get()) : nullptr,
                    run_cache ? static_cast<void*>(std::addressof(run_cache->runner)) : nullptr);
     }
     return run_with_current_runner();
@@ -2355,8 +2342,8 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
       continue;
     }
 
-    const NodeGroup upstream_group(std::vector<std::shared_ptr<Node>>(nodes->begin(),
-                                                                      nodes->begin() + i));
+    const NodeGroup upstream_group(
+        std::vector<std::shared_ptr<Node>>(nodes->begin(), nodes->begin() + i));
     OutputSpec upstream_spec;
     try {
       upstream_spec = derive_output_spec(upstream_group, {});
@@ -2409,21 +2396,23 @@ Run Session::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOp
   InputOptions tensor_src_opt = pipeline_internal::normalize_shape_bounds(ctx.src_node->options());
   if (!input_options_expect_tensor_media(tensor_src_opt)) {
     if (inputs.size() != 1U) {
-      throw std::runtime_error(
-          "Session::build(inputs): raw-image ingress supports exactly one cv::Mat per inference item");
+      throw std::runtime_error("Session::build(inputs): raw-image ingress supports exactly one "
+                               "cv::Mat per inference item");
     }
     progress.step("Building session...");
     InputStream stream = session_build_run_input_stream_internal(
-        nodes_, guard_, this, last_pipeline_, inputs.front(), opt_, build_stream_opt, ctx.name_transform,
-        ctx.insert_queue2, ctx.sync_num_buffers_override, ctx.mode == RunMode::Sync);
+        nodes_, guard_, this, last_pipeline_, inputs.front(), opt_, build_stream_opt,
+        ctx.name_transform, ctx.insert_queue2, ctx.sync_num_buffers_override,
+        ctx.mode == RunMode::Sync);
     progress.done("Session ready");
     return Run::create(std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, std::nullopt,
                        input_route_processor_);
   }
   TensorList tensors = tensor_list_from_mats(inputs, tensor_src_opt, "Session::build(inputs)");
   const Sample seed =
-      input_route_processor_ ? input_route_processor_->process_tensors(tensors, "Session::build(inputs)")
-                             : pipeline_internal::sample_from_tensors_for_input(tensors, tensor_src_opt);
+      input_route_processor_
+          ? input_route_processor_->process_tensors(tensors, "Session::build(inputs)")
+          : pipeline_internal::sample_from_tensors_for_input(tensors, tensor_src_opt);
   progress.step("Building session...");
   InputStream stream = session_build_run_input_stream_internal(
       nodes_, guard_, this, last_pipeline_, seed, opt_, build_stream_opt, ctx.name_transform,
@@ -2446,15 +2435,16 @@ Run Session::build(const TensorList& inputs, RunMode mode, const RunOptions& opt
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.startup_preflight = false;
   const InputOptions src_opt = pipeline_internal::normalize_shape_bounds(ctx.src_node->options());
-  const Sample seed =
-      input_route_processor_ ? input_route_processor_->seed_tensors(inputs, "Session::build(inputs)")
-                             : pipeline_internal::sample_from_tensors_for_input(inputs, src_opt);
+  const Sample seed = input_route_processor_
+                          ? input_route_processor_->seed_tensors(inputs, "Session::build(inputs)")
+                          : pipeline_internal::sample_from_tensors_for_input(inputs, src_opt);
   progress.step("Building session...");
   InputStream stream = session_build_run_input_stream_internal(
       nodes_, guard_, this, last_pipeline_, seed, opt_, build_stream_opt, ctx.name_transform,
       ctx.insert_queue2, ctx.sync_num_buffers_override, ctx.mode == RunMode::Sync);
-  const std::optional<InputOptions> tensor_src_opt =
-      input_options_expect_tensor_media(src_opt) ? std::optional<InputOptions>(src_opt) : std::nullopt;
+  const std::optional<InputOptions> tensor_src_opt = input_options_expect_tensor_media(src_opt)
+                                                         ? std::optional<InputOptions>(src_opt)
+                                                         : std::nullopt;
   progress.done("Session ready");
   return Run::create(std::move(stream), ctx.merged_opt, build_stream_opt, ctx.mode, tensor_src_opt,
                      input_route_processor_);
@@ -2472,9 +2462,9 @@ Run Session::build(const SampleList& inputs, RunMode mode, const RunOptions& opt
   progress.step("Preparing input stream...");
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.startup_preflight = false;
-  const Sample seed =
-      input_route_processor_ ? input_route_processor_->seed_samples(inputs, "Session::build(inputs)")
-                             : inputs.front();
+  const Sample seed = input_route_processor_
+                          ? input_route_processor_->seed_samples(inputs, "Session::build(inputs)")
+                          : inputs.front();
   progress.step("Building session...");
   InputStream stream = session_build_run_input_stream_internal(
       nodes_, guard_, this, last_pipeline_, seed, opt_, build_stream_opt, ctx.name_transform,
@@ -2503,12 +2493,11 @@ TensorList Session::run(const TensorList& inputs, const RunOptions& opt) {
     throw std::runtime_error("Session::run(inputs): empty tensor list");
   }
   if (inputs.size() == 1U) {
-    Sample out = run_sync_cached_input(
-        nodes_, nodes_version_, last_pipeline_, run_cache_, inputs.front(), opt,
-        RunInputKind::Tensor,
-        [this, &input = inputs.front()](const RunOptions& run_opt) {
-          return build(TensorList{input}, RunMode::Sync, run_opt);
-        });
+    Sample out = run_sync_cached_input(nodes_, nodes_version_, last_pipeline_, run_cache_,
+                                       inputs.front(), opt, RunInputKind::Tensor,
+                                       [this, &input = inputs.front()](const RunOptions& run_opt) {
+                                         return build(TensorList{input}, RunMode::Sync, run_opt);
+                                       });
     return tensors_from_sample(std::move(out), false);
   }
   Run runner = build(inputs, RunMode::Sync, opt);
@@ -2520,12 +2509,11 @@ SampleList Session::run(const SampleList& inputs, const RunOptions& opt) {
     throw std::runtime_error("Session::run(inputs): empty sample list");
   }
   if (inputs.size() == 1U) {
-    Sample out = run_sync_cached_input(
-        nodes_, nodes_version_, last_pipeline_, run_cache_, inputs.front(), opt,
-        RunInputKind::Sample,
-        [this, &input = inputs.front()](const RunOptions& run_opt) {
-          return build(SampleList{input}, RunMode::Sync, run_opt);
-        });
+    Sample out = run_sync_cached_input(nodes_, nodes_version_, last_pipeline_, run_cache_,
+                                       inputs.front(), opt, RunInputKind::Sample,
+                                       [this, &input = inputs.front()](const RunOptions& run_opt) {
+                                         return build(SampleList{input}, RunMode::Sync, run_opt);
+                                       });
     return SampleList{std::move(out)};
   }
   Run runner = build(inputs, RunMode::Sync, opt);
@@ -2569,31 +2557,34 @@ session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const cv::Mat& sample,
-    const SessionOptions& sess_opt,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode) {
-  return run_input_stream_internal(nodes, guard, owner, last_pipeline, sample, sess_opt, opt, name_transform,
-                                   insert_queue2, sync_num_buffers_override, sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode) {
+  return run_input_stream_internal(nodes, guard, owner, last_pipeline, sample, sess_opt, opt,
+                                   name_transform, insert_queue2, sync_num_buffers_override,
+                                   sync_mode);
 }
 
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const simaai::neat::Tensor& sample,
-    const SessionOptions& sess_opt,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode) {
-  return run_input_stream_internal(nodes, guard, owner, last_pipeline, sample, sess_opt, opt, name_transform,
-                                   insert_queue2, sync_num_buffers_override, sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode) {
+  return run_input_stream_internal(nodes, guard, owner, last_pipeline, sample, sess_opt, opt,
+                                   name_transform, insert_queue2, sync_num_buffers_override,
+                                   sync_mode);
 }
 
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const Sample& sample,
-    const SessionOptions& sess_opt,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode) {
-  return run_input_stream_internal(nodes, guard, owner, last_pipeline, sample, sess_opt, opt, name_transform,
-                                   insert_queue2, sync_num_buffers_override, sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode) {
+  return run_input_stream_internal(nodes, guard, owner, last_pipeline, sample, sess_opt, opt,
+                                   name_transform, insert_queue2, sync_num_buffers_override,
+                                   sync_mode);
 }
 
 } // namespace simaai::neat

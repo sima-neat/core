@@ -194,16 +194,15 @@ attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt, InputBuff
                            const std::optional<int64_t>& frame_id_override = std::nullopt,
                            const StreamIdOverride& stream_id_override = {},
                            const BufferNameOverride& buffer_name_override = {});
-bool update_simaai_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& frame_id_override,
-                               const std::optional<int64_t>& input_seq_override,
-                               const std::optional<int64_t>& orig_input_seq_override,
-                               const std::optional<std::string>& stream_id_override,
-                               const std::optional<std::string>& buffer_name_override,
-                               const std::optional<uint64_t>& timestamp_override = std::nullopt,
-                               const std::optional<std::string>& origin_stage_id_override =
-                                   std::nullopt,
-                               const std::optional<int>& origin_output_slot_override =
-                                   std::nullopt);
+bool update_simaai_meta_fields(
+    GstBuffer* buffer, const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const std::optional<uint64_t>& timestamp_override = std::nullopt,
+    const std::optional<std::string>& origin_stage_id_override = std::nullopt,
+    const std::optional<int>& origin_output_slot_override = std::nullopt);
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta);
 // Merge `axis_perm` (and only that field) onto an existing GstSimaMeta on
 // `buffer`. Adds GstSimaMeta if absent. The plugin path no longer writes
@@ -215,9 +214,10 @@ bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>
 std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer);
 bool has_simaai_preprocess_meta(GstBuffer* buffer);
 bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* err = nullptr);
-std::optional<std::string> validate_simaai_preprocess_meta_required_fields(
-    GstBuffer* buffer, const std::vector<std::string>& required_fields,
-    PreprocessRuntimeMeta* out_meta = nullptr);
+std::optional<std::string>
+validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
+                                                const std::vector<std::string>& required_fields,
+                                                PreprocessRuntimeMeta* out_meta = nullptr);
 bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions& opt,
                                            int input_width, int input_height);
 

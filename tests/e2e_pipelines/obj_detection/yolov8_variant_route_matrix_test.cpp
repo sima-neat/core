@@ -214,16 +214,13 @@ tensor_io_delta(const simaai::neat::pipeline_internal::TensorIoStats& before,
 
 std::string tensor_io_stats_string(const simaai::neat::pipeline_internal::TensorIoStats& stats) {
   std::ostringstream os;
-  os << "copies=" << stats.tensor_copy_count
-     << ",copy_bytes=" << stats.tensor_copy_bytes
-     << ",views=" << stats.tensor_view_count
-     << ",maps=" << stats.gst_memory_map_calls
+  os << "copies=" << stats.tensor_copy_count << ",copy_bytes=" << stats.tensor_copy_bytes
+     << ",views=" << stats.tensor_view_count << ",maps=" << stats.gst_memory_map_calls
      << ",holder_fast=" << stats.holder_fast_path_hits
      << ",bundle_proj=" << stats.bundle_projection_count
      << ",packed_reuse=" << stats.packed_view_reuse_hits << "/"
-     << stats.packed_view_reuse_opportunities
-     << ",packed_ratio=" << std::fixed << std::setprecision(3)
-     << stats.packed_view_reuse_ratio();
+     << stats.packed_view_reuse_opportunities << ",packed_ratio=" << std::fixed
+     << std::setprecision(3) << stats.packed_view_reuse_ratio();
   return os.str();
 }
 
@@ -332,9 +329,8 @@ LetterboxGeometry compute_letterbox_geometry(int src_w, int src_h, int dst_w, in
   if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0) {
     return g;
   }
-  const long long d =
-      static_cast<long long>(src_h) * static_cast<long long>(dst_w) -
-      static_cast<long long>(src_w) * static_cast<long long>(dst_h);
+  const long long d = static_cast<long long>(src_h) * static_cast<long long>(dst_w) -
+                      static_cast<long long>(src_w) * static_cast<long long>(dst_h);
   if (d < 0) {
     g.resized_w = dst_w;
     g.resized_h = std::max(
@@ -584,8 +580,8 @@ int cv_interpolation_from_env_override(const char* value, int fallback) {
   return fallback;
 }
 
-std::optional<PreprocKernelContract> read_preproc_contract_from_model(
-    const simaai::neat::Model& model) {
+std::optional<PreprocKernelContract>
+read_preproc_contract_from_model(const simaai::neat::Model& model) {
   std::string mla_cfg = model.find_config_path_by_processor("MLA");
   if (mla_cfg.empty()) {
     mla_cfg = model.find_config_path_by_plugin("processmla");
@@ -879,7 +875,7 @@ std::string bf16_probe_input_color_format(const simaai::neat::Model& model) {
   };
 
   const std::initializer_list<const char*> color_fields = {"output_img_type", "input_img_type",
-                                                        "output_format", "input_format"};
+                                                           "output_format", "input_format"};
   std::vector<std::string> cfg_paths;
   cfg_paths.emplace_back(model.find_config_path_by_processor("CVU"));
   cfg_paths.emplace_back(model.find_config_path_by_plugin("processcvu"));
@@ -996,8 +992,8 @@ simaai::neat::Tensor make_fp32_hwc_tensor_owned(const cv::Mat& fp32, const char*
     throw std::runtime_error(tag + ": invalid tensor geometry");
   }
 
-  const size_t elem_count = static_cast<size_t>(rows) * static_cast<size_t>(cols) *
-                            static_cast<size_t>(channels);
+  const size_t elem_count =
+      static_cast<size_t>(rows) * static_cast<size_t>(cols) * static_cast<size_t>(channels);
   auto storage = simaai::neat::make_cpu_owned_storage(elem_count * sizeof(float));
   auto map = storage->map(simaai::neat::MapMode::Write);
   if (!map.data || map.size_bytes < elem_count * sizeof(float)) {
@@ -1019,11 +1015,10 @@ simaai::neat::Tensor make_fp32_hwc_tensor_owned(const cv::Mat& fp32, const char*
   } else {
     tensor.layout = simaai::neat::TensorLayout::HWC;
     tensor.shape = {rows, cols, channels};
-    tensor.strides_bytes = {
-        static_cast<int64_t>(cols) * static_cast<int64_t>(channels) *
-            static_cast<int64_t>(sizeof(float)),
-        static_cast<int64_t>(channels) * static_cast<int64_t>(sizeof(float)),
-        static_cast<int64_t>(sizeof(float))};
+    tensor.strides_bytes = {static_cast<int64_t>(cols) * static_cast<int64_t>(channels) *
+                                static_cast<int64_t>(sizeof(float)),
+                            static_cast<int64_t>(channels) * static_cast<int64_t>(sizeof(float)),
+                            static_cast<int64_t>(sizeof(float))};
   }
   return tensor;
 }
@@ -1084,12 +1079,9 @@ std::pair<int, int> preferred_input_hw(const simaai::neat::Model& model, RouteKi
   return infer_hw_from_input_spec(spec);
 }
 
-simaai::neat::PreprocessRuntimeMeta build_preprocess_meta_stretch_local(int original_w,
-                                                                         int original_h,
-                                                                         int target_w, int target_h,
-                                                                         bool normalize,
-                                                                         bool quantize,
-                                                                         bool tessellate) {
+simaai::neat::PreprocessRuntimeMeta
+build_preprocess_meta_stretch_local(int original_w, int original_h, int target_w, int target_h,
+                                    bool normalize, bool quantize, bool tessellate) {
   simaai::neat::PreprocessRuntimeMeta meta;
   meta.original_width = original_w;
   meta.original_height = original_h;
@@ -1126,9 +1118,10 @@ simaai::neat::PreprocessRuntimeMeta build_preprocess_meta_stretch_local(int orig
   return meta;
 }
 
-simaai::neat::PreprocessRuntimeMeta build_preprocess_meta_letterbox_local(
-    int original_w, int original_h, int target_w, int target_h, bool normalize, bool quantize,
-    bool tessellate, const std::string& padding_type = "CENTER") {
+simaai::neat::PreprocessRuntimeMeta
+build_preprocess_meta_letterbox_local(int original_w, int original_h, int target_w, int target_h,
+                                      bool normalize, bool quantize, bool tessellate,
+                                      const std::string& padding_type = "CENTER") {
   simaai::neat::PreprocessRuntimeMeta meta;
   meta.original_width = original_w;
   meta.original_height = original_h;
@@ -1186,15 +1179,14 @@ bool attach_preprocess_meta_to_holder_local(simaai::neat::Tensor* tensor,
 void require_preprocess_meta_on_tensor_local(const simaai::neat::Tensor& tensor, int expect_orig_w,
                                              int expect_orig_h, int expect_resized_w,
                                              int expect_resized_h, const char* where) {
-  auto require_expected_meta =
-      [&](const simaai::neat::PreprocessRuntimeMeta& parsed, const char* source) {
-        if (parsed.original_width != expect_orig_w || parsed.original_height != expect_orig_h ||
-            parsed.resized_width != expect_resized_w ||
-            parsed.resized_height != expect_resized_h) {
-          throw std::runtime_error(std::string(where) +
-                                   ": preprocess meta mismatch after attach (" + source + ")");
-        }
-      };
+  auto require_expected_meta = [&](const simaai::neat::PreprocessRuntimeMeta& parsed,
+                                   const char* source) {
+    if (parsed.original_width != expect_orig_w || parsed.original_height != expect_orig_h ||
+        parsed.resized_width != expect_resized_w || parsed.resized_height != expect_resized_h) {
+      throw std::runtime_error(std::string(where) + ": preprocess meta mismatch after attach (" +
+                               source + ")");
+    }
+  };
   if (tensor.semantic.preprocess.has_value()) {
     require_expected_meta(*tensor.semantic.preprocess, "tensor semantic");
     return;
@@ -1215,12 +1207,9 @@ void require_preprocess_meta_on_tensor_local(const simaai::neat::Tensor& tensor,
   require_expected_meta(*parsed, "original/resized");
 }
 
-simaai::neat::Tensor ensure_preprocess_meta_stretch_local(const simaai::neat::Tensor& tensor,
-                                                          const simaai::neat::InputOptions& opt,
-                                                          int original_w, int original_h,
-                                                          int target_w, int target_h,
-                                                          bool normalize, bool quantize,
-                                                          bool tessellate) {
+simaai::neat::Tensor ensure_preprocess_meta_stretch_local(
+    const simaai::neat::Tensor& tensor, const simaai::neat::InputOptions& opt, int original_w,
+    int original_h, int target_w, int target_h, bool normalize, bool quantize, bool tessellate) {
   if (original_w <= 0 || original_h <= 0 || target_w <= 0 || target_h <= 0) {
     return tensor;
   }
@@ -1322,8 +1311,8 @@ int infer_bf16_target_depth(const simaai::neat::TensorSpec& spec, bool is_chw) {
     if (spec.shape.size() == 3 && spec.shape[0] > 0 && spec.shape[0] <= 8) {
       return static_cast<int>(spec.shape[0]);
     }
-    if (spec.shape.size() == 4 && spec.shape[1] > 0 && spec.shape[1] <= 8 &&
-        spec.shape[2] > 0 && spec.shape[3] > 0) {
+    if (spec.shape.size() == 4 && spec.shape[1] > 0 && spec.shape[1] <= 8 && spec.shape[2] > 0 &&
+        spec.shape[3] > 0) {
       return static_cast<int>(spec.shape[1]);
     }
     return 0;
@@ -1349,9 +1338,9 @@ simaai::neat::Tensor make_fp32_input_tensor_cpu(const cv::Mat& img_bgr,
 
   // Keep variant-matrix ingress deterministic and equivalent to host YOLO preproc:
   // letterbox 640x640 with pad=114, BGR->RGB, normalize to [0,1].
-  cv::Mat tensor_like = resize_to_target_local(
-      img_bgr, kFixedPreprocTargetWidth, kFixedPreprocTargetHeight, true, cv::INTER_LINEAR,
-      cv::Scalar(114, 114, 114, 0), "CENTER");
+  cv::Mat tensor_like =
+      resize_to_target_local(img_bgr, kFixedPreprocTargetWidth, kFixedPreprocTargetHeight, true,
+                             cv::INTER_LINEAR, cv::Scalar(114, 114, 114, 0), "CENTER");
   tensor_like = convert_color_for_format(tensor_like, "RGB", "matrix canonical fp32 ingress");
 
   if (!tensor_like.isContinuous()) {
@@ -1372,8 +1361,8 @@ simaai::neat::Tensor make_fp32_input_tensor_cpu(const cv::Mat& img_bgr,
     depth = std::min(depth, channels);
   }
   depth = std::max(1, depth);
-  const size_t elem_count = static_cast<size_t>(h) * static_cast<size_t>(w) *
-                           static_cast<size_t>(std::max(1, depth));
+  const size_t elem_count =
+      static_cast<size_t>(h) * static_cast<size_t>(w) * static_cast<size_t>(std::max(1, depth));
   auto storage = simaai::neat::make_cpu_owned_storage(elem_count * sizeof(float));
   auto map = storage->map(simaai::neat::MapMode::Write);
   if (!map.data) {
@@ -1398,16 +1387,16 @@ simaai::neat::Tensor make_fp32_input_tensor_cpu(const cv::Mat& img_bgr,
   } else {
     for (int y = 0; y < h; ++y) {
       const uint8_t* row = tensor_like.ptr<uint8_t>(y);
-      const size_t row_base = static_cast<size_t>(y) * static_cast<size_t>(w) * static_cast<size_t>(depth);
+      const size_t row_base =
+          static_cast<size_t>(y) * static_cast<size_t>(w) * static_cast<size_t>(depth);
       for (int x = 0; x < w; ++x) {
         const uint8_t* pix = row + static_cast<size_t>(x) * static_cast<size_t>(channels);
         if (is_chw) {
-          const size_t hw_idx = static_cast<size_t>(y) * static_cast<size_t>(w) +
-                                static_cast<size_t>(x);
+          const size_t hw_idx =
+              static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
           const size_t chw_stride = static_cast<size_t>(h) * static_cast<size_t>(w);
           for (int c = 0; c < std::min(channels, depth); ++c) {
-            out[c * chw_stride + hw_idx] =
-                static_cast<float>(pix[c]) * input_scale + input_bias;
+            out[c * chw_stride + hw_idx] = static_cast<float>(pix[c]) * input_scale + input_bias;
           }
         } else {
           const size_t pixel_idx = row_base + static_cast<size_t>(x) * static_cast<size_t>(depth);
@@ -1428,16 +1417,16 @@ simaai::neat::Tensor make_fp32_input_tensor_cpu(const cv::Mat& img_bgr,
   tensor.read_only = true;
   if (is_chw) {
     tensor.shape = {depth, h, w};
-    tensor.strides_bytes = {
-        static_cast<int64_t>(h) * static_cast<int64_t>(w) * static_cast<int64_t>(sizeof(float)),
-        static_cast<int64_t>(w) * static_cast<int64_t>(sizeof(float)),
-        static_cast<int64_t>(sizeof(float))};
+    tensor.strides_bytes = {static_cast<int64_t>(h) * static_cast<int64_t>(w) *
+                                static_cast<int64_t>(sizeof(float)),
+                            static_cast<int64_t>(w) * static_cast<int64_t>(sizeof(float)),
+                            static_cast<int64_t>(sizeof(float))};
   } else {
     tensor.shape = {h, w, depth};
-    tensor.strides_bytes = {
-        static_cast<int64_t>(w) * static_cast<int64_t>(depth) * static_cast<int64_t>(sizeof(float)),
-        static_cast<int64_t>(depth) * static_cast<int64_t>(sizeof(float)),
-        static_cast<int64_t>(sizeof(float))};
+    tensor.strides_bytes = {static_cast<int64_t>(w) * static_cast<int64_t>(depth) *
+                                static_cast<int64_t>(sizeof(float)),
+                            static_cast<int64_t>(depth) * static_cast<int64_t>(sizeof(float)),
+                            static_cast<int64_t>(sizeof(float))};
   }
   return tensor;
 }
@@ -1517,7 +1506,6 @@ void require_preprocess_meta_on_output_local(const simaai::neat::Sample& sample,
                                           where);
 }
 
-
 simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::neat::Model& model,
                                                 const simaai::neat::Model::SessionOptions& sess_opt,
                                                 int frames = 1) {
@@ -1532,8 +1520,7 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
 
   auto run_once_async = [&](int pull_timeout_ms) -> simaai::neat::Sample {
     simaai::neat::RunOptions async_run_opt;
-    if (const char* raw_depth = std::getenv("SIMA_E2E_RUN_QUEUE_DEPTH");
-        raw_depth && *raw_depth) {
+    if (const char* raw_depth = std::getenv("SIMA_E2E_RUN_QUEUE_DEPTH"); raw_depth && *raw_depth) {
       const int depth = std::atoi(raw_depth);
       if (depth > 0) {
         async_run_opt.queue_depth = depth;
@@ -1554,7 +1541,7 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     constexpr int kWarmupFrames = 200;
     constexpr int kMeasureFrames = 500;
     constexpr int kTotalFrames = kWarmupFrames + kMeasureFrames;
-    (void)loop_count;  // intentionally ignored on the MT_FPS path
+    (void)loop_count; // intentionally ignored on the MT_FPS path
     const int effective_loop = kTotalFrames;
 
     std::atomic<int> pulled{0};
@@ -1619,9 +1606,8 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
       double sum_ms = 0.0;
       double max_ms = 0.0;
     };
-    const bool push_profile =
-        std::getenv("SIMA_E2E_PUSH_PROFILE") != nullptr &&
-        std::strcmp(std::getenv("SIMA_E2E_PUSH_PROFILE"), "0") != 0;
+    const bool push_profile = std::getenv("SIMA_E2E_PUSH_PROFILE") != nullptr &&
+                              std::strcmp(std::getenv("SIMA_E2E_PUSH_PROFILE"), "0") != 0;
     const int push_profile_limit = []() {
       const char* raw = std::getenv("SIMA_E2E_PUSH_PROFILE_LIMIT");
       if (!raw || !*raw) {
@@ -1632,8 +1618,8 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     }();
     PushTimingStats warmup_push_stats;
     PushTimingStats measure_push_stats;
-    auto push_timed = [&](std::size_t slot_idx, int frame_idx,
-                          const char* phase, PushTimingStats& stats) -> bool {
+    auto push_timed = [&](std::size_t slot_idx, int frame_idx, const char* phase,
+                          PushTimingStats& stats) -> bool {
       const auto push_t0 = std::chrono::steady_clock::now();
       const bool ok = runner.push(input_tensorlist_pool[slot_idx]);
       const auto push_t1 = std::chrono::steady_clock::now();
@@ -1644,10 +1630,8 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
         stats.max_ms = std::max(stats.max_ms, ms);
         if (frame_idx < push_profile_limit ||
             (push_profile_limit > 0 && (frame_idx % push_profile_limit) == 0)) {
-          std::cerr << "E2E_PUSH_PROFILE phase=" << phase
-                    << " frame=" << frame_idx
-                    << " ok=" << (ok ? 1 : 0)
-                    << " ms=" << ms << "\n";
+          std::cerr << "E2E_PUSH_PROFILE phase=" << phase << " frame=" << frame_idx
+                    << " ok=" << (ok ? 1 : 0) << " ms=" << ms << "\n";
         }
       }
       return ok;
@@ -1683,32 +1667,24 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     consumer.join();
     const auto loop_t1 = std::chrono::steady_clock::now();
 
-    const double mt_ms =
-        std::chrono::duration<double, std::milli>(loop_t1 - loop_t0).count();
-    const int measured_pulled =
-        std::max(0, pulled.load() - kWarmupFrames);
+    const double mt_ms = std::chrono::duration<double, std::milli>(loop_t1 - loop_t0).count();
+    const int measured_pulled = std::max(0, pulled.load() - kWarmupFrames);
     const double mt_fps =
         mt_ms > 0.0 ? (static_cast<double>(measured_pulled) * 1000.0 / mt_ms) : 0.0;
     if (push_profile) {
       const auto print_push_stats = [](const char* phase, const PushTimingStats& stats) {
         const double avg = stats.count > 0 ? stats.sum_ms / static_cast<double>(stats.count) : 0.0;
-        std::cerr << "E2E_PUSH_PROFILE_SUMMARY phase=" << phase
-                  << " count=" << stats.count
-                  << " avg_ms=" << avg
-                  << " max_ms=" << stats.max_ms << "\n";
+        std::cerr << "E2E_PUSH_PROFILE_SUMMARY phase=" << phase << " count=" << stats.count
+                  << " avg_ms=" << avg << " max_ms=" << stats.max_ms << "\n";
       };
       print_push_stats("warmup", warmup_push_stats);
       print_push_stats("measure", measure_push_stats);
     }
     const auto stats = runner.stats();
-    std::cout << "MT_FPS frames=" << kMeasureFrames
-              << " warmup=" << kWarmupFrames
-              << " pushed=" << pushed
-              << " pulled=" << pulled.load()
-              << " measured_pulled=" << measured_pulled
-              << " push_pull_ms=" << mt_ms
-              << " fps=" << mt_fps
-              << " stats_inputs_pushed=" << stats.inputs_pushed
+    std::cout << "MT_FPS frames=" << kMeasureFrames << " warmup=" << kWarmupFrames
+              << " pushed=" << pushed << " pulled=" << pulled.load()
+              << " measured_pulled=" << measured_pulled << " push_pull_ms=" << mt_ms
+              << " fps=" << mt_fps << " stats_inputs_pushed=" << stats.inputs_pushed
               << " stats_outputs_pulled=" << stats.outputs_pulled
               << " avg_latency_ms=" << stats.avg_latency_ms
               << " min_latency_ms=" << stats.min_latency_ms
@@ -1731,9 +1707,9 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     require(!pull_failed.load(),
             "canonical e2e: push/pull failed" +
                 (async_pull_error.empty() ? std::string{} : (": " + async_pull_error)));
-    require(pulled.load() == effective_loop,
-            "canonical e2e: expected " + std::to_string(effective_loop) +
-                " outputs, got " + std::to_string(pulled.load()));
+    require(pulled.load() == effective_loop, "canonical e2e: expected " +
+                                                 std::to_string(effective_loop) + " outputs, got " +
+                                                 std::to_string(pulled.load()));
     return last_sample;
   };
 
@@ -1745,9 +1721,9 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
       require(runner.push(simaai::neat::TensorList{input}),
               "canonical e2e: runner push failed at frame " + std::to_string(frame_idx));
       const auto outputs = runner.pull(pull_timeout_ms);
-      require(outputs.size() == 1U,
-              "canonical e2e: expected exactly 1 output sample at frame " +
-                  std::to_string(frame_idx) + ", got " + std::to_string(outputs.size()));
+      require(outputs.size() == 1U, "canonical e2e: expected exactly 1 output sample at frame " +
+                                        std::to_string(frame_idx) + ", got " +
+                                        std::to_string(outputs.size()));
       last_sample = outputs.front();
     }
     return last_sample;
@@ -1831,8 +1807,7 @@ simaai::neat::Tensor make_bf16_input_tensor_cpu(const cv::Mat& img_bgr,
 
 simaai::neat::Tensor make_bf16_input_tensor(const cv::Mat& img_bgr,
                                             const simaai::neat::Model& model,
-                                            const simaai::neat::TensorSpec& spec,
-                                            RouteKind route) {
+                                            const simaai::neat::TensorSpec& spec, RouteKind route) {
   return make_bf16_input_tensor_cpu(img_bgr, model, spec, route);
 }
 
@@ -1879,7 +1854,8 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
            preproc_contract->output_width != kFixedPreprocTargetWidth) ||
           (preproc_contract->output_height > 0 &&
            preproc_contract->output_height != kFixedPreprocTargetHeight)) {
-        throw std::runtime_error("adapter_ingress strict profile requires 640x640 preproc contract");
+        throw std::runtime_error(
+            "adapter_ingress strict profile requires 640x640 preproc contract");
       }
     }
     target_w = kFixedPreprocTargetWidth;
@@ -1896,24 +1872,24 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
                                  ? preproc_contract->aspect_ratio
                                  : route_uses_letterbox(route));
   const bool requested_letterbox = out.use_letterbox;
-  if (!strict_adapter_profile && out.use_letterbox && pre_adapter_kind == PreAdapterKind::QuantTess &&
+  if (!strict_adapter_profile && out.use_letterbox &&
+      pre_adapter_kind == PreAdapterKind::QuantTess &&
       !kernel_preproc_can_letterbox_dims(input.cols, input.rows, out.target_w, out.target_h)) {
     out.use_letterbox = false;
   }
-  out.letterbox_padding = strict_adapter_profile
-                              ? "CENTER"
-                              : (preproc_contract.has_value() ? preproc_contract->padding_type
-                                                              : std::string("CENTER"));
-  out.interpolation = strict_adapter_profile
-                          ? cv::INTER_LINEAR
-                          : (preproc_contract.has_value()
-                                 ? cv_interpolation_from_preproc_scaling_type(
-                                       preproc_contract->scaling_type)
-                                 : cv::INTER_LINEAR);
+  out.letterbox_padding =
+      strict_adapter_profile
+          ? "CENTER"
+          : (preproc_contract.has_value() ? preproc_contract->padding_type : std::string("CENTER"));
+  out.interpolation =
+      strict_adapter_profile
+          ? cv::INTER_LINEAR
+          : (preproc_contract.has_value()
+                 ? cv_interpolation_from_preproc_scaling_type(preproc_contract->scaling_type)
+                 : cv::INTER_LINEAR);
   if (!strict_adapter_profile) {
-    out.interpolation =
-        cv_interpolation_from_env_override(std::getenv("SIMA_YOLOV8_MANUAL_PREPROC_INTERP"),
-                                           out.interpolation);
+    out.interpolation = cv_interpolation_from_env_override(
+        std::getenv("SIMA_YOLOV8_MANUAL_PREPROC_INTERP"), out.interpolation);
   }
   if (strict_adapter_profile) {
     if (preproc_contract.has_value()) {
@@ -1940,11 +1916,11 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
                  "[matrix-input-debug] adapter_ingress in=%dx%d route=%s pre_kind=%s "
                  "target=%dx%d tess_only_bf16=%d contract=%d out_fmt=%s normalize=%d "
                  "aspect_ratio=%d scaling=%d padding=%s\n",
-                 input.cols, input.rows, route_str.c_str(),
-                 pre_kind_name(pre_adapter_kind).c_str(), out.target_w, out.target_h,
-                 out.tess_only_bf16 ? 1 : 0, preproc_contract.has_value() ? 1 : 0,
-                 out.preproc_out_fmt.c_str(), out.normalize_enabled ? 1 : 0,
-                 out.use_letterbox ? 1 : 0, out.interpolation, out.letterbox_padding.c_str());
+                 input.cols, input.rows, route_str.c_str(), pre_kind_name(pre_adapter_kind).c_str(),
+                 out.target_w, out.target_h, out.tess_only_bf16 ? 1 : 0,
+                 preproc_contract.has_value() ? 1 : 0, out.preproc_out_fmt.c_str(),
+                 out.normalize_enabled ? 1 : 0, out.use_letterbox ? 1 : 0, out.interpolation,
+                 out.letterbox_padding.c_str());
     if (requested_letterbox && !out.use_letterbox) {
       std::fprintf(stderr,
                    "[matrix-input-debug] adapter_ingress forcing_stretch_for_kernel_parity "
@@ -1988,10 +1964,10 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
     }
   }
   cv::Mat prepped = input;
-  const cv::Scalar pad_value = (prepped.channels() == 1)
-                                   ? cv::Scalar(pad_scalar_value)
-                                   : cv::Scalar(pad_scalar_value, pad_scalar_value,
-                                                pad_scalar_value, 0);
+  const cv::Scalar pad_value =
+      (prepped.channels() == 1)
+          ? cv::Scalar(pad_scalar_value)
+          : cv::Scalar(pad_scalar_value, pad_scalar_value, pad_scalar_value, 0);
   prepped = resize_to_target_local(prepped, out.target_w, out.target_h, out.use_letterbox,
                                    out.interpolation, pad_value, out.letterbox_padding);
   prepped = convert_color_for_format(prepped, out.preproc_out_fmt, "quanttess ingress prep");
@@ -2018,11 +1994,10 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
   tensor_opt.height = fp32.rows;
   tensor_opt.depth = fp32.channels();
   const bool owned_fp32_ingress = env_flag_enabled("SIMA_YOLOV8_MANUAL_PREPROC_OWNED_FP32");
-  const simaai::neat::Tensor fp32_input = owned_fp32_ingress
-                                              ? make_fp32_hwc_tensor_owned(
-                                                    fp32, "yolov8_matrix_quanttess_owned")
-                                              : simaai::neat::tensor_from_cv_mat(
-                                                    fp32, tensor_opt, "yolov8_matrix_quanttess");
+  const simaai::neat::Tensor fp32_input =
+      owned_fp32_ingress
+          ? make_fp32_hwc_tensor_owned(fp32, "yolov8_matrix_quanttess_owned")
+          : simaai::neat::tensor_from_cv_mat(fp32, tensor_opt, "yolov8_matrix_quanttess");
   out.tensor = fp32_input;
   return out;
 }
@@ -2078,7 +2053,8 @@ bool try_bf16_to_fp32_preview(const simaai::neat::Tensor& tensor, std::vector<fl
   return true;
 }
 
-cv::Mat normalize_model_input(const cv::Mat& input, const simaai::neat::Model& model, RouteKind route) {
+cv::Mat normalize_model_input(const cv::Mat& input, const simaai::neat::Model& model,
+                              RouteKind route) {
   if (route != RouteKind::QuantizedNoPostFallback || !input.data) {
     return input;
   }
@@ -2303,16 +2279,16 @@ simaai::neat::Sample run_model_sample(const cv::Mat& img_bgr, simaai::neat::Mode
   const int kRetryTimeoutMs = std::max(kRunTimeoutMs, kRunRetryTimeoutMs);
   const auto spec = model.input_spec();
   const auto ingress_opt = model.input_appsrc_options(false);
-  const bool tensor_ingress =
-      upper_copy(ingress_opt.media_type) == "APPLICATION/VND.SIMAAI.TENSOR";
+  const bool tensor_ingress = upper_copy(ingress_opt.media_type) == "APPLICATION/VND.SIMAAI.TENSOR";
 
   auto require_single_sample = [&](const simaai::neat::SampleList& outputs,
                                    const char* where) -> simaai::neat::Sample {
-    require(outputs.size() == 1U,
-            std::string(where) + ": expected exactly 1 sample, got " + std::to_string(outputs.size()));
+    require(outputs.size() == 1U, std::string(where) + ": expected exactly 1 sample, got " +
+                                      std::to_string(outputs.size()));
     return outputs.front();
   };
-  auto run_with_fresh_retry_mat = [&](const cv::Mat& input, int timeout_ms) -> simaai::neat::Sample {
+  auto run_with_fresh_retry_mat = [&](const cv::Mat& input,
+                                      int timeout_ms) -> simaai::neat::Sample {
     auto run_once = [&](int rt) -> simaai::neat::Sample {
       auto runner = model.build(std::vector<cv::Mat>{input});
       require(runner.push(std::vector<cv::Mat>{input}), "run_model_sample(mat): push failed");
@@ -2328,7 +2304,8 @@ simaai::neat::Sample run_model_sample(const cv::Mat& img_bgr, simaai::neat::Mode
                                          int timeout_ms) -> simaai::neat::Sample {
     auto run_once = [&](int rt) -> simaai::neat::Sample {
       auto runner = model.build(simaai::neat::TensorList{input});
-      require(runner.push(simaai::neat::TensorList{input}), "run_model_sample(tensor): push failed");
+      require(runner.push(simaai::neat::TensorList{input}),
+              "run_model_sample(tensor): push failed");
       return require_single_sample(runner.pull(rt), "run_model_sample(tensor)");
     };
     try {
@@ -2384,7 +2361,7 @@ float box_iou_xyxy_local(float ax1, float ay1, float ax2, float ay2, float bx1, 
 }
 
 std::vector<objdet::Box> parse_boxes_strict_local(const std::vector<uint8_t>& bytes, int img_w,
-                                                   int img_h, int expected_topk) {
+                                                  int img_h, int expected_topk) {
   struct RawBoxLocal {
     int32_t x = 0;
     int32_t y = 0;
@@ -2453,9 +2430,8 @@ objdet::MatchResult match_expected_boxes_local(const std::vector<objdet::Box>& b
       if (used[j] || candidates[j].class_id != exp.class_id) {
         continue;
       }
-      const float iou =
-          box_iou_xyxy_local(exp.x1, exp.y1, exp.x2, exp.y2, candidates[j].x1, candidates[j].y1,
-                             candidates[j].x2, candidates[j].y2);
+      const float iou = box_iou_xyxy_local(exp.x1, exp.y1, exp.x2, exp.y2, candidates[j].x1,
+                                           candidates[j].y1, candidates[j].x2, candidates[j].y2);
       if (iou > best_iou) {
         best_iou = iou;
         best_idx = static_cast<int>(j);
@@ -2492,8 +2468,8 @@ void collect_preproc_probe_candidates_local(const simaai::neat::Sample& sample,
   for (const auto& tensor : base) {
     for (int mem_index = 0; mem_index <= 3; ++mem_index) {
       try {
-        out.push_back(
-            simaai::neat::pipeline_internal::copy_tensor_from_sample_memory(tensor, mem_index, false));
+        out.push_back(simaai::neat::pipeline_internal::copy_tensor_from_sample_memory(
+            tensor, mem_index, false));
       } catch (const std::exception&) {
       }
     }
@@ -2515,11 +2491,10 @@ std::string tensor_contract_string(const simaai::neat::TensorSpec& spec) {
 
 std::vector<simaai::neat::Tensor>
 order_tensors_for_contract_check(std::vector<simaai::neat::Tensor> tensors) {
-  const bool all_indexed =
-      !tensors.empty() &&
-      std::all_of(tensors.begin(), tensors.end(), [](const simaai::neat::Tensor& tensor) {
-        return tensor.route.logical_index >= 0;
-      });
+  const bool all_indexed = !tensors.empty() && std::all_of(tensors.begin(), tensors.end(),
+                                                           [](const simaai::neat::Tensor& tensor) {
+                                                             return tensor.route.logical_index >= 0;
+                                                           });
   if (!all_indexed) {
     return tensors;
   }
@@ -2534,18 +2509,17 @@ void require_tensor_outputs_match_model_contract(const simaai::neat::Model& mode
                                                  const std::vector<simaai::neat::Tensor>& tensors) {
   const auto specs = model.output_specs();
   require(!specs.empty(), "tensor-output route exposed no model output_specs()");
-  require(tensors.size() == specs.size(),
-          "tensor-output count mismatch: expected " + std::to_string(specs.size()) + ", got " +
-              std::to_string(tensors.size()));
+  require(tensors.size() == specs.size(), "tensor-output count mismatch: expected " +
+                                              std::to_string(specs.size()) + ", got " +
+                                              std::to_string(tensors.size()));
 
   const auto ordered = order_tensors_for_contract_check(tensors);
   for (size_t i = 0; i < ordered.size(); ++i) {
     const auto& tensor = ordered[i];
     const auto& spec = specs[i];
-    require(spec.matches(tensor),
-            "tensor-output contract mismatch at index " + std::to_string(i) + ": expected " +
-                tensor_contract_string(spec) + ", got " + dtype_name(tensor.dtype) + " " +
-                shape_string(tensor.shape));
+    require(spec.matches(tensor), "tensor-output contract mismatch at index " + std::to_string(i) +
+                                      ": expected " + tensor_contract_string(spec) + ", got " +
+                                      dtype_name(tensor.dtype) + " " + shape_string(tensor.shape));
     require(tensor.route.logical_index >= 0,
             "tensor-output missing logical_index at index " + std::to_string(i));
     require(!tensor.route.segment_name.empty(),
@@ -2566,7 +2540,7 @@ struct HostDecodeHeadSpec {
 };
 
 std::vector<HostDecodeHeadSpec> load_host_decode_heads_from_mpk_local(const ProbeResult& probe,
-                                                                       std::string* note_out) {
+                                                                      std::string* note_out) {
   std::vector<HostDecodeHeadSpec> heads;
   if (probe.etc_dir.empty()) {
     if (note_out)
@@ -2576,7 +2550,8 @@ std::vector<HostDecodeHeadSpec> load_host_decode_heads_from_mpk_local(const Prob
 
   fs::path mpk_path = probe.etc_dir / "yolov8n_modified_mpk.json";
   if (!fs::exists(mpk_path)) {
-    if (const auto any_mpk = find_json_suffix_path(probe.etc_dir, "_mpk.json"); any_mpk.has_value()) {
+    if (const auto any_mpk = find_json_suffix_path(probe.etc_dir, "_mpk.json");
+        any_mpk.has_value()) {
       mpk_path = *any_mpk;
     } else {
       if (note_out)
@@ -2600,16 +2575,18 @@ std::vector<HostDecodeHeadSpec> load_host_decode_heads_from_mpk_local(const Prob
     const std::string plugin_name_l = lower_copy(plugin_name);
     nlohmann::json params = nlohmann::json::object();
     if (plugin.contains("config_params") && plugin["config_params"].is_object() &&
-        plugin["config_params"].contains("params") && plugin["config_params"]["params"].is_object()) {
+        plugin["config_params"].contains("params") &&
+        plugin["config_params"]["params"].is_object()) {
       params = plugin["config_params"]["params"];
     }
 
     float dq_scale = 0.0f;
     int dq_zp = 0;
     bool has_dequant = false;
-    if (plugin_name_l.find("dequantize") != std::string::npos && params.contains("channel_params") &&
-        params["channel_params"].is_array() && !params["channel_params"].empty() &&
-        params["channel_params"][0].is_array() && params["channel_params"][0].size() >= 2) {
+    if (plugin_name_l.find("dequantize") != std::string::npos &&
+        params.contains("channel_params") && params["channel_params"].is_array() &&
+        !params["channel_params"].empty() && params["channel_params"][0].is_array() &&
+        params["channel_params"][0].size() >= 2) {
       const auto& cp = params["channel_params"][0];
       if (cp[0].is_number() && cp[1].is_number()) {
         dq_scale = static_cast<float>(cp[0].get<double>());
@@ -2622,7 +2599,8 @@ std::vector<HostDecodeHeadSpec> load_host_decode_heads_from_mpk_local(const Prob
       continue;
     }
     const auto& outputs = plugin["output_nodes"];
-    const bool has_output_shapes = params.contains("output_shapes") && params["output_shapes"].is_array();
+    const bool has_output_shapes =
+        params.contains("output_shapes") && params["output_shapes"].is_array();
 
     for (std::size_t oi = 0; oi < outputs.size(); ++oi) {
       if (!outputs[oi].is_object()) {
@@ -2667,18 +2645,19 @@ std::vector<HostDecodeHeadSpec> load_host_decode_heads_from_mpk_local(const Prob
     }
   }
 
-  std::sort(heads.begin(), heads.end(), [](const HostDecodeHeadSpec& a, const HostDecodeHeadSpec& b) {
-    if (a.h != b.h) {
-      return a.h > b.h;
-    }
-    if (a.w != b.w) {
-      return a.w > b.w;
-    }
-    if (a.is_bbox != b.is_bbox) {
-      return a.is_bbox && !b.is_bbox;
-    }
-    return a.name < b.name;
-  });
+  std::sort(heads.begin(), heads.end(),
+            [](const HostDecodeHeadSpec& a, const HostDecodeHeadSpec& b) {
+              if (a.h != b.h) {
+                return a.h > b.h;
+              }
+              if (a.w != b.w) {
+                return a.w > b.w;
+              }
+              if (a.is_bbox != b.is_bbox) {
+                return a.is_bbox && !b.is_bbox;
+              }
+              return a.name < b.name;
+            });
 
   if (note_out) {
     *note_out = "heads=" + std::to_string(heads.size());
@@ -2942,9 +2921,8 @@ void maybe_trace_sample_numeric_local(const char* phase, const simaai::neat::Sam
     return;
   }
   const auto tensors = tensors_in_sample(sample);
-  std::fprintf(stderr, "[matrix-numeric] phase=%s tensors=%zu signature=%s\n",
-               phase ? phase : "", tensors.size(),
-               sample_output_signature_local(sample).c_str());
+  std::fprintf(stderr, "[matrix-numeric] phase=%s tensors=%zu signature=%s\n", phase ? phase : "",
+               tensors.size(), sample_output_signature_local(sample).c_str());
   for (std::size_t i = 0; i < tensors.size(); ++i) {
     const auto digest = summarize_numeric_tensor_local(tensors[i]);
     std::fprintf(stderr,
@@ -2988,15 +2966,10 @@ std::string pre_mla_tensor_digest_string_local(const char* prefix, std::size_t i
                                                const PreMlaTensorDigest& d) {
   std::ostringstream oss;
   oss << prefix << "[" << index << "]"
-      << " dtype=" << d.dtype
-      << " shape=" << d.shape
-      << " fmt=" << (d.fmt.empty() ? "<none>" : d.fmt)
-      << " bytes=" << d.bytes
-      << " hash=" << hex_u64_local(d.hash)
-      << " byte_min=" << d.byte_min
-      << " byte_max=" << d.byte_max
-      << " byte_mean=" << d.byte_mean
-      << " head=" << d.preview_hex;
+      << " dtype=" << d.dtype << " shape=" << d.shape
+      << " fmt=" << (d.fmt.empty() ? "<none>" : d.fmt) << " bytes=" << d.bytes
+      << " hash=" << hex_u64_local(d.hash) << " byte_min=" << d.byte_min
+      << " byte_max=" << d.byte_max << " byte_mean=" << d.byte_mean << " head=" << d.preview_hex;
   return oss.str();
 }
 
@@ -3046,8 +3019,8 @@ bool tensor_to_cv32f_hwc3_local(const simaai::neat::Tensor& tensor, cv::Mat& out
   }
 
   const int elem_bytes = element_bytes_for_dtype_local(cpu.dtype);
-  const std::size_t elems = static_cast<std::size_t>(h) * static_cast<std::size_t>(w) *
-                            static_cast<std::size_t>(c);
+  const std::size_t elems =
+      static_cast<std::size_t>(h) * static_cast<std::size_t>(w) * static_cast<std::size_t>(c);
   const std::size_t required_bytes = elems * static_cast<std::size_t>(elem_bytes);
   if (elem_bytes <= 0 || bytes.size() < required_bytes) {
     note = "invalid_tensor_bytes expected=" + std::to_string(required_bytes) +
@@ -3076,8 +3049,10 @@ bool tensor_to_cv32f_hwc3_local(const simaai::neat::Tensor& tensor, cv::Mat& out
     }
   };
 
-  if (!(cpu.dtype == simaai::neat::TensorDType::UInt8 || cpu.dtype == simaai::neat::TensorDType::Int8 ||
-        cpu.dtype == simaai::neat::TensorDType::UInt16 || cpu.dtype == simaai::neat::TensorDType::Int16 ||
+  if (!(cpu.dtype == simaai::neat::TensorDType::UInt8 ||
+        cpu.dtype == simaai::neat::TensorDType::Int8 ||
+        cpu.dtype == simaai::neat::TensorDType::UInt16 ||
+        cpu.dtype == simaai::neat::TensorDType::Int16 ||
         cpu.dtype == simaai::neat::TensorDType::BFloat16 ||
         cpu.dtype == simaai::neat::TensorDType::Float32)) {
     note = "unsupported_tensor_dtype=" + dtype_name(cpu.dtype);
@@ -3194,18 +3169,17 @@ PreprocOpenCvParityResult run_preproc_vs_opencv_parity_once_local(const cv::Mat&
     return out;
   }
 
-  cv::Mat opencv_pre = resize_to_target_local(
-      img_bgr, kFixedPreprocTargetWidth, kFixedPreprocTargetHeight, true, cv::INTER_LINEAR,
-      cv::Scalar(0, 0, 0, 0), "CENTER");
+  cv::Mat opencv_pre =
+      resize_to_target_local(img_bgr, kFixedPreprocTargetWidth, kFixedPreprocTargetHeight, true,
+                             cv::INTER_LINEAR, cv::Scalar(0, 0, 0, 0), "CENTER");
   cv::Mat opencv_bgr_f32;
   opencv_pre.convertTo(opencv_bgr_f32, CV_32FC3, 1.0 / 255.0, 0.0);
   cv::Mat opencv_rgb = convert_color_for_format(opencv_pre, "RGB", "preproc_vs_opencv");
   cv::Mat opencv_rgb_f32;
   opencv_rgb.convertTo(opencv_rgb_f32, CV_32FC3, 1.0 / 255.0, 0.0);
 
-  const LetterboxGeometry g =
-      compute_letterbox_geometry(img_bgr.cols, img_bgr.rows, kFixedPreprocTargetWidth,
-                                 kFixedPreprocTargetHeight, "CENTER");
+  const LetterboxGeometry g = compute_letterbox_geometry(
+      img_bgr.cols, img_bgr.rows, kFixedPreprocTargetWidth, kFixedPreprocTargetHeight, "CENTER");
   const int valid_x0 = std::max(0, g.pad_left);
   const int valid_y0 = std::max(0, g.pad_top);
   const int valid_x1 = std::min(kFixedPreprocTargetWidth, g.pad_left + g.resized_w);
@@ -3236,8 +3210,8 @@ PreprocOpenCvParityResult run_preproc_vs_opencv_parity_once_local(const cv::Mat&
     }
     if (preproc_rgb_f32.cols != kFixedPreprocTargetWidth ||
         preproc_rgb_f32.rows != kFixedPreprocTargetHeight) {
-      decode_errors += " idx=" + std::to_string(i) + ":shape=" +
-                       std::to_string(preproc_rgb_f32.cols) + "x" +
+      decode_errors += " idx=" + std::to_string(i) +
+                       ":shape=" + std::to_string(preproc_rgb_f32.cols) + "x" +
                        std::to_string(preproc_rgb_f32.rows);
       continue;
     }
@@ -3282,14 +3256,13 @@ PreprocOpenCvParityResult run_preproc_vs_opencv_parity_once_local(const cv::Mat&
 
     const std::size_t mid = padded_values.size() / 2U;
     std::nth_element(padded_values.begin(),
-                     padded_values.begin() + static_cast<std::ptrdiff_t>(mid),
-                     padded_values.end());
+                     padded_values.begin() + static_cast<std::ptrdiff_t>(mid), padded_values.end());
     const float pad_median = padded_values[mid];
     const int observed_pad = static_cast<int>(std::lround(pad_median));
     double pad_max_dev = 0.0;
     for (float v : padded_values) {
-      pad_max_dev = std::max(pad_max_dev, std::abs(static_cast<double>(v) -
-                                                   static_cast<double>(observed_pad)));
+      pad_max_dev = std::max(pad_max_dev,
+                             std::abs(static_cast<double>(v) - static_cast<double>(observed_pad)));
     }
 
     const double mae_rgb = abs_sum_rgb / static_cast<double>(abs_count);
@@ -3305,18 +3278,14 @@ PreprocOpenCvParityResult run_preproc_vs_opencv_parity_once_local(const cv::Mat&
     std::ostringstream cand;
     const std::string probe_dtype =
         (i < preproc_probe_dtypes.size()) ? preproc_probe_dtypes[i] : std::string("unknown");
-    cand << "idx=" << i
-         << ":probe=" << probe_dtype
+    cand << "idx=" << i << ":probe=" << probe_dtype
          << ":dtype=" << dtype_name(preproc_tensors[i].dtype)
-         << ":ref=" << (use_rgb_ref ? "RGB" : "BGR")
-         << ":mae=" << std::fixed << std::setprecision(4) << mae
-         << ":max=" << std::setprecision(4) << abs_max
-         << ":pad=" << observed_pad
-         << ":pad_dev=" << std::setprecision(4) << pad_max_dev;
+         << ":ref=" << (use_rgb_ref ? "RGB" : "BGR") << ":mae=" << std::fixed
+         << std::setprecision(4) << mae << ":max=" << std::setprecision(4) << abs_max
+         << ":pad=" << observed_pad << ":pad_dev=" << std::setprecision(4) << pad_max_dev;
     candidate_summaries.push_back(cand.str());
     const double score = mae + 0.01 * abs_max + 0.1 * pad_max_dev;
-    const double best_score =
-        best_mae + 0.01 * best_max_abs + 0.1 * best_pad_max_dev;
+    const double best_score = best_mae + 0.01 * best_max_abs + 0.1 * best_pad_max_dev;
     if (!found_candidate || score < best_score) {
       found_candidate = true;
       best_index = i;
@@ -3350,16 +3319,11 @@ PreprocOpenCvParityResult run_preproc_vs_opencv_parity_once_local(const cv::Mat&
   const bool pad_guard_ok = out.observed_pad_value == kPadValue;
   out.ok = parity_ok && pad_guard_ok;
   std::ostringstream oss;
-  oss << "probe_dtype=" << best_probe_dtype
-      << " tensor_index=" << best_index
-      << " effective_dtype=" << out.effective_dtype
-      << " ref=" << best_ref
-      << " valid_mae=" << out.valid_mae
-      << " valid_max_abs=" << out.valid_max_abs
-      << " observed_pad=" << out.observed_pad_value
-      << " expected_pad=" << kPadValue
-      << " pad_max_dev=" << out.pad_max_dev
-      << " candidates=" << candidate_summaries.size();
+  oss << "probe_dtype=" << best_probe_dtype << " tensor_index=" << best_index
+      << " effective_dtype=" << out.effective_dtype << " ref=" << best_ref
+      << " valid_mae=" << out.valid_mae << " valid_max_abs=" << out.valid_max_abs
+      << " observed_pad=" << out.observed_pad_value << " expected_pad=" << kPadValue
+      << " pad_max_dev=" << out.pad_max_dev << " candidates=" << candidate_summaries.size();
   if (!candidate_summaries.empty()) {
     oss << " [";
     const std::size_t max_items = std::min<std::size_t>(candidate_summaries.size(), 6U);
@@ -3400,7 +3364,7 @@ const PreprocOpenCvParityResult& cached_preproc_vs_opencv_parity_local(const cv:
 }
 
 PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, RouteKind route,
-                                                   const cv::Mat& img_bgr) {
+                                                  const cv::Mat& img_bgr) {
   PreMlaParityResult out;
   PreprocOpenCvParityResult preproc_parity;
   bool have_preproc_parity = false;
@@ -3418,9 +3382,9 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
   try {
     simaai::neat::Model matrix_model = build_model_for_case(probe);
     const PreAdapterKind pre_kind = detect_pre_kind(matrix_model.preprocess());
-    const bool is_adapter_pre =
-        pre_kind == PreAdapterKind::Quant || pre_kind == PreAdapterKind::Tess ||
-        pre_kind == PreAdapterKind::QuantTess;
+    const bool is_adapter_pre = pre_kind == PreAdapterKind::Quant ||
+                                pre_kind == PreAdapterKind::Tess ||
+                                pre_kind == PreAdapterKind::QuantTess;
     if (!is_adapter_pre) {
       out.ok = true;
       out.note = "skip_pre_kind=" + pre_kind_name(pre_kind);
@@ -3442,20 +3406,19 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
 
     const auto matrix_spec = matrix_model.input_spec();
     const cv::Mat matrix_seed = normalize_model_input(img_bgr, matrix_model, route);
-    const AdapterIngressTensorInput matrix_ingress = build_adapter_tensor_ingress_input(
-        matrix_seed, matrix_model, matrix_spec, route, pre_kind);
+    const AdapterIngressTensorInput matrix_ingress =
+        build_adapter_tensor_ingress_input(matrix_seed, matrix_model, matrix_spec, route, pre_kind);
 
     auto matrix_input_opt = matrix_model.input_appsrc_options(false);
     simaai::neat::Session matrix_session;
     matrix_session.add(simaai::neat::nodes::Input(matrix_input_opt));
     matrix_session.add(simaai::neat::nodes::groups::Preprocess(matrix_model));
     matrix_session.add(simaai::neat::nodes::Output());
-    auto matrix_run =
-        matrix_session.build(simaai::neat::TensorList{matrix_ingress.tensor}, simaai::neat::RunMode::Sync);
+    auto matrix_run = matrix_session.build(simaai::neat::TensorList{matrix_ingress.tensor},
+                                           simaai::neat::RunMode::Sync);
     simaai::neat::SampleList matrix_outputs =
-        matrix_run.run(simaai::neat::SampleList{
-                           simaai::neat::sample_from_tensors(
-                               simaai::neat::TensorList{matrix_ingress.tensor})},
+        matrix_run.run(simaai::neat::SampleList{simaai::neat::sample_from_tensors(
+                           simaai::neat::TensorList{matrix_ingress.tensor})},
                        default_model_run_timeout_ms());
     require(matrix_outputs.size() == 1U, "pre_mla_parity: expected one matrix pre-MLA sample");
     const simaai::neat::Sample matrix_pre_mla = matrix_outputs.front();
@@ -3497,10 +3460,8 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     for (std::size_t i = 0; i < n; ++i) {
       const PreMlaTensorDigest matrix_d = summarize_pre_mla_tensor_local(matrix_tensors[i]);
       const PreMlaTensorDigest sync_d = summarize_pre_mla_tensor_local(sync_tensors[i]);
-      const bool tensor_match = matrix_d.dtype == sync_d.dtype &&
-                                matrix_d.shape == sync_d.shape &&
-                                matrix_d.bytes == sync_d.bytes &&
-                                matrix_d.hash == sync_d.hash;
+      const bool tensor_match = matrix_d.dtype == sync_d.dtype && matrix_d.shape == sync_d.shape &&
+                                matrix_d.bytes == sync_d.bytes && matrix_d.hash == sync_d.hash;
       match = match && tensor_match;
       if (!tensor_match || pre_mla_parity_debug_enabled()) {
         detail << " | " << pre_mla_tensor_digest_string_local("matrix", i, matrix_d);
@@ -3513,8 +3474,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     out.note = std::string("pre_mla_parity ") + (match ? "ok" : (strict ? "mismatch" : "warn")) +
                " " + detail.str() + " | preproc_opencv_parity " + preproc_parity.note;
     if (!match || pre_mla_parity_debug_enabled()) {
-      std::cerr << "[pre-mla-parity] model=" << probe.model_id
-                << " route=" << route_name(route)
+      std::cerr << "[pre-mla-parity] model=" << probe.model_id << " route=" << route_name(route)
                 << " strict=" << (strict ? 1 : 0) << " " << out.note << "\n";
     }
     return out;
@@ -3564,8 +3524,8 @@ bool decode_bytes_to_fp32_local(const uint8_t* data, std::size_t bytes_size,
   };
   PayloadMode mode = PayloadMode::Native;
   if (elems != expected_elems) {
-    const bool int8_meta = dtype == simaai::neat::TensorDType::Int8 ||
-                           dtype == simaai::neat::TensorDType::UInt8;
+    const bool int8_meta =
+        dtype == simaai::neat::TensorDType::Int8 || dtype == simaai::neat::TensorDType::UInt8;
     if (int8_meta && bytes.size() == expected_elems * sizeof(uint16_t)) {
       mode = PayloadMode::Int8AsBf16;
     } else if (int8_meta && bytes.size() == expected_elems * sizeof(float)) {
@@ -3609,8 +3569,9 @@ bool decode_bytes_to_fp32_local(const uint8_t* data, std::size_t bytes_size,
     const auto* p = reinterpret_cast<const int8_t*>(bytes.data());
     const bool use_dq = head.has_dequant && head.dq_scale > 0.0f;
     for (std::size_t i = 0; i < expected_elems; ++i) {
-      out[i] = use_dq ? ((static_cast<float>(p[i]) - static_cast<float>(head.dq_zp)) / head.dq_scale)
-                      : static_cast<float>(p[i]);
+      out[i] = use_dq
+                   ? ((static_cast<float>(p[i]) - static_cast<float>(head.dq_zp)) / head.dq_scale)
+                   : static_cast<float>(p[i]);
     }
     return true;
   }
@@ -3618,8 +3579,9 @@ bool decode_bytes_to_fp32_local(const uint8_t* data, std::size_t bytes_size,
     const auto* p = reinterpret_cast<const uint8_t*>(bytes.data());
     const bool use_dq = head.has_dequant && head.dq_scale > 0.0f;
     for (std::size_t i = 0; i < expected_elems; ++i) {
-      out[i] = use_dq ? ((static_cast<float>(p[i]) - static_cast<float>(head.dq_zp)) / head.dq_scale)
-                      : static_cast<float>(p[i]);
+      out[i] = use_dq
+                   ? ((static_cast<float>(p[i]) - static_cast<float>(head.dq_zp)) / head.dq_scale)
+                   : static_cast<float>(p[i]);
     }
     return true;
   }
@@ -3691,8 +3653,7 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
     output_w = model_w;
   if (output_h <= 0)
     output_h = model_h;
-  const float grid_offset =
-      read_env_float_or_default("SIMA_YOLOV8_HOSTDECODE_GRID_OFFSET", 0.5f);
+  const float grid_offset = read_env_float_or_default("SIMA_YOLOV8_HOSTDECODE_GRID_OFFSET", 0.5f);
   const float default_dfl_dist_scale = use_letterbox_remap ? 3.0f : 1.0f;
   const float dfl_dist_scale =
       read_env_float_or_default("SIMA_YOLOV8_HOSTDECODE_DIST_SCALE", default_dfl_dist_scale);
@@ -3792,8 +3753,8 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
             }
             std::vector<float> values;
             std::string decode_note;
-            if (!decode_bytes_to_fp32_local(raw_bytes.data() + cursor, need, cpu.dtype, head, values,
-                                            decode_note)) {
+            if (!decode_bytes_to_fp32_local(raw_bytes.data() + cursor, need, cpu.dtype, head,
+                                            values, decode_note)) {
               packed_failed = true;
               break;
             }
@@ -3821,56 +3782,57 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
   }
 
   if (!packed_single_tensor_mode) {
-  for (const auto& head : heads) {
-    const std::size_t expected_elems =
-        static_cast<std::size_t>(head.h) * static_cast<std::size_t>(head.w) * static_cast<std::size_t>(head.c);
-    int chosen = -1;
-    for (std::size_t ti = 0; ti < tensors.size(); ++ti) {
-      if (tensor_used[ti]) {
+    for (const auto& head : heads) {
+      const std::size_t expected_elems = static_cast<std::size_t>(head.h) *
+                                         static_cast<std::size_t>(head.w) *
+                                         static_cast<std::size_t>(head.c);
+      int chosen = -1;
+      for (std::size_t ti = 0; ti < tensors.size(); ++ti) {
+        if (tensor_used[ti]) {
+          continue;
+        }
+        const auto cpu = tensors[ti].cpu().contiguous();
+        const std::vector<uint8_t> bytes = cpu.copy_payload_bytes();
+        const int elem_bytes = element_bytes_for_dtype_local(cpu.dtype);
+        if (elem_bytes <= 0 || bytes.empty()) {
+          continue;
+        }
+        const std::size_t elems = bytes.size() / static_cast<std::size_t>(elem_bytes);
+        bool match = elems == expected_elems;
+        const bool int8_meta = cpu.dtype == simaai::neat::TensorDType::Int8 ||
+                               cpu.dtype == simaai::neat::TensorDType::UInt8;
+        if (!match && int8_meta) {
+          match = bytes.size() == expected_elems * sizeof(uint16_t) ||
+                  bytes.size() == expected_elems * sizeof(float);
+        }
+        if (match) {
+          chosen = static_cast<int>(ti);
+          break;
+        }
+      }
+      if (chosen < 0) {
         continue;
       }
-      const auto cpu = tensors[ti].cpu().contiguous();
-      const std::vector<uint8_t> bytes = cpu.copy_payload_bytes();
-      const int elem_bytes = element_bytes_for_dtype_local(cpu.dtype);
-      if (elem_bytes <= 0 || bytes.empty()) {
-        continue;
-      }
-      const std::size_t elems = bytes.size() / static_cast<std::size_t>(elem_bytes);
-      bool match = elems == expected_elems;
-      const bool int8_meta = cpu.dtype == simaai::neat::TensorDType::Int8 ||
-                             cpu.dtype == simaai::neat::TensorDType::UInt8;
-      if (!match && int8_meta) {
-        match = bytes.size() == expected_elems * sizeof(uint16_t) ||
-                bytes.size() == expected_elems * sizeof(float);
-      }
-      if (match) {
-        chosen = static_cast<int>(ti);
-        break;
-      }
-    }
-    if (chosen < 0) {
-      continue;
-    }
 
-    std::vector<float> values;
-    std::string decode_note;
-    if (!decode_tensor_to_fp32_local(tensors[static_cast<std::size_t>(chosen)], head, values,
-                                     decode_note)) {
-      continue;
+      std::vector<float> values;
+      std::string decode_note;
+      if (!decode_tensor_to_fp32_local(tensors[static_cast<std::size_t>(chosen)], head, values,
+                                       decode_note)) {
+        continue;
+      }
+      tensor_used[static_cast<std::size_t>(chosen)] = true;
+      mapped_heads += 1;
+      auto& sp = get_scale(head.h, head.w);
+      if (head.is_bbox) {
+        sp.bbox = std::move(values);
+        sp.bbox_c = head.c;
+        sp.has_bbox = true;
+      } else if (head.is_class) {
+        sp.cls = std::move(values);
+        sp.cls_c = head.c;
+        sp.has_cls = true;
+      }
     }
-    tensor_used[static_cast<std::size_t>(chosen)] = true;
-    mapped_heads += 1;
-    auto& sp = get_scale(head.h, head.w);
-    if (head.is_bbox) {
-      sp.bbox = std::move(values);
-      sp.bbox_c = head.c;
-      sp.has_bbox = true;
-    } else if (head.is_class) {
-      sp.cls = std::move(values);
-      sp.cls_c = head.c;
-      sp.has_cls = true;
-    }
-  }
   }
 
   if (mapped_heads == 0) {
@@ -3902,7 +3864,8 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
     if (sp.bbox.size() != cells * static_cast<std::size_t>(sp.bbox_c)) {
       continue;
     }
-    if (sp.has_cls && (sp.cls_c <= 0 || sp.cls.size() != cells * static_cast<std::size_t>(sp.cls_c))) {
+    if (sp.has_cls &&
+        (sp.cls_c <= 0 || sp.cls.size() != cells * static_cast<std::size_t>(sp.cls_c))) {
       continue;
     }
     has_class_head = has_class_head || sp.has_cls;
@@ -3912,7 +3875,8 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
       if (!decode_chw_layout) {
         return cell * static_cast<std::size_t>(channels) + static_cast<std::size_t>(channel);
       }
-      const std::size_t cells_count = static_cast<std::size_t>(sp.h) * static_cast<std::size_t>(sp.w);
+      const std::size_t cells_count =
+          static_cast<std::size_t>(sp.h) * static_cast<std::size_t>(sp.w);
       return static_cast<std::size_t>(channel) * cells_count + cell;
     };
 
@@ -3953,8 +3917,7 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
           for (int k = 0; k < reg_max; ++k) {
             const int ch = group * reg_max + k;
             const std::size_t bbox_idx = index_hwc_or_chw(cell, ch, sp.bbox_c);
-            const float e = std::exp(
-                sp.bbox[bbox_idx] - vmax);
+            const float e = std::exp(sp.bbox[bbox_idx] - vmax);
             prob[static_cast<std::size_t>(k)] = e;
             sum += e;
           }
@@ -4042,19 +4005,16 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
         x2 *= out_scale_x;
         y2 *= out_scale_y;
       }
-      out.push_back(objdet::Box{
-          std::max(0.0f, std::min(x1, static_cast<float>(output_w))),
-          std::max(0.0f, std::min(y1, static_cast<float>(output_h))),
-          std::max(0.0f, std::min(x2, static_cast<float>(output_w))),
-          std::max(0.0f, std::min(y2, static_cast<float>(output_h))),
-          c.score,
-          cls});
+      out.push_back(objdet::Box{std::max(0.0f, std::min(x1, static_cast<float>(output_w))),
+                                std::max(0.0f, std::min(y1, static_cast<float>(output_h))),
+                                std::max(0.0f, std::min(x2, static_cast<float>(output_w))),
+                                std::max(0.0f, std::min(y2, static_cast<float>(output_h))), c.score,
+                                cls});
     }
   }
 
-  std::sort(out.begin(), out.end(), [](const objdet::Box& a, const objdet::Box& b) {
-    return a.score > b.score;
-  });
+  std::sort(out.begin(), out.end(),
+            [](const objdet::Box& a, const objdet::Box& b) { return a.score > b.score; });
   if (topk > 0 && static_cast<int>(out.size()) > topk) {
     out.resize(static_cast<std::size_t>(topk));
   }
@@ -4076,18 +4036,16 @@ std::vector<objdet::Box> decode_yolov8_heads_with_opencv_nms_local(
     *note_out = "hostdecode_ok mapped_heads=" + std::to_string(mapped_heads) +
                 " class_head=" + std::string(has_class_head ? "1" : "0") +
                 " candidates=" + std::to_string(candidates.size()) +
-                " boxes=" + std::to_string(out.size()) +
-                " top_class=" + std::to_string(top_class) +
-                " top_score=" + std::to_string(top_score) +
-                " top_box=" + std::to_string(top_x1) + "," + std::to_string(top_y1) + "," +
-                std::to_string(top_x2) + "," + std::to_string(top_y2) +
-                " model_hw=" + std::to_string(model_w) + "x" + std::to_string(model_h) +
-                " output_hw=" + std::to_string(output_w) + "x" + std::to_string(output_h) +
+                " boxes=" + std::to_string(out.size()) + " top_class=" + std::to_string(top_class) +
+                " top_score=" + std::to_string(top_score) + " top_box=" + std::to_string(top_x1) +
+                "," + std::to_string(top_y1) + "," + std::to_string(top_x2) + "," +
+                std::to_string(top_y2) + " model_hw=" + std::to_string(model_w) + "x" +
+                std::to_string(model_h) + " output_hw=" + std::to_string(output_w) + "x" +
+                std::to_string(output_h) +
                 " remap=" + std::string(use_letterbox_remap ? "letterbox" : "scale") +
                 " layout=" + std::string(decode_chw_layout ? "CHW" : "HWC") +
                 " grid_offset=" + std::to_string(grid_offset) +
-                " dist_scale=" + std::to_string(dfl_dist_scale) +
-                " side_order=" +
+                " dist_scale=" + std::to_string(dfl_dist_scale) + " side_order=" +
                 std::string(side_group_for_ltrb[0] == 0 && side_group_for_ltrb[1] == 1 &&
                                     side_group_for_ltrb[2] == 2 && side_group_for_ltrb[3] == 3
                                 ? "LTRB"
@@ -4119,9 +4077,7 @@ std::string boxdecode_dtype_token_from_tensor_local(const simaai::neat::Tensor& 
   }
 }
 
-bool boxdecode_dims_from_tensor_local(const simaai::neat::Tensor& tensor,
-                                      int* out_h,
-                                      int* out_w,
+bool boxdecode_dims_from_tensor_local(const simaai::neat::Tensor& tensor, int* out_h, int* out_w,
                                       int* out_c) {
   if (!out_h || !out_w || !out_c) {
     return false;
@@ -4172,7 +4128,8 @@ build_standalone_boxdecode_contract_from_sample_local(const simaai::neat::Sample
     error_message->clear();
   }
 
-  std::vector<simaai::neat::Tensor> tensors = order_tensors_for_contract_check(tensors_in_sample(sample));
+  std::vector<simaai::neat::Tensor> tensors =
+      order_tensors_for_contract_check(tensors_in_sample(sample));
   if (tensors.empty()) {
     return fail("standalone boxdecode contract requires at least one output tensor");
   }
@@ -4211,8 +4168,8 @@ build_standalone_boxdecode_contract_from_sample_local(const simaai::neat::Sample
     entry.slice_shape = {h, w, c};
     entry.data_type = dtype;
     const std::string tensor_name = boxdecode_tensor_name_local(tensor, i);
-    const std::uint64_t tensor_bytes = static_cast<std::uint64_t>(
-        tensor.cpu().contiguous().copy_payload_bytes().size());
+    const std::uint64_t tensor_bytes =
+        static_cast<std::uint64_t>(tensor.cpu().contiguous().copy_payload_bytes().size());
     entry.logical_name = tensor_name;
     entry.backend_name = tensor_name;
     entry.source_segment_name = tensor_name;
@@ -4242,16 +4199,14 @@ std::vector<objdet::Box> run_hostdecode_boxes_on_sample_local(const simaai::neat
   const ProbeResult probe = build_hostdecode_probe_from_model_local(model);
   return decode_yolov8_heads_with_opencv_nms_local(
       probe, sample, kFixedPreprocTargetWidth, kFixedPreprocTargetHeight, img_bgr.cols,
-      img_bgr.rows, /*use_letterbox_remap=*/true,
-      canonical_boxdecode_options().detection_threshold,
+      img_bgr.rows, /*use_letterbox_remap=*/true, canonical_boxdecode_options().detection_threshold,
       canonical_boxdecode_options().nms_iou_threshold, canonical_boxdecode_options().top_k,
       note_out);
 }
 
 AccuracyResult run_hostdecode_accuracy_on_sample_local(const simaai::neat::Sample& sample,
                                                        const simaai::neat::Model& model,
-                                                       const cv::Mat& img_bgr,
-                                                       const char* label) {
+                                                       const cv::Mat& img_bgr, const char* label) {
   AccuracyResult out;
   constexpr float kMinScore = 0.52f;
   constexpr float kMinIou = 0.30f;
@@ -4282,18 +4237,16 @@ AccuracyResult run_hostdecode_accuracy_on_sample_local(const simaai::neat::Sampl
       if (expected_box.class_id != 0) {
         continue;
       }
-      best_person_iou =
-          std::max(best_person_iou,
-                   objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
-                                        expected_box.y2, box.x1, box.y1, box.x2, box.y2));
+      best_person_iou = std::max(
+          best_person_iou, objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
+                                                expected_box.y2, box.x1, box.y1, box.x2, box.y2));
     }
   }
   if (person_candidates > 0 && best_person_iou >= 0.25f) {
     out.ok = true;
     out.note = std::string(label) + "_coarse boxes=" + std::to_string(out.parsed_boxes) +
                " best_person_iou=" + std::to_string(best_person_iou) +
-               " strict=" + sima_yolov8_test::sanitize_note(strict.note) +
-               " note=" + decode_note;
+               " strict=" + sima_yolov8_test::sanitize_note(strict.note) + " note=" + decode_note;
     return out;
   }
 
@@ -4301,25 +4254,24 @@ AccuracyResult run_hostdecode_accuracy_on_sample_local(const simaai::neat::Sampl
   out.note = std::string(label) + "_mismatch boxes=" + std::to_string(out.parsed_boxes) +
              " person_candidates=" + std::to_string(person_candidates) +
              " best_person_iou=" + std::to_string(best_person_iou) +
-             " strict=" + sima_yolov8_test::sanitize_note(strict.note) +
-             " note=" + decode_note;
+             " strict=" + sima_yolov8_test::sanitize_note(strict.note) + " note=" + decode_note;
   return out;
 }
 
-simaai::neat::Sample run_standalone_boxdecode_sample_local(
-    const simaai::neat::Sample& stage_input, float score_threshold, float nms_iou_threshold,
-    int topk, int original_width, int original_height, int model_width, int model_height) {
+simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::Sample& stage_input,
+                                                           float score_threshold,
+                                                           float nms_iou_threshold, int topk,
+                                                           int original_width, int original_height,
+                                                           int model_width, int model_height) {
   const auto stage_tensor = first_tensor_in_sample(stage_input);
-  require(stage_tensor.has_value(),
-          "postrun_boxdecode: sample missing tensor payload");
+  require(stage_tensor.has_value(), "postrun_boxdecode: sample missing tensor payload");
   const std::string boxdecode_name = "matrix_post_boxdecode";
 
   simaai::neat::Session post;
   post.add(simaai::neat::nodes::Input());
-  post.add(simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8,
-                                              score_threshold, nms_iou_threshold, topk,
-                                              boxdecode_name, original_width, original_height,
-                                              model_width, model_height));
+  post.add(simaai::neat::nodes::SimaBoxDecode(
+      simaai::neat::BoxDecodeType::YoloV8, score_threshold, nms_iou_threshold, topk, boxdecode_name,
+      original_width, original_height, model_width, model_height));
   post.add(simaai::neat::nodes::Output());
 
   simaai::neat::RunOptions run_opt;
@@ -4327,7 +4279,8 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(
   run_opt.queue_depth = 1;
 
   const int timeout_ms = default_model_run_timeout_ms();
-  auto runner = post.build(simaai::neat::SampleList{stage_input}, simaai::neat::RunMode::Async, run_opt);
+  auto runner =
+      post.build(simaai::neat::SampleList{stage_input}, simaai::neat::RunMode::Async, run_opt);
   require(static_cast<bool>(runner), "postrun_boxdecode: runner build failed");
   require(runner.push(simaai::neat::SampleList{stage_input}),
           "postrun_boxdecode: runner push failed");
@@ -4338,9 +4291,8 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(
     throw std::runtime_error(std::string("postrun_boxdecode: pull failed: ") + ex.what() +
                              "\nrun-report:\n" + runner.report());
   }
-  require(outs.size() == 1U,
-          "postrun_boxdecode: expected exactly 1 sample, got " + std::to_string(outs.size()) +
-              "\nrun-report:\n" + runner.report());
+  require(outs.size() == 1U, "postrun_boxdecode: expected exactly 1 sample, got " +
+                                 std::to_string(outs.size()) + "\nrun-report:\n" + runner.report());
   return outs.front();
 }
 
@@ -4404,18 +4356,16 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
         if (expected_box.class_id != 0) {
           continue;
         }
-        best_person_iou =
-            std::max(best_person_iou,
-                     objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
-                                          expected_box.y2, box.x1, box.y1, box.x2, box.y2));
+        best_person_iou = std::max(
+            best_person_iou, objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
+                                                  expected_box.y2, box.x1, box.y1, box.x2, box.y2));
       }
     }
     if (person_candidates > 0 && best_person_iou >= 0.25f) {
       out.ok = true;
       out.note = "framework_boxdecode_coarse boxes=" + std::to_string(out.parsed_boxes) +
                  " best_person_iou=" + std::to_string(best_person_iou) +
-                 " strict=" + sima_yolov8_test::sanitize_note(strict.note) +
-                 " " + decode_note;
+                 " strict=" + sima_yolov8_test::sanitize_note(strict.note) + " " + decode_note;
       return out;
     }
 
@@ -4522,8 +4472,7 @@ ProbeResult probe_model(const fs::path& tar) {
                            (probe.has_dequant_config ? "1" : "0"));
   probe.evidence.push_back(std::string("has_pipeline_sequence=") +
                            (probe.has_pipeline_sequence ? "1" : "0"));
-  probe.evidence.push_back(std::string("tess_within_mla=") +
-                           (probe.tess_within_mla ? "1" : "0"));
+  probe.evidence.push_back(std::string("tess_within_mla=") + (probe.tess_within_mla ? "1" : "0"));
 
   simaai::neat::Model model = build_model_for_case(probe);
 
@@ -4573,7 +4522,8 @@ ProbeResult probe_model(const fs::path& tar) {
   if (input_spec_desc.empty())
     input_spec_desc = "<none>";
   probe.evidence.push_back("input_spec_dtypes=" + input_spec_desc);
-  probe.evidence.push_back("input_spec_tensor_mode=" + std::string(probe.input_spec_tensor_mode ? "1" : "0"));
+  probe.evidence.push_back("input_spec_tensor_mode=" +
+                           std::string(probe.input_spec_tensor_mode ? "1" : "0"));
 
   probe.evidence.push_back("mla_input_dtype=" + probe.mla_input_dtype_raw);
   probe.evidence.push_back("mla_output_dtype=" + probe.mla_output_dtype_raw);
@@ -4771,7 +4721,6 @@ std::string resolve_processcvu_run_target(int argc, char** argv) {
   return "AUTO";
 }
 
-
 bool has_flag(int argc, char** argv, const std::string& flag) {
   for (int i = 1; i < argc; ++i) {
     if (argv[i] && flag == argv[i]) {
@@ -4898,33 +4847,30 @@ AsyncSelection resolve_async_selection(int argc, char** argv) {
     sel.processcvu = true;
     sel.processmla = true;
   }
-  if (has_flag(argc, argv, "--processcvu-async") ||
-      has_flag(argc, argv, "--cvu-async") ||
-      has_flag(argc, argv, "--processcvu-async-only") ||
-      has_flag(argc, argv, "--cvu-async-only")) {
+  if (has_flag(argc, argv, "--processcvu-async") || has_flag(argc, argv, "--cvu-async") ||
+      has_flag(argc, argv, "--processcvu-async-only") || has_flag(argc, argv, "--cvu-async-only")) {
     sel.processcvu = true;
   }
-  if (has_flag(argc, argv, "--processmla-async") ||
-      has_flag(argc, argv, "--mla-async") ||
-      has_flag(argc, argv, "--processmla-async-only") ||
-      has_flag(argc, argv, "--mla-async-only")) {
+  if (has_flag(argc, argv, "--processmla-async") || has_flag(argc, argv, "--mla-async") ||
+      has_flag(argc, argv, "--processmla-async-only") || has_flag(argc, argv, "--mla-async-only")) {
     sel.processmla = true;
   }
-  if (has_flag(argc, argv, "--processcvu-async-only") ||
-      has_flag(argc, argv, "--cvu-async-only")) {
+  if (has_flag(argc, argv, "--processcvu-async-only") || has_flag(argc, argv, "--cvu-async-only")) {
     sel.processmla = false;
   }
-  if (has_flag(argc, argv, "--processmla-async-only") ||
-      has_flag(argc, argv, "--mla-async-only")) {
+  if (has_flag(argc, argv, "--processmla-async-only") || has_flag(argc, argv, "--mla-async-only")) {
     sel.processcvu = false;
   }
   return sel;
 }
 
 std::string async_selection_name(const AsyncSelection& sel) {
-  if (sel.processcvu && sel.processmla) return "both";
-  if (sel.processcvu) return "processcvu";
-  if (sel.processmla) return "processmla";
+  if (sel.processcvu && sel.processmla)
+    return "both";
+  if (sel.processcvu)
+    return "processcvu";
+  if (sel.processmla)
+    return "processmla";
   return "sync";
 }
 
@@ -4980,12 +4926,14 @@ void apply_processcvu_placement(const std::string& placement,
     return;
   }
   auto normalize_device = [](std::string value) -> std::string {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
-      return static_cast<char>(std::toupper(c));
-    });
-    if (value == "EV" || value == "EVXX" || value == "CVU") return "EV74";
-    if (value == "CPU" || value == "APU") return "A65";
-    if (value == "EV74" || value == "A65" || value == "AUTO") return value;
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (value == "EV" || value == "EVXX" || value == "CVU")
+      return "EV74";
+    if (value == "CPU" || value == "APU")
+      return "A65";
+    if (value == "EV74" || value == "A65" || value == "AUTO")
+      return value;
     return {};
   };
   auto set_pair = [&](std::string pre, std::string post) {
@@ -4998,8 +4946,7 @@ void apply_processcvu_placement(const std::string& placement,
     processcvu->post_run_target = post;
   };
 
-  if (placement == "mixed_pre_ev74_post_a65" ||
-      placement == "graph222_ev74_graph223_a65") {
+  if (placement == "mixed_pre_ev74_post_a65" || placement == "graph222_ev74_graph223_a65") {
     set_pair("EV74", "A65");
     return;
   }
@@ -5024,19 +4971,21 @@ void apply_processcvu_placement(const std::string& placement,
     std::size_t start = 0;
     while (start <= placement.size()) {
       const std::size_t comma = placement.find(',', start);
-      const std::string token = placement.substr(
-          start, comma == std::string::npos ? std::string::npos : comma - start);
+      const std::string token =
+          placement.substr(start, comma == std::string::npos ? std::string::npos : comma - start);
       const std::size_t sep = token.find_first_of("=:");
       if (sep != std::string::npos) {
         std::string key = token.substr(0, sep);
         std::string val = token.substr(sep + 1);
-        std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) {
-          return static_cast<char>(std::tolower(c));
-        });
-        if (key == "pre") pre = val;
-        if (key == "post") post = val;
+        std::transform(key.begin(), key.end(), key.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (key == "pre")
+          pre = val;
+        if (key == "post")
+          post = val;
       }
-      if (comma == std::string::npos) break;
+      if (comma == std::string::npos)
+        break;
       start = comma + 1;
     }
     if (!pre.empty() && !post.empty()) {
@@ -5178,15 +5127,16 @@ int main(int argc, char** argv) {
         (void)model.input_spec();
         (void)model.inference();
         std::cout << "MODEL_INIT_OK model=" << tar.filename().string()
-                  << " backend=" << processcvu_run_target
-                  << " placement=" << (processcvu_placement.empty() ? "default" : processcvu_placement)
+                  << " backend=" << processcvu_run_target << " placement="
+                  << (processcvu_placement.empty() ? "default" : processcvu_placement)
                   << " async_mode=" << async_selection_name(async_selection)
                   << " processcvu_async=" << (async_selection.processcvu ? 1 : 0)
                   << " processmla_async=" << (async_selection.processmla ? 1 : 0)
-                  << " async_queue_depth=" << async_queue_depth
-                  << " prepared_runner_mode=" << (prepared_runner_mode.empty() ? "off" : prepared_runner_mode)
+                  << " async_queue_depth=" << async_queue_depth << " prepared_runner_mode="
+                  << (prepared_runner_mode.empty() ? "off" : prepared_runner_mode)
                   << " prepared_runner_dequant_flags="
-                  << (prepared_runner_dequant_flags.empty() ? "default" : prepared_runner_dequant_flags)
+                  << (prepared_runner_dequant_flags.empty() ? "default"
+                                                            : prepared_runner_dequant_flags)
                   << " frames=" << frames
                   << " boxdecode_mode=" << boxdecode_run_mode_name(boxdecode_mode) << "\n";
 
@@ -5196,22 +5146,22 @@ int main(int argc, char** argv) {
         const simaai::neat::Sample infer_sample =
             run_canonical_model_sample(img_bgr, model, session_opt, frames);
         const auto run_t1 = std::chrono::steady_clock::now();
-        const double run_ms =
-            std::chrono::duration<double, std::milli>(run_t1 - run_t0).count();
+        const double run_ms = std::chrono::duration<double, std::milli>(run_t1 - run_t0).count();
         const double fps =
             run_ms > 0.0 ? (static_cast<double>(std::max(frames, 1)) * 1000.0 / run_ms) : 0.0;
-        std::cout << "FPS model=" << tar.filename().string() << " backend="
-                  << processcvu_run_target
-                  << " placement=" << (processcvu_placement.empty() ? "default" : processcvu_placement)
+        std::cout << "FPS model=" << tar.filename().string() << " backend=" << processcvu_run_target
+                  << " placement="
+                  << (processcvu_placement.empty() ? "default" : processcvu_placement)
                   << " async_mode=" << async_selection_name(async_selection)
                   << " processcvu_async=" << (async_selection.processcvu ? 1 : 0)
                   << " processmla_async=" << (async_selection.processmla ? 1 : 0)
-                  << " async_queue_depth=" << async_queue_depth
-                  << " prepared_runner_mode=" << (prepared_runner_mode.empty() ? "off" : prepared_runner_mode)
+                  << " async_queue_depth=" << async_queue_depth << " prepared_runner_mode="
+                  << (prepared_runner_mode.empty() ? "off" : prepared_runner_mode)
                   << " prepared_runner_dequant_flags="
-                  << (prepared_runner_dequant_flags.empty() ? "default" : prepared_runner_dequant_flags)
-                  << " frames=" << std::max(frames, 1)
-                  << " run_ms=" << run_ms << " fps=" << fps << "\n";
+                  << (prepared_runner_dequant_flags.empty() ? "default"
+                                                            : prepared_runner_dequant_flags)
+                  << " frames=" << std::max(frames, 1) << " run_ms=" << run_ms << " fps=" << fps
+                  << "\n";
         const auto tensor_io_after = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         const auto tensor_io = tensor_io_delta(tensor_io_before, tensor_io_after);
 
@@ -5223,17 +5173,16 @@ int main(int argc, char** argv) {
             run_framework_boxdecode_accuracy(infer_sample, model, img_bgr, boxdecode_mode);
         require(acc.ok, "accuracy check failed: " + acc.note);
 
-        std::cout << "E2E model=" << tar.filename().string() << " backend="
-                  << processcvu_run_target
-                  << " placement=" << (processcvu_placement.empty() ? "default" : processcvu_placement)
+        std::cout << "E2E model=" << tar.filename().string() << " backend=" << processcvu_run_target
+                  << " placement="
+                  << (processcvu_placement.empty() ? "default" : processcvu_placement)
                   << " boxdecode_mode=" << boxdecode_run_mode_name(boxdecode_mode)
                   << " signature=\"" << sample_output_signature_local(infer_sample) << "\""
                   << " accuracy=\"" << acc.note << "\" tensor_io=\""
                   << tensor_io_stats_string(tensor_io) << "\"\n";
       } catch (const std::exception& ex) {
         failures += 1;
-        std::cerr << "[FAIL] model=" << tar.filename().string()
-                  << " err=" << ex.what() << "\n";
+        std::cerr << "[FAIL] model=" << tar.filename().string() << " err=" << ex.what() << "\n";
       }
     }
 

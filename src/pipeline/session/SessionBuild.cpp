@@ -120,8 +120,7 @@ SessionReport make_error_report(const std::shared_ptr<DiagCtx>& diag, const std:
   throw SessionError(decorate_with_error_code(rep.error_code, rep.repro_note), std::move(rep));
 }
 
-const internal::ModelLineageBinding* node_model_lineage_binding(
-    const std::shared_ptr<Node>& node) {
+const internal::ModelLineageBinding* node_model_lineage_binding(const std::shared_ptr<Node>& node) {
   if (!node) {
     return nullptr;
   }
@@ -207,10 +206,9 @@ void dump_prefixed_multiline(const std::string& prefix, const std::string& text)
   std::size_t start = 0;
   while (start <= text.size()) {
     const std::size_t end = text.find('\n', start);
-    const std::string_view line =
-        (end == std::string::npos)
-            ? std::string_view(text).substr(start)
-            : std::string_view(text).substr(start, end - start);
+    const std::string_view line = (end == std::string::npos)
+                                      ? std::string_view(text).substr(start)
+                                      : std::string_view(text).substr(start, end - start);
     std::fprintf(stderr, "%s%s\n", prefix.c_str(), std::string(line).c_str());
     if (end == std::string::npos) {
       break;
@@ -346,8 +344,7 @@ struct ElementPadTimingProbeCtx {
   GQuark src_depart_quark = 0;
   // Lazily resolved on first probe fire to avoid mutex contention on the
   // hot path; once non-null, all probe fires increment it directly.
-  std::atomic<simaai::neat::pipeline_internal::ElementPadTimingCounters*>
-      counters{nullptr};
+  std::atomic<simaai::neat::pipeline_internal::ElementPadTimingCounters*> counters{nullptr};
 };
 
 static bool should_skip_stage_element(GstElement* elem) {
@@ -624,9 +621,8 @@ static GstPadProbeReturn element_pad_timing_probe_cb(GstPad*, GstPadProbeInfo* i
     const uint64_t delta = static_cast<uint64_t>(now - prev);
     counters->inter_arrival_total_us.fetch_add(delta, std::memory_order_relaxed);
     uint64_t cur_max = counters->inter_arrival_max_us.load(std::memory_order_relaxed);
-    while (delta > cur_max &&
-           !counters->inter_arrival_max_us.compare_exchange_weak(cur_max, delta,
-                                                                  std::memory_order_relaxed)) {
+    while (delta > cur_max && !counters->inter_arrival_max_us.compare_exchange_weak(
+                                  cur_max, delta, std::memory_order_relaxed)) {
     }
   }
   counters->samples.fetch_add(1, std::memory_order_relaxed);
@@ -642,9 +638,8 @@ static GstPadProbeReturn element_pad_timing_probe_cb(GstPad*, GstPadProbeInfo* i
       counters->queue_wait_total_us.fetch_add(wait, std::memory_order_relaxed);
       counters->queue_wait_samples.fetch_add(1, std::memory_order_relaxed);
       uint64_t cur_max = counters->queue_wait_max_us.load(std::memory_order_relaxed);
-      while (wait > cur_max &&
-             !counters->queue_wait_max_us.compare_exchange_weak(cur_max, wait,
-                                                                  std::memory_order_relaxed)) {
+      while (wait > cur_max && !counters->queue_wait_max_us.compare_exchange_weak(
+                                   cur_max, wait, std::memory_order_relaxed)) {
       }
     }
   } else if (!ctx->is_sink && ctx->src_depart_quark) {
@@ -674,8 +669,7 @@ static void attach_element_probes_for_pad(GstPad* pad, ElementProbeAttachState* 
 
   static GQuark timing_pad_quark = g_quark_from_static_string("sima.elem.timing.attached");
   static GQuark flow_pad_quark = g_quark_from_static_string("sima.elem.flow.attached");
-  static GQuark pad_timing_pad_quark =
-      g_quark_from_static_string("sima.elem.pad_timing.attached");
+  static GQuark pad_timing_pad_quark = g_quark_from_static_string("sima.elem.pad_timing.attached");
 
   if (state->track_pad_timing && state->diag_ctx) {
     if (!g_object_get_qdata(G_OBJECT(pad), pad_timing_pad_quark)) {
@@ -882,13 +876,11 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
       state->track_pad_timing = true;
       state->diag_ctx = diag.get();
       state->element_name = elem_name;
-      static GQuark pad_timing_quark =
-          g_quark_from_static_string("sima.elem.pad_timing.ts");
+      static GQuark pad_timing_quark = g_quark_from_static_string("sima.elem.pad_timing.ts");
       state->pad_timing_quark = pad_timing_quark;
       // src_depart_quark is process-global so any src-pad probe can stamp a
       // buffer and any sink-pad probe further downstream can read it.
-      static GQuark src_depart_quark =
-          g_quark_from_static_string("sima.elem.src_depart.us");
+      static GQuark src_depart_quark = g_quark_from_static_string("sima.elem.src_depart.us");
       state->src_depart_quark = src_depart_quark;
     }
     if (!state->track_timing && !state->track_flow) {
@@ -1143,9 +1135,8 @@ static void dump_node_debug_options(const std::vector<std::shared_ptr<Node>>& no
       std::ostringstream os;
       os << "[OPTS]   Preproc config=\"" << pre->config_path() << "\""
          << " next_cpu=" << opt.next_cpu << " input=" << opt.input_width() << "x"
-         << opt.input_height() << " fmt=" << opt.input_img_type << " output="
-         << opt.output_width() << "x" << opt.output_height() << " out_fmt="
-         << opt.output_img_type
+         << opt.input_height() << " fmt=" << opt.input_img_type << " output=" << opt.output_width()
+         << "x" << opt.output_height() << " out_fmt=" << opt.output_img_type
          << " normalize=" << (opt.normalize ? "true" : "false")
          << " tessellate=" << (opt.tessellate ? "true" : "false")
          << " num_buffers=" << opt.num_buffers;
@@ -1166,7 +1157,6 @@ static void dump_node_debug_options(const std::vector<std::shared_ptr<Node>>& no
       os << "[OPTS]   SimaBoxDecode typed-manifest=true";
       std::fprintf(stderr, "%s\n", os.str().c_str());
     }
-
   }
 }
 
@@ -1802,14 +1792,12 @@ static int async_queue2_depth(int requested_depth = 0) {
 }
 static std::string async_queue2_fragment(int requested_depth = 0) {
   const int depth = async_queue2_depth(requested_depth);
-  return "queue max-size-buffers=" + std::to_string(depth) +
-         " max-size-bytes=0 max-size-time=0";
+  return "queue max-size-buffers=" + std::to_string(depth) + " max-size-bytes=0 max-size-time=0";
 }
 
 static std::string append_boolean_property_if_absent(std::string fragment,
                                                      const std::string& factory,
-                                                     const std::string& property,
-                                                     bool value) {
+                                                     const std::string& property, bool value) {
   if (!value || fragment.find(factory) == std::string::npos ||
       fragment.find(property + "=") != std::string::npos) {
     return fragment;
@@ -1825,8 +1813,7 @@ static std::string append_boolean_property_if_absent(std::string fragment,
 
 static std::string set_int_property_if_factory_present(std::string fragment,
                                                        const std::string& factory,
-                                                       const std::string& property,
-                                                       int value) {
+                                                       const std::string& property, int value) {
   if (value <= 0 || fragment.find(factory) == std::string::npos) {
     return fragment;
   }
@@ -1835,8 +1822,7 @@ static std::string set_int_property_if_factory_present(std::string fragment,
   if (pos != std::string::npos) {
     size_t vstart = pos + key.size();
     size_t vend = vstart;
-    while (vend < fragment.size() &&
-           std::isdigit(static_cast<unsigned char>(fragment[vend]))) {
+    while (vend < fragment.size() && std::isdigit(static_cast<unsigned char>(fragment[vend]))) {
       ++vend;
     }
     fragment.replace(vstart, vend - vstart, std::to_string(value));
@@ -1870,7 +1856,8 @@ static std::string read_gst_fragment_property(const std::string& fragment,
   while (vend < fragment.size()) {
     const char c = fragment[vend];
     if (quote) {
-      if (c == quote) break;
+      if (c == quote)
+        break;
     } else if (std::isspace(static_cast<unsigned char>(c)) || c == '!') {
       break;
     }
@@ -1889,8 +1876,8 @@ static bool fragment_is_graph223_dequant_processcvu(const std::string& fragment)
          lower.find("graph_id=223") != std::string::npos;
 }
 
-static std::string maybe_replace_post_dequant_with_prepared_runner(
-    const std::string& fragment, const SessionOptions* sess_opt) {
+static std::string maybe_replace_post_dequant_with_prepared_runner(const std::string& fragment,
+                                                                   const SessionOptions* sess_opt) {
   if (!sess_opt) {
     return fragment;
   }
@@ -1937,27 +1924,27 @@ static bool env_explicit_false_session_build_local(const char* name) {
   return raw && *raw && std::strcmp(raw, "0") == 0;
 }
 
-static std::string apply_session_fast_path_options_to_fragment(
-    std::string fragment, const SessionOptions* sess_opt) {
+static std::string apply_session_fast_path_options_to_fragment(std::string fragment,
+                                                               const SessionOptions* sess_opt) {
   if (!sess_opt) {
     return fragment;
   }
   fragment = maybe_replace_post_dequant_with_prepared_runner(fragment, sess_opt);
-  const bool processcvu_async =
-      sess_opt->processcvu.async && !env_explicit_false_session_build_local("SIMA_PROCESSCVU_ASYNC");
+  const bool processcvu_async = sess_opt->processcvu.async &&
+                                !env_explicit_false_session_build_local("SIMA_PROCESSCVU_ASYNC");
   const bool processmla_async =
       sess_opt->processmla.async &&
       !env_explicit_false_session_build_local("SIMA_PROCESSMLA_SAFE_ASYNC");
-  fragment = append_boolean_property_if_absent(
-      std::move(fragment), "neatprocesscvu", "async", processcvu_async);
-  fragment = append_boolean_property_if_absent(
-      std::move(fragment), "neatprocessmla", "async", processmla_async);
-  fragment = set_int_property_if_factory_present(
-      std::move(fragment), "neatprocessmla", "num-buffers",
-      sess_opt->processmla.output_pool_buffers);
-  fragment = append_boolean_property_if_absent(
-      std::move(fragment), "neatprocessmla", "defer-output-invalidate",
-      sess_opt->processmla.defer_output_invalidate);
+  fragment = append_boolean_property_if_absent(std::move(fragment), "neatprocesscvu", "async",
+                                               processcvu_async);
+  fragment = append_boolean_property_if_absent(std::move(fragment), "neatprocessmla", "async",
+                                               processmla_async);
+  fragment =
+      set_int_property_if_factory_present(std::move(fragment), "neatprocessmla", "num-buffers",
+                                          sess_opt->processmla.output_pool_buffers);
+  fragment = append_boolean_property_if_absent(std::move(fragment), "neatprocessmla",
+                                               "defer-output-invalidate",
+                                               sess_opt->processmla.defer_output_invalidate);
   return fragment;
 }
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b);
@@ -2057,18 +2044,17 @@ SampleSpec infer_input_spec(const InputOptions& opt, const Sample& sample, const
     const auto limits = pipeline_internal::resolve_shape_limits(normalized, spec);
     if (pipeline_internal::env_bool("SIMA_INPUTSTREAM_DEBUG", false)) {
       std::fprintf(stderr,
-                   "[DBG] infer_input_spec(sample) tag=%s opt{media=%s format=%s w=%d h=%d d=%d max=%dx%dx%d} "
+                   "[DBG] infer_input_spec(sample) tag=%s opt{media=%s format=%s w=%d h=%d d=%d "
+                   "max=%dx%dx%d} "
                    "spec{media=%s format=%s shape=%s w=%d h=%d d=%d tensor_envelope=%d} "
                    "limits{seed=%dx%dx%d max=%dx%dx%d}\n",
-                   tag,
-                   normalized.media_type.c_str(), normalized.format.str().c_str(),
-                   normalized.width, normalized.height, normalized.depth,
-                   normalized.max_width, normalized.max_height, normalized.max_depth,
-                   spec.media_type.c_str(), spec.format.c_str(),
-                   sample_shape_debug_string(spec).c_str(),
-                   actual_dims.width, actual_dims.height, actual_dims.depth,
-                   spec.tensor_envelope_transport ? 1 : 0, limits.seed_width, limits.seed_height,
-                   limits.seed_depth, limits.max_width, limits.max_height, limits.max_depth);
+                   tag, normalized.media_type.c_str(), normalized.format.str().c_str(),
+                   normalized.width, normalized.height, normalized.depth, normalized.max_width,
+                   normalized.max_height, normalized.max_depth, spec.media_type.c_str(),
+                   spec.format.c_str(), sample_shape_debug_string(spec).c_str(), actual_dims.width,
+                   actual_dims.height, actual_dims.depth, spec.tensor_envelope_transport ? 1 : 0,
+                   limits.seed_width, limits.seed_height, limits.seed_depth, limits.max_width,
+                   limits.max_height, limits.max_depth);
     }
 
     if (!spec.tensor_envelope_transport && limits.max_width > 0 && actual_dims.width > 0 &&
@@ -2261,9 +2247,7 @@ void enforce_mla_num_buffers(const std::string& pipeline, const char* context,
   if (env_bool("SIMA_MLA_NUM_BUFFERS_DEBUG", false)) {
     std::fprintf(stderr, "[DBG] %s enforce_mla_num_buffers allow_one=%d has_mla=%d\n",
                  context ? context : "Session", allow_one ? 1 : 0,
-                 (pipeline.find("neatprocessmla") != std::string::npos)
-                     ? 1
-                     : 0);
+                 (pipeline.find("neatprocessmla") != std::string::npos) ? 1 : 0);
   }
   if (allow_one) {
     return;
@@ -2384,8 +2368,9 @@ std::string clamp_terminal_processcvu_num_buffers(std::string pipeline, int num_
     std::string seg = parts[static_cast<std::size_t>(i)];
     trim(seg);
     const std::string lower = to_lower(seg);
-    if (lower.empty() || starts_with_token(lower, "identity") || starts_with_token(lower, "queue") ||
-        starts_with_token(lower, "queue2") || starts_with_token(lower, "capsfilter")) {
+    if (lower.empty() || starts_with_token(lower, "identity") ||
+        starts_with_token(lower, "queue") || starts_with_token(lower, "queue2") ||
+        starts_with_token(lower, "capsfilter")) {
       continue;
     }
     if (lower.find("neatprocesscvu") == std::string::npos) {
@@ -2440,7 +2425,8 @@ std::string clamp_sync_pipeline(std::string pipeline, int num_buffers_override) 
     if (pos != std::string::npos) {
       size_t vstart = pos + key.size();
       size_t vend = vstart;
-      while (vend < seg.size() && (std::isalpha(static_cast<unsigned char>(seg[vend])) || seg[vend] == '_')) {
+      while (vend < seg.size() &&
+             (std::isalpha(static_cast<unsigned char>(seg[vend])) || seg[vend] == '_')) {
         ++vend;
       }
       seg.replace(vstart, vend - vstart, text);
@@ -2645,7 +2631,8 @@ std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_overr
   }
 
   if (env_bool("SIMA_MLA_NUM_BUFFERS_DEBUG", false)) {
-    std::fprintf(stderr, "[DBG] Session::build(input) clamp_detess_num_buffers min=%d\n", forced_min);
+    std::fprintf(stderr, "[DBG] Session::build(input) clamp_detess_num_buffers min=%d\n",
+                 forced_min);
   }
   return out.str();
 }
@@ -2749,9 +2736,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
     }
     const auto it = requested_posts.find(binding->lineage_key);
     if (it != requested_posts.end()) {
-      throw std::runtime_error(
-          "Session::build: multiple manual post nodes for model lineage '" + binding->lineage_key +
-          "' are not supported");
+      throw std::runtime_error("Session::build: multiple manual post nodes for model lineage '" +
+                               binding->lineage_key + "' are not supported");
     }
     requested_posts.emplace(binding->lineage_key,
                             RequestedPostState{*binding, requested_decode_type});
@@ -2814,7 +2800,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
     std::size_t j = i + 1U;
     while (j < nodes.size()) {
       const auto* next = node_model_lineage_binding(nodes[j]);
-      if (!next || next->lineage_key != binding->lineage_key || next->stage_role != binding->stage_role) {
+      if (!next || next->lineage_key != binding->lineage_key ||
+          next->stage_role != binding->stage_role) {
         break;
       }
       ++j;
@@ -2827,7 +2814,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
           internal::ModelAccess::build_preprocess_group(*it->second.effective_model, sync_mode);
       break;
     case internal::ModelLineageStageRole::Infer:
-      replacement = internal::ModelAccess::build_infer_group(*it->second.effective_model, sync_mode);
+      replacement =
+          internal::ModelAccess::build_infer_group(*it->second.effective_model, sync_mode);
       break;
     case internal::ModelLineageStageRole::ManualPost:
       break;
@@ -2843,8 +2831,7 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,
-                                     const ContractCompileInput& compile_input,
-                                     const char* where,
+                                     const ContractCompileInput& compile_input, const char* where,
                                      std::vector<std::shared_ptr<Node>>* apply_nodes) {
   if (!build_result) {
     return;
@@ -2858,8 +2845,7 @@ void session_build_compile_contracts(BuildResult* build_result,
     std::string apply_error;
     apply_compiled_contracts(apply_nodes, *compiled, &apply_error);
     if (!apply_error.empty()) {
-      throw std::runtime_error(std::string(where ? where : "Session::build") + ": " +
-                               apply_error);
+      throw std::runtime_error(std::string(where ? where : "Session::build") + ": " + apply_error);
     }
   }
 
@@ -3202,12 +3188,10 @@ void configure_appsrc(GstElement* appsrc, const InputOptions& opt) {
     effective_is_live = false;
     effective_do_timestamp = false;
   }
-  g_object_set(G_OBJECT(appsrc), "is-live", effective_is_live ? TRUE : FALSE,
-               "format", GST_FORMAT_TIME,
-               "do-timestamp", effective_do_timestamp ? TRUE : FALSE,
-               "block", opt.block ? TRUE : FALSE,
-               "stream-type", opt.stream_type, "max-bytes", static_cast<guint64>(opt.max_bytes),
-               nullptr);
+  g_object_set(G_OBJECT(appsrc), "is-live", effective_is_live ? TRUE : FALSE, "format",
+               GST_FORMAT_TIME, "do-timestamp", effective_do_timestamp ? TRUE : FALSE, "block",
+               opt.block ? TRUE : FALSE, "stream-type", opt.stream_type, "max-bytes",
+               static_cast<guint64>(opt.max_bytes), nullptr);
 }
 
 static std::uint64_t checked_mul_u64(std::uint64_t a, std::uint64_t b) {
@@ -3241,7 +3225,8 @@ std::uint64_t estimate_frame_bytes_limit(const InputOptions& opt, const SampleSp
   }
   const InputOptions normalized = pipeline_internal::normalize_shape_bounds(opt);
   const auto limits = pipeline_internal::resolve_shape_limits(normalized, spec);
-  const std::string media = lower_copy(normalized.media_type.empty() ? spec.media_type : normalized.media_type);
+  const std::string media =
+      lower_copy(normalized.media_type.empty() ? spec.media_type : normalized.media_type);
   const std::string fmt =
       lower_copy(normalized.format.empty() ? spec.format : normalized.format.str());
   std::uint64_t bytes = 0;

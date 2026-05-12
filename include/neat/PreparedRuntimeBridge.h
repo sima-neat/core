@@ -35,8 +35,7 @@ struct GraphTensorContract {
   std::int64_t byte_offset = 0;
   std::int64_t source_byte_offset = 0;
   std::vector<std::int64_t> stride_bytes;
-  GraphTensorMaterializationKind materialization_kind =
-      GraphTensorMaterializationKind::Direct;
+  GraphTensorMaterializationKind materialization_kind = GraphTensorMaterializationKind::Direct;
 };
 
 struct GraphQuantContract {
@@ -101,26 +100,22 @@ struct GraphProcessCvuStageRequest {
   bool c16_packed_io = false;
 };
 
-bool prepare_processmla_runtime_config(
-    ProcessMlaRuntimeConfig* runtime_cfg,
-    std::string* error_message = nullptr);
+bool prepare_processmla_runtime_config(ProcessMlaRuntimeConfig* runtime_cfg,
+                                       std::string* error_message = nullptr);
 
-bool build_graph_processmla_prepared_stage(
-    const GraphProcessMlaStageRequest& request,
-    simaai::gst::ProcessMlaPreparedStage* out,
-    std::string* error_message = nullptr);
+bool build_graph_processmla_prepared_stage(const GraphProcessMlaStageRequest& request,
+                                           simaai::gst::ProcessMlaPreparedStage* out,
+                                           std::string* error_message = nullptr);
 
-bool build_graph_processcvu_prepared_stage(
-    const GraphProcessCvuStageRequest& request,
-    simaai::gst::ProcessCvuPreparedStage* out,
-    std::string* error_message = nullptr);
+bool build_graph_processcvu_prepared_stage(const GraphProcessCvuStageRequest& request,
+                                           simaai::gst::ProcessCvuPreparedStage* out,
+                                           std::string* error_message = nullptr);
 
-bool build_prepared_stage_from_manifest_context(
-    const GstContext* static_manifest_context,
-    const char* stage_id_or_name,
-    const char* element_name_fallback,
-    simaai::gst::PreparedStageSpec* out,
-    std::string* error_message = nullptr);
+bool build_prepared_stage_from_manifest_context(const GstContext* static_manifest_context,
+                                                const char* stage_id_or_name,
+                                                const char* element_name_fallback,
+                                                simaai::gst::PreparedStageSpec* out,
+                                                std::string* error_message = nullptr);
 
 bool attach_prepared_runtime_context(GstElement* pipeline,
                                      PreparedRuntimeDescriptor prepared_runtime,

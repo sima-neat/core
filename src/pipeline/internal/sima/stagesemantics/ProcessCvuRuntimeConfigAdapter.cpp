@@ -59,8 +59,8 @@ bool processcvu_dtype_token_to_ev_runtime(const std::string& raw_dtype, uint32_t
     *out_dtype = SIMA_EV_DTYPE_FP32;
     return true;
   }
-  if (token == "BF16" || token == "BFLOAT16" || token == "EVXX_BFLOAT16" ||
-      token == "INT16" || token == "EVXX_INT16") {
+  if (token == "BF16" || token == "BFLOAT16" || token == "EVXX_BFLOAT16" || token == "INT16" ||
+      token == "EVXX_INT16") {
     *out_dtype = (token.find("FLOAT") != std::string::npos || token == "BF16")
                      ? SIMA_EV_DTYPE_BF16
                      : SIMA_EV_DTYPE_INT16;
@@ -82,8 +82,7 @@ bool processcvu_dtype_token_to_ev_runtime(const std::string& raw_dtype, uint32_t
 }
 
 bool processcvu_fill_dense_strides_runtime(const sima_ev_shape_desc& shape,
-                                           const std::string& raw_layout,
-                                           const uint32_t dtype,
+                                           const std::string& raw_layout, const uint32_t dtype,
                                            sima_ev_strided_layout_desc* out,
                                            std::string* error_detail) {
   return tensorsemantics::fill_dense_strides(shape, raw_layout, dtype, out, error_detail,
@@ -97,12 +96,14 @@ bool processcvu_build_dense_tensor_desc_runtime(const std::vector<int>& shape,
                                                 sima_ev_tensor_desc* out,
                                                 std::string* error_detail) {
   if (!out) {
-    if (error_detail) *error_detail = "runtime_dense_tensor_desc_output_storage_missing";
+    if (error_detail)
+      *error_detail = "runtime_dense_tensor_desc_output_storage_missing";
     return false;
   }
   const std::string normalized_layout = tensorsemantics::normalize_layout_token(layout_token);
   if (!layout_token.empty() && normalized_layout.empty()) {
-    if (error_detail) *error_detail = "runtime_dense_tensor_desc_layout_invalid";
+    if (error_detail)
+      *error_detail = "runtime_dense_tensor_desc_layout_invalid";
     return false;
   }
   if (normalized_layout.empty()) {
@@ -119,7 +120,8 @@ bool processcvu_build_dense_tensor_desc_runtime(const std::vector<int>& shape,
     return false;
   }
   if (!processcvu_dtype_token_to_ev_runtime(dtype_token, &out->dtype)) {
-    if (error_detail) *error_detail = "runtime_dense_tensor_desc_dtype_invalid";
+    if (error_detail)
+      *error_detail = "runtime_dense_tensor_desc_dtype_invalid";
     return false;
   }
   out->layout_kind = SIMA_EV_LAYOUT_STRIDED;
@@ -127,25 +129,25 @@ bool processcvu_build_dense_tensor_desc_runtime(const std::vector<int>& shape,
                                                &out->layout.strided, error_detail);
 }
 
-bool processcvu_build_tiled_tensor_desc_runtime(const std::vector<int>& shape,
-                                                const std::vector<int>& tile_shape,
-                                                const std::string& dtype_token,
-                                                const std::string& layout_token,
-                                                const guint32 tile_align_bytes,
-                                                sima_ev_tensor_desc* out,
-                                                std::string* error_detail) {
+bool processcvu_build_tiled_tensor_desc_runtime(
+    const std::vector<int>& shape, const std::vector<int>& tile_shape,
+    const std::string& dtype_token, const std::string& layout_token, const guint32 tile_align_bytes,
+    sima_ev_tensor_desc* out, std::string* error_detail) {
   if (!out) {
-    if (error_detail) *error_detail = "runtime_tiled_tensor_desc_output_storage_missing";
+    if (error_detail)
+      *error_detail = "runtime_tiled_tensor_desc_output_storage_missing";
     return false;
   }
   std::memset(out, 0, sizeof(*out));
   if (shape.size() != tile_shape.size()) {
-    if (error_detail) *error_detail = "runtime_tiled_tensor_desc_shape_rank_mismatch";
+    if (error_detail)
+      *error_detail = "runtime_tiled_tensor_desc_shape_rank_mismatch";
     return false;
   }
   const std::string normalized_layout = tensorsemantics::normalize_layout_token(layout_token);
   if (!layout_token.empty() && normalized_layout.empty()) {
-    if (error_detail) *error_detail = "runtime_tiled_tensor_desc_layout_invalid";
+    if (error_detail)
+      *error_detail = "runtime_tiled_tensor_desc_layout_invalid";
     return false;
   }
   if (normalized_layout.empty()) {
@@ -163,36 +165,38 @@ bool processcvu_build_tiled_tensor_desc_runtime(const std::vector<int>& shape,
     return false;
   }
   if (!processcvu_dtype_token_to_ev_runtime(dtype_token, &out->dtype)) {
-    if (error_detail) *error_detail = "runtime_tiled_tensor_desc_dtype_invalid";
+    if (error_detail)
+      *error_detail = "runtime_tiled_tensor_desc_dtype_invalid";
     return false;
   }
   out->layout_kind = SIMA_EV_LAYOUT_TILED;
   for (std::size_t i = 0; i < tile_shape.size(); ++i) {
     if (tile_shape[i] <= 0 || tile_shape[i] > shape[i]) {
-      if (error_detail) *error_detail = "runtime_tiled_tensor_desc_tile_shape_invalid";
+      if (error_detail)
+        *error_detail = "runtime_tiled_tensor_desc_tile_shape_invalid";
       return false;
     }
     out->layout.tiled.tile_sizes[i] = static_cast<int64_t>(tile_shape[i]);
   }
   out->layout.tiled.tile_align_bytes = tile_align_bytes;
-  out->layout.tiled.flags =
-      tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0
-          ? SIMA_EV_TILED_FLAG_COMPACT_CHANNELS
-          : SIMA_EV_TILED_FLAG_NONE;
+  out->layout.tiled.flags = tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0
+                                ? SIMA_EV_TILED_FLAG_COMPACT_CHANNELS
+                                : SIMA_EV_TILED_FLAG_NONE;
   return true;
 }
 
 bool processcvu_normalize_tile_shape_runtime(const std::vector<int>& shape,
                                              const std::vector<int>& raw_tile_shape,
-                                             std::vector<int>* out,
-                                             std::string* error_detail) {
+                                             std::vector<int>* out, std::string* error_detail) {
   if (!out) {
-    if (error_detail) *error_detail = "runtime_tile_shape_output_storage_missing";
+    if (error_detail)
+      *error_detail = "runtime_tile_shape_output_storage_missing";
     return false;
   }
   out->clear();
   if (shape.empty() || raw_tile_shape.empty()) {
-    if (error_detail) *error_detail = "runtime_tile_shape_missing";
+    if (error_detail)
+      *error_detail = "runtime_tile_shape_missing";
     return false;
   }
   std::vector<int> normalized = raw_tile_shape;
@@ -200,7 +204,8 @@ bool processcvu_normalize_tile_shape_runtime(const std::vector<int>& shape,
     const std::size_t extra = normalized.size() - shape.size();
     for (std::size_t i = 0; i < extra; ++i) {
       if (normalized[i] != 1) {
-        if (error_detail) *error_detail = "runtime_tile_shape_rank_prefix_invalid";
+        if (error_detail)
+          *error_detail = "runtime_tile_shape_rank_prefix_invalid";
         return false;
       }
     }
@@ -210,7 +215,8 @@ bool processcvu_normalize_tile_shape_runtime(const std::vector<int>& shape,
   }
   for (std::size_t i = 0; i < normalized.size(); ++i) {
     if (normalized[i] <= 0 || normalized[i] > shape[i]) {
-      if (error_detail) *error_detail = "runtime_tile_shape_dim_invalid";
+      if (error_detail)
+        *error_detail = "runtime_tile_shape_dim_invalid";
       return false;
     }
   }
@@ -243,8 +249,8 @@ std::vector<int> processcvu_tile_shape_from_desc_runtime(const sima_ev_tensor_de
   return tile_shape;
 }
 
-std::vector<std::vector<int>> processcvu_shapes_from_descs_runtime(
-    const std::vector<sima_ev_tensor_desc>& descs) {
+std::vector<std::vector<int>>
+processcvu_shapes_from_descs_runtime(const std::vector<sima_ev_tensor_desc>& descs) {
   std::vector<std::vector<int>> shapes;
   shapes.reserve(descs.size());
   for (const auto& desc : descs) {
@@ -253,8 +259,8 @@ std::vector<std::vector<int>> processcvu_shapes_from_descs_runtime(
   return shapes;
 }
 
-std::vector<std::vector<int>> processcvu_tile_shapes_from_descs_runtime(
-    const std::vector<sima_ev_tensor_desc>& descs) {
+std::vector<std::vector<int>>
+processcvu_tile_shapes_from_descs_runtime(const std::vector<sima_ev_tensor_desc>& descs) {
   std::vector<std::vector<int>> shapes;
   shapes.reserve(descs.size());
   for (const auto& desc : descs) {
@@ -266,24 +272,24 @@ std::vector<std::vector<int>> processcvu_tile_shapes_from_descs_runtime(
   return shapes;
 }
 
-std::vector<std::vector<int>> processcvu_resolved_input_shapes_runtime(
-    const CompiledProcessCvuRuntimeConfig& config) {
+std::vector<std::vector<int>>
+processcvu_resolved_input_shapes_runtime(const CompiledProcessCvuRuntimeConfig& config) {
   if (!config.input_shapes.empty()) {
     return config.input_shapes;
   }
   return processcvu_shapes_from_descs_runtime(config.input_tensors);
 }
 
-std::vector<std::vector<int>> processcvu_resolved_output_shapes_runtime(
-    const CompiledProcessCvuRuntimeConfig& config) {
+std::vector<std::vector<int>>
+processcvu_resolved_output_shapes_runtime(const CompiledProcessCvuRuntimeConfig& config) {
   if (!config.output_shapes.empty()) {
     return config.output_shapes;
   }
   return processcvu_shapes_from_descs_runtime(config.output_tensors);
 }
 
-std::vector<std::vector<int>> processcvu_resolved_slice_shapes_runtime(
-    const CompiledProcessCvuRuntimeConfig& config) {
+std::vector<std::vector<int>>
+processcvu_resolved_slice_shapes_runtime(const CompiledProcessCvuRuntimeConfig& config) {
   if (!config.slice_shapes.empty()) {
     return config.slice_shapes;
   }
@@ -321,17 +327,20 @@ bool processcvu_build_runtime_tensor_descs(const CompiledProcessCvuRuntimeConfig
                                            std::vector<sima_ev_tensor_desc>* output_tensors,
                                            std::string* error_detail) {
   if (!input_tensors || !output_tensors) {
-    if (error_detail) *error_detail = "runtime_tensor_desc_storage_missing";
+    if (error_detail)
+      *error_detail = "runtime_tensor_desc_storage_missing";
     return false;
   }
   input_tensors->clear();
   output_tensors->clear();
   if (config.input_tensors.empty() || config.output_tensors.empty()) {
-    if (error_detail) *error_detail = "runtime_tensor_desc_missing_explicit_descriptor_set";
+    if (error_detail)
+      *error_detail = "runtime_tensor_desc_missing_explicit_descriptor_set";
     return false;
   }
   if (config.input_tensors.size() != config.output_tensors.size()) {
-    if (error_detail) *error_detail = "runtime_tensor_desc_explicit_tensor_count_mismatch";
+    if (error_detail)
+      *error_detail = "runtime_tensor_desc_explicit_tensor_count_mismatch";
     return false;
   }
   *input_tensors = config.input_tensors;
@@ -344,9 +353,8 @@ std::size_t processcvu_semantic_input_count(const CompiledProcessCvuRuntimeConfi
   const auto resolved_slice_shapes = processcvu_resolved_slice_shapes_runtime(config);
   const std::size_t derived =
       std::max({resolved_input_shapes.size(), resolved_slice_shapes.size(),
-                config.input_tensors.size(),
-                config.q_scale_list.size(), config.q_zp_list.size(), config.dq_scale_list.size(),
-                config.dq_zp_list.size()});
+                config.input_tensors.size(), config.q_scale_list.size(), config.q_zp_list.size(),
+                config.dq_scale_list.size(), config.dq_zp_list.size()});
   if (derived > 0U) {
     return derived;
   }
@@ -356,8 +364,8 @@ std::size_t processcvu_semantic_input_count(const CompiledProcessCvuRuntimeConfi
   return 1U;
 }
 
-std::vector<std::string> processcvu_physical_input_names(
-    const CompiledProcessCvuRuntimeConfig& config) {
+std::vector<std::string>
+processcvu_physical_input_names(const CompiledProcessCvuRuntimeConfig& config) {
   if (!config.physical_input_names.empty()) {
     return config.physical_input_names;
   }
@@ -370,8 +378,8 @@ std::vector<std::string> processcvu_physical_input_names(
   return {};
 }
 
-std::vector<std::string> processcvu_physical_output_names(
-    const CompiledProcessCvuRuntimeConfig& config) {
+std::vector<std::string>
+processcvu_physical_output_names(const CompiledProcessCvuRuntimeConfig& config) {
   if (!config.physical_output_names.empty()) {
     return config.physical_output_names;
   }
@@ -418,16 +426,13 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
   const auto physical_input_names = processcvu_physical_input_names(config);
   const auto physical_output_names = processcvu_physical_output_names(config);
   if (config.default_input_name.empty()) {
-    throw std::invalid_argument(
-        "processcvu runtime config missing explicit default_input_name");
+    throw std::invalid_argument("processcvu runtime config missing explicit default_input_name");
   }
   if (config.primary_output_name.empty()) {
-    throw std::invalid_argument(
-        "processcvu runtime config missing explicit primary_output_name");
+    throw std::invalid_argument("processcvu runtime config missing explicit primary_output_name");
   }
   if (config.runtime_output_names.empty()) {
-    throw std::invalid_argument(
-        "processcvu runtime config missing explicit runtime_output_names");
+    throw std::invalid_argument("processcvu runtime config missing explicit runtime_output_names");
   }
   if (config.published_output_names.empty()) {
     throw std::invalid_argument(
@@ -479,13 +484,13 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
     }
   };
 
-  const bool has_any_runtime_output_arrays =
-      !config.runtime_output_logical_index_list.empty() ||
-      !config.runtime_output_output_slot_list.empty() ||
-      !config.runtime_output_physical_index_list.empty() ||
-      !config.runtime_output_dtype_list.empty() || !config.runtime_output_transport_kind_list.empty() ||
-      !config.runtime_output_semantic_kind_list.empty() ||
-      !resolved_runtime_output_logical_shapes.empty();
+  const bool has_any_runtime_output_arrays = !config.runtime_output_logical_index_list.empty() ||
+                                             !config.runtime_output_output_slot_list.empty() ||
+                                             !config.runtime_output_physical_index_list.empty() ||
+                                             !config.runtime_output_dtype_list.empty() ||
+                                             !config.runtime_output_transport_kind_list.empty() ||
+                                             !config.runtime_output_semantic_kind_list.empty() ||
+                                             !resolved_runtime_output_logical_shapes.empty();
   if (!resolved_output_shapes.empty()) {
     require_semantic_output_count("output_shapes", resolved_output_shapes.size());
   }
@@ -551,8 +556,9 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
   }
 }
 
-ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_common(
-    const CompiledProcessCvuRuntimeConfig& config, bool validate) {
+ProcessCvuStagePayload
+build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRuntimeConfig& config,
+                                                    bool validate) {
   if (validate) {
     validate_runtime_output_config_strict(config);
   }
@@ -563,9 +569,9 @@ ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_common(
   payload.graph_family = family;
   payload.graph_family_enum = family_enum_from_name_internal(payload.graph_family);
   payload.graph_name =
-      !config.graph_name.empty() ? config.graph_name
-                                 : (!payload.graph_family.empty() ? payload.graph_family
-                                                                  : std::string("processcvu"));
+      !config.graph_name.empty()
+          ? config.graph_name
+          : (!payload.graph_family.empty() ? payload.graph_family : std::string("processcvu"));
   payload.default_input_name = config.default_input_name;
   payload.default_output_names = config.runtime_output_names;
   payload.primary_output_name = config.primary_output_name;
@@ -596,16 +602,16 @@ ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_common(
   payload.dq_scale_list = config.dq_scale_list;
   payload.dq_zp_list.assign(config.dq_zp_list.begin(), config.dq_zp_list.end());
   std::string tensor_desc_error;
-  if (!processcvu_build_runtime_tensor_descs(config, &payload.input_tensors, &payload.output_tensors,
-                                             &tensor_desc_error)) {
-    throw std::invalid_argument(std::string("processcvu runtime config could not build tensor descriptors") +
-                                (tensor_desc_error.empty() ? std::string()
-                                                           : std::string(": ") + tensor_desc_error));
+  if (!processcvu_build_runtime_tensor_descs(config, &payload.input_tensors,
+                                             &payload.output_tensors, &tensor_desc_error)) {
+    throw std::invalid_argument(
+        std::string("processcvu runtime config could not build tensor descriptors") +
+        (tensor_desc_error.empty() ? std::string() : std::string(": ") + tensor_desc_error));
   }
   payload.input_shapes = processcvu_resolved_input_shapes_runtime(config);
   payload.num_in_tensor = !payload.input_tensors.empty()
-                             ? static_cast<int>(payload.input_tensors.size())
-                             : static_cast<int>(processcvu_semantic_input_count(config));
+                              ? static_cast<int>(payload.input_tensors.size())
+                              : static_cast<int>(processcvu_semantic_input_count(config));
   payload.slice_shapes = processcvu_resolved_slice_shapes_runtime(config);
   payload.output_shapes = processcvu_resolved_output_shapes_runtime(config);
   payload.runtime_output_logical_index_list = config.runtime_output_logical_index_list;
@@ -632,8 +638,8 @@ ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_common(
   return payload;
 }
 
-ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_strict(
-    const CompiledProcessCvuRuntimeConfig& config) {
+ProcessCvuStagePayload
+build_processcvu_payload_from_runtime_config_strict(const CompiledProcessCvuRuntimeConfig& config) {
   return build_processcvu_payload_from_runtime_config_common(config, true);
 }
 
@@ -642,8 +648,8 @@ ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_unchecked(
   return build_processcvu_payload_from_runtime_config_common(config, false);
 }
 
-ProcessCvuCanonicalFacts build_processcvu_facts_from_runtime_config_impl(
-    const CompiledProcessCvuRuntimeConfig& config) {
+ProcessCvuCanonicalFacts
+build_processcvu_facts_from_runtime_config_impl(const CompiledProcessCvuRuntimeConfig& config) {
   const auto payload = build_processcvu_payload_from_runtime_config_strict(config);
   const std::string family = canonical_family_name_internal(config.graph_family);
   const std::size_t semantic_input_count = processcvu_semantic_input_count(config);
@@ -653,18 +659,20 @@ ProcessCvuCanonicalFacts build_processcvu_facts_from_runtime_config_impl(
   if (family == "preproc") {
     return build_preproc_facts_from_payload_internal(payload);
   }
-  if (semantic_input_count > physical_input_count || semantic_output_count > physical_output_count) {
-    throw std::invalid_argument(
-        "processcvu runtime config requires explicit packed-route facts for semantic multi-io over packed transport");
+  if (semantic_input_count > physical_input_count ||
+      semantic_output_count > physical_output_count) {
+    throw std::invalid_argument("processcvu runtime config requires explicit packed-route facts "
+                                "for semantic multi-io over packed transport");
   }
   if (semantic_input_count > 1U || semantic_output_count > 1U) {
-    return build_multi_io_processcvu_facts_from_payload_internal(payload, config.runtime_input_names);
+    return build_multi_io_processcvu_facts_from_payload_internal(payload,
+                                                                 config.runtime_input_names);
   }
   return build_single_io_processcvu_facts_from_payload_internal(payload);
 }
 
-ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_impl(
-    const CompiledProcessCvuRuntimeConfig& config) {
+ProcessCvuStagePayload
+build_processcvu_payload_from_runtime_config_impl(const CompiledProcessCvuRuntimeConfig& config) {
   auto payload = build_processcvu_payload_from_runtime_config_strict(config);
   payload.canonical_contract = true;
   return payload;
@@ -684,13 +692,13 @@ ProcessCvuStagePayload build_processcvu_payload_from_runtime_config_unchecked_in
   return payload;
 }
 
-ProcessCvuCanonicalFacts build_processcvu_facts_from_runtime_config_internal(
-    const CompiledProcessCvuRuntimeConfig& config) {
+ProcessCvuCanonicalFacts
+build_processcvu_facts_from_runtime_config_internal(const CompiledProcessCvuRuntimeConfig& config) {
   return build_processcvu_facts_from_runtime_config_impl(config);
 }
 
-ProcessCvuCanonicalCompileInputs build_processcvu_compile_inputs_from_runtime_config(
-    const CompiledProcessCvuRuntimeConfig& config) {
+ProcessCvuCanonicalCompileInputs
+build_processcvu_compile_inputs_from_runtime_config(const CompiledProcessCvuRuntimeConfig& config) {
   ProcessCvuCanonicalCompileInputs out;
   out.payload = build_processcvu_payload_from_runtime_config_internal(config);
   out.facts = build_processcvu_facts_from_runtime_config_internal(config);

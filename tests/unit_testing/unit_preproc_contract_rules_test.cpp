@@ -359,10 +359,10 @@ RUN_TEST("unit_preproc_contract_rules_test", [] {
             "standalone Preproc must derive input width/height from actual upstream input");
     require(node.options().input_img_type == "BGR",
             "standalone Preproc must derive input format from actual upstream input");
-    require_not_contains(frag, "stage-id=",
-                         "standalone Preproc fragment must not opt into manifest routing");
-    require_not_contains(frag, "config=",
-                         "standalone Preproc fragment must not emit a legacy config path");
+    require_not_contains(
+        frag, "stage-id=", "standalone Preproc fragment must not opt into manifest routing");
+    require_not_contains(
+        frag, "config=", "standalone Preproc fragment must not emit a legacy config path");
   }
 
   {

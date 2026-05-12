@@ -63,10 +63,10 @@ std::string doubles_dbg_dequant_local(const std::vector<double>& values) {
 
 const char* quant_granularity_dbg_dequant_local(const QuantGranularity granularity) {
   switch (granularity) {
-    case QuantGranularity::PerTensor:
-      return "PerTensor";
-    case QuantGranularity::PerAxis:
-      return "PerAxis";
+  case QuantGranularity::PerTensor:
+    return "PerTensor";
+  case QuantGranularity::PerAxis:
+    return "PerAxis";
   }
   return "Unknown";
 }
@@ -84,14 +84,14 @@ std::string quant_dbg_dequant_local(const std::optional<QuantStaticSpec>& quant)
 
 const char* device_kind_dbg_dequant_local(const DeviceKind kind) {
   switch (kind) {
-    case DeviceKind::Unknown:
-      return "Unknown";
-    case DeviceKind::Cpu:
-      return "Cpu";
-    case DeviceKind::Mla:
-      return "Mla";
-    case DeviceKind::Evxx:
-      return "Evxx";
+  case DeviceKind::Unknown:
+    return "Unknown";
+  case DeviceKind::Cpu:
+    return "Cpu";
+  case DeviceKind::Mla:
+    return "Mla";
+  case DeviceKind::Evxx:
+    return "Evxx";
   }
   return "Unknown";
 }
@@ -103,9 +103,8 @@ std::string logical_input_dbg_dequant_local(const LogicalInputStaticSpec& spec) 
       << ",physical_index=" << spec.physical_index
       << ",shape=" << ints64_dbg_dequant_local(spec.shape)
       << ",stride_bytes=" << ints64_dbg_dequant_local(spec.stride_bytes)
-      << ",byte_offset=" << spec.byte_offset
-      << ",size_bytes=" << spec.size_bytes
-      << ",dtype=\"" << spec.dtype << "\""
+      << ",byte_offset=" << spec.byte_offset << ",size_bytes=" << spec.size_bytes << ",dtype=\""
+      << spec.dtype << "\""
       << ",layout=\"" << spec.layout << "\""
       << ",logical_name=\"" << spec.logical_name << "\""
       << ",backend_name=\"" << spec.backend_name << "\""
@@ -118,29 +117,26 @@ std::string binding_dbg_dequant_local(const InputBindingStaticSpec& spec) {
   std::ostringstream oss;
   oss << "{sink_pad_index=" << spec.sink_pad_index
       << ",local_logical_input_index=" << spec.local_logical_input_index
-      << ",src_stage_index=" << spec.src_stage_index
-      << ",src_stage_id=\"" << spec.src_stage_id << "\""
+      << ",src_stage_index=" << spec.src_stage_index << ",src_stage_id=\"" << spec.src_stage_id
+      << "\""
       << ",src_logical_output_index=" << spec.src_logical_output_index
       << ",src_output_slot=" << spec.src_output_slot
       << ",src_physical_output_index=" << spec.src_physical_output_index
       << ",src_physical_size_bytes=" << spec.src_physical_size_bytes
       << ",src_physical_byte_offset=" << spec.src_physical_byte_offset
-      << ",required=" << (spec.required ? 1 : 0)
-      << ",cm_input_name=\"" << spec.cm_input_name << "\""
+      << ",required=" << (spec.required ? 1 : 0) << ",cm_input_name=\"" << spec.cm_input_name
+      << "\""
       << ",source_segment_name=\"" << spec.source_segment_name << "\"}";
   return oss.str();
 }
 
 std::string physical_dbg_dequant_local(const PhysicalBufferStaticSpec& spec) {
   std::ostringstream oss;
-  oss << "{physical_index=" << spec.physical_index
-      << ",allocator_index=" << spec.allocator_index
+  oss << "{physical_index=" << spec.physical_index << ",allocator_index=" << spec.allocator_index
       << ",source_physical_index=" << spec.source_physical_index
-      << ",size_bytes=" << spec.size_bytes
-      << ",source_byte_offset=" << spec.source_byte_offset
+      << ",size_bytes=" << spec.size_bytes << ",source_byte_offset=" << spec.source_byte_offset
       << ",device_kind=" << device_kind_dbg_dequant_local(spec.device_kind)
-      << ",memory_flags=" << spec.memory_flags
-      << ",segment_name=\"" << spec.segment_name << "\"}";
+      << ",memory_flags=" << spec.memory_flags << ",segment_name=\"" << spec.segment_name << "\"}";
   return oss.str();
 }
 
@@ -148,14 +144,11 @@ std::string logical_output_dbg_dequant_local(const LogicalTensorStaticSpec& spec
   std::ostringstream oss;
   oss << "{logical_index=" << spec.logical_index
       << ",backend_output_index=" << spec.backend_output_index
-      << ",physical_index=" << spec.physical_index
-      << ",output_slot=" << spec.output_slot
-      << ",tensor_index=" << spec.tensor_index
-      << ",byte_offset=" << spec.byte_offset
-      << ",size_bytes=" << spec.size_bytes
-      << ",shape=" << ints64_dbg_dequant_local(spec.shape)
-      << ",stride_bytes=" << ints64_dbg_dequant_local(spec.stride_bytes)
-      << ",dtype=\"" << spec.dtype << "\""
+      << ",physical_index=" << spec.physical_index << ",output_slot=" << spec.output_slot
+      << ",tensor_index=" << spec.tensor_index << ",byte_offset=" << spec.byte_offset
+      << ",size_bytes=" << spec.size_bytes << ",shape=" << ints64_dbg_dequant_local(spec.shape)
+      << ",stride_bytes=" << ints64_dbg_dequant_local(spec.stride_bytes) << ",dtype=\""
+      << spec.dtype << "\""
       << ",layout=\"" << spec.layout << "\""
       << ",logical_name=\"" << spec.logical_name << "\""
       << ",backend_name=\"" << spec.backend_name << "\""
@@ -168,8 +161,8 @@ std::string route_dbg_dequant_local(const StageOutputRoute& route) {
   std::ostringstream oss;
   oss << "{output_slot=" << route.output_slot
       << ",logical_output_index=" << route.logical_output_index
-      << ",tensor_index=" << route.tensor_index
-      << ",cm_output_name=\"" << route.cm_output_name << "\""
+      << ",tensor_index=" << route.tensor_index << ",cm_output_name=\"" << route.cm_output_name
+      << "\""
       << ",segment_name=\"" << route.segment_name << "\"}";
   return oss.str();
 }
@@ -190,8 +183,9 @@ void dump_dequant_contract_compare_local(const std::string& element_name,
                compiled.runtime_contract.physical_outputs.size(),
                compiled.runtime_contract.output_order.size());
   for (std::size_t i = 0; i < compiled.runtime_contract.logical_inputs.size(); ++i) {
-    std::fprintf(stderr, "[dequant-compare] runtime.logical_input index=%zu value=%s\n", i,
-                 logical_input_dbg_dequant_local(compiled.runtime_contract.logical_inputs[i]).c_str());
+    std::fprintf(
+        stderr, "[dequant-compare] runtime.logical_input index=%zu value=%s\n", i,
+        logical_input_dbg_dequant_local(compiled.runtime_contract.logical_inputs[i]).c_str());
   }
   for (std::size_t i = 0; i < compiled.runtime_contract.input_bindings.size(); ++i) {
     std::fprintf(stderr, "[dequant-compare] runtime.input_binding index=%zu value=%s\n", i,
@@ -202,8 +196,9 @@ void dump_dequant_contract_compare_local(const std::string& element_name,
                  physical_dbg_dequant_local(compiled.runtime_contract.physical_inputs[i]).c_str());
   }
   for (std::size_t i = 0; i < compiled.runtime_contract.logical_outputs.size(); ++i) {
-    std::fprintf(stderr, "[dequant-compare] runtime.logical_output index=%zu value=%s\n", i,
-                 logical_output_dbg_dequant_local(compiled.runtime_contract.logical_outputs[i]).c_str());
+    std::fprintf(
+        stderr, "[dequant-compare] runtime.logical_output index=%zu value=%s\n", i,
+        logical_output_dbg_dequant_local(compiled.runtime_contract.logical_outputs[i]).c_str());
   }
   for (std::size_t i = 0; i < compiled.runtime_contract.physical_outputs.size(); ++i) {
     std::fprintf(stderr, "[dequant-compare] runtime.physical_output index=%zu value=%s\n", i,
@@ -215,13 +210,10 @@ void dump_dequant_contract_compare_local(const std::string& element_name,
   }
 }
 
-void populate_dequant_node_contract_common(const std::string& node_kind,
-                                           const std::string& plugin_kind,
-                                           const std::string& element_name,
-                                           const std::string& logical_stage_id,
-                                           const NodeContractDefinition& definition,
-                                           CompiledDequantContract compiled,
-                                           CompiledNodeContract* out) {
+void populate_dequant_node_contract_common(
+    const std::string& node_kind, const std::string& plugin_kind, const std::string& element_name,
+    const std::string& logical_stage_id, const NodeContractDefinition& definition,
+    CompiledDequantContract compiled, CompiledNodeContract* out) {
   out->node_kind = node_kind;
   out->plugin_kind = plugin_kind.empty() ? "dequant" : plugin_kind;
   out->element_name = element_name;
@@ -234,31 +226,31 @@ void populate_dequant_node_contract_common(const std::string& node_kind,
 
 } // namespace
 
-CompiledDequantContract build_dequant_compiled_contract_from_facts(
-    const DequantCanonicalFacts& facts) {
+CompiledDequantContract
+build_dequant_compiled_contract_from_facts(const DequantCanonicalFacts& facts) {
   CompiledDequantContract compiled;
   compiled.runtime_contract.plugin_kind = "dequant";
 
   compiled.runtime_contract.logical_inputs.push_back(specbuilders::build_logical_input_static_spec(
       0, 0, 0, {}, facts.input_dtype, facts.layout, facts.input_name, facts.input_name,
       facts.input_name, 0, 0, TensorMaterializationKind::Direct, facts.input_quant));
-  compiled.runtime_contract.input_bindings.push_back(specbuilders::build_input_binding_static_spec(
-      0, 0, facts.input_name, facts.input_name));
-  compiled.runtime_contract.logical_outputs.push_back(specbuilders::build_logical_output_static_spec(
-      0, 0, 0, 0, 0, {}, facts.output_dtype, facts.layout, facts.output_name,
-      facts.output_name, facts.output_name));
-  compiled.runtime_contract.physical_outputs.push_back(specbuilders::build_physical_buffer_static_spec(
-      0, 0, 0U, DeviceKind::Cpu, facts.output_name));
-  compiled.runtime_contract.output_order.push_back(specbuilders::build_output_route_static_spec(
-      0, 0, 0, facts.output_name, facts.output_name));
+  compiled.runtime_contract.input_bindings.push_back(
+      specbuilders::build_input_binding_static_spec(0, 0, facts.input_name, facts.input_name));
+  compiled.runtime_contract.logical_outputs.push_back(
+      specbuilders::build_logical_output_static_spec(0, 0, 0, 0, 0, {}, facts.output_dtype,
+                                                     facts.layout, facts.output_name,
+                                                     facts.output_name, facts.output_name));
+  compiled.runtime_contract.physical_outputs.push_back(
+      specbuilders::build_physical_buffer_static_spec(0, 0, 0U, DeviceKind::Cpu,
+                                                      facts.output_name));
+  compiled.runtime_contract.output_order.push_back(
+      specbuilders::build_output_route_static_spec(0, 0, 0, facts.output_name, facts.output_name));
 
   return compiled;
 }
 
 CompiledDequantContract build_dequant_compiled_contract_from_upstream(
-    const CompiledRuntimeContract& upstream,
-    const DequantCanonicalFacts& facts,
-    std::string* err) {
+    const CompiledRuntimeContract& upstream, const DequantCanonicalFacts& facts, std::string* err) {
   CompiledDequantContract compiled = build_dequant_compiled_contract_from_facts(facts);
   if (upstream.logical_outputs.size() != 1U) {
     if (err) {
@@ -349,13 +341,11 @@ CompiledDequantContract build_dequant_compiled_contract_from_upstream(
   return compiled;
 }
 
-bool build_dequant_node_contract(const std::string& node_kind,
-                                 const std::string& plugin_kind,
+bool build_dequant_node_contract(const std::string& node_kind, const std::string& plugin_kind,
                                  const std::string& element_name,
                                  const std::string& logical_stage_id,
                                  const NodeContractDefinition& definition,
-                                 const CompiledDequantContract& compiled,
-                                 CompiledNodeContract* out,
+                                 const CompiledDequantContract& compiled, CompiledNodeContract* out,
                                  std::string* error_message) {
   if (!out) {
     if (error_message) {

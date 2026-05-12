@@ -67,8 +67,8 @@ struct ModelAccess {
   static Model clone_with_options(const Model& model, const Model::Options& opt);
   static PostRouteStageKind resolved_post_kind(const Model& model);
   static PreprocessContractFlags preprocess_contract_flags(const Model& model);
-  static pipeline_internal::sima::ModelManagedRouteFlags model_managed_route_flags(
-      const Model& model);
+  static pipeline_internal::sima::ModelManagedRouteFlags
+  model_managed_route_flags(const Model& model);
   static bool has_model_managed_stage(const Model& model, StageNodeKind kind);
   static void require_model_managed_stage(const Model& model, StageNodeKind kind,
                                           const char* caller);
@@ -82,9 +82,8 @@ struct ModelAccess {
   static DetessDequantOptions build_detessdequant_stage_options(const Model& model, bool sync);
   static CompiledBoxDecodeContract build_boxdecode_stage_contract(const Model& model, bool sync);
   static simaai::neat::NodeGroup build_preprocess_group(const Model& model, bool sync);
-  static simaai::neat::NodeGroup build_preprocess_group_for_input(const Model& model,
-                                                                  const InputOptions& input,
-                                                                  bool sync);
+  static simaai::neat::NodeGroup
+  build_preprocess_group_for_input(const Model& model, const InputOptions& input, bool sync);
   static simaai::neat::NodeGroup build_infer_group(const Model& model, bool sync);
   static simaai::neat::NodeGroup build_postprocess_group(const Model& model, bool sync);
   static void configure_session_input_route(simaai::neat::Session& session, const Model& model,
@@ -95,9 +94,9 @@ Tensor remap_tensor_to_consumer_identity(Tensor tensor,
                                          const IngressConsumerTensorIdentity& identity);
 Sample remap_sample_to_consumer_identity(Sample sample,
                                          const IngressConsumerTensorIdentity& identity);
-TensorList materialize_joined_ingress_tensors(const TensorList& tensors,
-                                              const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
-                                              const std::string& segment_name,
-                                              const char* where);
+TensorList materialize_joined_ingress_tensors(
+    const TensorList& tensors,
+    const std::vector<IngressConsumerTensorIdentity>& consumer_identities,
+    const std::string& segment_name, const char* where);
 
 } // namespace simaai::neat::internal

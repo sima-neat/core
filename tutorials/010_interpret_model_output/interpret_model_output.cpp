@@ -33,8 +33,7 @@ int main() {
     simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
     // END CORE LOGIC
 
-    std::cout << "outputs=" << out.size()
-              << " has_tensor=" << (!out.empty() ? "yes" : "no")
+    std::cout << "outputs=" << out.size() << " has_tensor=" << (!out.empty() ? "yes" : "no")
               << " fields=" << 0 << "\n";
     if (out.empty())
       throw std::runtime_error("expected tensor output");

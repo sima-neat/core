@@ -35,21 +35,21 @@ namespace simaai::neat::pipeline_internal::sima {
  */
 enum class RouteGraphKernelKind {
   Unknown = 0,
-  Preproc,        ///< Preprocess (resize / normalize / layout convert).
-  Quant,          ///< Standalone quantize.
-  Tess,           ///< Standalone tessellate.
-  QuantTess,      ///< Fused quantize + tessellate.
-  Cast,           ///< Standalone dtype cast.
-  CastTess,       ///< Fused cast + tessellate.
-  Detess,         ///< Standalone detessellate.
-  DetessCast,     ///< Fused detess + cast.
-  DetessDequant,  ///< Fused detess + dequantize.
-  Dequantize,     ///< Standalone dequantize.
-  BoxDecode,      ///< Postprocess box-decode (YOLO/SSD/etc.).
-  Unpack,         ///< MLA-output unpack.
-  Slice,          ///< Tensor slice / split.
-  PassThrough,    ///< No-op identity stage.
-  Mla,            ///< The MLA inference core.
+  Preproc,       ///< Preprocess (resize / normalize / layout convert).
+  Quant,         ///< Standalone quantize.
+  Tess,          ///< Standalone tessellate.
+  QuantTess,     ///< Fused quantize + tessellate.
+  Cast,          ///< Standalone dtype cast.
+  CastTess,      ///< Fused cast + tessellate.
+  Detess,        ///< Standalone detessellate.
+  DetessCast,    ///< Fused detess + cast.
+  DetessDequant, ///< Fused detess + dequantize.
+  Dequantize,    ///< Standalone dequantize.
+  BoxDecode,     ///< Postprocess box-decode (YOLO/SSD/etc.).
+  Unpack,        ///< MLA-output unpack.
+  Slice,         ///< Tensor slice / split.
+  PassThrough,   ///< No-op identity stage.
+  Mla,           ///< The MLA inference core.
 };
 
 /**
@@ -60,12 +60,12 @@ enum class RouteGraphKernelKind {
  * MLA in the route.
  */
 struct RouteGraphNode {
-  std::size_t plugin_index = 0U;  ///< Index into `MpkContract::plugins`.
-  std::string plugin_name;        ///< MPK plugin display name.
-  std::string plugin_id;          ///< MPK plugin id.
-  std::string processor;          ///< Processor token (e.g., `"cvu"`, `"mla"`).
-  std::string kernel;             ///< Raw kernel name from the MPK.
-  RouteGraphKernelKind kind = RouteGraphKernelKind::Unknown;  ///< Canonical kind.
+  std::size_t plugin_index = 0U; ///< Index into `MpkContract::plugins`.
+  std::string plugin_name;       ///< MPK plugin display name.
+  std::string plugin_id;         ///< MPK plugin id.
+  std::string processor;         ///< Processor token (e.g., `"cvu"`, `"mla"`).
+  std::string kernel;            ///< Raw kernel name from the MPK.
+  RouteGraphKernelKind kind = RouteGraphKernelKind::Unknown; ///< Canonical kind.
   int sequence = -1;       ///< Execution sequence number; -1 if unspecified.
   bool before_mla = false; ///< True if this stage runs upstream of the MLA core.
   bool after_mla = false;  ///< True if this stage runs downstream of the MLA core.
@@ -78,15 +78,15 @@ struct RouteGraphNode {
  * end (separate `src_tensor_name`/`dst_tensor_name` are kept in case fusion renamed them).
  */
 struct RouteGraphEdge {
-  std::size_t src_plugin_index = 0U;  ///< Source plugin index.
-  int src_output_index = -1;          ///< Source plugin's output slot.
-  std::size_t dst_plugin_index = 0U;  ///< Destination plugin index.
-  int dst_input_index = -1;           ///< Destination plugin's input slot.
-  std::string src_plugin;             ///< Source plugin name.
-  std::string dst_plugin;             ///< Destination plugin name.
-  std::string tensor_name;            ///< Common tensor name (when source and dest agree).
-  std::string src_tensor_name;        ///< Tensor name as seen at the source.
-  std::string dst_tensor_name;        ///< Tensor name as seen at the destination.
+  std::size_t src_plugin_index = 0U; ///< Source plugin index.
+  int src_output_index = -1;         ///< Source plugin's output slot.
+  std::size_t dst_plugin_index = 0U; ///< Destination plugin index.
+  int dst_input_index = -1;          ///< Destination plugin's input slot.
+  std::string src_plugin;            ///< Source plugin name.
+  std::string dst_plugin;            ///< Destination plugin name.
+  std::string tensor_name;           ///< Common tensor name (when source and dest agree).
+  std::string src_tensor_name;       ///< Tensor name as seen at the source.
+  std::string dst_tensor_name;       ///< Tensor name as seen at the destination.
 };
 
 /**
@@ -96,11 +96,11 @@ struct RouteGraphEdge {
  * MLA stage in the plugin list (or -1 if no MLA present).
  */
 struct RouteGraph {
-  std::string model_name;                       ///< Model name (from MPK).
-  std::vector<RouteGraphNode> nodes;            ///< All stages.
-  std::vector<RouteGraphEdge> edges;            ///< Tensor edges between stages.
-  std::vector<std::size_t> execution_order;     ///< Plugin indices in execution order.
-  int mla_plugin_index = -1;                    ///< Index of the MLA stage; -1 if none.
+  std::string model_name;                   ///< Model name (from MPK).
+  std::vector<RouteGraphNode> nodes;        ///< All stages.
+  std::vector<RouteGraphEdge> edges;        ///< Tensor edges between stages.
+  std::vector<std::size_t> execution_order; ///< Plugin indices in execution order.
+  int mla_plugin_index = -1;                ///< Index of the MLA stage; -1 if none.
 };
 
 /// Map a raw kernel-name string to its canonical `RouteGraphKernelKind`.

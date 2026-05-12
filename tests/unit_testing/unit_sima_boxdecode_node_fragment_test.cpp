@@ -12,11 +12,10 @@
 namespace {
 
 sima_test::MpkFixture make_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture(
-      "boxdecode_node_fragment",
-      {
-          {"etc/pipeline_sequence.json",
-           R"json({
+  return sima_test::make_strict_mpk_tar_fixture("boxdecode_node_fragment",
+                                                {
+                                                    {"etc/pipeline_sequence.json",
+                                                     R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -49,8 +48,8 @@ sima_test::MpkFixture make_fixture() {
     ]
   }]
 })json"},
-          {"etc/0_preproc.json",
-           R"json({
+                                                    {"etc/0_preproc.json",
+                                                     R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -59,8 +58,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": 640,
   "output_img_type": "RGB"
 })json"},
-          {"etc/0_process_mla.json",
-           R"json({
+                                                    {"etc/0_process_mla.json",
+                                                     R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -70,8 +69,8 @@ sima_test::MpkFixture make_fixture() {
   "q_scale": [0.125],
   "q_zp": [-7]
 })json"},
-          {"etc/0_boxdecoder.json",
-           R"json({
+                                                    {"etc/0_boxdecoder.json",
+                                                     R"json({
   "node_name": "boxdecode_0",
   "decode_type": "yolov8",
   "topk": 100,
@@ -91,16 +90,15 @@ sima_test::MpkFixture make_fixture() {
   "dq_scale": [0.5],
   "dq_zp": [1]
 })json"},
-      },
-      true);
+                                                },
+                                                true);
 }
 
 sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture(
-      "boxdecode_node_fragment_quanttess",
-      {
-          {"etc/pipeline_sequence.json",
-           R"json({
+  return sima_test::make_strict_mpk_tar_fixture("boxdecode_node_fragment_quanttess",
+                                                {
+                                                    {"etc/pipeline_sequence.json",
+                                                     R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -133,15 +131,15 @@ sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
     ]
   }]
 })json"},
-          {"etc/0_quanttess.json",
-           R"json({
+                                                    {"etc/0_quanttess.json",
+                                                     R"json({
   "node_name": "quanttess_0",
   "input_width": 640,
   "input_height": 640,
   "input_depth": 3
 })json"},
-          {"etc/0_process_mla.json",
-           R"json({
+                                                    {"etc/0_process_mla.json",
+                                                     R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "quanttess_0"}],
   "input_format": ["EV81_INT8"],
@@ -155,8 +153,8 @@ sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
   "q_scale": [0.125],
   "q_zp": [-7]
 })json"},
-          {"etc/0_boxdecoder.json",
-           R"json({
+                                                    {"etc/0_boxdecoder.json",
+                                                     R"json({
   "node_name": "boxdecode_0",
   "decode_type": "yolov8",
   "topk": 100,
@@ -172,8 +170,8 @@ sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
   "dq_scale": [0.5],
   "dq_zp": [1]
 })json"},
-      },
-      true);
+                                                },
+                                                true);
 }
 
 } // namespace
@@ -201,16 +199,16 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            bool boxdecode_unavailable = false;
            try {
              (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(model,
-                                                                                        false);
+                                                                                       false);
            } catch (const std::exception&) {
              boxdecode_unavailable = true;
            }
            require(boxdecode_unavailable,
                    "MPK without decode_type should not expose a model-managed boxdecode contract");
 
-           auto standalone_node = simaai::neat::nodes::SimaBoxDecode(
-               simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45, 100, "manual_boxdecode", 1280,
-               720, 640, 640);
+           auto standalone_node =
+               simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,
+                                                  100, "manual_boxdecode", 1280, 720, 640, 640);
            const auto* standalone_box =
                dynamic_cast<const simaai::neat::SimaBoxDecode*>(standalone_node.get());
            require(standalone_box != nullptr,
@@ -233,11 +231,13 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            require(std::find(standalone_req->required_fields.begin(),
                              standalone_req->required_fields.end(),
                              "preproc_resized_width") == standalone_req->required_fields.end(),
-                   "manual boxdecode should drop resized-width meta requirement when model dims are overridden");
+                   "manual boxdecode should drop resized-width meta requirement when model dims "
+                   "are overridden");
            require(std::find(standalone_req->required_fields.begin(),
                              standalone_req->required_fields.end(),
                              "preproc_scaled_height") == standalone_req->required_fields.end(),
-                   "manual boxdecode should drop scaled-height meta requirement when model dims are overridden");
+                   "manual boxdecode should drop scaled-height meta requirement when model dims "
+                   "are overridden");
            require(std::find(standalone_req->required_fields.begin(),
                              standalone_req->required_fields.end(),
                              "preproc_resize_mode") != standalone_req->required_fields.end(),
@@ -246,21 +246,21 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            bool threw_partial_model_dims = false;
            try {
              (void)simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25,
-                                                      0.45, 100, "bad_manual_boxdecode", 1280,
-                                                      720, 640, 0);
+                                                      0.45, 100, "bad_manual_boxdecode", 1280, 720,
+                                                      640, 0);
            } catch (const std::exception& e) {
              threw_partial_model_dims = true;
-             require_contains(std::string(e.what()), "explicit model dimensions requires both width and height",
+             require_contains(std::string(e.what()),
+                              "explicit model dimensions requires both width and height",
                               "partial-model-dims error text mismatch");
            }
            require(threw_partial_model_dims,
                    "manual boxdecode must fail when only one explicit model dimension is provided");
 
            const auto legacy = sima_test::make_mpk_tar_fixture(
-               "boxdecode_node_fragment_legacy_missing_mpk",
-               {
-                   {"etc/pipeline_sequence.json",
-                    R"json({
+               "boxdecode_node_fragment_legacy_missing_mpk", {
+                                                                 {"etc/pipeline_sequence.json",
+                                                                  R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -275,12 +275,12 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
     ]
   }]
 })json"},
-                   {"etc/0_process_mla.json",
-                    R"json({
+                                                                 {"etc/0_process_mla.json",
+                                                                  R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-               });
+                                                             });
            bool threw = false;
            try {
              simaai::neat::Model legacy_model(legacy.tar_path);

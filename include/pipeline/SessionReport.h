@@ -1,7 +1,8 @@
 /**
  * @file
  * @ingroup diagnostics
- * @brief Structured pipeline diagnostics — what `Session::validate()` and `SessionError::report()` carry.
+ * @brief Structured pipeline diagnostics — what `Session::validate()` and `SessionError::report()`
+ * carry.
  *
  * `SessionReport` is the framework's primary triage record: when something fails (or even
  * when validation passes), it returns a structured snapshot of the pipeline shape, GStreamer
@@ -29,9 +30,10 @@ namespace simaai::neat {
  * @ingroup diagnostics
  */
 struct BusMessage {
-  std::string type;         ///< Message type: `"ERROR"`, `"WARNING"`, `"STATE_CHANGED"`, etc.
-  std::string src;          ///< Source element/object name (typically a NEAT-deterministic name like `"n3_videoconvert"`).
-  std::string detail;       ///< Formatted message text, including GStreamer debug info when present.
+  std::string type;   ///< Message type: `"ERROR"`, `"WARNING"`, `"STATE_CHANGED"`, etc.
+  std::string src;    ///< Source element/object name (typically a NEAT-deterministic name like
+                      ///< `"n3_videoconvert"`).
+  std::string detail; ///< Formatted message text, including GStreamer debug info when present.
   int64_t wall_time_us = 0; ///< Monotonic wall-clock timestamp at message capture (microseconds).
 };
 
@@ -44,12 +46,12 @@ struct BusMessage {
  * @ingroup diagnostics
  */
 struct BoundaryFlowStats {
-  std::string boundary_name;    ///< Boundary identifier (e.g., `"sima_b3"`).
-  int after_node_index = -1;    ///< Upstream Node index.
-  int before_node_index = -1;   ///< Downstream Node index (may be -1 for a terminal tap boundary).
+  std::string boundary_name;  ///< Boundary identifier (e.g., `"sima_b3"`).
+  int after_node_index = -1;  ///< Upstream Node index.
+  int before_node_index = -1; ///< Downstream Node index (may be -1 for a terminal tap boundary).
 
-  uint64_t in_buffers = 0;      ///< Buffers observed on the identity element's sink pad.
-  uint64_t out_buffers = 0;     ///< Buffers observed on the identity element's src pad.
+  uint64_t in_buffers = 0;  ///< Buffers observed on the identity element's sink pad.
+  uint64_t out_buffers = 0; ///< Buffers observed on the identity element's src pad.
 
   int64_t last_in_pts_ns = -1;  ///< PTS of the most recent buffer seen on input.
   int64_t last_out_pts_ns = -1; ///< PTS of the most recent buffer seen on output.
@@ -79,10 +81,11 @@ struct NodeReport {
  * @ingroup diagnostics
  */
 struct BuildAdaptationAction {
-  std::string target;       ///< What was being adapted (e.g., `"input_constraints"`, `"appsrc_caps_seed"`).
-  bool applied = false;     ///< Whether the action was successfully applied.
-  std::string detail;       ///< Description of what was adapted.
-  std::string reason;       ///< Reason for non-application (populated only when `applied == false`).
+  std::string
+      target; ///< What was being adapted (e.g., `"input_constraints"`, `"appsrc_caps_seed"`).
+  bool applied = false; ///< Whether the action was successfully applied.
+  std::string detail;   ///< Description of what was adapted.
+  std::string reason;   ///< Reason for non-application (populated only when `applied == false`).
 };
 
 /**
@@ -97,23 +100,25 @@ struct BuildAdaptationSummary {
   std::string shape_policy;       ///< Resolved shape policy (e.g., `"static"`, `"dynamic"`).
   std::string dynamic_capability; ///< Which dynamic-shape capability the planner used.
 
-  int seed_width = -1;             ///< Effective width seeded into the pipeline (-1 if not seeded).
-  int seed_height = -1;            ///< Effective height seeded into the pipeline.
-  int seed_depth = -1;             ///< Effective channel depth.
-  std::string seed_width_origin;   ///< Where the seed_width came from (e.g., `"input"`, `"manifest_default"`).
-  std::string seed_height_origin;  ///< Source of the seed_height value.
-  std::string seed_depth_origin;   ///< Source of the seed_depth value.
+  int seed_width = -1;            ///< Effective width seeded into the pipeline (-1 if not seeded).
+  int seed_height = -1;           ///< Effective height seeded into the pipeline.
+  int seed_depth = -1;            ///< Effective channel depth.
+  std::string seed_width_origin;  ///< Where the seed_width came from (e.g., `"input"`,
+                                  ///< `"manifest_default"`).
+  std::string seed_height_origin; ///< Source of the seed_height value.
+  std::string seed_depth_origin;  ///< Source of the seed_depth value.
 
-  int max_width = -1;              ///< Maximum width the pipeline was prepared to accept.
-  int max_height = -1;             ///< Maximum height.
-  int max_depth = -1;              ///< Maximum channel depth.
-  std::string max_width_origin;    ///< Source of the max_width value.
-  std::string max_height_origin;   ///< Source of the max_height value.
-  std::string max_depth_origin;    ///< Source of the max_depth value.
+  int max_width = -1;            ///< Maximum width the pipeline was prepared to accept.
+  int max_height = -1;           ///< Maximum height.
+  int max_depth = -1;            ///< Maximum channel depth.
+  std::string max_width_origin;  ///< Source of the max_width value.
+  std::string max_height_origin; ///< Source of the max_height value.
+  std::string max_depth_origin;  ///< Source of the max_depth value.
 
-  std::size_t max_input_bytes_guard = 0;            ///< Configured cap on input buffer size, if any.
-  std::string byte_guard_origin;                     ///< Source of the byte-guard value.
-  bool allow_ingress_cvu_format_renegotiation = false; ///< Whether the planner allowed mid-stream CVU caps renegotiation.
+  std::size_t max_input_bytes_guard = 0; ///< Configured cap on input buffer size, if any.
+  std::string byte_guard_origin;         ///< Source of the byte-guard value.
+  bool allow_ingress_cvu_format_renegotiation =
+      false; ///< Whether the planner allowed mid-stream CVU caps renegotiation.
 
   std::vector<BuildAdaptationAction> actions; ///< Full ordered log of adaptation attempts.
 };
@@ -134,7 +139,7 @@ struct BuildAdaptationSummary {
  * @ingroup diagnostics
  */
 struct SessionReport {
-  std::string pipeline_string;  ///< The GStreamer launch string the framework produced.
+  std::string pipeline_string; ///< The GStreamer launch string the framework produced.
   /**
    * @brief Canonical machine-triage code (see `pipeline/ErrorCodes.h`).
    *
@@ -148,11 +153,12 @@ struct SessionReport {
   std::vector<BoundaryFlowStats> boundaries; ///< Per-boundary flow stats (if probes were inserted).
 
   // ── Heavy-on-failure add-ons ─────────────────────────────────────────────────────────────
-  std::string caps_dump;                     ///< Verbose caps dump (populated on caps negotiation failures).
-  std::vector<std::string> dot_paths;        ///< Paths to GraphViz `.dot` files dumped for visualization.
+  std::string caps_dump; ///< Verbose caps dump (populated on caps negotiation failures).
+  std::vector<std::string> dot_paths; ///< Paths to GraphViz `.dot` files dumped for visualization.
 
   // ── Reproducer helpers ───────────────────────────────────────────────────────────────────
-  std::string repro_gst_launch; ///< Standalone `gst-launch-1.0 -v '...'` command that reproduces the pipeline.
+  std::string repro_gst_launch; ///< Standalone `gst-launch-1.0 -v '...'` command that reproduces
+                                ///< the pipeline.
   std::string repro_env;        ///< Suggested env vars for reproduction (GST_DEBUG, DOT dir, etc.).
   std::string repro_note;       ///< Human-readable summary + actionable hint.
 

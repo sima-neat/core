@@ -19,12 +19,12 @@ namespace simaai::neat::mpk {
  * @ingroup mpk
  */
 struct SequenceEntry {
-  int sequence_id = 0;       ///< Ordinal id of the entry within the sequence.
-  std::string name;          ///< Human-readable stage name.
-  std::string plugin_id;     ///< Identifier of the plugin/element implementing the stage.
-  std::string config_path;   ///< Path to the stage's configuration (relative to the model pack).
-  std::string processor;     ///< Target processor (e.g., MLA, EV74).
-  std::string kernel;        ///< Kernel label (used to identify pre/post adapters).
+  int sequence_id = 0;     ///< Ordinal id of the entry within the sequence.
+  std::string name;        ///< Human-readable stage name.
+  std::string plugin_id;   ///< Identifier of the plugin/element implementing the stage.
+  std::string config_path; ///< Path to the stage's configuration (relative to the model pack).
+  std::string processor;   ///< Target processor (e.g., MLA, EV74).
+  std::string kernel;      ///< Kernel label (used to identify pre/post adapters).
 };
 
 /**
@@ -66,9 +66,9 @@ enum class SequenceLoadSource {
  * @ingroup mpk
  */
 struct SequenceLoadResult {
-  std::vector<SequenceEntry> sequence;                          ///< Parsed sequence entries.
-  SequenceLoadSource source = SequenceLoadSource::Strict;       ///< How the sequence was obtained.
-  std::string strict_error;                                     ///< Error from the strict parse, if any.
+  std::vector<SequenceEntry> sequence;                    ///< Parsed sequence entries.
+  SequenceLoadSource source = SequenceLoadSource::Strict; ///< How the sequence was obtained.
+  std::string strict_error;                               ///< Error from the strict parse, if any.
 };
 
 /**

@@ -34,11 +34,13 @@ namespace simaai::neat::graph {
  * @ingroup graph
  */
 struct GraphRunOptions {
-  std::size_t edge_queue = 256;     ///< Bounded capacity for graph edge/stage/sink queues. `0` = unbounded.
-  int push_timeout_ms = 5000;       ///< Max wait (ms) on `push()` before failing fast with a backpressure error.
-  int pull_timeout_ms = 50;         ///< Poll timeout (ms) for internal pop/pull loops.
-  VerboseOptions verbose;           ///< Verbosity for graph/session progress logs.
-  RunOptions pipeline;              ///< Underlying pipeline-runtime options forwarded to GStreamer-side runs.
+  std::size_t edge_queue =
+      256; ///< Bounded capacity for graph edge/stage/sink queues. `0` = unbounded.
+  int push_timeout_ms =
+      5000; ///< Max wait (ms) on `push()` before failing fast with a backpressure error.
+  int pull_timeout_ms = 50; ///< Poll timeout (ms) for internal pop/pull loops.
+  VerboseOptions verbose;   ///< Verbosity for graph/session progress logs.
+  RunOptions pipeline; ///< Underlying pipeline-runtime options forwarded to GStreamer-side runs.
   PowerMonitorOptions power_monitor; ///< Optional graph-level board power monitor.
 
   /**
@@ -88,29 +90,30 @@ struct GraphRunOptions {
 struct GraphRunStats {
   /// Per-stream counters within a single node.
   struct StreamStat {
-    int64_t count = 0;                                 ///< Samples seen on this stream.
-    std::chrono::steady_clock::time_point first{};     ///< Timestamp of the first sample.
-    std::chrono::steady_clock::time_point last{};      ///< Timestamp of the most recent sample.
-    bool initialized = false;                          ///< True once any sample has been recorded.
+    int64_t count = 0;                             ///< Samples seen on this stream.
+    std::chrono::steady_clock::time_point first{}; ///< Timestamp of the first sample.
+    std::chrono::steady_clock::time_point last{};  ///< Timestamp of the most recent sample.
+    bool initialized = false;                      ///< True once any sample has been recorded.
   };
 
   /// Aggregated counters for a single node, plus per-stream breakdown.
   struct NodeStat {
-    int64_t total = 0;                                                    ///< Samples seen across all streams.
-    std::chrono::steady_clock::time_point first{};                        ///< Timestamp of the first sample.
-    std::chrono::steady_clock::time_point last{};                         ///< Timestamp of the most recent sample.
-    bool initialized = false;                                             ///< True once any sample has been recorded.
-    std::unordered_map<std::string, StreamStat> streams;                  ///< Per-stream counters.
+    int64_t total = 0;                             ///< Samples seen across all streams.
+    std::chrono::steady_clock::time_point first{}; ///< Timestamp of the first sample.
+    std::chrono::steady_clock::time_point last{};  ///< Timestamp of the most recent sample.
+    bool initialized = false;                      ///< True once any sample has been recorded.
+    std::unordered_map<std::string, StreamStat> streams; ///< Per-stream counters.
   };
 
   /// Lock-free snapshot of a single node's stats — safe to copy/return.
   struct Snapshot {
-    NodeId node_id = kInvalidNode;                                                 ///< Node these stats are for.
-    int64_t total = 0;                                                              ///< Total samples seen.
-    std::chrono::steady_clock::time_point first{};                                  ///< First-sample timestamp.
-    std::chrono::steady_clock::time_point last{};                                   ///< Last-sample timestamp.
-    std::unordered_map<std::string, int64_t> counts;                               ///< Per-stream counts.
-    std::unordered_map<std::string, std::chrono::steady_clock::time_point> last_seen; ///< Per-stream last-seen.
+    NodeId node_id = kInvalidNode;                   ///< Node these stats are for.
+    int64_t total = 0;                               ///< Total samples seen.
+    std::chrono::steady_clock::time_point first{};   ///< First-sample timestamp.
+    std::chrono::steady_clock::time_point last{};    ///< Last-sample timestamp.
+    std::unordered_map<std::string, int64_t> counts; ///< Per-stream counts.
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point>
+        last_seen; ///< Per-stream last-seen.
   };
 
   /// Record a single sample arriving at `node_id`. Thread-safe.
@@ -142,11 +145,13 @@ private:
  * @ingroup graph
  */
 struct GraphRunPullOptions {
-  int per_stream_target = 0;            ///< Stop when each stream has produced this many samples. `0` = no target.
-  int stall_ms = 0;                     ///< Stop after this many ms with no progress. `0` disables the stall guard.
-  int timeout_ms = 50;                  ///< Per-poll timeout (ms).
-  int max_runtime_ms = -1;              ///< Hard wall-clock cap (ms). `-1` = no cap.
-  std::vector<std::string> stream_ids;  ///< Restrict tracking/expectation to these streams (empty = all).
+  int per_stream_target =
+      0;               ///< Stop when each stream has produced this many samples. `0` = no target.
+  int stall_ms = 0;    ///< Stop after this many ms with no progress. `0` disables the stall guard.
+  int timeout_ms = 50; ///< Per-poll timeout (ms).
+  int max_runtime_ms = -1; ///< Hard wall-clock cap (ms). `-1` = no cap.
+  std::vector<std::string>
+      stream_ids; ///< Restrict tracking/expectation to these streams (empty = all).
 };
 
 /**

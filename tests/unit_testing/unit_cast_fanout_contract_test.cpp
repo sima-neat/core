@@ -7,10 +7,8 @@
 
 namespace {
 
-simaai::neat::Tensor make_bf16_head(int logical_index,
-                                    const std::vector<int64_t>& shape,
-                                    int64_t physical_offset,
-                                    const std::string& name) {
+simaai::neat::Tensor make_bf16_head(int logical_index, const std::vector<int64_t>& shape,
+                                    int64_t physical_offset, const std::string& name) {
   using namespace simaai::neat;
   Tensor tensor;
   tensor.dtype = TensorDType::BFloat16;

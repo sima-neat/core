@@ -59,7 +59,7 @@
 
 namespace simaai::neat {
 
-class Session;  // forward
+class Session; // forward
 
 /**
  * @brief One kernel-invocation telemetry event.
@@ -72,19 +72,19 @@ class Session;  // forward
  * @ingroup pipeline
  */
 struct ProfilerKernelInvocation {
-  std::uint64_t start_ns        = 0;            ///< Event start timestamp (CLOCK_MONOTONIC, ns).
-  std::uint64_t end_ns          = 0;            ///< Event end timestamp (CLOCK_MONOTONIC, ns).
-  std::string   backend;          ///< "MLA", "A65", "EV74", "BoxDecode", "Memcpy".
-  std::string   phase;            ///< "Run", "Load", "GetHandle", ...
-  std::int32_t  physical_input_index = -1;  ///< Physical input index, -1 if N/A.
-  std::int32_t  output_slot         = -1;   ///< Output slot, -1 if N/A.
-  std::int64_t  frame_id            = -1;   ///< Logical frame id, -1 if not tagged.
-  std::uint32_t request_id          = 0;    ///< Backend request id (0 if unset).
-  std::uint32_t bytes               = 0;    ///< Bytes moved/processed (0 if N/A).
-  std::string   kernel_name;                ///< Kernel name (backend-specific).
-  std::string   stage_name;                 ///< Pipeline stage name.
-  std::string   in_segment;                 ///< Input segment label.
-  std::string   out_segment;                ///< Output segment label.
+  std::uint64_t start_ns = 0;             ///< Event start timestamp (CLOCK_MONOTONIC, ns).
+  std::uint64_t end_ns = 0;               ///< Event end timestamp (CLOCK_MONOTONIC, ns).
+  std::string backend;                    ///< "MLA", "A65", "EV74", "BoxDecode", "Memcpy".
+  std::string phase;                      ///< "Run", "Load", "GetHandle", ...
+  std::int32_t physical_input_index = -1; ///< Physical input index, -1 if N/A.
+  std::int32_t output_slot = -1;          ///< Output slot, -1 if N/A.
+  std::int64_t frame_id = -1;             ///< Logical frame id, -1 if not tagged.
+  std::uint32_t request_id = 0;           ///< Backend request id (0 if unset).
+  std::uint32_t bytes = 0;                ///< Bytes moved/processed (0 if N/A).
+  std::string kernel_name;                ///< Kernel name (backend-specific).
+  std::string stage_name;                 ///< Pipeline stage name.
+  std::string in_segment;                 ///< Input segment label.
+  std::string out_segment;                ///< Output segment label.
 
   /// @brief Convenience: event duration in milliseconds.
   double duration_ms() const {
@@ -103,20 +103,19 @@ struct ProfilerKernelInvocation {
  * @ingroup pipeline
  */
 struct ProfilerMemcpySite {
-  std::string   site_name;       ///< Site label, e.g. "MEMCPY_NV12_Y".
-  std::uint64_t calls       = 0; ///< Number of times this site fired.
-  std::uint64_t total_ns    = 0; ///< Total wall-clock time across all calls (ns).
+  std::string site_name;         ///< Site label, e.g. "MEMCPY_NV12_Y".
+  std::uint64_t calls = 0;       ///< Number of times this site fired.
+  std::uint64_t total_ns = 0;    ///< Total wall-clock time across all calls (ns).
   std::uint64_t total_bytes = 0; ///< Total bytes copied across all calls.
-  std::uint64_t max_ns      = 0; ///< Worst-case single-call latency (ns).
+  std::uint64_t max_ns = 0;      ///< Worst-case single-call latency (ns).
 
   /// @brief Total time spent at this site, in milliseconds.
-  double total_ms() const { return static_cast<double>(total_ns) / 1.0e6; }
+  double total_ms() const {
+    return static_cast<double>(total_ns) / 1.0e6;
+  }
   /// @brief Average time per call at this site, in milliseconds.
   double avg_ms() const {
-    return calls > 0
-               ? (static_cast<double>(total_ns) / 1.0e6) /
-                     static_cast<double>(calls)
-               : 0.0;
+    return calls > 0 ? (static_cast<double>(total_ns) / 1.0e6) / static_cast<double>(calls) : 0.0;
   }
 };
 
@@ -129,15 +128,15 @@ struct ProfilerMemcpySite {
  * @ingroup pipeline
  */
 struct ProfilerKernelAggregate {
-  std::string   backend;       ///< Backend label ("MLA", "A65", ...).
-  std::string   kernel_name;   ///< Kernel name within the backend.
-  std::string   stage_name;    ///< Pipeline stage name.
-  std::int32_t  physical_input_index = -1; ///< Physical input index, -1 if N/A.
-  std::int32_t  output_slot          = -1; ///< Output slot, -1 if N/A.
-  std::uint64_t count    = 0;              ///< Number of invocations in the bucket.
-  double        total_ms = 0.0;            ///< Total time across invocations (ms).
-  double        min_ms   = 0.0;            ///< Minimum single-invocation time (ms).
-  double        max_ms   = 0.0;            ///< Maximum single-invocation time (ms).
+  std::string backend;                    ///< Backend label ("MLA", "A65", ...).
+  std::string kernel_name;                ///< Kernel name within the backend.
+  std::string stage_name;                 ///< Pipeline stage name.
+  std::int32_t physical_input_index = -1; ///< Physical input index, -1 if N/A.
+  std::int32_t output_slot = -1;          ///< Output slot, -1 if N/A.
+  std::uint64_t count = 0;                ///< Number of invocations in the bucket.
+  double total_ms = 0.0;                  ///< Total time across invocations (ms).
+  double min_ms = 0.0;                    ///< Minimum single-invocation time (ms).
+  double max_ms = 0.0;                    ///< Maximum single-invocation time (ms).
   /// @brief Mean latency per invocation, in milliseconds.
   double avg_ms() const {
     return count > 0 ? (total_ms / static_cast<double>(count)) : 0.0;
@@ -158,22 +157,22 @@ struct ProfilerKernelAggregate {
  */
 struct ProfilerReport {
   // Reused snapshots
-  RunStats         end_to_end{};   ///< End-to-end per-frame stats (Run::stats()).
+  RunStats end_to_end{};           ///< End-to-end per-frame stats (Run::stats()).
   InputStreamStats input_stream{}; ///< Input stream backpressure stats.
-  RunDiagSnapshot  diag{};         ///< Per-element aggregate timings.
+  RunDiagSnapshot diag{};          ///< Per-element aggregate timings.
 
   // New
   std::vector<ProfilerKernelInvocation> kernel_invocations; ///< Per-event timeline.
-  std::vector<ProfilerKernelAggregate>  kernel_aggregates;  ///< Bucketed event totals.
-  std::vector<ProfilerMemcpySite>       memcpy_sites;       ///< Per-site memcpy counters.
+  std::vector<ProfilerKernelAggregate> kernel_aggregates;   ///< Bucketed event totals.
+  std::vector<ProfilerMemcpySite> memcpy_sites;             ///< Per-site memcpy counters.
 
-  std::uint64_t profiler_emits   = 0; ///< Number of events the runtime emitted.
+  std::uint64_t profiler_emits = 0;   ///< Number of events the runtime emitted.
   std::uint64_t profiler_dropped = 0; ///< Number of events dropped (ring full).
 
-  std::string mpk_path;     ///< Optional: caller may set to identify the loaded MPK.
-  std::string description;  ///< Optional: caller-supplied label for the run.
-  std::int64_t frames_total = 0;   ///< Optional: total frames pushed during the run.
-  std::int64_t warmup_frames = 0;  ///< Optional: warmup frames excluded from measurements.
+  std::string mpk_path;           ///< Optional: caller may set to identify the loaded MPK.
+  std::string description;        ///< Optional: caller-supplied label for the run.
+  std::int64_t frames_total = 0;  ///< Optional: total frames pushed during the run.
+  std::int64_t warmup_frames = 0; ///< Optional: warmup frames excluded from measurements.
 };
 
 /**
@@ -182,10 +181,10 @@ struct ProfilerReport {
  * @ingroup pipeline
  */
 struct LatencyProfilerOptions {
-  bool capture_kernels = true;       ///< Capture per-kernel-invocation events.
-  bool capture_memcpy  = true;       ///< Capture per-site memcpy totals.
-  std::size_t ring_capacity = 8192;  ///< Event ring capacity (oldest dropped on overflow).
-  std::int64_t warmup_frames = 0;    ///< Frames to skip before starting measurement.
+  bool capture_kernels = true;      ///< Capture per-kernel-invocation events.
+  bool capture_memcpy = true;       ///< Capture per-site memcpy totals.
+  std::size_t ring_capacity = 8192; ///< Event ring capacity (oldest dropped on overflow).
+  std::int64_t warmup_frames = 0;   ///< Frames to skip before starting measurement.
 };
 
 /**
@@ -201,7 +200,7 @@ struct LatencyProfilerOptions {
  * @see Run
  */
 class LatencyProfiler {
- public:
+public:
   /// Tunable knobs for the profiler.
   using Options = LatencyProfilerOptions;
 
@@ -211,7 +210,7 @@ class LatencyProfiler {
   ~LatencyProfiler();
 
   /// Deleted copy constructor; the profiler owns thread-bound state.
-  LatencyProfiler(const LatencyProfiler&)            = delete;
+  LatencyProfiler(const LatencyProfiler&) = delete;
   /// Deleted copy assignment; the profiler owns thread-bound state.
   LatencyProfiler& operator=(const LatencyProfiler&) = delete;
 
@@ -266,13 +265,13 @@ class LatencyProfiler {
   /// @brief Render @p report as a Chrome/Perfetto trace JSON document.
   static std::string to_chrome_trace(const ProfilerReport& report);
 
- private:
-  Options              options_;
-  Run*                 attached_run_ = nullptr;
-  Session*             attached_session_ = nullptr;
-  bool                 enabled_at_attach_ = false;
+private:
+  Options options_;
+  Run* attached_run_ = nullptr;
+  Session* attached_session_ = nullptr;
+  bool enabled_at_attach_ = false;
 };
 
-}  // namespace simaai::neat
+} // namespace simaai::neat
 
-#endif  // SIMAAI_NEAT_PIPELINE_LATENCY_PROFILER_H_
+#endif // SIMAAI_NEAT_PIPELINE_LATENCY_PROFILER_H_

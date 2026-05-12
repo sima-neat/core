@@ -111,16 +111,13 @@ tensor_io_delta(const simaai::neat::pipeline_internal::TensorIoStats& before,
 
 std::string tensor_io_stats_string(const simaai::neat::pipeline_internal::TensorIoStats& stats) {
   std::ostringstream os;
-  os << "copies=" << stats.tensor_copy_count
-     << ",copy_bytes=" << stats.tensor_copy_bytes
-     << ",views=" << stats.tensor_view_count
-     << ",maps=" << stats.gst_memory_map_calls
+  os << "copies=" << stats.tensor_copy_count << ",copy_bytes=" << stats.tensor_copy_bytes
+     << ",views=" << stats.tensor_view_count << ",maps=" << stats.gst_memory_map_calls
      << ",holder_fast=" << stats.holder_fast_path_hits
      << ",bundle_proj=" << stats.bundle_projection_count
      << ",packed_reuse=" << stats.packed_view_reuse_hits << "/"
-     << stats.packed_view_reuse_opportunities
-     << ",packed_ratio=" << std::fixed << std::setprecision(3)
-     << stats.packed_view_reuse_ratio();
+     << stats.packed_view_reuse_opportunities << ",packed_ratio=" << std::fixed
+     << std::setprecision(3) << stats.packed_view_reuse_ratio();
   return os.str();
 }
 
@@ -442,8 +439,7 @@ void require_forced_preproc_options_complete(const simaai::neat::Model::Options&
     fail_missing("preprocess.normalize.enable",
                  "must be On; observed=" + auto_flag_name(p.normalize.enable));
   }
-  if (!p.normalize.has_explicit_stats &&
-      p.preset != simaai::neat::NormalizePreset::COCO_YOLO &&
+  if (!p.normalize.has_explicit_stats && p.preset != simaai::neat::NormalizePreset::COCO_YOLO &&
       p.preset != simaai::neat::NormalizePreset::ImageNet) {
     fail_missing("preprocess.normalize.{mean,stddev}",
                  "set explicit stats or use a preset that provides normalize defaults");
@@ -506,8 +502,8 @@ std::string bytes_preview_hex(const uint8_t* data, size_t size, size_t limit = 1
     if (i != 0U) {
       oss << ",";
     }
-    oss << "0x" << std::hex << std::setw(2) << std::setfill('0')
-        << static_cast<int>(data[i]) << std::dec;
+    oss << "0x" << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(data[i])
+        << std::dec;
   }
   if (n < size) {
     oss << ",...";
@@ -575,10 +571,11 @@ cv::Mat resize_letterbox_center(const cv::Mat& src, int dst_w, int dst_h, int pa
   const int pad_top = (dst_h - resized_h) / 2;
   const int pad_right = dst_w - resized_w - pad_left;
   const int pad_bottom = dst_h - resized_h - pad_top;
-  const cv::Scalar pad = (resized.channels() == 1)
-                             ? cv::Scalar(static_cast<double>(pad_value))
-                             : cv::Scalar(static_cast<double>(pad_value), static_cast<double>(pad_value),
-                                          static_cast<double>(pad_value), 0.0);
+  const cv::Scalar pad =
+      (resized.channels() == 1)
+          ? cv::Scalar(static_cast<double>(pad_value))
+          : cv::Scalar(static_cast<double>(pad_value), static_cast<double>(pad_value),
+                       static_cast<double>(pad_value), 0.0);
   cv::Mat out;
   cv::copyMakeBorder(resized, out, pad_top, pad_bottom, pad_left, pad_right, cv::BORDER_CONSTANT,
                      pad);
@@ -586,7 +583,7 @@ cv::Mat resize_letterbox_center(const cv::Mat& src, int dst_w, int dst_h, int pa
 }
 
 std::vector<uint8_t> build_host_preproc_bf16_tensor(const cv::Mat& frame_bgr,
-                                                     const simaai::neat::Model::Options& opt) {
+                                                    const simaai::neat::Model::Options& opt) {
   const auto& p = opt.preprocess;
   require(p.resize.width > 0 && p.resize.height > 0, "host preproc requires positive resize dims");
 
@@ -595,7 +592,8 @@ std::vector<uint8_t> build_host_preproc_bf16_tensor(const cv::Mat& frame_bgr,
   if (p.resize.mode == simaai::neat::ResizeMode::Letterbox) {
     resized = resize_letterbox_center(color, p.resize.width, p.resize.height, p.resize.pad_value);
   } else {
-    cv::resize(color, resized, cv::Size(p.resize.width, p.resize.height), 0.0, 0.0, cv::INTER_LINEAR);
+    cv::resize(color, resized, cv::Size(p.resize.width, p.resize.height), 0.0, 0.0,
+               cv::INTER_LINEAR);
   }
 
   cv::Mat fp32;
@@ -603,13 +601,12 @@ std::vector<uint8_t> build_host_preproc_bf16_tensor(const cv::Mat& frame_bgr,
   if (p.normalize.enable == simaai::neat::AutoFlag::On) {
     const std::array<float, 3> mean = p.normalize.mean;
     const std::array<float, 3> stddev = p.normalize.stddev;
-    const cv::Scalar mean255(
-        static_cast<double>(mean[0]) * 255.0, static_cast<double>(mean[1]) * 255.0,
-        static_cast<double>(mean[2]) * 255.0, 0.0);
-    const cv::Scalar std255(
-        std::max(1e-8, static_cast<double>(stddev[0]) * 255.0),
-        std::max(1e-8, static_cast<double>(stddev[1]) * 255.0),
-        std::max(1e-8, static_cast<double>(stddev[2]) * 255.0), 1.0);
+    const cv::Scalar mean255(static_cast<double>(mean[0]) * 255.0,
+                             static_cast<double>(mean[1]) * 255.0,
+                             static_cast<double>(mean[2]) * 255.0, 0.0);
+    const cv::Scalar std255(std::max(1e-8, static_cast<double>(stddev[0]) * 255.0),
+                            std::max(1e-8, static_cast<double>(stddev[1]) * 255.0),
+                            std::max(1e-8, static_cast<double>(stddev[2]) * 255.0), 1.0);
     cv::subtract(fp32, mean255, fp32);
     cv::divide(fp32, std255, fp32);
   }
@@ -680,9 +677,8 @@ void compare_runtime_vs_host_preproc_debug(const simaai::neat::Tensor& pre_tenso
     const auto* runtime16 = reinterpret_cast<const uint16_t*>(runtime_ptr);
     const auto* host16 = reinterpret_cast<const uint16_t*>(host_ptr);
     for (size_t i = 0; i < elems; ++i) {
-      const double diff =
-          std::fabs(static_cast<double>(bf16_to_fp32(runtime16[i])) -
-                    static_cast<double>(bf16_to_fp32(host16[i])));
+      const double diff = std::fabs(static_cast<double>(bf16_to_fp32(runtime16[i])) -
+                                    static_cast<double>(bf16_to_fp32(host16[i])));
       mae += diff;
       if (diff > max_abs) {
         max_abs = diff;
@@ -692,31 +688,22 @@ void compare_runtime_vs_host_preproc_debug(const simaai::neat::Tensor& pre_tenso
       mae /= static_cast<double>(elems);
     }
     const double eq_ratio = n > 0U ? static_cast<double>(eq) / static_cast<double>(n) : 0.0;
-    std::cout << "PREPROC_PARITY model=" << model_id
-              << " window=" << tag
-              << " off=" << offset
-              << " n=" << n
-              << " runtime_hash=0x" << std::hex << std::setw(16) << std::setfill('0')
-              << fnv1a64(runtime_ptr, n)
-              << " host_hash=0x" << std::setw(16) << fnv1a64(host_ptr, n)
-              << std::dec << std::setfill(' ')
-              << " eq_ratio=" << eq_ratio
-              << " mae=" << mae
+    std::cout << "PREPROC_PARITY model=" << model_id << " window=" << tag << " off=" << offset
+              << " n=" << n << " runtime_hash=0x" << std::hex << std::setw(16) << std::setfill('0')
+              << fnv1a64(runtime_ptr, n) << " host_hash=0x" << std::setw(16) << fnv1a64(host_ptr, n)
+              << std::dec << std::setfill(' ') << " eq_ratio=" << eq_ratio << " mae=" << mae
               << " max_abs=" << max_abs
               << " runtime_preview=" << bytes_preview_hex(runtime_ptr, n, 12)
-              << " host_preview=" << bytes_preview_hex(host_ptr, n, 12)
-              << "\n";
+              << " host_preview=" << bytes_preview_hex(host_ptr, n, 12) << "\n";
   };
 
   const size_t head_off = 0U;
   const size_t center_off = (common > win) ? (common / 2U - win / 2U) : 0U;
   const size_t tail_off = (common > win) ? (common - win) : 0U;
-  std::cout << "PREPROC_PARITY model=" << model_id
-            << " runtime_bytes=" << runtime.size()
-            << " host_bytes=" << host.size()
-            << " common_bytes=" << common
-            << " window_bytes=" << win
-            << " normalize=" << (forced_opt.preprocess.normalize.enable == simaai::neat::AutoFlag::On ? 1 : 0)
+  std::cout << "PREPROC_PARITY model=" << model_id << " runtime_bytes=" << runtime.size()
+            << " host_bytes=" << host.size() << " common_bytes=" << common
+            << " window_bytes=" << win << " normalize="
+            << (forced_opt.preprocess.normalize.enable == simaai::neat::AutoFlag::On ? 1 : 0)
             << " mean=[" << forced_opt.preprocess.normalize.mean[0] << ","
             << forced_opt.preprocess.normalize.mean[1] << ","
             << forced_opt.preprocess.normalize.mean[2] << "]"
@@ -764,7 +751,8 @@ std::string model_input_caps_format(const simaai::neat::Model::Options& opt) {
   return "BGR";
 }
 
-simaai::neat::Tensor make_model_input_tensor(const cv::Mat& input_frame, const simaai::neat::Model& model,
+simaai::neat::Tensor make_model_input_tensor(const cv::Mat& input_frame,
+                                             const simaai::neat::Model& model,
                                              const simaai::neat::Model::Options& opt,
                                              const char* where) {
   simaai::neat::InputOptions src_opt = model.input_appsrc_options(false);
@@ -798,8 +786,8 @@ AccuracyResult run_boxdecode_accuracy(simaai::neat::Model& model, const cv::Mat&
     std::vector<uint8_t> payload;
     std::string err;
     if (!objdet::extract_bbox_payload(result, payload, err)) {
-      out.note = "bbox_extract_failed model=" + model_id + " err=" +
-                 sima_yolov8_test::sanitize_note(err);
+      out.note =
+          "bbox_extract_failed model=" + model_id + " err=" + sima_yolov8_test::sanitize_note(err);
       return out;
     }
 
@@ -820,10 +808,10 @@ AccuracyResult run_boxdecode_accuracy(simaai::neat::Model& model, const cv::Mat&
           if (expected_box.class_id != 0) {
             continue;
           }
-          best_person_iou = std::max(
-              best_person_iou,
-              objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
-                                   expected_box.y2, box.x1, box.y1, box.x2, box.y2));
+          best_person_iou =
+              std::max(best_person_iou,
+                       objdet::box_iou_xyxy(expected_box.x1, expected_box.y1, expected_box.x2,
+                                            expected_box.y2, box.x1, box.y1, box.x2, box.y2));
         }
       }
       if (person_candidates > 0 && best_person_iou >= 0.25f) {
@@ -870,8 +858,8 @@ void run_model_case(const fs::path& tar_path, const cv::Mat& frame_bgr, bool acc
   std::optional<simaai::neat::Model> forced_model;
   forced_model.emplace(tar_path.string(), forced_opt);
   expected.dtype = expected_preproc_dtype_for_model(*forced_model, expected);
-  if (expected.dtype == DTypeFamily::BFloat16 &&
-      forced_opt.preprocess.color_convert.input_format == simaai::neat::PreprocessColorFormat::BGR) {
+  if (expected.dtype == DTypeFamily::BFloat16 && forced_opt.preprocess.color_convert.input_format ==
+                                                     simaai::neat::PreprocessColorFormat::BGR) {
     forced_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
     forced_model.emplace(tar_path.string(), forced_opt);
   }
@@ -895,9 +883,9 @@ void run_model_case(const fs::path& tar_path, const cv::Mat& frame_bgr, bool acc
       pre_info.transport_kind == simaai::neat::stages::PreprocOutputTransportKind::Packed;
   const DTypeFamily observed_cfg_dtype = dtype_family_from_token(pre_info.output_dtype);
   require(observed_packed_handoff == expected.tessellate,
-          "config transport mismatch for " + model_id + " expected_packed=" +
-              std::to_string(expected.tessellate ? 1 : 0) + " observed=" +
-              std::to_string(observed_packed_handoff ? 1 : 0));
+          "config transport mismatch for " + model_id +
+              " expected_packed=" + std::to_string(expected.tessellate ? 1 : 0) +
+              " observed=" + std::to_string(observed_packed_handoff ? 1 : 0));
   require(observed_cfg_dtype == expected.dtype,
           "config output_dtype mismatch for " + model_id + " expected_family=" +
               dtype_family_name(expected.dtype) + " observed_token=" + pre_info.output_dtype +
@@ -920,17 +908,16 @@ void run_model_case(const fs::path& tar_path, const cv::Mat& frame_bgr, bool acc
 
   const std::string resize_mode = lower_copy(meta.resize_mode);
   require(meta.quantize == expected.quantize,
-          "runtime quantize mismatch for " + model_id + " expected=" +
-              std::to_string(expected.quantize ? 1 : 0) + " observed=" +
-              std::to_string(meta.quantize ? 1 : 0));
+          "runtime quantize mismatch for " + model_id +
+              " expected=" + std::to_string(expected.quantize ? 1 : 0) +
+              " observed=" + std::to_string(meta.quantize ? 1 : 0));
   require(meta.tessellate == expected.tessellate,
-          "runtime tessellate mismatch for " + model_id + " expected=" +
-              std::to_string(expected.tessellate ? 1 : 0) + " observed=" +
-              std::to_string(meta.tessellate ? 1 : 0));
+          "runtime tessellate mismatch for " + model_id +
+              " expected=" + std::to_string(expected.tessellate ? 1 : 0) +
+              " observed=" + std::to_string(meta.tessellate ? 1 : 0));
   require(meta.normalize, "runtime normalize must be enabled for COCO preset: " + model_id);
-  require(resize_mode == "letterbox",
-          "runtime resize_mode must be letterbox for COCO preset: " + model_id +
-              " observed=" + meta.resize_mode);
+  require(resize_mode == "letterbox", "runtime resize_mode must be letterbox for COCO preset: " +
+                                          model_id + " observed=" + meta.resize_mode);
   require(upper_copy(meta.color_in) == upper_copy(expected_color_in),
           "runtime color_in must match test-defined options: " + model_id +
               " observed=" + meta.color_in);
@@ -943,16 +930,12 @@ void run_model_case(const fs::path& tar_path, const cv::Mat& frame_bgr, bool acc
   AccuracyResult acc;
   if (accuracy_enabled) {
     acc = run_boxdecode_accuracy(*forced_model, model_input, forced_opt, model_id);
-    require(acc.ok,
-            "accuracy mismatch for " + model_id + ": " + acc.note);
+    require(acc.ok, "accuracy mismatch for " + model_id + ": " + acc.note);
   }
 
-  std::cout << "PREPROC_MATRIX model=" << model_id
-            << " inferred{family=" << expected.family
-            << ",quant=" << (expected.quantize ? 1 : 0)
-            << ",tess=" << (expected.tessellate ? 1 : 0)
-            << ",cast=" << (expected.cast ? 1 : 0)
-            << ",dtype=" << dtype_family_name(expected.dtype)
+  std::cout << "PREPROC_MATRIX model=" << model_id << " inferred{family=" << expected.family
+            << ",quant=" << (expected.quantize ? 1 : 0) << ",tess=" << (expected.tessellate ? 1 : 0)
+            << ",cast=" << (expected.cast ? 1 : 0) << ",dtype=" << dtype_family_name(expected.dtype)
             << "} config{packed=" << (observed_packed_handoff ? 1 : 0)
             << ",dtype_token=" << pre_info.output_dtype
             << ",dtype_family=" << dtype_family_name(observed_cfg_dtype)
@@ -963,12 +946,9 @@ void run_model_case(const fs::path& tar_path, const cv::Mat& frame_bgr, bool acc
             << ",color_out=" << (meta.color_out.empty() ? "<empty>" : meta.color_out)
             << ",axis_perm=" << join_ints(meta.axis_perm)
             << ",normalize=" << (meta.normalize ? 1 : 0)
-            << "} accuracy{enabled=" << (accuracy_enabled ? 1 : 0)
-            << ",ok=" << (acc.ok ? 1 : 0)
-            << ",outputs=" << acc.outputs
-            << ",note=" << (acc.note.empty() ? "n/a" : acc.note)
-            << "} tensor_io{" << tensor_io_stats_string(tensor_io)
-            << "}\n";
+            << "} accuracy{enabled=" << (accuracy_enabled ? 1 : 0) << ",ok=" << (acc.ok ? 1 : 0)
+            << ",outputs=" << acc.outputs << ",note=" << (acc.note.empty() ? "n/a" : acc.note)
+            << "} tensor_io{" << tensor_io_stats_string(tensor_io) << "}\n";
 }
 
 } // namespace

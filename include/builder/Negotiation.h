@@ -30,9 +30,9 @@ namespace simaai::neat {
  * @ingroup builder
  */
 struct NegotiationResult {
-  bool ok = true;                         ///< True if negotiation succeeded end-to-end.
-  std::string error;                      ///< Human-readable diagnostic on failure.
-  std::vector<ConversionTrace> trace;     ///< Per-edge conversion record (in pipeline order).
+  bool ok = true;                     ///< True if negotiation succeeded end-to-end.
+  std::string error;                  ///< Human-readable diagnostic on failure.
+  std::vector<ConversionTrace> trace; ///< Per-edge conversion record (in pipeline order).
 };
 
 /**

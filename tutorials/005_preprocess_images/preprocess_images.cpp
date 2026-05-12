@@ -66,7 +66,8 @@ int main(int argc, char** argv) {
     // CORE LOGIC
     // stages::Preproc runs just the preprocessing step from the model's Options
     // and returns the preprocessed Tensor.
-    simaai::neat::Tensor pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model).front();
+    simaai::neat::Tensor pre =
+        simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model).front();
     // END CORE LOGIC
 
     std::cout << "preproc_rank=" << pre.shape.size() << "\n";

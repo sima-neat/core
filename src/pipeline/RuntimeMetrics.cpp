@@ -72,8 +72,8 @@ std::string runtime_metrics_to_json(const RuntimeMetrics& metrics, int indent) {
   oss << p4 << "\"max_ms\": " << metrics.latency.max_ms << ",\n";
   oss << p4 << "\"p50_ms\": " << metrics.latency.p50_ms << ",\n";
   oss << p4 << "\"p95_ms\": " << metrics.latency.p95_ms << ",\n";
-  oss << p4 << "\"has_percentiles\": "
-      << (metrics.latency.has_percentiles ? "true" : "false") << "\n";
+  oss << p4 << "\"has_percentiles\": " << (metrics.latency.has_percentiles ? "true" : "false")
+      << "\n";
   oss << p2 << "},\n";
   oss << p2 << "\"counters\": {\n";
   oss << p4 << "\"inputs_enqueued\": " << metrics.counters.inputs_enqueued << ",\n";
@@ -135,8 +135,7 @@ std::string runtime_metrics_to_compact_text(const RuntimeMetrics& metrics) {
     oss << " source=" << metrics.source_kind;
   if (!metrics.source_name.empty())
     oss << "/" << metrics.source_name;
-  oss << " elapsed_s=" << metrics.elapsed_seconds
-      << " throughput_fps=" << metrics.throughput_fps
+  oss << " elapsed_s=" << metrics.elapsed_seconds << " throughput_fps=" << metrics.throughput_fps
       << " latency_avg_ms=" << metrics.latency.avg_ms
       << " latency_min_ms=" << metrics.latency.min_ms
       << " latency_max_ms=" << metrics.latency.max_ms
@@ -160,12 +159,10 @@ std::string runtime_metrics_to_text(const RuntimeMetrics& metrics) {
   oss << "Summary: elapsed_s=" << metrics.elapsed_seconds
       << " throughput_fps=" << metrics.throughput_fps
       << " outputs_pulled=" << metrics.counters.outputs_pulled << "\n";
-  oss << "Latency: avg_ms=" << metrics.latency.avg_ms
-      << " min_ms=" << metrics.latency.min_ms
+  oss << "Latency: avg_ms=" << metrics.latency.avg_ms << " min_ms=" << metrics.latency.min_ms
       << " max_ms=" << metrics.latency.max_ms;
   if (metrics.latency.has_percentiles) {
-    oss << " p50_ms=" << metrics.latency.p50_ms
-        << " p95_ms=" << metrics.latency.p95_ms;
+    oss << " p50_ms=" << metrics.latency.p50_ms << " p95_ms=" << metrics.latency.p95_ms;
   }
   oss << "\n";
   oss << "Counters: inputs_enqueued=" << metrics.counters.inputs_enqueued

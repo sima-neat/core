@@ -47,14 +47,14 @@ struct DebugOptions {
  * @ingroup pipeline
  */
 struct DebugOutput {
-  OutputSpec expected;                              ///< Expected output spec.
-  OutputSpec observed;                              ///< Spec actually observed at runtime.
-  std::string caps_string;                          ///< Payload caps string.
-  bool tensorizable = false;                        ///< True iff the payload could be wrapped as a Tensor.
-  bool unknown = false;                             ///< True iff the payload type was not recognised.
-  std::vector<std::string> warnings;                ///< Non-fatal issues collected during capture.
-  std::optional<simaai::neat::Tensor> tensor;       ///< Owning tensor (when available).
-  std::vector<uint8_t> bytes;                       ///< Raw bytes for non-tensorizable outputs.
+  OutputSpec expected;               ///< Expected output spec.
+  OutputSpec observed;               ///< Spec actually observed at runtime.
+  std::string caps_string;           ///< Payload caps string.
+  bool tensorizable = false;         ///< True iff the payload could be wrapped as a Tensor.
+  bool unknown = false;              ///< True iff the payload type was not recognised.
+  std::vector<std::string> warnings; ///< Non-fatal issues collected during capture.
+  std::optional<simaai::neat::Tensor> tensor; ///< Owning tensor (when available).
+  std::vector<uint8_t> bytes;                 ///< Raw bytes for non-tensorizable outputs.
 };
 
 /**
@@ -70,13 +70,13 @@ struct DebugOutput {
  */
 struct DebugStream {
   std::function<std::optional<DebugOutput>(int)> next; ///< Pull next output; arg is timeout_ms.
-  std::function<void()> close;                          ///< Tear down the underlying stream.
-  OutputSpec expected;                                  ///< Expected output spec.
-  OutputSpec observed;                                  ///< Spec observed at runtime.
-  std::string caps_string;                              ///< Payload caps string.
-  bool tensorizable = false;                            ///< True iff outputs are tensorizable.
-  bool unknown = false;                                 ///< True iff payload type was unrecognised.
-  std::shared_ptr<void> state;                          ///< Keeps the underlying pipeline/stream alive.
+  std::function<void()> close;                         ///< Tear down the underlying stream.
+  OutputSpec expected;                                 ///< Expected output spec.
+  OutputSpec observed;                                 ///< Spec observed at runtime.
+  std::string caps_string;                             ///< Payload caps string.
+  bool tensorizable = false;                           ///< True iff outputs are tensorizable.
+  bool unknown = false;                                ///< True iff payload type was unrecognised.
+  std::shared_ptr<void> state; ///< Keeps the underlying pipeline/stream alive.
 
   /// @brief True iff the stream is bound and usable.
   explicit operator bool() const {

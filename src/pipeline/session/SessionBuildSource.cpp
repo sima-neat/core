@@ -26,8 +26,7 @@ namespace {
 
 void maybe_compile_source_contracts(BuildResult* build_result,
                                     const std::vector<std::shared_ptr<Node>>& nodes,
-                                    const SessionOptions& sess_opt,
-                                    const char* where) {
+                                    const SessionOptions& sess_opt, const char* where) {
   ContractCompileInput compile_input;
   compile_input.pipeline_label = where ? where : "Session::build(source)";
   compile_input.processcvu_requested_run_target = sess_opt.processcvu_requested_run_target;
@@ -132,8 +131,8 @@ Run Session::build(const RunOptions& opt) {
 
   progress.step("Building session...");
   const NameTransform name_transform = make_name_transform(opt_);
-  BuildResult br =
-      build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2, name_transform, &opt_);
+  BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
+                                       name_transform, &opt_);
   maybe_compile_source_contracts(&br, build_nodes, opt_, "Session::build");
   last_pipeline_ = br.pipeline_string;
   session_build_enforce_mla_num_buffers(last_pipeline_, "Session::build");

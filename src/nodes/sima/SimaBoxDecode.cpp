@@ -88,10 +88,10 @@ bool boxdecode_contract_needs_sample_semantic_refinement_local(
         boxdecode_name_has_class_score_semantics_local(tensor.logical_name) ||
         boxdecode_name_has_class_score_semantics_local(tensor.backend_name) ||
         boxdecode_name_has_class_score_semantics_local(tensor.source_segment_name);
-    saw_generic_names =
-        saw_generic_names || boxdecode_name_looks_generic_local(tensor.logical_name) ||
-        boxdecode_name_looks_generic_local(tensor.backend_name) ||
-        boxdecode_name_looks_generic_local(tensor.source_segment_name);
+    saw_generic_names = saw_generic_names ||
+                        boxdecode_name_looks_generic_local(tensor.logical_name) ||
+                        boxdecode_name_looks_generic_local(tensor.backend_name) ||
+                        boxdecode_name_looks_generic_local(tensor.source_segment_name);
   }
   return !saw_explicit_semantics && saw_generic_names;
 }
@@ -110,10 +110,8 @@ json shape_descs_to_json(const std::vector<sima_ev_shape_desc>& shapes) {
 }
 
 void maybe_refine_boxdecode_contract_from_ingress_sample_local(
-    pipeline_internal::sima::BoxDecodeStaticContract* contract,
-    const Sample& ingress_sample,
-    BoxDecodeType decode_type,
-    const std::optional<InputContract>& input_contract) {
+    pipeline_internal::sima::BoxDecodeStaticContract* contract, const Sample& ingress_sample,
+    BoxDecodeType decode_type, const std::optional<InputContract>& input_contract) {
   if (!contract || decode_type != BoxDecodeType::YoloV8 ||
       !boxdecode_contract_needs_sample_semantic_refinement_local(*contract)) {
     return;
@@ -157,8 +155,7 @@ json quant_to_json(const std::optional<pipeline_internal::sima::QuantStaticSpec>
   };
 }
 
-template <typename T>
-json vector_to_json_array(const std::vector<T>& values) {
+template <typename T> json vector_to_json_array(const std::vector<T>& values) {
   json arr = json::array();
   for (const auto& value : values) {
     arr.push_back(value);
@@ -248,8 +245,7 @@ json boxdecode_static_contract_to_json(
 
 void maybe_dump_boxdecode_core_dossier(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract,
-    const simaai::neat::CompiledBoxDecodeContract& compiled,
-    const std::string& element_name,
+    const simaai::neat::CompiledBoxDecodeContract& compiled, const std::string& element_name,
     const std::string& logical_stage_id) {
   const std::string dir = boxdecode_dossier_dir();
   if (dir.empty()) {
@@ -265,10 +261,9 @@ void maybe_dump_boxdecode_core_dossier(
   }
   json payload{
       {"decode_type", static_cast<int>(compiled.payload.decode_type)},
-      {"decode_type_option",
-       compiled.payload.decode_type_option.has_value()
-           ? json(static_cast<int>(*compiled.payload.decode_type_option))
-           : json(nullptr)},
+      {"decode_type_option", compiled.payload.decode_type_option.has_value()
+                                 ? json(static_cast<int>(*compiled.payload.decode_type_option))
+                                 : json(nullptr)},
       {"score_activation", static_cast<int>(compiled.payload.score_activation)},
       {"input_dtype", compiled.payload.input_dtype},
       {"tess_needed", compiled.payload.tess_needed},
@@ -301,9 +296,8 @@ std::string resolve_boxdecode_factory() {
   if (const char* forced = std::getenv("SIMA_BOXDECODE_FACTORY"); forced && *forced) {
     const std::string forced_name(forced);
     if (forced_name != "neatobjectdecode") {
-      throw std::runtime_error(
-          "SimaBoxDecode: only neatobjectdecode is supported. "
-          "Remove SIMA_BOXDECODE_FACTORY or set it to neatobjectdecode.");
+      throw std::runtime_error("SimaBoxDecode: only neatobjectdecode is supported. "
+                               "Remove SIMA_BOXDECODE_FACTORY or set it to neatobjectdecode.");
     }
   }
   if (!element_exists("neatobjectdecode")) {
@@ -344,7 +338,8 @@ bool has_explicit_dimension_pair(int width, int height) {
   return width > 0 && height > 0;
 }
 
-void validate_dimension_override_pair(int width, int height, const char* label, const char* context) {
+void validate_dimension_override_pair(int width, int height, const char* label,
+                                      const char* context) {
   const bool width_set = width > 0;
   const bool height_set = height > 0;
   if (width_set == height_set) {
@@ -356,9 +351,9 @@ void validate_dimension_override_pair(int width, int height, const char* label, 
   throw std::invalid_argument(oss.str());
 }
 
-std::vector<std::string> filter_required_preprocess_meta_fields(
-    const std::vector<std::string>& fields, int original_width, int original_height, int model_width,
-    int model_height) {
+std::vector<std::string>
+filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, int original_width,
+                                       int original_height, int model_width, int model_height) {
   std::vector<std::string> filtered;
   filtered.reserve(fields.size());
   const bool has_original_override = has_explicit_dimension_pair(original_width, original_height);
@@ -388,8 +383,8 @@ static BoxDecodeOptionsInternal options_from_model(
     const simaai::neat::internal::ModelPack& model,
     const pipeline_internal::sima::ModelManagedRouteFlags& resolved_route_flags,
     const CompiledBoxDecodeContract& compiled_contract,
-    const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>&
-        forced_model_semantics = std::nullopt) {
+    const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>& forced_model_semantics =
+        std::nullopt) {
   BoxDecodeOptionsInternal opt;
   opt.factory = resolve_boxdecode_factory();
   if (forced_model_semantics.has_value()) {
@@ -411,25 +406,19 @@ static BoxDecodeOptionsInternal options_from_model(
   opt.detection_threshold = compiled_contract.payload.detection_threshold;
   opt.nms_iou_threshold = compiled_contract.payload.nms_iou_threshold;
   if (boxdecode_debug_enabled()) {
-    const std::string decode_type_token =
-        pipeline_internal::sima::box_decode_type_token_string(compiled_contract.payload.decode_type);
-    std::fprintf(stderr,
-                 "[boxdecode-debug] etc_dir=%s factory=%s decode_type=%s\n",
+    const std::string decode_type_token = pipeline_internal::sima::box_decode_type_token_string(
+        compiled_contract.payload.decode_type);
+    std::fprintf(stderr, "[boxdecode-debug] etc_dir=%s factory=%s decode_type=%s\n",
                  model.etc_dir().c_str(), opt.factory.c_str(), decode_type_token.c_str());
   }
   return opt;
 }
 
-static BoxDecodeOptionsInternal options_from_customer(BoxDecodeType decode_type,
-                                                      double detection_threshold,
-                                                      double nms_iou_threshold,
-                                                      int top_k,
-                                                      const std::string& element_name,
-                                                      int original_width,
-                                                      int original_height,
-                                                      int model_width,
-                                                      int model_height,
-                                                      BoxDecodeTypeOption decode_type_option) {
+static BoxDecodeOptionsInternal
+options_from_customer(BoxDecodeType decode_type, double detection_threshold,
+                      double nms_iou_threshold, int top_k, const std::string& element_name,
+                      int original_width, int original_height, int model_width, int model_height,
+                      BoxDecodeTypeOption decode_type_option) {
   BoxDecodeOptionsInternal opt;
   opt.factory = resolve_boxdecode_factory();
   opt.element_name = element_name;
@@ -458,22 +447,14 @@ static BoxDecodeOptionsInternal options_from_customer(BoxDecodeType decode_type,
 
 static BoxDecodeOptionsInternal options_from_contract(
     const pipeline_internal::sima::BoxDecodeStaticContract& static_contract,
-    BoxDecodeType decode_type,
-    double detection_threshold,
-    double nms_iou_threshold,
-    int top_k,
+    BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold, int top_k,
     const std::string& element_name,
     const std::vector<std::string>& required_preprocess_meta_fields,
     const std::optional<pipeline_internal::sima::ModelManagedRouteFlags>& route_flags,
     const std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics>& model_semantics,
-    const std::optional<bool>& expect_resize,
-    const std::optional<bool>& expect_normalize,
-    const std::optional<bool>& expect_quantize,
-    const std::optional<bool>& expect_tessellate,
-    int original_width,
-    int original_height,
-    int model_width,
-    int model_height,
+    const std::optional<bool>& expect_resize, const std::optional<bool>& expect_normalize,
+    const std::optional<bool>& expect_quantize, const std::optional<bool>& expect_tessellate,
+    int original_width, int original_height, int model_width, int model_height,
     BoxDecodeTypeOption decode_type_option) {
   BoxDecodeOptionsInternal opt;
   opt.factory = resolve_boxdecode_factory();
@@ -481,9 +462,8 @@ static BoxDecodeOptionsInternal options_from_contract(
   opt.model_static_contract = static_contract;
   opt.model_route_flags = route_flags;
   opt.model_semantics = model_semantics;
-  opt.required_preprocess_meta_fields =
-      filter_required_preprocess_meta_fields(required_preprocess_meta_fields, original_width,
-                                             original_height, model_width, model_height);
+  opt.required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
+      required_preprocess_meta_fields, original_width, original_height, model_width, model_height);
   opt.expect_resize = expect_resize;
   opt.expect_normalize = expect_normalize;
   opt.expect_quantize = expect_quantize;
@@ -509,12 +489,11 @@ static BoxDecodeOptionsInternal options_from_contract(
 }
 
 SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
-                             double nms_iou_threshold, int top_k,
-                             const std::string& element_name, int original_width,
-                             int original_height, int model_width, int model_height,
-                             BoxDecodeTypeOption decode_type_option) {
-  validate_dimension_override_pair(
-      original_width, original_height, "original dimensions", "SimaBoxDecode");
+                             double nms_iou_threshold, int top_k, const std::string& element_name,
+                             int original_width, int original_height, int model_width,
+                             int model_height, BoxDecodeTypeOption decode_type_option) {
+  validate_dimension_override_pair(original_width, original_height, "original dimensions",
+                                   "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");
   auto opt = std::make_unique<BoxDecodeOptionsInternal>(options_from_customer(
       decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
@@ -528,12 +507,11 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
 
 SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
                              double detection_threshold, double nms_iou_threshold, int top_k,
-                             const std::string& element_name,
-                             std::optional<bool> route_tess_needed,
+                             const std::string& element_name, std::optional<bool> route_tess_needed,
                              std::optional<bool> route_quant_needed, int original_width,
                              int original_height, BoxDecodeTypeOption decode_type_option) {
-  validate_dimension_override_pair(
-      original_width, original_height, "original dimensions", "SimaBoxDecode(Model)");
+  validate_dimension_override_pair(original_width, original_height, "original dimensions",
+                                   "SimaBoxDecode(Model)");
   const auto& pack = simaai::neat::internal::ModelAccess::pack(model);
   int resolved_original_width = original_width;
   int resolved_original_height = original_height;
@@ -546,11 +524,12 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
       model, simaai::neat::internal::StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
   CompiledBoxDecodeContract compiled_contract;
   try {
-    compiled_contract = simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(
-        model, false);
+    compiled_contract =
+        simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(model, false);
     effective_route_flags.tess_needed = compiled_contract.payload.tess_needed;
     effective_route_flags.quant_needed = compiled_contract.payload.quant_needed;
-    effective_route_flags.quant_contract_required = compiled_contract.payload.quant_contract_required;
+    effective_route_flags.quant_contract_required =
+        compiled_contract.payload.quant_contract_required;
   } catch (const std::exception& e) {
     throw std::runtime_error(
         "SimaBoxDecode(Model): failed to issue model-managed boxdecode contract: " +
@@ -619,33 +598,24 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
 
 #ifdef SIMA_NEAT_INTERNAL
 SimaBoxDecode::SimaBoxDecode(
-    const pipeline_internal::sima::BoxDecodeStaticContract& contract,
-    BoxDecodeType decode_type,
-    double detection_threshold,
-    double nms_iou_threshold,
-    int top_k,
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract, BoxDecodeType decode_type,
+    double detection_threshold, double nms_iou_threshold, int top_k,
     const std::string& element_name,
     const std::vector<std::string>& required_preprocess_meta_fields,
     std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags,
     std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics,
-    std::optional<bool> expect_resize,
-    std::optional<bool> expect_normalize,
-    std::optional<bool> expect_quantize,
-    std::optional<bool> expect_tessellate,
-    int original_width,
-    int original_height,
-    int model_width,
-    int model_height,
+    std::optional<bool> expect_resize, std::optional<bool> expect_normalize,
+    std::optional<bool> expect_quantize, std::optional<bool> expect_tessellate, int original_width,
+    int original_height, int model_width, int model_height,
     BoxDecodeTypeOption decode_type_option) {
-  validate_dimension_override_pair(
-      original_width, original_height, "original dimensions", "SimaBoxDecode");
+  validate_dimension_override_pair(original_width, original_height, "original dimensions",
+                                   "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");
-  auto opt = std::make_unique<BoxDecodeOptionsInternal>(
-      options_from_contract(contract, decode_type, detection_threshold, nms_iou_threshold, top_k,
-                            element_name, required_preprocess_meta_fields, route_flags,
-                            model_semantics, expect_resize, expect_normalize, expect_quantize,
-                            expect_tessellate, original_width, original_height, model_width,
-                            model_height, decode_type_option));
+  auto opt = std::make_unique<BoxDecodeOptionsInternal>(options_from_contract(
+      contract, decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
+      required_preprocess_meta_fields, route_flags, model_semantics, expect_resize,
+      expect_normalize, expect_quantize, expect_tessellate, original_width, original_height,
+      model_width, model_height, decode_type_option));
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt->decode_type)) {
     throw std::invalid_argument(
         "SimaBoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified. "
@@ -671,16 +641,16 @@ NodeContractDefinition SimaBoxDecode::contract_definition() const {
 }
 
 bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
-                                          CompiledNodeContract* out,
-                                          std::string* err) const {
+                                          CompiledNodeContract* out, std::string* err) const {
   if (!opt_) {
     if (err) {
       *err = "SimaBoxDecode: missing node options";
     }
     return false;
   }
-  const std::string element_name = element_names(input.node_index).empty() ? std::string("boxdecode")
-                                                            : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("boxdecode")
+                                       : element_names(input.node_index).front();
   try {
     if (opt_->compiled_contract) {
       return pipeline_internal::sima::stagesemantics::build_boxdecode_node_contract(
@@ -704,7 +674,8 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         }
       } else if (!input.ingress.ingress_sample.has_value()) {
         if (err) {
-          *err = "SimaBoxDecode: inferred standalone contract requires Session::build/run input sample";
+          *err = "SimaBoxDecode: inferred standalone contract requires Session::build/run input "
+                 "sample";
         }
         return false;
       } else {
@@ -822,8 +793,8 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   std::ostringstream ss;
   require_element(opt_->factory.c_str(), "SimaBoxDecode::backend_fragment");
   const char* factory = opt_->factory.c_str();
-  const std::string name = opt_->element_name.empty() ? std::string("boxdecode")
-                                                      : opt_->element_name;
+  const std::string name =
+      opt_->element_name.empty() ? std::string("boxdecode") : opt_->element_name;
   ss << factory << " name=" << name << " stage-id=" << name;
 
   ss << " silent=" << (opt_->silent ? "true" : "false");
@@ -840,10 +811,10 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   ss << " transmit=" << (opt_->transmit ? "true" : "false");
   if (boxdecode_debug_enabled()) {
     std::fprintf(stderr,
-                 "[boxdecode-debug] backend_fragment stage=%s factory=%s decode_type=%s topk=%d det=%.6f nms=%.6f metadata_only=1 contract_only=1\n",
-                 name.c_str(), opt_->factory.c_str(),
-                 decode_type_token.c_str(), opt_->top_k, opt_->detection_threshold,
-                 opt_->nms_iou_threshold);
+                 "[boxdecode-debug] backend_fragment stage=%s factory=%s decode_type=%s topk=%d "
+                 "det=%.6f nms=%.6f metadata_only=1 contract_only=1\n",
+                 name.c_str(), opt_->factory.c_str(), decode_type_token.c_str(), opt_->top_k,
+                 opt_->detection_threshold, opt_->nms_iou_threshold);
   }
   if (opt_->original_width > 0) {
     ss << " original-width=" << opt_->original_width;
@@ -897,57 +868,38 @@ std::optional<PreprocessMetaRequirement> SimaBoxDecode::preprocess_meta_requirem
 
 namespace simaai::neat::nodes {
 
-std::shared_ptr<simaai::neat::Node> SimaBoxDecode(BoxDecodeType decode_type,
-                                                  double detection_threshold,
-                                                  double nms_iou_threshold,
-                                                  int top_k,
-                                                  const std::string& element_name,
-                                                  int original_width,
-                                                  int original_height,
-                                                  int model_width,
-                                                  int model_height,
-                                                  BoxDecodeTypeOption decode_type_option) {
-  return std::make_shared<simaai::neat::SimaBoxDecode>(decode_type, detection_threshold,
-                                                       nms_iou_threshold, top_k, element_name,
-                                                       original_width, original_height,
-                                                       model_width, model_height, decode_type_option);
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
+              int top_k, const std::string& element_name, int original_width, int original_height,
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option) {
+  return std::make_shared<simaai::neat::SimaBoxDecode>(
+      decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
+      original_height, model_width, model_height, decode_type_option);
 }
 
-std::shared_ptr<simaai::neat::Node> SimaBoxDecode(const simaai::neat::Model& model,
-                                                  BoxDecodeType decode_type,
-                                                  double detection_threshold,
-                                                  double nms_iou_threshold, int top_k,
-                                                  const std::string& element_name,
-                                                  std::optional<bool> route_tess_needed,
-                                                  std::optional<bool> route_quant_needed,
-                                                  int original_width, int original_height,
-                                                  BoxDecodeTypeOption decode_type_option) {
-  return std::make_shared<simaai::neat::SimaBoxDecode>(model, decode_type, detection_threshold,
-                                                       nms_iou_threshold, top_k, element_name,
-                                                       route_tess_needed, route_quant_needed,
-                                                       original_width, original_height, decode_type_option);
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
+              double detection_threshold, double nms_iou_threshold, int top_k,
+              const std::string& element_name, std::optional<bool> route_tess_needed,
+              std::optional<bool> route_quant_needed, int original_width, int original_height,
+              BoxDecodeTypeOption decode_type_option) {
+  return std::make_shared<simaai::neat::SimaBoxDecode>(
+      model, decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
+      route_tess_needed, route_quant_needed, original_width, original_height, decode_type_option);
 }
 
 #ifdef SIMA_NEAT_INTERNAL
-std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
-    const pipeline_internal::sima::BoxDecodeStaticContract& contract,
-    BoxDecodeType decode_type,
-    double detection_threshold,
-    double nms_iou_threshold,
-    int top_k,
-    const std::string& element_name,
-    const std::vector<std::string>& required_preprocess_meta_fields,
-    std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags,
-    std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics,
-    std::optional<bool> expect_resize,
-    std::optional<bool> expect_normalize,
-    std::optional<bool> expect_quantize,
-    std::optional<bool> expect_tessellate,
-    int original_width,
-    int original_height,
-    int model_width,
-    int model_height,
-    BoxDecodeTypeOption decode_type_option) {
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(const pipeline_internal::sima::BoxDecodeStaticContract& contract,
+              BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
+              int top_k, const std::string& element_name,
+              const std::vector<std::string>& required_preprocess_meta_fields,
+              std::optional<pipeline_internal::sima::ModelManagedRouteFlags> route_flags,
+              std::optional<pipeline_internal::sima::ModelBoxdecodeSemantics> model_semantics,
+              std::optional<bool> expect_resize, std::optional<bool> expect_normalize,
+              std::optional<bool> expect_quantize, std::optional<bool> expect_tessellate,
+              int original_width, int original_height, int model_width, int model_height,
+              BoxDecodeTypeOption decode_type_option) {
   return std::make_shared<simaai::neat::SimaBoxDecode>(
       contract, decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
       required_preprocess_meta_fields, route_flags, model_semantics, expect_resize,

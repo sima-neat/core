@@ -103,7 +103,8 @@ inline std::uint8_t to_ev_axis(TensorAxisSemantic axis) noexcept {
 }
 
 /// Lift the per-axis semantics out of a `sima_ev_shape_desc` into a host vector.
-inline std::vector<TensorAxisSemantic> host_axis_semantics_from_ev(const sima_ev_shape_desc& shape) {
+inline std::vector<TensorAxisSemantic>
+host_axis_semantics_from_ev(const sima_ev_shape_desc& shape) {
   const auto rank = std::min<std::uint32_t>(shape.rank, SIMA_EV_MAX_RANK);
   std::vector<TensorAxisSemantic> out;
   out.reserve(rank);
@@ -114,8 +115,8 @@ inline std::vector<TensorAxisSemantic> host_axis_semantics_from_ev(const sima_ev
 }
 
 /// Lift a raw axis-semantic byte vector into a `TensorAxisSemantic` vector.
-inline std::vector<TensorAxisSemantic> host_axis_semantics_from_raw(
-    const std::vector<std::uint8_t>& raw_axes) {
+inline std::vector<TensorAxisSemantic>
+host_axis_semantics_from_raw(const std::vector<std::uint8_t>& raw_axes) {
   std::vector<TensorAxisSemantic> out;
   out.reserve(raw_axes.size());
   for (const std::uint8_t axis : raw_axes) {
@@ -182,8 +183,8 @@ inline std::string layout_token_from_ev_tensor_desc(const sima_ev_tensor_desc& t
  * Returns true when either input is empty (unspecified). Returns false when the layout
  * normalizes to a non-empty token that disagrees with the layout derived from `axes`.
  */
-inline bool layout_token_matches_axis_semantics(
-    const std::string& raw_layout, const std::vector<TensorAxisSemantic>& axes) {
+inline bool layout_token_matches_axis_semantics(const std::string& raw_layout,
+                                                const std::vector<TensorAxisSemantic>& axes) {
   if (raw_layout.empty() || axes.empty()) {
     return true;
   }
@@ -196,8 +197,8 @@ inline bool layout_token_matches_axis_semantics(
 }
 
 /// Raw-byte overload of `layout_token_matches_axis_semantics`.
-inline bool layout_token_matches_axis_semantics(
-    const std::string& raw_layout, const std::vector<std::uint8_t>& raw_axes) {
+inline bool layout_token_matches_axis_semantics(const std::string& raw_layout,
+                                                const std::vector<std::uint8_t>& raw_axes) {
   return layout_token_matches_axis_semantics(raw_layout, host_axis_semantics_from_raw(raw_axes));
 }
 
@@ -245,15 +246,18 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
   }
   const std::uint32_t rank = static_cast<std::uint32_t>(shape.size());
   const std::string layout = normalize_layout_token(raw_layout);
-  const bool leading_batch =
-      rank >= 4U && !shape.empty() && shape.front() == static_cast<ShapeT>(1) &&
-      (layout == "CHW" || layout == "HWC");
+  const bool leading_batch = rank >= 4U && !shape.empty() &&
+                             shape.front() == static_cast<ShapeT>(1) &&
+                             (layout == "CHW" || layout == "HWC");
   if (layout == "CHW") {
     if (leading_batch) {
       semantics[0] = SIMA_EV_AXIS_N;
-      if (rank > 1U) semantics[1] = SIMA_EV_AXIS_C;
-      if (rank > 2U) semantics[2] = SIMA_EV_AXIS_H;
-      if (rank > 3U) semantics[3] = SIMA_EV_AXIS_W;
+      if (rank > 1U)
+        semantics[1] = SIMA_EV_AXIS_C;
+      if (rank > 2U)
+        semantics[2] = SIMA_EV_AXIS_H;
+      if (rank > 3U)
+        semantics[3] = SIMA_EV_AXIS_W;
       return;
     }
     if (rank == 3U) {
@@ -265,9 +269,12 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
   } else if (layout == "HWC") {
     if (leading_batch) {
       semantics[0] = SIMA_EV_AXIS_N;
-      if (rank > 1U) semantics[1] = SIMA_EV_AXIS_H;
-      if (rank > 2U) semantics[2] = SIMA_EV_AXIS_W;
-      if (rank > 3U) semantics[3] = SIMA_EV_AXIS_C;
+      if (rank > 1U)
+        semantics[1] = SIMA_EV_AXIS_H;
+      if (rank > 2U)
+        semantics[2] = SIMA_EV_AXIS_W;
+      if (rank > 3U)
+        semantics[3] = SIMA_EV_AXIS_C;
       return;
     }
     if (rank == 3U) {
@@ -287,11 +294,16 @@ inline void fill_axis_semantics_from_shape_layout(const std::vector<ShapeT>& sha
     return;
   }
   std::uint32_t cursor = std::min<std::uint32_t>(rank, SIMA_EV_MAX_RANK);
-  if (cursor > 0U) semantics[--cursor] = SIMA_EV_AXIS_C;
-  if (cursor > 0U) semantics[--cursor] = SIMA_EV_AXIS_W;
-  if (cursor > 0U) semantics[--cursor] = SIMA_EV_AXIS_H;
-  if (cursor > 0U) semantics[--cursor] = SIMA_EV_AXIS_D;
-  if (cursor > 0U) semantics[--cursor] = SIMA_EV_AXIS_N;
+  if (cursor > 0U)
+    semantics[--cursor] = SIMA_EV_AXIS_C;
+  if (cursor > 0U)
+    semantics[--cursor] = SIMA_EV_AXIS_W;
+  if (cursor > 0U)
+    semantics[--cursor] = SIMA_EV_AXIS_H;
+  if (cursor > 0U)
+    semantics[--cursor] = SIMA_EV_AXIS_D;
+  if (cursor > 0U)
+    semantics[--cursor] = SIMA_EV_AXIS_N;
 }
 
 /// Set every entry of a `SIMA_EV_MAX_RANK`-sized axis-semantic buffer to `UNKNOWN`.
@@ -323,12 +335,9 @@ inline int find_shape_axis(const sima_ev_shape_desc& shape, sima_ev_axis_semanti
  * non-positive-dim conditions.
  */
 template <typename ShapeT>
-inline bool fill_shape_desc(const std::vector<ShapeT>& shape,
-                            const std::string& layout_token,
-                            sima_ev_shape_desc* out,
-                            std::string* error_detail,
-                            std::string_view missing_output_msg,
-                            std::string_view rank_invalid_msg,
+inline bool fill_shape_desc(const std::vector<ShapeT>& shape, const std::string& layout_token,
+                            sima_ev_shape_desc* out, std::string* error_detail,
+                            std::string_view missing_output_msg, std::string_view rank_invalid_msg,
                             std::string_view dim_invalid_msg) {
   if (!out) {
     if (error_detail) {
@@ -399,12 +408,9 @@ inline bool fill_shape_desc_without_axis_semantics(const std::vector<ShapeT>& sh
  * For CHW the fastest axis is W → H → C; for HWC it is C → W → H. Other axes (D, N) follow
  * in slower order. Returns false on missing-output or invalid-dtype conditions.
  */
-inline bool fill_dense_strides(const sima_ev_shape_desc& shape,
-                               const std::string& raw_layout,
-                               const std::uint32_t dtype,
-                               sima_ev_strided_layout_desc* out,
-                               std::string* error_detail,
-                               std::string_view missing_output_msg,
+inline bool fill_dense_strides(const sima_ev_shape_desc& shape, const std::string& raw_layout,
+                               const std::uint32_t dtype, sima_ev_strided_layout_desc* out,
+                               std::string* error_detail, std::string_view missing_output_msg,
                                std::string_view dtype_invalid_msg) {
   if (!out) {
     if (error_detail) {
@@ -426,7 +432,8 @@ inline bool fill_dense_strides(const sima_ev_shape_desc& shape,
   fastest_axes.reserve(shape.rank);
   auto maybe_push_axis = [&](sima_ev_axis_semantic axis) {
     const int idx = find_shape_axis(shape, axis);
-    if (idx >= 0 && std::find(fastest_axes.begin(), fastest_axes.end(), idx) == fastest_axes.end()) {
+    if (idx >= 0 &&
+        std::find(fastest_axes.begin(), fastest_axes.end(), idx) == fastest_axes.end()) {
       fastest_axes.push_back(idx);
     }
   };
@@ -538,9 +545,10 @@ inline bool dtype_token_to_ev(std::string raw_dtype, std::uint32_t* out_dtype) {
  * on any inconsistency (rank mismatch, non-positive dim, dtype unknown, overflow).
  */
 template <typename ShapeT, typename TileShapeT>
-inline std::uint64_t generic_fixed_slot_tiled_size_bytes(
-    const std::vector<ShapeT>& shape, const std::vector<TileShapeT>& tile_shape,
-    const std::string& dtype_token, const std::uint32_t tile_align_bytes) {
+inline std::uint64_t generic_fixed_slot_tiled_size_bytes(const std::vector<ShapeT>& shape,
+                                                         const std::vector<TileShapeT>& tile_shape,
+                                                         const std::string& dtype_token,
+                                                         const std::uint32_t tile_align_bytes) {
   if (shape.empty() || shape.size() != tile_shape.size()) {
     return 0U;
   }
@@ -592,10 +600,8 @@ inline std::uint64_t generic_fixed_slot_tiled_size_bytes(
  * non-leading dimension that is non-positive or larger than its corresponding shape dim.
  */
 inline bool normalize_tile_shape(const std::vector<int>& shape,
-                                 const std::vector<int>& raw_tile_shape,
-                                 std::vector<int>* out,
-                                 std::string* error_detail,
-                                 std::string_view missing_msg,
+                                 const std::vector<int>& raw_tile_shape, std::vector<int>* out,
+                                 std::string* error_detail, std::string_view missing_msg,
                                  std::string_view rank_prefix_invalid_msg,
                                  std::string_view dim_invalid_msg) {
   if (!out) {
@@ -639,12 +645,9 @@ inline bool normalize_tile_shape(const std::vector<int>& shape,
 }
 
 /// Build a fully-populated dense `sima_ev_tensor_desc` (shape + axis semantics + strides).
-inline bool build_dense_tensor_desc(const std::vector<int>& shape,
-                                    const std::string& dtype_token,
-                                    const std::string& layout_token,
-                                    sima_ev_tensor_desc* out,
-                                    std::string* error_detail,
-                                    std::string_view missing_output_msg,
+inline bool build_dense_tensor_desc(const std::vector<int>& shape, const std::string& dtype_token,
+                                    const std::string& layout_token, sima_ev_tensor_desc* out,
+                                    std::string* error_detail, std::string_view missing_output_msg,
                                     std::string_view rank_invalid_msg,
                                     std::string_view dim_invalid_msg,
                                     std::string_view dtype_invalid_msg,
@@ -673,15 +676,11 @@ inline bool build_dense_tensor_desc(const std::vector<int>& shape,
 
 /// Build a generic (no-axis-semantics) dense `sima_ev_tensor_desc` with last-dim-fastest strides.
 template <typename ShapeT>
-inline bool build_generic_dense_tensor_desc(const std::vector<ShapeT>& shape,
-                                            const std::string& dtype_token,
-                                            sima_ev_tensor_desc* out,
-                                            std::string* error_detail,
-                                            std::string_view missing_output_msg,
-                                            std::string_view rank_invalid_msg,
-                                            std::string_view dim_invalid_msg,
-                                            std::string_view dtype_invalid_msg,
-                                            std::string_view stride_output_missing_msg) {
+inline bool build_generic_dense_tensor_desc(
+    const std::vector<ShapeT>& shape, const std::string& dtype_token, sima_ev_tensor_desc* out,
+    std::string* error_detail, std::string_view missing_output_msg,
+    std::string_view rank_invalid_msg, std::string_view dim_invalid_msg,
+    std::string_view dtype_invalid_msg, std::string_view stride_output_missing_msg) {
   if (!out) {
     if (error_detail) {
       *error_detail = std::string(missing_output_msg);
@@ -706,18 +705,13 @@ inline bool build_generic_dense_tensor_desc(const std::vector<ShapeT>& shape,
 
 /// Forward declaration; defined below.
 template <typename ShapeT, typename TileShapeT>
-inline bool build_generic_tiled_tensor_desc(const std::vector<ShapeT>& shape,
-                                            const std::vector<TileShapeT>& tile_shape,
-                                            const std::string& dtype_token,
-                                            std::uint32_t tile_align_bytes,
-                                            sima_ev_tensor_desc* out,
-                                            std::string* error_detail,
-                                            std::string_view missing_output_msg,
-                                            std::string_view rank_invalid_msg,
-                                            std::string_view dim_invalid_msg,
-                                            std::string_view dtype_invalid_msg,
-                                            std::string_view tile_rank_mismatch_msg,
-                                            std::string_view tile_dim_invalid_msg);
+inline bool build_generic_tiled_tensor_desc(
+    const std::vector<ShapeT>& shape, const std::vector<TileShapeT>& tile_shape,
+    const std::string& dtype_token, std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out,
+    std::string* error_detail, std::string_view missing_output_msg,
+    std::string_view rank_invalid_msg, std::string_view dim_invalid_msg,
+    std::string_view dtype_invalid_msg, std::string_view tile_rank_mismatch_msg,
+    std::string_view tile_dim_invalid_msg);
 
 /**
  * @brief Build a tiled `sima_ev_tensor_desc` with axis-semantic stamping when possible.
@@ -726,19 +720,14 @@ inline bool build_generic_tiled_tensor_desc(const std::vector<ShapeT>& shape,
  * semantics and sets `SIMA_EV_TILED_FLAG_COMPACT_CHANNELS` when a C axis is present. Otherwise
  * delegates to `build_generic_tiled_tensor_desc`.
  */
-inline bool build_tiled_tensor_desc(const std::vector<int>& shape,
-                                    const std::vector<int>& tile_shape,
-                                    const std::string& dtype_token,
-                                    const std::string& layout_token,
-                                    std::uint32_t tile_align_bytes,
-                                    sima_ev_tensor_desc* out,
-                                    std::string* error_detail,
-                                    std::string_view missing_output_msg,
-                                    std::string_view rank_invalid_msg,
-                                    std::string_view dim_invalid_msg,
-                                    std::string_view dtype_invalid_msg,
-                                    std::string_view tile_rank_mismatch_msg,
-                                    std::string_view tile_dim_invalid_msg) {
+inline bool
+build_tiled_tensor_desc(const std::vector<int>& shape, const std::vector<int>& tile_shape,
+                        const std::string& dtype_token, const std::string& layout_token,
+                        std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out,
+                        std::string* error_detail, std::string_view missing_output_msg,
+                        std::string_view rank_invalid_msg, std::string_view dim_invalid_msg,
+                        std::string_view dtype_invalid_msg, std::string_view tile_rank_mismatch_msg,
+                        std::string_view tile_dim_invalid_msg) {
   if (!out) {
     if (error_detail) {
       *error_detail = std::string(missing_output_msg);
@@ -786,9 +775,9 @@ inline bool build_tiled_tensor_desc(const std::vector<int>& shape,
     out->layout.tiled.tile_sizes[i] = static_cast<std::int64_t>(tile_shape[i]);
   }
   out->layout.tiled.tile_align_bytes = tile_align_bytes;
-  out->layout.tiled.flags =
-      find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0 ? SIMA_EV_TILED_FLAG_COMPACT_CHANNELS
-                                                       : SIMA_EV_TILED_FLAG_NONE;
+  out->layout.tiled.flags = find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0
+                                ? SIMA_EV_TILED_FLAG_COMPACT_CHANNELS
+                                : SIMA_EV_TILED_FLAG_NONE;
   return true;
 }
 
@@ -799,18 +788,13 @@ inline bool build_tiled_tensor_desc(const std::vector<int>& shape,
  * out-of-bound tile dims.
  */
 template <typename ShapeT, typename TileShapeT>
-inline bool build_generic_tiled_tensor_desc(const std::vector<ShapeT>& shape,
-                                            const std::vector<TileShapeT>& tile_shape,
-                                            const std::string& dtype_token,
-                                            std::uint32_t tile_align_bytes,
-                                            sima_ev_tensor_desc* out,
-                                            std::string* error_detail,
-                                            std::string_view missing_output_msg,
-                                            std::string_view rank_invalid_msg,
-                                            std::string_view dim_invalid_msg,
-                                            std::string_view dtype_invalid_msg,
-                                            std::string_view tile_rank_mismatch_msg,
-                                            std::string_view tile_dim_invalid_msg) {
+inline bool build_generic_tiled_tensor_desc(
+    const std::vector<ShapeT>& shape, const std::vector<TileShapeT>& tile_shape,
+    const std::string& dtype_token, std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out,
+    std::string* error_detail, std::string_view missing_output_msg,
+    std::string_view rank_invalid_msg, std::string_view dim_invalid_msg,
+    std::string_view dtype_invalid_msg, std::string_view tile_rank_mismatch_msg,
+    std::string_view tile_dim_invalid_msg) {
   if (!out) {
     if (error_detail) {
       *error_detail = std::string(missing_output_msg);
@@ -824,9 +808,8 @@ inline bool build_generic_tiled_tensor_desc(const std::vector<ShapeT>& shape,
     }
     return false;
   }
-  if (!fill_shape_desc_without_axis_semantics(shape, &out->shape, error_detail,
-                                              missing_output_msg, rank_invalid_msg,
-                                              dim_invalid_msg)) {
+  if (!fill_shape_desc_without_axis_semantics(shape, &out->shape, error_detail, missing_output_msg,
+                                              rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }
   if (!dtype_token_to_ev(dtype_token, &out->dtype)) {

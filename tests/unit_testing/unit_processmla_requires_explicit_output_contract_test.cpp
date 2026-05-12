@@ -41,8 +41,7 @@ RUN_TEST("unit_processmla_requires_explicit_output_contract_test", ([] {
                "processmla_requires_explicit_output_contract",
                "fakesrc num-buffers=1 ! neatprocessmla name=mla_explicit_contract "
                "stage-id=stage_mla_explicit silent=true ! fakesink",
-               &manifest,
-               GST_STATE_PAUSED);
+               &manifest, GST_STATE_PAUSED);
 
            if (result.error.find("Unable to get dispatcher") != std::string::npos ||
                is_dispatcher_unavailable(result.error)) {
@@ -51,16 +50,13 @@ RUN_TEST("unit_processmla_requires_explicit_output_contract_test", ([] {
            require(!result.error.empty(),
                    "processmla should fail when explicit output contract fields are missing");
 
-           require_contains(result.error,
-                            "Unable to build typed stage config",
-                            "processmla should reject manifest stages without explicit v3 output contract");
-           require_contains(result.error,
-                            "canonical_contract_missing",
+           require_contains(
+               result.error, "Unable to build typed stage config",
+               "processmla should reject manifest stages without explicit v3 output contract");
+           require_contains(result.error, "canonical_contract_missing",
                             "processmla should report canonical contract fields as missing");
-           require_contains(result.error,
-                            "source_used='manifest_context'",
+           require_contains(result.error, "source_used='manifest_context'",
                             "processmla should report manifest context as the semantic source");
-           require_contains(result.error,
-                            "fallback_chain='manifest_context_only'",
+           require_contains(result.error, "fallback_chain='manifest_context_only'",
                             "processmla should report manifest-only resolution");
          }));

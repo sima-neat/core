@@ -66,7 +66,8 @@ bool GraphRun::State::ensure_pipeline_built(std::size_t index, const Sample& sam
     pipe.building = true;
   }
 
-  Sample build_sample = simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
+  Sample build_sample =
+      simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
 
   try {
     if (graph_debug_enabled()) {

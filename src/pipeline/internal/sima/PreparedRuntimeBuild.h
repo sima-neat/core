@@ -40,12 +40,10 @@ namespace simaai::neat::pipeline_internal::sima {
  * @return Prepared-runtime descriptor on success; `std::nullopt` otherwise.
  */
 std::optional<simaai::neat::PreparedRuntimeDescriptor> build_prepared_runtime_context(
-    const GstContext* static_manifest_context,
-    const SimaPluginStaticManifest& transformed_manifest,
+    const GstContext* static_manifest_context, const SimaPluginStaticManifest& transformed_manifest,
     const std::optional<SimaPluginStaticManifest>& original_manifest,
     const std::vector<PipelineElementSpec>& pipeline_elements,
-    const std::vector<std::string>& model_source_paths,
-    const NameTransform& name_transform,
+    const std::vector<std::string>& model_source_paths, const NameTransform& name_transform,
     std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima

@@ -29,11 +29,13 @@ namespace simaai::neat::graph::nodes {
  * @ingroup graph
  */
 struct StageModelExecutorOptions {
-  std::shared_ptr<const simaai::neat::Model> model;          ///< Model to run inference against.
-  bool do_preproc = true;                                    ///< Run the preprocess stage.
-  bool do_mla = true;                                        ///< Run the MLA inference stage.
-  bool do_boxdecode = false;                                 ///< Run the box-decode post stage.
-  simaai::neat::stages::BoxDecodeOptions box_opt{simaai::neat::BoxDecodeType::Unspecified}; ///< Box-decode options when `do_boxdecode` is true.
+  std::shared_ptr<const simaai::neat::Model> model; ///< Model to run inference against.
+  bool do_preproc = true;                           ///< Run the preprocess stage.
+  bool do_mla = true;                               ///< Run the MLA inference stage.
+  bool do_boxdecode = false;                        ///< Run the box-decode post stage.
+  simaai::neat::stages::BoxDecodeOptions box_opt{
+      simaai::neat::BoxDecodeType::Unspecified}; ///< Box-decode options when `do_boxdecode` is
+                                                 ///< true.
 };
 
 /**

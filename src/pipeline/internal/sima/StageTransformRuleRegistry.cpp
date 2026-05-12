@@ -10,16 +10,13 @@ namespace simaai::neat::pipeline_internal::sima {
 namespace {
 
 const std::unordered_set<std::string> kPreRules = {"preproc", "quanttess", "quantize",
-                                                    "tessellate"};
-const std::unordered_set<std::string> kPostRules = {"detessdequant", "detessellate",
-                                                     "dequantize", "boxdecode"};
+                                                   "tessellate"};
+const std::unordered_set<std::string> kPostRules = {"detessdequant", "detessellate", "dequantize",
+                                                    "boxdecode"};
 const std::unordered_map<std::string, StageTransformRule> kRules = {
-    {"preproc",
-     StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
-    {"quanttess",
-     StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
-    {"quantize",
-     StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
+    {"preproc", StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
+    {"quanttess", StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
+    {"quantize", StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
     {"tessellate",
      StageTransformRule{StageTensorSource::None, StageTensorSource::MlaInputs, false}},
     {"detessdequant",
@@ -28,14 +25,13 @@ const std::unordered_map<std::string, StageTransformRule> kRules = {
      StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
     {"dequantize",
      StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
-    {"boxdecode",
-     StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
+    {"boxdecode", StageTransformRule{StageTensorSource::MlaOutputs, StageTensorSource::None, true}},
 };
 
 } // namespace
 
-std::optional<StageTransformRule> StageTransformRuleRegistry::lookup(
-    const std::string& kernel_kind) const {
+std::optional<StageTransformRule>
+StageTransformRuleRegistry::lookup(const std::string& kernel_kind) const {
   const auto it = kRules.find(lower_copy(kernel_kind));
   if (it == kRules.end()) {
     return std::nullopt;

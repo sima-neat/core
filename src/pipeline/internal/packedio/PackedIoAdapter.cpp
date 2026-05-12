@@ -19,15 +19,14 @@ std::uint64_t span_end_bytes(std::int64_t offset, std::uint64_t size) {
   if (offset < 0) {
     return 0U;
   }
-  if (static_cast<std::uint64_t>(offset) >
-      std::numeric_limits<std::uint64_t>::max() - size) {
+  if (static_cast<std::uint64_t>(offset) > std::numeric_limits<std::uint64_t>::max() - size) {
     return std::numeric_limits<std::uint64_t>::max();
   }
   return static_cast<std::uint64_t>(offset) + size;
 }
 
-const PhysicalBufferStaticSpec* find_physical(const std::vector<PhysicalBufferStaticSpec>& physicals,
-                                              int physical_index) {
+const PhysicalBufferStaticSpec*
+find_physical(const std::vector<PhysicalBufferStaticSpec>& physicals, int physical_index) {
   auto it = std::find_if(physicals.begin(), physicals.end(),
                          [&](const PhysicalBufferStaticSpec& physical) {
                            return physical.physical_index == physical_index;
@@ -69,8 +68,7 @@ std::uint64_t physical_span_bytes_for_tensor(const std::vector<std::int64_t>& sh
   }
   const std::uint64_t elem_bytes =
       strides->empty() ? 1U : static_cast<std::uint64_t>(strides->back());
-  if (elem_bytes == 0U ||
-      max_offset > (std::numeric_limits<std::uint64_t>::max() - elem_bytes)) {
+  if (elem_bytes == 0U || max_offset > (std::numeric_limits<std::uint64_t>::max() - elem_bytes)) {
     return logical_size_bytes;
   }
   return max_offset + elem_bytes;
@@ -149,8 +147,7 @@ bool normalize_shared_parent_input_views(CompiledRuntimeContract* contract, std:
   struct Group {
     int parent_source_physical_index = -1;
     std::string segment_name;
-    pipeline_internal::sima::DeviceKind device_kind =
-        pipeline_internal::sima::DeviceKind::Unknown;
+    pipeline_internal::sima::DeviceKind device_kind = pipeline_internal::sima::DeviceKind::Unknown;
     std::uint64_t size_bytes = 0U;
     std::uint64_t base_byte_offset = 0U;
     bool have_base_byte_offset = false;
@@ -166,18 +163,16 @@ bool normalize_shared_parent_input_views(CompiledRuntimeContract* contract, std:
 
   const auto binding_index_for_logical = [&](int logical_index,
                                              std::size_t fallback) -> std::size_t {
-    const auto by_logical = std::find_if(
-        contract->input_bindings.begin(), contract->input_bindings.end(),
-        [&](const pipeline_internal::sima::InputBindingStaticSpec& binding) {
-          return binding.local_logical_input_index == logical_index;
-        });
+    const auto by_logical =
+        std::find_if(contract->input_bindings.begin(), contract->input_bindings.end(),
+                     [&](const pipeline_internal::sima::InputBindingStaticSpec& binding) {
+                       return binding.local_logical_input_index == logical_index;
+                     });
     if (by_logical != contract->input_bindings.end()) {
-      return static_cast<std::size_t>(
-          std::distance(contract->input_bindings.begin(), by_logical));
+      return static_cast<std::size_t>(std::distance(contract->input_bindings.begin(), by_logical));
     }
-    return fallback < contract->input_bindings.size()
-               ? fallback
-               : std::numeric_limits<std::size_t>::max();
+    return fallback < contract->input_bindings.size() ? fallback
+                                                      : std::numeric_limits<std::size_t>::max();
   };
 
   for (std::size_t i = 0; i < contract->logical_inputs.size(); ++i) {
@@ -187,9 +182,9 @@ bool normalize_shared_parent_input_views(CompiledRuntimeContract* contract, std:
       return true;
     }
     const std::size_t binding_pos = binding_index_for_logical(logical.logical_index, i);
-    const auto* binding =
-        binding_pos < contract->input_bindings.size() ? &contract->input_bindings[binding_pos]
-                                                      : nullptr;
+    const auto* binding = binding_pos < contract->input_bindings.size()
+                              ? &contract->input_bindings[binding_pos]
+                              : nullptr;
 
     int parent_source_physical_index = -1;
     if (physical->source_physical_index >= 0) {
@@ -283,8 +278,8 @@ bool normalize_shared_parent_input_views(CompiledRuntimeContract* contract, std:
     const std::uint64_t size_bytes =
         group.size_bytes > base ? group.size_bytes - base : group.size_bytes;
     if (group.segment_name.empty()) {
-      group.segment_name = groups.size() == 1U ? "input_tensor"
-                                               : "input_tensor_" + std::to_string(gi);
+      group.segment_name =
+          groups.size() == 1U ? "input_tensor" : "input_tensor_" + std::to_string(gi);
     }
     normalized_physical_inputs.push_back(
         pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
@@ -365,8 +360,7 @@ selectors_for_logical_inputs(const CompiledRuntimeContract& contract) {
 
 bool prepare_physical_inputs(const CompiledRuntimeContract& contract,
                              const simaai::gst::TensorBufferView& upstream_view,
-                             std::vector<std::uint8_t>* out_bytes,
-                             std::string* err) {
+                             std::vector<std::uint8_t>* out_bytes, std::string* err) {
   if (!out_bytes) {
     if (err) {
       *err = "packed input preparation requires output byte storage";
@@ -380,10 +374,8 @@ bool prepare_physical_inputs(const CompiledRuntimeContract& contract,
       upstream_view, selectors_for_logical_inputs(contract), out_bytes, err);
 }
 
-bool publish_logical_outputs(const CompiledRuntimeContract& contract,
-                             const std::string& stage_key,
-                             simaai::gst::TensorBufferView* out,
-                             std::string* err) {
+bool publish_logical_outputs(const CompiledRuntimeContract& contract, const std::string& stage_key,
+                             simaai::gst::TensorBufferView* out, std::string* err) {
   if (!out) {
     if (err) {
       *err = "packed output publication requires output view";

@@ -36,18 +36,19 @@ namespace simaai::neat::nodes::groups {
  * @ingroup nodes_groups
  */
 struct InferOptions {
-  PreprocessColorFormat input_format = PreprocessColorFormat::Auto; ///< Color format the model expects.
-  bool normalize = false;             ///< If true, apply `(x - mean) / stddev` normalization.
-  std::vector<float> mean;            ///< Per-channel mean used when `normalize` is true.
-  std::vector<float> stddev;          ///< Per-channel stddev used when `normalize` is true.
-  std::string upstream_name;          ///< Name of the upstream Node the preprocess attaches to.
-  std::string preproc_next_cpu;       ///< Optional CPU-side next-element override after preprocess.
-  int num_buffers_cvu = 4;            ///< CVU-side buffer pool depth for preprocess.
-  int num_buffers_mla = 4;            ///< MLA-side buffer pool depth for inference.
-  int queue_max_buffers = 0;          ///< Cap on queued buffers (0 = default).
-  int64_t queue_max_time_ns = -1;     ///< Cap on queued time in ns (-1 = unset).
-  std::string queue_leaky;            ///< Queue leaky policy ("upstream", "downstream", or empty).
-  bool sync_mode = false;             ///< If true, run sinks in sync (real-time) mode.
+  PreprocessColorFormat input_format =
+      PreprocessColorFormat::Auto; ///< Color format the model expects.
+  bool normalize = false;          ///< If true, apply `(x - mean) / stddev` normalization.
+  std::vector<float> mean;         ///< Per-channel mean used when `normalize` is true.
+  std::vector<float> stddev;       ///< Per-channel stddev used when `normalize` is true.
+  std::string upstream_name;       ///< Name of the upstream Node the preprocess attaches to.
+  std::string preproc_next_cpu;    ///< Optional CPU-side next-element override after preprocess.
+  int num_buffers_cvu = 4;         ///< CVU-side buffer pool depth for preprocess.
+  int num_buffers_mla = 4;         ///< MLA-side buffer pool depth for inference.
+  int queue_max_buffers = 0;       ///< Cap on queued buffers (0 = default).
+  int64_t queue_max_time_ns = -1;  ///< Cap on queued time in ns (-1 = unset).
+  std::string queue_leaky;         ///< Queue leaky policy ("upstream", "downstream", or empty).
+  bool sync_mode = false;          ///< If true, run sinks in sync (real-time) mode.
 };
 
 /**

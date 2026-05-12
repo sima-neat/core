@@ -27,9 +27,9 @@ namespace simaai::neat {
  * @ingroup contracts
  */
 enum class ValidationSeverity {
-  Info = 0,   ///< Informational only; never blocks a run.
-  Warning,    ///< Soft contract violation; pipeline may still run.
-  Error,      ///< Hard contract violation; pipeline must not run.
+  Info = 0, ///< Informational only; never blocks a run.
+  Warning,  ///< Soft contract violation; pipeline may still run.
+  Error,    ///< Hard contract violation; pipeline must not run.
 };
 
 /// @brief Stable string label for a `ValidationSeverity` (for reports/logs).
@@ -58,14 +58,14 @@ struct ValidationIssue {
   ValidationSeverity severity = ValidationSeverity::Error; ///< Severity of this issue.
 
   // Contract metadata
-  std::string contract_id;  ///< `Contract::id()` of the emitting contract.
-  std::string code;         ///< Stable machine code (e.g., `"SINK_NOT_LAST"`).
-  std::string message;      ///< Human-readable diagnostic.
+  std::string contract_id; ///< `Contract::id()` of the emitting contract.
+  std::string code;        ///< Stable machine code (e.g., `"SINK_NOT_LAST"`).
+  std::string message;     ///< Human-readable diagnostic.
 
   // Best-effort node location (builder-level)
-  int node_index = -1;      ///< Index in NodeGroup, or -1 if not Node-specific.
-  std::string node_kind;    ///< `Node::kind()` of the offending Node, if any.
-  std::string node_label;   ///< User label of the offending Node, if any.
+  int node_index = -1;    ///< Index in NodeGroup, or -1 if not Node-specific.
+  std::string node_kind;  ///< `Node::kind()` of the offending Node, if any.
+  std::string node_label; ///< User label of the offending Node, if any.
 };
 
 /**

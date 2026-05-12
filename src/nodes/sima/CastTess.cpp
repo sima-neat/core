@@ -82,11 +82,11 @@ NodeContractDefinition CastTess::contract_definition() const {
   return def;
 }
 
-bool CastTess::compile_node_contract(const ContractCompileInput& input,
-                                     CompiledNodeContract* out,
+bool CastTess::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                      std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("casttess") : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("casttess")
+                                       : element_names(input.node_index).front();
   if (!config_holder_ || !config_holder_->compiled_contract.has_value()) {
     if (err) {
       *err = "CastTess: compiled processcvu contract is required";
@@ -94,8 +94,8 @@ bool CastTess::compile_node_contract(const ContractCompileInput& input,
     return false;
   }
   return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
-      kind(), element_name, element_name, contract_definition(),
-      *config_holder_->compiled_contract, out, err);
+      kind(), element_name, element_name, contract_definition(), *config_holder_->compiled_contract,
+      out, err);
 }
 
 void CastTess::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {

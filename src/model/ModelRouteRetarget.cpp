@@ -86,8 +86,7 @@ bool requested_post_route_supported(RequestedPostRouteKind kind) {
 
 std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLineageBinding& binding,
                                                                 BoxDecodeType requested_decode_type,
-                                                                bool* changed,
-                                                                std::string* err) {
+                                                                bool* changed, std::string* err) {
   if (changed) {
     *changed = false;
   }
@@ -102,7 +101,8 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
   const RequestedPostRouteKind requested = binding.requested_post;
   if (requested == RequestedPostRouteKind::Auto || requested == current) {
     if (requested == RequestedPostRouteKind::BoxDecode &&
-        requested_decode_type != BoxDecodeType::Unspecified && base_opt.decode_type != requested_decode_type) {
+        requested_decode_type != BoxDecodeType::Unspecified &&
+        base_opt.decode_type != requested_decode_type) {
       Model::Options opt = base_opt;
       opt.decode_type = requested_decode_type;
       auto rebuilt = std::make_shared<Model>(ModelAccess::clone_with_options(*model, opt));
@@ -146,7 +146,8 @@ std::shared_ptr<Model> build_effective_model_for_requested_post(const ModelLinea
   }
 
   auto rebuilt = std::make_shared<Model>(ModelAccess::clone_with_options(*model, opt));
-  if (requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*rebuilt)) != requested) {
+  if (requested_post_route_from_stage_kind(ModelAccess::resolved_post_kind(*rebuilt)) !=
+      requested) {
     if (err) {
       *err = "retargeted model route remained '" +
              requested_post_route_name(

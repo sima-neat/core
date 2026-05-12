@@ -28,7 +28,7 @@ struct Detess::ConfigHolder {
 
 namespace {
 std::shared_ptr<Detess::ConfigHolder> init_config_holder(const DetessOptions& opt,
-                                                          std::string& config_path_out) {
+                                                         std::string& config_path_out) {
   auto holder = std::make_shared<Detess::ConfigHolder>();
   if (opt.compiled_contract) {
     holder->compiled_contract = *opt.compiled_contract;
@@ -67,8 +67,9 @@ Detess::Detess(DetessOptions opt) : opt_(std::move(opt)) {
 std::string Detess::backend_fragment(int node_index) const {
   std::ostringstream ss;
   require_element("neatdetess", "Detess::backend_fragment");
-  const std::string name =
-      opt_.element_name.empty() ? ("n" + std::to_string(node_index) + "_detess") : opt_.element_name;
+  const std::string name = opt_.element_name.empty()
+                               ? ("n" + std::to_string(node_index) + "_detess")
+                               : opt_.element_name;
   ss << "neatdetess name=" << name << " stage-id=" << name;
   if (opt_.num_buffers > 0 && element_property_exists("neatdetess", "num-buffers")) {
     ss << " num-buffers=" << opt_.num_buffers;
@@ -110,11 +111,11 @@ NodeContractDefinition Detess::contract_definition() const {
   return def;
 }
 
-bool Detess::compile_node_contract(const ContractCompileInput& input,
-                                   CompiledNodeContract* out,
+bool Detess::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                                    std::string* err) const {
-  const std::string element_name =
-      element_names(input.node_index).empty() ? std::string("detess") : element_names(input.node_index).front();
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("detess")
+                                       : element_names(input.node_index).front();
   if (config_holder_ && config_holder_->compiled_contract.has_value()) {
     pipeline_internal::sima::stagesemantics::TransportCanonicalFacts facts;
     facts.plugin_kind = "neatdetess";
@@ -122,11 +123,12 @@ bool Detess::compile_node_contract(const ContractCompileInput& input,
     facts.model_managed_stage = opt_.num_buffers_locked;
     facts.payload_kind = pipeline_internal::sima::StagePayloadKind::ProcessCvu;
     facts.processcvu_payload = config_holder_->compiled_contract->payload;
-    facts.runtime_contract =
-        pipeline_internal::sima::stagesemantics::build_transport_runtime_contract_from_processcvu_compiled(
+    facts.runtime_contract = pipeline_internal::sima::stagesemantics::
+        build_transport_runtime_contract_from_processcvu_compiled(
             *config_holder_->compiled_contract);
     const auto compiled =
-        pipeline_internal::sima::stagesemantics::build_transport_compiled_contract_from_facts(facts);
+        pipeline_internal::sima::stagesemantics::build_transport_compiled_contract_from_facts(
+            facts);
     return pipeline_internal::sima::stagesemantics::build_transport_node_contract(
         kind(), element_name, element_name, contract_definition(), compiled, out, err);
   }

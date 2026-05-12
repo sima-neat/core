@@ -93,8 +93,7 @@ constexpr const char* kMonolithicOfmName = "data.ofm.b0";
 // `dst` already has a value at that index, prefer the existing one (keeps the
 // first-seen entry on duplicate scan; multi-section ELFs sometimes mention the
 // same logical placeholder in multiple sections).
-void place_at_index(std::vector<std::string>* dst, std::size_t index,
-                    const std::string& name) {
+void place_at_index(std::vector<std::string>* dst, std::size_t index, const std::string& name) {
   if (dst->size() <= index) {
     dst->resize(index + 1U);
   }
@@ -105,8 +104,7 @@ void place_at_index(std::vector<std::string>* dst, std::size_t index,
 
 } // namespace
 
-bool read_mla_elf_io_topology(const std::filesystem::path& elf_path,
-                              MlaElfIoTopology* out) {
+bool read_mla_elf_io_topology(const std::filesystem::path& elf_path, MlaElfIoTopology* out) {
   if (!out) {
     return false;
   }

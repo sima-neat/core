@@ -7,8 +7,8 @@
 
 namespace simaai::neat {
 
-inline const CompiledRuntimeContract* compiled_runtime_contract_from_stage(
-    const CompiledNodeContract* stage) {
+inline const CompiledRuntimeContract*
+compiled_runtime_contract_from_stage(const CompiledNodeContract* stage) {
   if (!stage) {
     return nullptr;
   }

@@ -40,7 +40,8 @@ void validate_layout_convert_spec(const LayoutConvertSpec& spec) {
   for (std::size_t i = 0; i < spec.perm.size(); ++i) {
     const int axis = spec.perm[i];
     if (axis < 0) {
-      throw std::invalid_argument("preprocess.layout_convert.perm must contain only non-negative axis indices");
+      throw std::invalid_argument(
+          "preprocess.layout_convert.perm must contain only non-negative axis indices");
     }
     for (std::size_t j = 0; j < i; ++j) {
       if (spec.perm[j] == axis) {
@@ -122,9 +123,8 @@ bool derive_unit_pixel_normalization_from_input_range(const std::vector<double>&
   // (1-mean)/stddev.  Solve these two equations to recover the stats.
   const double derived_stddev = 1.0 / (hi - lo);
   const double derived_mean = -lo * derived_stddev;
-  if (!std::isfinite(derived_mean) || !std::isfinite(derived_stddev) ||
-      derived_mean < 0.0 || derived_mean > 1.0 ||
-      derived_stddev <= 0.0 || derived_stddev > 1.0) {
+  if (!std::isfinite(derived_mean) || !std::isfinite(derived_stddev) || derived_mean < 0.0 ||
+      derived_mean > 1.0 || derived_stddev <= 0.0 || derived_stddev > 1.0) {
     return false;
   }
 
@@ -268,15 +268,18 @@ void ensure_family_available(const PreprocessCapabilities& caps, PreprocessGraph
                            PreprocessGraphFamily::Tess, PreprocessGraphFamily::QuantTess}) {
       const auto* c = capabilities_for_family(caps, candidate);
       if (c && c->available) {
-        if (!available_families.empty()) available_families += ", ";
+        if (!available_families.empty())
+          available_families += ", ";
         available_families += family_name(candidate);
       }
     }
-    if (available_families.empty()) available_families = "(none)";
+    if (available_families.empty())
+      available_families = "(none)";
     throw std::invalid_argument("preprocess planner: requested graph family '" +
                                 family_name(family) +
                                 "' is unavailable in this model pack (no fallback allowed)."
-                                " Available families: " + available_families);
+                                " Available families: " +
+                                available_families);
   }
 }
 
@@ -285,17 +288,43 @@ void ensure_supported(const GraphFamilyCapabilities& fam, bool resize_enabled, b
                       bool tess_enabled, const std::string& family) {
   auto fail = [&](const char* op) {
     std::string supported;
-    if (fam.supports_resize) { if (!supported.empty()) supported += ", "; supported += "resize"; }
-    if (fam.supports_color_convert) { if (!supported.empty()) supported += ", "; supported += "color_convert"; }
-    if (fam.supports_layout_convert) { if (!supported.empty()) supported += ", "; supported += "layout_convert"; }
-    if (fam.supports_normalize) { if (!supported.empty()) supported += ", "; supported += "normalize"; }
-    if (fam.supports_quantize) { if (!supported.empty()) supported += ", "; supported += "quantize"; }
-    if (fam.supports_tessellate) { if (!supported.empty()) supported += ", "; supported += "tessellate"; }
-    if (supported.empty()) supported = "(none)";
+    if (fam.supports_resize) {
+      if (!supported.empty())
+        supported += ", ";
+      supported += "resize";
+    }
+    if (fam.supports_color_convert) {
+      if (!supported.empty())
+        supported += ", ";
+      supported += "color_convert";
+    }
+    if (fam.supports_layout_convert) {
+      if (!supported.empty())
+        supported += ", ";
+      supported += "layout_convert";
+    }
+    if (fam.supports_normalize) {
+      if (!supported.empty())
+        supported += ", ";
+      supported += "normalize";
+    }
+    if (fam.supports_quantize) {
+      if (!supported.empty())
+        supported += ", ";
+      supported += "quantize";
+    }
+    if (fam.supports_tessellate) {
+      if (!supported.empty())
+        supported += ", ";
+      supported += "tessellate";
+    }
+    if (supported.empty())
+      supported = "(none)";
     throw std::invalid_argument("preprocess planner: graph family '" + family +
                                 "' does not support requested op '" + op +
                                 "' for this model (no fallback allowed)."
-                                " Supported ops for this family: " + supported);
+                                " Supported ops for this family: " +
+                                supported);
   };
   if (resize_enabled && !fam.supports_resize)
     fail("resize");
@@ -416,8 +445,8 @@ bool dtype_is_quantized_like(std::string raw) {
          raw.find("INT32") != std::string::npos || raw.find("UINT32") != std::string::npos;
 }
 
-std::string primary_tensor_dtype(
-    const std::vector<pipeline_internal::sima::MpkTensorContract>& tensors) {
+std::string
+primary_tensor_dtype(const std::vector<pipeline_internal::sima::MpkTensorContract>& tensors) {
   for (const auto& tensor : tensors) {
     if (!tensor.logical_dtype.empty()) {
       return canonical_dtype_for_signal(tensor.logical_dtype);
@@ -452,7 +481,8 @@ std::string canonical_mpk_kernel_kind(const std::string& raw_kernel) {
   if (token.empty()) {
     return {};
   }
-  if (token.find("boxdecode") != std::string::npos || token.find("boxdecoder") != std::string::npos) {
+  if (token.find("boxdecode") != std::string::npos ||
+      token.find("boxdecoder") != std::string::npos) {
     return "boxdecode";
   }
   if (token.find("detess") != std::string::npos && token.find("dequant") != std::string::npos) {
@@ -498,8 +528,8 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   }
   const auto& contract = *maybe_contract;
   for (const auto& ingress : contract.ingress_tensors) {
-    if (derive_unit_pixel_normalization_from_input_range(
-            ingress.input_range, &out.model_input_mean, &out.model_input_stddev)) {
+    if (derive_unit_pixel_normalization_from_input_range(ingress.input_range, &out.model_input_mean,
+                                                         &out.model_input_stddev)) {
       out.has_model_input_normalization = true;
       break;
     }
@@ -524,8 +554,7 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
   }
   const auto mla_rank_it = rank_by_index.find(*mla_idx);
   if (mla_rank_it == rank_by_index.end()) {
-    throw std::runtime_error(
-        "preprocess planner: MPK execution order is missing the MLA stage.");
+    throw std::runtime_error("preprocess planner: MPK execution order is missing the MLA stage.");
   }
 
   bool pre_has_quant = false;
@@ -552,9 +581,8 @@ PreprocessCapabilities inspect_preprocess_capabilities(const ModelPack& pack) {
     const int output_rank = primary_tensor_rank(plugin.output_tensors);
     const bool dtype_transition =
         !input_dtype.empty() && !output_dtype.empty() && input_dtype != output_dtype;
-    const bool hint_pre_quant =
-        dtype_transition && !dtype_is_quantized_like(input_dtype) &&
-        dtype_is_quantized_like(output_dtype);
+    const bool hint_pre_quant = dtype_transition && !dtype_is_quantized_like(input_dtype) &&
+                                dtype_is_quantized_like(output_dtype);
     const bool hint_pre_tess = input_rank >= 3 && output_rank > 0 && output_rank < input_rank;
 
     if (kernel == "quanttess") {
@@ -601,9 +629,9 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   out.resolved_plan.requested = options.preprocess;
   PreprocessOptions effective = options.preprocess;
   PreprocessExplicitKnobs explicit_knobs;
-  explicit_knobs.resize =
-      options.preprocess.resize.enable != AutoFlag::Auto || options.preprocess.resize.width > 0 ||
-      options.preprocess.resize.height > 0;
+  explicit_knobs.resize = options.preprocess.resize.enable != AutoFlag::Auto ||
+                          options.preprocess.resize.width > 0 ||
+                          options.preprocess.resize.height > 0;
   explicit_knobs.color_convert =
       options.preprocess.color_convert.enable != AutoFlag::Auto ||
       options.preprocess.color_convert.input_format != PreprocessColorFormat::Auto ||
@@ -637,9 +665,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
       apply_transform(&compiled, t);
       switch (t.type) {
       case TransformType::Resize:
-        explicit_knobs.resize =
-            explicit_knobs.resize || t.resize.enable != AutoFlag::Auto || t.resize.width > 0 ||
-            t.resize.height > 0;
+        explicit_knobs.resize = explicit_knobs.resize || t.resize.enable != AutoFlag::Auto ||
+                                t.resize.width > 0 || t.resize.height > 0;
         break;
       case TransformType::ColorConvert:
         explicit_knobs.color_convert =
@@ -688,26 +715,25 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
     effective.enable = AutoFlag::On;
   }
 
-  bool resize_enabled =
-      resolve_step_enabled(effective.resize.enable, effective.resize.width > 0 ||
-                                                      effective.resize.height > 0 ||
-                                                      effective.preset == NormalizePreset::COCO_YOLO);
+  bool resize_enabled = resolve_step_enabled(
+      effective.resize.enable, effective.resize.width > 0 || effective.resize.height > 0 ||
+                                   effective.preset == NormalizePreset::COCO_YOLO);
   bool color_enabled = resolve_step_enabled(
       effective.color_convert.enable,
       effective.color_convert.input_format != PreprocessColorFormat::Auto ||
           effective.color_convert.output_format != PreprocessColorFormat::Auto);
-  bool layout_enabled = resolve_step_enabled(
-      effective.layout_convert.enable, effective.layout_convert.has_perm());
-  const bool normalize_requested_or_preset =
-      effective.normalize.has_explicit_stats || effective.preset == NormalizePreset::ImageNet ||
-      effective.preset == NormalizePreset::COCO_YOLO;
+  bool layout_enabled =
+      resolve_step_enabled(effective.layout_convert.enable, effective.layout_convert.has_perm());
+  const bool normalize_requested_or_preset = effective.normalize.has_explicit_stats ||
+                                             effective.preset == NormalizePreset::ImageNet ||
+                                             effective.preset == NormalizePreset::COCO_YOLO;
   bool normalize_enabled =
       resolve_step_enabled(effective.normalize.enable, normalize_requested_or_preset);
 
   InputKind kind = effective.kind;
   if (kind == InputKind::Auto) {
-    const bool image_like = resize_enabled || color_enabled || layout_enabled || normalize_enabled ||
-                            effective.preset != NormalizePreset::None;
+    const bool image_like = resize_enabled || color_enabled || layout_enabled ||
+                            normalize_enabled || effective.preset != NormalizePreset::None;
     const bool tensor_like =
         effective.quantize.enable == AutoFlag::On || effective.tessellate.enable == AutoFlag::On;
     if (image_like) {
@@ -735,8 +761,8 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   if (effective.enable == AutoFlag::Off) {
     enabled = false;
   } else if (effective.enable == AutoFlag::Auto) {
-    enabled = resize_enabled || color_enabled || layout_enabled || normalize_enabled || quant_enabled ||
-              tess_enabled;
+    enabled = resize_enabled || color_enabled || layout_enabled || normalize_enabled ||
+              quant_enabled || tess_enabled;
   }
 
   if (!enabled) {
@@ -793,11 +819,10 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                      quant_enabled, tess_enabled, family_name(family));
   }
 
-  const bool explicit_off_resize = has_transforms
-                                       ? transform_has_explicit_enable(options.preprocess.transforms,
-                                                                       TransformType::Resize,
-                                                                       AutoFlag::Off)
-                                       : options.preprocess.resize.enable == AutoFlag::Off;
+  const bool explicit_off_resize =
+      has_transforms ? transform_has_explicit_enable(options.preprocess.transforms,
+                                                     TransformType::Resize, AutoFlag::Off)
+                     : options.preprocess.resize.enable == AutoFlag::Off;
   const bool explicit_off_normalize =
       has_transforms ? transform_has_explicit_enable(options.preprocess.transforms,
                                                      TransformType::Normalize, AutoFlag::Off)
@@ -813,16 +838,15 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   };
 
   if (enabled) {
-    if (explicit_off_normalize &&
-        (effective.preset == NormalizePreset::ImageNet ||
-         effective.preset == NormalizePreset::COCO_YOLO)) {
+    if (explicit_off_normalize && (effective.preset == NormalizePreset::ImageNet ||
+                                   effective.preset == NormalizePreset::COCO_YOLO)) {
       RequirementIssue issue;
       issue.op = RequiredPreprocessOp::Normalize;
       issue.severity = RequirementSeverity::Warning;
       issue.source = RequirementSource::Preset;
       issue.code = "PREPROC_REQ_WARN_MODEL_DEFAULT";
-      issue.reason =
-          "normalize was explicitly disabled, but the selected preset expects normalize to stay enabled.";
+      issue.reason = "normalize was explicitly disabled, but the selected preset expects normalize "
+                     "to stay enabled.";
       issue.fix_hint = "Use preprocess.normalize.enable=Auto/On, or set explicit mean/std.";
       emit_issue(issue);
     }
@@ -858,17 +882,17 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   out.infer_only_route = false;
   out.mla_tessellation = false;
 
-  const bool tensor_ingress = (kind == InputKind::Tensor) ||
-                              family == PreprocessGraphFamily::Quant ||
-                              family == PreprocessGraphFamily::Tess ||
-                              family == PreprocessGraphFamily::QuantTess;
+  const bool tensor_ingress =
+      (kind == InputKind::Tensor) || family == PreprocessGraphFamily::Quant ||
+      family == PreprocessGraphFamily::Tess || family == PreprocessGraphFamily::QuantTess;
   out.modelpack_media_type = tensor_ingress ? "application/vnd.simaai.tensor" : "video/x-raw";
   if (tensor_ingress) {
     out.modelpack_format = "FP32";
   } else {
-    const PreprocessColorFormat in_fmt = (effective.color_convert.input_format == PreprocessColorFormat::Auto)
-                                             ? PreprocessColorFormat::RGB
-                                             : effective.color_convert.input_format;
+    const PreprocessColorFormat in_fmt =
+        (effective.color_convert.input_format == PreprocessColorFormat::Auto)
+            ? PreprocessColorFormat::RGB
+            : effective.color_convert.input_format;
     out.modelpack_format = color_format_to_string(in_fmt);
   }
 
@@ -877,11 +901,14 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
                                     ? effective.input_max_depth
                                     : (pipeline_internal::mpk_no_json_path_enabled() ? 0 : 3);
   } else {
-    const PreprocessColorFormat in_fmt = (effective.color_convert.input_format == PreprocessColorFormat::Auto)
-                                             ? PreprocessColorFormat::RGB
-                                             : effective.color_convert.input_format;
+    const PreprocessColorFormat in_fmt =
+        (effective.color_convert.input_format == PreprocessColorFormat::Auto)
+            ? PreprocessColorFormat::RGB
+            : effective.color_convert.input_format;
     out.modelpack_input_depth =
-        format_is_gray(in_fmt) ? 1 : pipeline_internal::default_depth_for_image_format(out.modelpack_format, 3);
+        format_is_gray(in_fmt)
+            ? 1
+            : pipeline_internal::default_depth_for_image_format(out.modelpack_format, 3);
   }
 
   out.modelpack_max_width = (effective.input_max_width > 0) ? effective.input_max_width : 1920;
@@ -902,8 +929,7 @@ PreprocessPlannerResult plan_preprocess(const Model::Options& options,
   out.stddev = std::vector<float>{effective.normalize.stddev[0], effective.normalize.stddev[1],
                                   effective.normalize.stddev[2]};
 
-  out.resolved_plan.meta_contract.required_fields =
-      default_preprocess_meta_required_fields();
+  out.resolved_plan.meta_contract.required_fields = default_preprocess_meta_required_fields();
 
   return out;
 }
@@ -960,8 +986,7 @@ std::string requirement_issue_message(const RequirementIssue& issue) {
       << "code=" << (issue.code.empty() ? std::string("PREPROC_REQ_UNSPECIFIED") : issue.code)
       << " op=" << required_preprocess_op_name(issue.op)
       << " severity=" << requirement_severity_name(issue.severity)
-      << " source=" << requirement_source_name(issue.source)
-      << " reason=" << issue.reason;
+      << " source=" << requirement_source_name(issue.source) << " reason=" << issue.reason;
   if (!issue.fix_hint.empty()) {
     oss << " fix=" << issue.fix_hint;
   }

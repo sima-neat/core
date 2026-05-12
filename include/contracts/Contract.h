@@ -49,7 +49,7 @@ struct ValidationContext {
     Rtsp,         ///< `run_rtsp()` path (expects StillImageInput, encoder/pay if modeled).
   };
 
-  Mode mode = Mode::Validate;  ///< Active Session mode.
+  Mode mode = Mode::Validate; ///< Active Session mode.
 
   /// @brief Desired runner memory posture (used only for reporting / soft checks).
   MemoryContract runner_memory_contract = MemoryContract::AllowEitherButReport;

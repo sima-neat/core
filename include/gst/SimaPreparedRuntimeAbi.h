@@ -63,18 +63,18 @@ struct ProcessMlaPreparedStage {
   GstCaps* src_caps = nullptr;
 
   ProcessMlaPreparedStage() = default;
-  ~ProcessMlaPreparedStage() { reset(); }
+  ~ProcessMlaPreparedStage() {
+    reset();
+  }
 
   ProcessMlaPreparedStage(const ProcessMlaPreparedStage&) = delete;
   ProcessMlaPreparedStage& operator=(const ProcessMlaPreparedStage&) = delete;
 
   ProcessMlaPreparedStage(ProcessMlaPreparedStage&& other) noexcept
-      : stage_key(std::move(other.stage_key)),
-        runtime_cfg(std::move(other.runtime_cfg)),
+      : stage_key(std::move(other.stage_key)), runtime_cfg(std::move(other.runtime_cfg)),
         input_request(std::move(other.input_request)),
         output_publish_contract(std::move(other.output_publish_contract)),
-        output_meta_template(std::move(other.output_meta_template)),
-        sink_caps(other.sink_caps),
+        output_meta_template(std::move(other.output_meta_template)), sink_caps(other.sink_caps),
         src_caps(other.src_caps) {
     other.sink_caps = nullptr;
     other.src_caps = nullptr;
@@ -267,22 +267,22 @@ struct ProcessCvuPreparedStage {
   GstCaps* src_caps = nullptr;
 
   ProcessCvuPreparedStage() = default;
-  ~ProcessCvuPreparedStage() { reset(); }
+  ~ProcessCvuPreparedStage() {
+    reset();
+  }
 
   ProcessCvuPreparedStage(const ProcessCvuPreparedStage&) = delete;
   ProcessCvuPreparedStage& operator=(const ProcessCvuPreparedStage&) = delete;
 
   ProcessCvuPreparedStage(ProcessCvuPreparedStage&& other) noexcept
-      : stage_key(std::move(other.stage_key)),
-        typed_config(std::move(other.typed_config)),
+      : stage_key(std::move(other.stage_key)), typed_config(std::move(other.typed_config)),
         logical_inputs(std::move(other.logical_inputs)),
         physical_inputs(std::move(other.physical_inputs)),
         routing_contract(std::move(other.routing_contract)),
         output_publish_contract(std::move(other.output_publish_contract)),
         output_meta_template(std::move(other.output_meta_template)),
         primary_output_name(std::move(other.primary_output_name)),
-        primary_output_packed_caps(other.primary_output_packed_caps),
-        sink_caps(other.sink_caps),
+        primary_output_packed_caps(other.primary_output_packed_caps), sink_caps(other.sink_caps),
         src_caps(other.src_caps) {
     other.sink_caps = nullptr;
     other.src_caps = nullptr;
@@ -353,26 +353,22 @@ struct DequantPreparedStage {
   GstCaps* src_caps = nullptr;
 
   DequantPreparedStage() = default;
-  ~DequantPreparedStage() { reset(); }
+  ~DequantPreparedStage() {
+    reset();
+  }
 
   DequantPreparedStage(const DequantPreparedStage&) = delete;
   DequantPreparedStage& operator=(const DequantPreparedStage&) = delete;
 
   DequantPreparedStage(DequantPreparedStage&& other) noexcept
-      : stage_key(std::move(other.stage_key)),
-        input_dtype(std::move(other.input_dtype)),
-        tensor_shape(std::move(other.tensor_shape)),
-        tensor_layout(std::move(other.tensor_layout)),
-        input_elem_bytes(other.input_elem_bytes),
-        required_input_bytes(other.required_input_bytes),
+      : stage_key(std::move(other.stage_key)), input_dtype(std::move(other.input_dtype)),
+        tensor_shape(std::move(other.tensor_shape)), tensor_layout(std::move(other.tensor_layout)),
+        input_elem_bytes(other.input_elem_bytes), required_input_bytes(other.required_input_bytes),
         required_output_bytes(other.required_output_bytes),
-        has_scalar_quant(other.has_scalar_quant),
-        q_scale(other.q_scale),
-        q_zp(other.q_zp),
+        has_scalar_quant(other.has_scalar_quant), q_scale(other.q_scale), q_zp(other.q_zp),
         quant_spans(std::move(other.quant_spans)),
         identity_publish_contract(std::move(other.identity_publish_contract)),
-        prepared_meta_template(std::move(other.prepared_meta_template)),
-        sink_caps(other.sink_caps),
+        prepared_meta_template(std::move(other.prepared_meta_template)), sink_caps(other.sink_caps),
         src_caps(other.src_caps) {
     other.input_elem_bytes = 0U;
     other.required_input_bytes = 0U;
@@ -467,22 +463,21 @@ struct SimaPreparedRuntimeAccessor {
 
   guint (*stage_count)(gpointer user_data);
   const simaai::gst::PreparedStageSpec* (*stage_by_index)(gpointer user_data, guint index);
-  const simaai::gst::PreparedStageSpec* (*stage_by_key)(gpointer user_data,
-                                                        const gchar* stage_key);
+  const simaai::gst::PreparedStageSpec* (*stage_by_key)(gpointer user_data, const gchar* stage_key);
   const simaai::gst::CastPreparedStage* (*cast_stage_by_key)(gpointer user_data,
                                                              const gchar* stage_key);
-  const simaai::gst::ProcessMlaPreparedStage* (*processmla_stage_by_key)(
-      gpointer user_data, const gchar* stage_key);
-  const simaai::gst::ProcessCvuPreparedStage* (*processcvu_stage_by_key)(
-      gpointer user_data, const gchar* stage_key);
-  const simaai::gst::DequantPreparedStage* (*dequant_stage_by_key)(
-      gpointer user_data, const gchar* stage_key);
+  const simaai::gst::ProcessMlaPreparedStage* (*processmla_stage_by_key)(gpointer user_data,
+                                                                         const gchar* stage_key);
+  const simaai::gst::ProcessCvuPreparedStage* (*processcvu_stage_by_key)(gpointer user_data,
+                                                                         const gchar* stage_key);
+  const simaai::gst::DequantPreparedStage* (*dequant_stage_by_key)(gpointer user_data,
+                                                                   const gchar* stage_key);
   const simaai::gst::DetessDequantPreparedStage* (*detessdequant_stage_by_key)(
       gpointer user_data, const gchar* stage_key);
 };
 
-static inline const gchar* sima_prepared_runtime_lookup_status_name(
-    SimaPreparedRuntimeLookupStatus status) {
+static inline const gchar*
+sima_prepared_runtime_lookup_status_name(SimaPreparedRuntimeLookupStatus status) {
   switch (status) {
   case SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_OK:
     return "ok";
@@ -528,14 +523,12 @@ static inline GType sima_prepared_runtime_handle_get_type(void) {
   if (type != 0) {
     return type;
   }
-  return g_boxed_type_register_static(kTypeName,
-                                      sima_prepared_runtime_handle_boxed_copy,
+  return g_boxed_type_register_static(kTypeName, sima_prepared_runtime_handle_boxed_copy,
                                       sima_prepared_runtime_handle_boxed_free);
 }
 
-static inline void sima_prepared_runtime_set_lookup_status(
-    SimaPreparedRuntimeLookupStatus* status,
-    SimaPreparedRuntimeLookupStatus value) {
+static inline void sima_prepared_runtime_set_lookup_status(SimaPreparedRuntimeLookupStatus* status,
+                                                           SimaPreparedRuntimeLookupStatus value) {
   if (status) {
     *status = value;
   }
@@ -545,8 +538,7 @@ static inline gboolean sima_prepared_runtime_context_matches(const GstContext* c
   if (!context) {
     return FALSE;
   }
-  return g_strcmp0(gst_context_get_context_type(context),
-                   SIMA_PREPARED_RUNTIME_CONTEXT_TYPE) == 0;
+  return g_strcmp0(gst_context_get_context_type(context), SIMA_PREPARED_RUNTIME_CONTEXT_TYPE) == 0;
 }
 
 static inline const GstStructure*
@@ -563,10 +555,8 @@ sima_prepared_runtime_context_handle(const GstContext* context) {
   if (!structure) {
     return NULL;
   }
-  const GValue* handle_val =
-      gst_structure_get_value(structure, SIMA_PREPARED_RUNTIME_KEY_HANDLE);
-  if (!handle_val ||
-      G_VALUE_TYPE(handle_val) != sima_prepared_runtime_handle_get_type()) {
+  const GValue* handle_val = gst_structure_get_value(structure, SIMA_PREPARED_RUNTIME_KEY_HANDLE);
+  if (!handle_val || G_VALUE_TYPE(handle_val) != sima_prepared_runtime_handle_get_type()) {
     return NULL;
   }
   return static_cast<const SimaPreparedRuntimeHandle*>(g_value_get_boxed(handle_val));
@@ -576,19 +566,18 @@ static inline const SimaPreparedRuntimeAccessor*
 sima_prepared_runtime_context_accessor_checked(const GstContext* context,
                                                SimaPreparedRuntimeLookupStatus* status) {
   if (!context) {
-    sima_prepared_runtime_set_lookup_status(
-        status, SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_NO_CONTEXT);
+    sima_prepared_runtime_set_lookup_status(status, SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_NO_CONTEXT);
     return nullptr;
   }
   if (!sima_prepared_runtime_context_matches(context)) {
-    sima_prepared_runtime_set_lookup_status(
-        status, SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_WRONG_CONTEXT_TYPE);
+    sima_prepared_runtime_set_lookup_status(status,
+                                            SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_WRONG_CONTEXT_TYPE);
     return nullptr;
   }
   const auto* handle = sima_prepared_runtime_context_handle(context);
   if (!handle) {
-    sima_prepared_runtime_set_lookup_status(
-        status, SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_MISSING_HANDLE);
+    sima_prepared_runtime_set_lookup_status(status,
+                                            SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_MISSING_HANDLE);
     return nullptr;
   }
   if (handle->abi_version != SIMA_PREPARED_RUNTIME_ABI_VERSION) {
@@ -617,11 +606,10 @@ sima_prepared_runtime_context_accessor_checked(const GstContext* context,
 }
 
 static inline const simaai::gst::PreparedStageSpec*
-sima_prepared_runtime_context_stage_lookup_checked(
-    const GstContext* context, const gchar* stage_key,
-    SimaPreparedRuntimeLookupStatus* status) {
-  const auto* accessor =
-      sima_prepared_runtime_context_accessor_checked(context, status);
+sima_prepared_runtime_context_stage_lookup_checked(const GstContext* context,
+                                                   const gchar* stage_key,
+                                                   SimaPreparedRuntimeLookupStatus* status) {
+  const auto* accessor = sima_prepared_runtime_context_accessor_checked(context, status);
   if (!accessor || !accessor->stage_by_key || !stage_key || !*stage_key) {
     if (status && (!stage_key || !*stage_key)) {
       *status = SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND;
@@ -630,8 +618,8 @@ sima_prepared_runtime_context_stage_lookup_checked(
   }
   const auto* stage = accessor->stage_by_key(accessor->user_data, stage_key);
   if (!stage) {
-    sima_prepared_runtime_set_lookup_status(
-        status, SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND);
+    sima_prepared_runtime_set_lookup_status(status,
+                                            SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND);
     return nullptr;
   }
   sima_prepared_runtime_set_lookup_status(status, SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_OK);
@@ -639,11 +627,10 @@ sima_prepared_runtime_context_stage_lookup_checked(
 }
 
 static inline const simaai::gst::CastPreparedStage*
-sima_prepared_runtime_context_cast_stage_lookup_checked(
-    const GstContext* context, const gchar* stage_key,
-    SimaPreparedRuntimeLookupStatus* status) {
-  const auto* accessor =
-      sima_prepared_runtime_context_accessor_checked(context, status);
+sima_prepared_runtime_context_cast_stage_lookup_checked(const GstContext* context,
+                                                        const gchar* stage_key,
+                                                        SimaPreparedRuntimeLookupStatus* status) {
+  const auto* accessor = sima_prepared_runtime_context_accessor_checked(context, status);
   if (!accessor || !accessor->cast_stage_by_key || !stage_key || !*stage_key) {
     if (status && (!stage_key || !*stage_key)) {
       *status = SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND;
@@ -665,10 +652,8 @@ sima_prepared_runtime_context_cast_stage_lookup_checked(
 
 static inline const simaai::gst::ProcessMlaPreparedStage*
 sima_prepared_runtime_context_processmla_stage_lookup_checked(
-    const GstContext* context, const gchar* stage_key,
-    SimaPreparedRuntimeLookupStatus* status) {
-  const auto* accessor =
-      sima_prepared_runtime_context_accessor_checked(context, status);
+    const GstContext* context, const gchar* stage_key, SimaPreparedRuntimeLookupStatus* status) {
+  const auto* accessor = sima_prepared_runtime_context_accessor_checked(context, status);
   if (!accessor || !accessor->processmla_stage_by_key || !stage_key || !*stage_key) {
     if (status && (!stage_key || !*stage_key)) {
       *status = SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND;
@@ -690,10 +675,8 @@ sima_prepared_runtime_context_processmla_stage_lookup_checked(
 
 static inline const simaai::gst::ProcessCvuPreparedStage*
 sima_prepared_runtime_context_processcvu_stage_lookup_checked(
-    const GstContext* context, const gchar* stage_key,
-    SimaPreparedRuntimeLookupStatus* status) {
-  const auto* accessor =
-      sima_prepared_runtime_context_accessor_checked(context, status);
+    const GstContext* context, const gchar* stage_key, SimaPreparedRuntimeLookupStatus* status) {
+  const auto* accessor = sima_prepared_runtime_context_accessor_checked(context, status);
   if (!accessor || !accessor->processcvu_stage_by_key || !stage_key || !*stage_key) {
     if (status && (!stage_key || !*stage_key)) {
       *status = SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND;
@@ -715,10 +698,8 @@ sima_prepared_runtime_context_processcvu_stage_lookup_checked(
 
 static inline const simaai::gst::DequantPreparedStage*
 sima_prepared_runtime_context_dequant_stage_lookup_checked(
-    const GstContext* context, const gchar* stage_key,
-    SimaPreparedRuntimeLookupStatus* status) {
-  const auto* accessor =
-      sima_prepared_runtime_context_accessor_checked(context, status);
+    const GstContext* context, const gchar* stage_key, SimaPreparedRuntimeLookupStatus* status) {
+  const auto* accessor = sima_prepared_runtime_context_accessor_checked(context, status);
   if (!accessor || !accessor->dequant_stage_by_key || !stage_key || !*stage_key) {
     if (status && (!stage_key || !*stage_key)) {
       *status = SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND;
@@ -740,10 +721,8 @@ sima_prepared_runtime_context_dequant_stage_lookup_checked(
 
 static inline const simaai::gst::DetessDequantPreparedStage*
 sima_prepared_runtime_context_detessdequant_stage_lookup_checked(
-    const GstContext* context, const gchar* stage_key,
-    SimaPreparedRuntimeLookupStatus* status) {
-  const auto* accessor =
-      sima_prepared_runtime_context_accessor_checked(context, status);
+    const GstContext* context, const gchar* stage_key, SimaPreparedRuntimeLookupStatus* status) {
+  const auto* accessor = sima_prepared_runtime_context_accessor_checked(context, status);
   if (!accessor || !accessor->detessdequant_stage_by_key || !stage_key || !*stage_key) {
     if (status && (!stage_key || !*stage_key)) {
       *status = SIMA_PREPARED_RUNTIME_LOOKUP_STATUS_STAGE_NOT_FOUND;

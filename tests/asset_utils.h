@@ -147,8 +147,7 @@ inline std::optional<std::string> json_string_field(const std::string& text,
   return std::nullopt;
 }
 
-inline fs::path resolve_manifest_relative_path(const std::string& text,
-                                               const std::string& key,
+inline fs::path resolve_manifest_relative_path(const std::string& text, const std::string& key,
                                                const fs::path& build_root) {
   const std::optional<std::string> rel = json_string_field(text, key);
   if (!rel.has_value() || rel->empty())
@@ -164,8 +163,7 @@ inline fs::path discover_source_root_from_runtime() {
   for (const auto& seed : runtime_search_roots()) {
     fs::path cur = seed;
     while (!cur.empty()) {
-      if (fs::exists(cur / "CMakeLists.txt", ec) && !ec &&
-          fs::exists(cur / "src", ec) && !ec &&
+      if (fs::exists(cur / "CMakeLists.txt", ec) && !ec && fs::exists(cur / "src", ec) && !ec &&
           fs::exists(cur / "tests", ec) && !ec) {
         return cur;
       }
@@ -188,7 +186,8 @@ inline const TestRuntimePaths& test_runtime_paths() {
       std::ifstream in(value.manifest_path, std::ios::binary);
       if (in.is_open()) {
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-        value.source_root = resolve_manifest_relative_path(text, "source_root_rel", value.build_root);
+        value.source_root =
+            resolve_manifest_relative_path(text, "source_root_rel", value.build_root);
         value.repo_tmp_root =
             resolve_manifest_relative_path(text, "repo_tmp_root_rel", value.build_root);
         value.mpk_fixture_root =
@@ -209,7 +208,8 @@ inline const TestRuntimePaths& test_runtime_paths() {
     if (value.mpk_fixture_manifest.empty())
       value.mpk_fixture_manifest = value.mpk_fixture_root / "fixtures_manifest.json";
     if (value.decoder_fixture.empty())
-      value.decoder_fixture = value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
+      value.decoder_fixture =
+          value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
 
     return value;
   }();

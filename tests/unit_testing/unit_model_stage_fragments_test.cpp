@@ -8,8 +8,8 @@ namespace {
 sima_test::MpkFixture make_stage_fixture(const std::string& tag) {
   return sima_test::make_strict_mpk_tar_fixture(tag,
                                                 {
-                                             {"etc/pipeline_sequence.json",
-                                              R"json({
+                                                    {"etc/pipeline_sequence.json",
+                                                     R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -42,8 +42,8 @@ sima_test::MpkFixture make_stage_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                             {"etc/0_preproc.json",
-                                              R"json({
+                                                    {"etc/0_preproc.json",
+                                                     R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -52,8 +52,8 @@ sima_test::MpkFixture make_stage_fixture(const std::string& tag) {
   "output_height": 640,
   "output_img_type": "RGB"
 })json"},
-                                             {"etc/0_process_mla.json",
-                                              R"json({
+                                                    {"etc/0_process_mla.json",
+                                                     R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -61,8 +61,8 @@ sima_test::MpkFixture make_stage_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                             {"etc/0_postproc.json",
-                                              R"json({
+                                                    {"etc/0_postproc.json",
+                                                     R"json({
   "node_name": "detessdequant_0",
   "num_in_tensor": 1,
   "out_data_type": "FP32",
@@ -90,8 +90,7 @@ RUN_TEST(
 
       require(!pre.nodes().empty(), "Model::preprocess should produce a non-empty stage group");
       require(!infer.nodes().empty(), "Model::inference should produce a non-empty stage group");
-      require(!post.nodes().empty(),
-              "Model::postprocess should expose Model boundary post stage");
+      require(!post.nodes().empty(), "Model::postprocess should expose Model boundary post stage");
       require(sess.nodes().size() >= 3,
               "Model::session should include appsrc + model stages + appsink by default");
 
@@ -106,18 +105,17 @@ RUN_TEST(
                        "Model::backend_fragment(full) should include CVU preproc plugin");
       require_contains(full_fragment, "neatprocessmla",
                        "Model::backend_fragment(full) should include MLA plugin");
-      require_contains(full_fragment, "stage-id=",
-                       "Model::backend_fragment(full) should include stage metadata");
+      require_contains(full_fragment,
+                       "stage-id=", "Model::backend_fragment(full) should include stage metadata");
 
       const NodeGroup infer_only = model.fragment(Model::Stage::Inference);
       require(!infer_only.nodes().empty(),
               "Model::fragment(inference) should produce non-empty NodeGroup");
 
       const auto legacy = sima_test::make_mpk_tar_fixture(
-          "model_stage_fragments_legacy_missing_mpk",
-          {
-              {"etc/pipeline_sequence.json",
-               R"json({
+          "model_stage_fragments_legacy_missing_mpk", {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -132,12 +130,12 @@ RUN_TEST(
     ]
   }]
 })json"},
-              {"etc/0_process_mla.json",
-               R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-          });
+                                                      });
       bool threw = false;
       try {
         Model legacy_model(legacy.tar_path);

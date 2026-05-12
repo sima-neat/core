@@ -39,10 +39,11 @@ enum class CastDirection {
  */
 struct CastOptions {
   CastDirection direction = CastDirection::Bf16ToFp32; ///< Conversion direction.
-  std::string element_name;                            ///< Optional GStreamer element name (default: auto-generated).
-  bool silent = true;                                  ///< If true, suppresses element-level diagnostic logging.
-  std::shared_ptr<const CompiledProcessCvuContract> compiled_contract; ///< Optional processcvu contract for model-managed cast.
-  int num_buffers = 0;                                 ///< processcvu buffer pool size when compiled_contract is set.
+  std::string element_name; ///< Optional GStreamer element name (default: auto-generated).
+  bool silent = true;       ///< If true, suppresses element-level diagnostic logging.
+  std::shared_ptr<const CompiledProcessCvuContract>
+      compiled_contract; ///< Optional processcvu contract for model-managed cast.
+  int num_buffers = 0;   ///< processcvu buffer pool size when compiled_contract is set.
 #ifdef SIMA_NEAT_INTERNAL
   std::shared_ptr<const simaai::neat::internal::ModelLineageBinding> model_lineage;
 #endif
@@ -85,8 +86,7 @@ public:
   /// Structural contract definition for this Node.
   NodeContractDefinition contract_definition() const override;
   /// Compile this Node's contract from the given input.
-  bool compile_node_contract(const ContractCompileInput& input,
-                             CompiledNodeContract* out,
+  bool compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
                              std::string* err) const override;
   /// Apply a compiled contract back into this Node.
   void apply_compiled_contract(const CompiledNodeContract& contract, std::string* err) override;

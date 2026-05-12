@@ -47,7 +47,7 @@ namespace pipeline_internal {
 struct InputRouteProcessor;
 /// Shared pointer to a const internal route-processor (framework-internal use).
 using InputRouteProcessorPtr = std::shared_ptr<const InputRouteProcessor>;
-}
+} // namespace pipeline_internal
 
 /**
  * @brief What `push()` does when the input queue is full.
@@ -58,8 +58,10 @@ using InputRouteProcessorPtr = std::shared_ptr<const InputRouteProcessor>;
  */
 enum class OverflowPolicy {
   Block = 0,    ///< `push()` blocks until queue space frees up. Lossless. Use for batch processing.
-  KeepLatest,   ///< Drop the oldest queued frame to make room. Use for live cameras (freshness > completeness).
-  DropIncoming, ///< Drop the new frame; keep what's queued. Use when the pipeline is the chokepoint.
+  KeepLatest,   ///< Drop the oldest queued frame to make room. Use for live cameras (freshness >
+                ///< completeness).
+  DropIncoming, ///< Drop the new frame; keep what's queued. Use when the pipeline is the
+                ///< chokepoint.
 };
 
 /**
@@ -91,9 +93,11 @@ enum class OutputMemory {
 
 /// Advanced runtime tuning knobs (most users never set these).
 struct RunAdvancedOptions {
-  bool copy_input = false;          ///< Force a copy of every pushed input (useful when the source buffer is short-lived).
-  std::size_t max_input_bytes = 0;  ///< Reject pushes larger than this many bytes (0 = no cap).
-  int sync_num_buffers_override = -1; ///< Override the appsrc `num-buffers` for sync-mode runs (-1 = auto).
+  bool copy_input =
+      false; ///< Force a copy of every pushed input (useful when the source buffer is short-lived).
+  std::size_t max_input_bytes = 0; ///< Reject pushes larger than this many bytes (0 = no cap).
+  int sync_num_buffers_override =
+      -1; ///< Override the appsrc `num-buffers` for sync-mode runs (-1 = auto).
   /**
    * @brief Prepare zero-copy Gst/SiMa outputs for CPU reads on the InputStream worker.
    *
@@ -118,11 +122,13 @@ struct RunAdvancedOptions {
  * @ingroup pipeline
  */
 struct RunOptions {
-  RunPreset preset = RunPreset::Balanced;          ///< Convenience preset that tunes the other fields.
-  int queue_depth = 4;                             ///< Capacity of the input/output buffer queues.
-  OverflowPolicy overflow_policy = OverflowPolicy::Block; ///< What to do when the input queue is full.
-  OutputMemory output_memory = OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
-  bool enable_metrics = false;                     ///< Collect detailed per-stage metrics in the Run's stats vectors.
+  RunPreset preset = RunPreset::Balanced; ///< Convenience preset that tunes the other fields.
+  int queue_depth = 4;                    ///< Capacity of the input/output buffer queues.
+  OverflowPolicy overflow_policy =
+      OverflowPolicy::Block; ///< What to do when the input queue is full.
+  OutputMemory output_memory =
+      OutputMemory::Auto;      ///< Whether output tensors are zero-copy or owned.
+  bool enable_metrics = false; ///< Collect detailed per-stage metrics in the Run's stats vectors.
   /**
    * @brief Default pull timeout for `build()`/`run()` input-mode paths, in milliseconds.
    *
@@ -130,8 +136,8 @@ struct RunOptions {
    * passing an explicit `timeout_ms` to the relevant `pull()` or `run()` overload.
    */
   int input_timeout_ms = -1;
-  RunAdvancedOptions advanced{};                   ///< Advanced tuning (rarely needed).
-  PowerMonitorOptions power_monitor{};             ///< Optional board rail power telemetry.
+  RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
+  PowerMonitorOptions power_monitor{}; ///< Optional board rail power telemetry.
 
   /**
    * @brief Enable board power monitoring using built-in auto-detect.
@@ -203,7 +209,7 @@ struct InputDropInfo {
   int64_t frame_id = -1;                 ///< Source-assigned frame ID, if any.
   std::string stream_id;                 ///< Stream identifier (multi-stream pipelines).
   std::string port_name;                 ///< Ingress port name (multi-input models).
-  std::string reason;                    ///< Human-readable reason (e.g., `"queue_full"`, `"size_limit_exceeded"`).
+  std::string reason; ///< Human-readable reason (e.g., `"queue_full"`, `"size_limit_exceeded"`).
 };
 
 /**
@@ -214,21 +220,22 @@ struct InputDropInfo {
  * @ingroup diagnostics
  */
 struct InputStreamStats {
-  std::uint64_t push_count = 0;          ///< Total successful `push()` calls.
-  std::uint64_t push_failures = 0;       ///< Pushes that failed (queue full, EOS, error).
-  std::uint64_t pull_count = 0;          ///< Total successful `pull()` calls (output side).
-  std::uint64_t poll_count = 0;          ///< Total `pull()` calls (including timeouts).
-  std::uint64_t dropped_frames = 0;      ///< Frames dropped due to OverflowPolicy.
-  std::uint64_t renegotiations = 0;      ///< Times caps were re-negotiated mid-stream.
-  std::uint64_t alloc_grows = 0;         ///< Times the buffer pool grew due to demand.
-  std::uint64_t growth_blocked = 0;      ///< Pool-grow attempts that hit a configured cap.
-  std::uint64_t renegotiation_blocked = 0; ///< Renegotiation attempts that were rejected by downstream.
-  double avg_alloc_us = 0.0;             ///< Average buffer allocation time (microseconds).
-  double avg_map_us = 0.0;               ///< Average buffer map (lock for write) time.
-  double avg_copy_us = 0.0;              ///< Average input copy time (when `copy_input=true`).
-  double avg_push_us = 0.0;              ///< Average end-to-end `push()` call time.
-  double avg_pull_wait_us = 0.0;         ///< Average time `pull()` waited for output.
-  double avg_decode_us = 0.0;            ///< Average decode time (input-side decoders, e.g., H.264).
+  std::uint64_t push_count = 0;     ///< Total successful `push()` calls.
+  std::uint64_t push_failures = 0;  ///< Pushes that failed (queue full, EOS, error).
+  std::uint64_t pull_count = 0;     ///< Total successful `pull()` calls (output side).
+  std::uint64_t poll_count = 0;     ///< Total `pull()` calls (including timeouts).
+  std::uint64_t dropped_frames = 0; ///< Frames dropped due to OverflowPolicy.
+  std::uint64_t renegotiations = 0; ///< Times caps were re-negotiated mid-stream.
+  std::uint64_t alloc_grows = 0;    ///< Times the buffer pool grew due to demand.
+  std::uint64_t growth_blocked = 0; ///< Pool-grow attempts that hit a configured cap.
+  std::uint64_t renegotiation_blocked =
+      0;                         ///< Renegotiation attempts that were rejected by downstream.
+  double avg_alloc_us = 0.0;     ///< Average buffer allocation time (microseconds).
+  double avg_map_us = 0.0;       ///< Average buffer map (lock for write) time.
+  double avg_copy_us = 0.0;      ///< Average input copy time (when `copy_input=true`).
+  double avg_push_us = 0.0;      ///< Average end-to-end `push()` call time.
+  double avg_pull_wait_us = 0.0; ///< Average time `pull()` waited for output.
+  double avg_decode_us = 0.0;    ///< Average decode time (input-side decoders, e.g., H.264).
 };
 
 /**
@@ -239,15 +246,17 @@ struct InputStreamStats {
  * @ingroup diagnostics
  */
 struct RunStats {
-  std::uint64_t inputs_enqueued = 0;     ///< Inputs that were accepted into the input queue.
-  std::uint64_t inputs_dropped = 0;      ///< Inputs rejected by OverflowPolicy.
-  std::uint64_t inputs_pushed = 0;       ///< Inputs successfully pushed into the pipeline.
-  std::uint64_t outputs_ready = 0;       ///< Outputs the pipeline produced (may exceed pulls if backlogged).
-  std::uint64_t outputs_pulled = 0;      ///< Outputs the application pulled.
-  std::uint64_t outputs_dropped = 0;     ///< Outputs dropped before the application could pull (output-side overflow).
-  double avg_latency_ms = 0.0;           ///< Average push-to-pull latency.
-  double min_latency_ms = 0.0;           ///< Minimum observed latency.
-  double max_latency_ms = 0.0;           ///< Maximum observed latency.
+  std::uint64_t inputs_enqueued = 0; ///< Inputs that were accepted into the input queue.
+  std::uint64_t inputs_dropped = 0;  ///< Inputs rejected by OverflowPolicy.
+  std::uint64_t inputs_pushed = 0;   ///< Inputs successfully pushed into the pipeline.
+  std::uint64_t outputs_ready =
+      0; ///< Outputs the pipeline produced (may exceed pulls if backlogged).
+  std::uint64_t outputs_pulled = 0; ///< Outputs the application pulled.
+  std::uint64_t outputs_dropped =
+      0; ///< Outputs dropped before the application could pull (output-side overflow).
+  double avg_latency_ms = 0.0; ///< Average push-to-pull latency.
+  double min_latency_ms = 0.0; ///< Minimum observed latency.
+  double max_latency_ms = 0.0; ///< Maximum observed latency.
 };
 
 /**
@@ -260,11 +269,11 @@ struct RunStats {
  * @ingroup diagnostics
  */
 struct RunMeasurementSummary {
-  RunStats stats;                  ///< End-to-end Run counters and latency.
-  InputStreamStats input_stats;    ///< Input-side counters.
-  double elapsed_seconds = 0.0;    ///< Measured wall-clock duration.
-  double throughput_fps = 0.0;     ///< Pulled outputs per elapsed second.
-  PowerSummary power;              ///< Optional power telemetry summary.
+  RunStats stats;               ///< End-to-end Run counters and latency.
+  InputStreamStats input_stats; ///< Input-side counters.
+  double elapsed_seconds = 0.0; ///< Measured wall-clock duration.
+  double throughput_fps = 0.0;  ///< Pulled outputs per elapsed second.
+  PowerSummary power;           ///< Optional power telemetry summary.
 };
 
 /**
@@ -272,10 +281,10 @@ struct RunMeasurementSummary {
  * @ingroup diagnostics
  */
 struct RunStageStats {
-  std::string stage_name;       ///< Stage label (typically the NodeGroup or major Node name).
-  std::uint64_t samples = 0;    ///< Number of samples processed by this stage.
-  std::uint64_t total_us = 0;   ///< Cumulative time spent in this stage (microseconds).
-  std::uint64_t max_us = 0;     ///< Maximum per-sample time observed.
+  std::string stage_name;     ///< Stage label (typically the NodeGroup or major Node name).
+  std::uint64_t samples = 0;  ///< Number of samples processed by this stage.
+  std::uint64_t total_us = 0; ///< Cumulative time spent in this stage (microseconds).
+  std::uint64_t max_us = 0;   ///< Maximum per-sample time observed.
 };
 
 /**
@@ -283,9 +292,10 @@ struct RunStageStats {
  * @ingroup diagnostics
  */
 struct RunElementTimingStats {
-  std::string element_name;     ///< Deterministic element name (e.g., `"n3_videoconvert"`).
-  std::uint64_t samples = 0;    ///< Buffers processed.
-  std::uint64_t total_us = 0;   ///< Cumulative residency (sink-arrival → src-emit; INCLUDES backpressure wait).
+  std::string element_name;  ///< Deterministic element name (e.g., `"n3_videoconvert"`).
+  std::uint64_t samples = 0; ///< Buffers processed.
+  std::uint64_t total_us =
+      0; ///< Cumulative residency (sink-arrival → src-emit; INCLUDES backpressure wait).
   std::uint64_t max_us = 0;     ///< Maximum per-buffer residency.
   std::uint64_t min_us = 0;     ///< Minimum per-buffer residency.
   std::uint64_t missed_in = 0;  ///< Buffers expected on the input pad but never arrived.
@@ -313,16 +323,19 @@ struct RunElementFlowStats {
  * @ingroup diagnostics
  */
 struct RunElementPadTimingStats {
-  std::string element_name;               ///< Deterministic element name owning this pad.
-  std::string pad_name;                   ///< Pad name within the element.
-  bool        is_sink = false;            ///< True for input (sink) pads; false for output (src) pads.
-  std::uint64_t samples = 0;              ///< Number of buffers seen on this pad.
-  std::uint64_t inter_arrival_total_us = 0; ///< Cumulative time between consecutive buffer arrivals.
+  std::string element_name;  ///< Deterministic element name owning this pad.
+  std::string pad_name;      ///< Pad name within the element.
+  bool is_sink = false;      ///< True for input (sink) pads; false for output (src) pads.
+  std::uint64_t samples = 0; ///< Number of buffers seen on this pad.
+  std::uint64_t inter_arrival_total_us =
+      0;                                  ///< Cumulative time between consecutive buffer arrivals.
   std::uint64_t inter_arrival_max_us = 0; ///< Maximum observed inter-arrival gap, in microseconds.
-  std::uint64_t queue_wait_samples = 0;     ///< Samples that had to wait in a queue before being processed.
-  std::uint64_t queue_wait_total_us = 0;  ///< Cumulative queue-wait time across `queue_wait_samples`.
-  std::uint64_t queue_wait_max_us = 0;    ///< Maximum observed per-sample queue-wait time.
-  std::uint64_t bytes = 0;                ///< Cumulative byte count seen on this pad.
+  std::uint64_t queue_wait_samples =
+      0; ///< Samples that had to wait in a queue before being processed.
+  std::uint64_t queue_wait_total_us =
+      0;                               ///< Cumulative queue-wait time across `queue_wait_samples`.
+  std::uint64_t queue_wait_max_us = 0; ///< Maximum observed per-sample queue-wait time.
+  std::uint64_t bytes = 0;             ///< Cumulative byte count seen on this pad.
 };
 
 /**
@@ -333,10 +346,10 @@ struct RunElementPadTimingStats {
  * @ingroup diagnostics
  */
 struct RunDiagSnapshot {
-  std::vector<RunStageStats> stages;                       ///< Per-stage timing.
-  std::vector<BoundaryFlowStats> boundaries;               ///< Per-boundary (between Nodes) flow stats.
-  std::vector<RunElementTimingStats> element_timings;      ///< Per-element timing.
-  std::vector<RunElementFlowStats> element_flows;          ///< Per-element flow.
+  std::vector<RunStageStats> stages;                  ///< Per-stage timing.
+  std::vector<BoundaryFlowStats> boundaries;          ///< Per-boundary (between Nodes) flow stats.
+  std::vector<RunElementTimingStats> element_timings; ///< Per-element timing.
+  std::vector<RunElementFlowStats> element_flows;     ///< Per-element flow.
   /**
    * @brief Per-pad timing rows (Phase-A diagnostics).
    *
@@ -346,7 +359,6 @@ struct RunDiagSnapshot {
   std::vector<RunElementPadTimingStats> element_pad_timings;
 };
 
-
 /**
  * @brief Options for framework-owned runtime measurement.
  *
@@ -354,13 +366,13 @@ struct RunDiagSnapshot {
  * reimplement timers, percentile math, profiler aggregation, or terminal formatting.
  */
 struct MeasureOptions {
-  int duration_ms = 10000;        ///< Timed measurement window.
-  int warmup_ms = 1000;           ///< Warmup window excluded from latency/profiler results.
-  int timeout_ms = 5000;          ///< Per-output pull timeout.
+  int duration_ms = 10000; ///< Timed measurement window.
+  int warmup_ms = 1000;    ///< Warmup window excluded from latency/profiler results.
+  int timeout_ms = 5000;   ///< Per-output pull timeout.
   /// Capture per-plugin/kernel latency through the NEAT profiler.  This is precise, but can
   /// be disabled for absolute maximum throughput sweeps.
   bool include_plugin_latency = true;
-  bool include_power = true;      ///< Include power telemetry when enabled on the Run.
+  bool include_power = true; ///< Include power telemetry when enabled on the Run.
 
   /// Optional report metadata.  Model-owned wrappers/examples can fill these in so the
   /// standardized report is informative without custom formatting code.
@@ -430,7 +442,7 @@ struct MeasureReport {
  * latency samples, counter deltas, profiler aggregation, and optional power telemetry.
  */
 class MeasureScope {
- public:
+public:
   MeasureScope(MeasureScope&&) noexcept;
   MeasureScope& operator=(MeasureScope&&) noexcept;
   ~MeasureScope();
@@ -441,7 +453,7 @@ class MeasureScope {
   MeasureReport stop();
   bool stopped() const;
 
- private:
+private:
   friend class Run;
   struct Impl;
   explicit MeasureScope(std::unique_ptr<Impl> impl);
@@ -456,19 +468,19 @@ class MeasureScope {
  * @ingroup diagnostics
  */
 struct RunReportOptions {
-  bool include_pipeline = true;       ///< Include the rendered pipeline launch string.
-  bool include_stage_timings = true;  ///< Include the per-stage timing table.
-  bool include_element_timings = true;///< Include the per-element timing table.
-  bool include_boundaries = true;     ///< Include per-boundary flow stats between Nodes.
-  bool include_flow_stats = true;     ///< Include per-element buffer/byte flow stats.
-  bool include_node_reports = false;  ///< Off by default — verbose.
-  bool include_next_cpu = false;      ///< Off by default — internal routing detail.
-  bool include_queue_depth = true;    ///< Include configured queue depth in the report header.
-  bool include_num_buffers = true;    ///< Include configured num-buffers in the report header.
-  bool include_run_stats = true;      ///< Include end-to-end RunStats.
-  bool include_input_stats = true;    ///< Include input-side stream stats.
-  bool include_power = true;          ///< Include power telemetry when the Run enabled it.
-  bool include_system_info = false;   ///< Off by default — system-wide info, not Run-specific.
+  bool include_pipeline = true;        ///< Include the rendered pipeline launch string.
+  bool include_stage_timings = true;   ///< Include the per-stage timing table.
+  bool include_element_timings = true; ///< Include the per-element timing table.
+  bool include_boundaries = true;      ///< Include per-boundary flow stats between Nodes.
+  bool include_flow_stats = true;      ///< Include per-element buffer/byte flow stats.
+  bool include_node_reports = false;   ///< Off by default — verbose.
+  bool include_next_cpu = false;       ///< Off by default — internal routing detail.
+  bool include_queue_depth = true;     ///< Include configured queue depth in the report header.
+  bool include_num_buffers = true;     ///< Include configured num-buffers in the report header.
+  bool include_run_stats = true;       ///< Include end-to-end RunStats.
+  bool include_input_stats = true;     ///< Include input-side stream stats.
+  bool include_power = true;           ///< Include power telemetry when the Run enabled it.
+  bool include_system_info = false;    ///< Off by default — system-wide info, not Run-specific.
 };
 
 /**
@@ -504,9 +516,9 @@ public:
   Run(const Run&) = delete;            ///< Non-copyable.
   Run& operator=(const Run&) = delete; ///< Non-copyable.
 
-  Run(Run&&) noexcept;                  ///< Move-constructible.
-  Run& operator=(Run&&) noexcept;       ///< Move-assignable.
-  ~Run();                               ///< Cleanly tears down the pipeline.
+  Run(Run&&) noexcept;            ///< Move-constructible.
+  Run& operator=(Run&&) noexcept; ///< Move-assignable.
+  ~Run();                         ///< Cleanly tears down the pipeline.
 
   /// Returns `true` if the Run is alive (constructed by Session::build, not yet stopped).
   explicit operator bool() const noexcept;
@@ -536,7 +548,8 @@ public:
   bool push_holder(const std::shared_ptr<void>& holder);
   /// Non-blocking variant of `push_holder`.
   bool try_push_holder(const std::shared_ptr<void>& holder);
-  /// Send EOS into the pipeline. Drain remaining outputs by continuing to pull until `PullStatus::Closed`.
+  /// Send EOS into the pipeline. Drain remaining outputs by continuing to pull until
+  /// `PullStatus::Closed`.
   void close_input();
   /**
    * @brief Pull the next output sample with a structured status return.
@@ -618,8 +631,7 @@ private:
   bool push_message_impl(const Sample& msg, bool block);
   bool push_sample_impl(const Sample& msg, bool block);
   static Run create(InputStream stream, const RunOptions& opt,
-                    const struct InputStreamOptions& stream_opt,
-                    RunMode mode = RunMode::Async,
+                    const struct InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                     const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
                     pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr);
   friend class Session;

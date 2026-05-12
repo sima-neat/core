@@ -18,7 +18,8 @@
 namespace simaai::neat::graph::nodes {
 
 /**
- * @brief Runtime-graph node that wraps a builder-side `NodeGroup` (or single `Node`) as a pipeline-backend node.
+ * @brief Runtime-graph node that wraps a builder-side `NodeGroup` (or single `Node`) as a
+ * pipeline-backend node.
  *
  * Lets a linear, GStreamer-pipeline-shaped fragment participate in the runtime actor graph.
  * The wrapped group's first node's `InputRole` is inspected to decide whether this node is

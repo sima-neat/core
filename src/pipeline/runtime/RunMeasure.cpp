@@ -20,7 +20,8 @@ using Clock = std::chrono::steady_clock;
 
 void append_plugin_latency_from_profiler(const ProfilerReport& profiler,
                                          std::vector<MeasurePluginLatency>* out) {
-  if (!out) return;
+  if (!out)
+    return;
   out->clear();
   out->reserve(profiler.kernel_aggregates.size());
   for (const auto& k : profiler.kernel_aggregates) {
@@ -42,12 +43,10 @@ RunStats delta_counters(const RunStats& before, const RunStats& after) {
   out.inputs_dropped = after.inputs_dropped >= before.inputs_dropped
                            ? after.inputs_dropped - before.inputs_dropped
                            : 0;
-  out.inputs_pushed = after.inputs_pushed >= before.inputs_pushed
-                          ? after.inputs_pushed - before.inputs_pushed
-                          : 0;
-  out.outputs_ready = after.outputs_ready >= before.outputs_ready
-                          ? after.outputs_ready - before.outputs_ready
-                          : 0;
+  out.inputs_pushed =
+      after.inputs_pushed >= before.inputs_pushed ? after.inputs_pushed - before.inputs_pushed : 0;
+  out.outputs_ready =
+      after.outputs_ready >= before.outputs_ready ? after.outputs_ready - before.outputs_ready : 0;
   out.outputs_pulled = after.outputs_pulled >= before.outputs_pulled
                            ? after.outputs_pulled - before.outputs_pulled
                            : 0;
@@ -60,14 +59,16 @@ RunStats delta_counters(const RunStats& before, const RunStats& after) {
 MeasureLatencyStats summarize_samples(std::vector<double> samples) {
   MeasureLatencyStats out;
   out.count = samples.size();
-  if (samples.empty()) return out;
+  if (samples.empty())
+    return out;
 
   const double sum = std::accumulate(samples.begin(), samples.end(), 0.0);
   out.avg_ms = sum / static_cast<double>(samples.size());
   std::sort(samples.begin(), samples.end());
 
   auto percentile = [&](double p) {
-    if (samples.empty()) return 0.0;
+    if (samples.empty())
+      return 0.0;
     const double index = p * static_cast<double>(samples.size() - 1U);
     const auto lo = static_cast<std::size_t>(index);
     const auto hi = std::min(lo + 1U, samples.size() - 1U);
@@ -84,20 +85,18 @@ MeasureLatencyStats summarize_samples(std::vector<double> samples) {
 }
 
 void validate_options(const MeasureOptions& opt) {
-  if (opt.duration_ms <= 0) throw std::runtime_error("MeasureOptions::duration_ms must be > 0");
-  if (opt.warmup_ms < 0) throw std::runtime_error("MeasureOptions::warmup_ms must be >= 0");
-  if (opt.timeout_ms <= 0) throw std::runtime_error("MeasureOptions::timeout_ms must be > 0");
+  if (opt.duration_ms <= 0)
+    throw std::runtime_error("MeasureOptions::duration_ms must be > 0");
+  if (opt.warmup_ms < 0)
+    throw std::runtime_error("MeasureOptions::warmup_ms must be >= 0");
+  if (opt.timeout_ms <= 0)
+    throw std::runtime_error("MeasureOptions::timeout_ms must be > 0");
 }
 
 void print_latency_row(std::ostream& os, const char* name, const MeasureLatencyStats& s) {
-  os << std::left << std::setw(28) << name
-     << std::right << std::setw(9) << s.count
-     << std::setw(11) << s.avg_ms
-     << std::setw(11) << s.p50_ms
-     << std::setw(11) << s.p90_ms
-     << std::setw(11) << s.p95_ms
-     << std::setw(11) << s.p99_ms
-     << std::setw(11) << s.max_ms << "\n";
+  os << std::left << std::setw(28) << name << std::right << std::setw(9) << s.count << std::setw(11)
+     << s.avg_ms << std::setw(11) << s.p50_ms << std::setw(11) << s.p90_ms << std::setw(11)
+     << s.p95_ms << std::setw(11) << s.p99_ms << std::setw(11) << s.max_ms << "\n";
 }
 
 } // namespace
@@ -139,11 +138,15 @@ MeasureScope::~MeasureScope() {
   }
 }
 
-bool MeasureScope::stopped() const { return !impl_ || impl_->stopped; }
+bool MeasureScope::stopped() const {
+  return !impl_ || impl_->stopped;
+}
 
 MeasureReport MeasureScope::stop() {
-  if (!impl_) throw std::runtime_error("MeasureScope::stop: invalid moved-from scope");
-  if (impl_->stopped) return impl_->cached;
+  if (!impl_)
+    throw std::runtime_error("MeasureScope::stop: invalid moved-from scope");
+  if (impl_->stopped)
+    return impl_->cached;
 
   const auto end = Clock::now();
   const RunStats after = impl_->run->stats();
@@ -151,7 +154,8 @@ MeasureReport MeasureScope::stop() {
 
   MeasureReport report;
   report.options = impl_->options;
-  if (report.options.logical_batch_size <= 0) report.options.logical_batch_size = 1;
+  if (report.options.logical_batch_size <= 0)
+    report.options.logical_batch_size = 1;
   report.final_run_stats = after;
   report.inputs_pushed = measured.inputs_pushed;
   report.outputs_pulled = measured.outputs_pulled;
@@ -159,9 +163,8 @@ MeasureReport MeasureScope::stop() {
   report.outputs_dropped = measured.outputs_dropped;
   report.outputs = static_cast<std::size_t>(measured.outputs_pulled);
   report.elapsed_s = std::chrono::duration<double>(end - impl_->start).count();
-  report.throughput_batches_per_s = report.elapsed_s > 0.0
-                                        ? static_cast<double>(report.outputs) / report.elapsed_s
-                                        : 0.0;
+  report.throughput_batches_per_s =
+      report.elapsed_s > 0.0 ? static_cast<double>(report.outputs) / report.elapsed_s : 0.0;
   report.throughput_inferences_per_s =
       report.throughput_batches_per_s * static_cast<double>(report.options.logical_batch_size);
   std::vector<double> latency_samples;
@@ -178,9 +181,9 @@ MeasureReport MeasureScope::stop() {
   }
   report.end_to_end = summarize_samples(std::move(latency_samples));
   report.frame_gap = summarize_samples(std::move(frame_gap_samples));
-  report.latency_samples_collected =
-      report.end_to_end.count > 0 || report.frame_gap.count > 0;
-  if (impl_->options.include_power) report.power = impl_->run->power_summary();
+  report.latency_samples_collected = report.end_to_end.count > 0 || report.frame_gap.count > 0;
+  if (impl_->options.include_power)
+    report.power = impl_->run->power_summary();
   if (impl_->profiler) {
     append_plugin_latency_from_profiler(impl_->profiler->finalize(), &report.plugin_latency);
     impl_->profiler.reset();
@@ -219,12 +222,15 @@ std::string MeasureReport::to_text() const {
   os << "\n============================================================\n"
      << " " << (options.title.empty() ? "NEAT measurement" : options.title) << "\n"
      << "============================================================\n";
-  if (!options.model.empty()) os << "Model                 : " << options.model << "\n";
+  if (!options.model.empty())
+    os << "Model                 : " << options.model << "\n";
   if (options.logical_batch_size > 0) {
     os << "Compiled batch size   : " << options.logical_batch_size << "\n";
   }
-  if (!options.input.empty()) os << "Input                 : " << options.input << "\n";
-  if (!options.placement.empty()) os << "Placement             : " << options.placement << "\n";
+  if (!options.input.empty())
+    os << "Input                 : " << options.input << "\n";
+  if (!options.placement.empty())
+    os << "Placement             : " << options.placement << "\n";
   os << "Measure mode          : observer\n"
      << "Warmup window         : " << options.warmup_ms << " ms\n"
      << "Measured outputs      : " << outputs << "\n"
@@ -234,14 +240,10 @@ std::string MeasureReport::to_text() const {
 
   os << "\nLatency distribution (ms):\n";
   if (latency_samples_collected) {
-    os << std::left << std::setw(28) << "metric"
-       << std::right << std::setw(9) << "count"
-       << std::setw(11) << "avg"
-       << std::setw(11) << "p50"
-       << std::setw(11) << "p90"
-       << std::setw(11) << "p95"
-       << std::setw(11) << "p99"
-       << std::setw(11) << "max" << "\n";
+    os << std::left << std::setw(28) << "metric" << std::right << std::setw(9) << "count"
+       << std::setw(11) << "avg" << std::setw(11) << "p50" << std::setw(11) << "p90"
+       << std::setw(11) << "p95" << std::setw(11) << "p99" << std::setw(11) << "max"
+       << "\n";
     print_latency_row(os, "end-to-end push->output", end_to_end);
     print_latency_row(os, "between output frames", frame_gap);
   } else {
@@ -249,20 +251,16 @@ std::string MeasureReport::to_text() const {
   }
 
   os << "\nPer-plugin / kernel latency during measured window (ms):\n";
-  os << std::left << std::setw(34) << "plugin/kernel"
-     << std::right << std::setw(9) << "calls"
-     << std::setw(11) << "avg"
-     << std::setw(11) << "min"
-     << std::setw(11) << "max" << "\n";
+  os << std::left << std::setw(34) << "plugin/kernel" << std::right << std::setw(9) << "calls"
+     << std::setw(11) << "avg" << std::setw(11) << "min" << std::setw(11) << "max"
+     << "\n";
   if (plugin_latency.empty()) {
     os << "  no plugin/kernel timing samples were reported\n";
   } else {
     for (const auto& p : plugin_latency) {
-      os << std::left << std::setw(34) << p.name
-         << std::right << std::setw(9) << p.calls
-         << std::setw(11) << p.avg_ms
-         << std::setw(11) << p.min_ms
-         << std::setw(11) << p.max_ms << "\n";
+      os << std::left << std::setw(34) << p.name << std::right << std::setw(9) << p.calls
+         << std::setw(11) << p.avg_ms << std::setw(11) << p.min_ms << std::setw(11) << p.max_ms
+         << "\n";
     }
   }
 
