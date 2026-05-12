@@ -533,6 +533,16 @@ set(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
   CACHE FILEPATH
   "Path to the internals prepared-runtime bridge library")
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
+  foreach(_simaneat_runtime_dir IN LISTS SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES)
+    if (EXISTS "${_simaneat_runtime_dir}/libneatpreparedruntimebridge.so")
+      set(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
+        "${_simaneat_runtime_dir}/libneatpreparedruntimebridge.so"
+        CACHE FILEPATH "Prepared-runtime bridge library from SDK/runtime directory" FORCE)
+      break()
+    endif()
+  endforeach()
+endif()
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
   find_library(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
     NAMES neatpreparedruntimebridge
     HINTS
@@ -549,6 +559,18 @@ set(SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB
   "${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB}"
   CACHE FILEPATH
   "Path to the NEAT processmla runtime library used by the prepared-runtime bridge")
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND
+    NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE AND
+    NOT SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
+  foreach(_simaneat_runtime_dir IN LISTS SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES)
+    if (EXISTS "${_simaneat_runtime_dir}/libneatprocessmlaruntime.so")
+      set(SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB
+        "${_simaneat_runtime_dir}/libneatprocessmlaruntime.so"
+        CACHE FILEPATH "ProcessMLA runtime library from SDK/runtime directory" FORCE)
+      break()
+    endif()
+  endforeach()
+endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND
     NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE AND
     NOT SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
