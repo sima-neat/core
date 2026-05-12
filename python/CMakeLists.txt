@@ -23,7 +23,11 @@ set(PYNEAT_BINDING_SOURCES
 )
 
 nanobind_add_module(_pyneat_core ${PYNEAT_BINDING_SOURCES})
-target_link_libraries(_pyneat_core PRIVATE sima_neat)
+# Python bindings include public node headers whose layouts contain internal-only
+# fields when the core library is built with SIMA_NEAT_INTERNAL. Link through the
+# internal interface target so _pyneat_core sees the same compile definitions and
+# include paths as sima_neat, avoiding C++ ABI/layout mismatches.
+target_link_libraries(_pyneat_core PRIVATE sima_neat_internal)
 target_include_directories(_pyneat_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )

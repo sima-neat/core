@@ -209,6 +209,16 @@ std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
   return python_to_json(value);
 }
 
+simaai::neat::FormatSpec python_to_format_spec(nb::handle value) {
+  if (value.is_none()) {
+    return simaai::neat::FormatSpec{};
+  }
+  if (PyUnicode_Check(value.ptr())) {
+    return simaai::neat::FormatSpec(nb::cast<std::string>(value));
+  }
+  throw nb::type_error("format must be a string token such as 'RGB', 'NV12', or 'FP32'");
+}
+
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
                                               std::size_t elem_bytes) {
   if (shape.empty())
@@ -1663,7 +1673,13 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::InputOptions>(m, "InputOptions")
       .def(nb::init<>())
       .def_rw("media_type", &simaai::neat::InputOptions::media_type)
-      .def_rw("format", &simaai::neat::InputOptions::format)
+      .def_prop_rw(
+          "format",
+          [](const simaai::neat::InputOptions& options) { return options.format.str(); },
+          [](simaai::neat::InputOptions& options, nb::handle value) {
+            options.format = python_to_format_spec(value);
+          },
+          "value"_a.none())
       .def_rw("width", &simaai::neat::InputOptions::width)
       .def_rw("height", &simaai::neat::InputOptions::height)
       .def_rw("depth", &simaai::neat::InputOptions::depth)

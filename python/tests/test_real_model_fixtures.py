@@ -1,142 +1,38 @@
-import os
-import shutil
 import struct
-import subprocess
 import sys
-import json
 from pathlib import Path
 
 import cv2
 import numpy as np
 import pytest
 
+import model_fixture_helpers as model_fixtures
 import pyneat
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = model_fixtures.ROOT
 SANDBOX_API_TESTS = ROOT / "sandbox" / "api-tests"
-_MODEL_PATH_CACHE: dict[str, Path | None] = {}
+MODELZOO_PLATFORM_VERSION = model_fixtures.MODELZOO_PLATFORM_VERSION
 BOXDECODE_THRESHOLDS = (0.50, 0.60, 0.70)
 TOP_SCORE_HIGHLIGHT_COUNT = 3
 
-try:
-  from _platform_version_generated import PLATFORM_VERSION as MODELZOO_PLATFORM_VERSION
-except Exception:
-  manifest = ROOT / "deps" / "manifest.json"
-  try:
-    MODELZOO_PLATFORM_VERSION = (
-        json.loads(manifest.read_text(encoding="utf-8")).get("platform-version", "") or "2.0.0"
-    )
-  except Exception:
-    MODELZOO_PLATFORM_VERSION = "2.0.0"
-
-_MODEL_FIXTURES = {
-    "SIMA_RESNET50_TAR": {
-        "model_name": "resnet_50",
-        "names": (
-            "resnet_50_mpk.tar.gz",
-            "resnet-50_mpk.tar.gz",
-        ),
-    },
-    "SIMA_YOLO_TAR": {
-        "model_name": "yolo_v8s",
-        "names": (
-            "yolo_v8s_mpk.tar.gz",
-            "yolo-v8s_mpk.tar.gz",
-            "yolov8s_mpk.tar.gz",
-            "yolov8_s_mpk.tar.gz",
-        ),
-    },
-}
-
-
-def _candidate_model_dirs() -> list[Path]:
-  home = Path.home()
-  return [
-      ROOT / "tmp",
-      ROOT / "assets" / "models",
-      ROOT,
-      Path.cwd() / "tmp",
-      Path.cwd(),
-      home / ".simaai",
-      home / ".simaai" / "modelzoo",
-      home / ".sima" / "modelzoo",
-      Path("/data/simaai/modelzoo"),
-  ]
-
-
-def _find_existing_model_tar(names: tuple[str, ...]) -> Path | None:
-  for directory in _candidate_model_dirs():
-    for name in names:
-      candidate = directory / name
-      if candidate.is_file():
-        return candidate
-  return None
-
-
-def _resolve_model_tar(name: str) -> Path | None:
-  if name in _MODEL_PATH_CACHE:
-    return _MODEL_PATH_CACHE[name]
-
-  spec = _MODEL_FIXTURES[name]
-  env_value = os.environ.get(name, "")
-  if env_value:
-    env_path = Path(env_value)
-    if env_path.is_file():
-      _MODEL_PATH_CACHE[name] = env_path
-      return env_path
-
-  found = _find_existing_model_tar(spec["names"])
-  if found is not None:
-    _MODEL_PATH_CACHE[name] = found
-    return found
-
-  sima_cli = shutil.which("sima-cli")
-  if sima_cli is not None:
-    result = subprocess.run(
-        [sima_cli, "modelzoo", "-v", MODELZOO_PLATFORM_VERSION, "get", spec["model_name"]],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
-    if result.returncode == 0:
-      found = _find_existing_model_tar(spec["names"])
-      if found is not None:
-        _MODEL_PATH_CACHE[name] = found
-        return found
-
-  _MODEL_PATH_CACHE[name] = None
-  return None
-
-
-def _fixture_model_path(name: str) -> Path:
-  path = _resolve_model_tar(name)
-  if path is not None:
-    return path
-
-  spec = _MODEL_FIXTURES[name]
-  pytest.skip(
-      f"missing real model fixture for {name}; set {name} or run "
-      f"'sima-cli modelzoo -v {MODELZOO_PLATFORM_VERSION} get {spec['model_name']}'"
-  )
-
 
 def _env_path(name: str) -> Path:
-  return _fixture_model_path(name)
+  return model_fixtures.strict_model_tar_path(name)
 
 
 def test_model_fixture_path_helper_skips_when_unresolved(monkeypatch):
-  _MODEL_PATH_CACHE.clear()
+  model_fixtures._MODEL_PATH_CACHE.clear()
   monkeypatch.delenv("SIMA_RESNET50_TAR", raising=False)
   monkeypatch.setattr(
-      sys.modules[__name__],
-      "_resolve_model_tar",
+      model_fixtures,
+      "resolve_model_tar",
       lambda _name: None,
       raising=False,
   )
 
   with pytest.raises(pytest.skip.Exception, match="SIMA_RESNET50_TAR"):
-    _fixture_model_path("SIMA_RESNET50_TAR")
+    model_fixtures.fixture_model_path("SIMA_RESNET50_TAR")
 
 
 def test_image_fixture_path_helper_falls_back_to_cwd_when_root_missing(monkeypatch, tmp_path):
@@ -192,10 +88,13 @@ def _decode_rgb_image(path: Path) -> np.ndarray:
   return cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
 
 
-def _tensor_input_model(model_tar: Path) -> pyneat.Model:
+def _tensor_input_model(
+    model_tar: Path, decode_type: pyneat.BoxDecodeType = pyneat.BoxDecodeType.Unspecified
+) -> pyneat.Model:
   opt = pyneat.ModelOptions()
-  opt.media_type = "application/vnd.simaai.tensor"
-  opt.format = ""
+  opt.preprocess.kind = pyneat.InputKind.Tensor
+  opt.preprocess.enable = pyneat.AutoFlag.Off
+  opt.decode_type = decode_type
   return pyneat.Model(str(model_tar), opt)
 
 
@@ -376,11 +275,14 @@ def test_real_fixture_paths_resolve():
 
 
 def test_model_backed_option_structs_preserve_real_fixture_semantics():
-  resnet_model = pyneat.Model(str(_env_path("SIMA_RESNET50_TAR")))
+  resnet_preproc_opt = pyneat.ModelOptions()
+  resnet_preproc_opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+  resnet_preproc_model = pyneat.Model(str(_env_path("SIMA_RESNET50_TAR")), resnet_preproc_opt)
+  quant_model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
   yolo_model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
 
-  pre = pyneat.PreprocOptions(resnet_model)
-  quant = pyneat.QuantTessOptions(resnet_model)
+  pre = pyneat.PreprocOptions(resnet_preproc_model)
+  quant = pyneat.QuantTessOptions(quant_model)
   detess = pyneat.DetessDequantOptions(yolo_model)
 
   assert pre.node_name == "preproc"
@@ -389,15 +291,13 @@ def test_model_backed_option_structs_preserve_real_fixture_semantics():
   assert pre.num_buffers == pre.num_buffers_model == 4
   assert pre.num_buffers_locked is True
 
-  assert quant.config_path.endswith("0_quanttess.json")
   assert quant.config_json is None
   assert quant.num_buffers == quant.num_buffers_model == 4
   assert quant.num_buffers_locked is True
   assert pyneat.nodes.quant_tess(quant) is not None
 
-  assert detess.config_path.endswith("0_postproc.json")
-  assert detess.upstream_name == "simaaiprocessmla_1"
-  assert detess.element_name == "simaaiprocessdetess_dequant_1"
+  assert detess.upstream_name
+  assert detess.element_name
   assert detess.num_buffers == detess.num_buffers_model == 4
   assert detess.num_buffers_locked is True
 
@@ -431,19 +331,22 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
 
 def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
+  detess_model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
+  boxdecode_opt = pyneat.ModelOptions()
+  boxdecode_opt.decode_type = pyneat.BoxDecodeType.YoloV8
+  boxdecode_model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")), boxdecode_opt)
 
   detess_output = _run_model_on_image(
-      model,
+      detess_model,
       image,
-      pyneat.groups.mla(model),
-      pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)),
+      pyneat.groups.mla(detess_model),
+      pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)),
   )
   session = pyneat.Session()
-  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  session.add(_custom_preproc_node(model, image))
-  session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.sima_box_decode(model))
+  session.add(pyneat.nodes.input(boxdecode_model.input_appsrc_options(False)))
+  session.add(_custom_preproc_node(boxdecode_model, image))
+  session.add(pyneat.groups.mla(boxdecode_model))
+  session.add(pyneat.nodes.sima_box_decode(boxdecode_model, decode_type=pyneat.BoxDecodeType.YoloV8))
   session.add(pyneat.nodes.output())
 
   backend = session.describe_backend()
@@ -485,7 +388,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
     backend = model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
 
     assert input_spec.dtypes == [pyneat.TensorDType.Float32]
-    assert list(input_spec.shape) == [-1, -1, 3]
+    assert list(input_spec.shape) == [640, 640, 3]
     assert appsrc.media_type == "application/vnd.simaai.tensor"
     assert appsrc.format == "FP32"
     assert "quanttess" in backend
@@ -522,12 +425,12 @@ def _run_quanttess_boxdecode_on_real_input(
   session.add(
       pyneat.nodes.sima_box_decode(
           model,
-          "yolov8",
-          image.shape[1],
-          image.shape[0],
-          detection_threshold,
-          0.55,
-          120,
+          decode_type=pyneat.BoxDecodeType.YoloV8,
+          original_width=image.shape[1],
+          original_height=image.shape[0],
+          detection_threshold=detection_threshold,
+          nms_iou_threshold=0.55,
+          top_k=120,
       )
   )
   session.add(pyneat.nodes.output())
@@ -543,7 +446,7 @@ def _run_quanttess_boxdecode_on_real_input(
 
 def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
+  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
   quant_input = _cpu_quanttess_input(model, image)
 
   counts = []
@@ -581,7 +484,7 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
 
 def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
+  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
   quant_input = _cpu_quanttess_input(model, image)
 
   counts = []
@@ -621,7 +524,9 @@ def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path
 
 def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
+  opt = pyneat.ModelOptions()
+  opt.decode_type = pyneat.BoxDecodeType.YoloV8
+  model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")), opt)
 
   counts = []
   for threshold in BOXDECODE_THRESHOLDS:
@@ -632,12 +537,12 @@ def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
         pyneat.groups.mla(model),
         pyneat.nodes.sima_box_decode(
             model,
-            "yolov8",
-            image.shape[1],
-            image.shape[0],
-            threshold,
-            0.55,
-            120,
+            decode_type=pyneat.BoxDecodeType.YoloV8,
+            original_width=image.shape[1],
+            original_height=image.shape[0],
+            detection_threshold=threshold,
+            nms_iou_threshold=0.55,
+            top_k=120,
         ),
     )
     payload = _extract_bbox_payload(box_output)

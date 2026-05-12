@@ -6530,7 +6530,8 @@ bool ModelAccess::has_model_managed_stage(const Model& model, StageNodeKind kind
   case StageNodeKind::Tess:
   case StageNodeKind::QuantTess:
   case StageNodeKind::CastTess:
-    return resolved_preprocess_graph_contains_stage(model.impl_->preprocess_plan, kind);
+    return resolved_preprocess_graph_contains_stage(model.impl_->preprocess_plan, kind) ||
+           route_contains_stage(model.impl_->preprocess_plan.session_route_plan, kind);
   case StageNodeKind::Detess:
   case StageNodeKind::DetessCast:
   case StageNodeKind::DetessDequant:
