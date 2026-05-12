@@ -256,7 +256,6 @@ set(UNIT_TESTS
   unit_neatmodel_async_api_test
   unit_neattensor_core_test
   unit_neattensor_cvmat_test
-  unit_tensor_from_cv_mat_exactness_test
   unit_tensorbuffer_packed_runtime_parent_test
   unit_tensorbuffer_padded_hwc_gap_inference_test
   unit_tensorbuffer_runtime_contract_identity_overlay_test
@@ -338,6 +337,10 @@ set(UNIT_TESTS
   unit_nodes_test
   unit_plugin_failure_messages_test
 )
+
+if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
+  list(APPEND UNIT_TESTS unit_tensor_from_cv_mat_exactness_test)
+endif()
 
 foreach(test ${UNIT_TESTS})
   add_pipeline_test(

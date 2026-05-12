@@ -126,8 +126,8 @@ void check_per_frame_geometric_invariants(const char* family, const char* stage_
   if (rank < 1 || rank > kMaxPerFrameRank) {
     warn("RANK_OUT_OF_RANGE", "rank not in [1, kMaxPerFrameRank]");
   }
-  if (expected_batch_size > 0 && expected_batch_size < 1) {
-    warn("BATCH_NON_POSITIVE", "batch_size declared but not positive");
+  if (expected_batch_size < 0) {
+    warn("BATCH_NEGATIVE", "batch_size cannot be negative");
   }
 }
 
@@ -2458,10 +2458,6 @@ CompiledProcessCvuRuntimeConfig build_detessellate_runtime_config_from_subsets(
         i < published_output_names.size() && !published_output_names[i].empty()
             ? published_output_names[i]
             : output_name;
-    const int output_channels = output_dims.layout.empty() || upper_copy(output_dims.layout) != "HW"
-                                    ? std::max(output_dims.channels, 1)
-                                    : 1;
-
     const std::string semantic_layout;
     if (runtime.default_input_name.empty()) {
       runtime.default_input_name = input_name;

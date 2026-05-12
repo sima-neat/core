@@ -42,6 +42,14 @@ option(SIMANEAT_USE_EXPORTED_NEAT_INTERNALS
   "Prefer the exported NeatInternals SDK package over ad hoc library/header discovery"
   ON)
 
+set(SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS_DEFAULT ON)
+if (SIMANEAT_CPP_TIDY)
+  set(SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS_DEFAULT OFF)
+endif()
+option(SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
+  "Require NEAT runtime libraries/headers during configure"
+  ${SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS_DEFAULT})
+
 if (UNIX)
   set(SIMANEAT_SOURCE_FS_TYPE "")
   execute_process(
@@ -293,6 +301,32 @@ function(simaneat_find_exported_include_dir out_var target_name relative_header)
   endforeach()
 endfunction()
 
+function(simaneat_dependency_is_found out_var var_name)
+  set(_found OFF)
+  if (DEFINED ${var_name})
+    set(_value "${${var_name}}")
+    if (_value AND NOT _value MATCHES "-NOTFOUND$")
+      set(_found ON)
+    endif()
+  endif()
+  set(${out_var} ${_found} PARENT_SCOPE)
+endfunction()
+
+function(simaneat_require_dependency var_name error_message)
+  simaneat_dependency_is_found(_found ${var_name})
+  if (_found)
+    return()
+  endif()
+
+  if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS)
+    message(FATAL_ERROR "${error_message}")
+  endif()
+
+  message(STATUS
+    "${error_message} Continuing because "
+    "SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF.")
+endfunction()
+
 set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_internals_target IN ITEMS
@@ -416,6 +450,7 @@ find_library(SIMANEAT_NEAT_ALLOCATOR_LIB
 find_path(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
   NAMES gstsimaaiallocator.h
   HINTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/allocator
     /usr/include/simaai
     /usr/local/include/simaai
     $ENV{HOME}/.local/include/simaai
@@ -444,9 +479,18 @@ find_library(SIMANEAT_SIMAAIMEM_LIB
     /usr/lib
     /lib
 )
+find_path(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
+  NAMES simaai/simaai_memory.h
+  HINTS
+    /opt/toolchain/aarch64/modalix/usr/include
+    /usr/include
+    /usr/local/include
+    $ENV{HOME}/.local/include
+)
 find_path(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
   NAMES gstsimaaitensorbuffer.h
   HINTS
+    ${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/tensorbuffer
     /usr/include/simaai
     /usr/local/include/simaai
     $ENV{HOME}/.local/include/simaai
@@ -464,6 +508,16 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_
       /usr/local/include
       $ENV{HOME}/.local/include
   )
+endif()
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT AND
+    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/gst/SimaPreparedRuntimeAbi.h" AND
+    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/ev/ev_tensor_abi.h" AND
+    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/include/neat/PreparedRuntimeBridge.h")
+  set(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    CACHE PATH
+    "Root include directory that contains gst/, ev/, and neat/ headers exported by internals"
+    FORCE)
 endif()
 
 set(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
@@ -502,63 +556,58 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND
   )
 endif()
 
-if (NOT SIMANEAT_NEAT_ALLOCATOR_LIB)
-  message(FATAL_ERROR
-    "Required NEAT allocator library not found: libgstneatallocator.so. "
-    "Expected under a NEAT/GStreamer plugin directory."
-  )
+simaneat_require_dependency(SIMANEAT_NEAT_ALLOCATOR_LIB
+  "Required NEAT allocator library not found: libgstneatallocator.so. Expected under a NEAT/GStreamer plugin directory.")
+simaneat_require_dependency(SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR
+  "Required NEAT allocator headers not found: gstsimaaiallocator.h.")
+simaneat_require_dependency(SIMANEAT_NEAT_BUFFERPOOL_LIB
+  "Required NEAT buffer pool library not found: libgstneatbufferpool.so. Expected under a NEAT/GStreamer plugin directory.")
+simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_LIB
+  "Required NEAT tensor buffer library not found: libgstneattensorbuffer.so. Expected under a NEAT/GStreamer plugin directory.")
+simaneat_require_dependency(SIMANEAT_SIMAAIMEM_LIB
+  "Required simaai memory library not found: libsimaaimem.so.")
+simaneat_require_dependency(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
+  "Required simaai memory headers not found: simaai/simaai_memory.h.")
+simaneat_require_dependency(SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR
+  "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h.")
+if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
+  simaneat_require_dependency(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
+    "Prepared-runtime bridge headers not found. Expected an include root containing gst/SimaPreparedRuntimeAbi.h, ev/ev_tensor_abi.h, and neat/PreparedRuntimeBridge.h.")
+  simaneat_dependency_is_found(_simaneat_has_public_include_root
+    SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT)
+  if (_simaneat_has_public_include_root AND NOT EXISTS
+        "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h")
+    if (SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS)
+      message(FATAL_ERROR
+        "Prepared-runtime bridge API header not found under "
+        "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h"
+      )
+    endif()
+    message(STATUS
+      "Prepared-runtime bridge API header not found under "
+      "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h. "
+      "Continuing because SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF.")
+  endif()
+  simaneat_require_dependency(SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB
+    "Prepared-runtime bridge library not found: libneatpreparedruntimebridge.so")
+  if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
+    simaneat_require_dependency(SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB
+      "Required processmla runtime library not found: libneatprocessmlaruntime.so")
+  endif()
 endif()
-if (NOT SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR)
-  message(FATAL_ERROR
-    "Required NEAT allocator headers not found: gstsimaaiallocator.h."
-  )
-endif()
-if (NOT SIMANEAT_NEAT_BUFFERPOOL_LIB)
-  message(FATAL_ERROR
-    "Required NEAT buffer pool library not found: libgstneatbufferpool.so. "
-    "Expected under a NEAT/GStreamer plugin directory."
-  )
-endif()
-if (NOT SIMANEAT_NEAT_TENSORBUFFER_LIB)
-  message(FATAL_ERROR
-    "Required NEAT tensor buffer library not found: libgstneattensorbuffer.so. "
-    "Expected under a NEAT/GStreamer plugin directory."
-  )
-endif()
-if (NOT SIMANEAT_SIMAAIMEM_LIB)
-  message(FATAL_ERROR
-    "Required simaai memory library not found: libsimaaimem.so."
-  )
-endif()
-if (NOT SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR)
-  message(FATAL_ERROR
-    "Required NEAT tensor buffer headers not found: gstsimaaitensorbuffer.h."
-  )
-endif()
-if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT)
-  message(FATAL_ERROR
-    "Prepared-runtime bridge headers not found. Expected an include root containing "
-    "gst/SimaPreparedRuntimeAbi.h, ev/ev_tensor_abi.h, and neat/PreparedRuntimeBridge.h."
-  )
-endif()
-if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT EXISTS
-      "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h")
-  message(FATAL_ERROR
-    "Prepared-runtime bridge API header not found under "
-    "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}/neat/PreparedRuntimeBridge.h"
-  )
-endif()
-if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
-  message(FATAL_ERROR
-    "Prepared-runtime bridge library not found: libneatpreparedruntimebridge.so"
-  )
-endif()
-if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND
-    NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE AND
-    NOT SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
-  message(FATAL_ERROR
-    "Required processmla runtime library not found: libneatprocessmlaruntime.so"
-  )
+
+set(SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT "${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}")
+simaneat_dependency_is_found(_simaneat_has_simaaimem_include_root
+  SIMANEAT_SIMAAIMEM_INCLUDE_ROOT)
+if (SIMANEAT_CPP_TIDY AND _simaneat_has_simaaimem_include_root)
+  set(SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT
+    "${CMAKE_BINARY_DIR}/tidy-include")
+  file(MAKE_DIRECTORY "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}/simaai")
+  file(WRITE
+    "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h"
+    "#pragma once\n#include \"${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h\"\n")
+  set(SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT
+    "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -621,12 +670,19 @@ target_include_directories(sima_neat
 )
 
 if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-  target_include_directories(sima_neat PRIVATE
-    ${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}
-    ${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}
-    ${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}
-    ${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}
-    ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT})
+  foreach(_simaneat_neat_include_dir IN ITEMS
+      "${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}"
+      "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
+      "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
+      "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
+      "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
+      "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
+    if (_simaneat_neat_include_dir AND
+        NOT _simaneat_neat_include_dir MATCHES "-NOTFOUND$")
+      target_include_directories(sima_neat PRIVATE
+        "${_simaneat_neat_include_dir}")
+    endif()
+  endforeach()
 endif()
 
 if (GST_FOUND)
@@ -674,17 +730,31 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
     NeatInternals::BufferPool
     NeatInternals::TensorBuffer)
 else()
-  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_ALLOCATOR_LIB})
-  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
-  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+  if (SIMANEAT_NEAT_ALLOCATOR_LIB)
+    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_ALLOCATOR_LIB})
+  endif()
+  if (SIMANEAT_NEAT_BUFFERPOOL_LIB)
+    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
+  endif()
+  if (SIMANEAT_NEAT_TENSORBUFFER_LIB)
+    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+  endif()
 endif()
-target_link_libraries(sima_neat PUBLIC ${SIMANEAT_SIMAAIMEM_LIB})
+if (SIMANEAT_SIMAAIMEM_LIB)
+  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_SIMAAIMEM_LIB})
+endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
     target_link_libraries(sima_neat PUBLIC NeatInternals::PreparedRuntimeBridge)
   else()
-    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB})
-    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB})
+    if (SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
+      target_link_libraries(sima_neat PUBLIC
+        ${SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB})
+    endif()
+    if (SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
+      target_link_libraries(sima_neat PUBLIC
+        ${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB})
+    endif()
   endif()
 endif()
 
@@ -721,9 +791,21 @@ endif()
 
 target_compile_definitions(sima_neat PUBLIC SIMA_HAS_SIMAAI_POOL=1)
 
-get_filename_component(SIMANEAT_NEAT_ALLOCATOR_DIR "${SIMANEAT_NEAT_ALLOCATOR_LIB}" DIRECTORY)
-get_filename_component(SIMANEAT_NEAT_BUFFERPOOL_DIR "${SIMANEAT_NEAT_BUFFERPOOL_LIB}" DIRECTORY)
-get_filename_component(SIMANEAT_NEAT_TENSORBUFFER_DIR "${SIMANEAT_NEAT_TENSORBUFFER_LIB}" DIRECTORY)
+set(SIMANEAT_NEAT_ALLOCATOR_DIR "")
+if (SIMANEAT_NEAT_ALLOCATOR_LIB)
+  get_filename_component(SIMANEAT_NEAT_ALLOCATOR_DIR
+    "${SIMANEAT_NEAT_ALLOCATOR_LIB}" DIRECTORY)
+endif()
+set(SIMANEAT_NEAT_BUFFERPOOL_DIR "")
+if (SIMANEAT_NEAT_BUFFERPOOL_LIB)
+  get_filename_component(SIMANEAT_NEAT_BUFFERPOOL_DIR
+    "${SIMANEAT_NEAT_BUFFERPOOL_LIB}" DIRECTORY)
+endif()
+set(SIMANEAT_NEAT_TENSORBUFFER_DIR "")
+if (SIMANEAT_NEAT_TENSORBUFFER_LIB)
+  get_filename_component(SIMANEAT_NEAT_TENSORBUFFER_DIR
+    "${SIMANEAT_NEAT_TENSORBUFFER_LIB}" DIRECTORY)
+endif()
 set(SIMANEAT_CTEST_NEAT_PLUGIN_DIR "" CACHE PATH
   "NEAT plugin directory used by core CTest/tutorial executions")
 if (NOT SIMANEAT_CTEST_NEAT_PLUGIN_DIR AND DEFINED ENV{SIMA_GST_PLUGIN_DIR} AND
@@ -838,23 +920,33 @@ endif()
 add_library(sima_neat_internal INTERFACE)
 target_link_libraries(sima_neat_internal INTERFACE sima_neat)
 target_include_directories(sima_neat_internal INTERFACE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
   ${CMAKE_CURRENT_SOURCE_DIR}/src
   ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
 )
 if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-  target_include_directories(sima_neat_internal INTERFACE
-    ${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}
-    ${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}
-    ${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}
-    ${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}
-    ${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT})
+  foreach(_simaneat_neat_internal_include_dir IN ITEMS
+      "${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}"
+      "${SIMANEAT_REPO_NEAT_INCLUDE_ROOT}"
+      "${SIMANEAT_NEAT_ALLOCATOR_INCLUDE_DIR}"
+      "${SIMANEAT_NEAT_TENSORBUFFER_INCLUDE_DIR}"
+      "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}"
+      "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
+    if (_simaneat_neat_internal_include_dir AND
+        NOT _simaneat_neat_internal_include_dir MATCHES "-NOTFOUND$")
+      target_include_directories(sima_neat_internal INTERFACE
+        "${_simaneat_neat_internal_include_dir}")
+    endif()
+  endforeach()
 endif()
 target_compile_definitions(sima_neat_internal INTERFACE SIMA_NEAT_INTERNAL=1)
 
 # ------------------------------------------------------------------------------
 # Examples (optional, installable)
 # ------------------------------------------------------------------------------
-if (SIMANEAT_BUILD_SAMPLES)
+if (SIMANEAT_BUILD_SAMPLES AND
+    EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/CMakeLists.txt")
   add_subdirectory(examples)
 endif()
 

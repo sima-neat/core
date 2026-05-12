@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -119,11 +120,13 @@ bool processcvu_build_dense_tensor_desc_runtime(const std::vector<int>& shape,
                                         "runtime_shape_desc_dim_invalid")) {
     return false;
   }
-  if (!processcvu_dtype_token_to_ev_runtime(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!processcvu_dtype_token_to_ev_runtime(dtype_token, &dtype)) {
     if (error_detail)
       *error_detail = "runtime_dense_tensor_desc_dtype_invalid";
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_STRIDED;
   return processcvu_fill_dense_strides_runtime(out->shape, normalized_layout, out->dtype,
                                                &out->layout.strided, error_detail);
@@ -164,11 +167,13 @@ bool processcvu_build_tiled_tensor_desc_runtime(
                                         "runtime_shape_desc_dim_invalid")) {
     return false;
   }
-  if (!processcvu_dtype_token_to_ev_runtime(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!processcvu_dtype_token_to_ev_runtime(dtype_token, &dtype)) {
     if (error_detail)
       *error_detail = "runtime_tiled_tensor_desc_dtype_invalid";
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_TILED;
   for (std::size_t i = 0; i < tile_shape.size(); ++i) {
     if (tile_shape[i] <= 0 || tile_shape[i] > shape[i]) {

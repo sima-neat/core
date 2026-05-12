@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -2432,12 +2433,14 @@ bool processcvu_build_dense_tensor_desc_local(const std::vector<std::int64_t>& s
                                         "processcvu shape dim invalid")) {
     return false;
   }
-  if (!processcvu_dtype_token_to_ev_local(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!processcvu_dtype_token_to_ev_local(dtype_token, &dtype)) {
     if (error_message) {
       *error_message = "processcvu dense tensor dtype invalid";
     }
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_STRIDED;
   out->storage.nbytes = size_bytes != 0U ? size_bytes : shape_size_bytes_local(shape, dtype_token);
   return tensorsemantics::fill_dense_strides(out->shape, normalized_layout, out->dtype,
@@ -2494,12 +2497,14 @@ bool processcvu_build_tiled_tensor_desc_local(
                                         "processcvu shape dim invalid")) {
     return false;
   }
-  if (!processcvu_dtype_token_to_ev_local(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!processcvu_dtype_token_to_ev_local(dtype_token, &dtype)) {
     if (error_message) {
       *error_message = "processcvu tiled tensor dtype invalid";
     }
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_TILED;
   out->storage.nbytes = size_bytes != 0U ? size_bytes : shape_size_bytes_local(shape, dtype_token);
   for (std::size_t i = 0; i < tile_shape.size(); ++i) {

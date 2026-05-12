@@ -663,12 +663,14 @@ inline bool build_dense_tensor_desc(const std::vector<int>& shape, const std::st
                        rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }
-  if (!dtype_token_to_ev(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!dtype_token_to_ev(dtype_token, &dtype)) {
     if (error_detail) {
       *error_detail = std::string(dtype_invalid_msg);
     }
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_STRIDED;
   return fill_dense_strides(out->shape, layout_token, out->dtype, &out->layout.strided,
                             error_detail, stride_output_missing_msg, dtype_invalid_msg);
@@ -692,12 +694,14 @@ inline bool build_generic_dense_tensor_desc(
                                               rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }
-  if (!dtype_token_to_ev(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!dtype_token_to_ev(dtype_token, &dtype)) {
     if (error_detail) {
       *error_detail = std::string(dtype_invalid_msg);
     }
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_STRIDED;
   return fill_dense_strides_contiguous(out->shape, out->dtype, &out->layout.strided, error_detail,
                                        stride_output_missing_msg, dtype_invalid_msg);
@@ -758,12 +762,14 @@ build_tiled_tensor_desc(const std::vector<int>& shape, const std::vector<int>& t
                        rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }
-  if (!dtype_token_to_ev(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!dtype_token_to_ev(dtype_token, &dtype)) {
     if (error_detail) {
       *error_detail = std::string(dtype_invalid_msg);
     }
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_TILED;
   for (std::size_t i = 0; i < tile_shape.size(); ++i) {
     if (tile_shape[i] <= 0 || tile_shape[i] > shape[i]) {
@@ -812,12 +818,14 @@ inline bool build_generic_tiled_tensor_desc(
                                               rank_invalid_msg, dim_invalid_msg)) {
     return false;
   }
-  if (!dtype_token_to_ev(dtype_token, &out->dtype)) {
+  std::uint32_t dtype = 0;
+  if (!dtype_token_to_ev(dtype_token, &dtype)) {
     if (error_detail) {
       *error_detail = std::string(dtype_invalid_msg);
     }
     return false;
   }
+  out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_TILED;
   for (std::size_t i = 0; i < tile_shape.size(); ++i) {
     if (tile_shape[i] <= 0 || tile_shape[i] > shape[i]) {

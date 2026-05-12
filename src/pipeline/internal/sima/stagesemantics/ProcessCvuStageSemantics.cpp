@@ -2024,7 +2024,7 @@ build_processcvu_exposed_view_from_runtime(const CompiledRuntimeContract& runtim
       selected_output_names.size() > 1U) {
     std::fprintf(
         stderr, "[exposed-view-debug] selected_names=%zu selected_indices=%zu primary=%s\n",
-        selected_output_names.size(), selected_indices.size(), primary_output_name.c_str());
+        selected_output_names.size(), selected_indices.size(), exposed.primary_output_name.c_str());
     for (std::size_t i = 0; i < runtime.output_order.size(); ++i) {
       std::fprintf(stderr,
                    "  [exposed-view-debug] route[%zu]=cm:%s seg:%s logical:%d slot:%d tensor:%d\n",
