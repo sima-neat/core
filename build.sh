@@ -30,7 +30,7 @@ SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
-NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-neat-internals/manifest.json}"
+NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://neat-artifacts.modalix.info/neat-internals}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-neat-internals}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
@@ -228,6 +228,8 @@ Options:
   --python       Build Python bindings (pyneat) in addition to selected targets
   --install-neat-internals
                  Download/install neat-internals artifacts before build
+  --internals-manifest <path>
+                 Manifest that selects neat-internals artifact tag (default: deps/manifest.json)
   --doc          Build only docs
   --no-dist      Skip DEB packaging
   --clean        Remove build directory before building
@@ -284,6 +286,14 @@ parse_args() {
       --install-neat-internals)
         INSTALL_NEAT_INTERNALS=ON
         shift
+        ;;
+      --internals-manifest)
+        NEAT_INTERNALS_MANIFEST="${2:-}"
+        if [[ -z "${NEAT_INTERNALS_MANIFEST}" ]]; then
+          echo "ERROR: --internals-manifest requires a path" >&2
+          exit 1
+        fi
+        shift 2
         ;;
       --example)
         BUILD_SAMPLES=ON
@@ -549,7 +559,7 @@ download_file() {
     else
       curl -fL "${url}" -o "${out}"
     fi
-    return 0
+    return $?
   fi
   if command -v wget >/dev/null 2>&1; then
     if [[ -n "${basic_auth}" ]]; then
@@ -563,7 +573,7 @@ download_file() {
     else
       wget -O "${out}" "${url}"
     fi
-    return 0
+    return $?
   fi
   return 1
 }
@@ -822,9 +832,12 @@ ensure_neat_internals() {
 
   local artifact_tag
   # Manifest drives which artifact tag to fetch.
-  artifact_tag="$(extract_json_string "artifact_tag" "${NEAT_INTERNALS_MANIFEST}")"
+  artifact_tag="$(extract_json_string "internals" "${NEAT_INTERNALS_MANIFEST}")"
   if [[ -z "${artifact_tag}" ]]; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty artifact_tag string." >&2
+    artifact_tag="$(extract_json_string "artifact_tag" "${NEAT_INTERNALS_MANIFEST}")"
+  fi
+  if [[ -z "${artifact_tag}" ]]; then
+    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty internals string." >&2
     exit 1
   fi
 
