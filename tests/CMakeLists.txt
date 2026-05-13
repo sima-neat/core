@@ -349,7 +349,7 @@ foreach(test ${UNIT_TESTS})
   )
 
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_tests_properties(${test} PROPERTIES LABELS "unit")
+    set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
 
@@ -395,7 +395,7 @@ add_pipeline_test(
 
 foreach(test unit_appsrcimage_test unit_image_group_runtime_test unit_pipeline_io_test neat_tensor_device_placement_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_tests_properties(${test} PROPERTIES LABELS "unit")
+    set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
 
@@ -435,7 +435,7 @@ foreach(test ${E2E_TESTS})
   )
 
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_tests_properties(${test} PROPERTIES LABELS "e2e")
+    set_property(TEST ${test} APPEND PROPERTY LABELS "e2e")
   endif()
 endforeach()
 
@@ -445,7 +445,7 @@ add_pipeline_test_long(
 )
 
 if (NOT preproc_build_input_repro_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(preproc_build_input_repro_test PROPERTIES LABELS "e2e")
+  set_property(TEST preproc_build_input_repro_test APPEND PROPERTY LABELS "e2e")
 endif()
 
 add_pipeline_test_long(
@@ -454,7 +454,7 @@ add_pipeline_test_long(
 )
 
 if (NOT mnist_preproc_channels1_accuracy_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(mnist_preproc_channels1_accuracy_test PROPERTIES LABELS "e2e;modelzoo;long")
+  set_property(TEST mnist_preproc_channels1_accuracy_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
 endif()
 
 add_pipeline_test_long(
@@ -463,7 +463,7 @@ add_pipeline_test_long(
 )
 
 if (NOT mnist_async_consumer_visibility_control_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(mnist_async_consumer_visibility_control_test PROPERTIES LABELS "e2e;modelzoo;long;perf")
+  set_property(TEST mnist_async_consumer_visibility_control_test APPEND PROPERTY LABELS "e2e;modelzoo;long;perf")
 endif()
 
 add_pipeline_test_long(
@@ -472,7 +472,7 @@ add_pipeline_test_long(
 )
 
 if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(modelzoo_bulk_models_test PROPERTIES LABELS "e2e;modelzoo;long")
+  set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -489,7 +489,7 @@ add_pipeline_test(
 )
 
 if (NOT preproc_dynamic_renegotiate_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(preproc_dynamic_renegotiate_test PROPERTIES LABELS "e2e")
+  set_property(TEST preproc_dynamic_renegotiate_test APPEND PROPERTY LABELS "e2e")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -514,7 +514,7 @@ foreach(test ${STRESS_TESTS})
   )
 
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_tests_properties(${test} PROPERTIES LABELS "stress")
+    set_property(TEST ${test} APPEND PROPERTY LABELS "stress")
   endif()
 endforeach()
 
@@ -532,7 +532,7 @@ foreach(test ${SECURITY_TESTS})
   )
 
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-    set_tests_properties(${test} PROPERTIES LABELS "security")
+    set_property(TEST ${test} APPEND PROPERTY LABELS "security")
   endif()
 endforeach()
 
@@ -631,7 +631,7 @@ add_pipeline_test(
 )
 
 if (NOT file_read_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(file_read_test PROPERTIES LABELS "e2e")
+  set_property(TEST file_read_test APPEND PROPERTY LABELS "e2e")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -748,9 +748,7 @@ add_pipeline_test(
 )
 
 if (NOT async_yolov8_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(async_yolov8_tput_test
-    PROPERTIES LABELS "e2e;obj_detection"
-  )
+  set_property(TEST async_yolov8_tput_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 add_pipeline_test(
@@ -762,9 +760,7 @@ add_pipeline_test(
 )
 
 if (NOT sync_yolov8_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(sync_yolov8_test
-    PROPERTIES LABELS "e2e;obj_detection"
-  )
+  set_property(TEST sync_yolov8_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 add_pipeline_test(
@@ -776,9 +772,7 @@ add_pipeline_test(
 )
 
 if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(sync_yolov8_test_detessdequant
-    PROPERTIES LABELS "e2e;obj_detection"
-  )
+  set_property(TEST sync_yolov8_test_detessdequant APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 add_pipeline_test(
@@ -790,11 +784,8 @@ add_pipeline_test(
 )
 
 if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(async_yolov11_pose_bf16_tput_test
-    PROPERTIES
-      LABELS "e2e;obj_detection"
-      DISABLED TRUE
-  )
+  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY LABELS "e2e;obj_detection")
+  set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
@@ -805,9 +796,7 @@ add_pipeline_test(
 )
 
 if (NOT yolov8_variant_route_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(yolov8_variant_route_matrix_test
-    PROPERTIES LABELS "e2e;obj_detection"
-  )
+  set_property(TEST yolov8_variant_route_matrix_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 add_pipeline_test(
@@ -819,9 +808,7 @@ add_pipeline_test(
 )
 
 if (NOT preproc_yolov8_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(preproc_yolov8_matrix_test
-    PROPERTIES LABELS "e2e;obj_detection"
-  )
+  set_property(TEST preproc_yolov8_matrix_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 add_pipeline_test(
@@ -833,9 +820,7 @@ add_pipeline_test(
 )
 
 if (NOT graphpipes_yolo_optiview_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(graphpipes_yolo_optiview_16stream_test
-    PROPERTIES LABELS "e2e;obj_detection"
-  )
+  set_property(TEST graphpipes_yolo_optiview_16stream_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -847,9 +832,7 @@ add_pipeline_test(
 )
 
 if (NOT model_resnet50_multi_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(model_resnet50_multi_test
-    PROPERTIES LABELS "e2e;img_classification"
-  )
+  set_property(TEST model_resnet50_multi_test APPEND PROPERTY LABELS "e2e;img_classification")
 endif()
 
 add_pipeline_test(
@@ -858,9 +841,7 @@ add_pipeline_test(
 )
 
 if (NOT model_unique_names_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(model_unique_names_test
-    PROPERTIES LABELS "e2e;img_classification"
-  )
+  set_property(TEST model_unique_names_test APPEND PROPERTY LABELS "e2e;img_classification")
 endif()
 
 if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
@@ -891,14 +872,10 @@ if (NOT resnet50_modelpack_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     COMMAND resnet50_modelpack_test --goldfish --only-rtsp
   )
 
-  set_tests_properties(
-    resnet50_modelpack_direct
-    resnet50_modelpack_jpeg
-    resnet50_modelpack_rtsp
-    PROPERTIES
-      LABELS "e2e;img_classification"
-      RESOURCE_LOCK "dispatcher"
-  )
+  foreach(test resnet50_modelpack_direct resnet50_modelpack_jpeg resnet50_modelpack_rtsp)
+    set_property(TEST ${test} APPEND PROPERTY LABELS "e2e;img_classification")
+    set_property(TEST ${test} APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  endforeach()
   append_pipeline_test_env(resnet50_modelpack_direct)
   append_pipeline_test_env(resnet50_modelpack_jpeg)
   append_pipeline_test_env(resnet50_modelpack_rtsp)
@@ -920,12 +897,8 @@ add_pipeline_test_long(
 )
 
 if (NOT resnet50_neatargmax_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(
-    resnet50_neatargmax_test
-    PROPERTIES
-      LABELS "e2e;img_classification;long"
-      SKIP_RETURN_CODE 77
-  )
+  set_property(TEST resnet50_neatargmax_test APPEND PROPERTY LABELS "e2e;img_classification;long")
+  set_tests_properties(resnet50_neatargmax_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_pipeline_test(
@@ -935,9 +908,7 @@ add_pipeline_test(
 )
 
 if (NOT rtsp_pull_frame_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(rtsp_pull_frame_test
-    PROPERTIES LABELS "e2e;img_classification"
-  )
+  set_property(TEST rtsp_pull_frame_test APPEND PROPERTY LABELS "e2e;img_classification")
   set_property(TEST rtsp_pull_frame_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
 endif()
 
@@ -947,9 +918,7 @@ add_pipeline_test(
 )
 
 if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_tests_properties(hybrid_graph_rtsp_resnet50_tput_test
-    PROPERTIES LABELS "e2e;img_classification"
-  )
+  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY LABELS "e2e;img_classification")
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
 endif()
 
@@ -990,6 +959,7 @@ install(
   DIRECTORY ${CMAKE_BINARY_DIR}/tests/
   DESTINATION lib/sima-neat/tests
   COMPONENT extras
+  USE_SOURCE_PERMISSIONS
   FILES_MATCHING
     PATTERN "*"
 )
