@@ -146,8 +146,8 @@ inline fs::path ensure_yolov8n_drive_variants(const fs::path& root) {
   const fs::path drive_dir = root / "tmp" / "yolov8n_drive";
   std::error_code ec;
   fs::create_directories(drive_dir, ec);
-  require(!ec, "ensure_yolov8n_drive_variants: failed to create " + drive_dir.string() +
-                   " (" + ec.message() + ")");
+  require(!ec, "ensure_yolov8n_drive_variants: failed to create " + drive_dir.string() + " (" +
+                   ec.message() + ")");
 
   std::string base_url = yolov8n_variant_base_url();
   while (!base_url.empty() && base_url.back() == '/')

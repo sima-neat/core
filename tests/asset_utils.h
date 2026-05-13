@@ -75,8 +75,7 @@ inline bool has_tar_gz_suffix(const fs::path& path) {
 inline bool is_listable_tar_gz(const fs::path& tar_path) {
   if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
     return false;
-  const std::string cmd =
-      "tar -tzf " + shell_quote(tar_path.string()) + " >/dev/null 2>&1";
+  const std::string cmd = "tar -tzf " + shell_quote(tar_path.string()) + " >/dev/null 2>&1";
   return std::system(cmd.c_str()) == 0;
 }
 

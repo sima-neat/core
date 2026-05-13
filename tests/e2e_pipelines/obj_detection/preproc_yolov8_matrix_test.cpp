@@ -991,10 +991,9 @@ int main(int argc, char** argv) {
         variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
         model_packs = collect_model_packs(variants_dir);
       }
-      require(!model_packs.empty(),
-              "no model packs found in " + variants_dir.string() +
-                  " even after download attempt; check sima-cli login and "
-                  "SIMA_YOLOV8N_VARIANTS_BASE_URL");
+      require(!model_packs.empty(), "no model packs found in " + variants_dir.string() +
+                                        " even after download attempt; check sima-cli login and "
+                                        "SIMA_YOLOV8N_VARIANTS_BASE_URL");
     }
 
     std::size_t run_count = 0U;
