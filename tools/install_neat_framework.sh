@@ -161,7 +161,7 @@ activation_path_for_display() {
 run_sudo() {
   if sudo -n true >/dev/null 2>&1; then
     sudo "$@"
-    return 0
+    return $?
   fi
 
   local pw="${SUDO_PASSWORD}"
@@ -171,7 +171,7 @@ run_sudo() {
 
   if printf '%s\n' "${pw}" | sudo -S -v >/dev/null 2>&1; then
     printf '%s\n' "${pw}" | sudo -S "$@"
-    return 0
+    return $?
   fi
 
   if [[ -t 0 ]]; then
@@ -183,7 +183,7 @@ run_sudo() {
     fi
     printf '%s\n' "${pw}" | sudo -S -v >/dev/null
     printf '%s\n' "${pw}" | sudo -S "$@"
-    return 0
+    return $?
   fi
 
   echo "Unable to authenticate sudo. Set SUDO_PASSWORD or DEVKIT_PASSWORD." >&2
@@ -360,7 +360,24 @@ collect_cached_devkit_deploy_files() {
 
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
-  run_sudo apt install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"
+  printf '[install_neat_framework] DEB install set:\n'
+  printf '  %s\n' "${DEBS[@]}"
+
+  # Prefer apt-get for normal installs so system dependencies can be resolved.
+  # Some CI/self-hosted DevKit runners can be left in a transiently broken
+  # exact-version state after a previous partial NEAT install, e.g.
+  # neat-gst-plugins(main) depending on neat-runtime(main) while
+  # neat-runtime(beta) is already unpacked.  In that state apt refuses to start
+  # dependency resolution and suggests apt --fix-broken install, even though the
+  # local DEB set we are installing is self-consistent.  Fall back to installing
+  # the local NEAT DEBs as one dpkg transaction to restore that package set
+  # before continuing.
+  if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    return 0
+  fi
+
+  log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
+  run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
 }
 
 install_debs_into_sysroot() {
