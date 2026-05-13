@@ -94,6 +94,24 @@ RUN_TEST(
           root / "src/nodes/sima/DetessDequant.cpp",
       };
 
+      auto source_tree_available = [&]() {
+        if (!std::filesystem::exists(root / "CMakeLists.txt") ||
+            !std::filesystem::exists(root / "src") || !std::filesystem::exists(root / "include")) {
+          return false;
+        }
+        for (const auto& path : guarded_files) {
+          if (!std::filesystem::exists(path)) {
+            return false;
+          }
+        }
+        return true;
+      }();
+      if (!source_tree_available) {
+        std::cout << "[INFO] complete source tree unavailable at " << root
+                  << "; source architecture guard is build-tree only\n";
+        return;
+      }
+
       const std::vector<std::string> forbidden_tokens = {
           "LogicalInputStaticSpec ",   "LogicalTensorStaticSpec ", "InputBindingStaticSpec ",
           "PhysicalBufferStaticSpec ", "StageOutputRoute{",

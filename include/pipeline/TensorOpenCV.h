@@ -33,6 +33,18 @@ namespace simaai::neat {
              "from_cv_mat(mat, fmt) defaults to EV74 placement.")]] Tensor
 from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only);
 
+/**
+ * @brief Wrap a `cv::Mat` as a zero-copy CPU tensor view.
+ *
+ * The returned tensor references the Mat buffer and preserves ROI row stride.
+ * Keep the source Mat/storage alive through the returned tensor lifetime. Use
+ * the TensorMemory overload of `from_cv_mat` when an owned CPU copy or device
+ * placement is intended.
+ */
+Tensor from_cv_mat_view(const cv::Mat& mat,
+                        ImageSpec::PixelFormat fmt = ImageSpec::PixelFormat::BGR,
+                        bool read_only = true);
+
 Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt = ImageSpec::PixelFormat::BGR,
                    TensorMemory memory = TensorMemory::EV74);
 Tensor from_cv_mat(const cv::Mat& mat, TensorMemory memory);

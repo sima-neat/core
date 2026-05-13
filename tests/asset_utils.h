@@ -59,6 +59,27 @@ inline bool is_usable_regular_file(const fs::path& path) {
   return stream.good();
 }
 
+inline bool has_tar_gz_suffix(const fs::path& path) {
+  const std::string name = path.filename().string();
+  constexpr const char* suffix = ".tar.gz";
+  constexpr std::size_t suffix_len = 7;
+  return name.size() > suffix_len &&
+         name.compare(name.size() - suffix_len, suffix_len, suffix) == 0;
+}
+
+inline bool tar_contains_strict_mpk_json(const fs::path& tar_path) {
+  if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
+    return false;
+
+  const std::string cmd = "tar -tzf " + shell_quote(tar_path.string()) +
+                          " 2>/dev/null | grep -E '(^|/)[^/]+_mpk\\.json$' >/dev/null";
+  return std::system(cmd.c_str()) == 0;
+}
+
+inline bool is_strict_mpk_tar_gz(const fs::path& tar_path) {
+  return tar_contains_strict_mpk_json(tar_path);
+}
+
 struct TestRuntimePaths {
   fs::path manifest_path;
   fs::path build_root;
@@ -305,6 +326,10 @@ inline std::string resolve_resnet50_tar_local_only(const fs::path& root_in = {})
   const std::vector<fs::path> candidates = {
       root / "resnet_50_mpk.tar.gz",
       root / "resnet-50_mpk.tar.gz",
+      fs::current_path() / "resnet_50_mpk.tar.gz",
+      fs::current_path() / "resnet-50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet_50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet-50_mpk.tar.gz",
   };
   for (const auto& candidate : candidates) {
     if (is_usable_regular_file(candidate) && move_to_tmp(candidate, local)) {
@@ -336,6 +361,10 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
   const std::vector<fs::path> candidates = {
       root / "resnet_50_mpk.tar.gz",
       root / "resnet-50_mpk.tar.gz",
+      fs::current_path() / "resnet_50_mpk.tar.gz",
+      fs::current_path() / "resnet-50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet_50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet-50_mpk.tar.gz",
   };
   for (const auto& candidate : candidates) {
     if (is_usable_regular_file(candidate) && move_to_tmp(candidate, local)) {
@@ -368,6 +397,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
       root,
       fs::current_path(),
       root / "tmp",
+      fs::temp_directory_path(),
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
       home_path / ".sima" / "modelzoo",
@@ -496,6 +526,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
       tmp_dir,
       root,
       fs::current_path(),
+      fs::temp_directory_path(),
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
       home_path / ".sima" / "modelzoo",
@@ -527,6 +558,24 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
         return found;
     }
   }
+
+  return "";
+}
+
+inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
+  const std::string local_first = resolve_yolov8s_tar_local_first(root, false);
+  if (!local_first.empty() && is_strict_mpk_tar_gz(local_first))
+    return local_first;
+
+  const fs::path tmp_tar = default_asset_root(root) / "tmp" / "yolo_v8s_mpk.tar.gz";
+  if (is_usable_regular_file(tmp_tar) && !is_strict_mpk_tar_gz(tmp_tar)) {
+    std::error_code ec;
+    fs::remove(tmp_tar, ec);
+  }
+
+  const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
+  if (!modelzoo.empty() && is_strict_mpk_tar_gz(modelzoo))
+    return modelzoo;
 
   return "";
 }

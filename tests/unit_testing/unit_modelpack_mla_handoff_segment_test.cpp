@@ -17,8 +17,8 @@ RUN_TEST(
       using namespace simaai::neat;
 
       const std::filesystem::path core_root = sima_test::test_source_root();
-      const std::string tar_path = sima_test::resolve_yolov8s_tar_local_first(core_root, true);
-      require(!tar_path.empty(), "expected local yolo_v8s_mpk.tar.gz fixture");
+      const std::string tar_path = sima_test::resolve_yolov8s_strict_mpk_tar(core_root);
+      require(!tar_path.empty(), "expected modelzoo-backed yolo_v8s .tar.gz MPK with *_mpk.json");
 
       Model::Options model_opt;
       model_opt.preprocess.kind = InputKind::Image;

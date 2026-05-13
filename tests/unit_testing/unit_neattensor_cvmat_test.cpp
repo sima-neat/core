@@ -19,7 +19,7 @@ int main() {
     cv::Rect roi(1, 1, 2, 2);
     cv::Mat view = img(roi);
 
-    simaai::neat::Tensor t = simaai::neat::from_cv_mat(view);
+    simaai::neat::Tensor t = simaai::neat::from_cv_mat_view(view);
     require(t.shape.size() == 3, "shape rank mismatch");
     require(t.shape[0] == 2 && t.shape[1] == 2 && t.shape[2] == 3, "shape mismatch");
     require(!t.is_contiguous(), "ROI view should be non-contiguous");

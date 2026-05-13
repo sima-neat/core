@@ -721,6 +721,10 @@ struct Tensor {
   [[deprecated("Use Tensor::from_cv_mat(mat, fmt, TensorMemory::EV74/CPU/MLA); "
                "Tensor::from_cv_mat(mat, fmt) defaults to EV74 placement.")]] static Tensor
   from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only);
+  /// Construct a Tensor wrapping a `cv::Mat` as a zero-copy CPU view.
+  static Tensor from_cv_mat_view(const cv::Mat& mat,
+                                 ImageSpec::PixelFormat fmt = ImageSpec::PixelFormat::BGR,
+                                 bool read_only = true);
   /// Construct a Tensor from a `cv::Mat` in the requested memory placement.
   static Tensor from_cv_mat(const cv::Mat& mat,
                             ImageSpec::PixelFormat fmt = ImageSpec::PixelFormat::BGR,

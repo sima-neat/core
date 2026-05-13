@@ -806,8 +806,9 @@ void gst_init_once() {
     int argc = 0;
     char** argv = nullptr;
 
+    const bool already_initialized = gst_is_initialized();
     const bool allow_manual = env_bool("SIMA_ALLOW_GST_INIT", false);
-    if (gst_is_initialized() && !allow_manual) {
+    if (already_initialized && !allow_manual) {
       std::string plugin_path = default_plugin_path();
       if (plugin_path.empty())
         plugin_path = "<unknown>";
@@ -962,7 +963,9 @@ void gst_init_once() {
                         static_cast<GLogLevelFlags>(G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL),
                         gstreamer_segment_log_suppressor, nullptr);
     }
-    validate_neat_startup_contract(third_party);
+    if (!already_initialized) {
+      validate_neat_startup_contract(third_party);
+    }
   });
 }
 

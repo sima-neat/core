@@ -149,6 +149,10 @@ Tensor Tensor::from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool 
 #endif
 }
 
+Tensor Tensor::from_cv_mat_view(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+  return simaai::neat::from_cv_mat_view(mat, fmt, read_only);
+}
+
 Tensor Tensor::from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory memory) {
   return simaai::neat::from_cv_mat(mat, fmt, memory);
 }
@@ -171,7 +175,7 @@ Tensor Tensor::from_cv_mat(const cv::Mat& mat, TensorMemory memory) {
  *  - This wrapper preserves cv::Mat padding via row stride (step[0]).
  *  - read_only is enforced by Tensor::map() (throws on Write/ReadWrite if read_only=true).
  */
-Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+Tensor from_cv_mat_view(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
   validate_cv_mat_or_throw(mat, fmt);
 
   // Keep the Mat header (and its refcounted backing store) alive.
@@ -225,6 +229,10 @@ Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_onl
   return out;
 }
 
+Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+  return from_cv_mat_view(mat, fmt, read_only);
+}
+
 Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory memory) {
   if (memory == TensorMemory::Auto) {
     memory = TensorMemory::EV74;
@@ -233,7 +241,7 @@ Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory 
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
-  Tensor cpu_view = from_cv_mat(mat, fmt, /*read_only=*/true);
+  Tensor cpu_view = from_cv_mat_view(mat, fmt, /*read_only=*/true);
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
