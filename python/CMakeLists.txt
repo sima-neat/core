@@ -72,3 +72,11 @@ install(
   PATTERN "*.py"
   PATTERN "py.typed"
 )
+
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/
+  DESTINATION share/sima-neat/python/tests
+  COMPONENT extras
+  FILES_MATCHING
+  PATTERN "*.py"
+)
