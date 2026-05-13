@@ -967,6 +967,29 @@ install(
   COMPONENT extras
 )
 
+# MPK + decoder fixtures used by the unit_mpk_loader / unit_modelpack_extract
+# / security_modelpack_matrix / unit_pipeline_sequence_parse suites. Without
+# this, tests on the CI runner (and any deb-installed environment) call
+# MpKLoader::inspect/extract against a non-existent .mpk path and trip the
+# "archive path does not exist" InvalidArchive branch — masking the real
+# error-class assertions the tests are written for.
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/mpk/"
+  DESTINATION lib/sima-neat/test-assets/mpk
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/decoder/"
+  DESTINATION lib/sima-neat/test-assets/decoder
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_BINARY_DIR}/test-fixtures/runtime_manifest_installed.json"
+  DESTINATION lib/sima-neat/test-fixtures
+  COMPONENT extras
+  RENAME runtime_manifest.json
+)
+
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
   DESTINATION share/sima-neat/tests

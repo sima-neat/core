@@ -906,6 +906,32 @@ string(CONFIGURE "${SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT}"
   @ONLY)
 file(WRITE "${SIMANEAT_TEST_RUNTIME_MANIFEST}" "${SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT}")
 
+# Companion manifest for the *installed* extras deb layout. The build-tree
+# manifest above carries CMAKE_BINARY_DIR-relative paths to the source-tree
+# fixture roots, which only exist on the build host. After `cpack` packages
+# the extras component, tests run from /usr/lib/sima-neat/tests/ and need a
+# manifest whose paths resolve into the matching /usr/lib/sima-neat/
+# test-assets/ tree shipped by the install rules in tests/CMakeLists.txt.
+# find_runtime_manifest_path() walks up from the test binary, so we land the
+# manifest at lib/sima-neat/test-fixtures/runtime_manifest.json — first
+# walk-up hit from lib/sima-neat/tests/ — and keep every fixture under
+# lib/sima-neat/test-assets/.
+set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED
+  "${SIMANEAT_TEST_RUNTIME_MANIFEST_DIR}/runtime_manifest_installed.json")
+set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
+{
+  "format_version": 1,
+  "generator": "core/CMakeLists.txt (installed-layout variant)",
+  "source_root_rel": "",
+  "repo_tmp_root_rel": "",
+  "mpk_fixture_root_rel": "test-assets/mpk",
+  "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
+  "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264"
+}
+]=])
+file(WRITE "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED}"
+  "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT}")
+
 function(simaneat_append_ctest_env test_name)
   set(_plugin_dir "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}")
   set(_ld_library_path "${SIMANEAT_CTEST_NEAT_LD_LIBRARY_PATH}")
