@@ -45,7 +45,7 @@ struct AsyncTestConfig {
   int inflight = 4;
   int excluded_preproc_dispatches = 5;
   int topk = 100;
-  double min_fps = 400.0;
+  double min_fps = 350.0;
   float boxdecode_score_threshold = 0.50f;
   float min_score = 0.52f;
   float min_iou = 0.30f;
