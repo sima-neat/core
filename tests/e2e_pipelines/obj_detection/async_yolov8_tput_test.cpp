@@ -40,8 +40,8 @@ using sima_yolov8_test::sanitize_note;
 using sima_yolov8_test::step_log;
 
 struct AsyncTestConfig {
-  int iters = 100;
-  int warm = 30;
+  int iters = 200;
+  int warm = 200;
   int inflight = 4;
   int excluded_preproc_dispatches = 5;
   int topk = 100;
