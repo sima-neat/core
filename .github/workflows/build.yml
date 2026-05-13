@@ -457,12 +457,56 @@ jobs:
           "${PYTHON_BIN}" -m pip install pytest
           "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
 
-      - name: Cleanup modelpack extraction workspace
+      - name: Cleanup test workspace tmp artifacts
         if: ${{ always() }}
         run: |
-          MPK_BASE="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
-          echo "Cleaning up ${MPK_BASE}*"
+          # Free /tmp after the test phase. Self-hosted runners share /tmp
+          # across runs and several test suites land hundreds of MB there
+          # (MpKLoader extraction roots, GStreamer registry caches,
+          # downloaded model tars, fuzz workdirs, per-test mkdtemp roots).
+          # Without this the next run can fail on "no space left on device"
+          # while staging the installed extras tree or extracting fixtures.
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          MPK_BASE="${TMP_ROOT}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          echo "Disk usage before cleanup:"
+          df -h "${TMP_ROOT}" || true
+          du -sh "${TMP_ROOT}"/sima* "${TMP_ROOT}"/resnet*_mpk* 2>/dev/null || true
+
+          echo "Cleaning ${MPK_BASE}* (this-job MpK extraction roots)"
           rm -rf "${MPK_BASE}" "${MPK_BASE}-manifest" || true
+
+          echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
+          rm -rf \
+            "${TMP_ROOT}/sima_neat_mpk_tests" \
+            "${TMP_ROOT}/sima_neat_mpk_fixtures" \
+            "${TMP_ROOT}/sima_neat_fuzz_pipeline_sequence" \
+            "${TMP_ROOT}/sima_unit_asset_utils_readable_model_tar_test" \
+            "${TMP_ROOT}/sima_imagenet_goldfish.jpg" \
+            "${TMP_ROOT}/coco_sample.jpg" \
+            "${TMP_ROOT}/resnet_50_mpk.tar.gz" \
+            "${TMP_ROOT}/resnet-50_mpk.tar.gz" \
+            || true
+          # GStreamer registry caches dropped by every test that wires
+          # GST_REGISTRY=${TMP_ROOT}/sima_gst_registry_<name>.bin.
+          find "${TMP_ROOT}" -maxdepth 1 -name 'sima_gst_registry_*.bin' -delete 2>/dev/null || true
+          # Defensive sweep for any stale MpK extraction roots from
+          # previous runs that crashed before reaching their own cleanup.
+          find "${TMP_ROOT}" -maxdepth 1 -name 'sima-mpk-*' -type d -mmin +60 \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          # repo_tmp_root: tests/asset_utils.h points repo-relative caches
+          # at <source>/tmp (e.g. yolo_v8s_mpk.tar.gz, coco_sample.jpg).
+          # These end up inside GITHUB_WORKSPACE not /tmp, but they fill
+          # the runner workspace just as easily — purge them too.
+          if [[ -n "${GITHUB_WORKSPACE:-}" && -d "${GITHUB_WORKSPACE}/tmp" ]]; then
+            echo "Cleaning ${GITHUB_WORKSPACE}/tmp (repo-relative test caches)"
+            find "${GITHUB_WORKSPACE}/tmp" -maxdepth 1 -type f \
+              \( -name '*_mpk.tar.gz' -o -name 'coco_sample.jpg' -o -name 'yolov8*_mpk.tar.gz' \) \
+              -delete 2>/dev/null || true
+          fi
+
+          echo "Disk usage after cleanup:"
+          df -h "${TMP_ROOT}" || true
 
   docs:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
