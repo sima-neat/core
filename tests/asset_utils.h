@@ -67,6 +67,31 @@ inline bool has_tar_gz_suffix(const fs::path& path) {
          name.compare(name.size() - suffix_len, suffix_len, suffix) == 0;
 }
 
+// Defensive: returns false when `tar -tzf` cannot list the archive (file is
+// truncated, gzip CRC is wrong, content is HTML from a failed download, etc.).
+// Callers of resolve_yolov8s_tar_*() rely on this to reject corrupt cached
+// fixtures that previously slipped through `is_usable_regular_file` (which
+// only checks size>0) and surfaced as ModelPack "tar listing failed".
+inline bool is_listable_tar_gz(const fs::path& tar_path) {
+  if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
+    return false;
+  const std::string cmd =
+      "tar -tzf " + shell_quote(tar_path.string()) + " >/dev/null 2>&1";
+  return std::system(cmd.c_str()) == 0;
+}
+
+// Remove a corrupt cached tar so the next resolve attempt re-downloads.
+inline void purge_unlistable_tar_gz(const fs::path& tar_path) {
+  if (tar_path.empty())
+    return;
+  std::error_code ec;
+  if (!fs::is_regular_file(tar_path, ec) || ec)
+    return;
+  if (is_listable_tar_gz(tar_path))
+    return;
+  fs::remove(tar_path, ec);
+}
+
 inline bool tar_contains_strict_mpk_json(const fs::path& tar_path) {
   if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
     return false;
@@ -393,16 +418,23 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   const fs::path root = default_asset_root(root_in);
   const fs::path tmp_tar = root / "tmp" / "yolo_v8s_mpk.tar.gz";
 
+  // Drop corrupt cached tars up front so the subsequent search/download
+  // path can refresh them. is_usable_regular_file only checks size>0;
+  // a partial download or HTML error page satisfies that but fails
+  // `tar -tzf` and surfaces deep in ModelPack as "tar listing failed".
+  purge_unlistable_tar_gz(tmp_tar);
+  purge_unlistable_tar_gz(root / "yolo_v8s_mpk.tar.gz");
+
   const std::string env_tar = env_existing_model_tar_path("SIMA_YOLO_TAR");
   if (!env_tar.empty()) {
     return env_tar;
   }
 
   const fs::path direct_tar = root / "yolo_v8s_mpk.tar.gz";
-  if (is_usable_regular_file(direct_tar))
+  if (is_usable_regular_file(direct_tar) && is_listable_tar_gz(direct_tar))
     return direct_tar.string();
 
-  if (is_usable_regular_file(tmp_tar))
+  if (is_usable_regular_file(tmp_tar) && is_listable_tar_gz(tmp_tar))
     return tmp_tar.string();
 
   const char* home = std::getenv("HOME");
@@ -430,16 +462,20 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
       continue;
     for (const auto& name : names) {
       fs::path candidate = dir / name;
-      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
+      if (!is_usable_regular_file(candidate) || !is_listable_tar_gz(candidate))
+        continue;
+      if (move_to_tmp(candidate, tmp_tar) && is_listable_tar_gz(tmp_tar))
         return tmp_tar.string();
-      }
     }
   }
 
   if (!skip_download) {
     const int rc = run_modelzoo_get_noninteractive("yolo_v8s");
-    if (rc == 0 && is_usable_regular_file(tmp_tar))
+    if (rc == 0 && is_listable_tar_gz(tmp_tar))
       return tmp_tar.string();
+    // Modelzoo download said "ok" but the resulting tar is unreadable —
+    // remove it so a future retry isn't poisoned by the corpse.
+    purge_unlistable_tar_gz(tmp_tar);
   }
 
   for (const auto& dir : search_dirs) {
@@ -447,9 +483,10 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
       continue;
     for (const auto& name : names) {
       fs::path candidate = dir / name;
-      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
+      if (!is_usable_regular_file(candidate) || !is_listable_tar_gz(candidate))
+        continue;
+      if (move_to_tmp(candidate, tmp_tar) && is_listable_tar_gz(tmp_tar))
         return tmp_tar.string();
-      }
     }
   }
 
@@ -521,15 +558,16 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   }
 
   const fs::path local = tmp_dir / (base + "_mpk.tar.gz");
-  if (is_usable_regular_file(local))
+  purge_unlistable_tar_gz(local);
+  if (is_usable_regular_file(local) && is_listable_tar_gz(local))
     return local.string();
 
   auto try_candidate = [&](const fs::path& candidate) -> std::string {
-    if (!is_usable_regular_file(candidate))
+    if (!is_usable_regular_file(candidate) || !is_listable_tar_gz(candidate))
       return "";
     if (candidate == local)
       return local.string();
-    if (move_to_tmp(candidate, local))
+    if (move_to_tmp(candidate, local) && is_listable_tar_gz(local))
       return local.string();
     return "";
   };
@@ -560,8 +598,10 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   if (run_modelzoo_get_noninteractive(model_name) != 0)
     return "";
 
-  if (is_usable_regular_file(local))
+  if (is_listable_tar_gz(local))
     return local.string();
+  // Drop a corpse left by a half-finished modelzoo download.
+  purge_unlistable_tar_gz(local);
 
   for (const auto& dir : search_dirs) {
     if (dir.empty())

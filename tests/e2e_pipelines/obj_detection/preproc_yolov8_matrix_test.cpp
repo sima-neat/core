@@ -980,9 +980,21 @@ int main(int argc, char** argv) {
       require(fs::exists(*single_model), "single model tar not found: " + single_model->string());
       model_packs.push_back(*single_model);
     } else {
-      const fs::path variants_dir = resolve_variants_dir(cli, root);
+      fs::path variants_dir = resolve_variants_dir(cli, root);
       model_packs = collect_model_packs(variants_dir);
-      require(!model_packs.empty(), "no model packs found in " + variants_dir.string());
+      if (model_packs.empty()) {
+        // Mandatory test — download the six yolov8n variants on demand via
+        // the shared helper (uses sima-cli for the OAuth-gated
+        // docs.sima.ai endpoint) and rescan. Caller can short-circuit by
+        // pre-staging tarballs in <root>/tmp/yolov8n_drive/ or pointing
+        // SIMA_YOLOV8N_VARIANTS_BASE_URL at a mirror.
+        variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
+        model_packs = collect_model_packs(variants_dir);
+      }
+      require(!model_packs.empty(),
+              "no model packs found in " + variants_dir.string() +
+                  " even after download attempt; check sima-cli login and "
+                  "SIMA_YOLOV8N_VARIANTS_BASE_URL");
     }
 
     std::size_t run_count = 0U;

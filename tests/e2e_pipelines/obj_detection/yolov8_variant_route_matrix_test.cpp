@@ -5095,11 +5095,19 @@ int main(int argc, char** argv) {
       require(fs::exists(tar), "single model tar not found: " + tar.string());
       packs.push_back(tar);
     } else {
-      const fs::path variants_dir = resolve_variants_dir(root, argc, argv);
+      fs::path variants_dir = resolve_variants_dir(root, argc, argv);
       packs = collect_model_packs(variants_dir);
       if (packs.empty()) {
-        return skip_long_test("no model packs found in " + variants_dir.string());
+        // Mandatory test — download the six yolov8n variants on demand via
+        // the shared helper (uses sima-cli for the OAuth-gated
+        // docs.sima.ai endpoint) and rescan.
+        variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
+        packs = collect_model_packs(variants_dir);
       }
+      require(!packs.empty(),
+              "no model packs found in " + variants_dir.string() +
+                  " even after download attempt; check sima-cli login and "
+                  "SIMA_YOLOV8N_VARIANTS_BASE_URL");
     }
 
     const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
