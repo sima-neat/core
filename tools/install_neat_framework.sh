@@ -301,6 +301,7 @@ cache_install_artifacts_in_sysroot() {
   run_sudo rm -f \
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
     "${cache_dir}"/neat-*.deb \
+    "${cache_dir}"/appcomplex_*.deb \
     "${cache_dir}"/*.whl \
     "${cache_dir}"/install_neat_framework.sh
 
@@ -334,7 +335,7 @@ collect_cached_devkit_deploy_files() {
 
   local -a cached_core_debs=()
   mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
-  mapfile -t CACHED_DEBS < <(find "${cache_dir}" -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
+  mapfile -t CACHED_DEBS < <(find "${cache_dir}" -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' -o -name 'appcomplex_*.deb' \) | sort)
   mapfile -t CACHED_WHEELS < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
   local cached_installer="${cache_dir}/install_neat_framework.sh"
 
@@ -452,7 +453,7 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 
 parse_args "$@"
 
-mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
+mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' -o -name 'appcomplex_*.deb' \) | sort)
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
   exit 1

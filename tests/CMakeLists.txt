@@ -9,6 +9,17 @@ enable_testing()
 include(CMakeParseArguments)
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+option(SIMANEAT_CTEST_FOR_DEVKIT
+  "Emit CTestTestfile with absolute DevKit /usr/lib paths (skip configure-time EXISTS checks)"
+  OFF)
+
+if (SIMANEAT_CTEST_FOR_DEVKIT)
+  set(SIMA_TEST_NEAT_PLUGIN_DIR "/usr/lib/aarch64-linux-gnu/neat/gst-plugins")
+  set(SIMA_TEST_NEAT_LD_LIBRARY_PATH
+    "/usr/lib/aarch64-linux-gnu/neat/gst-plugins:/usr/lib/aarch64-linux-gnu/neat/runtime:/lib/aarch64-linux-gnu/neat/runtime")
+  message(STATUS "  [tests] SIMANEAT_CTEST_FOR_DEVKIT=ON; SIMA_TEST_NEAT_PLUGIN_DIR=${SIMA_TEST_NEAT_PLUGIN_DIR}")
+  message(STATUS "  [tests] SIMA_TEST_NEAT_LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
+else()
 set(SIMA_TEST_NEAT_PLUGIN_DIR "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}" CACHE PATH
     "NEAT GStreamer plugin directory used by tests")
 if (NOT SIMA_TEST_NEAT_PLUGIN_DIR)
@@ -47,6 +58,7 @@ endif()
 list(REMOVE_DUPLICATES _SIMA_TEST_NEAT_RUNTIME_DIRS)
 string(JOIN ":" SIMA_TEST_NEAT_LD_LIBRARY_PATH ${_SIMA_TEST_NEAT_RUNTIME_DIRS})
 message(STATUS "  [tests] SIMA_TEST_NEAT_LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
+endif()
 
 set(PIPELINESESSION_TEST_TARGETS "")
 # ------------------------------------------------------------------------------
