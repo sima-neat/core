@@ -284,9 +284,8 @@ inline bool download_file(const std::string& url, const fs::path& out_path) {
   // isn't available.
   if (std::system("command -v sima-cli >/dev/null 2>&1") == 0) {
     const std::string qdest = shell_quote(out_path.parent_path().string());
-    const std::string sima_cmd =
-        "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli download --dest " + qdest + " " + qurl +
-        " >/dev/null 2>&1";
+    const std::string sima_cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli download --dest " + qdest +
+                                 " " + qurl + " >/dev/null 2>&1";
     if (std::system(sima_cmd.c_str()) == 0 && is_usable_regular_file(out_path)) {
       return true;
     }
