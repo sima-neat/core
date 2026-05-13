@@ -957,6 +957,16 @@ install(
   COMPONENT extras
 )
 
+# Source-tree image fixture used by several pipeline tests (test.jpg). Ship it
+# via the extras package so installed-from-deb test runs find it after the
+# build-time CMAKE_SOURCE_DIR/test.jpg path is rebased by CI to
+# ${prefix}/share/sima-neat/test-assets/test.jpg.
+install(
+  FILES "${CMAKE_SOURCE_DIR}/test.jpg"
+  DESTINATION share/sima-neat/test-assets
+  COMPONENT extras
+)
+
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/
   DESTINATION share/sima-neat/tests

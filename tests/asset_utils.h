@@ -277,6 +277,21 @@ inline bool download_file(const std::string& url, const fs::path& out_path) {
   const std::string qurl = shell_quote(url);
   const std::string qout = shell_quote(out_path.string());
 
+  // Prefer sima-cli when present — it transparently handles the Developer
+  // Portal OAuth flow that docs.sima.ai/pkg_downloads/... requires (test
+  // fixtures live alongside SDK model downloads behind that auth wall).
+  // Falls back to bare curl/wget for public URLs or hosts where sima-cli
+  // isn't available.
+  if (std::system("command -v sima-cli >/dev/null 2>&1") == 0) {
+    const std::string qdest = shell_quote(out_path.parent_path().string());
+    const std::string sima_cmd =
+        "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli download --dest " + qdest + " " + qurl +
+        " >/dev/null 2>&1";
+    if (std::system(sima_cmd.c_str()) == 0 && is_usable_regular_file(out_path)) {
+      return true;
+    }
+  }
+
   std::string cmd = "curl -L --fail --silent --show-error -o " + qout + " " + qurl;
   if (std::system(cmd.c_str()) == 0)
     return true;

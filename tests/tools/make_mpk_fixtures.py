@@ -432,8 +432,14 @@ def _fixture_specs() -> List[FixtureSpec]:
         if e["name"] == "etc/pipeline_sequence.json":
             e["data"] = json.dumps(bad_dep_seq, sort_keys=True, separators=(",", ":"))
 
+    # Use a Windows-style drive-prefix entry (no '..', no leading '/') so the
+    # GNU tar listing in MpKLoader does not strip-and-warn (which exits the
+    # tar -tvzf subprocess non-zero on stricter runners and gets classified as
+    # InvalidArchive). MpKLoader::normalize_entry_path catches the drive
+    # prefix at the dedicated check and raises ErrorClass::PathTraversal —
+    # same security signal, but reaches the loader's own normalization step.
     path_traversal = copy.deepcopy(valid)
-    path_traversal.append({"type": "file", "name": "../outside.json", "data": "{}"})
+    path_traversal.append({"type": "file", "name": "C:owned.json", "data": "{}"})
 
     absolute_path = copy.deepcopy(valid)
     absolute_path.append({"type": "file", "name": "/tmp/owned.json", "data": "{}"})
@@ -519,7 +525,7 @@ def _fixture_specs() -> List[FixtureSpec]:
         FixtureSpec("invalid/duplicate_stage_names.mpk", "duplicate stage names in sequence", duplicate_names),
         FixtureSpec("invalid/unknown_kernel.mpk", "unknown kernel in sequence", unknown_kernel),
         FixtureSpec("invalid/invalid_dependency.mpk", "sequence input references unknown stage", invalid_dep),
-        FixtureSpec("invalid/path_traversal.mpk", "relative path traversal entry", path_traversal),
+        FixtureSpec("invalid/path_traversal.mpk", "drive-prefix path traversal entry", path_traversal),
         FixtureSpec("invalid/absolute_path.mpk", "absolute path entry", absolute_path),
         FixtureSpec("invalid/mixed_separator_traversal.mpk", "mixed separator traversal entry", mixed_sep),
         FixtureSpec("invalid/symlink_escape.mpk", "symlink escape entry", symlink_escape),

@@ -97,10 +97,10 @@
       "size_bytes": 2725
     },
     {
-      "intent": "relative path traversal entry",
+      "intent": "drive-prefix path traversal entry",
       "path": "invalid/path_traversal.mpk",
-      "sha256": "78ea083edcf975b6411a7f17d3b42639b329d0d60d3de95504139cbfe380215b",
-      "size_bytes": 587
+      "sha256": "c582ee63ab630e9c11c28f0f55aa7d0210e7050cd5c542269d912fa28034425d",
+      "size_bytes": 583
     },
     {
       "intent": "invalid JSON in pipeline_sequence.json",
