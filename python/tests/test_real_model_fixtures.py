@@ -267,21 +267,29 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract():
   model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
 
-  input_tensor = _rgb_tensor(image)
-  outputs = [model.run(input_tensor, timeout_ms=20000) for _ in range(3)]
+  summaries = []
+  for _ in range(3):
+    output = model.run(_rgb_tensor(image), timeout_ms=20000)
+    assert output.kind == pyneat.SampleKind.Tensor
+    assert output.tensor is not None
+    summaries.append(
+        {
+            "shape": list(output.tensor.shape),
+            "dtype": output.tensor.dtype,
+            "payload_tag": output.payload_tag,
+            "format": output.format,
+            "media_type": output.media_type,
+            "argmax": int(output.tensor.to_numpy(copy=True).reshape(-1).argmax()),
+        }
+    )
+    del output
 
-  assert all(out.kind == pyneat.SampleKind.Tensor for out in outputs)
-  assert all(out.tensor is not None for out in outputs)
-
-  tensors = [out.tensor for out in outputs]
-  assert all(list(tensor.shape) == [1, 1, 1, 1000] for tensor in tensors)
-  assert all(tensor.dtype == pyneat.TensorDType.Float32 for tensor in tensors)
-  assert all(out.payload_tag == "DETESSDEQUANT" for out in outputs)
-  assert all(out.format == "DETESSDEQUANT" for out in outputs)
-  assert all(out.media_type == "application/vnd.simaai.tensor" for out in outputs)
-
-  argmaxes = [int(tensor.to_numpy(copy=True).reshape(-1).argmax()) for tensor in tensors]
-  assert argmaxes == [839, 839, 839]
+  assert all(summary["shape"] == [1, 1, 1, 1000] for summary in summaries)
+  assert all(summary["dtype"] == pyneat.TensorDType.Float32 for summary in summaries)
+  assert all(summary["payload_tag"] == "DETESSDEQUANT" for summary in summaries)
+  assert all(summary["format"] == "DETESSDEQUANT" for summary in summaries)
+  assert all(summary["media_type"] == "application/vnd.simaai.tensor" for summary in summaries)
+  assert [summary["argmax"] for summary in summaries] == [839, 839, 839]
 
 
 def test_real_fixture_paths_resolve():
