@@ -796,6 +796,27 @@ bool sample_spec_is_byte_stream_tensor(const SampleSpec& spec) {
 
 void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<Node>>& nodes,
                                               const SampleSpec& seed_spec) {
+  // The strict byte-size guard only makes sense when the seed sample feeds
+  // directly into MLA. mla_input.span_size_bytes comes from the output of
+  // the last kernel before MLA in the MPK — always BF16 or INT8 bytes — so
+  // comparing it to seed_spec.required_bytes_actual is only valid when
+  // nothing sits between Input and ModelFragment that transforms the data
+  // type or shape. A Cast (FP32 → BF16 for _MLATess routes), a Quant, a
+  // QuantTess, a Preproc, etc. all change the byte budget by design, so the
+  // seed is allowed to be a different size than the MLA ingress. Look at
+  // the *immediate* next non-null node — not first_effective_downstream_node,
+  // which intentionally skips Cast for unrelated purposes.
+  const Node* immediate_next = nullptr;
+  for (std::size_t i = 1U; i < nodes.size(); ++i) {
+    if (nodes[i]) {
+      immediate_next = nodes[i].get();
+      break;
+    }
+  }
+  if (!immediate_next || immediate_next->kind() != "ModelFragment") {
+    return;
+  }
+  // Resolve the rendered MLA-input contract from the actual ModelFragment.
   const auto& first = first_effective_downstream_node(nodes);
   if (!first || first->kind() != "ModelFragment") {
     return;
