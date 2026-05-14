@@ -45,6 +45,7 @@ ELXR_SDK=OFF
 ELXR_SDK_VERSION=""
 ELXR_VERSION=""
 ELXR_WHEEL_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM:-}"
+ELXR_HOST_PYTHON_EXECUTABLE=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 
 # ------------------------------------------------------------------------------
@@ -353,6 +354,31 @@ activate_elxr_build_env_if_needed() {
   # shellcheck disable=SC1090
   source "${ELXR_INIT_SCRIPT}" "${ELXR_MACHINE}"
   detect_elxr_wheel_platform
+}
+
+detect_elxr_host_python() {
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    return 0
+  fi
+
+  local candidate="${SIMANEAT_HOST_PYTHON:-${Python3_EXECUTABLE:-${PYTHON3_EXECUTABLE:-}}}"
+  if [[ -z "${candidate}" ]]; then
+    candidate="$(command -v python3 || true)"
+  fi
+
+  if [[ -z "${candidate}" || ! -x "${candidate}" ]]; then
+    echo "ERROR: eLxr SDK cross-build requires an executable host python3." >&2
+    echo "Set SIMANEAT_HOST_PYTHON to the host Python interpreter path." >&2
+    exit 1
+  fi
+
+  if [[ -n "${SYSROOT:-}" && "${candidate}" == "${SYSROOT}/"* ]]; then
+    echo "ERROR: host Python resolved inside SYSROOT and cannot drive cross-build configuration: ${candidate}" >&2
+    echo "Set SIMANEAT_HOST_PYTHON to an executable host Python, for example /usr/bin/python3." >&2
+    exit 1
+  fi
+
+  ELXR_HOST_PYTHON_EXECUTABLE="${candidate}"
 }
 
 select_system_deps() {
@@ -1055,6 +1081,8 @@ configure_cmake() {
       -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY
       -DCMAKE_PREFIX_PATH="${SYSROOT}/usr;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake;${SYSROOT}/usr/lib/cmake"
       -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+      -DPython3_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
+      -DPython_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
     )
   fi
 
@@ -1189,7 +1217,7 @@ PY
     # (notably ninja), which are not executable on the host container.
     # Build without isolation and force Makefiles to keep host tools executable.
     _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
-      CMAKE_ARGS="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix}" \
+      CMAKE_ARGS="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}" \
       CMAKE_GENERATOR="Unix Makefiles" \
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
       "${wheel_python}" -m build --wheel --outdir dist --no-isolation
@@ -1469,6 +1497,7 @@ main() {
   install_system_deps
   ensure_node20_for_docs
   activate_elxr_build_env_if_needed
+  detect_elxr_host_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     echo
