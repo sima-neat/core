@@ -905,8 +905,7 @@ bool Tensor::validate(std::string* err) const {
     if (semantic.image.has_value() || semantic.encoded.has_value() || semantic.tess.has_value()) {
       return fail("byte_stream tensor cannot also be image/encoded/tess");
     }
-    if (dtype != simaai::neat::TensorDType::UInt8 &&
-        dtype != simaai::neat::TensorDType::Int8) {
+    if (dtype != simaai::neat::TensorDType::UInt8 && dtype != simaai::neat::TensorDType::Int8) {
       return fail("byte_stream tensor must use UInt8 or Int8 dtype");
     }
     if (!is_dense()) {

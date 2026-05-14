@@ -196,14 +196,15 @@ SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
               int model_height = 0,
               BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 /// Convenience factory for `SimaBoxDecode` from a bound `Model` — see the class constructor docs.
-std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
-    const simaai::neat::Model& model, BoxDecodeType decode_type, double detection_threshold = 0.0,
-    double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = "",
-    std::optional<bool> route_tess_needed = std::nullopt,
-    std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,
-    int original_height = 0, int model_width = 0, int model_height = 0,
-    std::optional<ResizeMode> resize_mode_override = std::nullopt,
-    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+std::shared_ptr<simaai::neat::Node>
+SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
+              double detection_threshold = 0.0, double nms_iou_threshold = 0.0, int top_k = 0,
+              const std::string& element_name = "",
+              std::optional<bool> route_tess_needed = std::nullopt,
+              std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,
+              int original_height = 0, int model_width = 0, int model_height = 0,
+              std::optional<ResizeMode> resize_mode_override = std::nullopt,
+              BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 #ifdef SIMA_NEAT_INTERNAL
 /// Internal-only factory used by the route planner with a pre-extracted static contract.
 std::shared_ptr<simaai::neat::Node> SimaBoxDecode(

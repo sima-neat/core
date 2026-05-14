@@ -757,8 +757,8 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
 }
 
-const std::shared_ptr<Node>& first_effective_downstream_node(
-    const std::vector<std::shared_ptr<Node>>& nodes) {
+const std::shared_ptr<Node>&
+first_effective_downstream_node(const std::vector<std::shared_ptr<Node>>& nodes) {
   static const std::shared_ptr<Node> kNullNode;
   if (nodes.size() <= 1U) {
     return kNullNode;
@@ -823,8 +823,7 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   }
   msg << "; expected " << expected_bytes << " bytes, got " << got_bytes << " bytes";
   if (!seed_spec.media_type.empty() || !seed_spec.format.empty()) {
-    msg << " (got media_type="
-        << (seed_spec.media_type.empty() ? "<empty>" : seed_spec.media_type)
+    msg << " (got media_type=" << (seed_spec.media_type.empty() ? "<empty>" : seed_spec.media_type)
         << ", format=" << (seed_spec.format.empty() ? "<empty>" : seed_spec.format) << ")";
   }
 
