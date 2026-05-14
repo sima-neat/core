@@ -199,7 +199,11 @@ GstStateChangeReturn set_state_with_timeout(GstElement* pipeline, GstState targe
 
 int resolve_state_change_timeout_ms(const char* where) {
   const bool is_build_input = (where && std::strstr(where, "Session::build(input)") != nullptr);
-  const int default_timeout_ms = is_build_input ? 30000 : 15000;
+  // 30s on both paths absorbs MLA cold-start outliers (mlashm_load_model up to
+  // ~7s on first load of a session) plus EV74 firmware handshake + preroll.
+  // 15s was leaving < 8s headroom and surfacing as flaky set_state timeouts on
+  // self-hosted runners with unwarm boards.
+  const int default_timeout_ms = 30000;
 
   int timeout_ms = env_int("SIMA_STATE_CHANGE_TIMEOUT_MS", default_timeout_ms);
   if (is_build_input) {
