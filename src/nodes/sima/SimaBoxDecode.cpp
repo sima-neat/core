@@ -714,11 +714,12 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
           // path failed instead of bubbling up an empty string that gets
           // overwritten by a generic "no compiler path" message upstream.
           if (err && err->empty()) {
-            *err = "SimaBoxDecode: failed to derive box-decode static contract from immediate "
-                   "upstream stage '" +
-                   input.immediate_upstream->node_kind +
-                   "' (compiled upstream did not expose detess/dequant metadata required for "
-                   "boxdecode)";
+            *err =
+                "SimaBoxDecode: failed to derive box-decode static contract from immediate "
+                "upstream stage '" +
+                input.immediate_upstream->node_kind +
+                "' (compiled upstream did not expose detess/dequant metadata required for "
+                "boxdecode)";
           }
           return false;
         }
@@ -952,7 +953,8 @@ SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
               double detection_threshold, double nms_iou_threshold, int top_k,
               const std::string& element_name, std::optional<bool> route_tess_needed,
               std::optional<bool> route_quant_needed, int original_width, int original_height,
-              int model_width, int model_height, std::optional<ResizeMode> resize_mode_override,
+              int model_width, int model_height,
+              std::optional<ResizeMode> resize_mode_override,
               BoxDecodeTypeOption decode_type_option) {
   return std::make_shared<simaai::neat::SimaBoxDecode>(
       model, decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,

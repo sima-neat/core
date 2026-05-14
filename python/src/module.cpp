@@ -70,10 +70,10 @@ using namespace nb::literals;
 
 namespace {
 
-using simaai::neat::ByteFormat;
-using simaai::neat::ByteStreamSpec;
 using simaai::neat::Device;
 using simaai::neat::DeviceType;
+using simaai::neat::ByteFormat;
+using simaai::neat::ByteStreamSpec;
 using simaai::neat::ImageSpec;
 using simaai::neat::MapMode;
 using simaai::neat::OutputMemory;
@@ -725,7 +725,7 @@ Tensor tensor_from_dlpack_capsule(const nb::capsule& capsule, bool copy,
                                   TensorMemory memory,
                                   const std::optional<ByteFormat>& byte_format) {
   return tensor_from_dlpack_capsule_obj(capsule.ptr(), copy, layout, image_format, byte_format,
-                                        memory);
+                                       memory);
 }
 
 std::optional<TensorLayout> infer_layout_from_object(const nb::object& obj,
@@ -870,10 +870,9 @@ Tensor tensor_from_dlpack_like_object(const nb::object& input, bool copy,
 
   nb::object capsule_obj = source.attr("__dlpack__")();
   return tensor_from_dlpack_capsule_obj(capsule_obj.ptr(), copy,
-                                        byte_format
-                                            ? std::optional<TensorLayout>(TensorLayout::Unknown)
-                                            : infer_layout_from_object(source, layout),
-                                        image_format, byte_format, memory);
+                                       byte_format ? std::optional<TensorLayout>(TensorLayout::Unknown)
+                                                   : infer_layout_from_object(source, layout),
+                                       image_format, byte_format, memory);
 }
 
 Tensor tensor_from_python_input(const nb::object& input, bool copy,
@@ -911,8 +910,9 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     nb::list items = nb::borrow<nb::list>(input);
     tensors.reserve(items.size());
     for (nb::handle h : items) {
-      tensors.emplace_back(tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout,
-                                                    image_format, byte_format, memory));
+      tensors.emplace_back(
+          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format,
+                                   byte_format, memory));
     }
     return tensors;
   }
@@ -920,8 +920,9 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     nb::tuple items = nb::borrow<nb::tuple>(input);
     tensors.reserve(items.size());
     for (nb::handle h : items) {
-      tensors.emplace_back(tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout,
-                                                    image_format, byte_format, memory));
+      tensors.emplace_back(
+          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format,
+                                   byte_format, memory));
     }
     return tensors;
   }
@@ -1154,7 +1155,8 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("codec", &simaai::neat::EncodedSpec::codec);
 
-  nb::enum_<simaai::neat::ByteFormat>(m, "ByteFormat").value("Raw", simaai::neat::ByteFormat::Raw);
+  nb::enum_<simaai::neat::ByteFormat>(m, "ByteFormat")
+      .value("Raw", simaai::neat::ByteFormat::Raw);
 
   nb::class_<simaai::neat::ByteStreamSpec>(m, "ByteStreamSpec")
       .def(nb::init<>())
@@ -1252,10 +1254,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
-             std::optional<ImageSpec::PixelFormat> image_format, TensorMemory memory,
-             std::optional<ByteFormat> byte_format) {
+             std::optional<ImageSpec::PixelFormat> image_format,
+             TensorMemory memory, std::optional<ByteFormat> byte_format) {
             return tensor_from_dlpack_capsule(capsule, copy, layout, image_format, memory,
-                                              byte_format);
+                                             byte_format);
           },
           "capsule"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none(),
           "memory"_a = TensorMemory::EV74, "byte_format"_a = nb::none())
@@ -2620,8 +2622,8 @@ NB_MODULE(_pyneat_core, m) {
             model, decode_type, detection_threshold, nms_iou_threshold, top_k,
             /*element_name=*/"", std::nullopt, std::nullopt, original_width, original_height);
       },
-      "model"_a, "decode_type"_a, "original_width"_a, "original_height"_a, "detection_threshold"_a,
-      "nms_iou_threshold"_a, "top_k"_a);
+      "model"_a, "decode_type"_a, "original_width"_a, "original_height"_a,
+      "detection_threshold"_a, "nms_iou_threshold"_a, "top_k"_a);
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,

@@ -213,7 +213,7 @@ private:
 
   static int smbus_access(int fd, char read_write, std::uint8_t command, int size,
                           SmbusData* data) {
-    struct i2c_smbus_ioctl_data args{};
+    struct i2c_smbus_ioctl_data args {};
     args.read_write = read_write;
     args.command = command;
     args.size = size;

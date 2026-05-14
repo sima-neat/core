@@ -331,9 +331,9 @@ bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
   };
   const auto packed_transport_format = [](const std::string& fmt) {
     const std::string up = upper_copy(fmt);
-    return up == "BYTESTREAM" || up == "BYTE_STREAM" || up == "BYTE-STREAM" || up == "RAW_BYTES" ||
-           up == "RAW-BYTES" || up == "OPAQUE_BYTES" || up == "OPAQUE-BYTES" || up == "MLA" ||
-           up.find("TESS") != std::string::npos;
+    return up == "BYTESTREAM" || up == "BYTE_STREAM" || up == "BYTE-STREAM" ||
+           up == "RAW_BYTES" || up == "RAW-BYTES" || up == "OPAQUE_BYTES" ||
+           up == "OPAQUE-BYTES" || up == "MLA" || up.find("TESS") != std::string::npos;
   };
   const auto caps_transport_format = [&sample]() -> std::string {
     if (sample.caps_string.empty()) {
