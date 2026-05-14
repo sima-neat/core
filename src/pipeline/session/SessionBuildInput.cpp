@@ -811,7 +811,18 @@ void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<
   const std::size_t got_bytes = seed_spec.required_bytes_actual;
   const bool byte_stream = sample_spec_is_byte_stream_tensor(seed_spec);
   const bool byte_size_matches = expected_bytes == 0U || got_bytes == expected_bytes;
-  if (byte_stream && byte_size_matches) {
+  // Accept either a byte-stream tensor or any application/vnd.simaai.tensor
+  // payload (typed EVXX_FLOAT32/EVXX_BFLOAT16/etc.) as long as the byte size
+  // matches the MLA's ingress contract. The matrix tests (yolov8_variant_
+  // route_matrix_test, preproc_yolov8_matrix_test) legitimately feed typed
+  // tensors directly into MLA-only routes when the byte budget is right;
+  // the strict guard exists to catch image input (video/x-raw) into MLA,
+  // which already fails on the media_type check below — typed tensor data
+  // of the correct width is not the bug we're guarding against.
+  const bool is_simaai_tensor =
+      lower_copy(seed_spec.media_type) == "application/vnd.simaai.tensor" &&
+      seed_spec.kind == SampleMediaKind::Tensor;
+  if (byte_size_matches && (byte_stream || is_simaai_tensor)) {
     return;
   }
 
