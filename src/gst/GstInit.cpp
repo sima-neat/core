@@ -456,7 +456,7 @@ std::unordered_set<std::string> list_plugin_basenames(const std::string& dir) {
 }
 
 bool is_regular_file(const std::string& path) {
-  struct stat st {};
+  struct stat st{};
   if (stat(path.c_str(), &st) != 0)
     return false;
   return S_ISREG(st.st_mode);
@@ -501,8 +501,8 @@ bool path_has_prefix(const std::string& path, const std::string& dir) {
 bool same_file_identity(const std::string& lhs, const std::string& rhs) {
   if (lhs.empty() || rhs.empty())
     return false;
-  struct stat l {};
-  struct stat r {};
+  struct stat l{};
+  struct stat r{};
   if (stat(lhs.c_str(), &l) != 0 || stat(rhs.c_str(), &r) != 0)
     return false;
   return l.st_dev == r.st_dev && l.st_ino == r.st_ino;

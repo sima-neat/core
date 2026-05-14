@@ -77,7 +77,7 @@ inline double percentile(std::vector<double> values, double p) {
 }
 
 inline double rss_peak_kb() {
-  struct rusage usage {};
+  struct rusage usage{};
   if (::getrusage(RUSAGE_SELF, &usage) != 0) {
     return 0.0;
   }
