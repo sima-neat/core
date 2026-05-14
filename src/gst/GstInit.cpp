@@ -1,7 +1,9 @@
 // src/gst/GstInit.cpp
 #include "gst/GstInit.h"
 
+#include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/UxLogging.h"
 
 #include <gst/gst.h>
 #include <glib.h>
@@ -24,10 +26,21 @@
 
 namespace simaai::neat {
 using pipeline_internal::env_bool;
+using pipeline_internal::env_truthy;
 
 namespace {
 
+bool should_emit_gst_init_detail() {
+  return pipeline_internal::ux::should_emit_gstreamer_for_current_context() ||
+         env_truthy("GST_DEBUG");
+}
+
+pipeline_internal::ux::VerboseTopic classify_message_topic(const std::string& line);
+
 void* g_allocator_handle = nullptr;
+
+std::string resolve_allocator_symbol_path();
+bool is_neat_allocator_path(const std::string& path);
 
 void json_log_suppressor(const gchar* domain, GLogLevelFlags level, const gchar* message,
                          gpointer user_data) {
@@ -52,6 +65,15 @@ void gstreamer_segment_log_suppressor(const gchar* domain, GLogLevelFlags level,
   if (message && (std::strstr(message, "Got data flow before segment event") ||
                   std::strstr(message, "gst_segment_to_running_time") ||
                   std::strstr(message, "segment->format == format"))) {
+    return;
+  }
+  g_log_default_handler(domain, level, message, user_data);
+}
+
+void glib_message_suppressor(const gchar* domain, GLogLevelFlags level, const gchar* message,
+                             gpointer user_data) {
+  if (message && !pipeline_internal::ux::should_emit_topic_for_current_context(
+                     classify_message_topic(message))) {
     return;
   }
   g_log_default_handler(domain, level, message, user_data);
@@ -105,6 +127,115 @@ bool should_suppress_device_line(const std::string& line) {
   return false;
 }
 
+bool starts_with(const std::string& line, std::string_view prefix) {
+  return line.size() >= prefix.size() && std::equal(prefix.begin(), prefix.end(), line.begin());
+}
+
+pipeline_internal::ux::VerboseTopic classify_message_topic(const std::string& line) {
+  if (line.find("FPSSINK: Calling plugin Init Function") != std::string::npos) {
+    return pipeline_internal::ux::VerboseTopic::GStreamer;
+  }
+  if (line.find("CvNormalizeQuantize Config") != std::string::npos ||
+      line.find("Out_dims:") != std::string::npos ||
+      line.find("Size of buffer allocated:") != std::string::npos ||
+      line.find("TOPK Config") != std::string::npos ||
+      line.find("TRANSFORM_ANCHORS Config") != std::string::npos ||
+      line.find("MaskFiltering:") != std::string::npos ||
+      line.find("Decoder destroyed asynchronously") != std::string::npos ||
+      line.find("perf: ") != std::string::npos) {
+    return pipeline_internal::ux::VerboseTopic::Plugins;
+  }
+  return pipeline_internal::ux::VerboseTopic::GStreamer;
+}
+
+bool should_suppress_known_glib_warning(const std::string& line) {
+  return line.find("Failed to build typed processcvu CM config from manifest stage") !=
+             std::string::npos ||
+         line.find("processcvu_tensor_descs_missing") != std::string::npos;
+}
+
+bool should_suppress_verbosity_line(const std::string& line) {
+  if (line.empty()) {
+    return false;
+  }
+
+  const auto opt = pipeline_internal::ux::current_effective_verbose_options();
+  const bool any_detail = pipeline_internal::ux::should_emit_any_details(opt);
+  const auto allow = [&](pipeline_internal::ux::VerboseTopic topic) {
+    return pipeline_internal::ux::should_emit_topic(opt, topic);
+  };
+
+  if (starts_with(line, "[GST]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::GStreamer);
+  }
+
+  if (starts_with(line, "** Message:")) {
+    return !allow(classify_message_topic(line));
+  }
+
+  if (line.find("FPSSINK: Calling plugin Init Function") != std::string::npos) {
+    return !allow(pipeline_internal::ux::VerboseTopic::GStreamer);
+  }
+
+  if (line.find("WARNING **:") != std::string::npos && should_suppress_known_glib_warning(line) &&
+      !allow(pipeline_internal::ux::VerboseTopic::GStreamer) &&
+      !allow(pipeline_internal::ux::VerboseTopic::Plugins)) {
+    return true;
+  }
+
+  if (starts_with(line, "[route-debug]") || starts_with(line, "[typed-adapter]") ||
+      starts_with(line, "[model-info-shadow]") || starts_with(line, "[mla-contract]") ||
+      starts_with(line, "[mpk-contract]") || starts_with(line, "[dequant-compare]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::Planner);
+  }
+
+  if (starts_with(line, "[GRAPH]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::Graph);
+  }
+
+  if (starts_with(line, "[STOP]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::Graph) &&
+           !allow(pipeline_internal::ux::VerboseTopic::Pipeline);
+  }
+
+  if (starts_with(line, "[PIPELINE]") || starts_with(line, "[PIPELINE:") ||
+      starts_with(line, "[FLOW:") || starts_with(line, "[rtsp]") ||
+      starts_with(line, "[sync-cache]") || starts_with(line, "[prepared-runtime-build]") ||
+      starts_with(line, "[prepared-runtime-graph]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::Pipeline);
+  }
+
+  if (starts_with(line, "[INPUTSTREAM]") || starts_with(line, "[APPSINK") ||
+      starts_with(line, "[APPSINK_DROP]") || starts_with(line, "[APPSINK_LAST]") ||
+      starts_with(line, "[PUSH_REF]") || starts_with(line, "[WEAKREF]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::InputStream);
+  }
+
+  if (starts_with(line, "[HOLDER]") || starts_with(line, "[SAMPLE]") ||
+      starts_with(line, "[NEAT_CAPS]") || starts_with(line, "[GRAPH_OUTPUT]") ||
+      starts_with(line, "[tensorbuffer-") || starts_with(line, "[tensor-set][debug]") ||
+      starts_with(line, "[GstDataAdapter]")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::Tensor) &&
+           !allow(pipeline_internal::ux::VerboseTopic::InputStream);
+  }
+
+  if (starts_with(line, "[stage]") || starts_with(line, "[manifest-stage-debug]") ||
+      starts_with(line, "[processcvu-stage-debug]") || starts_with(line, "[processcvu-compare]") ||
+      starts_with(line, "[preproc-mla-compare]") || starts_with(line, "[preproc-tess-debug]") ||
+      starts_with(line, "[preproc-tensor]") || starts_with(line, "[detess-") ||
+      starts_with(line, "[mla-") || starts_with(line, "[model-ingress-debug]") ||
+      starts_with(line, "[neatdec]") || starts_with(line, "input_track[") ||
+      starts_with(line, "neatdecoder init:")) {
+    return !allow(pipeline_internal::ux::VerboseTopic::Plugins);
+  }
+
+  if (starts_with(line, "[DBG]") || starts_with(line, "[TRACE]") || starts_with(line, "[DIAG]")) {
+    return !any_detail;
+  }
+
+  return false;
+}
+
 void start_stdio_filter(int target_fd, std::vector<std::unique_ptr<std::thread>>& threads) {
   int fds[2];
   if (pipe(fds) != 0)
@@ -136,7 +267,8 @@ void start_stdio_filter(int target_fd, std::vector<std::unique_ptr<std::thread>>
         trimmed.remove_suffix(1);
       }
       std::string line(trimmed);
-      if (!line.empty() && should_suppress_device_line(line)) {
+      if (!line.empty() &&
+          (should_suppress_device_line(line) || should_suppress_verbosity_line(line))) {
         buffer.clear();
         return;
       }
@@ -251,6 +383,19 @@ std::string default_plugin_path() {
     return env_override;
   }
 
+  const std::string loaded_allocator = resolve_allocator_symbol_path();
+  if (is_neat_allocator_path(loaded_allocator)) {
+    gchar* dir = g_path_get_dirname(loaded_allocator.c_str());
+    if (dir && *dir && g_file_test(dir, G_FILE_TEST_IS_DIR)) {
+      gchar* canon = g_canonicalize_filename(dir, nullptr);
+      std::string out = canon ? std::string(canon) : std::string(dir);
+      g_free(canon);
+      g_free(dir);
+      return out;
+    }
+    g_free(dir);
+  }
+
   const char* installed_candidates[] = {
       "/usr/lib/aarch64-linux-gnu/neat/gst-plugins",
       "/lib/aarch64-linux-gnu/neat/gst-plugins",
@@ -311,7 +456,7 @@ std::unordered_set<std::string> list_plugin_basenames(const std::string& dir) {
 }
 
 bool is_regular_file(const std::string& path) {
-  struct stat st{};
+  struct stat st {};
   if (stat(path.c_str(), &st) != 0)
     return false;
   return S_ISREG(st.st_mode);
@@ -323,12 +468,10 @@ std::string third_party_allocator_path(const std::string& third_party_dir) {
   const std::string neat_allocator = third_party_dir + "/libgstneatallocator.so";
   if (is_regular_file(neat_allocator))
     return neat_allocator;
-
-  const std::string legacy_allocator = third_party_dir + "/libgstsimaallocator.so";
-  if (is_regular_file(legacy_allocator))
-    return legacy_allocator;
-
-  return {};
+  throw std::runtime_error("Required NEAT allocator is missing: " + neat_allocator +
+                           ". Ensure libgstneatallocator.so is installed in the third-party"
+                           " plugin directory (searched: " +
+                           third_party_dir + ").");
 }
 
 std::string canonicalize_path(const std::string& path) {
@@ -355,10 +498,63 @@ bool path_has_prefix(const std::string& path, const std::string& dir) {
   return path.rfind(prefix, 0) == 0;
 }
 
+bool same_file_identity(const std::string& lhs, const std::string& rhs) {
+  if (lhs.empty() || rhs.empty())
+    return false;
+  struct stat l {};
+  struct stat r {};
+  if (stat(lhs.c_str(), &l) != 0 || stat(rhs.c_str(), &r) != 0)
+    return false;
+  return l.st_dev == r.st_dev && l.st_ino == r.st_ino;
+}
+
+bool is_neat_allocator_path(const std::string& path) {
+  return path.find("libgstneatallocator.so") != std::string::npos;
+}
+
+bool is_legacy_allocator_basename(const std::string& name) {
+  return name.rfind("libgstsimaallocator.so", 0) == 0 ||
+         name.rfind("libgstsimaaibufferpool.so", 0) == 0;
+}
+
+std::string resolve_allocator_symbol_path() {
+  void* sym = dlsym(RTLD_DEFAULT, "gst_neat_memory_init_once");
+  if (!sym)
+    return {};
+  Dl_info info{};
+  if (dladdr(sym, &info) == 0 || !info.dli_fname || !*info.dli_fname)
+    return {};
+  return canonicalize_path(info.dli_fname);
+}
+
 void preload_third_party_allocator(const std::string& third_party_dir) {
-  const std::string allocator_path = third_party_allocator_path(third_party_dir);
-  if (allocator_path.empty())
-    return;
+  const std::string allocator_path = canonicalize_path(third_party_allocator_path(third_party_dir));
+  if (allocator_path.empty()) {
+    throw std::runtime_error(
+        "Required NEAT allocator path resolved empty"
+        " (third_party_dir='" +
+        third_party_dir +
+        "'). Check that the directory exists and contains libgstneatallocator.so.");
+  }
+  const std::string expected_dir = canonicalize_path(third_party_dir);
+  const std::string loaded_before = resolve_allocator_symbol_path();
+  if (!loaded_before.empty()) {
+    if (!is_neat_allocator_path(loaded_before)) {
+      throw std::runtime_error(
+          "Legacy allocator already loaded before NEAT init: " + loaded_before +
+          ". Remove the legacy allocator plugin from GST_PLUGIN_PATH or ensure"
+          " NEAT init runs before any GStreamer pipeline creation.");
+    }
+    if (same_file_identity(loaded_before, allocator_path) ||
+        path_has_prefix(loaded_before, expected_dir)) {
+      if (should_emit_gst_init_detail()) {
+        std::fprintf(stderr, "[GST] allocator already loaded: %s\n", loaded_before.c_str());
+      }
+      return;
+    }
+    throw std::runtime_error("Allocator symbol already loaded from unexpected path: " +
+                             loaded_before + " (expected under " + expected_dir + ")");
+  }
 
   void* handle = dlopen(allocator_path.c_str(), RTLD_NOW | RTLD_GLOBAL);
   if (!handle) {
@@ -374,29 +570,31 @@ void preload_third_party_allocator(const std::string& third_party_dir) {
 
   g_allocator_handle = handle;
 
-  if (env_bool("SIMA_GST_PLUGIN_PATH_DEBUG", false)) {
+  if (should_emit_gst_init_detail()) {
     std::fprintf(stderr, "[GST] preloaded allocator: %s\n", allocator_path.c_str());
   }
 }
 
 void enforce_third_party_allocator(const std::string& third_party_dir) {
-  const std::string allocator_path = third_party_allocator_path(third_party_dir);
-  if (allocator_path.empty())
-    return;
-
-  if (env_bool("SIMA_GST_ALLOW_SYSTEM_ALLOCATOR", false))
-    return;
+  const std::string allocator_path = canonicalize_path(third_party_allocator_path(third_party_dir));
+  if (allocator_path.empty()) {
+    throw std::runtime_error(
+        "Required NEAT allocator path resolved empty"
+        " (third_party_dir='" +
+        third_party_dir +
+        "'). Check that the directory exists and contains libgstneatallocator.so.");
+  }
 
   void* sym = nullptr;
   if (g_allocator_handle) {
-    sym = dlsym(g_allocator_handle, "gst_simaai_memory_init_once");
+    sym = dlsym(g_allocator_handle, "gst_neat_memory_init_once");
   }
   if (!sym) {
-    sym = dlsym(RTLD_DEFAULT, "gst_simaai_memory_init_once");
+    sym = dlsym(RTLD_DEFAULT, "gst_neat_memory_init_once");
   }
   if (!sym) {
     throw std::runtime_error(
-        "Failed to locate gst_simaai_memory_init_once after preloading third-party allocator.");
+        "Failed to locate gst_neat_memory_init_once after preloading third-party allocator.");
   }
 
   Dl_info info{};
@@ -407,20 +605,27 @@ void enforce_third_party_allocator(const std::string& third_party_dir) {
   const std::string loaded_path = canonicalize_path(info.dli_fname);
   const std::string expected_dir = canonicalize_path(third_party_dir);
 
-  if (!path_has_prefix(loaded_path, expected_dir)) {
-    std::string msg = "System allocator loaded: ";
+  if (!is_neat_allocator_path(loaded_path)) {
+    std::string msg = "Legacy allocator loaded: ";
+    msg += loaded_path.empty() ? std::string(info.dli_fname) : loaded_path;
+    msg += ". NEAT allocator is required.";
+    throw std::runtime_error(msg);
+  }
+
+  if (!same_file_identity(loaded_path, allocator_path) &&
+      !path_has_prefix(loaded_path, expected_dir)) {
+    std::string msg = "Unexpected allocator loaded: ";
     msg += loaded_path.empty() ? std::string(info.dli_fname) : loaded_path;
     msg += " (expected under ";
     msg += expected_dir.empty() ? third_party_dir : expected_dir;
-    msg += "). Set SIMA_GST_ALLOW_SYSTEM_ALLOCATOR=1 to override.";
+    msg += ").";
     throw std::runtime_error(msg);
   }
 }
 
 std::string build_filtered_system_dir(const std::vector<std::string>& sys_dirs,
                                       const std::string& third_party_dir,
-                                      std::vector<std::string>* skipped,
-                                      bool strict_neat_only) {
+                                      std::vector<std::string>* skipped, bool strict_neat_only) {
   if (sys_dirs.empty() || third_party_dir.empty())
     return {};
 
@@ -446,6 +651,11 @@ std::string build_filtered_system_dir(const std::vector<std::string>& sys_dirs,
         continue;
       if (name.find(".so") == std::string::npos)
         continue;
+      if (is_legacy_allocator_basename(name)) {
+        if (skipped)
+          skipped->push_back(name);
+        continue;
+      }
       if (strict_neat_only && name.find("simaai") != std::string::npos) {
         if (skipped)
           skipped->push_back(name);
@@ -571,14 +781,18 @@ void validate_neat_factory_loaded(const char* factory, const char* plugin_dir) {
     }
   }
 
-  std::fprintf(stderr, "[GST] required factory=%s plugin=%s path=%s\n", factory,
-               plugin_name.c_str(), plugin_path.c_str());
+  if (should_emit_gst_init_detail()) {
+    std::fprintf(stderr, "[GST] required factory=%s plugin=%s path=%s\n", factory,
+                 plugin_name.c_str(), plugin_path.c_str());
+  }
 }
 
 void validate_neat_startup_contract(const std::string& plugin_dir) {
   // Contract: PipelineSession must resolve and instantiate NEAT factories.
   // Legacy SIMAAI factories may still be discoverable in the process.
-  const char* required[] = {"neatprocesscvu", "neatprocessmla", "neatboxdecode"};
+  const char* required[] = {
+      "neatprocesscvu", "neatprocessmla", "neatboxdecode", "neatdequant", "neatdetess",
+  };
   for (const char* factory : required) {
     validate_neat_factory_loaded(factory, plugin_dir.c_str());
   }
@@ -592,8 +806,9 @@ void gst_init_once() {
     int argc = 0;
     char** argv = nullptr;
 
+    const bool already_initialized = gst_is_initialized();
     const bool allow_manual = env_bool("SIMA_ALLOW_GST_INIT", false);
-    if (gst_is_initialized() && !allow_manual) {
+    if (already_initialized && !allow_manual) {
       std::string plugin_path = default_plugin_path();
       if (plugin_path.empty())
         plugin_path = "<unknown>";
@@ -608,12 +823,17 @@ void gst_init_once() {
       throw std::runtime_error(msg);
     }
 
+    if (env_bool("SIMA_GST_SUPPRESS_DEVICE_LOGS", true)) {
+      install_stdio_filters();
+    }
+
     const gchar* plugin_env_1_0 = g_getenv("GST_PLUGIN_PATH_1_0");
     const gchar* registry_env_1_0 = g_getenv("GST_REGISTRY_1_0");
     const gchar* plugin_env = g_getenv("GST_PLUGIN_PATH");
 
     const bool skip_third_party = false;
     const bool strict_neat_only = env_bool("SIMA_GST_NEAT_ONLY", true);
+    const gchar* plugin_dir_override = g_getenv("SIMA_GST_PLUGIN_DIR");
     const std::string third_party = default_plugin_path();
     if (third_party.empty()) {
       throw std::runtime_error(
@@ -629,6 +849,13 @@ void gst_init_once() {
         prepend_env_list("GST_PLUGIN_PATH", third_party);
       }
       prepend_env_list("LD_LIBRARY_PATH", third_party);
+      if (should_emit_gst_init_detail()) {
+        std::fprintf(stderr, "[GST] plugin_dir selected=%s override=%s strict_neat_only=%d\n",
+                     third_party.c_str(),
+                     (plugin_dir_override && *plugin_dir_override) ? plugin_dir_override
+                                                                   : "<unset>",
+                     strict_neat_only ? 1 : 0);
+      }
     }
 
     const bool allow_system_plugins = env_bool("SIMA_GST_ALLOW_SYSTEM_PLUGINS", false);
@@ -649,13 +876,13 @@ void gst_init_once() {
       const std::string filtered =
           build_filtered_system_dir(sys_dirs, third_party, &skipped, strict_neat_only);
       if (!filtered.empty()) {
-        g_setenv("GST_PLUGIN_SYSTEM_PATH_1_0", filtered.c_str(), FALSE);
-        if (env_bool("SIMA_GST_PLUGIN_PATH_DEBUG", false)) {
+        g_setenv("GST_PLUGIN_SYSTEM_PATH_1_0", filtered.c_str(), TRUE);
+        if (should_emit_gst_init_detail()) {
           std::fprintf(stderr, "[GST] filtered system plugins: %s (skipped %zu)\n",
                        filtered.c_str(), skipped.size());
         }
       }
-      if (env_bool("SIMA_GST_PLUGIN_PATH_DEBUG", false) && !skipped.empty()) {
+      if (should_emit_gst_init_detail() && !skipped.empty()) {
         std::fprintf(stderr, "[GST] skipped duplicate plugins:\n");
         for (const auto& name : skipped) {
           std::fprintf(stderr, "  - %s\n", name.c_str());
@@ -691,14 +918,19 @@ void gst_init_once() {
         const std::string wrapper = ensure_scanner_wrapper(third_party);
         if (!wrapper.empty()) {
           g_setenv("GST_PLUGIN_SCANNER", wrapper.c_str(), TRUE);
-          if (env_bool("SIMA_GST_PLUGIN_PATH_DEBUG", false)) {
+          if (should_emit_gst_init_detail()) {
             std::fprintf(stderr, "[GST] using plugin scanner wrapper: %s\n", wrapper.c_str());
           }
         }
       }
     }
 
+    g_log_set_handler(nullptr, G_LOG_LEVEL_MESSAGE, glib_message_suppressor, nullptr);
     gst_init(&argc, &argv);
+    if ((!g_getenv("GST_DEBUG") || !*g_getenv("GST_DEBUG")) &&
+        pipeline_internal::ux::should_emit_gstreamer_for_current_context()) {
+      gst_debug_set_default_threshold(GST_LEVEL_INFO);
+    }
     // Register custom metadata after gst_init to avoid GLib type init issues,
     // but before loading plugins to ensure transforms are wired.
     if (!gst_meta_get_info("GstSimaMeta")) {
@@ -710,6 +942,12 @@ void gst_init_once() {
       static const gchar* sima_sample_tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
       gst_meta_register_custom("GstSimaSampleMeta", sima_sample_tags, sima_custom_meta_transform,
                                const_cast<char*>("GstSimaSampleMeta"), nullptr);
+    }
+    if (!gst_meta_get_info(SIMA_TENSOR_SET_META_NAME)) {
+      static const gchar* sima_tensor_set_tags[] = {GST_META_TAG_MEMORY_STR, nullptr};
+      gst_meta_register_custom(SIMA_TENSOR_SET_META_NAME, sima_tensor_set_tags,
+                               sima_custom_meta_transform,
+                               const_cast<char*>(SIMA_TENSOR_SET_META_NAME), nullptr);
     }
     if (env_bool("SIMA_GST_SUPPRESS_JSON_WARNINGS", true)) {
       g_log_set_handler("Json",
@@ -725,10 +963,9 @@ void gst_init_once() {
                         static_cast<GLogLevelFlags>(G_LOG_LEVEL_WARNING | G_LOG_LEVEL_CRITICAL),
                         gstreamer_segment_log_suppressor, nullptr);
     }
-    if (env_bool("SIMA_GST_SUPPRESS_DEVICE_LOGS", true)) {
-      install_stdio_filters();
+    if (!already_initialized) {
+      validate_neat_startup_contract(third_party);
     }
-    validate_neat_startup_contract(third_party);
   });
 }
 

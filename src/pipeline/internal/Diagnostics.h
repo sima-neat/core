@@ -150,6 +150,54 @@ struct ElementFlowCounters {
   }
 };
 
+// Phase A: per-pad timing.  Captures the metrics the per-element aggregate
+// loses: inter-arrival cadence per pad (so multi-input elements like EVO
+// multibuff preprocess can report sink_0 vs sink_1 separately) and queue-wait
+// per sink pad (time the buffer spent on the upstream queue between the
+// previous src departure and arrival here).  Together these localize where
+// the 50-60% non-kernel overhead goes.
+struct ElementPadTimingStats {
+  std::string element_name;
+  std::string pad_name;
+  bool is_sink = false;
+  uint64_t samples = 0;
+  uint64_t inter_arrival_total_us = 0;
+  uint64_t inter_arrival_max_us = 0;
+  uint64_t queue_wait_samples = 0;
+  uint64_t queue_wait_total_us = 0;
+  uint64_t queue_wait_max_us = 0;
+  uint64_t bytes = 0;
+};
+
+struct ElementPadTimingCounters {
+  std::string element_name;
+  std::string pad_name;
+  bool is_sink = false;
+  std::atomic<uint64_t> samples{0};
+  std::atomic<uint64_t> inter_arrival_total_us{0};
+  std::atomic<uint64_t> inter_arrival_max_us{0};
+  std::atomic<int64_t> last_arrival_us{-1};
+  std::atomic<uint64_t> queue_wait_samples{0};
+  std::atomic<uint64_t> queue_wait_total_us{0};
+  std::atomic<uint64_t> queue_wait_max_us{0};
+  std::atomic<uint64_t> bytes{0};
+
+  ElementPadTimingStats snapshot() const {
+    ElementPadTimingStats s;
+    s.element_name = element_name;
+    s.pad_name = pad_name;
+    s.is_sink = is_sink;
+    s.samples = samples.load(std::memory_order_relaxed);
+    s.inter_arrival_total_us = inter_arrival_total_us.load(std::memory_order_relaxed);
+    s.inter_arrival_max_us = inter_arrival_max_us.load(std::memory_order_relaxed);
+    s.queue_wait_samples = queue_wait_samples.load(std::memory_order_relaxed);
+    s.queue_wait_total_us = queue_wait_total_us.load(std::memory_order_relaxed);
+    s.queue_wait_max_us = queue_wait_max_us.load(std::memory_order_relaxed);
+    s.bytes = bytes.load(std::memory_order_relaxed);
+    return s;
+  }
+};
+
 struct NextCpuDecision {
   int node_index = -1;
   std::string node_kind;
@@ -173,6 +221,11 @@ struct DiagCtx {
   std::vector<std::unique_ptr<StageTimingCounters>> stage_timings;
   std::vector<std::unique_ptr<ElementTimingCounters>> element_timings;
   std::vector<std::unique_ptr<ElementFlowCounters>> element_flows;
+  // Phase A: per-pad timing — extends element_timings with a per-pad
+  // breakdown so we can attribute the 50–60% non-kernel overhead to specific
+  // pads (multibuff sink_0 vs sink_1, queue waits between elements, etc.).
+  std::vector<std::unique_ptr<ElementPadTimingCounters>> element_pad_timings;
+  std::mutex element_pad_timings_mu; // guards lazy-creation of new pad rows
 
   bool has_build_adaptation = false;
   BuildAdaptationSummary build_adaptation;

@@ -24,6 +24,7 @@
 
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/internal/TensorTransfer.h"
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/imgproc.hpp>
@@ -138,7 +139,26 @@ std::size_t required_span_bytes_checked(std::size_t step_bytes, std::size_t row_
 //==============================================================================
 
 Tensor Tensor::from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
   return simaai::neat::from_cv_mat(mat, fmt, read_only);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+}
+
+Tensor Tensor::from_cv_mat_view(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+  return simaai::neat::from_cv_mat_view(mat, fmt, read_only);
+}
+
+Tensor Tensor::from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory memory) {
+  return simaai::neat::from_cv_mat(mat, fmt, memory);
+}
+
+Tensor Tensor::from_cv_mat(const cv::Mat& mat, TensorMemory memory) {
+  return simaai::neat::from_cv_mat(mat, ImageSpec::PixelFormat::BGR, memory);
 }
 
 /**
@@ -155,7 +175,7 @@ Tensor Tensor::from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool 
  *  - This wrapper preserves cv::Mat padding via row stride (step[0]).
  *  - read_only is enforced by Tensor::map() (throws on Write/ReadWrite if read_only=true).
  */
-Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+Tensor from_cv_mat_view(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
   validate_cv_mat_or_throw(mat, fmt);
 
   // Keep the Mat header (and its refcounted backing store) alive.
@@ -207,6 +227,47 @@ Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_onl
   out.semantic.image = image;
 
   return out;
+}
+
+Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, bool read_only) {
+  return from_cv_mat_view(mat, fmt, read_only);
+}
+
+Tensor from_cv_mat(const cv::Mat& mat, ImageSpec::PixelFormat fmt, TensorMemory memory) {
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
+  Tensor cpu_view = from_cv_mat_view(mat, fmt, /*read_only=*/true);
+#if defined(__GNUC__) || defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+    return cpu_view.clone();
+  }
+  const std::size_t bytes = cpu_view.dense_bytes_tight();
+  if (bytes == 0U) {
+    throw std::runtime_error("from_cv_mat: unable to determine dense byte size");
+  }
+  std::vector<Segment> segments{{"ifm0", bytes}};
+  if (memory == TensorMemory::EV74) {
+    return pipeline_internal::transfer_to_device(cpu_view, Device{DeviceType::SIMA_CVU, 0},
+                                                 &segments,
+                                                 /*required_segment_names=*/nullptr);
+  }
+  if (memory == TensorMemory::MLA) {
+    return pipeline_internal::transfer_to_device(cpu_view, Device{DeviceType::SIMA_MLA, 0},
+                                                 &segments,
+                                                 /*required_segment_names=*/nullptr);
+  }
+  throw std::invalid_argument("from_cv_mat: unsupported TensorMemory placement");
+}
+
+Tensor from_cv_mat(const cv::Mat& mat, TensorMemory memory) {
+  return from_cv_mat(mat, ImageSpec::PixelFormat::BGR, memory);
 }
 
 /**

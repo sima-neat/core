@@ -42,7 +42,7 @@ simaai::neat::Sample make_tensor_sample(int frame_id, const std::string& stream_
 
 bool has_field_name(const simaai::neat::Sample& bundle, const std::string& name) {
   for (const auto& field : bundle.fields) {
-    if (field.port_name == name)
+    if (field.stream_label == name || field.port_name == name)
       return true;
   }
   return false;
@@ -131,9 +131,9 @@ RUN_TEST(
                 "JoinBundle output kind should be Bundle");
         require(out[0].sample.fields.size() == 2,
                 "JoinBundle should emit both encoded/meta fields");
-        require(out[0].sample.fields[0].port_name == "encoded",
+        require(out[0].sample.fields[0].stream_label == "encoded",
                 "JoinBundle should preserve input order in bundle fields");
-        require(out[0].sample.fields[1].port_name == "meta",
+        require(out[0].sample.fields[1].stream_label == "meta",
                 "JoinBundle should preserve input order in bundle fields");
       }
 

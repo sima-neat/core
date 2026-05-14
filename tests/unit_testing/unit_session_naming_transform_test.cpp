@@ -1,5 +1,6 @@
 #include "pipeline/Session.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/session/SessionDetail.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -34,6 +35,30 @@ RUN_TEST("unit_session_naming_transform_test", ([] {
            require(transformed[0] == "pre_a_suf", "vector transform first element mismatch");
            require(transformed[1] == "pre_b_suf",
                    "vector transform should preserve already transformed names");
+
+           {
+             const std::unordered_map<std::string, std::string> mapping = {
+                 {"boxdecode", "pre_boxdecode_suf"}};
+             const std::string fragment =
+                 "neatobjectdecode name=boxdecode stage-id=boxdecode silent=true ! fakesink";
+             const std::string rewritten = rewrite_fragment_names(fragment, mapping);
+             require_contains(rewritten, "name=pre_boxdecode_suf",
+                              "rewrite_fragment_names should rewrite boxdecode element name");
+             require_contains(rewritten, "stage-id=pre_boxdecode_suf",
+                              "rewrite_fragment_names should rewrite matching stage-id");
+           }
+
+           {
+             const std::unordered_map<std::string, std::string> mapping = {
+                 {"boxdecode", "pre_boxdecode_suf"}};
+             const std::string fragment =
+                 "neatobjectdecode name=boxdecode stage-id=logical_box silent=true ! fakesink";
+             const std::string rewritten = rewrite_fragment_names(fragment, mapping);
+             require_contains(rewritten, "name=pre_boxdecode_suf",
+                              "rewrite_fragment_names should still rewrite element name");
+             require_contains(rewritten, "stage-id=logical_box",
+                              "rewrite_fragment_names should preserve explicit logical stage-id");
+           }
 
            SessionOptions opt;
            opt.element_name_prefix = "x_";

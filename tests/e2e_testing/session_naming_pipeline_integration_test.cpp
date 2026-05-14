@@ -17,7 +17,7 @@ RUN_TEST("session_naming_pipeline_integration_test", ([] {
            Session session(sopt);
            InputOptions src_opt;
            src_opt.media_type = "video/x-raw";
-           src_opt.format = "RGB";
+           src_opt.format = simaai::neat::FormatTag::RGB;
            src_opt.use_simaai_pool = false;
            src_opt.max_width = 96;
            src_opt.max_height = 96;
@@ -32,7 +32,7 @@ RUN_TEST("session_naming_pipeline_integration_test", ([] {
 
            Run run;
            try {
-             run = session.build(seed, RunMode::Async, run_opt);
+             run = session.build(TensorList{seed}, RunMode::Async, run_opt);
            } catch (const std::exception& e) {
              if (sima_test::likely_runtime_missing(e.what())) {
                throw std::runtime_error("Skipping naming integration due runtime limitations: " +
@@ -41,8 +41,8 @@ RUN_TEST("session_naming_pipeline_integration_test", ([] {
              throw;
            }
 
-           Sample out = run.push_and_pull(seed, 1000);
-           require(out.tensor.has_value(), "naming integration: push/pull output missing tensor");
+           TensorList outs = run.run(TensorList{seed}, 1000);
+           require(outs.size() == 1, "naming integration: expected one output tensor");
 
            const std::string backend = session.last_pipeline();
            require_contains(backend, "named_mysrc_rt",

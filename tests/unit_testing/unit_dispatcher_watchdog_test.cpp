@@ -42,7 +42,11 @@ fs::path find_repo_root() {
 
 std::string pick_model_pack() {
   if (const char* env = std::getenv("SIMA_WATCHDOG_MODEL_PACK")) {
-    if (*env)
+    if (*env && fs::exists(env))
+      return env;
+  }
+  if (const char* env = std::getenv("SIMA_MODEL_TAR")) {
+    if (*env && fs::exists(env))
       return env;
   }
   if (file_exists("tmp/resnet_50_mpk.tar.gz"))
@@ -106,11 +110,9 @@ cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
   }
 
   simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "NV12";
-  model_opt.input_max_width = kInferWidth;
-  model_opt.input_max_height = kInferHeight;
-  model_opt.input_max_depth = 0;
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::NV12;
   simaai::neat::Model model(model_pack, model_opt);
 
   simaai::neat::nodes::groups::ImageInputGroupOptions src_opt;
@@ -120,7 +122,7 @@ cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
   src_opt.use_videorate = true;
   src_opt.use_videoscale = true;
   src_opt.output_caps.enable = true;
-  src_opt.output_caps.format = "NV12";
+  src_opt.output_caps.format = simaai::neat::FormatTag::NV12;
   src_opt.output_caps.width = kInferWidth;
   src_opt.output_caps.height = kInferHeight;
   src_opt.output_caps.fps = 30;

@@ -29,12 +29,15 @@ int main() {
 
     setenv("SIMA_ALLOW_GST_INIT", "1", 1);
     bool threw_override = false;
+    std::string override_err;
     try {
       simaai::neat::gst_init_once();
-    } catch (const std::exception&) {
+    } catch (const std::exception& ex) {
       threw_override = true;
+      override_err = ex.what();
     }
-    require(!threw_override, "expected gst_init_once to allow when SIMA_ALLOW_GST_INIT=1");
+    require(!threw_override,
+            "expected gst_init_once to allow when SIMA_ALLOW_GST_INIT=1: " + override_err);
 
     std::cout << "[OK] unit_gst_init_guard_test passed\n";
     return 0;

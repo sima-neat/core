@@ -41,7 +41,7 @@ simaai::neat::Session make_rgb_session() {
   Session session;
   InputOptions src_opt;
   src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
@@ -53,77 +53,89 @@ simaai::neat::Session make_rgb_session() {
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
   using namespace simaai::neat;
-  Sample sample;
-  sample.kind = SampleKind::Tensor;
-  sample.tensor = tensor;
+  Sample sample = sample_from_tensors(TensorList{tensor});
   sample.payload_tag = "RGB";
   sample.owned = true;
   return sample;
 }
 
-void require_tensor_output(const simaai::neat::Sample& sample, const std::string& where) {
-  require(sample.kind == simaai::neat::SampleKind::Tensor, where + ": expected tensor sample kind");
-  require(sample.tensor.has_value(), where + ": missing tensor payload");
+void require_tensor_outputs(const simaai::neat::TensorList& outputs, const std::string& where) {
+  require(outputs.size() == 1U, where + ": expected one tensor output");
+}
+
+void require_tensor_sample_outputs(const simaai::neat::SampleList& outputs,
+                                   const std::string& where) {
+  require(outputs.size() == 1U, where + ": expected one sample output");
+  const auto& output = outputs.front();
+  const bool has_single_tensor =
+      (simaai::neat::sample_has_tensor_list(output) && output.tensors.size() == 1U) ||
+      (output.kind == simaai::neat::SampleKind::Tensor && output.tensor.has_value());
+  require(has_single_tensor, where + ": expected single-tensor sample output");
 }
 
 } // namespace
 
-RUN_TEST("unit_session_build_input_strategy_test", ([] {
-           using namespace simaai::neat;
+RUN_TEST(
+    "unit_session_build_input_strategy_test", ([] {
+      using namespace simaai::neat;
 
-           const ScopedEnvVar preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1");
-           const ScopedEnvVar sync_num_buffers("SIMA_SYNC_RUN_NUM_BUFFERS", "4");
+      const ScopedEnvVar preflight("SIMA_INPUTSTREAM_PREFLIGHT_RUN", "1");
 
-           cv::Mat mat_seed(48, 64, CV_8UC3, cv::Scalar(20, 80, 140));
-           Tensor tensor_seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x63);
-           const Sample sample_seed = tensor_to_sample(tensor_seed);
+      cv::Mat mat_seed(48, 64, CV_8UC3, cv::Scalar(20, 80, 140));
+      Tensor tensor_seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x63);
+      const Sample sample_seed = tensor_to_sample(tensor_seed);
 
-           RunOptions run_opt;
-           run_opt.queue_depth = 4;
-           run_opt.overflow_policy = OverflowPolicy::Block;
+      RunOptions run_opt;
+      run_opt.queue_depth = 4;
+      run_opt.overflow_policy = OverflowPolicy::Block;
 
-           // Sync build path parity for Mat/Tensor/Sample.
-           {
-             Session session = make_rgb_session();
+      // Sync build path parity for Mat/Tensor/Sample.
+      {
+        Session session = make_rgb_session();
 
-             Run run_mat = session.build(mat_seed, RunMode::Sync, run_opt);
-             require_tensor_output(run_mat.push_and_pull(mat_seed, 1000), "sync build mat");
-             run_mat.stop();
+        Run run_mat = session.build(std::vector<cv::Mat>{mat_seed}, RunMode::Sync, run_opt);
+        require_tensor_outputs(run_mat.run(std::vector<cv::Mat>{mat_seed}, 1000), "sync build mat");
+        run_mat.stop();
 
-             Run run_tensor = session.build(tensor_seed, RunMode::Sync, run_opt);
-             require_tensor_output(run_tensor.push_and_pull(tensor_seed, 1000),
-                                   "sync build tensor");
-             run_tensor.stop();
+        Run run_tensor = session.build(TensorList{tensor_seed}, RunMode::Sync, run_opt);
+        require_tensor_outputs(run_tensor.run(TensorList{tensor_seed}, 1000), "sync build tensor");
+        run_tensor.stop();
 
-             Run run_sample = session.build(sample_seed, RunMode::Sync, run_opt);
-             require_tensor_output(run_sample.run(sample_seed, 1000), "sync build sample");
-             run_sample.stop();
-           }
+        Run run_sample = session.build(SampleList{sample_seed}, RunMode::Sync, run_opt);
+        require_tensor_sample_outputs(run_sample.run(SampleList{sample_seed}, 1000),
+                                      "sync build sample");
+        run_sample.stop();
+      }
 
-           // Sync run cache parity for Mat/Tensor overloads.
-           {
-             Session session = make_rgb_session();
-             require_tensor_output(session.run(mat_seed, run_opt), "sync run mat first");
-             require_tensor_output(session.run(mat_seed, run_opt), "sync run mat second");
-             require_tensor_output(session.run(tensor_seed, run_opt), "sync run tensor first");
-             require_tensor_output(session.run(tensor_seed, run_opt), "sync run tensor second");
-           }
+      // Sync run cache parity for Mat/Tensor overloads.
+      {
+        Session session = make_rgb_session();
+        require_tensor_outputs(session.run(std::vector<cv::Mat>{mat_seed}, run_opt),
+                               "sync run mat first");
+        require_tensor_outputs(session.run(std::vector<cv::Mat>{mat_seed}, run_opt),
+                               "sync run mat second");
+        require_tensor_outputs(session.run(TensorList{tensor_seed}, run_opt),
+                               "sync run tensor first");
+        require_tensor_outputs(session.run(TensorList{tensor_seed}, run_opt),
+                               "sync run tensor second");
+      }
 
-           // Async build parity for Mat/Tensor/Sample.
-           {
-             Session session = make_rgb_session();
+      // Async build parity for Mat/Tensor/Sample.
+      {
+        Session session = make_rgb_session();
 
-             Run run_mat = session.build(mat_seed, RunMode::Async, run_opt);
-             require_tensor_output(run_mat.push_and_pull(mat_seed, 1000), "async build mat");
-             run_mat.stop();
+        Run run_mat = session.build(std::vector<cv::Mat>{mat_seed}, RunMode::Async, run_opt);
+        require_tensor_outputs(run_mat.run(std::vector<cv::Mat>{mat_seed}, 1000),
+                               "async build mat");
+        run_mat.stop();
 
-             Run run_tensor = session.build(tensor_seed, RunMode::Async, run_opt);
-             require_tensor_output(run_tensor.push_and_pull(tensor_seed, 1000),
-                                   "async build tensor");
-             run_tensor.stop();
+        Run run_tensor = session.build(TensorList{tensor_seed}, RunMode::Async, run_opt);
+        require_tensor_outputs(run_tensor.run(TensorList{tensor_seed}, 1000), "async build tensor");
+        run_tensor.stop();
 
-             Run run_sample = session.build(sample_seed, RunMode::Async, run_opt);
-             require_tensor_output(run_sample.run(sample_seed, 1000), "async build sample");
-             run_sample.stop();
-           }
-         }));
+        Run run_sample = session.build(SampleList{sample_seed}, RunMode::Async, run_opt);
+        require_tensor_sample_outputs(run_sample.run(SampleList{sample_seed}, 1000),
+                                      "async build sample");
+        run_sample.stop();
+      }
+    }));

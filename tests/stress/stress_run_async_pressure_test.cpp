@@ -38,7 +38,7 @@ RUN_TEST("stress_run_async_pressure_test", [] {
   Session session;
   InputOptions src_opt;
   src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
@@ -51,7 +51,7 @@ RUN_TEST("stress_run_async_pressure_test", [] {
   run_opt.overflow_policy = OverflowPolicy::Block;
 
   Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x22);
-  Run run = session.build(seed, RunMode::Async, run_opt);
+  Run run = session.build(TensorList{seed}, RunMode::Async, run_opt);
 
   std::atomic<int> pushed{0};
   std::atomic<int> pulled{0};
@@ -70,7 +70,7 @@ RUN_TEST("stress_run_async_pressure_test", [] {
         sample.frame_id = i;
         sample.stream_id = "stress";
 
-        if (!run.push(sample)) {
+        if (!run.push(SampleList{sample})) {
           const std::string err = run.last_error();
           throw std::runtime_error("push failed: " + (err.empty() ? std::string("unknown") : err));
         }

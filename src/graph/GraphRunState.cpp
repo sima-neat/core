@@ -66,10 +66,8 @@ bool GraphRun::State::ensure_pipeline_built(std::size_t index, const Sample& sam
     pipe.building = true;
   }
 
-  Sample build_sample = sample;
-  if (sample.kind == SampleKind::Bundle && !pipe.seg.input_complete) {
-    build_sample = make_bundle_carrier_sample();
-  }
+  Sample build_sample =
+      simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
 
   try {
     if (graph_debug_enabled()) {
@@ -88,7 +86,7 @@ bool GraphRun::State::ensure_pipeline_built(std::size_t index, const Sample& sam
                      static_cast<std::size_t>(pipe.seg.id));
       }
     }
-    Run run = pipe.session.build(build_sample, RunMode::Async, opt.pipeline);
+    Run run = pipe.session.build(SampleList{build_sample}, RunMode::Async, pipe.run_options);
     {
       std::lock_guard<std::mutex> lock(pipe.mu);
       pipe.run = std::move(run);

@@ -99,7 +99,7 @@ struct CapKey {
       return media_type == other.media_type && format == other.format && width == other.width &&
              height == other.height && fps_n == other.fps_n && fps_d == other.fps_d;
     case SampleMediaKind::Tensor:
-      return dtype == other.dtype && layout == other.layout && shape == other.shape;
+      return dtype == other.dtype && shape == other.shape;
     case SampleMediaKind::Encoded:
       return caps_hash == other.caps_hash;
     }
@@ -116,6 +116,17 @@ struct CapKeyHash {
   std::size_t operator()(const CapKey& key) const;
 };
 
+struct TensorCompatDims {
+  int width = -1;
+  int height = -1;
+  int depth = -1;
+};
+
+std::vector<int64_t> tensor_shape_from_compat_dims(int width, int height, int depth,
+                                                   TensorLayout layout);
+TensorCompatDims tensor_compat_dims_from_shape(const std::vector<int64_t>& shape,
+                                               TensorLayout layout);
+
 CapKey capkey_from_spec(const SampleSpec& spec);
 std::string caps_string_from_spec(const SampleSpec& spec);
 
@@ -126,9 +137,11 @@ struct SampleSpec {
   TensorDType dtype = TensorDType::UInt8;
   TensorLayout layout = TensorLayout::Unknown;
   std::vector<int64_t> shape;
+  // Raw-video compatibility only. Tensor truth is carried in `shape`.
   int width = -1;
   int height = -1;
   int depth = -1;
+  bool tensor_envelope_transport = false;
   int fps_n = 0;
   int fps_d = 1;
   std::vector<PlaneInfo> planes;
@@ -181,15 +194,31 @@ attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt, InputBuff
                            const std::optional<int64_t>& frame_id_override = std::nullopt,
                            const StreamIdOverride& stream_id_override = {},
                            const BufferNameOverride& buffer_name_override = {});
-bool update_simaai_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& frame_id_override,
-                               const std::optional<int64_t>& input_seq_override,
-                               const std::optional<int64_t>& orig_input_seq_override,
-                               const std::optional<std::string>& stream_id_override,
-                               const std::optional<std::string>& buffer_name_override,
-                               const std::optional<uint64_t>& timestamp_override = std::nullopt,
-                               const std::optional<std::string>& origin_stage_id_override =
-                                   std::nullopt,
-                               const std::optional<int>& origin_output_slot_override =
-                                   std::nullopt);
+bool update_simaai_meta_fields(
+    GstBuffer* buffer, const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const std::optional<uint64_t>& timestamp_override = std::nullopt,
+    const std::optional<std::string>& origin_stage_id_override = std::nullopt,
+    const std::optional<int>& origin_output_slot_override = std::nullopt);
+bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta);
+// Merge `axis_perm` (and only that field) onto an existing GstSimaMeta on
+// `buffer`. Adds GstSimaMeta if absent. The plugin path no longer writes
+// preproc_axis_perm because that field is framework-owned semantic
+// (the user's resolved layout_convert.perm); the framework merges it onto
+// the buffer's existing meta at handoff time without overwriting any
+// plugin-authored geometry/affine/flag fields.
+bool merge_simaai_preprocess_axis_perm(GstBuffer* buffer, const std::vector<int>& axis_perm);
+std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buffer);
+bool has_simaai_preprocess_meta(GstBuffer* buffer);
+bool copy_simaai_preprocess_meta(GstBuffer* dst, GstBuffer* src, std::string* err = nullptr);
+std::optional<std::string>
+validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
+                                                const std::vector<std::string>& required_fields,
+                                                PreprocessRuntimeMeta* out_meta = nullptr);
+bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions& opt,
+                                           int input_width, int input_height);
 
 } // namespace simaai::neat

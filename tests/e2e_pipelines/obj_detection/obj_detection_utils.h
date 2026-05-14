@@ -101,16 +101,26 @@ inline bool extract_bbox_payload_impl(const simaai::neat::Sample& result,
     err = append_context("bundle missing BBOX field", context);
     return false;
   }
-  if (result.kind != simaai::neat::SampleKind::Tensor) {
+
+  const simaai::neat::Tensor* tensor_ptr = nullptr;
+  if (simaai::neat::sample_has_tensor_list(result)) {
+    if (result.tensors.empty()) {
+      err = append_context("capture_missing_tensor", context);
+      return false;
+    }
+    if (result.tensors.size() != 1U) {
+      err = append_context("capture_expected_single_tensor", context);
+      return false;
+    }
+    tensor_ptr = &result.tensors.front();
+  } else if (result.kind == simaai::neat::SampleKind::Tensor && result.tensor.has_value()) {
+    tensor_ptr = &result.tensor.value();
+  } else {
     err = append_context("capture_expected_tensor", context);
     return false;
   }
-  if (!result.tensor.has_value()) {
-    err = append_context("capture_missing_tensor", context);
-    return false;
-  }
 
-  const auto& tensor = result.tensor.value();
+  const auto& tensor = *tensor_ptr;
   std::string fmt = result.payload_tag;
   if (fmt.empty() && !result.format.empty())
     fmt = result.format;

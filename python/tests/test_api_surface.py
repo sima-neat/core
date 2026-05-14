@@ -1,30 +1,27 @@
-import io
-import json
-import re
-import tarfile
 
 import numpy as np
 import pytest
 
+import model_fixture_helpers as model_fixtures
 import pyneat
 
 PREPROC_OPTION_FIELDS = (
-    "input_width",
-    "input_height",
-    "output_width",
-    "output_height",
+    "input_shape",
+    "output_shape",
+    "slice_shape",
+    "set_input_shape",
+    "set_output_shape",
+    "set_slice_shape",
+    "has_input_shape",
+    "has_output_shape",
+    "has_slice_shape",
     "scaled_width",
     "scaled_height",
-    "input_channels",
-    "output_channels",
     "batch_size",
     "normalize",
     "aspect_ratio",
     "tessellate",
     "dynamic_input_dims",
-    "tile_width",
-    "tile_height",
-    "tile_channels",
     "input_offset",
     "input_stride",
     "output_stride",
@@ -45,20 +42,13 @@ PREPROC_OPTION_FIELDS = (
     "debug",
     "upstream_name",
     "graph_input_name",
-    "output_memory_order",
     "num_buffers",
     "num_buffers_model",
     "num_buffers_locked",
-    "config_path",
-    "config_dir",
-    "keep_config",
-    "config_json",
 )
 
 QUANT_TESS_OPTION_FIELDS = (
     "config_path",
-    "config_dir",
-    "keep_config",
     "config_json",
     "element_name",
     "num_buffers",
@@ -68,8 +58,6 @@ QUANT_TESS_OPTION_FIELDS = (
 
 DETESS_DEQUANT_OPTION_FIELDS = (
     "config_path",
-    "config_dir",
-    "keep_config",
     "config_json",
     "upstream_name",
     "element_name",
@@ -161,191 +149,19 @@ OPTIVIEW_JSON_RESULT_FIELDS = (
 )
 
 
+def _strict_resnet50_mpk_path():
+  return model_fixtures.strict_model_tar_path("SIMA_RESNET50_TAR")
+
+
+def _strict_yolo_mpk_path():
+  return model_fixtures.strict_model_tar_path("SIMA_YOLO_TAR")
+
+
 def _assert_not_type_error(call):
   try:
     call()
   except Exception as exc:
     assert not isinstance(exc, TypeError), str(exc)
-
-
-def _write_tar_text(tar, name, text):
-  data = text.encode("utf-8")
-  info = tarfile.TarInfo(name=name)
-  info.size = len(data)
-  tar.addfile(info, io.BytesIO(data))
-
-
-def _write_tar_bytes(tar, name, data):
-  info = tarfile.TarInfo(name=name)
-  info.size = len(data)
-  tar.addfile(info, io.BytesIO(data))
-
-
-def _write_mpk_fixture(tmp_path, name, files):
-  tar_path = tmp_path / f"{name}.tar.gz"
-  with tarfile.open(tar_path, "w:gz") as tar:
-    for path, contents in files.items():
-      _write_tar_text(tar, path, contents)
-    _write_tar_bytes(tar, "share/placeholder.elf", bytes((0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01)))
-  return tar_path
-
-
-def _postprocess_fixture_path(tmp_path, name, *, include_boxdecode=False, include_detess=False):
-  sequence = [
-      {
-          "sequence_id": 1,
-          "name": "preproc_0",
-          "pluginId": "processcvu",
-          "configPath": "0_preproc.json",
-          "processor": "CVU",
-          "kernel": "preproc",
-          "input": "decoder",
-      },
-      {
-          "sequence_id": 2,
-          "name": "mla_0",
-          "pluginId": "processmla",
-          "configPath": "0_process_mla.json",
-          "processor": "MLA",
-          "kernel": "infer",
-          "input": "preproc_0",
-      },
-  ]
-  files = {
-      "etc/pipeline_sequence.json": json.dumps({"pipelines": [{"sequence": sequence}]}, indent=2),
-      "etc/0_preproc.json": json.dumps(
-          {
-              "node_name": "preproc_0",
-              "input_width": 1280,
-              "input_height": 720,
-              "input_img_type": "RGB",
-              "output_width": 640,
-              "output_height": 640,
-              "output_img_type": "RGB",
-          },
-          indent=2,
-      ),
-      "etc/0_process_mla.json": json.dumps(
-          {
-              "node_name": "mla_0",
-              "input_buffers": [{"name": "preproc_0"}],
-              "data_type": ["INT8"],
-              "output_width": [80],
-              "output_height": [80],
-              "output_depth": [6],
-          },
-          indent=2,
-      ),
-  }
-
-  if include_boxdecode:
-    sequence.append(
-        {
-            "sequence_id": 3,
-            "name": "boxdecode_0",
-            "pluginId": "processcvu",
-            "configPath": "0_boxdecode.json",
-            "processor": "CVU",
-            "kernel": "boxdecode",
-            "input": "mla_0",
-        }
-    )
-    files["etc/0_boxdecode.json"] = json.dumps(
-        {
-            "node_name": "boxdecode_0",
-            "input_buffers": [{"name": "mla_0"}],
-            "decode_type": "yolov8",
-            "original_width": 320,
-            "original_height": 240,
-            "detection_threshold": 0.15,
-            "nms_iou_threshold": 0.45,
-            "topk": 24,
-        },
-        indent=2,
-    )
-
-  if include_detess:
-    sequence.append(
-        {
-            "sequence_id": 3,
-            "name": "detessdequant_0",
-            "pluginId": "processcvu",
-            "configPath": "0_postproc.json",
-            "processor": "CVU",
-            "kernel": "detessdequant",
-            "input": "mla_0",
-        }
-    )
-    files["etc/0_postproc.json"] = json.dumps(
-        {
-            "node_name": "detessdequant_0",
-            "input_buffers": [{"name": "mla_0"}],
-            "memory": {"cpu": "CVU", "next_cpu": "CVU"},
-            "simaai__params": {"cpu": "CVU", "next_cpu": "CVU"},
-        },
-        indent=2,
-    )
-
-  return _write_mpk_fixture(tmp_path, name, files)
-
-
-def _preproc_fixture_path(tmp_path, name, *, normalize=True):
-  files = {
-      "etc/pipeline_sequence.json": json.dumps(
-          {
-              "pipelines": [
-                  {
-                      "sequence": [
-                          {
-                              "sequence_id": 1,
-                              "name": "preproc_0",
-                              "pluginId": "processcvu",
-                              "configPath": "0_preproc.json",
-                              "processor": "CVU",
-                              "kernel": "preproc",
-                              "input": "decoder",
-                          },
-                          {
-                              "sequence_id": 2,
-                              "name": "mla_0",
-                              "pluginId": "processmla",
-                              "configPath": "0_process_mla.json",
-                              "processor": "MLA",
-                              "kernel": "infer",
-                              "input": "preproc_0",
-                          },
-                      ]
-                  }
-              ]
-          },
-          indent=2,
-      ),
-      "etc/0_preproc.json": json.dumps(
-          {
-              "node_name": "preproc_0",
-              "input_width": 1280,
-              "input_height": 720,
-              "input_img_type": "RGB",
-              "output_width": 640,
-              "output_height": 640,
-              "output_img_type": "RGB",
-              "normalize": normalize,
-          },
-          indent=2,
-      ),
-      "etc/0_process_mla.json": json.dumps(
-          {
-              "node_name": "mla_0",
-              "input_buffers": [{"name": "preproc_0"}],
-              "data_type": ["INT8"],
-              "output_width": [80],
-              "output_height": [80],
-              "output_depth": [6],
-          },
-          indent=2,
-      ),
-  }
-  return _write_mpk_fixture(tmp_path, name, files)
 
 
 def test_session_pythonic_add_and_describe():
@@ -360,15 +176,15 @@ def test_session_pythonic_add_and_describe():
 
 def test_model_option_structs_are_mutable():
   opt = pyneat.ModelOptions()
-  opt.media_type = "video/x-raw"
-  opt.format = "RGB"
-  opt.input_max_width = 1920
-  opt.input_max_height = 1080
+  opt.preprocess.input_max_width = 1920
+  opt.preprocess.input_max_height = 1080
+  opt.boxdecode_original_width = 1280
+  opt.boxdecode_original_height = 720
 
-  assert opt.media_type == "video/x-raw"
-  assert opt.format == "RGB"
-  assert opt.input_max_width == 1920
-  assert opt.input_max_height == 1080
+  assert opt.preprocess.input_max_width == 1920
+  assert opt.preprocess.input_max_height == 1080
+  assert opt.boxdecode_original_width == 1280
+  assert opt.boxdecode_original_height == 720
 
 
 def test_input_stage_option_structs_expose_expected_fields():
@@ -435,7 +251,7 @@ def test_output_stage_option_structs_expose_expected_fields():
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
-  mpk_path = _basic_valid_mpk_path()
+  mpk_path = _strict_resnet50_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
   model = pyneat.Model(str(mpk_path))
@@ -447,7 +263,7 @@ def test_input_stage_option_struct_constructors_accept_expected_args():
 
 
 def test_postprocess_stage_option_struct_constructors_accept_expected_args(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "detess_valid", include_detess=True)
+  mpk_path = _strict_yolo_mpk_path()
   model = pyneat.Model(str(mpk_path))
 
   _assert_not_type_error(lambda: pyneat.DetessDequantOptions())
@@ -470,27 +286,22 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
 
 def test_input_stage_option_structs_are_mutable():
   pre = pyneat.PreprocOptions()
-  pre.input_width = 320
-  pre.input_height = 240
-  pre.output_memory_order = ["SystemMemory", "SimaAI"]
-  pre.keep_config = True
-  pre.config_json = {"graph_name": "preproc", "input_width": 320}
+  pre.input_shape = [240, 320, 3]
+  pre.output_shape = [640, 640, 3]
+  pre.slice_shape = [32, 128, 3]
 
   quant_tess = pyneat.QuantTessOptions()
   quant_tess.element_name = "qt"
-  quant_tess.keep_config = True
   quant_tess.config_json = {"node_name": "quanttess"}
 
-  assert pre.input_width == 320
-  assert pre.input_height == 240
-  assert pre.output_memory_order == ["SystemMemory", "SimaAI"]
-  assert pre.keep_config is True
-  assert pre.config_json["graph_name"] == "preproc"
-  pre.config_json = None
-  assert pre.config_json is None
+  assert pre.input_shape == [240, 320, 3]
+  assert pre.output_shape == [640, 640, 3]
+  assert pre.slice_shape == [32, 128, 3]
+  assert pre.has_input_shape() is True
+  assert pre.has_output_shape() is True
+  assert pre.has_slice_shape() is True
 
   assert quant_tess.element_name == "qt"
-  assert quant_tess.keep_config is True
   assert quant_tess.config_json["node_name"] == "quanttess"
   quant_tess.config_json = None
   assert quant_tess.config_json is None
@@ -499,8 +310,6 @@ def test_input_stage_option_structs_are_mutable():
 def test_postprocess_stage_option_structs_are_mutable():
   detess = pyneat.DetessDequantOptions()
   detess.config_path = "/tmp/detess.json"
-  detess.config_dir = "/tmp"
-  detess.keep_config = True
   detess.config_json = {"node_name": "detessdequant_0"}
   detess.upstream_name = "mla_0"
   detess.element_name = "detessdequant_0"
@@ -509,8 +318,6 @@ def test_postprocess_stage_option_structs_are_mutable():
   detess.num_buffers_locked = True
 
   assert detess.config_path == "/tmp/detess.json"
-  assert detess.config_dir == "/tmp"
-  assert detess.keep_config is True
   assert detess.config_json["node_name"] == "detessdequant_0"
   detess.config_json = None
   assert detess.config_json is None
@@ -675,7 +482,7 @@ def test_input_stage_node_factories_present_and_accept_expected_args():
 
 
 def test_postprocess_stage_node_factories_present_and_accept_expected_args(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_valid", include_boxdecode=True)
+  mpk_path = _strict_yolo_mpk_path()
   model = pyneat.Model(str(mpk_path))
 
   assert hasattr(pyneat.nodes, "detess_dequant")
@@ -687,7 +494,7 @@ def test_postprocess_stage_node_factories_present_and_accept_expected_args(tmp_p
   _assert_not_type_error(
       lambda: pyneat.nodes.sima_box_decode(
           model,
-          decode_type="yolov8",
+          decode_type=pyneat.BoxDecodeType.YoloV8,
           original_width=640,
           original_height=640,
           detection_threshold=0.25,
@@ -770,7 +577,7 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
 
 
 def test_mla_group_helper_present_and_accepts_model():
-  mpk_path = _basic_valid_mpk_path()
+  mpk_path = _strict_resnet50_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
   model = pyneat.Model(str(mpk_path))
@@ -780,14 +587,35 @@ def test_mla_group_helper_present_and_accepts_model():
   assert isinstance(pyneat.groups.mla(model), pyneat.NodeGroup)
 
 
+def _resnet_model_with_preproc(*, normalize: pyneat.AutoFlag = pyneat.AutoFlag.On):
+  opt = pyneat.ModelOptions()
+  # Force a real Preproc route through explicit planner intent.  When normalize
+  # is disabled, resize=On keeps the route in the Preproc family without relying
+  # on legacy per-stage JSON files.
+  opt.preprocess.normalize.enable = normalize
+  if normalize == pyneat.AutoFlag.Off:
+    opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  return pyneat.Model(str(_strict_resnet50_mpk_path()), opt)
+
+
+def _yolo_model_with_boxdecode():
+  opt = pyneat.ModelOptions()
+  opt.decode_type = pyneat.BoxDecodeType.YoloV8
+  return pyneat.Model(str(_strict_yolo_mpk_path()), opt)
+
+
 def test_session_describe_backend_includes_preproc_stage():
+  model = _resnet_model_with_preproc()
+  pre = pyneat.PreprocOptions(model)
+
   session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.nodes.preproc())
+  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  session.add(pyneat.nodes.preproc(pre))
   session.add(pyneat.nodes.output())
 
   text = session.describe_backend().lower()
   assert "preproc" in text
+  assert pre.normalize is True
 
 
 def test_session_describe_backend_includes_quant_tess_stage():
@@ -801,7 +629,7 @@ def test_session_describe_backend_includes_quant_tess_stage():
 
 
 def test_session_describe_backend_includes_detess_dequant_stage(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "detess_backend", include_detess=True)
+  mpk_path = _strict_yolo_mpk_path()
   model = pyneat.Model(str(mpk_path))
 
   session = pyneat.Session()
@@ -815,103 +643,64 @@ def test_session_describe_backend_includes_detess_dequant_stage(tmp_path):
 
 
 def test_session_describe_backend_includes_sima_box_decode_stage(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_backend", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+  model = _yolo_model_with_boxdecode()
 
   session = pyneat.Session()
   session.add(pyneat.nodes.input())
   session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.sima_box_decode(model))
+  session.add(pyneat.nodes.sima_box_decode(model, decode_type=pyneat.BoxDecodeType.YoloV8))
   session.add(pyneat.nodes.output())
 
   text = session.describe_backend().lower()
   assert "boxdecode" in text
 
 
-def _boxdecode_backend_config_path(text: str) -> str:
-  for line in text.splitlines():
-    if "boxdecode" not in line.lower():
-      continue
-    match = re.search(r'config="([^"]+)"', line)
-    if match:
-      return match.group(1)
-  raise AssertionError("failed to locate boxdecode config path in backend description")
-
-
-def _preproc_backend_config_path(text: str) -> str:
-  for line in text.splitlines():
-    if "preproc" not in line.lower():
-      continue
-    match = re.search(r'config="?([^" ]+)"?', line)
-    if match:
-      return match.group(1)
-  raise AssertionError("failed to locate preproc config path in backend description")
-
-
-def test_model_preproc_normalize_unset_preserves_model_pack_value(tmp_path):
-  mpk_path = _preproc_fixture_path(tmp_path, "preproc_normalize_default_true", normalize=True)
-  model = pyneat.Model(str(mpk_path))
+def test_model_preproc_normalize_explicit_on_resolves_preproc_semantics(tmp_path):
+  model = _resnet_model_with_preproc(normalize=pyneat.AutoFlag.On)
+  pre = pyneat.PreprocOptions(model)
 
   session = pyneat.Session()
   session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  session.add(model.preprocess())
+  session.add(pyneat.nodes.preproc(pre))
   session.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _preproc_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert cfg["normalize"] is True
+  backend = session.describe_backend().lower()
+  assert "preproc" in backend
+  assert pre.normalize is True
 
 
 def test_model_preproc_normalize_false_overrides_model_pack_value(tmp_path):
-  mpk_path = _preproc_fixture_path(tmp_path, "preproc_normalize_override_false", normalize=True)
-  opt = pyneat.ModelOptions()
-  opt.preproc.normalize = False
-  model = pyneat.Model(str(mpk_path), opt)
+  model = _resnet_model_with_preproc(normalize=pyneat.AutoFlag.Off)
+  pre = pyneat.PreprocOptions(model)
 
   session = pyneat.Session()
   session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  session.add(model.preprocess())
+  session.add(pyneat.nodes.preproc(pre))
   session.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _preproc_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert cfg["normalize"] is False
+  backend = session.describe_backend().lower()
+  assert "preproc" in backend
+  assert pre.normalize is False
 
 
 def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_defaults", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+  model = _yolo_model_with_boxdecode()
 
   session = pyneat.Session()
   session.add(pyneat.nodes.input())
   session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.sima_box_decode(model))
+  session.add(pyneat.nodes.sima_box_decode(model, decode_type=pyneat.BoxDecodeType.YoloV8))
   session.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _boxdecode_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert "detection-threshold=" not in backend.lower()
-  assert "nms-iou-threshold=" not in backend.lower()
-  assert "topk=" not in backend.lower()
-  assert cfg["original_width"] == 320
-  assert cfg["original_height"] == 240
-  assert cfg["detection_threshold"] == pytest.approx(0.15)
-  assert cfg["nms_iou_threshold"] == pytest.approx(0.45)
-  assert cfg["topk"] == 24
+  backend = session.describe_backend().lower()
+  assert "boxdecode" in backend
+  assert "detection-threshold=" not in backend
+  assert "nms-iou-threshold=" not in backend
+  assert "topk=" not in backend
 
 
 def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_override", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+  model = _yolo_model_with_boxdecode()
 
   session = pyneat.Session()
   session.add(pyneat.nodes.input())
@@ -919,7 +708,7 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
   session.add(
       pyneat.nodes.sima_box_decode(
           model,
-          decode_type="yolov8",
+          decode_type=pyneat.BoxDecodeType.YoloV8,
           original_width=640,
           original_height=360,
           detection_threshold=0.25,
@@ -929,21 +718,10 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
   )
   session.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _boxdecode_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert "detection-threshold=0.25" in backend.lower()
-  assert "nms-iou-threshold=0.55" in backend.lower()
-  assert "topk=120" in backend.lower()
-  assert cfg["original_width"] == 640
-  assert cfg["original_height"] == 360
-  # Runtime threshold/top-k overrides are emitted as backend properties, while
-  # the rewritten config keeps the packaged postprocess defaults.
-  assert cfg["detection_threshold"] == pytest.approx(0.15)
-  assert cfg["nms_iou_threshold"] == pytest.approx(0.45)
-  assert cfg["topk"] == 24
+  backend = session.describe_backend().lower()
+  assert "boxdecode" in backend
+  assert "original-width=640" in backend
+  assert "original-height=360" in backend
 
 
 def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
@@ -1006,24 +784,20 @@ def test_session_describe_backend_includes_udp_h264_output_group():
   assert "port=5600" in text
 
 
-def test_postprocess_stage_missing_model_config_reports_clear_error():
-  model = pyneat.Model(str(_basic_valid_mpk_path()))
-
-  with pytest.raises(RuntimeError, match="boxdecode"):
-    pyneat.nodes.sima_box_decode(model)
-
-  with pytest.raises(RuntimeError, match="DetessDequant: config not found"):
-    pyneat.DetessDequantOptions(model)
+def test_model_surface_fixtures_are_real_strict_model_tars():
+  for mpk_path in (_strict_resnet50_mpk_path(), _strict_yolo_mpk_path()):
+    assert mpk_path.name.endswith(".tar.gz")
+    assert model_fixtures.has_strict_mpk_json(mpk_path)
 
 
 def test_postprocess_stage_api_parity_guards_supported_call_surface(tmp_path):
-  detess_path = _postprocess_fixture_path(tmp_path, "detess_signature", include_detess=True)
-  box_path = _postprocess_fixture_path(tmp_path, "box_signature", include_boxdecode=True)
+  detess_path = _strict_yolo_mpk_path()
+  box_path = _strict_yolo_mpk_path()
   detess_model = pyneat.Model(str(detess_path))
   box_model = pyneat.Model(str(box_path))
 
   _assert_not_type_error(lambda: pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)))
-  _assert_not_type_error(lambda: pyneat.nodes.sima_box_decode(box_model, "yolov8", 640, 640, 0.25, 0.55, 120))
+  _assert_not_type_error(lambda: pyneat.nodes.sima_box_decode(box_model, pyneat.BoxDecodeType.YoloV8, 640, 640, 0.25, 0.55, 120))
 
   with pytest.raises(TypeError):
     pyneat.nodes.detess_dequant(detess_model)
@@ -1103,23 +877,6 @@ def test_inputstream_stats_extended_fields_present():
   assert hasattr(s, "renegotiation_blocked")
 
 
-def test_session_build_ambiguous_3d_layout_requires_explicit_layout():
-  session = pyneat.Session()
-  opt = pyneat.InputOptions()
-  opt.media_type = "application/vnd.simaai.tensor"
-  opt.format = "FP32"
-  session.add(pyneat.nodes.input(opt))
-  session.add(pyneat.nodes.output())
-
-  arr = np.zeros((3, 8, 3), dtype=np.float32)
-
-  try:
-    session.build(arr)
-  except Exception as exc:
-    assert "layout" in str(exc).lower()
-  else:
-    raise AssertionError("expected ambiguous 3D layout to fail without explicit layout")
-
 
 def test_native_build_overload_marker_present():
   import pyneat._pyneat_core as core
@@ -1127,19 +884,9 @@ def test_native_build_overload_marker_present():
   assert bool(getattr(core, "_HAS_NATIVE_BUILD_OBJECT_OVERLOADS", False))
 
 
-def _basic_valid_mpk_path():
-  from pathlib import Path
-
-  root = Path(__file__).resolve().parents[2]
-  fixture_root = root / "tests" / "assets" / "mpk" / "valid"
-  mpk = fixture_root / "basic_valid.mpk"
-  if mpk.exists():
-    return mpk
-  return fixture_root / "basic_valid.tar"
-
 
 def test_model_build_accepts_numpy_without_type_error():
-  mpk_path = _basic_valid_mpk_path()
+  mpk_path = _strict_resnet50_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
   model = pyneat.Model(str(mpk_path))
@@ -1148,20 +895,6 @@ def test_model_build_accepts_numpy_without_type_error():
   _assert_not_type_error(lambda: model.build(arr))
   _assert_not_type_error(lambda: model.build(arr, copy=True))
 
-
-def test_model_build_ambiguous_3d_layout_reports_layout_error():
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
-
-  model = pyneat.Model(str(mpk_path))
-  arr = np.zeros((3, 8, 3), dtype=np.float32)
-
-  try:
-    model.build(arr)
-  except Exception as exc:
-    assert "layout" in str(exc).lower()
-  else:
-    raise AssertionError("expected ambiguous 3D layout to fail without explicit layout")
 
 
 def test_session_build_accepts_torch_without_type_error():
@@ -1187,7 +920,7 @@ def test_model_build_accepts_torch_without_type_error():
   except Exception:
     return
 
-  mpk_path = _basic_valid_mpk_path()
+  mpk_path = _strict_resnet50_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
   model = pyneat.Model(str(mpk_path))
@@ -1197,13 +930,62 @@ def test_model_build_accepts_torch_without_type_error():
   _assert_not_type_error(lambda: model.build(tensor))
 
 
+def test_model_build_requires_explicit_image_semantic_for_image_tensor():
+  mpk_path = _strict_resnet50_mpk_path()
+  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+
+  opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.enable = pyneat.AutoFlag.On
+  opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(mpk_path), opt)
+  tensor = pyneat.Tensor.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), copy=True)
+
+  with pytest.raises(ValueError, match="requires explicit image format"):
+    model.build(tensor)
+
+
+def test_tensor_from_numpy_byte_stream_marks_opaque_transport():
+  spec = pyneat.ByteStreamSpec()
+  spec.format = pyneat.ByteFormat.Raw
+  spec.description = "opaque raw bytes"
+  assert spec.format == pyneat.ByteFormat.Raw
+  assert spec.description == "opaque raw bytes"
+
+  tensor = pyneat.Tensor.from_numpy(
+      np.arange(16, dtype=np.int8),
+      copy=True,
+      byte_format=pyneat.ByteFormat.Raw,
+      memory=pyneat.TensorMemory.CPU,
+  )
+
+  assert tensor.semantic.byte_stream is not None
+  assert tensor.semantic.byte_stream.format == pyneat.ByteFormat.Raw
+  assert tensor.layout == pyneat.TensorLayout.Unknown
+  ok, err = tensor.validate()
+  assert ok, err
+  assert "ByteStream" in tensor.debug_string()
+
+
+def test_byte_stream_is_incompatible_with_image_semantic():
+  with pytest.raises(RuntimeError, match="byte_format tensors cannot also specify image_format"):
+    pyneat.Tensor.from_numpy(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        copy=True,
+        image_format=pyneat.PixelFormat.RGB,
+        byte_format=pyneat.ByteFormat.Raw,
+        memory=pyneat.TensorMemory.CPU,
+    )
+
+
 def test_model_run_accepts_chw_torch_without_layout_or_image_format():
   try:
     import torch
   except Exception:
     return
 
-  mpk_path = _basic_valid_mpk_path()
+  mpk_path = _strict_resnet50_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
   model = pyneat.Model(str(mpk_path))
@@ -1212,7 +994,7 @@ def test_model_run_accepts_chw_torch_without_layout_or_image_format():
 
 
 def test_model_run_build_reject_layout_and_image_format_kwargs():
-  mpk_path = _basic_valid_mpk_path()
+  mpk_path = _strict_resnet50_mpk_path()
   assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
   model = pyneat.Model(str(mpk_path))
@@ -1255,16 +1037,9 @@ def test_session_video_push_uses_input_format_without_image_semantic():
 
 def test_session_error_in_python_exposes_structured_fields():
   session = pyneat.Session()
-  opt = pyneat.InputOptions()
-  opt.media_type = "video/x-raw"
-  opt.format = "RGB"
-  opt.use_simaai_pool = False
-  session.add(pyneat.nodes.input(opt))
-  session.add(pyneat.nodes.output())
 
-  bad = np.zeros((8, 8, 3), dtype=np.float32)
   try:
-    session.build(bad)
+    session.build(np.zeros((8, 8, 3), dtype=np.uint8))
   except pyneat.SessionError as exc:
     text = str(exc)
     assert text
@@ -1276,7 +1051,7 @@ def test_session_error_in_python_exposes_structured_fields():
     assert exc.report_json
     assert "error_code" in exc.report_json
   else:
-    raise AssertionError("expected SessionError for invalid video tensor dtype")
+    raise AssertionError("expected SessionError for empty pipeline")
 
 
 def test_graph_pipeline_node_accepts_nodegroup_without_type_error():

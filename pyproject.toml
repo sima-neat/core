@@ -47,7 +47,6 @@ sdist.include = [
   "include/**",
   "src/**",
   "python/**",
-  "scripts/neat",
   "README.md",
   "LICENSE",
 ]

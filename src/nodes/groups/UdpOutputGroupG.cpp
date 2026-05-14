@@ -18,7 +18,7 @@ simaai::neat::NodeGroup UdpOutputGroupG(const UdpOutputGroupGOptions& opt) {
   std::string render_fragment = "simaai_sampledemux name=demux "
                                 "demux.bbox ! queue ! render.sink_0 "
                                 "demux.image ! queue ! render.sink_1 "
-                                "simaairender name=render config=\"" +
+                                "neatrender name=render config=\"" +
                                 opt.render_config + "\"";
   nodes.push_back(nodes::Custom(render_fragment));
 

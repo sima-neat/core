@@ -1,185 +1,57 @@
 #include "nodes/sima/QuantTess.h"
+#include "nodes/sima/NodeConfigHelpers.h"
 
 #include "gst/GstHelpers.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
-#include "mpk/PipelineSequence.h"
-#include "builder/ConfigJsonWire.h"
-#include "pipeline/internal/TempJsonFileUtil.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
+#include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapter.h"
+#include "pipeline/internal/contract/CompiledNodeContract.h"
+#include "pipeline/internal/contract/ContractFacts.h"
 
 #include <nlohmann/json.hpp>
 
-#include <cstdio>
-#include <filesystem>
-#include <fstream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <vector>
 
 namespace simaai::neat {
-namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 struct QuantTess::ConfigHolder {
-  std::string path;
-  bool keep = false;
+  // Keep standalone config only for backend/config-file transport.
   json config;
   bool has_config = false;
-  ~ConfigHolder() {
-    if (!keep && !path.empty()) {
-      std::remove(path.c_str());
-    }
-  }
+  std::optional<CompiledProcessCvuContract> compiled_contract;
 };
 
 namespace {
 
-std::string make_temp_json_path(const std::string& dir) {
-  return pipeline_internal::make_temp_json_path(dir, "sima_quanttess", "QuantTess");
-}
-
-json load_json_file(const std::string& path, const char* label) {
-  std::ifstream in(path);
-  if (!in.is_open()) {
-    throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
-  }
-  json j;
-  in >> j;
-  return j;
-}
-
-void write_json_file(const json& j, const std::string& path, const char* label) {
-  std::ofstream out(path);
-  if (!out.is_open()) {
-    throw std::runtime_error(std::string(label) + ": failed to open config: " + path);
-  }
-  out << j.dump(2);
-}
-
-std::string write_json_temp(const json& j, const std::string& dir) {
-  const std::string path = make_temp_json_path(dir);
-  write_json_file(j, path, "QuantTess");
-  return path;
-}
-
-std::string find_config_by_kernel(const simaai::neat::internal::ModelPack& model,
-                                  const char* kernel, const char* fallback_name) {
-  std::vector<simaai::neat::mpk::SequenceEntry> seq =
-      simaai::neat::mpk::load_pipeline_sequence(model.etc_dir());
-  for (const auto& entry : seq) {
-    if (entry.kernel == kernel && !entry.config_path.empty()) {
-      return (fs::path(model.etc_dir()) / entry.config_path).string();
-    }
-  }
-  if (fallback_name && *fallback_name) {
-    const fs::path fallback = fs::path(model.etc_dir()) / fallback_name;
-    if (fs::exists(fallback))
-      return fallback.string();
-  }
-  throw std::runtime_error(std::string("QuantTess: config not found for kernel ") +
-                           (kernel ? kernel : ""));
-}
-
-std::string read_node_name(const json& j) {
-  if (j.contains("node_name") && j["node_name"].is_string()) {
-    return j["node_name"].get<std::string>();
-  }
-  return "";
-}
-
-std::string pick_input_name(const std::vector<std::string>& names, std::size_t index) {
-  if (index < names.size() && !names[index].empty())
-    return names[index];
-  for (std::size_t i = names.size(); i > 0; --i) {
-    if (!names[i - 1].empty())
-      return names[i - 1];
-  }
-  return "";
-}
-
-bool set_input_buffer_names_by_index_if_exists(json& j, const std::vector<std::string>& names) {
-  auto rewrite_array = [&](json& arr) -> bool {
-    if (!arr.is_array() || arr.empty())
-      return false;
-    bool changed = false;
-    for (std::size_t i = 0; i < arr.size(); ++i) {
-      auto& entry = arr[i];
-      if (!entry.is_object())
-        continue;
-
-      const std::string selected = pick_input_name(names, i);
-      if (selected.empty())
-        continue;
-
-      if (arr.size() == 1) {
-        auto it = entry.find("name");
-        if (it == entry.end() || (it->is_string() && it->get<std::string>().empty())) {
-          continue;
-        }
-      }
-
-      auto it = entry.find("name");
-      if (it != entry.end() && it->is_string() && it->get<std::string>() == selected) {
-        continue;
-      }
-      entry["name"] = selected;
-      changed = true;
-    }
-    return changed;
-  };
-
-  bool changed = false;
-  if (j.contains("input_buffers")) {
-    changed = rewrite_array(j["input_buffers"]) || changed;
-  }
-  if (j.contains("buffers") && j["buffers"].is_object() && j["buffers"].contains("input")) {
-    changed = rewrite_array(j["buffers"]["input"]) || changed;
-  }
-  return changed;
-}
-
-void set_input_buffer_name(json& j, const std::string& name) {
-  (void)set_input_buffer_name_if_exists(j, name);
-}
-
 std::shared_ptr<QuantTess::ConfigHolder> init_config_holder(const QuantTessOptions& opt,
                                                             std::string& config_path_out) {
   auto holder = std::make_shared<QuantTess::ConfigHolder>();
+  if (opt.compiled_contract) {
+    holder->compiled_contract = *opt.compiled_contract;
+    config_path_out.clear();
+    return holder;
+  }
   if (opt.config_json.has_value()) {
     holder->config = *opt.config_json;
     holder->has_config = true;
+    config_path_out.clear();
   } else if (!opt.config_path.empty()) {
     config_path_out = opt.config_path;
-    holder->config = load_json_file(config_path_out, "QuantTess");
+    holder->config = node_helpers::load_json_file(config_path_out, "QuantTess");
     holder->has_config = true;
-    holder->keep = true;
   }
-
-  if (!holder->has_config)
-    return holder;
-
-  if (opt.config_json.has_value() && !opt.config_path.empty()) {
-    write_json_file(holder->config, config_path_out, "QuantTess");
-    holder->keep = true;
-  } else if (opt.config_json.has_value()) {
-    config_path_out = write_json_temp(holder->config, opt.config_dir);
-    holder->keep = opt.keep_config;
-  }
-
-  holder->path = config_path_out;
   return holder;
 }
 
 } // namespace
 
 QuantTessOptions::QuantTessOptions(const simaai::neat::Model& model) {
-  const auto& pack = simaai::neat::internal::ModelAccess::pack(model);
-  config_path = find_config_by_kernel(pack, "quanttess", "0_quanttess.json");
-  num_buffers_model = pack.num_buffers_cvu();
-  num_buffers = num_buffers_model;
-  num_buffers_locked = true;
+  *this = simaai::neat::internal::ModelAccess::build_quanttess_stage_options(model, false);
 }
 
 QuantTess::QuantTess(QuantTessOptions opt) : opt_(std::move(opt)) {
@@ -195,6 +67,72 @@ QuantTess::QuantTess(QuantTessOptions opt) : opt_(std::move(opt)) {
   config_holder_ = init_config_holder(opt_, config_path_);
 }
 
+NodeContractDefinition QuantTess::contract_definition() const {
+  NodeContractDefinition def;
+  def.node_kind = kind();
+  def.plugin_kind = "processcvu";
+
+  ContractPortSpec input;
+  input.port_id = "input_tensor";
+  input.media_type = "application/vnd.simaai.tensor";
+  input.required_segment_names = {"input_tensor"};
+  def.inputs.push_back(std::move(input));
+
+  ContractPortSpec output;
+  output.port_id = "output_tensor";
+  output.media_type = "application/vnd.simaai.tensor";
+  output.required_segment_names = {"output_tensor"};
+  def.outputs.push_back(std::move(output));
+  return def;
+}
+
+bool QuantTess::compile_node_contract(const ContractCompileInput& input, CompiledNodeContract* out,
+                                      std::string* err) const {
+  const std::string element_name = element_names(input.node_index).empty()
+                                       ? std::string("quanttess")
+                                       : element_names(input.node_index).front();
+  try {
+    if (config_holder_ && config_holder_->compiled_contract.has_value()) {
+      return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
+          kind(), element_name, element_name, contract_definition(),
+          *config_holder_->compiled_contract, out, err);
+    }
+    const auto* cfg = config_json();
+    if (!cfg) {
+      if (err) {
+        *err =
+            "QuantTess: graph-owned contract compilation requires config_json or compiled_contract";
+      }
+      return false;
+    }
+    node_helpers::ProcessCvuRuntimeConfigOptions runtime_options;
+    runtime_options.graph_family = "quanttess";
+    runtime_options.graph_id = 202;
+    runtime_options.input_dtype_default = "FP32";
+    runtime_options.output_dtype_default = "EVXX_INT8";
+    runtime_options.set_tessellate = true;
+    runtime_options.include_q_fields = true;
+    runtime_options.include_slice_shapes = true;
+    const auto runtime =
+        node_helpers::build_processcvu_runtime_config(*cfg, std::move(runtime_options));
+    const auto compiled = pipeline_internal::sima::stagesemantics::
+        build_processcvu_compiled_contract_from_runtime_config(runtime);
+    return pipeline_internal::sima::stagesemantics::build_processcvu_node_contract(
+        kind(), element_name, element_name, contract_definition(), compiled, out, err);
+  } catch (const std::exception& ex) {
+    if (err) {
+      *err = ex.what();
+    }
+    return false;
+  }
+}
+
+void QuantTess::apply_compiled_contract(const CompiledNodeContract&, std::string* err) {
+  if (err) {
+    err->clear();
+  }
+}
+
 std::string QuantTess::backend_fragment(int node_index) const {
   std::ostringstream ss;
   require_element("neatprocesscvu", "QuantTess::backend_fragment");
@@ -202,9 +140,6 @@ std::string QuantTess::backend_fragment(int node_index) const {
                                ? ("n" + std::to_string(node_index) + "_quanttess")
                                : opt_.element_name;
   ss << "neatprocesscvu name=" << name << " stage-id=" << name;
-  if (!config_path_.empty()) {
-    ss << " config=\"" << config_path_ << "\"";
-  }
   if (opt_.num_buffers > 0) {
     ss << " num-buffers=" << opt_.num_buffers;
   }
@@ -223,55 +158,12 @@ const nlohmann::json* QuantTess::config_json() const {
   return &config_holder_->config;
 }
 
-bool QuantTess::wire_input_names(const std::vector<std::string>& upstream_names,
-                                 const std::string& tag) {
-  bool has_name = false;
-  for (const auto& name : upstream_names) {
-    if (!name.empty()) {
-      has_name = true;
-      break;
-    }
-  }
-  if (!has_name)
-    return false;
-
-  return override_config_json(
-      [&](json& j) {
-        if (set_input_buffer_names_by_index_if_exists(j, upstream_names))
-          return;
-        const std::string fallback = pick_input_name(upstream_names, 0);
-        if (!fallback.empty()) {
-          (void)set_input_buffer_name_if_exists(j, fallback);
-        }
-      },
-      tag);
+#ifdef SIMA_NEAT_INTERNAL
+const std::optional<CompiledProcessCvuContract>& QuantTess::compiled_contract_internal() const {
+  static const std::optional<CompiledProcessCvuContract> kNone;
+  return config_holder_ ? config_holder_->compiled_contract : kNone;
 }
-
-bool QuantTess::override_config_json(const std::function<void(json&)>& edit,
-                                     const std::string& tag) {
-  (void)tag;
-  if (!config_holder_ || !config_holder_->has_config)
-    return false;
-  json cfg = config_holder_->config;
-  edit(cfg);
-  config_path_ = write_json_temp(cfg, opt_.config_dir);
-  auto holder = std::make_shared<ConfigHolder>();
-  holder->config = std::move(cfg);
-  holder->has_config = true;
-  holder->path = config_path_;
-  holder->keep = opt_.keep_config;
-  config_holder_ = std::move(holder);
-  return true;
-}
-
-void QuantTess::apply_upstream_config(const nlohmann::json& upstream, const std::string&) {
-  if (!config_holder_ || !config_holder_->has_config)
-    return;
-  const std::string node_name = read_node_name(upstream);
-  if (node_name.empty())
-    return;
-  set_input_buffer_name(config_holder_->config, node_name);
-}
+#endif
 
 } // namespace simaai::neat
 

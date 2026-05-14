@@ -3,6 +3,8 @@
 #include "../SessionDetail.h"
 
 #include "internal/InputStream.h"
+#include "builder/InputContractConfigurable.h"
+#include "pipeline/internal/contract/ContractFacts.h"
 
 #include <memory>
 #include <string>
@@ -35,17 +37,17 @@ void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt
 void session_build_maybe_apply_detess_output_override(
     const std::vector<std::shared_ptr<Node>>& nodes, InputStreamOptions& stream_opt);
 void session_build_maybe_dump_pipeline_string(const std::string& pipeline, const char* label);
-std::string session_build_manifest_json_for_pipeline(const std::string& pipeline_string);
-std::string session_build_maybe_force_model_num_buffers(std::string pipeline);
 std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buffers_override);
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
 std::uint64_t session_build_estimate_frame_bytes_limit(const InputOptions& opt,
                                                        const SampleSpec& spec);
+std::vector<std::shared_ptr<Node>>
+session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<Node>>& nodes,
+                                            bool sync_mode);
 
 bool session_build_has_output_appsink(const std::vector<std::shared_ptr<Node>>& nodes);
 
-GstElement* session_build_parse_pipeline_or_throw(const std::string& pipeline_string,
-                                                  const char* where);
+GstElement* session_build_parse_pipeline_or_throw(const BuildResult& build, const char* where);
 void session_build_dump_pipeline_element_properties(GstElement* pipeline);
 void session_build_attach_debug_detess_input_probes(GstElement* pipeline);
 void session_build_attach_debug_appsink_probes(GstElement* pipeline);
@@ -86,22 +88,32 @@ session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node
                                           const SessionOptions& sess_opt, RunMode mode,
                                           const RunOptions& opt);
 
+void session_build_compile_contracts(BuildResult* build_result,
+                                     const std::vector<std::shared_ptr<Node>>& source_nodes,
+                                     const ContractCompileInput& compile_input, const char* where,
+                                     std::vector<std::shared_ptr<Node>>* apply_nodes = nullptr);
+
+void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Node>>* nodes);
+
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const cv::Mat& sample,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode);
 
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const simaai::neat::Tensor& sample,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode);
 
 InputStream session_build_run_input_stream_internal(
     const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
     const void* owner, std::string& last_pipeline, const Sample& sample,
-    const InputStreamOptions& opt, const NameTransform& name_transform, bool insert_queue2,
-    int sync_num_buffers_override, bool sync_mode);
+    const SessionOptions& sess_opt, const InputStreamOptions& opt,
+    const NameTransform& name_transform, bool insert_queue2, int sync_num_buffers_override,
+    bool sync_mode);
 
 } // namespace simaai::neat

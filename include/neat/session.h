@@ -1,6 +1,13 @@
 /**
  * @file
- * @brief Session/runtime convenience imports for SiMa NEAT.
+ * @brief Umbrella include for SiMa NEAT's Session and runtime tensor types.
+ *
+ * Pulls in the Session/Run lifecycle types (Session, Run, SessionOptions, SessionError,
+ * SessionReport) along with the tensor surface area applications interact with at
+ * runtime (Tensor, TensorCore, TensorSpec, TensorTypes, TensorAdapters,
+ * TensorConversion, TensorOpenCV, TessellatedTensor).
+ *
+ * Include this instead of cherry-picking individual `pipeline` subheaders.
  */
 #pragma once
 

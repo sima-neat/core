@@ -178,7 +178,7 @@ void JoinBundle::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out) {
     if (it == entry.samples.end())
       continue;
     Sample field = std::move(it->second);
-    field.port_name = name;
+    field.stream_label = name;
     bundle.fields.emplace_back(std::move(field));
   }
 

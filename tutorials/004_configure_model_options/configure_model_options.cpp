@@ -41,20 +41,20 @@ int main(int argc, char** argv) {
 
     // Model::Options groups input caps, preproc, and box-decode into one struct.
     simaai::neat::Model::Options opt;
-    opt.media_type = "video/x-raw";
-    opt.format = "BGR";
-    opt.input_max_width = 640;
-    opt.input_max_height = 640;
-    opt.input_max_depth = 3;
-    opt.preproc.normalize = true;
-    opt.preproc.channel_mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
-    opt.preproc.channel_stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
-    opt.decode_type = "yolov8";
+    opt.preprocess.kind = simaai::neat::InputKind::Image;
+    opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    opt.preprocess.input_max_width = 640;
+    opt.preprocess.input_max_height = 640;
+    opt.preprocess.input_max_depth = 3;
+    opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    opt.preprocess.normalize.mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
+    opt.preprocess.normalize.stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
+    opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
     opt.score_threshold = 0.55f;
     opt.nms_iou_threshold = 0.45f;
     opt.top_k = 100;
-    opt.original_width = 640;
-    opt.original_height = 640;
+    opt.boxdecode_original_width = 640;
+    opt.boxdecode_original_height = 640;
     opt.name_suffix = "_chapter";
 
     // CORE LOGIC
@@ -67,8 +67,8 @@ int main(int argc, char** argv) {
     cv::Mat bgr(640, 640, CV_8UC3, cv::Scalar(10, 20, 30));
     if (!bgr.isContinuous())
       bgr = bgr.clone();
-    auto out = model.run(bgr, /*timeout_ms=*/2000);
-    std::cout << "output_kind=" << static_cast<int>(out.kind) << "\n";
+    auto out = model.run(std::vector<cv::Mat>{bgr}, /*timeout_ms=*/2000);
+    std::cout << "outputs=" << out.size() << "\n";
     std::cout << "[OK] 004_configure_model_options\n";
     return 0;
   } catch (const std::exception& e) {

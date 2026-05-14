@@ -4,53 +4,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <regex>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <vector>
 
-#if __has_include("../generated/platform_version.h")
-#include "../generated/platform_version.h"
-#define SIMA_HAS_GENERATED_PLATFORM_VERSION 1
-#endif
-
 namespace sima_test {
 
 namespace fs = std::filesystem;
-
-inline std::string platform_version_from_manifest() {
-  const fs::path manifest_path =
-      fs::path(__FILE__).parent_path().parent_path() / "deps" / "manifest.json";
-  std::error_code ec;
-  if (!fs::exists(manifest_path, ec))
-    return "";
-
-  std::ifstream in(manifest_path);
-  if (!in.is_open())
-    return "";
-
-  std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  std::smatch match;
-  static const std::regex kVersionRegex(R"(\"platform-version\"\s*:\s*\"([^\"]+)\")");
-  if (std::regex_search(content, match, kVersionRegex) && match.size() > 1) {
-    return match[1].str();
-  }
-  return "";
-}
-
-inline const std::string& modelzoo_version() {
-  static const std::string version = []() -> std::string {
-#if defined(SIMA_HAS_GENERATED_PLATFORM_VERSION)
-    return sima_generated::kPlatformVersion;
-#else
-    const std::string from_manifest = platform_version_from_manifest();
-    if (!from_manifest.empty())
-      return from_manifest;
-    return "2.0.0";
-#endif
-  }();
-  return version;
-}
 
 inline std::string shell_quote(const std::string& s) {
   std::string out = "'";
@@ -81,18 +42,278 @@ inline bool move_to_tmp(const fs::path& src, const fs::path& dst) {
   return true;
 }
 
-inline bool download_file(const std::string& url, const fs::path& out_path) {
-  if (fs::exists(out_path)) {
-    std::error_code ec;
-    if (fs::file_size(out_path, ec) > 0 && !ec)
-      return true;
+inline bool is_usable_regular_file(const fs::path& path) {
+  if (path.empty())
+    return false;
+
+  std::error_code ec;
+  if (!fs::is_regular_file(path, ec) || ec)
+    return false;
+
+  ec.clear();
+  const auto size = fs::file_size(path, ec);
+  if (ec || size == 0)
+    return false;
+
+  std::ifstream stream(path, std::ios::binary);
+  return stream.good();
+}
+
+inline bool has_tar_gz_suffix(const fs::path& path) {
+  const std::string name = path.filename().string();
+  constexpr const char* suffix = ".tar.gz";
+  constexpr std::size_t suffix_len = 7;
+  return name.size() > suffix_len &&
+         name.compare(name.size() - suffix_len, suffix_len, suffix) == 0;
+}
+
+// Defensive: returns false when `tar -tzf` cannot list the archive (file is
+// truncated, gzip CRC is wrong, content is HTML from a failed download, etc.).
+// Callers of resolve_yolov8s_tar_*() rely on this to reject corrupt cached
+// fixtures that previously slipped through `is_usable_regular_file` (which
+// only checks size>0) and surfaced as ModelPack "tar listing failed".
+inline bool is_listable_tar_gz(const fs::path& tar_path) {
+  if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
+    return false;
+  const std::string cmd = "tar -tzf " + shell_quote(tar_path.string()) + " >/dev/null 2>&1";
+  return std::system(cmd.c_str()) == 0;
+}
+
+// Remove a corrupt cached tar so the next resolve attempt re-downloads.
+inline void purge_unlistable_tar_gz(const fs::path& tar_path) {
+  if (tar_path.empty())
+    return;
+  std::error_code ec;
+  if (!fs::is_regular_file(tar_path, ec) || ec)
+    return;
+  if (is_listable_tar_gz(tar_path))
+    return;
+  fs::remove(tar_path, ec);
+}
+
+inline bool tar_contains_strict_mpk_json(const fs::path& tar_path) {
+  if (!is_usable_regular_file(tar_path) || !has_tar_gz_suffix(tar_path))
+    return false;
+
+  const std::string cmd = "tar -tzf " + shell_quote(tar_path.string()) +
+                          " 2>/dev/null | grep -E '(^|/)[^/]+_mpk\\.json$' >/dev/null";
+  return std::system(cmd.c_str()) == 0;
+}
+
+inline bool is_strict_mpk_tar_gz(const fs::path& tar_path) {
+  return tar_contains_strict_mpk_json(tar_path);
+}
+
+struct TestRuntimePaths {
+  fs::path manifest_path;
+  fs::path build_root;
+  fs::path source_root;
+  fs::path repo_tmp_root;
+  fs::path mpk_fixture_root;
+  fs::path mpk_fixture_manifest;
+  fs::path decoder_fixture;
+};
+
+inline void append_unique_path(std::vector<fs::path>& out, const fs::path& path) {
+  if (path.empty())
+    return;
+  for (const auto& existing : out) {
+    if (existing == path)
+      return;
   }
+  out.push_back(path);
+}
+
+inline std::vector<fs::path> runtime_search_roots() {
+  std::vector<fs::path> roots;
+
+  std::error_code ec;
+  append_unique_path(roots, fs::current_path(ec));
+
+  ec.clear();
+  const fs::path exe_path = fs::read_symlink("/proc/self/exe", ec);
+  if (!ec && !exe_path.empty()) {
+    append_unique_path(roots, exe_path.parent_path());
+  }
+
+  append_unique_path(roots, fs::path(__FILE__).parent_path().parent_path());
+  return roots;
+}
+
+inline fs::path find_runtime_manifest_path() {
+  std::error_code ec;
+  for (const auto& seed : runtime_search_roots()) {
+    fs::path cur = seed;
+    while (!cur.empty()) {
+      const fs::path candidate = cur / "test-fixtures" / "runtime_manifest.json";
+      if (is_usable_regular_file(candidate))
+        return candidate;
+      const fs::path parent = cur.parent_path();
+      if (parent == cur)
+        break;
+      cur = parent;
+    }
+  }
+  return {};
+}
+
+inline std::optional<std::string> json_string_field(const std::string& text,
+                                                    const std::string& key) {
+  const std::string needle = "\"" + key + "\"";
+  const std::size_t key_pos = text.find(needle);
+  if (key_pos == std::string::npos)
+    return std::nullopt;
+
+  const std::size_t colon_pos = text.find(':', key_pos + needle.size());
+  if (colon_pos == std::string::npos)
+    return std::nullopt;
+
+  const std::size_t quote_pos = text.find('"', colon_pos + 1);
+  if (quote_pos == std::string::npos)
+    return std::nullopt;
+
+  std::string value;
+  bool escaped = false;
+  for (std::size_t i = quote_pos + 1; i < text.size(); ++i) {
+    const char c = text[i];
+    if (escaped) {
+      value.push_back(c);
+      escaped = false;
+      continue;
+    }
+    if (c == '\\') {
+      escaped = true;
+      continue;
+    }
+    if (c == '"')
+      return value;
+    value.push_back(c);
+  }
+  return std::nullopt;
+}
+
+inline fs::path resolve_manifest_relative_path(const std::string& text, const std::string& key,
+                                               const fs::path& build_root) {
+  const std::optional<std::string> rel = json_string_field(text, key);
+  if (!rel.has_value() || rel->empty())
+    return {};
+  const fs::path raw(*rel);
+  if (raw.is_absolute())
+    return raw;
+  return (build_root / raw).lexically_normal();
+}
+
+inline fs::path discover_source_root_from_runtime() {
+  std::error_code ec;
+  for (const auto& seed : runtime_search_roots()) {
+    fs::path cur = seed;
+    while (!cur.empty()) {
+      if (fs::exists(cur / "CMakeLists.txt", ec) && !ec && fs::exists(cur / "src", ec) && !ec &&
+          fs::exists(cur / "tests", ec) && !ec) {
+        return cur;
+      }
+      ec.clear();
+      const fs::path parent = cur.parent_path();
+      if (parent == cur)
+        break;
+      cur = parent;
+    }
+  }
+  return fs::path(__FILE__).parent_path().parent_path();
+}
+
+inline const TestRuntimePaths& test_runtime_paths() {
+  static const TestRuntimePaths paths = [] {
+    TestRuntimePaths value;
+    value.manifest_path = find_runtime_manifest_path();
+    if (!value.manifest_path.empty()) {
+      value.build_root = value.manifest_path.parent_path().parent_path();
+      std::ifstream in(value.manifest_path, std::ios::binary);
+      if (in.is_open()) {
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        value.source_root =
+            resolve_manifest_relative_path(text, "source_root_rel", value.build_root);
+        value.repo_tmp_root =
+            resolve_manifest_relative_path(text, "repo_tmp_root_rel", value.build_root);
+        value.mpk_fixture_root =
+            resolve_manifest_relative_path(text, "mpk_fixture_root_rel", value.build_root);
+        value.mpk_fixture_manifest =
+            resolve_manifest_relative_path(text, "mpk_fixture_manifest_rel", value.build_root);
+        value.decoder_fixture =
+            resolve_manifest_relative_path(text, "decoder_fixture_rel", value.build_root);
+      }
+    }
+
+    if (value.source_root.empty())
+      value.source_root = discover_source_root_from_runtime();
+    if (value.repo_tmp_root.empty())
+      value.repo_tmp_root = value.source_root / "tmp";
+    if (value.mpk_fixture_root.empty())
+      value.mpk_fixture_root = value.source_root / "tests" / "assets" / "mpk";
+    if (value.mpk_fixture_manifest.empty())
+      value.mpk_fixture_manifest = value.mpk_fixture_root / "fixtures_manifest.json";
+    if (value.decoder_fixture.empty())
+      value.decoder_fixture =
+          value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
+
+    return value;
+  }();
+  return paths;
+}
+
+inline fs::path test_source_root() {
+  return test_runtime_paths().source_root;
+}
+
+inline fs::path test_tmp_root() {
+  return test_runtime_paths().repo_tmp_root;
+}
+
+inline fs::path test_mpk_fixture_root_path() {
+  return test_runtime_paths().mpk_fixture_root;
+}
+
+inline fs::path test_mpk_fixture_manifest_path() {
+  return test_runtime_paths().mpk_fixture_manifest;
+}
+
+inline fs::path test_decoder_fixture_path() {
+  return test_runtime_paths().decoder_fixture;
+}
+
+inline fs::path default_asset_root(const fs::path& root_in = {}) {
+  return root_in.empty() ? test_source_root() : root_in;
+}
+
+inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
+  const std::string cmd =
+      "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo get " + shell_quote(model_name);
+  return std::system(cmd.c_str());
+}
+
+inline bool download_file(const std::string& url, const fs::path& out_path) {
+  if (is_usable_regular_file(out_path))
+    return true;
 
   std::error_code ec;
   fs::create_directories(out_path.parent_path(), ec);
 
   const std::string qurl = shell_quote(url);
   const std::string qout = shell_quote(out_path.string());
+
+  // Prefer sima-cli when present — it transparently handles the Developer
+  // Portal OAuth flow that docs.sima.ai/pkg_downloads/... requires (test
+  // fixtures live alongside SDK model downloads behind that auth wall).
+  // Falls back to bare curl/wget for public URLs or hosts where sima-cli
+  // isn't available.
+  if (std::system("command -v sima-cli >/dev/null 2>&1") == 0) {
+    const std::string qdest = shell_quote(out_path.parent_path().string());
+    const std::string sima_cmd = "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli download --dest " + qdest +
+                                 " " + qurl + " >/dev/null 2>&1";
+    if (std::system(sima_cmd.c_str()) == 0 && is_usable_regular_file(out_path)) {
+      return true;
+    }
+  }
 
   std::string cmd = "curl -L --fail --silent --show-error -o " + qout + " " + qurl;
   if (std::system(cmd.c_str()) == 0)
@@ -115,23 +336,41 @@ inline fs::path default_goldfish_path() {
   }
 }
 
+inline std::string env_existing_model_tar_path(const char* specific_env) {
+  if (specific_env && *specific_env) {
+    const char* specific = std::getenv(specific_env);
+    if (specific && *specific && is_usable_regular_file(specific)) {
+      return std::string(specific);
+    }
+  }
+  const char* generic = std::getenv("SIMA_MODEL_TAR");
+  if (generic && *generic && is_usable_regular_file(generic)) {
+    return std::string(generic);
+  }
+  return {};
+}
+
 inline std::string resolve_resnet50_tar_local_only(const fs::path& root_in = {}) {
-  const fs::path root = root_in.empty() ? fs::current_path() : root_in;
-  const char* env = std::getenv("SIMA_RESNET50_TAR");
-  if (env && *env && fs::exists(env)) {
-    return std::string(env);
+  const fs::path root = default_asset_root(root_in);
+  const std::string env_tar = env_existing_model_tar_path("SIMA_RESNET50_TAR");
+  if (!env_tar.empty()) {
+    return env_tar;
   }
 
   const fs::path local = root / "tmp" / "resnet_50_mpk.tar.gz";
-  if (fs::exists(local))
+  if (is_usable_regular_file(local))
     return local.string();
 
   const std::vector<fs::path> candidates = {
       root / "resnet_50_mpk.tar.gz",
       root / "resnet-50_mpk.tar.gz",
+      fs::current_path() / "resnet_50_mpk.tar.gz",
+      fs::current_path() / "resnet-50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet_50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet-50_mpk.tar.gz",
   };
   for (const auto& candidate : candidates) {
-    if (fs::exists(candidate) && move_to_tmp(candidate, local)) {
+    if (is_usable_regular_file(candidate) && move_to_tmp(candidate, local)) {
       return local.string();
     }
   }
@@ -140,31 +379,33 @@ inline std::string resolve_resnet50_tar_local_only(const fs::path& root_in = {})
 }
 
 inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
-  const fs::path root = root_in.empty() ? fs::current_path() : root_in;
-  const char* env = std::getenv("SIMA_RESNET50_TAR");
-  if (env && *env && fs::exists(env)) {
-    return std::string(env);
+  const fs::path root = default_asset_root(root_in);
+  const std::string env_tar = env_existing_model_tar_path("SIMA_RESNET50_TAR");
+  if (!env_tar.empty()) {
+    return env_tar;
   }
 
   const fs::path local = root / "tmp" / "resnet_50_mpk.tar.gz";
-  if (fs::exists(local))
+  if (is_usable_regular_file(local))
     return local.string();
 
-  const std::string dl_cmd =
-      std::string("sima-cli modelzoo -v ") + modelzoo_version() + " get resnet_50";
-  const int rc = std::system(dl_cmd.c_str());
+  const int rc = run_modelzoo_get_noninteractive("resnet_50");
   if (rc != 0)
     return "";
 
-  if (fs::exists(local))
+  if (is_usable_regular_file(local))
     return local.string();
 
   const std::vector<fs::path> candidates = {
       root / "resnet_50_mpk.tar.gz",
       root / "resnet-50_mpk.tar.gz",
+      fs::current_path() / "resnet_50_mpk.tar.gz",
+      fs::current_path() / "resnet-50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet_50_mpk.tar.gz",
+      fs::temp_directory_path() / "resnet-50_mpk.tar.gz",
   };
   for (const auto& candidate : candidates) {
-    if (fs::exists(candidate) && move_to_tmp(candidate, local)) {
+    if (is_usable_regular_file(candidate) && move_to_tmp(candidate, local)) {
       return local.string();
     }
   }
@@ -173,19 +414,32 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
 }
 
 inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
-  const fs::path root = root_in.empty() ? fs::current_path() : root_in;
+  const fs::path root = default_asset_root(root_in);
   const fs::path tmp_tar = root / "tmp" / "yolo_v8s_mpk.tar.gz";
 
-  const char* env = std::getenv("SIMA_YOLO_TAR");
-  if (env && *env && fs::exists(env)) {
-    return std::string(env);
+  // Drop corrupt cached tars up front so the subsequent search/download
+  // path can refresh them. is_usable_regular_file only checks size>0;
+  // a partial download or HTML error page satisfies that but fails
+  // `tar -tzf` and surfaces deep in ModelPack as "tar listing failed".
+  //
+  // NB: we intentionally do NOT apply is_listable_tar_gz to the broader
+  // search-loop candidates below — unit_asset_utils_readable_model_tar_test
+  // pre-stages dummy non-tar payloads to validate move_to_tmp semantics,
+  // and downstream callers handle real corruption via the cached-tar
+  // validation they perform on the path we return.
+  purge_unlistable_tar_gz(tmp_tar);
+  purge_unlistable_tar_gz(root / "yolo_v8s_mpk.tar.gz");
+
+  const std::string env_tar = env_existing_model_tar_path("SIMA_YOLO_TAR");
+  if (!env_tar.empty()) {
+    return env_tar;
   }
 
   const fs::path direct_tar = root / "yolo_v8s_mpk.tar.gz";
-  if (fs::exists(direct_tar))
+  if (is_usable_regular_file(direct_tar))
     return direct_tar.string();
 
-  if (fs::exists(tmp_tar))
+  if (is_usable_regular_file(tmp_tar))
     return tmp_tar.string();
 
   const char* home = std::getenv("HOME");
@@ -194,6 +448,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
       root,
       fs::current_path(),
       root / "tmp",
+      fs::temp_directory_path(),
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
       home_path / ".sima" / "modelzoo",
@@ -212,18 +467,22 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
       continue;
     for (const auto& name : names) {
       fs::path candidate = dir / name;
-      if (fs::exists(candidate) && move_to_tmp(candidate, tmp_tar)) {
+      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
         return tmp_tar.string();
       }
     }
   }
 
   if (!skip_download) {
-    const std::string yolo_cmd =
-        std::string("sima-cli modelzoo -v ") + modelzoo_version() + " get yolo_v8s";
-    const int rc = std::system(yolo_cmd.c_str());
-    if (rc == 0 && fs::exists(tmp_tar))
-      return tmp_tar.string();
+    const int rc = run_modelzoo_get_noninteractive("yolo_v8s");
+    if (rc == 0 && is_usable_regular_file(tmp_tar)) {
+      // After a real download we *do* validate — the modelzoo path is
+      // the one that has historically produced partial/corrupt tarballs
+      // that fail `tar -tzf` and surface deep in ModelPack.
+      if (is_listable_tar_gz(tmp_tar))
+        return tmp_tar.string();
+      purge_unlistable_tar_gz(tmp_tar);
+    }
   }
 
   for (const auto& dir : search_dirs) {
@@ -231,7 +490,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
       continue;
     for (const auto& name : names) {
       fs::path candidate = dir / name;
-      if (fs::exists(candidate) && move_to_tmp(candidate, tmp_tar)) {
+      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
         return tmp_tar.string();
       }
     }
@@ -246,7 +505,7 @@ inline std::string resolve_yolov8s_tar(const fs::path& root = {}) {
 
 inline std::string resolve_modelzoo_tar(const std::string& model_name,
                                         const fs::path& root_in = {}) {
-  const fs::path root = root_in.empty() ? fs::current_path() : root_in;
+  const fs::path root = default_asset_root(root_in);
   const fs::path tmp_dir = root / "tmp";
   std::error_code ec;
   fs::create_directories(tmp_dir, ec);
@@ -305,11 +564,16 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   }
 
   const fs::path local = tmp_dir / (base + "_mpk.tar.gz");
-  if (fs::exists(local))
+  // Only validate listability for the *cached* tmp tar (the path that
+  // gets handed back to callers and consumed by ModelPack). Candidates
+  // discovered via the search loop below may be unit-test fixtures
+  // containing dummy payloads — see unit_asset_utils_readable_model_tar_test.
+  purge_unlistable_tar_gz(local);
+  if (is_usable_regular_file(local))
     return local.string();
 
   auto try_candidate = [&](const fs::path& candidate) -> std::string {
-    if (!fs::exists(candidate))
+    if (!is_usable_regular_file(candidate))
       return "";
     if (candidate == local)
       return local.string();
@@ -324,6 +588,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
       tmp_dir,
       root,
       fs::current_path(),
+      fs::temp_directory_path(),
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
       home_path / ".sima" / "modelzoo",
@@ -340,13 +605,17 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
     }
   }
 
-  const std::string cmd =
-      std::string("sima-cli modelzoo -v ") + modelzoo_version() + " get " + shell_quote(model_name);
-  if (std::system(cmd.c_str()) != 0)
+  if (run_modelzoo_get_noninteractive(model_name) != 0)
     return "";
 
-  if (fs::exists(local))
-    return local.string();
+  // Post-download validation: the modelzoo path historically produces
+  // partial/corrupt tarballs that pass is_usable_regular_file (size > 0)
+  // but fail `tar -tzf`. Purge those so a future retry isn't poisoned.
+  if (is_usable_regular_file(local)) {
+    if (is_listable_tar_gz(local))
+      return local.string();
+    purge_unlistable_tar_gz(local);
+  }
 
   for (const auto& dir : search_dirs) {
     if (dir.empty())
@@ -361,8 +630,26 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   return "";
 }
 
+inline std::string resolve_yolov8s_strict_mpk_tar(const fs::path& root = {}) {
+  const std::string local_first = resolve_yolov8s_tar_local_first(root, false);
+  if (!local_first.empty() && is_strict_mpk_tar_gz(local_first))
+    return local_first;
+
+  const fs::path tmp_tar = default_asset_root(root) / "tmp" / "yolo_v8s_mpk.tar.gz";
+  if (is_usable_regular_file(tmp_tar) && !is_strict_mpk_tar_gz(tmp_tar)) {
+    std::error_code ec;
+    fs::remove(tmp_tar, ec);
+  }
+
+  const std::string modelzoo = resolve_modelzoo_tar("yolo_v8s", root);
+  if (!modelzoo.empty() && is_strict_mpk_tar_gz(modelzoo))
+    return modelzoo;
+
+  return "";
+}
+
 inline fs::path ensure_coco_sample(const fs::path& root_in = {}) {
-  const fs::path root = root_in.empty() ? fs::current_path() : root_in;
+  const fs::path root = default_asset_root(root_in);
   const char* url_env = std::getenv("SIMA_COCO_URL");
   const std::string url =
       (url_env && *url_env)

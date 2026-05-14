@@ -55,9 +55,16 @@ int main(int argc, char** argv) {
     run_opt.enable_metrics = true;
 
     simaai::neat::Model::Options model_opt;
-    model_opt.input_max_width = rgb.cols;
-    model_opt.input_max_height = rgb.rows;
-    model_opt.input_max_depth = rgb.channels();
+    model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+    model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+    model_opt.preprocess.input_max_width = rgb.cols;
+    model_opt.preprocess.input_max_height = rgb.rows;
+    model_opt.preprocess.input_max_depth = rgb.channels();
+    model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.normalize.mean = {0.485f, 0.456f, 0.406f};
+    model_opt.preprocess.normalize.stddev = {0.229f, 0.224f, 0.225f};
+    model_opt.preprocess.normalize.has_explicit_stats = true;
     model_opt.name_suffix = "_prod";
 
     simaai::neat::Model model(mpk, model_opt);
@@ -67,17 +74,18 @@ int main(int argc, char** argv) {
     sess_opt.include_appsink = true;
     sess_opt.name_suffix = "_prod";
 
-    auto runner =
-        model.build(simaai::neat::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB, true),
-                    sess_opt, run_opt);
+    auto runner = model.build(
+        simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+            rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74)},
+        sess_opt, run_opt);
 
     int ok = 0;
     for (int i = 0; i < iters; ++i) {
-      if (!runner.push(
-              simaai::neat::from_cv_mat(rgb, simaai::neat::ImageSpec::PixelFormat::RGB, true)))
+      if (!runner.push(simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+              rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74)}))
         continue;
       auto out = runner.pull(/*timeout_ms=*/2000);
-      if (out.has_value())
+      if (!out.empty())
         ++ok;
     }
     runner.close();

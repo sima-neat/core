@@ -23,13 +23,16 @@
 #include "internal/InputStreamUtil.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/internal/contract/CompiledNodeContract.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <gst/gst.h>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -46,6 +49,7 @@ using simaai::neat::pipeline_internal::DiagCtx;
 enum class RunInputKind {
   Mat = 0,
   Tensor,
+  Sample,
 };
 
 /**
@@ -60,6 +64,7 @@ struct Session::RunCache {
   RunOptions opt;
   uint64_t nodes_version = 0;
   RunInputKind input_kind = RunInputKind::Mat;
+  bool sync_prefill_warmed = false;
 };
 
 // -------------------------------------------------------------------------------------
@@ -75,9 +80,6 @@ using pipeline_internal::upper_copy;
 
 /** Lightweight debug tracing hook (enabled by SIMA_PIPELINE_TRACE_STEP). */
 void trace_step(const char* label);
-
-/** Optional sleep hook for "guard" debugging (SIMA_PIPELINE_GUARD_SLEEP_MS). */
-void maybe_guard_sleep(const char* where);
 
 // -------------------------------------------------------------------------------------
 // Naming helpers (element name rewrite)
@@ -139,6 +141,16 @@ struct BuildResult {
   std::shared_ptr<DiagCtx> diag;
   std::string appsink_name; // mysink or tap_* (after session name transform)
   int tap_node_index = -1;
+  NameTransform name_transform{};
+  std::shared_ptr<CompiledPipelineContracts> compiled_contracts;
+  std::optional<pipeline_internal::sima::SimaPluginStaticManifest> rendered_manifest;
+  std::vector<std::string> model_source_paths;
+  // Compile + render diagnostics from session_build_compile_contracts. Carried
+  // forward so the wrapper throws in parse_pipeline_or_throw can include the
+  // specific failure messages (which `render_manifest_from_compiled_contracts`
+  // and `compile_node_contracts` push here on error) rather than a generic
+  // "manifest is missing" message.
+  pipeline_internal::sima::ManifestBuildDiagnostics manifest_diagnostics;
 };
 
 /** Select boundary insertion behavior based on run/build mode env. */
@@ -245,6 +257,7 @@ void configure_appsink_for_input(GstElement* appsink);
  */
 BuildResult build_pipeline_full(const std::vector<std::shared_ptr<Node>>& nodes,
                                 bool insert_boundaries, const std::string& appsink_name,
-                                bool insert_queue2, const NameTransform& name_transform);
+                                bool insert_queue2, const NameTransform& name_transform,
+                                const SessionOptions* sess_opt = nullptr);
 
 } // namespace simaai::neat

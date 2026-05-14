@@ -20,6 +20,27 @@ bool element_exists(const char* factory) {
   return false;
 }
 
+bool element_property_exists(const char* factory, const char* property_name) {
+  if (!factory || !*factory || !property_name || !*property_name) {
+    return false;
+  }
+  gst_init_once();
+  GstElementFactory* f = gst_element_factory_find(factory);
+  if (!f) {
+    return false;
+  }
+  const GType element_type = gst_element_factory_get_element_type(f);
+  bool found = false;
+  if (element_type != G_TYPE_INVALID) {
+    if (auto* klass = G_OBJECT_CLASS(g_type_class_ref(element_type)); klass) {
+      found = g_object_class_find_property(klass, property_name) != nullptr;
+      g_type_class_unref(klass);
+    }
+  }
+  gst_object_unref(f);
+  return found;
+}
+
 std::string factory_plugin_path(const char* factory) {
   gst_init_once();
   GstElementFactory* f = gst_element_factory_find(factory);

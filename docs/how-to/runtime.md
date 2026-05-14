@@ -38,7 +38,54 @@ Advanced knobs are opt-in under `RunOptions::advanced`:
 - `advanced.max_input_bytes`: cap input buffer growth.
 - `advanced.copy_input`: force defensive input copies.
 
-Use `Run::stats()` and `Run::diag_snapshot()` to inspect
-throughput, latency, and flow counters.
+Use `Run::metrics()` to inspect latency, derived throughput, input counters,
+and optional board PMIC power telemetry in one call. `Model::Runner` and `GraphRun`
+expose the same `metrics()` / `metrics_report()` surface through runtime-specific
+adapters. For lower-level compatibility diagnostics, use `Run::stats()` and
+`Run::diag_snapshot()`.
 
-See [Runtime Tuning](/how-to/runtime_tuning) for practical tuning guidance.
+To include board power, enable it in code (no environment variable required):
+
+```cpp
+simaai::neat::RunOptions run_opt;
+run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
+auto run = session.build(inputs, simaai::neat::RunMode::Async, run_opt);
+auto metrics = run.metrics();
+```
+
+Python uses the same shape:
+
+```python
+run_opt = neat.RunOptions()
+run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
+run = session.build(tensor, neat.RunMode.Async, run_opt)
+metrics = run.metrics()
+```
+
+`Model::build(run_opt)` and `Model::build(session_opt, run_opt)` forward the same
+runtime options to the underlying `Run`. For graphs, prefer
+`graph::GraphRunOptions::enable_board_power()` to get one graph-level board
+power monitor instead of per-pipeline duplicate rail sampling.
+
+If you need to force a specific built-in profile, board-specific helpers remain
+available:
+
+- `enable_modalix_som_power()`
+- `enable_modalix_dvt_power()`
+
+## Verbosity presets
+
+Framework build/run messaging is controlled with `VerboseOptions` on `SessionOptions`,
+`Model::Options`, `Model::SessionOptions`, and `graph::GraphRunOptions`.
+
+Current development default: `VerboseOptions::debug_all()`.
+Call `production()` or `quiet()` explicitly when you want less output.
+
+| Preset | Intended use |
+| --- | --- |
+| `VerboseOptions::quiet()` | Suppress framework progress and detail output. |
+| `VerboseOptions::production()` | Show clean phase progress only. |
+| `VerboseOptions::debug_plugins()` | Keep production UX, but also surface plugin and GStreamer topics. |
+| `VerboseOptions::debug_all()` | Force the full verbose/detail sweep across all topics. |
+
+See [Runtime Tuning](runtime_tuning) for practical tuning guidance.

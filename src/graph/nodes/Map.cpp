@@ -32,9 +32,11 @@ std::shared_ptr<simaai::neat::graph::Node> TensorMap(TensorMapFn fn, std::string
   }
   return Map(
       [fn = std::move(fn)](Sample& sample) mutable {
-        if (sample.kind != SampleKind::Tensor || !sample.tensor.has_value())
+        if (!sample_has_tensor_list(sample))
           return;
-        fn(sample, sample.tensor.value());
+        for (auto& tensor : sample.tensors) {
+          fn(sample, tensor);
+        }
       },
       std::move(label), std::move(options), std::move(out_fn));
 }

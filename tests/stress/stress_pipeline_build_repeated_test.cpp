@@ -41,7 +41,7 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
              Session session(sopt);
              InputOptions src_opt;
              src_opt.media_type = "video/x-raw";
-             src_opt.format = "RGB";
+             src_opt.format = simaai::neat::FormatTag::RGB;
              src_opt.use_simaai_pool = false;
              src_opt.max_width = 96;
              src_opt.max_height = 96;
@@ -65,7 +65,7 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
 
              Run run;
              try {
-               run = session.build(seed, RunMode::Async, run_opt);
+               run = session.build(TensorList{seed}, RunMode::Async, run_opt);
              } catch (const std::exception& e) {
                if (sima_test::likely_runtime_missing(e.what())) {
                  skip_long_test_exception(
@@ -75,9 +75,9 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
                throw;
              }
 
-             Sample out = run.push_and_pull(seed, 1000);
-             require(out.tensor.has_value(),
-                     "stress_pipeline_build_repeated: push_and_pull output missing tensor");
+             TensorList outs = run.run(TensorList{seed}, 1000);
+             require(outs.size() == 1,
+                     "stress_pipeline_build_repeated: expected one output tensor");
              run.stop();
              ++completed;
            }

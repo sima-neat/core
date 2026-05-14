@@ -3,6 +3,7 @@
 
 #include "InputStreamUtil.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "nodes/io/Input.h"
@@ -23,6 +24,7 @@ namespace simaai::neat::pipeline_internal {
 
 bool attach_video_meta(GstBuffer** buffer, const SampleSpec& spec, std::string* err);
 bool apply_tensor_size(GstBuffer** buffer, const SampleSpec& spec, std::string* err);
+const char* storage_kind_name(simaai::neat::StorageKind kind);
 
 namespace {
 
@@ -31,7 +33,7 @@ bool data_adapter_debug_enabled() {
 }
 
 bool zero_copy_writable_view_enabled() {
-  return env_bool("SIMA_GST_ZERO_COPY_WRITABLE_VIEW", false);
+  return env_bool("SIMA_GST_ZERO_COPY_WRITABLE_VIEW", true);
 }
 
 std::size_t dtype_bytes_for_copy(TensorDType dtype) {
@@ -54,22 +56,6 @@ std::size_t dtype_bytes_for_copy(TensorDType dtype) {
     return 8;
   }
   return 1;
-}
-
-const char* storage_kind_name(simaai::neat::StorageKind kind) {
-  switch (kind) {
-  case simaai::neat::StorageKind::CpuOwned:
-    return "CpuOwned";
-  case simaai::neat::StorageKind::CpuExternal:
-    return "CpuExternal";
-  case simaai::neat::StorageKind::GstSample:
-    return "GstSample";
-  case simaai::neat::StorageKind::DeviceHandle:
-    return "DeviceHandle";
-  case simaai::neat::StorageKind::Unknown:
-  default:
-    return "Unknown";
-  }
 }
 
 const char* media_kind_name(SampleMediaKind kind) {
@@ -117,6 +103,8 @@ bool finalize_buffer(GstBuffer** buffer, const SampleSpec& spec, const GstBuffer
   }
   return true;
 }
+
+} // namespace
 
 bool wrap_cpu_dense_zero_copy(const simaai::neat::Tensor& tensor, GstBuffer** out,
                               std::string* err) {
@@ -238,8 +226,6 @@ bool wrap_cpu_video_zero_copy(const simaai::neat::Tensor& tensor, const SampleSp
   *out = buf;
   return true;
 }
-
-} // namespace
 
 std::size_t tensor_plane_bytes_tight(const simaai::neat::Plane& plane, TensorDType dtype) {
   if (plane.shape.size() < 2)
@@ -661,6 +647,13 @@ GstBuffer* build_copy_buffer_from_tensor(const simaai::neat::Tensor& tensor, con
         std::memcpy(map.data, payload.data(), payload.size());
         gst_buffer_unmap(buf, &map);
       }
+      if (tensor.semantic.preprocess.has_value() &&
+          !write_simaai_preprocess_meta(buf, *tensor.semantic.preprocess)) {
+        gst_buffer_unref(buf);
+        if (err)
+          *err = "copy path: failed to apply tensor preprocess metadata";
+        return nullptr;
+      }
       return buf;
     } catch (const std::exception& e) {
       if (err)
@@ -693,6 +686,13 @@ GstBuffer* build_copy_buffer_from_tensor(const simaai::neat::Tensor& tensor, con
     }
     gst_buffer_unmap(buf, &map);
   }
+  if (tensor.semantic.preprocess.has_value() &&
+      !write_simaai_preprocess_meta(buf, *tensor.semantic.preprocess)) {
+    gst_buffer_unref(buf);
+    if (err)
+      *err = "copy path: failed to apply tensor preprocess metadata";
+    return nullptr;
+  }
   return buf;
 }
 
@@ -702,22 +702,25 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
       *err = "field spec: missing output spec";
     return false;
   }
-  if (field.kind != SampleKind::Tensor || !field.tensor.has_value()) {
+  const Sample normalized = (field.kind == SampleKind::Tensor && field.tensor.has_value())
+                                ? canonicalize_tensor_transport_sample(field)
+                                : field;
+  if (!sample_has_tensor_list(normalized) || normalized.tensors.empty()) {
     if (err)
       *err = "field spec: missing tensor";
     return false;
   }
 
-  const simaai::neat::Tensor& t = *field.tensor;
+  const simaai::neat::Tensor& t = normalized.tensors.front();
   InputOptions opt;
-  opt.media_type = field.media_type;
+  opt.media_type = normalized.media_type;
   if (opt.media_type.empty()) {
     opt.media_type = t.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   }
-  if (!field.format.empty()) {
-    opt.format = field.format;
-  } else if (!field.payload_tag.empty()) {
-    opt.format = field.payload_tag;
+  if (!normalized.payload_tag.empty()) {
+    opt.format = normalized.payload_tag;
+  } else if (!normalized.format.empty()) {
+    opt.format = normalized.format;
   }
 
   try {
@@ -727,12 +730,23 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
         *err = "field spec: empty caps_string";
       return false;
     }
-    if (!field.caps_string.empty()) {
-      spec.caps_string = field.caps_string;
+    if (!normalized.caps_string.empty()) {
+      spec.caps_string = normalized.caps_string;
     }
     *out = std::move(spec);
     return true;
   } catch (const std::exception& e) {
+    if (data_adapter_debug_enabled()) {
+      const auto& tensor = normalized.tensors.front();
+      std::fprintf(stderr,
+                   "[GstDataAdapter] derive_field_spec failure name=%s segment=%s media=%s "
+                   "format=%s tensor=%s error=%s\n",
+                   normalized.stream_label.empty() ? "<empty>" : normalized.stream_label.c_str(),
+                   normalized.segment_name.empty() ? "<empty>" : normalized.segment_name.c_str(),
+                   normalized.media_type.empty() ? "<empty>" : normalized.media_type.c_str(),
+                   normalized.format.empty() ? "<empty>" : normalized.format.c_str(),
+                   tensor.debug_string().c_str(), e.what());
+    }
     if (err)
       *err = std::string("field spec: ") + e.what();
     return false;

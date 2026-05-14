@@ -73,7 +73,7 @@ int main() {
 
     simaai::neat::Session p;
     simaai::neat::InputOptions src_opt;
-    src_opt.format = "RGB";
+    src_opt.format = simaai::neat::FormatTag::RGB;
     src_opt.width = kW;
     src_opt.height = kH;
     src_opt.depth = 3;
@@ -96,10 +96,10 @@ int main() {
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
     run_opt.advanced.copy_input = false;
 
-    auto run = p.build(img, simaai::neat::RunMode::Async, run_opt);
+    auto run = p.build(std::vector<cv::Mat>{img}, simaai::neat::RunMode::Async, run_opt);
 
     for (int i = 0; i < iters; ++i) {
-      require(run.push(img), "async push failed");
+      require(run.push(std::vector<cv::Mat>{img}), "async push failed");
     }
     run.close_input();
 
@@ -107,16 +107,15 @@ int main() {
     bool checked = false;
     std::string err;
     while (true) {
-      auto out = run.pull(20000);
-      if (!out.has_value())
+      auto outs = run.pull_samples(20000);
+      if (outs.empty())
         break;
-      outputs += 1;
+      outputs += static_cast<int>(outs.size());
       if (!checked) {
-        if (out->tensor.has_value()) {
-          require(compare_rgb_tensor(img, out->tensor.value(), err), err);
-        } else {
-          require(false, "unexpected output kind");
-        }
+        const auto& out = outs.front();
+        const auto tensors = simaai::neat::tensors_from_sample(out, true);
+        require(tensors.size() == 1U, "expected one output tensor");
+        require(compare_rgb_tensor(img, tensors.front(), err), err);
         checked = true;
       }
     }

@@ -102,18 +102,21 @@ int run_case(const fs::path& root) {
   } guard{&optiview, nullptr};
 
   simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "BGR";
-  model_opt.input_max_width = img_bgr.cols;
-  model_opt.input_max_height = img_bgr.rows;
-  model_opt.input_max_depth = 3;
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+  model_opt.score_threshold = kMinScore;
+  model_opt.nms_iou_threshold = 0.5f;
+  model_opt.top_k = kTopK;
   simaai::neat::Model model(tar_gz, model_opt);
 
   simaai::neat::Session pipeline;
   pipeline.add(simaai::neat::nodes::Input());
   pipeline.add(simaai::neat::nodes::groups::Preprocess(model));
   pipeline.add(simaai::neat::nodes::groups::Infer(model));
-  pipeline.add(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", img_bgr.cols, img_bgr.rows,
+  pipeline.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
                                                   kMinScore, 0.5f, kTopK));
   pipeline.add(simaai::neat::nodes::Output());
 
@@ -122,14 +125,21 @@ int run_case(const fs::path& root) {
   run_opt.queue_depth = 1;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
-  simaai::neat::Run run = pipeline.build(img_bgr, simaai::neat::RunMode::Async, run_opt);
+  simaai::neat::Run run = pipeline.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                                             img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                                         simaai::neat::RunMode::Async, run_opt);
   guard.run = &run;
 
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
   std::unordered_set<std::string> expected_frame_ids;
 
   for (int i = 0; i < kStreams; ++i) {
-    simaai::neat::Sample out = run.push_and_pull(img_bgr, 15000);
+    require(run.push(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)}),
+            "graphpipes push failed");
+    simaai::neat::SampleList outs = run.pull_samples(15000);
+    require(!outs.empty(), "graphpipes expected at least one sample");
+    simaai::neat::Sample out = std::move(outs.front());
 
     std::vector<uint8_t> payload;
     std::string extract_err;

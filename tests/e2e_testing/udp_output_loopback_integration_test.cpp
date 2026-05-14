@@ -15,7 +15,7 @@ RUN_TEST("udp_output_loopback_integration_test", ([] {
            Session session;
            InputOptions src_opt;
            src_opt.media_type = "video/x-raw";
-           src_opt.format = "RGB";
+           src_opt.format = simaai::neat::FormatTag::RGB;
            src_opt.use_simaai_pool = false;
            src_opt.max_width = 32;
            src_opt.max_height = 24;
@@ -34,7 +34,7 @@ RUN_TEST("udp_output_loopback_integration_test", ([] {
              const Tensor seed = make_color_tensor(12, 8, ImageSpec::PixelFormat::RGB, 0x44);
              RunOptions run_opt;
              run_opt.queue_depth = 32;
-             run = session.build(seed, RunMode::Async, run_opt);
+             run = session.build(TensorList{seed}, RunMode::Async, run_opt);
            } catch (const std::exception& e) {
              if (sima_test::likely_runtime_missing(e.what())) {
                throw std::runtime_error(
@@ -63,7 +63,7 @@ RUN_TEST("udp_output_loopback_integration_test", ([] {
                                           static_cast<uint8_t>(0x50 + i));
              s.frame_id = i;
              s.stream_id = "udp-loopback";
-             require(run.push(s), "udp loopback: push failed");
+             require(run.push(SampleList{s}), "udp loopback: push failed");
            }
 
            std::string payload;

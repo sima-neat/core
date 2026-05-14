@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to SiMa Neat are documented in this file.
+All notable changes to SiMa NEAT are documented in this file.
 
 The format is based on Keep a Changelog and follows semantic versioning.
 
@@ -16,4 +16,4 @@ The format is based on Keep a Changelog and follows semantic versioning.
 ## [0.1.0]
 
 ### Added
-- Initial public baseline of SiMa Neat framework.
+- Initial public baseline of SiMa NEAT framework.

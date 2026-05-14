@@ -18,8 +18,6 @@ namespace pipeline_internal {
 
 struct ModelInputPolicyRequest {
   std::string format;
-  std::optional<int> preproc_input_width;
-  std::optional<int> preproc_input_height;
   std::optional<std::string> preproc_input_img_type;
   std::optional<bool> preproc_normalize;
   int input_max_width = 0;
@@ -29,8 +27,6 @@ struct ModelInputPolicyRequest {
 
 struct ModelInputPolicyResult {
   std::string resolved_input_format;
-  int resolved_input_width = 0;
-  int resolved_input_height = 0;
   int resolved_input_depth = 0;
   int resolved_max_input_width = 0;
   int resolved_max_input_height = 0;
@@ -39,8 +35,7 @@ struct ModelInputPolicyResult {
 };
 
 struct SessionInputPolicyResult {
-  InputStreamOptions::ShapePolicy shape_policy =
-      InputStreamOptions::ShapePolicy::BoundedDynamic;
+  InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
   InputStreamOptions::ResolvedShapeLimits shape_limits{};
   std::size_t max_input_bytes_guard = 0;
   InputStreamOptions::ByteGuardOrigin byte_guard_origin =
@@ -77,8 +72,7 @@ SessionInputPolicyResult resolve_session_input_policy(const InputOptions& opt,
 
 ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest& req);
 
-SessionInputPolicyResult resolve_for_session(const InputOptions& opt,
-                                             const SampleSpec& seed,
+SessionInputPolicyResult resolve_for_session(const InputOptions& opt, const SampleSpec& seed,
                                              std::size_t requested_max_input_bytes,
                                              std::size_t bounded_estimate_bytes);
 

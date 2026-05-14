@@ -25,9 +25,6 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "builder/Node.h"
 #include "builder/NodeGroup.h"
-#include "builder/ConfigJsonProvider.h"
-#include "builder/ConfigJsonConsumer.h"
-#include "builder/NextCpuConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
 #include "contracts/ContractRegistry.h"
@@ -214,7 +211,8 @@ std::string rewrite_fragment_names(const std::string& fragment,
     };
 
     if (!in_single && !in_double) {
-      if (rewrite_key("name=") || rewrite_key("op-buff-name=") || rewrite_key("next-element=")) {
+      if (rewrite_key("name=") || rewrite_key("stage-id=") || rewrite_key("op-buff-name=") ||
+          rewrite_key("next-element=")) {
         continue;
       }
     }
@@ -244,7 +242,8 @@ NodeFragment make_node_fragment(const std::shared_ptr<Node>& node, int index,
     mapping.emplace(base, renamed);
     out.element_names.push_back(std::move(renamed));
   }
-  out.fragment = rewrite_fragment_names(node->backend_fragment(index), mapping);
+  const std::string original_fragment = node->backend_fragment(index);
+  out.fragment = rewrite_fragment_names(original_fragment, mapping);
   return out;
 }
 

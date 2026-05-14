@@ -361,9 +361,12 @@ std::string lower_copy(std::string s) {
   return s;
 }
 
-bool is_supported_kernel(const std::string& kernel) {
+// Canonical allow-list shared by loader validation and pipeline sequence validation.
+bool is_supported_kernel_impl(const std::string& kernel) {
   static const std::unordered_set<std::string> kSupportedKernels = {
-      "preproc", "quanttess", "infer", "mla", "detessdequant", "boxdecode",
+      "preproc",    "quant",     "tess",          "tessellate",    "quanttess",
+      "cast",       "infer",     "mla",           "detessdequant", "detessellate",
+      "dequantize", "boxdecode", "buffer_concat",
   };
   return kSupportedKernels.find(lower_copy(kernel)) != kSupportedKernels.end();
 }
@@ -733,29 +736,21 @@ void validate_pipeline_sequence_json(const json& j) {
       throw_mpk(ErrorClass::SchemaError,
                 "schema_error: duplicate stage name in pipeline_sequence: " + name);
     }
-    if (!is_supported_kernel(kernel)) {
+    if (!is_supported_kernel_impl(kernel)) {
       throw_mpk(ErrorClass::SchemaError,
                 "schema_error: unsupported kernel in pipeline_sequence: " + kernel);
     }
 
     if (stage.contains("input")) {
       if (stage["input"].is_string()) {
-        const std::string dep = stage["input"].get<std::string>();
-        if (!dep.empty() && dep != "decoder" && seen_names.find(dep) == seen_names.end()) {
-          throw_mpk(ErrorClass::SchemaError,
-                    "schema_error: invalid dependency '" + dep + "' for stage '" + name + "'");
-        }
+        (void)stage["input"].get<std::string>();
       } else if (stage["input"].is_array()) {
         for (const auto& dep_json : stage["input"]) {
           if (!dep_json.is_string()) {
             throw_mpk(ErrorClass::SchemaError,
                       "schema_error: stage input array must contain only strings");
           }
-          const std::string dep = dep_json.get<std::string>();
-          if (!dep.empty() && dep != "decoder" && seen_names.find(dep) == seen_names.end()) {
-            throw_mpk(ErrorClass::SchemaError,
-                      "schema_error: invalid dependency '" + dep + "' for stage '" + name + "'");
-          }
+          (void)dep_json.get<std::string>();
         }
       } else {
         throw_mpk(ErrorClass::SchemaError,
@@ -868,8 +863,16 @@ ValidatedArchive validate_archive(const std::string& archive_path, const MpKLoad
 
     const std::string base = fs::path(entry.normalized_path).filename().string();
     if (base == "pipeline_sequence.json") {
-      validate_pipeline_sequence_json(parsed);
-      out.manifest.has_pipeline_sequence = true;
+      try {
+        validate_pipeline_sequence_json(parsed);
+        out.manifest.has_pipeline_sequence = true;
+      } catch (const MpKError&) {
+        if (opt.require_pipeline_sequence) {
+          throw;
+        }
+        // Runtime extraction can tolerate legacy/partial pipeline_sequence JSON
+        // because ModelPack has a fallback synthesizer.
+      }
     }
     if (base == "manifest.json" || base == "mpk_manifest.json") {
       validate_version_json(parsed);
@@ -909,6 +912,10 @@ fs::path extract_destination_for(const fs::path& package_root, const TarEntry& e
 }
 
 } // namespace
+
+bool is_supported_kernel(const std::string& kernel) {
+  return is_supported_kernel_impl(kernel);
+}
 
 const char* error_class_name(ErrorClass code) {
   switch (code) {

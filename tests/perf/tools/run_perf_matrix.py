@@ -276,6 +276,12 @@ def run_scenario(
 
     try:
         metrics = schema.parse_metrics_payload(payload_raw, context=f"payload:{spec.scenario_id}")
+        power = schema.parse_optional_power_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
+        runtime_metrics = schema.parse_optional_runtime_metrics_payload(
+            payload_raw, context=f"payload:{spec.scenario_id}"
+        )
     except schema.SchemaError as exc:
         return build_result(
             scenario_id=spec.scenario_id,
@@ -287,6 +293,12 @@ def run_scenario(
             run_meta={"phase": "parse_output", "error": str(exc)},
         )
 
+    run_meta = {"phase": "compare", "executable": str(exe_path), "iterations": scenario_iters}
+    if power is not None:
+        run_meta["power"] = power
+    if runtime_metrics is not None:
+        run_meta["runtime_metrics"] = runtime_metrics
+
     regressions = schema.compare_metrics(metrics, baseline)
     if regressions:
         return build_result(
@@ -296,12 +308,7 @@ def run_scenario(
             failure_class=schema.FailureClass.REGRESSION,
             reason_code=regressions[0],
             metrics=metrics,
-            run_meta={
-                "phase": "compare",
-                "regression_reasons": [reason.value for reason in regressions],
-                "executable": str(exe_path),
-                "iterations": scenario_iters,
-            },
+            run_meta={**run_meta, "regression_reasons": [reason.value for reason in regressions]},
         )
 
     return build_result(
@@ -311,7 +318,7 @@ def run_scenario(
         failure_class=None,
         reason_code=None,
         metrics=metrics,
-        run_meta={"phase": "compare", "executable": str(exe_path), "iterations": scenario_iters},
+        run_meta=run_meta,
     )
 
 

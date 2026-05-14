@@ -42,8 +42,8 @@ int main(int argc, char** argv) {
     tar_gz = sima_test::resolve_resnet50_tar();
     if (tar_gz.empty()) {
       std::cerr << "Failed to resolve resnet50 tar.gz. "
-                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo -v "
-                << sima_test::modelzoo_version() << " get resnet_50'.\n";
+                << "Set SIMA_MODEL_TAR (or SIMA_RESNET50_TAR) or run "
+                   "'sima-cli modelzoo get resnet_50'.\n";
       return 3;
     }
   }
@@ -57,11 +57,9 @@ int main(int argc, char** argv) {
     constexpr int kInferHeight = 224;
 
     simaai::neat::Model::Options model_opt;
-    model_opt.media_type = "video/x-raw";
-    model_opt.format = "RGB";
-    model_opt.input_max_width = kInferWidth;
-    model_opt.input_max_height = kInferHeight;
-    model_opt.input_max_depth = 3;
+    model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+    model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
     simaai::neat::Model model(tar_gz, model_opt);
 
     simaai::neat::Session p1;

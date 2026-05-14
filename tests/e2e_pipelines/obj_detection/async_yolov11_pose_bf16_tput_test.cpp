@@ -72,6 +72,9 @@ std::string resolve_yolov11_pose_bf16_tar_or_skip(const fs::path& root) {
   const char* env = std::getenv("SIMA_YOLO11_POSE_BF16_TAR");
   if (env && *env && file_exists(env))
     return env;
+  const char* generic = std::getenv("SIMA_MODEL_TAR");
+  if (generic && *generic && file_exists(generic))
+    return generic;
 
   const fs::path local = root / "tmp" / "yolov11_mpk_bf16.tar.gz";
   if (fs::exists(local))
@@ -83,18 +86,18 @@ std::string resolve_yolov11_pose_bf16_tar_or_skip(const fs::path& root) {
     return hardcoded.string();
 
   skip_long_test_exception(
-      "Missing yolov11 BF16 tarball. Set SIMA_YOLO11_POSE_BF16_TAR or place "
+      "Missing yolov11 BF16 tarball. Set SIMA_MODEL_TAR (or SIMA_YOLO11_POSE_BF16_TAR) or place "
       "tmp/yolov11_mpk_bf16.tar.gz.");
   return {};
 }
 
-PipelineConfigs extract_and_resolve_configs_or_throw(const std::string& tar_gz, const fs::path& root) {
+PipelineConfigs extract_and_resolve_configs_or_throw(const std::string& tar_gz,
+                                                     const fs::path& root) {
   const fs::path extract_root = root / "tmp" / "yolov11_pose_bf16_extract";
   std::error_code ec;
   fs::remove_all(extract_root, ec);
   fs::create_directories(extract_root, ec);
-  const std::string cmd =
-      "tar -xzf '" + tar_gz + "' -C '" + extract_root.string() + "'";
+  const std::string cmd = "tar -xzf '" + tar_gz + "' -C '" + extract_root.string() + "'";
   const int rc = std::system(cmd.c_str());
   require(rc == 0, "Failed to extract model tarball: " + tar_gz);
 
@@ -133,8 +136,7 @@ PipelineConfigs extract_and_resolve_configs_or_throw(const std::string& tar_gz, 
           "Failed to resolve tessellate config");
   require(!cfg.pre_cfg.empty() && file_exists(cfg.pre_cfg), "Failed to resolve preproc config");
   require(!cfg.mla_cfg.empty() && file_exists(cfg.mla_cfg), "Failed to resolve MLA config");
-  require(!cfg.box_cfg.empty() && file_exists(cfg.box_cfg),
-          "Failed to resolve boxdecode config");
+  require(!cfg.box_cfg.empty() && file_exists(cfg.box_cfg), "Failed to resolve boxdecode config");
   require(!cfg.post_cfg.empty() && file_exists(cfg.post_cfg), "Failed to resolve postproc config");
 
   return cfg;
@@ -219,13 +221,13 @@ bool pull_with_timeout(simaai::neat::Run& async, int pull_timeout_ms, int max_ti
 }
 
 void do_warmup(simaai::neat::Run& async, const cv::Mat& input, int warm, int timeout_ms) {
-  (void)async.warmup(input, warm, timeout_ms);
+  (void)async.warmup(std::vector<cv::Mat>{input}, warm, timeout_ms);
 }
 
 void do_warmup(simaai::neat::Run& async, const simaai::neat::Tensor& input, int warm,
                int timeout_ms) {
   for (int i = 0; i < warm; ++i) {
-    if (!async.push(input)) {
+    if (!async.push(simaai::neat::TensorList{input})) {
       throw std::runtime_error("Run::push returned false during tensor warmup");
     }
     simaai::neat::Sample out;
@@ -236,6 +238,27 @@ void do_warmup(simaai::neat::Run& async, const simaai::neat::Tensor& input, int 
                                (perr.message.empty() ? std::string("unknown") : perr.message));
     }
   }
+}
+
+const std::vector<cv::Mat>& as_build_inputs(const std::vector<cv::Mat>& inputs) {
+  return inputs;
+}
+std::vector<cv::Mat> as_build_inputs(const cv::Mat& input) {
+  return {input};
+}
+
+const simaai::neat::TensorList& as_build_inputs(const simaai::neat::TensorList& inputs) {
+  return inputs;
+}
+simaai::neat::TensorList as_build_inputs(const simaai::neat::Tensor& input) {
+  return {input};
+}
+
+const simaai::neat::SampleList& as_build_inputs(const simaai::neat::SampleList& inputs) {
+  return inputs;
+}
+simaai::neat::SampleList as_build_inputs(const simaai::neat::Sample& input) {
+  return {input};
 }
 
 template <typename BuildInputT, typename PushInputT>
@@ -250,7 +273,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
   step_log((name + ": before build").c_str());
-  auto async = session.build(build_input, simaai::neat::RunMode::Async, run_opt);
+  auto async = session.build(as_build_inputs(build_input), simaai::neat::RunMode::Async, run_opt);
   step_log((name + ": after build").c_str());
 
   try {
@@ -329,7 +352,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
   for (int i = 0; i < cfg.iters; ++i) {
     if (stop_requested.load())
       break;
-    if (!async.push(push_input)) {
+    if (!async.push(as_build_inputs(push_input))) {
       set_error("Run::push returned false");
       break;
     }
@@ -372,14 +395,13 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
 }
 
 RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories& factories,
-                              const cv::Mat& img_bgr,
-                              const AsyncTestConfig& cfg) {
+                              const cv::Mat& img_bgr, const AsyncTestConfig& cfg) {
   const int model_w = 640;
   const int model_h = 640;
 
   simaai::neat::InputOptions in;
   in.media_type = "application/vnd.simaai.tensor";
-  in.format = "BF16";
+  in.format = simaai::neat::FormatTag::BF16;
   in.width = model_w;
   in.height = model_h;
   in.depth = 3;
@@ -389,14 +411,13 @@ RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories
 
   simaai::neat::Session session;
   session.add(simaai::neat::nodes::Input(in));
-  session.custom(factories.processcvu +
-                 " name=neattess_1 stage-id=neattess_1 config=\"" + cfgs.tess_cfg +
-                 "\" num-buffers=4");
+  session.custom(factories.processcvu + " name=tessellate_1 stage-id=tessellate_1 config=\"" +
+                 cfgs.tess_cfg + "\" num-buffers=4");
   session.custom(factories.processmla +
-                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
-                 cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
-  session.custom(factories.boxdecode +
-                 " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" + cfgs.box_cfg +
+                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" + cfgs.mla_cfg +
+                 "\" multi-pipeline=true num-buffers=4");
+  session.custom(factories.boxdecode + " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" +
+                 cfgs.box_cfg +
                  "\" silent=true emit-signals=false sima-allocator-type=2 decode-type=yolo "
                  "detection-threshold=0.5 nms-iou-threshold=0.5 topk=24 transmit=false "
                  "num-buffers=4");
@@ -407,11 +428,11 @@ RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories
 }
 
 RunSummary run_preproc_bf16_boxdecode_path(const PipelineConfigs& cfgs,
-                                           const PluginFactories& factories,
-                                           const cv::Mat& img_bgr, const AsyncTestConfig& cfg) {
+                                           const PluginFactories& factories, const cv::Mat& img_bgr,
+                                           const AsyncTestConfig& cfg) {
   simaai::neat::InputOptions in;
   in.media_type = "video/x-raw";
-  in.format = "BGR";
+  in.format = simaai::neat::FormatTag::BGR;
   in.width = img_bgr.cols;
   in.height = img_bgr.rows;
   in.depth = 3;
@@ -421,28 +442,27 @@ RunSummary run_preproc_bf16_boxdecode_path(const PipelineConfigs& cfgs,
 
   simaai::neat::Session session;
   session.add(simaai::neat::nodes::Input(in));
-  session.custom(factories.processcvu +
-                 " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
+  session.custom(factories.processcvu + " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
                  cfgs.pre_cfg + "\" num-buffers=4");
   session.custom(factories.processmla +
-                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
-                 cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
-  session.custom(factories.boxdecode +
-                 " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" + cfgs.box_cfg +
+                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" + cfgs.mla_cfg +
+                 "\" multi-pipeline=true num-buffers=4");
+  session.custom(factories.boxdecode + " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" +
+                 cfgs.box_cfg +
                  "\" silent=true emit-signals=false sima-allocator-type=2 decode-type=yolo "
                  "detection-threshold=0.5 nms-iou-threshold=0.5 topk=24 transmit=false "
                  "num-buffers=4");
   session.add(simaai::neat::nodes::Output());
 
-  return run_async_pipeline("yolov11_preproc_bf16_boxdecode", session, img_bgr, img_bgr, cfg,
-                            true);
+  return run_async_pipeline("yolov11_preproc_bf16_boxdecode", session, img_bgr, img_bgr, cfg, true);
 }
 
-RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs, const PluginFactories& factories,
-                                        const cv::Mat& img_bgr, const AsyncTestConfig& cfg) {
+RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs,
+                                        const PluginFactories& factories, const cv::Mat& img_bgr,
+                                        const AsyncTestConfig& cfg) {
   simaai::neat::InputOptions in;
   in.media_type = "video/x-raw";
-  in.format = "BGR";
+  in.format = simaai::neat::FormatTag::BGR;
   in.width = img_bgr.cols;
   in.height = img_bgr.rows;
   in.depth = 3;
@@ -452,14 +472,13 @@ RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs, const Plugi
 
   simaai::neat::Session session;
   session.add(simaai::neat::nodes::Input(in));
-  session.custom(factories.processcvu +
-                 " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
+  session.custom(factories.processcvu + " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
                  cfgs.pre_cfg + "\" num-buffers=4");
   session.custom(factories.processmla +
-                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
-                 cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
-  session.custom("detessdequant name=detessdequant_1 config=\"" + cfgs.post_cfg +
-                 "\" silent=true");
+                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" + cfgs.mla_cfg +
+                 "\" multi-pipeline=true num-buffers=4");
+  session.custom(factories.processcvu + " name=detessdequant_1 stage-id=detessdequant_1 config=\"" +
+                 cfgs.post_cfg + "\" silent=true num-buffers=4");
   session.add(simaai::neat::nodes::Output());
 
   return run_async_pipeline("yolov11_preproc_bf16_detess", session, img_bgr, img_bgr, cfg, false);
@@ -469,9 +488,8 @@ RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs, const Plugi
 
 int main(int argc, char** argv) {
   if (!env_flag("SIMA_ENABLE_YOLOV11_BF16_TEST", false)) {
-    return skip_long_test(
-        "YOLOv11 BF16 test disabled for now "
-        "(set SIMA_ENABLE_YOLOV11_BF16_TEST=1 to run)");
+    return skip_long_test("YOLOv11 BF16 test disabled for now "
+                          "(set SIMA_ENABLE_YOLOV11_BF16_TEST=1 to run)");
   }
   try {
     const fs::path root = (argc > 1) ? fs::path(argv[1]) : fs::current_path();
@@ -487,30 +505,24 @@ int main(int argc, char** argv) {
     const std::string tar_gz = resolve_yolov11_pose_bf16_tar_or_skip(root);
     cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
     const PipelineConfigs cfgs = extract_and_resolve_configs_or_throw(tar_gz, root);
-    const bool has_detess = simaai::neat::element_exists("detessdequant");
-
     AsyncTestConfig cfg;
 
     RunSummary tess = run_tess_bf16_path(cfgs, factories, img_bgr, cfg);
     RunSummary pre_box = run_preproc_bf16_boxdecode_path(cfgs, factories, img_bgr, cfg);
     RunSummary pre_detess;
-    if (has_detess) {
-      pre_detess = run_preproc_bf16_detess_path(cfgs, factories, img_bgr, cfg);
-    } else {
-      pre_detess.name = "yolov11_preproc_bf16_detess";
-      pre_detess.note = "detessdequant factory missing";
-    }
+    pre_detess = run_preproc_bf16_detess_path(cfgs, factories, img_bgr, cfg);
 
     const bool require_pre = env_flag("SIMA_Y11_REQUIRE_PREPROC_BF16", false);
     const bool require_box = env_flag("SIMA_Y11_REQUIRE_BOXDECODE", false);
-    bool overall_ok = require_box ? (tess.ok || pre_box.ok) : (tess.ok || pre_box.ok || pre_detess.ok);
+    bool overall_ok =
+        require_box ? (tess.ok || pre_box.ok) : (tess.ok || pre_box.ok || pre_detess.ok);
     if (require_pre) {
       overall_ok = overall_ok && (pre_box.ok || pre_detess.ok);
     }
 
-    std::cout << "YOLOV11_BF16_TESS ok=" << (tess.ok ? "1" : "0")
-              << " outputs=" << tess.outputs << " payloads=" << tess.payloads
-              << " avg_fps=" << tess.avg_fps << " note=" << tess.note << "\n";
+    std::cout << "YOLOV11_BF16_TESS ok=" << (tess.ok ? "1" : "0") << " outputs=" << tess.outputs
+              << " payloads=" << tess.payloads << " avg_fps=" << tess.avg_fps
+              << " note=" << tess.note << "\n";
     std::cout << "YOLOV11_BF16_TESS pipeline\n" << tess.pipeline << "\n";
 
     std::cout << "YOLOV11_PREPROC_BF16_BOX ok=" << (pre_box.ok ? "1" : "0")
@@ -524,17 +536,16 @@ int main(int argc, char** argv) {
     std::cout << "YOLOV11_PREPROC_BF16_DETESS pipeline\n" << pre_detess.pipeline << "\n";
 
     std::cout << "YOLOV11_CFG tess=" << cfgs.tess_cfg << " pre=" << cfgs.pre_cfg
-              << " mla=" << cfgs.mla_cfg << " box=" << cfgs.box_cfg
-              << " post=" << cfgs.post_cfg << "\n";
+              << " mla=" << cfgs.mla_cfg << " box=" << cfgs.box_cfg << " post=" << cfgs.post_cfg
+              << "\n";
     std::cout << "YOLOV11_FACTORIES processcvu=" << factories.processcvu
-              << " processmla=" << factories.processmla
-              << " boxdecode=" << factories.boxdecode << "\n";
+              << " processmla=" << factories.processmla << " boxdecode=" << factories.boxdecode
+              << "\n";
 
     const bool require_success = env_flag("SIMA_Y11_REQUIRE_SUCCESS", false);
     if (!overall_ok && !require_success) {
-      skip_long_test_exception(
-          "YOLOv11 BF16 probe paths unavailable on this runtime "
-          "(set SIMA_Y11_REQUIRE_SUCCESS=1 to enforce pass/fail)");
+      skip_long_test_exception("YOLOv11 BF16 probe paths unavailable on this runtime "
+                               "(set SIMA_Y11_REQUIRE_SUCCESS=1 to enforce pass/fail)");
     }
 
     return overall_ok ? 0 : 2;

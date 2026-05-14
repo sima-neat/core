@@ -1,6 +1,6 @@
 /**
  * @example sync_yolov8_test.cpp
- * Canonical production pipeline: input -> preprocess -> Infer -> postprocess.
+ * Canonical production pipeline: input -> preprocess -> Infer -> boxdecode.
  */
 #include "pipeline/Session.h"
 #include "nodes/groups/ModelGroups.h"
@@ -35,6 +35,7 @@ using sima_yolov8_test::step_log;
 
 struct SyncTestConfig {
   int iters = 20;
+  float boxdecode_score_threshold = 0.50f;
   float min_score = 0.52f;
   float min_iou = 0.30f;
 };
@@ -70,30 +71,36 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
 
   (void)num_cvu;
   (void)num_mla;
+  const int topk = 100;
+
   simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "BGR";
-  model_opt.input_max_width = img.cols;
-  model_opt.input_max_height = img.rows;
-  model_opt.input_max_depth = 3;
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+  model_opt.score_threshold = cfg.boxdecode_score_threshold;
+  model_opt.nms_iou_threshold = 0.5f;
+  model_opt.top_k = topk;
   model_opt.upstream_name = "decoder";
   auto model = simaai::neat::Model(tar_gz, model_opt);
-  const int topk = 100;
 
   // [canonical_pipeline]
   simaai::neat::Session p;
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
   p.add(simaai::neat::nodes::groups::Infer(model));
-  p.add(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", img.cols, img.rows, cfg.min_score, 0.5f,
-                                           topk));
+  p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
+                                           cfg.boxdecode_score_threshold, 0.5f, topk));
   p.add(simaai::neat::nodes::Output());
   // [canonical_pipeline]
 
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
 
   step_log("sync: before build");
-  (void)p.build(img, simaai::neat::RunMode::Sync);
+  auto run = p.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                         img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                     simaai::neat::RunMode::Sync);
   step_log("sync: after build");
 
   const auto start = std::chrono::steady_clock::now();
@@ -103,7 +110,12 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     simaai::neat::Sample out;
     try {
       step_log("sync: before run");
-      out = p.run(img);
+      simaai::neat::SampleList outs =
+          run.run(simaai::neat::SampleList{simaai::neat::Sample::from_image(
+                      img, simaai::neat::ImageSpec::PixelFormat::BGR)},
+                  30000);
+      require(!outs.empty(), "sync run expected at least one sample");
+      out = outs.front();
       step_log("sync: after run");
     } catch (const std::exception& e) {
       append_note(res.note, "run_error=" + sanitize_note(e.what()));

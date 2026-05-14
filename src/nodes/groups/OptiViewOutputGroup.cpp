@@ -30,8 +30,9 @@ std::string bbox_format_hint(const simaai::neat::Sample& sample) {
     return sample.payload_tag;
   if (!sample.format.empty())
     return sample.format;
-  if (sample.tensor.has_value() && sample.tensor->semantic.tess.has_value()) {
-    return sample.tensor->semantic.tess->format;
+  if (sample_has_tensor_list(sample) && sample.tensors.size() == 1U &&
+      sample.tensors.front().semantic.tess.has_value()) {
+    return sample.tensors.front().semantic.tess->format;
   }
   return {};
 }
@@ -40,9 +41,25 @@ bool decode_bbox_sample_recursive(const simaai::neat::Sample& sample, int frame_
                                   int topk, std::vector<simaai::neat::Box>* out, std::string* err) {
   if (!out)
     return false;
-  if (sample.kind == simaai::neat::SampleKind::Bundle) {
+  if (sample.kind == simaai::neat::SampleKind::Bundle ||
+      (sample_has_tensor_list(sample) && sample.tensors.size() > 1U)) {
     bool saw_candidate = false;
     std::string last_err;
+    if (sample_has_tensor_list(sample)) {
+      for (const auto& tensor : sample.tensors) {
+        std::vector<simaai::neat::Box> parsed;
+        std::string field_err;
+        if (decode_bbox_sample_recursive(sample_from_tensors(TensorList{tensor}), frame_w, frame_h,
+                                         topk, &parsed, &field_err)) {
+          *out = std::move(parsed);
+          return true;
+        }
+        if (!field_err.empty()) {
+          saw_candidate = true;
+          last_err = std::move(field_err);
+        }
+      }
+    }
     for (const auto& field : sample.fields) {
       std::vector<simaai::neat::Box> parsed;
       std::string field_err;
@@ -65,7 +82,7 @@ bool decode_bbox_sample_recursive(const simaai::neat::Sample& sample, int frame_
     return false;
   }
 
-  if (sample.kind != simaai::neat::SampleKind::Tensor || !sample.tensor.has_value()) {
+  if (!sample_has_tensor_list(sample) || sample.tensors.size() != 1U) {
     return false;
   }
   const std::string fmt = upper_ascii_copy(bbox_format_hint(sample));
@@ -74,8 +91,8 @@ bool decode_bbox_sample_recursive(const simaai::neat::Sample& sample, int frame_
   }
 
   try {
-    *out =
-        simaai::neat::decode_bbox_tensor(sample.tensor.value(), frame_w, frame_h, topk, true).boxes;
+    *out = simaai::neat::decode_bbox_tensor(sample.tensors.front(), frame_w, frame_h, topk, true)
+               .boxes;
     return true;
   } catch (const std::exception& ex) {
     if (err)
@@ -137,7 +154,7 @@ bool UdpOutputNodeGroup::init(const UdpOutputNodeGroupOptions& opt, size_t strea
 
       auto dummy = make_dummy_encoded_sample(1, opt_.h264_caps);
       auto run = std::make_shared<simaai::neat::Run>(
-          forward.build(dummy, simaai::neat::RunMode::Async, run_opt));
+          forward.build(SampleList{dummy}, simaai::neat::RunMode::Async, run_opt));
       runs_.push_back(std::move(run));
     }
   } catch (const std::exception& ex) {
@@ -152,13 +169,13 @@ bool UdpOutputNodeGroup::init(const UdpOutputNodeGroupOptions& opt, size_t strea
 bool UdpOutputNodeGroup::push_video(size_t idx, const simaai::neat::Sample& sample) const {
   if (idx >= runs_.size() || !runs_[idx])
     return false;
-  return runs_[idx]->push(sample);
+  return runs_[idx]->push(SampleList{sample});
 }
 
 bool UdpOutputNodeGroup::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
   if (idx >= runs_.size() || !runs_[idx])
     return false;
-  return runs_[idx]->try_push(sample);
+  return runs_[idx]->try_push(SampleList{sample});
 }
 
 void UdpOutputNodeGroup::stop() {

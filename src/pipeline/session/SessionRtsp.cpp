@@ -26,9 +26,6 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "builder/Node.h"
 #include "builder/NodeGroup.h"
-#include "builder/ConfigJsonProvider.h"
-#include "builder/ConfigJsonConsumer.h"
-#include "builder/NextCpuConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
 #include "contracts/ContractRegistry.h"
@@ -129,12 +126,7 @@ static RtspImplPtr rtsp_impl_shared(void* impl) {
 }
 
 static bool rtsp_debug_enabled() {
-  static int cached = -1;
-  if (cached < 0) {
-    const char* v = std::getenv("SIMA_RTSP_DEBUG");
-    cached = (v && *v && std::strcmp(v, "0") != 0) ? 1 : 0;
-  }
-  return cached == 1;
+  return simaai::neat::pipeline_internal::env_bool("SIMA_RTSP_DEBUG", false);
 }
 
 static bool stop_trace_enabled() {
@@ -144,7 +136,7 @@ static bool stop_trace_enabled() {
 static std::string ensure_mount_path(const std::string& mount) {
   if (mount.empty())
     return "/image";
-  if (!mount.empty() && mount[0] == '/')
+  if (mount[0] == '/')
     return mount;
   return "/" + mount;
 }

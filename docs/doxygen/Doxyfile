@@ -30,6 +30,14 @@ EXTRACT_ALL            = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+
+# Treat the first sentence of `///` single-line comments and `/** */` blocks
+# without an explicit `@brief` as the brief description. Lets contributors use
+# either style — explicit `@brief` or natural-language one-liner — and have the
+# brief surface in IDE hover and the published API reference.
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
 
 # Output formats
 GENERATE_HTML          = NO
@@ -47,4 +55,5 @@ STRIP_FROM_PATH        = .
 HAVE_DOT               = YES
 DOT_IMAGE_FORMAT       = svg
 INTERACTIVE_SVG        = YES
-CLASS_DIAGRAMS         = YES
+# CLASS_DIAGRAMS removed — obsolete in Doxygen 1.9+; class graphs are now controlled
+# by HAVE_DOT and the per-graph toggles (CLASS_GRAPH, COLLABORATION_GRAPH, etc.).

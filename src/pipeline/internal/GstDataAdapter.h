@@ -58,4 +58,7 @@ bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const Sam
 bool attach_video_meta(GstBuffer** buffer, const SampleSpec& spec, std::string* err);
 bool apply_tensor_size(GstBuffer** buffer, const SampleSpec& spec, std::string* err);
 
+bool wrap_cpu_dense_zero_copy(const simaai::neat::Tensor& tensor, GstBuffer** out,
+                              std::string* err);
+
 } // namespace simaai::neat::pipeline_internal

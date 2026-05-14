@@ -45,7 +45,18 @@ function(add_tutorial exe source)
   endif()
 
   if (NOT AT_NO_TEST)
-    add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+    if (AT_MODEL)
+      add_test(NAME ${exe}
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
+          ${AT_MODEL}
+          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}"
+          $<TARGET_FILE:${exe}>
+          ${test_args}
+      )
+    else()
+      add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+    endif()
     set_tests_properties(${exe} PROPERTIES
       LABELS "${label_list}"
       RESOURCE_LOCK "dispatcher"
@@ -192,7 +203,9 @@ install(
 )
 
 install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+  FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+    ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
   DESTINATION share/sima-neat/tutorials
   COMPONENT extras
   PERMISSIONS

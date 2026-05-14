@@ -85,6 +85,74 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             self.assertEqual(result.failure_class, schema.FailureClass.HARNESS_ERROR)
             self.assertEqual(result.reason_code, schema.ReasonCode.HARNESS_SCHEMA_INVALID)
 
+    def test_run_scenario_copies_power_payload_to_run_meta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build_dir = root / "build"
+            results_dir = root / "results"
+            exe = build_dir / "tests" / "fake_power_perf"
+            exe.parent.mkdir(parents=True)
+            exe.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json\n"
+                "print(json.dumps({\n"
+                "  'scenario_id': 'runtime_session_sync_rgb',\n"
+                "  'iterations': 1,\n"
+                "  'run_mode': 'sync',\n"
+                "  'throughput': 100.0,\n"
+                "  'p50': 1.0,\n"
+                "  'p95': 2.0,\n"
+                "  'startup': 3.0,\n"
+                "  'rss_peak_kb': 4.0,\n"
+                "  'input_drop_count': 0.0,\n"
+                "  'output_drop_count': 0.0,\n"
+                "  'power': {'samples': 2, 'total_avg_watts': 5.5},\n"
+                "  'runtime_metrics': {'source_kind': 'perf', 'throughput_fps': 100.0},\n"
+                "}))\n",
+                encoding="utf-8",
+            )
+            exe.chmod(0o755)
+
+            profile = schema.PerfProfile(
+                modalix_profile_id="modalix_default",
+                board_class="modalix-v1",
+                sdk_version="2.0.0",
+                compiler="g++",
+                gstreamer_version="1",
+                runtime_plugin_bundle_hash="abc",
+            )
+            baseline = schema.ScenarioBaseline(
+                scenario_id="runtime_session_sync_rgb",
+                model_id="synthetic",
+                pipeline_id="pass",
+                run_mode="sync",
+                iterations=1,
+                metrics_thresholds=schema.MetricsThresholds(
+                    throughput_min=1.0,
+                    p50_max=10.0,
+                    p95_max=10.0,
+                    startup_max=10.0,
+                    rss_peak_kb_max=100.0,
+                    input_drop_count_max=0.0,
+                    output_drop_count_max=0.0,
+                    regression_tolerance_percent=0.0,
+                ),
+            )
+            result = run_perf_matrix.run_scenario(
+                repo_root=root,
+                build_dir=build_dir,
+                results_dir=results_dir,
+                profile=profile,
+                spec=run_perf_matrix.ScenarioSpec("runtime_session_sync_rgb", "fake_power_perf"),
+                baseline=baseline,
+                timeout_sec=10,
+                iterations_override=1,
+            )
+
+            self.assertEqual(result.status, schema.ResultStatus.PASS)
+            self.assertEqual(result.run_meta["power"]["total_avg_watts"], 5.5)
+            self.assertEqual(result.run_meta["runtime_metrics"]["source_kind"], "perf")
+
 
 if __name__ == "__main__":
     unittest.main()

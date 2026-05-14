@@ -34,7 +34,7 @@ RUN_TEST("unit_mpk_pipeline_adapter_test", ([] {
            split.post = {
                SequenceEntry{.sequence_id = 4,
                              .name = "detess_0",
-                             .plugin_id = "detessdequant",
+                             .plugin_id = "processcvu",
                              .config_path = "3_detess.json",
                              .processor = "CVU",
                              .kernel = "detessdequant"},

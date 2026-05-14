@@ -7,7 +7,14 @@ set -euo pipefail
 BUILD_DIR=build
 BUILD_TYPE=Release
 OS_NAME="$(uname -s)"
-REPO_ROOT="$(pwd -P)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="${SCRIPT_DIR}"
+WORKSPACE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+ORIGINAL_SOURCE_DIR="${SIMANEAT_ORIGINAL_SOURCE_DIR:-${SCRIPT_DIR}}"
+ORIGINAL_WORKSPACE_ROOT="${SIMANEAT_ORIGINAL_WORKSPACE_ROOT:-${WORKSPACE_ROOT}}"
+SHADOW_BUILD_MODE="${SIMANEAT_SHADOW_BUILD:-auto}"
+SHADOW_BUILD_ACTIVE="${SIMANEAT_SHADOW_BUILD_ACTIVE:-OFF}"
+SOURCE_FS_TYPE=""
 cd "${REPO_ROOT}"
 
 # Defaults
@@ -101,6 +108,127 @@ SELECTED_SYSTEM_DEPS_LINUX=()
 SELECTED_SYSTEM_DEPS_MAC=()
 BUILD_JOBS=""
 
+detect_fs_type() {
+  local path="$1"
+  local fs_type=""
+
+  if command -v findmnt >/dev/null 2>&1; then
+    fs_type="$(findmnt -T "${path}" -n -o FSTYPE 2>/dev/null | head -n1 || true)"
+  fi
+
+  if [[ -z "${fs_type}" ]]; then
+    if [[ "${OS_NAME}" == "Darwin" ]]; then
+      fs_type="$(stat -f %T "${path}" 2>/dev/null || true)"
+    else
+      fs_type="$(stat -f -c %T "${path}" 2>/dev/null || true)"
+    fi
+  fi
+
+  printf '%s\n' "${fs_type}"
+}
+
+is_remote_fs_type() {
+  local fs_type="${1,,}"
+  case "${fs_type}" in
+    cifs|nfs|nfs4|smb2|smb3|smbfs|fuse.sshfs)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+shadow_workspace_path() {
+  local key
+  key="$(printf '%s\n' "${ORIGINAL_WORKSPACE_ROOT}" | cksum | awk '{print $1}')"
+  printf '%s\n' "${SIMANEAT_SHADOW_ROOT:-/tmp/sima-neat-shadow-${key}}"
+}
+
+prepare_shadow_workspace() {
+  local shadow_root="$1"
+
+  rm -rf "${shadow_root}"
+  mkdir -p "${shadow_root}"
+
+  tar -C "${ORIGINAL_WORKSPACE_ROOT}" \
+    --exclude="core/.git" \
+    --exclude="core/build" \
+    --exclude="core/build-*" \
+    --exclude="core/Testing" \
+    --exclude="core/dist" \
+    --exclude="core/tmp" \
+    --exclude="core/.pytest_cache" \
+    --exclude="core/.build-py" \
+    --exclude="core/__pycache__" \
+    --exclude="core/website/node_modules" \
+    --exclude="core/neat-internals/gst-plugins" \
+    --exclude="internals/.git" \
+    --exclude="internals/build" \
+    --exclude="internals/build-*" \
+    --exclude="internals/dist" \
+    --exclude="internals/tmp" \
+    -cf - \
+    core \
+    internals/core \
+    internals/gst_plugins \
+    internals/sima-ai-cvu-sw/graphs \
+    | tar -C "${shadow_root}" -xf -
+}
+
+maybe_reexec_from_shadow() {
+  if [[ "${SHADOW_BUILD_ACTIVE}" == "ON" || "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
+    return 0
+  fi
+
+  SOURCE_FS_TYPE="$(detect_fs_type "${ORIGINAL_SOURCE_DIR}")"
+
+  case "${SHADOW_BUILD_MODE,,}" in
+    off|0|false|no)
+      return 0
+      ;;
+    force|on|1|true|yes)
+      ;;
+    auto|"")
+      if ! is_remote_fs_type "${SOURCE_FS_TYPE}"; then
+        return 0
+      fi
+      ;;
+    *)
+      echo "ERROR: Unsupported SIMANEAT_SHADOW_BUILD mode: ${SHADOW_BUILD_MODE}" >&2
+      echo "Use one of: auto, off, force" >&2
+      exit 1
+      ;;
+  esac
+
+  local shadow_root
+  shadow_root="$(shadow_workspace_path)"
+
+  echo "Detected remote source filesystem: ${SOURCE_FS_TYPE:-unknown}"
+  echo "Preparing local shadow workspace at ${shadow_root}"
+  prepare_shadow_workspace "${shadow_root}"
+
+  echo "Re-running build from shadow workspace..."
+  (
+    cd "${shadow_root}/core"
+    SIMANEAT_SHADOW_BUILD_ACTIVE=ON \
+    SIMANEAT_ORIGINAL_SOURCE_DIR="${ORIGINAL_SOURCE_DIR}" \
+    SIMANEAT_ORIGINAL_WORKSPACE_ROOT="${ORIGINAL_WORKSPACE_ROOT}" \
+    bash "${shadow_root}/core/build.sh" "$@"
+  )
+  local rc=$?
+  if [[ "${rc}" -ne 0 ]]; then
+    echo "Shadow build failed. Workspace retained at ${shadow_root}" >&2
+    exit "${rc}"
+  fi
+
+  echo
+  echo "Shadow build completed successfully."
+  echo "Shadow source   : ${shadow_root}/core"
+  echo "Shadow build dir: ${shadow_root}/core/${BUILD_DIR}"
+  exit 0
+}
+
 usage() {
   cat <<USAGE
 Usage: ./build.sh [options]
@@ -124,6 +252,12 @@ Options:
   --install-deps-only
                  Install system dependencies only, then exit
   -h, --help     Show this help
+
+Environment:
+  SIMANEAT_SHADOW_BUILD=auto|off|force
+                 Auto-stage a local shadow workspace for builds from remote filesystems.
+  SIMANEAT_SHADOW_ROOT=/tmp/sima-neat-shadow-<id>
+                 Override where the shadow workspace is created.
 
 Examples:
   ./build.sh
@@ -539,7 +673,7 @@ download_file() {
     else
       curl -fL "${url}" -o "${out}"
     fi
-    return 0
+    return $?
   fi
   if command -v wget >/dev/null 2>&1; then
     if [[ -n "${basic_auth}" ]]; then
@@ -553,7 +687,7 @@ download_file() {
     else
       wget -O "${out}" "${url}"
     fi
-    return 0
+    return $?
   fi
   return 1
 }
@@ -645,7 +779,7 @@ collect_plugin_files_from_debs() {
     if command -v apt >/dev/null 2>&1; then
       mapfile -t deb_abs_files < <(for deb in "${deb_files[@]}"; do realpath "${deb}"; done)
       # Use apt for local .deb install so dependency resolution happens automatically in CI.
-      if ! run_privileged apt install -y --allow-downgrades "${deb_abs_files[@]}"; then
+      if ! run_privileged apt install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${deb_abs_files[@]}"; then
         echo "ERROR: Failed to install neat-internals .deb packages via apt." >&2
         exit 1
       fi
@@ -1490,6 +1624,7 @@ main() {
   # High-level pipeline:
   # parse -> bootstrap deps -> sync internals -> configure/build -> package -> summary
   parse_args "$@"
+  maybe_reexec_from_shadow "$@"
   validate_build_mode_combinations
   apply_sanitizer_build_profile
   detect_elxr_sdk

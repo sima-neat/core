@@ -2,6 +2,7 @@
 
 #include "builder/NodeGroup.h"
 #include "builder/Node.h"
+#include "pipeline/internal/EnvUtil.h"
 
 #include <cstddef>
 #include <cstdlib>
@@ -13,8 +14,7 @@ namespace simaai::neat {
 namespace {
 
 bool outputspec_debug_enabled() {
-  const char* env = std::getenv("SIMA_DEBUG_OUTPUTSPEC_LOG");
-  return env && env[0] != '\0' && env[0] != '0';
+  return pipeline_internal::env_bool("SIMA_DEBUG_OUTPUTSPEC_LOG", false);
 }
 
 std::string spec_to_string(const OutputSpec& spec) {
