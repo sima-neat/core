@@ -136,7 +136,7 @@ jobs:
 
   build:
     if: needs.resolve-mode.outputs.build_mode == 'standard'
-    runs-on: [self-hosted, Linux, X64, elxr-sdk]
+    runs-on: [self-hosted, Linux, X64, elxr-sdk, cutting-edge]
     needs: [resolve-mode, clang-tidy]
 
     steps:
