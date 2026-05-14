@@ -31,6 +31,25 @@ target_link_libraries(_pyneat_core PRIVATE sima_neat_internal)
 target_include_directories(_pyneat_core PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
+
+# PyNeat is commonly installed into a venv while NEAT internals are installed as
+# system DEBs.  The extension has direct NEEDED entries on NEAT GStreamer/runtime
+# libraries (allocator, buffer pool, tensor buffer, prepared runtime bridge), so
+# keep the board install locations in its RUNPATH instead of relying on callers
+# to set LD_LIBRARY_PATH before importing pyneat.
+set(PYNEAT_RUNTIME_RPATH_DIRS
+  "$ORIGIN"
+  "$ORIGIN/../neat-internals/gst-plugins"
+  "/usr/lib/aarch64-linux-gnu/neat/gst-plugins"
+  "/usr/lib/aarch64-linux-gnu/neat/runtime"
+  "/usr/lib/sima-neat/gst-plugins"
+  "/usr/lib/aarch64-linux-gnu/gstreamer-1.0"
+)
+set_target_properties(_pyneat_core PROPERTIES
+  BUILD_RPATH "${PYNEAT_RUNTIME_RPATH_DIRS}"
+  INSTALL_RPATH "${PYNEAT_RUNTIME_RPATH_DIRS}"
+)
+
 if (DEFINED SIMANEAT_VERSION)
   target_compile_definitions(_pyneat_core PRIVATE PYNEAT_VERSION="${SIMANEAT_VERSION}")
 endif()
