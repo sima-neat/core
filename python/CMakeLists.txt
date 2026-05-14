@@ -99,3 +99,9 @@ install(
   FILES_MATCHING
   PATTERN "*.py"
 )
+
+install(
+  PROGRAMS ${PROJECT_SOURCE_DIR}/scripts/neat
+  DESTINATION share/sima-neat/scripts
+  COMPONENT extras
+)

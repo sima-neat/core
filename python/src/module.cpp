@@ -98,6 +98,7 @@ using simaai::neat::Tensor;
 using simaai::neat::TensorConstraint;
 using simaai::neat::TensorDType;
 using simaai::neat::TensorLayout;
+using simaai::neat::TensorMemory;
 using simaai::neat::ValidateOptions;
 using simaai::neat::dlpack::DLDataTypeCode;
 using simaai::neat::dlpack::DLManagedTensor;
@@ -586,7 +587,8 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
 
 Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
                                       const std::optional<TensorLayout>& layout,
-                                      const std::optional<ImageSpec::PixelFormat>& image_format) {
+                                      const std::optional<ImageSpec::PixelFormat>& image_format,
+                                      TensorMemory memory) {
   if (!PyCapsule_IsValid(capsule_obj, "dltensor")) {
     throw std::runtime_error("expected an unconsumed dltensor capsule");
   }
@@ -681,22 +683,35 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
   if (copy) {
     if (chw_to_hwc_converted) {
       out.read_only = false;
-      return out;
+    } else {
+      Tensor cloned = out.clone();
+      cloned.layout = out.layout;
+      cloned.semantic = out.semantic;
+      cloned.read_only = false;
+      out = std::move(cloned);
     }
-    Tensor cloned = out.clone();
-    cloned.layout = out.layout;
-    cloned.semantic = out.semantic;
-    cloned.read_only = false;
-    return cloned;
   }
 
-  return out;
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+    return out;
+  }
+  if (memory == TensorMemory::EV74) {
+    return out.cvu();
+  }
+  if (memory == TensorMemory::MLA) {
+    return out.mla(true);
+  }
+  throw std::runtime_error("unsupported TensorMemory placement for Python tensor import");
 }
 
 Tensor tensor_from_dlpack_capsule(const nb::capsule& capsule, bool copy,
                                   const std::optional<TensorLayout>& layout,
-                                  const std::optional<ImageSpec::PixelFormat>& image_format) {
-  return tensor_from_dlpack_capsule_obj(capsule.ptr(), copy, layout, image_format);
+                                  const std::optional<ImageSpec::PixelFormat>& image_format,
+                                  TensorMemory memory) {
+  return tensor_from_dlpack_capsule_obj(capsule.ptr(), copy, layout, image_format, memory);
 }
 
 std::optional<TensorLayout> infer_layout_from_object(const nb::object& obj,
@@ -802,7 +817,8 @@ std::optional<TensorLayout> infer_layout_from_object(const nb::object& obj,
 
 Tensor tensor_from_dlpack_like_object(const nb::object& input, bool copy,
                                       const std::optional<TensorLayout>& layout,
-                                      const std::optional<ImageSpec::PixelFormat>& image_format) {
+                                      const std::optional<ImageSpec::PixelFormat>& image_format,
+                                      TensorMemory memory) {
   nb::object source = input;
 
   // Match Python wrapper behavior: for torch tensors, move non-CPU tensors to CPU.
@@ -838,13 +854,14 @@ Tensor tensor_from_dlpack_like_object(const nb::object& input, bool copy,
   }
 
   nb::object capsule_obj = source.attr("__dlpack__")();
-  return tensor_from_dlpack_capsule_obj(capsule_obj.ptr(), copy,
-                                        infer_layout_from_object(source, layout), image_format);
+  return tensor_from_dlpack_capsule_obj(
+      capsule_obj.ptr(), copy, infer_layout_from_object(source, layout), image_format, memory);
 }
 
 Tensor tensor_from_python_input(const nb::object& input, bool copy,
                                 const std::optional<TensorLayout>& layout,
-                                const std::optional<ImageSpec::PixelFormat>& image_format) {
+                                const std::optional<ImageSpec::PixelFormat>& image_format,
+                                TensorMemory memory = TensorMemory::EV74) {
   if (nb::isinstance<Tensor>(input)) {
     Tensor tensor = nb::cast<Tensor>(input);
     if (image_format.has_value() && !tensor.semantic.image.has_value()) {
@@ -852,7 +869,7 @@ Tensor tensor_from_python_input(const nb::object& input, bool copy,
     }
     return tensor;
   }
-  return tensor_from_dlpack_like_object(input, copy, layout, image_format);
+  return tensor_from_dlpack_like_object(input, copy, layout, image_format, memory);
 }
 
 std::optional<ImageSpec::PixelFormat> model_image_format_hint(const simaai::neat::Model& model) {
@@ -867,14 +884,15 @@ std::optional<ImageSpec::PixelFormat> model_image_format_hint(const simaai::neat
 std::vector<Tensor>
 tensor_batch_from_python_input(const nb::object& input, bool copy,
                                const std::optional<TensorLayout>& layout,
-                               const std::optional<ImageSpec::PixelFormat>& image_format) {
+                               const std::optional<ImageSpec::PixelFormat>& image_format,
+                               TensorMemory memory = TensorMemory::EV74) {
   std::vector<Tensor> tensors;
   if (PyList_Check(input.ptr())) {
     nb::list items = nb::borrow<nb::list>(input);
     tensors.reserve(items.size());
     for (nb::handle h : items) {
       tensors.emplace_back(
-          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format));
+          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format, memory));
     }
     return tensors;
   }
@@ -883,7 +901,7 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     tensors.reserve(items.size());
     for (nb::handle h : items) {
       tensors.emplace_back(
-          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format));
+          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format, memory));
     }
     return tensors;
   }
@@ -1000,6 +1018,13 @@ NB_MODULE(_pyneat_core, m) {
       .value("HWC", TensorLayout::HWC)
       .value("CHW", TensorLayout::CHW)
       .value("HW", TensorLayout::HW);
+
+  nb::enum_<TensorMemory>(m, "TensorMemory")
+      .value("Auto", TensorMemory::Auto)
+      .value("CPU", TensorMemory::CPU)
+      .value("A65", TensorMemory::A65)
+      .value("EV74", TensorMemory::EV74)
+      .value("MLA", TensorMemory::MLA);
 
   nb::enum_<simaai::neat::TensorAxisSemantic>(m, "TensorAxisSemantic")
       .value("Unknown", simaai::neat::TensorAxisSemantic::Unknown)
@@ -1198,10 +1223,11 @@ NB_MODULE(_pyneat_core, m) {
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
-             std::optional<ImageSpec::PixelFormat> image_format) {
-            return tensor_from_dlpack_capsule(capsule, copy, layout, image_format);
+             std::optional<ImageSpec::PixelFormat> image_format, TensorMemory memory) {
+            return tensor_from_dlpack_capsule(capsule, copy, layout, image_format, memory);
           },
-          "capsule"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
+          "capsule"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none(),
+          "memory"_a = TensorMemory::EV74)
       .def(
           "__dlpack__",
           [](const simaai::neat::Tensor& t, nb::object stream) {

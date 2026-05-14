@@ -98,6 +98,18 @@ def _tensor_input_model(
   return pyneat.Model(str(model_tar), opt)
 
 
+def _image_input_model(
+    model_tar: Path, decode_type: pyneat.BoxDecodeType = pyneat.BoxDecodeType.Unspecified
+) -> pyneat.Model:
+  opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.enable = pyneat.AutoFlag.On
+  opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+  opt.decode_type = decode_type
+  return pyneat.Model(str(model_tar), opt)
+
+
 def _run_model_on_image(model: pyneat.Model, image: np.ndarray, *parts) -> pyneat.Sample:
   session = pyneat.Session()
   session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
@@ -279,7 +291,7 @@ def test_model_backed_option_structs_preserve_real_fixture_semantics():
   resnet_preproc_opt.preprocess.normalize.enable = pyneat.AutoFlag.On
   resnet_preproc_model = pyneat.Model(str(_env_path("SIMA_RESNET50_TAR")), resnet_preproc_opt)
   quant_model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
-  yolo_model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
+  yolo_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
 
   pre = pyneat.PreprocOptions(resnet_preproc_model)
   quant = pyneat.QuantTessOptions(quant_model)
@@ -304,7 +316,7 @@ def test_model_backed_option_structs_preserve_real_fixture_semantics():
 
 def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
 
   mla_output = _run_model_on_image(
       model,
@@ -331,10 +343,8 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
 
 def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  detess_model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")))
-  boxdecode_opt = pyneat.ModelOptions()
-  boxdecode_opt.decode_type = pyneat.BoxDecodeType.YoloV8
-  boxdecode_model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")), boxdecode_opt)
+  detess_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
+  boxdecode_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
 
   detess_output = _run_model_on_image(
       detess_model,
@@ -397,9 +407,9 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
 
 def test_cpu_quanttess_input_matches_letterboxed_fp32_tensor_contract():
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
+  preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"))
 
-  quant_input = _cpu_quanttess_input(model, image)
+  quant_input = _cpu_quanttess_input(preproc_model, image)
 
   assert list(quant_input.shape) == [640, 640, 3]
   assert quant_input.dtype == np.float32
@@ -447,7 +457,8 @@ def _run_quanttess_boxdecode_on_real_input(
 def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
-  quant_input = _cpu_quanttess_input(model, image)
+  preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  quant_input = _cpu_quanttess_input(preproc_model, image)
 
   counts = []
   for threshold in BOXDECODE_THRESHOLDS:
@@ -485,7 +496,8 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
 def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
-  quant_input = _cpu_quanttess_input(model, image)
+  preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
+  quant_input = _cpu_quanttess_input(preproc_model, image)
 
   counts = []
   for threshold in BOXDECODE_THRESHOLDS:
@@ -524,9 +536,7 @@ def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path
 
 def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
-  opt = pyneat.ModelOptions()
-  opt.decode_type = pyneat.BoxDecodeType.YoloV8
-  model = pyneat.Model(str(_env_path("SIMA_YOLO_TAR")), opt)
+  model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
 
   counts = []
   for threshold in BOXDECODE_THRESHOLDS:
