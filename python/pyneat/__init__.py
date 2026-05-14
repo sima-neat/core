@@ -69,6 +69,8 @@ def _configure_neat_runtime_environment():
       path
       for path in directories
       if (path / "libprocesscvu_testhooks.so").exists()
+      or (path / "libneattensorbufferfast.so").exists()
+      or (path / "libsimaaineatprofiler.so").exists()
       or (path / "libneatpreparedruntimebridge.so").exists()
       or (path / "libsimaaimem.so").exists()
   ]
@@ -102,6 +104,8 @@ def _preload_neat_runtime_libraries():
       "libgstsimaaimeta.so",
       "libsimaaimem.so",
       "libprocesscvu_testhooks.so",
+      "libneattensorbufferfast.so",
+      "libsimaaineatprofiler.so",
       "libgstneatallocator.so",
       "libgstneatbufferpool.so",
       "libgstneattensorbuffer.so",

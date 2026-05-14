@@ -267,22 +267,27 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract():
   model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
 
+  input_tensor = _rgb_tensor(image)
+  runner = model.build(input_tensor)
   summaries = []
-  for _ in range(3):
-    output = model.run(_rgb_tensor(image), timeout_ms=20000)
-    assert output.kind == pyneat.SampleKind.Tensor
-    assert output.tensor is not None
-    summaries.append(
-        {
-            "shape": list(output.tensor.shape),
-            "dtype": output.tensor.dtype,
-            "payload_tag": output.payload_tag,
-            "format": output.format,
-            "media_type": output.media_type,
-            "argmax": int(output.tensor.to_numpy(copy=True).reshape(-1).argmax()),
-        }
-    )
-    del output
+  try:
+    for _ in range(3):
+      output = runner.run(_rgb_tensor(image), timeout_ms=20000)
+      assert output.kind == pyneat.SampleKind.Tensor
+      assert output.tensor is not None
+      summaries.append(
+          {
+              "shape": list(output.tensor.shape),
+              "dtype": output.tensor.dtype,
+              "payload_tag": output.payload_tag,
+              "format": output.format,
+              "media_type": output.media_type,
+              "argmax": int(output.tensor.to_numpy(copy=True).reshape(-1).argmax()),
+          }
+      )
+      del output
+  finally:
+    runner.close()
 
   assert all(summary["shape"] == [1, 1, 1, 1000] for summary in summaries)
   assert all(summary["dtype"] == pyneat.TensorDType.Float32 for summary in summaries)
