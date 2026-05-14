@@ -18,6 +18,7 @@
 #include "builder/NodeContractConfigurable.h"
 #include "builder/NodeContractProvider.h"
 #include "builder/OutputSpec.h"
+#include "model/PreprocessPlan.h"
 #include "pipeline/BoxDecodeType.h"
 #ifdef SIMA_NEAT_INTERNAL
 #include "model/internal/ModelRouteRetarget.h"
