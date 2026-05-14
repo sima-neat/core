@@ -496,6 +496,49 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     }
   }
 
+  // Defensive recursive fallback: sima-cli reports "File already exists and is
+  // complete: yolo_v8s_mpk.tar.gz" when its own cache has the file, but the
+  // exact cache layout (subdir-per-model, environment-specific paths) is
+  // not directly observable from the resolver — it can't see sima-cli's
+  // stdout. The top-level + per-known-cache-dir scan above misses these
+  // sub-cached copies and the test then trips with
+  // "Failed to locate yolo_v8s MPK tarball" even though sima-cli succeeded.
+  // Walk a bounded set of cache roots one level deep so we recover the file
+  // wherever sima-cli's modelzoo layout put it, then move it into tmp_tar so
+  // subsequent calls hit the fast path. Skip if a candidate cache root is
+  // missing — we don't want this fallback to slow down the common path with
+  // nonexistent traversals.
+  const std::vector<fs::path> recursive_roots = {
+      root,
+      fs::current_path(),
+      home_path.empty() ? fs::path{} : home_path / ".simaai",
+      home_path.empty() ? fs::path{} : home_path / ".sima",
+      "/data/simaai",
+  };
+  for (const auto& base : recursive_roots) {
+    if (base.empty())
+      continue;
+    std::error_code rec_ec;
+    if (!fs::is_directory(base, rec_ec) || rec_ec)
+      continue;
+    fs::recursive_directory_iterator it(base,
+                                        fs::directory_options::skip_permission_denied,
+                                        rec_ec);
+    if (rec_ec)
+      continue;
+    for (const auto& entry : it) {
+      if (!entry.is_regular_file(rec_ec) || rec_ec)
+        continue;
+      const std::string fname = entry.path().filename().string();
+      for (const auto& name : names) {
+        if (fname == name && is_usable_regular_file(entry.path()) &&
+            move_to_tmp(entry.path(), tmp_tar)) {
+          return tmp_tar.string();
+        }
+      }
+    }
+  }
+
   return "";
 }
 
