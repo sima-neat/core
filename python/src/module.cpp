@@ -72,6 +72,8 @@ namespace {
 
 using simaai::neat::Device;
 using simaai::neat::DeviceType;
+using simaai::neat::ByteFormat;
+using simaai::neat::ByteStreamSpec;
 using simaai::neat::ImageSpec;
 using simaai::neat::MapMode;
 using simaai::neat::OutputMemory;
@@ -588,6 +590,7 @@ PyObject* tensor_to_dlpack_capsule(const Tensor& input) {
 Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
                                       const std::optional<TensorLayout>& layout,
                                       const std::optional<ImageSpec::PixelFormat>& image_format,
+                                      const std::optional<ByteFormat>& byte_format,
                                       TensorMemory memory) {
   if (!PyCapsule_IsValid(capsule_obj, "dltensor")) {
     throw std::runtime_error("expected an unconsumed dltensor capsule");
@@ -676,6 +679,15 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
   if (image_format.has_value()) {
     out.semantic.image = ImageSpec{*image_format, ""};
   }
+  if (byte_format.has_value()) {
+    if (image_format.has_value()) {
+      throw std::runtime_error("byte_format tensors cannot also specify image_format");
+    }
+    ByteStreamSpec spec;
+    spec.format = *byte_format;
+    out.semantic.byte_stream = spec;
+    out.layout = TensorLayout::Unknown;
+  }
 
   bool chw_to_hwc_converted = false;
   out = maybe_convert_chw_image_to_hwc(std::move(out), &chw_to_hwc_converted);
@@ -710,8 +722,10 @@ Tensor tensor_from_dlpack_capsule_obj(PyObject* capsule_obj, bool copy,
 Tensor tensor_from_dlpack_capsule(const nb::capsule& capsule, bool copy,
                                   const std::optional<TensorLayout>& layout,
                                   const std::optional<ImageSpec::PixelFormat>& image_format,
-                                  TensorMemory memory) {
-  return tensor_from_dlpack_capsule_obj(capsule.ptr(), copy, layout, image_format, memory);
+                                  TensorMemory memory,
+                                  const std::optional<ByteFormat>& byte_format) {
+  return tensor_from_dlpack_capsule_obj(capsule.ptr(), copy, layout, image_format, byte_format,
+                                       memory);
 }
 
 std::optional<TensorLayout> infer_layout_from_object(const nb::object& obj,
@@ -818,6 +832,7 @@ std::optional<TensorLayout> infer_layout_from_object(const nb::object& obj,
 Tensor tensor_from_dlpack_like_object(const nb::object& input, bool copy,
                                       const std::optional<TensorLayout>& layout,
                                       const std::optional<ImageSpec::PixelFormat>& image_format,
+                                      const std::optional<ByteFormat>& byte_format,
                                       TensorMemory memory) {
   nb::object source = input;
 
@@ -854,37 +869,41 @@ Tensor tensor_from_dlpack_like_object(const nb::object& input, bool copy,
   }
 
   nb::object capsule_obj = source.attr("__dlpack__")();
-  return tensor_from_dlpack_capsule_obj(
-      capsule_obj.ptr(), copy, infer_layout_from_object(source, layout), image_format, memory);
+  return tensor_from_dlpack_capsule_obj(capsule_obj.ptr(), copy,
+                                       byte_format ? std::optional<TensorLayout>(TensorLayout::Unknown)
+                                                   : infer_layout_from_object(source, layout),
+                                       image_format, byte_format, memory);
 }
 
 Tensor tensor_from_python_input(const nb::object& input, bool copy,
                                 const std::optional<TensorLayout>& layout,
                                 const std::optional<ImageSpec::PixelFormat>& image_format,
+                                const std::optional<ByteFormat>& byte_format = std::nullopt,
                                 TensorMemory memory = TensorMemory::EV74) {
   if (nb::isinstance<Tensor>(input)) {
     Tensor tensor = nb::cast<Tensor>(input);
     if (image_format.has_value() && !tensor.semantic.image.has_value()) {
       tensor.semantic.image = ImageSpec{*image_format, ""};
     }
+    if (byte_format.has_value()) {
+      if (image_format.has_value() || tensor.semantic.image.has_value()) {
+        throw std::runtime_error("byte_format tensors cannot also specify image_format");
+      }
+      ByteStreamSpec spec;
+      spec.format = *byte_format;
+      tensor.semantic.byte_stream = spec;
+      tensor.layout = TensorLayout::Unknown;
+    }
     return tensor;
   }
-  return tensor_from_dlpack_like_object(input, copy, layout, image_format, memory);
-}
-
-std::optional<ImageSpec::PixelFormat> model_image_format_hint(const simaai::neat::Model& model) {
-  try {
-    const TensorConstraint spec = model.input_spec();
-    return spec.image_format;
-  } catch (...) {
-    return std::nullopt;
-  }
+  return tensor_from_dlpack_like_object(input, copy, layout, image_format, byte_format, memory);
 }
 
 std::vector<Tensor>
 tensor_batch_from_python_input(const nb::object& input, bool copy,
                                const std::optional<TensorLayout>& layout,
                                const std::optional<ImageSpec::PixelFormat>& image_format,
+                               const std::optional<ByteFormat>& byte_format = std::nullopt,
                                TensorMemory memory = TensorMemory::EV74) {
   std::vector<Tensor> tensors;
   if (PyList_Check(input.ptr())) {
@@ -892,7 +911,8 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     tensors.reserve(items.size());
     for (nb::handle h : items) {
       tensors.emplace_back(
-          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format, memory));
+          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format,
+                                   byte_format, memory));
     }
     return tensors;
   }
@@ -901,7 +921,8 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     tensors.reserve(items.size());
     for (nb::handle h : items) {
       tensors.emplace_back(
-          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format, memory));
+          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format,
+                                   byte_format, memory));
     }
     return tensors;
   }
@@ -1079,6 +1100,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<SampleKind>(m, "SampleKind")
       .value("Tensor", SampleKind::Tensor)
+      .value("TensorSet", SampleKind::TensorSet)
       .value("Bundle", SampleKind::Bundle)
       .value("Unknown", SampleKind::Unknown);
 
@@ -1133,6 +1155,14 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("codec", &simaai::neat::EncodedSpec::codec);
 
+  nb::enum_<simaai::neat::ByteFormat>(m, "ByteFormat")
+      .value("Raw", simaai::neat::ByteFormat::Raw);
+
+  nb::class_<simaai::neat::ByteStreamSpec>(m, "ByteStreamSpec")
+      .def(nb::init<>())
+      .def_rw("format", &simaai::neat::ByteStreamSpec::format)
+      .def_rw("description", &simaai::neat::ByteStreamSpec::description);
+
   nb::enum_<simaai::neat::EncodedSpec::Codec>(m, "EncodedCodec")
       .value("H264", simaai::neat::EncodedSpec::Codec::H264)
       .value("H265", simaai::neat::EncodedSpec::Codec::H265)
@@ -1160,6 +1190,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("image", &simaai::neat::Semantic::image)
       .def_rw("audio", &simaai::neat::Semantic::audio)
       .def_rw("tokens", &simaai::neat::Semantic::tokens)
+      .def_rw("byte_stream", &simaai::neat::Semantic::byte_stream)
       .def_rw("tess", &simaai::neat::Semantic::tess)
       .def_rw("encoded", &simaai::neat::Semantic::encoded)
       .def_rw("quant", &simaai::neat::Semantic::quant);
@@ -1223,11 +1254,13 @@ NB_MODULE(_pyneat_core, m) {
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
-             std::optional<ImageSpec::PixelFormat> image_format, TensorMemory memory) {
-            return tensor_from_dlpack_capsule(capsule, copy, layout, image_format, memory);
+             std::optional<ImageSpec::PixelFormat> image_format,
+             TensorMemory memory, std::optional<ByteFormat> byte_format) {
+            return tensor_from_dlpack_capsule(capsule, copy, layout, image_format, memory,
+                                             byte_format);
           },
           "capsule"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none(),
-          "memory"_a = TensorMemory::EV74)
+          "memory"_a = TensorMemory::EV74, "byte_format"_a = nb::none())
       .def(
           "__dlpack__",
           [](const simaai::neat::Tensor& t, nb::object stream) {
@@ -1338,6 +1371,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("kind", &Sample::kind)
       .def_rw("owned", &Sample::owned)
       .def_rw("tensor", &Sample::tensor)
+      .def_rw("tensors", &Sample::tensors)
       .def_rw("fields", &Sample::fields)
       .def_rw("caps_string", &Sample::caps_string)
       .def_rw("media_type", &Sample::media_type)
@@ -1557,13 +1591,19 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) -> nb::object {
             if (nb::isinstance<Sample>(input)) {
               auto sample = nb::cast<Sample>(input);
-              nb::gil_scoped_release release;
-              auto out = run.run(simaai::neat::SampleList{sample}, timeout_ms);
+              simaai::neat::SampleList out;
+              {
+                nb::gil_scoped_release release;
+                out = run.run(simaai::neat::SampleList{sample}, timeout_ms);
+              }
               return nb::cast(std::move(out));
             }
             auto tensor = tensor_from_python_input(input, copy, layout, image_format);
-            nb::gil_scoped_release release;
-            auto out = run.run(simaai::neat::TensorList{tensor}, timeout_ms);
+            simaai::neat::TensorList out;
+            {
+              nb::gil_scoped_release release;
+              out = run.run(simaai::neat::TensorList{tensor}, timeout_ms);
+            }
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
@@ -2331,12 +2371,20 @@ NB_MODULE(_pyneat_core, m) {
              std::optional<ImageSpec::PixelFormat> image_format) -> nb::object {
             if (nb::isinstance<Sample>(input)) {
               auto sample = nb::cast<Sample>(input);
-              nb::gil_scoped_release release;
-              return nb::cast(runner.run(simaai::neat::SampleList{sample}, timeout_ms));
+              simaai::neat::SampleList out;
+              {
+                nb::gil_scoped_release release;
+                out = runner.run(simaai::neat::SampleList{sample}, timeout_ms);
+              }
+              return nb::cast(std::move(out));
             }
             auto tensor = tensor_from_python_input(input, copy, layout, image_format);
-            nb::gil_scoped_release release;
-            return nb::cast(runner.run(simaai::neat::TensorList{tensor}, timeout_ms));
+            simaai::neat::TensorList out;
+            {
+              nb::gil_scoped_release release;
+              out = runner.run(simaai::neat::TensorList{tensor}, timeout_ms);
+            }
+            return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
@@ -2405,8 +2453,7 @@ NB_MODULE(_pyneat_core, m) {
               auto sample = nb::cast<Sample>(input);
               return model.build(simaai::neat::SampleList{sample}, session_options, run_options);
             }
-            auto tensor =
-                tensor_from_python_input(input, copy, std::nullopt, model_image_format_hint(model));
+            auto tensor = tensor_from_python_input(input, copy, std::nullopt, std::nullopt);
             return model.build(simaai::neat::TensorList{tensor}, session_options, run_options);
           },
           "input"_a, "session_options"_a = simaai::neat::Model::SessionOptions{},
@@ -2425,19 +2472,29 @@ NB_MODULE(_pyneat_core, m) {
              bool copy) -> nb::object {
             if (nb::isinstance<Sample>(input)) {
               auto sample = nb::cast<Sample>(input);
-              nb::gil_scoped_release release;
-              return nb::cast(model.run(simaai::neat::SampleList{sample}, timeout_ms));
+              simaai::neat::SampleList out;
+              {
+                nb::gil_scoped_release release;
+                out = model.run(simaai::neat::SampleList{sample}, timeout_ms);
+              }
+              return nb::cast(std::move(out));
             }
-            const std::optional<ImageSpec::PixelFormat> image_format =
-                model_image_format_hint(model);
             if (PyList_Check(input.ptr()) || PyTuple_Check(input.ptr())) {
-              auto batch = tensor_batch_from_python_input(input, copy, std::nullopt, image_format);
-              nb::gil_scoped_release release;
-              return nb::cast(model.run(batch, timeout_ms));
+              auto batch = tensor_batch_from_python_input(input, copy, std::nullopt, std::nullopt);
+              simaai::neat::TensorList out;
+              {
+                nb::gil_scoped_release release;
+                out = model.run(batch, timeout_ms);
+              }
+              return nb::cast(std::move(out));
             }
-            auto tensor = tensor_from_python_input(input, copy, std::nullopt, image_format);
-            nb::gil_scoped_release release;
-            return nb::cast(model.run(simaai::neat::TensorList{tensor}, timeout_ms));
+            auto tensor = tensor_from_python_input(input, copy, std::nullopt, std::nullopt);
+            simaai::neat::TensorList out;
+            {
+              nb::gil_scoped_release release;
+              out = model.run(simaai::neat::TensorList{tensor}, timeout_ms);
+            }
+            return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false);
 
@@ -2559,20 +2616,46 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,
-         int original_width, int original_height, int model_width, int model_height,
-         double detection_threshold, double nms_iou_threshold, int top_k) {
-        if (model_width > 0 || model_height > 0) {
-          return simaai::neat::nodes::SimaBoxDecode(
-              decode_type, detection_threshold, nms_iou_threshold, top_k,
-              /*element_name=*/"", original_width, original_height, model_width, model_height);
-        }
+         int original_width, int original_height, double detection_threshold,
+         double nms_iou_threshold, int top_k) {
         return simaai::neat::nodes::SimaBoxDecode(
             model, decode_type, detection_threshold, nms_iou_threshold, top_k,
             /*element_name=*/"", std::nullopt, std::nullopt, original_width, original_height);
       },
+      "model"_a, "decode_type"_a, "original_width"_a, "original_height"_a,
+      "detection_threshold"_a, "nms_iou_threshold"_a, "top_k"_a);
+  nodes_mod.def(
+      "sima_box_decode",
+      [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,
+         int original_width, int original_height, int model_width, int model_height,
+         double detection_threshold, double nms_iou_threshold, int top_k,
+         std::optional<simaai::neat::ResizeMode> resize_mode) {
+        // When a Model is provided, always go through the model-bound
+        // constructor: it pulls the model's compiled boxdecode contract
+        // (decode family, quant scales/zero-points, tensor layout, etc.) and
+        // populates `compiled_contract`, which lets `compile_node_contract`
+        // short-circuit upstream-inference at session build time. Geometry
+        // and resize-mode overrides flow through the same path as optional
+        // refinements; they never cause the binding to silently fall back to
+        // the raw-geometry (no-model) constructor — that path can't recover
+        // the model's quant metadata and surfaces as
+        //   "boxdecode inferred quantized contract requires upstream q_scale/q_zp"
+        // for any composition whose immediate upstream stage is MLA-only.
+        //
+        // `resize_mode` is for compositions that skip the model's Preproc
+        // stage (e.g. CPU-letterboxed FP32 tensor directly into
+        // quanttess → mla → boxdecode). It relaxes the per-buffer required-
+        // meta contract by stripping `preproc_resize_mode`, so a buffer that
+        // has no upstream Preproc emitter doesn't get rejected at chain time.
+        return simaai::neat::nodes::SimaBoxDecode(
+            model, decode_type, detection_threshold, nms_iou_threshold, top_k,
+            /*element_name=*/"", std::nullopt, std::nullopt, original_width, original_height,
+            model_width, model_height, resize_mode);
+      },
       "model"_a, "decode_type"_a = simaai::neat::BoxDecodeType::Unspecified, "original_width"_a = 0,
       "original_height"_a = 0, "model_width"_a = 0, "model_height"_a = 0,
-      "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0);
+      "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0,
+      "resize_mode"_a = std::nullopt);
 
   nb::module_ graph_mod = m.def_submodule("graph", "Hybrid graph runtime and helper nodes");
 

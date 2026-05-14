@@ -88,6 +88,22 @@ public:
    * @param route_quant_needed   Override: does the route need a quant stage upstream?
    * @param original_width       Width of the unscaled source frame.
    * @param original_height      Height of the unscaled source frame.
+   * @param model_width          Optional override: model-input width. `0` = derive from the
+   *                             model pack (default). When set, the value flows through to the
+   *                             decoder kernel's spatial knobs; the model-managed
+   *                             `compiled_contract` still drives quant / decode-family / tensor
+   *                             layout, so callers can override geometry without falling off the
+   *                             model-managed contract path.
+   * @param model_height         Optional override: model-input height. Same semantics as
+   *                             `model_width`. Both must be set together (or both zero).
+   * @param resize_mode_override Optional override: explicit preprocess resize mode
+   *                             (`Stretch`/`Letterbox`/`Crop`). Use when running the model
+   *                             without an upstream `Preproc` stage and the per-buffer
+   *                             `preproc_resize_mode` meta isn't being written by an
+   *                             upstream element. When set, the contract drops
+   *                             `preproc_resize_mode` from the required-meta list so buffers
+   *                             flow through cleanly; otherwise the value is sourced from
+   *                             per-buffer `GstSimaaiPreprocessMeta` as before.
    * @param decode_type_option   Decoder sub-variant selector.
    */
   explicit SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
@@ -95,7 +111,9 @@ public:
                          int top_k = 0, const std::string& element_name = "",
                          std::optional<bool> route_tess_needed = std::nullopt,
                          std::optional<bool> route_quant_needed = std::nullopt,
-                         int original_width = 0, int original_height = 0,
+                         int original_width = 0, int original_height = 0, int model_width = 0,
+                         int model_height = 0,
+                         std::optional<ResizeMode> resize_mode_override = std::nullopt,
                          BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 #ifdef SIMA_NEAT_INTERNAL
   /// Internal constructor: takes a pre-extracted static contract (used by the planner).
@@ -183,7 +201,9 @@ std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
     double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = "",
     std::optional<bool> route_tess_needed = std::nullopt,
     std::optional<bool> route_quant_needed = std::nullopt, int original_width = 0,
-    int original_height = 0, BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+    int original_height = 0, int model_width = 0, int model_height = 0,
+    std::optional<ResizeMode> resize_mode_override = std::nullopt,
+    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
 #ifdef SIMA_NEAT_INTERNAL
 /// Internal-only factory used by the route planner with a pre-extracted static contract.
 std::shared_ptr<simaai::neat::Node> SimaBoxDecode(

@@ -145,6 +145,12 @@ struct BuildResult {
   std::shared_ptr<CompiledPipelineContracts> compiled_contracts;
   std::optional<pipeline_internal::sima::SimaPluginStaticManifest> rendered_manifest;
   std::vector<std::string> model_source_paths;
+  // Compile + render diagnostics from session_build_compile_contracts. Carried
+  // forward so the wrapper throws in parse_pipeline_or_throw can include the
+  // specific failure messages (which `render_manifest_from_compiled_contracts`
+  // and `compile_node_contracts` push here on error) rather than a generic
+  // "manifest is missing" message.
+  pipeline_internal::sima::ManifestBuildDiagnostics manifest_diagnostics;
 };
 
 /** Select boundary insertion behavior based on run/build mode env. */

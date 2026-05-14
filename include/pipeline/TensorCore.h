@@ -182,6 +182,26 @@ struct EncodedSpec {
 };
 
 /**
+ * @brief Opaque byte-stream tensor metadata.
+ *
+ * Set on `Tensor::semantic.byte_stream` when the tensor carries raw bytes that should not be
+ * interpreted as a structured numeric tensor by the transport layer. The downstream stage owns
+ * the byte contract (size, layout, meaning).
+ * @ingroup tensors
+ */
+struct ByteStreamSpec {
+  /// Byte-level payload formats for opaque raw-byte tensors.
+  enum class ByteFormat {
+    Raw = 0, ///< Raw opaque bytes; downstream interprets byte contract out-of-band.
+  };
+
+  ByteFormat format = ByteFormat::Raw; ///< Byte payload format.
+  std::string description; ///< Optional human-readable contract hint; empty = unspecified.
+};
+
+using ByteFormat = ByteStreamSpec::ByteFormat;
+
+/**
  * @brief Quantization metadata for INT8/INT16 tensors.
  *
  * For per-tensor quantization, set `scale` and `zero_point` directly. For per-channel
@@ -270,8 +290,9 @@ struct PreprocessRuntimeMeta {
 /**
  * @brief Discriminated union of "what this tensor represents".
  *
- * A single tensor can be image data, audio, tokens, a tessellated tile, an encoded video
- * frame, a quantization payload, or a preprocessing residue — and sometimes more than one
+ * A single tensor can be image data, audio, tokens, an opaque byte stream, a tessellated tile,
+ * an encoded video frame, a quantization payload, or a preprocessing residue — and sometimes more
+ * than one
  * at once (e.g., quantized image data). Each spec is an `std::optional`; only the relevant
  * ones are set. Consumers query the optional that matters to them.
  *
@@ -288,6 +309,8 @@ struct Semantic {
   std::optional<ImageSpec> image;     ///< Set for image tensors.
   std::optional<AudioSpec> audio;     ///< Set for audio tensors.
   std::optional<TokensSpec> tokens;   ///< Set for token-stream tensors (NLP).
+  std::optional<ByteStreamSpec>
+      byte_stream;                    ///< Set for opaque raw-byte tensors.
   std::optional<TessSpec> tess;       ///< Set for tessellated tile-layout tensors.
   std::optional<EncodedSpec> encoded; ///< Set for encoded-stream tensors (H.264, etc.).
   std::optional<QuantSpec> quant;     ///< Set for quantized integer tensors.

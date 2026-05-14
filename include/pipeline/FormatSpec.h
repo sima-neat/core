@@ -6,8 +6,9 @@
  * `FormatTag` is the framework-wide enum identifying every payload format the
  * pipeline understands: raw video (RGB/BGR/GRAY8/NV12/I420/YUYV), encoded
  * video (H.264, generic ENCODED), tensor element types (FP32/INT8/UINT8/BF16
- * and their EVXX_ aliases), and a few pipeline-internal payload kinds (MLA,
- * BBOX, ARGMAX, DETESSDEQUANT). `FormatSpec` is a tiny wrapper that converts
+ * and their EVXX_ aliases), opaque byte-stream payloads, and a few
+ * pipeline-internal payload kinds (MLA, BBOX, ARGMAX, DETESSDEQUANT).
+ * `FormatSpec` is a tiny wrapper that converts
  * implicitly to/from string forms used in caps strings and config files.
  *
  * @see Tensor.h for the underlying `Sample`/`Tensor` types.
@@ -42,6 +43,7 @@ enum class FormatTag {
   YUYV,          ///< YUV 4:2:2 packed (Y0 U Y1 V).
   ENCODED,       ///< Generic encoded payload (codec from caps).
   H264,          ///< H.264 access unit / NAL stream.
+  ByteStream,    ///< Opaque byte stream; downstream interprets bytes by contract.
   MLA,           ///< MLA-tessellated tensor payload.
   BBOX,          ///< Decoded bounding-box byte stream.
   ARGMAX,        ///< Argmax/segmentation map.
@@ -76,6 +78,8 @@ inline const char* format_tag_name(FormatTag tag) {
     return "ENCODED";
   case FormatTag::H264:
     return "H264";
+  case FormatTag::ByteStream:
+    return "BYTESTREAM";
   case FormatTag::MLA:
     return "MLA";
   case FormatTag::BBOX:
@@ -212,6 +216,10 @@ inline FormatTag format_tag_from_string(const std::string& value) {
     return FormatTag::ENCODED;
   if (up == "H264")
     return FormatTag::H264;
+  if (up == "BYTESTREAM" || up == "BYTE_STREAM" || up == "BYTE-STREAM" ||
+      up == "RAW_BYTES" || up == "RAW-BYTES" || up == "OPAQUE_BYTES" ||
+      up == "OPAQUE-BYTES" || up == "OCTET_STREAM" || up == "OCTET-STREAM")
+    return FormatTag::ByteStream;
   if (up == "MLA")
     return FormatTag::MLA;
   if (up == "BBOX")
@@ -247,9 +255,10 @@ inline bool is_raw_video_format(FormatTag tag) {
 
 /// @brief True iff @p tag names a tensor payload (MLA, BBOX, ARGMAX, dtype kinds, EVXX aliases).
 inline bool is_tensor_payload_format(FormatTag tag) {
-  return tag == FormatTag::MLA || tag == FormatTag::BBOX || tag == FormatTag::ARGMAX ||
-         tag == FormatTag::DETESSDEQUANT || tag == FormatTag::FP32 || tag == FormatTag::INT8 ||
-         tag == FormatTag::UINT8 || tag == FormatTag::BF16 || tag == FormatTag::EVXX_FLOAT32 ||
+  return tag == FormatTag::ByteStream || tag == FormatTag::MLA || tag == FormatTag::BBOX ||
+         tag == FormatTag::ARGMAX || tag == FormatTag::DETESSDEQUANT ||
+         tag == FormatTag::FP32 || tag == FormatTag::INT8 || tag == FormatTag::UINT8 ||
+         tag == FormatTag::BF16 || tag == FormatTag::EVXX_FLOAT32 ||
          tag == FormatTag::EVXX_INT8 || tag == FormatTag::EVXX_BFLOAT16;
 }
 

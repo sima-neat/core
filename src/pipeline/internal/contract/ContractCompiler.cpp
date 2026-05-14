@@ -104,8 +104,15 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
 
     stage.definition = provider->contract_definition();
 
-    std::string err;
-    if (provider->compile_node_contract(stage_input, &stage, &err)) {
+    // Preserve the provider's failure reason. Historically the fallback path
+    // below reused the same `err` string and then unconditionally overwrote it
+    // with a generic "no direct compiler path registered" message, masking the
+    // actual reason the provider rejected the node (e.g. "SimaBoxDecode:
+    // inferred standalone contract requires …"). Separate per-stage scratch
+    // strings so the diagnostic that lands in `diagnostics->errors` is the
+    // most specific one we have.
+    std::string provider_err;
+    if (provider->compile_node_contract(stage_input, &stage, &provider_err)) {
       compiled.fully_renderable = compiled.fully_renderable && stage.renderable;
       compiled.stages.push_back(std::move(stage));
       immediate_upstream = last_effective_child_stage(&compiled.stages.back());
@@ -113,12 +120,26 @@ compile_node_contracts(const std::vector<std::shared_ptr<Node>>& nodes,
     }
 
     bool handled_directly = false;
+    std::string direct_err;
     const bool direct_ok = compile_known_node_contract(node, stage.definition, stage_input, &stage,
-                                                       &err, &handled_directly);
+                                                       &direct_err, &handled_directly);
     bool compile_ok = direct_ok;
+    std::string err;
     if (!handled_directly) {
-      err = "no direct compiler path registered for node kind '" + node->kind() + "'";
+      // No fallback compiler path applies. The provider already failed; surface
+      // its message (it knows the specific contract / wiring requirement that
+      // didn't hold) rather than the generic "no direct compiler" stub.
+      err = !provider_err.empty()
+                ? provider_err
+                : "no direct compiler path registered for node kind '" + node->kind() + "'";
       compile_ok = false;
+    } else if (!direct_ok) {
+      // Fallback path tried but also rejected. Prefer its message if set, else
+      // fall back to the provider's.
+      err = !direct_err.empty() ? direct_err : provider_err;
+      if (err.empty()) {
+        err = "no direct compiler path registered for node kind '" + node->kind() + "'";
+      }
     }
     if (!compile_ok) {
       stage.renderable = false;

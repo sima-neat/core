@@ -75,13 +75,17 @@ def install_wrappers(core) -> None:
     except Exception:
       return None
 
-  def tensor_from_dlpack(cls, obj, copy: bool = False, layout=None, image_format=None, memory=None):
+  def tensor_from_dlpack(
+      cls, obj, copy: bool = False, layout=None, image_format=None, memory=None, byte_format=None
+  ):
     if hasattr(obj, "__dlpack__"):
       capsule = obj.__dlpack__()
     else:
       capsule = obj
 
-    if layout is None:
+    if byte_format is not None:
+      layout = core.TensorLayout.Unknown
+    elif layout is None:
       layout = _infer_layout(core, obj, prefer_chw=False)
 
     return cls._from_dlpack_capsule(
@@ -89,20 +93,26 @@ def install_wrappers(core) -> None:
         copy=copy,
         layout=layout,
         image_format=image_format,
+        byte_format=byte_format,
         memory=_normalize_memory(core, memory),
     )
 
-  def tensor_from_numpy(cls, array, copy: bool = False, layout=None, image_format=None, memory=None):
+  def tensor_from_numpy(
+      cls, array, copy: bool = False, layout=None, image_format=None, memory=None, byte_format=None
+  ):
     import numpy as np
 
     arr = np.asarray(array)
-    if layout is None:
+    if byte_format is not None:
+      layout = core.TensorLayout.Unknown
+    elif layout is None:
       layout = _infer_layout(core, arr, prefer_chw=False)
     return cls._from_dlpack_capsule(
         arr.__dlpack__(),
         copy=copy,
         layout=layout,
         image_format=image_format,
+        byte_format=byte_format,
         memory=_normalize_memory(core, memory),
     )
 
@@ -114,13 +124,17 @@ def install_wrappers(core) -> None:
       return out.copy()
     return out
 
-  def tensor_from_torch(cls, tensor, copy: bool = False, layout=None, image_format=None, memory=None):
+  def tensor_from_torch(
+      cls, tensor, copy: bool = False, layout=None, image_format=None, memory=None, byte_format=None
+  ):
     if hasattr(tensor, "device"):
       device_type = getattr(getattr(tensor, "device"), "type", "cpu")
       if device_type != "cpu":
         tensor = tensor.cpu()
 
-    if layout is None:
+    if byte_format is not None:
+      layout = core.TensorLayout.Unknown
+    elif layout is None:
       layout = _infer_layout(core, tensor, prefer_chw=True)
 
     return cls._from_dlpack_capsule(
@@ -128,6 +142,7 @@ def install_wrappers(core) -> None:
         copy=copy,
         layout=layout,
         image_format=image_format,
+        byte_format=byte_format,
         memory=_normalize_memory(core, memory),
     )
 

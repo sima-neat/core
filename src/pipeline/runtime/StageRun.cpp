@@ -744,6 +744,9 @@ simaai::neat::FormatSpec preprocess_color_format_to_format_spec(PreprocessColorF
 }
 
 std::string format_from_tensor(const simaai::neat::Tensor& tensor) {
+  if (tensor.semantic.byte_stream.has_value()) {
+    return format_tag_to_string(FormatTag::ByteStream);
+  }
   if (tensor.semantic.tess.has_value()) {
     return upper_copy(tensor.semantic.tess->format);
   }
@@ -1264,6 +1267,10 @@ WireCaps build_wire_caps_from_tensor(const NodeGroup& group, const simaai::neat:
 std::string wire_caps_format_from_dtype_token(const std::string& dtype_token,
                                               const std::string& fallback_format) {
   const std::string fallback = !fallback_format.empty() ? fallback_format : std::string("INT8");
+  const FormatSpec fallback_spec{fallback};
+  if (fallback_spec.tag == FormatTag::ByteStream) {
+    return format_tag_to_string(FormatTag::ByteStream);
+  }
   if (dtype_token.empty()) {
     return fallback;
   }
@@ -1354,6 +1361,7 @@ WireInput build_wire_input_from_tensor(const simaai::neat::Tensor& input, const 
     if (wire.media_type == "video/x-raw") {
       out.tensor.dtype = TensorDType::UInt8;
       out.tensor.semantic.tess.reset();
+      out.tensor.semantic.byte_stream.reset();
       if (!out.tensor.semantic.image.has_value()) {
         simaai::neat::ImageSpec image;
         image.format = image_format_from_string(fmt);
@@ -1362,7 +1370,12 @@ WireInput build_wire_input_from_tensor(const simaai::neat::Tensor& input, const 
         out.tensor.semantic.image->format = image_format_from_string(fmt);
       }
     } else {
-      if (!out.tensor.semantic.tess.has_value()) {
+      const FormatSpec fmt_spec{fmt};
+      if (fmt_spec.tag == FormatTag::ByteStream) {
+        out.tensor.semantic.tess.reset();
+        out.tensor.semantic.byte_stream = simaai::neat::ByteStreamSpec{};
+        out.tensor.layout = TensorLayout::Unknown;
+      } else if (!out.tensor.semantic.tess.has_value()) {
         simaai::neat::TessSpec tess;
         tess.format = fmt;
         out.tensor.semantic.tess = tess;

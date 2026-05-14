@@ -401,13 +401,11 @@ jobs:
           # prefers sima-cli when present, which handles the docs.sima.ai
           # OAuth flow transparently.
           SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
-          # TEMPORARY one-shot validation: when SIMA_CTEST_TAIL_ONLY is "1",
-          # the strict run only exercises the previously-failing tail
-          # (sync_yolov8*, the yolov8 matrix tests, graphpipes_yolo*).
-          # Set to "0" or remove the variable to re-enable the full sweep.
-          # Once this run goes green we flip this back to "0" in a
-          # follow-up commit to lock in full-suite coverage.
-          SIMA_CTEST_TAIL_ONLY: "1"
+          # The TEMPORARY tail-only validation has served its purpose; the
+          # gating tests it covered are now passing. Restore the full strict
+          # sweep. Conditional kept below in case we need to flip back, but
+          # default is "0" = full coverage.
+          SIMA_CTEST_TAIL_ONLY: "0"
         run: |
           set -x
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"

@@ -500,22 +500,53 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
 
   using namespace simaai::neat::pipeline_internal::sima;
   ManifestBuildDiagnostics manifest_diag;
+  // Helper: append captured compile/render diagnostics (collected by
+  // session_build_compile_contracts and stashed on build.manifest_diagnostics)
+  // to a wrapper failure message. The pipeline-shape throws below would
+  // otherwise discard the specific stage-level error string that explains
+  // *why* the rendered manifest came back empty or partial — historically
+  // surfacing as a generic "compiled manifest is missing" with no signal
+  // about which stage's compile or render call actually failed.
+  const auto append_compile_render_diagnostics = [&](std::string& msg) {
+    const auto& diag_errors = build.manifest_diagnostics.errors;
+    const auto& diag_warnings = build.manifest_diagnostics.warnings;
+    if (diag_errors.empty() && diag_warnings.empty()) {
+      return;
+    }
+    std::ostringstream oss;
+    oss << msg;
+    if (!diag_errors.empty()) {
+      oss << "\nCompile/render diagnostics (errors):";
+      for (const auto& e : diag_errors) {
+        oss << "\n  - " << e;
+      }
+    }
+    if (!diag_warnings.empty()) {
+      oss << "\nCompile/render diagnostics (warnings):";
+      for (const auto& w : diag_warnings) {
+        oss << "\n  - " << w;
+      }
+    }
+    msg = oss.str();
+  };
   const bool has_compiled_stage_contracts =
       build.compiled_contracts && !build.compiled_contracts->stages.empty();
   if (has_compiled_stage_contracts && !build.rendered_manifest.has_value()) {
     gst_object_unref(pipeline);
+    std::string msg = std::string(where ? where : "Session::build") +
+                      ": compiled manifest is missing; semantic contracts were not rendered";
+    append_compile_render_diagnostics(msg);
     session_build_throw_session_error_simple(
-        error_codes::kPipelineShape,
-        std::string(where ? where : "Session::build") +
-            ": compiled manifest is missing; semantic contracts were not rendered",
+        error_codes::kPipelineShape, msg,
         "Compile and render stage contracts before pipeline parse/attach.", build.pipeline_string);
   }
   if (build.compiled_contracts && !build.compiled_contracts->fully_renderable) {
     gst_object_unref(pipeline);
+    std::string msg = std::string(where ? where : "Session::build") +
+                      ": compiled contracts are partial; resolver fallback is no longer supported";
+    append_compile_render_diagnostics(msg);
     session_build_throw_session_error_simple(
-        error_codes::kPipelineShape,
-        std::string(where ? where : "Session::build") +
-            ": compiled contracts are partial; resolver fallback is no longer supported",
+        error_codes::kPipelineShape, msg,
         "Migrate every semantic stage to compiled-contract render before building the pipeline.",
         build.pipeline_string);
   }
@@ -538,8 +569,10 @@ static GstElement* parse_pipeline_or_throw(const BuildResult& build, const char*
     for (const auto& error : manifest_diag.errors) {
       oss << "  - " << error << '\n';
     }
+    std::string msg = oss.str();
+    append_compile_render_diagnostics(msg);
     gst_object_unref(pipeline);
-    session_build_throw_session_error_simple(error_codes::kPipelineShape, oss.str(),
+    session_build_throw_session_error_simple(error_codes::kPipelineShape, msg,
                                              "Fix manifest field ownership/precedence issues.",
                                              build.pipeline_string);
   }

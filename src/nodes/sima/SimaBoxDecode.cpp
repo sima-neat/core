@@ -52,6 +52,15 @@ struct BoxDecodeOptionsInternal {
   int original_height = 0;
   int model_width = 0;
   int model_height = 0;
+  // Explicit override for the preprocess resize mode. Set when the customer is
+  // running the model without an upstream Preproc stage (e.g. CPU-letterboxed
+  // FP32 tensor directly into quanttess→mla→boxdecode) and therefore the per-
+  // buffer GstSimaaiPreprocessMeta won't carry `preproc_resize_mode`. When
+  // present the contract drops `preproc_resize_mode` from
+  // required_preprocess_meta_fields, and the backend fragment emits the
+  // resize-mode token so a future GST plugin property can consume it. nullopt
+  // means "no override; expect the value from upstream meta as before".
+  std::optional<ResizeMode> resize_mode_override;
   std::string element_name;
   std::string factory = "neatobjectdecode";
 };
@@ -353,11 +362,19 @@ void validate_dimension_override_pair(int width, int height, const char* label,
 
 std::vector<std::string>
 filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, int original_width,
-                                       int original_height, int model_width, int model_height) {
+                                       int original_height, int model_width, int model_height,
+                                       bool has_resize_mode_override = false) {
   std::vector<std::string> filtered;
   filtered.reserve(fields.size());
   const bool has_original_override = has_explicit_dimension_pair(original_width, original_height);
   const bool has_model_override = has_explicit_dimension_pair(model_width, model_height);
+  // resize_mode_override is the customer's explicit "I did my own preproc"
+  // signal — by definition there is no upstream Preproc stage to emit
+  // per-buffer GstSimaaiPreprocessMeta, so the *entire* preproc_* family of
+  // required meta fields (color_in/out, axis_perm, normalize, quantize,
+  // tessellate, affine_*) must be dropped together. Geometry fields are
+  // still gated on the corresponding dimension overrides above so callers
+  // can opt into per-field relaxation without flipping the whole switch.
   for (const auto& field : fields) {
     if (field == "preproc_original_width" && has_original_override) {
       continue;
@@ -371,6 +388,22 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
          field == "preproc_pad_left" || field == "preproc_pad_right" ||
          field == "preproc_pad_top" || field == "preproc_pad_bottom")) {
       continue;
+    }
+    if (has_resize_mode_override) {
+      // resize_mode lives in this bucket plus all the non-geometry semantic
+      // fields below; they all originate from the same upstream Preproc
+      // emitter, which is absent in the manual-preproc composition.
+      if (field == "preproc_resize_mode" || field == "preproc_color_in" ||
+          field == "preproc_color_out" || field == "preproc_axis_perm" ||
+          field == "preproc_normalize" || field == "preproc_quantize" ||
+          field == "preproc_tessellate" || field == "preproc_affine_m00" ||
+          field == "preproc_affine_m01" || field == "preproc_affine_m02" ||
+          field == "preproc_affine_m10" || field == "preproc_affine_m11" ||
+          field == "preproc_affine_m12" || field == "preproc_affine_scale_x" ||
+          field == "preproc_affine_scale_y" || field == "preproc_affine_offset_x" ||
+          field == "preproc_affine_offset_y") {
+        continue;
+      }
     }
     filtered.push_back(field);
   }
@@ -509,14 +542,23 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
                              double detection_threshold, double nms_iou_threshold, int top_k,
                              const std::string& element_name, std::optional<bool> route_tess_needed,
                              std::optional<bool> route_quant_needed, int original_width,
-                             int original_height, BoxDecodeTypeOption decode_type_option) {
+                             int original_height, int model_width, int model_height,
+                             std::optional<ResizeMode> resize_mode_override,
+                             BoxDecodeTypeOption decode_type_option) {
   validate_dimension_override_pair(original_width, original_height, "original dimensions",
+                                   "SimaBoxDecode(Model)");
+  // model_{width,height} are optional overrides on the model-managed path: by
+  // default they're derived from the model pack at construction time, but the
+  // caller may pass non-zero values to refine the decoder kernel's spatial
+  // knobs (e.g. a YOLOv8 MPK trained at 640 driven with 320x320 frames). Both
+  // must be set together so the kernel never sees a half-specified override.
+  validate_dimension_override_pair(model_width, model_height, "model dimensions",
                                    "SimaBoxDecode(Model)");
   const auto& pack = simaai::neat::internal::ModelAccess::pack(model);
   int resolved_original_width = original_width;
   int resolved_original_height = original_height;
-  int resolved_model_width = 0;
-  int resolved_model_height = 0;
+  int resolved_model_width = model_width;
+  int resolved_model_height = model_height;
   const pipeline_internal::sima::ModelManagedRouteFlags resolved_route_flags =
       resolve_model_route_flags(model, route_tess_needed, route_quant_needed);
   auto effective_route_flags = resolved_route_flags;
@@ -559,9 +601,10 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   opt->decode_type_option = decode_type_option;
   opt->element_name = element_name;
   const auto resolved = model.resolved_preprocess_plan();
+  opt->resize_mode_override = resize_mode_override;
   opt->required_preprocess_meta_fields = filter_required_preprocess_meta_fields(
       resolved.meta_contract.required_fields, resolved_original_width, resolved_original_height,
-      resolved_model_width, resolved_model_height);
+      resolved_model_width, resolved_model_height, resize_mode_override.has_value());
   if (opt->compiled_contract) {
     auto updated = std::make_shared<CompiledBoxDecodeContract>(*opt->compiled_contract);
     updated->runtime_contract.required_preprocess_meta_fields =
@@ -666,6 +709,18 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         contract = pipeline_internal::sima::build_boxdecode_static_contract_from_compiled_upstream(
             *input.immediate_upstream, opt_->decode_type, err);
         if (!contract.has_value()) {
+          // Helper may return nullopt without populating *err. Provide a
+          // contextual default so the diagnostic message conveys *which*
+          // path failed instead of bubbling up an empty string that gets
+          // overwritten by a generic "no compiler path" message upstream.
+          if (err && err->empty()) {
+            *err =
+                "SimaBoxDecode: failed to derive box-decode static contract from immediate "
+                "upstream stage '" +
+                input.immediate_upstream->node_kind +
+                "' (compiled upstream did not expose detess/dequant metadata required for "
+                "boxdecode)";
+          }
           return false;
         }
         if (input.ingress.ingress_sample.has_value()) {
@@ -682,6 +737,10 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         contract = pipeline_internal::sima::build_boxdecode_static_contract_from_sample(
             *input.ingress.ingress_sample, opt_->decode_type, input_contract_, err);
         if (!contract.has_value()) {
+          if (err && err->empty()) {
+            *err = "SimaBoxDecode: failed to derive box-decode static contract from ingress "
+                   "sample";
+          }
           return false;
         }
       }
@@ -828,6 +887,18 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   if (opt_->model_height > 0) {
     ss << " model-height=" << opt_->model_height;
   }
+  // NOTE: `opt_->resize_mode_override` is intentionally NOT emitted into the
+  // GST fragment here. The neatobjectdecode plugin (in the internals repo)
+  // does not yet register a `resize-mode` GObject property, so emitting
+  // `resize-mode=<token>` would make gst_parse_launch fail with
+  // "no property 'resize-mode' in element 'neatobjectdecode'". The override's
+  // current job is purely contract-side: it relaxes the per-buffer required-
+  // meta check (`preproc_resize_mode` is stripped from
+  // `required_preprocess_meta_fields`), letting buffers flow through without
+  // the upstream-emitted field. Runtime box rescaling on the plugin side
+  // falls back to geometry-derived math from original-width/model-width.
+  // When the plugin gains a property, emit the token here and add a fallback
+  // case to the plugin's extract_runtime_config / field_has_property_fallback.
   return ss.str();
 }
 
@@ -882,10 +953,13 @@ SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,
               double detection_threshold, double nms_iou_threshold, int top_k,
               const std::string& element_name, std::optional<bool> route_tess_needed,
               std::optional<bool> route_quant_needed, int original_width, int original_height,
+              int model_width, int model_height,
+              std::optional<ResizeMode> resize_mode_override,
               BoxDecodeTypeOption decode_type_option) {
   return std::make_shared<simaai::neat::SimaBoxDecode>(
       model, decode_type, detection_threshold, nms_iou_threshold, top_k, element_name,
-      route_tess_needed, route_quant_needed, original_width, original_height, decode_type_option);
+      route_tess_needed, route_quant_needed, original_width, original_height, model_width,
+      model_height, resize_mode_override, decode_type_option);
 }
 
 #ifdef SIMA_NEAT_INTERNAL

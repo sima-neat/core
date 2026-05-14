@@ -879,8 +879,9 @@ bool Tensor::validate(std::string* err) const {
 
   // Encoded semantic constraints.
   if (semantic.encoded.has_value()) {
-    if (semantic.image.has_value() || semantic.tess.has_value()) {
-      return fail("encoded tensor cannot also be image/tess");
+    if (semantic.image.has_value() || semantic.tess.has_value() ||
+        semantic.byte_stream.has_value()) {
+      return fail("encoded tensor cannot also be image/tess/byte_stream");
     }
     if (dtype != simaai::neat::TensorDType::UInt8) {
       return fail("encoded tensor must use UInt8 dtype");
@@ -896,6 +897,29 @@ bool Tensor::validate(std::string* err) const {
     }
     if (layout != simaai::neat::TensorLayout::Unknown) {
       return fail("encoded tensor layout must be Unknown");
+    }
+  }
+
+  // Byte-stream semantic constraints.
+  if (semantic.byte_stream.has_value()) {
+    if (semantic.image.has_value() || semantic.encoded.has_value() || semantic.tess.has_value()) {
+      return fail("byte_stream tensor cannot also be image/encoded/tess");
+    }
+    if (dtype != simaai::neat::TensorDType::UInt8 &&
+        dtype != simaai::neat::TensorDType::Int8) {
+      return fail("byte_stream tensor must use UInt8 or Int8 dtype");
+    }
+    if (!is_dense()) {
+      return fail("byte_stream tensor must be dense");
+    }
+    if (!planes.empty()) {
+      return fail("byte_stream tensor must not have planes");
+    }
+    if (shape.size() != 1 || shape[0] <= 0) {
+      return fail("byte_stream tensor must have shape [num_bytes]");
+    }
+    if (layout != simaai::neat::TensorLayout::Unknown) {
+      return fail("byte_stream tensor layout must be Unknown");
     }
   }
 
@@ -929,6 +953,9 @@ std::string Tensor::debug_string() const {
 
   out += " byte_offset=" + std::to_string(byte_offset);
   out += " planes=" + std::to_string(planes.size());
+  if (semantic.byte_stream.has_value()) {
+    out += " semantic=ByteStream";
+  }
   out += "}";
   return out;
 }

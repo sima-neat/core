@@ -1561,8 +1561,10 @@ InputInfo input_info_from_tensor(const simaai::neat::Tensor& tensor, bool image_
 
   if (info.format.empty()) {
     if (image_mode) {
-      info.format = "RGB";
-      info.format_source = InputInfo::FormatSource::Heuristic;
+      // Do not infer an image color format from shape or dtype. Image tensors
+      // are unambiguous only when the caller attached Tensor::semantic.image;
+      // otherwise the caller must provide explicit image metadata (for example
+      // Python's Tensor.from_numpy(..., image_format=...)).
     } else if (tensor.dtype == TensorDType::Float32) {
       info.format = "FP32";
       info.format_source = InputInfo::FormatSource::Explicit;
@@ -1590,6 +1592,48 @@ InputInfo input_info_from_tensor(const simaai::neat::Tensor& tensor, bool image_
     info.depth = compat.depth;
   }
   return info;
+}
+
+InputInfo input_info_from_image_sample(const simaai::neat::Sample& sample) {
+  const Tensor* tensor = nullptr;
+  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
+    tensor = &*sample.tensor;
+  } else if (sample.kind == SampleKind::TensorSet && !sample.tensors.empty()) {
+    tensor = &sample.tensors.front();
+  }
+  if (!tensor) {
+    return InputInfo{};
+  }
+
+  InputInfo info = input_info_from_tensor(*tensor, true);
+  if (!sample.media_type.empty()) {
+    info.media_type = sample.media_type;
+  }
+  const std::string sample_format =
+      !sample.payload_tag.empty() ? sample.payload_tag : sample.format;
+  if (!sample_format.empty()) {
+    info.format = upper_copy(sample_format);
+    info.format_source = InputInfo::FormatSource::Explicit;
+  }
+  return info;
+}
+
+void require_explicit_image_input_info(const InputInfo& info, const char* where) {
+  if (upper_copy(info.media_type) != "VIDEO/X-RAW") {
+    std::ostringstream oss;
+    oss << (where ? where : "Model") << ": image-mode input must be video/x-raw";
+    if (!info.media_type.empty()) {
+      oss << " (got " << info.media_type << ")";
+    }
+    throw std::invalid_argument(oss.str());
+  }
+  if (info.format.empty() || info.format_source != InputInfo::FormatSource::Explicit) {
+    throw std::invalid_argument(
+        std::string(where ? where : "Model") +
+        ": image-mode Tensor input requires explicit image format metadata; pass a Tensor with "
+        "ImageSpec/image_format (for Python: Tensor.from_numpy(..., image_format=...)) or a "
+        "Sample with video/x-raw format metadata.");
+  }
 }
 
 InputOptions appsrc_from_info(const InputInfo& info) {
@@ -3084,8 +3128,8 @@ private:
     out.owned = true;
     out.media_type = "application/vnd.simaai.tensor";
     if (mla_handoff_contract_is_packed_1d(plan_)) {
-      out.payload_tag = "MLA";
-      out.format = "MLA";
+      out.payload_tag = format_tag_to_string(FormatTag::ByteStream);
+      out.format = out.payload_tag;
     }
     return out;
   }
@@ -3197,8 +3241,8 @@ private:
     joined.owned = true;
     joined.media_type = "application/vnd.simaai.tensor";
     if (mla_handoff_contract_is_packed_1d(plan_)) {
-      joined.payload_tag = "MLA";
-      joined.format = "MLA";
+      joined.payload_tag = format_tag_to_string(FormatTag::ByteStream);
+      joined.format = joined.payload_tag;
     }
     if (packed_joined_handoff && !joined_packed_segment_name_.empty()) {
       joined.segment_name = joined_packed_segment_name_;
@@ -4105,7 +4149,10 @@ std::string resolve_preproc_input_format(const internal::PreprocessPlannerResult
   const auto* ingress =
       maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
   if (ingress != nullptr && !ingress->format.empty()) {
-    return ingress->format;
+    const FormatSpec ingress_format{ingress->format};
+    if (is_raw_video_format(ingress_format.tag) || plan.modelpack_format.empty()) {
+      return ingress->format;
+    }
   }
   return plan.modelpack_format;
 }
@@ -4954,7 +5001,9 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
     return simaai::neat::nodes::SimaBoxDecode(
         model, decode_type, detection_threshold, nms_iou_threshold, top_k, stage_name,
-        route_tess_needed, route_quant_needed, 0, 0, decode_type_option);
+        route_tess_needed, route_quant_needed, /*original_width=*/0, /*original_height=*/0,
+        /*model_width=*/0, /*model_height=*/0, /*resize_mode_override=*/std::nullopt,
+        decode_type_option);
   }
   case GraphKind::Detess: {
     DetessOptions det_opt = make_detess_options_from_typed_adapter(model, stage_name, sync);
@@ -6296,10 +6345,13 @@ Model::Runner Model::build(const Model::SessionOptions& opt,
   }
   Run run = p.build(dummy_inputs, RunMode::Async, run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
-  const auto src_opts2 = input_appsrc_options_list(true);
-  const InputOptions src_opt =
-      !src_opts2.empty() ? src_opts2.front() : pack.input_appsrc_options(true);
-  return Runner(std::move(run), src_opt, ingress_names);
+  if (tensor_mode) {
+    const auto src_opts2 = input_appsrc_options_list(true);
+    const InputOptions src_opt =
+        !src_opts2.empty() ? src_opts2.front() : pack.input_appsrc_options(true);
+    return Runner(std::move(run), src_opt, ingress_names);
+  }
+  return Runner(std::move(run), ingress_names);
 }
 
 Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::SessionOptions& opt,
@@ -6311,13 +6363,30 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   if (!opt.name_suffix.empty()) {
     pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
   }
+  const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
-  require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::build", "tensor inputs");
+  if (tensor_mode) {
+    require_exact_ingress_count(inputs.size(), ingress_contracts, "Model::build", "tensor inputs");
+  } else if (inputs.size() != 1U) {
+    throw std::runtime_error(
+        "Model::build(TensorList): image-mode convenience expects exactly one image tensor; use "
+        "Session for explicit multi-input pipelines.");
+  } else if (ingress_contracts.size() > 1U) {
+    throw std::runtime_error(
+        "Model::build(TensorList): multi-ingress image convenience is unsupported; use "
+        "Model::build(SampleList)");
+  }
   const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
+  std::optional<InputInfo> image_input_info;
+  if (!tensor_mode) {
+    image_input_info = input_info_from_tensor(inputs.front(), true);
+    require_explicit_image_input_info(*image_input_info, "Model::build(TensorList)");
+  }
   NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
-                                         nullptr, false, externalize_preprocess);
+                                         image_input_info ? &*image_input_info : nullptr, false,
+                                         externalize_preprocess);
   Session p(session_options_from_model_session_options(opt, &impl_->options));
   p.add(group);
   if (use_input_route_processor) {
@@ -6325,9 +6394,11 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   }
   Run run = p.build(inputs, RunMode::Async, run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
+  if (!tensor_mode) {
+    return Runner(std::move(run), ingress_names);
+  }
   const auto src_opts = input_appsrc_options_list(true);
-  const InputOptions src_opt =
-      !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
+  const InputOptions src_opt = !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
   if (runner_debug_enabled()) {
     std::fprintf(stderr,
                  "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",
@@ -6351,8 +6422,20 @@ Model::Runner Model::build(const simaai::neat::SampleList& inputs, const Model::
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
+  const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
+  std::optional<InputInfo> image_input_info;
+  if (!tensor_mode) {
+    if (inputs.size() != 1U) {
+      throw std::runtime_error(
+          "Model::build(SampleList): image-mode convenience expects exactly one image sample; "
+          "use Session for explicit multi-input pipelines.");
+    }
+    image_input_info = input_info_from_image_sample(inputs.front());
+    require_explicit_image_input_info(*image_input_info, "Model::build(SampleList)");
+  }
   NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
-                                         nullptr, false, externalize_preprocess);
+                                         image_input_info ? &*image_input_info : nullptr, false,
+                                         externalize_preprocess);
   Session p(session_options_from_model_session_options(opt, &impl_->options));
   p.add(group);
   if (use_input_route_processor) {

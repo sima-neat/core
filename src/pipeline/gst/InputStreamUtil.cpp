@@ -331,7 +331,9 @@ bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
   };
   const auto packed_transport_format = [](const std::string& fmt) {
     const std::string up = upper_copy(fmt);
-    return up == "MLA" || up.find("TESS") != std::string::npos;
+    return up == "BYTESTREAM" || up == "BYTE_STREAM" || up == "BYTE-STREAM" ||
+           up == "RAW_BYTES" || up == "RAW-BYTES" || up == "OPAQUE_BYTES" ||
+           up == "OPAQUE-BYTES" || up == "MLA" || up.find("TESS") != std::string::npos;
   };
   const auto caps_transport_format = [&sample]() -> std::string {
     if (sample.caps_string.empty()) {
@@ -358,6 +360,9 @@ bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
                                 (sample.media_type.empty() && tensor->semantic.image.has_value());
   if (raw_video_sample && !tensor->semantic.tess.has_value()) {
     return false;
+  }
+  if (tensor->semantic.byte_stream.has_value()) {
+    return true;
   }
   if ((fmt.empty() || is_plain_dtype_format(fmt)) && packed_transport_format(caps_fmt)) {
     fmt = caps_fmt;
@@ -429,6 +434,8 @@ SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const
     first_tensor_opt.format = sample.payload_tag;
   } else if (!sample.format.empty()) {
     first_tensor_opt.format = sample.format;
+  } else if (tensors.front().semantic.byte_stream.has_value()) {
+    first_tensor_opt.format = FormatTag::ByteStream;
   }
 
   SampleSpec spec = derive_tensor_spec_or_throw(tensors.front(), first_tensor_opt, tag.c_str());
@@ -1232,6 +1239,9 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
 
     std::string fmt = upper_copy(opt.format);
     const std::string dtype_fmt = upper_copy(fmt_from_dtype(input.dtype));
+    if (fmt.empty() && input.semantic.byte_stream.has_value()) {
+      fmt = "BYTESTREAM";
+    }
     if (fmt.empty())
       fmt = dtype_fmt;
     if (fmt.empty()) {
@@ -1256,6 +1266,17 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
       }
       if (fmt_is_tess_bf16 && input.dtype != TensorDType::BFloat16) {
         throw std::invalid_argument(tag + ": tensor format does not match dtype");
+      }
+    }
+    if (input.semantic.byte_stream.has_value()) {
+      if (input.dtype != TensorDType::UInt8 && input.dtype != TensorDType::Int8) {
+        throw std::invalid_argument(tag + ": byte_stream tensor must be UInt8 or Int8");
+      }
+      if (input.layout != TensorLayout::Unknown) {
+        throw std::invalid_argument(tag + ": byte_stream tensor layout must be Unknown");
+      }
+      if (input.shape.size() != 1U || input.shape[0] <= 0) {
+        throw std::invalid_argument(tag + ": byte_stream tensor must have shape [num_bytes]");
       }
     }
 

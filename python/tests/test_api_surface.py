@@ -930,6 +930,55 @@ def test_model_build_accepts_torch_without_type_error():
   _assert_not_type_error(lambda: model.build(tensor))
 
 
+def test_model_build_requires_explicit_image_semantic_for_image_tensor():
+  mpk_path = _strict_resnet50_mpk_path()
+  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+
+  opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.enable = pyneat.AutoFlag.On
+  opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(mpk_path), opt)
+  tensor = pyneat.Tensor.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), copy=True)
+
+  with pytest.raises(ValueError, match="requires explicit image format"):
+    model.build(tensor)
+
+
+def test_tensor_from_numpy_byte_stream_marks_opaque_transport():
+  spec = pyneat.ByteStreamSpec()
+  spec.format = pyneat.ByteFormat.Raw
+  spec.description = "opaque raw bytes"
+  assert spec.format == pyneat.ByteFormat.Raw
+  assert spec.description == "opaque raw bytes"
+
+  tensor = pyneat.Tensor.from_numpy(
+      np.arange(16, dtype=np.int8),
+      copy=True,
+      byte_format=pyneat.ByteFormat.Raw,
+      memory=pyneat.TensorMemory.CPU,
+  )
+
+  assert tensor.semantic.byte_stream is not None
+  assert tensor.semantic.byte_stream.format == pyneat.ByteFormat.Raw
+  assert tensor.layout == pyneat.TensorLayout.Unknown
+  ok, err = tensor.validate()
+  assert ok, err
+  assert "ByteStream" in tensor.debug_string()
+
+
+def test_byte_stream_is_incompatible_with_image_semantic():
+  with pytest.raises(RuntimeError, match="byte_format tensors cannot also specify image_format"):
+    pyneat.Tensor.from_numpy(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        copy=True,
+        image_format=pyneat.PixelFormat.RGB,
+        byte_format=pyneat.ByteFormat.Raw,
+        memory=pyneat.TensorMemory.CPU,
+    )
+
+
 def test_model_run_accepts_chw_torch_without_layout_or_image_format():
   try:
     import torch

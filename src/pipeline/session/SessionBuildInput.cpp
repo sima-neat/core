@@ -17,6 +17,7 @@
 #include "nodes/io/RTSPInput.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/ErrorCodes.h"
+#include "pipeline/FormatSpec.h"
 #include "pipeline/SessionError.h"
 #include "pipeline/internal/GstDataAdapter.h"
 #include "pipeline/internal/OutputTensorOverride.h"
@@ -686,7 +687,8 @@ template <> InputContract input_contract_from_input(const Tensor& sample) {
 }
 
 template <> InputContract input_contract_from_input(const Sample& sample) {
-  if (sample_has_tensor_list(sample)) {
+  if (sample_has_tensor_list(sample) ||
+      (sample.kind == SampleKind::Tensor && sample.tensor.has_value())) {
     return input_contract_from_sample_spec(derive_sample_spec_or_throw(sample));
   }
   InputContract out;
@@ -753,6 +755,83 @@ void maybe_compile_build_result_contracts(BuildResult* build_result,
   compile_input.ingress.ingress_spec = spec;
   compile_input.ingress.ingress_sample = ingress_sample;
   session_build_compile_contracts(build_result, *nodes, compile_input, where, nodes);
+}
+
+const std::shared_ptr<Node>& first_effective_downstream_node(
+    const std::vector<std::shared_ptr<Node>>& nodes) {
+  static const std::shared_ptr<Node> kNullNode;
+  if (nodes.size() <= 1U) {
+    return kNullNode;
+  }
+  for (std::size_t i = 1U; i < nodes.size(); ++i) {
+    const auto& node = nodes[i];
+    if (!node) {
+      continue;
+    }
+    const std::string kind = node->kind();
+    if (kind == "Output") {
+      break;
+    }
+    if (kind == "Cast") {
+      continue;
+    }
+    return node;
+  }
+  return kNullNode;
+}
+
+bool sample_spec_is_byte_stream_tensor(const SampleSpec& spec) {
+  if (lower_copy(spec.media_type) != "application/vnd.simaai.tensor") {
+    return false;
+  }
+  if (spec.kind != SampleMediaKind::Tensor) {
+    return false;
+  }
+  try {
+    return FormatSpec{spec.format}.tag == FormatTag::ByteStream;
+  } catch (...) {
+    return false;
+  }
+}
+
+void validate_inference_only_ingress_or_throw(const std::vector<std::shared_ptr<Node>>& nodes,
+                                              const SampleSpec& seed_spec) {
+  const auto& first = first_effective_downstream_node(nodes);
+  if (!first || first->kind() != "ModelFragment") {
+    return;
+  }
+
+  const NodeGroup first_group({first});
+  const auto mla_input = rendered_stage_query::mla_input_tensor_info(first_group);
+  if (mla_input.span_size_bytes <= 0) {
+    return;
+  }
+
+  const std::size_t expected_bytes = static_cast<std::size_t>(mla_input.span_size_bytes);
+  const std::size_t got_bytes = seed_spec.required_bytes_actual;
+  const bool byte_stream = sample_spec_is_byte_stream_tensor(seed_spec);
+  const bool byte_size_matches = expected_bytes == 0U || got_bytes == expected_bytes;
+  if (byte_stream && byte_size_matches) {
+    return;
+  }
+
+  std::ostringstream msg;
+  msg << "Session::build(input): inference-only expects application/vnd.simaai.tensor / "
+         "ByteFormat.Raw byte-stream input";
+  if (!mla_input.segment_name.empty()) {
+    msg << " for '" << mla_input.segment_name << "'";
+  }
+  msg << "; expected " << expected_bytes << " bytes, got " << got_bytes << " bytes";
+  if (!seed_spec.media_type.empty() || !seed_spec.format.empty()) {
+    msg << " (got media_type="
+        << (seed_spec.media_type.empty() ? "<empty>" : seed_spec.media_type)
+        << ", format=" << (seed_spec.format.empty() ? "<empty>" : seed_spec.format) << ")";
+  }
+
+  session_build_throw_session_error_simple(
+      error_codes::kCaps, msg.str(),
+      "Insert the model preprocessing stage before groups.mla(model), or pass an exact raw-byte "
+      "Tensor using Tensor.from_numpy(..., byte_format=pyneat.ByteFormat.Raw).");
 }
 
 std::optional<Sample> contract_compile_sample_from_input(const Sample& sample) {
@@ -1733,6 +1812,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       replace_first_input_node_for_build(nodes, seeded_input_opt);
   build_nodes = session_build_materialize_model_bound_nodes(build_nodes, sync_mode);
   apply_input_contract_to_nodes(build_nodes, input_contract_from_input(sample));
+  validate_inference_only_ingress_or_throw(build_nodes, seed_spec);
 
   require_element("appsrc", "Session::build(input)");
   if (has_sink) {

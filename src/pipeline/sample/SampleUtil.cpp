@@ -246,6 +246,9 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t /*index*/) {
   if (tensor.semantic.image.has_value()) {
     field.format = Sample::image_format_string(tensor.semantic.image->format);
     field.payload_tag = field.format;
+  } else if (tensor.semantic.byte_stream.has_value()) {
+    field.format = format_tag_to_string(FormatTag::ByteStream);
+    field.payload_tag = field.format;
   }
   field.output_index = tensor.route.logical_index;
   field.logical_output_index = tensor.route.logical_index;
@@ -2629,9 +2632,10 @@ std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::s
   sample.owned = true;
   sample.media_type =
       tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
-  sample.payload_tag = tensor.semantic.image.has_value()
-                           ? Sample::image_format_string(tensor.semantic.image->format)
-                           : std::string();
+  sample.payload_tag =
+      tensor.semantic.image.has_value() ? Sample::image_format_string(tensor.semantic.image->format)
+      : tensor.semantic.byte_stream.has_value() ? format_tag_to_string(FormatTag::ByteStream)
+                                                : std::string();
   sample.format = sample.payload_tag;
   sample.segment_name = tensor_runtime_segment_name(tensor);
   sample.stream_label = tensor.route.name;
@@ -2738,6 +2742,9 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t index) {
       tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   if (tensor.semantic.image.has_value()) {
     field.format = Sample::image_format_string(tensor.semantic.image->format);
+    field.payload_tag = field.format;
+  } else if (tensor.semantic.byte_stream.has_value()) {
+    field.format = format_tag_to_string(FormatTag::ByteStream);
     field.payload_tag = field.format;
   }
   field.output_index = tensor.route.logical_index;
@@ -2911,6 +2918,10 @@ Sample sample_from_tensors(const TensorList& tensors) {
       std::all_of(out.tensors.begin(), out.tensors.end(),
                   [](const Tensor& tensor) { return tensor.semantic.image.has_value(); });
   out.media_type = all_image_tensors ? "video/x-raw" : "application/vnd.simaai.tensor";
+  if (out.tensors.size() == 1U && out.tensors.front().semantic.byte_stream.has_value()) {
+    out.format = format_tag_to_string(FormatTag::ByteStream);
+    out.payload_tag = out.format;
+  }
   return out;
 }
 
@@ -2931,6 +2942,8 @@ Sample pipeline_internal::collapse_single_tensor_sample(Sample sample) {
   }
   if (sample.payload_tag.empty() && sample.tensor->semantic.image.has_value()) {
     sample.payload_tag = Sample::image_format_string(sample.tensor->semantic.image->format);
+  } else if (sample.payload_tag.empty() && sample.tensor->semantic.byte_stream.has_value()) {
+    sample.payload_tag = format_tag_to_string(FormatTag::ByteStream);
   }
   if (sample.format.empty()) {
     sample.format = sample.payload_tag;

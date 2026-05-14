@@ -2788,7 +2788,8 @@ session_build_materialize_model_bound_nodes(const std::vector<std::shared_ptr<No
             box->top_k_internal(),
             box->element_names(0).empty() ? std::string() : box->element_names(0).front(),
             route_tess_needed, route_quant_needed, box->original_width_internal(),
-            box->original_height_internal(), box->decode_type_option_internal()));
+            box->original_height_internal(), /*model_width=*/0, /*model_height=*/0,
+            /*resize_mode_override=*/std::nullopt, box->decode_type_option_internal()));
         ++i;
         continue;
       }
@@ -2852,6 +2853,10 @@ void session_build_compile_contracts(BuildResult* build_result,
   build_result->compiled_contracts = compiled;
   build_result->rendered_manifest =
       render_manifest_from_compiled_contracts(*compiled, compile_input, &diagnostics);
+  // Carry forward compile + render diagnostics so the wrapper throws in
+  // parse_pipeline_or_throw can surface the actual stage-level failure
+  // messages instead of "manifest is missing" with no further detail.
+  build_result->manifest_diagnostics = std::move(diagnostics);
   build_result->model_source_paths.clear();
   for (const auto& node : source_nodes) {
     const auto* binding = node_model_lineage_binding(node);
