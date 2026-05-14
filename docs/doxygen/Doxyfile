@@ -8,7 +8,7 @@ OUTPUT_DIRECTORY       = docs/doxygen/out
 INPUT                  = include docs README.md
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.hpp *.cpp *.md *.dox
-EXAMPLE_PATH           = examples tests docs/doxygen
+EXAMPLE_PATH           = tests docs/doxygen
 USE_MDFILE_AS_MAINPAGE = docs/doxygen/mainpage.md
 MARKDOWN_SUPPORT       = YES
 
