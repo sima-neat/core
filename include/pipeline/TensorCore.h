@@ -199,6 +199,8 @@ struct ByteStreamSpec {
   std::string description; ///< Optional human-readable contract hint; empty = unspecified.
 };
 
+/// Convenience top-level alias for `ByteStreamSpec::ByteFormat`.
+/// @ingroup tensors
 using ByteFormat = ByteStreamSpec::ByteFormat;
 
 /**
