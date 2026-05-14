@@ -2559,15 +2559,20 @@ NB_MODULE(_pyneat_core, m) {
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,
-         int original_width, int original_height, double detection_threshold,
-         double nms_iou_threshold, int top_k) {
+         int original_width, int original_height, int model_width, int model_height,
+         double detection_threshold, double nms_iou_threshold, int top_k) {
+        if (model_width > 0 || model_height > 0) {
+          return simaai::neat::nodes::SimaBoxDecode(
+              decode_type, detection_threshold, nms_iou_threshold, top_k,
+              /*element_name=*/"", original_width, original_height, model_width, model_height);
+        }
         return simaai::neat::nodes::SimaBoxDecode(
             model, decode_type, detection_threshold, nms_iou_threshold, top_k,
             /*element_name=*/"", std::nullopt, std::nullopt, original_width, original_height);
       },
       "model"_a, "decode_type"_a = simaai::neat::BoxDecodeType::Unspecified, "original_width"_a = 0,
-      "original_height"_a = 0, "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0,
-      "top_k"_a = 0);
+      "original_height"_a = 0, "model_width"_a = 0, "model_height"_a = 0,
+      "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0);
 
   nb::module_ graph_mod = m.def_submodule("graph", "Hybrid graph runtime and helper nodes");
 

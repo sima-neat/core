@@ -110,15 +110,20 @@ def _image_input_model(
   return pyneat.Model(str(model_tar), opt)
 
 
+def _rgb_tensor(image: np.ndarray) -> pyneat.Tensor:
+  return pyneat.Tensor.from_numpy(image, copy=True, image_format=pyneat.PixelFormat.RGB)
+
+
 def _run_model_on_image(model: pyneat.Model, image: np.ndarray, *parts) -> pyneat.Sample:
   session = pyneat.Session()
   session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
   for part in parts:
     session.add(part)
   session.add(pyneat.nodes.output())
-  runner = session.build(image)
+  input_tensor = _rgb_tensor(image)
+  runner = session.build(input_tensor)
   try:
-    return runner.run(image, timeout_ms=30000)
+    return runner.run(input_tensor, timeout_ms=30000)
   finally:
     runner.close()
 
@@ -259,10 +264,11 @@ def _assert_image_dims(path: Path, width: int, height: int) -> None:
 
 
 def test_resnet_real_fixture_run_preserves_stable_classification_contract():
-  model = pyneat.Model(str(_env_path("SIMA_RESNET50_TAR")))
+  model = _image_input_model(_env_path("SIMA_RESNET50_TAR"))
   image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
 
-  outputs = [model.run(image, timeout_ms=20000) for _ in range(3)]
+  input_tensor = _rgb_tensor(image)
+  outputs = [model.run(input_tensor, timeout_ms=20000) for _ in range(3)]
 
   assert all(out.kind == pyneat.SampleKind.Tensor for out in outputs)
   assert all(out.tensor is not None for out in outputs)
@@ -362,9 +368,10 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
   backend = session.describe_backend()
   assert "detection-threshold=" not in backend.lower()
 
-  runner = session.build(image)
+  input_tensor = _rgb_tensor(image)
+  runner = session.build(input_tensor)
   try:
-    box_output = runner.run(image, timeout_ms=30000)
+    box_output = runner.run(input_tensor, timeout_ms=30000)
   finally:
     runner.close()
 
@@ -438,6 +445,8 @@ def _run_quanttess_boxdecode_on_real_input(
           decode_type=pyneat.BoxDecodeType.YoloV8,
           original_width=image.shape[1],
           original_height=image.shape[0],
+          model_width=quant_input.shape[1],
+          model_height=quant_input.shape[0],
           detection_threshold=detection_threshold,
           nms_iou_threshold=0.55,
           top_k=120,
@@ -550,6 +559,8 @@ def test_boxdecode_runtime_output_produces_overlay_artifact(tmp_path):
             decode_type=pyneat.BoxDecodeType.YoloV8,
             original_width=image.shape[1],
             original_height=image.shape[0],
+            model_width=640,
+            model_height=640,
             detection_threshold=threshold,
             nms_iou_threshold=0.55,
             top_k=120,
