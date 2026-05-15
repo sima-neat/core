@@ -521,8 +521,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     std::error_code rec_ec;
     if (!fs::is_directory(base, rec_ec) || rec_ec)
       continue;
-    fs::recursive_directory_iterator it(base,
-                                        fs::directory_options::skip_permission_denied,
+    fs::recursive_directory_iterator it(base, fs::directory_options::skip_permission_denied,
                                         rec_ec);
     if (rec_ec)
       continue;
