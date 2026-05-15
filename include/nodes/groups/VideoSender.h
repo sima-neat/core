@@ -11,13 +11,6 @@
 
 namespace simaai::neat::nodes::groups {
 
-struct VideoSenderUdpOptions {
-  std::string host = "127.0.0.1";
-  int port = 9000;
-  bool sync = false;
-  bool async = false;
-};
-
 struct VideoSenderRtpOptions {
   int payload_type = 96;
   int config_interval = 1;
@@ -49,8 +42,15 @@ public:
   int fps() const {
     return fps_;
   }
+  int video_port() const {
+    return video_port_base + channel;
+  }
 
-  VideoSenderUdpOptions udp{};
+  std::string host = "127.0.0.1";
+  int channel = 0;
+  int video_port_base = 9000;
+  bool sync = false;
+  bool async = false;
   VideoSenderRtpOptions rtp{};
   VideoSenderEncoderOptions encoder{};
 

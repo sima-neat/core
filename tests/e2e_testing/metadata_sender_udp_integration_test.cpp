@@ -1,4 +1,4 @@
-#include "nodes/io/MetadataSenderGroup.h"
+#include "nodes/io/MetadataSender.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
 
@@ -8,18 +8,19 @@
 
 RUN_TEST("metadata_sender_udp_integration_test", ([] {
            using nlohmann::json;
-           using simaai::neat::MetadataSenderGroup;
-           using simaai::neat::MetadataSenderGroupOptions;
+           using simaai::neat::MetadataSender;
+           using simaai::neat::MetadataSenderOptions;
 
            sima_test::UdpReceiver rx;
 
-           MetadataSenderGroup group;
-           MetadataSenderGroupOptions opt;
+           MetadataSenderOptions opt;
            opt.host = "127.0.0.1";
+           opt.channel = 0;
            opt.metadata_port_base = rx.port();
 
            std::string init_err;
-           require(group.init(opt, 1, &init_err), "MetadataSenderGroup init failed: " + init_err);
+           MetadataSender sender(opt, &init_err);
+           require(sender.ok(), "MetadataSender init failed: " + init_err);
 
            const std::string data_json = R"({
              "objects": [
@@ -29,7 +30,7 @@ RUN_TEST("metadata_sender_udp_integration_test", ([] {
            })";
 
            std::string send_err;
-           require(group.send_metadata(0, "object-detection", data_json, 4444, "777", &send_err),
+           require(sender.send_metadata("object-detection", data_json, 4444, "777", &send_err),
                    "MetadataSender integration send_metadata failed: " + send_err);
 
            std::string payload;
@@ -47,6 +48,4 @@ RUN_TEST("metadata_sender_udp_integration_test", ([] {
                    "MetadataSender integration object count mismatch");
            require(parsed["data"]["objects"][0]["label"].get<std::string>() == "car",
                    "MetadataSender integration data payload mismatch");
-
-           group.stop();
          }));

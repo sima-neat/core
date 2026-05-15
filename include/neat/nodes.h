@@ -28,7 +28,6 @@
 #include "nodes/common/VideoTrackSelect.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
-#include "nodes/io/MetadataSenderGroup.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/UdpOutput.h"

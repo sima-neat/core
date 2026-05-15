@@ -256,7 +256,6 @@ set(UNIT_TESTS
   unit_gst_helpers_test
   unit_gst_init_guard_test
   unit_gst_video_meta_test
-  unit_metadata_sender_group_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_input_policy_test
   unit_input_planner_semantics_test
@@ -351,7 +350,6 @@ set(UNIT_TESTS
   unit_node_metadata_sender_test
   unit_nodes_test
   unit_plugin_failure_messages_test
-  unit_udp_output_group_test
   unit_video_sender_test
 )
 

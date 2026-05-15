@@ -1,8 +1,8 @@
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/ModelGroups.h"
-#include "nodes/io/MetadataSenderGroup.h"
 #include "nodes/io/Input.h"
+#include "nodes/io/MetadataSender.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/Session.h"
 
@@ -44,8 +44,8 @@ int run_case(const fs::path& root) {
   const std::string tar_gz = sima_yolov8_test::resolve_yolov8s_tar_or_skip(root);
   const cv::Mat img_bgr = sima_yolov8_test::load_people_image_or_skip(root);
 
-  using simaai::neat::MetadataSenderGroup;
-  using simaai::neat::MetadataSenderGroupOptions;
+  using simaai::neat::MetadataSender;
+  using simaai::neat::MetadataSenderOptions;
 
   const int metadata_base = rtsp_find_free_port_range(/*base_port=*/18000,
                                                       /*ports_needed=*/kStreams,
@@ -58,16 +58,20 @@ int run_case(const fs::path& root) {
     receivers.emplace_back(metadata_base + i, "127.0.0.1");
   }
 
-  MetadataSenderGroup metadata;
-  MetadataSenderGroupOptions opt;
-  opt.host = "127.0.0.1";
-  opt.metadata_port_base = metadata_base;
+  std::vector<MetadataSender> metadata;
+  metadata.reserve(kStreams);
+  for (int i = 0; i < kStreams; ++i) {
+    MetadataSenderOptions opt;
+    opt.host = "127.0.0.1";
+    opt.channel = i;
+    opt.metadata_port_base = metadata_base;
 
-  std::string init_err;
-  require(metadata.init(opt, kStreams, &init_err), "MetadataSenderGroup init failed: " + init_err);
+    std::string init_err;
+    metadata.emplace_back(opt, &init_err);
+    require(metadata.back().ok(), "MetadataSender init failed: " + init_err);
+  }
 
   struct Guard {
-    simaai::neat::MetadataSenderGroup* group = nullptr;
     simaai::neat::Run* run = nullptr;
     ~Guard() {
       if (run) {
@@ -76,14 +80,8 @@ int run_case(const fs::path& root) {
         } catch (...) {
         }
       }
-      if (group) {
-        try {
-          group->stop();
-        } catch (...) {
-        }
-      }
     }
-  } guard{&metadata, nullptr};
+  } guard{nullptr};
 
   simaai::neat::Model::Options model_opt;
   model_opt.preprocess.kind = simaai::neat::InputKind::Image;
@@ -155,8 +153,8 @@ int run_case(const fs::path& root) {
     }
 
     std::string send_err;
-    require(metadata.send_metadata(static_cast<std::size_t>(i), "object-detection", data.dump(),
-                                   frame_id, std::to_string(frame_id), &send_err),
+    require(metadata[static_cast<std::size_t>(i)].send_metadata(
+                "object-detection", data.dump(), frame_id, std::to_string(frame_id), &send_err),
             "send_metadata failed for stream " + stream_id + ": " + send_err);
   }
 
@@ -178,8 +176,6 @@ int run_case(const fs::path& root) {
 
   guard.run = nullptr;
   run.close();
-  guard.group = nullptr;
-  metadata.stop();
 
   std::cout << "[OK] graphpipes_yolo_metadata_sender_16stream_test passed\n";
   return 0;

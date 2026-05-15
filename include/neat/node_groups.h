@@ -18,7 +18,6 @@
 #include "nodes/groups/MpKCompatGroup.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/UdpH264OutputGroup.h"
-#include "nodes/groups/UdpOutputGroup.h"
 #include "nodes/groups/UdpOutputGroupG.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/groups/VideoSender.h"

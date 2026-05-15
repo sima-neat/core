@@ -29,10 +29,10 @@ void append_h264_rtp_udp_nodes(std::vector<std::shared_ptr<simaai::neat::Node>>&
                            simaai::neat::H264Packetize::ConfigInterval(opt.rtp.config_interval)));
 
   simaai::neat::UdpOutputOptions udp_opt;
-  udp_opt.host = opt.udp.host;
-  udp_opt.port = opt.udp.port;
-  udp_opt.sync = opt.udp.sync;
-  udp_opt.async = opt.udp.async;
+  udp_opt.host = opt.host;
+  udp_opt.port = opt.video_port();
+  udp_opt.sync = opt.sync;
+  udp_opt.async = opt.async;
   nodes.push_back(nodes::UdpOutput(udp_opt));
 }
 

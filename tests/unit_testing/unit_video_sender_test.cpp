@@ -27,8 +27,9 @@ RUN_TEST(
 
       {
         auto opt = VideoSenderOptions::H264RtpUdpFromRaw(1280, 720, 30);
-        opt.udp.host = "10.0.0.5";
-        opt.udp.port = 9000;
+        opt.host = "10.0.0.5";
+        opt.channel = 3;
+        opt.video_port_base = 8997;
         opt.rtp.payload_type = 97;
         opt.rtp.config_interval = 2;
         opt.encoder.bitrate_kbps = 2500;
@@ -63,11 +64,13 @@ RUN_TEST(
         const std::string udp_fragment = nodes[4]->backend_fragment(4);
         require_contains(udp_fragment, "host=10.0.0.5", "VideoSender UDP host mismatch");
         require_contains(udp_fragment, "port=9000", "VideoSender UDP port mismatch");
+        require(opt.video_port() == 9000, "VideoSender computed video port mismatch");
       }
 
       {
         auto opt = VideoSenderOptions::H264RtpUdpFromEncoded();
-        opt.udp.port = 9001;
+        opt.channel = 1;
+        opt.video_port_base = 9000;
         opt.rtp.payload_type = 98;
 
         const auto group = VideoSender(opt);

@@ -1,4 +1,4 @@
-#include "nodes/io/MetadataSenderGroup.h"
+#include "nodes/io/MetadataSender.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
 
@@ -40,8 +40,8 @@ bool is_parseable_metadata_json(const std::string& payload) {
 } // namespace
 
 RUN_TEST("stress_udp_metadata_burst_test", ([] {
-           using simaai::neat::MetadataSenderGroup;
-           using simaai::neat::MetadataSenderGroupOptions;
+           using simaai::neat::MetadataSender;
+           using simaai::neat::MetadataSenderOptions;
 
            const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 180));
            const int streams = 2;
@@ -50,14 +50,19 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
            sima_test::UdpReceiver rx0(metadata_port_base);
            sima_test::UdpReceiver rx1(metadata_port_base + 1);
 
-           MetadataSenderGroup group;
-           MetadataSenderGroupOptions opt;
-           opt.host = "127.0.0.1";
-           opt.metadata_port_base = metadata_port_base;
+           std::vector<MetadataSender> senders;
+           senders.reserve(streams);
 
-           std::string init_err;
-           require(group.init(opt, streams, &init_err),
-                   "MetadataSenderGroup init failed: " + init_err);
+           for (int s = 0; s < streams; ++s) {
+             MetadataSenderOptions opt;
+             opt.host = "127.0.0.1";
+             opt.channel = s;
+             opt.metadata_port_base = metadata_port_base;
+
+             std::string init_err;
+             senders.emplace_back(opt, &init_err);
+             require(senders.back().ok(), "MetadataSender init failed: " + init_err);
+           }
 
            int emitted = 0;
            int emit_fail = 0;
@@ -76,8 +81,8 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
                                    {"bbox", {120 + (i % 15), 100 + (i % 20), 30, 28}}}});
 
                std::string send_err;
-               if (group.send_metadata(static_cast<size_t>(s), "object-detection", data.dump(),
-                                       1000 + i, std::to_string(i), &send_err)) {
+               if (senders[static_cast<size_t>(s)].send_metadata(
+                       "object-detection", data.dump(), 1000 + i, std::to_string(i), &send_err)) {
                  ++emitted;
                } else {
                  ++emit_fail;
@@ -113,6 +118,4 @@ RUN_TEST("stress_udp_metadata_burst_test", ([] {
                    "UDP JSON burst stress should produce parseable metadata datagrams");
            require(dropped <= (total_expected / 2),
                    "UDP JSON burst stress drop count exceeded bounded threshold");
-
-           group.stop();
          }));

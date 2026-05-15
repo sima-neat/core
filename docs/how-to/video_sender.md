@@ -2,8 +2,8 @@
 
 Use `VideoSender` when a pipeline should send video to an external receiver. `VideoSender` is a real `NodeGroup`, so it is added through `Session::add(...)`.
 
-The current wire format is H.264 over RTP/UDP. The default UDP port is `9000`; channel-style apps usually use `9000 + channel`.
-If the receiver runs behind container port remapping, pass the mapped host and port explicitly from the app.
+The current wire format is H.264 over RTP/UDP. The default UDP port rule is `video_port_base + channel`, with `video_port_base = 9000`.
+If the receiver runs behind container port remapping, pass the mapped host and a matching `video_port_base` from the app.
 
 ## Raw Frames
 
@@ -15,11 +15,13 @@ VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
 
 ```cpp
 simaai::neat::Session session;
+const int channel = 0;
 
 auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
     width, height, fps);
-opt.udp.host = "127.0.0.1";
-opt.udp.port = 9000;
+opt.host = "127.0.0.1";
+opt.channel = channel;
+opt.video_port_base = 9000;
 opt.encoder.bitrate_kbps = 2500;
 
 session.add(simaai::neat::nodes::groups::VideoSender(opt));
@@ -28,13 +30,16 @@ session.add(simaai::neat::nodes::groups::VideoSender(opt));
 Python:
 
 ```python
+channel = 0
+
 opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(
     width=1920,
     height=1080,
     fps=30,
 )
-opt.udp.host = "127.0.0.1"
-opt.udp.port = 9000
+opt.host = "127.0.0.1"
+opt.channel = channel
+opt.video_port_base = 9000
 opt.encoder.bitrate_kbps = 2500
 
 session.add(pyneat.groups.video_sender(opt))
@@ -49,9 +54,12 @@ H264Parse -> H264Packetize -> UdpOutput
 ```
 
 ```cpp
+const int channel = 0;
+
 auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
-opt.udp.host = "127.0.0.1";
-opt.udp.port = 9000;
+opt.host = "127.0.0.1";
+opt.channel = channel;
+opt.video_port_base = 9000;
 
 session.add(simaai::neat::nodes::groups::VideoSender(opt));
 ```
@@ -59,9 +67,12 @@ session.add(simaai::neat::nodes::groups::VideoSender(opt));
 Python:
 
 ```python
+channel = 0
+
 opt = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
-opt.udp.host = "127.0.0.1"
-opt.udp.port = 9000
+opt.host = "127.0.0.1"
+opt.channel = channel
+opt.video_port_base = 9000
 
 session.add(pyneat.groups.video_sender(opt))
 ```
