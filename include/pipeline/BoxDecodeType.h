@@ -23,9 +23,10 @@ namespace simaai::neat {
  * @brief Decode families accepted by the BoxDecode backend.
  *
  * `Unspecified` is an internal unset sentinel and must fail fast before runtime decode.
- * All YOLO-family variants share the same class-inference contract in `genericboxdecode_v2`:
+ * Most YOLO-family variants share the same class-inference contract in `genericboxdecode_v2`:
  * - decoupled heads: repeated class-depth tensors, class depth > 4
  * - packed heads: depth = 3 * (num_classes + 5), consistent across heads
+ * `YoloV26` uses decoupled 4-channel raw l/t/r/b bbox heads paired with class heads.
  *
  * @ingroup pipeline
  */
@@ -49,6 +50,7 @@ enum class BoxDecodeType : std::int32_t {
   EffDet = 14,     ///< EfficientDet detection.
   RcnnStage1 = 15, ///< Region-proposal stage of two-stage R-CNN models.
   Centernet = 16,  ///< CenterNet keypoint-style detection.
+  YoloV26 = 17,    ///< YOLO26 detection (raw l/t/r/b distance heads).
 };
 
 /**
@@ -101,6 +103,8 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolov10";
   case BoxDecodeType::YoloV10Seg:
     return "yolov10-seg";
+  case BoxDecodeType::YoloV26:
+    return "yolo26";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -158,6 +162,7 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV9Seg:
   case BoxDecodeType::YoloV10:
   case BoxDecodeType::YoloV10Seg:
+  case BoxDecodeType::YoloV26:
     return true;
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
@@ -185,6 +190,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV8Pose:
   case BoxDecodeType::YoloV9:
   case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV26:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -207,6 +213,9 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloV10:
     return "YOLO tensor contract: decoupled class heads (>4 channels, repeated across heads) or "
            "packed heads (depth=3*(num_classes+5), consistent across heads).";
+  case BoxDecodeType::YoloV26:
+    return "YOLO26 tensor contract: grouped raw l/t/r/b bbox heads (4 channels) paired "
+           "with repeated class-score heads (>4 channels).";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

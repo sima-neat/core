@@ -92,6 +92,9 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolov10-seg") {
     return BoxDecodeType::YoloV10Seg;
   }
+  if (lower == "yolo26" || lower == "yolov26") {
+    return BoxDecodeType::YoloV26;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }

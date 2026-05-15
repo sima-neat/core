@@ -15,6 +15,7 @@ The runtime contract below comes from `internals/gst_plugins/genericboxdecode_v2
 - YOLO-family decode types (`yolo`, `yolov5*`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
   - Decoupled heads: class-head depths must be repeatable and `> 4`.
   - Packed heads: each head depth must satisfy `depth = 3 * (num_classes + 5)` and be consistent across heads.
+- `yolo26`: decoupled grouped heads with 4-channel raw l/t/r/b bbox tensors and repeatable class-head depths `> 4`.
 - `detr`: class channels are inferred from the maximum depth across heads, and must be `> 4`.
 - Other non-YOLO decode types (`effdet`, `rcnn-stage1`, `centernet`): fallback class inference uses max depth and requires `> 4`.
 - Segmentation decode tokens (`*-seg`) enable segmentation-like output sizing in v2 (adds mask payload per detection).
@@ -35,6 +36,7 @@ The runtime contract below comes from `internals/gst_plugins/genericboxdecode_v2
 | `BoxDecodeType::YoloV9Seg` | `yolov9-seg` | YOLO depth contract + segmentation path |
 | `BoxDecodeType::YoloV10` | `yolov10` | YOLO decoupled or packed depth contract |
 | `BoxDecodeType::YoloV10Seg` | `yolov10-seg` | YOLO depth contract + segmentation path |
+| `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 grouped raw l/t/r/b bbox heads + class-score heads |
 | `BoxDecodeType::Detr` | `detr` | `num_classes = max(depth)` (must be `> 4`) |
 | `BoxDecodeType::EffDet` | `effdet` | fallback max-depth inference (`> 4`) |
 | `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | fallback max-depth inference (`> 4`) |

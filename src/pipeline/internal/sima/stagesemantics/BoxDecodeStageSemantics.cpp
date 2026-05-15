@@ -15,6 +15,66 @@ bool boxdecode_bypass_mla_unpack_enabled() {
   return raw && *raw && std::strcmp(raw, "0") != 0;
 }
 
+bool contract_looks_like_grouped_yolov26(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.empty() || (contract.tensors.size() % 2U) != 0U) {
+    return false;
+  }
+  const std::size_t heads = contract.tensors.size() / 2U;
+  for (std::size_t i = 0; i < heads; ++i) {
+    const auto& bbox = contract.tensors[i];
+    const auto& scores = contract.tensors[i + heads];
+    if (bbox.input_shape.size() < 3U || scores.input_shape.size() < 3U) {
+      return false;
+    }
+    if (bbox.input_shape[0] != scores.input_shape[0] ||
+        bbox.input_shape[1] != scores.input_shape[1]) {
+      return false;
+    }
+    const int bbox_depth =
+        bbox.slice_shape.size() >= 3U ? bbox.slice_shape[2] : bbox.input_shape[2];
+    const int score_depth =
+        scores.slice_shape.size() >= 3U ? scores.slice_shape[2] : scores.input_shape[2];
+    if (bbox_depth != 4 || bbox.input_shape[2] < bbox_depth || score_depth <= 4) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void apply_yolov26_static_contract_overrides(BoxDecodeStaticContract* contract) {
+  if (!contract || contract->decode_type != BoxDecodeType::YoloV26) {
+    return;
+  }
+
+  // YOLO26 emits raw l/t/r/b distance heads plus class logits. Do not inherit
+  // YOLOv8 quant-probability heuristics from an auto-extracted MPK route.
+  contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+  contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+
+  if (!contract_looks_like_grouped_yolov26(*contract)) {
+    return;
+  }
+
+  const std::size_t heads = contract->tensors.size() / 2U;
+  for (std::size_t i = 0; i < heads; ++i) {
+    const std::string bbox_name = "bbox_" + std::to_string(i);
+    auto& bbox = contract->tensors[i];
+    bbox.logical_name = bbox_name;
+    bbox.backend_name = bbox_name;
+    if (i < contract->tensor_names.size()) {
+      contract->tensor_names[i] = bbox_name;
+    }
+
+    const std::string score_name = "class_logit_" + std::to_string(i);
+    auto& score = contract->tensors[i + heads];
+    score.logical_name = score_name;
+    score.backend_name = score_name;
+    if ((i + heads) < contract->tensor_names.size()) {
+      contract->tensor_names[i + heads] = score_name;
+    }
+  }
+}
+
 std::string resolve_boxdecode_input_dtype(const plugin_contracts::BoxDecodeContractSubset& subset) {
   std::string dtype;
   for (const auto& logical : subset.logical_inputs) {
@@ -78,6 +138,7 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   finalized.topk = topk;
   finalized.num_classes = num_classes > 0 ? num_classes : contract.num_classes;
   finalized.required_preprocess_meta_fields = required_preprocess_meta_fields;
+  apply_yolov26_static_contract_overrides(&finalized);
   return finalized;
 }
 

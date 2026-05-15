@@ -267,7 +267,9 @@ void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticC
     contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
     return;
   }
-  if (!saw_prob_tensor && !saw_logit_tensor && contract->decode_type == BoxDecodeType::YoloV8) {
+  if (!saw_prob_tensor && !saw_logit_tensor &&
+      (contract->decode_type == BoxDecodeType::YoloV8 ||
+       contract->decode_type == BoxDecodeType::YoloV26)) {
     contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
   }
 }
@@ -348,7 +350,9 @@ bool contract_looks_grouped_by_role_yolov8_local(const BoxDecodeStaticContract& 
 }
 
 void maybe_infer_yolov8_decode_type_option_local(BoxDecodeStaticContract* contract) {
-  if (!contract || contract->decode_type != BoxDecodeType::YoloV8 ||
+  if (!contract ||
+      (contract->decode_type != BoxDecodeType::YoloV8 &&
+       contract->decode_type != BoxDecodeType::YoloV26) ||
       contract->decode_type_option != BoxDecodeTypeOption::Auto ||
       !contract_looks_grouped_by_role_yolov8_local(*contract)) {
     return;
@@ -711,14 +715,14 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (saw_logit_tensor) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type == BoxDecodeType::YoloV8) {
+  if (decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26) {
     if (const auto inferred = maybe_infer_float_yolov8_score_activation_from_sample_values_local(
             tensors, input_contract);
         inferred.has_value()) {
       return inferred;
     }
   }
-  if (decode_type == BoxDecodeType::YoloV8) {
+  if (decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
   set_error(error_message,
@@ -1030,7 +1034,7 @@ void maybe_restore_boxdecode_semantic_names_from_lineage_local(
       continue;
     }
     const std::string synthesized = synthesize_boxdecode_tensor_name_from_lineage_local(
-        lineage_facts[i], contract->quant_needed);
+        lineage_facts[i], contract->quant_needed && contract->decode_type != BoxDecodeType::YoloV26);
     if (synthesized.empty()) {
       continue;
     }
@@ -1044,7 +1048,9 @@ void maybe_restore_boxdecode_semantic_names_from_lineage_local(
 
 void maybe_restore_grouped_role_semantic_names_from_structure_local(
     BoxDecodeStaticContract* contract) {
-  if (!contract || contract->decode_type != BoxDecodeType::YoloV8 ||
+  if (!contract ||
+      (contract->decode_type != BoxDecodeType::YoloV8 &&
+       contract->decode_type != BoxDecodeType::YoloV26) ||
       !contract_looks_grouped_by_role_yolov8_local(*contract) || contract->tensors.empty() ||
       (contract->tensors.size() % 2U) != 0U) {
     return;
@@ -1070,8 +1076,10 @@ void maybe_restore_grouped_role_semantic_names_from_structure_local(
       contract->tensor_names[i] = bbox_name;
     }
 
+    const bool score_is_probability =
+        contract->quant_needed && contract->decode_type != BoxDecodeType::YoloV26;
     const std::string score_name =
-        std::string(contract->quant_needed ? "class_prob_" : "class_logit_") + std::to_string(i);
+        std::string(score_is_probability ? "class_prob_" : "class_logit_") + std::to_string(i);
     contract->tensors[i + heads].logical_name = score_name;
     contract->tensors[i + heads].backend_name = score_name;
     if ((i + heads) < contract->tensor_names.size()) {
@@ -2024,19 +2032,51 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   out.tensor_names.reserve(logical_outputs.size());
   for (std::size_t i = 0; i < logical_outputs.size(); ++i) {
     const auto& tensor = logical_outputs[i];
-    const std::vector<std::int64_t> shape =
+    const std::vector<std::int64_t> logical_shape =
         !tensor.logical_shape.empty() ? tensor.logical_shape : tensor.mpk_shape;
     int h = 0;
     int w = 0;
     int c = 0;
-    if (!dims_from_mpk_shape_for_input_nhwc_local(shape, &h, &w, &c)) {
+    if (!dims_from_mpk_shape_for_input_nhwc_local(logical_shape, &h, &w, &c)) {
       return fail("boxdecode model-managed contract requires explicit upstream tensor geometry");
     }
-    BoxDecodeTensorStaticContract entry;
-    entry.input_shape = {h, w, c};
-    entry.slice_shape = {h, w, c};
-    entry.data_type = normalize_mpk_dtype_token_local(
+    const std::string entry_dtype = normalize_mpk_dtype_token_local(
         !tensor.logical_dtype.empty() ? tensor.logical_dtype : tensor.dtype);
+    const int elem_bytes = dtype_size_bytes_local(entry_dtype);
+
+    int physical_h = h;
+    int physical_w = w;
+    int physical_c = c;
+    if (elem_bytes > 0 && tensor.stride_bytes.size() == logical_shape.size() &&
+        tensor.stride_bytes.size() >= 3U) {
+      // MLA boundary views published after an unpack+slice keep the logical shape
+      // (for example [1,80,80,4]) but preserve the parent storage strides
+      // (for example [102400,1280,16,2] for BF16 [1,80,80,8]).  Reuse those
+      // existing MPK stride facts: input_shape is the physical/storage HWC view
+      // consumed by objectdecode, slice_shape is the logical region to decode.
+      const std::size_t rank = tensor.stride_bytes.size();
+      const std::int64_t stride_w = tensor.stride_bytes[rank - 2U];
+      const std::int64_t stride_c = tensor.stride_bytes[rank - 1U];
+      if (stride_c == elem_bytes && stride_w > 0 &&
+          (stride_w % static_cast<std::int64_t>(elem_bytes)) == 0) {
+        const auto inferred_physical_c =
+            static_cast<int>(stride_w / static_cast<std::int64_t>(elem_bytes));
+        if (inferred_physical_c >= c) {
+          physical_c = inferred_physical_c;
+        }
+      }
+    }
+    const std::uint64_t physical_size_bytes =
+        elem_bytes > 0 ? static_cast<std::uint64_t>(physical_h) *
+                             static_cast<std::uint64_t>(physical_w) *
+                             static_cast<std::uint64_t>(physical_c) *
+                             static_cast<std::uint64_t>(elem_bytes)
+                       : tensor.size_bytes;
+
+    BoxDecodeTensorStaticContract entry;
+    entry.input_shape = {physical_h, physical_w, physical_c};
+    entry.slice_shape = {h, w, c};
+    entry.data_type = entry_dtype;
     entry.layout = "HWC";
     if (entry.data_type.empty()) {
       return fail("boxdecode model-managed contract requires explicit upstream tensor dtype");
@@ -2070,7 +2110,10 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     // source segment, not the parent-carrier base offset. Preserving the logical view offset is
     // what allows grouped MLA heads that share one parent segment to resolve each sub-view at the
     // correct position instead of re-reading every head from byte offset 0 of the parent.
-    const std::int64_t source_byte_offset = tensor.byte_offset;
+    std::int64_t source_byte_offset = tensor.source_byte_offset;
+    if (source_byte_offset == 0 && tensor.byte_offset > 0) {
+      source_byte_offset = tensor.byte_offset;
+    }
     if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) &&
         !source_parent_segment_name.empty()) {
       entry.source_segment_name = source_parent_segment_name;
@@ -2082,7 +2125,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
     entry.source_physical_index = source_physical_index;
     entry.source_byte_offset = source_byte_offset;
-    entry.source_size_bytes = tensor.size_bytes;
+    entry.source_size_bytes = physical_size_bytes > 0U ? physical_size_bytes : tensor.size_bytes;
     out.tensors.push_back(std::move(entry));
     out.tensor_names.push_back(out.tensors.back().logical_name);
     BoxDecodePhysicalInputStaticContract physical_input;
