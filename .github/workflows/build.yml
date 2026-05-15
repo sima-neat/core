@@ -574,7 +574,12 @@ jobs:
 
       - name: Configure docs build
         run: |
-          cmake -S . -B build
+          cmake -S . -B build \
+            -DSIMANEAT_BUILD_SAMPLES=OFF \
+            -DSIMANEAT_BUILD_TESTS=OFF \
+            -DSIMANEAT_BUILD_TUTORIALS=OFF \
+            -DSIMANEAT_BUILD_PYTHON=OFF \
+            -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
 
       - name: Build docs
         env:

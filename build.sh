@@ -1194,6 +1194,16 @@ configure_cmake() {
     -DFUZZING="${BUILD_FUZZ}"
   )
 
+  if [[ "${DOCS_ONLY}" == "ON" ]]; then
+    # The docs job only needs the Doxygen target and public headers.  Some
+    # x64 docs runners do not have the ARM NEAT/GStreamer runtime artifacts
+    # installed, so do not make those runtime libraries configure-time
+    # requirements for docs-only builds.
+    cmake_args+=(
+      -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
+    )
+  fi
+
   if [[ "${ELXR_SDK}" == "ON" && -n "${SYSROOT:-}" ]]; then
     local -a pkgconfig_dirs=(
       "${SYSROOT}/usr/lib/aarch64-linux-gnu/pkgconfig"
