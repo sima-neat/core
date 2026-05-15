@@ -1034,7 +1034,8 @@ void maybe_restore_boxdecode_semantic_names_from_lineage_local(
       continue;
     }
     const std::string synthesized = synthesize_boxdecode_tensor_name_from_lineage_local(
-        lineage_facts[i], contract->quant_needed && contract->decode_type != BoxDecodeType::YoloV26);
+        lineage_facts[i],
+        contract->quant_needed && contract->decode_type != BoxDecodeType::YoloV26);
     if (synthesized.empty()) {
       continue;
     }
@@ -2067,11 +2068,10 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       }
     }
     const std::uint64_t physical_size_bytes =
-        elem_bytes > 0 ? static_cast<std::uint64_t>(physical_h) *
-                             static_cast<std::uint64_t>(physical_w) *
-                             static_cast<std::uint64_t>(physical_c) *
-                             static_cast<std::uint64_t>(elem_bytes)
-                       : tensor.size_bytes;
+        elem_bytes > 0
+            ? static_cast<std::uint64_t>(physical_h) * static_cast<std::uint64_t>(physical_w) *
+                  static_cast<std::uint64_t>(physical_c) * static_cast<std::uint64_t>(elem_bytes)
+            : tensor.size_bytes;
 
     BoxDecodeTensorStaticContract entry;
     entry.input_shape = {physical_h, physical_w, physical_c};
