@@ -739,10 +739,35 @@ inline fs::path ensure_coco_sample(const fs::path& root_in = {}) {
       (url_env && *url_env)
           ? std::string(url_env)
           : "https://raw.githubusercontent.com/ultralytics/yolov5/master/data/images/zidane.jpg";
-  const fs::path out_path = root / "tmp" / "coco_sample.jpg";
-  if (!download_file(url, out_path))
-    return {};
-  return out_path;
+
+  // Primary destination matches the historical layout (caller looks here
+  // first via resolve_people_image_path). Falls back to writable scratch
+  // locations when the primary parent can't be created — this happens on
+  // CI when `root` is a build-host path that doesn't exist on the test
+  // runner, so curl/wget bail with "Failure writing output to destination"
+  // even though the URL resolves cleanly and the test would otherwise pass.
+  const fs::path primary = root / "tmp" / "coco_sample.jpg";
+  if (download_file(url, primary))
+    return primary;
+
+  std::error_code ec;
+  fs::path temp_root;
+  try {
+    temp_root = fs::temp_directory_path();
+  } catch (...) {
+    temp_root = fs::path("/tmp");
+  }
+  const std::vector<fs::path> fallbacks = {
+      temp_root / "sima-coco-sample" / "coco_sample.jpg",
+      fs::path("/tmp") / "sima-coco-sample" / "coco_sample.jpg",
+  };
+  for (const auto& candidate : fallbacks) {
+    ec.clear();
+    fs::create_directories(candidate.parent_path(), ec);
+    if (download_file(url, candidate))
+      return candidate;
+  }
+  return {};
 }
 
 } // namespace sima_test
