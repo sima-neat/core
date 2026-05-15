@@ -121,7 +121,8 @@ json shape_descs_to_json(const std::vector<sima_ev_shape_desc>& shapes) {
 void maybe_refine_boxdecode_contract_from_ingress_sample_local(
     pipeline_internal::sima::BoxDecodeStaticContract* contract, const Sample& ingress_sample,
     BoxDecodeType decode_type, const std::optional<InputContract>& input_contract) {
-  if (!contract || decode_type != BoxDecodeType::YoloV8 ||
+  if (!contract ||
+      (decode_type != BoxDecodeType::YoloV8 && decode_type != BoxDecodeType::YoloV26) ||
       !boxdecode_contract_needs_sample_semantic_refinement_local(*contract)) {
     return;
   }
@@ -410,6 +411,17 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
   return filtered;
 }
 
+void apply_yolov26_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
+  if (!compiled || compiled->payload.decode_type != BoxDecodeType::YoloV26) {
+    return;
+  }
+  // YOLO26 score heads are logits by contract. Make model-managed overrides
+  // robust even when an MPK route was auto-extracted through legacy YOLOv8
+  // grouped-head heuristics.
+  compiled->payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+  compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+}
+
 } // namespace
 
 static BoxDecodeOptionsInternal options_from_model(
@@ -583,6 +595,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
     compiled_contract.payload.decode_type_option = decode_type_option;
   }
+  apply_yolov26_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }
