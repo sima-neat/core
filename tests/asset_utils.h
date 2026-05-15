@@ -496,6 +496,36 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     }
   }
 
+  // First, try the explicit sima-cli internal-mode layout. When sima-cli
+  // detects board mode (Environment: board (modalix)) it routes through
+  // _download_model_internal, which lands the tarball at
+  //   <getcwd()>/<model_name>/<filename>
+  // (see /usr/local/lib/python3.11/dist-packages/sima_cli/model_zoo/model.py
+  //  around `dest_dir = os.path.join(os.getcwd(), selected_model.split("/")[-1])`).
+  // None of the directories in the broader search loop above check this
+  // per-model subdir form, so the CI runner — which detects board mode
+  // because /etc/build advertises SIMA_BUILD_VERSION+MACHINE — trips the
+  // SKIP path after a perfectly successful sima-cli download. Add the exact
+  // subdir as an explicit candidate before falling back to recursive walks.
+  const std::vector<fs::path> board_mode_subdir_roots = {
+      root,
+      fs::current_path(),
+  };
+  for (const auto& base : board_mode_subdir_roots) {
+    if (base.empty())
+      continue;
+    const fs::path subdir = base / "yolo_v8s";
+    for (const auto& name : names) {
+      const fs::path candidate = subdir / name;
+      if (is_usable_regular_file(candidate)) {
+        if (move_to_tmp(candidate, tmp_tar)) {
+          return tmp_tar.string();
+        }
+        return candidate.string();
+      }
+    }
+  }
+
   // Defensive recursive fallback: sima-cli reports "File already exists and is
   // complete: yolo_v8s_mpk.tar.gz" when its own cache has the file, but the
   // exact cache layout (subdir-per-model, environment-specific paths) is
@@ -530,10 +560,22 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
         continue;
       const std::string fname = entry.path().filename().string();
       for (const auto& name : names) {
-        if (fname == name && is_usable_regular_file(entry.path()) &&
-            move_to_tmp(entry.path(), tmp_tar)) {
+        if (fname != name)
+          continue;
+        const fs::path& found = entry.path();
+        if (!is_usable_regular_file(found))
+          continue;
+        // Try to stage into tmp_tar so the fast path picks it up next time,
+        // but if that fails (e.g. `root` is a synthetic path on the test
+        // runner so `root/tmp/` can't be created), fall back to the located
+        // path. Either way the caller gets a usable tarball — silently
+        // skipping here was the bug behind the "Failed to locate" CI flake
+        // when sima-cli's board-mode cache layout puts the file under a
+        // per-model subdir (e.g. `<cwd>/yolo_v8s/yolo_v8s_mpk.tar.gz`).
+        if (move_to_tmp(found, tmp_tar)) {
           return tmp_tar.string();
         }
+        return found.string();
       }
     }
   }
