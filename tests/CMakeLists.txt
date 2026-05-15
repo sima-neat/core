@@ -42,6 +42,7 @@ set(_SIMA_TEST_NEAT_RUNTIME_DIR_CANDIDATES
   "${SIMA_TEST_NEAT_PLUGIN_DIR}"
   ${SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES}
   ${SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES}
+  ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
   "/usr/lib/aarch64-linux-gnu/neat/runtime"
   "/lib/aarch64-linux-gnu/neat/runtime"
   "/usr/lib/neat/runtime"
@@ -255,6 +256,7 @@ set(UNIT_TESTS
   unit_gst_helpers_test
   unit_gst_init_guard_test
   unit_gst_video_meta_test
+  unit_metadata_sender_group_test
   unit_inputstream_dynamic_policy_matrix_test
   unit_input_policy_test
   unit_input_planner_semantics_test
@@ -346,8 +348,11 @@ set(UNIT_TESTS
   unit_tensor_image_mapping_test
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
+  unit_node_metadata_sender_test
   unit_nodes_test
   unit_plugin_failure_messages_test
+  unit_udp_output_group_test
+  unit_video_sender_test
 )
 
 if (SIMA_WITH_OPENCV AND OPENCV_FOUND)
@@ -437,6 +442,7 @@ set(E2E_TESTS
   session_rtsp_lifecycle_regression_test
   session_validate_report_regression_test
   stage_routing_regression_test
+  metadata_sender_udp_integration_test
   udp_output_loopback_integration_test
 )
 
@@ -509,7 +515,7 @@ endif()
 # ------------------------------------------------------------------------------
 set(STRESS_TESTS
   stress_graph_strict_sync_join_race_test
-  stress_udp_json_burst_test
+  stress_udp_metadata_burst_test
   stress_pipeline_build_repeated_test
   stress_model_lifecycle_test
   stress_session_lifecycle_test
@@ -824,15 +830,15 @@ if (NOT preproc_yolov8_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
-  graphpipes_yolo_optiview_16stream_test
-  e2e_pipelines/obj_detection/graphpipes_yolo_optiview_16stream_test.cpp
+  graphpipes_yolo_metadata_sender_16stream_test
+  e2e_pipelines/obj_detection/graphpipes_yolo_metadata_sender_16stream_test.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
   ARGS ${CMAKE_SOURCE_DIR}
 )
 
-if (NOT graphpipes_yolo_optiview_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST graphpipes_yolo_optiview_16stream_test APPEND PROPERTY LABELS "e2e;obj_detection")
+if (NOT graphpipes_yolo_metadata_sender_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graphpipes_yolo_metadata_sender_16stream_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 # ------------------------------------------------------------------------------
