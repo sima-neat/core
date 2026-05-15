@@ -57,7 +57,7 @@ The four `PreprocessGraphFamily` values map to four kernel chains:
 
 The dual on the output side — `Postproc` / `Detess` / `DetessDequant` / pass-through — depends on whether the MLA's compiled output kernel includes detess/dequant.
 
-See [the dtype contract](dtype_contract) for why these four families exist.
+See [the dtype contract](/concepts/dtype_contract) for why these four families exist.
 
 ## Kernel naming convention
 

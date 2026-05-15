@@ -50,11 +50,11 @@ The framework's element naming is deterministic — the same Node list with the 
 - Test snapshots stable across runs.
 - Element identification (e.g., for `RunDiagSnapshot` lookups) machine-friendly.
 
-The convention is `n<node_index>_<role>`, where `role` is a short stable identifier the Node author picks. See [`Node::backend_fragment()`](/reference/cppapi/classes/simaai-neat-node).
+The convention is `n<node_index>_<role>`, where `role` is a short stable identifier the Node author picks. See [`Node::backend_fragment()`](/reference/cppapi/classes/simaai-neat-graph-node).
 
 ## Further reading
 
 - "GStreamer abstraction" — §0.8 of the design deep dive.
-- [`Node::backend_fragment()`](/reference/cppapi/classes/simaai-neat-node)
+- [`Node::backend_fragment()`](/reference/cppapi/classes/simaai-neat-graph-node)
 - [`Session::describe()`](/reference/cppapi/classes/simaai-neat-session) — print the launch string.
 - "SiMa plugin manifest" — §51 and §95 of the design deep dive.

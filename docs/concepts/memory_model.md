@@ -36,7 +36,7 @@ A `Tensor` carries its segment alongside the triple, so the framework knows whet
 
 The MLA, EV74, and CPU all have their own caches. When a buffer is written by one and read by another, the framework inserts cache flush / invalidate calls at the boundary. Application code never has to think about this — it's handled at the segment level when buffers cross stages.
 
-The one place application code does have to think about it: when **mapping** a `TensorBuffer` for direct CPU read or write via `Mapping`. The framework inserts the right invalidate (read map) or flush (write map) at unmap time. See [`MapMode`](/reference/cppapi/enums/) and [`TensorBuffer::map()`](/reference/cppapi/classes/simaai-neat-tensorbuffer).
+The one place application code does have to think about it: when **mapping** a `TensorBuffer` for direct CPU read or write via `Mapping`. The framework inserts the right invalidate (read map) or flush (write map) at unmap time. See [`MapMode`](/reference/cppapi/namespaces/simaai-neat) and [`TensorBuffer::map()`](/reference/cppapi/structs/simaai-neat-tensorbuffer).
 
 ## Zero-copy in practice
 
@@ -52,10 +52,10 @@ The framework's planner is responsible for picking segments such that consecutiv
 
 ## Related types
 
-- [`TensorBuffer`](/reference/cppapi/classes/simaai-neat-tensorbuffer) — the buffer-triple container.
-- [`Segment`](/reference/cppapi/classes/) — segment handle.
-- [`Mapping`](/reference/cppapi/classes/) — RAII map handle for direct CPU access.
-- [`MemoryContract`](/reference/cppapi/enums/) — how a Node prefers to allocate.
+- [`TensorBuffer`](/reference/cppapi/structs/simaai-neat-tensorbuffer) — the buffer-triple container.
+- [`Segment`](/reference/cppapi/structs/simaai-neat-segment) — segment handle.
+- [`Mapping`](/reference/cppapi/structs/simaai-neat-mapping) — RAII map handle for direct CPU access.
+- [`MemoryContract`](/reference/cppapi/files/include-contracts-contracttypes-h) — how a Node prefers to allocate.
 - [`ConversionKind::Transfer`](/reference/cppapi/files/include-pipeline-tensorconversion-h) — the only conversion kind that copies across segments.
 
 ## Further reading

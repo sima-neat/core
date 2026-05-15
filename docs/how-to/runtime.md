@@ -88,4 +88,4 @@ Call `production()` or `quiet()` explicitly when you want less output.
 | `VerboseOptions::debug_plugins()` | Keep production UX, but also surface plugin and GStreamer topics. |
 | `VerboseOptions::debug_all()` | Force the full verbose/detail sweep across all topics. |
 
-See [Runtime Tuning](runtime_tuning) for practical tuning guidance.
+See [Runtime Tuning](/how-to/runtime_tuning) for practical tuning guidance.

@@ -10,7 +10,7 @@ The Neat framework has two types named `Graph`. They live in different namespace
 
 ## `simaai::neat::Graph` — the builder graph
 
-Defined in [`builder/Graph.h`](/reference/cppapi/files/include-builder-graph-h). Pure STL, no GStreamer, no threads. It is a directed acyclic graph of `Node` objects, used by application code that wants to express **non-linear** pipeline shapes (fan-in, fan-out, tee, multi-input).
+Defined in `include/builder/Graph.h`. Pure STL, no GStreamer, no threads. It is a directed acyclic graph of `Node` objects, used by application code that wants to express **non-linear** pipeline shapes (fan-in, fan-out, tee, multi-input).
 
 Use it when:
 
@@ -71,8 +71,8 @@ This is the world `GraphSession` / `GraphRun` / `StageExecutor` live in.
 
 ## Further reading
 
-- "Graphs" — §0.14, §10, §73 of the design deep dive ([Design / architect.md](../design/architect)).
-- [`builder/Graph.h`](/reference/cppapi/files/include-builder-graph-h)
+- "Graphs" — §0.14, §10, §73 of the design deep dive ([Architecture](/contribute/architecture)).
+- `include/builder/Graph.h`
 - [`graph/Graph.h`](/reference/cppapi/files/include-graph-graph-h)
 - [`graph/GraphSession.h`](/reference/cppapi/files/include-graph-graphsession-h)
 - [`graph/StageExecutor.h`](/reference/cppapi/files/include-graph-stageexecutor-h)

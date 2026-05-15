@@ -45,4 +45,4 @@ Even if you're not an agent, you benefit from agent-friendly API design: the sam
 - "Introducing Neat" — §0.1 of the design deep dive.
 - [`Session::describe()`](/reference/cppapi/classes/simaai-neat-session) — programmatic plan summary.
 - [`SessionError`](/reference/cppapi/classes/simaai-neat-sessionerror) — structured error type.
-- [`MpKManifest`](/reference/cppapi/structs/simaai-neat-mpk-mpkmanifest) — model-pack metadata.
+- [`Model`](/reference/cppapi/classes/simaai-neat-model) — loaded MPK and parsed manifest.

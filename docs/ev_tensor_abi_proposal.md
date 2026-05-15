@@ -22,10 +22,10 @@ The current EV graph ABIs have drifted in two bad ways:
 - some graphs are half-migrated and carry both legacy scalar fields and array-based fields
 
 Examples from the current tree:
-- [tessellate_config.h](/home/docker/sima-cli/internals/sima-ai-cvu-sw/graphs/tessellate/config/tessellate_config.h) mixes array fields with duplicated legacy scalar fields.
-- [detessellate_config.h](/home/docker/sima-cli/internals/sima-ai-cvu-sw/graphs/detessellate/config/detessellate_config.h) is already array-based but different from tess.
-- [quantize_config.h](/home/docker/sima-cli/internals/sima-ai-cvu-sw/graphs/quantize/config/quantize_config.h) and [dequantize_config.h](/home/docker/sima-cli/internals/sima-ai-cvu-sw/graphs/dequantize/config/dequantize_config.h) repeat the same pattern with different per-op fields.
-- [detessdequant_config.h](/home/docker/sima-cli/internals/sima-ai-cvu-sw/graphs/detessdequant/config/detessdequant_config.h) is a larger multi-head variant of the same idea.
+- `internals/sima-ai-cvu-sw/graphs/tessellate/config/tessellate_config.h` mixes array fields with duplicated legacy scalar fields.
+- `internals/sima-ai-cvu-sw/graphs/detessellate/config/detessellate_config.h` is already array-based but different from tess.
+- `internals/sima-ai-cvu-sw/graphs/quantize/config/quantize_config.h` and `internals/sima-ai-cvu-sw/graphs/dequantize/config/dequantize_config.h` repeat the same pattern with different per-op fields.
+- `internals/sima-ai-cvu-sw/graphs/detessdequant/config/detessdequant_config.h` is a larger multi-head variant of the same idea.
 
 The result is more ABI drift, harder roundtrip validation, and easier host/device mismatch.
 
@@ -41,7 +41,7 @@ The result is more ABI drift, harder roundtrip validation, and easier host/devic
 ## Proposed Header
 
 Draft header:
-- [EvTensorAbi.h](/home/docker/sima-cli/core/include/pipeline/EvTensorAbi.h)
+- `core/include/pipeline/EvTensorAbi.h`
 
 The proposal introduces:
 - `sima_ev_abi_header`
@@ -169,7 +169,7 @@ Recommended config:
 Why `bus` is the preferred canonical domain:
 - EV hardware dereferences device-visible addresses, not host CPU physical addresses
 - the current platform already pins several working graphs to `bus/bus`
-- the current shared helper reflects that in [configManagerCommon.h](/home/docker/sima-cli/internals/sima-ai-soc-pipeline/config_manager/include/configManagerCommon.h)
+- the current shared helper reflects that in `internals/sima-ai-soc-pipeline/config_manager/include/configManagerCommon.h`
 - the current policy note records graph-specific correctness differences in `internals/sima-ai-soc-pipeline/config_manager/doc/evxx_graph_address_policy.md`
 
 The proposal still keeps `addr_space` explicit during migration.
@@ -207,7 +207,7 @@ The proposal still keeps `addr_space` explicit during migration.
 ## Recommendation
 
 Adopt the shared descriptor ABI in:
-- [EvTensorAbi.h](/home/docker/sima-cli/core/include/pipeline/EvTensorAbi.h)
+- `core/include/pipeline/EvTensorAbi.h`
 
 Then migrate EV kernels in this order:
 1. tessellate

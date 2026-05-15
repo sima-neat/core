@@ -25,7 +25,7 @@ A model's MPK contract tells the framework two things about its first MLA stage:
 | INT8      | yes      | `Quant`                                    | Resize, color convert, normalize, **quantize**. The MLA stage tessellates internally. |
 | INT8      | no       | `QuantTess`                                | Resize, color convert, normalize, **quantize**, **tessellate**. |
 
-The planner picks one of these four `PreprocessGraphFamily` values when building the preprocess Node. See [`PreprocessGraphFamily`](/reference/cppapi/enums/) in the C++ reference and [`ResolvedPreprocessPlan`](/reference/cppapi/structs/simaai-neat-resolvedpreprocessplan) for the field.
+The planner picks one of these four `PreprocessGraphFamily` values when building the preprocess Node. See [`PreprocessGraphFamily`](/reference/cppapi/files/include-model-preprocessplan-h) in the C++ reference and [`ResolvedPreprocessPlan`](/reference/cppapi/structs/simaai-neat-resolvedpreprocessplan) for the field.
 
 ## What "tessellation" means here
 
@@ -54,10 +54,10 @@ What the dtype contract means in practice for application code:
 
 - [`PreprocessOptions`](/reference/cppapi/structs/simaai-neat-preprocessoptions) — application intent.
 - [`ResolvedPreprocessPlan`](/reference/cppapi/structs/simaai-neat-resolvedpreprocessplan) — what the planner compiled.
-- [`PreprocessGraphFamily`](/reference/cppapi/enums/) — which of the four corners was chosen.
+- [`PreprocessGraphFamily`](/reference/cppapi/files/include-model-preprocessplan-h) — which of the four corners was chosen.
 - [`ConversionKind`](/reference/cppapi/files/include-pipeline-tensorconversion-h) — what kind of conversion the framework inserted.
 
 ## Further reading
 
-- "Tessellation, quant, and cast" — §17 of the design deep dive ([Design / architect.md](../design/architect#17-tessellation-quant-and-cast)).
+- "Tessellation, quant, and cast" — §17 of the design deep dive ([Architecture](/contribute/architecture#17-tessellation-quant-and-cast)).
 - "Input planner" — §82 of the design deep dive.

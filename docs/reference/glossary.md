@@ -13,7 +13,7 @@ Terms and acronyms that appear across the framework's docs and code.
 | Term | Definition |
 |---|---|
 | **Neat (the framework)** | The library this documentation describes — a C++/Python framework for building, validating, and running GStreamer-based AI inference pipelines on Modalix. |
-| **Node** | The smallest building block of a pipeline. A typed wrapper over a GStreamer element. See [`Node.h`](/reference/cppapi/files/include-builder-node-h). |
+| **Node** | The smallest building block of a pipeline. A typed wrapper over a GStreamer element. See `include/builder/Node.h`. |
 | **NodeGroup** | A bundle of Nodes that travels as a unit (e.g., a model's preprocess). |
 | **Session** | The assembly stage that turns Nodes into a runnable Run. |
 | **Run** | A live, running pipeline. Push samples in, pull samples out. |
@@ -67,6 +67,6 @@ Terms and acronyms that appear across the framework's docs and code.
 ## See also
 
 - [`Session::describe()`](/reference/cppapi/classes/simaai-neat-session) — emits the repro launch string.
-- [The dtype contract](../concepts/dtype_contract).
-- [Memory model](../concepts/memory_model).
-- [Processor backends](../concepts/processor_backends).
+- [The dtype contract](/concepts/dtype_contract).
+- [Memory model](/concepts/memory_model).
+- [Processor backends](/concepts/processor_backends).

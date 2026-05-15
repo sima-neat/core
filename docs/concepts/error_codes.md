@@ -56,7 +56,7 @@ Codes are grouped by the layer that raises them. The full set of constants lives
 | Code | When raised | What to do |
 |---|---|---|
 | `runtime.timeout` | A `pull()` / `push()` exceeded its timeout. | Check back-pressure with `RunDiagSnapshot::boundary_flow_stats`. |
-| `runtime.gst_error` | GStreamer posted a `GST_MESSAGE_ERROR`. | Read the wrapped debug string ([Plugin error format](../reference/error_format)). |
+| `runtime.gst_error` | GStreamer posted a `GST_MESSAGE_ERROR`. | Read the wrapped debug string ([Plugin error format](/reference/error_format)). |
 | `runtime.eos` | Pipeline reached EOS before all expected outputs arrived. | Check the input source for premature EOS; verify there's enough input data. |
 
 ## How to consume
@@ -78,7 +78,7 @@ The `SessionReport` attached to the error names the failing Node and the build p
 
 ## Further reading
 
-- [Plugin error format](../reference/error_format) — how GStreamer-side plugin errors are encoded into the debug string.
+- [Plugin error format](/reference/error_format) — how GStreamer-side plugin errors are encoded into the debug string.
 - [`SessionError`](/reference/cppapi/classes/simaai-neat-sessionerror) — the exception type.
 - [`SessionReport`](/reference/cppapi/structs/simaai-neat-sessionreport) — the structured context attached to every error.
 - "Validation, SessionReport" — §29 and §41 of the design deep dive.

@@ -13,7 +13,7 @@ An **MPK** (Model Pack) is a `.tar.gz` / `.tgz` / `.mpk` / `.tar` archive contai
 - **Configs** — per-stage runtime metadata.
 - **Weights / assets** — quantization tables, calibration data, anything the model needs at runtime.
 
-This page is the conceptual overview. For the byte-level contract and security rules, see [MPK Contract (contributor reference)](../contribute/mpk_contract).
+This page is the conceptual overview. For the byte-level contract and security rules, see [MPK Contract (contributor reference)](/contribute/mpk_contract).
 
 ## Why a single archive
 
@@ -70,14 +70,11 @@ auto manifest = sima::MpKLoader::inspect(path, opt);
 
 ## Related types
 
-- [`MpKLoader`](/reference/cppapi/classes/simaai-neat-mpk-mpkloader) — entry point.
-- [`MpKLoaderOptions`](/reference/cppapi/structs/simaai-neat-mpk-mpkloaderoptions) — tunable safety caps.
-- [`MpKManifest`](/reference/cppapi/structs/simaai-neat-mpk-mpkmanifest) — parsed manifest.
-- [`MpKError`](/reference/cppapi/classes/simaai-neat-mpk-mpkerror) — exception with `ErrorClass`.
-- [`ErrorClass`](/reference/cppapi/enums/) — coarse triage taxonomy.
+- [`Model`](/reference/cppapi/classes/simaai-neat-model) — the public entry point that loads an MPK and exposes the parsed manifest.
+- `MpKLoader`, `MpKLoaderOptions`, `MpKManifest`, `MpKError`, `ErrorClass` — internal types in `include/mpk/`; reach them through `Model` in application code.
 
 ## Further reading
 
-- [MPK Contract (contributor reference)](../contribute/mpk_contract) — byte-level rules and field semantics.
+- [MPK Contract (contributor reference)](/contribute/mpk_contract) — byte-level rules and field semantics.
 - "MPK contract" — §0.16, §15 of the design deep dive.
 - "MPK security matrix" — §91 of the design deep dive.

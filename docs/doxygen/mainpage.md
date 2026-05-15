@@ -2,7 +2,7 @@
 
 The **Neat framework** is the C++/Python library and runtime that runs models on the SiMa Modalix chip. It loads compiled model packs (MPKs), assembles them into deterministic GStreamer pipelines, and executes inference at frame rate on heterogeneous compute (A65 host CPU + EV74 vector cores + MLA accelerator + hardware codec).
 
-This site is the **reference documentation** for the framework's public API. For design rationale and worked examples, see the [Design / Deep Dive](../design) section, which mirrors the architect-level documentation.
+This site is the **reference documentation** for the framework's public API. For design rationale and worked examples, see the [Architecture deep dive](/contribute/architecture), which mirrors the architect-level documentation.
 
 ## Neat has two parts
 
@@ -41,42 +41,42 @@ The framework's surface is **eight primary concepts**. They form a clean progres
 
 | # | Concept | Purpose | Reference |
 |---|---|---|---|
-| 1 | **MPK** | Sealed model file on disk (`.tar.gz` from the compiler — kernels + weights + manifest). | [`MpKLoader`](../reference/cppapi/classes/simaai-neat-mpk-mpkloader), [`MpKManifest`](../reference/cppapi/structs/simaai-neat-mpk-mpkmanifest), [MPK contract](../concepts/mpk_contract) |
-| 2 | **Model** | Loaded form of an MPK; the simplified entry point. | [`Model`](../reference/cppapi/classes/simaai-neat-model) |
-| 3 | **Tensor** | Typed data unit that flows between stages. | [`Tensor`](../reference/cppapi/classes/simaai-neat-tensor), [Memory model](../concepts/memory_model), [dtype contract](../concepts/dtype_contract) |
-| 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [`Node`](../reference/cppapi/classes/simaai-neat-node), [GStreamer underneath](../concepts/gstreamer_layer) |
-| 5 | **NodeGroups** | Pre-made bundles of Nodes capturing common patterns. | [`NodeGroup`](../reference/cppapi/classes/simaai-neat-nodegroup) |
-| 6 | **Session** | Assembly stage that turns Nodes into a runnable pipeline. | [`Session`](../reference/cppapi/classes/simaai-neat-session), [`SessionOptions`](../reference/cppapi/structs/simaai-neat-sessionoptions) |
-| 7 | **Run** | Live, running pipeline produced by `Session::build()`. | [`Run`](../reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](../concepts/timing_model), [Threading model](../concepts/threading) |
-| 8 | **Graph** | Composition of pipelines for non-linear shapes. | [Builder Graph](../reference/cppapi/classes/simaai-neat-graph), [Runtime Graph](../reference/cppapi/classes/simaai-neat-graph-graph), [Two graph systems](../concepts/graphs) |
+| 1 | **MPK** | Sealed model file on disk (`.tar.gz` from the compiler — kernels + weights + manifest). | [`Model`](/reference/cppapi/classes/simaai-neat-model), [MPK contract](/concepts/mpk_contract) |
+| 2 | **Model** | Loaded form of an MPK; the simplified entry point. | [`Model`](/reference/cppapi/classes/simaai-neat-model) |
+| 3 | **Tensor** | Typed data unit that flows between stages. | [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Memory model](/concepts/memory_model), [dtype contract](/concepts/dtype_contract) |
+| 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [`Node`](/reference/cppapi/classes/simaai-neat-graph-node), [GStreamer underneath](/concepts/gstreamer_layer) |
+| 5 | **NodeGroups** | Pre-made bundles of Nodes capturing common patterns. | [Node groups](/reference/cppapi/groups/nodes-groups) |
+| 6 | **Session** | Assembly stage that turns Nodes into a runnable pipeline. | [`Session`](/reference/cppapi/classes/simaai-neat-session), [`SessionOptions`](/reference/cppapi/structs/simaai-neat-sessionoptions) |
+| 7 | **Run** | Live, running pipeline produced by `Session::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
+| 8 | **Graph** | Composition of pipelines for non-linear shapes. | [Builder Graph](/reference/cppapi/namespaces/simaai-neat-graph), [Runtime Graph](/reference/cppapi/classes/simaai-neat-graph-graph), [Two graph systems](/concepts/graphs) |
 
 ## Where to read what
 
 | What you want | Where to look |
 |---|---|
-| Conceptual overview, architecture, design rationale | [Design / Deep Dive](../design) — the architect-level documentation, surfaced as navigable site pages |
-| C++ public API — every class, method, field | [C++ API Reference](../reference/cppapi) — generated from Doxygen comments |
-| Python public API — pyneat module surface | [Python API Reference](../reference/pythonapi) — generated from nanobind bindings |
-| Conceptual deep-dives (dtype contract, memory model, error codes, etc.) | [Concepts](../concepts) — [dtype contract](../concepts/dtype_contract), [memory model](../concepts/memory_model), [graphs](../concepts/graphs), [timing model](../concepts/timing_model), [threading](../concepts/threading), [processor backends](../concepts/processor_backends), [GStreamer underneath](../concepts/gstreamer_layer), [CVU kernels](../concepts/cvu_kernels), [MPK contract](../concepts/mpk_contract), [error codes](../concepts/error_codes), [build options](../concepts/build_options), [agentic workflow](../concepts/agentic_workflow) |
-| Glossary, environment variables, scripts, error format | [Glossary](../reference/glossary), [env vars](../reference/env_vars), [scripts inventory](../reference/scripts), [plugin error format](../reference/error_format) |
-| Onboarding, build, minimal example, common pitfalls | [Install](../getting-started/install), [Build](../getting-started/build), [Minimal example](../getting-started/minimal_example), [Pitfalls](../getting-started/pitfalls) |
-| How to do specific things (debugging, runtime tuning, plugin failures) | [How-to Guides](../how-to) |
-| Coding standards, MPK contract, contribution policy, migration | [Coding standard](../contribute/coding_standard), [MPK contract](../contribute/mpk_contract), [Architecture](../contribute/architecture), [Migration](../contribute/migration) |
+| Conceptual overview, architecture, design rationale | [Architecture deep dive](/contribute/architecture) — the architect-level documentation, surfaced as navigable site pages |
+| C++ public API — every class, method, field | [C++ API Reference](/reference/cppapi/) — generated from Doxygen comments |
+| Python public API — pyneat module surface | [Python API Reference](/reference/pythonapi/) — generated from nanobind bindings |
+| Conceptual deep-dives (dtype contract, memory model, error codes, etc.) | [dtype contract](/concepts/dtype_contract), [memory model](/concepts/memory_model), [graphs](/concepts/graphs), [timing model](/concepts/timing_model), [threading](/concepts/threading), [processor backends](/concepts/processor_backends), [GStreamer underneath](/concepts/gstreamer_layer), [CVU kernels](/concepts/cvu_kernels), [MPK contract](/concepts/mpk_contract), [error codes](/concepts/error_codes), [build options](/concepts/build_options), [agentic workflow](/concepts/agentic_workflow) |
+| Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/env_vars), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
+| Onboarding, build, minimal example | [Installation](/getting-started/installation), [Build](/getting-started/build), [Minimal example](/getting-started/minimal_example) |
+| How to do specific things (debugging, runtime tuning, plugin failures) | [How-to: runtime tuning](/how-to/runtime_tuning), [How-to: diagnostics](/how-to/diagnostics), [How-to: plugin failures](/how-to/plugin_failures) |
+| Coding standards, MPK contract, contribution policy | [Coding standard](/contribute/coding_standard), [MPK contract](/contribute/mpk_contract), [Architecture](/contribute/architecture) |
 
 ## Why the framework is built for agents
 
 A consequence of how the framework was designed: it's an exceptionally good substrate for AI code generation. Every framework error produces a structured `SessionReport` (machine-readable error code + reproducer command). Every public symbol has stable naming. Validation runs before any pipeline starts. Pipelines are serializable JSON. The public API is ABI-stable. Errors fail fast with actionable messages instead of silent fallbacks.
 
-These properties weren't picked for AI agents specifically — they came from "make the framework deterministic, debuggable, and never hang the process" (see [`docs/contribute/architecture.md`](../contribute/architecture)). But they happen to be exactly what an AI agent needs to write code that converges quickly. That's why the **agentic workflow** in the Neat environment delivers what it does — the framework is the substrate, the environment is the workshop.
+These properties weren't picked for AI agents specifically — they came from "make the framework deterministic, debuggable, and never hang the process" (see [`docs/contribute/architecture.md`](/contribute/architecture)). But they happen to be exactly what an AI agent needs to write code that converges quickly. That's why the **agentic workflow** in the Neat environment delivers what it does — the framework is the substrate, the environment is the workshop.
 
-The full story of why the framework is good for agents — fifteen specific design properties, each tied to architect-doc rationale — is in the [Design / Deep Dive §0.1 Introducing Neat](../design) chapter.
+The full story of why the framework is good for agents — fifteen specific design properties, each tied to architect-doc rationale — is in the [Architecture deep dive](/contribute/architecture).
 
 ## Conventions in this reference
 
 - All public types live under the `simaai::neat` namespace.
 - Nodes live under `simaai::neat::nodes::{common,io,rtp,sima,groups}`.
 - Headers are organized by responsibility: `model/`, `pipeline/`, `mpk/`, `builder/`, `graph/`, `nodes/`, `contracts/`, `policy/`, `gst/`, plus convenience umbrellas under `neat/`.
-- Every public header has a file-level `@file` / `@ingroup` / `@brief` block. Group definitions are in [`docs/doxygen/groups.dox`](groups.dox).
-- Errors are returned as `SessionError` exceptions carrying a structured `SessionReport`. See the [Error code catalog](../concepts/error_codes) for the full taxonomy.
+- Every public header has a file-level `@file` / `@ingroup` / `@brief` block. Group definitions live in `docs/doxygen/groups.dox`.
+- Errors are returned as `SessionError` exceptions carrying a structured `SessionReport`. See the [Error code catalog](/concepts/error_codes) for the full taxonomy.
 
-The rest of this site is the API itself. Start by browsing [classes](../reference/cppapi/classes), or jump to the headline types: [`Model`](../reference/cppapi/classes/simaai-neat-model), [`Session`](../reference/cppapi/classes/simaai-neat-session), [`Run`](../reference/cppapi/classes/simaai-neat-run), [`Tensor`](../reference/cppapi/classes/simaai-neat-tensor), [`Node`](../reference/cppapi/classes/simaai-neat-node).
+The rest of this site is the API itself. Start by browsing [classes](/reference/cppapi/classes), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Session`](/reference/cppapi/classes/simaai-neat-session), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [`Node`](/reference/cppapi/classes/simaai-neat-graph-node).
