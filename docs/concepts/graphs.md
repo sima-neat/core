@@ -32,7 +32,7 @@ When `Session` consumes the resulting `NodeGroup`, it builds a single linear GSt
 
 ## `simaai::neat::graph::Graph` — the runtime graph
 
-Defined in [`graph/Graph.h`](/reference/cppapi/files/include-graph-graph-h). This is a different beast: an **actor-style** runtime that schedules `StageExecutor` nodes via mailboxes, with named ports on every node so a stage can have multiple distinct inputs and outputs. It runs alongside (or instead of) GStreamer for use cases that don't fit a linear pipeline.
+Defined in `graph/Graph.h`. This is a different beast: an **actor-style** runtime that schedules `StageExecutor` nodes via mailboxes, with named ports on every node so a stage can have multiple distinct inputs and outputs. It runs alongside (or instead of) GStreamer for use cases that don't fit a linear pipeline.
 
 Use it when:
 
@@ -73,6 +73,6 @@ This is the world `GraphSession` / `GraphRun` / `StageExecutor` live in.
 
 - "Graphs" — §0.14, §10, §73 of the design deep dive ([Architecture](/contribute/architecture)).
 - `include/builder/Graph.h`
-- [`graph/Graph.h`](/reference/cppapi/files/include-graph-graph-h)
+- `graph/Graph.h`
 - [`graph/GraphSession.h`](/reference/cppapi/files/include-graph-graphsession-h)
 - [`graph/StageExecutor.h`](/reference/cppapi/files/include-graph-stageexecutor-h)

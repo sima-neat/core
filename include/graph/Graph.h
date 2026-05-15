@@ -9,7 +9,7 @@
  * and outputs that the executor can route between. It's the substrate the actor-style
  * runtime uses for stage scheduling and mailbox-based message passing.
  *
- * Use the **builder** `Graph` (in [builder/Graph.h](../builder/Graph.h)) when you're
+ * Use the **builder** `Graph` (in `builder/Graph.h`) when you're
  * authoring a pipeline shape; use this **runtime** `Graph` only if you're building a
  * runtime-graph-driven Session via `GraphSession`.
  *
