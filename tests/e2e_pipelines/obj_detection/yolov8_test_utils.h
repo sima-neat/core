@@ -143,9 +143,33 @@ inline std::string yolov8n_variant_base_url() {
 // validated with `tar -tzf` after download; corrupt downloads are removed
 // so the next retry isn't poisoned. Returns the variants directory.
 inline fs::path ensure_yolov8n_drive_variants(const fs::path& root) {
-  const fs::path drive_dir = root / "tmp" / "yolov8n_drive";
+  // Primary destination matches the historical caller expectation. On the
+  // CI test runner `root` is the build-host CMAKE_SOURCE_DIR (passed as
+  // argv[1] from CTestTestfile.cmake) and doesn't exist on this machine —
+  // attempting to create `<root>/tmp/yolov8n_drive` fails with "Permission
+  // denied" because we can't mkdir under /workspace owned by the build
+  // runner. Fall back to a writable scratch dir under tmp so the variants
+  // can still be staged for the test; same approach used by
+  // ensure_coco_sample.
+  fs::path drive_dir = root / "tmp" / "yolov8n_drive";
   std::error_code ec;
   fs::create_directories(drive_dir, ec);
+  if (ec) {
+    fs::path scratch_root;
+    try {
+      scratch_root = fs::temp_directory_path();
+    } catch (...) {
+      scratch_root = fs::path("/tmp");
+    }
+    drive_dir = scratch_root / "sima-yolov8n-drive";
+    ec.clear();
+    fs::create_directories(drive_dir, ec);
+    if (ec) {
+      drive_dir = fs::path("/tmp") / "sima-yolov8n-drive";
+      ec.clear();
+      fs::create_directories(drive_dir, ec);
+    }
+  }
   require(!ec, "ensure_yolov8n_drive_variants: failed to create " + drive_dir.string() + " (" +
                    ec.message() + ")");
 
