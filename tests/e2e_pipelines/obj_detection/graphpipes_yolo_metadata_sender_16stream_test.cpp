@@ -64,8 +64,7 @@ int run_case(const fs::path& root) {
   opt.metadata_port_base = metadata_base;
 
   std::string init_err;
-  require(metadata.init(opt, kStreams, &init_err),
-          "MetadataSenderGroup init failed: " + init_err);
+  require(metadata.init(opt, kStreams, &init_err), "MetadataSenderGroup init failed: " + init_err);
 
   struct Guard {
     simaai::neat::MetadataSenderGroup* group = nullptr;
@@ -152,8 +151,7 @@ int run_case(const fs::path& root) {
                          {"confidence", box.score},
                          {"bbox",
                           {static_cast<int>(box.x1), static_cast<int>(box.y1),
-                           static_cast<int>(box.x2 - box.x1),
-                           static_cast<int>(box.y2 - box.y1)}}});
+                           static_cast<int>(box.x2 - box.x1), static_cast<int>(box.y2 - box.y1)}}});
     }
 
     std::string send_err;
@@ -169,8 +167,7 @@ int run_case(const fs::path& root) {
             "missing UDP metadata packet for stream " + std::to_string(i));
 
     const nlohmann::json parsed = nlohmann::json::parse(payload);
-    require(parsed["type"].get<std::string>() == "object-detection",
-            "UDP metadata type mismatch");
+    require(parsed["type"].get<std::string>() == "object-detection", "UDP metadata type mismatch");
     require(parsed["data"]["objects"].is_array(), "UDP metadata objects field is not array");
     require(!parsed["data"]["objects"].empty(), "UDP metadata objects unexpectedly empty");
 
