@@ -252,13 +252,29 @@ bool build_dense_desc_local(const std::vector<int>& shape, const std::string& dt
 
 bool build_tiled_desc_local(const std::vector<int>& shape, const std::vector<int>& tile_shape,
                             const std::string& dtype, const std::string& layout,
-                            std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out) {
-  std::string error_detail;
+                            std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out,
+                            std::string* error_detail) {
+  std::vector<int> normalized_tile_shape;
+  if (!tensorsemantics::normalize_tile_shape(shape, tile_shape, &normalized_tile_shape,
+                                             error_detail,
+                                             "subset_tiled_tensor_desc_tile_shape_missing",
+                                             "subset_tiled_tensor_desc_tile_rank_prefix_invalid",
+                                             "subset_tiled_tensor_desc_tile_dim_invalid")) {
+    return false;
+  }
   return tensorsemantics::build_tiled_tensor_desc(
-      shape, tile_shape, dtype, layout, tile_align_bytes, out, &error_detail,
+      shape, normalized_tile_shape, dtype, layout, tile_align_bytes, out, error_detail,
       "subset_tiled_tensor_desc_output_missing", "subset_shape_rank_invalid",
       "subset_shape_dim_invalid", "subset_dtype_invalid",
       "subset_tiled_tensor_desc_shape_rank_mismatch", "subset_tiled_tensor_desc_tile_dim_invalid");
+}
+
+bool build_tiled_desc_local(const std::vector<int>& shape, const std::vector<int>& tile_shape,
+                            const std::string& dtype, const std::string& layout,
+                            std::uint32_t tile_align_bytes, sima_ev_tensor_desc* out) {
+  std::string error_detail;
+  return build_tiled_desc_local(shape, tile_shape, dtype, layout, tile_align_bytes, out,
+                                &error_detail);
 }
 
 bool build_generic_tiled_desc_local(const std::vector<int>& shape,
@@ -278,26 +294,12 @@ void apply_tensor_axes_local(sima_ev_tensor_desc* desc) {
   }
   const std::uint32_t rank =
       std::min<std::uint32_t>(desc->shape.rank, static_cast<std::uint32_t>(SIMA_EV_MAX_RANK));
-  for (std::uint32_t i = 0; i < SIMA_EV_MAX_RANK; ++i) {
-    desc->shape.axis_semantics[i] = SIMA_EV_AXIS_UNKNOWN;
+  std::vector<std::int64_t> shape;
+  shape.reserve(rank);
+  for (std::uint32_t i = 0; i < rank; ++i) {
+    shape.push_back(desc->shape.sizes[i]);
   }
-  if (rank == 0U) {
-    return;
-  }
-  if (rank == 1U) {
-    desc->shape.axis_semantics[0] = SIMA_EV_AXIS_W;
-  } else if (rank == 2U) {
-    desc->shape.axis_semantics[0] = SIMA_EV_AXIS_H;
-    desc->shape.axis_semantics[1] = SIMA_EV_AXIS_W;
-  } else {
-    desc->shape.axis_semantics[rank - 1U] = SIMA_EV_AXIS_C;
-    desc->shape.axis_semantics[rank - 2U] = SIMA_EV_AXIS_W;
-    desc->shape.axis_semantics[rank - 3U] = SIMA_EV_AXIS_H;
-    if (rank >= 5U) {
-      desc->shape.axis_semantics[rank - 4U] = SIMA_EV_AXIS_D;
-      desc->shape.axis_semantics[0] = SIMA_EV_AXIS_N;
-    }
-  }
+  tensorsemantics::fill_axis_semantics_from_shape_layout(shape, "", desc->shape.axis_semantics);
   if (desc->layout_kind == SIMA_EV_LAYOUT_TILED &&
       tensorsemantics::find_shape_axis(desc->shape, SIMA_EV_AXIS_C) >= 0) {
     desc->layout.tiled.flags |= SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
@@ -319,13 +321,22 @@ void apply_tiled_channel_storage_policy_local(sima_ev_tensor_desc* desc, bool c1
 bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
                                    const std::vector<int>& tile_shape, const std::string& dtype,
                                    std::uint32_t tile_align_bytes, bool c16_packed,
-                                   sima_ev_tensor_desc* out) {
-  if (!build_tiled_desc_local(shape, tile_shape, dtype, "", tile_align_bytes, out)) {
+                                   sima_ev_tensor_desc* out, std::string* error_detail) {
+  if (!build_tiled_desc_local(shape, tile_shape, dtype, "", tile_align_bytes, out, error_detail)) {
     return false;
   }
   apply_tensor_axes_local(out);
   apply_tiled_channel_storage_policy_local(out, c16_packed);
   return true;
+}
+
+bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
+                                   const std::vector<int>& tile_shape, const std::string& dtype,
+                                   std::uint32_t tile_align_bytes, bool c16_packed,
+                                   sima_ev_tensor_desc* out) {
+  std::string error_detail;
+  return build_tensor_tiled_desc_local(shape, tile_shape, dtype, tile_align_bytes, c16_packed, out,
+                                       &error_detail);
 }
 
 bool build_tensor_tiled_desc_local(const std::vector<int>& shape,
@@ -536,27 +547,36 @@ bool canonical_slice_dhwc_from_shape(const std::vector<std::int64_t>& shape, int
 
 std::vector<int> tensor_desc_tile_shape_from_slice_shape(const std::vector<int>& tensor_shape,
                                                          const std::vector<int>& slice_shape) {
-  if (tensor_shape.empty() || slice_shape.empty() || slice_shape.size() == tensor_shape.size()) {
-    return slice_shape;
-  }
-  if (slice_shape.size() > tensor_shape.size()) {
-    return slice_shape;
-  }
-  // The typed EV tensor descriptor requires a tile size for every tensor axis.
-  // Insert full-axis tiles for omitted leading axes so we keep the plugin runtime
-  // config faithful to mpk.json while still producing a valid descriptor.
   std::vector<int> out;
-  out.reserve(tensor_shape.size());
-  const std::size_t missing = tensor_shape.size() - slice_shape.size();
-  std::size_t slice_index = 0U;
-  for (std::size_t axis = 0U; axis < tensor_shape.size(); ++axis) {
-    if (axis < missing) {
-      out.push_back(tensor_shape[axis]);
-      continue;
-    }
-    out.push_back(slice_shape[slice_index++]);
+  std::string error_detail;
+  if (!tensorsemantics::normalize_tile_shape(tensor_shape, slice_shape, &out, &error_detail,
+                                             "subset_tiled_tensor_desc_tile_shape_missing",
+                                             "subset_tiled_tensor_desc_tile_rank_prefix_invalid",
+                                             "subset_tiled_tensor_desc_tile_dim_invalid")) {
+    return slice_shape;
   }
   return out;
+}
+
+int explicit_stage_batch_size_or_one(const MpkPluginIoContract& stage) {
+  return stage.batch_size > 0 ? stage.batch_size : 1;
+}
+
+int explicit_pair_batch_size_or_one(const MpkPluginIoContract& lhs, const MpkPluginIoContract& rhs,
+                                    std::string_view family) {
+  const bool lhs_has_batch = lhs.batch_size > 0;
+  const bool rhs_has_batch = rhs.batch_size > 0;
+  if (lhs_has_batch && rhs_has_batch && lhs.batch_size != rhs.batch_size) {
+    throw std::invalid_argument("plugin contract subset '" + std::string(family) +
+                                "' requires matching explicit batch_size across paired stages");
+  }
+  if (lhs_has_batch) {
+    return lhs.batch_size;
+  }
+  if (rhs_has_batch) {
+    return rhs.batch_size;
+  }
+  return 1;
 }
 
 ShapeDims dims_from_detess_shape(const std::vector<std::int64_t>& shape,
@@ -1452,6 +1472,7 @@ extract_tessellate_contract_subset_from_stage(const MpkPluginIoContract& stage) 
   subset.slice_shape = stage.slice_shape;
   subset.align_c16 = stage.has_align_c16 && stage.align_c16;
   subset.cblock = stage.has_cblock && stage.cblock;
+  subset.batch_size = explicit_stage_batch_size_or_one(stage);
   if (!stage.output_tensors.empty() && stage.output_tensors.front().size_bytes > 0U) {
     subset.output_size_bytes = static_cast<std::uint64_t>(stage.output_tensors.front().size_bytes);
   }
@@ -1506,6 +1527,7 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
   subset.frame_type = normalize_dtype_token(tess_stage->frame_type);
   subset.align_c16 = tess_stage->has_align_c16 && tess_stage->align_c16;
   subset.cblock = tess_stage->has_cblock && tess_stage->cblock;
+  subset.batch_size = explicit_pair_batch_size_or_one(*quant_stage, *tess_stage, "quanttess");
 
   const std::array present = {
       PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
@@ -1528,20 +1550,6 @@ QuantTessContractSubset extract_quanttess_contract_subset_from_mpk(const MpkCont
   require_non_empty_value(subset.frame_type, "quanttess", PluginContractFieldKey::FrameType,
                           tess_stage->name);
 
-  // Phase 3a (Option A++): hoist the leading batch dims into the explicit
-  // `batch_size` scalar but keep `input_shape` / `output_shape` BATCHED on
-  // the subset. Caps negotiation downstream (e.g. MLA's typed-caps) reads
-  // these shapes and asserts dim0 == batch (rank-4 NHWC for batch>1), so
-  // stripping the subset breaks the caps contract. The runtime-config
-  // builder strips on the fly when synthesizing the per-frame kernel
-  // descriptor (which must match slice_shape rank).
-  {
-    const int per_frame_rank =
-        derive_per_frame_rank(subset.slice_shape, /*peer_per_frame_shape=*/{});
-    if (per_frame_rank > 0) {
-      subset.batch_size = inferred_batch_size_from_shape(subset.input_shape, per_frame_rank);
-    }
-  }
   return subset;
 }
 
@@ -1573,6 +1581,7 @@ extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   subset.frame_type = normalize_dtype_token(stage.frame_type);
   subset.align_c16 = stage.has_align_c16 && stage.align_c16;
   subset.cblock = stage.has_cblock && stage.cblock;
+  subset.batch_size = explicit_stage_batch_size_or_one(stage);
 
   const std::array present = {
       PluginContractFieldKey::QuantParams, PluginContractFieldKey::InputShape,
@@ -1595,16 +1604,6 @@ extract_quanttess_contract_subset_from_stage(const MpkPluginIoContract& stage) {
   require_non_empty_value(subset.frame_type, "quanttess", PluginContractFieldKey::FrameType,
                           stage.name);
 
-  // Phase 3a (Option A++): hoist the leading batch dims into batch_size but
-  // keep input_shape/output_shape BATCHED for downstream caps. See companion
-  // comment in extract_quanttess_contract_subset_from_mpk above.
-  {
-    const int per_frame_rank =
-        derive_per_frame_rank(subset.slice_shape, /*peer_per_frame_shape=*/{});
-    if (per_frame_rank > 0) {
-      subset.batch_size = inferred_batch_size_from_shape(subset.input_shape, per_frame_rank);
-    }
-  }
   return subset;
 }
 
@@ -2044,33 +2043,19 @@ build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset
   runtime.published_output_names = {published_output_name.empty() ? std::string("output_tensor")
                                                                   : published_output_name};
   runtime.primary_output_name = runtime.published_output_names.front();
-  // Phase 3a (Option A++): consume the explicit per-frame batch_size derived
-  // by the extractor. The kernel's outer batch loop iterates `batch_size`
-  // times over the per-frame descriptors below; never read batch from the
-  // (already-stripped) input_shape / output_shape.
+  // Keep batch as the explicit runtime field. Tensor descriptors below use the
+  // authored MPK/runtime shapes exactly; they do not reconstruct batch from rank.
   runtime.batch_size = subset.batch_size > 0 ? subset.batch_size : 1;
   runtime.byte_align = 1;
   runtime.round_off = subset.round_off;
   runtime.tessellate = 1;
 
-  // Phase 3a (Option A++): the subset carries shapes in their MPK-batched
-  // form (rank == per-frame rank + leading batch dims). Caps fields take the
-  // batched shape verbatim; the kernel descriptors below take per-frame
-  // shapes so their rank matches `slice_shape`.
-  const int per_frame_rank = derive_per_frame_rank(subset.slice_shape, /*peer_per_frame_shape=*/{});
-  const auto input_shape_per_frame =
-      semantic_shape_without_batch(subset.input_shape, per_frame_rank);
-  const auto output_shape_per_frame =
-      semantic_shape_without_batch(subset.output_shape, per_frame_rank);
-
   {
     std::vector<int> input_shape_int(subset.input_shape.begin(), subset.input_shape.end());
     runtime.input_shapes = {input_shape_int};
-    std::vector<int> input_shape_per_frame_int(input_shape_per_frame.begin(),
-                                               input_shape_per_frame.end());
     sima_ev_tensor_desc input_desc{};
-    if (!build_tensor_dense_desc_local(input_shape_per_frame_int,
-                                       normalize_dtype_token(subset.input_dtype), &input_desc)) {
+    if (!build_tensor_dense_desc_local(input_shape_int, normalize_dtype_token(subset.input_dtype),
+                                       &input_desc)) {
       throw std::invalid_argument(
           "quanttess runtime config could not synthesize typed input tensor");
     }
@@ -2083,14 +2068,12 @@ build_quanttess_runtime_config_from_subset(const QuantTessContractSubset& subset
     std::vector<int> output_shape_int(subset.output_shape.begin(), subset.output_shape.end());
     runtime.output_shapes = {output_shape_int};
     runtime.runtime_output_logical_shapes = {output_shape_int};
-    std::vector<int> output_shape_per_frame_int(output_shape_per_frame.begin(),
-                                                output_shape_per_frame.end());
     sima_ev_tensor_desc output_desc{};
     std::vector<int> tile_shape_int(subset.slice_shape.begin(), subset.slice_shape.end());
     const std::uint32_t tile_align = resolve_tile_align_bytes_local(runtime.byte_align);
-    if (!build_tensor_tiled_desc_local(output_shape_per_frame_int, tile_shape_int,
-                                       runtime.output_dtype, tile_align,
-                                       subset.align_c16 || subset.cblock, &output_desc)) {
+    if (!build_tensor_tiled_desc_local(output_shape_int, tile_shape_int, runtime.output_dtype,
+                                       tile_align, subset.align_c16 || subset.cblock,
+                                       &output_desc)) {
       throw std::invalid_argument(
           "quanttess runtime config could not synthesize typed output tensor");
     }
@@ -2219,7 +2202,7 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
                  join_i64_debug_local(tess_subset.slice_shape).c_str(), packed_output_bytes);
   }
   runtime.primary_output_name = runtime.published_output_names.front();
-  runtime.batch_size = inferred_batch_size_from_shape(cast_subset.input_shape);
+  runtime.batch_size = tess_subset.batch_size > 0 ? tess_subset.batch_size : 1;
   if (runtime.batch_size <= 0) {
     throw std::invalid_argument("tessellate runtime config requires a positive batch_size");
   }
@@ -2243,10 +2226,29 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
     std::vector<int> tile_shape_int(tess_subset.slice_shape.begin(), tess_subset.slice_shape.end());
     sima_ev_tensor_desc output_desc{};
     const std::uint32_t tile_align = resolve_tile_align_bytes_local(runtime.byte_align);
+    std::string desc_error;
     if (!build_tensor_tiled_desc_local(output_shape_int, tile_shape_int, frame_type, tile_align,
-                                       tess_subset.align_c16 || tess_subset.cblock, &output_desc)) {
-      throw std::invalid_argument(
-          "tessellate runtime config could not synthesize typed output tensor");
+                                       tess_subset.align_c16 || tess_subset.cblock, &output_desc,
+                                       &desc_error)) {
+      std::ostringstream msg;
+      msg << "tessellate runtime config could not synthesize typed output tensor"
+          << " for published_output='" << runtime.published_output_names.front()
+          << "' physical_output='" << runtime.physical_output_names.front() << "'";
+      if (!desc_error.empty()) {
+        msg << ": " << desc_error;
+      }
+      msg << "; semantic_output_shape=" << join_i64_debug_local(semantic_output_shape)
+          << " (rank=" << semantic_output_shape.size() << ")"
+          << ", slice_shape=" << join_i64_debug_local(tess_subset.slice_shape)
+          << " (rank=" << tess_subset.slice_shape.size() << ")"
+          << ", frame_type=" << frame_type << ", cast_input_dtype=" << cast_input_dtype
+          << ", cast_output_dtype=" << cast_output_dtype
+          << ", packed_output_bytes=" << packed_output_bytes
+          << ", batch_size=" << runtime.batch_size
+          << ". Tile/slice shape is normalized against semantic_output_shape by trailing "
+             "alignment: shorter tile ranks are left-padded with 1, longer ranks may only trim "
+             "leading 1s, and every normalized tile dim must be > 0 and <= the tensor dim.";
+      throw std::invalid_argument(msg.str());
     }
     output_desc.storage.nbytes = packed_output_bytes;
     runtime.output_tensors = {output_desc};

@@ -90,32 +90,24 @@ struct PluginContractFamilyDeclaration {
 /**
  * @brief QuantTess contract subset.
  *
- * @note `input_shape` and `output_shape` are PER-FRAME (batch dims stripped). The explicit
- * `batch_size` carries the multiplicative leading dims that were present in the MPK's
- * logical_shape. See Option A++ in `PluginContractSubsets.cpp` for the per-frame-rank
- * convention.
+ * @note `input_shape` and `output_shape` preserve the authored MPK/runtime tensor shapes.
+ * `batch_size` is the explicit stage batch count when present; descriptor builders must not
+ * reconstruct it from shape rank.
  */
 struct QuantTessContractSubset {
   MpkQuantContract quant_params;
-  // input_shape and output_shape are PER-FRAME (batch dims stripped). The
-  // explicit `batch_size` carries the multiplicative leading dims that were
-  // present in the MPK's logical_shape. See Option A++ in
-  // PluginContractSubsets.cpp for the per-frame-rank convention.
   std::vector<std::int64_t> input_shape;
   std::vector<std::int64_t> output_shape;
   std::string input_layout;
   std::string input_dtype;
   std::string output_dtype;
   int round_off = -1;
-  std::vector<std::int64_t> slice_shape; // Per-frame tile geometry; rank == per-frame rank.
+  // Authored tile geometry; descriptor builders normalize rank.
+  std::vector<std::int64_t> slice_shape;
   std::string frame_type;
   bool align_c16 = false;
   bool cblock = false;
   std::uint64_t output_size_bytes = 0U;
-  // Phase 3 (Option A++): explicit batch_size scalar derived from leading
-  // dims of the original (pre-strip) logical_shape. The kernel's outer batch
-  // loop consumes this directly — never read batch from input_shape/
-  // output_shape, which are guaranteed per-frame after extractor migration.
   int batch_size = 1;
 };
 
@@ -147,6 +139,7 @@ struct TessellateContractSubset {
   bool align_c16 = false;
   bool cblock = false;
   std::uint64_t output_size_bytes = 0U;
+  int batch_size = 1;
 };
 
 /// ProcessMla stage contract subset (carries model path + dispatcher fan-out).

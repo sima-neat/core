@@ -218,13 +218,12 @@ void verify_yolov8_int8_contract_subset() {
           "quanttess subset should preserve quant scale from quantize_0");
   require(quanttess_subset.quant_params.zero_points.front() == -128,
           "quanttess subset should preserve quant zero-point from quantize_0");
-  // The quanttess extractor strips the leading batch dim on the subset and
-  // hoists it into the explicit `batch_size` scalar; downstream consumers
-  // re-batch via batch_size when they need a 4-rank descriptor.
+  // The quanttess extractor preserves the authored tensor shape. batch_size
+  // comes only from the explicit stage field, not from reconstructing rank.
   require(quanttess_subset.input_shape == std::vector<std::int64_t>({640, 640, 3}),
-          "quanttess subset should preserve the per-frame input shape");
+          "quanttess subset should preserve the authored input shape");
   require(quanttess_subset.batch_size == 1,
-          "quanttess subset should hoist the leading batch=1 into batch_size");
+          "quanttess subset should preserve explicit/default batch_size");
   require(quanttess_subset.input_dtype == "FP32",
           "quanttess subset should normalize the quantize input dtype");
   require(quanttess_subset.output_dtype == "INT8",

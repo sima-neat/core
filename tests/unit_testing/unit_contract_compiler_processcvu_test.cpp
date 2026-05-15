@@ -128,6 +128,19 @@ std::vector<std::int64_t> tensor_desc_shape_for_test(const sima_ev_tensor_desc& 
   return out;
 }
 
+std::vector<std::int64_t> tensor_desc_tile_shape_for_test(const sima_ev_tensor_desc& desc) {
+  std::vector<std::int64_t> out;
+  if (desc.layout_kind != SIMA_EV_LAYOUT_TILED) {
+    return out;
+  }
+  const auto rank = std::min<std::uint32_t>(desc.shape.rank, SIMA_EV_MAX_RANK);
+  out.reserve(rank);
+  for (std::uint32_t i = 0; i < rank; ++i) {
+    out.push_back(desc.layout.tiled.tile_sizes[i]);
+  }
+  return out;
+}
+
 std::vector<std::int64_t>
 detess_transport_shape_for_frame(const std::vector<std::int64_t>& frame_shape) {
   require(frame_shape.size() >= 3U, "detess test frame_shape must include HWC geometry");
@@ -531,6 +544,184 @@ RUN_TEST(
       using namespace simaai::neat;
       using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
 
+      {
+        namespace ts = simaai::neat::pipeline_internal::sima::tensorsemantics;
+        std::vector<int> normalized;
+        std::string error_detail;
+        require(ts::normalize_tile_shape({1, 300, 4}, {4, 4}, &normalized, &error_detail, "missing",
+                                         "prefix", "dim"),
+                "tile normalizer should accept shorter tile ranks");
+        require(normalized == std::vector<int>({1, 4, 4}),
+                "tile normalizer should left-pad shorter tile ranks with 1");
+
+        normalized.clear();
+        require(ts::normalize_tile_shape({1, 36, 36, 256}, {36, 4, 32}, &normalized, &error_detail,
+                                         "missing", "prefix", "dim"),
+                "tile normalizer should accept RF-DETR feature-map tile rank");
+        require(normalized == std::vector<int>({1, 36, 4, 32}),
+                "tile normalizer should left-pad RF-DETR feature-map tile rank with 1");
+
+        normalized.clear();
+        require(ts::normalize_tile_shape({300, 4}, {1, 4, 4}, &normalized, &error_detail, "missing",
+                                         "prefix", "dim"),
+                "tile normalizer should trim longer tile ranks with leading 1s");
+        require(normalized == std::vector<int>({4, 4}),
+                "tile normalizer should trim only the leading compatibility 1");
+
+        normalized.clear();
+        error_detail.clear();
+        require(!ts::normalize_tile_shape({300, 4}, {2, 4, 4}, &normalized, &error_detail,
+                                          "missing", "prefix", "dim"),
+                "tile normalizer should reject non-1 leading trim prefixes");
+        require(error_detail == "prefix",
+                "tile normalizer should report the rank-prefix validation failure");
+
+        normalized.clear();
+        error_detail.clear();
+        require(!ts::normalize_tile_shape({1, 300, 4}, {2, 4, 4}, &normalized, &error_detail,
+                                          "missing", "prefix", "dim"),
+                "tile normalizer should reject tile dims larger than tensor dims");
+        require(error_detail == "dim",
+                "tile normalizer should report the tile-dimension validation failure");
+
+        normalized.clear();
+        error_detail.clear();
+        require(!ts::normalize_tile_shape({1, 300, 4}, {0, 4, 4}, &normalized, &error_detail,
+                                          "missing", "prefix", "dim"),
+                "tile normalizer should reject non-positive tile dims");
+        require(error_detail == "dim",
+                "tile normalizer should report non-positive tile dims as dimension failures");
+      }
+
+      {
+        namespace pcs = simaai::neat::pipeline_internal::sima::plugin_contracts;
+
+        pcs::CastContractSubset cast_subset;
+        cast_subset.input_shape = {1, 300, 4};
+        cast_subset.input_dtype = "FP32";
+        cast_subset.output_dtype = "BF16";
+        pcs::TessellateContractSubset tess_subset;
+        tess_subset.input_shape = {1, 300, 4};
+        tess_subset.frame_type = "BF16";
+        tess_subset.slice_shape = {4, 4};
+        tess_subset.output_size_bytes = 2400U;
+        tess_subset.batch_size = 1;
+        const auto tess_runtime = pcs::build_tessellate_runtime_config_from_subsets(
+            cast_subset, tess_subset, "rfdetr_boxes_tess", "rfdetr_boxes_tess");
+        require(tess_runtime.input_tensors.size() == 1U &&
+                    tensor_desc_shape_for_test(tess_runtime.input_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 300, 4}),
+                "tessellate descriptor should preserve authored rank-3 input shape");
+        require(tess_runtime.output_tensors.size() == 1U &&
+                    tensor_desc_shape_for_test(tess_runtime.output_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 300, 4}),
+                "tessellate descriptor should preserve authored rank-3 output shape");
+        require(tensor_desc_tile_shape_for_test(tess_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 4, 4}),
+                "tessellate descriptor should normalize [4,4] to [1,4,4]");
+
+        pcs::QuantTessContractSubset quanttess_subset;
+        quanttess_subset.quant_params.scales = {0.25};
+        quanttess_subset.quant_params.zero_points = {-7};
+        quanttess_subset.input_shape = {1, 36, 36, 256};
+        quanttess_subset.output_shape = {1, 36, 36, 256};
+        quanttess_subset.input_dtype = "FP32";
+        quanttess_subset.output_dtype = "INT8";
+        quanttess_subset.round_off = 0;
+        quanttess_subset.slice_shape = {36, 4, 32};
+        quanttess_subset.frame_type = "INT8";
+        quanttess_subset.output_size_bytes = 663552U;
+        quanttess_subset.batch_size = 1;
+        const auto quanttess_runtime =
+            pcs::build_quanttess_runtime_config_from_subset(quanttess_subset, "rfdetr_feat_tess");
+        require(quanttess_runtime.input_tensors.size() == 1U &&
+                    tensor_desc_shape_for_test(quanttess_runtime.input_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 36, 36, 256}),
+                "quanttess descriptor should preserve authored rank-4 input shape");
+        require(quanttess_runtime.output_tensors.size() == 1U &&
+                    tensor_desc_shape_for_test(quanttess_runtime.output_tensors.front()) ==
+                        std::vector<std::int64_t>({1, 36, 36, 256}),
+                "quanttess descriptor should preserve authored rank-4 output shape");
+        require(tensor_desc_tile_shape_for_test(quanttess_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 36, 4, 32}),
+                "quanttess descriptor should normalize [36,4,32] to [1,36,4,32]");
+
+        pcs::QuantizeContractSubset quantize_subset;
+        quantize_subset.quant_params.scales = {0.25};
+        quantize_subset.quant_params.zero_points = {-7};
+        quantize_subset.input_shape = {1, 300, 4};
+        quantize_subset.input_dtype = "FP32";
+        quantize_subset.output_dtype = "INT8";
+        quantize_subset.round_off = 0;
+        const auto quantize_runtime = pcs::build_quantize_runtime_config_from_subset(
+            quantize_subset, "quantized", "quantized");
+        require(tensor_desc_shape_for_test(quantize_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 300, 4}),
+                "quantize dense descriptor should preserve authored input shape");
+        require(tensor_desc_shape_for_test(quantize_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 300, 4}),
+                "quantize dense descriptor should preserve authored output shape");
+
+        pcs::DequantizeContractSubset dequantize_subset;
+        dequantize_subset.quant_params.scales = {0.25};
+        dequantize_subset.quant_params.zero_points = {-7};
+        dequantize_subset.input_shape = {1, 300, 4};
+        dequantize_subset.output_shape = {1, 300, 4};
+        dequantize_subset.input_dtype = "INT8";
+        dequantize_subset.output_dtype = "FP32";
+        const auto dequantize_runtime =
+            pcs::build_dequantize_runtime_config_from_subsets({dequantize_subset}, {"dequantized"});
+        require(tensor_desc_shape_for_test(dequantize_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 300, 4}),
+                "dequantize dense descriptor should preserve authored input shape");
+        require(tensor_desc_shape_for_test(dequantize_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 300, 4}),
+                "dequantize dense descriptor should preserve authored output shape");
+
+        pcs::DetessellateContractSubset detess_subset;
+        detess_subset.frame_shape = {1, 300, 4};
+        detess_subset.input_transport_shape = {1, 300, 4};
+        detess_subset.input_transport_size_bytes =
+            packed_tensor_bytes_for_test({1, 300, 4}, "INT8");
+        detess_subset.frame_type = "INT8";
+        detess_subset.slice_shape = {4, 4};
+        const auto detess_runtime = pcs::build_detessellate_runtime_config_from_subsets(
+            {detess_subset}, {"detess"}, {"detess"});
+        require(tensor_desc_shape_for_test(detess_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 300, 4}),
+                "detessellate tiled descriptor should preserve authored frame shape");
+        require(tensor_desc_tile_shape_for_test(detess_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 4, 4}),
+                "detessellate tiled descriptor should normalize shorter tile shape");
+        require(tensor_desc_shape_for_test(detess_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({1, 300, 4}),
+                "detessellate dense output descriptor should preserve authored frame shape");
+
+        pcs::DetessDequantHeadContractSubset head;
+        head.per_head_input_shape = {300, 4};
+        head.input_transport_shape = {300, 4};
+        head.input_transport_size_bytes = packed_tensor_bytes_for_test({300, 4}, "INT8");
+        head.per_head_quant_params.scales = {0.25};
+        head.per_head_quant_params.zero_points = {-7};
+        head.frame_shape = {300, 4};
+        head.frame_type = "INT8";
+        head.slice_shape = {4, 4};
+        head.output_dtype = "FP32";
+        pcs::DetessDequantContractSubset detessdequant_subset;
+        detessdequant_subset.heads = {head};
+        const auto detessdequant_runtime = pcs::build_detessdequant_runtime_config_from_subset(
+            detessdequant_subset, {"detessdq"}, {"detessdq"});
+        require(tensor_desc_shape_for_test(detessdequant_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({300, 4}),
+                "detessdequant tiled descriptor should preserve current authored frame shape");
+        require(tensor_desc_tile_shape_for_test(detessdequant_runtime.input_tensors.front()) ==
+                    std::vector<std::int64_t>({4, 4}),
+                "detessdequant tiled descriptor should preserve matching tile shape");
+        require(tensor_desc_shape_for_test(detessdequant_runtime.output_tensors.front()) ==
+                    std::vector<std::int64_t>({300, 4}),
+                "detessdequant dense output descriptor should preserve authored frame shape");
+      }
+
       auto node = nodes::Preproc(make_preproc_options());
       std::vector<std::shared_ptr<Node>> nodes_to_compile = {node};
       pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
@@ -763,12 +954,9 @@ RUN_TEST(
             build_tessellate_runtime_config_from_subsets;
         using simaai::neat::pipeline_internal::sima::MpkPluginIoContract;
 
-        // The previous build_tessellate_runtime_config_from_subsets sub-test that
-        // hand-built a CastContractSubset/TessellateContractSubset combo no longer
-        // composes under the new tile-desc synthesizer (which requires per-frame
-        // shape ranks and dtype/tile rules that the manual fixture didn't satisfy).
-        // The path is exercised by the MPK-driven extraction below and by
-        // unit_yolov8_contract_subset_test, so the manual sub-test is dropped.
+        // Direct descriptor coverage for build_tessellate_runtime_config_from_subsets
+        // lives above with the RF-DETR rank-normalization cases. Keep this block
+        // focused on MPK/stage extraction behavior.
         (void)build_tessellate_runtime_config_from_subsets;
         (void)CastContractSubset{};
         (void)TessellateContractSubset{};

@@ -37,9 +37,10 @@ namespace simaai::neat::mpk {
  */
 struct MpKLoaderOptions {
   std::size_t max_archive_bytes =
-      512ULL * 1024ULL * 1024ULL; ///< Hard cap on the on-disk archive size (default 512 MiB).
+      8ULL * 1024ULL * 1024ULL * 1024ULL; ///< Hard cap on the on-disk archive size (default 8 GiB).
   std::size_t max_entry_bytes =
-      256ULL * 1024ULL * 1024ULL; ///< Hard cap on any single extracted entry (default 256 MiB).
+      8ULL * 1024ULL * 1024ULL *
+      1024ULL; ///< Hard cap on any single extracted entry (default 8 GiB).
   std::size_t max_total_json_bytes =
       32ULL * 1024ULL *
       1024ULL; ///< Hard cap on aggregate JSON size across all manifest/config files.

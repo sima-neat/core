@@ -2358,40 +2358,24 @@ bool processcvu_normalize_tile_shape_local(const std::vector<std::int64_t>& shap
     return false;
   }
   out->clear();
-  if (shape.empty()) {
-    if (error_message) {
-      *error_message = "processcvu tile shape missing";
-    }
-    return false;
-  }
-  if (raw_tile_shape.empty()) {
-    *out = shape;
-    return true;
-  }
-  std::vector<std::int64_t> normalized(raw_tile_shape.begin(), raw_tile_shape.end());
-  if (normalized.size() > shape.size()) {
-    const std::size_t extra = normalized.size() - shape.size();
-    for (std::size_t i = 0; i < extra; ++i) {
-      if (normalized[i] != 1) {
-        if (error_message) {
-          *error_message = "tile_shape_rank_prefix_invalid";
-        }
-        return false;
-      }
-    }
-    normalized.erase(normalized.begin(), normalized.begin() + static_cast<std::ptrdiff_t>(extra));
-  } else if (normalized.size() < shape.size()) {
-    normalized.insert(normalized.begin(), shape.size() - normalized.size(), 1);
-  }
-  for (std::size_t i = 0; i < normalized.size(); ++i) {
-    if (normalized[i] <= 0 || normalized[i] > shape[i]) {
+  std::vector<int> shape_int;
+  shape_int.reserve(shape.size());
+  for (const auto dim : shape) {
+    if (dim <= 0 || dim > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
       if (error_message) {
-        *error_message = "processcvu tile shape invalid";
+        *error_message = "processcvu tile shape invalid tensor shape";
       }
       return false;
     }
+    shape_int.push_back(static_cast<int>(dim));
   }
-  *out = std::move(normalized);
+  std::vector<int> normalized;
+  if (!tensorsemantics::normalize_tile_shape(
+          shape_int, raw_tile_shape, &normalized, error_message, "processcvu tile shape missing",
+          "tile_shape_rank_prefix_invalid", "processcvu tile shape invalid")) {
+    return false;
+  }
+  out->assign(normalized.begin(), normalized.end());
   return true;
 }
 

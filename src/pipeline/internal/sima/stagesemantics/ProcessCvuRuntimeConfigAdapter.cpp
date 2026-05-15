@@ -7,7 +7,6 @@
 #include <cctype>
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
@@ -142,9 +141,10 @@ bool processcvu_build_tiled_tensor_desc_runtime(
     return false;
   }
   std::memset(out, 0, sizeof(*out));
-  if (shape.size() != tile_shape.size()) {
-    if (error_detail)
-      *error_detail = "runtime_tiled_tensor_desc_shape_rank_mismatch";
+  std::vector<int> normalized_tile_shape;
+  if (!tensorsemantics::normalize_tile_shape(
+          shape, tile_shape, &normalized_tile_shape, error_detail, "runtime_tile_shape_missing",
+          "runtime_tile_shape_rank_prefix_invalid", "runtime_tile_shape_dim_invalid")) {
     return false;
   }
   const std::string normalized_layout = tensorsemantics::normalize_layout_token(layout_token);
@@ -155,7 +155,7 @@ bool processcvu_build_tiled_tensor_desc_runtime(
   }
   if (normalized_layout.empty()) {
     return tensorsemantics::build_generic_tiled_tensor_desc(
-        shape, tile_shape, dtype_token, tile_align_bytes, out, error_detail,
+        shape, normalized_tile_shape, dtype_token, tile_align_bytes, out, error_detail,
         "runtime_tiled_tensor_desc_output_storage_missing", "runtime_shape_desc_rank_invalid",
         "runtime_shape_desc_dim_invalid", "runtime_tiled_tensor_desc_dtype_invalid",
         "runtime_tiled_tensor_desc_shape_rank_mismatch",
@@ -175,13 +175,13 @@ bool processcvu_build_tiled_tensor_desc_runtime(
   }
   out->dtype = dtype;
   out->layout_kind = SIMA_EV_LAYOUT_TILED;
-  for (std::size_t i = 0; i < tile_shape.size(); ++i) {
-    if (tile_shape[i] <= 0 || tile_shape[i] > shape[i]) {
+  for (std::size_t i = 0; i < normalized_tile_shape.size(); ++i) {
+    if (normalized_tile_shape[i] <= 0 || normalized_tile_shape[i] > shape[i]) {
       if (error_detail)
         *error_detail = "runtime_tiled_tensor_desc_tile_shape_invalid";
       return false;
     }
-    out->layout.tiled.tile_sizes[i] = static_cast<int64_t>(tile_shape[i]);
+    out->layout.tiled.tile_sizes[i] = static_cast<int64_t>(normalized_tile_shape[i]);
   }
   out->layout.tiled.tile_align_bytes = tile_align_bytes;
   out->layout.tiled.flags = tensorsemantics::find_shape_axis(out->shape, SIMA_EV_AXIS_C) >= 0
@@ -193,40 +193,9 @@ bool processcvu_build_tiled_tensor_desc_runtime(
 bool processcvu_normalize_tile_shape_runtime(const std::vector<int>& shape,
                                              const std::vector<int>& raw_tile_shape,
                                              std::vector<int>* out, std::string* error_detail) {
-  if (!out) {
-    if (error_detail)
-      *error_detail = "runtime_tile_shape_output_storage_missing";
-    return false;
-  }
-  out->clear();
-  if (shape.empty() || raw_tile_shape.empty()) {
-    if (error_detail)
-      *error_detail = "runtime_tile_shape_missing";
-    return false;
-  }
-  std::vector<int> normalized = raw_tile_shape;
-  if (normalized.size() > shape.size()) {
-    const std::size_t extra = normalized.size() - shape.size();
-    for (std::size_t i = 0; i < extra; ++i) {
-      if (normalized[i] != 1) {
-        if (error_detail)
-          *error_detail = "runtime_tile_shape_rank_prefix_invalid";
-        return false;
-      }
-    }
-    normalized.erase(normalized.begin(), normalized.begin() + static_cast<std::ptrdiff_t>(extra));
-  } else if (normalized.size() < shape.size()) {
-    normalized.insert(normalized.begin(), shape.size() - normalized.size(), 1);
-  }
-  for (std::size_t i = 0; i < normalized.size(); ++i) {
-    if (normalized[i] <= 0 || normalized[i] > shape[i]) {
-      if (error_detail)
-        *error_detail = "runtime_tile_shape_dim_invalid";
-      return false;
-    }
-  }
-  *out = std::move(normalized);
-  return true;
+  return tensorsemantics::normalize_tile_shape(
+      shape, raw_tile_shape, out, error_detail, "runtime_tile_shape_missing",
+      "runtime_tile_shape_rank_prefix_invalid", "runtime_tile_shape_dim_invalid");
 }
 
 std::vector<int> processcvu_shape_from_desc_runtime(const sima_ev_tensor_desc& desc) {

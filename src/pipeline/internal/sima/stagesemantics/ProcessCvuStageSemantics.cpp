@@ -435,8 +435,16 @@ bool build_tiled_desc_processcvu_local(const std::vector<int>& shape,
                                        const std::string& layout, std::uint32_t tile_align_bytes,
                                        sima_ev_tensor_desc* out) {
   std::string error_detail;
+  std::vector<int> normalized_tile_shape;
+  if (!tensorsemantics::normalize_tile_shape(shape, tile_shape, &normalized_tile_shape,
+                                             &error_detail,
+                                             "stage_tiled_tensor_desc_tile_shape_missing",
+                                             "stage_tiled_tensor_desc_tile_rank_prefix_invalid",
+                                             "stage_tiled_tensor_desc_tile_dim_invalid")) {
+    return false;
+  }
   return tensorsemantics::build_tiled_tensor_desc(
-      shape, tile_shape, dtype, layout, tile_align_bytes, out, &error_detail,
+      shape, normalized_tile_shape, dtype, layout, tile_align_bytes, out, &error_detail,
       "stage_tiled_tensor_desc_output_missing", "stage_shape_rank_invalid",
       "stage_shape_dim_invalid", "stage_dtype_invalid",
       "stage_tiled_tensor_desc_shape_rank_mismatch", "stage_tiled_tensor_desc_tile_dim_invalid");
@@ -448,26 +456,12 @@ void apply_tensor_axes_processcvu_local(sima_ev_tensor_desc* desc) {
   }
   const std::uint32_t rank =
       std::min<std::uint32_t>(desc->shape.rank, static_cast<std::uint32_t>(SIMA_EV_MAX_RANK));
-  for (std::uint32_t i = 0; i < SIMA_EV_MAX_RANK; ++i) {
-    desc->shape.axis_semantics[i] = SIMA_EV_AXIS_UNKNOWN;
+  std::vector<std::int64_t> shape;
+  shape.reserve(rank);
+  for (std::uint32_t i = 0; i < rank; ++i) {
+    shape.push_back(desc->shape.sizes[i]);
   }
-  if (rank == 0U) {
-    return;
-  }
-  if (rank == 1U) {
-    desc->shape.axis_semantics[0] = SIMA_EV_AXIS_W;
-  } else if (rank == 2U) {
-    desc->shape.axis_semantics[0] = SIMA_EV_AXIS_H;
-    desc->shape.axis_semantics[1] = SIMA_EV_AXIS_W;
-  } else {
-    desc->shape.axis_semantics[rank - 1U] = SIMA_EV_AXIS_C;
-    desc->shape.axis_semantics[rank - 2U] = SIMA_EV_AXIS_W;
-    desc->shape.axis_semantics[rank - 3U] = SIMA_EV_AXIS_H;
-    if (rank >= 5U) {
-      desc->shape.axis_semantics[rank - 4U] = SIMA_EV_AXIS_D;
-      desc->shape.axis_semantics[0] = SIMA_EV_AXIS_N;
-    }
-  }
+  tensorsemantics::fill_axis_semantics_from_shape_layout(shape, "", desc->shape.axis_semantics);
   if (desc->layout_kind == SIMA_EV_LAYOUT_TILED &&
       tensorsemantics::find_shape_axis(desc->shape, SIMA_EV_AXIS_C) >= 0) {
     desc->layout.tiled.flags |= SIMA_EV_TILED_FLAG_COMPACT_CHANNELS;
@@ -521,22 +515,13 @@ bool build_tensor_dense_desc_processcvu_local(const std::vector<int>& shape,
 std::vector<int>
 tensor_desc_tile_shape_from_slice_shape_processcvu_local(const std::vector<int>& tensor_shape,
                                                          const std::vector<int>& slice_shape) {
-  if (tensor_shape.empty() || slice_shape.empty() || slice_shape.size() == tensor_shape.size()) {
-    return slice_shape;
-  }
-  if (slice_shape.size() > tensor_shape.size()) {
-    return slice_shape;
-  }
   std::vector<int> out;
-  out.reserve(tensor_shape.size());
-  const std::size_t missing = tensor_shape.size() - slice_shape.size();
-  std::size_t slice_index = 0U;
-  for (std::size_t axis = 0U; axis < tensor_shape.size(); ++axis) {
-    if (axis < missing) {
-      out.push_back(tensor_shape[axis]);
-    } else {
-      out.push_back(slice_shape[slice_index++]);
-    }
+  std::string error_detail;
+  if (!tensorsemantics::normalize_tile_shape(tensor_shape, slice_shape, &out, &error_detail,
+                                             "stage_tiled_tensor_desc_tile_shape_missing",
+                                             "stage_tiled_tensor_desc_tile_rank_prefix_invalid",
+                                             "stage_tiled_tensor_desc_tile_dim_invalid")) {
+    return slice_shape;
   }
   return out;
 }
@@ -3864,22 +3849,6 @@ void preserve_distinct_physical_output_views(
   out->facts.preserve_physical_outputs = true;
 }
 
-bool processcvu_tensor_desc_has_leading_unit_batch_local(const sima_ev_tensor_desc& desc) {
-  if (desc.shape.rank == 0U) {
-    return false;
-  }
-  const auto first_axis = static_cast<sima_ev_axis_semantic>(desc.shape.axis_semantics[0]);
-  return desc.shape.sizes[0] == 1 &&
-         (first_axis == SIMA_EV_AXIS_N || first_axis == SIMA_EV_AXIS_UNKNOWN);
-}
-
-bool processcvu_published_shape_has_leading_unit_batch_local(
-    const MpkTensorContract& published_input) {
-  const auto shape = !published_input.logical_shape.empty() ? published_input.logical_shape
-                                                            : published_input.mpk_shape;
-  return !shape.empty() && shape.front() == 1;
-}
-
 bool processcvu_try_promote_desc_to_published_physical_shape_local(
     sima_ev_tensor_desc& desc, const MpkTensorContract& published_input) {
   if (desc.layout_kind != SIMA_EV_LAYOUT_STRIDED || published_input.mpk_shape.empty() ||
@@ -3941,14 +3910,25 @@ void assign_published_desc_values_preserving_logical_shape_local(
   std::size_t value_offset = 0U;
   if (values.size() == desc_rank) {
     // Same-rank published view: copy one-to-one.
-  } else if (values.size() + 1U == desc_rank &&
-             processcvu_tensor_desc_has_leading_unit_batch_local(desc)) {
-    // Published view dropped a leading N=1, while the runtime descriptor kept it.
-    desc_offset = 1U;
-  } else if (values.size() == desc_rank + 1U &&
-             processcvu_published_shape_has_leading_unit_batch_local(published_input)) {
-    // Published view kept a leading N=1, while the consuming descriptor is per-frame.
-    value_offset = 1U;
+  } else if (values.size() < desc_rank) {
+    // Published view omitted one or more leading unit axes. Axis semantics are
+    // compatibility hints only; accept any leading size-1 descriptor axes and
+    // assign the published shape onto the descriptor suffix.
+    desc_offset = desc_rank - values.size();
+    for (std::size_t axis = 0; axis < desc_offset; ++axis) {
+      if (desc.shape.sizes[axis] != 1) {
+        throw std::invalid_argument(mismatch_message);
+      }
+    }
+  } else if (values.size() > desc_rank) {
+    // Published view kept one or more leading unit axes that the consuming
+    // descriptor does not carry. Trim only those leading 1s.
+    value_offset = values.size() - desc_rank;
+    for (std::size_t axis = 0; axis < value_offset; ++axis) {
+      if (values[axis] != 1) {
+        throw std::invalid_argument(mismatch_message);
+      }
+    }
   } else {
     throw std::invalid_argument(mismatch_message);
   }
@@ -5862,18 +5842,17 @@ build_quanttess_contract_subset_for_exact_stage_local(const MpkContract& contrac
         (!exact_stage->name.empty() ? exact_stage->name : exact_stage->plugin_id) + "'");
   }
 
-  // Phase 3a (Option A++): mirror the batch_size hoisting done by
-  // plugin_contracts::extract_quanttess_contract_subset_from_{mpk,stage}.
-  // input_shape / output_shape stay BATCHED on the subset (caps negotiation
-  // downstream depends on the batch dim being explicit); the runtime-config
-  // builder strips on the fly for kernel descriptor synthesis.
   {
-    const int per_frame_rank = plugin_contracts::derive_per_frame_rank_public(
-        subset.slice_shape, /*peer_per_frame_shape=*/{});
-    if (per_frame_rank > 0) {
-      subset.batch_size = plugin_contracts::inferred_batch_size_from_shape_public(
-          subset.input_shape, per_frame_rank);
+    const bool quant_has_batch = quant_stage->batch_size > 0;
+    const bool tess_has_batch = tess_stage->batch_size > 0;
+    if (quant_has_batch && tess_has_batch && quant_stage->batch_size != tess_stage->batch_size) {
+      throw std::runtime_error(
+          std::string("processcvu MPK quanttess exact-stage subset requires matching explicit "
+                      "batch_size across paired quant/tess stages for '") +
+          (!exact_stage->name.empty() ? exact_stage->name : exact_stage->plugin_id) + "'");
     }
+    subset.batch_size =
+        quant_has_batch ? quant_stage->batch_size : (tess_has_batch ? tess_stage->batch_size : 1);
   }
   return subset;
 }
