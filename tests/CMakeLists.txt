@@ -523,6 +523,17 @@ if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
 endif()
 
+add_pipeline_test_long(
+  genai_graph_llm_run_test
+  e2e_testing/genai_graph_llm_run_test.cpp
+)
+
+if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
+  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_llm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_property(TEST decoder_quality_compare_test

@@ -97,7 +97,9 @@ public:
     cleanup();
   }
 
-  const fs::path& path() const { return path_; }
+  const fs::path& path() const {
+    return path_;
+  }
 
 private:
   void cleanup() {
@@ -119,16 +121,15 @@ AutoModelDir download_model_to_nvme() {
                              std::string(kModelEnv) + " to an existing model directory");
   }
 
-  const fs::path root =
-      fs::path("/media/nvme/tmp") /
-      ("neat-genai-e2e-" + std::to_string(static_cast<long long>(::getpid())));
+  const fs::path root = fs::path("/media/nvme/tmp") /
+                        ("neat-genai-e2e-" + std::to_string(static_cast<long long>(::getpid())));
   const fs::path model_dir = root / kModelName;
 
   std::error_code ec;
   fs::create_directories(root, ec);
   if (ec) {
-    skip_long_test_exception("failed to create temporary model directory " + root.string() +
-                             ": " + ec.message());
+    skip_long_test_exception("failed to create temporary model directory " + root.string() + ": " +
+                             ec.message());
   }
 
   std::ostringstream cmd;

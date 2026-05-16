@@ -33,15 +33,13 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
            GenerationRequest multiple;
            multiple.prompt = std::string{"hello"};
            multiple.messages.push_back(ChatMessage{.role = "user", .content = "hello"});
-           require_throws_contains(
-               [&] { internal::validate_text_generation_request(multiple); },
-               "exactly one");
+           require_throws_contains([&] { internal::validate_text_generation_request(multiple); },
+                                   "exactly one");
 
            GenerationRequest formatted;
            formatted.formatted_prompt = std::string{"<s>hello"};
-           require_throws_contains(
-               [&] { (void)internal::build_text_messages(formatted); },
-               "formatted_prompt");
+           require_throws_contains([&] { (void)internal::build_text_messages(formatted); },
+                                   "formatted_prompt");
 
            GenerationRequest prompt;
            prompt.system_prompt = std::string{"You are concise."};
@@ -49,8 +47,7 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
            const auto prompt_messages = internal::build_text_messages(prompt);
            require(prompt_messages.size() == 2U, "prompt messages size mismatch");
            require(prompt_messages[0].role == "system", "system role mismatch");
-           require(prompt_messages[0].content == "You are concise.",
-                   "system content mismatch");
+           require(prompt_messages[0].content == "You are concise.", "system content mismatch");
            require(prompt_messages[1].role == "user", "user role mismatch");
            require(prompt_messages[1].content == "Explain NEAT.", "user content mismatch");
 

@@ -79,7 +79,9 @@ public:
     void operator++(int);
 
     friend bool operator==(const iterator& lhs, const iterator& rhs);
-    friend bool operator!=(const iterator& lhs, const iterator& rhs) { return !(lhs == rhs); }
+    friend bool operator!=(const iterator& lhs, const iterator& rhs) {
+      return !(lhs == rhs);
+    }
 
   private:
     explicit iterator(GenerationStream* stream);

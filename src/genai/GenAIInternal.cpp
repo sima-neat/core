@@ -18,9 +18,9 @@ bool is_existing_regular_file(const std::filesystem::path& path) {
 }
 
 bool has_vision_capability(const nlohmann::json& config) {
-  return config.contains("vm_cfg") && !config.at("vm_cfg").is_null() &&
-         config.contains("mm_cfg") && !config.at("mm_cfg").is_null() &&
-         config.contains("vision_model_name") && config.at("vision_model_name").is_string() &&
+  return config.contains("vm_cfg") && !config.at("vm_cfg").is_null() && config.contains("mm_cfg") &&
+         !config.at("mm_cfg").is_null() && config.contains("vision_model_name") &&
+         config.at("vision_model_name").is_string() &&
          !config.at("vision_model_name").get<std::string>().empty();
 }
 
@@ -64,10 +64,11 @@ ModelDirectoryInfo inspect_model_directory(const std::filesystem::path& model_di
 
   if (has_vlm_config == has_whisper_config) {
     throw std::runtime_error(
-        has_vlm_config ? "GenAI model directory has both vlm_config.json and whisper_config.json: " +
-                             normalized.string()
-                       : "GenAI model directory missing vlm_config.json or whisper_config.json: " +
-                             normalized.string());
+        has_vlm_config
+            ? "GenAI model directory has both vlm_config.json and whisper_config.json: " +
+                  normalized.string()
+            : "GenAI model directory missing vlm_config.json or whisper_config.json: " +
+                  normalized.string());
   }
 
   if (has_vlm_config) {

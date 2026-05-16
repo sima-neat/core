@@ -2,9 +2,11 @@
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
 #include "genai/VisionLanguageModel.h"
+#include "genai/nodes/Language.h"
 #include "test_main.h"
 
 #include <memory>
+#include <stdexcept>
 #include <type_traits>
 
 // Verifies that the public GenAI headers are self-contained and expose the
@@ -21,10 +23,12 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            TokenSample token;
            token.text = "tok";
            ChatMessage message{"user", "hello"};
+           nodes::LanguageOptions language_options;
 
            static_assert(std::is_move_constructible_v<GenerationStream>);
            static_assert(!std::is_copy_constructible_v<GenerationStream>);
            static_assert(std::is_copy_constructible_v<TokenSample>);
+           static_assert(std::is_default_constructible_v<nodes::LanguageOptions>);
            static_assert(std::is_move_constructible_v<VisionLanguageModel>);
            static_assert(!std::is_copy_constructible_v<VisionLanguageModel>);
            static_assert(std::is_move_constructible_v<ASRModel>);
@@ -35,6 +39,15 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto vlm = static_cast<VisionLanguageModel*>(nullptr);
            auto asr = static_cast<ASRModel*>(nullptr);
            auto genai = static_cast<GenAIModel*>(nullptr);
+           bool language_rejected_null = false;
+           try {
+             (void)nodes::Language(nullptr);
+           } catch (const std::invalid_argument&) {
+             language_rejected_null = true;
+           }
+           if (!language_rejected_null) {
+             throw std::runtime_error("genai::nodes::Language should reject nullptr model");
+           }
 
            (void)task;
            (void)request;
@@ -42,6 +55,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)metrics;
            (void)token;
            (void)message;
+           (void)language_options;
            (void)vlm;
            (void)asr;
            (void)genai;

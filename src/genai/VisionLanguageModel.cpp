@@ -63,7 +63,7 @@ std::optional<uint16_t> make_max_total_tokens(std::size_t input_token_count,
       input_token_count + static_cast<std::size_t>(max_new_tokens) > max_uint16) {
     throw std::runtime_error("GenerationRequest::max_new_tokens exceeds LLiMa token limit");
   }
-      return static_cast<uint16_t>(input_token_count + max_new_tokens);
+  return static_cast<uint16_t>(input_token_count + max_new_tokens);
 }
 
 std::string token_content_from_json(const nlohmann::json& token_json, const char* token_name) {
@@ -129,7 +129,9 @@ struct VisionLanguageModel::Impl {
       return *this;
     }
 
-    ~ActiveRunGuard() { release(); }
+    ~ActiveRunGuard() {
+      release();
+    }
 
     static ActiveRunGuard acquire(Impl& owner) {
       std::unique_lock<std::mutex> lock(owner.run_state_mutex);
@@ -171,8 +173,8 @@ struct VisionLanguageModel::Impl {
     ensure_llima_runtime_connected();
     cfg = load_vlm_config(info.root);
     bos_token = load_bos_token(info.root);
-    vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
-        cfg, info.root / "devkit", std::nullopt, std::nullopt);
+    vlm_helper = std::make_unique<simaai::llima::VlmHelper>(cfg, info.root / "devkit", std::nullopt,
+                                                            std::nullopt);
     text_streamer = std::make_unique<simaai::llima::TextStreamer>(
         vlm_helper->get_tokenizer(),
         [this](const std::string& metric, double value) { record_metric(metric, value); },
@@ -211,8 +213,8 @@ struct VisionLanguageModel::Impl {
 
     const auto max_total_tokens =
         make_max_total_tokens(input_token_ids.size(), request.max_new_tokens);
-    return language_model->run_model(
-        input_token_ids, simaai::llima::ChronoTimer{true}, max_total_tokens);
+    return language_model->run_model(input_token_ids, simaai::llima::ChronoTimer{true},
+                                     max_total_tokens);
   }
 
   std::vector<uint32_t> build_input_token_ids(const GenerationRequest& request) {
