@@ -28,7 +28,6 @@ DOCS_ONLY=OFF
 INSTALL_NODE=ON
 SKIP_DOCS=OFF
 INSTALL_DEPS_ONLY=OFF
-INSTALL_ARTIFACTS_ONLY=OFF
 INSTALL_AFTER_BUILD=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
@@ -189,8 +188,7 @@ prepare_shadow_workspace() {
 }
 
 maybe_reexec_from_shadow() {
-  if [[ "${SHADOW_BUILD_ACTIVE}" == "ON" || "${INSTALL_DEPS_ONLY}" == "ON" ||
-        "${INSTALL_ARTIFACTS_ONLY}" == "ON" ]]; then
+  if [[ "${SHADOW_BUILD_ACTIVE}" == "ON" || "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     return 0
   fi
 
@@ -264,8 +262,6 @@ Options:
   --no-node      Skip Node.js install (docs build will not work)
   --install-deps-only
                  Install system dependencies only, then exit
-  --install-artifacts-only
-                 Download/install internals + LLiMa artifacts, then exit
   -h, --help     Show this help
 
 Environment:
@@ -396,12 +392,6 @@ parse_args() {
         ;;
       --install-deps-only)
         INSTALL_DEPS_ONLY=ON
-        shift
-        ;;
-      --install-artifacts-only)
-        INSTALL_ARTIFACTS_ONLY=ON
-        INSTALL_NEAT_INTERNALS=ON
-        INSTALL_NEAT_LLIMA=ON
         shift
         ;;
       -h|--help)
@@ -2042,12 +2032,6 @@ main() {
   fi
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
-  fi
-
-  if [[ "${INSTALL_ARTIFACTS_ONLY}" == "ON" ]]; then
-    echo
-    echo "NEAT internals and LLiMa artifacts installed. Exiting due to --install-artifacts-only."
-    exit 0
   fi
 
   detect_build_jobs

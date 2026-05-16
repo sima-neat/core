@@ -56,7 +56,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Install build dependencies
-        run: ./build.sh --install-artifacts-only
+        run: ./build.sh --install-deps-only
 
       - name: Run clang-tidy
         env:

@@ -51,6 +51,19 @@ require_cmd run-clang-tidy
 require_cmd rg
 require_cmd git
 
+SIMANEAT_TIDY_HAS_SIMALMM=OFF
+
+is_genai_source() {
+  case "$1" in
+    include/genai/*|src/genai/*|tests/*/genai_*.cpp|tests/*/unit_genai_*.cpp)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 configure_tidy_build() {
   local cmake_prefix_path="${CMAKE_PREFIX_PATH:-}"
   local candidate
@@ -65,6 +78,9 @@ configure_tidy_build() {
         cmake_prefix_path="${cmake_prefix_path}:${candidate}"
       else
         cmake_prefix_path="${candidate}"
+      fi
+      if [[ -f "${candidate}/include/sima_lmm/chat.hpp" ]]; then
+        SIMANEAT_TIDY_HAS_SIMALMM=ON
       fi
     fi
   done
@@ -190,13 +206,19 @@ if [ ${#all_files[@]} -gt 0 ]; then
 fi
 
 files=()
+skipped_genai=0
 for f in "${all_files[@]}"; do
-  if [ -z "${gst_excluded[$f]+x}" ]; then
+  if [[ "${SIMANEAT_TIDY_HAS_SIMALMM}" != "ON" ]] && is_genai_source "$f"; then
+    skipped_genai=$((skipped_genai + 1))
+  elif [ -z "${gst_excluded[$f]+x}" ]; then
     files+=("$f")
   fi
 done
 
 echo "clang-tidy mode: ${MODE}"
+if [[ "${SIMANEAT_TIDY_HAS_SIMALMM}" != "ON" ]]; then
+  echo "SimaLMM package not found; skipped ${skipped_genai} GenAI source file(s)."
+fi
 echo "clang-tidy file count: ${#files[@]}"
 if [ ${#files[@]} -eq 0 ]; then
   echo "No non-GStreamer sources found for clang-tidy (${MODE} mode)."

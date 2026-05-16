@@ -2,6 +2,7 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/chrono.h>
 #include <nanobind/stl/function.h>
+#include <nanobind/stl/filesystem.h>
 #include <nanobind/stl/optional.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
@@ -11,6 +12,10 @@
 #include "builder/Node.h"
 #include "builder/NodeGroup.h"
 #include "builder/OutputSpec.h"
+#include "genai/GenAIModel.h"
+#include "genai/GenAITypes.h"
+#include "genai/VisionLanguageModel.h"
+#include "genai/nodes/Language.h"
 #include "graph/Graph.h"
 #include "graph/GraphPrinter.h"
 #include "graph/GraphRun.h"
@@ -60,6 +65,7 @@
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -210,6 +216,42 @@ std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
   if (value.is_none())
     return std::nullopt;
   return python_to_json(value);
+}
+
+Sample make_text_sample_for_python(const std::string& port_name, const std::string& text) {
+  Sample out = simaai::neat::make_tensor_sample(port_name, Tensor::from_text(text));
+  out.port_name = port_name;
+  out.stream_label = port_name;
+  return out;
+}
+
+std::string sample_to_text_for_python(const Sample& sample) {
+  if (sample.kind == SampleKind::Tensor) {
+    if (!sample.tensor.has_value()) {
+      throw std::runtime_error("Sample.to_text: Tensor sample has no tensor payload");
+    }
+    return sample.tensor->to_text();
+  }
+
+  if (sample.kind == SampleKind::TensorSet) {
+    if (sample.tensors.size() != 1U) {
+      throw std::runtime_error("Sample.to_text: TensorSet sample must contain exactly one tensor");
+    }
+    return sample.tensors.front().to_text();
+  }
+
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      if (field.port_name == "text" || field.stream_label == "text") {
+        return sample_to_text_for_python(field);
+      }
+    }
+    if (!sample.fields.empty()) {
+      return sample_to_text_for_python(sample.fields.front());
+    }
+  }
+
+  throw std::runtime_error("Sample.to_text: sample does not carry a text tensor");
 }
 
 simaai::neat::FormatSpec python_to_format_spec(nb::handle value) {
@@ -1247,8 +1289,10 @@ NB_MODULE(_pyneat_core, m) {
       .def("is_nv12", &simaai::neat::Tensor::is_nv12)
       .def("is_i420", &simaai::neat::Tensor::is_i420)
       .def("debug_string", &simaai::neat::Tensor::debug_string)
+      .def("to_text", &simaai::neat::Tensor::to_text)
       .def("__repr__",
            [](const simaai::neat::Tensor& t) { return "Tensor(" + t.debug_string() + ")"; })
+      .def_static("from_text", &simaai::neat::Tensor::from_text, "text"_a)
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
@@ -1383,9 +1427,103 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("orig_input_seq", &Sample::orig_input_seq)
       .def_rw("pts_ns", &Sample::pts_ns)
       .def_rw("dts_ns", &Sample::dts_ns)
-      .def_rw("duration_ns", &Sample::duration_ns);
+      .def_rw("duration_ns", &Sample::duration_ns)
+      .def("to_text", &sample_to_text_for_python);
 
   m.def("make_tensor_sample", &simaai::neat::make_tensor_sample, "port_name"_a, "tensor"_a);
+  m.def("make_text_sample", &make_text_sample_for_python, "port_name"_a, "text"_a);
+
+  nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
+      .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)
+      .value("ASR", simaai::neat::genai::GenAITask::ASR);
+
+  nb::class_<simaai::neat::genai::ChatMessage>(m, "ChatMessage")
+      .def(nb::init<>())
+      .def_rw("role", &simaai::neat::genai::ChatMessage::role)
+      .def_rw("content", &simaai::neat::genai::ChatMessage::content);
+
+  nb::class_<simaai::neat::genai::GenerationMetrics>(m, "GenerationMetrics")
+      .def(nb::init<>())
+      .def_rw("generated_tokens", &simaai::neat::genai::GenerationMetrics::generated_tokens)
+      .def_rw("time_to_first_token_s",
+              &simaai::neat::genai::GenerationMetrics::time_to_first_token_s)
+      .def_rw("tokens_per_second", &simaai::neat::genai::GenerationMetrics::tokens_per_second);
+
+  nb::class_<simaai::neat::genai::GenerationRequest>(m, "GenerationRequest")
+      .def(nb::init<>())
+      .def_rw("prompt", &simaai::neat::genai::GenerationRequest::prompt)
+      .def_rw("formatted_prompt", &simaai::neat::genai::GenerationRequest::formatted_prompt)
+      .def_rw("system_prompt", &simaai::neat::genai::GenerationRequest::system_prompt)
+      .def_rw("messages", &simaai::neat::genai::GenerationRequest::messages)
+      .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_rw("temperature", &simaai::neat::genai::GenerationRequest::temperature)
+      .def_rw("top_p", &simaai::neat::genai::GenerationRequest::top_p);
+
+  nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
+      .def(nb::init<>())
+      .def_rw("text", &simaai::neat::genai::GenerationResult::text)
+      .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
+      .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason);
+
+  nb::class_<simaai::neat::genai::TokenSample>(m, "TokenSample")
+      .def(nb::init<>())
+      .def_rw("text", &simaai::neat::genai::TokenSample::text)
+      .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
+      .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
+      .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason);
+
+  nb::class_<simaai::neat::genai::GenerationStream>(m, "GenerationStream")
+      .def("next", &simaai::neat::genai::GenerationStream::next,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("cancel", &simaai::neat::genai::GenerationStream::cancel,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "__iter__",
+          [](simaai::neat::genai::GenerationStream& stream)
+              -> simaai::neat::genai::GenerationStream& { return stream; },
+          nb::rv_policy::reference_internal)
+      .def("__next__", [](simaai::neat::genai::GenerationStream& stream) {
+        std::optional<simaai::neat::genai::TokenSample> token;
+        {
+          nb::gil_scoped_release release;
+          token = stream.next();
+        }
+        if (!token.has_value()) {
+          throw nb::stop_iteration();
+        }
+        return std::move(*token);
+      });
+
+  nb::class_<simaai::neat::genai::VisionLanguageModel>(m, "VisionLanguageModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
+      .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
+      .def("describe", &simaai::neat::genai::VisionLanguageModel::describe)
+      .def("run", &simaai::neat::genai::VisionLanguageModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &simaai::neat::genai::VisionLanguageModel::stream, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
+
+  nb::class_<simaai::neat::genai::GenAIModel>(m, "GenAIModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("task", &simaai::neat::genai::GenAIModel::task)
+      .def("accepts_text", &simaai::neat::genai::GenAIModel::accepts_text)
+      .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
+      .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
+      .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
+      .def("describe", &simaai::neat::genai::GenAIModel::describe);
+
+  nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
+  genai_mod.attr("GenAITask") = m.attr("GenAITask");
+  genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
+  genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
+  genai_mod.attr("GenerationRequest") = m.attr("GenerationRequest");
+  genai_mod.attr("GenerationResult") = m.attr("GenerationResult");
+  genai_mod.attr("TokenSample") = m.attr("TokenSample");
+  genai_mod.attr("GenerationStream") = m.attr("GenerationStream");
+  genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
+  genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
+  nb::module_ genai_nodes_mod = genai_mod.def_submodule("nodes", "GenAI graph node factories");
 
   nb::class_<simaai::neat::RtspServerOptions>(m, "RtspServerOptions")
       .def(nb::init<>())
@@ -2719,6 +2857,15 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("do_mla", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_mla)
       .def_rw("do_boxdecode", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
 
+  nb::class_<simaai::neat::genai::nodes::LanguageOptions>(genai_nodes_mod, "LanguageOptions")
+      .def(nb::init<>())
+      .def_rw("system_prompt", &simaai::neat::genai::nodes::LanguageOptions::system_prompt)
+      .def_rw("max_new_tokens", &simaai::neat::genai::nodes::LanguageOptions::max_new_tokens)
+      .def_rw("temperature", &simaai::neat::genai::nodes::LanguageOptions::temperature)
+      .def_rw("top_p", &simaai::neat::genai::nodes::LanguageOptions::top_p)
+      .def_rw("streaming", &simaai::neat::genai::nodes::LanguageOptions::streaming);
+  graph_nodes_mod.attr("GenAILanguageOptions") = genai_nodes_mod.attr("LanguageOptions");
+
   graph_nodes_mod.def(
       "pipeline_node",
       [](const simaai::neat::NodeGroup& group, const std::string& label) {
@@ -2754,6 +2901,22 @@ NB_MODULE(_pyneat_core, m) {
         return simaai::neat::graph::nodes::JoinBundleNode(inputs, label, output);
       },
       "inputs"_a, "label"_a = "", "output"_a = "bundle");
+  graph_nodes_mod.def(
+      "genai_language",
+      [](std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
+         simaai::neat::genai::nodes::LanguageOptions options, const std::string& label) {
+        return simaai::neat::genai::nodes::Language(std::move(model), std::move(options), label);
+      },
+      "model"_a, "options"_a = simaai::neat::genai::nodes::LanguageOptions{},
+      "label"_a = "language");
+  genai_nodes_mod.def(
+      "language",
+      [](std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
+         simaai::neat::genai::nodes::LanguageOptions options, const std::string& label) {
+        return simaai::neat::genai::nodes::Language(std::move(model), std::move(options), label);
+      },
+      "model"_a, "options"_a = simaai::neat::genai::nodes::LanguageOptions{},
+      "label"_a = "language");
 
   nb::module_ mpk_mod = m.def_submodule("mpk", "MPK inspection and sequence helpers");
 
