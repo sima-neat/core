@@ -5,8 +5,8 @@
 #include <stdexcept>
 #include <string>
 
-// Verifies Phase 4 direct text request validation and LLiMa message conversion
-// without loading real LLiMa model artifacts.
+// Verifies Phase 4 text prompt/message validation and conversion without
+// loading real LLiMa model artifacts.
 namespace {
 
 void require_throws_contains(const std::function<void()>& fn, const std::string& expected) {
@@ -21,7 +21,7 @@ void require_throws_contains(const std::function<void()>& fn, const std::string&
 
 } // namespace
 
-RUN_TEST("unit_genai_direct_request_test", ([] {
+RUN_TEST("unit_genai_prompt_builder_test", ([] {
            using simaai::neat::genai::ChatMessage;
            using simaai::neat::genai::GenerationRequest;
            namespace internal = simaai::neat::genai::internal;

@@ -5,10 +5,14 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace simaai::neat::genai {
+
+class VisionLanguageModel;
 
 /**
  * @brief High-level task family for a deployed LLiMa model directory.
@@ -46,6 +50,36 @@ struct GenerationResult {
   std::string text;
   GenerationMetrics metrics;
   std::string finish_reason;
+};
+
+struct TokenSample {
+  std::string text;
+  GenerationMetrics metrics;
+  bool is_final = false;
+  std::string finish_reason;
+};
+
+class GenerationStream {
+public:
+  ~GenerationStream();
+
+  GenerationStream(GenerationStream&&) noexcept;
+  GenerationStream& operator=(GenerationStream&&) noexcept;
+
+  GenerationStream(const GenerationStream&) = delete;
+  GenerationStream& operator=(const GenerationStream&) = delete;
+
+  std::optional<TokenSample> next();
+  void cancel();
+
+private:
+  struct Impl;
+
+  explicit GenerationStream(std::unique_ptr<Impl> impl);
+
+  std::unique_ptr<Impl> impl_;
+
+  friend class VisionLanguageModel;
 };
 
 } // namespace simaai::neat::genai

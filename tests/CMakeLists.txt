@@ -258,7 +258,7 @@ set(UNIT_TESTS
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
-  unit_genai_direct_request_test
+  unit_genai_prompt_builder_test
   unit_genai_header_compile_surface_test
   unit_genai_text_tensor_test
   unit_header_neat_compile_surface_test
@@ -510,6 +510,16 @@ add_pipeline_test_long(
 
 if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
+endif()
+
+add_pipeline_test_long(
+  genai_llm_run_test
+  e2e_testing/genai_llm_run_test.cpp
+)
+
+if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
+  set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)

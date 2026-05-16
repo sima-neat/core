@@ -18,8 +18,13 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            GenerationResult result;
            result.text = "world";
            GenerationMetrics metrics;
+           TokenSample token;
+           token.text = "tok";
            ChatMessage message{"user", "hello"};
 
+           static_assert(std::is_move_constructible_v<GenerationStream>);
+           static_assert(!std::is_copy_constructible_v<GenerationStream>);
+           static_assert(std::is_copy_constructible_v<TokenSample>);
            static_assert(std::is_move_constructible_v<VisionLanguageModel>);
            static_assert(!std::is_copy_constructible_v<VisionLanguageModel>);
            static_assert(std::is_move_constructible_v<ASRModel>);
@@ -35,6 +40,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)request;
            (void)result;
            (void)metrics;
+           (void)token;
            (void)message;
            (void)vlm;
            (void)asr;
