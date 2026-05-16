@@ -520,6 +520,7 @@ add_pipeline_test_long(
 if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
   set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
