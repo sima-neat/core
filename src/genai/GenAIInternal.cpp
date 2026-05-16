@@ -95,7 +95,7 @@ std::string model_id_from_path(const std::filesystem::path& path) {
 
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
   validate_text_generation_request(request);
-  if (!request.formatted_prompt.empty()) {
+  if (request.formatted_prompt.has_value()) {
     throw std::logic_error("GenerationRequest::formatted_prompt is not implemented yet");
   }
 
@@ -104,17 +104,17 @@ std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
   }
 
   std::vector<ChatMessage> messages;
-  if (!request.system_prompt.empty()) {
-    messages.push_back(ChatMessage{.role = "system", .content = request.system_prompt});
+  if (request.system_prompt.has_value()) {
+    messages.push_back(ChatMessage{.role = "system", .content = *request.system_prompt});
   }
-  messages.push_back(ChatMessage{.role = "user", .content = request.prompt});
+  messages.push_back(ChatMessage{.role = "user", .content = *request.prompt});
   return messages;
 }
 
 void validate_text_generation_request(const GenerationRequest& request) {
-  const int text_source_count = (request.prompt.empty() ? 0 : 1) +
+  const int text_source_count = (request.prompt.has_value() ? 1 : 0) +
                                 (request.messages.empty() ? 0 : 1) +
-                                (request.formatted_prompt.empty() ? 0 : 1);
+                                (request.formatted_prompt.has_value() ? 1 : 0);
   if (text_source_count == 0) {
     throw std::runtime_error("GenerationRequest requires prompt, messages, or formatted_prompt");
   }

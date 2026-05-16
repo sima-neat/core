@@ -63,7 +63,38 @@ std::optional<uint16_t> make_max_total_tokens(std::size_t input_token_count,
       input_token_count + static_cast<std::size_t>(max_new_tokens) > max_uint16) {
     throw std::runtime_error("GenerationRequest::max_new_tokens exceeds LLiMa token limit");
   }
-  return static_cast<uint16_t>(input_token_count + max_new_tokens);
+      return static_cast<uint16_t>(input_token_count + max_new_tokens);
+}
+
+std::string token_content_from_json(const nlohmann::json& token_json, const char* token_name) {
+  if (token_json.is_null()) {
+    return {};
+  }
+  if (token_json.is_string()) {
+    return token_json.get<std::string>();
+  }
+  if (token_json.contains("content") && token_json.at("content").is_string()) {
+    return token_json.at("content").get<std::string>();
+  }
+  throw std::runtime_error(std::string("Failed to read ") + token_name + " from tokenizer config");
+}
+
+std::string load_bos_token(const std::filesystem::path& model_root) {
+  const auto config_path = model_root / "devkit" / "tokenizer_config.json";
+  std::ifstream in(config_path);
+  if (!in) {
+    return {};
+  }
+  try {
+    const auto config = nlohmann::json::parse(in);
+    if (!config.contains("bos_token")) {
+      return {};
+    }
+    return token_content_from_json(config.at("bos_token"), "bos_token");
+  } catch (const nlohmann::json::exception& e) {
+    throw std::runtime_error("Unable to parse LLiMa tokenizer config " + config_path.string() +
+                             ": " + e.what());
+  }
 }
 
 nlohmann::ordered_json build_llima_messages(const GenerationRequest& request) {
@@ -139,6 +170,7 @@ struct VisionLanguageModel::Impl {
 
     ensure_llima_runtime_connected();
     cfg = load_vlm_config(info.root);
+    bos_token = load_bos_token(info.root);
     vlm_helper = std::make_unique<simaai::llima::VlmHelper>(
         cfg, info.root / "devkit", std::nullopt, std::nullopt);
     text_streamer = std::make_unique<simaai::llima::TextStreamer>(
@@ -153,9 +185,6 @@ struct VisionLanguageModel::Impl {
 
   GenerationResult run(const GenerationRequest& request) {
     internal::validate_text_generation_request(request);
-    if (!request.formatted_prompt.empty()) {
-      throw std::logic_error("GenerationRequest::formatted_prompt is not implemented yet");
-    }
 
     auto active_run = ActiveRunGuard::acquire(*this);
     reset_metrics();
@@ -177,15 +206,25 @@ struct VisionLanguageModel::Impl {
   }
 
   std::optional<std::vector<uint32_t>> generate_tokens(const GenerationRequest& request) {
+    const auto input_token_ids = build_input_token_ids(request);
+    language_model->create_input_buffers(input_token_ids);
+
+    const auto max_total_tokens =
+        make_max_total_tokens(input_token_ids.size(), request.max_new_tokens);
+    return language_model->run_model(
+        input_token_ids, simaai::llima::ChronoTimer{true}, max_total_tokens);
+  }
+
+  std::vector<uint32_t> build_input_token_ids(const GenerationRequest& request) {
+    if (request.formatted_prompt.has_value()) {
+      const bool add_special_tokens = !request.formatted_prompt->starts_with(bos_token);
+      return vlm_helper->get_tokenizer()->encode(*request.formatted_prompt, add_special_tokens);
+    }
+
     simaai::llima::Chat chat(*vlm_helper);
     chat.set_messages(build_llima_messages(request));
     auto preprocessed = vlm_helper->preprocess(chat);
-    language_model->create_input_buffers(preprocessed.input_token_ids);
-
-    const auto max_total_tokens =
-        make_max_total_tokens(preprocessed.input_token_ids.size(), request.max_new_tokens);
-    return language_model->run_model(
-        preprocessed.input_token_ids, simaai::llima::ChronoTimer{true}, max_total_tokens);
+    return std::move(preprocessed.input_token_ids);
   }
 
   void configure_run_callbacks() {
@@ -215,6 +254,7 @@ struct VisionLanguageModel::Impl {
 
   internal::ModelDirectoryInfo info;
   simaai::llima::VlmConfig cfg;
+  std::string bos_token;
   std::unique_ptr<simaai::llima::VlmHelper> vlm_helper;
   std::unique_ptr<simaai::llima::TextStreamer> text_streamer;
   std::unique_ptr<simaai::llima::LanguageModel> language_model;
@@ -389,6 +429,50 @@ void GenerationStream::cancel() {
   }
 }
 
+GenerationStream::iterator GenerationStream::begin() {
+  return iterator(this);
+}
+
+GenerationStream::iterator GenerationStream::end() {
+  return iterator();
+}
+
+GenerationStream::iterator::iterator(GenerationStream* stream) : stream_(stream) {
+  advance();
+}
+
+GenerationStream::iterator::reference GenerationStream::iterator::operator*() const {
+  return *current_;
+}
+
+GenerationStream::iterator::pointer GenerationStream::iterator::operator->() const {
+  return &*current_;
+}
+
+GenerationStream::iterator& GenerationStream::iterator::operator++() {
+  advance();
+  return *this;
+}
+
+void GenerationStream::iterator::operator++(int) {
+  advance();
+}
+
+void GenerationStream::iterator::advance() {
+  if (!stream_) {
+    current_.reset();
+    return;
+  }
+  current_ = stream_->next();
+  if (!current_.has_value()) {
+    stream_ = nullptr;
+  }
+}
+
+bool operator==(const GenerationStream::iterator& lhs, const GenerationStream::iterator& rhs) {
+  return lhs.stream_ == rhs.stream_ && lhs.current_.has_value() == rhs.current_.has_value();
+}
+
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
     : impl_(std::make_shared<Impl>(std::move(model_dir))) {
   impl_->load();
@@ -418,9 +502,6 @@ GenerationResult VisionLanguageModel::run(const GenerationRequest& request) {
 
 GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
   internal::validate_text_generation_request(request);
-  if (!request.formatted_prompt.empty()) {
-    throw std::logic_error("GenerationRequest::formatted_prompt is not implemented yet");
-  }
   return GenerationStream(std::make_unique<GenerationStream::Impl>(impl_, request));
 }
 

@@ -4,7 +4,9 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
@@ -37,9 +39,9 @@ struct GenerationMetrics {
 };
 
 struct GenerationRequest {
-  std::string prompt;
-  std::string formatted_prompt;
-  std::string system_prompt;
+  std::optional<std::string> prompt;
+  std::optional<std::string> formatted_prompt;
+  std::optional<std::string> system_prompt;
   std::vector<ChatMessage> messages;
   std::uint32_t max_new_tokens = 0;
   float temperature = 1.0F;
@@ -61,6 +63,34 @@ struct TokenSample {
 
 class GenerationStream {
 public:
+  class iterator {
+  public:
+    using iterator_category = std::input_iterator_tag;
+    using value_type = TokenSample;
+    using difference_type = std::ptrdiff_t;
+    using pointer = const TokenSample*;
+    using reference = const TokenSample&;
+
+    iterator() = default;
+
+    reference operator*() const;
+    pointer operator->() const;
+    iterator& operator++();
+    void operator++(int);
+
+    friend bool operator==(const iterator& lhs, const iterator& rhs);
+    friend bool operator!=(const iterator& lhs, const iterator& rhs) { return !(lhs == rhs); }
+
+  private:
+    explicit iterator(GenerationStream* stream);
+    void advance();
+
+    GenerationStream* stream_ = nullptr;
+    std::optional<TokenSample> current_;
+
+    friend class GenerationStream;
+  };
+
   ~GenerationStream();
 
   GenerationStream(GenerationStream&&) noexcept;
@@ -71,6 +101,8 @@ public:
 
   std::optional<TokenSample> next();
   void cancel();
+  iterator begin();
+  iterator end();
 
 private:
   struct Impl;

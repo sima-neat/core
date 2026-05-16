@@ -14,7 +14,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
 
            GenAITask task = GenAITask::VisionLanguage;
            GenerationRequest request;
-           request.prompt = "hello";
+           request.prompt = std::string{"hello"};
            GenerationResult result;
            result.text = "world";
            GenerationMetrics metrics;

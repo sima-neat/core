@@ -601,8 +601,14 @@ ensure_llima_sdk_sysroot_deps() {
   if [[ ! -f "${install_root}/usr/include/fmt/core.h" ]]; then
     missing_packages+=("libfmt-dev:arm64")
   fi
+  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
+    missing_packages+=("libfmt9:arm64")
+  fi
   if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ]]; then
     missing_packages+=("libspdlog-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
+    missing_packages+=("libspdlog1.10:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
@@ -643,7 +649,9 @@ ensure_llima_sdk_sysroot_deps() {
 
   if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
         ! -f "${install_root}/usr/include/fmt/core.h" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ||
         ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ||
         ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
       echo "ERROR: LLiMa SDK sysroot dependencies are still incomplete after install." >&2
       rm -rf "${tmp_dir}"
@@ -1717,6 +1725,13 @@ PY
     echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
     local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
     if [[ -n "${SYSROOT:-}" ]]; then
+      wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
+      wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
       wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
     fi
     # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools

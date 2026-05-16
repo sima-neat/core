@@ -177,8 +177,8 @@ int main() {
     require(!model.accepts_image(), "Text-only LLiMa model should not accept image input");
 
     simaai::neat::genai::GenerationRequest request;
-    request.system_prompt = "You are concise.";
-    request.prompt = "What is the capital of Germany?";
+    request.system_prompt = std::string{"You are concise."};
+    request.prompt = std::string{"What is the capital of Germany?"};
     request.max_new_tokens = 24;
 
     const auto result = model.run(request);

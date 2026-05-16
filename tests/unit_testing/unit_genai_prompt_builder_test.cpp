@@ -31,21 +31,21 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
                "requires prompt");
 
            GenerationRequest multiple;
-           multiple.prompt = "hello";
+           multiple.prompt = std::string{"hello"};
            multiple.messages.push_back(ChatMessage{.role = "user", .content = "hello"});
            require_throws_contains(
                [&] { internal::validate_text_generation_request(multiple); },
                "exactly one");
 
            GenerationRequest formatted;
-           formatted.formatted_prompt = "<s>hello";
+           formatted.formatted_prompt = std::string{"<s>hello"};
            require_throws_contains(
                [&] { (void)internal::build_text_messages(formatted); },
                "formatted_prompt");
 
            GenerationRequest prompt;
-           prompt.system_prompt = "You are concise.";
-           prompt.prompt = "Explain NEAT.";
+           prompt.system_prompt = std::string{"You are concise."};
+           prompt.prompt = std::string{"Explain NEAT."};
            const auto prompt_messages = internal::build_text_messages(prompt);
            require(prompt_messages.size() == 2U, "prompt messages size mismatch");
            require(prompt_messages[0].role == "system", "system role mismatch");
@@ -64,4 +64,12 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
            require(converted[1].role == "user", "converted user role mismatch");
            require(converted[2].role == "assistant", "converted assistant role mismatch");
            require(converted[2].content == "Hello", "converted assistant content mismatch");
+
+           GenerationRequest empty_prompt;
+           empty_prompt.prompt = std::string{};
+           const auto empty_prompt_messages = internal::build_text_messages(empty_prompt);
+           require(empty_prompt_messages.size() == 1U, "empty prompt messages size mismatch");
+           require(empty_prompt_messages[0].role == "user", "empty prompt role mismatch");
+           require(empty_prompt_messages[0].content.empty(),
+                   "empty prompt content should be preserved");
          }));
