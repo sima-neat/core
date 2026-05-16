@@ -39,11 +39,11 @@
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
-#include "nodes/groups/OptiViewOutputGroup.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
+#include "nodes/groups/VideoSender.h"
 #include "nodes/io/Input.h"
-#include "nodes/io/OptiViewJsonOutput.h"
+#include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
@@ -70,10 +70,10 @@ using namespace nb::literals;
 
 namespace {
 
-using simaai::neat::Device;
-using simaai::neat::DeviceType;
 using simaai::neat::ByteFormat;
 using simaai::neat::ByteStreamSpec;
+using simaai::neat::Device;
+using simaai::neat::DeviceType;
 using simaai::neat::ImageSpec;
 using simaai::neat::MapMode;
 using simaai::neat::OutputMemory;
@@ -725,7 +725,7 @@ Tensor tensor_from_dlpack_capsule(const nb::capsule& capsule, bool copy,
                                   TensorMemory memory,
                                   const std::optional<ByteFormat>& byte_format) {
   return tensor_from_dlpack_capsule_obj(capsule.ptr(), copy, layout, image_format, byte_format,
-                                       memory);
+                                        memory);
 }
 
 std::optional<TensorLayout> infer_layout_from_object(const nb::object& obj,
@@ -870,9 +870,10 @@ Tensor tensor_from_dlpack_like_object(const nb::object& input, bool copy,
 
   nb::object capsule_obj = source.attr("__dlpack__")();
   return tensor_from_dlpack_capsule_obj(capsule_obj.ptr(), copy,
-                                       byte_format ? std::optional<TensorLayout>(TensorLayout::Unknown)
-                                                   : infer_layout_from_object(source, layout),
-                                       image_format, byte_format, memory);
+                                        byte_format
+                                            ? std::optional<TensorLayout>(TensorLayout::Unknown)
+                                            : infer_layout_from_object(source, layout),
+                                        image_format, byte_format, memory);
 }
 
 Tensor tensor_from_python_input(const nb::object& input, bool copy,
@@ -910,9 +911,8 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     nb::list items = nb::borrow<nb::list>(input);
     tensors.reserve(items.size());
     for (nb::handle h : items) {
-      tensors.emplace_back(
-          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format,
-                                   byte_format, memory));
+      tensors.emplace_back(tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout,
+                                                    image_format, byte_format, memory));
     }
     return tensors;
   }
@@ -920,9 +920,8 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
     nb::tuple items = nb::borrow<nb::tuple>(input);
     tensors.reserve(items.size());
     for (nb::handle h : items) {
-      tensors.emplace_back(
-          tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout, image_format,
-                                   byte_format, memory));
+      tensors.emplace_back(tensor_from_python_input(nb::borrow<nb::object>(h), copy, layout,
+                                                    image_format, byte_format, memory));
     }
     return tensors;
   }
@@ -1155,8 +1154,7 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("codec", &simaai::neat::EncodedSpec::codec);
 
-  nb::enum_<simaai::neat::ByteFormat>(m, "ByteFormat")
-      .value("Raw", simaai::neat::ByteFormat::Raw);
+  nb::enum_<simaai::neat::ByteFormat>(m, "ByteFormat").value("Raw", simaai::neat::ByteFormat::Raw);
 
   nb::class_<simaai::neat::ByteStreamSpec>(m, "ByteStreamSpec")
       .def(nb::init<>())
@@ -1254,10 +1252,10 @@ NB_MODULE(_pyneat_core, m) {
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
-             std::optional<ImageSpec::PixelFormat> image_format,
-             TensorMemory memory, std::optional<ByteFormat> byte_format) {
+             std::optional<ImageSpec::PixelFormat> image_format, TensorMemory memory,
+             std::optional<ByteFormat> byte_format) {
             return tensor_from_dlpack_capsule(capsule, copy, layout, image_format, memory,
-                                             byte_format);
+                                              byte_format);
           },
           "capsule"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none(),
           "memory"_a = TensorMemory::EV74, "byte_format"_a = nb::none())
@@ -1917,157 +1915,88 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_sync)
       .def_rw("udp_async", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_async);
 
-  nb::class_<simaai::neat::OptiViewObject>(m, "OptiViewObject")
+  nb::class_<simaai::neat::nodes::groups::VideoSenderRtpOptions>(m, "VideoSenderRtpOptions")
       .def(nb::init<>())
-      .def_rw("x", &simaai::neat::OptiViewObject::x)
-      .def_rw("y", &simaai::neat::OptiViewObject::y)
-      .def_rw("w", &simaai::neat::OptiViewObject::w)
-      .def_rw("h", &simaai::neat::OptiViewObject::h)
-      .def_rw("score", &simaai::neat::OptiViewObject::score)
-      .def_rw("class_id", &simaai::neat::OptiViewObject::class_id);
-
-  nb::class_<simaai::neat::OptiViewChannelOptions>(m, "OptiViewChannelOptions")
-      .def(nb::init<>())
-      .def_rw("host", &simaai::neat::OptiViewChannelOptions::host)
-      .def_rw("channel", &simaai::neat::OptiViewChannelOptions::channel)
-      .def_rw("video_port_base", &simaai::neat::OptiViewChannelOptions::video_port_base)
-      .def_rw("json_port_base", &simaai::neat::OptiViewChannelOptions::json_port_base);
-
-  nb::class_<simaai::neat::nodes::groups::UdpOutputNodeGroupOptions>(m, "UdpOutputNodeGroupOptions")
-      .def(nb::init<>())
-      .def_rw("h264_caps", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::h264_caps)
-      .def_rw("payload_type", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::payload_type)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::VideoSenderRtpOptions::payload_type)
       .def_rw("config_interval",
-              &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::config_interval)
-      .def_rw("enable_timings",
-              &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::enable_timings)
-      .def_rw("host", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::host)
-      .def_rw("video_port_base",
-              &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::video_port_base)
-      .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::udp_sync)
-      .def_rw("udp_async", &simaai::neat::nodes::groups::UdpOutputNodeGroupOptions::udp_async);
+              &simaai::neat::nodes::groups::VideoSenderRtpOptions::config_interval);
 
-  nb::class_<simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions>(
-      m, "OptiViewOutputNodeGroupOptions")
+  nb::class_<simaai::neat::nodes::groups::VideoSenderEncoderOptions>(m, "VideoSenderEncoderOptions")
       .def(nb::init<>())
-      .def_rw("udp", &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::udp)
-      .def_rw("send_json", &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::send_json)
-      .def_rw("json_port_base",
-              &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::json_port_base)
-      .def_rw("frame_w", &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::frame_w)
-      .def_rw("frame_h", &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::frame_h)
-      .def_rw("topk", &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::topk)
-      .def_rw("parse_debug",
-              &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::parse_debug)
-      .def_rw("json_delay_ms",
-              &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::json_delay_ms)
-      .def_rw("video_delay_ms",
-              &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::video_delay_ms)
-      .def_rw("labels", &simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions::labels);
+      .def_rw("bitrate_kbps", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::bitrate_kbps)
+      .def_rw("profile", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::profile)
+      .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
 
-  nb::class_<simaai::neat::nodes::groups::OptiViewJsonInput>(m, "OptiViewJsonInput")
-      .def(nb::init<>())
-      .def_rw("stream_idx", &simaai::neat::nodes::groups::OptiViewJsonInput::stream_idx)
-      .def_rw("stream_id", &simaai::neat::nodes::groups::OptiViewJsonInput::stream_id)
-      .def_rw("frame_id", &simaai::neat::nodes::groups::OptiViewJsonInput::frame_id)
-      .def_rw("capture_ms", &simaai::neat::nodes::groups::OptiViewJsonInput::capture_ms)
-      .def_rw("yolo_ms", &simaai::neat::nodes::groups::OptiViewJsonInput::yolo_ms)
-      .def_rw("output_frame_id", &simaai::neat::nodes::groups::OptiViewJsonInput::output_frame_id)
+  nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("h264_rtp_udp_from_raw",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
+                  "height"_a, "fps"_a)
+      .def_static("h264_rtp_udp_from_encoded",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
+      .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
+      .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
+      .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)
+      .def_prop_ro("height", &simaai::neat::nodes::groups::VideoSenderOptions::height)
+      .def_prop_ro("fps", &simaai::neat::nodes::groups::VideoSenderOptions::fps)
+      .def_prop_ro("video_port", &simaai::neat::nodes::groups::VideoSenderOptions::video_port)
+      .def_rw("host", &simaai::neat::nodes::groups::VideoSenderOptions::host)
+      .def_rw("channel", &simaai::neat::nodes::groups::VideoSenderOptions::channel)
+      .def_rw("video_port_base", &simaai::neat::nodes::groups::VideoSenderOptions::video_port_base)
+      .def_rw("sync", &simaai::neat::nodes::groups::VideoSenderOptions::sync)
+      .def_rw("async_", &simaai::neat::nodes::groups::VideoSenderOptions::async)
       .def_prop_rw(
-          "yolo_sample",
-          [](const simaai::neat::nodes::groups::OptiViewJsonInput& input) {
-            return input.yolo_sample;
+          "async",
+          [](const simaai::neat::nodes::groups::VideoSenderOptions& options) {
+            return options.async;
           },
-          [](simaai::neat::nodes::groups::OptiViewJsonInput& input, const Sample* sample) {
-            input.yolo_sample = sample;
+          [](simaai::neat::nodes::groups::VideoSenderOptions& options, bool value) {
+            options.async = value;
           })
-      .def_prop_rw(
-          "decoded_sample",
-          [](const simaai::neat::nodes::groups::OptiViewJsonInput& input) {
-            return input.decoded_sample;
-          },
-          [](simaai::neat::nodes::groups::OptiViewJsonInput& input, const Sample* sample) {
-            input.decoded_sample = sample;
-          });
+      .def_rw("rtp", &simaai::neat::nodes::groups::VideoSenderOptions::rtp)
+      .def_rw("encoder", &simaai::neat::nodes::groups::VideoSenderOptions::encoder);
 
-  nb::class_<simaai::neat::nodes::groups::OptiViewJsonResult>(m, "OptiViewJsonResult")
+  nb::class_<simaai::neat::MetadataSenderOptions>(m, "MetadataSenderOptions")
       .def(nb::init<>())
-      .def_rw("ok", &simaai::neat::nodes::groups::OptiViewJsonResult::ok)
-      .def_rw("nonempty", &simaai::neat::nodes::groups::OptiViewJsonResult::nonempty)
-      .def_rw("boxes", &simaai::neat::nodes::groups::OptiViewJsonResult::boxes)
-      .def_rw("error", &simaai::neat::nodes::groups::OptiViewJsonResult::error);
+      .def_rw("host", &simaai::neat::MetadataSenderOptions::host)
+      .def_rw("channel", &simaai::neat::MetadataSenderOptions::channel)
+      .def_rw("metadata_port_base", &simaai::neat::MetadataSenderOptions::metadata_port_base);
 
-  nb::class_<simaai::neat::OptiViewJsonOutput>(m, "OptiViewJsonOutput")
+  nb::class_<simaai::neat::MetadataSender>(m, "MetadataSender")
       .def(
           "__init__",
-          [](simaai::neat::OptiViewJsonOutput* self,
-             const simaai::neat::OptiViewChannelOptions& opt) {
+          [](simaai::neat::MetadataSender* self, const simaai::neat::MetadataSenderOptions& opt) {
             std::string err;
-            new (self) simaai::neat::OptiViewJsonOutput(opt, &err);
+            new (self) simaai::neat::MetadataSender(opt, &err);
             if (!self->ok()) {
-              self->~OptiViewJsonOutput();
-              throw std::runtime_error(err.empty() ? "OptiViewJsonOutput init failed" : err);
+              self->~MetadataSender();
+              throw std::runtime_error(err.empty() ? "MetadataSender init failed" : err);
             }
           },
           "options"_a)
-      .def("ok", &simaai::neat::OptiViewJsonOutput::ok)
-      .def("host", &simaai::neat::OptiViewJsonOutput::host)
-      .def("json_port", &simaai::neat::OptiViewJsonOutput::json_port)
-      .def("video_port", &simaai::neat::OptiViewJsonOutput::video_port)
+      .def("ok", &simaai::neat::MetadataSender::ok)
+      .def("host", &simaai::neat::MetadataSender::host)
+      .def("metadata_port", &simaai::neat::MetadataSender::metadata_port)
       .def(
-          "send_json",
-          [](const simaai::neat::OptiViewJsonOutput& self, const std::string& payload) {
+          "send_raw_json",
+          [](const simaai::neat::MetadataSender& self, const std::string& payload) {
             std::string err;
-            const bool ok = self.send_json(payload, &err);
+            const bool ok = self.send_raw_json(payload, &err);
             if (!ok && !err.empty())
               throw std::runtime_error(err);
             return ok;
           },
           "payload"_a)
       .def(
-          "send_detection",
-          [](const simaai::neat::OptiViewJsonOutput& self, int64_t timestamp_ms,
-             const std::string& frame_id, const std::vector<simaai::neat::OptiViewObject>& objects,
-             const std::vector<std::string>& labels) {
+          "send_metadata",
+          [](const simaai::neat::MetadataSender& self, const std::string& type,
+             const std::string& data_json, int64_t timestamp_ms, const std::string& frame_id) {
             std::string err;
-            const bool ok = self.send_detection(timestamp_ms, frame_id, objects, labels, &err);
+            const bool ok = self.send_metadata(type, data_json, timestamp_ms, frame_id, &err);
             if (!ok && !err.empty())
               throw std::runtime_error(err);
             return ok;
           },
-          "timestamp_ms"_a, "frame_id"_a, "objects"_a, "labels"_a);
-
-  nb::class_<simaai::neat::nodes::groups::OptiViewOutputNodeGroup>(m, "OptiViewOutputNodeGroup")
-      .def(nb::init<>())
-      .def(
-          "init",
-          [](simaai::neat::nodes::groups::OptiViewOutputNodeGroup& self,
-             const simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions& opt,
-             size_t streams) {
-            std::string err;
-            const bool ok = self.init(opt, streams, &err);
-            if (!ok)
-              throw std::runtime_error(err.empty() ? "OptiViewOutputNodeGroup init failed" : err);
-            return ok;
-          },
-          "options"_a, "streams"_a)
-      .def("push_video", &simaai::neat::nodes::groups::OptiViewOutputNodeGroup::push_video,
-           "stream_idx"_a, "sample"_a)
-      .def("try_push_video", &simaai::neat::nodes::groups::OptiViewOutputNodeGroup::try_push_video,
-           "stream_idx"_a, "sample"_a)
-      .def(
-          "emit_json",
-          [](const simaai::neat::nodes::groups::OptiViewOutputNodeGroup& self,
-             const simaai::neat::nodes::groups::OptiViewJsonInput& input) {
-            simaai::neat::nodes::groups::OptiViewJsonResult out;
-            self.emit_json(input, &out);
-            return out;
-          },
-          "input"_a)
-      .def("stop", &simaai::neat::nodes::groups::OptiViewOutputNodeGroup::stop);
-
-  m.def("OptiViewMakeJson", &simaai::neat::OptiViewMakeJson, "timestamp_ms"_a, "frame_id"_a,
-        "objects"_a, "labels"_a);
+          "type"_a, "data_json"_a, "timestamp_ms"_a, "frame_id"_a);
 
   nb::class_<simaai::neat::UdpOutputOptions>(m, "UdpOutputOptions")
       .def(nb::init<>())
@@ -2114,6 +2043,7 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
+  groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);
   groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);
@@ -2623,8 +2553,8 @@ NB_MODULE(_pyneat_core, m) {
             model, decode_type, detection_threshold, nms_iou_threshold, top_k,
             /*element_name=*/"", std::nullopt, std::nullopt, original_width, original_height);
       },
-      "model"_a, "decode_type"_a, "original_width"_a, "original_height"_a,
-      "detection_threshold"_a, "nms_iou_threshold"_a, "top_k"_a);
+      "model"_a, "decode_type"_a, "original_width"_a, "original_height"_a, "detection_threshold"_a,
+      "nms_iou_threshold"_a, "top_k"_a);
   nodes_mod.def(
       "sima_box_decode",
       [](const simaai::neat::Model& model, simaai::neat::BoxDecodeType decode_type,

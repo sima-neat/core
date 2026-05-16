@@ -420,7 +420,7 @@ jobs:
           # interaction across ctest versions has been unreliable and the
           # name-based regex is unambiguous: it matches the exact test set
           # the user wants exercised this round.
-          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|preproc_yolov8_matrix_test|graphpipes_yolo_optiview_16stream_test)$'
+          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
 
           # unit_dispatcher_watchdog_test trips a residual EINVAL race in the
           # EVXX dispatcher path (frame_id=N "Dispatcher async run failed:
