@@ -258,6 +258,9 @@ set(UNIT_TESTS
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
+  unit_genai_direct_request_test
+  unit_genai_header_compile_surface_test
+  unit_genai_text_tensor_test
   unit_header_neat_compile_surface_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test

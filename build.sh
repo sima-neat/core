@@ -577,6 +577,55 @@ run_privileged() {
   return 1
 }
 
+ensure_llima_sdk_sysroot_deps() {
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    return
+  fi
+
+  local install_root="${SYSROOT:-}"
+  if [[ -z "${install_root}" ]]; then
+    echo "ERROR: eLxr SDK mode requires SYSROOT to be set before installing LLiMa dependencies." >&2
+    exit 1
+  fi
+
+  if [[ -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
+        -f "${install_root}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
+    return
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
+    echo "ERROR: apt-get and dpkg-deb are required to install libeigen3-dev into the SDK sysroot." >&2
+    exit 1
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-llima-deps-XXXXXX)"
+
+  echo "Installing LLiMa SDK sysroot dependency: libeigen3-dev"
+  (
+    cd "${tmp_dir}"
+    apt-get download libeigen3-dev
+  )
+
+  local eigen_deb
+  eigen_deb="$(find "${tmp_dir}" -maxdepth 1 -type f -name 'libeigen3-dev_*.deb' | sort | head -n 1)"
+  if [[ -z "${eigen_deb}" ]]; then
+    echo "ERROR: Failed to download libeigen3-dev." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  if ! dpkg-deb -x "${eigen_deb}" "${install_root}" 2>/dev/null; then
+    if ! run_privileged dpkg-deb -x "${eigen_deb}" "${install_root}"; then
+      echo "ERROR: Failed to install libeigen3-dev into SYSROOT=${install_root}" >&2
+      rm -rf "${tmp_dir}"
+      exit 1
+    fi
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+
 is_dep_satisfied_linux() {
   local pkg="$1"
   # Some tools are version-suffixed on devkits, so check common aliases first.
@@ -1194,6 +1243,7 @@ ensure_neat_llima() {
       fi
     fi
     echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
+    ensure_llima_sdk_sysroot_deps
     local deb_path
     for deb_path in "${llima_debs[@]}"; do
       echo "  $(basename "${deb_path}")"
@@ -1638,11 +1688,15 @@ PY
     py_triplet="$(elxr_ext_platform_triplet)"
     pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
     echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
+    local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
+    if [[ -n "${SYSROOT:-}" ]]; then
+      wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+    fi
     # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
     # (notably ninja), which are not executable on the host container.
     # Build without isolation and force Makefiles to keep host tools executable.
     _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
-      CMAKE_ARGS="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}" \
+      CMAKE_ARGS="${wheel_cmake_args}" \
       CMAKE_GENERATOR="Unix Makefiles" \
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
       "${wheel_python}" -m build --wheel --outdir dist --no-isolation

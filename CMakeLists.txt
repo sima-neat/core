@@ -210,6 +210,28 @@ endif()
 # Dependencies
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
+find_package(SimaLMM CONFIG REQUIRED)
+message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
+find_path(SIMANEAT_JSONCPP_INCLUDE_DIR
+  NAMES json/json.h
+  PATHS
+    "$ENV{SYSROOT}/usr/include/jsoncpp"
+    "${CMAKE_SYSROOT}/usr/include/jsoncpp"
+    "/usr/include/jsoncpp")
+find_path(SIMANEAT_EIGEN3_INCLUDE_DIR
+  NAMES Eigen/Core
+  PATHS
+    "$ENV{SYSROOT}/usr/include/eigen3"
+    "${CMAKE_SYSROOT}/usr/include/eigen3"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
+    "/usr/include/eigen3")
+find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
+  NAMES unsupported/Eigen/CXX11/Tensor
+  PATHS
+    "$ENV{SYSROOT}/usr/include/eigen3"
+    "${CMAKE_SYSROOT}/usr/include/eigen3"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
+    "/usr/include/eigen3")
 
 if (SIMANEAT_CPP_TIDY)
   pkg_check_modules(GST QUIET
@@ -703,6 +725,16 @@ target_include_directories(sima_neat
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
 )
 
+foreach(_simaneat_llima_header_dep IN ITEMS
+    "${SIMANEAT_JSONCPP_INCLUDE_DIR}"
+    "${SIMANEAT_EIGEN3_INCLUDE_DIR}"
+    "${SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR}")
+  if (_simaneat_llima_header_dep AND
+      NOT _simaneat_llima_header_dep MATCHES "-NOTFOUND$")
+    target_include_directories(sima_neat SYSTEM PRIVATE "${_simaneat_llima_header_dep}")
+  endif()
+endforeach()
+
 if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_neat_include_dir IN ITEMS
       "${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}"
@@ -745,6 +777,7 @@ endif()
 
 target_link_libraries(sima_neat
   PUBLIC
+    SimaLMM::sima_lmm_runtime
 )
 
 if (GST_FOUND)
@@ -1149,7 +1182,7 @@ set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
 
 set(CPACK_DEBIAN_CORE_PACKAGE_DEPENDS
-  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libglib2.0-0, libopencv-core406, neat-internals-dev, neat-gst-plugins"
+  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libglib2.0-0, libopencv-core406, neat-internals-dev, neat-gst-plugins, sima-lmm-core, sima-lmm-dev"
 )
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
