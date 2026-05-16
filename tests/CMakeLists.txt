@@ -213,8 +213,17 @@ endfunction()
 # ------------------------------------------------------------------------------
 # Unit tests (1:1 cpp mapping)
 # ------------------------------------------------------------------------------
+add_pipeline_test(
+  hybrid_graph_rtsp_resnet50_tput_test
+  e2e_pipelines/img_classification/hybrid_graph_rtsp_resnet50_tput_test.cpp
+)
+
+if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY LABELS "e2e;img_classification")
+  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+endif()
+
 set(UNIT_TESTS
-  unit_builder_test
   unit_caps_bridge_test
   unit_contract_compiler_boxdecode_test
   unit_contract_compiler_mla_test
@@ -367,6 +376,15 @@ foreach(test ${UNIT_TESTS})
     set_property(TEST ${test} APPEND PROPERTY LABELS "unit")
   endif()
 endforeach()
+
+add_pipeline_test(
+  unit_builder_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/unit_testing/unit_builder_test.cpp
+)
+
+if (NOT unit_builder_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST unit_builder_test APPEND PROPERTY LABELS "unit")
+endif()
 
 if (TARGET unit_power_telemetry_test)
   target_include_directories(unit_power_telemetry_test PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -926,16 +944,6 @@ add_pipeline_test(
 if (NOT rtsp_pull_frame_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST rtsp_pull_frame_test APPEND PROPERTY LABELS "e2e;img_classification")
   set_property(TEST rtsp_pull_frame_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
-endif()
-
-add_pipeline_test(
-  hybrid_graph_rtsp_resnet50_tput_test
-  e2e_pipelines/img_classification/hybrid_graph_rtsp_resnet50_tput_test.cpp
-)
-
-if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY LABELS "e2e;img_classification")
-  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
 endif()
 
 add_executable(
