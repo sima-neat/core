@@ -23,6 +23,7 @@ struct LanguageOptions {
   std::uint32_t max_new_tokens = 0;
   float temperature = 1.0F;
   float top_p = 1.0F;
+  bool streaming = true;
 };
 
 std::shared_ptr<graph::Node> Language(std::shared_ptr<VisionLanguageModel> model,

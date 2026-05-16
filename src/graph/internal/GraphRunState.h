@@ -145,12 +145,32 @@ struct GraphRun::State {
   void signal_stop();
   void request_stop(const std::string& err);
   bool ensure_pipeline_built(std::size_t index, const Sample& sample, std::string* err);
+  bool route_stage_output(NodeId node_id, const std::vector<PortId>& output_ports,
+                          StageOutMsg&& out_msg);
+
+  struct RuntimeStageEmitter final : StageEmitter {
+    bool emit(StageOutMsg msg) override {
+      if (state == nullptr || output_ports == nullptr) {
+        return false;
+      }
+      return state->route_stage_output(node_id, *output_ports, std::move(msg));
+    }
+
+    bool stop_requested() const override {
+      return state == nullptr || state->stop.load(std::memory_order_relaxed);
+    }
+
+    GraphRun::State* state = nullptr;
+    NodeId node_id = kInvalidNode;
+    const std::vector<PortId>* output_ports = nullptr;
+  };
 
   struct StageRuntime {
     explicit StageRuntime(std::size_t capacity = 0) : mailbox(capacity) {}
 
     NodeId node_id = kInvalidNode;
     std::unique_ptr<StageExecutor> exec;
+    RuntimeStageEmitter emitter;
     StageMailbox mailbox;
     std::thread worker;
     std::atomic<bool> worker_done{false};

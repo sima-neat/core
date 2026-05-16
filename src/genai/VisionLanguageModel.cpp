@@ -1,8 +1,6 @@
 #include "genai/VisionLanguageModel.h"
 #include "genai/GenAIInternal.h"
 
-#include <sima_lmm/nlohmann_optional.hpp>
-
 #include <sima_lmm/chat.hpp>
 #include <sima_lmm/image_processor.hpp>
 #include <sima_lmm/language_model.hpp>

@@ -255,6 +255,7 @@ set(UNIT_TESTS
   unit_graph_stamp_frame_id_test
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
+  unit_graph_stage_emitter_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test

@@ -18,6 +18,8 @@
 #include <vector>
 #include <unistd.h>
 
+// Exercises the GenAI Language graph node end-to-end against a real LLiMa text
+// model, including prompt, formatted_prompt, done metadata, and error output.
 namespace fs = std::filesystem;
 
 namespace {
@@ -219,6 +221,7 @@ struct GraphOutputs {
   std::string tokens;
   simaai::neat::Sample done;
   std::string error;
+  int token_samples = 0;
   bool saw_done = false;
   bool saw_error = false;
 };
@@ -226,11 +229,12 @@ struct GraphOutputs {
 GraphOutputs pull_graph_outputs(simaai::neat::graph::GraphRun& run,
                                 simaai::neat::graph::NodeId node_id, bool stop_on_error = false) {
   GraphOutputs outputs;
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < 64; ++i) {
     auto sample = run.pull(node_id, 60000);
     require(sample.has_value(), "GraphRun::pull timed out");
     if (sample->port_name == "tokens" || sample->stream_label == "tokens") {
       outputs.tokens += sample_text(*sample);
+      outputs.token_samples += 1;
     } else if (sample->port_name == "done" || sample->stream_label == "done") {
       outputs.done = *sample;
       outputs.saw_done = true;
@@ -263,43 +267,73 @@ int main() {
     simaai::neat::graph::Graph graph;
     const auto prompt_port = graph.intern_port("prompt");
     const auto formatted_prompt_port = graph.intern_port("formatted_prompt");
-    const auto language =
+    const auto streaming_language =
         graph.add(simaai::neat::genai::nodes::Language(model,
                                                        simaai::neat::genai::nodes::LanguageOptions{
                                                            .system_prompt = "You are concise.",
                                                            .max_new_tokens = 24,
+                                                           .streaming = true,
                                                        },
-                                                       "language"));
+                                                       "language_streaming"));
+    const auto sync_language =
+        graph.add(simaai::neat::genai::nodes::Language(model,
+                                                       simaai::neat::genai::nodes::LanguageOptions{
+                                                           .system_prompt = "You are concise.",
+                                                           .max_new_tokens = 24,
+                                                           .streaming = false,
+                                                       },
+                                                       "language_sync"));
 
     simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
 
-    require(run.push(language, prompt_port, make_text_input("What is the capital of Germany?", 1)),
-            "GraphRun::push prompt failed");
-    const GraphOutputs prompt_outputs = pull_graph_outputs(run, language);
-    require(prompt_outputs.saw_done, "GenAI graph prompt run did not emit done");
-    require(!prompt_outputs.saw_error,
-            "GenAI graph prompt run emitted error: " + prompt_outputs.error);
-    require(trim_text(prompt_outputs.tokens) == "The capital of Germany is Berlin.",
-            "GenAI graph generated unexpected text: " + prompt_outputs.tokens);
-    const std::string finish_reason = bundle_field_text(prompt_outputs.done, "finish_reason");
-    require(finish_reason == "stop" || finish_reason == "interrupted",
-            "GenAI graph returned unexpected finish reason: " + finish_reason);
-    require(std::stoul(bundle_field_text(prompt_outputs.done, "generated_tokens")) > 0,
-            "GenAI graph done should report generated tokens");
+    require(run.push(streaming_language, prompt_port,
+                     make_text_input("What is the capital of Germany?", 1)),
+            "GraphRun::push streaming prompt failed");
+    const GraphOutputs streaming_prompt_outputs = pull_graph_outputs(run, streaming_language);
+    require(streaming_prompt_outputs.saw_done, "GenAI graph streaming prompt did not emit done");
+    require(!streaming_prompt_outputs.saw_error,
+            "GenAI graph streaming prompt emitted error: " + streaming_prompt_outputs.error);
+    require(streaming_prompt_outputs.token_samples > 0,
+            "GenAI graph streaming prompt should emit token samples");
+    require(trim_text(streaming_prompt_outputs.tokens) == "The capital of Germany is Berlin.",
+            "GenAI graph streaming generated unexpected text: " + streaming_prompt_outputs.tokens);
+    const std::string streaming_finish_reason =
+        bundle_field_text(streaming_prompt_outputs.done, "finish_reason");
+    require(streaming_finish_reason == "stop" || streaming_finish_reason == "interrupted",
+            "GenAI graph streaming returned unexpected finish reason: " + streaming_finish_reason);
+    require(std::stoul(bundle_field_text(streaming_prompt_outputs.done, "generated_tokens")) > 0,
+            "GenAI graph streaming done should report generated tokens");
 
     require(
-        run.push(language, formatted_prompt_port, make_text_input("The capital of Germany is", 2)),
-        "GraphRun::push formatted_prompt failed");
-    const GraphOutputs formatted_outputs = pull_graph_outputs(run, language);
+        run.push(sync_language, prompt_port, make_text_input("What is the capital of Germany?", 2)),
+        "GraphRun::push sync prompt failed");
+    const GraphOutputs sync_prompt_outputs = pull_graph_outputs(run, sync_language);
+    require(sync_prompt_outputs.saw_done, "GenAI graph sync prompt did not emit done");
+    require(!sync_prompt_outputs.saw_error,
+            "GenAI graph sync prompt emitted error: " + sync_prompt_outputs.error);
+    require(sync_prompt_outputs.token_samples == 1,
+            "GenAI graph sync prompt should emit exactly one token sample");
+    require(trim_text(sync_prompt_outputs.tokens) == "The capital of Germany is Berlin.",
+            "GenAI graph sync generated unexpected text: " + sync_prompt_outputs.tokens);
+    const std::string finish_reason = bundle_field_text(sync_prompt_outputs.done, "finish_reason");
+    require(finish_reason == "stop" || finish_reason == "interrupted",
+            "GenAI graph returned unexpected finish reason: " + finish_reason);
+    require(std::stoul(bundle_field_text(sync_prompt_outputs.done, "generated_tokens")) > 0,
+            "GenAI graph done should report generated tokens");
+
+    require(run.push(streaming_language, formatted_prompt_port,
+                     make_text_input("The capital of Germany is", 3)),
+            "GraphRun::push streaming formatted_prompt failed");
+    const GraphOutputs formatted_outputs = pull_graph_outputs(run, streaming_language);
     require(formatted_outputs.saw_done, "GenAI graph formatted_prompt run did not emit done");
     require(!formatted_outputs.saw_error,
             "GenAI graph formatted_prompt run emitted error: " + formatted_outputs.error);
     require(!trim_text(formatted_outputs.tokens).empty(),
             "GenAI graph formatted_prompt should generate non-empty text");
 
-    require(run.push(language, prompt_port, make_non_text_input()),
+    require(run.push(streaming_language, prompt_port, make_non_text_input()),
             "GraphRun::push invalid prompt failed");
-    const GraphOutputs error_outputs = pull_graph_outputs(run, language, true);
+    const GraphOutputs error_outputs = pull_graph_outputs(run, streaming_language, true);
     require(error_outputs.saw_error, "GenAI graph invalid prompt should emit error");
     require(!error_outputs.error.empty(), "GenAI graph error text should be non-empty");
 

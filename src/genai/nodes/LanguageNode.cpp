@@ -7,6 +7,7 @@
 #include "pipeline/TensorCore.h"
 
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -103,6 +104,17 @@ public:
     error_port_ = ports.out_port(kErrorPort);
   }
 
+  void set_emitter(graph::StageEmitter* emitter) override {
+    emitter_ = emitter;
+  }
+
+  void request_stop() override {
+    std::lock_guard<std::mutex> lock(active_stream_mutex_);
+    if (active_stream_ != nullptr) {
+      active_stream_->cancel();
+    }
+  }
+
   void on_input(graph::StageMsg&& msg, std::vector<graph::StageOutMsg>& out) override {
     try {
       GenerationRequest request;
@@ -122,26 +134,93 @@ public:
         throw std::runtime_error("GenAI Language graph input arrived on an unknown port");
       }
 
-      const GenerationResult result = model_->run(request);
-      out.push_back(graph::StageOutMsg{
-          .out_port = tokens_port_,
-          .sample = make_text_sample(result.text, kTokensPort, msg.sample),
-      });
-      out.push_back(graph::StageOutMsg{
-          .out_port = done_port_,
-          .sample = make_done_sample(result, msg.sample),
-      });
+      if (!options_.streaming) {
+        const GenerationResult result = model_->run(request);
+        if (!emit_or_append(tokens_port_, make_text_sample(result.text, kTokensPort, msg.sample),
+                            out)) {
+          return;
+        }
+        (void)emit_or_append(done_port_, make_done_sample(result, msg.sample), out);
+        return;
+      }
+
+      GenerationStream stream = model_->stream(request);
+      struct ActiveStreamGuard {
+        LanguageExecutor& owner;
+        GenerationStream* stream;
+
+        ActiveStreamGuard(LanguageExecutor& owner_in, GenerationStream* stream_in)
+            : owner(owner_in), stream(stream_in) {
+          std::lock_guard<std::mutex> lock(owner.active_stream_mutex_);
+          owner.active_stream_ = stream;
+        }
+
+        ~ActiveStreamGuard() {
+          std::lock_guard<std::mutex> lock(owner.active_stream_mutex_);
+          if (owner.active_stream_ == stream) {
+            owner.active_stream_ = nullptr;
+          }
+        }
+      } active_stream{*this, &stream};
+
+      std::string generated_text;
+      GenerationMetrics last_metrics;
+      bool saw_final = false;
+
+      while (auto token = stream.next()) {
+        last_metrics = token->metrics;
+        if (token->is_final) {
+          GenerationResult result;
+          result.text = generated_text;
+          result.metrics = token->metrics;
+          result.finish_reason = token->finish_reason.empty() ? "stop" : token->finish_reason;
+          (void)emit_or_append(done_port_, make_done_sample(result, msg.sample), out);
+          saw_final = true;
+          break;
+        }
+
+        if (!token->text.empty()) {
+          generated_text += token->text;
+          if (!emit_or_append(tokens_port_, make_text_sample(token->text, kTokensPort, msg.sample),
+                              out)) {
+            stream.cancel();
+            return;
+          }
+        }
+
+        if (emitter_ != nullptr && emitter_->stop_requested()) {
+          stream.cancel();
+          return;
+        }
+      }
+
+      if (!saw_final && (emitter_ == nullptr || !emitter_->stop_requested())) {
+        GenerationResult result;
+        result.text = generated_text;
+        result.metrics = last_metrics;
+        result.finish_reason = "interrupted";
+        (void)emit_or_append(done_port_, make_done_sample(result, msg.sample), out);
+      }
     } catch (const std::exception& e) {
-      out.push_back(graph::StageOutMsg{
-          .out_port = error_port_,
-          .sample = make_text_sample(e.what(), kErrorPort, msg.sample),
-      });
+      (void)emit_or_append(error_port_, make_text_sample(e.what(), kErrorPort, msg.sample), out);
     }
   }
 
 private:
+  bool emit_or_append(graph::PortId port, Sample sample, std::vector<graph::StageOutMsg>& out) {
+    graph::StageOutMsg msg{.out_port = port, .sample = std::move(sample)};
+    if (emitter_ != nullptr) {
+      return emitter_->emit(std::move(msg));
+    }
+    out.push_back(std::move(msg));
+    return true;
+  }
+
   std::shared_ptr<VisionLanguageModel> model_;
   LanguageOptions options_;
+  graph::StageEmitter* emitter_ = nullptr;
+  std::mutex active_stream_mutex_;
+  GenerationStream* active_stream_ = nullptr;
   graph::PortId prompt_port_ = graph::kInvalidPort;
   graph::PortId formatted_prompt_port_ = graph::kInvalidPort;
   graph::PortId tokens_port_ = graph::kInvalidPort;

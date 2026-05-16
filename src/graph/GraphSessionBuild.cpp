@@ -182,8 +182,12 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
         rt->output_ports.push_back(pid);
         rt->ports.out.emplace(port.name, pid);
       }
+      rt->emitter.state = state.get();
+      rt->emitter.node_id = rt->node_id;
+      rt->emitter.output_ports = &rt->output_ports;
       if (rt->exec) {
         rt->exec->set_ports(rt->ports);
+        rt->exec->set_emitter(&rt->emitter);
       }
 
       group.instances.push_back(state->stages.size());
@@ -256,11 +260,34 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
     rt.worker = std::thread([state, i]() {
       auto& st = *state->stages[i];
       struct DoneGuard {
+        GraphRun::State& state;
+        GraphRun::State::StageRuntime& stage;
+        bool& started;
         std::atomic<bool>& flag;
         ~DoneGuard() {
+          if (started && stage.exec) {
+            try {
+              stage.exec->stop();
+            } catch (const std::exception& e) {
+              if (graph_debug_enabled()) {
+                std::fprintf(stderr, "[GRAPH] stage_stop_error node=%zu err=%s\n",
+                             static_cast<std::size_t>(stage.node_id), e.what());
+              }
+              state.request_stop(e.what());
+            }
+          }
           flag.store(true);
         }
-      } done_guard{st.worker_done};
+      };
+      bool started = false;
+      DoneGuard done_guard{*state, st, started, st.worker_done};
+      try {
+        st.exec->start();
+        started = true;
+      } catch (const std::exception& e) {
+        state->request_stop(e.what());
+        return;
+      }
       while (!state->stop.load()) {
         StageMsg msg;
         if (!st.mailbox.inbox.pop(msg, state->opt.pull_timeout_ms)) {
@@ -281,89 +308,7 @@ GraphRun GraphSession::build(const GraphRunOptions& opt) {
         }
 
         for (auto& out_msg : outputs) {
-          PortId out_port = out_msg.out_port;
-          if (out_port == kInvalidPort && st.output_ports.size() == 1) {
-            out_port = st.output_ports[0];
-          }
-          const std::uint64_t key = port_key(st.node_id, out_port);
-          const auto it = state->adjacency.find(key);
-          if (it == state->adjacency.end() || it->second.empty()) {
-            auto sink_it = state->sinks.find(st.node_id);
-            if (sink_it != state->sinks.end()) {
-              Sample sample_move = std::move(out_msg.sample);
-              const std::size_t qsize = sink_it->second->size();
-              maybe_force_copy_for_backpressure(sample_move, qsize, "sink_queue", st.node_id);
-              if (!sink_it->second->push(std::move(sample_move), state->opt.push_timeout_ms)) {
-                if (!state->stop.load(std::memory_order_relaxed)) {
-                  std::ostringstream msg;
-                  msg << "GraphRun: sink backpressure timeout (node="
-                      << static_cast<std::size_t>(st.node_id)
-                      << ", edge_queue=" << state->opt.edge_queue
-                      << ", push_timeout_ms=" << state->opt.push_timeout_ms
-                      << "). Increase GraphRunOptions.edge_queue or pull outputs concurrently.";
-                  state->request_stop(msg.str());
-                }
-              }
-            }
-            continue;
-          }
-          auto dispatch_target = [&](const DownstreamTarget& target, Sample&& sample) {
-            if (target.kind == DownstreamTarget::Kind::StageGroup) {
-              (void)state->dispatch_to_stage_group(target.index, target.port, std::move(sample));
-              return;
-            }
-            if (target.kind == DownstreamTarget::Kind::PipelineInput) {
-              std::string build_err;
-              if (!state->ensure_pipeline_built(target.index, sample, &build_err)) {
-                state->request_stop(build_err.empty() ? "GraphRun: pipeline build failed"
-                                                      : build_err);
-                return;
-              }
-              state->sanitize_sample_for_pipeline_input(*state->pipelines[target.index], sample);
-              auto& input_queue = state->pipelines[target.index]->input_queue;
-              if (input_queue) {
-                if (!input_queue->push(std::move(sample), state->opt.push_timeout_ms)) {
-                  if (!state->stop.load(std::memory_order_relaxed)) {
-                    std::ostringstream msg;
-                    msg << "GraphRun: pipeline input backpressure timeout (seg="
-                        << static_cast<std::size_t>(state->pipelines[target.index]->seg.id)
-                        << ", edge_queue=" << state->opt.edge_queue
-                        << ", push_timeout_ms=" << state->opt.push_timeout_ms
-                        << "). Increase GraphRunOptions.edge_queue or pull outputs concurrently.";
-                    state->request_stop(msg.str());
-                  }
-                }
-              }
-              return;
-            }
-            const NodeId sink_node = static_cast<NodeId>(target.index);
-            auto sink_it = state->sinks.find(sink_node);
-            if (sink_it != state->sinks.end()) {
-              const std::size_t qsize = sink_it->second->size();
-              maybe_force_copy_for_backpressure(sample, qsize, "sink_queue", target.index);
-              if (!sink_it->second->push(std::move(sample), state->opt.push_timeout_ms)) {
-                if (!state->stop.load(std::memory_order_relaxed)) {
-                  std::ostringstream msg;
-                  msg << "GraphRun: sink backpressure timeout (node="
-                      << static_cast<std::size_t>(sink_node)
-                      << ", edge_queue=" << state->opt.edge_queue
-                      << ", push_timeout_ms=" << state->opt.push_timeout_ms
-                      << "). Increase GraphRunOptions.edge_queue or pull outputs concurrently.";
-                  state->request_stop(msg.str());
-                }
-              }
-            }
-          };
-
-          const auto& targets = it->second;
-          if (targets.size() == 1) {
-            dispatch_target(targets.front(), std::move(out_msg.sample));
-          } else {
-            for (const auto& target : targets) {
-              Sample sample_copy = out_msg.sample;
-              dispatch_target(target, std::move(sample_copy));
-            }
-          }
+          (void)state->route_stage_output(st.node_id, st.output_ports, std::move(out_msg));
         }
       }
     });
