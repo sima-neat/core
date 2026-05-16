@@ -599,10 +599,10 @@ ensure_llima_sdk_sysroot_deps() {
     missing_packages+=("libeigen3-dev")
   fi
   if [[ ! -f "${install_root}/usr/include/fmt/core.h" ]]; then
-    missing_packages+=("libfmt-dev:${ARCH}")
+    missing_packages+=("libfmt-dev:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ]]; then
-    missing_packages+=("libspdlog-dev:${ARCH}")
+    missing_packages+=("libspdlog-dev:arm64")
   fi
   if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
