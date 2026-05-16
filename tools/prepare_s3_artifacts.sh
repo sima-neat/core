@@ -82,6 +82,20 @@ mkdir -p "${extract_dir}"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
 
+if ! command -v dpkg-deb >/dev/null 2>&1; then
+  echo "dpkg-deb is required to validate core DEB contents." >&2
+  exit 1
+fi
+core_extract_dir="${tmp_dir}/core-deb-extract"
+mkdir -p "${core_extract_dir}"
+dpkg-deb -x "${CORE_DEB}" "${core_extract_dir}"
+for required_cli in usr/bin/fix_devkit_runtime.sh usr/bin/neat; do
+  if [[ ! -x "${core_extract_dir}/${required_cli}" ]]; then
+    echo "Core DEB missing executable ${required_cli}." >&2
+    exit 1
+  fi
+done
+
 cp "${CORE_DEB}" "${OUTPUT_DIR}/"
 cp "${EXTRAS_TAR}" "${OUTPUT_DIR}/"
 cp "${WHEEL_PATH}" "${OUTPUT_DIR}/"
