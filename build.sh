@@ -588,39 +588,66 @@ ensure_llima_sdk_sysroot_deps() {
     exit 1
   fi
 
-  if [[ -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
-        -f "${install_root}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
-    return
+  if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
+    echo "ERROR: apt-get and dpkg-deb are required to install LLiMa dependencies into the SDK sysroot." >&2
+    exit 1
   fi
 
-  if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
-    echo "ERROR: apt-get and dpkg-deb are required to install libeigen3-dev into the SDK sysroot." >&2
-    exit 1
+  local -a missing_packages=()
+  if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
+        ! -f "${install_root}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
+    missing_packages+=("libeigen3-dev")
+  fi
+  if [[ ! -f "${install_root}/usr/include/fmt/core.h" ]]; then
+    missing_packages+=("libfmt-dev:${ARCH}")
+  fi
+  if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ]]; then
+    missing_packages+=("libspdlog-dev:${ARCH}")
+  fi
+  if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
+    missing_packages+=("nlohmann-json3-dev")
+  fi
+
+  if (( ${#missing_packages[@]} == 0 )); then
+    return
   fi
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-deps-XXXXXX)"
 
-  echo "Installing LLiMa SDK sysroot dependency: libeigen3-dev"
+  echo "Installing LLiMa SDK sysroot dependencies:"
+  printf '  %s\n' "${missing_packages[@]}"
   (
     cd "${tmp_dir}"
-    apt-get download libeigen3-dev
+    apt-get download "${missing_packages[@]}"
   )
 
-  local eigen_deb
-  eigen_deb="$(find "${tmp_dir}" -maxdepth 1 -type f -name 'libeigen3-dev_*.deb' | sort | head -n 1)"
-  if [[ -z "${eigen_deb}" ]]; then
-    echo "ERROR: Failed to download libeigen3-dev." >&2
+  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
+  if (( ${#downloaded_debs[@]} == 0 )); then
+    echo "ERROR: Failed to download LLiMa SDK sysroot dependencies." >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
 
-  if ! dpkg-deb -x "${eigen_deb}" "${install_root}" 2>/dev/null; then
-    if ! run_privileged dpkg-deb -x "${eigen_deb}" "${install_root}"; then
-      echo "ERROR: Failed to install libeigen3-dev into SYSROOT=${install_root}" >&2
+  local dep_deb
+  for dep_deb in "${downloaded_debs[@]}"; do
+    echo "  $(basename "${dep_deb}")"
+    if ! dpkg-deb -x "${dep_deb}" "${install_root}" 2>/dev/null; then
+      if ! run_privileged dpkg-deb -x "${dep_deb}" "${install_root}"; then
+        echo "ERROR: Failed to install $(basename "${dep_deb}") into SYSROOT=${install_root}" >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+      fi
+    fi
+  done
+
+  if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
+        ! -f "${install_root}/usr/include/fmt/core.h" ||
+        ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
+        ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
+      echo "ERROR: LLiMa SDK sysroot dependencies are still incomplete after install." >&2
       rm -rf "${tmp_dir}"
       exit 1
-    fi
   fi
 
   rm -rf "${tmp_dir}"
