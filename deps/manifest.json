@@ -1,5 +1,10 @@
 {
+<<<<<<< HEAD
   "internals": "",
   "llima": "main-latest",
+=======
+  "internals": "add_llima-latest",
+  "llima": "add_llima-latest",
+>>>>>>> 96071ba (use add_llima for internals/llima repo)
   "platform-version": "2.0.0"
 }
