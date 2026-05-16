@@ -52,6 +52,23 @@ require_cmd rg
 require_cmd git
 
 configure_tidy_build() {
+  local cmake_prefix_path="${CMAKE_PREFIX_PATH:-}"
+  local candidate
+
+  for candidate in \
+    "${SYSROOT:-}/usr" \
+    "${SDKTARGETSYSROOT:-}/usr" \
+    "/opt/toolchain/aarch64/modalix/usr"; do
+    [[ -n "$candidate" ]] || continue
+    if [[ -f "${candidate}/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake" ]]; then
+      if [[ -n "$cmake_prefix_path" ]]; then
+        cmake_prefix_path="${cmake_prefix_path}:${candidate}"
+      else
+        cmake_prefix_path="${candidate}"
+      fi
+    fi
+  done
+
   # Keep clang-tidy analysis on the host toolchain even when SDK/cross env
   # variables are present in CI.
   env \
@@ -70,6 +87,7 @@ configure_tidy_build() {
     -u OECORE_TARGET_ARCH \
     -u OECORE_TARGET_SYSROOT \
     -u OECORE_NATIVE_SYSROOT \
+    CMAKE_PREFIX_PATH="${cmake_prefix_path}" \
     cmake -S "$root_dir" -B "$build_dir" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
       -DSIMANEAT_CPP_TIDY=ON \
       -DSIMANEAT_STRICT_WARNINGS=ON \

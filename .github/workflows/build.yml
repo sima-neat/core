@@ -117,7 +117,7 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          ./build.sh --install-deps-only
+          ./build.sh --install-artifacts-only
 
       - name: Verify host C++ headers for clang-tidy
         run: |
