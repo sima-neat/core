@@ -51,6 +51,14 @@ option(SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
   "Require NEAT runtime libraries/headers during configure"
   ${SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS_DEFAULT})
 
+set(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT ON)
+if (SIMANEAT_CPP_TIDY)
+  set(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT OFF)
+endif()
+option(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS
+  "Require LLiMa runtime libraries/headers during configure"
+  ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT})
+
 if (UNIX)
   set(SIMANEAT_SOURCE_FS_TYPE "")
   execute_process(
@@ -210,8 +218,19 @@ endif()
 # Dependencies
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
-find_package(SimaLMM CONFIG REQUIRED)
-message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
+if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
+  find_package(SimaLMM CONFIG REQUIRED)
+  message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
+else()
+  find_package(SimaLMM CONFIG QUIET)
+  if (SimaLMM_FOUND)
+    message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
+  else()
+    message(WARNING
+      "SimaLMM package not found; continuing because "
+      "SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF.")
+  endif()
+endif()
 find_path(SIMANEAT_JSONCPP_INCLUDE_DIR
   NAMES json/json.h
   PATHS
@@ -775,10 +794,12 @@ if (GST_FOUND)
   target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
 endif()
 
-target_link_libraries(sima_neat
-  PUBLIC
-    SimaLMM::sima_lmm_runtime
-)
+if (SimaLMM_FOUND)
+  target_link_libraries(sima_neat
+    PUBLIC
+      SimaLMM::sima_lmm_runtime
+  )
+endif()
 
 if (GST_FOUND)
   target_link_libraries(sima_neat PUBLIC ${GST_LIBRARIES})
