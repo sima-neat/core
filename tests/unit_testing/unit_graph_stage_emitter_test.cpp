@@ -173,7 +173,8 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
     auto first = run.pull(streamer, 1000);
     require(first.has_value(), "live emitter output did not reach terminal sink");
     require(sample_text(*first) == "token-1", "unexpected first streamed token");
-    require(state->entered.load(std::memory_order_acquire), "stage did not enter blocking region");
+    require(wait_until([&] { return state->entered.load(std::memory_order_acquire); }, 3000),
+            "stage did not enter blocking region");
     require(!state->completed.load(std::memory_order_acquire),
             "stage completed before the live token was pulled");
 
