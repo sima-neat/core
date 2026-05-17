@@ -1,5 +1,5 @@
 #include "genai/VisionLanguageModel.h"
-#include "genai/nodes/Language.h"
+#include "genai/nodes/VisionLanguage.h"
 #include "graph/Graph.h"
 #include "graph/GraphRun.h"
 #include "graph/GraphSession.h"
@@ -266,22 +266,22 @@ int main() {
 
     simaai::neat::graph::Graph graph;
     const auto prompt_port = graph.intern_port("prompt");
-    const auto streaming_language =
-        graph.add(simaai::neat::genai::nodes::Language(model,
-                                                       simaai::neat::genai::nodes::LanguageOptions{
-                                                           .system_prompt = "You are concise.",
-                                                           .max_new_tokens = 24,
-                                                           .streaming = true,
-                                                       },
-                                                       "language_streaming"));
-    const auto sync_language =
-        graph.add(simaai::neat::genai::nodes::Language(model,
-                                                       simaai::neat::genai::nodes::LanguageOptions{
-                                                           .system_prompt = "You are concise.",
-                                                           .max_new_tokens = 24,
-                                                           .streaming = false,
-                                                       },
-                                                       "language_sync"));
+    const auto streaming_language = graph.add(simaai::neat::genai::nodes::VisionLanguage(
+        model,
+        simaai::neat::genai::nodes::VisionLanguageOptions{
+            .system_prompt = "You are concise.",
+            .max_new_tokens = 24,
+            .streaming = true,
+        },
+        "vision_language_streaming"));
+    const auto sync_language = graph.add(simaai::neat::genai::nodes::VisionLanguage(
+        model,
+        simaai::neat::genai::nodes::VisionLanguageOptions{
+            .system_prompt = "You are concise.",
+            .max_new_tokens = 24,
+            .streaming = false,
+        },
+        "vision_language_sync"));
 
     simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
 

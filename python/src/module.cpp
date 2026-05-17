@@ -15,7 +15,7 @@
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
 #include "genai/VisionLanguageModel.h"
-#include "genai/nodes/Language.h"
+#include "genai/nodes/VisionLanguage.h"
 #include "graph/Graph.h"
 #include "graph/GraphPrinter.h"
 #include "graph/GraphRun.h"
@@ -2926,14 +2926,16 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("do_mla", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_mla)
       .def_rw("do_boxdecode", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
 
-  nb::class_<simaai::neat::genai::nodes::LanguageOptions>(genai_nodes_mod, "LanguageOptions")
+  nb::class_<simaai::neat::genai::nodes::VisionLanguageOptions>(genai_nodes_mod,
+                                                                "VisionLanguageOptions")
       .def(nb::init<>())
-      .def_rw("system_prompt", &simaai::neat::genai::nodes::LanguageOptions::system_prompt)
-      .def_rw("max_new_tokens", &simaai::neat::genai::nodes::LanguageOptions::max_new_tokens)
-      .def_rw("temperature", &simaai::neat::genai::nodes::LanguageOptions::temperature)
-      .def_rw("top_p", &simaai::neat::genai::nodes::LanguageOptions::top_p)
-      .def_rw("streaming", &simaai::neat::genai::nodes::LanguageOptions::streaming);
-  graph_nodes_mod.attr("GenAILanguageOptions") = genai_nodes_mod.attr("LanguageOptions");
+      .def_rw("system_prompt", &simaai::neat::genai::nodes::VisionLanguageOptions::system_prompt)
+      .def_rw("max_new_tokens", &simaai::neat::genai::nodes::VisionLanguageOptions::max_new_tokens)
+      .def_rw("temperature", &simaai::neat::genai::nodes::VisionLanguageOptions::temperature)
+      .def_rw("top_p", &simaai::neat::genai::nodes::VisionLanguageOptions::top_p)
+      .def_rw("streaming", &simaai::neat::genai::nodes::VisionLanguageOptions::streaming)
+      .def_rw("encode_images_on_input",
+              &simaai::neat::genai::nodes::VisionLanguageOptions::encode_images_on_input);
 
   graph_nodes_mod.def(
       "pipeline_node",
@@ -2971,21 +2973,23 @@ NB_MODULE(_pyneat_core, m) {
       },
       "inputs"_a, "label"_a = "", "output"_a = "bundle");
   graph_nodes_mod.def(
-      "genai_language",
+      "genai_vision_language",
       [](std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
-         simaai::neat::genai::nodes::LanguageOptions options, const std::string& label) {
-        return simaai::neat::genai::nodes::Language(std::move(model), std::move(options), label);
+         simaai::neat::genai::nodes::VisionLanguageOptions options, const std::string& label) {
+        return simaai::neat::genai::nodes::VisionLanguage(std::move(model), std::move(options),
+                                                          label);
       },
-      "model"_a, "options"_a = simaai::neat::genai::nodes::LanguageOptions{},
-      "label"_a = "language");
+      "model"_a, "options"_a = simaai::neat::genai::nodes::VisionLanguageOptions{},
+      "label"_a = "vision_language");
   genai_nodes_mod.def(
-      "language",
+      "vision_language",
       [](std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
-         simaai::neat::genai::nodes::LanguageOptions options, const std::string& label) {
-        return simaai::neat::genai::nodes::Language(std::move(model), std::move(options), label);
+         simaai::neat::genai::nodes::VisionLanguageOptions options, const std::string& label) {
+        return simaai::neat::genai::nodes::VisionLanguage(std::move(model), std::move(options),
+                                                          label);
       },
-      "model"_a, "options"_a = simaai::neat::genai::nodes::LanguageOptions{},
-      "label"_a = "language");
+      "model"_a, "options"_a = simaai::neat::genai::nodes::VisionLanguageOptions{},
+      "label"_a = "vision_language");
 
   nb::module_ mpk_mod = m.def_submodule("mpk", "MPK inspection and sequence helpers");
 

@@ -129,6 +129,31 @@ def _pull_language_outputs(run, node_id, stop_on_error=False):
   return "".join(tokens), done, error, token_samples
 
 
+def _pull_encoded(run, node_id):
+  for _ in range(16):
+    sample = run.pull(node_id, 60000)
+    assert sample is not None, "GraphRun.pull encoded timed out"
+    port = sample.port_name or sample.stream_label
+    if port == "encoded":
+      return sample
+    if port == "error":
+      raise AssertionError(f"image input emitted error: {sample.to_text()}")
+    raise AssertionError(f"unexpected graph output before encoded: {port!r}")
+  raise AssertionError("image input did not emit encoded")
+
+
+def _make_image_sample(image, memory=pyneat.TensorMemory.CPU):
+  tensor = pyneat.Tensor.from_numpy(
+      image,
+      copy=True,
+      image_format=pyneat.PixelFormat.RGB,
+      memory=memory,
+  )
+  sample = pyneat.make_tensor_sample("image", tensor)
+  sample.stream_label = "image"
+  return sample
+
+
 def test_genai_value_types_and_text_sample_helpers():
   req = pyneat.GenerationRequest()
   req.prompt = "hello"
@@ -185,16 +210,22 @@ def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.GenAIModel is pyneat.GenAIModel
   assert pyneat.genai.ImageList is pyneat.ImageList
   assert pyneat.genai.GenerationRequest is pyneat.GenerationRequest
-  assert hasattr(pyneat.genai.nodes, "language")
-  assert hasattr(pyneat.graph.nodes, "genai_language")
+  assert hasattr(pyneat.genai.nodes, "vision_language")
+  assert hasattr(pyneat.graph.nodes, "genai_vision_language")
+  assert not hasattr(pyneat.genai.nodes, "language")
+  assert not hasattr(pyneat.graph.nodes, "genai_language")
+  assert not hasattr(pyneat.genai.nodes, "LanguageOptions")
+  assert not hasattr(pyneat.graph.nodes, "GenAIVisionLanguageOptions")
 
-  options = pyneat.genai.nodes.LanguageOptions()
+  options = pyneat.genai.nodes.VisionLanguageOptions()
   options.system_prompt = "Answer exactly."
   options.max_new_tokens = 24
   options.streaming = False
+  options.encode_images_on_input = False
   assert options.system_prompt == "Answer exactly."
   assert options.max_new_tokens == 24
   assert options.streaming is False
+  assert options.encode_images_on_input is False
 
 
 def test_genai_direct_text_generation_and_streaming():
@@ -299,19 +330,23 @@ def test_genai_language_graph_node_generation_and_errors():
     graph = pyneat.graph.Graph()
     prompt_port = graph.intern_port("prompt")
 
-    streaming_options = pyneat.genai.nodes.LanguageOptions()
+    streaming_options = pyneat.genai.nodes.VisionLanguageOptions()
     streaming_options.system_prompt = "You are concise."
     streaming_options.max_new_tokens = 24
     streaming_options.streaming = True
     streaming_node = graph.add(
-        pyneat.genai.nodes.language(model, streaming_options, "language_streaming")
+        pyneat.genai.nodes.vision_language(
+            model, streaming_options, "vision_language_streaming"
+        )
     )
 
-    sync_options = pyneat.genai.nodes.LanguageOptions()
+    sync_options = pyneat.genai.nodes.VisionLanguageOptions()
     sync_options.system_prompt = "You are concise."
     sync_options.max_new_tokens = 24
     sync_options.streaming = False
-    sync_node = graph.add(pyneat.graph.nodes.genai_language(model, sync_options, "language_sync"))
+    sync_node = graph.add(
+        pyneat.graph.nodes.genai_vision_language(model, sync_options, "vision_language_sync")
+    )
 
     run = pyneat.graph.GraphSession(graph).build()
     try:
@@ -338,6 +373,105 @@ def test_genai_language_graph_node_generation_and_errors():
       invalid.stream_label = "prompt"
       assert run.push_port(streaming_node, prompt_port, invalid)
       _, _, error, _ = _pull_language_outputs(run, streaming_node, stop_on_error=True)
+      assert error
+    finally:
+      run.stop()
+  except Exception as exc:
+    _skip_if_dispatcher_unavailable(exc)
+    raise
+
+
+def test_genai_vision_language_graph_node_generation_and_errors():
+  try:
+    model = pyneat.VisionLanguageModel(_vlm_model_dir())
+    assert model.accepts_image()
+    image = _people_rgb_image()
+
+    graph = pyneat.graph.Graph()
+    prompt_port = graph.intern_port("prompt")
+    image_port = graph.intern_port("image")
+    use_cached_image_port = graph.intern_port("use_cached_image")
+
+    streaming_options = pyneat.genai.nodes.VisionLanguageOptions()
+    streaming_options.max_new_tokens = 48
+    streaming_options.streaming = True
+    streaming_options.encode_images_on_input = True
+    streaming_node = graph.add(
+        pyneat.genai.nodes.vision_language(
+            model, streaming_options, "vision_language_streaming"
+        )
+    )
+
+    sync_options = pyneat.genai.nodes.VisionLanguageOptions()
+    sync_options.max_new_tokens = 48
+    sync_options.streaming = False
+    sync_options.encode_images_on_input = False
+    sync_node = graph.add(
+        pyneat.graph.nodes.genai_vision_language(model, sync_options, "vision_language_sync")
+    )
+
+    missing_image_node = graph.add(
+        pyneat.genai.nodes.vision_language(
+            model, streaming_options, "vision_language_missing_image"
+        )
+    )
+
+    run = pyneat.graph.GraphSession(graph).build()
+    try:
+      assert run.push_port(streaming_node, image_port, _make_image_sample(image))
+      encoded = _pull_encoded(run, streaming_node)
+      assert _bundle_field_text(encoded, "mode") == "cached"
+      assert int(_bundle_field_text(encoded, "cached_image_count")) == 1
+
+      assert run.push_port(
+          streaming_node,
+          use_cached_image_port,
+          pyneat.make_text_sample("use_cached_image", "true"),
+      )
+      assert run.push_port(
+          streaming_node,
+          prompt_port,
+          pyneat.make_text_sample("prompt", _VLM_PROMPT),
+      )
+      text, done, error, token_samples = _pull_language_outputs(run, streaming_node)
+      assert error is None
+      assert done is not None
+      assert token_samples > 0
+      assert _trim_text(text) == _EXPECTED_VLM_TEXT
+      _assert_finish_reason(_bundle_field_text(done, "finish_reason"))
+      assert int(_bundle_field_text(done, "generated_tokens")) > 0
+
+      assert run.push_port(sync_node, image_port, _make_image_sample(image))
+      encoded = _pull_encoded(run, sync_node)
+      assert _bundle_field_text(encoded, "mode") == "direct"
+
+      assert run.push_port(
+          sync_node,
+          use_cached_image_port,
+          pyneat.make_text_sample("use_cached_image", "false"),
+      )
+      assert run.push_port(
+          sync_node,
+          prompt_port,
+          pyneat.make_text_sample("prompt", _VLM_PROMPT),
+      )
+      text, done, error, token_samples = _pull_language_outputs(run, sync_node)
+      assert error is None
+      assert done is not None
+      assert token_samples == 1
+      assert _trim_text(text) == _EXPECTED_VLM_TEXT
+
+      invalid = pyneat.make_text_sample("image", "not-an-image")
+      assert run.push_port(streaming_node, image_port, invalid)
+      _, _, error, _ = _pull_language_outputs(run, streaming_node, stop_on_error=True)
+      assert error
+
+      assert run.push_port(
+          missing_image_node,
+          prompt_port,
+          pyneat.make_text_sample("prompt", _VLM_PROMPT),
+      )
+      _, _, error, _ = _pull_language_outputs(run, missing_image_node, stop_on_error=True)
       assert error
     finally:
       run.stop()
