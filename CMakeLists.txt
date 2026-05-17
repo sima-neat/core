@@ -1099,7 +1099,39 @@ install(
 )
 
 install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+  DIRECTORY
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/builder
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/contracts
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/genai
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/graph
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/model
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/mpk
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/nodes
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/policy
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+  COMPONENT core
+)
+
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/gst/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gst
+  COMPONENT core
+  PATTERN "ProcessMlaRuntimeConfig.h" EXCLUDE
+  PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
+  PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
+  PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
+)
+
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/neat/
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/neat
+  COMPONENT core
+  PATTERN "PreparedRuntimeBridge.h" EXCLUDE
+)
+
+install(
+  FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/neat.h
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   COMPONENT core
 )

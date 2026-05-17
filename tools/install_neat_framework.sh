@@ -24,7 +24,8 @@ set -euo pipefail
 # - Directory containing:
 #   - one .whl file
 #   - sima-neat-*-Linux-core.deb
-#   - neat-*.deb runtime dependencies
+#   - neat-*.deb / simaai-common*.deb runtime dependencies
+#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-dev.deb
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
@@ -265,6 +266,30 @@ install_agent_skills_for_current_user() {
   fi
 }
 
+append_matching_files() {
+  local out_array_name="$1"
+  local search_dir="$2"
+  local pattern="$3"
+  local -n out_array="${out_array_name}"
+  local -a matches=()
+  mapfile -t matches < <(find "${search_dir}" -maxdepth 1 -type f -name "${pattern}" | sort)
+  out_array+=("${matches[@]}")
+}
+
+collect_debs_in_install_order() {
+  local search_dir="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+  out_array=()
+
+  # Install low-level runtime packages first, then LLiMa, then NEAT core.
+  append_matching_files out_array "${search_dir}" 'simaai-common*.deb'
+  append_matching_files out_array "${search_dir}" 'appcomplex_*.deb'
+  append_matching_files out_array "${search_dir}" 'neat-*.deb'
+  append_matching_files out_array "${search_dir}" 'sima-lmm-*.deb'
+  append_matching_files out_array "${search_dir}" 'sima-neat-*-Linux-core.deb'
+}
+
 sysroot_path() {
   printf '%s\n' "${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 }
@@ -301,7 +326,9 @@ cache_install_artifacts_in_sysroot() {
   run_sudo rm -f \
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
     "${cache_dir}"/neat-*.deb \
+    "${cache_dir}"/simaai-common*.deb \
     "${cache_dir}"/appcomplex_*.deb \
+    "${cache_dir}"/sima-lmm-*.deb \
     "${cache_dir}"/*.whl \
     "${cache_dir}"/install_neat_framework.sh
 
@@ -335,7 +362,7 @@ collect_cached_devkit_deploy_files() {
 
   local -a cached_core_debs=()
   mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
-  mapfile -t CACHED_DEBS < <(find "${cache_dir}" -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' -o -name 'appcomplex_*.deb' \) | sort)
+  collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   mapfile -t CACHED_WHEELS < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
   local cached_installer="${cache_dir}/install_neat_framework.sh"
 
@@ -453,7 +480,7 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 
 parse_args "$@"
 
-mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' -o -name 'appcomplex_*.deb' \) | sort)
+collect_debs_in_install_order "." DEBS
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
   exit 1
