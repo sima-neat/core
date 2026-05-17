@@ -536,6 +536,8 @@ void copy_gst_metadata(GstBuffer* dst, GstBuffer* src) {
   const GstBufferCopyFlags flags = static_cast<GstBufferCopyFlags>(
       GST_BUFFER_COPY_METADATA | GST_BUFFER_COPY_TIMESTAMPS | GST_BUFFER_COPY_FLAGS);
   gst_buffer_copy_into(dst, src, flags, 0, -1);
+  copy_custom_meta(dst, src, "GstSimaMeta");
+  copy_custom_meta(dst, src, "GstSimaSampleMeta");
 }
 
 /**
