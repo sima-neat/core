@@ -285,7 +285,10 @@ collect_debs_in_install_order() {
   # Install low-level runtime packages first, then LLiMa, then NEAT core.
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'appcomplex_*.deb'
-  append_matching_files "${out_array_name}" "${search_dir}" 'neat-*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-gst-plugins_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-internals-dev_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
 }
@@ -397,15 +400,40 @@ install_debs_on_board() {
   # neat-gst-plugins(main) depending on neat-runtime(main) while
   # neat-runtime(beta) is already unpacked.  In that state apt refuses to start
   # dependency resolution and suggests apt --fix-broken install, even though the
-  # local DEB set we are installing is self-consistent.  Fall back to installing
-  # the local NEAT DEBs as one dpkg transaction to restore that package set
-  # before continuing.
+  # local DEB set we are installing is self-consistent.  Fall back to unpacking
+  # the local DEBs as one dpkg transaction, then let apt repair/configure the
+  # system so repository dependencies such as fmt/spdlog/eigen are still pulled
+  # in normally.
   if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     return 0
   fi
 
-  log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
-  run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  local -a predepends_bootstrap_debs=()
+  local -a remaining_debs=()
+  local deb_base
+  local deb
+  for deb in "${DEBS[@]}"; do
+    deb_base="$(basename "${deb}")"
+    case "${deb_base}" in
+      simaai-common*.deb|appcomplex_*.deb|neat-ev74-firmware_*.deb)
+        predepends_bootstrap_debs+=("${deb}")
+        ;;
+      *)
+        remaining_debs+=("${deb}")
+        ;;
+    esac
+  done
+
+  log "apt-get install failed; bootstrapping Pre-Depends packages with dpkg."
+  run_sudo dpkg -i --force-overwrite "${predepends_bootstrap_debs[@]}"
+
+  log "Installing remaining local NEAT DEB set with dpkg."
+  if run_sudo dpkg -i --force-overwrite "${remaining_debs[@]}"; then
+    return 0
+  fi
+
+  log "dpkg left packages unconfigured; running apt-get --fix-broken install."
+  run_sudo apt-get install -f -y --allow-downgrades -o Dpkg::Options::=--force-overwrite
 }
 
 install_debs_into_sysroot() {
