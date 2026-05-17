@@ -1542,6 +1542,7 @@ configure_cmake() {
     # requirements for docs-only builds.
     cmake_args+=(
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
+      -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
     )
   fi
 
