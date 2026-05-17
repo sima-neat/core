@@ -23,8 +23,10 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            TokenSample token;
            token.text = "tok";
            ChatMessage message{"user", "hello"};
+           ImageList images;
            nodes::LanguageOptions language_options;
 
+           static_assert(std::is_default_constructible_v<ImageList>);
            static_assert(std::is_move_constructible_v<GenerationStream>);
            static_assert(!std::is_copy_constructible_v<GenerationStream>);
            static_assert(std::is_copy_constructible_v<TokenSample>);
@@ -55,6 +57,7 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)metrics;
            (void)token;
            (void)message;
+           (void)images;
            (void)language_options;
            (void)vlm;
            (void)asr;

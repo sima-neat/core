@@ -5,7 +5,7 @@
 #include <stdexcept>
 #include <string>
 
-// Verifies Phase 4 text prompt/message validation and conversion without
+// Verifies prompt/message/image request validation and conversion without
 // loading real LLiMa model artifacts.
 namespace {
 
@@ -64,4 +64,29 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
            require(empty_prompt_messages[0].role == "user", "empty prompt role mismatch");
            require(empty_prompt_messages[0].content.empty(),
                    "empty prompt content should be preserved");
+
+           GenerationRequest message_with_top_level_images;
+           message_with_top_level_images.messages.push_back(
+               ChatMessage{.role = "user", .content = "hello"});
+           message_with_top_level_images.images = {simaai::neat::Tensor{}};
+           require_throws_contains(
+               [&] { internal::validate_text_generation_request(message_with_top_level_images); },
+               "top-level images");
+
+           GenerationRequest direct_and_cached;
+           direct_and_cached.prompt = std::string{"hello"};
+           direct_and_cached.images = {simaai::neat::Tensor{}};
+           direct_and_cached.use_cached_images = true;
+           require_throws_contains(
+               [&] { internal::validate_text_generation_request(direct_and_cached); },
+               "direct images");
+
+           GenerationRequest two_cached_insertions;
+           two_cached_insertions.messages.push_back(
+               ChatMessage{.role = "user", .content = "first", .use_cached_images = true});
+           two_cached_insertions.messages.push_back(
+               ChatMessage{.role = "user", .content = "second", .use_cached_images = true});
+           require_throws_contains(
+               [&] { internal::validate_text_generation_request(two_cached_insertions); },
+               "one cached image");
          }));

@@ -970,6 +970,18 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
   throw std::runtime_error("expected list/tuple of Tensor or DLPack-compatible inputs");
 }
 
+std::vector<Tensor> genai_image_tensors_from_python(const nb::object& input) {
+  auto images = tensor_batch_from_python_input(
+      input, true, TensorLayout::HWC, ImageSpec::PixelFormat::RGB, std::nullopt, TensorMemory::CPU);
+  for (Tensor& image : images) {
+    if (!image.semantic.image.has_value()) {
+      image.semantic.image = ImageSpec{ImageSpec::PixelFormat::RGB, ""};
+    }
+    image = image.to_cpu_if_needed();
+  }
+  return images;
+}
+
 nb::bytes tensor_dense_bytes(const Tensor& t) {
   std::vector<uint8_t> data = t.copy_dense_bytes_tight();
   return nb::bytes(reinterpret_cast<const char*>(data.data()), data.size());
@@ -1440,10 +1452,34 @@ NB_MODULE(_pyneat_core, m) {
       .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)
       .value("ASR", simaai::neat::genai::GenAITask::ASR);
 
+  nb::class_<simaai::neat::genai::ImageList>(m, "ImageList")
+      .def(nb::init<>())
+      .def(nb::init<std::vector<Tensor>>(), "images"_a)
+      .def(
+          "__init__",
+          [](simaai::neat::genai::ImageList* self, const nb::object& images) {
+            new (self) simaai::neat::genai::ImageList(genai_image_tensors_from_python(images));
+          },
+          "images"_a)
+      .def("empty", &simaai::neat::genai::ImageList::empty)
+      .def("size", &simaai::neat::genai::ImageList::size)
+      .def_prop_rw(
+          "tensors", [](const simaai::neat::genai::ImageList& images) { return images.tensors(); },
+          [](simaai::neat::genai::ImageList& images, const nb::object& tensors) {
+            images = genai_image_tensors_from_python(tensors);
+          });
+
   nb::class_<simaai::neat::genai::ChatMessage>(m, "ChatMessage")
       .def(nb::init<>())
       .def_rw("role", &simaai::neat::genai::ChatMessage::role)
-      .def_rw("content", &simaai::neat::genai::ChatMessage::content);
+      .def_rw("content", &simaai::neat::genai::ChatMessage::content)
+      .def_prop_rw(
+          "images",
+          [](const simaai::neat::genai::ChatMessage& message) { return message.images.tensors(); },
+          [](simaai::neat::genai::ChatMessage& message, const nb::object& images) {
+            message.images = genai_image_tensors_from_python(images);
+          })
+      .def_rw("use_cached_images", &simaai::neat::genai::ChatMessage::use_cached_images);
 
   nb::class_<simaai::neat::genai::GenerationMetrics>(m, "GenerationMetrics")
       .def(nb::init<>())
@@ -1457,6 +1493,15 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("prompt", &simaai::neat::genai::GenerationRequest::prompt)
       .def_rw("system_prompt", &simaai::neat::genai::GenerationRequest::system_prompt)
       .def_rw("messages", &simaai::neat::genai::GenerationRequest::messages)
+      .def_prop_rw(
+          "images",
+          [](const simaai::neat::genai::GenerationRequest& request) {
+            return request.images.tensors();
+          },
+          [](simaai::neat::genai::GenerationRequest& request, const nb::object& images) {
+            request.images = genai_image_tensors_from_python(images);
+          })
+      .def_rw("use_cached_images", &simaai::neat::genai::GenerationRequest::use_cached_images)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
       .def_rw("temperature", &simaai::neat::genai::GenerationRequest::temperature)
       .def_rw("top_p", &simaai::neat::genai::GenerationRequest::top_p);
@@ -1501,6 +1546,15 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
       .def("describe", &simaai::neat::genai::VisionLanguageModel::describe)
+      .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
+      .def(
+          "encode",
+          [](simaai::neat::genai::VisionLanguageModel& model, const nb::object& images) {
+            auto tensors = genai_image_tensors_from_python(images);
+            nb::gil_scoped_release release;
+            return model.encode(tensors);
+          },
+          "images"_a)
       .def("run", &simaai::neat::genai::VisionLanguageModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::VisionLanguageModel::stream, "request"_a,
@@ -1517,6 +1571,7 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");
+  genai_mod.attr("ImageList") = m.attr("ImageList");
   genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
   genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
   genai_mod.attr("GenerationRequest") = m.attr("GenerationRequest");

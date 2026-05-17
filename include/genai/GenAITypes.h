@@ -4,13 +4,20 @@
  */
 #pragma once
 
+#include "pipeline/Tensor.h"
+
 #include <cstddef>
 #include <cstdint>
+#include <initializer_list>
 #include <iterator>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+
+#if defined(SIMA_WITH_OPENCV)
+#include <opencv2/core/mat.hpp>
+#endif
 
 namespace simaai::neat::genai {
 
@@ -27,9 +34,45 @@ enum class GenAITask {
   ASR,
 };
 
+/**
+ * @brief Ordered image inputs for GenAI requests and chat messages.
+ *
+ * Tensor inputs are interpreted from their Tensor image metadata and VLM requests
+ * require uint8 HWC RGB tensors. OpenCV cv::Mat overloads follow the existing
+ * NEAT/OpenCV convention: 3-channel matrices are BGR and are converted to RGB
+ * before they are stored in the request.
+ */
+class ImageList {
+public:
+  ImageList() = default;
+  ImageList(std::initializer_list<Tensor> images);
+  explicit ImageList(std::vector<Tensor> images);
+
+  ImageList& operator=(std::initializer_list<Tensor> images);
+  ImageList& operator=(std::vector<Tensor> images);
+
+#if defined(SIMA_WITH_OPENCV)
+  ImageList(std::initializer_list<cv::Mat> images);
+  explicit ImageList(const std::vector<cv::Mat>& images);
+
+  ImageList& operator=(std::initializer_list<cv::Mat> images);
+  ImageList& operator=(const std::vector<cv::Mat>& images);
+#endif
+
+  bool empty() const;
+  std::size_t size() const;
+  const std::vector<Tensor>& tensors() const;
+  std::vector<Tensor>& tensors();
+
+private:
+  std::vector<Tensor> images_;
+};
+
 struct ChatMessage {
   std::string role;
   std::string content;
+  ImageList images;
+  bool use_cached_images = false;
 };
 
 struct GenerationMetrics {
@@ -42,6 +85,8 @@ struct GenerationRequest {
   std::optional<std::string> prompt;
   std::optional<std::string> system_prompt;
   std::vector<ChatMessage> messages;
+  ImageList images;
+  bool use_cached_images = false;
   std::uint32_t max_new_tokens = 0;
   float temperature = 1.0F;
   float top_p = 1.0F;

@@ -260,6 +260,7 @@ set(UNIT_TESTS
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
   unit_genai_prompt_builder_test
+  unit_genai_image_types_test
   unit_genai_header_compile_surface_test
   unit_genai_text_tensor_test
   unit_header_neat_compile_surface_test
@@ -522,6 +523,18 @@ if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
   set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
   set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_vlm_run_test
+  SOURCES e2e_testing/genai_vlm_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
+  set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_vlm_run_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test_long(

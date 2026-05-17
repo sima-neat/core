@@ -42,6 +42,7 @@
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
+#include "gst/GstInit.h"
 
 #include <gst/gst.h>
 #include <gst/gstbufferpool.h>
@@ -601,6 +602,8 @@ Tensor transfer_to_device(const Tensor& src, const Device& target,
 #if !SIMA_HAS_SIMAAI_POOL
   throw std::runtime_error("transfer: simaai buffer pool unavailable");
 #else
+  simaai::neat::gst_init_once();
+
   // Choose destination memory flags.
   std::uint64_t mem_flags = 0;
   if (src.storage) {
