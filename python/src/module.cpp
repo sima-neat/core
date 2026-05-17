@@ -1292,9 +1292,9 @@ NB_MODULE(_pyneat_core, m) {
       .def("to_text", &simaai::neat::Tensor::to_text)
       .def("__repr__",
            [](const simaai::neat::Tensor& t) { return "Tensor(" + t.debug_string() + ")"; })
-      .def_static("from_text",
-                  [](const std::string& text) { return simaai::neat::Tensor::from_text(text); },
-                  "text"_a)
+      .def_static(
+          "from_text",
+          [](const std::string& text) { return simaai::neat::Tensor::from_text(text); }, "text"_a)
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
@@ -2751,16 +2751,18 @@ NB_MODULE(_pyneat_core, m) {
       .def("add", &simaai::neat::graph::Graph::add, "node"_a)
       .def("connect", &simaai::neat::graph::Graph::connect, "from_node"_a, "to_node"_a,
            "from_port"_a = "out", "to_port"_a = "in")
-      .def("intern_port",
-           [](simaai::neat::graph::Graph& graph, const std::string& name) {
-             return graph.intern_port(name);
-           },
-           "name"_a)
-      .def("port_name",
-           [](const simaai::neat::graph::Graph& graph, simaai::neat::graph::PortId port_id) {
-             return graph.port_name(port_id);
-           },
-           "port_id"_a)
+      .def(
+          "intern_port",
+          [](simaai::neat::graph::Graph& graph, const std::string& name) {
+            return graph.intern_port(name);
+          },
+          "name"_a)
+      .def(
+          "port_name",
+          [](const simaai::neat::graph::Graph& graph, simaai::neat::graph::PortId port_id) {
+            return graph.port_name(port_id);
+          },
+          "port_id"_a)
       .def("node_count", &simaai::neat::graph::Graph::node_count)
       .def("port_count", &simaai::neat::graph::Graph::port_count)
       .def("port_names", &simaai::neat::graph::Graph::port_names)

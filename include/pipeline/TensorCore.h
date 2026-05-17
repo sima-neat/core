@@ -320,15 +320,14 @@ struct PreprocessRuntimeMeta {
  * @ingroup tensors
  */
 struct Semantic {
-  std::optional<ImageSpec> image;     ///< Set for image tensors.
-  std::optional<AudioSpec> audio;     ///< Set for audio tensors.
-  std::optional<TokensSpec> tokens;   ///< Set for token-stream tensors (NLP).
-  std::optional<TextSpec> text;       ///< Set for UTF-8 text tensors.
-  std::optional<ByteStreamSpec>
-      byte_stream;                    ///< Set for opaque raw-byte tensors.
-  std::optional<TessSpec> tess;       ///< Set for tessellated tile-layout tensors.
-  std::optional<EncodedSpec> encoded; ///< Set for encoded-stream tensors (H.264, etc.).
-  std::optional<QuantSpec> quant;     ///< Set for quantized integer tensors.
+  std::optional<ImageSpec> image;            ///< Set for image tensors.
+  std::optional<AudioSpec> audio;            ///< Set for audio tensors.
+  std::optional<TokensSpec> tokens;          ///< Set for token-stream tensors (NLP).
+  std::optional<TextSpec> text;              ///< Set for UTF-8 text tensors.
+  std::optional<ByteStreamSpec> byte_stream; ///< Set for opaque raw-byte tensors.
+  std::optional<TessSpec> tess;              ///< Set for tessellated tile-layout tensors.
+  std::optional<EncodedSpec> encoded;        ///< Set for encoded-stream tensors (H.264, etc.).
+  std::optional<QuantSpec> quant;            ///< Set for quantized integer tensors.
   std::optional<PreprocessRuntimeMeta>
       preprocess; ///< Set when the tensor was produced by a preprocess stage.
 };
