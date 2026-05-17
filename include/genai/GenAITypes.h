@@ -40,7 +40,6 @@ struct GenerationMetrics {
 
 struct GenerationRequest {
   std::optional<std::string> prompt;
-  std::optional<std::string> formatted_prompt;
   std::optional<std::string> system_prompt;
   std::vector<ChatMessage> messages;
   std::uint32_t max_new_tokens = 0;

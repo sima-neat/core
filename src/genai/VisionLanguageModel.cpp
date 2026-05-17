@@ -216,11 +216,6 @@ struct VisionLanguageModel::Impl {
   }
 
   std::vector<uint32_t> build_input_token_ids(const GenerationRequest& request) {
-    if (request.formatted_prompt.has_value()) {
-      const bool add_special_tokens = !request.formatted_prompt->starts_with(bos_token);
-      return vlm_helper->get_tokenizer()->encode(*request.formatted_prompt, add_special_tokens);
-    }
-
     simaai::llima::Chat chat(*vlm_helper);
     chat.set_messages(build_llima_messages(request));
     auto preprocessed = vlm_helper->preprocess(chat);

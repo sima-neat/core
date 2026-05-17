@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 // Exercises direct VisionLanguageModel text generation and streaming against a
-// real LLiMa text model, including prompt and formatted_prompt request paths.
+// real LLiMa text model.
 namespace fs = std::filesystem;
 
 namespace {

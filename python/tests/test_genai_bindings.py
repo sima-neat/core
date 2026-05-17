@@ -167,7 +167,6 @@ def test_genai_language_graph_node_generation_and_errors():
 
     graph = pyneat.graph.Graph()
     prompt_port = graph.intern_port("prompt")
-    formatted_prompt_port = graph.intern_port("formatted_prompt")
 
     streaming_options = pyneat.genai.nodes.LanguageOptions()
     streaming_options.system_prompt = "You are concise."
@@ -200,16 +199,6 @@ def test_genai_language_graph_node_generation_and_errors():
       assert done is not None
       assert token_samples == 1
       assert _trim_text(text) == _EXPECTED_TEXT
-
-      assert run.push_port(
-          streaming_node,
-          formatted_prompt_port,
-          pyneat.make_text_sample("formatted_prompt", "The capital of Germany is"),
-      )
-      text, done, error, _ = _pull_language_outputs(run, streaming_node)
-      assert error is None
-      assert done is not None
-      assert _trim_text(text)
 
       invalid = pyneat.Sample()
       invalid.kind = pyneat.SampleKind.Tensor

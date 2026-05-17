@@ -17,7 +17,6 @@ namespace simaai::neat::genai::nodes {
 namespace {
 
 constexpr const char* kPromptPort = "prompt";
-constexpr const char* kFormattedPromptPort = "formatted_prompt";
 constexpr const char* kTokensPort = "tokens";
 constexpr const char* kDonePort = "done";
 constexpr const char* kErrorPort = "error";
@@ -98,7 +97,6 @@ public:
 
   void set_ports(const graph::StagePorts& ports) override {
     prompt_port_ = ports.in_port(kPromptPort);
-    formatted_prompt_port_ = ports.in_port(kFormattedPromptPort);
     tokens_port_ = ports.out_port(kTokensPort);
     done_port_ = ports.out_port(kDonePort);
     error_port_ = ports.out_port(kErrorPort);
@@ -128,8 +126,6 @@ public:
       const std::string text = require_text_tensor(msg.sample).to_text();
       if (msg.in_port == prompt_port_) {
         request.prompt = text;
-      } else if (msg.in_port == formatted_prompt_port_) {
-        request.formatted_prompt = text;
       } else {
         throw std::runtime_error("GenAI Language graph input arrived on an unknown port");
       }
@@ -222,7 +218,6 @@ private:
   std::mutex active_stream_mutex_;
   GenerationStream* active_stream_ = nullptr;
   graph::PortId prompt_port_ = graph::kInvalidPort;
-  graph::PortId formatted_prompt_port_ = graph::kInvalidPort;
   graph::PortId tokens_port_ = graph::kInvalidPort;
   graph::PortId done_port_ = graph::kInvalidPort;
   graph::PortId error_port_ = graph::kInvalidPort;
@@ -238,7 +233,6 @@ std::shared_ptr<graph::Node> Language(std::shared_ptr<VisionLanguageModel> model
 
   std::vector<graph::PortDesc> inputs = {
       graph::PortDesc{.name = kPromptPort, .spec = text_output_spec()},
-      graph::PortDesc{.name = kFormattedPromptPort, .spec = text_output_spec()},
   };
   std::vector<graph::PortDesc> outputs = {
       graph::PortDesc{.name = kTokensPort, .spec = text_output_spec()},

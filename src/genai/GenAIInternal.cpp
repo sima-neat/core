@@ -96,9 +96,6 @@ std::string model_id_from_path(const std::filesystem::path& path) {
 
 std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
   validate_text_generation_request(request);
-  if (request.formatted_prompt.has_value()) {
-    throw std::logic_error("GenerationRequest::formatted_prompt is not implemented yet");
-  }
 
   if (!request.messages.empty()) {
     return request.messages;
@@ -113,15 +110,13 @@ std::vector<ChatMessage> build_text_messages(const GenerationRequest& request) {
 }
 
 void validate_text_generation_request(const GenerationRequest& request) {
-  const int text_source_count = (request.prompt.has_value() ? 1 : 0) +
-                                (request.messages.empty() ? 0 : 1) +
-                                (request.formatted_prompt.has_value() ? 1 : 0);
+  const int text_source_count =
+      (request.prompt.has_value() ? 1 : 0) + (request.messages.empty() ? 0 : 1);
   if (text_source_count == 0) {
-    throw std::runtime_error("GenerationRequest requires prompt, messages, or formatted_prompt");
+    throw std::runtime_error("GenerationRequest requires prompt or messages");
   }
   if (text_source_count > 1) {
-    throw std::runtime_error(
-        "GenerationRequest accepts exactly one of prompt, messages, or formatted_prompt");
+    throw std::runtime_error("GenerationRequest accepts exactly one of prompt or messages");
   }
 }
 

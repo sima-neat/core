@@ -19,7 +19,7 @@
 #include <unistd.h>
 
 // Exercises the GenAI Language graph node end-to-end against a real LLiMa text
-// model, including prompt, formatted_prompt, done metadata, and error output.
+// model, including prompt, done metadata, and error output.
 namespace fs = std::filesystem;
 
 namespace {
@@ -266,7 +266,6 @@ int main() {
 
     simaai::neat::graph::Graph graph;
     const auto prompt_port = graph.intern_port("prompt");
-    const auto formatted_prompt_port = graph.intern_port("formatted_prompt");
     const auto streaming_language =
         graph.add(simaai::neat::genai::nodes::Language(model,
                                                        simaai::neat::genai::nodes::LanguageOptions{
@@ -320,16 +319,6 @@ int main() {
             "GenAI graph returned unexpected finish reason: " + finish_reason);
     require(std::stoul(bundle_field_text(sync_prompt_outputs.done, "generated_tokens")) > 0,
             "GenAI graph done should report generated tokens");
-
-    require(run.push(streaming_language, formatted_prompt_port,
-                     make_text_input("The capital of Germany is", 3)),
-            "GraphRun::push streaming formatted_prompt failed");
-    const GraphOutputs formatted_outputs = pull_graph_outputs(run, streaming_language);
-    require(formatted_outputs.saw_done, "GenAI graph formatted_prompt run did not emit done");
-    require(!formatted_outputs.saw_error,
-            "GenAI graph formatted_prompt run emitted error: " + formatted_outputs.error);
-    require(!trim_text(formatted_outputs.tokens).empty(),
-            "GenAI graph formatted_prompt should generate non-empty text");
 
     require(run.push(streaming_language, prompt_port, make_non_text_input()),
             "GraphRun::push invalid prompt failed");

@@ -1455,7 +1455,6 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::genai::GenerationRequest>(m, "GenerationRequest")
       .def(nb::init<>())
       .def_rw("prompt", &simaai::neat::genai::GenerationRequest::prompt)
-      .def_rw("formatted_prompt", &simaai::neat::genai::GenerationRequest::formatted_prompt)
       .def_rw("system_prompt", &simaai::neat::genai::GenerationRequest::system_prompt)
       .def_rw("messages", &simaai::neat::genai::GenerationRequest::messages)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)

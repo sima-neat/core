@@ -165,8 +165,8 @@ struct TokensSpec {
  * @brief UTF-8 text tensor metadata.
  *
  * Text is carried as a normal dense `UInt8` 1D tensor containing UTF-8 bytes.
- * Prompt interpretation is intentionally not part of this semantic; graph ports
- * such as `prompt` and `formatted_prompt` define whether templating is applied.
+ * Prompt interpretation is intentionally not part of this semantic; graph nodes
+ * decide how text samples are interpreted.
  */
 struct TextSpec {
   std::string encoding = "utf-8"; ///< Text encoding. The only supported value is UTF-8.

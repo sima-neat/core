@@ -36,11 +36,6 @@ RUN_TEST("unit_genai_prompt_builder_test", ([] {
            require_throws_contains([&] { internal::validate_text_generation_request(multiple); },
                                    "exactly one");
 
-           GenerationRequest formatted;
-           formatted.formatted_prompt = std::string{"<s>hello"};
-           require_throws_contains([&] { (void)internal::build_text_messages(formatted); },
-                                   "formatted_prompt");
-
            GenerationRequest prompt;
            prompt.system_prompt = std::string{"You are concise."};
            prompt.prompt = std::string{"Explain NEAT."};
