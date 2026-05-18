@@ -41,10 +41,12 @@ INSTALL_NEAT_INTERNALS=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
+NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
+NEAT_INTERNALS_RESOLVED_REF=""
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -127,8 +129,13 @@ detect_fs_type() {
   printf '%s\n' "${fs_type}"
 }
 
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 is_remote_fs_type() {
-  local fs_type="${1,,}"
+  local fs_type
+  fs_type="$(lowercase "$1")"
   case "${fs_type}" in
     cifs|nfs|nfs4|smb2|smb3|smbfs|fuse.sshfs)
       return 0
@@ -183,7 +190,7 @@ maybe_reexec_from_shadow() {
 
   SOURCE_FS_TYPE="$(detect_fs_type "${ORIGINAL_SOURCE_DIR}")"
 
-  case "${SHADOW_BUILD_MODE,,}" in
+  case "$(lowercase "${SHADOW_BUILD_MODE}")" in
     off|0|false|no)
       return 0
       ;;
@@ -662,6 +669,12 @@ extract_json_string() {
   sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n1
 }
 
+manifest_has_json_string_key() {
+  local key="$1"
+  local file="$2"
+  grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "${file}"
+}
+
 download_file() {
   local url="$1"
   local out="$2"
@@ -690,6 +703,78 @@ download_file() {
     return $?
   fi
   return 1
+}
+
+sanitize_internals_branch_key() {
+  # Match internals publish naming from internals/.github/workflows/build-and-publish-tar.yml.
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
+    sed -E 's#[^a-z0-9._-]+#-#g; s/^-+//; s/-+$//'
+}
+
+current_core_branch() {
+  if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+    printf '%s\n' "${GITHUB_HEAD_REF}"
+    return 0
+  fi
+  if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 &&
+     git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null
+    return 0
+  fi
+  printf '\n'
+}
+
+internals_checksum_available() {
+  local url="$1"
+  local probe_path
+  probe_path="$(mktemp /tmp/sima-neat-internals-probe-XXXXXX)"
+  if download_file "${url}" "${probe_path}" "${NEAT_INTERNALS_BASIC_AUTH}" >/dev/null 2>&1; then
+    rm -f "${probe_path}"
+    return 0
+  fi
+  rm -f "${probe_path}"
+  return 1
+}
+
+resolve_neat_internals_ref() {
+  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
+    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
+    return 1
+  fi
+
+  if ! manifest_has_json_string_key "internals" "${NEAT_INTERNALS_MANIFEST}"; then
+    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define an internals string." >&2
+    return 1
+  fi
+
+  local manifest_ref
+  manifest_ref="$(extract_json_string "internals" "${NEAT_INTERNALS_MANIFEST}")"
+  if [[ -n "${manifest_ref}" ]]; then
+    printf '%s\n' "${manifest_ref}"
+    return 0
+  fi
+
+  local branch branch_key candidate checksum_url
+  branch="$(current_core_branch)"
+  branch_key="$(sanitize_internals_branch_key "${branch}")"
+  if [[ -n "${branch_key}" && "${branch_key}" != "head" ]]; then
+    candidate="${branch_key}-latest"
+    checksum_url="${NEAT_INTERNALS_BASE_URL}/sima-neat-internals-${candidate}.tar.gz.sha256"
+    if internals_checksum_available "${checksum_url}"; then
+      echo "Resolved empty internals manifest to matching branch artifact: ${candidate}" >&2
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+    echo "No internals artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
+  else
+    echo "Could not determine current branch for internals snap; using develop-latest." >&2
+  fi
+
+  printf '%s\n' "develop-latest"
 }
 
 compute_sha256() {
@@ -909,18 +994,11 @@ copy_plugins_to_neat_internals() {
 
 ensure_neat_internals() {
   # Sync neat-internals from remote artifact, validate integrity, then materialize plugins.
-  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
-    exit 1
-  fi
-
   local internals_ref
-  # Manifest drives which internals artifact to fetch.
-  internals_ref="$(extract_json_string "internals" "${NEAT_INTERNALS_MANIFEST}")"
-  if [[ -z "${internals_ref}" ]]; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty internals string." >&2
+  if ! internals_ref="$(resolve_neat_internals_ref)"; then
     exit 1
   fi
+  NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.internals"
   local checksum_file="${NEAT_INTERNALS_DIR}/.artifact_sha256"
@@ -1317,6 +1395,33 @@ generate_platform_version_artifacts() {
   python3 tools/generate_platform_version_artifacts.py --repo-root "${REPO_ROOT}"
 }
 
+write_resolved_neat_internals_manifest_if_needed() {
+  if [[ -z "${NEAT_INTERNALS_RESOLVED_REF}" ]]; then
+    return 0
+  fi
+
+  local output_path="${NEAT_INTERNALS_RESOLVED_MANIFEST}"
+  mkdir -p "$(dirname "${output_path}")"
+  python3 - "${NEAT_INTERNALS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${output_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+internals_ref = sys.argv[2]
+output_path = Path(sys.argv[3])
+
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+platform_version = str(data.get("platform-version", "")).strip()
+if not platform_version:
+    raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
+
+data["internals"] = internals_ref
+output_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+  echo "Resolved deps manifest: ${output_path} (internals=${NEAT_INTERNALS_RESOLVED_REF})"
+}
+
 build_python_wheel_if_requested() {
   if [[ "${BUILD_PYTHON}" != "ON" ]]; then
     return 0
@@ -1660,6 +1765,7 @@ main() {
   generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
+  write_resolved_neat_internals_manifest_if_needed
   configure_cmake
   build_docs_only_if_requested
   build_targets

@@ -179,13 +179,18 @@ jobs:
           CORE_DEB="${CORE_DEBS[0]}"
           EXTRAS_TAR="${EXTRAS_TARS[0]}"
           WHEEL_PATH="${WHEELS[0]}"
+          RESOLVED_MANIFEST="build/resolved_manifest.json"
+          if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
+            echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
+            exit 1
+          fi
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest deps/manifest.json \
+            --internals-manifest "${RESOLVED_MANIFEST}" \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
-          cp deps/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+          cp "${RESOLVED_MANIFEST}" "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
       - name: Upload prepared artifacts for publish pipeline
         uses: actions/upload-artifact@v6
@@ -236,13 +241,18 @@ jobs:
           CORE_DEB="${CORE_DEBS[0]}"
           EXTRAS_TAR="${EXTRAS_TARS[0]}"
           WHEEL_PATH="${WHEELS[0]}"
+          RESOLVED_MANIFEST="build/resolved_manifest.json"
+          if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
+            echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
+            exit 1
+          fi
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest deps/manifest.json \
+            --internals-manifest "${RESOLVED_MANIFEST}" \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
-          cp deps/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+          cp "${RESOLVED_MANIFEST}" "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
       - name: Upload prepared fuzz artifacts for publish pipeline
         uses: actions/upload-artifact@v6
