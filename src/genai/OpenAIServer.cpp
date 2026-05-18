@@ -168,12 +168,24 @@ std::string choice_finish_reason(const std::string& finish_reason) {
 }
 
 std::string chat_chunk(const std::string& model_name, const std::string& text,
-                       const std::optional<std::string>& finish_reason = std::nullopt) {
+                       const std::optional<std::string>& finish_reason = std::nullopt,
+                       const std::optional<GenerationMetrics>& metrics = std::nullopt) {
   nlohmann::json chunk;
   chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
   chunk["object"] = "chat.completion.chunk";
   chunk["created"] = unix_time_s();
   chunk["model"] = model_name;
+  if (metrics.has_value()) {
+    if (metrics->time_to_first_token_s > 0.0) {
+      chunk["ttft"] = metrics->time_to_first_token_s;
+    }
+    if (metrics->tokens_per_second > 0.0) {
+      chunk["tps"] = metrics->tokens_per_second;
+    }
+    if (metrics->generated_tokens > 0U) {
+      chunk["generated_tokens"] = metrics->generated_tokens;
+    }
+  }
 
   nlohmann::json choice;
   choice["index"] = 0;
@@ -249,6 +261,14 @@ Tensor tensor_from_data_uri(const std::string& uri) {
   ImageList image_list{bgr};
   return image_list.tensors().front();
 }
+
+void append_data_uri_image(ChatMessage& message, const std::string& uri) {
+  message.images.tensors().push_back(tensor_from_data_uri(uri));
+}
+#else
+void append_data_uri_image(ChatMessage&, const std::string&) {
+  throw std::runtime_error("OpenAI image input requires SIMA_WITH_OPENCV");
+}
 #endif
 
 void append_content_text(std::string& content, const std::string& text) {
@@ -256,6 +276,73 @@ void append_content_text(std::string& content, const std::string& text) {
     content.push_back(' ');
   }
   content += text;
+}
+
+void append_openai_content_part(ChatMessage& message, const nlohmann::json& part) {
+  const std::string type = part.value("type", std::string{});
+  if (type == "text") {
+    append_content_text(message.content, part.value("text", std::string{}));
+    return;
+  }
+
+  if (type == "image_url") {
+    const auto& image_url = part.at("image_url");
+    const std::string url = image_url.is_string() ? image_url.get<std::string>()
+                                                  : image_url.value("url", std::string{});
+    append_data_uri_image(message, url);
+    return;
+  }
+
+  if (type == "image" && part.contains("image")) {
+    append_data_uri_image(message, part.at("image").get<std::string>());
+  }
+}
+
+void append_ollama_images(ChatMessage& message, const nlohmann::json& images) {
+  if (!images.is_array()) {
+    return;
+  }
+  for (const auto& image : images) {
+    if (image.is_string()) {
+      append_data_uri_image(message, "data:image/jpeg;base64," + image.get<std::string>());
+    }
+  }
+}
+
+Tensor make_warmup_image() {
+  std::vector<std::uint8_t> pixels(224U * 224U * 3U, 0U);
+  Tensor tensor = Tensor::from_vector(std::move(pixels), {224, 224, 3}, TensorMemory::CPU);
+  tensor.layout = TensorLayout::HWC;
+  tensor.semantic.image = ImageSpec{ImageSpec::PixelFormat::RGB, ""};
+  return tensor;
+}
+
+Tensor make_warmup_audio() {
+  std::vector<float> samples(1600U, 0.0F);
+  Tensor tensor = Tensor::from_vector(std::move(samples), {1600}, TensorMemory::CPU);
+  tensor.semantic.audio = AudioSpec{
+      .sample_rate = 16000,
+      .channels = 1,
+      .interleaved = true,
+  };
+  return tensor;
+}
+
+GenerationRequest make_warmup_request(const GenAIModel& model) {
+  GenerationRequest request;
+  request.max_new_tokens = 1;
+  if (model.accepts_audio()) {
+    request.audio = make_warmup_audio();
+    request.language = "en";
+    return request;
+  }
+
+  request.prompt = "Hello";
+  if (model.accepts_image()) {
+    request.prompt = "Describe the image.";
+    request.images = ImageList{make_warmup_image()};
+  }
+  return request;
 }
 
 std::vector<ChatMessage> parse_chat_messages(const nlohmann::json& body) {
@@ -268,31 +355,25 @@ std::vector<ChatMessage> parse_chat_messages(const nlohmann::json& body) {
     ChatMessage message;
     message.role = item.value("role", "user");
 
-    if (!item.contains("content")) {
-      messages.push_back(std::move(message));
-      continue;
-    }
-    const auto& content = item.at("content");
-    if (content.is_string()) {
-      message.content = content.get<std::string>();
-    } else if (content.is_array()) {
-      for (const auto& part : content) {
-        const std::string type = part.value("type", std::string{});
-        if (type == "text") {
-          append_content_text(message.content, part.value("text", std::string{}));
-        } else if (type == "image_url") {
-#if defined(SIMA_WITH_OPENCV)
-          const auto& image_url = part.at("image_url");
-          const std::string url = image_url.is_string() ? image_url.get<std::string>()
-                                                        : image_url.value("url", std::string{});
-          message.images.tensors().push_back(tensor_from_data_uri(url));
-#else
-          throw std::runtime_error("OpenAI image_url input requires SIMA_WITH_OPENCV");
-#endif
+    if (item.contains("content")) {
+      const auto& content = item.at("content");
+      if (content.is_string()) {
+        message.content = content.get<std::string>();
+      } else if (content.is_array()) {
+        for (const auto& part : content) {
+          append_openai_content_part(message, part);
         }
+      } else if (!content.is_null()) {
+        throw std::runtime_error("OpenAI chat message content must be string or array");
       }
-    } else if (!content.is_null()) {
-      throw std::runtime_error("OpenAI chat message content must be string or array");
+    }
+
+    if (item.contains("images")) {
+      append_ollama_images(message, item.at("images"));
+    }
+
+    if (message.content.empty() && message.images.empty()) {
+      continue;
     }
     messages.push_back(std::move(message));
   }
@@ -337,6 +418,55 @@ struct OpenAIServer::Impl {
     std::shared_ptr<GenAIModel> model;
   };
 
+  struct ActiveStreamHandle {
+    void attach(GenerationStream& stream_in) {
+      std::lock_guard<std::mutex> lock(mutex);
+      stream = &stream_in;
+      if (cancelled) {
+        stream->cancel();
+      }
+    }
+
+    void cancel() {
+      std::lock_guard<std::mutex> lock(mutex);
+      cancelled = true;
+      if (stream) {
+        stream->cancel();
+      }
+    }
+
+    std::mutex mutex;
+    GenerationStream* stream = nullptr;
+    bool cancelled = false;
+  };
+
+  class ActiveStreamRegistration {
+  public:
+    ActiveStreamRegistration(Impl& owner_in, std::string model_name_in)
+        : owner(&owner_in), model_name(std::move(model_name_in)),
+          handle(std::make_shared<ActiveStreamHandle>()) {
+      owner->register_active_stream(model_name, handle);
+    }
+
+    ActiveStreamRegistration(const ActiveStreamRegistration&) = delete;
+    ActiveStreamRegistration& operator=(const ActiveStreamRegistration&) = delete;
+
+    ~ActiveStreamRegistration() {
+      if (owner) {
+        owner->unregister_active_stream(model_name, handle);
+      }
+    }
+
+    void attach(GenerationStream& stream) {
+      handle->attach(stream);
+    }
+
+  private:
+    Impl* owner;
+    std::string model_name;
+    std::shared_ptr<ActiveStreamHandle> handle;
+  };
+
   void configure_routes() {
     http.Get("/v1/models",
              [this](const httplib::Request&, httplib::Response& res) { handle_models(res); });
@@ -346,6 +476,9 @@ struct OpenAIServer::Impl {
     http.Post(
         "/v1/audio/transcriptions",
         [this](const httplib::Request& req, httplib::Response& res) { handle_audio(req, res); });
+    http.Post("/stop", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_stop(req, res);
+    });
     auto options_handler = [](const httplib::Request&, httplib::Response& res) {
       set_cors(res);
       res.status = 200;
@@ -353,6 +486,7 @@ struct OpenAIServer::Impl {
     http.Options("/v1/models", options_handler);
     http.Options("/v1/chat/completions", options_handler);
     http.Options("/v1/audio/transcriptions", options_handler);
+    http.Options("/stop", options_handler);
   }
 
   static void set_cors(httplib::Response& res) {
@@ -418,6 +552,61 @@ struct OpenAIServer::Impl {
     return it == registry.end() ? nullptr : it->second.model;
   }
 
+  void register_active_stream(const std::string& model_name,
+                              const std::shared_ptr<ActiveStreamHandle>& handle) {
+    std::lock_guard<std::mutex> lock(active_streams_mutex);
+    active_streams[model_name].push_back(handle);
+  }
+
+  void unregister_active_stream(const std::string& model_name,
+                                const std::shared_ptr<ActiveStreamHandle>& handle) {
+    std::lock_guard<std::mutex> lock(active_streams_mutex);
+    auto it = active_streams.find(model_name);
+    if (it == active_streams.end()) {
+      return;
+    }
+    auto& handles = it->second;
+    handles.erase(std::remove_if(handles.begin(), handles.end(),
+                                 [&handle](const std::weak_ptr<ActiveStreamHandle>& stored) {
+                                   const auto locked = stored.lock();
+                                   return !locked || locked == handle;
+                                 }),
+                  handles.end());
+    if (handles.empty()) {
+      active_streams.erase(it);
+    }
+  }
+
+  std::size_t cancel_active_streams(const std::optional<std::string>& model_name) {
+    std::vector<std::shared_ptr<ActiveStreamHandle>> handles;
+    {
+      std::lock_guard<std::mutex> lock(active_streams_mutex);
+      if (model_name.has_value()) {
+        const auto it = active_streams.find(*model_name);
+        if (it != active_streams.end()) {
+          for (const auto& weak_handle : it->second) {
+            if (auto handle = weak_handle.lock()) {
+              handles.push_back(std::move(handle));
+            }
+          }
+        }
+      } else {
+        for (const auto& [_, weak_handles] : active_streams) {
+          for (const auto& weak_handle : weak_handles) {
+            if (auto handle = weak_handle.lock()) {
+              handles.push_back(std::move(handle));
+            }
+          }
+        }
+      }
+    }
+
+    for (const auto& handle : handles) {
+      handle->cancel();
+    }
+    return handles.size();
+  }
+
   void handle_models(httplib::Response& res) const {
     set_cors(res);
     nlohmann::json data = nlohmann::json::array();
@@ -425,6 +614,44 @@ struct OpenAIServer::Impl {
       data.push_back({{"id", name}, {"object", "model"}, {"owned_by", "simaai"}});
     }
     set_json(res, {{"object", "list"}, {"data", data}});
+  }
+
+  std::optional<std::string> stop_model_name(const httplib::Request& req) const {
+    if (req.has_param("model")) {
+      return req.get_param_value("model");
+    }
+    if (req.has_file("model")) {
+      return req.get_file_value("model").content;
+    }
+    if (req.body.empty()) {
+      return std::nullopt;
+    }
+    const auto body = parse_json_body(req);
+    const std::string model = body.value("model", std::string{});
+    return model.empty() ? std::nullopt : std::optional<std::string>{model};
+  }
+
+  static bool messages_use_images(const std::vector<ChatMessage>& messages) {
+    return std::any_of(messages.begin(), messages.end(), [](const ChatMessage& message) {
+      return !message.images.empty() || message.use_cached_images;
+    });
+  }
+
+  void handle_stop(const httplib::Request& req, httplib::Response& res) {
+    set_cors(res);
+    try {
+      const auto model_name = stop_model_name(req);
+      if (model_name.has_value() && !find_model(*model_name)) {
+        set_error(res, "Unknown model: " + *model_name, 404);
+        return;
+      }
+      const auto cancelled = cancel_active_streams(model_name);
+      set_json(res, {{"status", "stopping"},
+                     {"model", model_name.value_or(std::string{"*"})},
+                     {"cancelled_streams", cancelled}});
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 500);
+    }
   }
 
   void handle_chat(const httplib::Request& req, httplib::Response& res) {
@@ -438,7 +665,7 @@ struct OpenAIServer::Impl {
       }
       auto model = find_model(model_name);
       if (!model) {
-        set_error(res, "Unknown OpenAI model: " + model_name, 404);
+        set_error(res, "Unknown model: " + model_name, 404);
         return;
       }
       if (model->accepts_audio()) {
@@ -448,6 +675,10 @@ struct OpenAIServer::Impl {
 
       GenerationRequest request;
       request.messages = parse_chat_messages(body);
+      if (messages_use_images(request.messages) && !model->accepts_image()) {
+        set_error(res, "Model does not accept image input: " + model_name, 400);
+        return;
+      }
       if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
         request.max_new_tokens = *max_tokens;
       }
@@ -480,20 +711,24 @@ struct OpenAIServer::Impl {
     res.set_header("Connection", "keep-alive");
     res.set_chunked_content_provider(
         "text/event-stream",
-        [model_name = std::move(model_name), model = std::move(model),
+        [this, model_name = std::move(model_name), model = std::move(model),
          request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
           try {
+            ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
+            active_stream.attach(stream);
             for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
               if (sample->is_final) {
                 const auto final_chunk =
-                    chat_chunk(model_name, "", choice_finish_reason(sample->finish_reason)) +
+                    chat_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
+                               sample->metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
-              const auto chunk = chat_chunk(model_name, sample->text);
+              const auto chunk =
+                  chat_chunk(model_name, sample->text, std::nullopt, sample->metrics);
               write_sink(sink, chunk);
             }
             const auto done = chat_chunk(model_name, "", "stop") + "data: [DONE]\n\n";
@@ -523,7 +758,7 @@ struct OpenAIServer::Impl {
       }
       auto model = find_model(model_name);
       if (!model) {
-        set_error(res, "Unknown OpenAI model: " + model_name, 404);
+        set_error(res, "Unknown model: " + model_name, 404);
         return;
       }
       if (!model->accepts_audio()) {
@@ -551,7 +786,7 @@ struct OpenAIServer::Impl {
 
       const auto audio_path = write_uploaded_file(req.get_file_value("file"));
       if (stream) {
-        handle_audio_stream(res, std::move(model), audio_path, language);
+        handle_audio_stream(res, model_name, std::move(model), audio_path, language);
       } else {
         TempFileGuard guard{audio_path};
         GenerationRequest request;
@@ -567,12 +802,14 @@ struct OpenAIServer::Impl {
     }
   }
 
-  void handle_audio_stream(httplib::Response& res, std::shared_ptr<GenAIModel> model,
-                           std::filesystem::path audio_path, std::string language) {
+  void handle_audio_stream(httplib::Response& res, std::string model_name,
+                           std::shared_ptr<GenAIModel> model, std::filesystem::path audio_path,
+                           std::string language) {
     res.set_header("Content-Type", "text/event-stream");
     res.set_header("Cache-Control", "no-cache");
     res.set_header("Connection", "keep-alive");
-    res.set_chunked_content_provider("text/event-stream", [model = std::move(model),
+    res.set_chunked_content_provider("text/event-stream", [this, model_name = std::move(model_name),
+                                                           model = std::move(model),
                                                            audio_path = std::move(audio_path),
                                                            language = std::move(language)](
                                                               std::size_t,
@@ -582,7 +819,9 @@ struct OpenAIServer::Impl {
         GenerationRequest request;
         request.audio_file = audio_path;
         request.language = language;
+        ActiveStreamRegistration active_stream{*this, model_name};
         auto stream = model->stream(request);
+        active_stream.attach(stream);
         for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
           if (sample->is_final) {
             const auto final_chunk =
@@ -607,15 +846,53 @@ struct OpenAIServer::Impl {
     });
   }
 
+  void warmup_models_once() {
+    {
+      std::lock_guard<std::mutex> lock(warmup_mutex);
+      if (warmup_complete) {
+        return;
+      }
+    }
+
+    std::vector<std::pair<std::string, std::shared_ptr<GenAIModel>>> models;
+    {
+      std::lock_guard<std::mutex> lock(registry_mutex);
+      models.reserve(registry.size());
+      for (const auto& [name, entry] : registry) {
+        models.emplace_back(name, entry.model);
+      }
+    }
+
+    for (const auto& [name, model] : models) {
+      try {
+        (void)model->run(make_warmup_request(*model));
+      } catch (const std::exception& e) {
+        throw std::runtime_error("OpenAIServer warmup failed for model '" + name +
+                                 "': " + e.what());
+      }
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(warmup_mutex);
+      warmup_complete = true;
+    }
+  }
+
   void serve() {
     if (running.exchange(true)) {
       throw std::runtime_error("OpenAIServer is already running");
     }
-    const bool ok = http.listen(options.host, options.port);
-    running.store(false);
-    if (!ok && !stopping.load()) {
-      throw std::runtime_error("OpenAIServer failed to listen on " + options.host + ":" +
-                               std::to_string(options.port));
+    try {
+      warmup_models_once();
+      const bool ok = http.listen(options.host, options.port);
+      running.store(false);
+      if (!ok && !stopping.load()) {
+        throw std::runtime_error("OpenAIServer failed to listen on " + options.host + ":" +
+                                 std::to_string(options.port));
+      }
+    } catch (...) {
+      running.store(false);
+      throw;
     }
   }
 
@@ -624,6 +901,7 @@ struct OpenAIServer::Impl {
       throw std::runtime_error("OpenAIServer is already started");
     }
     stopping.store(false);
+    warmup_models_once();
     worker = std::thread([this] { serve(); });
   }
 
@@ -640,6 +918,10 @@ struct OpenAIServer::Impl {
   httplib::Server http;
   mutable std::mutex registry_mutex;
   std::map<std::string, Entry> registry;
+  mutable std::mutex active_streams_mutex;
+  std::map<std::string, std::vector<std::weak_ptr<ActiveStreamHandle>>> active_streams;
+  std::mutex warmup_mutex;
+  bool warmup_complete = false;
   std::thread worker;
   std::atomic<bool> running = false;
   std::atomic<bool> stopping = false;

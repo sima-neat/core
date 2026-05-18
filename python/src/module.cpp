@@ -1605,8 +1605,6 @@ NB_MODULE(_pyneat_core, m) {
           "model_dir"_a, "served_name"_a)
       .def("remove_model", &simaai::neat::genai::OpenAIServer::remove_model, "served_name"_a)
       .def("model_names", &simaai::neat::genai::OpenAIServer::model_names)
-      .def("serve", &simaai::neat::genai::OpenAIServer::serve,
-           nb::call_guard<nb::gil_scoped_release>())
       .def("start", &simaai::neat::genai::OpenAIServer::start,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stop", &simaai::neat::genai::OpenAIServer::stop,
