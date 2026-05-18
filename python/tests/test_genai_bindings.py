@@ -301,6 +301,24 @@ def test_genai_direct_text_generation_and_streaming():
     assert _trim_text("".join(streamed_text)) == _EXPECTED_TEXT
     _assert_finish_reason(final_sample.finish_reason)
     assert final_sample.metrics.generated_tokens > 0
+
+    generic = pyneat.GenAIModel(_text_model_dir())
+    assert generic.task() == pyneat.GenAITask.VisionLanguage
+    assert generic.accepts_text()
+    assert not generic.accepts_image()
+    assert not generic.accepts_audio()
+    generic_result = generic.run(request)
+    assert _trim_text(generic_result.text) == _EXPECTED_TEXT
+
+    generic_streamed_text = []
+    generic_final = None
+    for sample in generic.stream(request):
+      if sample.is_final:
+        generic_final = sample
+        break
+      generic_streamed_text.append(sample.text)
+    assert generic_final is not None
+    assert _trim_text("".join(generic_streamed_text)) == _EXPECTED_TEXT
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
     raise
@@ -366,6 +384,21 @@ def test_genai_direct_vlm_generation_and_cached_image():
     _assert_finish_reason(cached_result.finish_reason)
     assert cached_result.metrics.generated_tokens > 0
     print(f"GENAI_PY_VLM_CACHED text={cached_result.text}")
+
+    del model
+
+    generic = pyneat.GenAIModel(_vlm_model_dir())
+    assert generic.task() == pyneat.GenAITask.VisionLanguage
+    assert generic.accepts_text()
+    assert generic.accepts_image()
+    assert not generic.accepts_audio()
+    generic_request = pyneat.GenerationRequest()
+    generic_request.prompt = _VLM_PROMPT
+    generic_request.images = [image]
+    generic_request.max_new_tokens = 48
+    generic_result = generic.run(generic_request)
+    assert _trim_text(generic_result.text) == _EXPECTED_VLM_TEXT
+    print(f"GENAI_PY_MODEL_VLM text={generic_result.text}")
 
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
@@ -555,6 +588,26 @@ def test_genai_direct_asr_generation_and_streaming():
     assert _trim_text(stream_text)
     assert _normalize_transcript(stream_text) == _EXPECTED_ASR_TEXT
     print(f"GENAI_PY_ASR_STREAM text={stream_text}")
+
+    generic = pyneat.GenAIModel(_asr_model_dir())
+    assert generic.task() == pyneat.GenAITask.ASR
+    assert not generic.accepts_text()
+    assert not generic.accepts_image()
+    assert generic.accepts_audio()
+    generic_result = generic.run(request)
+    assert _normalize_transcript(generic_result.text) == _EXPECTED_ASR_TEXT
+
+    generic_stream_text = ""
+    generic_saw_final = False
+    for sample in generic.stream(request):
+      if sample.is_final:
+        assert sample.finish_reason == "stop"
+        generic_saw_final = True
+        break
+      generic_stream_text += sample.text
+    assert generic_saw_final
+    assert _normalize_transcript(generic_stream_text) == _EXPECTED_ASR_TEXT
+    print(f"GENAI_PY_MODEL_ASR_STREAM text={generic_stream_text}")
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
     raise

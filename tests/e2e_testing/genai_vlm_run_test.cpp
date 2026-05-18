@@ -1,4 +1,5 @@
 #include "genai/GenAITypes.h"
+#include "genai/GenAIModel.h"
 #include "genai/VisionLanguageModel.h"
 #include "pipeline/TensorCore.h"
 #include "test_utils.h"
@@ -223,63 +224,79 @@ int main(int argc, char** argv) {
     cv::Mat image_bgr = cv::imread(image_path.string(), cv::IMREAD_COLOR);
     require(!image_bgr.empty(), "failed to load VLM e2e image: " + image_path.string());
 
-    simaai::neat::genai::VisionLanguageModel model(model_dir);
-    require(model.accepts_image(), "LFM2-VL model should accept image input");
+    {
+      simaai::neat::genai::VisionLanguageModel model(model_dir);
+      require(model.accepts_image(), "LFM2-VL model should accept image input");
 
-    simaai::neat::genai::GenerationRequest cv_request;
-    cv_request.prompt = std::string{kPrompt};
-    cv_request.images = {image_bgr};
-    cv_request.max_new_tokens = 48;
-    require_generation_result(model.run(cv_request), "GENAI_VLM_CVMAT");
+      simaai::neat::genai::GenerationRequest cv_request;
+      cv_request.prompt = std::string{kPrompt};
+      cv_request.images = {image_bgr};
+      cv_request.max_new_tokens = 48;
+      require_generation_result(model.run(cv_request), "GENAI_VLM_CVMAT");
 
-    simaai::neat::genai::GenerationRequest tensor_request;
-    tensor_request.prompt = std::string{kPrompt};
-    tensor_request.images = {rgb_tensor_from_bgr(image_bgr, simaai::neat::TensorMemory::CPU)};
-    tensor_request.max_new_tokens = 48;
-    require_generation_result(model.run(tensor_request), "GENAI_VLM_TENSOR");
+      simaai::neat::genai::GenerationRequest tensor_request;
+      tensor_request.prompt = std::string{kPrompt};
+      tensor_request.images = {rgb_tensor_from_bgr(image_bgr, simaai::neat::TensorMemory::CPU)};
+      tensor_request.max_new_tokens = 48;
+      require_generation_result(model.run(tensor_request), "GENAI_VLM_TENSOR");
 
-    simaai::neat::genai::GenerationRequest ev74_tensor_request;
-    ev74_tensor_request.prompt = std::string{kPrompt};
-    ev74_tensor_request.images = {rgb_tensor_from_bgr(image_bgr, simaai::neat::TensorMemory::EV74)};
-    ev74_tensor_request.max_new_tokens = 48;
-    require_generation_result(model.run(ev74_tensor_request), "GENAI_VLM_EV74_TENSOR");
+      simaai::neat::genai::GenerationRequest ev74_tensor_request;
+      ev74_tensor_request.prompt = std::string{kPrompt};
+      ev74_tensor_request.images = {
+          rgb_tensor_from_bgr(image_bgr, simaai::neat::TensorMemory::EV74)};
+      ev74_tensor_request.max_new_tokens = 48;
+      require_generation_result(model.run(ev74_tensor_request), "GENAI_VLM_EV74_TENSOR");
 
-    auto stream = model.stream(tensor_request);
-    std::string streamed_text;
-    bool saw_stream_chunk = false;
-    bool saw_stream_final = false;
-    simaai::neat::genai::TokenSample final_sample;
-    while (auto sample = stream.next()) {
-      if (sample->is_final) {
-        saw_stream_final = true;
-        final_sample = *sample;
-        break;
+      auto stream = model.stream(tensor_request);
+      std::string streamed_text;
+      bool saw_stream_chunk = false;
+      bool saw_stream_final = false;
+      simaai::neat::genai::TokenSample final_sample;
+      while (auto sample = stream.next()) {
+        if (sample->is_final) {
+          saw_stream_final = true;
+          final_sample = *sample;
+          break;
+        }
+        saw_stream_chunk = true;
+        streamed_text += sample->text;
       }
-      saw_stream_chunk = true;
-      streamed_text += sample->text;
+      require(saw_stream_chunk, "GENAI_VLM_STREAM expected at least one text chunk");
+      require(saw_stream_final, "GENAI_VLM_STREAM expected final sample");
+      require(final_sample.metrics.generated_tokens > 0,
+              "GENAI_VLM_STREAM expected generated tokens");
+      require(final_sample.finish_reason == "stop" || final_sample.finish_reason == "interrupted",
+              "GENAI_VLM_STREAM returned unexpected finish reason: " + final_sample.finish_reason);
+      require(trim_text(streamed_text) == kExpectedText,
+              "GENAI_VLM_STREAM generated unexpected text: " + streamed_text);
+      std::cout << "GENAI_VLM_STREAM generated_tokens=" << final_sample.metrics.generated_tokens
+                << " ttft_s=" << final_sample.metrics.time_to_first_token_s
+                << " tps=" << final_sample.metrics.tokens_per_second
+                << " finish_reason=" << final_sample.finish_reason << "\n";
+      std::cout << "GENAI_VLM_STREAM text=" << streamed_text << "\n";
+
+      require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
+      require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");
+
+      simaai::neat::genai::GenerationRequest cached_request;
+      cached_request.prompt = std::string{kPrompt};
+      cached_request.use_cached_images = true;
+      cached_request.max_new_tokens = 48;
+      require_generation_result(model.run(cached_request), "GENAI_VLM_CACHED");
     }
-    require(saw_stream_chunk, "GENAI_VLM_STREAM expected at least one text chunk");
-    require(saw_stream_final, "GENAI_VLM_STREAM expected final sample");
-    require(final_sample.metrics.generated_tokens > 0,
-            "GENAI_VLM_STREAM expected generated tokens");
-    require(final_sample.finish_reason == "stop" || final_sample.finish_reason == "interrupted",
-            "GENAI_VLM_STREAM returned unexpected finish reason: " + final_sample.finish_reason);
-    require(trim_text(streamed_text) == kExpectedText,
-            "GENAI_VLM_STREAM generated unexpected text: " + streamed_text);
-    std::cout << "GENAI_VLM_STREAM generated_tokens=" << final_sample.metrics.generated_tokens
-              << " ttft_s=" << final_sample.metrics.time_to_first_token_s
-              << " tps=" << final_sample.metrics.tokens_per_second
-              << " finish_reason=" << final_sample.finish_reason << "\n";
-    std::cout << "GENAI_VLM_STREAM text=" << streamed_text << "\n";
 
-    require(model.encode(std::vector<cv::Mat>{image_bgr}), "GENAI_VLM_ENCODE failed");
-    require(model.cached_image_count() == 1U, "GENAI_VLM_ENCODE expected one cached image");
+    simaai::neat::genai::GenAIModel generic_model(model_dir);
+    require(generic_model.task() == simaai::neat::genai::GenAITask::VisionLanguage,
+            "GenAIModel VLM task mismatch");
+    require(generic_model.accepts_text(), "GenAIModel VLM should accept text");
+    require(generic_model.accepts_image(), "GenAIModel VLM should accept images");
+    require(!generic_model.accepts_audio(), "GenAIModel VLM should not accept audio");
 
-    simaai::neat::genai::GenerationRequest cached_request;
-    cached_request.prompt = std::string{kPrompt};
-    cached_request.use_cached_images = true;
-    cached_request.max_new_tokens = 48;
-    require_generation_result(model.run(cached_request), "GENAI_VLM_CACHED");
+    simaai::neat::genai::GenerationRequest generic_request;
+    generic_request.prompt = std::string{kPrompt};
+    generic_request.images = {rgb_tensor_from_bgr(image_bgr, simaai::neat::TensorMemory::CPU)};
+    generic_request.max_new_tokens = 48;
+    require_generation_result(generic_model.run(generic_request), "GENAI_MODEL_VLM");
 
     std::cout << "[OK] genai_vlm_run_test passed\n";
     return 0;

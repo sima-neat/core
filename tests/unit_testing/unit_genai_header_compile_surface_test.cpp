@@ -47,6 +47,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto vlm = static_cast<VisionLanguageModel*>(nullptr);
            auto asr = static_cast<ASRModel*>(nullptr);
            auto genai = static_cast<GenAIModel*>(nullptr);
+           auto genai_run = &GenAIModel::run;
+           auto genai_stream = &GenAIModel::stream;
            bool vision_language_rejected_null = false;
            try {
              (void)nodes::VisionLanguage(nullptr);
@@ -79,4 +81,6 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)vlm;
            (void)asr;
            (void)genai;
+           (void)genai_run;
+           (void)genai_stream;
          }));

@@ -1,4 +1,5 @@
 #include "genai/ASRModel.h"
+#include "genai/GenAIModel.h"
 #include "test_utils.h"
 
 #include <cstdlib>
@@ -228,6 +229,45 @@ int main(int argc, char** argv) {
     std::cout << "GENAI_ASR_SILENCE_STREAM text=\n" << silence_stream_text << "\n";
     require(normalize_transcript(silence_stream_text) == kExpectedSilenceTranscript,
             "ASR silence stream transcript mismatch: " + trim_text(silence_stream_text));
+
+    simaai::neat::genai::GenAIModel generic_model(model_dir);
+    require(generic_model.task() == simaai::neat::genai::GenAITask::ASR,
+            "GenAIModel ASR task mismatch");
+    require(!generic_model.accepts_text(), "GenAIModel ASR should not accept text");
+    require(!generic_model.accepts_image(), "GenAIModel ASR should not accept images");
+    require(generic_model.accepts_audio(), "GenAIModel ASR should accept audio");
+
+    const auto generic_result = generic_model.run(file_request);
+    std::cout << "GENAI_MODEL_ASR_FILE text=\n" << generic_result.text << "\n";
+    require(normalize_transcript(generic_result.text) == kExpectedTranscript,
+            "GenAIModel ASR file transcript mismatch: " + trim_text(generic_result.text));
+
+    auto generic_stream = generic_model.stream(file_request);
+    const std::string generic_stream_text =
+        consume_stream(generic_stream, "GENAI_MODEL_ASR_FILE_STREAM");
+    std::cout << "GENAI_MODEL_ASR_FILE_STREAM text=\n" << generic_stream_text << "\n";
+    require(normalize_transcript(generic_stream_text) == kExpectedTranscript,
+            "GenAIModel ASR stream transcript mismatch: " + trim_text(generic_stream_text));
+
+    simaai::neat::genai::GenerationRequest bad_text_request;
+    bad_text_request.prompt = std::string{"What is this audio?"};
+    bool rejected_text = false;
+    try {
+      (void)generic_model.run(bad_text_request);
+    } catch (const std::exception&) {
+      rejected_text = true;
+    }
+    require(rejected_text, "GenAIModel ASR should reject text requests");
+
+    simaai::neat::genai::GenerationRequest bad_image_request;
+    bad_image_request.images = {simaai::neat::Tensor::from_text("not-an-image")};
+    bool rejected_image = false;
+    try {
+      (void)generic_model.run(bad_image_request);
+    } catch (const std::exception&) {
+      rejected_image = true;
+    }
+    require(rejected_image, "GenAIModel ASR should reject image requests");
 
     std::cout << "[OK] genai_asr_run_test passed\n";
     return 0;

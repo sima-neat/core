@@ -1,4 +1,5 @@
 #include "genai/GenAITypes.h"
+#include "genai/GenAIModel.h"
 #include "genai/VisionLanguageModel.h"
 #include "test_utils.h"
 
@@ -20,6 +21,15 @@ namespace {
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_TEXT_MODEL";
 constexpr const char* kRepoId = "simaai/LFM2-350M-a16w4";
 constexpr const char* kModelName = "LFM2-350M-a16w4";
+
+void require_throws(const std::function<void()>& fn, const std::string& label) {
+  try {
+    fn();
+  } catch (const std::exception&) {
+    return;
+  }
+  throw std::runtime_error(label + " should throw");
+}
 
 std::string shell_quote(const fs::path& path) {
   std::string in = path.string();
@@ -226,6 +236,37 @@ int main() {
               << " tps=" << final_sample.metrics.tokens_per_second
               << " finish_reason=" << final_sample.finish_reason << "\n";
     std::cout << "GENAI_LLM_STREAM text=" << streamed_text << "\n";
+
+    simaai::neat::genai::GenAIModel generic_model(model_dir);
+    require(generic_model.task() == simaai::neat::genai::GenAITask::VisionLanguage,
+            "GenAIModel text task mismatch");
+    require(generic_model.accepts_text(), "GenAIModel text model should accept text");
+    require(!generic_model.accepts_image(), "GenAIModel text model should not accept images");
+    require(!generic_model.accepts_audio(), "GenAIModel text model should not accept audio");
+
+    const auto generic_result = generic_model.run(request);
+    require(trim_text(generic_result.text) == "The capital of Germany is Berlin.",
+            "GenAIModel LLM generated unexpected text: " + generic_result.text);
+
+    auto generic_stream = generic_model.stream(request);
+    std::string generic_streamed_text;
+    bool saw_generic_final = false;
+    while (auto sample = generic_stream.next()) {
+      if (sample->is_final) {
+        saw_generic_final = true;
+        break;
+      }
+      generic_streamed_text += sample->text;
+    }
+    require(saw_generic_final, "GenAIModel LLM stream expected final sample");
+    require(trim_text(generic_streamed_text) == "The capital of Germany is Berlin.",
+            "GenAIModel LLM stream generated unexpected text: " + generic_streamed_text);
+
+    simaai::neat::genai::GenerationRequest bad_audio_request;
+    bad_audio_request.audio_file = fs::path{"audio.wav"};
+    require_throws([&] { (void)generic_model.run(bad_audio_request); },
+                   "GenAIModel VisionLanguage audio request");
+
     std::cout << "[OK] genai_llm_run_test passed\n";
     return 0;
   } catch (const SkipTest& e) {

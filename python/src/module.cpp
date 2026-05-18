@@ -1582,7 +1582,11 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
       .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
       .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
-      .def("describe", &simaai::neat::genai::GenAIModel::describe);
+      .def("describe", &simaai::neat::genai::GenAIModel::describe)
+      .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
 
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");

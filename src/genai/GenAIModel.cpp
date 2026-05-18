@@ -1,15 +1,33 @@
 #include "genai/GenAIModel.h"
+#include "genai/ASRModel.h"
 #include "genai/GenAIInternal.h"
+#include "genai/VisionLanguageModel.h"
 
+#include <stdexcept>
 #include <utility>
+#include <variant>
 
 namespace simaai::neat::genai {
 
 struct GenAIModel::Impl {
   explicit Impl(std::filesystem::path model_dir_in)
-      : info(internal::inspect_model_directory(std::move(model_dir_in))) {}
+      : info(internal::inspect_model_directory(std::move(model_dir_in))),
+        model(make_model(info)) {}
+
+  using ModelVariant = std::variant<VisionLanguageModel, ASRModel>;
+
+  static ModelVariant make_model(const internal::ModelDirectoryInfo& info) {
+    switch (info.task) {
+    case GenAITask::VisionLanguage:
+      return VisionLanguageModel(info.root);
+    case GenAITask::ASR:
+      return ASRModel(info.root);
+    }
+    throw std::runtime_error("Unsupported GenAI task");
+  }
 
   internal::ModelDirectoryInfo info;
+  ModelVariant model;
 };
 
 GenAIModel::GenAIModel(std::filesystem::path model_dir)
@@ -43,6 +61,14 @@ std::string GenAIModel::model_id() const {
 
 std::string GenAIModel::describe() const {
   return "GenAIModel(" + impl_->info.root.string() + ")";
+}
+
+GenerationResult GenAIModel::run(const GenerationRequest& request) {
+  return std::visit([&](auto& model) { return model.run(request); }, impl_->model);
+}
+
+GenerationStream GenAIModel::stream(const GenerationRequest& request) {
+  return std::visit([&](auto& model) { return model.stream(request); }, impl_->model);
 }
 
 } // namespace simaai::neat::genai
