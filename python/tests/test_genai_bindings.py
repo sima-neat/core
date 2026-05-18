@@ -195,8 +195,6 @@ def test_genai_value_types_and_text_sample_helpers():
   req.prompt = "hello"
   req.system_prompt = "be concise"
   req.max_new_tokens = 8
-  req.temperature = 0.25
-  req.top_p = 0.9
   req.audio_file = "audio.wav"
   req.language = "en"
   req.messages = [pyneat.ChatMessage()]
@@ -207,6 +205,8 @@ def test_genai_value_types_and_text_sample_helpers():
 
   assert req.prompt == "hello"
   assert req.system_prompt == "be concise"
+  assert not hasattr(req, "temperature")
+  assert not hasattr(req, "top_p")
   assert req.messages[0].content == "hello"
   assert str(req.audio_file).endswith("audio.wav")
   assert req.language == "en"
@@ -267,6 +267,8 @@ def test_genai_top_level_and_namespace_aliases_exist():
   options.encode_images_on_input = False
   assert options.system_prompt == "Answer exactly."
   assert options.max_new_tokens == 24
+  assert not hasattr(options, "temperature")
+  assert not hasattr(options, "top_p")
   assert options.streaming is False
   assert options.encode_images_on_input is False
 

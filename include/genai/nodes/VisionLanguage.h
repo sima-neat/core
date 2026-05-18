@@ -21,8 +21,6 @@ namespace nodes {
 struct VisionLanguageOptions {
   std::string system_prompt;
   std::uint32_t max_new_tokens = 0;
-  float temperature = 1.0F;
-  float top_p = 1.0F;
   bool streaming = true;
   bool encode_images_on_input = true;
 };

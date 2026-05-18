@@ -30,7 +30,6 @@ public:
 
   bool accepts_image() const;
   std::string model_id() const;
-  std::string describe() const;
   std::size_t cached_image_count() const;
   bool encode(const Tensor& image);
   bool encode(const std::vector<Tensor>& images);

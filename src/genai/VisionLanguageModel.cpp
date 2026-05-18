@@ -544,10 +544,6 @@ std::string VisionLanguageModel::model_id() const {
   return internal::model_id_from_path(impl_->info.root);
 }
 
-std::string VisionLanguageModel::describe() const {
-  return "VisionLanguageModel(" + impl_->info.root.string() + ")";
-}
-
 std::size_t VisionLanguageModel::cached_image_count() const {
   return impl_->cached_image_count();
 }

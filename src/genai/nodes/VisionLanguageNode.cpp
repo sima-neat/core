@@ -301,8 +301,6 @@ private:
       request.system_prompt = options_.system_prompt;
     }
     request.max_new_tokens = options_.max_new_tokens;
-    request.temperature = options_.temperature;
-    request.top_p = options_.top_p;
     request.prompt =
         require_single_text_tensor(msg.sample, "GenAI VisionLanguage prompt input").to_text();
 

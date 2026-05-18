@@ -28,7 +28,6 @@ public:
   bool accepts_image() const;
   bool accepts_audio() const;
   std::string model_id() const;
-  std::string describe() const;
   GenerationResult run(const GenerationRequest& request);
   GenerationStream stream(const GenerationRequest& request);
 

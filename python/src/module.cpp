@@ -1507,9 +1507,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("audio", &simaai::neat::genai::GenerationRequest::audio)
       .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
-      .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
-      .def_rw("temperature", &simaai::neat::genai::GenerationRequest::temperature)
-      .def_rw("top_p", &simaai::neat::genai::GenerationRequest::top_p);
+      .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens);
 
   nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
       .def(nb::init<>())
@@ -1550,7 +1548,6 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
       .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
       .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
-      .def("describe", &simaai::neat::genai::VisionLanguageModel::describe)
       .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
       .def(
           "encode",
@@ -1569,7 +1566,6 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
       .def("accepts_audio", &simaai::neat::genai::ASRModel::accepts_audio)
       .def("model_id", &simaai::neat::genai::ASRModel::model_id)
-      .def("describe", &simaai::neat::genai::ASRModel::describe)
       .def("run", &simaai::neat::genai::ASRModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::ASRModel::stream, "request"_a,
@@ -1582,7 +1578,6 @@ NB_MODULE(_pyneat_core, m) {
       .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
       .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
       .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
-      .def("describe", &simaai::neat::genai::GenAIModel::describe)
       .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
            nb::call_guard<nb::gil_scoped_release>())
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
@@ -2951,8 +2946,6 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("system_prompt", &simaai::neat::genai::nodes::VisionLanguageOptions::system_prompt)
       .def_rw("max_new_tokens", &simaai::neat::genai::nodes::VisionLanguageOptions::max_new_tokens)
-      .def_rw("temperature", &simaai::neat::genai::nodes::VisionLanguageOptions::temperature)
-      .def_rw("top_p", &simaai::neat::genai::nodes::VisionLanguageOptions::top_p)
       .def_rw("streaming", &simaai::neat::genai::nodes::VisionLanguageOptions::streaming)
       .def_rw("encode_images_on_input",
               &simaai::neat::genai::nodes::VisionLanguageOptions::encode_images_on_input);

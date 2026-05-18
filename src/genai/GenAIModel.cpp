@@ -58,10 +58,6 @@ std::string GenAIModel::model_id() const {
   return internal::model_id_from_path(impl_->info.root);
 }
 
-std::string GenAIModel::describe() const {
-  return "GenAIModel(" + impl_->info.root.string() + ")";
-}
-
 GenerationResult GenAIModel::run(const GenerationRequest& request) {
   return std::visit([&](auto& model) { return model.run(request); }, impl_->model);
 }

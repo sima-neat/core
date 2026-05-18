@@ -76,10 +76,6 @@ std::string ASRModel::model_id() const {
   return internal::model_id_from_path(impl_->info.root);
 }
 
-std::string ASRModel::describe() const {
-  return "ASRModel(" + impl_->info.root.string() + ")";
-}
-
 GenerationResult ASRModel::run(const GenerationRequest& request) {
   return impl_->run(request);
 }

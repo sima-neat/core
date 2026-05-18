@@ -95,8 +95,6 @@ struct GenerationRequest {
   std::optional<std::filesystem::path> audio_file;
   std::string language = "en";
   std::uint32_t max_new_tokens = 0;
-  float temperature = 1.0F;
-  float top_p = 1.0F;
 };
 
 struct GenerationResult {
