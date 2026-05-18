@@ -769,12 +769,12 @@ resolve_neat_internals_ref() {
       printf '%s\n' "${candidate}"
       return 0
     fi
-    echo "No internals artifact found for branch '${branch}' (${candidate}); using main-latest." >&2
+    echo "No internals artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
   else
-    echo "Could not determine current branch for internals snap; using main-latest." >&2
+    echo "Could not determine current branch for internals snap; using develop-latest." >&2
   fi
 
-  printf '%s\n' "main-latest"
+  printf '%s\n' "develop-latest"
 }
 
 compute_sha256() {
