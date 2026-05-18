@@ -1269,6 +1269,7 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "neat-internals-dev"
   "neat-gst-plugins"
   "sima-lmm-core"
+  "sima-lmm-dev"
 )
 if (SIMANEAT_ENABLE_OPENAI_SERVER)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "libcpp-httplib0.11")
