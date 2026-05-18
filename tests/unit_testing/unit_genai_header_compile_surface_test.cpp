@@ -33,6 +33,18 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            openai_options.port = 9998;
            request.audio_file = std::filesystem::path{"audio.wav"};
            request.language = "en";
+           request.tools = Json::array(
+               {{{"type", "function"},
+                 {"function", {{"name", "lookup"}, {"parameters", {{"type", "object"}}}}}}});
+           request.tool_choice = "auto";
+           message.tool_calls =
+               Json::array({{{"id", "call_0"},
+                             {"type", "function"},
+                             {"function", {{"name", "lookup"}, {"arguments", "{}"}}}}});
+           message.tool_call_id = "call_0";
+           message.name = "lookup";
+           result.tool_calls = message.tool_calls;
+           token.tool_calls = message.tool_calls;
 
            static_assert(std::is_default_constructible_v<ImageList>);
            static_assert(std::is_move_constructible_v<GenerationStream>);

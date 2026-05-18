@@ -221,6 +221,14 @@ std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
   return python_to_json(value);
 }
 
+simaai::neat::genai::Json python_to_genai_json(nb::handle value) {
+  return simaai::neat::genai::Json::parse(python_to_json(value).dump());
+}
+
+nb::object genai_json_to_python(const simaai::neat::genai::Json& value) {
+  return json_to_python(nlohmann::json::parse(value.dump()));
+}
+
 Sample make_text_sample_for_python(const std::string& port_name, const std::string& text) {
   Sample out = simaai::neat::make_tensor_sample(port_name, Tensor::from_text(text));
   out.port_name = port_name;
@@ -1482,7 +1490,17 @@ NB_MODULE(_pyneat_core, m) {
           [](simaai::neat::genai::ChatMessage& message, const nb::object& images) {
             message.images = genai_image_tensors_from_python(images);
           })
-      .def_rw("use_cached_images", &simaai::neat::genai::ChatMessage::use_cached_images);
+      .def_rw("use_cached_images", &simaai::neat::genai::ChatMessage::use_cached_images)
+      .def_prop_rw(
+          "tool_calls",
+          [](const simaai::neat::genai::ChatMessage& message) {
+            return genai_json_to_python(message.tool_calls);
+          },
+          [](simaai::neat::genai::ChatMessage& message, nb::handle value) {
+            message.tool_calls = python_to_genai_json(value);
+          })
+      .def_rw("tool_call_id", &simaai::neat::genai::ChatMessage::tool_call_id)
+      .def_rw("name", &simaai::neat::genai::ChatMessage::name);
 
   nb::class_<simaai::neat::genai::GenerationMetrics>(m, "GenerationMetrics")
       .def(nb::init<>())
@@ -1508,20 +1526,52 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("audio", &simaai::neat::genai::GenerationRequest::audio)
       .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
       .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
-      .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens);
+      .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_prop_rw(
+          "tools",
+          [](const simaai::neat::genai::GenerationRequest& request) {
+            return genai_json_to_python(request.tools);
+          },
+          [](simaai::neat::genai::GenerationRequest& request, nb::handle value) {
+            request.tools = python_to_genai_json(value);
+          })
+      .def_prop_rw(
+          "tool_choice",
+          [](const simaai::neat::genai::GenerationRequest& request) {
+            return genai_json_to_python(request.tool_choice);
+          },
+          [](simaai::neat::genai::GenerationRequest& request, nb::handle value) {
+            request.tool_choice = python_to_genai_json(value);
+          });
 
   nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::GenerationResult::text)
       .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
-      .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason);
+      .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
+      .def_prop_rw(
+          "tool_calls",
+          [](const simaai::neat::genai::GenerationResult& result) {
+            return genai_json_to_python(result.tool_calls);
+          },
+          [](simaai::neat::genai::GenerationResult& result, nb::handle value) {
+            result.tool_calls = python_to_genai_json(value);
+          });
 
   nb::class_<simaai::neat::genai::TokenSample>(m, "TokenSample")
       .def(nb::init<>())
       .def_rw("text", &simaai::neat::genai::TokenSample::text)
       .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
       .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
-      .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason);
+      .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
+      .def_prop_rw(
+          "tool_calls",
+          [](const simaai::neat::genai::TokenSample& sample) {
+            return genai_json_to_python(sample.tool_calls);
+          },
+          [](simaai::neat::genai::TokenSample& sample, nb::handle value) {
+            sample.tool_calls = python_to_genai_json(value);
+          });
 
   nb::class_<simaai::neat::genai::GenerationStream>(m, "GenerationStream")
       .def("next", &simaai::neat::genai::GenerationStream::next,

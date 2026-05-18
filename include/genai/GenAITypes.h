@@ -6,6 +6,8 @@
 
 #include "pipeline/Tensor.h"
 
+#include <nlohmann/json.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -23,6 +25,8 @@
 #endif
 
 namespace simaai::neat::genai {
+
+using Json = nlohmann::ordered_json;
 
 class ASRModel;
 class GenAIModel;
@@ -79,6 +83,9 @@ struct ChatMessage {
   std::string content;
   ImageList images;
   bool use_cached_images = false;
+  Json tool_calls = Json::array();
+  std::optional<std::string> tool_call_id;
+  std::optional<std::string> name;
 };
 
 struct GenerationMetrics {
@@ -97,12 +104,15 @@ struct GenerationRequest {
   std::optional<std::filesystem::path> audio_file;
   std::string language = "en";
   std::uint32_t max_new_tokens = 0;
+  Json tools = Json::array();
+  Json tool_choice = nullptr;
 };
 
 struct GenerationResult {
   std::string text;
   GenerationMetrics metrics;
   std::string finish_reason;
+  Json tool_calls = Json::array();
 };
 
 struct TokenSample {
@@ -110,6 +120,7 @@ struct TokenSample {
   GenerationMetrics metrics;
   bool is_final = false;
   std::string finish_reason;
+  Json tool_calls = Json::array();
 };
 
 class GenerationStream {

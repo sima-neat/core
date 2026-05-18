@@ -10,9 +10,9 @@ _MODEL_ENV = "SIMA_TEST_LLIMA_TEXT_MODEL"
 _LEGACY_MODEL_ENV = "SIMA_NEAT_GENAI_TEST_MODEL"
 _VLM_MODEL_ENV = "SIMA_TEST_LLIMA_VLM_MODEL"
 _ASR_MODEL_ENV = "SIMA_TEST_LLIMA_ASR_MODEL"
-_VLM_REPO_ID = "simaai/LFM2-VL-450M-a16w4"
+_VLM_REPO_ID = "simaai/Qwen3-VL-2B-Instruct-GPTQ-a16w4"
 _VLM_PROMPT = "Describe this image in a short phrase."
-_EXPECTED_VLM_TEXT = "Skier jumping high in the air."
+_EXPECTED_VLM_TEXT = "A skier soars through the air above a snowy slope, with spectators watching below."
 _PROMPT = "What is the capital of Germany?"
 _EXPECTED_TEXT = "The capital of Germany is Berlin."
 _EXPECTED_ASR_TEXT = "tell me a joke please"
@@ -41,7 +41,7 @@ def _text_model_dir():
   if not value:
     value = os.environ.get(_LEGACY_MODEL_ENV, "").strip()
   if not value:
-    pytest.skip(f"{_MODEL_ENV} is not set")
+    pytest.skip(f"set {_MODEL_ENV} to a LLiMa text model directory")
 
   model_dir = Path(value)
   if not (model_dir / "devkit" / "vlm_config.json").is_file():
@@ -52,7 +52,7 @@ def _text_model_dir():
 def _vlm_model_dir():
   value = os.environ.get(_VLM_MODEL_ENV, "").strip()
   if not value:
-    pytest.skip(f"{_VLM_MODEL_ENV} is not set; expected {_VLM_REPO_ID}")
+    pytest.skip(f"set {_VLM_MODEL_ENV} to a LLiMa VLM model directory")
 
   model_dir = Path(value)
   if not (model_dir / "devkit" / "vlm_config.json").is_file():
@@ -63,7 +63,7 @@ def _vlm_model_dir():
 def _asr_model_dir():
   value = os.environ.get(_ASR_MODEL_ENV, "").strip()
   if not value:
-    pytest.skip(f"{_ASR_MODEL_ENV} is not set")
+    pytest.skip(f"set {_ASR_MODEL_ENV} to a LLiMa Whisper model directory")
 
   model_dir = Path(value)
   if not (model_dir / "devkit" / "whisper_config.json").is_file():
@@ -200,20 +200,44 @@ def test_genai_value_types_and_text_sample_helpers():
   req.messages = [pyneat.ChatMessage()]
   req.messages[0].role = "user"
   req.messages[0].content = "hello"
+  req.messages[0].tool_calls = [
+      {
+          "id": "call_0",
+          "type": "function",
+          "function": {"name": "lookup", "arguments": "{}"},
+      }
+  ]
+  req.messages[0].tool_call_id = "call_0"
+  req.messages[0].name = "lookup"
   req.images = [np.zeros((2, 2, 3), dtype=np.uint8)]
   req.use_cached_images = False
+  req.tools = [
+      {
+          "type": "function",
+          "function": {
+              "name": "lookup",
+              "parameters": {"type": "object"},
+          },
+      }
+  ]
+  req.tool_choice = "auto"
 
   assert req.prompt == "hello"
   assert req.system_prompt == "be concise"
   assert not hasattr(req, "temperature")
   assert not hasattr(req, "top_p")
   assert req.messages[0].content == "hello"
+  assert req.messages[0].tool_calls[0]["function"]["name"] == "lookup"
+  assert req.messages[0].tool_call_id == "call_0"
+  assert req.messages[0].name == "lookup"
   assert str(req.audio_file).endswith("audio.wav")
   assert req.language == "en"
   assert len(req.images) == 1
   assert list(req.images[0].shape) == [2, 2, 3]
   assert req.images[0].image_format() == pyneat.PixelFormat.RGB
   assert req.use_cached_images is False
+  assert req.tools[0]["function"]["name"] == "lookup"
+  assert req.tool_choice == "auto"
 
   image_list = pyneat.ImageList(req.images)
   assert not image_list.empty()
@@ -232,6 +256,14 @@ def test_genai_value_types_and_text_sample_helpers():
   assert sample.port_name == "prompt"
   assert sample.stream_label == "prompt"
   assert sample.to_text() == "What is NEAT?"
+
+  result = pyneat.GenerationResult()
+  result.tool_calls = req.messages[0].tool_calls
+  assert result.tool_calls[0]["id"] == "call_0"
+
+  token = pyneat.TokenSample()
+  token.tool_calls = req.messages[0].tool_calls
+  assert token.tool_calls[0]["function"]["arguments"] == "{}"
 
   result = pyneat.GenerationResult()
   result.text = "done"
@@ -294,6 +326,7 @@ def test_genai_direct_text_generation_and_streaming():
 
     request = _make_request()
     result = model.run(request)
+    print(f"GENAI_PY_LLM text={result.text}")
     assert _trim_text(result.text) == _EXPECTED_TEXT
     _assert_finish_reason(result.finish_reason)
     assert result.metrics.generated_tokens > 0
@@ -308,6 +341,7 @@ def test_genai_direct_text_generation_and_streaming():
 
     assert streamed_text
     assert final_sample is not None
+    print(f"GENAI_PY_LLM_STREAM text={''.join(streamed_text)}")
     assert _trim_text("".join(streamed_text)) == _EXPECTED_TEXT
     _assert_finish_reason(final_sample.finish_reason)
     assert final_sample.metrics.generated_tokens > 0
@@ -318,6 +352,7 @@ def test_genai_direct_text_generation_and_streaming():
     assert not generic.accepts_image()
     assert not generic.accepts_audio()
     generic_result = generic.run(request)
+    print(f"GENAI_PY_MODEL_LLM text={generic_result.text}")
     assert _trim_text(generic_result.text) == _EXPECTED_TEXT
 
     generic_streamed_text = []
@@ -328,6 +363,7 @@ def test_genai_direct_text_generation_and_streaming():
         break
       generic_streamed_text.append(sample.text)
     assert generic_final is not None
+    print(f"GENAI_PY_MODEL_LLM_STREAM text={''.join(generic_streamed_text)}")
     assert _trim_text("".join(generic_streamed_text)) == _EXPECTED_TEXT
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
@@ -346,10 +382,10 @@ def test_genai_direct_vlm_generation_and_cached_image():
     request.images = [image]
     request.max_new_tokens = 48
     result = model.run(request)
+    print(f"GENAI_PY_VLM text={result.text}")
     assert _trim_text(result.text) == _EXPECTED_VLM_TEXT
     _assert_finish_reason(result.finish_reason)
     assert result.metrics.generated_tokens > 0
-    print(f"GENAI_PY_VLM text={result.text}")
 
     ev74_tensor = pyneat.Tensor.from_numpy(
         image,
@@ -362,10 +398,10 @@ def test_genai_direct_vlm_generation_and_cached_image():
     ev74_request.images = [ev74_tensor]
     ev74_request.max_new_tokens = 48
     ev74_result = model.run(ev74_request)
+    print(f"GENAI_PY_VLM_EV74_TENSOR text={ev74_result.text}")
     assert _trim_text(ev74_result.text) == _EXPECTED_VLM_TEXT
     _assert_finish_reason(ev74_result.finish_reason)
     assert ev74_result.metrics.generated_tokens > 0
-    print(f"GENAI_PY_VLM_EV74_TENSOR text={ev74_result.text}")
 
     streamed_text = []
     final_sample = None
@@ -377,23 +413,28 @@ def test_genai_direct_vlm_generation_and_cached_image():
 
     assert streamed_text
     assert final_sample is not None
+    print(f"GENAI_PY_VLM_STREAM text={''.join(streamed_text)}")
     assert _trim_text("".join(streamed_text)) == _EXPECTED_VLM_TEXT
     _assert_finish_reason(final_sample.finish_reason)
     assert final_sample.metrics.generated_tokens > 0
-    print(f"GENAI_PY_VLM_STREAM text={''.join(streamed_text)}")
 
-    assert model.encode([image])
-    assert model.cached_image_count() == 1
+    try:
+      assert model.encode([image])
+      assert model.cached_image_count() == 1
 
-    cached = pyneat.GenerationRequest()
-    cached.prompt = _VLM_PROMPT
-    cached.use_cached_images = True
-    cached.max_new_tokens = 48
-    cached_result = model.run(cached)
-    assert _trim_text(cached_result.text) == _EXPECTED_VLM_TEXT
-    _assert_finish_reason(cached_result.finish_reason)
-    assert cached_result.metrics.generated_tokens > 0
-    print(f"GENAI_PY_VLM_CACHED text={cached_result.text}")
+      cached = pyneat.GenerationRequest()
+      cached.prompt = _VLM_PROMPT
+      cached.use_cached_images = True
+      cached.max_new_tokens = 48
+      cached_result = model.run(cached)
+      print(f"GENAI_PY_VLM_CACHED text={cached_result.text}")
+      assert _trim_text(cached_result.text) == _EXPECTED_VLM_TEXT
+      _assert_finish_reason(cached_result.finish_reason)
+      assert cached_result.metrics.generated_tokens > 0
+    except RuntimeError as exc:
+      if "cached reuse is not supported" not in str(exc):
+        raise
+      print(f"GENAI_PY_VLM_CACHED skipped: {exc}")
 
     del model
 
@@ -407,8 +448,8 @@ def test_genai_direct_vlm_generation_and_cached_image():
     generic_request.images = [image]
     generic_request.max_new_tokens = 48
     generic_result = generic.run(generic_request)
-    assert _trim_text(generic_result.text) == _EXPECTED_VLM_TEXT
     print(f"GENAI_PY_MODEL_VLM text={generic_result.text}")
+    assert _trim_text(generic_result.text) == _EXPECTED_VLM_TEXT
 
   except Exception as exc:
     _skip_if_dispatcher_unavailable(exc)
@@ -447,6 +488,7 @@ def test_genai_language_graph_node_generation_and_errors():
       assert error is None
       assert done is not None
       assert token_samples > 0
+      print(f"GENAI_PY_GRAPH_LLM_STREAM text={text}")
       assert _trim_text(text) == _EXPECTED_TEXT
       _assert_finish_reason(_bundle_field_text(done, "finish_reason"))
       assert int(_bundle_field_text(done, "generated_tokens")) > 0
@@ -456,6 +498,7 @@ def test_genai_language_graph_node_generation_and_errors():
       assert error is None
       assert done is not None
       assert token_samples == 1
+      print(f"GENAI_PY_GRAPH_LLM_SYNC text={text}")
       assert _trim_text(text) == _EXPECTED_TEXT
 
       invalid = pyneat.Sample()
@@ -487,7 +530,7 @@ def test_genai_vision_language_graph_node_generation_and_errors():
     streaming_options = pyneat.genai.nodes.VisionLanguageOptions()
     streaming_options.max_new_tokens = 48
     streaming_options.streaming = True
-    streaming_options.encode_images_on_input = True
+    streaming_options.encode_images_on_input = False
     streaming_node = graph.add(
         pyneat.genai.nodes.vision_language(
             model, streaming_options, "vision_language_streaming"
@@ -502,6 +545,16 @@ def test_genai_vision_language_graph_node_generation_and_errors():
         pyneat.graph.nodes.genai_vision_language(model, sync_options, "vision_language_sync")
     )
 
+    cached_options = pyneat.genai.nodes.VisionLanguageOptions()
+    cached_options.max_new_tokens = 48
+    cached_options.streaming = True
+    cached_options.encode_images_on_input = True
+    cached_node = graph.add(
+        pyneat.genai.nodes.vision_language(
+            model, cached_options, "vision_language_unsupported_cached"
+        )
+    )
+
     missing_image_node = graph.add(
         pyneat.genai.nodes.vision_language(
             model, streaming_options, "vision_language_missing_image"
@@ -512,14 +565,7 @@ def test_genai_vision_language_graph_node_generation_and_errors():
     try:
       assert run.push_port(streaming_node, image_port, _make_image_sample(image))
       encoded = _pull_encoded(run, streaming_node)
-      assert _bundle_field_text(encoded, "mode") == "cached"
-      assert int(_bundle_field_text(encoded, "cached_image_count")) == 1
-
-      assert run.push_port(
-          streaming_node,
-          use_cached_image_port,
-          pyneat.make_text_sample("use_cached_image", "true"),
-      )
+      assert _bundle_field_text(encoded, "mode") == "direct"
       assert run.push_port(
           streaming_node,
           prompt_port,
@@ -529,6 +575,7 @@ def test_genai_vision_language_graph_node_generation_and_errors():
       assert error is None
       assert done is not None
       assert token_samples > 0
+      print(f"GENAI_PY_GRAPH_VLM_DIRECT_STREAM text={text}")
       assert _trim_text(text) == _EXPECTED_VLM_TEXT
       _assert_finish_reason(_bundle_field_text(done, "finish_reason"))
       assert int(_bundle_field_text(done, "generated_tokens")) > 0
@@ -551,7 +598,13 @@ def test_genai_vision_language_graph_node_generation_and_errors():
       assert error is None
       assert done is not None
       assert token_samples == 1
+      print(f"GENAI_PY_GRAPH_VLM_SYNC text={text}")
       assert _trim_text(text) == _EXPECTED_VLM_TEXT
+
+      assert run.push_port(cached_node, image_port, _make_image_sample(image))
+      _, _, error, _ = _pull_language_outputs(run, cached_node, stop_on_error=True)
+      assert error
+      assert "cached reuse is not supported" in error
 
       invalid = pyneat.make_text_sample("image", "not-an-image")
       assert run.push_port(streaming_node, image_port, invalid)

@@ -436,6 +436,17 @@ install_debs_on_board() {
   run_sudo apt-get install -f -y --allow-downgrades -o Dpkg::Options::=--force-overwrite
 }
 
+remove_stale_global_sima_lmm_pip_install() {
+  if ! command -v pip3 >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if run_sudo pip3 show sima_lmm >/dev/null 2>&1; then
+    log "Removing stale global sima_lmm pip package before installing LLiMa DEBs."
+    run_sudo pip3 uninstall -y sima_lmm --break-system-packages
+  fi
+}
+
 install_debs_into_sysroot() {
   local sysroot
   sysroot="$(sysroot_path)"
@@ -524,6 +535,7 @@ if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
 else
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
+  remove_stale_global_sima_lmm_pip_install
   log_green "Preparing Python virtual environment at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
   python3 -m venv --system-site-packages "${VENV_DIR}"

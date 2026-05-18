@@ -166,7 +166,7 @@ void validate_asr_generation_request(const GenerationRequest& request) {
     throw std::runtime_error("GenerationRequest accepts exactly one of audio or audio_file");
   }
   if (request.prompt.has_value() || request.system_prompt.has_value() ||
-      !request.messages.empty()) {
+      !request.messages.empty() || !request.tools.empty() || !request.tool_choice.is_null()) {
     throw std::runtime_error("GenerationRequest text fields are not valid for ASRModel");
   }
   if (!request.images.empty() || request.use_cached_images) {

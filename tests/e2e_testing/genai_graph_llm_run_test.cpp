@@ -12,42 +12,20 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
-#include <unistd.h>
 
 // Exercises the GenAI Language graph node end-to-end against a real LLiMa text
 // model, including prompt, done metadata, and error output.
+// Model fixture:
+//   hf download simaai/Qwen2.5-0.5B-Instruct-GPTQ-a16w4 --local-dir <model-dir>
+//   export SIMA_TEST_LLIMA_TEXT_MODEL=<model-dir>
 namespace fs = std::filesystem;
 
 namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_TEXT_MODEL";
-constexpr const char* kRepoId = "simaai/LFM2-350M-a16w4";
-constexpr const char* kModelName = "LFM2-350M-a16w4";
-
-std::string shell_quote(const fs::path& path) {
-  std::string in = path.string();
-  std::string out = "'";
-  for (char c : in) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out += c;
-    }
-  }
-  out += "'";
-  return out;
-}
-
-bool command_exists(const char* command) {
-  std::string cmd = "command -v ";
-  cmd += command;
-  cmd += " >/dev/null 2>&1";
-  return std::system(cmd.c_str()) == 0;
-}
 
 bool has_llima_vlm_config(const fs::path& model_dir) {
   std::error_code ec;
@@ -77,102 +55,22 @@ std::string trim_text(std::string value) {
   return value.substr(first, last - first + 1);
 }
 
-class AutoModelDir {
-public:
-  AutoModelDir() = default;
-
-  explicit AutoModelDir(fs::path path) : path_(std::move(path)), owned_(true) {}
-
-  AutoModelDir(const AutoModelDir&) = delete;
-  AutoModelDir& operator=(const AutoModelDir&) = delete;
-
-  AutoModelDir(AutoModelDir&& other) noexcept
-      : path_(std::move(other.path_)), owned_(other.owned_) {
-    other.owned_ = false;
-  }
-
-  AutoModelDir& operator=(AutoModelDir&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-    cleanup();
-    path_ = std::move(other.path_);
-    owned_ = other.owned_;
-    other.owned_ = false;
-    return *this;
-  }
-
-  ~AutoModelDir() {
-    cleanup();
-  }
-
-  const fs::path& path() const {
-    return path_;
-  }
-
-private:
-  void cleanup() {
-    if (!owned_ || path_.empty()) {
-      return;
-    }
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-    owned_ = false;
-  }
-
-  fs::path path_;
-  bool owned_ = false;
-};
-
-AutoModelDir download_model_to_nvme() {
-  if (!command_exists("hf")) {
-    skip_long_test_exception("missing Hugging Face CLI command 'hf'; set " +
-                             std::string(kModelEnv) + " to an existing model directory");
-  }
-
-  const fs::path root =
-      fs::path("/media/nvme/tmp") /
-      ("neat-genai-graph-e2e-" + std::to_string(static_cast<long long>(::getpid())));
-  const fs::path model_dir = root / kModelName;
-
-  std::error_code ec;
-  fs::create_directories(root, ec);
-  if (ec) {
-    skip_long_test_exception("failed to create temporary model directory " + root.string() + ": " +
-                             ec.message());
-  }
-
-  std::ostringstream cmd;
-  cmd << "hf download " << kRepoId << " --local-dir " << shell_quote(model_dir);
-  const int rc = std::system(cmd.str().c_str());
-  if (rc != 0) {
-    skip_long_test_exception("failed to download " + std::string(kRepoId) + " with hf");
-  }
-
-  if (!has_llima_vlm_config(model_dir)) {
-    throw std::runtime_error("downloaded model is missing devkit/vlm_config.json: " +
-                             model_dir.string());
-  }
-
-  return AutoModelDir(root);
-}
-
-fs::path resolve_model_dir(AutoModelDir& auto_dir) {
+fs::path resolve_model_dir() {
   const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (!env_model_dir.empty()) {
-    fs::path model_dir(env_model_dir);
-    if (has_llima_vlm_config(model_dir)) {
-      return model_dir;
-    }
-
-    std::cout << "[WARN] " << kModelEnv
-              << " does not point to a LLiMa VLM model directory, falling back to temporary "
-                 "download: "
-              << model_dir << "\n";
+  if (env_model_dir.empty()) {
+    skip_long_test_exception("set " + std::string(kModelEnv) +
+                             " to an existing LLiMa text model directory");
   }
 
-  auto_dir = download_model_to_nvme();
-  return auto_dir.path() / kModelName;
+  fs::path model_dir(env_model_dir);
+  if (has_llima_vlm_config(model_dir)) {
+    return model_dir;
+  }
+
+  skip_long_test_exception(
+      std::string(kModelEnv) +
+      " does not point to a LLiMa text model directory: " + model_dir.string());
+  return {};
 }
 
 simaai::neat::Sample make_text_input(std::string text, int64_t frame_id = 1) {
@@ -256,8 +154,7 @@ GraphOutputs pull_graph_outputs(simaai::neat::graph::GraphRun& run,
 
 int main() {
   try {
-    AutoModelDir auto_dir;
-    const fs::path model_dir = resolve_model_dir(auto_dir);
+    const fs::path model_dir = resolve_model_dir();
 
     std::cout << "GENAI_GRAPH_LLM model_dir=" << model_dir << "\n";
 
@@ -294,6 +191,7 @@ int main() {
             "GenAI graph streaming prompt emitted error: " + streaming_prompt_outputs.error);
     require(streaming_prompt_outputs.token_samples > 0,
             "GenAI graph streaming prompt should emit token samples");
+    std::cout << "GENAI_GRAPH_LLM_STREAM text=" << streaming_prompt_outputs.tokens << "\n";
     require(trim_text(streaming_prompt_outputs.tokens) == "The capital of Germany is Berlin.",
             "GenAI graph streaming generated unexpected text: " + streaming_prompt_outputs.tokens);
     const std::string streaming_finish_reason =
@@ -312,6 +210,7 @@ int main() {
             "GenAI graph sync prompt emitted error: " + sync_prompt_outputs.error);
     require(sync_prompt_outputs.token_samples == 1,
             "GenAI graph sync prompt should emit exactly one token sample");
+    std::cout << "GENAI_GRAPH_LLM_SYNC text=" << sync_prompt_outputs.tokens << "\n";
     require(trim_text(sync_prompt_outputs.tokens) == "The capital of Germany is Berlin.",
             "GenAI graph sync generated unexpected text: " + sync_prompt_outputs.tokens);
     const std::string finish_reason = bundle_field_text(sync_prompt_outputs.done, "finish_reason");

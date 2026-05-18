@@ -18,6 +18,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -145,6 +146,12 @@ std::optional<std::uint32_t> json_u32(const nlohmann::json& body,
     if (body.contains(key) && body.at(key).is_number_unsigned()) {
       return body.at(key).get<std::uint32_t>();
     }
+    if (body.contains(key) && body.at(key).is_number_integer()) {
+      const auto value = body.at(key).get<std::int64_t>();
+      if (value >= 0 && value <= std::numeric_limits<std::uint32_t>::max()) {
+        return static_cast<std::uint32_t>(value);
+      }
+    }
   }
   return std::nullopt;
 }
@@ -165,6 +172,17 @@ bool json_bool(const nlohmann::json& body, const char* key, bool default_value =
 
 std::string choice_finish_reason(const std::string& finish_reason) {
   return finish_reason.empty() ? "stop" : finish_reason;
+}
+
+nlohmann::json chat_message_response(const GenerationResult& result) {
+  nlohmann::json message = {{"role", "assistant"}};
+  if (!result.tool_calls.empty()) {
+    message["content"] = nullptr;
+    message["tool_calls"] = result.tool_calls;
+  } else {
+    message["content"] = result.text;
+  }
+  return message;
 }
 
 std::string chat_chunk(const std::string& model_name, const std::string& text,
@@ -200,6 +218,88 @@ std::string chat_chunk(const std::string& model_name, const std::string& text,
   return "data: " + chunk.dump() + "\n\n";
 }
 
+std::string chat_tool_call_chunk(const std::string& model_name, const Json& tool_calls,
+                                 const GenerationMetrics& metrics) {
+  nlohmann::json delta_tool_calls = nlohmann::json::array();
+  for (std::size_t i = 0; i < tool_calls.size(); ++i) {
+    nlohmann::json tool_call = tool_calls.at(i);
+    tool_call["index"] = static_cast<int>(i);
+    delta_tool_calls.push_back(std::move(tool_call));
+  }
+
+  nlohmann::json chunk;
+  chunk["id"] = "chatcmpl-" + std::to_string(unix_time_s());
+  chunk["object"] = "chat.completion.chunk";
+  chunk["created"] = unix_time_s();
+  chunk["model"] = model_name;
+  if (metrics.time_to_first_token_s > 0.0) {
+    chunk["ttft"] = metrics.time_to_first_token_s;
+  }
+  if (metrics.tokens_per_second > 0.0) {
+    chunk["tps"] = metrics.tokens_per_second;
+  }
+  if (metrics.generated_tokens > 0U) {
+    chunk["generated_tokens"] = metrics.generated_tokens;
+  }
+  chunk["choices"] = nlohmann::json::array(
+      {{{"index", 0}, {"delta", {{"tool_calls", delta_tool_calls}}}, {"finish_reason", nullptr}}});
+  return "data: " + chunk.dump() + "\n\n";
+}
+
+Json openai_tool_calls_to_ollama(const Json& tool_calls) {
+  Json out = Json::array();
+  for (const auto& tool_call : tool_calls) {
+    if (!tool_call.contains("function") || !tool_call.at("function").is_object()) {
+      continue;
+    }
+    const auto& fn = tool_call.at("function");
+    Json args = Json::object();
+    if (fn.contains("arguments")) {
+      const auto& value = fn.at("arguments");
+      if (value.is_object()) {
+        args = value;
+      } else if (value.is_string()) {
+        try {
+          args = nlohmann::json::parse(value.get<std::string>());
+        } catch (const nlohmann::json::exception&) {
+          args = Json::object();
+        }
+      }
+    }
+    out.push_back({{"function", {{"name", fn.value("name", std::string{})}, {"arguments", args}}}});
+  }
+  return out;
+}
+
+std::string completion_chunk(const std::string& model_name, const std::string& text,
+                             const std::optional<std::string>& finish_reason = std::nullopt,
+                             const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+  nlohmann::json chunk;
+  chunk["id"] = "cmpl-" + std::to_string(unix_time_s());
+  chunk["object"] = "text_completion";
+  chunk["created"] = unix_time_s();
+  chunk["model"] = model_name;
+  if (metrics.has_value()) {
+    if (metrics->time_to_first_token_s > 0.0) {
+      chunk["ttft"] = metrics->time_to_first_token_s;
+    }
+    if (metrics->tokens_per_second > 0.0) {
+      chunk["tps"] = metrics->tokens_per_second;
+    }
+    if (metrics->generated_tokens > 0U) {
+      chunk["generated_tokens"] = metrics->generated_tokens;
+    }
+  }
+
+  nlohmann::json choice;
+  choice["index"] = 0;
+  choice["text"] = finish_reason.has_value() ? "" : text;
+  choice["finish_reason"] =
+      finish_reason.has_value() ? nlohmann::json(*finish_reason) : nlohmann::json(nullptr);
+  chunk["choices"] = nlohmann::json::array({choice});
+  return "data: " + chunk.dump() + "\n\n";
+}
+
 std::string audio_chunk(const std::string& text, bool finished,
                         const std::optional<std::string>& finish_reason = std::nullopt) {
   nlohmann::json chunk;
@@ -209,6 +309,54 @@ std::string audio_chunk(const std::string& text, bool finished,
     chunk["finish_reason"] = finish_reason.value_or("stop");
   }
   return "data: " + chunk.dump() + "\n\n";
+}
+
+std::string ollama_chat_line(const std::string& model_name, const std::string& text, bool done,
+                             const std::optional<std::string>& finish_reason = std::nullopt,
+                             const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+  nlohmann::json body;
+  body["model"] = model_name;
+  body["message"] = {{"role", "assistant"}, {"content", done ? "" : text}};
+  body["done"] = done;
+  if (done) {
+    body["done_reason"] = finish_reason.value_or("stop");
+  }
+  if (metrics.has_value()) {
+    if (metrics->time_to_first_token_s > 0.0) {
+      body["ttft"] = metrics->time_to_first_token_s;
+    }
+    if (metrics->tokens_per_second > 0.0) {
+      body["tps"] = metrics->tokens_per_second;
+    }
+    if (metrics->generated_tokens > 0U) {
+      body["eval_count"] = metrics->generated_tokens;
+    }
+  }
+  return body.dump() + "\n";
+}
+
+std::string ollama_generate_line(const std::string& model_name, const std::string& text, bool done,
+                                 const std::optional<std::string>& finish_reason = std::nullopt,
+                                 const std::optional<GenerationMetrics>& metrics = std::nullopt) {
+  nlohmann::json body;
+  body["model"] = model_name;
+  body["response"] = done ? "" : text;
+  body["done"] = done;
+  if (done) {
+    body["done_reason"] = finish_reason.value_or("stop");
+  }
+  if (metrics.has_value()) {
+    if (metrics->time_to_first_token_s > 0.0) {
+      body["ttft"] = metrics->time_to_first_token_s;
+    }
+    if (metrics->tokens_per_second > 0.0) {
+      body["tps"] = metrics->tokens_per_second;
+    }
+    if (metrics->generated_tokens > 0U) {
+      body["eval_count"] = metrics->generated_tokens;
+    }
+  }
+  return body.dump() + "\n";
 }
 
 std::vector<std::uint8_t> decode_base64(std::string_view input) {
@@ -347,7 +495,7 @@ GenerationRequest make_warmup_request(const GenAIModel& model) {
 
 std::vector<ChatMessage> parse_chat_messages(const nlohmann::json& body) {
   if (!body.contains("messages") || !body.at("messages").is_array()) {
-    throw std::runtime_error("OpenAI chat request requires messages array");
+    throw std::runtime_error("Chat request requires messages array");
   }
 
   std::vector<ChatMessage> messages;
@@ -372,7 +520,23 @@ std::vector<ChatMessage> parse_chat_messages(const nlohmann::json& body) {
       append_ollama_images(message, item.at("images"));
     }
 
-    if (message.content.empty() && message.images.empty()) {
+    if (item.contains("tool_calls") && item.at("tool_calls").is_array()) {
+      message.tool_calls = item.at("tool_calls");
+    } else if (item.contains("function_call") && item.at("function_call").is_object()) {
+      const auto& function_call = item.at("function_call");
+      message.tool_calls =
+          Json::array({{{"id", "call_0"}, {"type", "function"}, {"function", function_call}}});
+    }
+
+    if (item.contains("tool_call_id") && item.at("tool_call_id").is_string()) {
+      message.tool_call_id = item.at("tool_call_id").get<std::string>();
+    }
+    if (item.contains("name") && item.at("name").is_string()) {
+      message.name = item.at("name").get<std::string>();
+    }
+
+    if (message.content.empty() && message.images.empty() && message.tool_calls.empty() &&
+        !message.tool_call_id.has_value()) {
       continue;
     }
     messages.push_back(std::move(message));
@@ -473,9 +637,21 @@ struct OpenAIServer::Impl {
     http.Post("/v1/chat/completions", [this](const httplib::Request& req, httplib::Response& res) {
       handle_chat(req, res);
     });
+    http.Post("/v1/completions", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_completion(req, res);
+    });
     http.Post(
         "/v1/audio/transcriptions",
         [this](const httplib::Request& req, httplib::Response& res) { handle_audio(req, res); });
+    http.Post("/audio/transcriptions", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_audio(req, res);
+    });
+    http.Post("/api/chat", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_ollama_chat(req, res);
+    });
+    http.Post("/api/generate", [this](const httplib::Request& req, httplib::Response& res) {
+      handle_ollama_generate(req, res);
+    });
     http.Post("/stop", [this](const httplib::Request& req, httplib::Response& res) {
       handle_stop(req, res);
     });
@@ -485,7 +661,11 @@ struct OpenAIServer::Impl {
     };
     http.Options("/v1/models", options_handler);
     http.Options("/v1/chat/completions", options_handler);
+    http.Options("/v1/completions", options_handler);
     http.Options("/v1/audio/transcriptions", options_handler);
+    http.Options("/audio/transcriptions", options_handler);
+    http.Options("/api/chat", options_handler);
+    http.Options("/api/generate", options_handler);
     http.Options("/stop", options_handler);
   }
 
@@ -637,6 +817,73 @@ struct OpenAIServer::Impl {
     });
   }
 
+  static std::string completion_prompt(const nlohmann::json& body) {
+    if (!body.contains("prompt")) {
+      throw std::runtime_error("OpenAI completion request requires prompt");
+    }
+    const auto& prompt = body.at("prompt");
+    if (prompt.is_string()) {
+      return prompt.get<std::string>();
+    }
+    if (prompt.is_array()) {
+      std::string out;
+      for (const auto& item : prompt) {
+        if (!item.is_string()) {
+          throw std::runtime_error("OpenAI completion prompt array must contain strings");
+        }
+        if (!out.empty()) {
+          out.push_back('\n');
+        }
+        out += item.get<std::string>();
+      }
+      return out;
+    }
+    throw std::runtime_error("OpenAI completion prompt must be string or string array");
+  }
+
+  static std::optional<std::uint32_t> ollama_max_tokens(const nlohmann::json& body) {
+    if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
+      return max_tokens;
+    }
+    if (body.contains("options") && body.at("options").is_object()) {
+      return json_u32(body.at("options"), {"num_predict"});
+    }
+    return std::nullopt;
+  }
+
+  std::shared_ptr<GenAIModel> require_model(const std::string& model_name, httplib::Response& res,
+                                            const std::string& request_kind) const {
+    if (model_name.empty()) {
+      set_error(res, request_kind + " request requires model", 400);
+      return nullptr;
+    }
+    auto model = find_model(model_name);
+    if (!model) {
+      set_error(res, "Unknown model: " + model_name, 404);
+      return nullptr;
+    }
+    return model;
+  }
+
+  bool require_text_or_vision_model(const GenAIModel& model, const std::string& model_name,
+                                    httplib::Response& res) const {
+    if (model.accepts_audio()) {
+      set_error(res, "Model is not a text or vision-language model: " + model_name, 400);
+      return false;
+    }
+    return true;
+  }
+
+  bool require_image_capability(const GenAIModel& model, const std::string& model_name,
+                                const GenerationRequest& request, httplib::Response& res) const {
+    if ((!request.images.empty() || messages_use_images(request.messages)) &&
+        !model.accepts_image()) {
+      set_error(res, "Model does not accept image input: " + model_name, 400);
+      return false;
+    }
+    return true;
+  }
+
   void handle_stop(const httplib::Request& req, httplib::Response& res) {
     set_cors(res);
     try {
@@ -659,24 +906,23 @@ struct OpenAIServer::Impl {
     try {
       const auto body = parse_json_body(req);
       const std::string model_name = body.value("model", std::string{});
-      if (model_name.empty()) {
-        set_error(res, "OpenAI chat request requires model", 400);
-        return;
-      }
-      auto model = find_model(model_name);
+      auto model = require_model(model_name, res, "OpenAI chat");
       if (!model) {
-        set_error(res, "Unknown model: " + model_name, 404);
         return;
       }
-      if (model->accepts_audio()) {
-        set_error(res, "Model is not a text or vision-language model: " + model_name, 400);
+      if (!require_text_or_vision_model(*model, model_name, res)) {
         return;
       }
 
       GenerationRequest request;
       request.messages = parse_chat_messages(body);
-      if (messages_use_images(request.messages) && !model->accepts_image()) {
-        set_error(res, "Model does not accept image input: " + model_name, 400);
+      if (body.contains("tools") && body.at("tools").is_array()) {
+        request.tools = body.at("tools");
+      }
+      if (body.contains("tool_choice")) {
+        request.tool_choice = body.at("tool_choice");
+      }
+      if (!require_image_capability(*model, model_name, request, res)) {
         return;
       }
       if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
@@ -687,7 +933,7 @@ struct OpenAIServer::Impl {
         handle_chat_stream(res, model_name, std::move(model), std::move(request));
       } else {
         const auto result = model->run(request);
-        nlohmann::json message = {{"role", "assistant"}, {"content", result.text}};
+        const nlohmann::json message = chat_message_response(result);
         set_json(res, {{"id", "chatcmpl-" + std::to_string(unix_time_s())},
                        {"object", "chat.completion"},
                        {"created", unix_time_s()},
@@ -698,6 +944,136 @@ struct OpenAIServer::Impl {
                               {"message", message},
                               {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
                        {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+      }
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 500);
+    }
+  }
+
+  void handle_completion(const httplib::Request& req, httplib::Response& res) {
+    set_cors(res);
+    try {
+      const auto body = parse_json_body(req);
+      const std::string model_name = body.value("model", std::string{});
+      auto model = require_model(model_name, res, "OpenAI completion");
+      if (!model) {
+        return;
+      }
+      if (!require_text_or_vision_model(*model, model_name, res)) {
+        return;
+      }
+
+      GenerationRequest request;
+      request.prompt = completion_prompt(body);
+      if (const auto max_tokens = json_u32(body, {"max_tokens", "max_completion_tokens"})) {
+        request.max_new_tokens = *max_tokens;
+      }
+      const bool stream = json_bool(body, "stream");
+      if (stream) {
+        handle_completion_stream(res, model_name, std::move(model), std::move(request));
+      } else {
+        const auto result = model->run(request);
+        set_json(res, {{"id", "cmpl-" + std::to_string(unix_time_s())},
+                       {"object", "text_completion"},
+                       {"created", unix_time_s()},
+                       {"model", model_name},
+                       {"choices",
+                        nlohmann::json::array(
+                            {{{"index", 0},
+                              {"text", result.text},
+                              {"finish_reason", choice_finish_reason(result.finish_reason)}}})},
+                       {"usage", {{"completion_tokens", result.metrics.generated_tokens}}}});
+      }
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 500);
+    }
+  }
+
+  void handle_ollama_chat(const httplib::Request& req, httplib::Response& res) {
+    set_cors(res);
+    try {
+      const auto body = parse_json_body(req);
+      const std::string model_name = body.value("model", std::string{});
+      auto model = require_model(model_name, res, "Ollama chat");
+      if (!model) {
+        return;
+      }
+      if (!require_text_or_vision_model(*model, model_name, res)) {
+        return;
+      }
+
+      GenerationRequest request;
+      request.messages = parse_chat_messages(body);
+      if (body.contains("tools") && body.at("tools").is_array()) {
+        request.tools = body.at("tools");
+      }
+      if (body.contains("tool_choice")) {
+        request.tool_choice = body.at("tool_choice");
+      }
+      if (!require_image_capability(*model, model_name, request, res)) {
+        return;
+      }
+      if (const auto max_tokens = ollama_max_tokens(body)) {
+        request.max_new_tokens = *max_tokens;
+      }
+      const bool stream = json_bool(body, "stream", true);
+      if (stream) {
+        handle_ollama_chat_stream(res, model_name, std::move(model), std::move(request));
+      } else {
+        const auto result = model->run(request);
+        set_json(res, {{"model", model_name},
+                       {"message", chat_message_response(result)},
+                       {"done", true},
+                       {"done_reason", choice_finish_reason(result.finish_reason)},
+                       {"eval_count", result.metrics.generated_tokens}});
+      }
+    } catch (const std::exception& e) {
+      set_error(res, e.what(), 500);
+    }
+  }
+
+  void handle_ollama_generate(const httplib::Request& req, httplib::Response& res) {
+    set_cors(res);
+    try {
+      const auto body = parse_json_body(req);
+      const std::string model_name = body.value("model", std::string{});
+      auto model = require_model(model_name, res, "Ollama generate");
+      if (!model) {
+        return;
+      }
+      if (!require_text_or_vision_model(*model, model_name, res)) {
+        return;
+      }
+      if (!body.contains("prompt") || !body.at("prompt").is_string()) {
+        set_error(res, "Ollama generate request requires string prompt", 400);
+        return;
+      }
+
+      ChatMessage message;
+      message.role = "user";
+      message.content = body.at("prompt").get<std::string>();
+      if (body.contains("images")) {
+        append_ollama_images(message, body.at("images"));
+      }
+
+      GenerationRequest request;
+      request.messages.push_back(std::move(message));
+      if (!require_image_capability(*model, model_name, request, res)) {
+        return;
+      }
+      if (const auto max_tokens = ollama_max_tokens(body)) {
+        request.max_new_tokens = *max_tokens;
+      }
+      const bool stream = json_bool(body, "stream", true);
+      if (stream) {
+        handle_ollama_generate_stream(res, model_name, std::move(model), std::move(request));
+      } else {
+        const auto result = model->run(request);
+        set_json(res, {{"model", model_name},
+                       {"response", result.text},
+                       {"done", true},
+                       {"done_reason", choice_finish_reason(result.finish_reason)},
+                       {"eval_count", result.metrics.generated_tokens}});
       }
     } catch (const std::exception& e) {
       set_error(res, e.what(), 500);
@@ -727,6 +1103,11 @@ struct OpenAIServer::Impl {
                 sink.done();
                 return true;
               }
+              if (!sample->tool_calls.empty()) {
+                write_sink(sink,
+                           chat_tool_call_chunk(model_name, sample->tool_calls, sample->metrics));
+                continue;
+              }
               const auto chunk =
                   chat_chunk(model_name, sample->text, std::nullopt, sample->metrics);
               write_sink(sink, chunk);
@@ -737,6 +1118,135 @@ struct OpenAIServer::Impl {
             const nlohmann::json error = {{"error", {{"message", e.what()}}}};
             const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
             write_sink(sink, chunk);
+          }
+          sink.done();
+          return true;
+        });
+  }
+
+  void handle_completion_stream(httplib::Response& res, std::string model_name,
+                                std::shared_ptr<GenAIModel> model, GenerationRequest request) {
+    res.set_header("Content-Type", "text/event-stream");
+    res.set_header("Cache-Control", "no-cache");
+    res.set_header("Connection", "keep-alive");
+    res.set_chunked_content_provider(
+        "text/event-stream",
+        [this, model_name = std::move(model_name), model = std::move(model),
+         request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
+          try {
+            ActiveStreamRegistration active_stream{*this, model_name};
+            auto stream = model->stream(request);
+            active_stream.attach(stream);
+            for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              if (sample->is_final) {
+                const auto final_chunk =
+                    completion_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
+                                     sample->metrics) +
+                    "data: [DONE]\n\n";
+                write_sink(sink, final_chunk);
+                sink.done();
+                return true;
+              }
+              write_sink(sink,
+                         completion_chunk(model_name, sample->text, std::nullopt, sample->metrics));
+            }
+            write_sink(sink, completion_chunk(model_name, "", "stop") + "data: [DONE]\n\n");
+          } catch (const std::exception& e) {
+            const nlohmann::json error = {{"error", {{"message", e.what()}}}};
+            write_sink(sink, "data: " + error.dump() + "\n\ndata: [DONE]\n\n");
+          }
+          sink.done();
+          return true;
+        });
+  }
+
+  void handle_ollama_chat_stream(httplib::Response& res, std::string model_name,
+                                 std::shared_ptr<GenAIModel> model, GenerationRequest request) {
+    res.set_header("Content-Type", "application/x-ndjson");
+    res.set_header("Cache-Control", "no-cache");
+    res.set_chunked_content_provider(
+        "application/x-ndjson",
+        [this, model_name = std::move(model_name), model = std::move(model),
+         request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
+          try {
+            ActiveStreamRegistration active_stream{*this, model_name};
+            auto stream = model->stream(request);
+            active_stream.attach(stream);
+            Json pending_tool_calls = nullptr;
+            GenerationMetrics pending_tool_metrics;
+            for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              if (sample->is_final) {
+                if (!pending_tool_calls.is_null()) {
+                  nlohmann::json body;
+                  body["model"] = model_name;
+                  body["message"] = {
+                      {"role", "assistant"},
+                      {"content", ""},
+                      {"tool_calls", openai_tool_calls_to_ollama(pending_tool_calls)}};
+                  body["done"] = true;
+                  body["done_reason"] = choice_finish_reason(sample->finish_reason);
+                  if (pending_tool_metrics.time_to_first_token_s > 0.0) {
+                    body["ttft"] = pending_tool_metrics.time_to_first_token_s;
+                  }
+                  if (pending_tool_metrics.tokens_per_second > 0.0) {
+                    body["tps"] = pending_tool_metrics.tokens_per_second;
+                  }
+                  if (sample->metrics.generated_tokens > 0U) {
+                    body["eval_count"] = sample->metrics.generated_tokens;
+                  }
+                  write_sink(sink, body.dump() + "\n");
+                  sink.done();
+                  return true;
+                }
+                write_sink(sink, ollama_chat_line(model_name, "", true,
+                                                  choice_finish_reason(sample->finish_reason),
+                                                  sample->metrics));
+                sink.done();
+                return true;
+              }
+              if (!sample->tool_calls.empty()) {
+                pending_tool_calls = sample->tool_calls;
+                pending_tool_metrics = sample->metrics;
+                continue;
+              }
+              write_sink(sink, ollama_chat_line(model_name, sample->text, false, std::nullopt,
+                                                sample->metrics));
+            }
+            write_sink(sink, ollama_chat_line(model_name, "", true, "stop"));
+          } catch (const std::exception& e) {
+            write_sink(sink, nlohmann::json({{"error", e.what()}, {"done", true}}).dump() + "\n");
+          }
+          sink.done();
+          return true;
+        });
+  }
+
+  void handle_ollama_generate_stream(httplib::Response& res, std::string model_name,
+                                     std::shared_ptr<GenAIModel> model, GenerationRequest request) {
+    res.set_header("Content-Type", "application/x-ndjson");
+    res.set_header("Cache-Control", "no-cache");
+    res.set_chunked_content_provider(
+        "application/x-ndjson",
+        [this, model_name = std::move(model_name), model = std::move(model),
+         request = std::move(request)](std::size_t, httplib::DataSink& sink) mutable {
+          try {
+            ActiveStreamRegistration active_stream{*this, model_name};
+            auto stream = model->stream(request);
+            active_stream.attach(stream);
+            for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              if (sample->is_final) {
+                write_sink(sink, ollama_generate_line(model_name, "", true,
+                                                      choice_finish_reason(sample->finish_reason),
+                                                      sample->metrics));
+                sink.done();
+                return true;
+              }
+              write_sink(sink, ollama_generate_line(model_name, sample->text, false, std::nullopt,
+                                                    sample->metrics));
+            }
+            write_sink(sink, ollama_generate_line(model_name, "", true, "stop"));
+          } catch (const std::exception& e) {
+            write_sink(sink, nlohmann::json({{"error", e.what()}, {"done", true}}).dump() + "\n");
           }
           sink.done();
           return true;

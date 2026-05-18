@@ -14,45 +14,23 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
-#include <sstream>
 #include <string>
 #include <system_error>
-#include <utility>
 #include <vector>
-#include <unistd.h>
 
 // Exercises the GenAI VisionLanguage graph node end-to-end against a real LLiMa
 // VLM, including image encode, cached image generation, EV74 tensors, and errors.
+// Model fixture:
+//   hf download simaai/Qwen3-VL-2B-Instruct-GPTQ-a16w4 --local-dir <model-dir>
+//   export SIMA_TEST_LLIMA_VLM_MODEL=<model-dir>
 namespace fs = std::filesystem;
 
 namespace {
 
 constexpr const char* kModelEnv = "SIMA_TEST_LLIMA_VLM_MODEL";
-constexpr const char* kRepoId = "simaai/LFM2-VL-450M-a16w4";
-constexpr const char* kModelName = "LFM2-VL-450M-a16w4";
 constexpr const char* kPrompt = "Describe this image in a short phrase.";
-constexpr const char* kExpectedText = "Skier jumping high in the air.";
-
-std::string shell_quote(const fs::path& path) {
-  std::string in = path.string();
-  std::string out = "'";
-  for (char c : in) {
-    if (c == '\'') {
-      out += "'\\''";
-    } else {
-      out += c;
-    }
-  }
-  out += "'";
-  return out;
-}
-
-bool command_exists(const char* command) {
-  std::string cmd = "command -v ";
-  cmd += command;
-  cmd += " >/dev/null 2>&1";
-  return std::system(cmd.c_str()) == 0;
-}
+constexpr const char* kExpectedText =
+    "A skier soars through the air above a snowy slope, with spectators watching below.";
 
 bool has_llima_vlm_config(const fs::path& model_dir) {
   std::error_code ec;
@@ -82,103 +60,21 @@ std::string trim_text(std::string value) {
   return value.substr(first, last - first + 1);
 }
 
-class AutoModelDir {
-public:
-  AutoModelDir() = default;
-
-  explicit AutoModelDir(fs::path path) : path_(std::move(path)), owned_(true) {}
-
-  AutoModelDir(const AutoModelDir&) = delete;
-  AutoModelDir& operator=(const AutoModelDir&) = delete;
-
-  AutoModelDir(AutoModelDir&& other) noexcept
-      : path_(std::move(other.path_)), owned_(other.owned_) {
-    other.owned_ = false;
-  }
-
-  AutoModelDir& operator=(AutoModelDir&& other) noexcept {
-    if (this == &other) {
-      return *this;
-    }
-    cleanup();
-    path_ = std::move(other.path_);
-    owned_ = other.owned_;
-    other.owned_ = false;
-    return *this;
-  }
-
-  ~AutoModelDir() {
-    cleanup();
-  }
-
-  const fs::path& path() const {
-    return path_;
-  }
-
-private:
-  void cleanup() {
-    if (!owned_ || path_.empty()) {
-      return;
-    }
-    std::error_code ec;
-    fs::remove_all(path_, ec);
-    owned_ = false;
-  }
-
-  fs::path path_;
-  bool owned_ = false;
-};
-
-AutoModelDir download_model_to_nvme() {
-  if (!command_exists("hf")) {
-    skip_long_test_exception("missing Hugging Face CLI command 'hf'; set " +
-                             std::string(kModelEnv) + " to an existing " + kRepoId +
-                             " model directory");
-  }
-
-  const fs::path root =
-      fs::path("/media/nvme/tmp") /
-      ("neat-genai-graph-vlm-e2e-" + std::to_string(static_cast<long long>(::getpid())));
-  const fs::path model_dir = root / kModelName;
-
-  std::error_code ec;
-  fs::create_directories(root, ec);
-  if (ec) {
-    skip_long_test_exception("failed to create temporary model directory " + root.string() + ": " +
-                             ec.message());
-  }
-
-  std::ostringstream cmd;
-  cmd << "hf download " << kRepoId << " --local-dir " << shell_quote(model_dir);
-  const int rc = std::system(cmd.str().c_str());
-  if (rc != 0) {
-    skip_long_test_exception("failed to download " + std::string(kRepoId) + " with hf");
-  }
-
-  if (!has_llima_vlm_config(model_dir)) {
-    throw std::runtime_error("downloaded model is missing devkit/vlm_config.json: " +
-                             model_dir.string());
-  }
-
-  return AutoModelDir(root);
-}
-
-fs::path resolve_model_dir(AutoModelDir& auto_dir) {
+fs::path resolve_model_dir() {
   const std::string env_model_dir = trim_env_value(std::getenv(kModelEnv));
-  if (!env_model_dir.empty()) {
-    fs::path model_dir(env_model_dir);
-    if (has_llima_vlm_config(model_dir)) {
-      return model_dir;
-    }
-
-    std::cout << "[WARN] " << kModelEnv
-              << " does not point to a LLiMa VLM model directory, falling back to temporary "
-                 "download: "
-              << model_dir << "\n";
+  if (env_model_dir.empty()) {
+    skip_long_test_exception("set " + std::string(kModelEnv) +
+                             " to an existing LLiMa VLM model directory");
   }
 
-  auto_dir = download_model_to_nvme();
-  return auto_dir.path() / kModelName;
+  fs::path model_dir(env_model_dir);
+  if (has_llima_vlm_config(model_dir)) {
+    return model_dir;
+  }
+
+  skip_long_test_exception(std::string(kModelEnv) +
+                           " does not point to a LLiMa VLM model directory: " + model_dir.string());
+  return {};
 }
 
 fs::path resolve_image_path(const fs::path& repo_root) {
@@ -310,6 +206,7 @@ void require_vlm_outputs(const GraphOutputs& outputs, const std::string& label,
   if (!expect_streaming) {
     require(outputs.token_samples == 1, label + " should emit one sync token sample");
   }
+  std::cout << label << " text=" << outputs.tokens << "\n";
   require(trim_text(outputs.tokens) == kExpectedText,
           label + " generated unexpected text: " + outputs.tokens);
   const std::string finish_reason = bundle_field_text(outputs.done, "finish_reason");
@@ -317,7 +214,6 @@ void require_vlm_outputs(const GraphOutputs& outputs, const std::string& label,
           label + " returned unexpected finish reason: " + finish_reason);
   require(std::stoul(bundle_field_text(outputs.done, "generated_tokens")) > 0,
           label + " done should report generated tokens");
-  std::cout << label << " text=" << outputs.tokens << "\n";
 }
 
 } // namespace
@@ -328,8 +224,7 @@ int main(int argc, char** argv) {
       throw std::runtime_error("genai_graph_vlm_run_test requires repository root argument");
     }
 
-    AutoModelDir auto_dir;
-    const fs::path model_dir = resolve_model_dir(auto_dir);
+    const fs::path model_dir = resolve_model_dir();
     const fs::path image_path = resolve_image_path(fs::path(argv[1]));
 
     std::cout << "GENAI_GRAPH_VLM model_dir=" << model_dir << "\n";
@@ -339,84 +234,87 @@ int main(int argc, char** argv) {
     require(!image_bgr.empty(), "failed to load VLM e2e image: " + image_path.string());
 
     auto model = std::make_shared<simaai::neat::genai::VisionLanguageModel>(model_dir);
-    require(model->accepts_image(), "LFM2-VL model should accept image input");
+    require(model->accepts_image(), "Qwen3-VL model should accept image input");
 
     simaai::neat::graph::Graph graph;
     const auto prompt_port = graph.intern_port("prompt");
     const auto image_port = graph.intern_port("image");
     const auto use_cached_image_port = graph.intern_port("use_cached_image");
 
-    const auto cached_streaming_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
+    const auto direct_streaming_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
         model,
         simaai::neat::genai::nodes::VisionLanguageOptions{
-            .max_new_tokens = 48, .streaming = true, .encode_images_on_input = true},
-        "vision_language_cached_streaming"));
+            .max_new_tokens = 48, .streaming = true, .encode_images_on_input = false},
+        "vision_language_direct_streaming"));
     const auto direct_sync_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
         model,
         simaai::neat::genai::nodes::VisionLanguageOptions{
             .max_new_tokens = 48, .streaming = false, .encode_images_on_input = false},
         "vision_language_direct_sync"));
-    const auto missing_image_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
+    const auto unsupported_cached_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
         model,
         simaai::neat::genai::nodes::VisionLanguageOptions{
             .max_new_tokens = 48, .streaming = true, .encode_images_on_input = true},
+        "vision_language_unsupported_cached"));
+    const auto missing_image_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
+        model,
+        simaai::neat::genai::nodes::VisionLanguageOptions{
+            .max_new_tokens = 48, .streaming = true, .encode_images_on_input = false},
         "vision_language_missing_image"));
 
     simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
 
-    require(run.push(cached_streaming_node, image_port,
+    require(run.push(direct_streaming_node, image_port,
                      make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 1)),
             "GraphRun::push CPU image failed");
-    simaai::neat::Sample encoded = pull_encoded(run, cached_streaming_node);
-    require(bundle_field_text(encoded, "mode") == "cached", "CPU image should be encoded cached");
-    require(bundle_field_text(encoded, "cached_image_count") == "1",
-            "CPU image should cache one image");
+    simaai::neat::Sample encoded = pull_encoded(run, direct_streaming_node);
+    require(bundle_field_text(encoded, "mode") == "direct", "CPU image should stay direct");
 
-    require(run.push(cached_streaming_node, use_cached_image_port,
-                     make_text_input("use_cached_image", "true", 2)),
-            "GraphRun::push cached control before prompt failed");
-    require(run.push(cached_streaming_node, prompt_port, make_text_input("prompt", kPrompt, 3)),
-            "GraphRun::push cached prompt failed");
-    require_vlm_outputs(pull_until_done_or_error(run, cached_streaming_node),
-                        "GENAI_GRAPH_VLM_CACHED_STREAMING", true);
+    require(run.push(direct_streaming_node, prompt_port, make_text_input("prompt", kPrompt, 2)),
+            "GraphRun::push direct streaming prompt failed");
+    require_vlm_outputs(pull_until_done_or_error(run, direct_streaming_node),
+                        "GENAI_GRAPH_VLM_DIRECT_STREAMING", true);
 
-    require(run.push(cached_streaming_node, use_cached_image_port,
-                     make_text_input("use_cached_image", "true", 4)),
-            "GraphRun::push cached control failed");
-    require(run.push(cached_streaming_node, image_port,
-                     make_image_input(image_bgr, simaai::neat::TensorMemory::EV74, 5)),
+    require(run.push(direct_streaming_node, image_port,
+                     make_image_input(image_bgr, simaai::neat::TensorMemory::EV74, 3)),
             "GraphRun::push EV74 image failed");
-    encoded = pull_encoded(run, cached_streaming_node);
-    require(bundle_field_text(encoded, "mode") == "cached", "EV74 image should be encoded cached");
-    require(bundle_field_text(encoded, "cached_image_count") == "1",
-            "EV74 image should cache one image");
+    encoded = pull_encoded(run, direct_streaming_node);
+    require(bundle_field_text(encoded, "mode") == "direct", "EV74 image should stay direct");
 
-    require(run.push(cached_streaming_node, prompt_port, make_text_input("prompt", kPrompt, 6)),
-            "GraphRun::push EV74 cached prompt failed");
-    require_vlm_outputs(pull_until_done_or_error(run, cached_streaming_node),
-                        "GENAI_GRAPH_VLM_EV74_CACHED_STREAMING", true);
+    require(run.push(direct_streaming_node, prompt_port, make_text_input("prompt", kPrompt, 4)),
+            "GraphRun::push EV74 direct prompt failed");
+    require_vlm_outputs(pull_until_done_or_error(run, direct_streaming_node),
+                        "GENAI_GRAPH_VLM_EV74_DIRECT_STREAMING", true);
 
     require(run.push(direct_sync_node, image_port,
-                     make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 7)),
+                     make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 5)),
             "GraphRun::push direct image failed");
     encoded = pull_encoded(run, direct_sync_node);
     require(bundle_field_text(encoded, "mode") == "direct", "direct image should stay direct");
 
     require(run.push(direct_sync_node, use_cached_image_port,
-                     make_text_input("use_cached_image", "false", 8)),
+                     make_text_input("use_cached_image", "false", 6)),
             "GraphRun::push direct control failed");
-    require(run.push(direct_sync_node, prompt_port, make_text_input("prompt", kPrompt, 9)),
+    require(run.push(direct_sync_node, prompt_port, make_text_input("prompt", kPrompt, 7)),
             "GraphRun::push direct sync prompt failed");
     require_vlm_outputs(pull_until_done_or_error(run, direct_sync_node),
                         "GENAI_GRAPH_VLM_DIRECT_SYNC", false);
 
-    require(run.push(cached_streaming_node, image_port, make_invalid_image_input()),
+    require(run.push(unsupported_cached_node, image_port,
+                     make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 8)),
+            "GraphRun::push unsupported cached image failed");
+    GraphOutputs error_outputs = pull_until_done_or_error(run, unsupported_cached_node);
+    require(error_outputs.saw_error, "unsupported cached image should emit error");
+    require(error_outputs.error.find("cached reuse is not supported") != std::string::npos,
+            "unsupported cached image error should explain cached reuse support");
+
+    require(run.push(direct_streaming_node, image_port, make_invalid_image_input()),
             "GraphRun::push invalid image failed");
-    GraphOutputs error_outputs = pull_until_done_or_error(run, cached_streaming_node);
+    error_outputs = pull_until_done_or_error(run, direct_streaming_node);
     require(error_outputs.saw_error, "invalid image should emit error");
     require(!error_outputs.error.empty(), "invalid image error should be non-empty");
 
-    require(run.push(missing_image_node, prompt_port, make_text_input("prompt", kPrompt, 10)),
+    require(run.push(missing_image_node, prompt_port, make_text_input("prompt", kPrompt, 9)),
             "GraphRun::push missing image prompt failed");
     error_outputs = pull_until_done_or_error(run, missing_image_node);
     require(error_outputs.saw_error, "missing image prompt should emit error");
