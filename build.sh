@@ -51,6 +51,7 @@ NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_LLIMA_BASE_URL="${NEAT_LLIMA_BASE_URL:-https://artifacts.sima-neat.com/llima}"
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
 NEAT_LLIMA_BASIC_AUTH="${NEAT_LLIMA_BASIC_AUTH:-${NEAT_INTERNALS_BASIC_AUTH}}"
+NEAT_LLIMA_RESOLVED_REF=""
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -831,11 +832,13 @@ current_core_branch() {
   printf '\n'
 }
 
-internals_checksum_available() {
+artifact_checksum_available() {
   local url="$1"
+  local basic_auth="$2"
+  local temp_prefix="$3"
   local probe_path
-  probe_path="$(mktemp /tmp/sima-neat-internals-probe-XXXXXX)"
-  if download_file "${url}" "${probe_path}" "${NEAT_INTERNALS_BASIC_AUTH}" >/dev/null 2>&1; then
+  probe_path="$(mktemp "/tmp/${temp_prefix}-probe-XXXXXX")"
+  if download_file "${url}" "${probe_path}" "${basic_auth}" >/dev/null 2>&1; then
     rm -f "${probe_path}"
     return 0
   fi
@@ -843,19 +846,26 @@ internals_checksum_available() {
   return 1
 }
 
-resolve_neat_internals_ref() {
+resolve_manifest_artifact_ref() {
+  local manifest_key="$1"
+  local base_url="$2"
+  local artifact_prefix="$3"
+  local basic_auth="$4"
+  local display_name="$5"
+  local temp_prefix="$6"
+
   if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
     return 1
   fi
 
-  if ! manifest_has_json_string_key "internals" "${NEAT_INTERNALS_MANIFEST}"; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define an internals string." >&2
+  if ! manifest_has_json_string_key "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}"; then
+    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a ${manifest_key} string." >&2
     return 1
   fi
 
   local manifest_ref
-  manifest_ref="$(extract_json_string "internals" "${NEAT_INTERNALS_MANIFEST}")"
+  manifest_ref="$(extract_json_string "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}")"
   if [[ -n "${manifest_ref}" ]]; then
     printf '%s\n' "${manifest_ref}"
     return 0
@@ -866,18 +876,38 @@ resolve_neat_internals_ref() {
   branch_key="$(sanitize_internals_branch_key "${branch}")"
   if [[ -n "${branch_key}" && "${branch_key}" != "head" ]]; then
     candidate="${branch_key}-latest"
-    checksum_url="${NEAT_INTERNALS_BASE_URL}/sima-neat-internals-${candidate}.tar.gz.sha256"
-    if internals_checksum_available "${checksum_url}"; then
-      echo "Resolved empty internals manifest to matching branch artifact: ${candidate}" >&2
+    checksum_url="${base_url}/${artifact_prefix}-${candidate}.tar.gz.sha256"
+    if artifact_checksum_available "${checksum_url}" "${basic_auth}" "${temp_prefix}"; then
+      echo "Resolved empty ${manifest_key} manifest to matching branch artifact: ${candidate}" >&2
       printf '%s\n' "${candidate}"
       return 0
     fi
-    echo "No internals artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
+    echo "No ${display_name} artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
   else
-    echo "Could not determine current branch for internals snap; using develop-latest." >&2
+    echo "Could not determine current branch for ${display_name} snap; using develop-latest." >&2
   fi
 
   printf '%s\n' "develop-latest"
+}
+
+resolve_neat_internals_ref() {
+  resolve_manifest_artifact_ref \
+    "internals" \
+    "${NEAT_INTERNALS_BASE_URL}" \
+    "sima-neat-internals" \
+    "${NEAT_INTERNALS_BASIC_AUTH}" \
+    "internals" \
+    "sima-neat-internals"
+}
+
+resolve_neat_llima_ref() {
+  resolve_manifest_artifact_ref \
+    "llima" \
+    "${NEAT_LLIMA_BASE_URL}" \
+    "sima-llima" \
+    "${NEAT_LLIMA_BASIC_AUTH}" \
+    "LLiMa" \
+    "sima-neat-llima"
 }
 
 compute_sha256() {
@@ -1192,17 +1222,11 @@ ensure_neat_internals() {
 
 ensure_neat_llima() {
   # Sync LLiMa C++ runtime/dev packages from remote artifact and install them.
-  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
-    exit 1
-  fi
-
   local llima_ref
-  llima_ref="$(extract_json_string "llima" "${NEAT_INTERNALS_MANIFEST}")"
-  if [[ -z "${llima_ref}" ]]; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty llima string." >&2
+  if ! llima_ref="$(resolve_neat_llima_ref)"; then
     exit 1
   fi
+  NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.llima"
   local checksum_file="${NEAT_INTERNALS_DIR}/.llima_artifact_sha256"
@@ -1670,30 +1694,34 @@ generate_platform_version_artifacts() {
 }
 
 write_resolved_neat_internals_manifest_if_needed() {
-  if [[ -z "${NEAT_INTERNALS_RESOLVED_REF}" ]]; then
+  if [[ -z "${NEAT_INTERNALS_RESOLVED_REF}" && -z "${NEAT_LLIMA_RESOLVED_REF}" ]]; then
     return 0
   fi
 
   local output_path="${NEAT_INTERNALS_RESOLVED_MANIFEST}"
   mkdir -p "$(dirname "${output_path}")"
-  python3 - "${NEAT_INTERNALS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${output_path}" <<'PY'
+  python3 - "${NEAT_INTERNALS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 manifest_path = Path(sys.argv[1])
 internals_ref = sys.argv[2]
-output_path = Path(sys.argv[3])
+llima_ref = sys.argv[3]
+output_path = Path(sys.argv[4])
 
 data = json.loads(manifest_path.read_text(encoding="utf-8"))
 platform_version = str(data.get("platform-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
 
-data["internals"] = internals_ref
+if internals_ref:
+    data["internals"] = internals_ref
+if llima_ref:
+    data["llima"] = llima_ref
 output_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 PY
-  echo "Resolved deps manifest: ${output_path} (internals=${NEAT_INTERNALS_RESOLVED_REF})"
+  echo "Resolved deps manifest: ${output_path} (internals=${NEAT_INTERNALS_RESOLVED_REF:-<unchanged>}, llima=${NEAT_LLIMA_RESOLVED_REF:-<unchanged>})"
 }
 
 build_python_wheel_if_requested() {
