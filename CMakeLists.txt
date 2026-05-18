@@ -1261,9 +1261,19 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
 
-set(CPACK_DEBIAN_CORE_PACKAGE_DEPENDS
-  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libglib2.0-0, libopencv-core406, neat-internals-dev, neat-gst-plugins, sima-lmm-core, sima-lmm-dev"
+set(SIMANEAT_CORE_DEBIAN_DEPENDS
+  "libgstreamer1.0-0"
+  "libgstrtspserver-1.0-0"
+  "libglib2.0-0"
+  "libopencv-core406"
+  "neat-internals-dev"
+  "neat-gst-plugins"
+  "sima-lmm-core"
 )
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "libcpp-httplib0.11")
+endif()
+string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
 )

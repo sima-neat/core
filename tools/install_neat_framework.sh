@@ -25,7 +25,7 @@ set -euo pipefail
 #   - one .whl file
 #   - sima-neat-*-Linux-core.deb
 #   - neat-*.deb / simaai-common*.deb runtime dependencies
-#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-dev.deb
+#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
@@ -293,6 +293,28 @@ collect_debs_in_install_order() {
   append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
 }
 
+drop_board_only_debs() {
+  local out_array_name="$1"
+  local -n out_array="${out_array_name}"
+  local -a filtered=()
+  local deb
+  local deb_base
+
+  for deb in "${out_array[@]}"; do
+    deb_base="$(basename "${deb}")"
+    case "${deb_base}" in
+      sima-lmm-*-Linux-dev.deb)
+        log "Skipping board runtime install of LLiMa development package: ${deb_base}"
+        ;;
+      *)
+        filtered+=("${deb}")
+        ;;
+    esac
+  done
+
+  out_array=("${filtered[@]}")
+}
+
 sysroot_path() {
   printf '%s\n' "${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 }
@@ -533,6 +555,7 @@ if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
   install_agent_skills_for_current_user "${SYSROOT:-/opt/toolchain/aarch64/modalix}/usr/share/sima-neat/skills/sima-neat"
   deploy_artifacts_to_paired_devkit_if_configured
 else
+  drop_board_only_debs DEBS
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
   remove_stale_global_sima_lmm_pip_install
