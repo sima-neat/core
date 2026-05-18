@@ -59,6 +59,14 @@ option(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS
   "Require LLiMa runtime libraries/headers during configure"
   ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT})
 
+set(SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS})
+if (SIMANEAT_CPP_TIDY)
+  set(SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT OFF)
+endif()
+option(SIMANEAT_ENABLE_OPENAI_SERVER
+  "Build OpenAI-compatible GenAI HTTP server support"
+  ${SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT})
+
 if (UNIX)
   set(SIMANEAT_SOURCE_FS_TYPE "")
   execute_process(
@@ -222,14 +230,7 @@ if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
   find_package(SimaLMM CONFIG REQUIRED)
   message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
 else()
-  find_package(SimaLMM CONFIG QUIET)
-  if (SimaLMM_FOUND)
-    message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
-  else()
-    message(WARNING
-      "SimaLMM package not found; continuing because "
-      "SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF.")
-  endif()
+  message(STATUS "Skipping SimaLMM package lookup because SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF.")
 endif()
 find_path(SIMANEAT_JSONCPP_INCLUDE_DIR
   NAMES json/json.h
@@ -251,9 +252,11 @@ find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
     "${CMAKE_SYSROOT}/usr/include/eigen3"
     "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
     "/usr/include/eigen3")
-if (SIMANEAT_CPP_TIDY)
-  message(STATUS "OpenAIServer.cpp omitted from clang-tidy analysis.")
-else()
+if (SIMANEAT_ENABLE_OPENAI_SERVER AND NOT SimaLMM_FOUND)
+  message(STATUS "OpenAI server disabled because SimaLMM package was not found.")
+  set(SIMANEAT_ENABLE_OPENAI_SERVER OFF)
+endif()
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
   pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
   find_library(SIMANEAT_HTTPLIB_LIBRARY
     NAMES cpp-httplib
@@ -719,7 +722,7 @@ file(GLOB_RECURSE SIMANEAT_ALL_SOURCES
 # Apply blacklist
 # ------------------------------------------------------------------------------
 set(SIMANEAT_SOURCES ${SIMANEAT_ALL_SOURCES})
-if (SIMANEAT_CPP_TIDY)
+if (NOT SIMANEAT_ENABLE_OPENAI_SERVER)
   list(REMOVE_ITEM SIMANEAT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp")
 endif()
@@ -802,7 +805,7 @@ endif()
 if (OPENCV_FOUND)
   target_compile_options(sima_neat PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
-if (NOT SIMANEAT_CPP_TIDY)
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
   target_compile_options(sima_neat PRIVATE ${HTTPLIB_CFLAGS_OTHER})
 endif()
 
@@ -820,7 +823,7 @@ if (SimaLMM_FOUND)
   )
 endif()
 
-if (NOT SIMANEAT_CPP_TIDY)
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
   target_include_directories(sima_neat SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
   target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
