@@ -144,7 +144,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           clean: true
-          fetch-depth: 0
 
       - name: Setup Environment
         run: |
@@ -211,7 +210,6 @@ jobs:
         uses: actions/checkout@v5
         with:
           clean: true
-          fetch-depth: 0
 
       - name: Build fuzz artifacts
         env:
