@@ -1,6 +1,7 @@
 #include "genai/ASRModel.h"
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
+#include "genai/OpenAIServer.h"
 #include "genai/VisionLanguageModel.h"
 #include "genai/nodes/SpeechTranscriber.h"
 #include "genai/nodes/VisionLanguage.h"
@@ -28,6 +29,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            ImageList images;
            nodes::VisionLanguageOptions vision_language_options;
            nodes::SpeechTranscriberOptions speech_transcriber_options;
+           OpenAIServerOptions openai_options;
+           openai_options.port = 9998;
            request.audio_file = std::filesystem::path{"audio.wav"};
            request.language = "en";
 
@@ -43,10 +46,13 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            static_assert(!std::is_copy_constructible_v<ASRModel>);
            static_assert(std::is_move_constructible_v<GenAIModel>);
            static_assert(!std::is_copy_constructible_v<GenAIModel>);
+           static_assert(std::is_move_constructible_v<OpenAIServer>);
+           static_assert(!std::is_copy_constructible_v<OpenAIServer>);
 
            auto vlm = static_cast<VisionLanguageModel*>(nullptr);
            auto asr = static_cast<ASRModel*>(nullptr);
            auto genai = static_cast<GenAIModel*>(nullptr);
+           auto openai_server = static_cast<OpenAIServer*>(nullptr);
            auto genai_run = &GenAIModel::run;
            auto genai_stream = &GenAIModel::stream;
            bool vision_language_rejected_null = false;
@@ -78,9 +84,11 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)images;
            (void)vision_language_options;
            (void)speech_transcriber_options;
+           (void)openai_options;
            (void)vlm;
            (void)asr;
            (void)genai;
+           (void)openai_server;
            (void)genai_run;
            (void)genai_stream;
          }));

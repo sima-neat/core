@@ -14,6 +14,7 @@
 #include "builder/OutputSpec.h"
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
+#include "genai/OpenAIServer.h"
 #include "genai/ASRModel.h"
 #include "genai/VisionLanguageModel.h"
 #include "genai/nodes/SpeechTranscriber.h"
@@ -1583,6 +1584,34 @@ NB_MODULE(_pyneat_core, m) {
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
            nb::call_guard<nb::gil_scoped_release>());
 
+  nb::class_<simaai::neat::genai::OpenAIServerOptions>(m, "OpenAIServerOptions")
+      .def(nb::init<>())
+      .def_rw("host", &simaai::neat::genai::OpenAIServerOptions::host)
+      .def_rw("port", &simaai::neat::genai::OpenAIServerOptions::port);
+
+  nb::class_<simaai::neat::genai::OpenAIServer>(m, "OpenAIServer")
+      .def(nb::init<simaai::neat::genai::OpenAIServerOptions>(),
+           "options"_a = simaai::neat::genai::OpenAIServerOptions{})
+      .def(
+          "add_model",
+          [](simaai::neat::genai::OpenAIServer& server, const std::filesystem::path& model_dir) {
+            return server.add_model(model_dir);
+          },
+          "model_dir"_a)
+      .def(
+          "add_model",
+          [](simaai::neat::genai::OpenAIServer& server, const std::filesystem::path& model_dir,
+             const std::string& served_name) { return server.add_model(model_dir, served_name); },
+          "model_dir"_a, "served_name"_a)
+      .def("remove_model", &simaai::neat::genai::OpenAIServer::remove_model, "served_name"_a)
+      .def("model_names", &simaai::neat::genai::OpenAIServer::model_names)
+      .def("serve", &simaai::neat::genai::OpenAIServer::serve,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("start", &simaai::neat::genai::OpenAIServer::start,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stop", &simaai::neat::genai::OpenAIServer::stop,
+           nb::call_guard<nb::gil_scoped_release>());
+
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
   genai_mod.attr("GenAITask") = m.attr("GenAITask");
   genai_mod.attr("ImageList") = m.attr("ImageList");
@@ -1595,6 +1624,8 @@ NB_MODULE(_pyneat_core, m) {
   genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
   genai_mod.attr("ASRModel") = m.attr("ASRModel");
   genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
+  genai_mod.attr("OpenAIServerOptions") = m.attr("OpenAIServerOptions");
+  genai_mod.attr("OpenAIServer") = m.attr("OpenAIServer");
   nb::module_ genai_nodes_mod = genai_mod.def_submodule("nodes", "GenAI graph node factories");
 
   nb::class_<simaai::neat::RtspServerOptions>(m, "RtspServerOptions")

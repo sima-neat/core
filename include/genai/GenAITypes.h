@@ -25,6 +25,8 @@
 namespace simaai::neat::genai {
 
 class ASRModel;
+class GenAIModel;
+class OpenAIServer;
 class VisionLanguageModel;
 
 /**

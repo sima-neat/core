@@ -88,6 +88,7 @@ SYSTEM_DEPS_LINUX=(
   libglib2.0-dev
   libopencv-dev
   nlohmann-json3-dev
+  libcpp-httplib-dev
   clang
   clang-format
   ripgrep
@@ -612,6 +613,17 @@ ensure_llima_sdk_sysroot_deps() {
   fi
   if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
     missing_packages+=("nlohmann-json3-dev")
+  fi
+  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
+    missing_packages+=("libbrotli-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/httplib.h" ]]; then
+    missing_packages+=("libcpp-httplib-dev:arm64")
+  fi
+  if [[ ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
+    missing_packages+=("libcpp-httplib0.11:arm64")
   fi
 
   if (( ${#missing_packages[@]} == 0 )); then

@@ -249,6 +249,8 @@ def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.VisionLanguageModel is pyneat.VisionLanguageModel
   assert pyneat.genai.ASRModel is pyneat.ASRModel
   assert pyneat.genai.GenAIModel is pyneat.GenAIModel
+  assert pyneat.genai.OpenAIServer is pyneat.OpenAIServer
+  assert pyneat.genai.OpenAIServerOptions is pyneat.OpenAIServerOptions
   assert pyneat.genai.ImageList is pyneat.ImageList
   assert pyneat.genai.GenerationRequest is pyneat.GenerationRequest
   assert hasattr(pyneat.genai.nodes, "vision_language")
@@ -277,6 +279,12 @@ def test_genai_top_level_and_namespace_aliases_exist():
   speech_options.streaming = False
   assert speech_options.language == "en"
   assert speech_options.streaming is False
+
+  server_options = pyneat.OpenAIServerOptions()
+  server_options.host = "127.0.0.1"
+  server_options.port = 9999
+  assert server_options.host == "127.0.0.1"
+  assert server_options.port == 9999
 
 
 def test_genai_direct_text_generation_and_streaming():
