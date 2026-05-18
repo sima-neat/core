@@ -728,6 +728,14 @@ current_core_branch() {
   printf '\n'
 }
 
+current_core_base_branch() {
+  if [[ -n "${GITHUB_BASE_REF:-}" ]]; then
+    printf '%s\n' "${GITHUB_BASE_REF}"
+    return 0
+  fi
+  printf '\n'
+}
+
 internals_checksum_available() {
   local url="$1"
   local probe_path
@@ -758,18 +766,32 @@ resolve_neat_internals_ref() {
     return 0
   fi
 
-  local branch branch_key candidate checksum_url
-  branch="$(current_core_branch)"
-  branch_key="$(sanitize_internals_branch_key "${branch}")"
-  if [[ -n "${branch_key}" && "${branch_key}" != "head" ]]; then
+  local branch primary_branch base_branch last_branch branch_key candidate checksum_url checked_candidates
+  primary_branch="$(current_core_branch)"
+  base_branch="$(current_core_base_branch)"
+  checked_candidates=""
+  last_branch=""
+  for branch in "${primary_branch}" "${base_branch}"; do
+    if [[ -z "${branch}" || "${branch}" == "${last_branch}" ]]; then
+      continue
+    fi
+    last_branch="${branch}"
+    branch_key="$(sanitize_internals_branch_key "${branch}")"
+    if [[ -z "${branch_key}" || "${branch_key}" == "head" ]]; then
+      continue
+    fi
     candidate="${branch_key}-latest"
+    checked_candidates="${checked_candidates}${checked_candidates:+, }'${branch}' (${candidate})"
     checksum_url="${NEAT_INTERNALS_BASE_URL}/sima-neat-internals-${candidate}.tar.gz.sha256"
     if internals_checksum_available "${checksum_url}"; then
       echo "Resolved empty internals manifest to matching branch artifact: ${candidate}" >&2
       printf '%s\n' "${candidate}"
       return 0
     fi
-    echo "No internals artifact found for branch '${branch}' (${candidate}); using main-latest." >&2
+  done
+
+  if [[ -n "${checked_candidates}" ]]; then
+    echo "No internals artifact found for branch candidates: ${checked_candidates}; using main-latest." >&2
   else
     echo "Could not determine current branch for internals snap; using main-latest." >&2
   fi
