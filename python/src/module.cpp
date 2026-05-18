@@ -2957,8 +2957,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("encode_images_on_input",
               &simaai::neat::genai::nodes::VisionLanguageOptions::encode_images_on_input);
 
-  nb::class_<simaai::neat::genai::nodes::SpeechTranscriberOptions>(
-      genai_nodes_mod, "SpeechTranscriberOptions")
+  nb::class_<simaai::neat::genai::nodes::SpeechTranscriberOptions>(genai_nodes_mod,
+                                                                   "SpeechTranscriberOptions")
       .def(nb::init<>())
       .def_rw("language", &simaai::neat::genai::nodes::SpeechTranscriberOptions::language)
       .def_rw("streaming", &simaai::neat::genai::nodes::SpeechTranscriberOptions::streaming);
@@ -3010,8 +3010,7 @@ NB_MODULE(_pyneat_core, m) {
   graph_nodes_mod.def(
       "genai_speech_transcriber",
       [](std::shared_ptr<simaai::neat::genai::ASRModel> model,
-         simaai::neat::genai::nodes::SpeechTranscriberOptions options,
-         const std::string& label) {
+         simaai::neat::genai::nodes::SpeechTranscriberOptions options, const std::string& label) {
         return simaai::neat::genai::nodes::SpeechTranscriber(std::move(model), std::move(options),
                                                              label);
       },
@@ -3029,8 +3028,7 @@ NB_MODULE(_pyneat_core, m) {
   genai_nodes_mod.def(
       "speech_transcriber",
       [](std::shared_ptr<simaai::neat::genai::ASRModel> model,
-         simaai::neat::genai::nodes::SpeechTranscriberOptions options,
-         const std::string& label) {
+         simaai::neat::genai::nodes::SpeechTranscriberOptions options, const std::string& label) {
         return simaai::neat::genai::nodes::SpeechTranscriber(std::move(model), std::move(options),
                                                              label);
       },

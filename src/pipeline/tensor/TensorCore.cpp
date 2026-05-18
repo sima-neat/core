@@ -904,9 +904,10 @@ bool Tensor::validate(std::string* err) const {
   if (semantic.text.has_value()) {
     if (semantic.image.has_value() || semantic.audio.has_value() || semantic.tokens.has_value() ||
         semantic.encoded.has_value() || semantic.byte_stream.has_value() ||
-        semantic.tess.has_value() || semantic.quant.has_value() || semantic.preprocess.has_value()) {
-      return fail(
-          "text tensor cannot also be image/audio/tokens/encoded/byte_stream/tess/quant/preprocess");
+        semantic.tess.has_value() || semantic.quant.has_value() ||
+        semantic.preprocess.has_value()) {
+      return fail("text tensor cannot also be "
+                  "image/audio/tokens/encoded/byte_stream/tess/quant/preprocess");
     }
     if (semantic.text->encoding != "utf-8") {
       return fail("text tensor encoding must be utf-8");

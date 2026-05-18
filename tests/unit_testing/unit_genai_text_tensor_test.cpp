@@ -64,8 +64,7 @@ RUN_TEST("unit_genai_text_tensor_test", ([] {
            require_contains(err, "layout", "bad layout validation message mismatch");
            require_throws([&] { (void)bad_layout.to_text(); }, "to_text bad layout");
 
-           simaai::neat::Tensor non_text =
-               simaai::neat::Tensor::from_vector(std::vector<uint8_t>{'x'}, {1},
-                                                 simaai::neat::TensorMemory::CPU);
+           simaai::neat::Tensor non_text = simaai::neat::Tensor::from_vector(
+               std::vector<uint8_t>{'x'}, {1}, simaai::neat::TensorMemory::CPU);
            require_throws([&] { (void)non_text.to_text(); }, "to_text non-text");
          }));

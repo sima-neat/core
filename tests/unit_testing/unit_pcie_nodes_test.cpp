@@ -7,8 +7,8 @@
 #include <string>
 
 RUN_TEST("unit_pcie_nodes_test", [] {
-  const bool has_pcie_plugins = simaai::neat::element_exists("neatpciesrc") &&
-                                simaai::neat::element_exists("neatpciesink");
+  const bool has_pcie_plugins =
+      simaai::neat::element_exists("neatpciesrc") && simaai::neat::element_exists("neatpciesink");
   if (!has_pcie_plugins) {
     throw std::runtime_error("pcie plugins missing (neatpciesrc/neatpciesink)");
   }

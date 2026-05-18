@@ -6398,7 +6398,8 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
     return Runner(std::move(run), ingress_names);
   }
   const auto src_opts = input_appsrc_options_list(true);
-  const InputOptions src_opt = !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
+  const InputOptions src_opt =
+      !src_opts.empty() ? src_opts.front() : pack.input_appsrc_options(true);
   if (runner_debug_enabled()) {
     std::fprintf(stderr,
                  "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",

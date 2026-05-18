@@ -280,19 +280,19 @@ int main(int argc, char** argv) {
 
     simaai::neat::graph::Graph sync_graph;
     const auto sync_audio_path_port = sync_graph.intern_port("audio_path");
-    const auto sync_asr_node =
-        sync_graph.add(simaai::neat::genai::nodes::SpeechTranscriber(
-            model,
-            simaai::neat::genai::nodes::SpeechTranscriberOptions{
-                .language = "en",
-                .streaming = false,
-            },
-            "speech_transcriber_sync"));
+    const auto sync_asr_node = sync_graph.add(simaai::neat::genai::nodes::SpeechTranscriber(
+        model,
+        simaai::neat::genai::nodes::SpeechTranscriberOptions{
+            .language = "en",
+            .streaming = false,
+        },
+        "speech_transcriber_sync"));
 
     simaai::neat::graph::GraphRun sync_run =
         simaai::neat::graph::GraphSession(std::move(sync_graph)).build();
-    require(sync_run.push(sync_asr_node, sync_audio_path_port, make_audio_path_input(audio_path, 3)),
-            "GraphRun::push sync audio_path failed");
+    require(
+        sync_run.push(sync_asr_node, sync_audio_path_port, make_audio_path_input(audio_path, 3)),
+        "GraphRun::push sync audio_path failed");
     const GraphOutputs sync_outputs = pull_graph_outputs(sync_run, sync_asr_node);
     require(sync_outputs.saw_done, "ASR graph sync audio_path did not emit done");
     require(!sync_outputs.saw_error,

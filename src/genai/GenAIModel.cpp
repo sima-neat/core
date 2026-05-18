@@ -11,8 +11,7 @@ namespace simaai::neat::genai {
 
 struct GenAIModel::Impl {
   explicit Impl(std::filesystem::path model_dir_in)
-      : info(internal::inspect_model_directory(std::move(model_dir_in))),
-        model(make_model(info)) {}
+      : info(internal::inspect_model_directory(std::move(model_dir_in))), model(make_model(info)) {}
 
   using ModelVariant = std::variant<VisionLanguageModel, ASRModel>;
 

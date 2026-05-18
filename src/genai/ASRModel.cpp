@@ -115,8 +115,8 @@ GenerationStream ASRModel::stream(const GenerationRequest& request) {
         } else {
           const PcmAudio audio = tensor_to_pcm_audio(*request.audio);
           (void)model->whisper_model->run_model_from_pcm(
-              std::span<const float>{audio.samples.data(), audio.samples.size()},
-              audio.sample_rate, language);
+              std::span<const float>{audio.samples.data(), audio.samples.size()}, audio.sample_rate,
+              language);
         }
         producer.finish(producer.cancelled() ? "interrupted" : "stop",
                         std::optional<std::uint32_t>(0));
