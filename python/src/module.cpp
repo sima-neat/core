@@ -14,7 +14,9 @@
 #include "builder/OutputSpec.h"
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
+#include "genai/ASRModel.h"
 #include "genai/VisionLanguageModel.h"
+#include "genai/nodes/SpeechTranscriber.h"
 #include "genai/nodes/VisionLanguage.h"
 #include "graph/Graph.h"
 #include "graph/GraphPrinter.h"
@@ -1502,6 +1504,9 @@ NB_MODULE(_pyneat_core, m) {
             request.images = genai_image_tensors_from_python(images);
           })
       .def_rw("use_cached_images", &simaai::neat::genai::GenerationRequest::use_cached_images)
+      .def_rw("audio", &simaai::neat::genai::GenerationRequest::audio)
+      .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
+      .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
       .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
       .def_rw("temperature", &simaai::neat::genai::GenerationRequest::temperature)
       .def_rw("top_p", &simaai::neat::genai::GenerationRequest::top_p);
@@ -1560,6 +1565,16 @@ NB_MODULE(_pyneat_core, m) {
       .def("stream", &simaai::neat::genai::VisionLanguageModel::stream, "request"_a,
            nb::call_guard<nb::gil_scoped_release>());
 
+  nb::class_<simaai::neat::genai::ASRModel>(m, "ASRModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("accepts_audio", &simaai::neat::genai::ASRModel::accepts_audio)
+      .def("model_id", &simaai::neat::genai::ASRModel::model_id)
+      .def("describe", &simaai::neat::genai::ASRModel::describe)
+      .def("run", &simaai::neat::genai::ASRModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &simaai::neat::genai::ASRModel::stream, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
+
   nb::class_<simaai::neat::genai::GenAIModel>(m, "GenAIModel")
       .def(nb::init<std::filesystem::path>(), "model_dir"_a)
       .def("task", &simaai::neat::genai::GenAIModel::task)
@@ -1579,6 +1594,7 @@ NB_MODULE(_pyneat_core, m) {
   genai_mod.attr("TokenSample") = m.attr("TokenSample");
   genai_mod.attr("GenerationStream") = m.attr("GenerationStream");
   genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
+  genai_mod.attr("ASRModel") = m.attr("ASRModel");
   genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
   nb::module_ genai_nodes_mod = genai_mod.def_submodule("nodes", "GenAI graph node factories");
 
@@ -2937,6 +2953,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("encode_images_on_input",
               &simaai::neat::genai::nodes::VisionLanguageOptions::encode_images_on_input);
 
+  nb::class_<simaai::neat::genai::nodes::SpeechTranscriberOptions>(
+      genai_nodes_mod, "SpeechTranscriberOptions")
+      .def(nb::init<>())
+      .def_rw("language", &simaai::neat::genai::nodes::SpeechTranscriberOptions::language)
+      .def_rw("streaming", &simaai::neat::genai::nodes::SpeechTranscriberOptions::streaming);
+
   graph_nodes_mod.def(
       "pipeline_node",
       [](const simaai::neat::NodeGroup& group, const std::string& label) {
@@ -2981,6 +3003,16 @@ NB_MODULE(_pyneat_core, m) {
       },
       "model"_a, "options"_a = simaai::neat::genai::nodes::VisionLanguageOptions{},
       "label"_a = "vision_language");
+  graph_nodes_mod.def(
+      "genai_speech_transcriber",
+      [](std::shared_ptr<simaai::neat::genai::ASRModel> model,
+         simaai::neat::genai::nodes::SpeechTranscriberOptions options,
+         const std::string& label) {
+        return simaai::neat::genai::nodes::SpeechTranscriber(std::move(model), std::move(options),
+                                                             label);
+      },
+      "model"_a, "options"_a = simaai::neat::genai::nodes::SpeechTranscriberOptions{},
+      "label"_a = "speech_transcriber");
   genai_nodes_mod.def(
       "vision_language",
       [](std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
@@ -2990,6 +3022,16 @@ NB_MODULE(_pyneat_core, m) {
       },
       "model"_a, "options"_a = simaai::neat::genai::nodes::VisionLanguageOptions{},
       "label"_a = "vision_language");
+  genai_nodes_mod.def(
+      "speech_transcriber",
+      [](std::shared_ptr<simaai::neat::genai::ASRModel> model,
+         simaai::neat::genai::nodes::SpeechTranscriberOptions options,
+         const std::string& label) {
+        return simaai::neat::genai::nodes::SpeechTranscriber(std::move(model), std::move(options),
+                                                             label);
+      },
+      "model"_a, "options"_a = simaai::neat::genai::nodes::SpeechTranscriberOptions{},
+      "label"_a = "speech_transcriber");
 
   nb::module_ mpk_mod = m.def_submodule("mpk", "MPK inspection and sequence helpers");
 

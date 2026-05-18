@@ -3,6 +3,7 @@
 #include "pipeline/internal/SimaaiMemory.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
+#include "gst/GstInit.h"
 
 #include "test_utils.h"
 
@@ -69,7 +70,7 @@ int main() {
 #if !SIMA_HAS_SIMAAI_POOL
     require(false, "tensor_device_placement_test requires simaai buffer pool");
 #else
-    gst_init(nullptr, nullptr);
+    simaai::neat::gst_init_once();
 
     std::vector<simaai::neat::Segment> segments = {
         {"seg0", 64},

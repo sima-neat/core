@@ -1,6 +1,5 @@
 #include "genai/nodes/VisionLanguage.h"
 
-#include "genai/TensorToVision.h"
 #include "genai/VisionLanguageModel.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
@@ -33,6 +32,25 @@ constexpr const char* kEncodedPort = "encoded";
 constexpr const char* kErrorPort = "error";
 
 enum class ImageSource { None, Direct, Cached };
+
+#if defined(SIMA_WITH_OPENCV)
+cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
+  if (image.dtype != TensorDType::UInt8) {
+    throw std::runtime_error("GenAI image tensor must have UInt8 dtype");
+  }
+  if (image.layout != TensorLayout::HWC) {
+    throw std::runtime_error("GenAI image tensor must use HWC layout");
+  }
+  if (image.shape.size() != 3U || image.shape[2] != 3) {
+    throw std::runtime_error("GenAI image tensor must have shape [H, W, 3]");
+  }
+  if (!image.semantic.image.has_value() ||
+      image.semantic.image->format != ImageSpec::PixelFormat::RGB) {
+    throw std::runtime_error("GenAI image tensor must declare RGB image semantics");
+  }
+  return image.to_cv_mat_copy(ImageSpec::PixelFormat::RGB);
+}
+#endif
 
 OutputSpec text_output_spec() {
   OutputSpec spec;
@@ -154,7 +172,7 @@ std::vector<Tensor> require_image_tensors(const Sample& sample) {
   out.reserve(inputs.size());
 #if defined(SIMA_WITH_OPENCV)
   for (const Tensor& image : inputs) {
-    cv::Mat rgb = internal::tensor_to_rgb_mat(image);
+    cv::Mat rgb = require_genai_rgb_image_tensor(image);
     out.push_back(Tensor::from_cv_mat(rgb, ImageSpec::PixelFormat::RGB, TensorMemory::CPU));
   }
 #else

@@ -8,6 +8,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <exception>
+#include <filesystem>
+#include <functional>
 #include <initializer_list>
 #include <iterator>
 #include <memory>
@@ -21,6 +24,7 @@
 
 namespace simaai::neat::genai {
 
+class ASRModel;
 class VisionLanguageModel;
 
 /**
@@ -87,6 +91,9 @@ struct GenerationRequest {
   std::vector<ChatMessage> messages;
   ImageList images;
   bool use_cached_images = false;
+  std::optional<Tensor> audio;
+  std::optional<std::filesystem::path> audio_file;
+  std::string language = "en";
   std::uint32_t max_new_tokens = 0;
   float temperature = 1.0F;
   float top_p = 1.0F;
@@ -152,11 +159,31 @@ public:
 
 private:
   struct Impl;
+  class Producer {
+  public:
+    void record_metric(const std::string& metric, double value);
+    void record_text(const std::string& text, bool stream_end);
+    void push(TokenSample sample);
+    void finish(std::string finish_reason, std::optional<std::uint32_t> generated_tokens);
+    bool cancelled() const;
+    GenerationMetrics current_metrics() const;
+
+  private:
+    explicit Producer(Impl& impl);
+
+    Impl& impl_;
+
+    friend struct Impl;
+  };
+  using ProducerFn = std::function<void(Producer&)>;
+  using CancelFn = std::function<void()>;
 
   explicit GenerationStream(std::unique_ptr<Impl> impl);
+  GenerationStream(ProducerFn producer, CancelFn cancel);
 
   std::unique_ptr<Impl> impl_;
 
+  friend class ASRModel;
   friend class VisionLanguageModel;
 };
 

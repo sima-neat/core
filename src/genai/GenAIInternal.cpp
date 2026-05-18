@@ -1,7 +1,15 @@
 #include "genai/GenAIInternal.h"
 
+#include <sima_lmm/image_processor.hpp>
+#include <sima_lmm/mla_model.hpp>
+#include <sima_lmm/setup.hpp>
+#include <sima_lmm/utils.hpp>
+
+#include <spdlog/spdlog.h>
+
 #include <fstream>
 #include <nlohmann/json.hpp>
+#include <mutex>
 #include <stdexcept>
 
 namespace simaai::neat::genai::internal {
@@ -129,6 +137,10 @@ void validate_text_generation_request(const GenerationRequest& request) {
   if (!request.images.empty() && request.use_cached_images) {
     throw std::runtime_error("GenerationRequest cannot combine direct images with cached images");
   }
+  if (request.audio.has_value() || request.audio_file.has_value()) {
+    throw std::runtime_error(
+        "GenerationRequest audio fields are not valid for VisionLanguageModel");
+  }
 
   std::size_t cached_image_uses = request.use_cached_images ? 1U : 0U;
   for (const auto& message : request.messages) {
@@ -142,6 +154,35 @@ void validate_text_generation_request(const GenerationRequest& request) {
   if (cached_image_uses > 1U) {
     throw std::runtime_error("GenerationRequest accepts at most one cached image insertion point");
   }
+}
+
+void validate_asr_generation_request(const GenerationRequest& request) {
+  const int audio_source_count =
+      (request.audio.has_value() ? 1 : 0) + (request.audio_file.has_value() ? 1 : 0);
+  if (audio_source_count == 0) {
+    throw std::runtime_error("GenerationRequest requires audio or audio_file for ASR");
+  }
+  if (audio_source_count > 1) {
+    throw std::runtime_error("GenerationRequest accepts exactly one of audio or audio_file");
+  }
+  if (request.prompt.has_value() || request.system_prompt.has_value() ||
+      !request.messages.empty()) {
+    throw std::runtime_error("GenerationRequest text fields are not valid for ASRModel");
+  }
+  if (!request.images.empty() || request.use_cached_images) {
+    throw std::runtime_error("GenerationRequest image fields are not valid for ASRModel");
+  }
+}
+
+void ensure_llima_runtime_connected() {
+  static std::once_flag once;
+  std::call_once(once, [] {
+    simaai::llima::set_log_level(spdlog::level::warn);
+    simaai::llima::connect_mla_rt({});
+    simaai::llima::MLAModelWithBuffer::read_env_vars();
+    simaai::llima::ImageProcessor::read_env_vars();
+    simaai::llima::initialize_default_sample_files();
+  });
 }
 
 } // namespace simaai::neat::genai::internal

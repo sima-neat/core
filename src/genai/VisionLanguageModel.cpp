@@ -1,19 +1,15 @@
 #include "genai/VisionLanguageModel.h"
 #include "genai/GenAIInternal.h"
-#include "genai/TensorToVision.h"
 
 #include <sima_lmm/chat.hpp>
 #include <sima_lmm/image_processor.hpp>
 #include <sima_lmm/language_model.hpp>
 #include <sima_lmm/mla_model.hpp>
-#include <sima_lmm/setup.hpp>
 #include <sima_lmm/text_streamer.hpp>
 #include <sima_lmm/utils.hpp>
 #include <sima_lmm/vlm_config.hpp>
 #include <sima_lmm/vlm_helper.hpp>
 #include <sima_lmm/vision_model.hpp>
-
-#include <spdlog/spdlog.h>
 
 #include <atomic>
 #include <condition_variable>
@@ -30,14 +26,21 @@
 namespace simaai::neat::genai {
 namespace {
 
-void ensure_llima_runtime_connected() {
-  static std::once_flag once;
-  std::call_once(once, [] {
-    simaai::llima::set_log_level(spdlog::level::warn);
-    simaai::llima::connect_mla_rt({});
-    simaai::llima::MLAModelWithBuffer::read_env_vars();
-    simaai::llima::ImageProcessor::read_env_vars();
-  });
+cv::Mat require_genai_rgb_image_tensor(const Tensor& image) {
+  if (image.dtype != TensorDType::UInt8) {
+    throw std::runtime_error("GenAI image tensor must have UInt8 dtype");
+  }
+  if (image.layout != TensorLayout::HWC) {
+    throw std::runtime_error("GenAI image tensor must use HWC layout");
+  }
+  if (image.shape.size() != 3U || image.shape[2] != 3) {
+    throw std::runtime_error("GenAI image tensor must have shape [H, W, 3]");
+  }
+  if (!image.semantic.image.has_value() ||
+      image.semantic.image->format != ImageSpec::PixelFormat::RGB) {
+    throw std::runtime_error("GenAI image tensor must declare RGB image semantics");
+  }
+  return image.to_cv_mat_copy(ImageSpec::PixelFormat::RGB);
 }
 
 simaai::llima::VlmConfig load_vlm_config(const std::filesystem::path& model_root) {
@@ -231,7 +234,7 @@ preprocess_images(simaai::llima::ImageProcessor& image_processor,
   std::vector<std::vector<Eigen::bfloat16>> out;
   out.reserve(images.size());
   for (const auto& image : images) {
-    out.push_back(image_processor.preprocess(internal::tensor_to_rgb_mat(image)));
+    out.push_back(image_processor.preprocess(require_genai_rgb_image_tensor(image)));
   }
   return out;
 }
@@ -301,7 +304,7 @@ struct VisionLanguageModel::Impl {
       return;
     }
 
-    ensure_llima_runtime_connected();
+    internal::ensure_llima_runtime_connected();
     cfg = load_vlm_config(info.root);
     bos_token = load_bos_token(info.root);
     vlm_helper = std::make_unique<simaai::llima::VlmHelper>(cfg, info.root / "devkit", std::nullopt,
@@ -522,213 +525,6 @@ struct VisionLanguageModel::Impl {
   GenerationMetrics metrics;
 };
 
-struct GenerationStream::Impl {
-  Impl(std::shared_ptr<VisionLanguageModel::Impl> model_in, GenerationRequest request_in)
-      : model(std::move(model_in)), request(std::move(request_in)) {
-    worker = std::thread([this] { run_worker(); });
-  }
-
-  ~Impl() {
-    cancel();
-    if (worker.joinable()) {
-      worker.join();
-    }
-  }
-
-  std::optional<TokenSample> next() {
-    std::unique_lock<std::mutex> lock(queue_mutex);
-    queue_cv.wait(lock, [&] { return !samples.empty() || closed || error != nullptr; });
-    if (!samples.empty()) {
-      TokenSample sample = std::move(samples.front());
-      samples.pop();
-      return sample;
-    }
-    if (error) {
-      std::rethrow_exception(error);
-    }
-    return std::nullopt;
-  }
-
-  void cancel() {
-    cancelled = true;
-    if (model && model->language_model) {
-      model->language_model->stop_model();
-    }
-  }
-
-  void run_worker() {
-    try {
-      auto active_run = VisionLanguageModel::Impl::ActiveRunGuard::acquire(*model);
-      model->reset_metrics();
-      model->text_streamer->set_info_callback(
-          [this](const std::string& metric, double value) { record_metric(metric, value); });
-      model->text_streamer->set_text_callback(
-          [this](const std::string& text, bool stream_end) { record_text(text, stream_end); });
-
-      auto output_token_ids = model->generate_tokens(request);
-      {
-        std::lock_guard<std::mutex> lock(metrics_mutex);
-        metrics.generated_tokens =
-            output_token_ids.has_value() ? static_cast<std::uint32_t>(output_token_ids->size()) : 0;
-        if (finish_reason.empty()) {
-          finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
-        }
-        if (cancelled && !output_token_ids.has_value()) {
-          finish_reason = "interrupted";
-        }
-      }
-      push_final();
-      model->configure_run_callbacks();
-    } catch (...) {
-      if (model) {
-        model->configure_run_callbacks();
-      }
-      {
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        error = std::current_exception();
-        closed = true;
-      }
-      queue_cv.notify_all();
-    }
-  }
-
-  void record_metric(const std::string& metric, double value) {
-    std::lock_guard<std::mutex> lock(metrics_mutex);
-    if (metric == "ttft") {
-      metrics.time_to_first_token_s = value;
-    } else if (metric == "tps") {
-      metrics.tokens_per_second = value;
-    } else if (metric == "FULL") {
-      finish_reason = "cache_full";
-    }
-  }
-
-  GenerationMetrics current_metrics() const {
-    std::lock_guard<std::mutex> lock(metrics_mutex);
-    return metrics;
-  }
-
-  std::string current_finish_reason() const {
-    std::lock_guard<std::mutex> lock(metrics_mutex);
-    return finish_reason;
-  }
-
-  void record_text(const std::string& text, bool stream_end) {
-    if (!text.empty()) {
-      push_sample(TokenSample{.text = text, .metrics = current_metrics()});
-    }
-    if (stream_end) {
-      saw_stream_end = true;
-    }
-  }
-
-  void push_sample(TokenSample sample) {
-    {
-      std::lock_guard<std::mutex> lock(queue_mutex);
-      samples.push(std::move(sample));
-    }
-    queue_cv.notify_one();
-  }
-
-  void push_final() {
-    TokenSample sample;
-    sample.metrics = current_metrics();
-    sample.is_final = true;
-    sample.finish_reason = current_finish_reason();
-    if (sample.finish_reason.empty()) {
-      sample.finish_reason = saw_stream_end ? "stop" : "interrupted";
-    }
-
-    {
-      std::lock_guard<std::mutex> lock(queue_mutex);
-      samples.push(std::move(sample));
-      closed = true;
-    }
-    queue_cv.notify_all();
-  }
-
-  std::shared_ptr<VisionLanguageModel::Impl> model;
-  GenerationRequest request;
-  std::thread worker;
-  std::atomic<bool> cancelled = false;
-  std::atomic<bool> saw_stream_end = false;
-
-  mutable std::mutex metrics_mutex;
-  GenerationMetrics metrics;
-  std::string finish_reason;
-
-  std::mutex queue_mutex;
-  std::condition_variable queue_cv;
-  std::queue<TokenSample> samples;
-  bool closed = false;
-  std::exception_ptr error;
-};
-
-GenerationStream::GenerationStream(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
-
-GenerationStream::~GenerationStream() = default;
-
-GenerationStream::GenerationStream(GenerationStream&&) noexcept = default;
-
-GenerationStream& GenerationStream::operator=(GenerationStream&&) noexcept = default;
-
-std::optional<TokenSample> GenerationStream::next() {
-  if (!impl_) {
-    return std::nullopt;
-  }
-  return impl_->next();
-}
-
-void GenerationStream::cancel() {
-  if (impl_) {
-    impl_->cancel();
-  }
-}
-
-GenerationStream::iterator GenerationStream::begin() {
-  return iterator(this);
-}
-
-GenerationStream::iterator GenerationStream::end() {
-  return iterator();
-}
-
-GenerationStream::iterator::iterator(GenerationStream* stream) : stream_(stream) {
-  advance();
-}
-
-GenerationStream::iterator::reference GenerationStream::iterator::operator*() const {
-  return *current_;
-}
-
-GenerationStream::iterator::pointer GenerationStream::iterator::operator->() const {
-  return &*current_;
-}
-
-GenerationStream::iterator& GenerationStream::iterator::operator++() {
-  advance();
-  return *this;
-}
-
-void GenerationStream::iterator::operator++(int) {
-  advance();
-}
-
-void GenerationStream::iterator::advance() {
-  if (!stream_) {
-    current_.reset();
-    return;
-  }
-  current_ = stream_->next();
-  if (!current_.has_value()) {
-    stream_ = nullptr;
-  }
-}
-
-bool operator==(const GenerationStream::iterator& lhs, const GenerationStream::iterator& rhs) {
-  return lhs.stream_ == rhs.stream_ && lhs.current_.has_value() == rhs.current_.has_value();
-}
-
 VisionLanguageModel::VisionLanguageModel(std::filesystem::path model_dir)
     : impl_(std::make_shared<Impl>(std::move(model_dir))) {
   impl_->load();
@@ -781,7 +577,41 @@ GenerationResult VisionLanguageModel::run(const GenerationRequest& request) {
 
 GenerationStream VisionLanguageModel::stream(const GenerationRequest& request) {
   internal::validate_text_generation_request(request);
-  return GenerationStream(std::make_unique<GenerationStream::Impl>(impl_, request));
+  return GenerationStream(
+      [model = impl_, request](GenerationStream::Producer& producer) {
+        struct CallbackGuard {
+          std::shared_ptr<VisionLanguageModel::Impl> model;
+          ~CallbackGuard() {
+            if (model) {
+              model->configure_run_callbacks();
+            }
+          }
+        } callback_guard{model};
+
+        auto active_run = VisionLanguageModel::Impl::ActiveRunGuard::acquire(*model);
+        model->reset_metrics();
+        model->text_streamer->set_info_callback(
+            [&producer](const std::string& metric, double value) {
+              producer.record_metric(metric, value);
+            });
+        model->text_streamer->set_text_callback(
+            [&producer](const std::string& text, bool stream_end) {
+              producer.record_text(text, stream_end);
+            });
+
+        auto output_token_ids = model->generate_tokens(request);
+        const std::string finish_reason = output_token_ids.has_value() ? "stop" : "interrupted";
+        const auto generated_tokens =
+            output_token_ids.has_value()
+                ? std::optional<std::uint32_t>(static_cast<std::uint32_t>(output_token_ids->size()))
+                : std::optional<std::uint32_t>(0);
+        producer.finish(finish_reason, generated_tokens);
+      },
+      [model = impl_] {
+        if (model && model->language_model) {
+          model->language_model->stop_model();
+        }
+      });
 }
 
 } // namespace simaai::neat::genai

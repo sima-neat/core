@@ -27,10 +27,11 @@ public:
   std::string model_id() const;
   std::string describe() const;
   GenerationResult run(const GenerationRequest& request);
+  GenerationStream stream(const GenerationRequest& request);
 
 private:
   struct Impl;
-  std::unique_ptr<Impl> impl_;
+  std::shared_ptr<Impl> impl_;
 };
 
 } // namespace simaai::neat::genai

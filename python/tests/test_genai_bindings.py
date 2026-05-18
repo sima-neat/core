@@ -9,15 +9,31 @@ import pytest
 _MODEL_ENV = "SIMA_TEST_LLIMA_TEXT_MODEL"
 _LEGACY_MODEL_ENV = "SIMA_NEAT_GENAI_TEST_MODEL"
 _VLM_MODEL_ENV = "SIMA_TEST_LLIMA_VLM_MODEL"
+_ASR_MODEL_ENV = "SIMA_TEST_LLIMA_ASR_MODEL"
 _VLM_REPO_ID = "simaai/LFM2-VL-450M-a16w4"
 _VLM_PROMPT = "Describe this image in a short phrase."
 _EXPECTED_VLM_TEXT = "Skier jumping high in the air."
 _PROMPT = "What is the capital of Germany?"
 _EXPECTED_TEXT = "The capital of Germany is Berlin."
+_EXPECTED_ASR_TEXT = "tell me a joke please"
 
 
 def _trim_text(text):
   return text.strip()
+
+
+def _normalize_transcript(text):
+  out = []
+  pending_space = False
+  for ch in text:
+    if ch.isalnum():
+      if pending_space and out:
+        out.append(" ")
+      out.append(ch.lower())
+      pending_space = False
+    elif ch.isspace() or not ch.isalnum():
+      pending_space = True
+  return "".join(out)
 
 
 def _text_model_dir():
@@ -44,6 +60,17 @@ def _vlm_model_dir():
   return str(model_dir)
 
 
+def _asr_model_dir():
+  value = os.environ.get(_ASR_MODEL_ENV, "").strip()
+  if not value:
+    pytest.skip(f"{_ASR_MODEL_ENV} is not set")
+
+  model_dir = Path(value)
+  if not (model_dir / "devkit" / "whisper_config.json").is_file():
+    pytest.skip(f"{model_dir} is not a LLiMa Whisper model directory")
+  return str(model_dir)
+
+
 def _candidate_roots():
   roots = []
 
@@ -66,6 +93,15 @@ def _people_image_path():
     if candidate.is_file():
       return candidate
   pytest.skip(f"missing image fixture: {rel}")
+
+
+def _audio_fixture_path():
+  rel = Path("tests/assets/genai/audio.wav")
+  for root in _candidate_roots():
+    candidate = root / rel
+    if candidate.is_file():
+      return candidate
+  pytest.skip(f"missing audio fixture: {rel}")
 
 
 def _people_rgb_image():
@@ -161,6 +197,8 @@ def test_genai_value_types_and_text_sample_helpers():
   req.max_new_tokens = 8
   req.temperature = 0.25
   req.top_p = 0.9
+  req.audio_file = "audio.wav"
+  req.language = "en"
   req.messages = [pyneat.ChatMessage()]
   req.messages[0].role = "user"
   req.messages[0].content = "hello"
@@ -170,6 +208,8 @@ def test_genai_value_types_and_text_sample_helpers():
   assert req.prompt == "hello"
   assert req.system_prompt == "be concise"
   assert req.messages[0].content == "hello"
+  assert str(req.audio_file).endswith("audio.wav")
+  assert req.language == "en"
   assert len(req.images) == 1
   assert list(req.images[0].shape) == [2, 2, 3]
   assert req.images[0].image_format() == pyneat.PixelFormat.RGB
@@ -207,11 +247,14 @@ def test_genai_value_types_and_text_sample_helpers():
 
 def test_genai_top_level_and_namespace_aliases_exist():
   assert pyneat.genai.VisionLanguageModel is pyneat.VisionLanguageModel
+  assert pyneat.genai.ASRModel is pyneat.ASRModel
   assert pyneat.genai.GenAIModel is pyneat.GenAIModel
   assert pyneat.genai.ImageList is pyneat.ImageList
   assert pyneat.genai.GenerationRequest is pyneat.GenerationRequest
   assert hasattr(pyneat.genai.nodes, "vision_language")
+  assert hasattr(pyneat.genai.nodes, "speech_transcriber")
   assert hasattr(pyneat.graph.nodes, "genai_vision_language")
+  assert hasattr(pyneat.graph.nodes, "genai_speech_transcriber")
   assert not hasattr(pyneat.genai.nodes, "language")
   assert not hasattr(pyneat.graph.nodes, "genai_language")
   assert not hasattr(pyneat.genai.nodes, "LanguageOptions")
@@ -226,6 +269,12 @@ def test_genai_top_level_and_namespace_aliases_exist():
   assert options.max_new_tokens == 24
   assert options.streaming is False
   assert options.encode_images_on_input is False
+
+  speech_options = pyneat.genai.nodes.SpeechTranscriberOptions()
+  speech_options.language = "en"
+  speech_options.streaming = False
+  assert speech_options.language == "en"
+  assert speech_options.streaming is False
 
 
 def test_genai_direct_text_generation_and_streaming():
@@ -472,6 +521,79 @@ def test_genai_vision_language_graph_node_generation_and_errors():
           pyneat.make_text_sample("prompt", _VLM_PROMPT),
       )
       _, _, error, _ = _pull_language_outputs(run, missing_image_node, stop_on_error=True)
+      assert error
+    finally:
+      run.stop()
+  except Exception as exc:
+    _skip_if_dispatcher_unavailable(exc)
+    raise
+
+
+def test_genai_direct_asr_generation_and_streaming():
+  try:
+    model = pyneat.ASRModel(_asr_model_dir())
+    assert model.accepts_audio()
+
+    request = pyneat.GenerationRequest()
+    request.audio_file = str(_audio_fixture_path())
+    request.language = "en"
+    result = model.run(request)
+    assert _trim_text(result.text)
+    assert _normalize_transcript(result.text) == _EXPECTED_ASR_TEXT
+    assert result.finish_reason == "stop"
+    print(f"GENAI_PY_ASR text={result.text}")
+
+    stream_text = ""
+    saw_final = False
+    for sample in model.stream(request):
+      if sample.is_final:
+        assert sample.finish_reason == "stop"
+        saw_final = True
+        break
+      stream_text += sample.text
+    assert saw_final
+    assert _trim_text(stream_text)
+    assert _normalize_transcript(stream_text) == _EXPECTED_ASR_TEXT
+    print(f"GENAI_PY_ASR_STREAM text={stream_text}")
+  except Exception as exc:
+    _skip_if_dispatcher_unavailable(exc)
+    raise
+
+
+def test_genai_speech_transcriber_graph_node_generation_and_errors():
+  try:
+    model = pyneat.ASRModel(_asr_model_dir())
+    graph = pyneat.graph.Graph()
+    audio_path_port = graph.intern_port("audio_path")
+    audio_port = graph.intern_port("audio")
+
+    options = pyneat.genai.nodes.SpeechTranscriberOptions()
+    options.language = "en"
+    assert options.streaming
+    node = graph.add(
+        pyneat.genai.nodes.speech_transcriber(model, options, "speech_transcriber")
+    )
+
+    run = pyneat.graph.GraphSession(graph).build()
+    try:
+      assert run.push_port(
+          node,
+          audio_path_port,
+          pyneat.make_text_sample("audio_path", str(_audio_fixture_path())),
+      )
+      text, done, error, token_samples = _pull_language_outputs(run, node)
+      assert error is None
+      assert done is not None
+      assert token_samples >= 1
+      assert _trim_text(text)
+      assert _normalize_transcript(text) == _EXPECTED_ASR_TEXT
+      assert _bundle_field_text(done, "finish_reason") == "stop"
+      assert _bundle_field_text(done, "language") == "en"
+      print(f"GENAI_PY_GRAPH_ASR text={text}")
+
+      invalid = pyneat.make_text_sample("audio", "not-audio")
+      assert run.push_port(node, audio_port, invalid)
+      _, _, error, _ = _pull_language_outputs(run, node, stop_on_error=True)
       assert error
     finally:
       run.stop()
