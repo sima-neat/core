@@ -51,6 +51,7 @@ jobs:
         with:
           clean: true
           fetch-depth: 0
+          fetch-depth: 0
 
       - name: Install formatting/lint tools
         run: |
@@ -144,6 +145,7 @@ jobs:
         uses: actions/checkout@v5
         with:
           clean: true
+          fetch-depth: 0
 
       - name: Setup Environment
         run: |

@@ -736,6 +736,27 @@ current_core_base_branch() {
   printf '\n'
 }
 
+nearby_core_branch_candidates() {
+  local current_branch="$1"
+  if ! command -v git >/dev/null 2>&1 ||
+     ! git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+
+  git -C "${REPO_ROOT}" for-each-ref --format='%(refname:short)' refs/remotes/origin 2>/dev/null |
+    while IFS= read -r ref; do
+      local branch merge_base head_distance branch_distance
+      branch="${ref#origin/}"
+      if [[ -z "${branch}" || "${branch}" == "HEAD" || "${branch}" == "${current_branch}" ]]; then
+        continue
+      fi
+      merge_base="$(git -C "${REPO_ROOT}" merge-base "${ref}" HEAD 2>/dev/null)" || continue
+      head_distance="$(git -C "${REPO_ROOT}" rev-list --count "${merge_base}..HEAD" 2>/dev/null)" || continue
+      branch_distance="$(git -C "${REPO_ROOT}" rev-list --count "${merge_base}..${ref}" 2>/dev/null)" || branch_distance=99999999
+      printf '%08d %08d %s\n' "${head_distance}" "${branch_distance}" "${branch}"
+    done | sort -n | cut -d' ' -f3-
+}
+
 internals_checksum_available() {
   local url="$1"
   local probe_path
@@ -766,16 +787,16 @@ resolve_neat_internals_ref() {
     return 0
   fi
 
-  local branch primary_branch base_branch last_branch branch_key candidate checksum_url checked_candidates
+  local branch primary_branch base_branch branch_key candidate checksum_url checked_candidates checked_branches
   primary_branch="$(current_core_branch)"
   base_branch="$(current_core_base_branch)"
   checked_candidates=""
-  last_branch=""
-  for branch in "${primary_branch}" "${base_branch}"; do
-    if [[ -z "${branch}" || "${branch}" == "${last_branch}" ]]; then
+  checked_branches=""
+  while IFS= read -r branch; do
+    if [[ -z "${branch}" ]] || printf '%s' "${checked_branches}" | grep -Fxq "${branch}"; then
       continue
     fi
-    last_branch="${branch}"
+    checked_branches="${checked_branches}${branch}"$'\n'
     branch_key="$(sanitize_internals_branch_key "${branch}")"
     if [[ -z "${branch_key}" || "${branch_key}" == "head" ]]; then
       continue
@@ -788,7 +809,11 @@ resolve_neat_internals_ref() {
       printf '%s\n' "${candidate}"
       return 0
     fi
-  done
+  done < <(
+    printf '%s\n' "${primary_branch}"
+    printf '%s\n' "${base_branch}"
+    nearby_core_branch_candidates "${primary_branch}"
+  )
 
   if [[ -n "${checked_candidates}" ]]; then
     echo "No internals artifact found for branch candidates: ${checked_candidates}; using main-latest." >&2
