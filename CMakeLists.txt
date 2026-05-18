@@ -251,13 +251,17 @@ find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
     "${CMAKE_SYSROOT}/usr/include/eigen3"
     "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
     "/usr/include/eigen3")
-pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
-find_library(SIMANEAT_HTTPLIB_LIBRARY
-  NAMES cpp-httplib
-  PATHS ${HTTPLIB_LIBRARY_DIRS}
-  NO_DEFAULT_PATH)
-if (NOT SIMANEAT_HTTPLIB_LIBRARY)
-  message(FATAL_ERROR "Could not find libcpp-httplib. Install libcpp-httplib-dev.")
+if (SIMANEAT_CPP_TIDY)
+  message(STATUS "OpenAIServer.cpp omitted from clang-tidy analysis.")
+else()
+  pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
+  find_library(SIMANEAT_HTTPLIB_LIBRARY
+    NAMES cpp-httplib
+    PATHS ${HTTPLIB_LIBRARY_DIRS}
+    NO_DEFAULT_PATH)
+  if (NOT SIMANEAT_HTTPLIB_LIBRARY)
+    message(FATAL_ERROR "Could not find libcpp-httplib. Install libcpp-httplib-dev.")
+  endif()
 endif()
 
 if (SIMANEAT_CPP_TIDY)
@@ -715,6 +719,10 @@ file(GLOB_RECURSE SIMANEAT_ALL_SOURCES
 # Apply blacklist
 # ------------------------------------------------------------------------------
 set(SIMANEAT_SOURCES ${SIMANEAT_ALL_SOURCES})
+if (SIMANEAT_CPP_TIDY)
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp")
+endif()
 
 foreach(blacklisted ${SIMANEAT_SRC_BLACKLIST})
   set(abs_path "${CMAKE_CURRENT_SOURCE_DIR}/src/${blacklisted}")
@@ -794,7 +802,9 @@ endif()
 if (OPENCV_FOUND)
   target_compile_options(sima_neat PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
-target_compile_options(sima_neat PRIVATE ${HTTPLIB_CFLAGS_OTHER})
+if (NOT SIMANEAT_CPP_TIDY)
+  target_compile_options(sima_neat PRIVATE ${HTTPLIB_CFLAGS_OTHER})
+endif()
 
 if (OPENCV_FOUND)
   target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
@@ -810,8 +820,10 @@ if (SimaLMM_FOUND)
   )
 endif()
 
-target_include_directories(sima_neat SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
-target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+if (NOT SIMANEAT_CPP_TIDY)
+  target_include_directories(sima_neat SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
+  target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+endif()
 
 if (GST_FOUND)
   target_link_libraries(sima_neat PUBLIC ${GST_LIBRARIES})
