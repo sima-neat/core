@@ -110,7 +110,7 @@ manifest = Path(sys.argv[1])
 data = json.loads(manifest.read_text(encoding="utf-8"))
 tag = str(data.get("internals", "")).strip()
 if not tag:
-    raise SystemExit("internals missing in deps manifest")
+    raise SystemExit("internals missing in resolved deps manifest")
 print(tag)
 PY
 )"
