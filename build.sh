@@ -1391,7 +1391,7 @@ collect_install_artifact_files() {
 
   for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb \
               "${NEAT_INTERNALS_DEB_DIR}"/simaai-common*.deb \
-              "${NEAT_INTERNALS_DEB_DIR}"/appcomplex_*.deb; do
+              "${NEAT_INTERNALS_DEB_DIR}"/neat-appcomplex_*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
