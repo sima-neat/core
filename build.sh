@@ -44,6 +44,7 @@ NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
 NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
+NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
@@ -262,7 +263,7 @@ Options:
   --no-doc       Skip documentation build (even with --all)
   --no-node      Skip Node.js install (docs build will not work)
   --install-deps-only
-                 Install system dependencies only, then exit
+                 Install system dependencies and dependency headers, then exit
   -h, --help     Show this help
 
 Environment:
@@ -1373,6 +1374,216 @@ ensure_neat_llima() {
   rm -rf "${tmp_dir}"
 }
 
+copy_deb_usr_include_to_header_cache() {
+  local deb_path="$1"
+  local extract_dir="$2"
+
+  mkdir -p "${extract_dir}"
+  dpkg-deb -x "${deb_path}" "${extract_dir}"
+  if [[ -d "${extract_dir}/usr/include" ]]; then
+    mkdir -p "${NEAT_DEP_HEADERS_DIR}/usr"
+    cp -a "${extract_dir}/usr/include" "${NEAT_DEP_HEADERS_DIR}/usr/"
+  fi
+}
+
+ensure_neat_internals_headers() {
+  # Header-only bootstrap for x86 analysis jobs. Do not install arm64 runtime/plugin packages.
+  local internals_ref
+  if ! internals_ref="$(resolve_neat_internals_ref)"; then
+    exit 1
+  fi
+  NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
+
+  local marker_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers"
+  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers_sha256"
+  local archive_name="sima-neat-internals-${internals_ref}.tar.gz"
+  local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
+  local checksum_url="${archive_url}.sha256"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-internals-headers-XXXXXX)"
+  local checksum_path="${tmp_dir}/${archive_name}.sha256"
+  local archive_path="${tmp_dir}/${archive_name}"
+  local extract_dir="${tmp_dir}/extract"
+  local deb_extract_dir="${tmp_dir}/deb-extract"
+
+  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
+    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local server_sha
+  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
+  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
+    echo "Using cached neat-internals headers (${internals_ref}, sha256=${server_sha})."
+    rm -rf "${tmp_dir}"
+    return 0
+  fi
+
+  echo "Fetching neat-internals headers: ${archive_url} (sha256=${server_sha})"
+  mkdir -p "${extract_dir}"
+
+  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
+    echo "ERROR: curl or wget is required to download neat-internals artifacts." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local actual_sha
+  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
+    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+  if [[ "${actual_sha}" != "${server_sha}" ]]; then
+    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
+    echo "  expected: ${server_sha}" >&2
+    echo "  actual  : ${actual_sha}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+
+  local dev_deb
+  dev_deb="$(find "${extract_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
+  if [[ -z "${dev_deb}" ]]; then
+    echo "ERROR: neat-internals-dev package was not found in ${archive_name}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_INTERNALS_DEB_DIR}"
+  cp -f "${dev_deb}" "${NEAT_INTERNALS_DEB_DIR}/$(basename "${dev_deb}")"
+  copy_deb_usr_include_to_header_cache "${dev_deb}" "${deb_extract_dir}"
+
+  if [[ ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ||
+        ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
+    echo "ERROR: neat-internals headers are incomplete under ${NEAT_DEP_HEADERS_DIR}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_DEP_HEADERS_DIR}"
+  printf '%s\n' "${internals_ref}" > "${marker_file}"
+  printf '%s\n' "${server_sha}" > "${checksum_file}"
+  rm -rf "${tmp_dir}"
+}
+
+ensure_neat_llima_headers() {
+  # Header-only bootstrap for x86 analysis jobs. GenAI tidy may still be skipped
+  # unless a full SimaLMM CMake package/runtime is available.
+  local llima_ref
+  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+    exit 1
+  fi
+  NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
+
+  local marker_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers"
+  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers_sha256"
+  local archive_name="sima-llima-${llima_ref}.tar.gz"
+  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
+  local checksum_url="${archive_url}.sha256"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-llima-headers-XXXXXX)"
+  local checksum_path="${tmp_dir}/${archive_name}.sha256"
+  local archive_path="${tmp_dir}/${archive_name}"
+  local extract_dir="${tmp_dir}/extract"
+  local deb_extract_dir="${tmp_dir}/deb-extract"
+
+  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
+    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local server_sha
+  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
+  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/sima_lmm/chat.hpp" ]]; then
+    echo "Using cached LLiMa headers (${llima_ref}, sha256=${server_sha})."
+    rm -rf "${tmp_dir}"
+    return 0
+  fi
+
+  echo "Fetching LLiMa headers: ${archive_url} (sha256=${server_sha})"
+  mkdir -p "${extract_dir}"
+
+  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
+    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local actual_sha
+  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
+    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+  if [[ "${actual_sha}" != "${server_sha}" ]]; then
+    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
+    echo "  expected: ${server_sha}" >&2
+    echo "  actual  : ${actual_sha}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+
+  local dev_deb
+  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  if [[ -z "${dev_deb}" ]]; then
+    echo "ERROR: sima-lmm dev package was not found in ${archive_name}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_LLIMA_DEB_DIR}"
+  cp -f "${dev_deb}" "${NEAT_LLIMA_DEB_DIR}/$(basename "${dev_deb}")"
+  copy_deb_usr_include_to_header_cache "${dev_deb}" "${deb_extract_dir}"
+
+  if [[ ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/sima_lmm/chat.hpp" ]]; then
+    echo "ERROR: LLiMa headers are incomplete under ${NEAT_DEP_HEADERS_DIR}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_DEP_HEADERS_DIR}"
+  printf '%s\n' "${llima_ref}" > "${marker_file}"
+  printf '%s\n' "${server_sha}" > "${checksum_file}"
+  rm -rf "${tmp_dir}"
+}
+
+ensure_dependency_headers() {
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    echo "Skipping NEAT/LLiMa header artifact extraction on macOS."
+    return 0
+  fi
+  ensure_neat_internals_headers
+  ensure_neat_llima_headers
+}
+
 collect_install_artifact_files() {
   local -n out_files_ref="$1"
   out_files_ref=()
@@ -2064,9 +2275,7 @@ main() {
   detect_elxr_host_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
-    echo
-    echo "System dependencies installed. Exiting due to --install-deps-only."
-    exit 0
+    ensure_dependency_headers
   fi
 
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_INTERNALS}" == "ON" ]]; then
@@ -2074,6 +2283,12 @@ main() {
   fi
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
     ensure_neat_llima
+  fi
+
+  if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
+    echo
+    echo "System dependencies and dependency headers installed. Exiting due to --install-deps-only."
+    exit 0
   fi
 
   detect_build_jobs

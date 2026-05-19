@@ -64,7 +64,7 @@ Supported `build.sh` options:
 - `--clean`: Remove `build/` before configuring.
 - `--no-doc`: Skip docs build (even with `--all`).
 - `--no-node`: Skip Node.js install (docs build may fail if Node is missing).
-- `--install-deps-only`: Install system dependencies only, then exit.
+- `--install-deps-only`: Install system dependencies and dependency headers, then exit.
 
 ## Typical Builds
 
@@ -100,7 +100,7 @@ Clean full build:
 ./build.sh --all --clean
 ```
 
-Install dependencies only:
+Install dependencies without building core:
 
 ```bash
 ./build.sh --install-deps-only
