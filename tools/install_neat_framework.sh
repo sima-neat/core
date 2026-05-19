@@ -301,6 +301,72 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
+has_sima_lmm_sysroot_deps() {
+  local sysroot="$1"
+  [[ ( -f "${sysroot}/usr/lib/aarch64-linux-gnu/cmake/fmt/fmtConfig.cmake" ||
+        -f "${sysroot}/usr/lib/aarch64-linux-gnu/cmake/fmt/fmt-config.cmake" ) &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/cmake/spdlog/spdlogConfig.cmake" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]
+}
+
+ensure_sima_lmm_sysroot_deps() {
+  local sysroot="$1"
+
+  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    return 0
+  fi
+  if has_sima_lmm_sysroot_deps "${sysroot}"; then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local -a packages=(
+    "libfmt-dev:arm64"
+    "libfmt9:arm64"
+    "libspdlog-dev:arm64"
+    "libspdlog1.10:arm64"
+  )
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
+
+  log "Installing SimaLMM SDK/sysroot dependencies:"
+  printf '  %s\n' "${packages[@]}"
+  if ! (
+    cd "${tmp_dir}"
+    apt-get download "${packages[@]}"
+  ); then
+    rm -rf "${tmp_dir}"
+    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local -a downloaded_debs=()
+  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
+  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local dep_deb
+  for dep_deb in "${downloaded_debs[@]}"; do
+    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+    if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
+      run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
+    fi
+  done
+  rm -rf "${tmp_dir}"
+
+  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
+    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
+    exit 1
+  fi
+}
+
 ensure_sdk_neat_cli_symlink() {
   local sysroot
   sysroot="$(sysroot_path)"
@@ -435,6 +501,7 @@ install_debs_into_sysroot() {
   fi
 
   log "Detected eLxr SDK environment; installing DEBs into sysroot: ${sysroot}"
+  ensure_sima_lmm_sysroot_deps "${sysroot}"
   local deb
   for deb in "${DEBS[@]}"; do
     log "Extracting $(basename "${deb}") into ${sysroot}"
