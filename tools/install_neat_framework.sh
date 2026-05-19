@@ -24,7 +24,8 @@ set -euo pipefail
 # - Directory containing:
 #   - one .whl file
 #   - sima-neat-*-Linux-core.deb
-#   - neat-*.deb runtime dependencies
+#   - neat-*.deb / simaai-common*.deb runtime dependencies
+#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb / sima-lmm-*-Linux-dev.deb
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
@@ -161,7 +162,7 @@ activation_path_for_display() {
 run_sudo() {
   if sudo -n true >/dev/null 2>&1; then
     sudo "$@"
-    return 0
+    return $?
   fi
 
   local pw="${SUDO_PASSWORD}"
@@ -171,7 +172,7 @@ run_sudo() {
 
   if printf '%s\n' "${pw}" | sudo -S -v >/dev/null 2>&1; then
     printf '%s\n' "${pw}" | sudo -S "$@"
-    return 0
+    return $?
   fi
 
   if [[ -t 0 ]]; then
@@ -183,7 +184,7 @@ run_sudo() {
     fi
     printf '%s\n' "${pw}" | sudo -S -v >/dev/null
     printf '%s\n' "${pw}" | sudo -S "$@"
-    return 0
+    return $?
   fi
 
   echo "Unable to authenticate sudo. Set SUDO_PASSWORD or DEVKIT_PASSWORD." >&2
@@ -265,6 +266,33 @@ install_agent_skills_for_current_user() {
   fi
 }
 
+append_matching_files() {
+  local out_array_name="$1"
+  local search_dir="$2"
+  local pattern="$3"
+  local -n out_array="${out_array_name}"
+  local -a matches=()
+  mapfile -t matches < <(find "${search_dir}" -maxdepth 1 -type f -name "${pattern}" | sort)
+  out_array+=("${matches[@]}")
+}
+
+collect_debs_in_install_order() {
+  local search_dir="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+  out_array=()
+
+  # Install low-level runtime packages first, then LLiMa, then NEAT core.
+  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-gst-plugins_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-internals-dev_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
+}
+
 sysroot_path() {
   printf '%s\n' "${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 }
@@ -301,6 +329,9 @@ cache_install_artifacts_in_sysroot() {
   run_sudo rm -f \
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
     "${cache_dir}"/neat-*.deb \
+    "${cache_dir}"/simaai-common*.deb \
+    "${cache_dir}"/neat-appcomplex_*.deb \
+    "${cache_dir}"/sima-lmm-*.deb \
     "${cache_dir}"/*.whl \
     "${cache_dir}"/install_neat_framework.sh
 
@@ -334,7 +365,7 @@ collect_cached_devkit_deploy_files() {
 
   local -a cached_core_debs=()
   mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
-  mapfile -t CACHED_DEBS < <(find "${cache_dir}" -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
+  collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
   mapfile -t CACHED_WHEELS < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
   local cached_installer="${cache_dir}/install_neat_framework.sh"
 
@@ -360,7 +391,35 @@ collect_cached_devkit_deploy_files() {
 
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
-  run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
+  printf '[install_neat_framework] DEB install set:\n'
+  printf '  %s\n' "${DEBS[@]}"
+
+  # Prefer apt-get for normal installs so system dependencies can be resolved.
+  # Some CI/self-hosted DevKit runners can be left in a transiently broken
+  # exact-version state after a previous partial NEAT install, e.g.
+  # neat-gst-plugins(main) depending on neat-runtime(main) while
+  # neat-runtime(beta) is already unpacked.  In that state apt refuses to start
+  # dependency resolution and suggests apt --fix-broken install, even though the
+  # local DEB set we are installing is self-consistent.  Fall back to installing
+  # the local NEAT DEBs as one dpkg transaction to restore that package set
+  # before continuing.
+  if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    return 0
+  fi
+
+  log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
+  run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+}
+
+remove_stale_global_sima_lmm_pip_install() {
+  if ! command -v pip3 >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if run_sudo pip3 show sima_lmm >/dev/null 2>&1; then
+    log "Removing stale global sima_lmm pip package before installing LLiMa DEBs."
+    run_sudo pip3 uninstall -y sima_lmm --break-system-packages
+  fi
 }
 
 install_debs_into_sysroot() {
@@ -435,7 +494,7 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 
 parse_args "$@"
 
-mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
+collect_debs_in_install_order "." DEBS
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
   exit 1
@@ -451,6 +510,7 @@ if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
 else
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
+  remove_stale_global_sima_lmm_pip_install
   log_green "Preparing Python virtual environment at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
   python3 -m venv --system-site-packages "${VENV_DIR}"

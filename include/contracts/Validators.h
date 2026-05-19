@@ -2,6 +2,15 @@
  * @file
  * @ingroup contracts
  * @brief Built-in contract implementations and default registry.
+ *
+ * Provides the small set of header-only `Contract` factories that ship with
+ * the framework — non-empty pipeline, no-null nodes, sink-last-for-run,
+ * RTSP source presence — plus `DefaultRegistry()`, the recommended starting
+ * point for most callers. Library code can compose its own registry by
+ * cloning `DefaultRegistry()` and adding/removing contracts.
+ *
+ * @see Contract
+ * @see ContractRegistry
  */
 // include/contracts/Validators.h
 #pragma once
@@ -25,6 +34,11 @@ namespace validators {
 
 /**
  * @brief Ensures NodeGroup is not empty.
+ *
+ * Issues `EMPTY_PIPELINE` error when validated against an empty NodeGroup.
+ *
+ * @ingroup contracts
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> NonEmptyPipeline() {
   class C final : public Contract {
@@ -48,7 +62,12 @@ inline std::shared_ptr<Contract> NonEmptyPipeline() {
 }
 
 /**
- * @brief Ensures there are no null node pointers.
+ * @brief Ensures there are no null node pointers in the NodeGroup.
+ *
+ * Issues a `NULL_NODE` error per offending index.
+ *
+ * @ingroup contracts
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> NoNullNodes() {
   class C final : public Contract {
@@ -75,9 +94,16 @@ inline std::shared_ptr<Contract> NoNullNodes() {
 }
 
 /**
- * @brief Ensures Output exists and is last when ctx.mode == Run.
+ * @brief Ensures the configured sink kind exists and is last when `ctx.mode == Run`.
  *
- * This is the builder-level version of the "sink last" contract described in the architecture.
+ * This is the builder-level version of the "sink last" contract described in
+ * the architecture. Issues `SINK_NOT_LAST` if the last Node isn't of the
+ * expected kind, and `MULTIPLE_SINKS` if a sink-kind Node is found earlier
+ * in the chain.
+ *
+ * @ingroup contracts
+ * @param sink_kind The Node kind expected as the terminal (default `"Output"`).
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> SinkLastForRun(std::string sink_kind = "Output") {
   class C final : public Contract {
@@ -126,9 +152,15 @@ inline std::shared_ptr<Contract> SinkLastForRun(std::string sink_kind = "Output"
 }
 
 /**
- * @brief Ensures an RTSP source node exists when ctx.mode == Rtsp.
+ * @brief Ensures an RTSP source node exists when `ctx.mode == Rtsp`.
  *
- * Builder-level: we only check presence of StillImageInput (or another configured kind).
+ * Builder-level: we only check presence of `StillImageInput` (or another
+ * configured kind). Issues `RTSP_SOURCE_MISSING` if no Node of the expected
+ * kind is found in the NodeGroup.
+ *
+ * @ingroup contracts
+ * @param source_kind The Node kind expected to act as the RTSP source.
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> RtspRequiresSource(std::string source_kind = "StillImageInput") {
   class C final : public Contract {
@@ -175,7 +207,12 @@ inline std::shared_ptr<Contract> RtspRequiresSource(std::string source_kind = "S
 /**
  * @brief Reasonable default set of builder-level contracts.
  *
- * Keep this purely structural (no GStreamer).
+ * Bundles `NonEmptyPipeline`, `NoNullNodes`, `SinkLastForRun`, and
+ * `RtspRequiresSource` into a fresh registry. Keep this purely structural
+ * (no GStreamer); domain-specific contracts should be added on top.
+ *
+ * @ingroup contracts
+ * @return New `ContractRegistry` populated with the default contracts.
  */
 inline ContractRegistry DefaultRegistry() {
   ContractRegistry reg;

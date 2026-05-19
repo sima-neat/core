@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
+#include <vector>
 
 namespace sima_yolov8_test {
 
@@ -107,11 +109,91 @@ inline cv::Mat load_people_image_or_skip(const fs::path& root = {}) {
 inline std::string resolve_yolov8s_tar_or_skip(const fs::path& root = {}) {
   const std::string tar_gz = sima_e2e::resolve_yolov8s_tar(root);
   if (tar_gz.empty()) {
-    skip_long_test_exception("Failed to locate yolo_v8s MPK tarball. Set SIMA_YOLO_TAR or run "
-                             "sima-cli modelzoo -v " +
-                             sima_test::modelzoo_version() + " get yolo_v8s.");
+    skip_long_test_exception(
+        "Failed to locate yolo_v8s MPK tarball. Set SIMA_MODEL_TAR (or SIMA_YOLO_TAR) or run "
+        "sima-cli modelzoo get yolo_v8s.");
   }
   return tar_gz;
+}
+
+// Canonical YOLOv8n variant set used by the matrix tests
+// (preproc_yolov8_matrix_test, yolov8_variant_route_matrix_test). Mirrors
+// tmp/run_yolov8_matrix.sh so on-disk staging matches CI staging.
+inline const std::vector<std::string>& yolov8n_drive_variant_stems() {
+  static const std::vector<std::string> stems = {
+      "yolov8n_A_BF16_W_INT8_MLATess", "yolov8n_A_BF16_W_INT8_mpk", "yolov8n_A_W_BF16_MLATess",
+      "yolov8n_A_W_BF16_mpk",          "yolov8n_A_W_INT8_MLATess",  "yolov8n_A_W_int8_mpk",
+  };
+  return stems;
+}
+
+inline std::string yolov8n_variant_base_url() {
+  if (const char* env = std::getenv("SIMA_YOLOV8N_VARIANTS_BASE_URL"); env && *env)
+    return env;
+  if (const char* env = std::getenv("SIMA_YOLOV8_VARIANTS_BASE_URL"); env && *env)
+    return env;
+  return "https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix";
+}
+
+// Ensure every YOLOv8n variant tarball is staged under
+// <root>/tmp/yolov8n_drive/. The matrix tests are mandatory in CI and must
+// NOT skip when the variants are missing: fetch them on demand via
+// sima_test::download_file (which prefers sima-cli for the OAuth-gated
+// docs.sima.ai endpoint and falls back to curl/wget). Each tarball is
+// validated with `tar -tzf` after download; corrupt downloads are removed
+// so the next retry isn't poisoned. Returns the variants directory.
+inline fs::path ensure_yolov8n_drive_variants(const fs::path& root) {
+  // Primary destination matches the historical caller expectation. On the
+  // CI test runner `root` is the build-host CMAKE_SOURCE_DIR (passed as
+  // argv[1] from CTestTestfile.cmake) and doesn't exist on this machine —
+  // attempting to create `<root>/tmp/yolov8n_drive` fails with "Permission
+  // denied" because we can't mkdir under /workspace owned by the build
+  // runner. Fall back to a writable scratch dir under tmp so the variants
+  // can still be staged for the test; same approach used by
+  // ensure_coco_sample.
+  fs::path drive_dir = root / "tmp" / "yolov8n_drive";
+  std::error_code ec;
+  fs::create_directories(drive_dir, ec);
+  if (ec) {
+    fs::path scratch_root;
+    try {
+      scratch_root = fs::temp_directory_path();
+    } catch (...) {
+      scratch_root = fs::path("/tmp");
+    }
+    drive_dir = scratch_root / "sima-yolov8n-drive";
+    ec.clear();
+    fs::create_directories(drive_dir, ec);
+    if (ec) {
+      drive_dir = fs::path("/tmp") / "sima-yolov8n-drive";
+      ec.clear();
+      fs::create_directories(drive_dir, ec);
+    }
+  }
+  require(!ec, "ensure_yolov8n_drive_variants: failed to create " + drive_dir.string() + " (" +
+                   ec.message() + ")");
+
+  std::string base_url = yolov8n_variant_base_url();
+  while (!base_url.empty() && base_url.back() == '/')
+    base_url.pop_back();
+
+  for (const auto& stem : yolov8n_drive_variant_stems()) {
+    const fs::path tar_path = drive_dir / (stem + ".tar.gz");
+    if (sima_test::is_listable_tar_gz(tar_path))
+      continue;
+    sima_test::purge_unlistable_tar_gz(tar_path);
+
+    const std::string url = base_url + "/" + stem + ".tar.gz";
+    const bool ok = sima_test::download_file(url, tar_path);
+    require(ok, "ensure_yolov8n_drive_variants: failed to download " + url + " -> " +
+                    tar_path.string() +
+                    " (run `sima-cli login` if the docs.sima.ai endpoint requires OAuth, or "
+                    "set SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
+    require(sima_test::is_listable_tar_gz(tar_path),
+            "ensure_yolov8n_drive_variants: downloaded archive is not a readable tar.gz: " +
+                tar_path.string());
+  }
+  return drive_dir;
 }
 
 } // namespace sima_yolov8_test

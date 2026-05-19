@@ -27,9 +27,6 @@
 #include "pipeline/internal/TensorUtil.h"
 #include "builder/Node.h"
 #include "builder/NodeGroup.h"
-#include "builder/ConfigJsonProvider.h"
-#include "builder/ConfigJsonConsumer.h"
-#include "builder/NextCpuConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
 #include "contracts/ContractRegistry.h"
@@ -107,6 +104,11 @@ std::string format_validate_note(const std::string& where, const std::string& co
   return oss.str();
 }
 
+int resolve_validate_timeout_ms(const ValidateOptions& opt, int default_timeout_ms) {
+  (void)opt;
+  return std::max(10, env_int("SIMA_GST_VALIDATE_TIMEOUT_MS", default_timeout_ms));
+}
+
 } // namespace
 
 SessionReport Session::validate(const ValidateOptions& opt) const {
@@ -131,7 +133,9 @@ SessionReport Session::validate(const ValidateOptions& opt) const {
   }
 
   {
-    NodeGroup group(nodes_);
+    const std::vector<std::shared_ptr<Node>> validate_nodes =
+        session_build_materialize_model_bound_nodes(nodes_, false);
+    NodeGroup group(validate_nodes);
     ValidationContext ctx;
     ctx.mode = ValidationContext::Mode::Validate;
     ctx.strict = true;
@@ -158,14 +162,25 @@ SessionReport Session::validate(const ValidateOptions& opt) const {
   const bool insert_boundaries =
       should_insert_boundaries_for_mode("SIMA_GST_VALIDATE_INSERT_BOUNDARIES", true);
 
+  const std::vector<std::shared_ptr<Node>> validate_nodes =
+      session_build_materialize_model_bound_nodes(nodes_, false);
   const NameTransform name_transform = make_name_transform(opt_);
-  BuildResult br = build_pipeline_full(nodes_, insert_boundaries, "mysink", false, name_transform);
+  BuildResult br = build_pipeline_full(validate_nodes, insert_boundaries, "mysink", false,
+                                       name_transform, &opt_);
+  {
+    ContractCompileInput compile_input;
+    compile_input.pipeline_label = "Session::validate";
+    compile_input.processcvu_requested_run_target = opt_.processcvu_requested_run_target;
+    compile_input.processcvu = opt_.processcvu;
+    session_build_compile_contracts(&br, validate_nodes, compile_input, "Session::validate",
+                                    nullptr);
+  }
   rep.pipeline_string = br.pipeline_string;
   enforce_mla_pipeline_guard("Session::validate", rep.pipeline_string, this);
 
   GstElement* pipeline = nullptr;
   try {
-    pipeline = session_build_parse_pipeline_or_throw(rep.pipeline_string, "Session::validate");
+    pipeline = session_build_parse_pipeline_or_throw(br, "Session::validate");
   } catch (const SessionError& e) {
     rep.error_code = error_codes::kParseLaunch;
     rep.repro_note =
@@ -223,8 +238,7 @@ SessionReport Session::validate(const ValidateOptions& opt) const {
     return rep;
   }
 
-  const int timeout_ms =
-      std::max(10, std::atoi(env_str("SIMA_GST_VALIDATE_TIMEOUT_MS", "2000").c_str()));
+  const int timeout_ms = resolve_validate_timeout_ms(opt, 2000);
 
   GstSample* sample = nullptr;
 #if GST_CHECK_VERSION(1, 10, 0)
@@ -273,7 +287,9 @@ SessionReport Session::validate(const ValidateOptions& opt, const cv::Mat& input
   }
 
   {
-    NodeGroup group(nodes_);
+    const std::vector<std::shared_ptr<Node>> validate_nodes =
+        session_build_materialize_model_bound_nodes(nodes_, true);
+    NodeGroup group(validate_nodes);
     ValidationContext ctx;
     ctx.mode = ValidationContext::Mode::Validate;
     ctx.strict = true;
@@ -300,15 +316,25 @@ SessionReport Session::validate(const ValidateOptions& opt, const cv::Mat& input
   const bool insert_boundaries =
       should_insert_boundaries_for_mode("SIMA_GST_VALIDATE_INSERT_BOUNDARIES", true);
 
+  const std::vector<std::shared_ptr<Node>> validate_nodes =
+      session_build_materialize_model_bound_nodes(nodes_, true);
   const NameTransform name_transform = make_name_transform(opt_);
-  BuildResult br = build_pipeline_full(nodes_, insert_boundaries, "mysink", false, name_transform);
+  BuildResult br = build_pipeline_full(validate_nodes, insert_boundaries, "mysink", false,
+                                       name_transform, &opt_);
+  {
+    ContractCompileInput compile_input;
+    compile_input.pipeline_label = "Session::validate(input)";
+    compile_input.processcvu_requested_run_target = opt_.processcvu_requested_run_target;
+    compile_input.processcvu = opt_.processcvu;
+    session_build_compile_contracts(&br, validate_nodes, compile_input, "Session::validate(input)",
+                                    nullptr);
+  }
   rep.pipeline_string = br.pipeline_string;
   enforce_mla_pipeline_guard("Session::validate(input)", rep.pipeline_string, this);
 
   GstElement* pipeline = nullptr;
   try {
-    pipeline =
-        session_build_parse_pipeline_or_throw(rep.pipeline_string, "Session::validate(input)");
+    pipeline = session_build_parse_pipeline_or_throw(br, "Session::validate(input)");
   } catch (const SessionError& e) {
     rep.error_code = error_codes::kParseLaunch;
     rep.repro_note =
@@ -495,8 +521,7 @@ SessionReport Session::validate(const ValidateOptions& opt, const cv::Mat& input
   }
   gst_app_src_end_of_stream(GST_APP_SRC(appsrc));
 
-  const int timeout_ms =
-      std::max(10, std::atoi(env_str("SIMA_GST_VALIDATE_TIMEOUT_MS", "10000").c_str()));
+  const int timeout_ms = resolve_validate_timeout_ms(opt, 10000);
 
   GstSample* sample = nullptr;
 #if GST_CHECK_VERSION(1, 10, 0)

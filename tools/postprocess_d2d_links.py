@@ -22,6 +22,20 @@ pipeline_root_re = re.compile(r"/PipelineSession//reference/(api|cppapi)/")
 
 slug_re = re.compile(r"^slug:\s*/reference/(api|cppapi)/(?P<section>files|structs|classes|namespaces)/(?P<path>[A-Za-z0-9_./-]+)\s*$", re.MULTILINE)
 
+# doxygen2docusaurus emits anchors to /reference/cppapi/pages/deprecated/ and
+# to groups.dox (a Doxygen-only source filename) that have no corresponding
+# rendered page — we strip generate_api_docs.sh's "pages/" output and groups.dox
+# is never published. Strip the dead hrefs so linkinator doesn't 404 on them,
+# keeping the visible label text intact.
+dead_anchor_re = re.compile(
+    r'<a\s+href=(?:'
+    r'"[^"]*(?:pages/deprecated/|groups\.dox)[^"]*"'
+    r"|'[^']*(?:pages/deprecated/|groups\.dox)[^']*'"
+    r'|[^\s>]*(?:pages/deprecated/|groups\.dox)[^\s>]*'
+    r')\s*>(?P<label>.*?)</a>',
+    re.DOTALL,
+)
+
 
 def normalize_link(match: re.Match) -> str:
     base = "/reference/cppapi/"
@@ -54,6 +68,7 @@ def main() -> None:
         new_text = pipeline_prefix_re.sub("/reference/cppapi/", new_text)
         new_text = pipeline_root_re.sub("/reference/cppapi/", new_text)
         new_text = normalize_slug(new_text)
+        new_text = dead_anchor_re.sub(lambda m: m.group("label"), new_text)
         if new_text != text:
             md.write_text(new_text)
 

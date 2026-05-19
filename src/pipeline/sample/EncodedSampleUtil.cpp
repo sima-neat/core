@@ -63,7 +63,7 @@ Sample make_encoded_sample(std::vector<uint8_t> bytes, std::string caps_string, 
   }
 
   Sample out;
-  out.kind = SampleKind::Tensor;
+  out.kind = SampleKind::TensorSet;
   out.caps_string = std::move(caps_string);
   out.pts_ns = pts_ns;
   out.dts_ns = dts_ns;
@@ -89,7 +89,7 @@ Sample make_encoded_sample(std::vector<uint8_t> bytes, std::string caps_string, 
     out.payload_tag = tag;
   }
 
-  out.tensor = std::move(tensor);
+  out.tensors = TensorList{std::move(tensor)};
   return out;
 }
 

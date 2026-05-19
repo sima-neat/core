@@ -1,6 +1,38 @@
 #include "internal/GraphRunState.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cstdint>
+#include <iostream>
+#include <limits>
+#include <sstream>
+#include <string>
+
 namespace simaai::neat::graph {
+
+namespace {
+
+RuntimeMetricGroup graph_snapshot_group(const GraphRunStats::Snapshot& snap,
+                                        const std::string& label) {
+  RuntimeMetricGroup group;
+  group.name =
+      label.empty() ? ("graph_node:" + std::to_string(snap.node_id)) : ("graph_node:" + label);
+  const double secs =
+      std::chrono::duration_cast<std::chrono::duration<double>>(snap.last - snap.first).count();
+  const double fps = (secs > 0.0) ? (static_cast<double>(snap.total) / secs) : 0.0;
+  group.values = {
+      {"node_id", static_cast<double>(snap.node_id), "id"},
+      {"samples", static_cast<double>(snap.total), "count"},
+      {"elapsed_s", secs, "s"},
+      {"fps", fps, "fps"},
+  };
+  for (const auto& kv : snap.counts) {
+    group.values.push_back({"stream:" + kv.first, static_cast<double>(kv.second), "count"});
+  }
+  return group;
+}
+
+} // namespace
 
 void GraphRun::emit_rate_summary(const GraphRunStats& stats) const {
   const auto snaps = stats.snapshot();
@@ -84,6 +116,61 @@ void GraphRun::emit_summary() const {
   if (!state_ || !state_->stats)
     return;
   emit_summary(*state_->stats);
+}
+
+RuntimeMetrics GraphRun::metrics(const RuntimeMetricsOptions& opt) const {
+  RuntimeMetrics out;
+  out.source_kind = "graph";
+  if (!state_)
+    return out;
+  if (opt.include_pipeline) {
+    out.metadata.emplace_back("graph", describe());
+  }
+  if (opt.include_power && state_->power_monitor) {
+    out.power = state_->power_monitor->summary();
+  }
+
+  const GraphRunStats* graph_stats = stats();
+  if (!graph_stats)
+    return out;
+
+  const auto snaps = graph_stats->snapshot();
+  std::chrono::steady_clock::time_point first{};
+  std::chrono::steady_clock::time_point last{};
+  std::int64_t total_events = 0;
+  for (const auto& snap : snaps) {
+    if (snap.total <= 0)
+      continue;
+    if (first == std::chrono::steady_clock::time_point{} || snap.first < first)
+      first = snap.first;
+    if (last == std::chrono::steady_clock::time_point{} || snap.last > last)
+      last = snap.last;
+    total_events += snap.total;
+
+    std::string label;
+    if (snap.node_id < state_->node_labels.size()) {
+      label = state_->node_labels[snap.node_id];
+    }
+    out.groups.push_back(graph_snapshot_group(snap, label));
+  }
+  out.counters.outputs_ready = static_cast<std::uint64_t>(std::max<std::int64_t>(0, total_events));
+  out.counters.outputs_pulled = out.counters.outputs_ready;
+  if (first != std::chrono::steady_clock::time_point{} && last > first) {
+    out.elapsed_seconds = std::chrono::duration<double>(last - first).count();
+    if (out.elapsed_seconds > 0.0) {
+      out.throughput_fps = static_cast<double>(total_events) / out.elapsed_seconds;
+    }
+  }
+  return out;
+}
+
+std::string GraphRun::metrics_report(const RuntimeMetricsOptions& opt,
+                                     RuntimeMetricsFormat format) const {
+  return format_runtime_metrics(metrics(opt), format);
+}
+
+std::string GraphRun::metrics_report(RuntimeMetricsFormat format) const {
+  return metrics_report(RuntimeMetricsOptions{}, format);
 }
 
 std::string GraphRun::describe() const {

@@ -36,7 +36,7 @@ RUN_TEST("stress_run_try_push_holder_race_test", ([] {
            Session session;
            InputOptions src_opt;
            src_opt.media_type = "video/x-raw";
-           src_opt.format = "RGB";
+           src_opt.format = simaai::neat::FormatTag::RGB;
            src_opt.use_simaai_pool = false;
            src_opt.max_width = 96;
            src_opt.max_height = 96;
@@ -49,14 +49,14 @@ RUN_TEST("stress_run_try_push_holder_race_test", ([] {
            run_opt.overflow_policy = OverflowPolicy::Block;
 
            Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x66);
-           Run run = session.build(seed, RunMode::Async, run_opt);
+           Run run = session.build(TensorList{seed}, RunMode::Async, run_opt);
 
            // Prime one holder from a regular push/pull path.
-           Sample prime = run.push_and_pull(seed, 1000);
-           require(prime.tensor.has_value(), "stress holder prime sample missing tensor");
-           require(prime.tensor->storage != nullptr, "stress holder prime storage missing");
-           require(prime.tensor->storage->holder != nullptr, "stress holder prime holder missing");
-           const std::shared_ptr<void> holder = prime.tensor->storage->holder;
+           TensorList prime = run.run(TensorList{seed}, 1000);
+           require(prime.size() == 1, "stress holder prime expected one tensor");
+           require(prime.front().storage != nullptr, "stress holder prime storage missing");
+           require(prime.front().storage->holder != nullptr, "stress holder prime holder missing");
+           const std::shared_ptr<void> holder = prime.front().storage->holder;
 
            std::atomic<int> pushed{0};
            std::atomic<int> pulled{0};
@@ -86,10 +86,8 @@ RUN_TEST("stress_run_try_push_holder_race_test", ([] {
              try {
                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
                while (std::chrono::steady_clock::now() < deadline) {
-                 auto out = run.pull(100);
-                 if (out.has_value()) {
-                   ++pulled;
-                 }
+                 auto outs = run.pull_tensors(100);
+                 pulled += static_cast<int>(outs.size());
                  if (producer_done.load() && pulled.load() >= pushed.load()) {
                    break;
                  }

@@ -77,12 +77,12 @@ int main(int argc, char** argv) {
       std::cout << "attached_session_backend=\n" << attached.describe_backend() << "\n";
     }
 
-    auto run = direct.build(rgb, simaai::neat::RunMode::Sync);
-    auto out = run.push_and_pull(rgb, /*timeout_ms=*/1000);
+    auto run = direct.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
+    simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
 
-    if (!out.tensor.has_value())
+    if (out.empty())
       throw std::runtime_error("direct session output missing tensor");
-    std::cout << "direct_rank=" << out.tensor->shape.size() << "\n";
+    std::cout << "direct_rank=" << out.front().shape.size() << "\n";
     std::cout << "[OK] 007_plug_model_into_pipeline\n";
     return 0;
   } catch (const std::exception& e) {

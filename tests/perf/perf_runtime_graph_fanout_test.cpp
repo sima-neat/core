@@ -83,6 +83,8 @@ int main() {
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
                                                               sima_perf::Clock::now());
 
+    simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
+    power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {
       push_timestamps[static_cast<std::size_t>(i)] = sima_perf::Clock::now();
@@ -114,6 +116,7 @@ int main() {
       outputs += 2;
     }
     const auto run_t1 = sima_perf::Clock::now();
+    power_monitor.stop();
 
     run.stop();
 
@@ -125,7 +128,9 @@ int main() {
     metrics.startup = sima_perf::elapsed_ms(startup_t0, startup_t1);
     metrics.rss_peak_kb = sima_perf::rss_peak_kb();
 
-    sima_perf::emit_metrics_json("runtime_graph_fanout", iterations, metrics, "graph_fanout");
+    const auto power_summary = power_monitor.summary();
+    sima_perf::emit_metrics_json("runtime_graph_fanout", iterations, metrics, "graph_fanout",
+                                 &power_summary);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "perf_runtime_graph_fanout_test exception: " << e.what() << "\n";

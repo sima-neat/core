@@ -93,6 +93,49 @@ inline std::vector<int64_t> contiguous_strides(const std::vector<int64_t>& shape
   return contiguous_strides_bytes(shape, elem_bytes);
 }
 
+/**
+ * Normalize a tensor-view stride vector to a projected logical tensor rank.
+ *
+ * MPK/MLA tensor views can carry strides for a parent tensor that has leading
+ * singleton/batch dimensions while the logical consumer shape has already been
+ * projected to a lower rank.  This helper preserves the concrete tensor view by
+ * dropping only those leading dimensions when the source shape proves they are
+ * singleton-compatible.  If the source shape is not available, callers may opt
+ * into the suffix fallback, which keeps the last target-rank strides rather than
+ * incorrectly treating a strided parent view as dense storage.
+ */
+inline std::vector<int64_t> normalize_strides_rank_to_shape(
+    const std::vector<int64_t>& strides, const std::vector<int64_t>& source_shape,
+    const std::vector<int64_t>& target_shape, bool allow_suffix_fallback = false) {
+  if (strides.empty() || target_shape.empty() || strides.size() == target_shape.size()) {
+    return strides;
+  }
+  if (source_shape.size() == strides.size() && source_shape.size() >= target_shape.size()) {
+    const std::size_t drop = source_shape.size() - target_shape.size();
+    bool can_drop = true;
+    for (std::size_t i = 0; i < drop; ++i) {
+      if (source_shape[i] != 1) {
+        can_drop = false;
+        break;
+      }
+    }
+    for (std::size_t i = 0; can_drop && i < target_shape.size(); ++i) {
+      if (target_shape[i] <= 0 || source_shape[i + drop] < target_shape[i]) {
+        can_drop = false;
+      }
+    }
+    if (can_drop) {
+      return std::vector<int64_t>(strides.begin() + static_cast<std::ptrdiff_t>(drop),
+                                  strides.end());
+    }
+  }
+  if (allow_suffix_fallback && strides.size() > target_shape.size()) {
+    return std::vector<int64_t>(strides.end() - static_cast<std::ptrdiff_t>(target_shape.size()),
+                                strides.end());
+  }
+  return strides;
+}
+
 //------------------------------------------------------------------------------
 // String helpers
 //------------------------------------------------------------------------------

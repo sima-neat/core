@@ -86,4 +86,4 @@ Recommended support bundle:
 | `tensor caps change not supported` | Tensor shape/dtype change at runtime | Keep tensor shape/dtype stable (no renegotiation) |
 
 For structured plugin errors and actionable hints, see
-[How To Debug Plugin Failures](/how-to/plugin_failures).
+[How To Debug Plugin Failures](plugin_failures.md).

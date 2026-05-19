@@ -11,6 +11,23 @@ def _shape_tuple(obj):
   return shape
 
 
+def _normalize_memory(core, memory):
+  if memory is None:
+    return core.TensorMemory.EV74
+  if isinstance(memory, str):
+    token = memory.strip().lower().replace("-", "_")
+    if token in ("auto",):
+      return core.TensorMemory.Auto
+    if token in ("cpu", "a65"):
+      return core.TensorMemory.CPU if token == "cpu" else core.TensorMemory.A65
+    if token in ("ev74", "cvu", "sima_cvu"):
+      return core.TensorMemory.EV74
+    if token in ("mla", "sima_mla"):
+      return core.TensorMemory.MLA
+    raise ValueError(f"unsupported tensor memory placement: {memory!r}")
+  return memory
+
+
 def _infer_layout(core, obj, *, prefer_chw: bool = False):
   if not hasattr(obj, "ndim"):
     return core.TensorLayout.Unknown
@@ -58,13 +75,17 @@ def install_wrappers(core) -> None:
     except Exception:
       return None
 
-  def tensor_from_dlpack(cls, obj, copy: bool = False, layout=None, image_format=None):
+  def tensor_from_dlpack(
+      cls, obj, copy: bool = False, layout=None, image_format=None, memory=None, byte_format=None
+  ):
     if hasattr(obj, "__dlpack__"):
       capsule = obj.__dlpack__()
     else:
       capsule = obj
 
-    if layout is None:
+    if byte_format is not None:
+      layout = core.TensorLayout.Unknown
+    elif layout is None:
       layout = _infer_layout(core, obj, prefer_chw=False)
 
     return cls._from_dlpack_capsule(
@@ -72,19 +93,27 @@ def install_wrappers(core) -> None:
         copy=copy,
         layout=layout,
         image_format=image_format,
+        byte_format=byte_format,
+        memory=_normalize_memory(core, memory),
     )
 
-  def tensor_from_numpy(cls, array, copy: bool = False, layout=None, image_format=None):
+  def tensor_from_numpy(
+      cls, array, copy: bool = False, layout=None, image_format=None, memory=None, byte_format=None
+  ):
     import numpy as np
 
     arr = np.asarray(array)
-    if layout is None:
+    if byte_format is not None:
+      layout = core.TensorLayout.Unknown
+    elif layout is None:
       layout = _infer_layout(core, arr, prefer_chw=False)
     return cls._from_dlpack_capsule(
         arr.__dlpack__(),
         copy=copy,
         layout=layout,
         image_format=image_format,
+        byte_format=byte_format,
+        memory=_normalize_memory(core, memory),
     )
 
   def tensor_to_numpy(self, copy: bool = False):
@@ -95,13 +124,17 @@ def install_wrappers(core) -> None:
       return out.copy()
     return out
 
-  def tensor_from_torch(cls, tensor, copy: bool = False, layout=None, image_format=None):
+  def tensor_from_torch(
+      cls, tensor, copy: bool = False, layout=None, image_format=None, memory=None, byte_format=None
+  ):
     if hasattr(tensor, "device"):
       device_type = getattr(getattr(tensor, "device"), "type", "cpu")
       if device_type != "cpu":
         tensor = tensor.cpu()
 
-    if layout is None:
+    if byte_format is not None:
+      layout = core.TensorLayout.Unknown
+    elif layout is None:
       layout = _infer_layout(core, tensor, prefer_chw=True)
 
     return cls._from_dlpack_capsule(
@@ -109,6 +142,8 @@ def install_wrappers(core) -> None:
         copy=copy,
         layout=layout,
         image_format=image_format,
+        byte_format=byte_format,
+        memory=_normalize_memory(core, memory),
     )
 
   def tensor_to_torch(self, copy: bool = False):
@@ -123,7 +158,9 @@ def install_wrappers(core) -> None:
   core.Tensor.from_numpy = classmethod(tensor_from_numpy)
   core.Tensor.to_numpy = tensor_to_numpy
   core.Tensor.from_torch = classmethod(tensor_from_torch)
+  core.Tensor.from_pytorch = classmethod(tensor_from_torch)
   core.Tensor.to_torch = tensor_to_torch
+  core.Tensor.to_pytorch = tensor_to_torch
 
   if not hasattr(core.Run, "push"):
     def run_push(self, value, copy: bool = False, layout=None, image_format=None):

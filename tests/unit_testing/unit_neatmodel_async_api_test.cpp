@@ -37,27 +37,33 @@ struct has_build_sample_runoptions_only<T, std::void_t<decltype(std::declval<T&>
 int main() {
   using simaai::neat::Model;
   using simaai::neat::NodeGroup;
+  using simaai::neat::SampleList;
   using simaai::neat::Tensor;
+  using simaai::neat::TensorList;
 
   static_assert(std::is_same_v<decltype(std::declval<Model&>().build()), Model::Runner>);
   static_assert(
-      std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const Tensor&>())),
+      std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const TensorList&>())),
                      Model::Runner>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().build(
-                                   std::declval<const simaai::neat::Sample&>())),
-                               Model::Runner>);
-
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const Tensor&>())),
-                               simaai::neat::Sample>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(
-                                   std::declval<const std::vector<Tensor>&>())),
-                               simaai::neat::Sample>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(
-                                   std::declval<const simaai::neat::Sample&>())),
-                               simaai::neat::Sample>);
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const SampleList&>())),
+                     Model::Runner>);
 #if defined(SIMA_WITH_OPENCV)
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const cv::Mat&>())),
-                               simaai::neat::Sample>);
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().build(
+                                   std::declval<const std::vector<cv::Mat>&>())),
+                               Model::Runner>);
+#endif
+
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const TensorList&>())),
+                     TensorList>);
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const SampleList&>())),
+                     SampleList>);
+#if defined(SIMA_WITH_OPENCV)
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(
+                                   std::declval<const std::vector<cv::Mat>&>())),
+                               TensorList>);
 #endif
   static_assert(std::is_same_v<decltype(std::declval<Model&>().session()), NodeGroup>);
   static_assert(std::is_same_v<decltype(std::declval<Model&>().session(

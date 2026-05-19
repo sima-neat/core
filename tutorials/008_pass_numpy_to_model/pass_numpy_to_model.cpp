@@ -44,9 +44,9 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
 
     // CORE LOGIC
-    // from_cv_mat wraps a cv::Mat as a Neat Tensor (read-only here).
+    // from_cv_mat converts a cv::Mat into a CPU-backed Neat Tensor.
     simaai::neat::Tensor tensor = simaai::neat::from_cv_mat(
-        rgb, simaai::neat::ImageSpec::PixelFormat::RGB, /*read_only=*/true);
+        rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::CPU);
 
     // map_read yields a Mapping with a raw pointer and size in bytes.
     simaai::neat::Mapping mapped = tensor.map_read();

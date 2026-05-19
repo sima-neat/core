@@ -21,7 +21,7 @@ std::shared_ptr<simaai::neat::Run> build_integration_run() {
   Session session;
   InputOptions src_opt;
   src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
@@ -35,7 +35,7 @@ std::shared_ptr<simaai::neat::Run> build_integration_run() {
   run_opt.overflow_policy = OverflowPolicy::Block;
 
   const Tensor seed = make_color_tensor(12, 8, ImageSpec::PixelFormat::RGB, 0x22);
-  return std::make_shared<Run>(session.build(seed, RunMode::Async, run_opt));
+  return std::make_shared<Run>(session.build(TensorList{seed}, RunMode::Async, run_opt));
 }
 
 } // namespace

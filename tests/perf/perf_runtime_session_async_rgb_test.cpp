@@ -35,7 +35,7 @@ int main() {
 
     InputOptions input_opt;
     input_opt.media_type = "video/x-raw";
-    input_opt.format = "RGB";
+    input_opt.format = simaai::neat::FormatTag::RGB;
     input_opt.width = 96;
     input_opt.height = 96;
     input_opt.depth = 3;
@@ -53,18 +53,20 @@ int main() {
     run_opt.queue_depth = std::max(32, iterations / 2);
     const Sample seed = make_sample(0);
     const auto startup_t0 = sima_perf::Clock::now();
-    Run run = session.build(seed, RunMode::Async, run_opt);
+    Run run = session.build(SampleList{seed}, RunMode::Async, run_opt);
     const auto startup_t1 = sima_perf::Clock::now();
 
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
                                                               sima_perf::Clock::now());
 
+    simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
+    power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {
       push_timestamps[static_cast<std::size_t>(i)] = sima_perf::Clock::now();
       const Sample input =
           make_sample(static_cast<int64_t>(i), static_cast<uint8_t>(0x40 + (i % 32)));
-      if (!run.push(input)) {
+      if (!run.push(SampleList{input})) {
         throw std::runtime_error("async push failed");
       }
     }
@@ -89,6 +91,7 @@ int main() {
       ++outputs;
     }
     const auto run_t1 = sima_perf::Clock::now();
+    power_monitor.stop();
 
     const RunStats stats = run.stats();
     run.stop();
@@ -103,7 +106,9 @@ int main() {
     metrics.input_drop_count = stats.inputs_dropped;
     metrics.output_drop_count = stats.outputs_dropped;
 
-    sima_perf::emit_metrics_json("runtime_session_async_rgb", iterations, metrics, "async");
+    const auto power_summary = power_monitor.summary();
+    sima_perf::emit_metrics_json("runtime_session_async_rgb", iterations, metrics, "async",
+                                 &power_summary);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "perf_runtime_session_async_rgb_test exception: " << e.what() << "\n";

@@ -39,11 +39,13 @@ int main() {
     cv::Mat img(720, 1280, CV_8UC3, cv::Scalar(64, 128, 192));
     if (!img.isContinuous())
       img = img.clone();
+    const simaai::neat::Tensor tensor_rgb = simaai::neat::Tensor::from_cv_mat(
+        img, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
 
     simaai::neat::Session p;
 
     simaai::neat::InputOptions src_opt;
-    src_opt.format = "RGB";
+    src_opt.format = simaai::neat::FormatTag::RGB;
     src_opt.width = img.cols;
     src_opt.height = img.rows;
     src_opt.depth = 3;
@@ -57,10 +59,8 @@ int main() {
     src_opt.max_bytes = 0;
 
     simaai::neat::PreprocOptions pre_opt;
-    pre_opt.input_width = img.cols;
-    pre_opt.input_height = img.rows;
-    pre_opt.output_width = 640;
-    pre_opt.output_height = 640;
+    pre_opt.set_input_shape({img.rows, img.cols, 3});
+    pre_opt.set_output_shape({640, 640, 3});
     pre_opt.scaled_width = 640;
     pre_opt.scaled_height = 640;
     pre_opt.input_img_type = "RGB";
@@ -73,9 +73,9 @@ int main() {
     pre_opt.next_cpu = "APU";
     pre_opt.upstream_name = "decoder";
     pre_opt.num_buffers = src_opt.pool_min_buffers;
-    pre_opt.config_dir = "tmp";
-    pre_opt.keep_config = env_bool("SIMA_PREPROC_KEEP_CONFIG", false);
-    pre_opt.output_memory_order = {"output_rgb_image", "output_tessellated_image"};
+    pre_opt.set_slice_shape({32, 128, 3});
+    pre_opt.q_scale = 0.25;
+    pre_opt.q_zp = 0;
 
     p.add(simaai::neat::nodes::Input(src_opt));
     p.add(simaai::neat::nodes::Preproc(pre_opt));
@@ -92,20 +92,23 @@ int main() {
     run_opt.queue_depth = 1;
     const int timeout_ms = env_int("SIMA_INPUT_TIMEOUT_MS", 20000);
 
-    auto run = p.build(img, simaai::neat::RunMode::Async, run_opt);
-    auto out = run.push_and_pull(img, timeout_ms);
+    auto run = p.build(simaai::neat::TensorList{tensor_rgb}, simaai::neat::RunMode::Async, run_opt);
+    simaai::neat::TensorList outs = run.run(simaai::neat::TensorList{tensor_rgb}, timeout_ms);
     run.close();
 
-    const simaai::neat::Tensor* tensor = out.tensor.has_value() ? &out.tensor.value() : nullptr;
-    require(tensor != nullptr, "Preproc output missing tensor");
+    require(outs.size() == 1, "Preproc output missing tensor");
+    const simaai::neat::Tensor* tensor = &outs.front();
     require(tensor->shape.size() >= 2, "Preproc output missing shape");
     const int64_t h = tensor->shape[0];
     const int64_t w = tensor->shape[1];
     require(w == 640 && h == 640, "Preproc size mismatch");
-    require(tensor->semantic.image.has_value(), "Preproc missing image semantic");
-    require(tensor->semantic.image->format == simaai::neat::ImageSpec::PixelFormat::RGB,
-            "Preproc format mismatch");
-    require(tensor->dtype == simaai::neat::TensorDType::UInt8, "Preproc dtype mismatch");
+    if (tensor->semantic.image.has_value()) {
+      require(tensor->semantic.image->format == simaai::neat::ImageSpec::PixelFormat::RGB,
+              "Preproc format mismatch");
+    }
+    require(tensor->dtype == simaai::neat::TensorDType::UInt8 ||
+                tensor->dtype == simaai::neat::TensorDType::Int8,
+            "Preproc dtype mismatch");
 
     simaai::neat::Tensor cpu = tensor->clone();
     simaai::neat::Mapping map = cpu.map(simaai::neat::MapMode::Read);

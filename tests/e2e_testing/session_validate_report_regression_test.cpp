@@ -77,7 +77,7 @@ RUN_TEST(
         Session with_input;
         InputOptions src_opt;
         src_opt.media_type = "video/x-raw";
-        src_opt.format = "RGB";
+        src_opt.format = simaai::neat::FormatTag::RGB;
         src_opt.use_simaai_pool = false;
         with_input.add(nodes::Input(src_opt));
         with_input.add(nodes::Output(OutputOptions::Latest()));

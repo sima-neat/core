@@ -55,6 +55,8 @@ int main() {
     std::vector<double> latencies_ms;
     latencies_ms.reserve(static_cast<std::size_t>(iterations));
 
+    simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
+    power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {
       const auto t0 = sima_perf::Clock::now();
@@ -64,6 +66,7 @@ int main() {
       latencies_ms.push_back(sima_perf::elapsed_ms(t0, t1));
     }
     const auto run_t1 = sima_perf::Clock::now();
+    power_monitor.stop();
 
     sima_perf::PerfMetrics metrics;
     const double total_s = sima_perf::elapsed_seconds(run_t0, run_t1);
@@ -73,7 +76,9 @@ int main() {
     metrics.startup = sima_perf::elapsed_ms(startup_t0, startup_t1);
     metrics.rss_peak_kb = sima_perf::rss_peak_kb();
 
-    sima_perf::emit_metrics_json("mpk_parse_smoke", iterations, metrics, "mpk_parse");
+    const auto power_summary = power_monitor.summary();
+    sima_perf::emit_metrics_json("mpk_parse_smoke", iterations, metrics, "mpk_parse",
+                                 &power_summary);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "perf_mpk_parse_smoke_test exception: " << e.what() << "\n";

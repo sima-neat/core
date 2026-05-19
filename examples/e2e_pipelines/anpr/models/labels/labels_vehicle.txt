@@ -1,7 +1,0 @@
-lp
-2w
-3w
-helmet
-no_helmet
-lmv
-hmv

@@ -1,6 +1,6 @@
 #include "graph/Compiler.h"
-#include "graph_test_utils.h"
 #include "graph/nodes/PipelineNode.h"
+#include "graph_test_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/io/Input.h"
@@ -31,6 +31,17 @@ RUN_TEST(
                 "Compiler should reject cyclic graphs");
       }
 
+      // Unknown input port wiring rejection.
+      {
+        Graph g;
+        const auto src = g.add(sima_test::make_stage_source("src", OutputSpec{}));
+        const auto sink = g.add(sima_test::make_stage_passthrough("sink"));
+        g.connect(src, sink, "out", "missing_port");
+
+        require(sima_test::throws_with([&]() { (void)compiler.compile(g); }, "unknown input port"),
+                "Compiler should reject edges wired to undeclared input ports");
+      }
+
       // Pipeline invalid fan-in rejection.
       {
         Graph g;
@@ -40,7 +51,6 @@ RUN_TEST(
             g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Input(), "src1"));
         const auto conv =
             g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::VideoConvert(), "conv"));
-
         g.connect(src0, conv);
         g.connect(src1, conv);
 
@@ -58,7 +68,6 @@ RUN_TEST(
             g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Output(), "sink0"));
         const auto sink1 =
             g.add(std::make_shared<PipelineNode>(simaai::neat::nodes::Output(), "sink1"));
-
         g.connect(src, conv);
         g.connect(conv, sink0);
         g.connect(conv, sink1);
@@ -88,5 +97,38 @@ RUN_TEST(
 
         require(sima_test::throws_with([&]() { (void)compiler.compile(g); }, "empty port name"),
                 "Compiler should reject empty stage input port names");
+      }
+
+      // Max input-edge contract enforcement.
+      {
+        Graph g;
+        const OutputSpec spec = OutputSpec{
+            .media_type = "video/x-raw", .format = "RGB", .width = 32, .height = 24, .depth = 3};
+        const auto src_a = g.add(sima_test::make_stage_source("src_a", spec));
+        const auto src_b = g.add(sima_test::make_stage_source("src_b", spec));
+        const auto sink = g.add(sima_test::make_stage_passthrough("sink", 1));
+        g.connect(src_a, sink, "out", "in");
+        g.connect(src_b, sink, "out", "in");
+
+        require(
+            sima_test::throws_with([&]() { (void)compiler.compile(g); }, "exceeds max_in_edges"),
+            "Compiler should enforce max_in_edges contracts");
+      }
+
+      // Merged input spec consistency enforcement.
+      {
+        Graph g;
+        const auto rgb_src = g.add(sima_test::make_stage_source(
+            "rgb_src",
+            OutputSpec{.media_type = "video/x-raw", .format = "RGB", .width = 64, .height = 48}));
+        const auto nv12_src = g.add(sima_test::make_stage_source(
+            "nv12_src",
+            OutputSpec{.media_type = "video/x-raw", .format = "NV12", .width = 64, .height = 48}));
+        const auto merge = g.add(sima_test::make_stage_passthrough("merge", 0));
+        g.connect(rgb_src, merge, "out", "in");
+        g.connect(nv12_src, merge, "out", "in");
+
+        require(sima_test::throws_with([&]() { (void)compiler.compile(g); }, "input spec mismatch"),
+                "Compiler should reject conflicting merged input specs");
       }
     }));

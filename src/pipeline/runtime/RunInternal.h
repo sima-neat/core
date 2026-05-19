@@ -1,6 +1,7 @@
 #pragma once
 
 #include "internal/InputStream.h"
+#include "pipeline/internal/InputRouteProcessor.h"
 #include "pipeline/Run.h"
 
 #include <opencv2/core/mat.hpp>
@@ -17,10 +18,11 @@
 #include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 namespace simaai::neat {
 
-enum class InputKind {
+enum class QueuedInputKind {
   Mat,
   Tensor,
   Holder,
@@ -28,7 +30,7 @@ enum class InputKind {
 };
 
 struct InputItem {
-  InputKind kind = InputKind::Mat;
+  QueuedInputKind kind = QueuedInputKind::Mat;
   cv::Mat mat;
   simaai::neat::Tensor tensor;
   std::shared_ptr<void> holder;
@@ -40,6 +42,18 @@ struct Run::State {
   double latency_mean_ms = 0.0;
   double latency_min_ms = 0.0;
   double latency_max_ms = 0.0;
+  std::chrono::steady_clock::time_point created_at{};
+  std::chrono::steady_clock::time_point first_output_at{};
+  std::chrono::steady_clock::time_point last_output_at{};
+  std::chrono::steady_clock::time_point first_pull_at{};
+  std::chrono::steady_clock::time_point last_pull_at{};
+  std::chrono::steady_clock::time_point measurement_last_output_at{};
+  bool output_timing_init = false;
+  bool pull_timing_init = false;
+  bool measurement_active = false;
+  bool measurement_output_timing_init = false;
+  std::vector<double> measurement_latencies_ms;
+  std::vector<double> measurement_frame_gaps_ms;
   std::thread input_thread;
   std::atomic<std::uint64_t> inputs_enqueued{0};
   std::atomic<std::uint64_t> inputs_dropped{0};
@@ -50,6 +64,7 @@ struct Run::State {
   InputStream stream;
   std::string error;
   std::string diag_sysinfo;
+  std::unique_ptr<PowerMonitor> power_monitor;
 
   std::mutex in_mu;
   std::condition_variable in_cv;
@@ -58,10 +73,13 @@ struct Run::State {
   std::mutex latency_mu;
   mutable std::mutex error_mu;
   RunOptions opt;
+  RunMode mode = RunMode::Async;
   std::deque<InputItem> in_queue;
   std::deque<Sample> out_queue;
   std::deque<std::chrono::steady_clock::time_point> pending_times;
   InputStreamOptions stream_opt;
+  std::optional<InputOptions> tensor_input_opt_for_cv;
+  pipeline_internal::InputRouteProcessorPtr input_route_processor;
   std::atomic<int> handle_refs{0};
   bool supports_push = false;
   bool supports_pull = false;
@@ -139,7 +157,10 @@ inline int zero_copy_backpressure_cap() {
   env = std::getenv("SIMA_GRAPH_ZERO_COPY_MAX_INFLIGHT");
   if (env && *env)
     return std::max(0, std::atoi(env));
-  return 1;
+  // Tensor creators can now place input directly in device-visible GstSample
+  // storage.  Do not silently clone those tensors back to CPU under queue
+  // pressure; lifetime must be owned by the caller/ring instead.
+  return 0;
 }
 
 inline void force_copy_tensor_if_zero_copy(simaai::neat::Tensor& t) {
@@ -150,33 +171,34 @@ inline void force_copy_tensor_if_zero_copy(simaai::neat::Tensor& t) {
 }
 
 inline void force_copy_sample_if_zero_copy(Sample& sample) {
-  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
-    force_copy_tensor_if_zero_copy(*sample.tensor);
+  if (sample.kind == SampleKind::TensorSet) {
+    for (auto& tensor : sample.tensors) {
+      force_copy_tensor_if_zero_copy(tensor);
+    }
     sample.owned = true;
     return;
   }
-  if (sample.kind != SampleKind::Bundle)
+  if (!sample_is_multi_output(sample))
     return;
   for (auto& field : sample.fields) {
-    if (field.kind == SampleKind::Tensor && field.tensor.has_value()) {
-      force_copy_tensor_if_zero_copy(*field.tensor);
-      field.owned = true;
-    }
+    force_copy_sample_if_zero_copy(field);
   }
   sample.owned = true;
 }
 
 inline bool sample_has_zero_copy_tensor(const Sample& sample) {
-  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
-    return tensor_is_zero_copy(*sample.tensor);
-  }
-  if (sample.kind != SampleKind::Bundle)
-    return false;
-  for (const auto& field : sample.fields) {
-    if (field.kind == SampleKind::Tensor && field.tensor.has_value()) {
-      if (tensor_is_zero_copy(*field.tensor))
+  if (sample.kind == SampleKind::TensorSet) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_is_zero_copy(tensor))
         return true;
     }
+    return false;
+  }
+  if (!sample_is_multi_output(sample))
+    return false;
+  for (const auto& field : sample.fields) {
+    if (sample_has_zero_copy_tensor(field))
+      return true;
   }
   return false;
 }

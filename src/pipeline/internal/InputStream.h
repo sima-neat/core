@@ -79,13 +79,19 @@ struct InputStreamOptions {
   int worker_poll_ms = 0;
   bool appsink_sync = true;
   bool appsink_drop = false;
-  int appsink_max_buffers = 1;
+  int appsink_max_buffers = 4;
   bool enable_timings = false;
   bool startup_preflight = false;
   int stability_frames = 2;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
   bool copy_input = false;
+  bool prepare_output_cpu_visible = false;
+  // When true, CPU-backed Tensor inputs are rejected before the slow
+  // InputStream memcpy fallback.  Device-first routes should receive tensors
+  // constructed in the required memory placement; set
+  // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 for legacy compatibility.
+  bool require_device_visible_input = false;
   bool reuse_input_buffer = false;
   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
@@ -117,8 +123,6 @@ public:
                             std::shared_ptr<pipeline_internal::DiagCtx> diag,
                             std::shared_ptr<void> guard);
 
-  Sample push_and_pull(const cv::Mat& input, int timeout_ms = -1);
-  Sample push_and_pull(const simaai::neat::Tensor& input, int timeout_ms = -1);
   Sample push_and_pull_holder(const std::shared_ptr<void>& holder, int timeout_ms = -1);
   void push(const cv::Mat& input);
   bool try_push(const cv::Mat& input);
@@ -156,7 +160,8 @@ private:
                       const std::optional<std::string>& stream_id_override,
                       const std::optional<std::string>& buffer_name_override,
                       const std::optional<uint64_t>& timestamp_override,
-                      const std::function<void(GstBuffer*)>& prepare = {});
+                      const std::function<void(GstBuffer**)>& prepare = {}, int input_width = -1,
+                      int input_height = -1);
   friend class Session;
   friend class Run;
 };

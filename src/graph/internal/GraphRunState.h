@@ -10,11 +10,13 @@
 #include "graph/runtime/BlockingQueue.h"
 #include "graph/runtime/StageMailbox.h"
 #include "nodes/io/Input.h"
+#include "pipeline/PowerTelemetry.h"
 #include "pipeline/Run.h"
 #include "pipeline/Session.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/PipelineBuild.h"
+#include "pipeline/internal/SampleUtil.h"
 
 #include <atomic>
 #include <condition_variable>
@@ -93,12 +95,14 @@ void log_first_decoded_once(const Sample& sample, const CompiledPipelineSegment&
 struct GraphRun::State {
   CompiledGraph compiled;
   GraphRunOptions opt;
+  std::shared_ptr<void> verbose_guard;
   std::atomic<bool> stop{false};
   std::vector<std::string> node_labels;
   std::atomic<bool> output_rate_reported{false};
   std::atomic<bool> sched_reported{false};
   std::atomic<std::size_t> output_rr{0};
   std::shared_ptr<GraphRunStats> stats;
+  std::unique_ptr<simaai::neat::PowerMonitor> power_monitor;
 
   std::mutex error_mu;
   std::string error;
@@ -106,6 +110,7 @@ struct GraphRun::State {
   struct PipelineRuntime {
     CompiledPipelineSegment seg;
     Session session;
+    RunOptions run_options;
     Run run;
     std::atomic<bool> built{false};
     bool building = false;
@@ -140,12 +145,32 @@ struct GraphRun::State {
   void signal_stop();
   void request_stop(const std::string& err);
   bool ensure_pipeline_built(std::size_t index, const Sample& sample, std::string* err);
+  bool route_stage_output(NodeId node_id, const std::vector<PortId>& output_ports,
+                          StageOutMsg&& out_msg);
+
+  struct RuntimeStageEmitter final : StageEmitter {
+    bool emit(StageOutMsg msg) override {
+      if (state == nullptr || output_ports == nullptr) {
+        return false;
+      }
+      return state->route_stage_output(node_id, *output_ports, std::move(msg));
+    }
+
+    bool stop_requested() const override {
+      return state == nullptr || state->stop.load(std::memory_order_relaxed);
+    }
+
+    GraphRun::State* state = nullptr;
+    NodeId node_id = kInvalidNode;
+    const std::vector<PortId>* output_ports = nullptr;
+  };
 
   struct StageRuntime {
     explicit StageRuntime(std::size_t capacity = 0) : mailbox(capacity) {}
 
     NodeId node_id = kInvalidNode;
     std::unique_ptr<StageExecutor> exec;
+    RuntimeStageEmitter emitter;
     StageMailbox mailbox;
     std::thread worker;
     std::atomic<bool> worker_done{false};
@@ -183,6 +208,7 @@ struct GraphRun::State {
 
   std::unordered_map<NodeId, std::size_t> node_to_pipeline;
   std::unordered_map<NodeId, std::size_t> node_to_stage_group;
+  std::unordered_set<NodeId> direct_sink_nodes;
 
   std::unordered_map<std::uint64_t, std::vector<DownstreamTarget>> adjacency;
   std::unordered_map<NodeId, std::shared_ptr<BlockingQueueSample>> sinks;
@@ -215,8 +241,6 @@ struct GraphRun::State {
       graph_sched_record(group.node_id, label, sample);
     }
     auto& stage = *stages[pick];
-    const std::size_t qsize = stage.mailbox.inbox.size();
-    maybe_force_copy_for_backpressure(sample, qsize, "stage_inbox", group_index);
     StageMsg next{.in_port = port, .sample = std::move(sample)};
     const bool ok = stage.mailbox.inbox.push(std::move(next), opt.push_timeout_ms);
     if (!ok && !stop.load(std::memory_order_relaxed)) {
@@ -231,6 +255,7 @@ struct GraphRun::State {
   }
 
   void sanitize_sample_for_pipeline_input(PipelineRuntime& pipe, Sample& sample) {
+    sample = simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
     const int64_t prev_input_seq = sample.input_seq;
     if (sample.orig_input_seq < 0 && prev_input_seq >= 0) {
       sample.orig_input_seq = prev_input_seq;
@@ -319,18 +344,21 @@ struct GraphRun::State {
         }
       }
     }
-    if (sample.port_name.empty())
+    const std::string current_label =
+        !sample.stream_label.empty() ? sample.stream_label : sample.port_name;
+    if (current_label.empty())
       return;
     if (pipe.expected_buffer_names.empty()) {
       if (graph_debug_enabled()) {
         std::fprintf(stderr, "[GRAPH] clear_port_name seg=%zu got=%s expected=<none>\n",
-                     static_cast<std::size_t>(pipe.seg.id), sample.port_name.c_str());
+                     static_cast<std::size_t>(pipe.seg.id), current_label.c_str());
       }
+      sample.stream_label.clear();
       sample.port_name.clear();
       return;
     }
     for (const auto& expected : pipe.expected_buffer_names) {
-      if (expected == sample.port_name)
+      if (expected == current_label)
         return;
     }
     if (graph_debug_enabled()) {
@@ -341,9 +369,10 @@ struct GraphRun::State {
         expected_join += expected;
       }
       std::fprintf(stderr, "[GRAPH] clear_port_name seg=%zu got=%s expected=%s\n",
-                   static_cast<std::size_t>(pipe.seg.id), sample.port_name.c_str(),
+                   static_cast<std::size_t>(pipe.seg.id), current_label.c_str(),
                    expected_join.c_str());
     }
+    sample.stream_label.clear();
     sample.port_name.clear();
   }
 
@@ -369,11 +398,10 @@ struct GraphRun::State {
     };
 
     std::lock_guard<std::mutex> lock(pipe.stream_mu);
-    if (sample.input_seq >= 0 && sample.frame_id < 0) {
+    if (sample.input_seq >= 0) {
       auto it_frame = pipe.frame_by_input_seq.find(sample.input_seq);
-      if (it_frame != pipe.frame_by_input_seq.end()) {
+      if (it_frame != pipe.frame_by_input_seq.end() && it_frame->second >= 0) {
         sample.frame_id = it_frame->second;
-        pipe.frame_by_input_seq.erase(it_frame);
       }
     }
     bool needs_stream = missing || looks_internal || prefer_mapped;

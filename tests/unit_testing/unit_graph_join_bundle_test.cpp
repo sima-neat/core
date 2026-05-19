@@ -58,9 +58,9 @@ RUN_TEST("unit_graph_join_bundle_test", ([] {
                        "JoinBundle StreamFrame output order must be stable");
                require(out[i].sample.fields.size() == 2,
                        "JoinBundle StreamFrame bundle field cardinality mismatch");
-               require(out[i].sample.fields[0].port_name == "encoded",
+               require(out[i].sample.fields[0].stream_label == "encoded",
                        "JoinBundle StreamFrame field[0] name mismatch");
-               require(out[i].sample.fields[1].port_name == "meta",
+               require(out[i].sample.fields[1].stream_label == "meta",
                        "JoinBundle StreamFrame field[1] name mismatch");
              }
            }
@@ -129,7 +129,7 @@ RUN_TEST("unit_graph_join_bundle_test", ([] {
              require(
                  out[0].sample.fields.size() == 1,
                  "JoinBundle emit_partial should produce single-field bundle when peer missing");
-             require(out[0].sample.fields[0].port_name == "encoded",
+             require(out[0].sample.fields[0].stream_label == "encoded",
                      "JoinBundle emit_partial field name mismatch");
            }
 

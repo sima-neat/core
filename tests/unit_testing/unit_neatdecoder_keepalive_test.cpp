@@ -38,7 +38,7 @@ int main() {
 
     simaai::neat::InputOptions src_opt;
     src_opt.media_type = "video/x-h264";
-    src_opt.format = "H264";
+    src_opt.format = simaai::neat::FormatTag::H264;
     src_opt.caps_override = caps;
     src_opt.is_live = true;
     src_opt.do_timestamp = true;
@@ -58,7 +58,8 @@ int main() {
     simaai::neat::RunOptions opt;
     opt.queue_depth = 1;
 
-    simaai::neat::Run run = p.build(sample, simaai::neat::RunMode::Async, opt);
+    simaai::neat::Run run =
+        p.build(simaai::neat::SampleList{sample}, simaai::neat::RunMode::Async, opt);
     require(run.running(), "Pipeline did not enter running state");
 
     int sleep_ms = 35000;

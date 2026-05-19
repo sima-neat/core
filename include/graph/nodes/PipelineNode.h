@@ -17,32 +17,51 @@
 
 namespace simaai::neat::graph::nodes {
 
+/**
+ * @brief Runtime-graph node that wraps a builder-side `NodeGroup` (or single `Node`) as a
+ * pipeline-backend node.
+ *
+ * Lets a linear, GStreamer-pipeline-shaped fragment participate in the runtime actor graph.
+ * The wrapped group's first node's `InputRole` is inspected to decide whether this node is
+ * source-like (no input port) or push-style (single `"in"` port). Always exposes a single
+ * `"out"` port.
+ *
+ * @see simaai::neat::NodeGroup
+ * @see simaai::neat::graph::Node
+ * @ingroup graph
+ */
 class PipelineNode final : public simaai::neat::graph::Node {
 public:
+  /// Construct from a `NodeGroup` by copy.
   explicit PipelineNode(const simaai::neat::NodeGroup& group, std::string label = {})
       : group_(group), label_(std::move(label)) {
     init_();
   }
 
+  /// Construct from a `NodeGroup` by move.
   explicit PipelineNode(simaai::neat::NodeGroup&& group, std::string label = {})
       : group_(std::move(group)), label_(std::move(label)) {
     init_();
   }
 
+  /// Construct from a single builder `Node`.
   explicit PipelineNode(std::shared_ptr<simaai::neat::Node> node, std::string label = {})
       : group_(std::vector<std::shared_ptr<simaai::neat::Node>>{std::move(node)}),
         label_(std::move(label)) {
     init_();
   }
 
+  /// Always returns `Backend::Pipeline`.
   Backend backend() const override {
     return Backend::Pipeline;
   }
 
+  /// Returns the wrapped node's kind, or `"PipelineGroup"` when the group has multiple nodes.
   std::string kind() const override {
     return kind_;
   }
 
+  /// Returns the explicit label if set, else the wrapped single node's `user_label()`.
   std::string user_label() const override {
     if (!label_.empty())
       return label_;
@@ -52,23 +71,28 @@ public:
     return "";
   }
 
+  /// Returns the input port (`"in"`) unless the group is source-like, in which case empty.
   std::vector<PortDesc> input_ports() const override {
     if (!requires_input_)
       return {};
     return {PortDesc{.name = "in", .spec = OutputSpec{}}};
   }
 
+  /// Always exposes a single `"out"` port.
   std::vector<PortDesc> output_ports() const override {
     return {PortDesc{.name = "out", .spec = OutputSpec{}}};
   }
 
+  /// Access the wrapped builder `NodeGroup`.
   const simaai::neat::NodeGroup& group() const {
     return group_;
   }
 
+  /// True iff the wrapped group is source-like (has a Source role and no Push role).
   bool is_source_like() const {
     return is_source_like_;
   }
+  /// True iff this node requires an upstream input port.
   bool requires_input() const {
     return requires_input_;
   }

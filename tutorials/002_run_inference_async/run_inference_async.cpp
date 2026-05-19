@@ -56,19 +56,19 @@ cv::Mat load_rgb(const fs::path& image_path, int size) {
 
 simaai::neat::Model::Options build_options(int size) {
   simaai::neat::Model::Options opt;
-  opt.format = "RGB";
-  opt.input_max_width = size;
-  opt.input_max_height = size;
-  opt.input_max_depth = 3;
-  opt.preproc.channel_mean = {0.485f, 0.456f, 0.406f};
-  opt.preproc.channel_stddev = {0.229f, 0.224f, 0.225f};
+  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+  opt.preprocess.input_max_width = size;
+  opt.preprocess.input_max_height = size;
+  opt.preprocess.input_max_depth = 3;
+  opt.preprocess.normalize.mean = {0.485f, 0.456f, 0.406f};
+  opt.preprocess.normalize.stddev = {0.229f, 0.224f, 0.225f};
   return opt;
 }
 
 int top1_from_output(const simaai::neat::Sample& out) {
-  if (!out.tensor.has_value())
+  if (simaai::neat::tensors_from_sample(out, true).empty())
     throw std::runtime_error("no tensor output");
-  const simaai::neat::Mapping m = out.tensor->map_read();
+  const simaai::neat::Mapping m = simaai::neat::tensors_from_sample(out, true).front().map_read();
   const size_t n = m.size_bytes / sizeof(float);
   const float* p = reinterpret_cast<const float*>(m.data);
   int best = 0;
@@ -105,13 +105,13 @@ int main(int argc, char** argv) {
     simaai::neat::Session session;
     session.add(model.session());
 
-    auto run = session.build(frames.front(), simaai::neat::RunMode::Async);
+    auto run = session.build(std::vector<cv::Mat>{frames.front()}, simaai::neat::RunMode::Async);
 
     std::atomic<int> pushed{0};
     std::atomic<bool> producer_done{false};
     std::thread producer([&]() {
       for (const cv::Mat& f : frames) {
-        run.push(f);
+        run.push(std::vector<cv::Mat>{f});
         pushed.fetch_add(1, std::memory_order_relaxed);
       }
       run.close_input();

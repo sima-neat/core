@@ -67,4 +67,20 @@ RUN_TEST(
 
         gst_caps_unref(caps);
       }
+
+      {
+        GstCaps* caps = gst_caps_from_string(
+            "application/vnd.simaai.tensor,dtype=(string)INT8,rank=(int)5,dim0=(int)2,"
+            "dim1=(int)3,dim2=(int)4,dim3=(int)5,dim4=(int)6");
+        require(caps != nullptr, "failed to construct rank-first tensor caps");
+
+        const TensorConstraint tc = tensor_constraint_from_caps(caps);
+        require(tc.rank == 5, "rank-first tensor caps rank mismatch");
+        require(tc.shape == std::vector<int64_t>({2, 3, 4, 5, 6}),
+                "rank-first tensor caps shape mismatch");
+        require(!tc.dtypes.empty(), "rank-first tensor caps should report dtype");
+        require(tc.dtypes.front() == TensorDType::Int8, "rank-first tensor caps dtype mismatch");
+
+        gst_caps_unref(caps);
+      }
     }));

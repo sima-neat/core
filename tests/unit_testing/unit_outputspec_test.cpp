@@ -8,12 +8,9 @@
 
 #include <iostream>
 #include <stdexcept>
-#include <cstdlib>
 
 int main() {
   try {
-    setenv("SIMA_DEBUG_OUTPUTSPEC_LOG", "1", 1);
-
     simaai::neat::OutputSpec nv12;
     nv12.media_type = "video/x-raw";
     nv12.format = "NV12";
@@ -24,7 +21,7 @@ int main() {
 
     simaai::neat::InputOptions appsrc_opt;
     appsrc_opt.media_type = "video/x-raw";
-    appsrc_opt.format = "RGB";
+    appsrc_opt.format = simaai::neat::FormatTag::RGB;
     appsrc_opt.width = 10;
     appsrc_opt.height = 8;
     appsrc_opt.use_simaai_pool = false;
@@ -47,7 +44,7 @@ int main() {
 
     simaai::neat::nodes::groups::ImageInputGroupOptions img_opt;
     img_opt.output_caps.enable = true;
-    img_opt.output_caps.format = "NV12";
+    img_opt.output_caps.format = simaai::neat::FormatTag::NV12;
     img_opt.output_caps.width = 32;
     img_opt.output_caps.height = 16;
     img_opt.output_caps.fps = 15;

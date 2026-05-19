@@ -57,6 +57,11 @@ RUN_TEST(
         const auto names = node->element_names(3);
         require(names.size() == 1 && names[0] == "n3_h264_capsfix",
                 "H264CapsFixup element name mismatch");
+        auto* raw = dynamic_cast<simaai::neat::H264CapsFixup*>(node.get());
+        require(raw != nullptr, "H264CapsFixup dynamic_cast failed");
+        require(raw->fallback_fps() == 25, "H264CapsFixup fallback_fps getter mismatch");
+        require(raw->fallback_width() == 1280, "H264CapsFixup fallback_width getter mismatch");
+        require(raw->fallback_height() == 720, "H264CapsFixup fallback_height getter mismatch");
       }
 
       // UdpH264OutputGroup snapshot + caps escaping behavior.
@@ -112,6 +117,8 @@ RUN_TEST(
         opt.config_interval = 3;
         opt.udp_host = "127.0.0.1";
         opt.udp_port = 5700;
+        opt.udp_sync = true;
+        opt.udp_async = false;
 
         auto group = simaai::neat::nodes::groups::UdpOutputGroupG(opt);
         const auto& nodes = group.nodes();
@@ -133,8 +140,19 @@ RUN_TEST(
         require_contains(render_fragment, "config=\"/tmp/render_config.json\"",
                          "UdpOutputGroupG render fragment missing render config");
 
+        const std::string packetize_fragment = nodes[3]->backend_fragment(3);
+        require_contains(packetize_fragment, "pt=98", "UdpOutputGroupG payload_type mismatch");
+        require_contains(packetize_fragment, "config-interval=3",
+                         "UdpOutputGroupG config_interval mismatch");
+
         require_contains(nodes[4]->backend_fragment(4), "port=5700",
                          "UdpOutputGroupG udp sink port mismatch");
+        require_contains(nodes[4]->backend_fragment(4), "host=127.0.0.1",
+                         "UdpOutputGroupG udp sink host mismatch");
+        require_contains(nodes[4]->backend_fragment(4), "sync=true",
+                         "UdpOutputGroupG udp sink sync mismatch");
+        require_contains(nodes[4]->backend_fragment(4), "async=false",
+                         "UdpOutputGroupG udp sink async mismatch");
       }
 
       // QuantTess: fragment contract and failure paths.
@@ -142,8 +160,6 @@ RUN_TEST(
         simaai::neat::QuantTessOptions opt;
         opt.config_json = json{{"node_name", "quant0"},
                                {"input_buffers", json::array({json{{"name", "decoder"}}})}};
-        opt.config_dir = "/tmp";
-        opt.keep_config = true;
         opt.element_name = "quant_test";
         opt.num_buffers = 4;
 
@@ -155,7 +171,8 @@ RUN_TEST(
                          "QuantTess fragment name mismatch");
         require_contains(fragment, "stage-id=quant_test", "QuantTess stage-id mismatch");
         require_contains(fragment, "num-buffers=4", "QuantTess num-buffers mismatch");
-        require_contains(fragment, "config=\"", "QuantTess should emit config path in fragment");
+        require(fragment.find("config=\"") == std::string::npos,
+                "QuantTess should not emit legacy config path in fragment");
 
         const auto names = quant.element_names(6);
         require(names.size() == 1 && names[0] == "quant_test", "QuantTess element names mismatch");
@@ -165,8 +182,8 @@ RUN_TEST(
         require((*cfg)["node_name"].get<std::string>() == "quant0",
                 "QuantTess config node_name mismatch");
 
-        require(!quant.config_path().empty(),
-                "QuantTess should materialize config_path when config_json is provided");
+        require(quant.config_path().empty(),
+                "QuantTess should keep config in-memory under compiled-contract ownership");
 
         require(throws_with(
                     []() {

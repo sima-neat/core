@@ -8,8 +8,6 @@
 
 #include "pipeline/SessionError.h"
 #include "pipeline/internal/ErrorUtil.h"
-#include "pipeline/internal/sima/SimaPluginStaticManifest.h"
-#include "pipeline/internal/sima/SimaPluginStaticManifestResolver.h"
 
 #include <memory>
 #include <string>
@@ -25,7 +23,6 @@ void throw_if_bus_error_local(GstElement* pipeline, const std::shared_ptr<DiagCt
 void dump_flow_snapshot(const std::shared_ptr<DiagCtx>& diag, const char* label);
 void dump_pipeline_string_force(const std::shared_ptr<DiagCtx>& diag, const char* label);
 void maybe_dump_pipeline_string(const std::string& pipeline, const char* label);
-std::string maybe_force_model_num_buffers(std::string pipeline);
 std::string clamp_sync_pipeline(std::string pipeline, int num_buffers_override);
 std::string clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
 std::uint64_t estimate_frame_bytes_limit(const InputOptions& opt, const SampleSpec& spec);
@@ -78,18 +75,6 @@ void session_build_dump_pipeline_string_force(const std::shared_ptr<DiagCtx>& di
 
 void session_build_maybe_dump_pipeline_string(const std::string& pipeline, const char* label) {
   maybe_dump_pipeline_string(pipeline, label);
-}
-
-std::string session_build_manifest_json_for_pipeline(const std::string& pipeline_string) {
-  using namespace simaai::neat::pipeline_internal::sima;
-  ManifestBuildDiagnostics diag;
-  const SimaPluginStaticManifest manifest =
-      resolve_manifest_from_pipeline(pipeline_string, /*session_id=*/"", &diag);
-  return serialize_manifest_json(manifest);
-}
-
-std::string session_build_maybe_force_model_num_buffers(std::string pipeline) {
-  return maybe_force_model_num_buffers(std::move(pipeline));
 }
 
 std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buffers_override) {

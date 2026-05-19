@@ -286,12 +286,14 @@ int main(int argc, char** argv) {
       throw std::runtime_error(msg);
     }
 
-    const simaai::neat::Tensor* neat = out.tensor.has_value() ? &out.tensor.value() : nullptr;
-    if (!neat) {
-      throw std::runtime_error("rtsp: expected simaai::neat::Tensor output but none was produced");
+    const auto tensors = simaai::neat::tensors_from_sample(out, true);
+    if (tensors.size() != 1U) {
+      throw std::runtime_error("rtsp: expected exactly one tensor output, got " +
+                               std::to_string(tensors.size()));
     }
+    const simaai::neat::Tensor& neat = tensors.front();
 
-    std::string actual_format = tensor_format(*neat);
+    std::string actual_format = tensor_format(neat);
     if (actual_format.empty()) {
       actual_format = upper_copy(out.payload_tag);
     }
@@ -308,14 +310,14 @@ int main(int argc, char** argv) {
                                expect_format + extra);
     }
 
-    const int64_t h = neat->shape.size() > 0 ? neat->shape[0] : 0;
-    const int64_t w = neat->shape.size() > 1 ? neat->shape[1] : 0;
+    const int64_t h = neat.shape.size() > 0 ? neat.shape[0] : 0;
+    const int64_t w = neat.shape.size() > 1 ? neat.shape[1] : 0;
     size_t total = 0;
-    for (const auto& p : neat->planes)
-      total += plane_bytes(p, neat->dtype);
-    const size_t bytes = neat->storage ? neat->storage->size_bytes : total;
+    for (const auto& p : neat.planes)
+      total += plane_bytes(p, neat.dtype);
+    const size_t bytes = neat.storage ? neat.storage->size_bytes : total;
     std::cout << "[rtsp] neat format=" << actual_format << " w=" << w << " h=" << h
-              << " planes=" << neat->planes.size() << " bytes=" << bytes;
+              << " planes=" << neat.planes.size() << " bytes=" << bytes;
     if (!out.payload_tag.empty()) {
       std::cout << " tag=" << out.payload_tag;
     }

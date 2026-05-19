@@ -45,17 +45,17 @@ int main(int argc, char** argv) {
     const int size = parse_int_arg(argc, argv, "--size", 224);
 
     simaai::neat::Model::Options opt;
-    opt.format = "BGR";
-    opt.input_max_width = size;
-    opt.input_max_height = size;
-    opt.input_max_depth = 3;
-    opt.preproc.input_width = size;
-    opt.preproc.input_height = size;
-    opt.preproc.output_width = size;
-    opt.preproc.output_height = size;
-    opt.preproc.normalize = true;
-    opt.preproc.channel_mean = std::array<float, 3>{0.5f, 0.5f, 0.5f};
-    opt.preproc.channel_stddev = std::array<float, 3>{0.5f, 0.5f, 0.5f};
+    opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+    opt.preprocess.input_max_width = size;
+    opt.preprocess.input_max_height = size;
+    opt.preprocess.input_max_depth = 3;
+    opt.preprocess.resize.width = size;
+    opt.preprocess.resize.height = size;
+    opt.preprocess.resize.width = size;
+    opt.preprocess.resize.height = size;
+    opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    opt.preprocess.normalize.mean = std::array<float, 3>{0.5f, 0.5f, 0.5f};
+    opt.preprocess.normalize.stddev = std::array<float, 3>{0.5f, 0.5f, 0.5f};
 
     simaai::neat::Model model(mpk, opt);
 
@@ -66,7 +66,8 @@ int main(int argc, char** argv) {
     // CORE LOGIC
     // stages::Preproc runs just the preprocessing step from the model's Options
     // and returns the preprocessed Tensor.
-    simaai::neat::Tensor pre = simaai::neat::stages::Preproc(bgr, model);
+    simaai::neat::Tensor pre =
+        simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model).front();
     // END CORE LOGIC
 
     std::cout << "preproc_rank=" << pre.shape.size() << "\n";

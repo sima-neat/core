@@ -52,10 +52,11 @@ void tensor_dims_from_shape(const simaai::neat::Tensor& tensor, int* w, int* h) 
 }
 
 void verify_cpu_and_video_meta(const simaai::neat::Sample& sample) {
-  if (sample.kind != simaai::neat::SampleKind::Tensor || !sample.tensor.has_value()) {
-    throw std::runtime_error("PassThroughStage: expected tensor sample");
+  const simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample, true);
+  if (tensors.size() != 1U) {
+    throw std::runtime_error("PassThroughStage: expected one tensor sample");
   }
-  const simaai::neat::Tensor& tensor = *sample.tensor;
+  const simaai::neat::Tensor& tensor = tensors.front();
   if (tensor.device.type != simaai::neat::DeviceType::CPU) {
     throw std::runtime_error("PassThroughStage: incoming tensor not on CPU");
   }

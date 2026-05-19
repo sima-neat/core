@@ -12,7 +12,7 @@
 int main() {
   try {
     const bool has_neatargmax = simaai::neat::element_exists("neatargmax");
-    const bool has_simaairender = simaai::neat::element_exists("simaairender");
+    const bool has_neatrender = simaai::neat::element_exists("neatrender");
     require(simaai::neat::element_exists("neatboxdecode"),
             "required plugin missing (neatboxdecode)");
 
@@ -20,8 +20,8 @@ int main() {
     if (has_neatargmax) {
       simaai::neat::require_element("neatargmax", "unit_sima_plugins_test");
     }
-    if (has_simaairender) {
-      simaai::neat::require_element("simaairender", "unit_sima_plugins_test");
+    if (has_neatrender) {
+      simaai::neat::require_element("neatrender", "unit_sima_plugins_test");
     }
 
     {
@@ -60,9 +60,9 @@ int main() {
       opt.transmit = false;
 
       auto node = simaai::neat::nodes::SimaRender(opt);
-      if (has_simaairender) {
+      if (has_neatrender) {
         const std::string frag = node->backend_fragment(3);
-        require_contains(frag, "simaairender name=n3_render", "render fragment name mismatch");
+        require_contains(frag, "neatrender name=n3_render", "render fragment name mismatch");
         require_contains(frag, "config=\"/tmp/render.json\"", "render config missing");
         require_contains(frag, "sima-allocator-type=2", "render allocator missing");
         require_contains(frag, "silent=false", "render silent missing");
@@ -73,7 +73,7 @@ int main() {
       auto* provider = dynamic_cast<simaai::neat::OutputSpecProvider*>(node.get());
       require(provider != nullptr, "render OutputSpecProvider missing");
       simaai::neat::OutputSpec spec = provider->output_spec({});
-      require(spec.note == "simaairender", "render output note mismatch");
+      require(spec.note == "neatrender", "render output note mismatch");
     }
 
     std::cout << "[OK] unit_sima_plugins_test passed\n";

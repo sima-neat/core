@@ -289,9 +289,11 @@ void log_first_decoded_once(const Sample& sample, const CompiledPipelineSegment&
   std::lock_guard<std::mutex> lock(mu);
   if (!seen.insert(sample.stream_id).second)
     return;
+  const char* label =
+      !sample.stream_label.empty() ? sample.stream_label.c_str() : sample.port_name.c_str();
   std::fprintf(stderr, "[GRAPH] first_decoded stream=%s frame_id=%lld seg=%zu port=%s\n",
                sample.stream_id.c_str(), static_cast<long long>(sample.frame_id),
-               static_cast<std::size_t>(seg.id), sample.port_name.c_str());
+               static_cast<std::size_t>(seg.id), label);
 }
 
 void graph_debug_sample(const char* tag, const Sample& sample) {
@@ -299,8 +301,8 @@ void graph_debug_sample(const char* tag, const Sample& sample) {
     return;
   std::string kind;
   switch (sample.kind) {
-  case SampleKind::Tensor:
-    kind = "Tensor";
+  case SampleKind::TensorSet:
+    kind = "TensorSet";
     break;
   case SampleKind::Bundle:
     kind = "Bundle";
@@ -309,14 +311,15 @@ void graph_debug_sample(const char* tag, const Sample& sample) {
     kind = "Unknown";
     break;
   }
+  const char* label =
+      !sample.stream_label.empty() ? sample.stream_label.c_str() : sample.port_name.c_str();
   std::fprintf(stderr,
                "[GRAPH] %s kind=%s frame_id=%lld input_seq=%lld orig_input_seq=%lld stream_id=%s "
                "port=%s media=%s format=%s tag=%s\n",
                tag, kind.c_str(), static_cast<long long>(sample.frame_id),
                static_cast<long long>(sample.input_seq),
-               static_cast<long long>(sample.orig_input_seq), sample.stream_id.c_str(),
-               sample.port_name.c_str(), sample.media_type.c_str(), sample.format.c_str(),
-               sample.payload_tag.c_str());
+               static_cast<long long>(sample.orig_input_seq), sample.stream_id.c_str(), label,
+               sample.media_type.c_str(), sample.format.c_str(), sample.payload_tag.c_str());
 }
 
 int pull_step_timeout_ms(bool has_timeout, std::chrono::steady_clock::time_point deadline,
@@ -415,23 +418,27 @@ bool GraphRun::running() const {
 }
 
 bool GraphRun::push(NodeId node_id, const Sample& sample) {
-  if (!state_)
+  if (!state_) {
+    std::fprintf(stderr, "[GRAPH] GraphRun::push failed: run state is null (graph not started or "
+                         "already stopped)\n");
     return false;
+  }
   auto it_pipe = state_->node_to_pipeline.find(node_id);
   if (it_pipe != state_->node_to_pipeline.end()) {
     auto& pipe = *state_->pipelines[it_pipe->second];
-    if (!pipe.input_queue)
+    if (!pipe.input_queue) {
+      std::fprintf(stderr,
+                   "[GRAPH] GraphRun::push failed: input queue not found for node %zu (check graph "
+                   "wiring)\n",
+                   static_cast<std::size_t>(node_id));
       return false;
+    }
     std::string build_err;
     if (!state_->ensure_pipeline_built(it_pipe->second, sample, &build_err)) {
       state_->request_stop(build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
       return false;
     }
     Sample copy = sample;
-    if (pipe.input_queue) {
-      const std::size_t qsize = pipe.input_queue->size();
-      maybe_force_copy_for_backpressure(copy, qsize, "graph_push", pipe.seg.id);
-    }
     const bool ok = pipe.input_queue->push(std::move(copy), state_->opt.push_timeout_ms);
     if (!ok && !state_->stop.load(std::memory_order_relaxed)) {
       std::ostringstream msg;
@@ -456,27 +463,33 @@ bool GraphRun::push(NodeId node_id, const Sample& sample) {
     Sample copy = sample;
     return state_->dispatch_to_stage_group(it_stage->second, in_port, std::move(copy));
   }
+  std::fprintf(stderr, "[GRAPH] GraphRun::push failed: node %zu not found in any pipeline stage\n",
+               static_cast<std::size_t>(node_id));
   return false;
 }
 
 bool GraphRun::push(NodeId node_id, PortId port, const Sample& sample) {
-  if (!state_)
+  if (!state_) {
+    std::fprintf(stderr, "[GRAPH] GraphRun::push failed: run state is null (graph not started or "
+                         "already stopped)\n");
     return false;
+  }
   auto it_pipe = state_->node_to_pipeline.find(node_id);
   if (it_pipe != state_->node_to_pipeline.end()) {
     auto& pipe = *state_->pipelines[it_pipe->second];
-    if (!pipe.input_queue)
+    if (!pipe.input_queue) {
+      std::fprintf(stderr,
+                   "[GRAPH] GraphRun::push failed: input queue not found for node %zu port %zu "
+                   "(check graph wiring)\n",
+                   static_cast<std::size_t>(node_id), static_cast<std::size_t>(port));
       return false;
+    }
     std::string build_err;
     if (!state_->ensure_pipeline_built(it_pipe->second, sample, &build_err)) {
       state_->request_stop(build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
       return false;
     }
     Sample copy = sample;
-    if (pipe.input_queue) {
-      const std::size_t qsize = pipe.input_queue->size();
-      maybe_force_copy_for_backpressure(copy, qsize, "graph_push", pipe.seg.id);
-    }
     const bool ok = pipe.input_queue->push(std::move(copy), state_->opt.push_timeout_ms);
     if (!ok && !state_->stop.load(std::memory_order_relaxed)) {
       std::ostringstream msg;
@@ -493,15 +506,22 @@ bool GraphRun::push(NodeId node_id, PortId port, const Sample& sample) {
     Sample copy = sample;
     return state_->dispatch_to_stage_group(it_stage->second, port, std::move(copy));
   }
+  std::fprintf(stderr, "[GRAPH] GraphRun::push failed: node %zu not found in any pipeline stage\n",
+               static_cast<std::size_t>(node_id));
   return false;
 }
 
 std::optional<Sample> GraphRun::pull(NodeId node_id, int timeout_ms) {
-  if (!state_)
+  if (!state_) {
+    std::fprintf(stderr, "[GRAPH] GraphRun::pull failed: run state is null (graph not started or "
+                         "already stopped)\n");
     return std::nullopt;
+  }
   const bool has_timeout = (timeout_ms >= 0);
+  const bool direct_sink =
+      state_->direct_sink_nodes.find(node_id) != state_->direct_sink_nodes.end();
   auto it_pipe = state_->node_to_pipeline.find(node_id);
-  if (it_pipe != state_->node_to_pipeline.end()) {
+  if (!direct_sink && it_pipe != state_->node_to_pipeline.end()) {
     auto& pipe = *state_->pipelines[it_pipe->second];
     if (!pipe.built.load(std::memory_order_acquire)) {
       if (graph_debug_enabled()) {
@@ -531,12 +551,20 @@ std::optional<Sample> GraphRun::pull(NodeId node_id, int timeout_ms) {
     }
   }
   auto it = state_->sinks.find(node_id);
-  if (it == state_->sinks.end())
+  if (it == state_->sinks.end()) {
+    std::fprintf(stderr, "[GRAPH] GraphRun::pull failed: no output sink found for node %zu\n",
+                 static_cast<std::size_t>(node_id));
     return std::nullopt;
+  }
   Sample out;
   const int wait_ms = has_timeout ? timeout_ms : -1;
-  if (!it->second->pop(out, wait_ms))
+  if (!it->second->pop(out, wait_ms)) {
+    std::fprintf(stderr,
+                 "[GRAPH] GraphRun::pull: queue pop returned empty for node %zu (timeout=%dms or "
+                 "queue closed)\n",
+                 static_cast<std::size_t>(node_id), wait_ms);
     return std::nullopt;
+  }
   return out;
 }
 
@@ -570,8 +598,10 @@ const GraphRunStats* GraphRun::stats() const {
 }
 
 bool GraphRun::Input::push(const Sample& sample) const {
-  if (!run_)
+  if (!run_) {
+    std::fprintf(stderr, "[GRAPH] Input::push failed: GraphRun handle is null\n");
     return false;
+  }
   if (has_port_)
     return run_->push(node_, port_, sample);
   return run_->push(node_, sample);
@@ -611,7 +641,8 @@ Sample GraphRun::Output::pull_or_throw(int timeout_ms, GraphRunStats* stats) con
     if (!err.empty())
       throw std::runtime_error(err);
   }
-  throw std::runtime_error("GraphRun::pull timed out");
+  throw std::runtime_error("GraphRun::pull timed out (timeout_ms=" + std::to_string(timeout_ms) +
+                           ", node=" + std::to_string(static_cast<std::size_t>(node_)) + ")");
 }
 
 void GraphRunStats::record(NodeId node_id, const Sample& sample) {
@@ -717,8 +748,11 @@ GraphRun::StallGuard::StallGuard(std::vector<NodeId> nodes, std::vector<std::str
       stall_ms_(stall_ms) {}
 
 bool GraphRun::StallGuard::update(const GraphRunStats& stats) {
-  if (per_stream_target_ <= 0)
+  if (per_stream_target_ <= 0) {
+    std::fprintf(stderr, "[GRAPH] StallGuard::update: invalid per_stream_target=%d (must be > 0)\n",
+                 per_stream_target_);
     return false;
+  }
   std::unordered_map<std::string, int64_t> counts;
   const auto snaps = stats.snapshot();
   for (const auto& snap : snaps) {
@@ -786,16 +820,26 @@ std::optional<Sample> GraphRun::pull_any(const std::vector<Output>& outputs, int
 }
 
 bool GraphRun::warmup(const std::vector<Output>& outputs, int warmup_count, int timeout_ms) {
-  if (!state_ || outputs.empty())
+  if (!state_ || outputs.empty()) {
+    std::fprintf(stderr, "[GRAPH] GraphRun::warmup failed: %s\n",
+                 !state_ ? "run state is null" : "no output nodes configured");
     return false;
+  }
   if (warmup_count <= 0)
     return true;
   for (int i = 0; i < warmup_count; ++i) {
     auto sample = pull_any(outputs, timeout_ms);
     if (sample.has_value())
       continue;
-    if (!last_error().empty())
+    if (!last_error().empty()) {
+      std::fprintf(stderr, "[GRAPH] GraphRun::warmup: pull_any failed on iteration %d/%d: %s\n",
+                   i + 1, warmup_count, last_error().c_str());
       return false;
+    }
+    std::fprintf(stderr,
+                 "[GRAPH] GraphRun::warmup: pull returned no value but error queue is empty "
+                 "(possible timeout or dropped frame, iteration %d/%d, timeout_ms=%d)\n",
+                 i + 1, warmup_count, timeout_ms);
     return false;
   }
   return true;
@@ -832,11 +876,19 @@ void GraphRun::pull_until(const std::vector<Output>& outputs, GraphRunStats& sta
     if (guard.done())
       return;
     if (guard.stalled()) {
-      throw std::runtime_error("GraphRun: stalled waiting for per-stream outputs");
+      throw std::runtime_error(
+          "GraphRun: stalled waiting for per-stream outputs (per_stream_target=" +
+          std::to_string(opt.per_stream_target) + ", stall_ms=" + std::to_string(opt.stall_ms) +
+          ", streams=" + std::to_string(opt.stream_ids.size()) + ")");
     }
     if (opt.max_runtime_ms > 0 &&
         std::chrono::steady_clock::now() - t0 > std::chrono::milliseconds(opt.max_runtime_ms)) {
-      throw std::runtime_error("GraphRun: max runtime exceeded");
+      const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now() - t0)
+                                  .count();
+      throw std::runtime_error(
+          "GraphRun: max runtime exceeded (max_runtime_ms=" + std::to_string(opt.max_runtime_ms) +
+          ", elapsed_ms=" + std::to_string(elapsed_ms) + ")");
     }
   }
 }

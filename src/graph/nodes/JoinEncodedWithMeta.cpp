@@ -30,8 +30,12 @@ std::string JoinEncodedWithMeta::make_key_(const Sample& sample) const {
 bool JoinEncodedWithMeta::is_encoded_(PortId port, const Sample& sample) const {
   if (opt_.encoded_port != kInvalidPort)
     return port == opt_.encoded_port;
-  if (sample.tensor.has_value() && sample.tensor->semantic.encoded.has_value())
-    return true;
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor.semantic.encoded.has_value())
+        return true;
+    }
+  }
   return false;
 }
 
@@ -42,6 +46,8 @@ std::string JoinEncodedWithMeta::field_name_(PortId port, const Sample& sample,
   auto it = opt_.port_names.find(port);
   if (it != opt_.port_names.end() && !it->second.empty())
     return it->second;
+  if (!sample.stream_label.empty())
+    return sample.stream_label;
   if (!sample.port_name.empty())
     return sample.port_name;
   std::ostringstream oss;
@@ -104,7 +110,7 @@ void JoinEncodedWithMeta::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out
   for (auto& [port, sample] : it->second) {
     const bool is_enc = is_encoded_(port, sample);
     Sample field = sample;
-    field.port_name = field_name_(port, sample, is_enc);
+    field.stream_label = field_name_(port, sample, is_enc);
     bundle.fields.emplace_back(std::move(field));
   }
 

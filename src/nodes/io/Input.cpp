@@ -33,16 +33,30 @@ std::string build_caps_string(const InputOptions& opt) {
   caps << media;
 
   if (!opt.format.empty()) {
-    caps << ",format=" << opt.format;
+    const std::string format = normalize_caps_format_for_media(media, opt.format.str());
+    caps << ",format=" << format;
   }
-  if (opt.width > 0) {
-    caps << ",width=" << opt.width;
-  }
-  if (opt.height > 0) {
-    caps << ",height=" << opt.height;
-  }
-  if (opt.depth > 0) {
-    caps << ",depth=" << opt.depth;
+  if (media == "application/vnd.simaai.tensor") {
+    if (opt.width > 0 && opt.height > 0 && opt.depth > 0) {
+      caps << ",rank=3"
+           << ",dim0=" << opt.height << ",dim1=" << opt.width << ",dim2=" << opt.depth;
+    } else if (opt.width > 0 && opt.height > 0) {
+      caps << ",rank=2"
+           << ",dim0=" << opt.height << ",dim1=" << opt.width;
+    } else if (opt.width > 0) {
+      caps << ",rank=1"
+           << ",dim0=" << opt.width;
+    }
+  } else {
+    if (opt.width > 0) {
+      caps << ",width=" << opt.width;
+    }
+    if (opt.height > 0) {
+      caps << ",height=" << opt.height;
+    }
+    if (opt.depth > 0) {
+      caps << ",depth=" << opt.depth;
+    }
   }
   if (opt.fps_n > 0 && opt.fps_d > 0) {
     caps << ",framerate=" << opt.fps_n << "/" << opt.fps_d;
@@ -88,7 +102,7 @@ std::vector<std::string> Input::element_names(int /*node_index*/) const {
 OutputSpec Input::output_spec(const OutputSpec& /*input*/) const {
   OutputSpec out;
   out.media_type = opt_.media_type.empty() ? "video/x-raw" : opt_.media_type;
-  out.format = opt_.format;
+  out.format = opt_.format.str();
   out.width = opt_.width;
   out.height = opt_.height;
   out.depth = opt_.depth;

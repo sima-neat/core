@@ -9,7 +9,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            using namespace simaai::neat::pipeline_internal::sima;
 
            const std::string pipeline =
-               "fakesrc ! neatprocesscvu name=pre stage-id=pre_stage config=/tmp/pre.json ! "
+               "fakesrc ! neatprocesscvu name=pre stage-id=pre_stage ! "
                "neatprocessmla name=mla stage_id=mla_stage config=/tmp/mla.json ! "
                "neatboxdecode name=box config=/tmp/box.json decode-type=yolov8 "
                "detection-threshold=0.35 nms-iou-threshold=0.5 topk=120 ! fakesink";
@@ -20,7 +20,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(elements[1].plugin == "neatprocesscvu", "unexpected plugin at index 1");
            require(elements[1].element_name == "pre", "unexpected element name for pre stage");
            require(elements[1].stage_id == "pre_stage", "stage-id should be parsed for pre stage");
-           require(elements[1].config_path == "/tmp/pre.json", "pre config path parse mismatch");
+           require(elements[1].config_path.empty(), "pre config path should be empty");
 
            require(elements[2].plugin == "neatprocessmla", "unexpected plugin at index 2");
            require(elements[2].stage_id == "mla_stage",
@@ -31,7 +31,7 @@ RUN_TEST("unit_sima_plugin_static_manifest_parse_test", ([] {
            require(elements[3].config_path == "/tmp/box.json", "box config path parse mismatch");
            require(elements[3].decode_type_property.has_value(),
                    "decode-type property should be parsed");
-           require(elements[3].decode_type_property.value() == "yolov8",
+           require(elements[3].decode_type_property.value() == simaai::neat::BoxDecodeType::YoloV8,
                    "decode-type parse mismatch");
            require(elements[3].detection_threshold_property.has_value(),
                    "detection-threshold property should be parsed");

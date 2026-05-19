@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     simaai::neat::Session session;
     session.add(simaai::neat::nodes::Input(in));
     session.add(simaai::neat::nodes::Output());
-    auto run = session.build(seed, simaai::neat::RunMode::Sync);
+    auto run = session.build(simaai::neat::TensorList{seed}, simaai::neat::RunMode::Sync);
 
     // make_bundle_sample packs multiple named tensors into one Sample.
     simaai::neat::Sample bundle = simaai::neat::make_bundle_sample({
@@ -78,17 +78,17 @@ int main(int argc, char** argv) {
         simaai::neat::make_tensor_sample("right", make_fp32_tensor(w, h, c, 2.0f)),
     });
 
-    run.push(bundle);
-    auto out = run.pull(/*timeout_ms=*/1000);
+    auto outs = run.run(simaai::neat::SampleList{bundle}, /*timeout_ms=*/1000);
     // END CORE LOGIC
 
-    if (!out.has_value())
+    if (outs.empty())
       throw std::runtime_error("bundle output missing");
-    if (out->kind != simaai::neat::SampleKind::Bundle)
+    const simaai::neat::Sample& out = outs.front();
+    if (out.kind != simaai::neat::SampleKind::Bundle)
       throw std::runtime_error("expected bundle output");
 
-    std::cout << "bundle_fields=" << out->fields.size() << "\n";
-    for (const auto& field : out->fields) {
+    std::cout << "bundle_fields=" << out.fields.size() << "\n";
+    for (const auto& field : out.fields) {
       std::cout << "  port=" << field.port_name
                 << " has_tensor=" << (field.tensor.has_value() ? "yes" : "no") << "\n";
     }

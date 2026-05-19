@@ -25,22 +25,21 @@ int main() {
     simaai::neat::Session session;
     session.add(simaai::neat::nodes::Input(in));
     session.add(simaai::neat::nodes::Output());
-    auto run = session.build(rgb, simaai::neat::RunMode::Sync);
+    auto run = session.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
 
     // CORE LOGIC
     // push_and_pull is the one-frame synchronous shortcut; Sample has .kind,
     // .tensor (optional), .fields (named sub-tensors for bundles).
-    simaai::neat::Sample out = run.push_and_pull(rgb, /*timeout_ms=*/1000);
+    simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
     // END CORE LOGIC
 
-    std::cout << "kind=" << static_cast<int>(out.kind)
-              << " has_tensor=" << (out.tensor.has_value() ? "yes" : "no")
-              << " fields=" << out.fields.size() << "\n";
-    if (!out.tensor.has_value())
+    std::cout << "outputs=" << out.size() << " has_tensor=" << (!out.empty() ? "yes" : "no")
+              << " fields=" << 0 << "\n";
+    if (out.empty())
       throw std::runtime_error("expected tensor output");
-    if (out.tensor->shape.empty())
+    if (out.front().shape.empty())
       throw std::runtime_error("output tensor shape is empty");
-    std::cout << "rank=" << out.tensor->shape.size() << "\n";
+    std::cout << "rank=" << out.front().shape.size() << "\n";
     std::cout << "[OK] 010_interpret_model_output\n";
     return 0;
   } catch (const std::exception& e) {
