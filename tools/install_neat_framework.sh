@@ -307,7 +307,11 @@ has_sima_lmm_sysroot_deps() {
         -f "${sysroot}/usr/lib/aarch64-linux-gnu/cmake/fmt/fmt-config.cmake" ) &&
      -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
      -f "${sysroot}/usr/lib/aarch64-linux-gnu/cmake/spdlog/spdlogConfig.cmake" &&
-     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
+     -f "${sysroot}/usr/include/eigen3/Eigen/Core" &&
+     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
+     -f "${sysroot}/usr/include/httplib.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]
 }
 
 ensure_sima_lmm_sysroot_deps() {
@@ -329,6 +333,9 @@ ensure_sima_lmm_sysroot_deps() {
     "libfmt9:arm64"
     "libspdlog-dev:arm64"
     "libspdlog1.10:arm64"
+    "libeigen3-dev"
+    "libcpp-httplib-dev:arm64"
+    "libcpp-httplib0.11:arm64"
   )
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
