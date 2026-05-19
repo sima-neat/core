@@ -255,9 +255,15 @@ set(UNIT_TESTS
   unit_graph_stamp_frame_id_test
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
+  unit_graph_stage_emitter_test
   unit_graph_stop_sequencing_test
   unit_graph_strict_sync_store_test
   unit_graph_strict_sync_test
+  unit_genai_prompt_builder_test
+  unit_genai_image_types_test
+  unit_genai_audio_types_test
+  unit_genai_header_compile_surface_test
+  unit_genai_text_tensor_test
   unit_header_neat_compile_surface_test
   unit_verbose_options_surface_test
   unit_gst_data_adapter_edge_test
@@ -507,6 +513,76 @@ add_pipeline_test_long(
 
 if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
+endif()
+
+add_pipeline_test_long(
+  genai_llm_run_test
+  e2e_testing/genai_llm_run_test.cpp
+)
+
+if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
+  set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_vlm_run_test
+  SOURCES e2e_testing/genai_vlm_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
+  set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_vlm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_graph_llm_run_test
+  e2e_testing/genai_graph_llm_run_test.cpp
+)
+
+if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
+  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_llm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_graph_vlm_run_test
+  SOURCES e2e_testing/genai_graph_vlm_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
+  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_vlm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_asr_run_test
+  SOURCES e2e_testing/genai_asr_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
+  set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_asr_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_graph_asr_run_test
+  SOURCES e2e_testing/genai_graph_asr_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
+  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_asr_run_test PROPERTIES DISABLED TRUE)
 endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)

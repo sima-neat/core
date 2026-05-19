@@ -47,6 +47,26 @@ struct StageOutMsg {
 };
 
 /**
+ * @brief Runtime-owned output handle for stages that stream while `on_input()` is active.
+ *
+ * Most stages can keep appending to the `out` vector passed to `on_input()`. Long-running
+ * stages may use this emitter to route samples immediately, before `on_input()` returns.
+ *
+ * The pointer supplied through `StageExecutor::set_emitter()` is owned by the runtime and
+ * remains valid until the executor is stopped.
+ * @ingroup graph
+ */
+class StageEmitter {
+public:
+  virtual ~StageEmitter() = default;
+
+  /// Route one output sample through the same graph paths used for returned `StageOutMsg`s.
+  virtual bool emit(StageOutMsg msg) = 0;
+  /// True once the graph runtime has begun stopping.
+  virtual bool stop_requested() const = 0;
+};
+
+/**
  * @brief Resolved port-id table for a stage — populated by the runtime before `start()`.
  *
  * Stage authors should cache the relevant port-ids in `set_ports()` rather than looking
@@ -104,8 +124,13 @@ public:
   /// Provide resolved port ids for caching. Optional — default is a no-op.
   virtual void set_ports(const StagePorts& /*ports*/) {}
 
+  /// Provide the runtime output emitter. Optional — default is a no-op.
+  virtual void set_emitter(StageEmitter* /*emitter*/) {}
+
   /// Start any background work. Called once before the first `on_input`.
   virtual void start() {}
+  /// Ask an active stage to cancel long-running work. Optional — default is a no-op.
+  virtual void request_stop() {}
   /// Tear down. Called once after the last `on_input`/`on_tick`.
   virtual void stop() {}
 

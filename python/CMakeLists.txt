@@ -73,24 +73,20 @@ endif()
 
 if (DEFINED SKBUILD_PLATLIB_DIR)
   set(PYNEAT_INSTALL_DIR "${SKBUILD_PLATLIB_DIR}/pyneat")
-else()
-  set(PYNEAT_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/python3/dist-packages/pyneat")
+
+  install(
+    TARGETS _pyneat_core
+    LIBRARY DESTINATION ${PYNEAT_INSTALL_DIR}
+  )
+
+  install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pyneat/
+    DESTINATION ${PYNEAT_INSTALL_DIR}
+    FILES_MATCHING
+    PATTERN "*.py"
+    PATTERN "py.typed"
+  )
 endif()
-
-install(
-  TARGETS _pyneat_core
-  LIBRARY DESTINATION ${PYNEAT_INSTALL_DIR}
-  COMPONENT core
-)
-
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/pyneat/
-  DESTINATION ${PYNEAT_INSTALL_DIR}
-  COMPONENT core
-  FILES_MATCHING
-  PATTERN "*.py"
-  PATTERN "py.typed"
-)
 
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/

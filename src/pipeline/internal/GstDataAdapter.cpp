@@ -480,7 +480,11 @@ void copy_custom_meta(GstBuffer* dst, GstBuffer* src, const char* meta_name) {
   GstCustomMeta* src_meta = gst_buffer_get_custom_meta(src, meta_name);
   if (!src_meta)
     return;
-  GstCustomMeta* dst_meta = gst_buffer_add_custom_meta(dst, meta_name);
+
+  GstCustomMeta* dst_meta = gst_buffer_get_custom_meta(dst, meta_name);
+  if (!dst_meta) {
+    dst_meta = gst_buffer_add_custom_meta(dst, meta_name);
+  }
   if (!dst_meta)
     return;
   GstStructure* src_struct = gst_custom_meta_get_structure(src_meta);

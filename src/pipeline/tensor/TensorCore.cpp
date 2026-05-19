@@ -900,6 +900,35 @@ bool Tensor::validate(std::string* err) const {
     }
   }
 
+  // Text semantic constraints.
+  if (semantic.text.has_value()) {
+    if (semantic.image.has_value() || semantic.audio.has_value() || semantic.tokens.has_value() ||
+        semantic.encoded.has_value() || semantic.byte_stream.has_value() ||
+        semantic.tess.has_value() || semantic.quant.has_value() ||
+        semantic.preprocess.has_value()) {
+      return fail("text tensor cannot also be "
+                  "image/audio/tokens/encoded/byte_stream/tess/quant/preprocess");
+    }
+    if (semantic.text->encoding != "utf-8") {
+      return fail("text tensor encoding must be utf-8");
+    }
+    if (dtype != simaai::neat::TensorDType::UInt8) {
+      return fail("text tensor must use UInt8 dtype");
+    }
+    if (!is_dense()) {
+      return fail("text tensor must be dense");
+    }
+    if (!planes.empty()) {
+      return fail("text tensor must not have planes");
+    }
+    if (shape.size() != 1 || shape[0] < 0) {
+      return fail("text tensor must have shape [num_bytes]");
+    }
+    if (layout != simaai::neat::TensorLayout::Unknown) {
+      return fail("text tensor layout must be Unknown");
+    }
+  }
+
   // Byte-stream semantic constraints.
   if (semantic.byte_stream.has_value()) {
     if (semantic.image.has_value() || semantic.encoded.has_value() || semantic.tess.has_value()) {
@@ -952,11 +981,69 @@ std::string Tensor::debug_string() const {
 
   out += " byte_offset=" + std::to_string(byte_offset);
   out += " planes=" + std::to_string(planes.size());
+  if (semantic.text.has_value()) {
+    out += " semantic=Text";
+  }
   if (semantic.byte_stream.has_value()) {
     out += " semantic=ByteStream";
   }
   out += "}";
   return out;
+}
+
+Tensor Tensor::from_text(std::string_view text) {
+  auto storage = make_cpu_owned_storage(text.size());
+  if (!text.empty()) {
+    Mapping dst = storage->map(MapMode::Write);
+    if (!dst.data) {
+      throw std::runtime_error("Tensor::from_text: CPU destination map failed");
+    }
+    std::memcpy(dst.data, text.data(), text.size());
+  }
+
+  Tensor out;
+  out.storage = std::move(storage);
+  out.dtype = TensorDType::UInt8;
+  out.layout = TensorLayout::Unknown;
+  out.shape = {static_cast<int64_t>(text.size())};
+  out.strides_bytes = {1};
+  out.byte_offset = 0;
+  out.device = {DeviceType::CPU, 0};
+  out.semantic.text = TextSpec{};
+  out.read_only = false;
+  return out;
+}
+
+std::string Tensor::to_text() const {
+  if (!semantic.text.has_value()) {
+    throw std::runtime_error("Tensor::to_text: tensor is not marked as text");
+  }
+  if (dtype != TensorDType::UInt8) {
+    throw std::runtime_error("Tensor::to_text: text tensor must use UInt8 dtype");
+  }
+  if (semantic.text->encoding != "utf-8") {
+    throw std::runtime_error("Tensor::to_text: text tensor encoding must be utf-8");
+  }
+  if (!is_dense()) {
+    throw std::runtime_error("Tensor::to_text: text tensor must be dense");
+  }
+  if (shape.size() != 1 || shape[0] < 0) {
+    throw std::runtime_error("Tensor::to_text: text tensor must have shape [num_bytes]");
+  }
+  if (layout != TensorLayout::Unknown) {
+    throw std::runtime_error("Tensor::to_text: text tensor layout must be Unknown");
+  }
+
+  const auto bytes = static_cast<std::size_t>(shape[0]);
+  if (bytes == 0U) {
+    return {};
+  }
+
+  std::vector<uint8_t> payload(bytes);
+  if (!copy_dense_bytes_tight_to(payload.data(), payload.size())) {
+    throw std::runtime_error("Tensor::to_text: copy failed");
+  }
+  return std::string(reinterpret_cast<const char*>(payload.data()), payload.size());
 }
 
 namespace {
