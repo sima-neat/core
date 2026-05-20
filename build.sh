@@ -2100,7 +2100,7 @@ run_install_sanity_check() {
   local install_test_dir="/tmp/sima-neat-install-test"
   rm -rf "${install_test_dir}"
 
-  cmake --install "${BUILD_DIR}" --prefix "${install_test_dir}"
+  cmake --install "${BUILD_DIR}" --component core --prefix "${install_test_dir}"
 
   echo "Installed files:"
   find "${install_test_dir}" | sed 's|^|  |'
