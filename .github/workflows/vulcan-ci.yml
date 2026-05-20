@@ -120,7 +120,7 @@ jobs:
         test -f dist/install_neat_framework.sh
         test -f build/resolved_manifest.json
 
-        cp -f build/resolved_manifest.json dist/manifest.json
+        sudo install -m 0644 build/resolved_manifest.json dist/manifest.json
         ls -lh dist
 
   publish-vulcan-artifacts:
