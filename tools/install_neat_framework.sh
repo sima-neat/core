@@ -310,8 +310,12 @@ has_sima_lmm_sysroot_deps() {
      -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
      -f "${sysroot}/usr/include/eigen3/Eigen/Core" &&
      -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
+     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
      -f "${sysroot}/usr/include/httplib.h" &&
-     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so" ]]
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
 }
 
 ensure_sima_lmm_sysroot_deps() {
@@ -334,6 +338,8 @@ ensure_sima_lmm_sysroot_deps() {
     "libspdlog-dev:arm64"
     "libspdlog1.10:arm64"
     "libeigen3-dev"
+    "nlohmann-json3-dev"
+    "libbrotli-dev:arm64"
     "libcpp-httplib-dev:arm64"
     "libcpp-httplib0.11:arm64"
   )
