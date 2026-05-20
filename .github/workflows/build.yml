@@ -317,6 +317,12 @@ jobs:
           rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
+      - name: Pre-install devkit runtime cleanup
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/fix_devkit_runtime.sh
+
       - name: Install test runtime from metadata-all
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
