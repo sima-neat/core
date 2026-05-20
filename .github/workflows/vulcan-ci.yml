@@ -72,6 +72,10 @@ jobs:
 
         docker exec \
           -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
+          -e GITHUB_HEAD_REF="${{ github.head_ref }}" \
+          -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+          -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
+          -e GITHUB_SHA="${{ github.sha }}" \
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Neural Edge Acceleration Toolkit" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
@@ -80,14 +84,13 @@ jobs:
           bash -lc '
             set -euo pipefail
             export SIMA_CLI_CHECK_FOR_UPDATE=0
-            if ! command -v sima-cli >/dev/null 2>&1 ||
-               ! sima-cli vulcan install --help >/dev/null 2>&1 ||
-               ! sima-cli packages build --help >/dev/null 2>&1; then
-              curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o sima-cli-install.py
-              python3 sima-cli-install.py main latest
-              rm -f sima-cli-install.py
-              export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
-            fi
+            curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o sima-cli-install.py
+            python3 sima-cli-install.py main latest --noninteractive
+            rm -f sima-cli-install.py
+            export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
+            sima-cli version
+            sima-cli vulcan install --help >/dev/null
+            sima-cli packages build --help >/dev/null
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
           '
