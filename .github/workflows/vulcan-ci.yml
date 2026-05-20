@@ -1,0 +1,145 @@
+name: Vulcan CI
+
+run-name: vulcan-ci (${{ vars.VULCAN_ENV || 'dev' }}, ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}, ${{ vars.VULCAN_CAPACITY || 'default' }})
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Build mode: standard or fuzz"
+        required: false
+        default: "standard"
+        type: choice
+        options:
+          - standard
+          - fuzz
+
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+  packages: read
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.build_mode || 'standard' }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build:
+    name: Build Core on Vulcan
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+    with:
+      vulcan_env: ${{ vars.VULCAN_ENV || 'dev' }}
+      sdk_cache: ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}
+      capacity: ${{ vars.VULCAN_CAPACITY || 'default' }}
+      fetch_depth: 0
+      checkout_submodules: recursive
+      ensure_sdk_container: true
+      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
+      artifact_name: neat-core-dist
+      artifact_path: dist/*
+      artifact_retention_days: 3
+      build_command: |
+        set -euo pipefail
+
+        core_build_mode="${{ inputs.build_mode || 'standard' }}"
+        neat_vulcan_env="${{ vars.VULCAN_ENV || 'dev' }}"
+        echo "Resolved build mode: ${core_build_mode}"
+
+        sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
+        if [[ -z "${sdk_container}" ]]; then
+          sdk_container="$(docker ps --filter 'name=sdk' --format '{{.Names}}' | head -n 1)"
+        fi
+        if [[ -z "${sdk_container}" ]]; then
+          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+          echo "Could not find running SDK container." >&2
+          exit 1
+        fi
+
+        if [[ "${core_build_mode}" == "fuzz" ]]; then
+          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
+        else
+          CORE_BUILD_ARGS="--all --clean --no-doc"
+        fi
+
+        docker exec \
+          -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
+          -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
+          -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Neural Edge Acceleration Toolkit" \
+          -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
+          -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
+          "${sdk_container}" \
+          bash -lc '
+            set -euo pipefail
+            export SIMA_CLI_CHECK_FOR_UPDATE=0
+            if ! command -v sima-cli >/dev/null 2>&1 ||
+               ! sima-cli vulcan install --help >/dev/null 2>&1 ||
+               ! sima-cli packages build --help >/dev/null 2>&1; then
+              curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o sima-cli-install.py
+              python3 sima-cli-install.py main latest
+              rm -f sima-cli-install.py
+              export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
+            fi
+            cd /workspace
+            ./build.sh ${CORE_BUILD_ARGS}
+          '
+
+      post_build_command: |
+        set -euo pipefail
+
+        mapfile -t CORE_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+        mapfile -t EXTRAS_TARS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-extras.tar.gz' | sort)
+        mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+
+        if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+          echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel." >&2
+          echo "core debs: ${#CORE_DEBS[@]}" >&2
+          printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+          echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+          printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+          echo "wheels: ${#WHEELS[@]}" >&2
+          printf '  %s\n' "${WHEELS[@]}" >&2 || true
+          exit 1
+        fi
+
+        for metadata_file in metadata.json metadata-minimal.json metadata-all.json; do
+          test -f "dist/${metadata_file}"
+          python3 -m json.tool "dist/${metadata_file}" >/dev/null
+        done
+        test -f dist/install_neat_framework.sh
+        test -f build/resolved_manifest.json
+
+        cp -f build/resolved_manifest.json dist/manifest.json
+        ls -lh dist
+
+  publish-vulcan-artifacts:
+    name: Publish to Vulcan
+    needs: build
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@main
+    with:
+      aws_region: ${{ vars.VULCAN_AWS_REGION || 'us-west-2' }}
+      environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
+      artifact_folder: "."
+      artifact_pattern: neat-core-dist
+      artifact_glob: "*"
+      min_artifact_count: 10
+
+  promote-latest-tag:
+    name: Promote Latest Tag
+    if: ${{ github.ref_type == 'branch' }}
+    needs: publish-vulcan-artifacts
+    uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
+    with:
+      aws_region: ${{ vars.VULCAN_AWS_REGION || 'us-west-2' }}
+      environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
+      bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET }}
+      role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN }}
+      artifact_folder: "."

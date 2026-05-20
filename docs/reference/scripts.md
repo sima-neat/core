@@ -17,7 +17,7 @@ The framework ships two directories of helpers. This page is the map.
 | `generate_tutorial_docs.py` | (Tutorials are being deprecated — this script is fading out.) |
 | `postprocess_d2d_links.py` | Fix up doxygen2docusaurus link slugs after generation. Called automatically by `generate_api_docs.sh`. |
 | `strip_empty_programlisting.py` | Workaround for empty `<programlisting>` elements that confuse doxygen2docusaurus. |
-| `compute_version.sh` | Compute the framework's version string from git state. Used by CI and packaging. |
+| `compute_version.sh` | Compute the framework's version string from `deps/manifest.json` `platform-version`, plus git metadata for branch builds. Used by CI and packaging. |
 | `expand_code_tabs.py` | Expand multi-language tabs in tutorial sources. |
 | `run_clean_env.sh` | Run a command inside a clean shell environment (no inherited `LD_*` / `PATH` weirdness). |
 | `tutorial_quality_lint.py` / `tutorial_scorecard.py` | Lint tutorial Markdown / score it. (Deprecating with tutorials.) |
