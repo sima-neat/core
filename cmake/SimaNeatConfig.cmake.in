@@ -1,6 +1,7 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+find_dependency(SimaLMM CONFIG REQUIRED)
 find_dependency(NeatInternals CONFIG REQUIRED)
 
 # Exported targets

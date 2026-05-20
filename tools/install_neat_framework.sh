@@ -301,6 +301,106 @@ sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
 }
 
+has_sima_lmm_sysroot_deps() {
+  local sysroot="$1"
+  [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
+     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
+     -f "${sysroot}/usr/include/fmt/core.h" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
+     -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
+     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
+     -f "${sysroot}/usr/include/httplib.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
+}
+
+ensure_sima_lmm_sysroot_deps() {
+  local sysroot="$1"
+
+  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local -a missing_packages=()
+  if [[ ! -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
+        ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
+    missing_packages+=("libeigen3-dev")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ]]; then
+    missing_packages+=("libfmt-dev:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
+    missing_packages+=("libfmt9:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ]]; then
+    missing_packages+=("libspdlog-dev:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
+    missing_packages+=("libspdlog1.10:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
+    missing_packages+=("nlohmann-json3-dev")
+  fi
+  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
+        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
+        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
+    missing_packages+=("libbrotli-dev:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
+    missing_packages+=("libcpp-httplib-dev:arm64")
+  fi
+  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
+    missing_packages+=("libcpp-httplib0.11:arm64")
+  fi
+
+  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
+
+  log "Installing SimaLMM SDK/sysroot dependencies:"
+  printf '  %s\n' "${missing_packages[@]}"
+  if ! (
+    cd "${tmp_dir}"
+    apt-get download "${missing_packages[@]}"
+  ); then
+    rm -rf "${tmp_dir}"
+    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local -a downloaded_debs=()
+  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
+  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local dep_deb
+  for dep_deb in "${downloaded_debs[@]}"; do
+    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+    if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
+      run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
+    fi
+  done
+  rm -rf "${tmp_dir}"
+
+  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
+    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
+    exit 1
+  fi
+}
+
 ensure_sdk_neat_cli_symlink() {
   local sysroot
   sysroot="$(sysroot_path)"
@@ -435,6 +535,7 @@ install_debs_into_sysroot() {
   fi
 
   log "Detected eLxr SDK environment; installing DEBs into sysroot: ${sysroot}"
+  ensure_sima_lmm_sysroot_deps "${sysroot}"
   local deb
   for deb in "${DEBS[@]}"; do
     log "Extracting $(basename "${deb}") into ${sysroot}"

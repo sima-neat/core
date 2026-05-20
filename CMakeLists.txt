@@ -407,6 +407,8 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
 endif()
 
 set(SIMANEAT_ELXR_SYSROOT /opt/toolchain/aarch64/modalix)
+set(SIMANEAT_LOCAL_DEP_HEADER_ROOT
+  ${CMAKE_CURRENT_SOURCE_DIR}/deps/headers/usr/include)
 set(SIMANEAT_INSTALLED_NEAT_PLUGIN_DIR_CANDIDATES
   ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/neat/gst-plugins
   ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/gstreamer-1.0
@@ -426,6 +428,7 @@ set(SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES
   /lib/neat/runtime
 )
 set(SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES
+  ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}/simaai
   ${SIMANEAT_ELXR_SYSROOT}/usr/include/simaai
   /usr/include/simaai
   /usr/local/include/simaai
@@ -572,6 +575,7 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_
   find_path(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     NAMES gst/SimaPreparedRuntimeAbi.h
     HINTS
+      ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}
       /usr/include
       /usr/local/include
       $ENV{HOME}/.local/include
