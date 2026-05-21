@@ -1,0 +1,142 @@
+name: Vulcan Docs
+
+run-name: vulcan-docs (${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'stg' }})
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: "Vulcan docs environment"
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - stg
+          - prod
+
+permissions:
+  contents: read
+  actions: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'stg' }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-target:
+    name: Resolve Target
+    runs-on: ubuntu-latest
+    outputs:
+      deploy_environment: ${{ steps.target.outputs.deploy_environment }}
+    steps:
+      - name: Resolve deployment target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            deploy_environment="${{ inputs.deploy_environment }}"
+          else
+            deploy_environment="stg"
+          fi
+
+          case "${deploy_environment}" in
+            dev|stg)
+              ;;
+            prod)
+              if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+                echo "Production docs deploy is only allowed from refs/heads/main. Current ref: ${GITHUB_REF}" >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported deployment environment: ${deploy_environment}" >&2
+              exit 1
+              ;;
+          esac
+
+          echo "deploy_environment=${deploy_environment}" >> "${GITHUB_OUTPUT}"
+
+  build-docs:
+    name: Build Docs
+    needs: resolve-target
+    runs-on: [self-hosted, Linux, X64]
+    environment: ${{ needs.resolve-target.outputs.deploy_environment }}
+    env:
+      DOCS_URL: ${{ vars.VULCAN_DOCS_URL }}
+      DOCS_GA_MEASUREMENT_ID: ${{ vars.DOCS_GA_MEASUREMENT_ID }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+
+      - name: Validate docs build settings
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCS_URL}" ]]; then
+            echo "Missing VULCAN_DOCS_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
+            exit 1
+          fi
+          echo "Deploy environment: ${{ needs.resolve-target.outputs.deploy_environment }}"
+          echo "Docs URL          : ${DOCS_URL}"
+
+      - name: Install build dependencies
+        run: |
+          ./build.sh --install-deps-only
+
+      - name: Build docs website
+        env:
+          DOCS_STRICT_LINKS: "1"
+          DOCS_URL: ${{ env.DOCS_URL }}
+          DOCS_BASE_URL: /
+          DOCS_GA_MEASUREMENT_ID: ${{ env.DOCS_GA_MEASUREMENT_ID }}
+          DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
+          DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
+          DOCS_ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
+        run: |
+          ./build.sh --doc
+
+      - name: Verify build output
+        run: |
+          test -d website/build
+          test -f website/build/index.html
+
+      - name: Check rendered docs links
+        env:
+          DOCS_LINK_SITE_DIR: ${{ github.workspace }}/website/build
+          DOCS_LINK_START_PATHS: all
+        run: |
+          bash scripts/ci/check_docs_links.sh
+
+      - name: Upload docs site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vulcan-docs-site
+          path: website/build/
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-docs:
+    name: Publish Docs
+    needs:
+      - resolve-target
+      - build-docs
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
+    with:
+      environment_name: ${{ needs.resolve-target.outputs.deploy_environment }}
+      site_key: DOCS
+      artifact_pattern: vulcan-docs-site
