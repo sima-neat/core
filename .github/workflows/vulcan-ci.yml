@@ -186,7 +186,22 @@ jobs:
         run: |
           mapfile -t CTEST_FILES < <(find "${GITHUB_WORKSPACE}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
           if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
-            echo "Unable to locate installed extras tests under GITHUB_WORKSPACE after sima-cli install." >&2
+            echo "Unable to locate extracted extras CTest files under ${GITHUB_WORKSPACE}; re-extracting extras archive for tests."
+            mapfile -t EXTRAS_TARS < <(find "${GITHUB_WORKSPACE}" -maxdepth 2 -type f -name 'sima-neat-*-Linux-extras.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+            if [[ "${#EXTRAS_TARS[@]}" -eq 0 ]]; then
+              echo "Unable to locate downloaded extras archive under ${GITHUB_WORKSPACE} after sima-cli install." >&2
+              echo "Workspace top-level contents:" >&2
+              find "${GITHUB_WORKSPACE}" -maxdepth 2 -mindepth 1 -printf '  %p\n' 2>/dev/null | sort >&2 || true
+              exit 1
+            fi
+            EXTRAS_REEXTRACT_DIR="${GITHUB_WORKSPACE}/_work/extras"
+            rm -rf "${EXTRAS_REEXTRACT_DIR}"
+            mkdir -p "${EXTRAS_REEXTRACT_DIR}"
+            tar -xzf "${EXTRAS_TARS[0]}" -C "${EXTRAS_REEXTRACT_DIR}"
+            mapfile -t CTEST_FILES < <(find "${EXTRAS_REEXTRACT_DIR}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+          fi
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "Unable to locate installed extras tests after sima-cli install and extras re-extract." >&2
             exit 1
           fi
           EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
