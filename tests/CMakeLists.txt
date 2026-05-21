@@ -1106,3 +1106,9 @@ install(
     PATTERN "*.o.d" EXCLUDE
     PATTERN "*.ts" EXCLUDE
 )
+
+install(
+  FILES ${CMAKE_BINARY_DIR}/tests/CTestTestfile.cmake
+  DESTINATION lib/sima-neat/tests
+  COMPONENT extras
+)
