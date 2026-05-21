@@ -149,4 +149,5 @@ jobs:
       environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
       bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET || 'sima-neat-artifacts-dev' }}
       role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN || 'arn:aws:iam::990858070801:role/NeatDevArtifactPublisherRole' }}
+      sse_kms_key_id: ${{ vars.VULCAN_ARTIFACT_KMS_KEY_ID || 'alias/sima-neat-artifacts-dev' }}
       artifact_folder: "."
