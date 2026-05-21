@@ -117,8 +117,8 @@ jobs:
           test -f "dist/${metadata_file}"
           python3 -m json.tool "dist/${metadata_file}" >/dev/null
         done
-        tar -tzf "${EXTRAS_TARS[0]}" | grep -qx './lib/sima-neat/tests/CTestTestfile.cmake'
-        tar -tzf "${EXTRAS_TARS[0]}" | grep -qx './lib/sima-neat/tutorials/CTestTestfile.cmake'
+        tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tests/CTestTestfile.cmake' >/dev/null
+        tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
         test -f dist/install_neat_framework.sh
         test -f build/resolved_manifest.json
 
