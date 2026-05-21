@@ -184,7 +184,15 @@ jobs:
 
       - name: Locate installed extras content
         run: |
-          mapfile -t CTEST_FILES < <(find "${GITHUB_WORKSPACE}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+          find_extras_ctest_files() {
+            local root="$1"
+            find "${root}" -type f -name CTestTestfile.cmake -printf '%T@ %p\n' 2>/dev/null \
+              | awk '$2 ~ /(^|\/)tests\/CTestTestfile\.cmake$/ {print}' \
+              | sort -nr \
+              | awk '{print $2}'
+          }
+
+          mapfile -t CTEST_FILES < <(find_extras_ctest_files "${GITHUB_WORKSPACE}")
           if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
             echo "Unable to locate extracted extras CTest files under ${GITHUB_WORKSPACE}; re-extracting extras archive for tests."
             mapfile -t EXTRAS_TARS < <(find "${GITHUB_WORKSPACE}" -maxdepth 2 -type f -name 'sima-neat-*-Linux-extras.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
@@ -198,15 +206,23 @@ jobs:
             rm -rf "${EXTRAS_REEXTRACT_DIR}"
             mkdir -p "${EXTRAS_REEXTRACT_DIR}"
             tar -xzf "${EXTRAS_TARS[0]}" -C "${EXTRAS_REEXTRACT_DIR}"
-            mapfile -t CTEST_FILES < <(find "${EXTRAS_REEXTRACT_DIR}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+            mapfile -t CTEST_FILES < <(find_extras_ctest_files "${EXTRAS_REEXTRACT_DIR}")
           fi
           if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
             echo "Unable to locate installed extras tests after sima-cli install and extras re-extract." >&2
+            echo "Candidate CTest files:" >&2
+            find "${GITHUB_WORKSPACE}" -type f -name CTestTestfile.cmake -printf '  %p\n' 2>/dev/null | sort >&2 || true
             exit 1
           fi
-          EXTRAS_LIB_DIR="$(dirname "$(dirname "${CTEST_FILES[0]}")")"
+          TEST_DIR="$(dirname "${CTEST_FILES[0]}")"
+          if [[ "${TEST_DIR}" == */lib/sima-neat/tests ]]; then
+            EXTRAS_LIB_DIR="${TEST_DIR%/tests}"
+            EXTRAS_PREFIX="${EXTRAS_LIB_DIR%/lib/sima-neat}"
+          else
+            EXTRAS_LIB_DIR="$(dirname "${TEST_DIR}")"
+            EXTRAS_PREFIX="${EXTRAS_LIB_DIR}"
+          fi
           echo "Using extras lib dir: ${EXTRAS_LIB_DIR}"
-          EXTRAS_PREFIX="$(dirname "$(dirname "${EXTRAS_LIB_DIR}")")"
           PYTEST_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests"
           if [[ ! -d "${PYTEST_DIR}" ]]; then
             echo "Installed python tests not found at ${PYTEST_DIR}" >&2
