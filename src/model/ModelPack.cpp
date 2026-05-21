@@ -2456,18 +2456,13 @@ publish_mla_outputs_as_packed_parent(pipeline_internal::sima::MlaStaticContract*
   }
 
   constexpr const char* kPackedParentSegmentName = "mla_output_tensor";
-  pipeline_internal::sima::PhysicalBufferStaticSpec parent;
-  parent.physical_index = 0;
-  parent.allocator_index = 0;
   // The dispatcher still has N real OFM outputs.  This published parent is an
   // aggregate runtime allocation over those N outputs, so source_physical_index
   // is only a compatibility anchor for older one-source descriptors; processmla
   // validates the dense aggregate-parent shape explicitly.
-  parent.source_physical_index = 0;
-  parent.source_byte_offset = 0;
-  parent.device_kind = pipeline_internal::sima::DeviceKind::Mla;
-  parent.segment_name = kPackedParentSegmentName;
-  parent.size_bytes = total_size;
+  auto parent = pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
+      0, 0, total_size, pipeline_internal::sima::DeviceKind::Mla, kPackedParentSegmentName, 0,
+      0);
 
   for (std::size_t i = 0; i < contract->logical_outputs.size(); ++i) {
     auto& logical = contract->logical_outputs[i];
