@@ -73,7 +73,7 @@ jobs:
       sdk_cache: ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}
       capacity: ${{ vars.VULCAN_DOCS_CAPACITY || 'cheap' }}
       fetch_depth: 1
-      checkout_submodules: false
+      checkout_submodules: "false"
       ensure_sdk_container: true
       sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
       artifact_name: vulcan-docs-site
