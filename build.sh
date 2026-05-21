@@ -40,23 +40,21 @@ SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
-NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
-NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
+NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
 NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-dev}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
+NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
 NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
-NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
 NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
-NEAT_LLIMA_BASE_URL="${NEAT_LLIMA_BASE_URL:-https://artifacts.sima-neat.com/llima}"
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
-NEAT_LLIMA_BASIC_AUTH="${NEAT_LLIMA_BASIC_AUTH:-${NEAT_INTERNALS_BASIC_AUTH}}"
 NEAT_LLIMA_RESOLVED_REF=""
+NEAT_LLIMA_SNAP_POLICY=OFF
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -280,6 +278,12 @@ Environment:
                  Auto-stage a local shadow workspace for builds from remote filesystems.
   SIMANEAT_SHADOW_ROOT=/tmp/sima-neat-shadow-<id>
                  Override where the shadow workspace is created.
+  NEAT_DEPS_MANIFEST=deps/manifest.json
+                 Manifest used to resolve Vulcan dependency artifacts.
+  NEAT_VULCAN_ENV=dev
+                 Vulcan environment used for dependency artifact installs.
+  SIMA_CLI_BIN=sima-cli
+                 sima-cli executable used for Vulcan installs and metadata generation.
 
 Examples:
   ./build.sh
@@ -816,42 +820,6 @@ raise SystemExit(
 PY
 }
 
-download_file() {
-  local url="$1"
-  local out="$2"
-  local basic_auth="${3:-}"
-  # Prefer curl; fall back to wget for minimal environments.
-  if command -v curl >/dev/null 2>&1; then
-    if [[ -n "${basic_auth}" ]]; then
-      curl -fL -u "${basic_auth}" "${url}" -o "${out}"
-    else
-      curl -fL "${url}" -o "${out}"
-    fi
-    return $?
-  fi
-  if command -v wget >/dev/null 2>&1; then
-    if [[ -n "${basic_auth}" ]]; then
-      local wget_user="${basic_auth%%:*}"
-      local wget_pass="${basic_auth#*:}"
-      if [[ "${wget_user}" == "${wget_pass}" ]]; then
-        echo "ERROR: NEAT_INTERNALS_BASIC_AUTH must be in 'user:password' format for wget." >&2
-        return 1
-      fi
-      wget --user="${wget_user}" --password="${wget_pass}" -O "${out}" "${url}"
-    else
-      wget -O "${out}" "${url}"
-    fi
-    return $?
-  fi
-  return 1
-}
-
-sanitize_internals_branch_key() {
-  # Match internals publish naming from internals/.github/workflows/build-and-publish-tar.yml.
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
-    sed -E 's#[^a-z0-9._-]+#-#g; s/^-+//; s/-+$//'
-}
-
 current_core_branch() {
   if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
     printf '%s\n' "${GITHUB_HEAD_REF}"
@@ -869,69 +837,14 @@ current_core_branch() {
   printf '\n'
 }
 
-artifact_checksum_available() {
-  local url="$1"
-  local basic_auth="$2"
-  local temp_prefix="$3"
-  local probe_path
-  probe_path="$(mktemp "/tmp/${temp_prefix}-probe-XXXXXX")"
-  if download_file "${url}" "${probe_path}" "${basic_auth}" >/dev/null 2>&1; then
-    rm -f "${probe_path}"
-    return 0
-  fi
-  rm -f "${probe_path}"
-  return 1
-}
-
-resolve_manifest_artifact_ref() {
-  local manifest_key="$1"
-  local base_url="$2"
-  local artifact_prefix="$3"
-  local basic_auth="$4"
-  local display_name="$5"
-  local temp_prefix="$6"
-
-  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
-    return 1
-  fi
-
-  local manifest_ref
-  if ! manifest_ref="$(manifest_dependency_spec "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}")"; then
-    return 1
-  fi
-  if [[ "${manifest_ref}" != "__SNAP__" ]]; then
-    printf '%s\n' "${manifest_ref}"
-    return 0
-  fi
-
-  local branch branch_key candidate checksum_url
-  branch="$(current_core_branch)"
-  branch_key="$(sanitize_internals_branch_key "${branch}")"
-  if [[ -n "${branch_key}" && "${branch_key}" != "head" ]]; then
-    candidate="${branch_key}-latest"
-    checksum_url="${base_url}/${artifact_prefix}-${candidate}.tar.gz.sha256"
-    if artifact_checksum_available "${checksum_url}" "${basic_auth}" "${temp_prefix}"; then
-      echo "Resolved empty ${manifest_key} manifest to matching branch artifact: ${candidate}" >&2
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-    echo "No ${display_name} artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
-  else
-    echo "Could not determine current branch for ${display_name} snap; using develop-latest." >&2
-  fi
-
-  printf '%s\n' "develop-latest"
-}
-
 resolve_neat_internals_ref() {
-  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
+  if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
+    echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
     return 1
   fi
 
   local manifest_spec
-  if ! manifest_spec="$(manifest_dependency_spec "internals" "${NEAT_INTERNALS_MANIFEST}")"; then
+  if ! manifest_spec="$(manifest_dependency_spec "internals" "${NEAT_DEPS_MANIFEST}")"; then
     return 1
   fi
 
@@ -955,27 +868,33 @@ resolve_neat_internals_ref() {
 }
 
 resolve_neat_llima_ref() {
-  resolve_manifest_artifact_ref \
-    "llima" \
-    "${NEAT_LLIMA_BASE_URL}" \
-    "sima-llima" \
-    "${NEAT_LLIMA_BASIC_AUTH}" \
-    "LLiMa" \
-    "sima-neat-llima"
-}
+  if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
+    echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
+    return 1
+  fi
 
-compute_sha256() {
-  local path="$1"
-  # Prefer GNU sha256sum; fall back to shasum for macOS compatibility.
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${path}" | awk '{print $1}'
-    return 0
+  local manifest_spec
+  if ! manifest_spec="$(manifest_dependency_spec "llima" "${NEAT_DEPS_MANIFEST}")"; then
+    return 1
   fi
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${path}" | awk '{print $1}'
-    return 0
+
+  local branch spec
+  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
+    NEAT_LLIMA_SNAP_POLICY=ON
+    branch="$(current_core_branch)"
+    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+      echo "Could not determine current branch for LLiMa snap; using develop." >&2
+      branch="develop"
+    fi
+  elif [[ "${manifest_spec}" == *":"* ]]; then
+    branch="${manifest_spec%%:*}"
+    spec="${manifest_spec#*:}"
+  else
+    branch="${manifest_spec}"
   fi
-  return 1
+  spec="${spec:-latest}"
+
+  printf '%s:%s\n' "${branch}" "${spec}"
 }
 
 find_legacy_plugin_dir() {
@@ -1186,12 +1105,14 @@ copy_plugins_to_neat_internals() {
 }
 
 require_sima_cli_vulcan_install() {
-  if ! command -v sima-cli >/dev/null 2>&1; then
+  if ! command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1; then
     echo "ERROR: sima-cli is required for Vulcan artifact access." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with Vulcan install support if needed." >&2
     exit 1
   fi
-  if ! sima-cli vulcan install --help >/dev/null 2>&1; then
+  if ! "${SIMA_CLI_BIN}" vulcan install --help >/dev/null 2>&1; then
     echo "ERROR: sima-cli with Vulcan install support is required." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with Vulcan install support if needed." >&2
     exit 1
   fi
 }
@@ -1211,7 +1132,7 @@ fetch_neat_internals_vulcan_artifacts() {
   fi
 
   local resolve_output resolved_ref
-  if ! resolve_output="$(sima-cli "${base_args[@]}" install "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
     if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
@@ -1219,7 +1140,7 @@ fetch_neat_internals_vulcan_artifacts() {
 
     echo "No internals Vulcan artifact found for '${internals_ref}'; retrying develop:latest." >&2
     internals_ref="develop:latest"
-    if ! resolve_output="$(sima-cli "${base_args[@]}" install "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
       echo "ERROR: Failed to resolve fallback internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
     fi
@@ -1253,8 +1174,71 @@ PY
   echo "Fetching neat-internals packages from Vulcan: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}"
   rm -rf "${output_dir}"
   mkdir -p "${output_dir}"
-  if ! sima-cli "${install_args[@]}"; then
+  if ! "${SIMA_CLI_BIN}" "${install_args[@]}"; then
     echo "ERROR: Failed to fetch internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}" >&2
+    exit 1
+  fi
+}
+
+fetch_neat_llima_vulcan_artifacts() {
+  local llima_ref="$1"
+  local output_dir="$2"
+
+  require_sima_cli_vulcan_install
+
+  local -a base_args=(
+    vulcan
+    --env "${NEAT_VULCAN_ENV}"
+  )
+  if [[ -n "${NEAT_VULCAN_BASE_URL}" ]]; then
+    base_args+=(--base-url "${NEAT_VULCAN_BASE_URL}")
+  fi
+
+  local resolve_output resolved_ref
+  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+    if [[ "${NEAT_LLIMA_SNAP_POLICY}" != "ON" || "${llima_ref}" == "develop:latest" ]]; then
+      echo "ERROR: Failed to resolve LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
+      exit 1
+    fi
+
+    echo "No LLiMa Vulcan artifact found for '${llima_ref}'; retrying develop:latest." >&2
+    llima_ref="develop:latest"
+    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+      echo "ERROR: Failed to resolve fallback LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
+      exit 1
+    fi
+  fi
+
+  resolved_ref="$(python3 - <<'PY' "${resolve_output}"
+import json
+import sys
+
+text = sys.argv[1]
+start = text.find("{")
+if start < 0:
+    raise SystemExit("missing JSON object in sima-cli vulcan install --json output")
+payload = json.loads(text[start:])
+ref = str(payload.get("ref", "")).strip()
+spec = str(payload.get("resolved_spec", "")).strip()
+if not ref or not spec:
+    raise SystemExit("sima-cli vulcan install --json did not return ref and resolved_spec")
+print(f"{ref}:{spec}")
+PY
+)"
+  NEAT_LLIMA_RESOLVED_REF="${resolved_ref}"
+
+  local -a install_args=(
+    "${base_args[@]}"
+    install
+    -d "${output_dir}"
+    "${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}"
+  )
+
+  echo "Fetching LLiMa packages from Vulcan: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}"
+  rm -rf "${output_dir}"
+  mkdir -p "${output_dir}"
+  if ! "${SIMA_CLI_BIN}" "${install_args[@]}"; then
+    echo "ERROR: Failed to fetch LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}" >&2
     exit 1
   fi
 }
@@ -1306,7 +1290,7 @@ ensure_neat_internals() {
 }
 
 ensure_neat_llima() {
-  # Sync LLiMa C++ runtime/dev packages from remote artifact and install them.
+  # Sync LLiMa C++ runtime/dev packages from Vulcan package artifacts and install them.
   local llima_ref
   if ! llima_ref="$(resolve_neat_llima_ref)"; then
     exit 1
@@ -1314,72 +1298,40 @@ ensure_neat_llima() {
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.llima"
-  local checksum_file="${NEAT_INTERNALS_DIR}/.llima_artifact_sha256"
   local deb_cache_dir="${NEAT_LLIMA_DEB_DIR}"
-  local archive_name="sima-llima-${llima_ref}.tar.gz"
-  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
-  local checksum_url="${archive_url}.sha256"
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-XXXXXX)"
 
-  local checksum_path="${tmp_dir}/${archive_name}.sha256"
-  local archive_path="${tmp_dir}/${archive_name}"
-  local extract_dir="${tmp_dir}/extract"
-
-  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
+  local artifact_dir="${tmp_dir}/package"
+  local using_cached_debs=0
+  if [[ -f "${marker_file}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
+     compgen -G "${deb_cache_dir}/sima-lmm-*.deb" >/dev/null 2>&1; then
+    echo "Using cached LLiMa debs (${llima_ref})."
+    artifact_dir="${deb_cache_dir}"
+    using_cached_debs=1
+  else
+    fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
+    llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
-
-  local server_sha
-  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
-  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  echo "Fetching LLiMa packages: ${archive_url} (sha256=${server_sha})"
-  mkdir -p "${extract_dir}"
-
-  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local actual_sha
-  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
-    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-  if [[ "${actual_sha}" != "${server_sha}" ]]; then
-    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
-    echo "  expected: ${server_sha}" >&2
-    echo "  actual  : ${actual_sha}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  tar -xzf "${archive_path}" -C "${extract_dir}"
 
   local core_deb dev_deb
-  core_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
-  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
   if [[ -z "${core_deb}" || -z "${dev_deb}" ]]; then
-    echo "ERROR: Expected sima-lmm core/dev debs were not found in ${archive_name}" >&2
-    find "${extract_dir}" -maxdepth 1 -type f -name '*.deb' -printf '  %f\n' | sort >&2
+    echo "ERROR: Expected sima-lmm core/dev debs were not found in Vulcan LLiMa artifact." >&2
+    find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
 
-  mkdir -p "${deb_cache_dir}"
-  rm -f "${deb_cache_dir}"/sima-lmm-*.deb
-  cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
-  cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+  if [[ "${using_cached_debs}" != "1" ]]; then
+    mkdir -p "${deb_cache_dir}"
+    rm -f "${deb_cache_dir}"/sima-lmm-*.deb
+    cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
+    cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+  fi
 
   local -a llima_debs=("${core_deb}" "${dev_deb}")
   local install_root="${SYSROOT:-}"
@@ -1454,7 +1406,6 @@ ensure_neat_llima() {
   fi
 
   printf '%s\n' "${llima_ref}" > "${marker_file}"
-  printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1531,70 +1482,27 @@ ensure_neat_llima_headers() {
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers"
-  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers_sha256"
-  local archive_name="sima-llima-${llima_ref}.tar.gz"
-  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
-  local checksum_url="${archive_url}.sha256"
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-headers-XXXXXX)"
-  local checksum_path="${tmp_dir}/${archive_name}.sha256"
-  local archive_path="${tmp_dir}/${archive_name}"
-  local extract_dir="${tmp_dir}/extract"
+  local artifact_dir="${tmp_dir}/package"
   local deb_extract_dir="${tmp_dir}/deb-extract"
 
-  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local server_sha
-  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
-  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+  if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
-     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
      [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/sima_lmm/chat.hpp" ]]; then
-    echo "Using cached LLiMa headers (${llima_ref}, sha256=${server_sha})."
+    echo "Using cached LLiMa headers (${llima_ref})."
     rm -rf "${tmp_dir}"
     return 0
   fi
 
-  echo "Fetching LLiMa headers: ${archive_url} (sha256=${server_sha})"
-  mkdir -p "${extract_dir}"
-
-  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local actual_sha
-  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
-    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-  if [[ "${actual_sha}" != "${server_sha}" ]]; then
-    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
-    echo "  expected: ${server_sha}" >&2
-    echo "  actual  : ${actual_sha}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  tar -xzf "${archive_path}" -C "${extract_dir}"
+  fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
+  llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
 
   local dev_deb
-  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
   if [[ -z "${dev_deb}" ]]; then
-    echo "ERROR: sima-lmm dev package was not found in ${archive_name}" >&2
+    echo "ERROR: sima-lmm dev package was not found in Vulcan LLiMa artifact." >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
@@ -1611,7 +1519,6 @@ ensure_neat_llima_headers() {
 
   mkdir -p "${NEAT_DEP_HEADERS_DIR}"
   printf '%s\n' "${llima_ref}" > "${marker_file}"
-  printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1955,7 +1862,7 @@ write_resolved_neat_internals_manifest_if_needed() {
 
   local output_path="${NEAT_INTERNALS_RESOLVED_MANIFEST}"
   mkdir -p "$(dirname "${output_path}")"
-  python3 - "${NEAT_INTERNALS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
+  python3 - "${NEAT_DEPS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
 import json
 import sys
 from pathlib import Path
