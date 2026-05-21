@@ -284,6 +284,7 @@ collect_debs_in_install_order() {
 
   # Install low-level runtime packages first, then LLiMa, then NEAT core.
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
@@ -430,6 +431,7 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
     "${cache_dir}"/neat-*.deb \
     "${cache_dir}"/simaai-common*.deb \
+    "${cache_dir}"/neat-common_*.deb \
     "${cache_dir}"/neat-appcomplex_*.deb \
     "${cache_dir}"/sima-lmm-*.deb \
     "${cache_dir}"/*.whl \
