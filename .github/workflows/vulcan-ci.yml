@@ -130,6 +130,10 @@ jobs:
     with:
       aws_region: ${{ vars.VULCAN_AWS_REGION || 'us-west-2' }}
       environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
+      bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET || 'sima-neat-artifacts-dev' }}
+      role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN || 'arn:aws:iam::990858070801:role/NeatDevArtifactPublisherRole' }}
+      sse_kms_key_id: ${{ vars.VULCAN_ARTIFACT_KMS_KEY_ID || 'alias/sima-neat-artifacts-dev' }}
+      cloudfront_distribution_id: ${{ vars.VULCAN_ARTIFACT_CLOUDFRONT_DISTRIBUTION_ID || 'E3KMY51NKZQUMF' }}
       artifact_folder: "."
       artifact_pattern: neat-core-dist
       artifact_glob: "*"
@@ -143,6 +147,6 @@ jobs:
     with:
       aws_region: ${{ vars.VULCAN_AWS_REGION || 'us-west-2' }}
       environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
-      bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET }}
-      role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN }}
+      bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET || 'sima-neat-artifacts-dev' }}
+      role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN || 'arn:aws:iam::990858070801:role/NeatDevArtifactPublisherRole' }}
       artifact_folder: "."
