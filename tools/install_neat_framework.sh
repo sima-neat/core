@@ -491,6 +491,19 @@ collect_cached_devkit_deploy_files() {
   CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}" "${cached_installer}")
 }
 
+apt_package_database_is_healthy() {
+  local apt_check_log
+  apt_check_log="$(mktemp /tmp/sima-neat-apt-check-XXXXXX)"
+
+  if run_sudo apt-get check >"${apt_check_log}" 2>&1; then
+    rm -f "${apt_check_log}"
+    return 0
+  fi
+
+  rm -f "${apt_check_log}"
+  return 1
+}
+
 install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
@@ -505,11 +518,15 @@ install_debs_on_board() {
   # local DEB set we are installing is self-consistent.  Fall back to installing
   # the local NEAT DEBs as one dpkg transaction to restore that package set
   # before continuing.
-  if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
-    return 0
+  if apt_package_database_is_healthy; then
+    if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+      return 0
+    fi
+    log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
+  else
+    log "apt package database has unresolved dependencies; using direct dpkg install for the local NEAT DEB set."
   fi
 
-  log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
 }
 
