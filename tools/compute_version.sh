@@ -24,7 +24,19 @@ if git describe --tags --exact-match >/dev/null 2>&1; then
 else
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
   hash="$(git rev-parse --short HEAD 2>/dev/null || true)"
-  if [[ -n "${branch}" && -n "${hash}" ]]; then
+
+  if [[ -n "${GITHUB_REF_TYPE:-}" && "${GITHUB_REF_TYPE}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+    version="${GITHUB_REF_NAME}"
+  else
+    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+      branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
+    fi
+    if [[ -z "${hash}" && -n "${GITHUB_SHA:-}" ]]; then
+      hash="${GITHUB_SHA:0:7}"
+    fi
+  fi
+
+  if [[ "${version}" == "${platform_version}" && -n "${branch}" && -n "${hash}" ]]; then
     branch="$(
       printf '%s' "${branch}" \
         | tr '[:upper:]' '[:lower:]' \
