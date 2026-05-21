@@ -162,15 +162,6 @@ jobs:
           rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
-      - name: Install sima-cli main
-        run: |
-          curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o sima-cli-install.py
-          python3 sima-cli-install.py main latest --noninteractive
-          rm -f sima-cli-install.py
-          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
-          "${HOME}/.sima-cli/.venv/bin/sima-cli" version
-          "${HOME}/.sima-cli/.venv/bin/sima-cli" install --help >/dev/null
-
       - name: Pre-install devkit runtime cleanup
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
