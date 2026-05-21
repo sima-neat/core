@@ -67,68 +67,38 @@ jobs:
   build-docs:
     name: Build Docs
     needs: resolve-target
-    runs-on: [self-hosted, Linux, X64]
-    environment: ${{ needs.resolve-target.outputs.deploy_environment }}
-    env:
-      DOCS_URL: ${{ vars.VULCAN_DOCS_URL }}
-      DOCS_GA_MEASUREMENT_ID: ${{ vars.DOCS_GA_MEASUREMENT_ID }}
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+    with:
+      vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
+      sdk_cache: ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}
+      capacity: ${{ vars.VULCAN_DOCS_CAPACITY || 'cheap' }}
+      fetch_depth: 1
+      checkout_submodules: false
+      ensure_sdk_container: true
+      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
+      artifact_name: vulcan-docs-site
+      artifact_path: website/build/*
+      artifact_retention_days: 1
+      build_command: |
+        set -euo pipefail
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.sha }}
+        export DOCS_URL='${{ vars.VULCAN_DOCS_URL }}'
+        export DOCS_GA_MEASUREMENT_ID='${{ vars.DOCS_GA_MEASUREMENT_ID }}'
+        export DOCS_STRICT_LINKS=1
+        export DOCS_BASE_URL=/
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "20"
+        if [[ -z "${DOCS_URL}" ]]; then
+          echo "Missing VULCAN_DOCS_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
+          exit 1
+        fi
 
-      - name: Validate docs build settings
-        run: |
-          set -euo pipefail
-          if [[ -z "${DOCS_URL}" ]]; then
-            echo "Missing VULCAN_DOCS_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
-            exit 1
-          fi
-          echo "Deploy environment: ${{ needs.resolve-target.outputs.deploy_environment }}"
-          echo "Docs URL          : ${DOCS_URL}"
+        ./build.sh --doc
 
-      - name: Install build dependencies
-        run: |
-          ./build.sh --install-deps-only
-
-      - name: Build docs website
-        env:
-          DOCS_STRICT_LINKS: "1"
-          DOCS_URL: ${{ env.DOCS_URL }}
-          DOCS_BASE_URL: /
-          DOCS_GA_MEASUREMENT_ID: ${{ env.DOCS_GA_MEASUREMENT_ID }}
-          DOCS_ALGOLIA_APP_ID: ${{ secrets.DOCS_ALGOLIA_APP_ID }}
-          DOCS_ALGOLIA_API_KEY: ${{ secrets.DOCS_ALGOLIA_API_KEY }}
-          DOCS_ALGOLIA_INDEX_NAME: ${{ secrets.DOCS_ALGOLIA_INDEX_NAME }}
-        run: |
-          ./build.sh --doc
-
-      - name: Verify build output
-        run: |
-          test -d website/build
-          test -f website/build/index.html
-
-      - name: Check rendered docs links
-        env:
-          DOCS_LINK_SITE_DIR: ${{ github.workspace }}/website/build
-          DOCS_LINK_START_PATHS: all
-        run: |
-          bash scripts/ci/check_docs_links.sh
-
-      - name: Upload docs site artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: vulcan-docs-site
-          path: website/build/
-          if-no-files-found: error
-          retention-days: 1
+      post_build_command: |
+        set -euo pipefail
+        test -d website/build
+        test -f website/build/index.html
+        DOCS_LINK_SITE_DIR="${PWD}/website/build" DOCS_LINK_START_PATHS=all bash scripts/ci/check_docs_links.sh
 
   publish-docs:
     name: Publish Docs
