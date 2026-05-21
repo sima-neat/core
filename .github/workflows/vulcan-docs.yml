@@ -67,7 +67,9 @@ jobs:
 
   build-docs:
     name: Build Docs
-    needs: resolve-target
+    needs:
+      - resolve-target
+      - resolve-docs-vars
     uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
     with:
       vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
@@ -83,7 +85,7 @@ jobs:
       build_command: |
         set -euo pipefail
 
-        export DOCS_URL='${{ vars.VULCAN_DOCS_URL }}'
+        export DOCS_URL='${{ needs.resolve-docs-vars.outputs.docs_url }}'
         export DOCS_GA_MEASUREMENT_ID='${{ vars.DOCS_GA_MEASUREMENT_ID }}'
         export DOCS_STRICT_LINKS=1
         export DOCS_BASE_URL=/
@@ -100,6 +102,28 @@ jobs:
         test -d website/build
         test -f website/build/index.html
         DOCS_LINK_SITE_DIR="${PWD}/website/build" DOCS_LINK_START_PATHS=all bash scripts/ci/check_docs_links.sh
+
+  resolve-docs-vars:
+    name: Resolve Docs Vars
+    needs: resolve-target
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-target.outputs.deploy_environment }}
+    outputs:
+      docs_url: ${{ steps.docs-vars.outputs.docs_url }}
+    steps:
+      - name: Resolve docs environment variables
+        id: docs-vars
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docs_url="${{ vars.VULCAN_DOCS_URL }}"
+          if [[ -z "${docs_url}" ]]; then
+            echo "Missing VULCAN_DOCS_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
+            exit 1
+          fi
+
+          echo "docs_url=${docs_url}" >> "${GITHUB_OUTPUT}"
 
   publish-docs:
     name: Publish Docs
