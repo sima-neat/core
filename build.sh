@@ -46,6 +46,7 @@ NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
 NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
 NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
+NEAT_PACKAGE_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON:-${BUILD_DIR}/buildinfo.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
@@ -1728,6 +1729,14 @@ configure_cmake() {
     -DFUZZING="${BUILD_FUZZ}"
   )
 
+  if [[ -f "${NEAT_PACKAGE_BUILDINFO_JSON}" ]]; then
+    local buildinfo_json_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
+    if [[ "${buildinfo_json_path}" != /* ]]; then
+      buildinfo_json_path="${REPO_ROOT}/${buildinfo_json_path}"
+    fi
+    cmake_args+=("-DSIMANEAT_BUILDINFO_JSON=${buildinfo_json_path}")
+  fi
+
   if [[ "${DOCS_ONLY}" == "ON" ]]; then
     # The docs job only needs the Doxygen target and public headers.  Some
     # x64 docs runners do not have the ARM NEAT/GStreamer runtime artifacts
@@ -1853,6 +1862,22 @@ generate_platform_version_artifacts() {
 
 compute_neat_package_version() {
   "${REPO_ROOT}/tools/compute_version.sh"
+}
+
+generate_package_buildinfo_json() {
+  local output_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
+  local package_version
+  package_version="$(compute_neat_package_version)"
+
+  python3 scripts/build/generate_package_buildinfo.py \
+    --repo-root "${REPO_ROOT}" \
+    --output "${output_path}" \
+    --package-name "${NEAT_PACKAGE_NAME}" \
+    --package-version "${package_version}" \
+    --vulcan-env "${NEAT_VULCAN_ENV}" \
+    --internals-ref "${NEAT_INTERNALS_RESOLVED_REF}" \
+    --llima-ref "${NEAT_LLIMA_RESOLVED_REF}"
+  echo "Generated package build info: ${output_path}"
 }
 
 write_resolved_neat_internals_manifest_if_needed() {
@@ -2440,6 +2465,7 @@ main() {
   print_build_config
   clean_build_dir_if_requested
   write_resolved_neat_internals_manifest_if_needed
+  generate_package_buildinfo_json
   configure_cmake
   build_docs_only_if_requested
   build_targets

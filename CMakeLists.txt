@@ -66,6 +66,8 @@ endif()
 option(SIMANEAT_ENABLE_OPENAI_SERVER
   "Build OpenAI-compatible GenAI HTTP server support"
   ${SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT})
+set(SIMANEAT_BUILDINFO_JSON "" CACHE FILEPATH
+  "Optional package provenance JSON to install as share/sima-neat/buildinfo.json")
 
 if (UNIX)
   set(SIMANEAT_SOURCE_FS_TYPE "")
@@ -1257,6 +1259,18 @@ install(
   DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/skills/sima-neat
   COMPONENT core
 )
+
+if (SIMANEAT_BUILDINFO_JSON)
+  if (NOT EXISTS "${SIMANEAT_BUILDINFO_JSON}")
+    message(FATAL_ERROR "SIMANEAT_BUILDINFO_JSON does not exist: ${SIMANEAT_BUILDINFO_JSON}")
+  endif()
+  install(
+    FILES ${SIMANEAT_BUILDINFO_JSON}
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat
+    RENAME buildinfo.json
+    COMPONENT core
+  )
+endif()
 
 install(
   FILES
