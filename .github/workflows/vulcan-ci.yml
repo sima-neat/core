@@ -1,6 +1,6 @@
 name: Vulcan CI
 
-run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'dev' }}, ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}, ${{ vars.VULCAN_CAPACITY || 'default' }})
+run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'dev' }})
 
 on:
   push:
@@ -33,13 +33,20 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  build:
-    name: Build Core on Vulcan
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+  resolve-vulcan-config:
+    name: Resolve Vulcan Config
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'dev' }}
-      sdk_cache: ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}
-      capacity: ${{ vars.VULCAN_CAPACITY || 'default' }}
+
+  build:
+    name: Build Core on Vulcan
+    needs: resolve-vulcan-config
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+    with:
+      vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      sdk_cache: ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
+      capacity: ${{ needs.resolve-vulcan-config.outputs.capacity }}
       fetch_depth: 0
       checkout_submodules: recursive
       ensure_sdk_container: true
@@ -51,7 +58,7 @@ jobs:
         set -euo pipefail
 
         core_build_mode="${{ inputs.build_mode || 'standard' }}"
-        neat_vulcan_env="${{ vars.VULCAN_ENV || 'dev' }}"
+        neat_vulcan_env="${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"
         echo "Resolved build mode: ${core_build_mode}"
 
         sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
@@ -127,15 +134,17 @@ jobs:
 
   publish-vulcan-artifacts:
     name: Publish to Vulcan
-    needs: build
+    needs:
+      - resolve-vulcan-config
+      - build
     uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@main
     with:
-      aws_region: ${{ vars.VULCAN_AWS_REGION || 'us-west-2' }}
-      environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
-      bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET }}
-      role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN }}
-      sse_kms_key_id: ${{ vars.VULCAN_ARTIFACT_KMS_KEY_ID }}
-      cloudfront_distribution_id: ${{ vars.VULCAN_ARTIFACT_CLOUDFRONT_DISTRIBUTION_ID }}
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
       artifact_folder: "."
       artifact_pattern: neat-core-dist
       artifact_glob: "*"
@@ -144,10 +153,12 @@ jobs:
   test-devkit:
     name: Test Core on DevKit
     if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
-    needs: publish-vulcan-artifacts
-    runs-on: [self-hosted, vulcan-dev]
+    needs:
+      - resolve-vulcan-config
+      - publish-vulcan-artifacts
+    runs-on: [self-hosted, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
     env:
-      VULCAN_ENV: ${{ vars.VULCAN_ENV || 'dev' }}
+      VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
 
     steps:
@@ -403,12 +414,14 @@ jobs:
   promote-latest-tag:
     name: Promote Latest Tag
     if: ${{ github.ref_type == 'branch' && (inputs.build_mode || 'standard') == 'standard' }}
-    needs: test-devkit
+    needs:
+      - resolve-vulcan-config
+      - test-devkit
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
     with:
-      aws_region: ${{ vars.VULCAN_AWS_REGION || 'us-west-2' }}
-      environment_name: ${{ vars.VULCAN_ENV || 'dev' }}
-      bucket: ${{ vars.VULCAN_ARTIFACT_BUCKET }}
-      role_to_assume: ${{ vars.VULCAN_ARTIFACT_PUBLISHER_ROLE_ARN }}
-      sse_kms_key_id: ${{ vars.VULCAN_ARTIFACT_KMS_KEY_ID }}
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       artifact_folder: "."

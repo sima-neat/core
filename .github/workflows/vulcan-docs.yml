@@ -73,8 +73,8 @@ jobs:
     uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
     with:
       vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
-      sdk_cache: ${{ vars.VULCAN_SDK_CACHE || 'sdk-latest' }}
-      capacity: ${{ vars.VULCAN_DOCS_CAPACITY || 'cheap' }}
+      sdk_cache: ${{ needs.resolve-docs-vars.outputs.sdk_cache }}
+      capacity: ${{ needs.resolve-docs-vars.outputs.docs_capacity }}
       fetch_depth: 1
       checkout_submodules: "false"
       ensure_sdk_container: true
@@ -85,7 +85,7 @@ jobs:
       build_command: |
         set -euo pipefail
 
-        export DOCS_URL='${{ needs.resolve-docs-vars.outputs.docs_url }}'
+        export DOCS_URL='${{ needs.resolve-docs-vars.outputs.docs_base_url }}'
         export DOCS_GA_MEASUREMENT_ID='${{ vars.DOCS_GA_MEASUREMENT_ID }}'
         export DOCS_STRICT_LINKS=1
         export DOCS_BASE_URL=/
@@ -106,32 +106,23 @@ jobs:
   resolve-docs-vars:
     name: Resolve Docs Vars
     needs: resolve-target
-    runs-on: ubuntu-latest
-    environment: ${{ needs.resolve-target.outputs.deploy_environment }}
-    outputs:
-      docs_url: ${{ steps.docs-vars.outputs.docs_url }}
-    steps:
-      - name: Resolve docs environment variables
-        id: docs-vars
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          docs_url="${{ vars.VULCAN_DOCS_URL }}"
-          if [[ -z "${docs_url}" ]]; then
-            echo "Missing VULCAN_DOCS_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
-            exit 1
-          fi
-
-          echo "docs_url=${docs_url}" >> "${GITHUB_OUTPUT}"
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
 
   publish-docs:
     name: Publish Docs
     needs:
       - resolve-target
+      - resolve-docs-vars
       - build-docs
     uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
     with:
       environment_name: ${{ needs.resolve-target.outputs.deploy_environment }}
       site_key: DOCS
+      aws_region: ${{ needs.resolve-docs-vars.outputs.aws_region }}
+      bucket: ${{ needs.resolve-docs-vars.outputs.docs_bucket }}
+      role_to_assume: ${{ needs.resolve-docs-vars.outputs.docs_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-docs-vars.outputs.docs_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-docs-vars.outputs.docs_cloudfront_distribution_id }}
       artifact_pattern: vulcan-docs-site
