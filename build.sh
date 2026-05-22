@@ -2157,7 +2157,6 @@ stage_package_artifacts_to_dist() {
   rm -f \
     dist/*-Linux-core.deb \
     dist/*-Linux-extras.tar.gz \
-    dist/*.whl \
     dist/neat-*.deb \
     dist/simaai-common*.deb \
     dist/appcomplex_*.deb \
@@ -2188,7 +2187,7 @@ stage_package_artifacts_to_dist() {
   if [[ "${staged_any}" == "ON" ]]; then
     echo
     echo "Moved package artifacts into dist/:"
-    ls -lh dist/*.deb dist/*extras.tar.gz dist/install_neat_framework.sh 2>/dev/null || true
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh 2>/dev/null || true
   fi
 }
 
