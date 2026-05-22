@@ -127,6 +127,7 @@ jobs:
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tests/CTestTestfile.cmake' >/dev/null
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
         test -f dist/install_neat_framework.sh
+        test -f dist/neat-install-manifest.txt
         test -f build/resolved_manifest.json
 
         sudo install -m 0644 build/resolved_manifest.json dist/manifest.json
@@ -172,7 +173,7 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh || true
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Pre-install devkit runtime cleanup
