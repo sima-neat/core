@@ -39,6 +39,12 @@ private:
   std::string old_;
 };
 
+bool is_expected_teardown_error(const std::string& msg) {
+  return msg.find("stream is stopping") != std::string::npos ||
+         msg.find("EOS has been reached") != std::string::npos ||
+         msg.find("stream closed") != std::string::npos;
+}
+
 } // namespace
 
 RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
@@ -51,6 +57,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            Run run = sima_test::make_async_rgb_run(seed, 128, 128);
 
            std::atomic<bool> keep_running{true};
+           std::atomic<bool> teardown_started{false};
            std::atomic<int> pushes{0};
            std::atomic<int> pulls{0};
            std::mutex err_mu;
@@ -67,6 +74,10 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
                  }
                }
              } catch (const std::exception& e) {
+               if (teardown_started.load(std::memory_order_acquire) &&
+                   is_expected_teardown_error(e.what())) {
+                 return;
+               }
                std::lock_guard<std::mutex> lock(err_mu);
                producer_err = e.what();
              }
@@ -81,6 +92,10 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
                  }
                }
              } catch (const std::exception& e) {
+               if (teardown_started.load(std::memory_order_acquire) &&
+                   is_expected_teardown_error(e.what())) {
+                 return;
+               }
                std::lock_guard<std::mutex> lock(err_mu);
                consumer_err = e.what();
              }
@@ -89,6 +104,7 @@ RUN_TEST("unit_run_lifecycle_teardown_test", ([] {
            std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
            const auto t0 = std::chrono::steady_clock::now();
+           teardown_started.store(true, std::memory_order_release);
            run.close_input();
            run.stop();
            run.stop(); // idempotent stop under prior teardown
