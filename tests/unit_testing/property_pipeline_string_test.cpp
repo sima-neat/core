@@ -1,4 +1,4 @@
-#include "pipeline/session/SessionDetail.h"
+#include "pipeline/graph/GraphDetail.h"
 #include "test_main.h"
 #include "test_utils.h"
 

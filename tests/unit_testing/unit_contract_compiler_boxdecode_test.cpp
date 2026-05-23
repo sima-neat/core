@@ -234,8 +234,7 @@ RUN_TEST(
       const auto compiled_yolo26 = build_boxdecode_compiled_contract(finalized_yolo26);
       require(compiled_yolo26.payload.decode_type == BoxDecodeType::YoloV26,
               "YOLO26 compiled payload should preserve decode type");
-      require(compiled_yolo26.payload.decode_type_option ==
-                  BoxDecodeTypeOption::GroupedByRoleLogit,
+      require(compiled_yolo26.payload.decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit,
               "YOLO26 compiled payload should preserve grouped-by-role-logit");
       require(compiled_yolo26.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
               "YOLO26 compiled payload should preserve sigmoid activation");

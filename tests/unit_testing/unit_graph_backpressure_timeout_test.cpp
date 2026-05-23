@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "test_main.h"
@@ -88,13 +88,11 @@ RUN_TEST("unit_graph_backpressure_timeout_test", [] {
   auto sink_b = g.add(make_pass_node("sink_b"));
   g.connect(fan, sink_a, "left", "in");
   g.connect(fan, sink_b, "right", "in");
-
-  simaai::neat::graph::GraphSession session(std::move(g));
   simaai::neat::graph::GraphRunOptions run_opt;
   run_opt.edge_queue = 1;
   run_opt.push_timeout_ms = 100;
   run_opt.pull_timeout_ms = 20;
-  simaai::neat::graph::GraphRun run = session.build(run_opt);
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g), run_opt);
 
   simaai::neat::Sample sample;
   sample.kind = simaai::neat::SampleKind::Tensor;
@@ -105,7 +103,7 @@ RUN_TEST("unit_graph_backpressure_timeout_test", [] {
   bool saw_timeout = false;
   for (int i = 0; i < 200; ++i) {
     sample.frame_id = i;
-    if (!run.push(fan, sample)) {
+    if (!run.push(fan, simaai::neat::Sample{sample})) {
       saw_timeout = true;
       break;
     }

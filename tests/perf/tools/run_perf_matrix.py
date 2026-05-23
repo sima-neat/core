@@ -27,9 +27,8 @@ class ScenarioSpec:
 
 
 SCENARIOS: tuple[ScenarioSpec, ...] = (
-    ScenarioSpec("mpk_parse_smoke", "perf_mpk_parse_smoke_test"),
-    ScenarioSpec("runtime_session_sync_rgb", "perf_runtime_session_sync_rgb_test"),
-    ScenarioSpec("runtime_session_async_rgb", "perf_runtime_session_async_rgb_test"),
+    ScenarioSpec("runtime_session_sync_rgb", "perf_runtime_graph_sync_rgb_test"),
+    ScenarioSpec("runtime_session_async_rgb", "perf_runtime_graph_async_rgb_test"),
     ScenarioSpec("runtime_graph_fanout", "perf_runtime_graph_fanout_test"),
     ScenarioSpec("runtime_graph_join_bundle", "perf_runtime_graph_join_bundle_test"),
 )

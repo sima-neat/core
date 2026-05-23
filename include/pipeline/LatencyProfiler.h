@@ -3,7 +3,7 @@
  * @ingroup pipeline
  * @brief Per-kernel latency profiler — V1 surface.
  *
- * Attach a `LatencyProfiler` to a `simaai::neat::Run` (or to a Session that has
+ * Attach a `LatencyProfiler` to a `simaai::neat::Run` (or to a Graph that has
  * produced one) BEFORE you start pushing frames. After your run loop, call
  * `finalize()` to get a `ProfilerReport` and pass it to `to_text()` /
  * `to_chrome_trace()` to dump a human-readable summary or a JSON trace file
@@ -28,7 +28,7 @@
 
 // Per-kernel latency profiler library — V1 surface.
 //
-// Attach a `LatencyProfiler` to a `simaai::neat::Run` (or to a Session that
+// Attach a `LatencyProfiler` to a `simaai::neat::Run` (or to a Graph that
 // has produced one) BEFORE you start pushing frames.  After your run loop,
 // call `finalize()` to get a `Report` and pass it to `to_text()` /
 // `to_chrome_trace()` to dump a human-readable summary or a JSON trace file
@@ -59,7 +59,7 @@
 
 namespace simaai::neat {
 
-class Session; // forward
+class Graph; // forward
 
 /**
  * @brief One kernel-invocation telemetry event.
@@ -148,7 +148,7 @@ struct ProfilerKernelAggregate {
  *
  * Combines the existing per-frame and per-element telemetry surfaces with the
  * new per-invocation kernel events and memcpy-site totals. Optional fields
- * (`mpk_path`, `description`, `frames_total`, `warmup_frames`) let the caller
+ * (`model_path`, `description`, `frames_total`, `warmup_frames`) let the caller
  * stamp the report with run-identifying metadata before serialising.
  *
  * @ingroup pipeline
@@ -169,9 +169,9 @@ struct ProfilerReport {
   std::uint64_t profiler_emits = 0;   ///< Number of events the runtime emitted.
   std::uint64_t profiler_dropped = 0; ///< Number of events dropped (ring full).
 
-  std::string mpk_path;           ///< Optional: caller may set to identify the loaded MPK.
-  std::string description;        ///< Optional: caller-supplied label for the run.
-  std::int64_t frames_total = 0;  ///< Optional: total frames pushed during the run.
+  std::string model_path;        ///< Optional: caller may set to identify the loaded model archive.
+  std::string description;       ///< Optional: caller-supplied label for the run.
+  std::int64_t frames_total = 0; ///< Optional: total frames pushed during the run.
   std::int64_t warmup_frames = 0; ///< Optional: warmup frames excluded from measurements.
 };
 
@@ -190,7 +190,7 @@ struct LatencyProfilerOptions {
 /**
  * @brief Per-sample latency tracker; attach to a `Run` to capture timing telemetry.
  *
- * Lifetime: construct, `attach()` to a `Run` (or `Session`) before pushing
+ * Lifetime: construct, `attach()` to a `Run` (or `Graph`) before pushing
  * frames, push frames, optionally call `mark_warmup_done()` after the warmup
  * window, then call `finalize()` to obtain a `ProfilerReport`. The profiler
  * is single-owner (non-copyable) and detaches automatically on destruction.
@@ -206,7 +206,7 @@ public:
 
   /// @brief Construct a profiler with the given options.
   explicit LatencyProfiler(Options o = Options());
-  /// @brief Destructor; detaches from any attached Run/Session.
+  /// @brief Destructor; detaches from any attached Run/Graph.
   ~LatencyProfiler();
 
   /// Deleted copy constructor; the profiler owns thread-bound state.
@@ -215,25 +215,25 @@ public:
   LatencyProfiler& operator=(const LatencyProfiler&) = delete;
 
   /**
-   * @brief Attach to a `Run` (Session-level path).
+   * @brief Attach to a `Run` (Graph-level path).
    *
    * After this call, every kernel event emitted by the runtime is captured in
    * the profiler's ring. Must be called before frames are pushed for events
    * to be observed.
    */
-  // Attach to a Run (Session-level path).  After this call, every kernel
+  // Attach to a Run (Graph-level path).  After this call, every kernel
   // event emitted by the runtime is captured in the profiler's ring.
   void attach(Run& run);
 
   /**
-   * @brief Optional: attach a Session directly.
+   * @brief Optional: attach a Graph directly.
    *
    * Reserved for V2: would let per-output `frame_id` stamping hook the existing
    * tensor_callback. No-op for V1.
    */
-  // Optional: attach a Session directly so per-output frame_id stamping can
+  // Optional: attach a Graph directly so per-output frame_id stamping can
   // hook the existing tensor_callback.  No-op for V1 (placeholder for V2).
-  void attach(Session& session);
+  void attach(Graph& graph);
 
   /**
    * @brief Reset all counters/event ring to mark the warmup→measured boundary.
@@ -268,7 +268,7 @@ public:
 private:
   Options options_;
   Run* attached_run_ = nullptr;
-  Session* attached_session_ = nullptr;
+  Graph* attached_graph_ = nullptr;
   bool enabled_at_attach_ = false;
 };
 

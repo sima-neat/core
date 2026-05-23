@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/TessellatedTensor.h"
 #include "nodes/groups/ModelGroups.h"
@@ -214,8 +214,8 @@ void run_stage_route_once(const cv::Mat& img_bgr, const simaai::neat::Model& mod
   std::cout << "Preproc passed\n" << std::endl;
 
   const simaai::neat::Sample pre = simaai::neat::sample_from_tensors(pre_tensors);
-  const simaai::neat::SampleList infer_samples =
-      simaai::neat::stages::Infer(simaai::neat::SampleList{pre}, model);
+  const simaai::neat::Sample infer_samples =
+      simaai::neat::stages::Infer(simaai::neat::Sample{pre}, model);
   require(infer_samples.size() == 1U, "Infer should return exactly one sample");
   const simaai::neat::Sample infer = infer_samples.front();
   const auto infer_tensors = simaai::neat::stages::Tensors(infer);
@@ -227,8 +227,8 @@ void run_stage_route_once(const cv::Mat& img_bgr, const simaai::neat::Model& mod
   std::cout << "Infer passed\n" << std::endl;
 
   step_log("stage_route: before BoxDecode");
-  const simaai::neat::SampleList out_samples =
-      simaai::neat::stages::BoxDecode(simaai::neat::SampleList{infer}, model, box_opt);
+  const simaai::neat::Sample out_samples =
+      simaai::neat::stages::BoxDecode(simaai::neat::Sample{infer}, model, box_opt);
   require(out_samples.size() == 1U, "BoxDecode should return exactly one sample");
   const simaai::neat::Sample out = out_samples.front();
   std::cout << "BoxDecode passed\n" << std::endl;
@@ -263,7 +263,7 @@ void run_preproc_pipeline_once(const cv::Mat& img_bgr, const simaai::neat::Model
   std::cout << "Preproc passed\n" << std::endl;
 
   const int topk = (box_opt.top_k > 0) ? box_opt.top_k : 100;
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Infer(model));
   p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
@@ -271,11 +271,10 @@ void run_preproc_pipeline_once(const cv::Mat& img_bgr, const simaai::neat::Model
   p.add(simaai::neat::nodes::Output());
 
   step_log("preproc_pipeline: before p.run");
-  auto runner = p.build(simaai::neat::SampleList{wire}, simaai::neat::RunMode::Sync);
-  const simaai::neat::SampleList out_samples =
-      run_with_report(runner, "preproc_pipeline p.run", [&]() {
-        return runner.run(simaai::neat::SampleList{wire}, kStageTimeoutMs);
-      });
+  auto runner = p.build(simaai::neat::Sample{wire}, simaai::neat::RunMode::Sync);
+  const simaai::neat::Sample out_samples = run_with_report(runner, "preproc_pipeline p.run", [&]() {
+    return runner.run(simaai::neat::Sample{wire}, kStageTimeoutMs);
+  });
   require(out_samples.size() == 1U, "preproc pipeline should return exactly one sample");
   const simaai::neat::Sample out = out_samples.front();
   step_log("preproc_pipeline: after p.run");

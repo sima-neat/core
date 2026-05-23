@@ -1,7 +1,7 @@
 #include "graph/StrictSync.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "graph_test_utils.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
@@ -18,24 +18,24 @@ namespace {
 std::shared_ptr<simaai::neat::Run> build_integration_run() {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
 
-  session.add(nodes::Input(src_opt));
-  session.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Input(src_opt));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
 
   RunOptions run_opt;
   run_opt.queue_depth = 128;
   run_opt.overflow_policy = OverflowPolicy::Block;
 
   const Tensor seed = make_color_tensor(12, 8, ImageSpec::PixelFormat::RGB, 0x22);
-  return std::make_shared<Run>(session.build(TensorList{seed}, RunMode::Async, run_opt));
+  return std::make_shared<Run>(graph.build(TensorList{seed}, RunMode::Async, run_opt));
 }
 
 } // namespace

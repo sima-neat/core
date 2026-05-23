@@ -15,7 +15,7 @@ In the broader SiMa software ecosystem, Neat sits at the application layer, buil
 
 <div class="overview-section-label">How It Works</div>
 
-Neat gives you a direct mental model for that path. A compiled model package (`.tar.gz`) becomes a `Model` component, application logic is assembled as a `Session`, and that session is built and executed as a `Run` object on the SoC. The same workflow is designed to work well with agentic development too, so teams can explore, build, and iterate faster.
+Neat gives you a direct mental model for that path. A compiled model archive (`.tar.gz`) becomes a `Model` component, application logic is assembled as a `Graph`, and that graph is built and executed as a `Run` object on the SoC. The same workflow is designed to work well with agentic development too, so teams can explore, build, and iterate faster.
 
 <LanguageContent lang="cpp">
 
@@ -59,7 +59,7 @@ The getting-started guides help you install and build Neat, the programming-mode
       <li><a class="overview-link-card" href="getting-started/installation"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
       <li><a class="overview-link-card" href="getting-started/build"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
       <li><a class="overview-link-card" href="getting-started/minimal_example"><strong>Hello Neat!</strong><span>Validate your environment with a minimal Neat application.</span></a></li>
-      <li><a class="overview-link-card" href="getting-started/programming-model/overview"><strong>Programming Model</strong><span>Learn the `Model`, `Session`, and `Run` workflow in more detail.</span></a></li>
+      <li><a class="overview-link-card" href="getting-started/programming-model/overview"><strong>Programming Model</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
     </ul>
   </section>
 

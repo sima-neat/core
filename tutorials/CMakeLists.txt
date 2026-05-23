@@ -35,7 +35,7 @@ function(add_tutorial exe source)
   if (AT_MODEL)
     get_filename_component(model_base "${AT_MODEL}" NAME)
     list(APPEND test_args
-      --mpk "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+      --model "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
     )
   endif()
 
@@ -49,7 +49,7 @@ function(add_tutorial exe source)
       add_test(NAME ${exe}
         COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
           ${AT_MODEL}
-          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
           "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}"
           $<TARGET_FILE:${exe}>
           ${test_args}

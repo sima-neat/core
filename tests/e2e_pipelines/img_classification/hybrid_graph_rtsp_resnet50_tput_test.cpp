@@ -12,9 +12,10 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "gst/GstHelpers.h"
 #include "model/Model.h"
+#include "model/internal/ModelInternal.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include "asset_utils.h"
@@ -106,7 +107,7 @@ static void log_edge(const char* tag, const simaai::neat::Sample& sample) {
 }
 
 struct RtspServerContext {
-  simaai::neat::Session session;
+  simaai::neat::Graph graph;
   simaai::neat::RtspServerHandle handle;
 };
 
@@ -168,14 +169,14 @@ static RtspServerContext start_rtsp_server(const std::string& image_path, int co
                                            int content_h, int enc_w, int enc_h, int fps, int port,
                                            int rtp_port_base, int rtp_port_count) {
   RtspServerContext ctx;
-  ctx.session.add(
+  ctx.graph.add(
       simaai::neat::nodes::StillImageInput(image_path, content_w, content_h, enc_w, enc_h, fps));
   // Use software encoder to force frequent IDR (x264enc uses key-int-max=1).
-  ctx.session.add(simaai::neat::nodes::H264EncodeSW());
-  ctx.session.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
-  ctx.session.add(simaai::neat::nodes::H264Packetize(/*pt=*/kPayloadType, /*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264EncodeSW());
+  ctx.graph.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264Packetize(/*pt=*/kPayloadType, /*config_interval=*/1));
 
-  ctx.handle = ctx.session.run_rtsp({
+  ctx.handle = ctx.graph.run_rtsp({
       .mount = "image",
       .port = port,
       .rtp_port_base = rtp_port_base,
@@ -232,7 +233,7 @@ static bool probe_rtsp_encoded(const std::string& url, int fps, int w, int h, in
     std::cerr << "[rtsp] probe start url=" << url << " tries=" << tries
               << " timeout_ms=" << timeout_ms << "\n";
   }
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::RTSPInput(url, /*latency_ms=*/200, /*tcp=*/true));
   p.add(simaai::neat::nodes::H264Depacketize(kPayloadType,
                                              /*config_interval=*/1, fps, w, h,
@@ -590,24 +591,25 @@ int main(int argc, char** argv) {
     if (rtsp_debug)
       std::cerr << "[model] simaai::neat::Model loaded\n";
 
-    simaai::neat::Model::SessionOptions model_opt;
-    model_opt.include_appsrc = false;
-    model_opt.include_appsink = false;
+    simaai::neat::Model::RouteOptions model_opt;
+    model_opt.include_input = false;
+    model_opt.include_output = false;
 
     // ---------------------------------------------------------------------
     // Build pipeline definitions first.
     // ---------------------------------------------------------------------
     struct StreamPipelineDef {
       std::string stream_id;
-      simaai::neat::NodeGroup cap;
+      std::vector<std::shared_ptr<simaai::neat::Node>> cap;
       std::shared_ptr<simaai::neat::Node> dec;
       simaai::neat::graph::StreamMetadataDefaults meta_defaults;
       int sched_idx = 0;
     };
 
-    std::vector<simaai::neat::NodeGroup> model_pipelines;
+    std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> model_pipelines;
     for (int i = 0; i < model_instances; ++i) {
-      model_pipelines.push_back(model.session(model_opt));
+      model_pipelines.push_back(
+          simaai::neat::internal::ModelAccess::build_public_route_nodes(model, model_opt));
     }
 
     std::vector<std::string> stream_ids;
@@ -619,7 +621,7 @@ int main(int argc, char** argv) {
 
       const auto& rtsp_ctx =
           rtsp_servers_vec[static_cast<std::size_t>(i % std::max(1, rtsp_servers))];
-      simaai::neat::NodeGroup cap_group({
+      std::vector<std::shared_ptr<simaai::neat::Node>> cap_group{
           simaai::neat::nodes::RTSPInput(rtsp_ctx.handle.url(),
                                          /*latency_ms=*/200,
                                          /*tcp=*/true),
@@ -629,7 +631,7 @@ int main(int argc, char** argv) {
                                                /*w=*/kEncWidth,
                                                /*h=*/kEncHeight,
                                                /*enforce_caps=*/true),
-      });
+      };
 
       StreamPipelineDef def;
       def.stream_id = sid;
@@ -747,8 +749,8 @@ int main(int argc, char** argv) {
     if (rtsp_debug)
       std::cerr << "[graph] warmup done\n";
 
-    auto session = run.collect(outputs);
-    auto& output_stats = session.stats();
+    auto graph = run.collect(outputs);
+    auto& output_stats = graph.stats();
 
     int seen = 0;
     std::vector<int> seen_by_model(outputs.size(), 0);
@@ -759,7 +761,7 @@ int main(int argc, char** argv) {
 
     const auto t0 = std::chrono::steady_clock::now();
 
-    session.per_stream_target(iterations)
+    graph.per_stream_target(iterations)
         .stall_after_ms(stall_timeout_ms)
         .timeout_ms(100)
         .max_runtime_ms(max_runtime_ms)
@@ -782,7 +784,7 @@ int main(int argc, char** argv) {
         });
 
     try {
-      session.run();
+      graph.run();
     } catch (const std::exception& e) {
       const std::string msg = e.what();
       if (msg.find("max runtime") != std::string::npos) {

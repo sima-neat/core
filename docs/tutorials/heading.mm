@@ -33,7 +33,7 @@ Your shell's current directory is now the root of the extras tree. All tutorial 
 
 ### Tutorial models
 
-Some chapters need Model Zoo MPKs. `build.sh` reads the tutorial metadata and the installed dependency manifest, then downloads the right model versions for your platform. By default, models are prepared under `/tmp`.
+Some chapters need Model Zoo model archives. `build.sh` reads the tutorial metadata and the installed dependency manifest, then downloads the right model versions for your platform. By default, models are prepared under `/tmp`.
 
 When you build C++ tutorials from source, models are downloaded automatically before the build:
 

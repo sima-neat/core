@@ -1,19 +1,17 @@
 /**
  * @file
  * @ingroup graph
- * @brief Runtime `graph::Graph` — actor-style DAG with named ports for the runtime.
+ * @brief Internal runtime `graph::Graph` — actor-style DAG with named ports.
  *
- * This is the framework's **runtime** graph — a different type from the builder-side
- * `simaai::neat::Graph`. The runtime graph carries **named ports** (e.g., `"out"`,
- * `"in"`), interned to compact `PortId`s, so a node can have multiple distinct inputs
- * and outputs that the executor can route between. It's the substrate the actor-style
- * runtime uses for stage scheduling and mailbox-based message passing.
+ * This is the framework's lower-level runtime graph. The public application composition
+ * API is `simaai::neat::Graph` in `pipeline/Graph.h`; it lowers connected public graphs
+ * into this port graph when it needs actor-style stage scheduling, mailboxes, or
+ * compiler-inserted branch/combine runtime nodes.
  *
- * Use the **builder** `Graph` (in `include/builder/Graph.h`) when you're authoring a
- * pipeline shape; use this **runtime** `Graph` only if you're building a
- * runtime-graph-driven Session via `GraphSession`.
+ * Prefer public `simaai::neat::Graph` for application code. Use this namespace only for
+ * runtime/compiler internals and focused internal tests.
  *
- * @see GraphSession, GraphRun, StageExecutor
+ * @see build, GraphRun, StageExecutor
  * @see "The two graph systems" (§0.14 / §73 of the design deep dive)
  */
 #pragma once
@@ -34,7 +32,7 @@
 namespace simaai::neat::graph {
 
 /**
- * @brief Directed acyclic graph of hybrid nodes with named ports.
+ * @brief Directed acyclic graph of runtime nodes with named ports.
  *
  * Edges carry **interned port identifiers** at both endpoints (`from_port` and `to_port`),
  * letting a node distinguish multiple inputs (e.g., `"left"` and `"right"`) and multiple
@@ -42,9 +40,11 @@ namespace simaai::neat::graph {
  * interned to compact `PortId`s so the executor doesn't pay string-compare costs at
  * dispatch time.
  *
- * Construct one of these via `GraphSession`; consume via `GraphRun` / `StageExecutor`.
+ * Build one of these with `graph::build`; consume via `GraphRun` / `StageExecutor`.
+ * Public applications should normally build `simaai::neat::Graph` instead and let the
+ * compiler choose this runtime substrate when needed.
  *
- * @see GraphSession, GraphRun, StageExecutor
+ * @see build, GraphRun, StageExecutor
  * @ingroup graph
  */
 class Graph final {

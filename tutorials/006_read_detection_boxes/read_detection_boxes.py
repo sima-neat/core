@@ -5,7 +5,7 @@ The output tensor is a rank-1 uint8 buffer: a uint32 count header followed by
 N 24-byte RawBox records (int32 x, y, w, h; float32 score; int32 class_id).
 
 Usage:
-  python3 read_detection_boxes.py --mpk /path/to/yolo_v8s.tar.gz [--width 640] [--height 640]
+  python3 read_detection_boxes.py --model /path/to/yolo_v8s.tar.gz [--width 640] [--height 640]
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import numpy as np
 
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--width", type=int, default=640)
   ap.add_argument("--height", type=int, default=640)
   args = ap.parse_args(argv[1:])
@@ -45,11 +45,11 @@ def main(argv: list[str]) -> int:
   opt.original_height = args.height
 
   # CORE LOGIC
-  model = pyneat.Model(str(args.mpk), opt)
+  model = pyneat.Model(str(args.model), opt)
 
   rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
-  sample = model.run(tensor, timeout_ms=2000)
+  sample = model.run([tensor], timeout_ms=2000)
   # END CORE LOGIC
 
   # Two paths for reading the output:

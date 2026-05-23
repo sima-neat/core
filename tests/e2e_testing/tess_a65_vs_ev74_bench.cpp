@@ -2,7 +2,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/Tess.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
@@ -592,9 +592,9 @@ Ev74RunSummary run_ev74_benchmark(const TessBenchCase& c, const BenchOptions& op
                                   const simaai::neat::Tensor& input) {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions in;
-  in.media_type = "application/vnd.simaai.tensor";
+  in.payload_type = simaai::neat::PayloadType::Tensor;
   in.format = input_caps_format_for_dtype(c.dtype);
   in.width = c.input_width;
   in.height = c.input_height;
@@ -609,22 +609,22 @@ Ev74RunSummary run_ev74_benchmark(const TessBenchCase& c, const BenchOptions& op
   out.drop = false;
   out.max_buffers = 1;
 
-  session.add(nodes::Input(in));
-  session.add(nodes::Tess(make_tess_options_for_case(c)));
-  session.add(nodes::Output(out));
+  graph.add(nodes::Input(in));
+  graph.add(nodes::Tess(make_tess_options_for_case(c)));
+  graph.add(nodes::Output(out));
 
   RunOptions run_opt;
   run_opt.output_memory = OutputMemory::Owned;
   run_opt.enable_metrics = true;
   run_opt.queue_depth = 1;
 
-  auto warm_run = session.build(TensorList{input}, RunMode::Sync, run_opt);
+  auto warm_run = graph.build(TensorList{input}, RunMode::Sync, run_opt);
   for (int i = 0; i < opt.warmup; ++i) {
     (void)warm_run.run(TensorList{input}, opt.timeout_ms);
   }
   warm_run.close();
 
-  auto run = session.build(TensorList{input}, RunMode::Sync, run_opt);
+  auto run = graph.build(TensorList{input}, RunMode::Sync, run_opt);
   std::vector<double> wall_ms;
   wall_ms.reserve(static_cast<std::size_t>(opt.iterations));
 

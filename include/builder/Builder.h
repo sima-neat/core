@@ -1,16 +1,15 @@
 /**
  * @file
  * @ingroup builder
- * @brief Fluent builder for assembling linear NodeGroups.
+ * @brief Fluent builder for assembling linear node lists.
  *
  * `Builder` is the lightweight, STL-only API used by app code to chain Nodes into a
- * linear pipeline before handing them off to a Session. It implies Node indices from
- * insertion order, which the Session then uses to mint deterministic element names.
- * For non-linear (multi-input/multi-output) topologies, use `Graph` directly instead.
+ * linear pipeline before handing them off to a Graph. It implies Node indices from
+ * insertion order, which the Graph then uses to mint deterministic element names.
+ * For non-linear (multi-input/multi-output) topologies, use public `Graph` with named
+ * `Input`/`Output` endpoints and `connect()`.
  *
- * @see NodeGroup
  * @see Graph
- * @see Session
  */
 // include/builder/Builder.h
 #pragma once
@@ -22,25 +21,23 @@
 #include <vector>
 
 #include "builder/Node.h"
-#include "builder/NodeGroup.h"
 
 namespace simaai::neat {
 
 /**
- * @brief Fluent builder for assembling a linear NodeGroup (the common case).
+ * @brief Fluent builder for assembling a linear node list (the common case).
  *
  * Use `add()` / `then()` to append Nodes in order, then call `build()` (copy) or
- * `release()` (move) to materialize a `NodeGroup`. The Builder itself stores nothing
- * but `shared_ptr<Node>` and is safe to discard once the NodeGroup is produced.
+ * `release_nodes()` (move) to materialize a node list. The Builder itself stores nothing
+ * but `shared_ptr<Node>` and is safe to discard once the node list is produced.
  *
  * Notes:
  * - This module is STL-only (no GStreamer/OpenCV includes).
- * - Node indices are implied by order-of-insertion; Session uses that
+ * - Node indices are implied by order-of-insertion; Graph uses that
  *   ordering for deterministic element naming (n<idx>_...).
- * - For non-linear graphs, use builder/Graph directly (kept separate on purpose).
+ * - For non-linear topologies, use public `Graph` fragments and `connect()`.
  *
  * @ingroup builder
- * @see NodeGroup
  * @see Graph
  */
 class Builder final {
@@ -49,9 +46,6 @@ public:
 
   /// @brief Construct an empty builder.
   Builder() = default;
-
-  /// @brief Construct from an existing group (copies node pointers).
-  explicit Builder(const NodeGroup& g) : nodes_(g.nodes()) {}
 
   /// @brief Construct from an existing vector of nodes (moves the vector).
   explicit Builder(std::vector<NodePtr> nodes) : nodes_(std::move(nodes)) {}
@@ -67,13 +61,6 @@ public:
   /// @brief Fluent alias for `add()` — reads naturally as `b.add(a).then(b).then(c)`.
   Builder& then(NodePtr node) {
     return add(std::move(node));
-  }
-
-  /// @brief Append all nodes from a group (preserves order).
-  Builder& add(const NodeGroup& group) {
-    const auto& gnodes = group.nodes();
-    nodes_.insert(nodes_.end(), gnodes.begin(), gnodes.end());
-    return *this;
   }
 
   /// @brief Append nodes from an initializer_list.
@@ -117,9 +104,9 @@ public:
 
   // -------- Materialization --------
 
-  /// @brief Return a copy of the assembled NodeGroup. Builder remains usable.
-  NodeGroup build() const {
-    return NodeGroup(nodes_);
+  /// @brief Return a copy of the assembled node list. Builder remains usable.
+  std::vector<NodePtr> build() const {
+    return nodes_;
   }
 
   /// @brief Move out the nodes and reset the builder.
@@ -127,11 +114,6 @@ public:
     std::vector<NodePtr> out;
     out.swap(nodes_);
     return out;
-  }
-
-  /// @brief Move out as NodeGroup and reset the builder.
-  NodeGroup release() {
-    return NodeGroup(release_nodes());
   }
 
 private:

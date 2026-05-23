@@ -164,8 +164,8 @@ def doc_url(path: Path) -> str:
         stem = ""
 
     # Canonical tutorials route mapping:
-    # docs/tutorials/tutorial_v2_007_session_patterns.mdx
-    # -> /tutorials/v2/007-session-patterns
+    # docs/tutorials/tutorial_v2_007_graph_patterns.mdx
+    # -> /tutorials/v2/007-graph-patterns
     m = re.match(r"^tutorials/tutorial_v(\d+)_(\d+)_(.+)$", stem)
     if m:
         major, chapter, slug = m.groups()

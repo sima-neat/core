@@ -8,8 +8,8 @@ sidebar_position: 1
 
 If you are new to SiMa Neat, keep this sequence in mind:
 
-1. Load a compiled model package (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
-2. Compose a [`Session`](/reference/{lsa}/classes/simaai-neat-session) with input nodes, model stages, and output nodes.
+1. Load a compiled model archive (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
+2. Compose a [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) with input nodes, model stages, and output nodes.
 3. Build a [`Run`](/reference/{lsa}/classes/simaai-neat-run) in sync or async mode.
 4. Push inputs and pull outputs as [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor) or [`Sample`](/reference/{lsa}/structs/simaai-neat-sample).
 
@@ -22,11 +22,11 @@ Sync: use `run(...)` or `push_and_pull(...)` for request/response style executio
 
 ```cpp
 simaai::neat::Model model("resnet_50_model.tar.gz");
-simaai::neat::Session session;
-session.add(model.session());
+simaai::neat::Graph graph;
+graph.add(model.graph());
 
 cv::Mat img = /* your frame (RGB/BGR as configured) */;
-auto run = session.build(img, simaai::neat::RunMode::Sync);
+auto run = graph.build(img, simaai::neat::RunMode::Sync);
 auto out = run.push_and_pull(img, /*timeout_ms=*/1000);
 ```
 
@@ -37,12 +37,12 @@ auto out = run.push_and_pull(img, /*timeout_ms=*/1000);
 # Pseudo Python sync example.
 model = neat.Model("resnet_50_model.tar.gz")
 
-session = neat.Session()
-session.add(model.session())
+graph = neat.Graph()
+graph.add(model.graph())
 
 img = ...  # your frame tensor
 
-run = session.build(img, neat.RunMode.Sync)
+run = graph.build(img, neat.RunMode.Sync)
 out = run.run(img, timeout_ms=1000)
 ```
 
@@ -60,8 +60,8 @@ Async: use `push(...)` / `pull(...)` with [`RunOptions`](/reference/{lsa}/struct
 
 ```cpp
 simaai::neat::Model model("resnet_50_model.tar.gz");
-simaai::neat::Session session;
-session.add(model.session());
+simaai::neat::Graph graph;
+graph.add(model.graph());
 
 cv::Mat img = /* your frame */;
 
@@ -70,7 +70,7 @@ opt.queue_depth = 8;
 opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
 opt.enable_metrics = true;
 
-auto run = session.build(img, simaai::neat::RunMode::Async, opt);
+auto run = graph.build(img, simaai::neat::RunMode::Async, opt);
 run.push(img);
 auto out = run.pull(/*timeout_ms=*/1000);
 ```
@@ -82,8 +82,8 @@ auto out = run.pull(/*timeout_ms=*/1000);
 # Pseudo Python async example.
 model = neat.Model("resnet_50_model.tar.gz")
 
-session = neat.Session()
-session.add(model.session())
+graph = neat.Graph()
+graph.add(model.graph())
 
 img = ...  # your frame
 
@@ -91,7 +91,7 @@ opt = neat.RunOptions()
 opt.queue_depth = 8
 opt.overflow_policy = neat.OverflowPolicy.Block
 
-run = session.build(img, neat.RunMode.Async, opt)
+run = graph.build(img, neat.RunMode.Async, opt)
 run.push(img)
 out = run.pull(timeout_ms=1000)
 ```
@@ -101,8 +101,8 @@ out = run.pull(timeout_ms=1000)
 
 ## Learn the concepts
 
-- [Model](/getting-started/programming-model/model): model pack loading and model-driven pipeline fragments.
-- [Session](/getting-started/programming-model/session): assembly, validation, and run/build entry point.
+- [Model](/getting-started/programming-model/model): model archive loading and model-driven pipeline fragments.
+- [Graph](/getting-started/programming-model/graph): assembly, validation, and run/build entry point.
 - [Node](/getting-started/programming-model/node): atomic pipeline building block and composition unit.
 - [Pipeline](/getting-started/programming-model/pipeline): deterministic node composition and execution handles.
 - [Graph](/getting-started/programming-model/graph): hybrid DAG runtime for pipeline + stage composition.

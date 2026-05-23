@@ -1,6 +1,6 @@
 #pragma once
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include <chrono>
 #include <memory>

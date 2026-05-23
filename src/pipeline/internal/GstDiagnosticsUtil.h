@@ -6,7 +6,7 @@
 
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/Diagnostics.h" // provides simaai::neat::pipeline_internal::DiagCtx
-#include "pipeline/SessionReport.h"
+#include "pipeline/GraphReport.h"
 
 #include <gst/gst.h>
 #include <gst/video/video.h>

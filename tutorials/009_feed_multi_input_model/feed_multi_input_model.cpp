@@ -1,4 +1,4 @@
-// Build a multi-port bundle Sample and push it through a tensor-in/tensor-out Session.
+// Build a multi-port bundle Sample and push it through a tensor-in/tensor-out Graph.
 //
 // Usage:
 //   tutorial_009_feed_multi_input_model [--width 64] [--height 48]
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
     const int c = 3;
 
     simaai::neat::InputOptions in;
-    in.media_type = "application/vnd.simaai.tensor";
+    in.payload_type = simaai::neat::PayloadType::Tensor;
     in.format = "FP32";
     in.width = w;
     in.height = h;
@@ -66,11 +66,11 @@ int main(int argc, char** argv) {
     simaai::neat::Tensor seed = make_fp32_tensor(w, h, c, 0.0f);
 
     // CORE LOGIC
-    // Session accepting fp32 tensors as input.
-    simaai::neat::Session session;
-    session.add(simaai::neat::nodes::Input(in));
-    session.add(simaai::neat::nodes::Output());
-    auto run = session.build(simaai::neat::TensorList{seed}, simaai::neat::RunMode::Sync);
+    // Graph accepting fp32 tensors as input.
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::nodes::Input(in));
+    graph.add(simaai::neat::nodes::Output());
+    auto run = graph.build(simaai::neat::TensorList{seed}, simaai::neat::RunMode::Sync);
 
     // make_bundle_sample packs multiple named tensors into one Sample.
     simaai::neat::Sample bundle = simaai::neat::make_bundle_sample({
@@ -78,19 +78,29 @@ int main(int argc, char** argv) {
         simaai::neat::make_tensor_sample("right", make_fp32_tensor(w, h, c, 2.0f)),
     });
 
-    auto outs = run.run(simaai::neat::SampleList{bundle}, /*timeout_ms=*/1000);
+    auto outs = run.run(simaai::neat::Sample{bundle}, /*timeout_ms=*/1000);
     // END CORE LOGIC
 
     if (outs.empty())
       throw std::runtime_error("bundle output missing");
-    const simaai::neat::Sample& out = outs.front();
+    // `Run::run(Sample)` returns one Sample. When the logical result has multiple fields,
+    // that Sample is itself a Bundle; `front()` would mean "first field inside the bundle",
+    // not "first output sample".
+    const simaai::neat::Sample& out = outs;
     if (out.kind != simaai::neat::SampleKind::Bundle)
       throw std::runtime_error("expected bundle output");
+    if (out.fields.size() != 2U)
+      throw std::runtime_error("expected two bundle fields");
 
     std::cout << "bundle_fields=" << out.fields.size() << "\n";
-    for (const auto& field : out.fields) {
-      std::cout << "  port=" << field.port_name
-                << " has_tensor=" << (field.tensor.has_value() ? "yes" : "no") << "\n";
+    for (std::size_t i = 0; i < out.fields.size(); ++i) {
+      const auto& field = out.fields[i];
+      const bool has_tensor = field.tensor.has_value() || !field.tensors.empty();
+      const std::string label =
+          !field.port_name.empty()
+              ? field.port_name
+              : (!field.stream_label.empty() ? field.stream_label : ("field_" + std::to_string(i)));
+      std::cout << "  field=" << label << " has_tensor=" << (has_tensor ? "yes" : "no") << "\n";
     }
     std::cout << "[OK] 009_feed_multi_input_model\n";
     return 0;

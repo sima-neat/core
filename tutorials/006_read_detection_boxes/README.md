@@ -26,7 +26,7 @@ Common box-decode controls in this tutorial:
 - Duplicate overlapping boxes: lower `nms_iou_threshold` to make suppression stricter.
 - Missed true positives: decrease `score_threshold` cautiously.
 - Boxes appear scaled/offset incorrectly: verify `original_width` and `original_height` match real source frames.
-- Porting between detector variants: ensure `decode_type` matches the model family expected by the MPK.
+- Porting between detector variants: ensure `decode_type` matches the model family expected by the model archive.
 
 **APIs introduced**
 - `pyneat.ModelOptions()` with `.decode_type`, `.score_threshold`, `.nms_iou_threshold`, `.top_k`, `.original_width/height`.
@@ -58,12 +58,12 @@ with:
 | `payload_tag` / `format` | `"BBOX"` |
 | `media_type` | `"application/vnd.simaai.tensor"` |
 | `tensor.dtype` | `UInt8` |
-| `tensor.shape` | rank-1: `[N_bytes]`, where `N_bytes` is the MPK-packed buffer capacity (for example `[20160]` on the stock YOLOv8 pack) |
+| `tensor.shape` | rank-1: `[N_bytes]`, where `N_bytes` is the model archive-packed buffer capacity (for example `[20160]` on the stock YOLOv8 pack) |
 | `fields` | empty (all payload lives in `tensor`) |
 
 The tensor shape is a **byte count**, not a detection count. The packed bytes
 hold both a small header and a contiguous array of fixed-size box records.
-`N_bytes` is determined by the MPK's `buffers.input[0].size` field (inside
+`N_bytes` is determined by the model archive's `buffers.input[0].size` field (inside
 the boxdecode stage's config JSON) and bounds the maximum number of
 detections the decoder can emit in a single frame (see "Override contract"
 below for how runtime dims interact with packaged values).
@@ -92,7 +92,7 @@ Each `RawBox` record is 24 bytes:
 |  8 | 4 | int32 | `w`     | width, in source pixels  |
 | 12 | 4 | int32 | `h`     | height, in source pixels |
 | 16 | 4 | float32 | `score` | post-NMS detection confidence in `[0.0, 1.0]` (the value `detection_threshold` gates on) |
-| 20 | 4 | int32 | `class_id` | predicted class id (model-defined; 0-indexed; class-name map lives in the MPK metadata) |
+| 20 | 4 | int32 | `class_id` | predicted class id (model-defined; 0-indexed; class-name map lives in the model archive metadata) |
 
 The canonical Python `struct` format matching one record is `"<iiiifi"`
 (little-endian, 4 signed ints, one float, one signed int).
@@ -114,7 +114,7 @@ struct Box {
 
 Coordinates decoded from `BBOX` are in **original-image pixels**, the same
 coordinate system you passed as `original_width` / `original_height` (or that
-the MPK was packaged with). They are **not** normalized to `[0, 1]`, and they
+the model archive was packaged with). They are **not** normalized to `[0, 1]`, and they
 are **not** expressed in the model's internal letterboxed input space. The
 parser clamps `(x1, y1, x2, y2)` to `[0, original_width]` / `[0, original_height]`
 so caller code can draw them directly on the source frame.
@@ -151,9 +151,9 @@ already done this unpack for you: `result.boxes[i]` is a `Box` with
 `(x1, y1, x2, y2)` already populated from `(x, y, x+w, y+h)` and clamped to
 the image.
 
-### Override contract: runtime dims vs. packaged MPK defaults
+### Override contract: runtime dims vs. packaged model archive defaults
 
-`SimaBoxDecode` is constructed from a trained MPK that ships with packaged
+`SimaBoxDecode` is constructed from a trained model archive that ships with packaged
 defaults for `decode_type`, `detection_threshold`, `nms_iou_threshold`,
 `top_k`, `original_width`, and `original_height`. The public constructor
 
@@ -176,15 +176,15 @@ and its Python twin `pyneat.nodes.sima_box_decode(model, ...)` use a simple
 
 | Runtime argument | Value passed | Behavior |
 | --- | --- | --- |
-| `decode_type` | `""` (empty) | preserve MPK / model-path inference |
-| `decode_type` | non-empty string | override the MPK value for this session |
-| `original_width` / `original_height` | `0` | preserve MPK packaged dimension |
+| `decode_type` | `""` (empty) | preserve model archive / model-path inference |
+| `decode_type` | non-empty string | override the model archive value for this run |
+| `original_width` / `original_height` | `0` | preserve model archive packaged dimension |
 | `original_width` / `original_height` | positive int | rewrite `original_width` / `original_height` in the effective config |
-| `detection_threshold` | `0.0` | preserve MPK packaged threshold |
+| `detection_threshold` | `0.0` | preserve model archive packaged threshold |
 | `detection_threshold` | `> 0.0` | override (also triggers the YOLOv8 cliff-warning below) |
-| `nms_iou_threshold` | `0.0` | preserve MPK packaged NMS IoU |
+| `nms_iou_threshold` | `0.0` | preserve model archive packaged NMS IoU |
 | `nms_iou_threshold` | `> 0.0` | override |
-| `top_k` | `0` | preserve MPK packaged top-K |
+| `top_k` | `0` | preserve model archive packaged top-K |
 | `top_k` | `> 0` | override |
 
 The rule is strictly per-field:
@@ -198,11 +198,11 @@ The rule is strictly per-field:
 
 Practical consequences:
 
-- If your MPK was packed for a different resolution than your source frames,
+- If your model archive was packed for a different resolution than your source frames,
   pass `original_width` and `original_height` explicitly so coordinates land
   in source pixels.
 - Leaving `detection_threshold` and `nms_iou_threshold` at `0.0` is the
-  safest way to get the MPK's validated defaults; only override when you are
+  safest way to get the model archive's validated defaults; only override when you are
   deliberately retuning.
 - For YOLOv8-family packs, a resolved `detection_threshold <= 0.5` triggers
   a `[WARN] SimaBoxDecode: resolved detection-threshold=...` on `stderr` at
@@ -219,20 +219,20 @@ Practical consequences:
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/006_read_detection_boxes/read_detection_boxes.py \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz --width 640 --height 640
+  --model /tmp/yolo_v8s.tar.gz --width 640 --height 640
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_006_read_detection_boxes \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz --image /path/to/frame.jpg
+  --model /tmp/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_006_read_detection_boxes
 ./build/tutorials-standalone/tutorial_006_read_detection_boxes \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz --image /path/to/frame.jpg
+  --model /tmp/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

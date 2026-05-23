@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/Preproc.h"
@@ -41,7 +41,7 @@ void run_preproc_build_repro(simaai::neat::RunMode mode, bool tessellate) {
   const Tensor tensor_rgb =
       Tensor::from_cv_mat(img, ImageSpec::PixelFormat::RGB, TensorMemory::EV74);
 
-  Session session;
+  Graph graph;
 
   InputOptions src_opt;
   src_opt.format = FormatTag::RGB;
@@ -81,14 +81,14 @@ void run_preproc_build_repro(simaai::neat::RunMode mode, bool tessellate) {
   pre_opt.q_scale = 0.25;
   pre_opt.q_zp = 0;
 
-  session.add(nodes::Input(src_opt));
-  session.add(nodes::Preproc(pre_opt));
+  graph.add(nodes::Input(src_opt));
+  graph.add(nodes::Preproc(pre_opt));
 
   OutputOptions sink_opt;
   sink_opt.sync = (mode == RunMode::Sync);
   sink_opt.drop = true;
   sink_opt.max_buffers = 1;
-  session.add(nodes::Output(sink_opt));
+  graph.add(nodes::Output(sink_opt));
 
   RunOptions run_opt;
   run_opt.output_memory = OutputMemory::Owned;
@@ -99,7 +99,7 @@ void run_preproc_build_repro(simaai::neat::RunMode mode, bool tessellate) {
   std::cerr << "[REPRO] mode=" << ((mode == RunMode::Sync) ? "sync" : "async")
             << " tessellate=" << (tessellate ? 1 : 0) << "\n";
 
-  auto run = session.build(TensorList{tensor_rgb}, mode, run_opt);
+  auto run = graph.build(TensorList{tensor_rgb}, mode, run_opt);
   TensorList outs = run.run(TensorList{tensor_rgb}, timeout_ms);
   run.close();
 

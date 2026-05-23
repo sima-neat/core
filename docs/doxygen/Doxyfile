@@ -1,6 +1,6 @@
-# Doxygen configuration for PipelineSession
+# Doxygen configuration for SiMa NEAT Graph
 
-PROJECT_NAME           = "PipelineSession"
+PROJECT_NAME           = "SiMa NEAT Graph"
 PROJECT_BRIEF          = "Typed, composable GStreamer pipelines in C++20"
 OUTPUT_DIRECTORY       = docs/doxygen/out
 
@@ -21,9 +21,12 @@ EXCLUDE_PATTERNS       = */include/sima/* \
                           */docs/reference/api/* \
                           */docs/reference/cppapi/* \
                           */include/policy/* \
-                          */include/mpk/MpK*.* \
+                          */include/neat/session.h \
+                          */include/pipeline/Session.h \
+                          */include/pipeline/SessionError.h \
+                          */include/pipeline/SessionOptions.h \
+                          */include/pipeline/SessionReport.h \
                           */include/nodes/groups/ImageToH264RtspGroup.h \
-                          */include/nodes/groups/MpKCompatGroup.h
 
 # Extraction / warnings
 EXTRACT_ALL            = YES

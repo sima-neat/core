@@ -12,7 +12,7 @@ The Neat framework's pipelines have a deliberately small dtype vocabulary at the
 - **Inside the MLA**: either **INT8** (with quant/dequant at the boundary) or **BF16** (no quant/dequant — straight through).
 - **Outputs from postprocess**: FP32, ready for the application.
 
-Everything else — quantization, tessellation, layout conversion — is an *internal* transformation the framework inserts when the model's MPK manifest demands it. This page explains the four corners of that contract and how the planner picks the right preprocess graph family.
+Everything else — quantization, tessellation, layout conversion — is an *internal* transformation the framework inserts when the model's MPK contract demands it. This page explains the four corners of that contract and how the planner picks the right preprocess graph family.
 
 ## The four cases
 

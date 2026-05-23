@@ -3,9 +3,9 @@
  * @ingroup nodes_groups
  * @brief `UdpH264OutputGroup` — H.264 encode plus RTP packetize plus UDP send.
  *
- * Bundles an H.264 encoder, an RTP H.264 payloader, and a `udpsink` so a Session can
+ * Bundles an H.264 encoder, an RTP H.264 payloader, and a `udpsink` so a Graph can
  * stream its rendered output to a remote receiver as RTP/H.264 over UDP. Typical
- * placement: tail end of a Session that wants to broadcast detection results to a
+ * placement: tail end of a Graph that wants to broadcast detection results to a
  * VLC-style viewer or a downstream analytics host.
  *
  * @see UdpOutputGroupG
@@ -13,7 +13,7 @@
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "pipeline/Graph.h"
 
 #include <string>
 
@@ -38,18 +38,18 @@ struct UdpH264OutputGroupOptions {
 };
 
 /**
- * @brief Build a NodeGroup that H.264-encodes, RTP-packetizes, and sends frames over UDP.
+ * @brief Build a Graph that H.264-encodes, RTP-packetizes, and sends frames over UDP.
  *
  * Typical chain: H.264 encoder -> RTP H.264 payloader -> `udpsink`. Use as the tail
- * of a Session that should broadcast its rendered output as RTP/H.264 over UDP.
+ * of a Graph that should broadcast its rendered output as RTP/H.264 over UDP.
  *
  * @param opt Encoder, RTP, and UDP-sink configuration.
- * @return The configured `NodeGroup` ready to be `add()`ed to a Session.
+ * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *
  * @see UdpOutputGroupG
  * @see ImageToH264RtspGroup
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup UdpH264OutputGroup(const UdpH264OutputGroupOptions& opt);
+simaai::neat::Graph UdpH264OutputGroup(const UdpH264OutputGroupOptions& opt);
 
 } // namespace simaai::neat::nodes::groups

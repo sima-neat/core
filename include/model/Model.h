@@ -1,23 +1,23 @@
 /**
  * @file
  * @ingroup model
- * @brief Model — the simplified entry point for loading and running an MPK on the Modalix chip.
+ * @brief Model — the simplified entry point for loading and running a compiled model archive on
+ * Modalix.
  *
- * `Model` is the user-facing wrapper around an MPK (model pack) `.tar.gz`. It loads the file,
- * extracts and validates the manifest, runs the route planner, and exposes ready-to-use
- * `NodeGroup` fragments (preprocess, inference, postprocess) plus convenience `run()` and
- * `build()` methods that drive a one-shot inference. Internally a Model is a `Session` wrapper:
- * the same composition, validation, and runtime machinery the Session API exposes powers Model
+ * `Model` is the user-facing wrapper around a compiled model archive (`.tar.gz`). It loads the
+ * file, extracts and validates the manifest, runs the route planner, and exposes ready-to-use
+ * `Graph` fragments (preprocess, inference, postprocess) plus convenience `run()` and
+ * `build()` methods that drive a one-shot inference. Internally a Model is a `Graph` wrapper:
+ * the same composition, validation, and runtime machinery the Graph API exposes powers Model
  * underneath. New users start with `Model::run(input)`; advanced users compose their own
- * `Session` from `model.session()` plus extra Nodes.
+ * `Graph` from `model.graph()` plus extra Nodes.
  *
  * @see "Models" in the design deep dive (§0.7 — The main concepts)
- * @see "Sessions: the assembly contract" (§0.12) for what Model wraps
- * @see "MPK contract" (§0.16) for the file format Model loads
+ * @see "Graphs: the assembly contract" (§0.12) for what Model wraps
+ * @see "MPK contract" (§0.16) for the inference contract embedded in model archives
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
 #include "model/PreprocessPlan.h"
 #include "nodes/io/Input.h"
 #include "pipeline/BoxDecodeType.h"
@@ -42,18 +42,20 @@ namespace simaai::neat {
 namespace internal {
 struct ModelAccess;
 } // namespace internal
+class Graph;
 
 /// Tensor specification used by the Model API.
 using TensorSpec = TensorConstraint;
 
 /**
- * @brief Loaded form of an MPK; the simplified entry point to run inference on Modalix.
+ * @brief Loaded form of a compiled model archive; the simplified entry point to run inference on
+ * Modalix.
  *
- * A `Model` owns an extracted MPK directory, the parsed manifest, and the route plan
+ * A `Model` owns an extracted model archive, the parsed inference contract, and the route plan
  * derived from it. Once constructed it exposes:
- *   - **`NodeGroup` fragments** — `preprocess()`, `inference()`, `postprocess()`, `session()` —
- *     for composing into a user-built `Session`.
- *   - **`run(input)`** convenience methods that build a one-shot `Session`, push the input,
+ *   - **`Graph` fragments** — `preprocess()`, `inference()`, `postprocess()`, `graph()` —
+ *     for composing into a user-built `Graph`.
+ *   - **`run(input)`** convenience methods that build a one-shot `Graph`, push the input,
  *     pull the result, and tear down. The shortest path from "I have a tensor" to "here are
  *     detections."
  *   - **`build(...)`** that returns a long-lived `Runner` for streaming use cases (push many
@@ -67,11 +69,11 @@ using TensorSpec = TensorConstraint;
  * @endcode
  *
  * For applications that need more control (custom pre/post nodes, multiple cameras, RTSP
- * server output), graduate from `Model::run()` to composing a `Session` that includes
- * `model.session()` plus your own input/output nodes.
+ * server output), graduate from `Model::run()` to composing a `Graph` that includes
+ * `model.graph()` plus your own input/output nodes.
  *
- * @see Session
- * @see "Model is a Session in disguise" (§0.12 of the design deep dive)
+ * @see Graph
+ * @see "Model is a Graph in disguise" (§0.12 of the design deep dive)
  * @ingroup model
  */
 class Model {
@@ -80,7 +82,7 @@ public:
    * @brief Diagnostic snapshot of how the route planner resolved the model.
    *
    * Returned by `info()`. Aggregates the planner's needs (what the model demands),
-   * capabilities (what the MPK provides), selection (what got included in the route),
+   * capabilities (what the MPK contract provides), selection (what got included in the route),
    * and the output topology (physical vs logical outputs, packed or split).
    */
   struct ModelInfo {
@@ -98,24 +100,27 @@ public:
       bool post_cast = false; ///< Output dtype conversion required (e.g., BF16→FP32).
     };
 
-    /// What pre/post adapters the MPK provides (read from manifest stages).
+    /// What pre/post adapters the MPK contract provides (read from manifest stages).
     struct RouteCapabilities {
-      bool has_pre_quantization = false; ///< MPK provides a preprocess quantize (FP→INT8) stage.
+      bool has_pre_quantization =
+          false; ///< MPK contract provides a preprocess quantize (FP→INT8) stage.
       bool has_pre_tessellation =
-          false;                 ///< MPK provides a preprocess tessellate (tile-layout) stage.
-      bool has_pre_cast = false; ///< MPK provides a preprocess cast (FP dtype convert) stage.
+          false; ///< MPK contract provides a preprocess tessellate (tile-layout) stage.
+      bool has_pre_cast =
+          false; ///< MPK contract provides a preprocess cast (FP dtype convert) stage.
       bool has_post_detessellation =
-          false; ///< MPK provides a post detessellate (tile→row-major) stage.
-      bool has_post_dequantization = false; ///< MPK provides a post dequantize (INT8→FP) stage.
-      bool has_post_cast = false;           ///< MPK provides a post cast (FP dtype convert) stage.
+          false; ///< MPK contract provides a post detessellate (tile→row-major) stage.
+      bool has_post_dequantization =
+          false;                  ///< MPK contract provides a post dequantize (INT8→FP) stage.
+      bool has_post_cast = false; ///< MPK contract provides a post cast (FP dtype convert) stage.
       bool has_post_boxdecode =
           false; ///< Manifest includes a fused detection-decode stage (YOLO BoxDecode).
     };
 
     /// What the planner actually included in the materialized route.
     struct RouteSelection {
-      bool include_preprocess_stage = true;  ///< True if a preprocess NodeGroup is attached.
-      bool include_postprocess_stage = true; ///< True if a postprocess NodeGroup is attached.
+      bool include_preprocess_stage = true;  ///< True if a preprocess Graph fragment is attached.
+      bool include_postprocess_stage = true; ///< True if a postprocess Graph fragment is attached.
       bool infer_only = false;        ///< True if only the MLA inference stage runs (no pre/post).
       std::string preprocess_graph;   ///< Name of the chosen preprocess CVU graph (e.g., `preproc`,
                                       ///< `quanttess`).
@@ -131,7 +136,8 @@ public:
       bool packed_outputs = false; ///< True if logical outputs share underlying memory buffers.
     };
 
-    std::string mpk_json_path; ///< Filesystem path to the manifest JSON inside the extracted MPK.
+    std::string mpk_json_path; ///< Filesystem path to the MPK contract JSON inside the extracted
+                               ///< model archive.
     std::string model_name;    ///< Human-readable model name (from manifest, when present).
 
     RouteNeeds needs;               ///< @copydoc RouteNeeds
@@ -157,14 +163,14 @@ public:
     std::optional<std::size_t>
         last_stage_index; ///< Stop after this stage index (0-based, inclusive).
     std::optional<std::string>
-        last_stage_name; ///< Stop after the named stage (matches MPK manifest stage name).
+        last_stage_name; ///< Stop after the named stage (matches MPK contract stage name).
     std::optional<std::string> last_plugin_id; ///< Stop after the first stage using this plugin ID.
     std::optional<std::string>
         last_processor; ///< Stop after the first stage running on this processor (CVU/MLA/APU).
   };
 
   /**
-   * @brief Concrete preprocess parameters resolved by the planner from the MPK manifest.
+   * @brief Concrete preprocess parameters resolved by the planner from the MPK contract.
    *
    * Returned by `preprocess_requirements()`. Useful when an application needs to mirror the
    * model's preprocessing in custom code (e.g., when feeding inputs from a path the framework
@@ -193,8 +199,8 @@ public:
    *
    * Most fields have sensible defaults; the most commonly-customized are `preprocess` (image
    * preprocessing parameters: resize target, color format, normalization mean/std) and the
-   * `decode_type` family (when the MPK contains a YOLO-style detection model). Setting these
-   * upgrades the framework's basic dtype-bridge stages into fused Generic Preproc / BoxDecode
+   * `decode_type` family (when the MPK contract describes a YOLO-style detection model). Setting
+   * these upgrades the framework's basic dtype-bridge stages into fused Generic Preproc / BoxDecode
    * kernels — same kernel slot, more work done in one pass.
    *
    * @see "The dtype contract" (§0.5 of the design deep dive) for when adapters get attached
@@ -232,14 +238,14 @@ public:
     /// decoder).
     std::string upstream_name = "decoder";
     /// Optional suffix appended to every generated GStreamer element name (use to disambiguate
-    /// concurrent Sessions).
+    /// concurrent Graphs).
     std::string name_suffix;
 
     // ── Extraction lifecycle ───────────────────────────────────────────────────────────────
     /**
-     * @brief Whether to clean up the on-disk extracted MPK directory on process exit.
+     * @brief Whether to clean up the on-disk extracted model-archive directory on process exit.
      *
-     * - `true` (default): per-process extracted MPK data is removed on normal exit.
+     * - `true` (default): per-process extracted model-archive data is removed on normal exit.
      * - `false`: extracted data stays on disk after the process ends (useful for inspection/reuse).
      */
     bool cleanup_extracted_model_data = true;
@@ -267,20 +273,34 @@ public:
   };
 
   /**
-   * @brief Options for `Model::session()` — controls how the model assembles into a NodeGroup.
+   * @brief Options for `Model::graph()` — controls how the model assembles into a Graph.
    *
-   * Used when composing a custom `Session` from `model.session(opt)` plus your own input/output
-   * Nodes. The defaults are right for the convenience `Model::run()` path.
+   * By default `model.graph()` returns a reusable model fragment with open named endpoints. Set
+   * `include_input` and/or `include_output` when you intentionally want the returned Graph to
+   * contain public `nodes::Input` / `nodes::Output` boundary nodes.
    */
-  struct SessionOptions {
-    bool include_appsrc = true;  ///< Include an appsrc input Node at the head of the NodeGroup.
-    bool include_appsink = true; ///< Include an appsink output Node at the tail.
-    std::string upstream_name;   ///< Element name of the upstream Node feeding the model (default:
-                                 ///< `"decoder"`).
-    std::string name_suffix;     ///< Suffix appended to generated element names.
+  struct RouteOptions {
+    bool include_input = false;  ///< Include a public `nodes::Input` Node at the head.
+    bool include_output = false; ///< Include a public `nodes::Output` Node at the tail.
+    /**
+     * @brief Expose individual model output endpoints when the model route has multiple physical
+     * outputs.
+     *
+     * The default public Graph contract is intentionally ML-friendly: a model produces one
+     * aggregate output Sample, normally a TensorSet containing all model tensors. That remains true
+     * for optimized routes where several logical tensors are packed into one physical buffer.
+     *
+     * Set this to true only when advanced/debug code needs to address truly separate physical model
+     * outputs by name. If the route has a single physical output buffer, this flag is ignored and
+     * the Graph still exposes one aggregate output endpoint.
+     */
+    bool expose_all_outputs = false;
+    std::string upstream_name; ///< Element name of the upstream Node feeding the model (default:
+                               ///< `"decoder"`).
+    std::string name_suffix;   ///< Suffix appended to generated element names.
     std::string
         buffer_name;        ///< Optional buffer pool name (used by advanced memory configurations).
-    VerboseOptions verbose; ///< Diagnostic verbosity during NodeGroup construction.
+    VerboseOptions verbose; ///< Diagnostic verbosity during Graph construction.
     /**
      * @brief Requested backend for model-managed `processcvu` generic-EV stages.
      *
@@ -290,7 +310,7 @@ public:
     std::string processcvu_requested_run_target = "AUTO";
 
     /// Simple placement for model-managed `processcvu` stages when this
-    /// Session/Runner is built. Non-AUTO values take priority over
+    /// Graph/Runner is built. Non-AUTO values take priority over
     /// Model::Options and the legacy coarse target above.
     ProcessCvuOptions processcvu;
 
@@ -320,46 +340,43 @@ public:
   };
 
   /**
-   * @brief Load and validate an MPK at the given path with default options.
+   * @brief Load and validate a compiled model archive at the given path with default options.
    *
-   * Equivalent to `Model(mpk_path, Options{})`. The constructor extracts the tarball,
+   * Equivalent to `Model(model_path, Options{})`. The constructor extracts the `.tar.gz`,
    * validates the manifest (rejecting malformed or malicious archives), and runs the route
-   * planner. Throws `SessionError` on any failure (with a structured `SessionReport`).
+   * planner. Throws `NeatError` on any failure (with a structured `GraphReport`).
    *
-   * @param mpk_path Filesystem path to a `.tar.gz` / `.tgz` / `.mpk` / `.tar` file.
-   * @throws SessionError on archive validation failure, manifest parse error, or unsupported route.
+   * @param model_path Filesystem path to a `.tar.gz` model archive.
+   * @throws NeatError on archive validation failure, manifest parse error, or unsupported route.
    */
-  explicit Model(const std::string& mpk_path);
+  explicit Model(const std::string& model_path);
   /**
-   * @brief Load and validate an MPK with explicit options.
+   * @brief Load and validate a compiled model archive with explicit options.
    *
-   * @param mpk_path Filesystem path to a `.tar.gz` / `.tgz` / `.mpk` / `.tar` file.
-   * @param opt     Options controlling preprocess, postprocess decode, naming, lifecycle, and
+   * @param model_path Filesystem path to a `.tar.gz` model archive.
+   * @param opt        Options controlling preprocess, postprocess decode, naming, lifecycle, and
    * verbosity.
-   * @throws SessionError on archive validation failure, manifest parse error, or unsupported route.
+   * @throws NeatError on archive validation failure, manifest parse error, or unsupported route.
    */
-  explicit Model(const std::string& mpk_path, const Options& opt);
+  explicit Model(const std::string& model_path, const Options& opt);
 
   Model(Model&&) noexcept;            ///< Move-constructible.
   Model& operator=(Model&&) noexcept; ///< Move-assignable. (Models are not copyable.)
-  ~Model(); ///< Destructor; releases the impl and (optionally) cleans up extracted MPK data.
+  ~Model(); ///< Destructor; releases the impl and (optionally) cleans up extracted model-archive
+            ///< data.
 
   // ── Stage composition ────────────────────────────────────────────────────────────────────
-  /// Returns the preprocess portion of the model's pipeline as a `NodeGroup`.
-  simaai::neat::NodeGroup preprocess() const;
-  /// Returns the MLA inference portion of the model's pipeline as a `NodeGroup`.
-  simaai::neat::NodeGroup inference() const;
-  /// Returns the postprocess portion of the model's pipeline as a `NodeGroup`.
-  simaai::neat::NodeGroup postprocess() const;
-  /// Returns the model's full pipeline as a single `NodeGroup` (preprocess + inference +
-  /// postprocess).
-  simaai::neat::NodeGroup session() const;
-  /**
-   * @brief Returns the model's full pipeline as a `NodeGroup` with custom session options.
-   * @param opt Per-call overrides for appsrc/appsink inclusion, naming, and CVU run-target
-   * preference.
-   */
-  simaai::neat::NodeGroup session(SessionOptions opt) const;
+  /// Returns the preprocess portion of the model's pipeline as a `Graph`.
+  simaai::neat::Graph preprocess() const;
+  /// Returns the MLA inference portion of the model's pipeline as a `Graph`.
+  simaai::neat::Graph inference() const;
+  /// Returns the postprocess portion of the model's pipeline as a `Graph`.
+  simaai::neat::Graph postprocess() const;
+  /// Returns the model's full route as a public Graph fragment.
+  simaai::neat::Graph graph() const;
+  /// Returns the model's full route as a public Graph, optionally with explicit Input/Output
+  /// boundary Nodes when requested by `RouteOptions`.
+  simaai::neat::Graph graph(RouteOptions opt) const;
 
   // ── Introspection ────────────────────────────────────────────────────────────────────────
   /// Single-input convenience accessor for `input_specs().front()`.
@@ -389,9 +406,9 @@ public:
   std::unordered_map<std::string, std::string> metadata() const;
 
   // ── Advanced / graph composition ─────────────────────────────────────────────────────────
-  /// Returns one specific stage of the pipeline as a `NodeGroup`.
-  NodeGroup fragment(Stage stage) const;
-  /// Returns the GStreamer launch fragment for one specific stage (debugging / `Session::custom()`
+  /// Returns one specific stage of the pipeline as a `Graph`.
+  Graph fragment(Stage stage) const;
+  /// Returns the GStreamer launch fragment for one specific stage (debugging / `Graph::custom()`
   /// use).
   std::string backend_fragment(Stage stage) const;
 
@@ -399,9 +416,10 @@ public:
   simaai::neat::InputOptions input_appsrc_options(bool tensor_mode) const;
   /// Per-input variant of `input_appsrc_options` for multi-input models.
   std::vector<simaai::neat::InputOptions> input_appsrc_options_list(bool tensor_mode) const;
-  /// Find the path to a per-stage config file in the extracted MPK by plugin ID.
+  /// Find the path to a per-stage config file in the extracted model archive by plugin ID.
   std::string find_config_path_by_plugin(const std::string& plugin_id) const;
-  /// Find the path to a per-stage config file in the extracted MPK by processor name (CVU/MLA/APU).
+  /// Find the path to a per-stage config file in the extracted model archive by processor name
+  /// (CVU/MLA/APU).
   std::string find_config_path_by_processor(const std::string& processor) const;
   /// Returns the canonical output element name for the inference stage (used in pipeline string
   /// emission).
@@ -411,7 +429,7 @@ public:
    * @brief Long-lived execution handle returned by `Model::build(...)`.
    *
    * Wraps an underlying `Run` plus the bookkeeping needed to convert user-friendly input types
-   * (`cv::Mat`, `TensorList`, `SampleList`) into the right Sample shape for the model's appsrc.
+   * (`cv::Mat`, `TensorList`, `Sample`) into the right Sample shape for the model's appsrc.
    * Use the Runner for streaming workloads; use the convenience `Model::run()` overloads for
    * one-shot inference.
    *
@@ -453,14 +471,14 @@ public:
     /// Push a list of `Tensor` inputs (one per ingress port).
     bool push(const simaai::neat::TensorList& inputs);
     /// Push a list of `Sample` inputs (full Samples carry per-buffer metadata).
-    bool push(const simaai::neat::SampleList& inputs);
+    bool push(const simaai::neat::Sample& inputs);
     /**
      * @brief Pull the next produced output Sample list.
      * @param timeout_ms Maximum time to wait, in milliseconds; `-1` means wait forever; `0` is
      * non-blocking.
-     * @return The next `SampleList`. Empty if the timeout elapsed or the pipeline closed.
+     * @return The next `Sample`. Empty if the timeout elapsed or the pipeline closed.
      */
-    simaai::neat::SampleList pull(int timeout_ms = -1);
+    simaai::neat::Sample pull(int timeout_ms = -1);
 #if defined(SIMA_WITH_OPENCV)
     /// One-shot synchronous push+pull from `cv::Mat` inputs.
     simaai::neat::TensorList run(const std::vector<cv::Mat>& inputs, int timeout_ms = -1);
@@ -468,7 +486,7 @@ public:
     /// One-shot synchronous push+pull from `Tensor` inputs.
     simaai::neat::TensorList run(const simaai::neat::TensorList& inputs, int timeout_ms = -1);
     /// One-shot synchronous push+pull from `Sample` inputs.
-    simaai::neat::SampleList run(const simaai::neat::SampleList& inputs, int timeout_ms = -1);
+    simaai::neat::Sample run(const simaai::neat::Sample& inputs, int timeout_ms = -1);
 
     /// Start observing caller-owned push/pull code without consuming outputs.
     simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
@@ -507,7 +525,7 @@ public:
   };
 
 private:
-  static const SessionOptions& default_session_options();
+  static const RouteOptions& default_route_options();
   static const simaai::neat::RunOptions& default_run_options();
 
 public:
@@ -518,39 +536,39 @@ public:
    * For one-shot inference, prefer `run()`.
    *
    * @return A `Runner` ready for push/pull.
-   * @throws SessionError on validation or build failure (with structured `SessionReport`).
+   * @throws NeatError on validation or build failure (with structured `GraphReport`).
    */
   Runner build();
-  /// Build a `Runner` with explicit session options.
-  Runner build(const SessionOptions& opt);
+  /// Build a `Runner` with explicit route options.
+  Runner build(const RouteOptions& opt);
   /// Build a `Runner` with explicit runtime options.
   Runner build(const simaai::neat::RunOptions& run_opt);
-  /// Build a `Runner` with explicit session and runtime options.
-  Runner build(const SessionOptions& opt, const simaai::neat::RunOptions& run_opt);
+  /// Build a `Runner` with explicit route and runtime options.
+  Runner build(const RouteOptions& opt, const simaai::neat::RunOptions& run_opt);
   /**
    * @brief Build a `Runner` and seed the build with sample input(s).
    *
    * Seeding the build with an input lets the planner perform build-time adaptation: tightening
    * caps to match the actual input shape, picking concrete pixel formats, validating that the
-   * input is compatible. The `BuildAdaptationSummary` in the resulting `SessionReport` records
+   * input is compatible. The `BuildAdaptationSummary` in the resulting `GraphReport` records
    * what adaptations were applied.
    *
    * @param inputs    One Tensor per ingress port. For single-input models pass a single-element
    * list.
-   * @param opt       Session options (defaults are sensible).
+   * @param opt       Graph options (defaults are sensible).
    * @param run_opt   Runtime options (queue depth, overflow policy, async/sync mode).
    */
   Runner build(const simaai::neat::TensorList& inputs,
-               const SessionOptions& opt = default_session_options(),
+               const RouteOptions& opt = default_route_options(),
                const simaai::neat::RunOptions& run_opt = default_run_options());
   /// Build variant that seeds with full `Sample` inputs (carrying per-buffer metadata).
-  Runner build(const simaai::neat::SampleList& inputs,
-               const SessionOptions& opt = default_session_options(),
+  Runner build(const simaai::neat::Sample& inputs,
+               const RouteOptions& opt = default_route_options(),
                const simaai::neat::RunOptions& run_opt = default_run_options());
 #if defined(SIMA_WITH_OPENCV)
   /// Build variant that seeds with `cv::Mat` inputs (the OpenCV convenience path).
   Runner build(const std::vector<cv::Mat>& inputs,
-               const SessionOptions& opt = default_session_options(),
+               const RouteOptions& opt = default_route_options(),
                const simaai::neat::RunOptions& run_opt = default_run_options());
 #endif
 
@@ -564,11 +582,11 @@ public:
    * @param inputs     Input tensors (one per ingress port).
    * @param timeout_ms Maximum wait for the result, in milliseconds; `-1` waits forever.
    * @return The output tensor list.
-   * @throws SessionError on build failure or pull timeout/error.
+   * @throws NeatError on build failure or pull timeout/error.
    */
   simaai::neat::TensorList run(const simaai::neat::TensorList& inputs, int timeout_ms = -1);
   /// One-shot inference with full `Sample` inputs.
-  simaai::neat::SampleList run(const simaai::neat::SampleList& inputs, int timeout_ms = -1);
+  simaai::neat::Sample run(const simaai::neat::Sample& inputs, int timeout_ms = -1);
 #if defined(SIMA_WITH_OPENCV)
   /// One-shot inference with `cv::Mat` inputs (OpenCV convenience).
   simaai::neat::TensorList run(const std::vector<cv::Mat>& inputs, int timeout_ms = -1);

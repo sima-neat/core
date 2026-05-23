@@ -85,8 +85,8 @@ int backend_tid(const std::string& backend) {
 std::string LatencyProfiler::to_text(const ProfilerReport& r) {
   std::ostringstream o;
   o << "== SiMa NEAT Latency Profiler ==\n";
-  if (!r.mpk_path.empty()) {
-    o << "mpk:        " << r.mpk_path << "\n";
+  if (!r.model_path.empty()) {
+    o << "model:      " << r.model_path << "\n";
   }
   if (!r.description.empty()) {
     o << "label:      " << r.description << "\n";
@@ -252,7 +252,7 @@ std::string LatencyProfiler::to_chrome_trace(const ProfilerReport& r) {
 
   o << "\n  ],\n";
   o << "  \"otherData\": {\n"
-    << "    \"mpk\":\"" << json_escape(r.mpk_path) << "\",\n"
+    << "    \"model\":\"" << json_escape(r.model_path) << "\",\n"
     << "    \"description\":\"" << json_escape(r.description) << "\",\n"
     << "    \"frames_total\":" << r.frames_total << ",\n"
     << "    \"warmup_frames\":" << r.warmup_frames << ",\n"

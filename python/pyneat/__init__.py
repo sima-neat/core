@@ -4,6 +4,8 @@ import ctypes as _ctypes
 import os as _os
 from pathlib import Path as _Path
 import sys as _sys
+import types as _types
+import warnings as _warnings
 
 
 def _existing_library_dirs():
@@ -151,6 +153,33 @@ del _existing_library_dirs
 from ._pyneat_core import *
 from ._wrappers import install_wrappers
 
+
+class _DeprecatedModule(_types.ModuleType):
+  def __init__(self, name, target, message):
+    super().__init__(name)
+    self.__dict__["_target"] = target
+    self.__dict__["_message"] = message
+    self.__doc__ = getattr(target, "__doc__", None)
+
+  def __getattr__(self, attr):
+    _warnings.warn(self.__dict__["_message"], DeprecationWarning, stacklevel=2)
+    return getattr(self.__dict__["_target"], attr)
+
+  def __dir__(self):
+    return dir(self.__dict__["_target"])
+
+
+_graph = _core._graph
+_sys.modules[__name__ + "._graph"] = _graph
+graph = _DeprecatedModule(
+    __name__ + ".graph",
+    _graph,
+    "pyneat.graph is the old low-level runtime graph surface and is deprecated. "
+    "Use public pyneat.Graph/pyneat.graphs for application composition; use "
+    "pyneat._graph only for internal runtime tests.",
+)
+_sys.modules[__name__ + ".graph"] = graph
+
 def _set_doc(obj, doc: str) -> None:
   try:
     obj.__doc__ = doc
@@ -160,16 +189,41 @@ def _set_doc(obj, doc: str) -> None:
 
 install_wrappers(_core)
 
+_REMOVED_NAMES = {
+  "Session": "Session was removed. Use pyneat.Graph.",
+  "SessionError": "SessionError was removed. Catch pyneat.NeatError.",
+  "SessionReport": "SessionReport was removed. Use pyneat.GraphReport.",
+  "SessionOptions": "SessionOptions was removed. Use pyneat.GraphOptions.",
+  "ModelSessionOptions": "ModelSessionOptions was removed. Use pyneat.ModelRouteOptions.",
+  "NodeGroup": "NodeGroup was removed. Reusable fragments are pyneat.Graph objects.",
+  "UdpOutputNodeGroupOptions": (
+      "UdpOutputNodeGroupOptions was renamed to pyneat.UdpOutputGraphOptions."
+  ),
+  "OptiViewOutputNodeGroupOptions": (
+      "OptiViewOutputNodeGroupOptions was renamed to pyneat.OptiViewOutputGraphOptions."
+  ),
+  "OptiViewOutputNodeGroup": (
+      "OptiViewOutputNodeGroup was renamed to pyneat.OptiViewOutputGraph."
+  ),
+}
+
+
+def __getattr__(name):
+  if name in _REMOVED_NAMES:
+    raise AttributeError(_REMOVED_NAMES[name])
+  raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 _set_doc(
   _core.Model,
-  """Model loads a compiled MPK package and exposes reusable stage fragments.
+  """Model loads a compiled `.tar.gz` model archive and exposes reusable stage fragments.
 
-  Use Model to assemble Sessions or run inference directly via build/run helpers.
+  Use Model to assemble Graphs or run inference directly via build/run helpers.
   """,
 )
 _set_doc(
-  _core.Session,
-  """Session assembles Nodes/NodeGroups into a deterministic pipeline."""
+  _core.Graph,
+  """Graph assembles Nodes, Models, and reusable Graph fragments into a deterministic pipeline."""
 )
 _set_doc(
   _core.Run,

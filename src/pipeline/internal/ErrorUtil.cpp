@@ -21,9 +21,9 @@ std::string append_hint(std::string_view message, std::string_view hint) {
   return to_owned(message) + "\nHint: " + to_owned(hint);
 }
 
-SessionReport make_report(std::string_view code, std::string_view summary,
-                          std::string_view pipeline_string, std::string_view hint) {
-  SessionReport rep;
+GraphReport make_report(std::string_view code, std::string_view summary,
+                        std::string_view pipeline_string, std::string_view hint) {
+  GraphReport rep;
   rep.error_code = to_owned(code);
   rep.pipeline_string = to_owned(pipeline_string);
   if (!rep.pipeline_string.empty()) {
@@ -35,13 +35,13 @@ SessionReport make_report(std::string_view code, std::string_view summary,
 
 [[noreturn]] void throw_session_error(std::string_view code, std::string_view summary,
                                       std::string_view pipeline_string, std::string_view hint) {
-  SessionReport rep = make_report(code, summary, pipeline_string, hint);
+  GraphReport rep = make_report(code, summary, pipeline_string, hint);
   const std::string msg = decorate_error(rep.error_code, rep.repro_note);
-  throw SessionError(msg, std::move(rep));
+  throw NeatError(msg, std::move(rep));
 }
 
 void set_pull_error(PullError* err, std::string code, std::string message,
-                    std::optional<SessionReport> report) {
+                    std::optional<GraphReport> report) {
   if (!err)
     return;
   err->code = std::move(code);

@@ -72,7 +72,19 @@ OutputSpec merge_specs(SpecMergeInputs inputs, const std::string& port_name) {
     }
   };
 
+  if (out.payload_type == PayloadType::Auto) {
+    out.payload_type = inputs.incoming.payload_type;
+  } else if (inputs.incoming.payload_type != PayloadType::Auto &&
+             out.payload_type != inputs.incoming.payload_type) {
+    throw std::runtime_error(
+        "Compiler: input spec mismatch for port '" + port_name +
+        "' (payload_type): existing=" + std::to_string(static_cast<int>(out.payload_type)) +
+        " vs incoming=" + std::to_string(static_cast<int>(inputs.incoming.payload_type)));
+  }
   merge_str(out.media_type, inputs.incoming.media_type, "media_type");
+  if (out.payload_type == PayloadType::Auto) {
+    out.payload_type = payload_type_from_media_type(out.media_type);
+  }
   merge_str(out.format, inputs.incoming.format, "format");
   merge_int(out.width, inputs.incoming.width, "width");
   merge_int(out.height, inputs.incoming.height, "height");
@@ -96,26 +108,29 @@ OutputSpec merge_specs(SpecMergeInputs inputs, const std::string& port_name) {
   return out;
 }
 
-simaai::neat::NodeGroup merge_groups(const std::vector<const PipelineNode*>& nodes) {
+std::vector<std::shared_ptr<simaai::neat::Node>>
+merge_pipeline_nodes(const std::vector<const PipelineNode*>& nodes) {
   std::vector<std::shared_ptr<simaai::neat::Node>> out;
   for (const auto* pn : nodes) {
     if (!pn)
       continue;
-    const auto& gnodes = pn->group().nodes();
+    const auto& gnodes = pn->nodes();
     out.insert(out.end(), gnodes.begin(), gnodes.end());
   }
-  return simaai::neat::NodeGroup(std::move(out));
+  return out;
 }
 
 } // namespace
 
 bool Compiler::spec_complete_(const OutputSpec& spec) {
-  if (spec.media_type.empty())
+  const std::string media =
+      !spec.media_type.empty() ? spec.media_type : media_type_from_payload_type(spec.payload_type);
+  if (media.empty())
     return false;
-  if (spec.media_type == "video/x-raw") {
+  if (media == "video/x-raw") {
     return !spec.format.empty() && spec.width > 0 && spec.height > 0;
   }
-  if (spec.media_type == "application/vnd.simaai.tensor") {
+  if (media == "application/vnd.simaai.tensor") {
     return !spec.format.empty() && spec.width > 0 && spec.height > 0 && spec.depth > 0;
   }
   // For other media types, rely on media_type + format only.
@@ -123,6 +138,10 @@ bool Compiler::spec_complete_(const OutputSpec& spec) {
 }
 
 CompiledGraph Compiler::compile(const Graph& g) const {
+  return compile(g, CompilerOptions{});
+}
+
+CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) const {
   if (!g.is_dag()) {
     throw std::runtime_error(
         "Compiler: graph must be a DAG (node_count=" + std::to_string(g.node_count()) +
@@ -216,7 +235,7 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       }
       pnodes.push_back(p);
     }
-    seg.group = merge_groups(pnodes);
+    seg.nodes = merge_pipeline_nodes(pnodes);
 
     seg.source_like = false;
     for (const auto* p : pnodes) {
@@ -315,6 +334,14 @@ CompiledGraph Compiler::compile(const Graph& g) const {
     std::vector<std::size_t> counts(in_ports.size(), 0);
     std::vector<bool> seen(in_ports.size(), false);
 
+    if (g.in_edges(id).empty() && in_ports.size() == 1U) {
+      auto root_it = opt.root_input_specs.find(id);
+      if (root_it != opt.root_input_specs.end()) {
+        inputs[0] = root_it->second;
+        seen[0] = true;
+      }
+    }
+
     for (const std::size_t eidx : g.in_edges(id)) {
       const Edge& e = g.edge(eidx);
       const std::string port_name = g.port_name(e.to_port);
@@ -362,7 +389,7 @@ CompiledGraph Compiler::compile(const Graph& g) const {
         throw std::runtime_error("Compiler: pipeline node cast failed for node " +
                                  std::to_string(id) + " (kind='" + node->kind() + "')");
       OutputSpec in_spec = inputs.empty() ? OutputSpec{} : inputs[0];
-      OutputSpec out_spec = derive_output_spec(pn->group(), in_spec);
+      OutputSpec out_spec = derive_output_spec(pn->nodes(), in_spec);
       for (const PortId pid : out_port_ids) {
         node_outputs[id][pid] = out_spec;
       }
@@ -393,6 +420,12 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       const auto& es = out.edge_specs[seg.input_edges[0]];
       seg.input_spec = es.spec;
       seg.input_complete = es.complete;
+    } else if (!seg.node_ids.empty()) {
+      auto root_it = opt.root_input_specs.find(seg.node_ids.front());
+      if (root_it != opt.root_input_specs.end()) {
+        seg.input_spec = root_it->second;
+        seg.input_complete = spec_complete_(seg.input_spec);
+      }
     }
     if (!seg.output_edges.empty()) {
       const auto& es = out.edge_specs[seg.output_edges[0]];

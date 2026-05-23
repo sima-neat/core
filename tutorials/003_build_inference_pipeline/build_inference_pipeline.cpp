@@ -1,4 +1,4 @@
-// Build a minimal Session (Input -> Output), run a frame, read the tensor rank.
+// Build a minimal Graph (Input -> Output), run a frame, read the tensor rank.
 //
 // Usage:
 //   tutorial_003_build_inference_pipeline [--width <w>] [--height <h>]
@@ -53,11 +53,11 @@ int main(int argc, char** argv) {
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
     // CORE LOGIC
-    // Compose a Session from Input and Output nodes, then build+run one frame.
-    simaai::neat::Session session;
-    session.add(simaai::neat::nodes::Input(in));
-    session.add(simaai::neat::nodes::Output());
-    auto run = session.build(std::vector<cv::Mat>{input}, simaai::neat::RunMode::Sync, run_opt);
+    // Compose a Graph from Input and Output nodes, then build+run one frame.
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::nodes::Input(in));
+    graph.add(simaai::neat::nodes::Output());
+    auto run = graph.build(std::vector<cv::Mat>{input}, simaai::neat::RunMode::Sync, run_opt);
     simaai::neat::TensorList sample = run.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/1000);
     // END CORE LOGIC
 

@@ -1,5 +1,5 @@
 #include "pipeline/ErrorCodes.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "runtime_test_utils.h"
@@ -22,22 +22,22 @@ simaai::neat::Run make_async_rgb_run_with_copy_input(const simaai::neat::Tensor&
                                                      int queue_depth = 1) {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
-  session.add(nodes::Input(src_opt));
-  session.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Input(src_opt));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
 
   RunOptions run_opt;
   run_opt.queue_depth = queue_depth;
   run_opt.overflow_policy = OverflowPolicy::Block;
   run_opt.advanced.copy_input = true;
-  return session.build(TensorList{seed}, RunMode::Async, run_opt);
+  return graph.build(TensorList{seed}, RunMode::Async, run_opt);
 }
 
 } // namespace
@@ -138,10 +138,10 @@ RUN_TEST(
         Sample copy_msg;
         copy_msg.kind = SampleKind::Tensor;
         copy_msg.tensor = seed;
-        copy_msg.media_type = "video/x-raw";
+        copy_msg.payload_type = PayloadType::Image;
         copy_msg.format = "RGB";
         try {
-          require(run.try_push(SampleList{copy_msg}),
+          require(run.try_push(Sample{copy_msg}),
                   run_api_case("active_try_push_sample_copy",
                                "Run::try_push(Sample copy) should succeed"));
         } catch (const std::exception& e) {
@@ -248,7 +248,7 @@ RUN_TEST(
                              "holder sample path should produce holder-backed tensor"));
 
         try {
-          require(holder_sample_run.try_push(SampleList{first}),
+          require(holder_sample_run.try_push(Sample{first}),
                   run_api_case("active_try_push_sample_holder",
                                "Run::try_push(Sample holder) should succeed"));
         } catch (const std::exception& e) {
@@ -270,14 +270,14 @@ RUN_TEST(
 
       // Sync contract: run() only, no push/pull.
       {
-        Session session;
+        Graph graph;
         InputOptions src_opt;
-        src_opt.media_type = "application/vnd.simaai.tensor";
+        src_opt.payload_type = simaai::neat::PayloadType::Tensor;
         src_opt.format = simaai::neat::FormatTag::RGB;
-        session.add(nodes::Input(src_opt));
-        session.add(nodes::Output(OutputOptions::EveryFrame(16)));
+        graph.add(nodes::Input(src_opt));
+        graph.add(nodes::Output(OutputOptions::EveryFrame(16)));
 
-        Run sync_run = session.build(TensorList{seed}, RunMode::Sync);
+        Run sync_run = graph.build(TensorList{seed}, RunMode::Sync);
         require(sima_test::throws_with([&]() { (void)sync_run.push(TensorList{seed}); },
                                        "not allowed in sync mode"),
                 run_api_case("sync_push_tensor_throws", "Run::push should throw in sync mode"));
@@ -302,22 +302,22 @@ RUN_TEST(
 
       // Format/depth mismatch path.
       {
-        Session session;
+        Graph graph;
         InputOptions src_opt;
-        src_opt.media_type = "video/x-raw";
+        src_opt.payload_type = simaai::neat::PayloadType::Image;
         src_opt.format = simaai::neat::FormatTag::RGB;
         src_opt.use_simaai_pool = false;
         src_opt.max_width = 96;
         src_opt.max_height = 96;
         src_opt.max_depth = 3;
-        session.add(nodes::Input(src_opt));
-        session.add(nodes::Output(OutputOptions::EveryFrame(32)));
+        graph.add(nodes::Input(src_opt));
+        graph.add(nodes::Output(OutputOptions::EveryFrame(32)));
 
         RunOptions run_opt;
         run_opt.queue_depth = 8;
 
         cv::Mat rgb_seed(48, 64, CV_8UC3, cv::Scalar(20, 40, 60));
-        Run run = session.build(std::vector<cv::Mat>{rgb_seed}, RunMode::Async, run_opt);
+        Run run = graph.build(std::vector<cv::Mat>{rgb_seed}, RunMode::Async, run_opt);
 
         bool threw = false;
         std::string msg;
@@ -338,16 +338,16 @@ RUN_TEST(
 
       // Empty input build path.
       {
-        Session session;
+        Graph graph;
         InputOptions src_opt;
-        src_opt.media_type = "video/x-raw";
+        src_opt.payload_type = simaai::neat::PayloadType::Image;
         src_opt.format = simaai::neat::FormatTag::RGB;
         src_opt.use_simaai_pool = false;
         src_opt.max_width = 96;
         src_opt.max_height = 96;
         src_opt.max_depth = 3;
-        session.add(nodes::Input(src_opt));
-        session.add(nodes::Output(OutputOptions::EveryFrame(32)));
+        graph.add(nodes::Input(src_opt));
+        graph.add(nodes::Output(OutputOptions::EveryFrame(32)));
 
         RunOptions run_opt;
         run_opt.queue_depth = 8;
@@ -356,9 +356,9 @@ RUN_TEST(
             sima_test::throws_with(
                 [&]() {
                   cv::Mat empty;
-                  (void)session.build(std::vector<cv::Mat>{empty}, RunMode::Async, run_opt);
+                  (void)graph.build(std::vector<cv::Mat>{empty}, RunMode::Async, run_opt);
                 },
                 "empty image input at index 0"),
-            run_api_case("empty_input_build", "Session::build should reject empty cv::Mat input"));
+            run_api_case("empty_input_build", "Graph::build should reject empty cv::Mat input"));
       }
     }));

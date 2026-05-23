@@ -241,7 +241,7 @@ export default function SearchBar() {
             <div className={styles.status}>No matches found.</div>
           )}
           {!loading && !error && !query.trim() && (
-            <div className={styles.status}>Try terms like "session", "build", or "RunStats".</div>
+            <div className={styles.status}>Try terms like "graph", "build", or "RunStats".</div>
           )}
 
           {!loading && !error && groupedHits.length > 0 && (

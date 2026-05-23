@@ -8,13 +8,13 @@
  * for each arriving sample and `on_tick()` periodically; the stage emits zero or more
  * `StageOutMsg`s back to the runtime, which routes them on outgoing edges.
  *
- * @see Graph, GraphSession, GraphRun
+ * @see Graph, build, GraphRun
  * @see "Runtime graph stages" (§73 / §84 of the design deep dive)
  */
 #pragma once
 
 #include "graph/GraphTypes.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include <cstdint>
 #include <string>

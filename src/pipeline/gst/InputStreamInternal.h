@@ -299,9 +299,9 @@ BuiltBuffer build_buffer_with_fill(
     const std::optional<int64_t>& orig_input_seq_override,
     const std::optional<std::string>& stream_id_override,
     const std::optional<std::string>& buffer_name_override,
-    const std::optional<uint64_t>& timestamp_override,
-    const std::function<void(GstBuffer**)>& prepare, bool record_timings, const char* op_tag,
-    bool release_reuse_buffer_on_fail, int input_width = -1, int input_height = -1);
+    const SampleTimingOverrides& timing_override, const std::function<void(GstBuffer**)>& prepare,
+    bool record_timings, const char* op_tag, bool release_reuse_buffer_on_fail,
+    int input_width = -1, int input_height = -1);
 
 void apply_video_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);
 void apply_tensor_size_or_throw(GstBuffer** buffer, const SampleSpec& spec, const char* where);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compose a Session from input + output nodes, build a Run, invoke it once.
+"""Compose a Graph from input + output nodes, build a Run, invoke it once.
 
 Usage:
   python3 build_inference_pipeline.py [--width 320] [--height 240]
@@ -34,15 +34,15 @@ def main(argv: list[str]) -> int:
   inp.do_timestamp = True
 
   # CORE LOGIC
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(inp))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(inp))
+  graph.add(pyneat.nodes.output())
 
   rgb = np.full((args.height, args.width, 3), 33, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
-  run = session.build(tensor, pyneat.RunMode.Sync)
-  sample = run.run(tensor, timeout_ms=1000)
+  run = graph.build([tensor], pyneat.RunMode.Sync)
+  sample = run.run([tensor], timeout_ms=1000)
   # END CORE LOGIC
 
   print(f"output_rank={len(sample.tensor.shape)}")

@@ -62,13 +62,13 @@ RUN_TEST("optiview_json_udp_integration_test", ([] {
            using nlohmann::json;
            using simaai::neat::nodes::groups::OptiViewJsonInput;
            using simaai::neat::nodes::groups::OptiViewJsonResult;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+           using simaai::neat::nodes::groups::OptiViewOutputGraph;
+           using simaai::neat::nodes::groups::OptiViewOutputGraphOptions;
 
            sima_test::UdpReceiver rx;
 
-           OptiViewOutputNodeGroup group;
-           OptiViewOutputNodeGroupOptions opt;
+           OptiViewOutputGraph group;
+           OptiViewOutputGraphOptions opt;
            opt.send_json = true;
            opt.udp.h264_caps =
                "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
@@ -88,11 +88,11 @@ RUN_TEST("optiview_json_udp_integration_test", ([] {
                throw std::runtime_error(
                    "Skipping OptiView JSON UDP integration due runtime limitations: " + init_err);
              }
-             throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+             throw std::runtime_error("OptiViewOutputGraph init failed: " + init_err);
            }
 
            struct Guard {
-             OptiViewOutputNodeGroup* g = nullptr;
+             OptiViewOutputGraph* g = nullptr;
              ~Guard() {
                if (!g)
                  return;

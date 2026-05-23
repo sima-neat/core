@@ -101,6 +101,9 @@ enum class TensorMemory {
   Auto,
 };
 
+/// Short public alias for memory placement in Tensor/Sample constructors.
+using Memory = TensorMemory;
+
 /**
  * @brief Role of a plane within a composite (multi-plane) tensor.
  *
@@ -146,6 +149,9 @@ struct ImageSpec {
   PixelFormat format = PixelFormat::UNKNOWN; ///< Pixel format of the image data.
   std::string color_space; ///< Color space hint (e.g., `"bt709"`, `"srgb"`); empty = unspecified.
 };
+
+/// Short public alias for image pixel format in Tensor/Sample constructors.
+using ImageType = ImageSpec::PixelFormat;
 
 /// Audio-tensor metadata: sample rate, channel count, interleaving.
 struct AudioSpec {
@@ -308,14 +314,13 @@ struct PreprocessRuntimeMeta {
  * @ingroup tensors
  */
 struct Semantic {
-  std::optional<ImageSpec> image;     ///< Set for image tensors.
-  std::optional<AudioSpec> audio;     ///< Set for audio tensors.
-  std::optional<TokensSpec> tokens;   ///< Set for token-stream tensors (NLP).
-  std::optional<ByteStreamSpec>
-      byte_stream;                    ///< Set for opaque raw-byte tensors.
-  std::optional<TessSpec> tess;       ///< Set for tessellated tile-layout tensors.
-  std::optional<EncodedSpec> encoded; ///< Set for encoded-stream tensors (H.264, etc.).
-  std::optional<QuantSpec> quant;     ///< Set for quantized integer tensors.
+  std::optional<ImageSpec> image;            ///< Set for image tensors.
+  std::optional<AudioSpec> audio;            ///< Set for audio tensors.
+  std::optional<TokensSpec> tokens;          ///< Set for token-stream tensors (NLP).
+  std::optional<ByteStreamSpec> byte_stream; ///< Set for opaque raw-byte tensors.
+  std::optional<TessSpec> tess;              ///< Set for tessellated tile-layout tensors.
+  std::optional<EncodedSpec> encoded;        ///< Set for encoded-stream tensors (H.264, etc.).
+  std::optional<QuantSpec> quant;            ///< Set for quantized integer tensors.
   std::optional<PreprocessRuntimeMeta>
       preprocess; ///< Set when the tensor was produced by a preprocess stage.
 };

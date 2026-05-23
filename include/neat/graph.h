@@ -1,15 +1,13 @@
 /**
  * @file
- * @brief Umbrella include for SiMa NEAT's graph layer.
+ * @brief Advanced/internal umbrella include for SiMa NEAT's lower-level runtime graph layer.
  *
- * Pulls in everything needed to build, compile, and run a Graph: the Graph class itself,
- * the GraphDsl construction helpers, GraphSession/GraphRun runtime types, the Compiler,
- * the StageExecutor and StreamScheduler, the runtime building blocks (BlockingQueue,
- * StageMailbox, StrictSync), and the canonical Graph node implementations (PipelineNode,
- * StageNode, FanOut, JoinBundle, JoinEncodedWithMeta, LambdaStage, Map, StageModelExecutor,
- * StampFrameId, StreamMetadata, plus the Adapters glue).
+ * Normal application composition should use `simaai::neat::Graph` from `<neat.h>` /
+ * `pipeline/Graph.h`. This header exposes the lower-level runtime substrate used by the
+ * public Graph compiler: graph::build/GraphRun, StageExecutor, scheduler/mailbox helpers,
+ * and internal runtime nodes.
  *
- * Include this header instead of cherry-picking individual graph subsystem headers.
+ * Include this header only for runtime/compiler internals or focused internal tests.
  */
 #pragma once
 
@@ -20,7 +18,7 @@
 #include "graph/GraphMetadata.h"
 #include "graph/GraphPrinter.h"
 #include "graph/GraphRun.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/GraphTypes.h"
 #include "graph/Node.h"
 #include "graph/StageExecutor.h"

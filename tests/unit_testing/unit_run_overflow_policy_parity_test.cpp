@@ -1,7 +1,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -30,23 +30,23 @@ simaai::neat::Run make_async_rgb_run_with_policy(const simaai::neat::Tensor& see
                                                  int queue_depth = 1) {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
-  session.add(nodes::Input(src_opt));
-  session.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Input(src_opt));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
 
   RunOptions run_opt;
   run_opt.queue_depth = queue_depth;
   run_opt.overflow_policy = overflow_policy;
   run_opt.advanced.copy_input = true;
 
-  return session.build(TensorList{seed}, RunMode::Async, run_opt);
+  return graph.build(TensorList{seed}, RunMode::Async, run_opt);
 }
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
@@ -89,7 +89,7 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
       ok = run.try_push(TensorList{seed});
       break;
     case PushPath::Sample:
-      ok = run.try_push(SampleList{sample_seed});
+      ok = run.try_push(Sample{sample_seed});
       break;
     case PushPath::Holder:
       ok = run.try_push_holder(holder);

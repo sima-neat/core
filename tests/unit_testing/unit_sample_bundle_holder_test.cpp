@@ -150,7 +150,7 @@ int main() {
     simaai::neat::Sample single_tensor =
         simaai::neat::sample_from_tensors(simaai::neat::TensorList{tensor_set.tensors.front()});
     single_tensor.owned = true;
-    single_tensor.media_type = "application/vnd.simaai.tensor";
+    single_tensor.payload_type = simaai::neat::PayloadType::Tensor;
     single_tensor.segment_name = tensor_set.tensors.front().route.segment_name;
     single_tensor.stream_label = tensor_set.tensors.front().route.name;
     std::shared_ptr<void> single_holder =

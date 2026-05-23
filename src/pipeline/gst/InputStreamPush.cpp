@@ -269,9 +269,10 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
 SampleSpec derive_mat_spec_or_throw(const cv::Mat& contiguous, const InputOptions& relaxed) {
   SampleSpec spec;
   const bool float_input = contiguous.depth() == CV_32F && contiguous.channels() > 0;
-  spec.media_type = relaxed.media_type.empty()
+  const std::string relaxed_media = resolve_input_media_type(relaxed);
+  spec.media_type = relaxed_media.empty()
                         ? (float_input ? "application/vnd.simaai.tensor" : "video/x-raw")
-                        : relaxed.media_type;
+                        : relaxed_media;
   spec.required_bytes_actual = 0;
   if (spec.media_type == "video/x-raw") {
     spec.kind = SampleMediaKind::RawVideo;
@@ -414,7 +415,7 @@ void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& s
                                          const MessageMetaOverrides& meta,
                                          const std::optional<int64_t>& input_seq_override,
                                          const std::optional<int64_t>& orig_input_seq_override,
-                                         const std::optional<uint64_t>& ts_override,
+                                         const SampleTimingOverrides& timing_override,
                                          const InputOptions& src_opt, InputBufferPoolGuard& guard,
                                          const char* where) {
   GstBuffer* const original = buffer ? *buffer : nullptr;
@@ -443,9 +444,13 @@ void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& s
   }
   if (!update_simaai_meta_fields(*buffer, meta.frame_id, input_seq_override,
                                  orig_input_seq_override, meta.stream_id, meta.stream_label,
-                                 ts_override)) {
+                                 timing_override.pts_ns)) {
     throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
                              ": failed to write GstSimaMeta fields");
+  }
+  if (!write_sample_timing_to_gst_buffer(*buffer, timing_override)) {
+    throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
+                             ": failed to write sample timing metadata");
   }
   if (!has_simaai_preprocess_meta(*buffer) && spec.width > 0 && spec.height > 0) {
     (void)apply_simaai_preprocess_meta_template(*buffer, src_opt, spec.width, spec.height);
@@ -595,7 +600,7 @@ bool sima_meta_fields_need_update(GstBuffer* buffer,
                                   const std::optional<int64_t>& orig_input_seq_override,
                                   const std::optional<std::string>& stream_id_override,
                                   const std::optional<std::string>& buffer_name_override,
-                                  const std::optional<uint64_t>& timestamp_override) {
+                                  const SampleTimingOverrides& timing_override) {
   GstCustomMeta* meta = buffer ? gst_buffer_get_custom_meta(buffer, "GstSimaMeta") : nullptr;
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
   if (!s)
@@ -610,6 +615,10 @@ bool sima_meta_fields_need_update(GstBuffer* buffer,
     guint64 current = 0;
     return gst_structure_get_uint64(s, field, &current) != TRUE ||
            current != static_cast<guint64>(expected);
+  };
+  auto boolean_mismatch = [s](const char* field, bool expected) {
+    gboolean current = FALSE;
+    return gst_structure_get_boolean(s, field, &current) != TRUE || (current == TRUE) != expected;
   };
   auto string_mismatch = [s](const char* field, const std::string& expected) {
     const char* current = gst_structure_get_string(s, field);
@@ -635,7 +644,27 @@ bool sima_meta_fields_need_update(GstBuffer* buffer,
   }
   if (buffer_name_override.has_value() && string_mismatch("buffer-name", *buffer_name_override))
     return true;
-  if (timestamp_override.has_value() && uint64_mismatch("timestamp", *timestamp_override))
+  if (timing_override.pts_ns.has_value() && uint64_mismatch("timestamp", *timing_override.pts_ns))
+    return true;
+  if (boolean_mismatch("sample-frame-id-valid", timing_override.frame_id.has_value()))
+    return true;
+  if (timing_override.frame_id.has_value() &&
+      int64_mismatch("sample-frame-id", *timing_override.frame_id))
+    return true;
+  if (boolean_mismatch("sample-pts-valid", timing_override.pts_ns.has_value()))
+    return true;
+  if (timing_override.pts_ns.has_value() &&
+      uint64_mismatch("sample-pts-ns", *timing_override.pts_ns))
+    return true;
+  if (boolean_mismatch("sample-dts-valid", timing_override.dts_ns.has_value()))
+    return true;
+  if (timing_override.dts_ns.has_value() &&
+      uint64_mismatch("sample-dts-ns", *timing_override.dts_ns))
+    return true;
+  if (boolean_mismatch("sample-duration-valid", timing_override.duration_ns.has_value()))
+    return true;
+  if (timing_override.duration_ns.has_value() &&
+      uint64_mismatch("sample-duration-ns", *timing_override.duration_ns))
     return true;
   return false;
 }
@@ -647,7 +676,7 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
                            const std::optional<int64_t>& orig_input_seq_override,
                            const std::optional<std::string>& stream_id_override,
                            const std::optional<std::string>& buffer_name_override,
-                           const std::optional<uint64_t>& timestamp_override,
+                           const SampleTimingOverrides& timing_override,
                            const Sample* fail_msg = nullptr,
                            const SampleSpec* fail_spec = nullptr) {
   GstBuffer* buf = pipeline_internal::buffer_from_tensor_holder(holder);
@@ -679,7 +708,7 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
   }
   const bool need_meta_update = sima_meta_fields_need_update(
       buf, frame_id_override, input_seq_override, orig_input_seq_override, stream_id_override,
-      buffer_name_override, timestamp_override);
+      buffer_name_override, timing_override);
   if (need_meta_update) {
     if (!gst_buffer_is_writable(buf)) {
       buf = gst_buffer_make_writable(buf);
@@ -690,10 +719,14 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
     }
     if (!update_simaai_meta_fields(buf, frame_id_override, input_seq_override,
                                    orig_input_seq_override, stream_id_override,
-                                   buffer_name_override, timestamp_override)) {
+                                   buffer_name_override, timing_override.pts_ns)) {
       throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
                                ": failed to write GstSimaMeta fields");
     }
+  }
+  if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
+    throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
+                             ": failed to write sample timing metadata");
   }
   if (preproc_trace) {
     GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
@@ -762,17 +795,15 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
       orig_input_seq_override);
 }
 
-std::optional<bool>
-admit_copy_payload_nonpush(InputStream::State& st, CapsDecision decision, const char* where,
-                           const SampleSpec& spec,
-                           const std::function<size_t(uint8_t*, size_t)>& fill,
-                           const std::optional<int64_t>& frame_id_override,
-                           const std::optional<int64_t>& input_seq_override,
-                           const std::optional<int64_t>& orig_input_seq_override,
-                           const std::optional<std::string>& stream_id_override,
-                           const std::optional<std::string>& buffer_name_override,
-                           const std::optional<uint64_t>& timestamp_override,
-                           const std::function<void(GstBuffer**)>& prepare) {
+std::optional<bool> admit_copy_payload_nonpush(
+    InputStream::State& st, CapsDecision decision, const char* where, const SampleSpec& spec,
+    const std::function<size_t(uint8_t*, size_t)>& fill,
+    const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const SampleTimingOverrides& timing_override, const std::function<void(GstBuffer**)>& prepare) {
   if (decision != CapsDecision::Queue && decision != CapsDecision::Flush) {
     return std::nullopt;
   }
@@ -780,8 +811,8 @@ admit_copy_payload_nonpush(InputStream::State& st, CapsDecision decision, const 
   const bool record_timings = (decision == CapsDecision::Flush) && st.timing_enabled;
   BuiltBuffer pending = build_buffer_with_fill(
       st, where, fill, spec.required_bytes_actual, frame_id_override, input_seq_override,
-      orig_input_seq_override, stream_id_override, buffer_name_override, timestamp_override,
-      prepare, record_timings, "build_buffer_with_fill", false, spec.width, spec.height);
+      orig_input_seq_override, stream_id_override, buffer_name_override, timing_override, prepare,
+      record_timings, "build_buffer_with_fill", false, spec.width, spec.height);
   queue_pending_buffer(st, pending, spec, where);
   if (decision == CapsDecision::Queue) {
     st.dropped_frames.fetch_add(1, std::memory_order_relaxed);
@@ -795,7 +826,7 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
                               const MessageMetaOverrides& meta,
                               const std::optional<int64_t>& input_seq_override,
                               const std::optional<int64_t>& orig_input_seq_override,
-                              const std::optional<uint64_t>& ts_override) {
+                              const SampleTimingOverrides& timing_override) {
   if (!input.storage) {
     throw std::invalid_argument("InputStream::try_push_message: encoded Sample missing storage");
   }
@@ -845,19 +876,14 @@ bool try_push_message_encoded(InputStream::State& st, const Sample& msg,
   if (timings)
     t_copy_end = std::chrono::steady_clock::now();
 
-  if (msg.pts_ns >= 0) {
-    GST_BUFFER_PTS(buf) = static_cast<GstClockTime>(msg.pts_ns);
-  }
-  if (msg.dts_ns >= 0) {
-    GST_BUFFER_DTS(buf) = static_cast<GstClockTime>(msg.dts_ns);
-  }
-  if (msg.duration_ns >= 0) {
-    GST_BUFFER_DURATION(buf) = static_cast<GstClockTime>(msg.duration_ns);
-  }
-
   attach_required_meta(buf, st.src_opt, st.pool_guard, "InputStream::try_push_message(encoded)");
   update_simaai_meta_fields(buf, meta.frame_id, input_seq_override, orig_input_seq_override,
-                            meta.stream_id, meta.stream_label, ts_override);
+                            meta.stream_id, meta.stream_label, timing_override.pts_ns);
+  if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
+    release_input_buffer(buf, "InputStream::try_push_message:encoded_timing_fail");
+    throw std::runtime_error(
+        "InputStream::try_push_message(encoded): failed to write sample timing metadata");
+  }
 
   std::chrono::steady_clock::time_point t_push_start{};
   if (timings)
@@ -928,7 +954,7 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
                                  CapsDecision decision, const MessageMetaOverrides& meta,
                                  const std::optional<int64_t>& input_seq_override,
                                  const std::optional<int64_t>& orig_input_seq_override,
-                                 const std::optional<uint64_t>& ts_override) {
+                                 const SampleTimingOverrides& timing_override) {
   HolderFastPathResult out;
 
   if (holder_debug_enabled() && input.storage->holder) {
@@ -965,7 +991,7 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     BufferUnrefGuard holder_guard(&holder_buf, "InputStream::try_push_message:holder_guard");
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
-                                          orig_input_seq_override, ts_override, st.src_opt,
+                                          orig_input_seq_override, timing_override, st.src_opt,
                                           st.pool_guard, "InputStream::try_push_message(holder)");
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
@@ -992,7 +1018,7 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     BufferUnrefGuard holder_guard(&holder_buf, "InputStream::try_push_message:holder_guard");
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
-                                          orig_input_seq_override, ts_override, st.src_opt,
+                                          orig_input_seq_override, timing_override, st.src_opt,
                                           st.pool_guard, "InputStream::try_push_message(holder)");
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
@@ -1020,7 +1046,7 @@ CpuZeroCopyFastPathResult try_push_message_cpu_owned_zero_copy_fastpath(
     const SampleSpec& spec, CapsDecision decision, const MessageMetaOverrides& meta,
     const std::optional<int64_t>& input_seq_override,
     const std::optional<int64_t>& orig_input_seq_override,
-    const std::optional<uint64_t>& ts_override, const std::function<void(GstBuffer**)>& prepare) {
+    const SampleTimingOverrides& timing_override, const std::function<void(GstBuffer**)>& prepare) {
   CpuZeroCopyFastPathResult out;
 
   // Keep v1 surgical: only bypass the memcpy for stable caps/push frames and
@@ -1058,9 +1084,13 @@ CpuZeroCopyFastPathResult try_push_message_cpu_owned_zero_copy_fastpath(
           "InputStream::try_push_message(cpu_zc): failed to attach GstSimaMeta");
     }
     if (!update_simaai_meta_fields(buf, meta.frame_id, input_seq_override, orig_input_seq_override,
-                                   meta.stream_id, meta.stream_label, ts_override)) {
+                                   meta.stream_id, meta.stream_label, timing_override.pts_ns)) {
       throw std::runtime_error(
           "InputStream::try_push_message(cpu_zc): failed to write GstSimaMeta fields");
+    }
+    if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
+      throw std::runtime_error(
+          "InputStream::try_push_message(cpu_zc): failed to write sample timing metadata");
     }
     if (!has_simaai_preprocess_meta(buf) && spec.width > 0 && spec.height > 0) {
       (void)apply_simaai_preprocess_meta_template(buf, st.src_opt, spec.width, spec.height);
@@ -1145,14 +1175,14 @@ bool InputStream::try_push(const cv::Mat& input) {
   };
   if (auto admitted = admit_copy_payload_nonpush(
           *state_, decision, "InputStream::try_push(mat)", spec, fill, std::nullopt, seq.input_seq,
-          seq.orig_input_seq, std::nullopt, std::nullopt, std::nullopt, prepare);
+          seq.orig_input_seq, std::nullopt, std::nullopt, SampleTimingOverrides{}, prepare);
       admitted.has_value()) {
     return *admitted;
   }
 
   return push_with_fill("InputStream::try_push(mat)", fill, input_bytes, std::nullopt,
-                        seq.input_seq, seq.orig_input_seq, std::nullopt, std::nullopt, std::nullopt,
-                        prepare, spec.width, spec.height);
+                        seq.input_seq, seq.orig_input_seq, std::nullopt, std::nullopt,
+                        SampleTimingOverrides{}, prepare, spec.width, spec.height);
 }
 
 void InputStream::push(const simaai::neat::Tensor& input) {
@@ -1194,6 +1224,20 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
 
   const Sample transport_msg = pipeline_internal::canonicalize_tensor_transport_sample(msg);
+  if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
+    std::fprintf(
+        stderr,
+        "[SAMPLE_TIMING] inputstream_try_push incoming_kind=%d transport_kind=%d "
+        "incoming_frame=%lld transport_frame=%lld incoming_pts=%lld transport_pts=%lld "
+        "incoming_dts=%lld transport_dts=%lld incoming_dur=%lld transport_dur=%lld "
+        "stream_id=%s\n",
+        static_cast<int>(msg.kind), static_cast<int>(transport_msg.kind),
+        static_cast<long long>(msg.frame_id), static_cast<long long>(transport_msg.frame_id),
+        static_cast<long long>(msg.pts_ns), static_cast<long long>(transport_msg.pts_ns),
+        static_cast<long long>(msg.dts_ns), static_cast<long long>(transport_msg.dts_ns),
+        static_cast<long long>(msg.duration_ns), static_cast<long long>(transport_msg.duration_ns),
+        transport_msg.stream_id.c_str());
+  }
   const bool tensor_like_message =
       sample_has_tensor_list(transport_msg) || transport_msg.kind == SampleKind::Bundle;
   const bool allow_zero_copy_transport = !state_->opt.copy_input;
@@ -1211,10 +1255,7 @@ bool InputStream::try_push_message(const Sample& msg) {
       sample_has_tensor_list(transport_msg) && !transport_msg.tensors.empty()
           ? &transport_msg.tensors.front()
           : nullptr;
-  const std::optional<uint64_t> ts_override =
-      transport_msg.pts_ns >= 0
-          ? std::optional<uint64_t>(static_cast<uint64_t>(transport_msg.pts_ns))
-          : std::nullopt;
+  const SampleTimingOverrides timing_override = sample_timing_overrides_from_sample(transport_msg);
   cache_preprocess_meta(*st, transport_msg, seq.input_seq, seq.orig_input_seq);
   SampleSpec spec = derive_sample_spec_or_throw(transport_msg);
   const bool use_tensor_envelope_transport = spec.tensor_envelope_transport;
@@ -1249,7 +1290,7 @@ bool InputStream::try_push_message(const Sample& msg) {
       throw std::runtime_error("InputStream::try_push_message: encoded sample missing tensor");
     }
     return try_push_message_encoded(*st, msg, *input_tensor, spec, meta, seq.input_seq,
-                                    seq.orig_input_seq, ts_override);
+                                    seq.orig_input_seq, timing_override);
   }
 
   if (use_tensor_envelope_transport) {
@@ -1289,7 +1330,7 @@ bool InputStream::try_push_message(const Sample& msg) {
     const bool ok = push_holder_transport(
         *st, holder, "InputStream::try_push_message(holder_envelope)",
         /*record_timings=*/st->timing_enabled, meta.frame_id, seq.input_seq, seq.orig_input_seq,
-        meta.stream_id, meta.stream_label, ts_override, &transport_msg, &spec);
+        meta.stream_id, meta.stream_label, timing_override, &transport_msg, &spec);
     if (inputstream_top_timing) {
       const auto inputstream_end = std::chrono::steady_clock::now();
       const auto pre_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -1325,7 +1366,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   HolderFastPathResult holder_result;
   if (allow_zero_copy_transport) {
     holder_result = try_push_message_holder_fastpath(
-        *st, msg, input, spec, decision, meta, seq.input_seq, seq.orig_input_seq, ts_override);
+        *st, msg, input, spec, decision, meta, seq.input_seq, seq.orig_input_seq, timing_override);
   }
   if (holder_result.handled.has_value()) {
     return *holder_result.handled;
@@ -1359,7 +1400,7 @@ bool InputStream::try_push_message(const Sample& msg) {
 
   if (allow_zero_copy_transport && cpu_owned_zero_copy_input_enabled()) {
     CpuZeroCopyFastPathResult cpu_zc_result = try_push_message_cpu_owned_zero_copy_fastpath(
-        *st, msg, input, spec, decision, meta, seq.input_seq, seq.orig_input_seq, ts_override,
+        *st, msg, input, spec, decision, meta, seq.input_seq, seq.orig_input_seq, timing_override,
         prepare);
     if (cpu_zc_result.handled.has_value()) {
       maybe_drop_holder_after_push(input, "InputStream::try_push_message(cpu_zc)");
@@ -1385,7 +1426,7 @@ bool InputStream::try_push_message(const Sample& msg) {
 
   if (auto admitted = admit_copy_payload_nonpush(
           *st, decision, "InputStream::try_push_message", spec, fill, meta.frame_id, seq.input_seq,
-          seq.orig_input_seq, meta.stream_id, meta.stream_label, ts_override, prepare);
+          seq.orig_input_seq, meta.stream_id, meta.stream_label, timing_override, prepare);
       admitted.has_value()) {
     return *admitted;
   }
@@ -1401,7 +1442,7 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
   const bool pushed = push_with_fill(where, fill, input_bytes, meta.frame_id, seq.input_seq,
                                      seq.orig_input_seq, meta.stream_id, meta.stream_label,
-                                     ts_override, prepare, spec.width, spec.height);
+                                     timing_override, prepare, spec.width, spec.height);
   if (pushed) {
     maybe_drop_holder_after_push(input, "InputStream::try_push_message(copy)");
   }
@@ -1429,6 +1470,6 @@ bool InputStream::try_push_holder(const std::shared_ptr<void>& holder) {
   const SeqOverrides seq = next_seq_overrides(*st);
   return push_holder_transport(*st, holder, "InputStream::try_push_holder", st->timing_enabled,
                                std::nullopt, seq.input_seq, seq.orig_input_seq, std::nullopt,
-                               std::nullopt, std::nullopt);
+                               std::nullopt, SampleTimingOverrides{});
 }
 } // namespace simaai::neat

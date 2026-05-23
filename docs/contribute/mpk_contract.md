@@ -1,30 +1,25 @@
 ---
 title: MPK Contract
-description: Model package ingestion contract, validation, and security rules
+description: Model archive ingestion contract, validation, and security rules
 sidebar_position: 2
 ---
 
 # MPK Contract
 
-This document defines the authoritative contract for MPK/ModelPack ingestion.
+This document defines the authoritative contract for model-archive ingestion and MPK-contract parsing.
 
 ## Scope
 
 The contract applies to:
 
 - `src/model/ModelPack.cpp`
-- `src/mpk/MpKLoader.cpp`
-- `src/mpk/MpKPipelineAdapter.cpp`
-- `src/mpk/PipelineSequence.cpp`
+- `src/model/ModelArchiveLoader.cpp`
+- `src/model/internal/ModelArchiveLoader.h`
+- `src/pipeline/internal/sima/MpkContract.cpp`
 
-## Accepted Archive Formats
+## Accepted Archive Format
 
-Accepted package extensions:
-
-- `.tar.gz`
-- `.tgz`
-- `.mpk`
-- `.tar`
+Accepted package extension: exact lowercase `.tar.gz` only. `.mpk`, `.tgz`, `.tar`, and bare `.gz` are rejected before tar inspection.
 
 Archive requirements:
 
@@ -45,8 +40,8 @@ Allowed extracted file classes:
 
 Required package content:
 
-- `pipeline_sequence.json`
-- At least one additional `*.json` stage config file
+- The MPK inference contract (`mpk.json` or `*_mpk.json`)
+- Loader-side stage/config JSON needed by the runtime
 - At least one model binary artifact (`*.elf` or `*.so`)
 
 ## Extraction Safety Rules
@@ -102,7 +97,7 @@ Extraction behavior:
 
 ## Error Taxonomy
 
-All MPK ingestion failures must map to one of the following classes:
+All model-archive or MPK-contract ingestion failures must map to one of the following classes:
 
 - `invalid_archive`
 - `path_traversal`
@@ -116,8 +111,8 @@ Public error messages must include the taxonomy key so tests can assert determin
 
 - Sequence ordering must be deterministic across repeated runs.
 - Fixture archives under `tests/assets/mpk` must be reproducible bit-for-bit.
-- Fixture manifest checksums in `tests/assets/mpk/fixtures_manifest.json` are the source of truth.
+- Generated fixture manifest checksums under `test-assets/model-archive/fixtures_manifest.json` are the source of truth for build-tree security fixtures.
 
 ## Test Mapping Requirement
 
-Every negative MPK test must assert one of the taxonomy keys above.
+Every negative model-archive/MPK-contract test must assert one of the taxonomy keys above.

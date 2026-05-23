@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -56,6 +56,7 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
   bundle.kind = SampleKind::TensorSet;
   bundle.owned = canonical.owned;
   bundle.caps_string = canonical.caps_string;
+  bundle.payload_type = canonical.payload_type;
   bundle.media_type = canonical.media_type;
   bundle.payload_tag = canonical.payload_tag;
   bundle.format = canonical.format;

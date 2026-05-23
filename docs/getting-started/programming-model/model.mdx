@@ -1,6 +1,6 @@
 ---
 title: Model
-description: Load compiled model packs and produce runnable model stages
+description: Load compiled model archives and produce runnable model stages
 sidebar_position: 2
 ---
 
@@ -12,7 +12,7 @@ Use `Model` when you want model-aware pipeline assembly without manually wiring 
 
 ## What `Model` gives you
 
-- `session()`: full model path as a node group.
+- `graph()`: full model path as a node group.
 - `preprocess()`, `inference()`, `postprocess()`: stage-level composition.
 - `input_spec()` and `output_spec()`: tensor contract introspection.
 - `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
@@ -20,9 +20,9 @@ Use `Model` when you want model-aware pipeline assembly without manually wiring 
 Reference:
 - [`Model` API](/reference/{lsa}/classes/simaai-neat-model)
 - [`Model::Options`](/reference/{lsa}/structs/simaai-neat-model-options)
-- [`Model::SessionOptions`](/reference/{lsa}/structs/simaai-neat-model-sessionoptions)
+- [`Model::RouteOptions`](/reference/{lsa}/structs/simaai-neat-model-routeoptions)
 
-## Typical usage inside a session
+## Typical usage inside a Graph
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -30,8 +30,8 @@ Reference:
 ```cpp
 simaai::neat::Model model("yolov8s_model.tar.gz");
 
-simaai::neat::Session session;
-session.add(model.session());
+simaai::neat::Graph graph;
+graph.add(model.graph());
 ```
 
 </CodeTab>
@@ -41,8 +41,8 @@ session.add(model.session());
 # Pseudo Python model example.
 model = Model("yolov8s_model.tar.gz")
 
-session = Session()
-session.add(model.session())
+graph = Graph()
+graph.add(model.graph())
 ```
 
 </CodeTab>
@@ -50,11 +50,11 @@ session.add(model.session())
 
 ## Failure handling
 
-Model-driven sessions use the same diagnostics contract as raw `Session`:
+Model-driven Graphs use the same diagnostics contract as raw `Graph`:
 
-- `SessionError.report().error_code` for terminal failures
-- `SessionError.report().repro_note` for actionable context + hints
-- `SessionError.report().bus` for plugin/runtime detail
+- `NeatError.report().error_code` for terminal failures
+- `NeatError.report().repro_note` for actionable context + hints
+- `NeatError.report().bus` for plugin/runtime detail
 
 Start triage from `error_code` (`misconfig.*`, `build.*`, `runtime.*`, `io.*`)
 before inspecting detailed bus logs.
@@ -62,7 +62,7 @@ before inspecting detailed bus logs.
 ## See also
 
 - [Inference Workflow](/getting-started/programming-model/overview)
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Pipeline](/getting-started/programming-model/pipeline)
 
 ## Tutorials

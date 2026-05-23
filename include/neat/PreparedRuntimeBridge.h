@@ -76,6 +76,7 @@ struct GraphProcessCvuStageRequest {
   int input_stride = 0;
   int output_stride = 0;
   int input_offset = 0;
+  int pad_value = 0;
   std::string input_img_type;
   std::string output_img_type;
   std::string scaling_type;

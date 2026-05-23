@@ -1,6 +1,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -33,22 +33,22 @@ void require_timeout_window(const char* op_name, int measured_ms, int timeout_ms
 RUN_TEST("pull_timeout_regression_test", [] {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions input_opt;
-  input_opt.media_type = "video/x-raw";
+  input_opt.payload_type = simaai::neat::PayloadType::Image;
   input_opt.format = simaai::neat::FormatTag::RGB;
   input_opt.use_simaai_pool = false;
   input_opt.max_width = 96;
   input_opt.max_height = 96;
   input_opt.max_depth = 3;
-  session.add(nodes::Input(input_opt));
-  session.add(nodes::Output(OutputOptions::Latest()));
+  graph.add(nodes::Input(input_opt));
+  graph.add(nodes::Output(OutputOptions::Latest()));
 
   RunOptions run_opt;
   run_opt.queue_depth = 8;
 
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x33);
-  Run run = session.build(TensorList{seed}, RunMode::Async, run_opt);
+  Run run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
 
   const int timeout_ms = 120;
   {

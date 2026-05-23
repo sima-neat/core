@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/io/Input.h"
@@ -8,6 +8,7 @@
 #include "e2e_pipelines/e2e_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
+#include "gst/GstInit.h"
 #include "test_utils.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -187,6 +188,12 @@ cv::Mat maybe_resize_benchmark_input(const cv::Mat& img, const AsyncTestConfig& 
   return resized;
 }
 
+simaai::neat::TensorList make_ev74_image_input(const cv::Mat& img) {
+  simaai::neat::gst_init_once();
+  return simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
+      img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)};
+}
+
 std::vector<objdet::ExpectedBox>
 scale_expected_boxes(const std::vector<objdet::ExpectedBox>& expected, int src_w, int src_h,
                      int dst_w, int dst_h) {
@@ -246,10 +253,11 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
                                  const AsyncTestConfig& cfg) {
   RunSummary res;
 
-  require(!tar_gz.empty(), "Failed to locate yolo_v8s MPK tarball");
+  require(!tar_gz.empty(), "Failed to locate yolo_v8s model archive");
   require(!source_img.empty(), "Missing YOLOv8 input image");
 
   const cv::Mat img = maybe_resize_benchmark_input(source_img, cfg);
+  const simaai::neat::TensorList ev74_input = make_ev74_image_input(img);
 
   simaai::neat::Model::Options model_opt;
   model_opt.preprocess.kind = simaai::neat::InputKind::Image;
@@ -265,7 +273,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   }
   auto model = simaai::neat::Model(tar_gz, model_opt);
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
 
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
@@ -284,7 +292,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
 
   step_log("async: before build");
   const auto build_start = std::chrono::steady_clock::now();
-  auto async = p.build(std::vector<cv::Mat>{img});
+  auto async = p.build(ev74_input);
   const auto build_end = std::chrono::steady_clock::now();
   step_log("async: after build");
 
@@ -303,7 +311,9 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   try {
     step_log("async: before warmup");
     const auto warmup_start = std::chrono::steady_clock::now();
-    async.warmup(std::vector<cv::Mat>{img}, cfg.warm, warm_timeout_ms);
+    for (int i = 0; i < cfg.warm; ++i) {
+      (void)async.run(ev74_input, warm_timeout_ms);
+    }
     const auto warmup_end = std::chrono::steady_clock::now();
     if (profile.enabled) {
       profile.warmup_ms = ns_to_ms(duration_ns(warmup_start, warmup_end));
@@ -318,7 +328,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
 
   for (int i = 0; i < std::max(0, cfg.excluded_preproc_dispatches); ++i) {
     step_log("async: prime preproc dispatch");
-    if (!async.push(std::vector<cv::Mat>{img})) {
+    if (!async.push(ev74_input)) {
       res.ok = false;
       append_note(res.note, "primer_push_failed");
       res.diagnostics = maybe_collect_run_report(async, cfg.profile_emit_run_report);
@@ -381,7 +391,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   const int seed = std::min(inflight, cfg.iters);
   for (; pushed_count < seed; ++pushed_count) {
     const auto push_start = std::chrono::steady_clock::now();
-    const bool pushed = async.push(std::vector<cv::Mat>{img});
+    const bool pushed = async.push(ev74_input);
     const auto push_end = std::chrono::steady_clock::now();
     if (profile.enabled) {
       const std::uint64_t ns = duration_ns(push_start, push_end);
@@ -441,7 +451,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
 
       if (pushed_count < cfg.iters) {
         const auto push_start = std::chrono::steady_clock::now();
-        const bool pushed = async.push(std::vector<cv::Mat>{img});
+        const bool pushed = async.push(ev74_input);
         const auto push_end = std::chrono::steady_clock::now();
         if (profile.enabled) {
           const std::uint64_t ns = duration_ns(push_start, push_end);

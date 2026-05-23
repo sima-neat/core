@@ -25,6 +25,7 @@ namespace simaai::neat {
 struct InputOptions;
 struct Sample;
 struct SampleSpec;
+struct SampleTimingOverrides;
 
 namespace pipeline_internal {
 struct DiagCtx;
@@ -133,6 +134,7 @@ public:
   void push_holder(const std::shared_ptr<void>& holder);
   bool try_push_holder(const std::shared_ptr<void>& holder);
   Sample pull(int timeout_ms = -1);
+  void pull_and_discard(int timeout_ms = -1);
   void signal_eos();
   void drain_before_teardown(int timeout_ms);
 
@@ -159,10 +161,10 @@ private:
                       const std::optional<int64_t>& orig_input_seq_override,
                       const std::optional<std::string>& stream_id_override,
                       const std::optional<std::string>& buffer_name_override,
-                      const std::optional<uint64_t>& timestamp_override,
+                      const SampleTimingOverrides& timing_override,
                       const std::function<void(GstBuffer**)>& prepare = {}, int input_width = -1,
                       int input_height = -1);
-  friend class Session;
+  friend class Graph;
   friend class Run;
 };
 

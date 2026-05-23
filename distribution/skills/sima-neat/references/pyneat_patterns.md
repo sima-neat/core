@@ -16,9 +16,9 @@ Use this reference when the user asks for Python application code with Neat.
 ## Preferred generation patterns
 
 - Start with public `pyneat` only.
-- For minimal validation, import `pyneat` and construct `Session`, `Model`, or `Tensor` directly.
+- For minimal validation, import `pyneat` and construct `Graph`, `Model`, or `Tensor` directly.
 - For image/model flows, use `pyneat.ModelOptions()`, `pyneat.Tensor.from_numpy(...)`, and explicit `PixelFormat`.
-- For run loops, build `Session`, set `RunOptions`, and choose output/overflow policy explicitly.
+- For run loops, build `Graph`, set `RunOptions`, and choose output/overflow policy explicitly.
 
 ## Runtime assumptions
 

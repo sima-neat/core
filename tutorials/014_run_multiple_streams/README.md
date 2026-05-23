@@ -10,16 +10,24 @@
 
 ## Concept
 
-Schedule multiple streams through one graph — fair scheduling, fan-out branches, and deterministic bundle re-join. This is the pattern behind any multi-camera or multi-source system built on Neat graphs.
+Run multiple logical streams through one public `Graph` and combine two named inputs into one deterministic bundle output. This is the pattern behind multi-camera or multi-source systems where related inputs must be aligned before downstream processing.
 
-The graph here is: `stamp → stream_scheduler → fan_out → join_bundle`. Each sample is tagged with stream/frame identity, scheduled fairly across streams, branched into parallel paths, and re-joined into a bundle you can pull as one unit.
+The graph here is created with:
+
+```python
+graph = pyneat.graphs.combine(["left", "right"],
+                              "combined",
+                              pyneat.CombinePolicy.ByFrame)
+```
+
+Each pushed sample carries a `stream_id` and `frame_id`. `CombinePolicy.ByFrame` waits until both named inputs have produced the same `frame_id`, then emits one bundle from `run.pull("combined")`.
 
 **APIs introduced**
-- `pyneat.graph.nodes.StreamSchedulerOptions()` with `per_stream_queue`, `drop_policy`.
-- `pyneat.graph.nodes.stream_scheduler(opts, name)` — the fairness primitive.
-- `pyneat.graph.nodes.fan_out(port_names, name)` — split one sample into multiple named branches.
-- `pyneat.graph.nodes.join_bundle(port_names, name, bundle_name)` — re-join branches into one bundle.
-- `pyneat.graph.nodes.StreamDropPolicy.DropOldest` — per-stream overflow policy.
+- `pyneat.graphs.combine(inputs, output, policy)` — build a reusable public Graph fragment.
+- `pyneat.CombinePolicy.ByFrame` — combine samples whose `Sample.frame_id` values match.
+- `pyneat.CombinePolicy.ByPts` — combine samples whose `Sample.pts_ns` presentation timestamps match.
+- `run.push("left", [sample])` / `run.push("right", [sample])` — named multi-input push.
+- `run.pull("combined")` — named output pull.
 
 **When to use this**
 - Multi-camera ingestion where each stream must make progress independently.
@@ -35,9 +43,9 @@ Chapter 012 (Graph basics). Chapter 009 (bundle samples) helps for join semantic
 
 ## Learning Process
 1. Generate deterministic per-stream/per-frame samples with explicit tags.
-2. Build multistream graph with scheduler, fanout, and join stages.
+2. Build a public combine Graph with named inputs and one named output.
 3. Push all expected inputs and pull joined outputs.
-4. Validate output count and bundle cardinality via `CHECK` and `SIGNATURE`.
+4. Validate output count and bundle cardinality.
 
 ## Run
 

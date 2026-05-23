@@ -2,7 +2,7 @@
 
 #include "test_utils.h"
 
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 
@@ -72,7 +72,7 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
     } else if constexpr (std::is_same_v<InputT, simaai::neat::Tensor>) {
       return sample_from_tensors(run.run(TensorList{input}, spec.timeout_ms));
     } else {
-      SampleList outs = run.run(SampleList{input}, spec.timeout_ms);
+      Sample outs = run.run(Sample{input}, spec.timeout_ms);
       require(!outs.empty(), "run() returned no Sample outputs");
       return std::move(outs.front());
     }
@@ -84,13 +84,13 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
     } else if constexpr (std::is_same_v<InputT, simaai::neat::Tensor>) {
       return run.push(TensorList{input});
     } else {
-      return run.push(SampleList{input});
+      return run.push(Sample{input});
     }
   };
 
-  Session p;
+  Graph p;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = spec.format;
   src_opt.use_simaai_pool = false;
   p.add(nodes::Input(src_opt));
@@ -115,7 +115,7 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
     } else if constexpr (std::is_same_v<InputT, simaai::neat::Tensor>) {
       return p.build(TensorList{first}, RunMode::Async, opt);
     } else {
-      return p.build(SampleList{first}, RunMode::Async, opt);
+      return p.build(Sample{first}, RunMode::Async, opt);
     }
   }();
 
@@ -170,9 +170,9 @@ inline void run_inputstream_format_change_test(const InputstreamFormatChangeSpec
   simaai::neat::Tensor rgb = make_color_tensor(
       spec.width, spec.height, simaai::neat::ImageSpec::PixelFormat::RGB, spec.rgb_fill);
 
-  Session p;
+  Graph p;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::Auto;
   src_opt.use_simaai_pool = false;
   p.add(nodes::Input(src_opt));

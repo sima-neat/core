@@ -25,14 +25,14 @@ Many real applications carry more than one input per inference event. Neat repre
 - Debugging wiring issues: inspect `port_name` and field tensor presence on output.
 
 **Prerequisites**
-Chapters 001–003 (Model, Session, Run basics). Chapter 008 (Tensor interop).
+Chapters 001–003 (Model, Graph, Run basics). Chapter 008 (Tensor interop).
 
 **References**
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 
 ## Learning Process
-1. Define a tensor session contract for deterministic multi-field routing.
+1. Define a tensor graph contract for deterministic multi-field routing.
 2. Build a seed run handle, then create a bundle sample with named tensor fields.
 3. Push/pull the bundle and inspect output field structure.
 

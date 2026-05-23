@@ -109,8 +109,8 @@ struct TestRuntimePaths {
   fs::path build_root;
   fs::path source_root;
   fs::path repo_tmp_root;
-  fs::path mpk_fixture_root;
-  fs::path mpk_fixture_manifest;
+  fs::path model_archive_fixture_root;
+  fs::path model_archive_fixture_manifest;
   fs::path decoder_fixture;
 };
 
@@ -195,8 +195,10 @@ inline std::optional<std::string> json_string_field(const std::string& text,
 inline fs::path resolve_manifest_relative_path(const std::string& text, const std::string& key,
                                                const fs::path& build_root) {
   const std::optional<std::string> rel = json_string_field(text, key);
-  if (!rel.has_value() || rel->empty())
+  if (!rel.has_value())
     return {};
+  if (rel->empty())
+    return build_root.lexically_normal();
   const fs::path raw(*rel);
   if (raw.is_absolute())
     return raw;
@@ -235,10 +237,10 @@ inline const TestRuntimePaths& test_runtime_paths() {
             resolve_manifest_relative_path(text, "source_root_rel", value.build_root);
         value.repo_tmp_root =
             resolve_manifest_relative_path(text, "repo_tmp_root_rel", value.build_root);
-        value.mpk_fixture_root =
-            resolve_manifest_relative_path(text, "mpk_fixture_root_rel", value.build_root);
-        value.mpk_fixture_manifest =
-            resolve_manifest_relative_path(text, "mpk_fixture_manifest_rel", value.build_root);
+        value.model_archive_fixture_root = resolve_manifest_relative_path(
+            text, "model_archive_fixture_root_rel", value.build_root);
+        value.model_archive_fixture_manifest = resolve_manifest_relative_path(
+            text, "model_archive_fixture_manifest_rel", value.build_root);
         value.decoder_fixture =
             resolve_manifest_relative_path(text, "decoder_fixture_rel", value.build_root);
       }
@@ -248,10 +250,12 @@ inline const TestRuntimePaths& test_runtime_paths() {
       value.source_root = discover_source_root_from_runtime();
     if (value.repo_tmp_root.empty())
       value.repo_tmp_root = value.source_root / "tmp";
-    if (value.mpk_fixture_root.empty())
-      value.mpk_fixture_root = value.source_root / "tests" / "assets" / "mpk";
-    if (value.mpk_fixture_manifest.empty())
-      value.mpk_fixture_manifest = value.mpk_fixture_root / "fixtures_manifest.json";
+    if (value.model_archive_fixture_root.empty())
+      value.model_archive_fixture_root =
+          value.source_root / "build" / "test-assets" / "model-archive";
+    if (value.model_archive_fixture_manifest.empty())
+      value.model_archive_fixture_manifest =
+          value.model_archive_fixture_root / "fixtures_manifest.json";
     if (value.decoder_fixture.empty())
       value.decoder_fixture =
           value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
@@ -269,12 +273,12 @@ inline fs::path test_tmp_root() {
   return test_runtime_paths().repo_tmp_root;
 }
 
-inline fs::path test_mpk_fixture_root_path() {
-  return test_runtime_paths().mpk_fixture_root;
+inline fs::path test_model_archive_fixture_root_path() {
+  return test_runtime_paths().model_archive_fixture_root;
 }
 
-inline fs::path test_mpk_fixture_manifest_path() {
-  return test_runtime_paths().mpk_fixture_manifest;
+inline fs::path test_model_archive_fixture_manifest_path() {
+  return test_runtime_paths().model_archive_fixture_manifest;
 }
 
 inline fs::path test_decoder_fixture_path() {
@@ -532,7 +536,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   // not directly observable from the resolver — it can't see sima-cli's
   // stdout. The top-level + per-known-cache-dir scan above misses these
   // sub-cached copies and the test then trips with
-  // "Failed to locate yolo_v8s MPK tarball" even though sima-cli succeeded.
+  // "Failed to locate yolo_v8s model archive" even though sima-cli succeeded.
   // Walk a bounded set of cache roots one level deep so we recover the file
   // wherever sima-cli's modelzoo layout put it, then move it into tmp_tar so
   // subsequent calls hit the fast path. Skip if a candidate cache root is

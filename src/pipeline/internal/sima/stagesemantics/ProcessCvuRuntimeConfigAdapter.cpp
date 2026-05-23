@@ -562,6 +562,7 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.round_off = config.round_off;
   payload.byte_align = config.byte_align;
   payload.opt_flags = config.opt_flags;
+  payload.pad_value = config.pad_value;
   payload.aspect_ratio = config.aspect_ratio;
   payload.normalize = config.normalize;
   payload.tessellate = config.tessellate;

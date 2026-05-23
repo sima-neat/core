@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
 
 #include <cstddef>

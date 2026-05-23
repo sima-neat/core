@@ -6,7 +6,7 @@ sidebar_position: 7
 
 # GStreamer underneath
 
-The Neat framework's pipelines run on GStreamer. Almost all of what's visible to the application — `Session`, `Run`, `Node` — is a typed wrapper over GStreamer concepts. This page explains the layering: what gets hidden, what doesn't, and when raw GStreamer is the right answer.
+The Neat framework's pipelines run on GStreamer. Almost all of what's visible to the application — `Graph`, `Run`, `Node` — is a typed wrapper over GStreamer concepts. This page explains the layering: what gets hidden, what doesn't, and when raw GStreamer is the right answer.
 
 ## What the framework abstracts
 
@@ -14,10 +14,10 @@ The Neat framework's pipelines run on GStreamer. Almost all of what's visible to
 |---|---|
 | `gst-launch` text fragment | `Node::backend_fragment(int node_index)` |
 | Element name (`name=…`) | Deterministic `n<idx>_<role>` from `Node::element_names()` |
-| Pipeline string (concatenated fragments) | `Session::add()` builds and concatenates |
-| Caps negotiation | `Session::build()` validates caps via `NodeCapsBehavior` |
-| `gst_pipeline_set_state()` | `Session::run()` / `Run::start()` |
-| Bus messages | `SessionReport::bus_messages` |
+| Pipeline string (concatenated fragments) | `Graph::add()` builds and concatenates |
+| Caps negotiation | `Graph::build()` validates caps via `NodeCapsBehavior` |
+| `gst_pipeline_set_state()` | `Graph::run()` / `Run::start()` |
+| Bus messages | `GraphReport::bus_messages` |
 | `appsrc` push API | `Run::push()` (only on Nodes with `InputRole::Push`) |
 | `appsink` pull API | `Run::pull()` |
 | Per-element timing | `RunDiagSnapshot::element_timing` |
@@ -32,14 +32,14 @@ A few GStreamer concepts the framework doesn't (and shouldn't) hide:
 - **Buffer flags** — discontinuity, EOS, gap. The framework propagates these on `Sample` so application code can react to stream boundaries.
 - **Event ordering** — GStreamer guarantees that events (caps, segment, EOS) flow in-order with buffers. The framework preserves this on the pull side.
 
-If you need to know the exact GStreamer launch string for a built session, call `Session::describe()` — it produces the deterministic `gst-launch` reproducer that recreates the pipeline byte-for-byte.
+If you need to know the exact GStreamer launch string for a built Graph, call `Graph::describe()` — it produces the deterministic `gst-launch` reproducer that recreates the pipeline byte-for-byte.
 
 ## When to reach for raw GStreamer
 
 You don't need to in normal application code. The cases where it's appropriate:
 
 - **Custom GStreamer plugins** — if you want a GStreamer element the framework doesn't ship as a Node, write a Node subclass that wraps your plugin and emits the right `backend_fragment()`. See "Building a custom Node" in the design deep dive (§0.10).
-- **Diagnostic tooling** — the `repro_gst_launch` reproducer from `Session::describe()` is exactly the launch string GStreamer would consume; you can paste it into `gst-launch-1.0` for offline debugging.
+- **Diagnostic tooling** — the `repro_gst_launch` reproducer from `Graph::describe()` is exactly the launch string GStreamer would consume; you can paste it into `gst-launch-1.0` for offline debugging.
 - **Plugin authoring** — SiMa's own GStreamer plugins (the `sima*` family) are documented in the plugin manifest ABI (see [`gst/SimaPluginStaticManifestAbi.h`](/reference/cppapi/files/include-gst-simapluginstaticmanifestabi-h)) and are loaded by the framework automatically.
 
 ## Determinism guarantees
@@ -56,5 +56,5 @@ The convention is `n<node_index>_<role>`, where `role` is a short stable identif
 
 - "GStreamer abstraction" — §0.8 of the design deep dive.
 - [`Node::backend_fragment()`](/reference/cppapi/classes/simaai-neat-graph-node)
-- [`Session::describe()`](/reference/cppapi/classes/simaai-neat-session) — print the launch string.
+- [`Graph::describe()`](/reference/cppapi/classes/simaai-neat-graph) — print the launch string.
 - "SiMa plugin manifest" — §51 and §95 of the design deep dive.

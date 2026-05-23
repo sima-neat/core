@@ -327,6 +327,7 @@ json build_preproc_json(const PreprocOptions& opt) {
   j["output_img_type"] = out_fmt;
   j["scaling_type"] = opt.scaling_type;
   j["padding_type"] = opt.padding_type;
+  j["pad_value"] = opt.pad_value;
   j["input_stride"] = opt.input_stride;
   j["output_stride"] = opt.output_stride;
   j["output_dtype"] = opt.output_dtype;

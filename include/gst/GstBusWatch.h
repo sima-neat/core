@@ -3,13 +3,13 @@
  * @ingroup gst
  * @brief Helpers for watching a GStreamer pipeline's message bus.
  *
- * Provides a small set of free functions used by Run/Session to drain bus messages and
- * surface them into the framework's reporting layer (SessionReport entries, SessionError
+ * Provides a small set of free functions used by Run/Graph to drain bus messages and
+ * surface them into the framework's reporting layer (GraphReport entries, NeatError
  * exceptions). Forward-declares the GStreamer C types so this header doesn't drag the
  * full `<gst/gst.h>` into framework public headers.
  *
- * @see SessionReport
- * @see SessionError
+ * @see GraphReport
+ * @see NeatError
  */
 #pragma once
 
@@ -38,7 +38,7 @@ using BusErrorFn = void (*)(const std::string& line, void* user_data);
 /**
  * @brief Format a single GStreamer bus message into a stable, one-line string.
  * @param msg The bus message to format. Must be non-null.
- * @return Human-readable summary suitable for logs and SessionReport.
+ * @return Human-readable summary suitable for logs and GraphReport.
  */
 std::string gst_message_to_string(GstMessage* msg);
 
@@ -55,10 +55,10 @@ std::string gst_message_to_string(GstMessage* msg);
 void drain_bus(GstElement* pipeline, BusMessageFn on_message, void* user_data);
 
 /**
- * @brief Drain the bus and throw a SessionError if any error message is found.
+ * @brief Drain the bus and throw a NeatError if any error message is found.
  *
  * Drains exactly like `drain_bus` but additionally invokes `on_error` and raises a
- * SessionError if any `GST_MESSAGE_ERROR` is observed.
+ * NeatError if any `GST_MESSAGE_ERROR` is observed.
  *
  * @param pipeline Pipeline whose bus to drain.
  * @param on_message Callback invoked for every message (may be null).

@@ -55,44 +55,44 @@ simaai::neat::Model load_model(const std::string& tar_gz, const InferOptions& op
 
 } // namespace
 
-simaai::neat::NodeGroup preprocessing(const std::string& tar_gz, const InferOptions& opt) {
+simaai::neat::Graph preprocessing(const std::string& tar_gz, const InferOptions& opt) {
   auto model = load_model(tar_gz, opt);
   return model.preprocess();
 }
 
-simaai::neat::NodeGroup simple_infer(const std::string& tar_gz) {
+simaai::neat::Graph simple_infer(const std::string& tar_gz) {
   simaai::neat::Model model(tar_gz, simaai::neat::Model::Options{});
   return model.inference();
 }
 
-simaai::neat::NodeGroup postprocessing(const std::string& tar_gz) {
+simaai::neat::Graph postprocessing(const std::string& tar_gz) {
   simaai::neat::Model model(tar_gz, simaai::neat::Model::Options{});
   return model.postprocess();
 }
 
-simaai::neat::NodeGroup infer(const std::string& tar_gz) {
+simaai::neat::Graph infer(const std::string& tar_gz) {
   simaai::neat::Model model(tar_gz, simaai::neat::Model::Options{});
   return model.inference();
 }
 
-simaai::neat::NodeGroup infer(const std::string& tar_gz, const InferOptions& opt) {
+simaai::neat::Graph infer(const std::string& tar_gz, const InferOptions& opt) {
   auto model = load_model(tar_gz, opt);
   return model.inference();
 }
 
-simaai::neat::NodeGroup Preprocess(const simaai::neat::Model& model) {
+simaai::neat::Graph Preprocess(const simaai::neat::Model& model) {
   return model.preprocess();
 }
 
-simaai::neat::NodeGroup MLA(const simaai::neat::Model& model) {
+simaai::neat::Graph MLA(const simaai::neat::Model& model) {
   return model.inference();
 }
 
-simaai::neat::NodeGroup Postprocess(const simaai::neat::Model& model) {
+simaai::neat::Graph Postprocess(const simaai::neat::Model& model) {
   return model.postprocess();
 }
 
-simaai::neat::NodeGroup Infer(const simaai::neat::Model& model) {
+simaai::neat::Graph Infer(const simaai::neat::Model& model) {
   return model.inference();
 }
 

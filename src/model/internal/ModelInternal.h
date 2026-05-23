@@ -11,9 +11,12 @@
 #include "model/internal/RoutePlanner.h"
 #include "nodes/io/Input.h"
 
+#include <memory>
+#include <vector>
+
 namespace simaai::neat {
-class NodeGroup;
-class Session;
+class Node;
+class Graph;
 struct CompiledBoxDecodeContract;
 struct PreprocOptions;
 struct QuantOptions;
@@ -24,6 +27,10 @@ struct DetessOptions;
 struct DetessCastOptions;
 struct DetessDequantOptions;
 } // namespace simaai::neat
+
+namespace simaai::neat::runtime {
+struct FragmentBoundaryHints;
+} // namespace simaai::neat::runtime
 
 namespace simaai::neat::pipeline_internal::sima {
 struct ModelManagedRouteFlags;
@@ -81,13 +88,24 @@ struct ModelAccess {
   static DetessCastOptions build_detesscast_stage_options(const Model& model, bool sync);
   static DetessDequantOptions build_detessdequant_stage_options(const Model& model, bool sync);
   static CompiledBoxDecodeContract build_boxdecode_stage_contract(const Model& model, bool sync);
-  static simaai::neat::NodeGroup build_preprocess_group(const Model& model, bool sync);
-  static simaai::neat::NodeGroup
-  build_preprocess_group_for_input(const Model& model, const InputOptions& input, bool sync);
-  static simaai::neat::NodeGroup build_infer_group(const Model& model, bool sync);
-  static simaai::neat::NodeGroup build_postprocess_group(const Model& model, bool sync);
-  static void configure_session_input_route(simaai::neat::Session& session, const Model& model,
-                                            const Model::SessionOptions& opt);
+  static std::vector<std::shared_ptr<Node>> build_public_preprocess_nodes(const Model& model);
+  static std::vector<std::shared_ptr<Node>> build_public_inference_nodes(const Model& model);
+  static std::vector<std::shared_ptr<Node>> build_public_postprocess_nodes(const Model& model);
+  static std::vector<std::shared_ptr<Node>> build_public_route_nodes(const Model& model,
+                                                                     Model::RouteOptions opt);
+  static std::vector<std::shared_ptr<Node>> build_public_stage_fragment_nodes(const Model& model,
+                                                                              Model::Stage stage);
+  static simaai::neat::Graph build_stage_graph_fragment(const Model& model, Model::Stage stage);
+  static std::vector<std::shared_ptr<Node>> build_preprocess_nodes(const Model& model, bool sync);
+  static std::vector<std::shared_ptr<Node>>
+  build_preprocess_nodes_for_input(const Model& model, const InputOptions& input, bool sync);
+  static std::vector<std::shared_ptr<Node>> build_infer_nodes(const Model& model, bool sync);
+  static std::vector<std::shared_ptr<Node>> build_postprocess_nodes(const Model& model, bool sync);
+  static simaai::neat::Graph
+  build_graph_fragment(const Model& model, Model::RouteOptions opt,
+                       simaai::neat::runtime::FragmentBoundaryHints* hints = nullptr);
+  static void configure_session_input_route(simaai::neat::Graph& session, const Model& model,
+                                            const Model::RouteOptions& opt);
 };
 
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,

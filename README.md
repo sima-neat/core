@@ -1,6 +1,6 @@
 # SiMa NEAT Framework
 
-[![CI Build](https://github.com/manuel-roldan/PipelineSession/actions/workflows/build.yml/badge.svg)](https://github.com/manuel-roldan/PipelineSession/actions/workflows/build.yml)
+[![CI Build](https://github.com/manuel-roldan/sima-neat/actions/workflows/build.yml/badge.svg)](https://github.com/manuel-roldan/sima-neat/actions/workflows/build.yml)
 ![SDK](https://img.shields.io/badge/SDK-2.0-green)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-informational)
 
@@ -14,31 +14,33 @@ It helps teams ship production media/ML pipelines with reproducible pipeline gen
 
 NEAT is built around three core concepts:
 
-- `Model`: loads a compiled model pack (`.tar.gz`) and exposes reusable pipeline stages (`preprocess`, `inference`, `postprocess`, or full `session()`).
-- `Session` + `Run`: composes typed `Node`/`NodeGroup` blocks into a deterministic pipeline, then executes it in `Sync` or `Async` mode via push/pull APIs.
+- `Model`: loads a compiled model archive (`.tar.gz`) and exposes reusable `Graph`
+  fragments (`preprocess`, `inference`, `postprocess`, or the full model route).
+- `Graph` + `Run`: composes typed `Node`, `Model`, and reusable `Graph` fragments into
+  a deterministic pipeline, then executes it in `Sync` or `Async` mode via push/pull APIs.
 - `Tensor` + `Sample`: `Tensor` is the typed data container (dtype/layout/shape/device/storage), while `Sample` wraps tensors with stream metadata (timestamps, caps, routing info, bundles).
 
 Typical flow:
 
-1. Build a `Model` from compiled .tar.gz model file.
-2. Add model stages (and optional custom nodes) to a `Session`.
+1. Build a `Model` from compiled `.tar.gz` model archive.
+2. Add model stages (and optional custom nodes) to a `Graph`.
 3. `build(...)` to get a `Run`, then `run()` or `push()/pull()` tensors/samples.
 
 ```cpp
 #include "model/Model.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
 
-simaai::neat::Model model("resnet_50_mpk.tar.gz");
+simaai::neat::Model model("resnet_50.tar.gz");
 
-simaai::neat::Session session;
-session.add(simaai::neat::nodes::Input());
-session.add(model.session());
-session.add(simaai::neat::nodes::Output());
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input());
+graph.add(model);
+graph.add(simaai::neat::nodes::Output());
 
-auto run = session.build(input_tensor, simaai::neat::RunMode::Sync);
-auto out = run.push_and_pull(input_tensor);
+auto run = graph.build(simaai::neat::TensorList{input_tensor}, simaai::neat::RunMode::Sync);
+auto out = run.run(simaai::neat::TensorList{input_tensor});
 ```
 
 For unified runtime reporting, use:
@@ -47,7 +49,8 @@ For unified runtime reporting, use:
 simaai::neat::RunOptions run_opt;
 run_opt.enable_board_power();
 
-auto run = session.build(input_tensor, simaai::neat::RunMode::Async, run_opt);
+auto run = graph.build(simaai::neat::TensorList{input_tensor}, simaai::neat::RunMode::Async,
+                       run_opt);
 auto metrics = run.metrics();
 ```
 

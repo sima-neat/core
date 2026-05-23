@@ -6,7 +6,7 @@
  * Holds the limits the framework enforces on decoder-bearing nodes (file readers, RTSP
  * input, image decoders) — typically a maximum frame resolution plus a flag controlling
  * whether dynamic GStreamer caps are accepted. Used by builder-side validation when a
- * Session is composed.
+ * Graph is composed.
  *
  * @see Policy.h
  * @see DefaultPolicy

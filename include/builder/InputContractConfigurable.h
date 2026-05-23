@@ -14,6 +14,8 @@
 #include <optional>
 #include <string>
 
+#include "pipeline/PayloadType.h"
+
 namespace simaai::neat {
 
 /**
@@ -26,6 +28,7 @@ namespace simaai::neat {
  * @ingroup builder
  */
 struct InputContract {
+  PayloadType payload_type = PayloadType::Auto; ///< Semantic payload family.
   std::string media_type;           ///< e.g., `"video/x-raw"`, `"application/vnd.simaai.tensor"`.
   std::string format;               ///< e.g., `"NV12"`, `"RGB"`, `"FP32"`.
   std::string dtype;                ///< e.g., `"UInt8"`, `"Float32"`.

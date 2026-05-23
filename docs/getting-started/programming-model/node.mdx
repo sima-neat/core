@@ -17,14 +17,15 @@ Reference:
 
 - One logical stage in the pipeline (decode, convert, preprocess, sink, etc.).
 - A deterministic gst fragment with stable element naming.
-- Caps behavior and wiring hints used by `Session` build/validation.
+- Caps behavior and wiring hints used by `Graph` build/validation.
 
-## Node vs NodeGroup
+## Node vs reusable Graph fragment
 
 - **Node**: single stage.
-- **NodeGroup**: ordered reusable list of nodes (for example input groups or model stages).
+- **Reusable Graph fragment**: premade `Graph` containing an ordered reusable list of nodes
+  (for example input fragments or model stages).
 
-You add both through [`Session`](/reference/{lsa}/classes/simaai-neat-session) with `add(...)`.
+You add both through [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) with `add(...)`.
 
 ## Why it matters
 
@@ -34,7 +35,7 @@ You add both through [`Session`](/reference/{lsa}/classes/simaai-neat-session) w
 
 ## See also
 
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Pipeline](/getting-started/programming-model/pipeline)
 - [Graph](/getting-started/programming-model/graph)
 - [Input and Output](/getting-started/programming-model/io)

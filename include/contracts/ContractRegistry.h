@@ -5,8 +5,8 @@
  * @brief Contract registry for builder-level validation.
  *
  * `ContractRegistry` aggregates a deterministic, ordered set of `Contract`s
- * and runs them all against a `NodeGroup` to produce a single
- * `ValidationReport`. It is the entry point used by the Builder/Session at
+ * and runs them all against an ordered node list to produce a single
+ * `ValidationReport`. It is the entry point used by the Builder/Graph at
  * `validate()`/`run()` time and by CI tools that want to check a pipeline
  * without going to PLAYING.
  *
@@ -15,6 +15,7 @@
 #pragma once
 
 #include <memory>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -116,7 +117,8 @@ public:
    * - contract violations should be reported (not thrown)
    * - if a Contract throws, registry converts that into an internal ERROR issue
    */
-  ValidationReport validate(const NodeGroup& nodes, const ValidationContext& ctx) const {
+  ValidationReport validate(std::span<const std::shared_ptr<Node>> nodes,
+                            const ValidationContext& ctx) const {
     ValidationReport report;
     report.set_mode(static_cast<int>(ctx.mode));
 

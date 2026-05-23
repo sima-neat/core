@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a multistream graph: stamp -> scheduler -> fan-out -> join.
+"""Build a multistream public Graph with graphs.combine(..., ByFrame).
 
 Usage:
   python3 run_multiple_streams.py [--streams 8] [--frames 4]
@@ -37,34 +37,22 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
-  graph = pyneat.graph.Graph()
-  stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
-
-  sched_opt = pyneat.graph.nodes.StreamSchedulerOptions()
-  sched_opt.per_stream_queue = 2
-  sched_opt.drop_policy = pyneat.graph.nodes.StreamDropPolicy.DropOldest
-  sched = graph.add(pyneat.graph.nodes.stream_scheduler(sched_opt, "sched"))
-
-  fan = graph.add(pyneat.graph.nodes.fan_out(["image", "bbox"], "fan"))
-  join = graph.add(pyneat.graph.nodes.join_bundle(["image", "bbox"], "join", "bundle"))
-
-  graph.connect(stamp, sched)
-  graph.connect(sched, fan)
-  graph.connect(fan, join, "image", "image")
-  graph.connect(fan, join, "bbox", "bbox")
-
-  run = pyneat.graph.GraphSession(graph).build()
+  graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.ByFrame)
+  run = graph.build()
   # END CORE LOGIC
+
   for frame in range(args.frames):
     for sid in range(args.streams):
-      run.push(stamp, make_rgb_sample(str(sid), frame))
+      logical_frame = frame * args.streams + sid
+      run.push("left", [make_rgb_sample(str(sid), logical_frame)])
+      run.push("right", [make_rgb_sample(str(sid), logical_frame)])
 
   expected = args.streams * args.frames
   received = 0
   for _ in range(expected):
-    if run.pull(join, 2000) is not None:
+    if run.pull("combined", 2000) is not None:
       received += 1
-  run.stop()
+  run.close()
 
   print(f"expected={expected} received={received}")
   return 0

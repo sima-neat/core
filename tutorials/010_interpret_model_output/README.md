@@ -33,7 +33,7 @@ Chapter 001.
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 
 ## Learning Process
-1. Build a deterministic sync session with explicit input/output nodes.
+1. Build a deterministic sync Graph with explicit input/output nodes.
 2. Execute one run and summarize output structure (`kind`, tensor, fields).
 3. Validate output contract assumptions (non-empty tensor shape/rank).
 

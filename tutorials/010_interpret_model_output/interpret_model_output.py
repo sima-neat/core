@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read the Sample that a Session Run returns: kind, tensor, fields.
+"""Read the Sample that a Graph Run returns: kind, tensor, fields.
 
 Usage:
   python3 interpret_model_output.py
@@ -32,12 +32,12 @@ def main(argv: list[str]) -> int:
   inp.height = 120
   inp.depth = 3
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(inp))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(inp))
+  graph.add(pyneat.nodes.output())
 
-  run = session.build(tensor, pyneat.RunMode.Sync)
-  sample = run.run(tensor, timeout_ms=1000)
+  run = graph.build([tensor], pyneat.RunMode.Sync)
+  sample = run.run([tensor], timeout_ms=1000)
 
   # CORE LOGIC
   print(f"sample_kind={sample.kind}")

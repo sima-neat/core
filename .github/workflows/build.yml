@@ -409,9 +409,9 @@ jobs:
         run: |
           set -x
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
-          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
-          mkdir -p "${MPK_ROOT}"
-          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          MODEL_ARCHIVE_ROOT="${RUNNER_TEMP:-/tmp}/sima-model-archive-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          mkdir -p "${MODEL_ARCHIVE_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MODEL_ARCHIVE_ROOT}"
           echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
           echo "SIMA_CTEST_TAIL_ONLY=${SIMA_CTEST_TAIL_ONLY:-<unset>}"
 
@@ -459,9 +459,9 @@ jobs:
           # a follow-up, the existing -R will match them and the gate
           # automatically becomes active again.
           TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
-          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-manifest"
-          mkdir -p "${MPK_ROOT}"
-          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          MODEL_ARCHIVE_ROOT="${RUNNER_TEMP:-/tmp}/sima-model-archive-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-manifest"
+          mkdir -p "${MODEL_ARCHIVE_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MODEL_ARCHIVE_ROOT}"
           GATE_REGEX='^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$'
           if ctest --test-dir "${TEST_DIR}" -N -R "${GATE_REGEX}" 2>/dev/null \
                | grep -qE "Test +#"; then
@@ -511,24 +511,25 @@ jobs:
         run: |
           # Free /tmp after the test phase. Self-hosted runners share /tmp
           # across runs and several test suites land hundreds of MB there
-          # (MpKLoader extraction roots, GStreamer registry caches,
+          # (model archive extraction roots, GStreamer registry caches,
           # downloaded model tars, fuzz workdirs, per-test mkdtemp roots).
           # Without this the next run can fail on "no space left on device"
           # while staging the installed extras tree or extracting fixtures.
           TMP_ROOT="${RUNNER_TEMP:-/tmp}"
-          MPK_BASE="${TMP_ROOT}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          MODEL_ARCHIVE_BASE="${TMP_ROOT}/sima-model-archive-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
           echo "Disk usage before cleanup:"
           df -h "${TMP_ROOT}" || true
           du -sh "${TMP_ROOT}"/sima* "${TMP_ROOT}"/resnet*_mpk* 2>/dev/null || true
 
-          echo "Cleaning ${MPK_BASE}* (this-job MpK extraction roots)"
-          rm -rf "${MPK_BASE}" "${MPK_BASE}-manifest" || true
+          echo "Cleaning ${MODEL_ARCHIVE_BASE}* (this-job model archive extraction roots)"
+          rm -rf "${MODEL_ARCHIVE_BASE}" "${MODEL_ARCHIVE_BASE}-manifest" || true
 
           echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
           rm -rf \
+            "${TMP_ROOT}/sima_neat_model_archive_tests" \
+            "${TMP_ROOT}/sima_neat_model_archive_fixtures" \
             "${TMP_ROOT}/sima_neat_mpk_tests" \
             "${TMP_ROOT}/sima_neat_mpk_fixtures" \
-            "${TMP_ROOT}/sima_neat_fuzz_pipeline_sequence" \
             "${TMP_ROOT}/sima_unit_asset_utils_readable_model_tar_test" \
             "${TMP_ROOT}/sima_imagenet_goldfish.jpg" \
             "${TMP_ROOT}/coco_sample.jpg" \
@@ -538,10 +539,11 @@ jobs:
           # GStreamer registry caches dropped by every test that wires
           # GST_REGISTRY=${TMP_ROOT}/sima_gst_registry_<name>.bin.
           find "${TMP_ROOT}" -maxdepth 1 -name 'sima_gst_registry_*.bin' -delete 2>/dev/null || true
-          # Defensive sweep for any stale MpK extraction roots from
+          # Defensive sweep for any stale model archive extraction roots from
           # previous runs that crashed before reaching their own cleanup.
-          find "${TMP_ROOT}" -maxdepth 1 -name 'sima-mpk-*' -type d -mmin +60 \
-            -exec rm -rf {} + 2>/dev/null || true
+          find "${TMP_ROOT}" -maxdepth 1 \
+            \( -name 'sima-model-archive-*' -o -name 'sima-mpk-*' \) \
+            -type d -mmin +60 -exec rm -rf {} + 2>/dev/null || true
 
           # NB: do NOT clean ${GITHUB_WORKSPACE}/tmp/*_mpk.tar.gz — those
           # are valuable per-runner caches under the workspace volume (not

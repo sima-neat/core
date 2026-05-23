@@ -32,13 +32,13 @@ The runtime graph (`graph::Graph`) adds:
 User code shows up in a few places:
 
 - **Direct calls into the framework** — `push()`, `pull()`, `build()`, `run()`, `start()`, `stop()`. These run on whatever application thread invokes them. They are safe to call concurrently from different threads as long as they target different `Run` instances; multiple threads calling `pull()` on the same `Run` is supported and fans out.
-- **Sample callbacks** — `GraphRun::PullSession::on_sample()` and similar callbacks run on the runtime's pull-side waiter thread. Keep them short; long-running callbacks back-pressure the pipeline.
-- **Custom `Node` implementations** — `Node::backend_fragment()` / `element_names()` etc. are called only at build time, on the application thread that called `Session::build()`. They never run during `push()` / `pull()`.
+- **Sample callbacks** — `GraphRun::PullLoop::on_sample()` and similar callbacks run on the runtime's pull-side waiter thread. Keep them short; long-running callbacks back-pressure the pipeline.
+- **Custom `Node` implementations** — `Node::backend_fragment()` / `element_names()` etc. are called only at build time, on the application thread that called `Graph::build()`. They never run during `push()` / `pull()`.
 - **Custom `StageExecutor` implementations** — `on_input()` / `on_tick()` run on the executor thread the runtime owns. The runtime guarantees serial invocation per-stage, so stages may keep non-atomic per-instance state without locks.
 
 ## Locking rules
 
-The framework's public-API objects are not thread-safe by default — `Session`, `Run`, `Tensor`, `TensorBuffer`, etc. assume one thread at a time. The exceptions:
+The framework's public-API objects are not thread-safe by default — `Graph`, `Run`, `Tensor`, `TensorBuffer`, etc. assume one thread at a time. The exceptions:
 
 - `Run::push()` / `pull()` are mutually exclusive with each other but **internally synchronized** — concurrent push from one thread and pull from another is supported.
 - `GraphRunStats` is internally locked.

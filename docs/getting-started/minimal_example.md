@@ -145,6 +145,6 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 ## Next Steps
 Once this minimal example works, continue with broader SiMa Neat learning resources:
 
-- Learn the [core programming model](/getting-started/programming-model/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
+- Learn the [core programming model](/getting-started/programming-model/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

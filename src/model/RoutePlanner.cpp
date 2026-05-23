@@ -340,6 +340,7 @@ bool populate_tensor_contract_from_stage_tensor(
   // can read it directly without reconstructing from the (batch,h,w,d) scalars
   // + a layout token.
   out->logical_shape = shape;
+  out->source_tensor_name = tensor.name;
   out->source_stage = source_stage;
   return true;
 }
@@ -2188,7 +2189,7 @@ build_post_regions_from_lineages(const pipeline_internal::sima::RouteGraph& grap
 // fan-out / fan-in topology per branch_op depth (one FanoutMap per depth, plus
 // an optional FaninJoin when all ingresses converge into a single packer).
 //
-// `pre_regions` is what build_preprocess_group_impl walks to materialize the
+// `pre_regions` is what build_preprocess_nodes_impl walks to materialize the
 // pre stage. Building it from `ingress_regions` guarantees that:
 //   - For monolithic models with a single ingress contract, depth-0 emits a
 //     Linear region (one node per op level), exactly what the legacy flat
@@ -3360,6 +3361,8 @@ ModelSemantics build_model_semantics(const ModelPack& pack) {
 SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSemantics& semantics,
                                   const RouteCapability* capability, const ModelPack* pack) {
   SessionRoutePlan out;
+  out.output_physical_count = semantics.output_physical_count;
+  out.output_logical_count = semantics.output_logical_count;
   const bool have_capability = capability != nullptr;
   if (have_capability && !capability->ingress_contracts.empty()) {
     out.ingress_contracts = capability->ingress_contracts;

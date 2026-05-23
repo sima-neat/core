@@ -54,6 +54,9 @@ struct BoxDecodeResult {
   std::vector<uint8_t> raw; ///< Source bytes the boxes were parsed from.
 };
 
+/// List form used by public stage APIs; even single-image decode results travel as a list.
+using BoxDecodeResultList = std::vector<BoxDecodeResult>;
+
 /**
  * @brief Parse a packed BBOX byte payload into typed `Box` records.
  *

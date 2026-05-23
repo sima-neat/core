@@ -713,10 +713,10 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
 
   const simaai::neat::Tensor& t = normalized.tensors.front();
   InputOptions opt;
-  opt.media_type = normalized.media_type;
-  if (opt.media_type.empty()) {
-    opt.media_type = t.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
-  }
+  opt.payload_type =
+      !normalized.media_type.empty()
+          ? input_type_from_media_type(normalized.media_type)
+          : (t.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor);
   if (!normalized.payload_tag.empty()) {
     opt.format = normalized.payload_tag;
   } else if (!normalized.format.empty()) {

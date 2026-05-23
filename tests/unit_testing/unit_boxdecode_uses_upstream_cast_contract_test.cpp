@@ -1,6 +1,6 @@
 #include "nodes/sima/Cast.h"
 #include "nodes/sima/SimaBoxDecode.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/TensorMath.h"

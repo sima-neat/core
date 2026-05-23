@@ -1,22 +1,22 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelRouteRetarget.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/BoxDecodeType.h"
-#include "pipeline/session/internal/SessionBuildInternal.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 #include "test_main.h"
 
 #include <filesystem>
 
 namespace {
 
-sima_test::MpkFixture make_quanttess_detessdequant_fixture(const std::string& tag) {
-  return sima_test::make_strict_mpk_tar_fixture(tag,
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_quanttess_detessdequant_fixture(const std::string& tag) {
+  return sima_test::make_strict_model_archive_fixture(tag,
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -49,15 +49,15 @@ sima_test::MpkFixture make_quanttess_detessdequant_fixture(const std::string& ta
     ]
   }]
 })json"},
-                                                    {"etc/0_quanttess.json",
-                                                     R"json({
+                                                          {"etc/0_quanttess.json",
+                                                           R"json({
   "node_name": "quanttess_0",
   "input_width": 640,
   "input_height": 640,
   "input_depth": 3
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "quanttess_0"}],
   "input_format": ["EV81_INT8"],
@@ -69,8 +69,8 @@ sima_test::MpkFixture make_quanttess_detessdequant_fixture(const std::string& ta
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                    {"etc/0_postproc.json",
-                                                     R"json({
+                                                          {"etc/0_postproc.json",
+                                                           R"json({
   "node_name": "detessdequant_0",
   "num_in_tensor": 1,
   "out_data_type": "FP32",
@@ -78,8 +78,8 @@ sima_test::MpkFixture make_quanttess_detessdequant_fixture(const std::string& ta
   "input_height": [80],
   "input_depth": [6]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
 class ManualPostProbeNode final : public simaai::neat::Node,

@@ -5,7 +5,6 @@
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
 #include "nodes/io/Input.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/RouteGraph.h"
@@ -18,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
@@ -92,7 +92,7 @@ struct ModelFragment {
 };
 
 /**
- * @brief Load model packs and expose stage fragments/NodeGroups.
+ * @brief Load model packs and expose stage fragments as reusable node lists.
  */
 class ModelPack {
 public:
@@ -136,10 +136,10 @@ public:
   std::vector<ModelFragment::StageFacts> stage_facts_for_model_stage(ModelStage stage) const;
   ModelFragment fragment(ModelStage stage) const;
   std::string backend_fragment(ModelStage stage) const;
-  simaai::neat::NodeGroup to_node_group(ModelStage stage) const;
+  std::vector<std::shared_ptr<simaai::neat::Node>> to_nodes(ModelStage stage) const;
 
   // Infer block derived from the typed MPK execution plan.
-  simaai::neat::NodeGroup
+  std::vector<std::shared_ptr<simaai::neat::Node>>
   infer_block(const std::string& upstream_name = {},
               std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) const;
   std::string apply_name_suffix(const std::string& base) const;

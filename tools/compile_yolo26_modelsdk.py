@@ -78,8 +78,8 @@ def dummy_calibration(input_names: list[str], input_shapes: list[tuple[int, ...]
     return convert_data_generator_to_iterable(DataGenerator(data))
 
 
-def inspect_mpk(mpk_path: Path) -> dict[str, Any]:
-    with tarfile.open(mpk_path) as tar:
+def inspect_model_archive(archive_path: Path) -> dict[str, Any]:
+    with tarfile.open(archive_path) as tar:
         names = tar.getnames()
         mpk_json_name = next(name for name in names if name.endswith("_mpk.json"))
         mpk_json = json.load(tar.extractfile(mpk_json_name))  # type: ignore[arg-type]
@@ -88,7 +88,7 @@ def inspect_mpk(mpk_path: Path) -> dict[str, Any]:
             processor = plugin.get("processor") or plugin.get("type") or plugin.get("backend")
             processors[processor] = processors.get(processor, 0) + 1
         return {
-            "mpk": str(mpk_path),
+            "archive": str(archive_path),
             "files": sorted(names),
             "mla_elf_count": sum(name.endswith("_mla.elf") for name in names),
             "so_count": sum(name.endswith(".so") for name in names),
@@ -169,9 +169,9 @@ def compile_model(args: argparse.Namespace) -> dict[str, Any]:
         log_level=logging.INFO,
         tessellate_parameters=tess_params,
     )
-    mpks = sorted(output_root.glob("*_mpk.tar.gz"))
-    if not mpks:
-        raise RuntimeError(f"No *_mpk.tar.gz found under {output_root}")
+    archives = sorted(output_root.glob("*.tar.gz"))
+    if not archives:
+        raise RuntimeError(f"No .tar.gz model archive found under {output_root}")
     report = {
         "model_sdk_version": get_model_sdk_version(),
         "input_model": str(model_path),
@@ -179,12 +179,12 @@ def compile_model(args: argparse.Namespace) -> dict[str, Any]:
         "output_root": str(output_root),
         "inputs": list(zip(input_names, input_shapes)),
         "outputs": output_names,
-        "mpk": inspect_mpk(mpks[-1]),
+        "model_archive": inspect_model_archive(archives[-1]),
     }
     if args.strict_one_mla:
-        mpk = report["mpk"]
-        if mpk["mla_elf_count"] != 1 or mpk["so_count"] != 0 or mpk["process_tvm_count"] != 0:
-            raise RuntimeError(f"MPK failed one-MLA/zero-.so gate: {mpk}")
+        archive = report["model_archive"]
+        if archive["mla_elf_count"] != 1 or archive["so_count"] != 0 or archive["process_tvm_count"] != 0:
+            raise RuntimeError(f"model archive failed one-MLA/zero-.so gate: {archive}")
     return report
 
 

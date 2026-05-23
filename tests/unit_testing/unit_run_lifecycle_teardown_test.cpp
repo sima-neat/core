@@ -1,6 +1,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "runtime_test_utils.h"
 #include "test_main.h"
 #include "test_utils.h"

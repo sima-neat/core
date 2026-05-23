@@ -3,11 +3,11 @@
  * @ingroup nodes_groups
  * @brief OptiView fan-out helpers — multi-stream UDP H.264 video plus per-frame JSON results.
  *
- * Hosts two cooperating NodeGroup-style classes used by demos and OptiView dashboards:
- * `UdpOutputNodeGroup` opens N parallel UDP H.264 video sinks (one per camera), and
- * `OptiViewOutputNodeGroup` adds a matching set of OptiView-formatted JSON sinks that
+ * Hosts two cooperating Graph-output manager classes used by demos and OptiView dashboards:
+ * `UdpOutputGraph` opens N parallel UDP H.264 video sinks (one per camera), and
+ * `OptiViewOutputGraph` adds a matching set of OptiView-formatted JSON sinks that
  * carry the detection results alongside the video. Typical placement: tail of a
- * multi-stream detection Session that needs to ship video and metadata to an external
+ * multi-stream detection Graph that needs to ship video and metadata to an external
  * OptiView viewer.
  *
  * @see OptiViewJsonOutput
@@ -16,7 +16,7 @@
 #pragma once
 
 #include "nodes/io/OptiViewJsonOutput.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 
 #include <cstddef>
@@ -28,14 +28,14 @@
 namespace simaai::neat::nodes::groups {
 
 /**
- * @brief Configuration for `UdpOutputNodeGroup` — N parallel H.264-over-UDP video sinks.
+ * @brief Configuration for `UdpOutputGraph` — N parallel H.264-over-UDP video sinks.
  *
  * Specifies the H.264 caps, RTP packetization, and the UDP host plus port-base from
  * which per-stream destination ports are derived.
  *
  * @ingroup nodes_groups
  */
-struct UdpOutputNodeGroupOptions {
+struct UdpOutputGraphOptions {
   std::string h264_caps;          ///< Optional caps string applied to the H.264 elementary stream.
   int payload_type = 96;          ///< RTP payload type number for H.264.
   int config_interval = 1;        ///< SPS/PPS repeat interval (seconds).
@@ -51,12 +51,12 @@ struct UdpOutputNodeGroupOptions {
  *
  * Each call to `init()` constructs `streams` independent `Run`s, one per UDP video
  * sink. Callers `push_video()` rendered samples per stream index; `stop()` tears
- * them all down. Used as the video-side companion to `OptiViewOutputNodeGroup`.
+ * them all down. Used as the video-side companion to `OptiViewOutputGraph`.
  *
- * @see OptiViewOutputNodeGroup
+ * @see OptiViewOutputGraph
  * @ingroup nodes_groups
  */
-class UdpOutputNodeGroup {
+class UdpOutputGraph {
 public:
   /**
    * @brief Initialize and start `streams` parallel UDP H.264 output runs.
@@ -65,7 +65,7 @@ public:
    * @param err Optional out-parameter that receives a diagnostic message on failure.
    * @return True on success.
    */
-  bool init(const UdpOutputNodeGroupOptions& opt, size_t streams, std::string* err = nullptr);
+  bool init(const UdpOutputGraphOptions& opt, size_t streams, std::string* err = nullptr);
 
   /**
    * @brief Blocking push of a video sample into the indexed stream.
@@ -95,20 +95,20 @@ public:
   }
 
 private:
-  UdpOutputNodeGroupOptions opt_{};
+  UdpOutputGraphOptions opt_{};
   std::vector<std::shared_ptr<simaai::neat::Run>> runs_;
 };
 
 /**
- * @brief Configuration for `OptiViewOutputNodeGroup`.
+ * @brief Configuration for `OptiViewOutputGraph`.
  *
  * Combines the underlying UDP-video options with OptiView-specific JSON tunables
  * (port base, frame geometry, top-K cap, optional class label table).
  *
  * @ingroup nodes_groups
  */
-struct OptiViewOutputNodeGroupOptions {
-  UdpOutputNodeGroupOptions udp{}; ///< Embedded options for the H.264 video side.
+struct OptiViewOutputGraphOptions {
+  UdpOutputGraphOptions udp{};     ///< Embedded options for the H.264 video side.
   bool send_json = true;           ///< If false, the JSON side is not initialized.
   int json_port_base = 9100;       ///< First JSON UDP port; stream `i` uses `json_port_base + i`.
   int frame_w = 0;                 ///< Frame width reported in the JSON (0 = unknown).
@@ -156,20 +156,20 @@ struct OptiViewJsonResult {
 /**
  * @brief OptiView fan-out: parallel UDP H.264 video sinks plus matching JSON senders.
  *
- * Composes a `UdpOutputNodeGroup` for the video streams with one
+ * Composes a `UdpOutputGraph` for the video streams with one
  * `OptiViewJsonOutput` per stream. Use as the tail of a multi-stream detection
- * Session to broadcast both video and per-frame detection results to an external
+ * Graph to broadcast both video and per-frame detection results to an external
  * OptiView viewer.
  *
  * @see OptiViewJsonOutput
- * @see UdpOutputNodeGroup
+ * @see UdpOutputGraph
  * @ingroup nodes_groups
  */
-class OptiViewOutputNodeGroup {
+class OptiViewOutputGraph {
 public:
-  OptiViewOutputNodeGroup() = default;
-  OptiViewOutputNodeGroup(const OptiViewOutputNodeGroup&) = delete;
-  OptiViewOutputNodeGroup& operator=(const OptiViewOutputNodeGroup&) = delete;
+  OptiViewOutputGraph() = default;
+  OptiViewOutputGraph(const OptiViewOutputGraph&) = delete;
+  OptiViewOutputGraph& operator=(const OptiViewOutputGraph&) = delete;
 
   /**
    * @brief Initialize the video runs and the per-stream JSON senders.
@@ -178,7 +178,7 @@ public:
    * @param err Optional out-parameter that receives a diagnostic message on failure.
    * @return True on success.
    */
-  bool init(const OptiViewOutputNodeGroupOptions& opt, size_t streams, std::string* err = nullptr);
+  bool init(const OptiViewOutputGraphOptions& opt, size_t streams, std::string* err = nullptr);
 
   /**
    * @brief Blocking push of a video sample into the indexed stream's H.264 sink.
@@ -213,8 +213,8 @@ public:
 private:
   int64_t pick_timestamp_ms_(const OptiViewJsonInput& in) const;
 
-  OptiViewOutputNodeGroupOptions opt_{};
-  UdpOutputNodeGroup udp_;
+  OptiViewOutputGraphOptions opt_{};
+  UdpOutputGraph udp_;
   std::vector<std::unique_ptr<simaai::neat::OptiViewJsonOutput>> senders_;
 };
 

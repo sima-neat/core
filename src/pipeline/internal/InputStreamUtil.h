@@ -175,6 +175,20 @@ struct BufferNameOverride {
   BufferNameOverride(std::optional<std::string> v) : value(std::move(v)) {}
 };
 
+struct SampleTimingOverrides {
+  std::optional<int64_t> frame_id;
+  std::optional<uint64_t> pts_ns;
+  std::optional<uint64_t> dts_ns;
+  std::optional<uint64_t> duration_ns;
+
+  bool empty() const {
+    return !frame_id.has_value() && !pts_ns.has_value() && !dts_ns.has_value() &&
+           !duration_ns.has_value();
+  }
+};
+
+SampleTimingOverrides sample_timing_overrides_from_sample(const Sample& sample);
+
 GstCaps* caps_from_spec(const SampleSpec& spec);
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard);
@@ -203,6 +217,8 @@ bool update_simaai_meta_fields(
     const std::optional<uint64_t>& timestamp_override = std::nullopt,
     const std::optional<std::string>& origin_stage_id_override = std::nullopt,
     const std::optional<int>& origin_output_slot_override = std::nullopt);
+bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOverrides& timing);
+void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out);
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta);
 // Merge `axis_perm` (and only that field) onto an existing GstSimaMeta on
 // `buffer`. Adds GstSimaMeta if absent. The plugin path no longer writes

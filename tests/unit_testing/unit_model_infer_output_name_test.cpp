@@ -1,5 +1,5 @@
 #include "asset_utils.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "model/Model.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -67,7 +67,7 @@ RUN_TEST(
       // Malformed model metadata should fail deterministically.
       {
         const auto fixture =
-            sima_test::make_malformed_mpk_tar_fixture("infer_output_name_malformed");
+            sima_test::make_malformed_model_archive_fixture("infer_output_name_malformed");
         bool threw = false;
         std::string msg;
         try {
@@ -77,16 +77,16 @@ RUN_TEST(
           threw = true;
           msg = e.what();
         }
-        require(threw, "malformed MPK fixture should throw");
-        require(!msg.empty(), "malformed MPK fixture should report non-empty error text");
+        require(threw, "malformed model archive fixture should throw");
+        require(!msg.empty(), "malformed model archive fixture should report non-empty error text");
         require(msg.find("parse error") != std::string::npos ||
                     msg.find("ModelPack") != std::string::npos,
-                "malformed MPK fixture error should be actionable");
+                "malformed model archive fixture error should be actionable");
       }
 
       // Multi-stage inference sequence should pick the final MLA stage name deterministically.
       {
-        const auto fixture = sima_test::make_strict_mpk_tar_fixture(
+        const auto fixture = sima_test::make_strict_model_archive_fixture(
             "infer_output_name_multi_stage", {
                                                  {"etc/pipeline_sequence.json",
                                                   R"json({
@@ -161,10 +161,10 @@ RUN_TEST(
       }
 
       {
-        const auto legacy = sima_test::make_mpk_tar_fixture("infer_output_name_legacy_missing_mpk",
-                                                            {
-                                                                {"etc/pipeline_sequence.json",
-                                                                 R"json({
+        const auto legacy = sima_test::make_model_archive_fixture(
+            "infer_output_name_legacy_missing_mpk", {
+                                                        {"etc/pipeline_sequence.json",
+                                                         R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -179,12 +179,12 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                {"etc/0_process_mla.json",
-                                                                 R"json({
+                                                        {"etc/0_process_mla.json",
+                                                         R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-                                                            });
+                                                    });
         require(throws_with(
                     [&]() {
                       simaai::neat::Model legacy_model(legacy.tar_path);

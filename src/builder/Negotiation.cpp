@@ -115,13 +115,13 @@ bool constraint_compatible(const TensorConstraint& cur, const TensorConstraint& 
 
 } // namespace
 
-NegotiationResult validate_tensor_pipeline(const simaai::neat::NodeGroup& group,
+NegotiationResult validate_tensor_pipeline(std::span<const std::shared_ptr<Node>> nodes,
                                            const TensorConstraint& input,
                                            ConversionPolicy /*policy*/) {
   NegotiationResult out;
   TensorConstraint current = input;
 
-  for (const auto& node : group.nodes()) {
+  for (const auto& node : nodes) {
     if (!node)
       continue;
     const auto* provider = dynamic_cast<const SpecProvider*>(node.get());

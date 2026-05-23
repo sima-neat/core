@@ -681,10 +681,18 @@ endforeach()
 # ------------------------------------------------------------------------------
 add_library(sima_neat STATIC
   ${SIMANEAT_SOURCES}
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/session/internal/SessionTestHooks.cpp
 )
 
-target_compile_definitions(sima_neat PRIVATE SIMA_NEAT_INTERNAL=1)
+if (NOT GIT_HASH)
+  set(GIT_HASH "unknown")
+endif()
+
+target_compile_definitions(sima_neat
+  PRIVATE
+    SIMA_NEAT_INTERNAL=1
+    SIMANEAT_VERSION_STRING="${SIMANEAT_VERSION}"
+    SIMANEAT_GIT_SHA="${GIT_HASH}"
+)
 
 set(SIMANEAT_REPO_NEAT_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/include")
 set(SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/gst_plugins/include")
@@ -880,12 +888,12 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SOURCE_ROOT_REL
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tmp")
-file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_ROOT_REL
   "${CMAKE_BINARY_DIR}"
-  "${CMAKE_SOURCE_DIR}/tests/assets/mpk")
-file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL
+  "${CMAKE_BINARY_DIR}/test-assets/model-archive")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL
   "${CMAKE_BINARY_DIR}"
-  "${CMAKE_SOURCE_DIR}/tests/assets/mpk/fixtures_manifest.json")
+  "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
@@ -896,8 +904,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
   "generator": "core/CMakeLists.txt",
   "source_root_rel": "@SIMANEAT_TEST_RUNTIME_SOURCE_ROOT_REL@",
   "repo_tmp_root_rel": "@SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL@",
-  "mpk_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL@",
-  "mpk_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL@",
+  "model_archive_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_ROOT_REL@",
+  "model_archive_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL@",
   "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@"
 }
 ]=])
@@ -924,8 +932,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
   "generator": "core/CMakeLists.txt (installed-layout variant)",
   "source_root_rel": "",
   "repo_tmp_root_rel": "",
-  "mpk_fixture_root_rel": "test-assets/mpk",
-  "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
+  "model_archive_fixture_root_rel": "test-assets/model-archive",
+  "model_archive_fixture_manifest_rel": "test-assets/model-archive/fixtures_manifest.json",
   "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264"
 }
 ]=])

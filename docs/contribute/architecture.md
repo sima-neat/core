@@ -59,7 +59,7 @@ Your app keeps the business logic; the framework owns the pipeline glue.
 Business logic
     |
     v
-Nodes/NodeGroups  ->  GStreamer fragments  ->  caps negotiation  ->  runtime (Run)
+Nodes/Graph fragments  ->  GStreamer fragments  ->  caps negotiation  ->  runtime (Run)
     |                                                           |
     +-----------------------------------------------------------+
                                 Sample / Tensor
@@ -70,32 +70,32 @@ Nodes/NodeGroups  ->  GStreamer fragments  ->  caps negotiation  ->  runtime (Ru
 ## Core concepts
 
 The framework is intentionally organized around a small set of concepts. Most user code touches
-only `Model`, `Session`, `Run`, `Tensor`, and `Sample`; lower-level contributors also work with
-`Node`, `NodeGroup`, MPK parsing, and Graphs.
+only `Model`, `Graph`, `Run`, `Tensor`, and `Sample`; lower-level contributors also work with
+`Node`, reusable Graph fragments, MPK-contract parsing, and Graph internals.
 
 | Concept | Role |
 | --- | --- |
-| MPK | A sealed model artifact (`.tar.gz`, `.mpk`, etc.) containing the manifest, plugin-private configs, model binaries, and kernel artifacts. |
-| `Model` | The loaded MPK. It parses the manifest, runs route planning, exposes model stages, and provides simple `run(...)` / `session(...)` entry points. |
+| Model archive | A sealed `.tar.gz` artifact containing the MPK inference contract, plugin-private configs, model binaries, and kernel artifacts. |
+| `Model` | The public loader for a `.tar.gz` model archive. It parses the MPK contract, runs route planning, exposes model stages, and provides simple `run(...)` / `Graph` composition entry points. |
 | `Tensor` | Typed numeric payload with dtype, shape, layout, storage, device, and semantic metadata. |
 | `Sample` | Runtime/media envelope around tensors, tensor lists, or bundles. Check `Sample::kind` before reading fields. |
 | `Node` | Atomic pipeline stage that emits a deterministic GStreamer fragment and owned element names. |
-| `NodeGroup` | Reusable recipe that expands to multiple Nodes, such as decoded RTSP input or model stages. |
-| `Session` | Assembly and validation boundary. Nodes and NodeGroups become a negotiated, buildable pipeline. |
-| `Run` | Live pipeline handle returned by `Session::build(...)`; owns push/pull/runtime lifecycle. |
+| Reusable Graph fragment | A premade `Graph` that expands to multiple Nodes, such as decoded RTSP input or model stages. |
+| `Graph` | Assembly and validation boundary. Nodes, Models, and reusable Graph fragments become a negotiated, buildable pipeline. |
+| `Run` | Live pipeline handle returned by `Graph::build(...)`; owns push/pull/runtime lifecycle. |
 | Graph | Use builder graph for DAG composition inside one pipeline; use runtime graph for coordinating stages/runs across pipelines. |
 
 Read the relationship left to right:
 
 ```text
-MPK on disk -> Model -> NodeGroups/Nodes -> Session -> Run
+model archive on disk -> Model -> Graph fragments/Nodes -> Graph -> Run
                                            |
                                            v
                                   Tensor/Sample flow
 ```
 
 `Model` is the beginner-facing entry point, but it is not a separate execution engine. It resolves
-to model Nodes/NodeGroups that can be added to a `Session`. `Session` is the central assembly
+to model Graph fragments/Nodes that can be added to a `Graph`. `Graph` is the central assembly
 concept; `Run` is the live object after build.
 
 ---
@@ -108,12 +108,12 @@ between implementation options.
 - **Determinism wins.** Keep element names, generated pipeline strings, serialized pipeline data,
   report fields, and tests reproducible. Diagnostics and agent loops depend on stable identifiers.
 - **Debuggability is first-class.** Failures should produce structured data, not only strings:
-  `SessionReport.error_code`, `repro_note`, bus messages, and replayable backend pipelines.
+  `GraphReport.error_code`, `repro_note`, bus messages, and replayable backend pipelines.
 - **No silent fallback.** Do not hide model-input bugs or hardware/runtime failures by quietly
   converting formats, changing graph families, falling back to CPU, or swallowing plugin errors.
 - **Validate before run.** Prefer structural, caps, shape, and contract validation before runtime
   threads start or hardware resources are acquired.
-- **The MPK manifest is the model source of truth.** Core routing, dtype, shape, quantization, and
+- **The MPK contract is the model source of truth.** Core routing, dtype, shape, quantization, and
   stage decisions must come from `mpk.json` / `*_mpk.json`. Per-stage JSON files are
   plugin-private.
 - **Public APIs stay stable.** Public headers under `include/*` are installed and supported.
@@ -130,7 +130,7 @@ For model-backed pipelines, the high-level path is:
 ```text
 input Sample/Tensor
   -> optional preprocessing / format normalization
-  -> MLA inference stages selected from MPK manifest
+  -> MLA inference stages selected from MPK contract
   -> optional postprocessing / box decode
   -> output Sample/Tensor
 ```
@@ -140,7 +140,7 @@ MLA may require INT8/BF16 and tessellated layouts, while user code generally wor
 and normal tensor layouts. The framework bridges that gap with manifest-driven adapter stages.
 
 Preprocessing and postprocessing are explicit framework stages/options. A format mismatch, missing
-required preprocessing metadata, unavailable MLA dispatcher, invalid MPK, or caps negotiation
+required preprocessing metadata, unavailable MLA dispatcher, invalid model archive or MPK contract, or caps negotiation
 failure should surface as an actionable structured error rather than a hidden runtime correction.
 
 ---
@@ -158,11 +158,11 @@ failure should surface as an actionable structured error rather than a hidden ru
 
 ### Public header tree (`include/`)
 Public headers live under `include/<module>/...`.
-Examples: `include/pipeline/Session.h`, `include/model/Model.h`.
+Examples: `include/pipeline/Graph.h`, `include/model/Model.h`.
 
 Public convenience entry headers:
 - `include/neat.h` (umbrella)
-- `include/neat/session.h`
+- `include/neat/runtime.h`
 - `include/neat/models.h`
 - `include/neat/nodes.h`
 - `include/neat/node_groups.h`
@@ -190,25 +190,23 @@ Runtime environment notes:
 
 | Area / API | Status | Notes |
 | --- | --- | --- |
-| Core pipeline API (`Session`, `Run`, `Tensor`, `Sample`) | Stable | Primary supported C++ surface. |
-| Builder layer (`Node`, `NodeGroup`, `Graph`, `GraphPrinter`) | Stable | STL-only, pre-GStreamer composition. |
-| MPK APIs (`ModelMPK`, `ModelGroups`, `Model`) | Stable | Canonical MPK integration path. |
+| Core pipeline API (`Graph`, `Run`, `Tensor`, `Sample`) | Stable | Primary supported C++ surface. |
+| Builder internals (`Node`, private node-vector helpers, `GraphPrinter`) | Internal | STL-only, pre-GStreamer composition support. |
+| Model API (`Model`, reusable Graph fragments) | Stable | Canonical model-archive integration path. |
 | `include/policy/*` | Stable | Minimal validated policy contracts and defaults (`Decoder`, `Encoder`, `Memory`, `RTSP`). |
-| `include/mpk/MpKLoader.h` / `MpKManifest.h` / `MpKPipelineAdapter.h` | Stable | Implemented MPK inspection/extraction, error taxonomy, and sequence adaptation helpers. |
 | `include/nodes/groups/ImageToH264RtspGroup.h` | Planned | Empty placeholder group. |
-| `include/nodes/groups/MpKCompatGroup.h` | Planned | Empty placeholder group. |
-| Python bindings (`python/`, `pyneat`) | Beta | Nanobind-based bindings and packaging live in-repo; API surface focuses on `Tensor`, `Session/Run`, `Model`, and core node/group helpers. |
+| Python bindings (`python/`, `pyneat`) | Beta | Nanobind-based bindings and packaging live in-repo; API surface focuses on `Tensor`, `Graph/Run`, `Model`, and core node/group helpers. |
 
 ---
 
 ## Modules and responsibilities
 
-### `builder/` -- graph & composition (no GStreamer)
+### `builder/` -- node contracts and private linear composition support (no GStreamer)
 **Purpose:** Define how pipelines are assembled from logical parts.
 
 Key types:
 - `Node` -- interface implemented by each pipeline building block
-- `Graph`, `Builder`, `NodeGroup` -- composition utilities and printing
+- private node-vector helpers and `GraphPrinter` -- composition utilities and diagnostics
 
 **Rule:** builder must remain mostly STL-only. It should not own GStreamer runtime objects.
 
@@ -249,15 +247,15 @@ Examples:
 **Purpose:** Own the runtime lifecycle: build -> parse -> run -> consume -> teardown, with diagnostics.
 
 Key types:
-- `Session` -- the main entry point for users
+- `Graph` -- the main entry point for users
 - `Run` -- running pipeline handle with push/pull APIs
 - `Sample` -- structured output payload returned by pulls
-- `SessionReport` -- structured diagnostics for failures, stalls, and reproduction
-- `Errors` -- exceptions (`SessionError`) embedding a report
+- `GraphReport` -- structured diagnostics for failures, stalls, and reproduction
+- `Errors` -- exceptions (`NeatError`) embedding a report
 
 #### Error semantics contract
 
-`SessionReport.error_code` is the canonical machine-triage field. Framework
+`GraphReport.error_code` is the canonical machine-triage field. Framework
 runtime/build/IO paths map terminal failures into stable code families:
 
 - `misconfig.pipeline_shape`
@@ -268,10 +266,10 @@ runtime/build/IO paths map terminal failures into stable code families:
 - `io.parse`
 - `io.open`
 
-`SessionReport.repro_note` is the human-facing summary and must include enough
+`GraphReport.repro_note` is the human-facing summary and must include enough
 context to reproduce (offending value, node/element context, or hint).
-`SessionReport.bus` is the source of truth for plugin/runtime error details.
-For build(input) flows, `SessionReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
+`GraphReport.bus` is the source of truth for plugin/runtime error details.
+For build(input) flows, `GraphReport.build_adaptation` records the resolved shape policy/capability, origins for seed/max limits, byte-guard origin, and applied/skipped adaptation actions.
 For non-throwing runtime pulls, `PullError.code` uses the same taxonomy.
 
 Support triage order is:
@@ -348,62 +346,43 @@ The goal is to make "knobs" explicit and discoverable rather than hidden in scat
 
 ---
 
-### `mpk/` -- MPK integration
-**Purpose:** Load/interpret "model packs" (MPK) and adapt them into pipeline nodes or pipeline fragments.
+### Model archive integration
+**Purpose:** Load `.tar.gz` model archives through `Model` and adapt the parsed MPK
+inference contract into routeable graph fragments.
 
-This module is intentionally optional and should not contaminate the core runtime path unless used.
-
-Key types:
-- `ModelMPK` -- loads an MPK tarball, parses its JSON, and exposes model fragments
-- `ModelStage` -- `Preprocess`, `MlaOnly`, `Postprocess`, `Full`
-- `ModelFragment` -- `{gst, elements}` pair for deterministic fragments
+The secure archive loader is internal implementation detail; application code should
+construct `Model` and compose `model.graph()` or the stage-specific fragments.
 
 Common usage:
 
 ```cpp
-// From a cv::Mat (OpenCV enabled)
-auto model = sima::mpk::ModelMPK("resnet_50_mpk.tar.gz", rgb_mat,
-                                 /*normalize=*/true,
-                                 /*mean=*/{0.485f, 0.456f, 0.406f},
-                                 /*stddev=*/{0.229f, 0.224f, 0.225f});
-
-// Or with explicit caps/shape (no OpenCV dependency)
-// sima::mpk::ModelMPK("resnet_50_mpk.tar.gz", "video/x-raw", "RGB", 224, 224, 3,
-//                     /*normalize=*/true, /*mean=*/..., /*stddev=*/...);
-
-sima::Session p;
-p.add(sima::nodes::groups::Infer(model));
+simaai::neat::Model model("resnet_50.tar.gz");
+simaai::neat::Graph graph;
+graph.add(model.graph());
 ```
-
-`ModelMPK::to_node_group(ModelStage)` returns a `NodeGroup` for a specific stage.
-The `sima::nodes::groups::{Preprocess,MLA,Postprocess,Infer}` helpers wrap that
-API and should be preferred when composing pipelines from an already-loaded model.
-
-`ModelMPK::input_appsrc_options(...)` provides caps/config for `Input`
-when you need to feed frames or tensors into an MPK pipeline.
 
 ---
 
-### `stages/` -- stage-by-stage execution
-**Purpose:** Run individual MPK stages without a full pipeline build.
+### Model stage fragments
+**Purpose:** Compose the preprocess, inference, postprocess, or full route exposed by
+`Model` without exposing the internal archive loader.
 
 Key APIs:
-- `sima::stages::Preproc(cv::Mat, ModelMPK)`
-- `sima::stages::MLA(Tensor, ModelMPK)`
-- `sima::stages::BoxDecode(Tensor, ModelMPK, BoxDecodeOptions)`
+- `Model::preprocess()`
+- `Model::inference()`
+- `Model::postprocess()`
+- `Model::graph()`
 
-This is used for stage-only tests (`yolov8_stage_route_test.cpp`) and for
-hybrid flows where preproc is done once and MLA/BoxDecode are run in a separate
-pipeline or thread.
+This is used for hybrid flows where preproc is done once and MLA/BoxDecode are run
+in a separate graph or thread.
 
 ---
 
 ### Where work runs (CPU / CVU / MLA)
-Processor routing is determined by the MPK graph configuration (the CVU/MLA
-stages defined in the model pack) plus optional runtime overrides:
+Processor routing is determined by the MPK contract (the CVU/MLA stages defined
+in the model archive) plus optional runtime overrides:
 
-* `ModelMPK` constructors allow setting `preproc_next_cpu`, `num_buffers_cvu`,
-  and `num_buffers_mla` to influence throughput and stage placement.
+* `Model::Options` controls preprocess, postprocess, naming, and buffering choices.
 * `SIMA_MLA_NEXT_CPU` can override the next stage for MLA in some configs.
 * Pipeline nodes themselves are declarative; actual execution happens in the
   GStreamer plugins and their configs.
@@ -423,10 +402,10 @@ Additionally, runtime paths may verify required plugins are present:
 - `require_element("appsink", ...)`, etc.
 
 ### Building pipelines
-A `Session` is built by adding `Node` objects:
+A `Graph` is built by adding `Node` objects:
 
 ```cpp
-sima::Session s;
+sima::Graph s;
 s.add(nodes::RTSPInput("rtsp://..."))
  .add(nodes::H264DecodeSima())
  .add(nodes::Caps(/*...NV12...*/))
@@ -435,7 +414,7 @@ s.add(nodes::RTSPInput("rtsp://..."))
 
 Internally:
 
-1. The session asks each Node for `backend_fragment(i)` and concatenates fragments with `!`
+1. The Graph asks each Node for `backend_fragment(i)` and concatenates fragments with `!`
 2. Optionally inserts **boundary markers** between nodes:
 
    * `identity name=sima_b<i> silent=true`
@@ -453,7 +432,7 @@ Internally:
 * `try_push(...)` is non-blocking (returns false if the queue is full)
 
 This supports fully async pipelines (producer/consumer split) as well as
-sync flows (`RunMode::Sync` or `Session::run(...)`).
+sync flows (`RunMode::Sync` or `Graph::run(...)`).
 
 ### Parsing & launch
 
@@ -465,7 +444,7 @@ This provides flexibility and debuggability (you can replay the exact string wit
 
 ### Running
 
-Typical flow (`Session::build()` / `Run`):
+Typical flow (`Graph::build()` / `Run`):
 
 1. Enforce contracts (e.g., "sink last" for `build()` + pull)
 2. Build pipeline string (+ optional boundaries)
@@ -480,7 +459,7 @@ Typical flow (`Session::build()` / `Run`):
 2. **Negotiate:** GStreamer negotiates caps between elements (format, size, memory).
 3. **Run:** Inputs are pushed (or pulled from sources) into the pipeline.
 4. **Sample:** Appsink yields a `Sample` / `Tensor` back to your code.
-5. **Error:** Any negotiation or runtime failure becomes a `SessionError` with a `SessionReport`.
+5. **Error:** Any negotiation or runtime failure becomes a `NeatError` with a `GraphReport`.
 
 Caps negotiation is automatic; failures surface early (validate/preroll) or at runtime with
 diagnostics you can reproduce (`describe_backend()` + report).
@@ -503,7 +482,7 @@ The common pattern is:
 
 SimaAI plugins support multiple pipelines per process. If you run several
 pipelines concurrently, make element names unique via
-`SessionOptions` or `Model` name suffixes/prefixes to avoid
+`GraphOptions` or `Model` name suffixes/prefixes to avoid
 GStreamer name collisions.
 
 ---
@@ -514,13 +493,13 @@ GStreamer name collisions.
   Mismatches fail fast during negotiation or when pushing inputs.
 * **Capability-gated dynamic input**: runtime renegotiation is allowed only when the built graph advertises dynamic capability. `FullyDynamic` graphs can renegotiate raw-video geometry/format/fps/media caps; `IngressDynamicCvuOnly` allows geometry changes and permits format changes only when build-time downstream contract checks prove stable output behavior.
 * **Dynamic within effective bounds**: `max_*` are hard ceilings; if `max_*` is unset, `width/height/depth` act as implicit ceilings.
-* **Model vs Session defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Session` remains node-option driven unless configured.
+* **Model vs Graph defaults**: both flows now resolve seed/max/byte-guard policy through `src/pipeline/internal/InputPolicy.*`; `Model` still applies its documented metadata-backed defaults (for example 1920x1080 ceilings) while `Graph` remains node-option driven unless configured.
 * **`caps_override` is authoritative**: when set, renegotiation is blocked and shape changes require rebuild.
 
 | Flow | Seed defaults | Max defaults | Byte-guard default |
 | --- | --- | --- | --- |
 | `Model` | preproc metadata (if present), otherwise inferred from user format/options | explicit `input_max_*`; otherwise policy defaults (for example `1920x1080`, format-derived depth) | explicit `RunOptions.max_input_bytes`, otherwise bounded estimate or elastic default from `InputPolicy` |
-| `Session` | input-node options and/or seed input sample | explicit `max_*`; otherwise implicit from seed `width/height/depth` when provided | explicit `RunOptions.max_input_bytes`, otherwise bounded estimate or elastic default from `InputPolicy` |
+| `Graph` | input-node options and/or seed input sample | explicit `max_*`; otherwise implicit from seed `width/height/depth` when provided | explicit `RunOptions.max_input_bytes`, otherwise bounded estimate or elastic default from `InputPolicy` |
 
 * **SimaAI concurrency**: multiple pipelines can run in-process; keep element names unique.
 
@@ -596,15 +575,15 @@ every plugin in the graph.
 ### Bus logging and errors
 
 The runtime drains bus messages into `DiagCtx`.
-On an error message (`GST_MESSAGE_ERROR`), it throws `SessionError` including a `SessionReport` and reproduction hints.
+On an error message (`GST_MESSAGE_ERROR`), it throws `NeatError` including a `GraphReport` and reproduction hints.
 
 ### DOT dumps
 
 If enabled, the runtime can emit DOT graphs via `gst_debug_bin_to_dot_file_with_ts(...)` to a configured directory.
 
 ### Debugging playbook (production)
-1. **Reproduce the pipeline**: `Session::describe_backend()` or `last_pipeline()`.
-2. **Capture a report**: `Run::report()` or `SessionError::report()`.
+1. **Reproduce the pipeline**: `Graph::describe_backend()` or `last_pipeline()`.
+2. **Capture a report**: `Run::report()` or `NeatError::report()`.
 3. **Enable targeted probes**:
    - `SIMA_GST_BOUNDARY_PROBES=1` for stall localization
    - `SIMA_GST_ELEMENT_TIMINGS=1` for per-element timing
@@ -630,8 +609,8 @@ Convenience helpers like `Run::pull_tensor()` and
 
 Pipelines can be saved and restored as JSON:
 
-* `Session::save(path)` writes a versioned JSON with node kind/label/fragment/elements
-* `Session::load(path)` rehydrates nodes via a `ConfiguredNode` wrapper
+* `Graph::save(path)` writes a versioned JSON with node kind/label/fragment/elements
+* `Graph::load(path)` rehydrates nodes via a `ConfiguredNode` wrapper
 
 The current schema is intentionally minimal and reproducible, and can evolve to richer
 node configs later. This also serves as the bridge for future bindings and tooling.
@@ -640,8 +619,8 @@ node configs later. This also serves as the bridge for future bindings and tooli
 
 ## UX helpers
 
-* `Session::describe()` uses `GraphPrinter` to render a human-readable node list
-* `Session::describe_backend()` returns the gst-launch string for quick debugging
+* `Graph::describe()` uses `GraphPrinter` to render a human-readable node list
+* `Graph::describe_backend()` returns the gst-launch string for quick debugging
 
 ---
 
@@ -678,8 +657,8 @@ Implications:
 * Build no longer performs JSON-based wiring checks.
 * Name transform still applies to element names only.
 
-For model-managed sessions, stage resolution is driven by `stage-id` + manifest context.
-For non-model sessions, explicit plugin properties are the runtime control plane.
+For model-managed graph runs, stage resolution is driven by `stage-id` + manifest context.
+For non-model graph runs, explicit plugin properties are the runtime control plane.
 
 ---
 
@@ -751,7 +730,7 @@ you need deep diagnostics.
 
 ### Adding runtime diagnostics
 
-* Prefer adding fields to `DiagCtx` and `SessionReport`
+* Prefer adding fields to `DiagCtx` and `GraphReport`
 * If updates happen from streaming threads, use **atomics** (or another lock-free mechanism)
 * Convert to plain snapshot types for reporting
 
@@ -762,7 +741,7 @@ you need deep diagnostics.
 * `builder/` should not depend on GStreamer or `pipeline/`
 * `gst/` should not depend on `pipeline/`
 * `nodes/` should not depend on `pipeline/` (Nodes are build-time descriptions, not runtime orchestrators)
-* `pipeline/` is the orchestrator and can depend on `gst/`, `builder/`, `nodes/`, `contracts/`, `policy/`, `mpk/`
+* `pipeline/` is the orchestrator and can depend on `gst/`, `builder/`, `nodes/`, `contracts/`, `policy/`, model internals
 
 This keeps the architecture modular and prevents circular dependencies.
 
@@ -773,20 +752,20 @@ This keeps the architecture modular and prevents circular dependencies.
 * `examples/` show typical end-to-end usage patterns:
 
   * decode RTSP
-  * run MPK
+  * run model archive
   * run RTSP server
 * `tests/` verify critical behaviors:
 
   * file read paths
   * group expansion equivalence (input groups)
   * tensor output path + save/load round-trip
-  * `model_resnet50_multi_test` validates Model accuracy with multiple sessions
+  * `model_resnet50_multi_test` validates Model accuracy with multiple Graph/Run instances
 
 When adding features, prefer adding tests that:
 
 * reproduce the pipeline string deterministically
 * validate caps negotiation assumptions
-* ensure failures produce useful `SessionReport` diagnostics
+* ensure failures produce useful `GraphReport` diagnostics
 
 ---
 

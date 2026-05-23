@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "builder/NodeGroup.h"
+#include "builder/Node.h"
 #include "pipeline/internal/RenderedStageQueryTypes.h"
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -16,24 +16,25 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace simaai::neat::pipeline_internal::rendered_stage_query {
 
 inline std::optional<sima::SimaPluginStaticManifest>
-rendered_manifest_from_group(const NodeGroup& group,
+rendered_manifest_from_nodes(std::span<const std::shared_ptr<Node>> nodes,
                              const char* pipeline_label = "RenderedStageQuery") {
   ContractCompileInput input;
   input.pipeline_label = pipeline_label ? pipeline_label : "RenderedStageQuery";
   sima::ManifestBuildDiagnostics diagnostics;
-  const CompiledPipelineContracts compiled =
-      compile_node_contracts(group.nodes(), input, &diagnostics);
+  const std::vector<std::shared_ptr<Node>> node_vec(nodes.begin(), nodes.end());
+  const CompiledPipelineContracts compiled = compile_node_contracts(node_vec, input, &diagnostics);
   if (!diagnostics.errors.empty()) {
     return std::nullopt;
   }
 
-  std::vector<std::shared_ptr<Node>> applied_nodes = group.nodes();
+  std::vector<std::shared_ptr<Node>> applied_nodes = node_vec;
   std::string apply_error;
   apply_compiled_contracts(&applied_nodes, compiled, &apply_error);
   if (!apply_error.empty()) {
@@ -250,12 +251,9 @@ preproc_semantic_kind_from_manifest(sima::ProcessCvuOutputSemanticKind kind) {
   }
 }
 
-inline stages::PreprocOutputInfo preproc_output_info(const NodeGroup& group) {
-  const auto manifest = rendered_manifest_from_group(group);
-  if (!manifest.has_value()) {
-    return {};
-  }
-  const auto* stage = find_preproc_stage(*manifest);
+inline stages::PreprocOutputInfo
+preproc_output_info_from_manifest(const sima::SimaPluginStaticManifest& manifest) {
+  const auto* stage = find_preproc_stage(manifest);
   if (!stage) {
     return {};
   }
@@ -344,8 +342,15 @@ inline stages::PreprocOutputInfo preproc_output_info(const NodeGroup& group) {
   return info;
 }
 
-inline std::string primary_input_buffer_name(const NodeGroup& group) {
-  const auto manifest = rendered_manifest_from_group(group);
+inline stages::PreprocOutputInfo
+preproc_output_info_from_nodes(std::span<const std::shared_ptr<Node>> nodes) {
+  const auto manifest = rendered_manifest_from_nodes(nodes);
+  return manifest.has_value() ? preproc_output_info_from_manifest(*manifest)
+                              : stages::PreprocOutputInfo{};
+}
+
+inline std::string primary_input_buffer_name(std::span<const std::shared_ptr<Node>> nodes) {
+  const auto manifest = rendered_manifest_from_nodes(nodes);
   if (!manifest.has_value()) {
     return {};
   }
@@ -370,13 +375,10 @@ inline std::string primary_input_buffer_name(const NodeGroup& group) {
   return {};
 }
 
-inline std::vector<stages::MlaOutputTensorInfo> mla_output_tensors(const NodeGroup& group) {
+inline std::vector<stages::MlaOutputTensorInfo>
+mla_output_tensors_from_manifest(const sima::SimaPluginStaticManifest& manifest) {
   std::vector<stages::MlaOutputTensorInfo> out;
-  const auto manifest = rendered_manifest_from_group(group);
-  if (!manifest.has_value()) {
-    return out;
-  }
-  const auto* stage = find_mla_stage(*manifest);
+  const auto* stage = find_mla_stage(manifest);
   if (!stage || stage->logical_outputs.empty()) {
     return out;
   }
@@ -414,9 +416,16 @@ inline std::vector<stages::MlaOutputTensorInfo> mla_output_tensors(const NodeGro
   return out;
 }
 
-inline stages::MlaOutputInfo mla_output_info(const NodeGroup& group) {
+inline std::vector<stages::MlaOutputTensorInfo>
+mla_output_tensors_from_nodes(std::span<const std::shared_ptr<Node>> nodes) {
+  const auto manifest = rendered_manifest_from_nodes(nodes);
+  return manifest.has_value() ? mla_output_tensors_from_manifest(*manifest)
+                              : std::vector<stages::MlaOutputTensorInfo>{};
+}
+
+inline stages::MlaOutputInfo
+mla_output_info_from_tensors(const std::vector<stages::MlaOutputTensorInfo>& outputs) {
   stages::MlaOutputInfo info;
-  const auto outputs = mla_output_tensors(group);
   if (outputs.empty()) {
     return info;
   }
@@ -431,12 +440,14 @@ inline stages::MlaOutputInfo mla_output_info(const NodeGroup& group) {
   return info;
 }
 
-inline stages::MlaInputTensorInfo mla_input_tensor_info(const NodeGroup& group) {
-  const auto manifest = rendered_manifest_from_group(group);
-  if (!manifest.has_value()) {
-    return {};
-  }
-  const auto* stage = find_mla_stage(*manifest);
+inline stages::MlaOutputInfo
+mla_output_info_from_nodes(std::span<const std::shared_ptr<Node>> nodes) {
+  return mla_output_info_from_tensors(mla_output_tensors_from_nodes(nodes));
+}
+
+inline stages::MlaInputTensorInfo
+mla_input_tensor_info_from_manifest(const sima::SimaPluginStaticManifest& manifest) {
+  const auto* stage = find_mla_stage(manifest);
   if (!stage || stage->logical_inputs.empty()) {
     return {};
   }
@@ -481,8 +492,14 @@ inline stages::MlaInputTensorInfo mla_input_tensor_info(const NodeGroup& group) 
   return info;
 }
 
-inline stages::MlaInputInfo mla_input_info(const NodeGroup& group) {
-  const stages::MlaInputTensorInfo input = mla_input_tensor_info(group);
+inline stages::MlaInputTensorInfo
+mla_input_tensor_info_from_nodes(std::span<const std::shared_ptr<Node>> nodes) {
+  const auto manifest = rendered_manifest_from_nodes(nodes);
+  return manifest.has_value() ? mla_input_tensor_info_from_manifest(*manifest)
+                              : stages::MlaInputTensorInfo{};
+}
+
+inline stages::MlaInputInfo mla_input_info_from_tensor(const stages::MlaInputTensorInfo& input) {
   stages::MlaInputInfo info;
   info.size_bytes = input.span_size_bytes;
   info.input_media_type = input.media_type;
@@ -499,6 +516,11 @@ inline stages::MlaInputInfo mla_input_info(const NodeGroup& group) {
           ? tensor_dims_projection_from_contract_shape(*input.physical_shape, input.logical_layout)
           : info.logical_dims;
   return info;
+}
+
+inline stages::MlaInputInfo
+mla_input_info_from_nodes(std::span<const std::shared_ptr<Node>> nodes) {
+  return mla_input_info_from_tensor(mla_input_tensor_info_from_nodes(nodes));
 }
 
 inline std::optional<stages::PackedTensorOutputInfo>
@@ -545,9 +567,9 @@ packed_stage_output_info(const sima::StageStaticSpec& stage, bool include_batch_
   return info;
 }
 
-inline stages::PackedTensorOutputInfo terminal_output_info(const NodeGroup& group,
-                                                           bool include_batch_axis = true) {
-  const auto manifest = rendered_manifest_from_group(group);
+inline stages::PackedTensorOutputInfo
+terminal_output_info(std::span<const std::shared_ptr<Node>> nodes, bool include_batch_axis = true) {
+  const auto manifest = rendered_manifest_from_nodes(nodes);
   if (!manifest.has_value()) {
     return {};
   }
@@ -560,9 +582,10 @@ inline stages::PackedTensorOutputInfo terminal_output_info(const NodeGroup& grou
   return {};
 }
 
-inline stages::DetessDequantOutputInfo detessdequant_output_info(const NodeGroup& group,
-                                                                 bool include_batch_axis = true) {
-  const auto manifest = rendered_manifest_from_group(group);
+inline stages::DetessDequantOutputInfo
+detessdequant_output_info(std::span<const std::shared_ptr<Node>> nodes,
+                          bool include_batch_axis = true) {
+  const auto manifest = rendered_manifest_from_nodes(nodes);
   if (!manifest.has_value()) {
     return {};
   }
@@ -574,9 +597,9 @@ inline stages::DetessDequantOutputInfo detessdequant_output_info(const NodeGroup
   return info.has_value() ? *info : stages::DetessDequantOutputInfo{};
 }
 
-inline stages::DequantOutputInfo dequant_output_info(const NodeGroup& group,
+inline stages::DequantOutputInfo dequant_output_info(std::span<const std::shared_ptr<Node>> nodes,
                                                      bool include_batch_axis = true) {
-  const auto manifest = rendered_manifest_from_group(group);
+  const auto manifest = rendered_manifest_from_nodes(nodes);
   if (!manifest.has_value()) {
     return {};
   }

@@ -1,6 +1,6 @@
 #include "model/Model.h"
 
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include "test_utils.h"
 
@@ -61,9 +61,12 @@ int main(int argc, char** argv) {
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
     simaai::neat::Model model(tar_gz, model_opt);
+    simaai::neat::Model::RouteOptions route_opt;
+    route_opt.include_input = true;
+    route_opt.include_output = true;
 
-    simaai::neat::Session p1;
-    p1.add(model.session());
+    simaai::neat::Graph p1;
+    p1.add(model.graph(route_opt));
     const std::string pipeline1 = p1.describe_backend();
     const std::string appsrc1 = extract_element_name(pipeline1, "appsrc");
     const std::string appsink1 = extract_element_name(pipeline1, "appsink");
@@ -71,8 +74,8 @@ int main(int argc, char** argv) {
     require(!appsrc1.empty(), "appsrc name not found");
     require(!appsink1.empty(), "appsink name not found");
 
-    simaai::neat::Session p2;
-    p2.add(model.session());
+    simaai::neat::Graph p2;
+    p2.add(model.graph(route_opt));
     const std::string pipeline2 = p2.describe_backend();
     const std::string appsrc2 = extract_element_name(pipeline2, "appsrc");
     const std::string appsink2 = extract_element_name(pipeline2, "appsink");

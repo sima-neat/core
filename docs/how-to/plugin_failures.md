@@ -1,6 +1,6 @@
 # How To Debug Plugin Failures
 
-When a plugin fails, NEAT raises a `SessionError` whose message contains the
+When a plugin fails, NEAT raises a `NeatError` whose message contains the
 GStreamer error and a structured debug string. Use the fields to locate the
 root cause quickly.
 
@@ -18,7 +18,7 @@ See the [Error Format Reference](/reference/error_format) for the full list.
 
 ## 2) Confirm the Pipeline Context
 
-Use the pipeline string from `Session::last_pipeline()` or from the error report:
+Use the pipeline string from `Graph::last_pipeline()` or from the error report:
 
 - Verify the `node` name appears in the pipeline.
 - Confirm the `config_path` exists and is readable.

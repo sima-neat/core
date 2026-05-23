@@ -6,7 +6,7 @@
  */
 #pragma once
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 
 #include <atomic>

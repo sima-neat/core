@@ -8,17 +8,17 @@ API_DIR = ROOT / "docs" / "reference" / "cppapi"
 SECTIONS = ["files", "structs", "classes", "namespaces", "groups"]
 
 link_re = re.compile(
-    r"(/PipelineSession//reference/api/|/PipelineSession/reference/api/|/PipelineSession/docs/reference/api/|/docs/reference/api/|/reference/api/|"
-    r"/PipelineSession//reference/cppapi/|/PipelineSession/reference/cppapi/|/PipelineSession/docs/reference/cppapi/|/docs/reference/cppapi/|/reference/cppapi/)"
+    r"(//reference/api/|/reference/api/|/docs/reference/api/|/docs/reference/api/|/reference/api/|"
+    r"//reference/cppapi/|/reference/cppapi/|/docs/reference/cppapi/|/docs/reference/cppapi/|/reference/cppapi/)"
     r"(?P<section>files|structs|classes|namespaces|groups)"
     r"/(?P<path>[A-Za-z0-9_./-]+)"
 )
 
-dash_anchor_re = re.compile(r"(/PipelineSession/(docs/)?reference/(api|cppapi)/[A-Za-z0-9_/.-]+|/reference/(api|cppapi)/[A-Za-z0-9_/.-]+)-#")
-docs_prefix_re = re.compile(r"/PipelineSession/docs/reference/(api|cppapi)/")
+dash_anchor_re = re.compile(r"(/(docs/)?reference/(api|cppapi)/[A-Za-z0-9_/.-]+|/reference/(api|cppapi)/[A-Za-z0-9_/.-]+)-#")
+docs_prefix_re = re.compile(r"/docs/reference/(api|cppapi)/")
 docs_root_prefix_re = re.compile(r"/docs/reference/(api|cppapi)/")
-pipeline_prefix_re = re.compile(r"/PipelineSession/reference/(api|cppapi)/")
-pipeline_root_re = re.compile(r"/PipelineSession//reference/(api|cppapi)/")
+pipeline_prefix_re = re.compile(r"/reference/(api|cppapi)/")
+pipeline_root_re = re.compile(r"//reference/(api|cppapi)/")
 
 slug_re = re.compile(r"^slug:\s*/reference/(api|cppapi)/(?P<section>files|structs|classes|namespaces)/(?P<path>[A-Za-z0-9_./-]+)\s*$", re.MULTILINE)
 

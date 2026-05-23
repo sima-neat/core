@@ -34,7 +34,7 @@ Chapter 002 (async basics). Chapter 011 (diagnostics).
 
 **References**
 - [Pipeline](/getting-started/programming-model/pipeline)
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
 1. Build an async run path with explicit queue and overflow settings.

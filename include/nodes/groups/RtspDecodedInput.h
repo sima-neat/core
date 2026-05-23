@@ -5,7 +5,7 @@
  *
  * The "live camera" preset: pulls an H.264 stream from an `rtsp://` URL, depacketizes
  * and parses the bitstream, and runs SiMa hardware H.264 decode to emit raw frames
- * for downstream Nodes. Typical placement: very first NodeGroup in a Session that
+ * for downstream Nodes. Typical placement: very first Graph in a Graph that
  * consumes a live IP camera feed.
  *
  * @see VideoInputGroup
@@ -14,7 +14,7 @@
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "pipeline/Graph.h"
 #include "contracts/ContractTypes.h"
 #include "pipeline/FormatSpec.h"
 
@@ -74,19 +74,19 @@ struct RtspDecodedInputOptions {
 };
 
 /**
- * @brief Build the live-RTSP input NodeGroup: source, depayload+parse, hardware H.264 decode.
+ * @brief Build the live-RTSP input Graph: source, depayload+parse, hardware H.264 decode.
  *
  * Typical chain: `rtspsrc` -> RTP H.264 depayloader -> `H264Parse` -> SiMa hardware
  * H.264 decoder -> optional `videoconvert` / `videoscale`. Use this as the head of
- * a Session that runs detection or analytics on a live IP camera feed.
+ * a Graph that runs detection or analytics on a live IP camera feed.
  *
  * @param opt Configuration (URL, transport, parser fallback caps, decoder output).
- * @return The configured `NodeGroup` ready to be `add()`ed to a Session.
+ * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *
  * @see VideoInputGroup
  * @see H264Parse
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup RtspDecodedInput(const RtspDecodedInputOptions& opt);
+simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt);
 
 } // namespace simaai::neat::nodes::groups

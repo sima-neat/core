@@ -6056,6 +6056,7 @@ build_preproc_payload_from_options_local(const ::simaai::neat::PreprocOptions& o
   payload.out_dtype = opt.output_dtype;
   payload.scaling_type = opt.scaling_type;
   payload.padding_type = opt.padding_type;
+  payload.pad_value = opt.pad_value;
   payload.has_q_scale = opt.q_scale.has_value();
   payload.q_scale = opt.q_scale.value_or(0.0);
   if (opt.q_scale.has_value()) {

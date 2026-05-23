@@ -2479,7 +2479,7 @@ MpkGraphKernelContract kernel_contract_template_local(const std::string& actual_
     add_kernel_fields_local(&contract, MpkGraphKernelFieldKind::Value,
                             {"input_shape", "input_offset", "input_stride", "output_stride",
                              "scaled_width", "scaled_height", "slice_shape", "q_scale", "q_zp",
-                             "channel_mean", "channel_stddev", "batch_size"});
+                             "channel_mean", "channel_stddev", "pad_value", "batch_size"});
     add_kernel_fields_local(&contract, MpkGraphKernelFieldKind::Parameter,
                             {"aspect_ratio", "tessellate", "normalize", "input_img_type",
                              "output_img_type", "output_dtype", "output_shapes", "scaling_type",

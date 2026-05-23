@@ -5,7 +5,7 @@
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "graph/Graph.h"
 #include "graph/nodes/StageNode.h"
@@ -32,15 +32,15 @@ struct EdgeSpec {
 /**
  * @brief Compiled view of a contiguous pipeline-backend segment in the runtime graph.
  *
- * Groups the `NodeId`s and the merged `NodeGroup` belonging to a single pipeline run, plus
+ * Groups the `NodeId`s and the merged node list belonging to a single pipeline run, plus
  * the input/output edges that bound the segment and the input/output specs flowing through.
  *
  * @ingroup graph
  */
 struct CompiledPipelineSegment {
-  int id = -1;                   ///< Stable segment id.
-  std::vector<NodeId> node_ids;  ///< Runtime-graph node ids merged into this segment.
-  simaai::neat::NodeGroup group; ///< Builder `NodeGroup` representing the merged segment.
+  int id = -1;                  ///< Stable segment id.
+  std::vector<NodeId> node_ids; ///< Runtime-graph node ids merged into this segment.
+  std::vector<std::shared_ptr<simaai::neat::Node>> nodes; ///< Merged pipeline segment nodes.
   std::vector<std::size_t>
       input_edges; ///< Indices into `CompiledGraph::edges` feeding the segment.
   std::vector<std::size_t>
@@ -80,6 +80,20 @@ struct CompiledGraph {
 };
 
 /**
+ * @brief Optional compile-time context for root graph inputs.
+ *
+ * Public Graph builds can supply a seed sample before runtime starts. That sample should complete
+ * compile-time contract derivation for root push inputs, but it must not mutate public `Input`
+ * options or turn the first seed size into a fixed/max input size. The compiler therefore accepts
+ * root input specs as build-local context keyed by runtime `NodeId`.
+ *
+ * @ingroup graph
+ */
+struct CompilerOptions {
+  std::unordered_map<NodeId, OutputSpec> root_input_specs;
+};
+
+/**
  * @brief Runtime-graph compiler that partitions a `Graph` into pipeline segments and stages.
  *
  * Performs partitioning of contiguous pipeline-backend nodes into pipeline segments, leaves
@@ -93,6 +107,8 @@ class Compiler final {
 public:
   /// Compile a runtime `Graph` into a `CompiledGraph`.
   CompiledGraph compile(const Graph& g) const;
+  /// Compile with build-local root input context.
+  CompiledGraph compile(const Graph& g, const CompilerOptions& opt) const;
 
 private:
   static bool spec_complete_(const OutputSpec& spec);

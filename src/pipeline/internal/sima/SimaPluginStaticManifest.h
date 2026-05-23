@@ -265,6 +265,7 @@ struct ProcessCvuStagePayload {
   std::string output_dtype;
   std::string out_dtype;
 
+  int pad_value = 0;
   int scaled_width = 0;
   int scaled_height = 0;
   int input_stride = 0;

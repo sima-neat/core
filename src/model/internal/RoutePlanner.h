@@ -142,6 +142,7 @@ struct EgressTensorContract {
   // Canonical tensor shape from the MPK contract. Source of truth for
   // tensor-domain consumers (see comment on IngressTensorContract).
   std::vector<std::int64_t> logical_shape;
+  std::string source_tensor_name;
   std::string source_stage;
 };
 
@@ -327,6 +328,8 @@ struct RouteMaterializationPlan {
   std::vector<RouteRegion> ingress_regions;
   EgressTensorContract egress_contract;
   std::vector<EgressTensorContract> egress_contracts;
+  std::size_t output_physical_count = 0U;
+  std::size_t output_logical_count = 0U;
   PipelineType pipeline_type = PipelineType::Preproc;
   PostRouteStageKind selected_post_kind = PostRouteStageKind::None;
   bool infer_only = false;

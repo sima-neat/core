@@ -410,12 +410,10 @@ int main(int argc, char** argv) {
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.input_max_depth = 1;
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::GRAY8;
-    if (env_flag("SIMA_MNIST_PREPROC_EXPLICIT_NORM")) {
-      model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
-      model_opt.preprocess.normalize.mean = std::array<float, 3>{0.1307f, 0.1307f, 0.1307f};
-      model_opt.preprocess.normalize.stddev = std::array<float, 3>{0.3081f, 0.3081f, 0.3081f};
-      model_opt.preprocess.normalize.has_explicit_stats = true;
-    }
+    model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.normalize.mean = std::array<float, 3>{0.1307f, 0.1307f, 0.1307f};
+    model_opt.preprocess.normalize.stddev = std::array<float, 3>{0.3081f, 0.3081f, 0.3081f};
+    model_opt.preprocess.normalize.has_explicit_stats = true;
 
     std::cout << "[MNIST] model_name=" << model_name << "\n";
     std::cout << "[MNIST] model_path=" << model_path << "\n";

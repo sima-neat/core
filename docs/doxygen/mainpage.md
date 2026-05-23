@@ -1,6 +1,6 @@
 # Neat framework
 
-The **Neat framework** is the C++/Python library and runtime that runs models on the SiMa Modalix chip. It loads compiled model packs (MPKs), assembles them into deterministic GStreamer pipelines, and executes inference at frame rate on heterogeneous compute (A65 host CPU + EV74 vector cores + MLA accelerator + hardware codec).
+The **Neat framework** is the C++/Python library and runtime that runs models on the SiMa Modalix chip. It loads compiled `.tar.gz` model archives, assembles them into deterministic GStreamer pipelines, and executes inference at frame rate on heterogeneous compute (A65 host CPU + EV74 vector cores + MLA accelerator + hardware codec).
 
 This site is the **reference documentation** for the framework's public API. For design rationale and worked examples, see the [Architecture deep dive](/contribute/architecture), which mirrors the architect-level documentation.
 
@@ -21,12 +21,12 @@ A typical Neat-framework application looks like this:
 
 ```cpp
 sima::Model model("/models/yolov8.tar.gz");
-sima::Session sess;
-sess.add(sima::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"}));
-sess.add(model.session());
-sess.add(sima::Output{});
+sima::Graph graph;
+graph.add(sima::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"}));
+graph.add(model.graph());
+graph.add(sima::Output{});
 
-auto run = sess.build(sima::RunMode::Async);
+auto run = graph.build(sima::RunMode::Async);
 while (running) {
   auto sample = run.pull(/*timeout_ms=*/100);
   if (sample) handle_detection(*sample);
@@ -37,18 +37,18 @@ A dozen lines from "RTSP camera → real-time YOLO detection running on Modalix 
 
 ## The eight main concepts
 
-The framework's surface is **eight primary concepts**. They form a clean progression from "the file on disk" to "the data that flows between processors at runtime":
+The framework's public surface is a small set of primary concepts. They form a clean progression from "the file on disk" to "the data that flows between processors at runtime":
 
 | # | Concept | Purpose | Reference |
 |---|---|---|---|
-| 1 | **MPK** | Sealed model file on disk (`.tar.gz` from the compiler — kernels + weights + manifest). | [`Model`](/reference/cppapi/classes/simaai-neat-model), [MPK contract](/concepts/mpk_contract) |
-| 2 | **Model** | Loaded form of an MPK; the simplified entry point. | [`Model`](/reference/cppapi/classes/simaai-neat-model) |
+| 1 | **Model archive** | Sealed `.tar.gz` file from the compiler — kernels, weights, configs, and the MPK contract. | [`Model`](/reference/cppapi/classes/simaai-neat-model), [MPK contract](/concepts/mpk_contract) |
+| 2 | **Model** | Loaded form of a model archive; the simplified entry point. | [`Model`](/reference/cppapi/classes/simaai-neat-model) |
 | 3 | **Tensor** | Typed data unit that flows between stages. | [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Memory model](/concepts/memory_model), [dtype contract](/concepts/dtype_contract) |
 | 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [`Node`](/reference/cppapi/classes/simaai-neat-graph-node), [GStreamer underneath](/concepts/gstreamer_layer) |
-| 5 | **NodeGroups** | Pre-made bundles of Nodes capturing common patterns. | [Node groups](/reference/cppapi/groups/nodes-groups) |
-| 6 | **Session** | Assembly stage that turns Nodes into a runnable pipeline. | [`Session`](/reference/cppapi/classes/simaai-neat-session), [`SessionOptions`](/reference/cppapi/structs/simaai-neat-sessionoptions) |
-| 7 | **Run** | Live, running pipeline produced by `Session::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
-| 8 | **Graph** | Composition of pipelines for non-linear shapes. | [Builder Graph](/reference/cppapi/namespaces/simaai-neat-graph), [Runtime Graph](/reference/cppapi/classes/simaai-neat-graph-graph), [Two graph systems](/concepts/graphs) |
+| 5 | **Reusable Graph fragments** | Pre-made `Graph` fragments capturing common patterns. | [Reusable Graph fragments](/reference/cppapi/groups/nodes-groups) |
+| 6 | **Graph** | Assembly stage that turns Nodes, Models, and reusable Graph fragments into a runnable pipeline. | [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`GraphOptions`](/reference/cppapi/structs/simaai-neat-graphoptions) |
+| 7 | **Run** | Live, running pipeline produced by `Graph::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
+| 8 | **Runtime Graph internals** | Internal topology runtime used for connected Graphs. | [Runtime Graph](/reference/cppapi/classes/simaai-neat-graph-graph), [Graph concepts](/concepts/graphs) |
 
 ## Where to read what
 
@@ -65,7 +65,7 @@ The framework's surface is **eight primary concepts**. They form a clean progres
 
 ## Why the framework is built for agents
 
-A consequence of how the framework was designed: it's an exceptionally good substrate for AI code generation. Every framework error produces a structured `SessionReport` (machine-readable error code + reproducer command). Every public symbol has stable naming. Validation runs before any pipeline starts. Pipelines are serializable JSON. The public API is ABI-stable. Errors fail fast with actionable messages instead of silent fallbacks.
+A consequence of how the framework was designed: it's an exceptionally good substrate for AI code generation. Every framework error produces a structured `GraphReport` (machine-readable error code + reproducer command). Every public symbol has stable naming. Validation runs before any pipeline starts. Pipelines are serializable JSON. The public API is ABI-stable. Errors fail fast with actionable messages instead of silent fallbacks.
 
 These properties weren't picked for AI agents specifically — they came from "make the framework deterministic, debuggable, and never hang the process" (see [`docs/contribute/architecture.md`](/contribute/architecture)). But they happen to be exactly what an AI agent needs to write code that converges quickly. That's why the **agentic workflow** in the Neat environment delivers what it does — the framework is the substrate, the environment is the workshop.
 
@@ -75,8 +75,8 @@ The full story of why the framework is good for agents — fifteen specific desi
 
 - All public types live under the `simaai::neat` namespace.
 - Nodes live under `simaai::neat::nodes::{common,io,rtp,sima,groups}`.
-- Headers are organized by responsibility: `model/`, `pipeline/`, `mpk/`, `builder/`, `graph/`, `nodes/`, `contracts/`, `policy/`, `gst/`, plus convenience umbrellas under `neat/`.
+- Headers are organized by responsibility: `model/`, `pipeline/`, `builder/`, `graph/`, `nodes/`, `contracts/`, `policy/`, `gst/`, plus convenience umbrellas under `neat/`.
 - Every public header has a file-level `@file` / `@ingroup` / `@brief` block. Group definitions live in `docs/doxygen/groups.dox`.
-- Errors are returned as `SessionError` exceptions carrying a structured `SessionReport`. See the [Error code catalog](/concepts/error_codes) for the full taxonomy.
+- Errors are returned as `NeatError` exceptions carrying a structured `GraphReport`. See the [Error code catalog](/concepts/error_codes) for the full taxonomy.
 
-The rest of this site is the API itself. Start by browsing [classes](/reference/cppapi/classes), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Session`](/reference/cppapi/classes/simaai-neat-session), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [`Node`](/reference/cppapi/classes/simaai-neat-graph-node).
+The rest of this site is the API itself. Start by browsing [classes](/reference/cppapi/classes), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [`Node`](/reference/cppapi/classes/simaai-neat-graph-node).

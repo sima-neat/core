@@ -24,7 +24,7 @@ bool caps_enabled(const VideoInputGroupOptions::OutputCaps& c) {
 
 } // namespace
 
-simaai::neat::NodeGroup VideoInputGroup(const VideoInputGroupOptions& opt) {
+simaai::neat::Graph VideoInputGroup(const VideoInputGroupOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
 
   nodes.push_back(nodes::FileInput(opt.path));
@@ -63,7 +63,11 @@ simaai::neat::NodeGroup VideoInputGroup(const VideoInputGroupOptions& opt) {
     nodes.push_back(nodes::Custom(opt.extra_fragment));
   }
 
-  return simaai::neat::NodeGroup(std::move(nodes));
+  simaai::neat::Graph graph;
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+  return graph;
 }
 
 } // namespace simaai::neat::nodes::groups

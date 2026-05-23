@@ -37,6 +37,7 @@ struct CompiledProcessCvuRuntimeConfig {
   int round_off = 0;
   int byte_align = 1;
   std::uint32_t opt_flags = 0;
+  int pad_value = 0;
 
   int aspect_ratio = -1;
   int normalize = -1;

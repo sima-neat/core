@@ -1603,6 +1603,7 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   cfg.round_off = payload.round_off;
   cfg.byte_align = payload.byte_align;
   cfg.opt_flags = payload.opt_flags;
+  cfg.pad_value = payload.pad_value;
   cfg.aspect_ratio = payload.aspect_ratio;
   cfg.normalize = payload.normalize;
   cfg.tessellate = payload.tessellate;
@@ -3172,6 +3173,7 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   request.input_stride = payload.input_stride;
   request.output_stride = payload.output_stride;
   request.input_offset = payload.input_offset;
+  request.pad_value = payload.pad_value;
   request.input_img_type = payload.input_img_type;
   request.output_img_type = payload.output_img_type;
   request.scaling_type = payload.scaling_type;

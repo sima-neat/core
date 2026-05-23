@@ -725,15 +725,7 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   if (!buffer)
     return;
 
-  const GstClockTime pts = GST_BUFFER_PTS(buffer);
-  const GstClockTime dts = GST_BUFFER_DTS(buffer);
-  const GstClockTime dur = GST_BUFFER_DURATION(buffer);
-  if (pts != GST_CLOCK_TIME_NONE)
-    out->pts_ns = static_cast<int64_t>(pts);
-  if (dts != GST_CLOCK_TIME_NONE)
-    out->dts_ns = static_cast<int64_t>(dts);
-  if (dur != GST_CLOCK_TIME_NONE)
-    out->duration_ns = static_cast<int64_t>(dur);
+  restore_sample_timing_from_gst_buffer(buffer, out);
 
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
@@ -754,8 +746,21 @@ static void fill_output_meta_from_sample(GstSample* sample, Sample* out) {
   const char* stream_id = gst_structure_get_string(s, "stream-id");
   const char* buffer_name = gst_structure_get_string(s, "buffer-name");
   const char* orig_stream_id = gst_structure_get_string(s, "orig-stream-id");
-  if (frame_id >= 0)
+  gboolean sample_frame_valid = FALSE;
+  const bool has_sample_frame =
+      gst_structure_get_boolean(s, "sample-frame-id-valid", &sample_frame_valid) == TRUE;
+  if (has_sample_frame) {
+    gint64 sample_frame_id = -1;
+    if (sample_frame_valid == TRUE &&
+        gst_structure_get_int64(s, "sample-frame-id", &sample_frame_id) == TRUE &&
+        sample_frame_id >= 0) {
+      out->frame_id = sample_frame_id;
+    } else {
+      out->frame_id = -1;
+    }
+  } else if (frame_id >= 0) {
     out->frame_id = frame_id;
+  }
   if (has_input_seq && input_seq >= 0) {
     out->input_seq = input_seq;
   } else if (has_orig_input_seq && orig_input_seq >= 0) {
@@ -798,15 +803,7 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
   if (!buffer)
     return;
 
-  const GstClockTime pts = GST_BUFFER_PTS(buffer);
-  const GstClockTime dts = GST_BUFFER_DTS(buffer);
-  const GstClockTime dur = GST_BUFFER_DURATION(buffer);
-  if (pts != GST_CLOCK_TIME_NONE)
-    out->pts_ns = static_cast<int64_t>(pts);
-  if (dts != GST_CLOCK_TIME_NONE)
-    out->dts_ns = static_cast<int64_t>(dts);
-  if (dur != GST_CLOCK_TIME_NONE)
-    out->duration_ns = static_cast<int64_t>(dur);
+  restore_sample_timing_from_gst_buffer(buffer, out);
 
   GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
   GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
@@ -814,7 +811,19 @@ static void fill_output_meta_minimal_from_sample(GstSample* sample, Sample* out)
     return;
 
   gint64 frame_id = -1;
-  if (gst_structure_get_int64(s, "frame-id", &frame_id) == TRUE && frame_id >= 0) {
+  gboolean sample_frame_valid = FALSE;
+  const bool has_sample_frame =
+      gst_structure_get_boolean(s, "sample-frame-id-valid", &sample_frame_valid) == TRUE;
+  gint64 sample_frame_id = -1;
+  if (has_sample_frame) {
+    if (sample_frame_valid == TRUE &&
+        gst_structure_get_int64(s, "sample-frame-id", &sample_frame_id) == TRUE &&
+        sample_frame_id >= 0) {
+      out->frame_id = sample_frame_id;
+    } else {
+      out->frame_id = -1;
+    }
+  } else if (gst_structure_get_int64(s, "frame-id", &frame_id) == TRUE && frame_id >= 0) {
     out->frame_id = frame_id;
   }
 
@@ -1040,6 +1049,7 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
 
   out.caps_string = pipeline_internal::gst_caps_to_string_safe(out_caps);
   out.media_type = media ? media : "";
+  out.payload_type = payload_type_from_media_type(out.media_type);
 
   fill_output_meta_from_sample(sample, &out);
 
@@ -1131,6 +1141,7 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
 
   Sample enc = make_encoded_sample(std::move(bytes), out.caps_string, out.pts_ns, out.dts_ns,
                                    out.duration_ns);
+  enc.payload_type = payload_type_from_media_type(out.media_type);
   enc.media_type = out.media_type;
   enc.frame_id = out.frame_id;
   enc.stream_id = out.stream_id;
@@ -1243,6 +1254,7 @@ static std::optional<Sample> bundle_from_sample_meta(GstSample* sample, const ch
   const char* media = out_st ? gst_structure_get_name(out_st) : nullptr;
   out.caps_string = pipeline_internal::gst_caps_to_string_safe(out_caps);
   out.media_type = media ? media : "";
+  out.payload_type = payload_type_from_media_type(out.media_type);
   fill_output_meta_from_sample(sample, &out);
 
   if (sample_debug_enabled()) {
@@ -1488,6 +1500,7 @@ static std::optional<Sample> tensor_set_from_meta_slow(GstSample* sample, const 
   out.kind = SampleKind::TensorSet;
   out.owned = copy_output;
   out.caps_string = base.caps_string;
+  out.payload_type = base.payload_type;
   out.media_type = base.media_type;
   out.payload_tag = base.payload_tag;
   out.format = base.format;
@@ -2194,6 +2207,78 @@ Sample InputStream::pull(int timeout_ms) {
         std::memory_order_relaxed);
   }
   return out;
+}
+
+void InputStream::pull_and_discard(int timeout_ms) {
+  if (!state_ || !state_->pipeline) {
+    throw std::runtime_error("InputStream::pull_and_discard: stream is closed");
+  }
+  if (!state_->appsink) {
+    throw std::runtime_error("InputStream::pull_and_discard: appsink not available (no Output)");
+  }
+  const int timeout = (timeout_ms >= 0) ? timeout_ms : state_->opt.timeout_ms;
+  const bool timings = state_->timing_enabled;
+  std::chrono::steady_clock::time_point t_wait_start{};
+  if (timings)
+    t_wait_start = std::chrono::steady_clock::now();
+  auto sample_opt = pipeline_internal::try_pull_sample_sliced(
+      state_->pipeline, state_->appsink, timeout, state_->diag, "InputStream::pull_and_discard");
+  std::chrono::steady_clock::time_point t_wait_end{};
+  if (timings)
+    t_wait_end = std::chrono::steady_clock::now();
+  if (!sample_opt.has_value()) {
+    if (pipeline_internal::env_bool("SIMA_INPUTSTREAM_DEBUG", false)) {
+      std::fprintf(stderr, "[DBG] InputStream::pull_and_discard timeout\n%s",
+                   diagnostics_summary().c_str());
+    }
+    throw std::runtime_error("InputStream::pull_and_discard: timeout waiting for output");
+  }
+
+  GstSample* sample = sample_opt.value();
+  const std::int64_t inflight = state_->inflight.load(std::memory_order_relaxed);
+  if (inflight > 0) {
+    state_->inflight.fetch_sub(1, std::memory_order_relaxed);
+  }
+  const bool pool_dbg = pipeline_internal::env_bool("SIMA_INPUTSTREAM_POOL_DEBUG", false);
+  const bool weak_dbg = pipeline_internal::env_bool("SIMA_INPUTSTREAM_WEAKREF_DEBUG", false);
+  GstBuffer* buf = gst_sample_get_buffer(sample);
+  GstBuffer* buf_ref = nullptr;
+  if (weak_dbg) {
+    auto* sample_tag = new WeakRefTag{next_weak_id(), "discard_sample"};
+    gst_mini_object_weak_ref(GST_MINI_OBJECT(sample), mini_object_weak_notify, sample_tag);
+    if (buf) {
+      auto* buf_tag = new WeakRefTag{next_weak_id(), "discard_buffer"};
+      gst_mini_object_weak_ref(GST_MINI_OBJECT(buf), mini_object_weak_notify, buf_tag);
+    }
+  }
+  if (pool_dbg && buf) {
+    const guint sample_ref = GST_MINI_OBJECT_REFCOUNT_VALUE(sample);
+    const guint buf_refcnt = GST_MINI_OBJECT_REFCOUNT_VALUE(buf);
+    buf_ref = gst_buffer_ref(buf);
+    std::fprintf(stderr,
+                 "[INPUTSTREAM] discard pre unref sample=%p sample_refcnt=%u buffer=%p "
+                 "buf_refcnt=%u pool=%p\n",
+                 static_cast<void*>(sample), sample_ref, static_cast<void*>(buf), buf_refcnt,
+                 static_cast<void*>(buf->pool));
+  }
+  gst_sample_unref(sample);
+  if (pool_dbg && buf_ref) {
+    const guint after = GST_MINI_OBJECT_REFCOUNT_VALUE(buf_ref);
+    std::fprintf(stderr,
+                 "[INPUTSTREAM] discard after sample_unref buffer=%p buf_refcnt_with_probe=%u "
+                 "pool=%p\n",
+                 static_cast<void*>(buf_ref), after, static_cast<void*>(buf_ref->pool));
+    gst_buffer_unref(buf_ref);
+  }
+
+  if (timings) {
+    state_->pull_count.fetch_add(1, std::memory_order_relaxed);
+    state_->pull_wait_ns.fetch_add(
+        static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t_wait_end - t_wait_start)
+                .count()),
+        std::memory_order_relaxed);
+  }
 }
 
 Sample InputStream::push_and_pull_holder(const std::shared_ptr<void>& holder, int timeout_ms) {

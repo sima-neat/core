@@ -84,7 +84,7 @@ target_link_libraries(app PRIVATE SimaNeat::sima_neat)
 - `references/environment_layout.md`
 - `references/devkit_preflight.md`
 - `references/minimal_app.md`
-- `references/session_pattern.md`
+- `references/graph_pattern.md`
 - `references/api_surface.md`
 - `references/pyneat_patterns.md`
 - `references/recipes.md`
@@ -98,8 +98,8 @@ target_link_libraries(app PRIVATE SimaNeat::sima_neat)
 
 ## Templates
 
-- `templates/session_sync_main.cpp`
-- `templates/session_async_main.cpp`
+- `templates/graph_sync_main.cpp`
+- `templates/graph_async_main.cpp`
 - `templates/model_runner_main.cpp`
 - `templates/CMakeLists.txt`
 - `templates/pyneat_hello.py`

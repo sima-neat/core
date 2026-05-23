@@ -63,9 +63,43 @@ def _infer_layout(core, obj, *, prefer_chw: bool = False):
   return core.TensorLayout.Unknown
 
 
+def _is_sequence(value) -> bool:
+  return isinstance(value, (list, tuple))
+
+
+def _reject_single_tensor_or_sample(core, value, where: str) -> None:
+  if isinstance(value, core.Sample):
+    raise TypeError(f"{where} expects a Sample; pass [sample] instead of a single Sample")
+  if isinstance(value, core.Tensor):
+    raise TypeError(f"{where} expects a TensorList; pass [tensor] instead of a single Tensor")
+
+
+def _sequence_all_samples(core, value) -> bool:
+  return _is_sequence(value) and len(value) > 0 and all(isinstance(v, core.Sample) for v in value)
+
+
+def _tensor_list_from_sequence(core, value, *, copy: bool = False, layout=None,
+                               image_format=None, memory=None):
+  if not _is_sequence(value):
+    raise TypeError("expected a list/tuple of Tensor or DLPack-compatible inputs")
+  out = []
+  for item in value:
+    if isinstance(item, core.Tensor):
+      out.append(item)
+    else:
+      out.append(core.Tensor.from_dlpack(
+          item,
+          copy=copy,
+          layout=layout,
+          image_format=image_format,
+          memory=memory,
+      ))
+  return out
+
+
 def install_wrappers(core) -> None:
   raw_model_build = core.Model.build
-  raw_model_build_with_session_options = core.Model.build_with_session_options
+  raw_model_build_with_route_options = core.Model.build_with_route_options
   has_native_build_overloads = bool(getattr(core, "_HAS_NATIVE_BUILD_OBJECT_OVERLOADS", False))
 
   def _model_image_format_hint(model):
@@ -164,42 +198,41 @@ def install_wrappers(core) -> None:
 
   if not hasattr(core.Run, "push"):
     def run_push(self, value, copy: bool = False, layout=None, image_format=None):
-      if isinstance(value, core.Sample):
-        return self.push_sample(value)
-      if isinstance(value, core.Tensor):
-        return self.push_tensor(value)
-      tensor = core.Tensor.from_dlpack(value, copy=copy, layout=layout, image_format=image_format)
-      return self.push_tensor(tensor)
+      _reject_single_tensor_or_sample(core, value, "Run.push")
+      if _sequence_all_samples(core, value):
+        return self.push_samples(list(value))
+      return self.push_tensors(_tensor_list_from_sequence(
+          core, value, copy=copy, layout=layout, image_format=image_format))
 
     core.Run.push = run_push
 
   if not hasattr(core.Run, "try_push"):
     def run_try_push(self, value, copy: bool = False, layout=None, image_format=None):
-      if isinstance(value, core.Sample):
-        return self.try_push_sample(value)
-      if isinstance(value, core.Tensor):
-        return self.try_push_tensor(value)
-      tensor = core.Tensor.from_dlpack(value, copy=copy, layout=layout, image_format=image_format)
-      return self.try_push_tensor(tensor)
+      _reject_single_tensor_or_sample(core, value, "Run.try_push")
+      if _sequence_all_samples(core, value):
+        return self.try_push_samples(list(value))
+      return self.try_push_tensors(_tensor_list_from_sequence(
+          core, value, copy=copy, layout=layout, image_format=image_format))
 
     core.Run.try_push = run_try_push
 
   if not hasattr(core.Run, "run"):
     def run_execute(self, value, timeout_ms: int = -1):
-      if isinstance(value, core.Sample):
-        return self.run_sample(value, timeout_ms)
-      if isinstance(value, core.Tensor):
-        return self.run_tensor(value, timeout_ms)
-      raise TypeError("Run.run expects Tensor or Sample")
+      _reject_single_tensor_or_sample(core, value, "Run.run")
+      if _sequence_all_samples(core, value):
+        return self.run_samples(list(value), timeout_ms)
+      return self.run_tensors(_tensor_list_from_sequence(core, value), timeout_ms)
 
     core.Run.run = run_execute
 
-  def session_add(self, item):
-    if isinstance(item, core.NodeGroup):
-      return self.add_group(item)
+  def graph_add(self, item):
+    if isinstance(item, core.Graph):
+      return self.add_graph(item)
+    if isinstance(item, core.Model):
+      return self.add_model(item)
     return self.add_node(item)
 
-  def session_build(
+  def graph_build(
       self,
       input_value=None,
       mode=None,
@@ -215,68 +248,59 @@ def install_wrappers(core) -> None:
 
     if input_value is None:
       return self.build_source(options)
-    if isinstance(input_value, core.Sample):
-      return self.build_sample(input_value, mode, options)
-    if isinstance(input_value, core.Tensor):
-      return self.build_tensor(input_value, mode, options)
+    _reject_single_tensor_or_sample(core, input_value, "Graph.build")
+    if _sequence_all_samples(core, input_value):
+      return self.build_samples(list(input_value), mode, options)
+    return self.build_tensors(_tensor_list_from_sequence(
+        core, input_value, copy=copy, layout=layout, image_format=image_format), mode, options)
 
-    tensor = core.Tensor.from_dlpack(
-        input_value,
-        copy=copy,
-        layout=layout,
-        image_format=image_format,
-    )
-    return self.build_tensor(tensor, mode, options)
-
-  def session_run(self, input_value=None, options=None):
+  def graph_run(self, input_value=None, options=None):
     if input_value is None:
       return self.run_source()
     if options is None:
       options = core.RunOptions()
-    if isinstance(input_value, core.Tensor):
-      return self.run_tensor(input_value, options)
-    raise TypeError("Session.run expects Tensor or None")
+    _reject_single_tensor_or_sample(core, input_value, "Graph.run")
+    if _sequence_all_samples(core, input_value):
+      return self.run_samples(list(input_value), options)
+    return self.run_tensors(_tensor_list_from_sequence(core, input_value), options)
 
-  core.Session.add = session_add
+  core.Graph.add = graph_add
   if not has_native_build_overloads:
-    core.Session.build = session_build
-  core.Session.run = session_run
+    core.Graph.build = graph_build
+  core.Graph.run = graph_run
 
-  def model_session(self, options=None):
-    if options is None:
-      return self.session_group()
-    return self.session_group_with_options(options)
 
   def model_build(
       self,
       input_value=None,
-      session_options=None,
+      route_options=None,
       run_options=None,
       copy: bool = False,
   ):
     if input_value is None:
-      if session_options is None:
+      if route_options is None:
         return raw_model_build(self)
-      return raw_model_build_with_session_options(self, session_options)
+      return raw_model_build_with_route_options(self, route_options)
 
-    if session_options is None:
-      session_options = core.ModelSessionOptions()
+    if route_options is None:
+      route_options = core.ModelRouteOptions()
     if run_options is None:
       run_options = core.RunOptions()
 
-    if isinstance(input_value, core.Tensor):
-      return self.build_tensor(input_value, session_options, run_options)
-    if isinstance(input_value, core.Sample):
-      return self.build_sample(input_value, session_options, run_options)
-
-    tensor = core.Tensor.from_dlpack(
-        input_value,
-        copy=copy,
-        image_format=_model_image_format_hint(self),
+    _reject_single_tensor_or_sample(core, input_value, "Model.build")
+    if _sequence_all_samples(core, input_value):
+      return self.build_samples(list(input_value), route_options, run_options)
+    return self.build_tensors(
+        _tensor_list_from_sequence(
+            core,
+            input_value,
+            copy=copy,
+            image_format=_model_image_format_hint(self),
+        ),
+        route_options,
+        run_options,
     )
-    return self.build_tensor(tensor, session_options, run_options)
 
-  core.Model.session = model_session
   if not has_native_build_overloads:
     core.Model.build = model_build
   if not hasattr(core.Model, "run"):
@@ -286,48 +310,32 @@ def install_wrappers(core) -> None:
         timeout_ms: int = -1,
         copy: bool = False,
     ):
-      if isinstance(input_value, core.Tensor):
-        return self.run_tensor(input_value, timeout_ms)
-      if isinstance(input_value, core.Sample):
-        return self.run_sample(input_value, timeout_ms)
+      _reject_single_tensor_or_sample(core, input_value, "Model.run")
       image_format = _model_image_format_hint(self)
-      if isinstance(input_value, (list, tuple)):
-        tensors = []
-        for value in input_value:
-          if isinstance(value, core.Tensor):
-            tensors.append(value)
-          else:
-            tensors.append(
-                core.Tensor.from_dlpack(value, copy=copy, image_format=image_format)
-            )
-        return self.run_batch(tensors, timeout_ms)
-
-      tensor = core.Tensor.from_dlpack(
-          input_value,
-          copy=copy,
-          image_format=image_format,
+      if _sequence_all_samples(core, input_value):
+        return self.run_samples(list(input_value), timeout_ms)
+      return self.run_tensors(
+          _tensor_list_from_sequence(core, input_value, copy=copy, image_format=image_format),
+          timeout_ms,
       )
-      return self.run_tensor(tensor, timeout_ms)
 
     core.Model.run = model_run
 
   if not hasattr(core.ModelRunner, "push"):
     def model_runner_push(self, value, copy: bool = False, layout=None, image_format=None):
-      if isinstance(value, core.Tensor):
-        return self.push_tensor(value)
-      if isinstance(value, core.Sample):
-        return self.push_sample(value)
-      tensor = core.Tensor.from_dlpack(value, copy=copy, layout=layout, image_format=image_format)
-      return self.push_tensor(tensor)
+      _reject_single_tensor_or_sample(core, value, "ModelRunner.push")
+      if _sequence_all_samples(core, value):
+        return self.push_samples(list(value))
+      return self.push_tensors(_tensor_list_from_sequence(
+          core, value, copy=copy, layout=layout, image_format=image_format))
 
     core.ModelRunner.push = model_runner_push
 
   if not hasattr(core.ModelRunner, "run"):
     def model_runner_run(self, value, timeout_ms: int = -1):
-      if isinstance(value, core.Tensor):
-        return self.run_tensor(value, timeout_ms)
-      if isinstance(value, core.Sample):
-        return self.run_sample(value, timeout_ms)
-      raise TypeError("ModelRunner.run expects Tensor or Sample")
+      _reject_single_tensor_or_sample(core, value, "ModelRunner.run")
+      if _sequence_all_samples(core, value):
+        return self.run_samples(list(value), timeout_ms)
+      return self.run_tensors(_tensor_list_from_sequence(core, value), timeout_ms)
 
     core.ModelRunner.run = model_runner_run

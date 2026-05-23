@@ -47,20 +47,20 @@ Chapter 001.
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/004_configure_model_options/configure_model_options.py \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz
+  --model /tmp/yolo_v8s.tar.gz
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_004_configure_model_options \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz
+  --model /tmp/yolo_v8s.tar.gz
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_004_configure_model_options
 ./build/tutorials-standalone/tutorial_004_configure_model_options \
-  --mpk /tmp/yolo_v8s_mpk.tar.gz
+  --model /tmp/yolo_v8s.tar.gz
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

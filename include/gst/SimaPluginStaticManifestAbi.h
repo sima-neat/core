@@ -27,7 +27,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)18)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)19)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -250,6 +250,7 @@ typedef struct SimaPluginProcessCvuStagePayload {
   const gchar* output_dtype;
   const gchar* out_dtype;
 
+  gint pad_value;
   gint scaled_width;
   gint scaled_height;
   gint input_stride;

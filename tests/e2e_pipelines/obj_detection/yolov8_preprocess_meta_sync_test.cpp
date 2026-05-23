@@ -117,7 +117,7 @@ int main(int argc, char** argv) {
               "sync-meta: affine scales must be positive");
 
       (void)simaai::neat::stages::BoxDecode(
-          simaai::neat::SampleList{simaai::neat::sample_from_tensors(infer)}, model, box_opt);
+          simaai::neat::Sample{simaai::neat::sample_from_tensors(infer)}, model, box_opt);
     }
 
 #if SIMA_HAS_SIMAAI_POOL
@@ -131,7 +131,7 @@ int main(int argc, char** argv) {
       bool threw = false;
       try {
         (void)simaai::neat::stages::BoxDecode(
-            simaai::neat::SampleList{
+            simaai::neat::Sample{
                 simaai::neat::sample_from_tensors(simaai::neat::TensorList{corrupt})},
             model, box_opt);
       } catch (const std::exception& e) {

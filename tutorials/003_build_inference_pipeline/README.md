@@ -6,13 +6,13 @@
 | Difficulty | Beginner |
 | Estimated Read Time | 5 minutes |
 | Model | None |
-| Labels | session, build, run, pipeline |
+| Labels | graph, build, run, pipeline |
 
 ## Concept
 
-Compose a `Session` by hand — input node, output node, no model — and run one frame through it. See the pipeline primitives in isolation before a model is added to the picture.
+Compose a `Graph` by hand — input node, output node, no model — and run one frame through it. See the pipeline primitives in isolation before a model is added to the picture.
 
-A `Session` is where you define pipeline structure by adding nodes and node groups in order. It is not a one-off inference call; it is a reusable runtime graph definition that can be built once and executed many times.
+A `Graph` is where you define pipeline structure by adding nodes and node groups in order. It is not a one-off inference call; it is a reusable runtime graph definition that can be built once and executed many times.
 
 `build(...)` turns that definition into a runnable `Run` handle — the transition from "graph description" to "executable runtime":
 - Resolves the added nodes/groups into a concrete pipeline.
@@ -21,24 +21,24 @@ A `Session` is where you define pipeline structure by adding nodes and node grou
 - Returns a `Run` object for push/pull calls.
 
 **APIs introduced**
-- `pyneat.Session()` — the composition entry point.
+- `pyneat.Graph()` — the composition entry point.
 - `pyneat.InputOptions()`, `pyneat.nodes.input(opts)`, `pyneat.nodes.output()` — the most basic node pair.
-- `session.build(tensor, pyneat.RunMode.Sync)` — materialize the pipeline.
+- `graph.build(tensor, pyneat.RunMode.Sync)` — materialize the pipeline.
 - `run.run(tensor, timeout_ms)` — sync one-shot inference on the built pipeline.
 
 **When to use this**
-Learning the `Session` / `Run` lifecycle without a model in the loop, or building custom pipelines from primitives.
+Learning the `Graph` / `Run` lifecycle without a model in the loop, or building custom pipelines from primitives.
 
 **Prerequisites**
 Chapter 001.
 
 **References**
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Pipeline](/getting-started/programming-model/pipeline)
 
 ## Learning Process
-1. Create a minimal `Session` with explicit input and output nodes.
-2. Build the session with a concrete sample input to materialize a runnable pipeline.
+1. Create a minimal `Graph` with explicit input and output nodes.
+2. Build the Graph with a concrete sample input to materialize a runnable pipeline.
 3. Execute one deterministic sync run to verify output contract behavior.
 
 ## Run

@@ -154,7 +154,7 @@ RUN_TEST(
       require(accessor->session_id != nullptr, "accessor session_id callback should exist");
       require(accessor->model_id != nullptr, "accessor model_id callback should exist");
       require(std::string(accessor->session_id(accessor->user_data)) == "contract-sess",
-              "session id callback mismatch");
+              "graph id callback mismatch");
       require(std::string(accessor->model_id(accessor->user_data)) == "contract-model",
               "model id callback mismatch");
 

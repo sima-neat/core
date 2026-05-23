@@ -8,13 +8,13 @@ required_files=(
   ".github/CODEOWNERS"
   ".github/PULL_REQUEST_TEMPLATE.md"
   "CONTRIBUTING.md"
-  "docs/release-checklist.md"
+  "docs/contribute/release-checklist.md"
   "scripts/ci/check_naming_and_conflicts.sh"
   "scripts/ci/check_clean_branch.sh"
   "scripts/ci/check_artifacts.sh"
   "scripts/ci/check_release_policy.sh"
   "scripts/ci/run_crash_correctness_gate.sh"
-  "scripts/ci/run_mpk_security_gate.sh"
+  "scripts/ci/run_model_archive_security_gate.sh"
   "scripts/ci/run_install_smoke.sh"
   "scripts/ci/run_perf_regression_gate.sh"
   "scripts/ci/run_soak_lane.sh"
@@ -24,7 +24,7 @@ required_files=(
   "scripts/dev/install_hooks.sh"
   ".githooks/pre-push"
   ".github/workflows/test-crash-correctness-nightly.yml"
-  ".github/workflows/mpk-security.yml"
+  ".github/workflows/model-archive-security.yml"
   ".github/workflows/install-smoke.yml"
   ".github/workflows/perf-regression.yml"
   ".github/workflows/test-soak-weekly.yml"
@@ -53,8 +53,8 @@ for script in scripts/ci/*.sh; do
 done
 
 if [[ -f .github/workflows/release-gate.yml ]] &&
-   ! grep -q "docs/release-checklist.md" .github/workflows/release-gate.yml; then
-  echo "ERROR: release-gate workflow must reference docs/release-checklist.md" >&2
+   ! grep -q "docs/contribute/release-checklist.md" .github/workflows/release-gate.yml; then
+  echo "ERROR: release-gate workflow must reference docs/contribute/release-checklist.md" >&2
   fail=1
 fi
 
@@ -63,7 +63,7 @@ required_checks=(
   "configure-build-sanity"
   "docs-link-check"
   "crash-correctness-gate"
-  "mpk-security-gate"
+  "model-archive-security-gate"
   "install-smoke"
   "perf-regression-gate"
   "soak-weekly"
@@ -74,8 +74,8 @@ required_checks=(
 )
 
 for check_name in "${required_checks[@]}"; do
-  if ! grep -q "${check_name}" docs/release-checklist.md; then
-    echo "ERROR: docs/release-checklist.md must list required check: ${check_name}" >&2
+  if ! grep -q "${check_name}" docs/contribute/release-checklist.md; then
+    echo "ERROR: docs/contribute/release-checklist.md must list required check: ${check_name}" >&2
     fail=1
   fi
 done

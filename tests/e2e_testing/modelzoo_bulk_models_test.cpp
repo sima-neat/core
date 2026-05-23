@@ -116,7 +116,7 @@ bool tensor_list_has_tensor(const simaai::neat::TensorList& outs, std::string& e
   return false;
 }
 
-bool sample_list_has_tensor(const simaai::neat::SampleList& outs, std::string& err) {
+bool sample_list_has_tensor(const simaai::neat::Sample& outs, std::string& err) {
   if (outs.empty()) {
     err = "sample output empty";
     return false;

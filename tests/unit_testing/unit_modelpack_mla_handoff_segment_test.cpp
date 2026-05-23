@@ -1,5 +1,4 @@
 #include "asset_utils.h"
-#include "builder/NodeGroup.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -26,12 +25,12 @@ RUN_TEST(
       model_opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
       model_opt.upstream_name = "decoder";
       Model model(tar_path, model_opt);
-      const NodeGroup infer = nodes::groups::Infer(model);
-      require(!infer.nodes().empty(), "inference fragment should compile from the YOLOv8 asset");
+      const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
+      require(!infer_nodes.empty(), "inference fragment should compile from the YOLOv8 asset");
 
       pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
       const auto compiled =
-          compile_node_contracts(infer.nodes(), ContractCompileInput{}, &diagnostics);
+          compile_node_contracts(infer_nodes, ContractCompileInput{}, &diagnostics);
       require(diagnostics.errors.empty(), "inference fragment contract compile failed");
       require(!compiled.stages.empty(),
               "compiled inference fragment should emit a container stage");

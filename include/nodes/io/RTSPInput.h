@@ -3,9 +3,9 @@
  * @ingroup nodes_io
  * @brief `RTSPInput` Node — source that reads from an RTSP server.
  *
- * Wraps `rtspsrc`. Place at the head of a Session that consumes a network camera
+ * Wraps `rtspsrc`. Place at the head of a Graph that consumes a network camera
  * or other RTSP stream; downstream stages typically chain RTP depayload and an
- * H.264 decoder. Because it carries `InputRole::Source`, the Session is driven
+ * H.264 decoder. Because it carries `InputRole::Source`, the Graph is driven
  * with `Run::run()` (no `push()`).
  */
 #pragma once
@@ -20,7 +20,7 @@ namespace simaai::neat {
  * @brief RTSP source Node — pulls a stream from an RTSP URL.
  *
  * Pair with `H264Depacketize` (and optionally `H264CapsFixup`) plus a decoder to
- * obtain raw frames. The Session uses `Session::run()` since this Node is a
+ * obtain raw frames. The Graph uses `Graph::run()` since this Node is a
  * source and no samples are pushed by the application.
  *
  * @ingroup nodes_io

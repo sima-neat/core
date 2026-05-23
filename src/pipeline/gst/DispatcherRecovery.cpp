@@ -36,7 +36,7 @@ bool rpmsg_channels_idle() {
                  "done; exit 0'") == 0;
 }
 
-void append_note(SessionReport* report, const std::string& line) {
+void append_note(GraphReport* report, const std::string& line) {
   if (!report)
     return;
   if (!report->repro_note.empty()) {
@@ -51,11 +51,11 @@ bool match_dispatcher_unavailable(const std::string& message) {
   return message.find("Unable to connect to the server from dispatcher") != std::string::npos;
 }
 
-bool is_dispatcher_unavailable(const SessionReport& report) {
+bool is_dispatcher_unavailable(const GraphReport& report) {
   return simaai::neat::error_codes::is_dispatcher_unavailable(report.error_code);
 }
 
-bool attempt_dispatcher_recovery(SessionReport* report, bool auto_recover) {
+bool attempt_dispatcher_recovery(GraphReport* report, bool auto_recover) {
   append_note(report, "DispatcherUnavailable: auto recovery will run and you should retry.");
   if (!auto_recover) {
     append_note(

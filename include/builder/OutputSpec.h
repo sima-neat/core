@@ -8,14 +8,20 @@
  * shape, framerate, memory class, dtype. It is *not* the authoritative tensor
  * model (that lives in `Tensor` / `TensorBufferTensorView` /
  * `sima_ev_tensor_desc`); it exists so the Builder can plan caps negotiation
- * and the Session can stamp gst caps without consulting runtime objects.
+ * and the Graph can stamp gst caps without consulting runtime objects.
  */
 #pragma once
 
 #include <cstddef>
+#include <memory>
+#include <span>
 #include <string>
 
+#include "pipeline/PayloadType.h"
+
 namespace simaai::neat {
+
+class Node;
 
 /**
  * @brief How confident the source of an `OutputSpec` is.
@@ -43,6 +49,7 @@ struct OutputSpec {
   // Boundary/caps metadata only. OutputSpec is not the authoritative generic
   // tensor semantic model; internal tensor truth must live in Tensor,
   // TensorBufferTensorView, or sima_ev_tensor_desc.
+  PayloadType payload_type = PayloadType::Auto; ///< Semantic payload family.
   std::string media_type;    ///< e.g. `"video/x-raw"`, `"application/vnd.simaai.tensor"`.
   std::string format;        ///< e.g. `"NV12"`, `"RGB"`, `"FP32"`.
   int width = -1;            ///< Width at the boundary; -1 if unknown.
@@ -59,8 +66,9 @@ struct OutputSpec {
 
   /// @brief True if every meaningful field is at its default ("nothing known").
   bool is_unknown() const {
-    return media_type.empty() && format.empty() && width <= 0 && height <= 0 && depth <= 0 &&
-           byte_size == 0 && certainty == SpecCertainty::Unknown;
+    return payload_type == PayloadType::Auto && media_type.empty() && format.empty() &&
+           width <= 0 && height <= 0 && depth <= 0 && byte_size == 0 &&
+           certainty == SpecCertainty::Unknown;
   }
 
   /// @brief True if both `width` and `height` are positive.
@@ -90,7 +98,8 @@ public:
 /// @brief Compute the boundary buffer's byte size from a spec (best effort, may be 0).
 std::size_t expected_byte_size(const OutputSpec& spec);
 
-/// @brief Walk a NodeGroup propagating `OutputSpec` from `input` through each Node.
-OutputSpec derive_output_spec(const class NodeGroup& group, const OutputSpec& input = {});
+/// @brief Walk a node list propagating `OutputSpec` from `input` through each Node.
+OutputSpec derive_output_spec(std::span<const std::shared_ptr<Node>> nodes,
+                              const OutputSpec& input = {});
 
 } // namespace simaai::neat

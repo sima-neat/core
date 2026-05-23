@@ -6,9 +6,9 @@
  * `GraphRun` is the runtime-graph counterpart of `pipeline::Run`: a live, running graph
  * the caller pushes inputs into and pulls outputs out of. Unlike `pipeline::Run`,
  * `GraphRun` uses **named ports**, and exposes per-node `Input` / `Output` handles plus
- * an opinionated `PullSession` for the common collect-until-stall workflow.
+ * an opinionated `PullLoop` for the common collect-until-stall workflow.
  *
- * @see GraphSession to build one
+ * @see graph::build to build one
  * @see pipeline::Run for the linear-pipeline counterpart
  */
 #pragma once
@@ -25,6 +25,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace simaai::neat::graph {
@@ -39,7 +40,7 @@ struct GraphRunOptions {
   int push_timeout_ms =
       5000; ///< Max wait (ms) on `push()` before failing fast with a backpressure error.
   int pull_timeout_ms = 50; ///< Poll timeout (ms) for internal pop/pull loops.
-  VerboseOptions verbose;   ///< Verbosity for graph/session progress logs.
+  VerboseOptions verbose;   ///< Verbosity for graph build/runtime progress logs.
   RunOptions pipeline; ///< Underlying pipeline-runtime options forwarded to GStreamer-side runs.
   PowerMonitorOptions power_monitor; ///< Optional graph-level board power monitor.
 
@@ -83,7 +84,7 @@ struct GraphRunOptions {
  * @brief Per-node, per-stream telemetry collector for a running `GraphRun`.
  *
  * Records sample counts and first/last timestamps per output stream, per node. Used by
- * `PullSession` and the various `emit_*_summary()` helpers.
+ * `PullLoop` and the various `emit_*_summary()` helpers.
  *
  * @ingroup graph
  */
@@ -138,7 +139,7 @@ private:
 };
 
 /**
- * @brief Tuning knobs for `GraphRun::pull_until()` / `PullSession::run()`.
+ * @brief Tuning knobs for `GraphRun::pull_until()` / `PullLoop::run()`.
  *
  * Controls when a pull loop stops: hit the per-stream sample target, hit the stall
  * deadline (no progress for `stall_ms`), or hit `max_runtime_ms`.
@@ -157,31 +158,34 @@ struct GraphRunPullOptions {
 /**
  * @brief Live runtime handle for a compiled `Graph`.
  *
- * Returned by `GraphSession::build()`. Move-only (queues, threads, resources are not
+ * Returned by `graph::build()`. Move-only (queues, threads, resources are not
  * copyable). Push samples into named-port `Input` handles, pull from `Output` handles,
- * use the fluent `PullSession` for the common collect-until-done workflow.
+ * use the fluent `PullLoop` for the common collect-until-done workflow.
  *
  * @ingroup graph
  */
 class GraphRun {
+private:
+  struct State;
+
 public:
   /**
    * @brief Push handle for a node's input port.
    *
    * Obtain via `GraphRun::input(node_id)` or `GraphRun::input(node_id, port)`. Holds a
-   * non-owning pointer back to the parent `GraphRun` — must not outlive it.
+   * weak reference to the runtime and fails cleanly after the parent `GraphRun` is gone.
    */
   class Input {
   public:
-    /// Push a sample into the bound port. Returns false on backpressure timeout.
-    bool push(const Sample& sample) const;
+    /// Push samples into the bound port. Returns false on backpressure timeout.
+    bool push(const Sample& samples) const;
 
   private:
     friend class GraphRun;
-    Input(GraphRun* run, NodeId node, PortId port, bool has_port)
-        : run_(run), node_(node), port_(port), has_port_(has_port) {}
+    Input(std::weak_ptr<State> state, NodeId node, PortId port, bool has_port)
+        : state_(std::move(state)), node_(node), port_(port), has_port_(has_port) {}
 
-    GraphRun* run_ = nullptr;
+    std::weak_ptr<State> state_;
     NodeId node_ = kInvalidNode;
     PortId port_ = kInvalidPort;
     bool has_port_ = false;
@@ -197,7 +201,7 @@ public:
   public:
     /// Pull one sample. `timeout_ms < 0` blocks indefinitely; returns `nullopt` on timeout.
     std::optional<Sample> pull(int timeout_ms = -1, GraphRunStats* stats = nullptr) const;
-    /// Like `pull()` but throws `SessionError` on timeout.
+    /// Like `pull()` but throws `NeatError` on timeout.
     Sample pull_or_throw(int timeout_ms = -1, GraphRunStats* stats = nullptr) const;
     /// Node this output belongs to.
     NodeId node_id() const {
@@ -206,9 +210,9 @@ public:
 
   private:
     friend class GraphRun;
-    Output(GraphRun* run, NodeId node) : run_(run), node_(node) {}
+    Output(std::weak_ptr<State> state, NodeId node) : state_(std::move(state)), node_(node) {}
 
-    GraphRun* run_ = nullptr;
+    std::weak_ptr<State> state_;
     NodeId node_ = kInvalidNode;
   };
 
@@ -254,7 +258,7 @@ public:
   /**
    * @brief Fluent builder for the common "collect samples until target/stall" workflow.
    *
-   * Configure with chainable setters, then call `run()`. The session pulls from the
+   * Configure with chainable setters, then call `run()`. The pull loop reads from the
    * configured outputs until per-stream targets are met, the runtime stalls, or the
    * max-runtime cap is hit.
    *
@@ -266,32 +270,32 @@ public:
    *    .run();
    * @endcode
    */
-  class PullSession {
+  class PullLoop {
   public:
     /// Stop once each tracked stream has produced this many samples.
-    PullSession& per_stream_target(int n);
+    PullLoop& per_stream_target(int n);
     /// Stop after this many ms with no progress (stall detection).
-    PullSession& stall_after_ms(int ms);
+    PullLoop& stall_after_ms(int ms);
     /// Per-poll timeout (ms).
-    PullSession& timeout_ms(int ms);
-    /// Hard wall-clock cap (ms) on the entire session.
-    PullSession& max_runtime_ms(int ms);
+    PullLoop& timeout_ms(int ms);
+    /// Hard wall-clock cap (ms) on the entire pull loop.
+    PullLoop& max_runtime_ms(int ms);
     /// Limit tracking to these stream-ids (and treat anything else as unexpected).
-    PullSession& expect_streams(std::vector<std::string> ids);
+    PullLoop& expect_streams(std::vector<std::string> ids);
     /// Callback fired on every successfully pulled sample.
-    PullSession& on_sample(std::function<void(const Sample&, NodeId)> cb);
-    /// Live reference to the stats collector this session writes to.
+    PullLoop& on_sample(std::function<void(const Sample&, NodeId)> cb);
+    /// Live reference to the stats collector this pull loop writes to.
     GraphRunStats& stats();
     /// Execute the configured pull loop. Blocks until done/stall/max-runtime.
     void run();
 
   private:
     friend class GraphRun;
-    PullSession(GraphRun* run, const std::vector<Output>* outputs, std::vector<NodeId> output_nodes,
-                GraphRunStats* stats);
+    PullLoop(std::weak_ptr<State> state, std::vector<Output> outputs,
+             std::vector<NodeId> output_nodes, GraphRunStats* stats);
 
-    GraphRun* run_ = nullptr;
-    const std::vector<Output>* outputs_ = nullptr;
+    std::weak_ptr<State> state_;
+    std::vector<Output> outputs_;
     std::vector<NodeId> output_nodes_;
     GraphRunStats* stats_ = nullptr;
     GraphRunPullOptions opt_;
@@ -320,10 +324,10 @@ public:
   /// True iff the underlying graph is currently running.
   bool running() const;
 
-  /// Push a sample to a node's default input port. Returns false on backpressure timeout.
-  bool push(NodeId node_id, const Sample& sample);
-  /// Push a sample to a specific named port on a node.
-  bool push(NodeId node_id, PortId port, const Sample& sample);
+  /// Push samples to a node's default input port. Returns false on backpressure timeout.
+  bool push(NodeId node_id, const Sample& samples);
+  /// Push samples to a specific named port on a node.
+  bool push(NodeId node_id, PortId port, const Sample& samples);
 
   /// Pull from a node's output. `timeout_ms < 0` blocks; returns `nullopt` on timeout.
   std::optional<Sample> pull(NodeId node_id, int timeout_ms = -1);
@@ -339,8 +343,8 @@ public:
   GraphRunStats& enable_stats();
   /// Read the stats collector, if `enable_stats()` was called; else `nullptr`.
   const GraphRunStats* stats() const;
-  /// Begin a fluent `PullSession` over the given outputs.
-  PullSession collect(const std::vector<Output>& outputs, GraphRunStats* stats = nullptr);
+  /// Begin a fluent `PullLoop` over the given outputs.
+  PullLoop collect(const std::vector<Output>& outputs, GraphRunStats* stats = nullptr);
 
   /// Pull from whichever of `outputs` produces a sample first. `out_node` reports the source.
   std::optional<Sample> pull_any(const std::vector<Output>& outputs, int timeout_ms = -1,
@@ -381,15 +385,25 @@ public:
   void stop();
   /// Most recent error message, or empty string if none.
   std::string last_error() const;
-  /// Throw `SessionError` if `last_error()` is non-empty.
+  /// Throw `NeatError` if `last_error()` is non-empty.
   void last_error_or_throw() const;
 
 private:
-  struct State;
   std::shared_ptr<State> state_;
 
   explicit GraphRun(std::shared_ptr<State> state);
-  friend class GraphSession;
+  static bool push_state(const std::shared_ptr<State>& state, NodeId node_id, PortId port,
+                         bool has_port, const Sample& sample);
+  static std::optional<Sample> pull_state(const std::shared_ptr<State>& state, NodeId node_id,
+                                          int timeout_ms);
+  static std::optional<Sample> pull_any_state(const std::shared_ptr<State>& state,
+                                              const std::vector<Output>& outputs, int timeout_ms,
+                                              GraphRunStats* stats, NodeId* out_node);
+  static void pull_until_state(const std::shared_ptr<State>& state,
+                               const std::vector<Output>& outputs, GraphRunStats& stats,
+                               const GraphRunPullOptions& opt,
+                               const std::function<void(const Sample&, NodeId)>& on_sample);
+  friend GraphRun build(Graph graph, const GraphRunOptions& opt);
 };
 
 } // namespace simaai::neat::graph

@@ -5,7 +5,7 @@
  *
  * The "feed me a video file" preset: opens a media file, demuxes it, picks the video
  * pad, runs the H.264 parser, and decodes the bitstream with the SiMa hardware
- * decoder. Typical placement: very first NodeGroup in a Session that should run
+ * decoder. Typical placement: very first Graph in a Graph that should run
  * against a recorded `.mp4` (or similar) video file.
  *
  * @see RtspDecodedInput
@@ -14,7 +14,7 @@
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "pipeline/Graph.h"
 #include "contracts/ContractTypes.h"
 #include "nodes/sima/H264Parse.h"
 #include "pipeline/FormatSpec.h"
@@ -27,7 +27,7 @@ namespace simaai::neat::nodes::groups {
  * @brief Configuration for `VideoInputGroup`.
  *
  * Controls the source path and demuxer pad selection, the H.264 parser tunables,
- * the SiMa decoder output, and any optional output caps the group advertises.
+ * the SiMa decoder output, and any optional output caps the Graph fragment advertises.
  *
  * @ingroup nodes_groups
  */
@@ -62,19 +62,19 @@ struct VideoInputGroupOptions {
 };
 
 /**
- * @brief Build the video-file input NodeGroup: file source, demux, H.264 parse, hardware decode.
+ * @brief Build the video-file input Graph: file source, demux, H.264 parse, hardware decode.
  *
  * Typical chain: `FileInput` -> `decodebin`/demuxer -> `H264Parse` -> SiMa hardware
  * H.264 decoder -> optional `videoconvert` / `videoscale`. Use this as the head of
- * a Session that runs against a recorded video file.
+ * a Graph that runs against a recorded video file.
  *
  * @param opt Configuration (path, parser tunables, decoder output, caps).
- * @return The configured `NodeGroup` ready to be `add()`ed to a Session.
+ * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *
  * @see RtspDecodedInput
  * @see H264Parse
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup VideoInputGroup(const VideoInputGroupOptions& opt);
+simaai::neat::Graph VideoInputGroup(const VideoInputGroupOptions& opt);
 
 } // namespace simaai::neat::nodes::groups

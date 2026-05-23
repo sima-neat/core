@@ -5,7 +5,7 @@
 #include "pipeline/EncodedSampleUtil.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/TensorCore.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include "test_utils.h"
 
@@ -234,7 +234,7 @@ int main() {
       const int h = 6;
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "video/x-raw";
+      s.payload_type = PayloadType::Image;
       s.tensors = TensorList{make_rgb_tensor(w, h)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -259,7 +259,7 @@ int main() {
       const int h = 5;
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "video/x-raw";
+      s.payload_type = PayloadType::Image;
       s.tensors = TensorList{make_gray_tensor(w, h)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -276,7 +276,7 @@ int main() {
       const int h = 4;
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "video/x-raw";
+      s.payload_type = PayloadType::Image;
       s.tensors = TensorList{make_nv12_tensor(w, h, 0x33)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -296,7 +296,7 @@ int main() {
       const int h = 4;
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "video/x-raw";
+      s.payload_type = PayloadType::Image;
       s.tensors = TensorList{make_i420_tensor(w, h)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -318,7 +318,7 @@ int main() {
       const int c = 2;
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "application/vnd.simaai.tensor";
+      s.payload_type = PayloadType::Tensor;
       s.tensors = TensorList{make_tensor_hwc(w, h, c)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -338,7 +338,7 @@ int main() {
       const int c = 3;
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "application/vnd.simaai.tensor";
+      s.payload_type = PayloadType::Tensor;
       s.tensors = TensorList{make_tensor_chw(w, h, c)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -355,7 +355,7 @@ int main() {
       const std::vector<int64_t> shape = {2, 3, 4, 5, 6};
       Sample s;
       s.kind = SampleKind::TensorSet;
-      s.media_type = "application/vnd.simaai.tensor";
+      s.payload_type = PayloadType::Tensor;
       s.tensors = TensorList{make_generic_tensor(shape)};
 
       SampleSpec spec = derive_sample_spec_or_throw(s);
@@ -384,7 +384,7 @@ int main() {
     {
       std::vector<uint8_t> bytes(16, 0xAB);
       Sample enc = make_encoded_sample(bytes, "video/x-h264");
-      enc.media_type = "video/x-h264";
+      enc.payload_type = PayloadType::Encoded;
       SampleSpec spec = derive_sample_spec_or_throw(enc);
       require(spec.kind == SampleMediaKind::Encoded, "encoded spec kind mismatch");
       require(spec.caps_string == enc.caps_string, "encoded caps mismatch");
@@ -407,7 +407,7 @@ int main() {
     {
       Sample s;
       s.kind = SampleKind::Tensor;
-      s.media_type = "application/vnd.simaai.tensor";
+      s.payload_type = PayloadType::Tensor;
       s.format = "BF16";
       s.tensor = make_flat_tess_tensor(32U, TensorDType::BFloat16, "EVXX_BFLOAT16");
 
@@ -422,7 +422,7 @@ int main() {
     {
       Sample s;
       s.kind = SampleKind::Tensor;
-      s.media_type = "application/vnd.simaai.tensor";
+      s.payload_type = PayloadType::Tensor;
       s.tensor = make_runtime_shared_parent_subview_tensor();
 
       SampleSpec spec = derive_sample_spec_or_throw(s);

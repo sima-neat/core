@@ -9,7 +9,7 @@ sidebar_position: 30
 ## Status
 
 - Accepted
-- Scope: `Model` / `ModelSession` managed preprocess path (C++ and Python)
+- Scope: `Model` / `Graph` managed preprocess path (C++ and Python)
 - Non-goals: changing standalone `nodes::Preproc(PreprocOptions)` semantics
 
 ## Product Direction
@@ -18,7 +18,7 @@ This RFC defines an intent-driven preprocess API and planner that:
 
 - hides kernel names from end users
 - lowers intent to one frontend graph family (`Preproc`, `Quant`, `Tess`, `QuantTess`)
-- validates against model-pack capabilities before runtime
+- validates against model-archive capabilities before runtime
 - enforces strict no-fallback behavior
 - propagates per-buffer geometry/context through `GstSimaMeta` for downstream stages
 
@@ -145,7 +145,7 @@ Diagnostics use a normalized message payload:
 
 - resize enabled without valid target dimensions
 - normalize enabled with non-positive stddev
-- selected graph family unavailable in model pack
+- selected graph family unavailable in model archive
 - selected family cannot satisfy requested ops
 - required preprocess metadata missing/invalid at runtime
 - required preprocess operation mismatch observed at runtime

@@ -14,9 +14,9 @@ The framework supports three named profiles:
 
 | Profile | Use case | What's compiled |
 |---------|----------|-----------------|
-| **Production** | Customer-facing builds | All public Nodes, MPK loader, Modalix backends, optimized |
+| **Production** | Customer-facing builds | All public Nodes, model-archive loading, Modalix backends, optimized |
 | **Developer** | Framework engineers | Production set + debug Nodes + extended diagnostics + tests |
-| **Sandbox** | Multi-tenant deployments | Production set + tightened MPK security defaults |
+| **Sandbox** | Multi-tenant deployments | Production set + tightened model-archive security defaults |
 
 Pick via `-DSIMA_NEAT_PROFILE=Production|Developer|Sandbox` at configure time (or accept the default in `CMakeLists.txt`).
 

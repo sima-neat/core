@@ -4,7 +4,7 @@
 #include "nodes/io/Input.h"
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/EncodedSampleUtil.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include <algorithm>
 #include <cctype>
@@ -114,25 +114,24 @@ int64_t now_ms_i64() {
 
 } // namespace
 
-bool UdpOutputNodeGroup::init(const UdpOutputNodeGroupOptions& opt, size_t streams,
-                              std::string* err) {
+bool UdpOutputGraph::init(const UdpOutputGraphOptions& opt, size_t streams, std::string* err) {
   runs_.clear();
   opt_ = opt;
   if (streams == 0) {
     if (err)
-      *err = "UdpOutputNodeGroup: streams must be > 0";
+      *err = "UdpOutputGraph: streams must be > 0";
     return false;
   }
   if (opt_.h264_caps.empty()) {
     if (err)
-      *err = "UdpOutputNodeGroup: missing h264_caps";
+      *err = "UdpOutputGraph: missing h264_caps";
     return false;
   }
 
   runs_.reserve(streams);
   try {
     for (size_t i = 0; i < streams; ++i) {
-      simaai::neat::Session forward;
+      simaai::neat::Graph forward;
       simaai::neat::InputOptions src_opt;
       src_opt.use_simaai_pool = false;
       src_opt.block = true;
@@ -154,7 +153,7 @@ bool UdpOutputNodeGroup::init(const UdpOutputNodeGroupOptions& opt, size_t strea
 
       auto dummy = make_dummy_encoded_sample(1, opt_.h264_caps);
       auto run = std::make_shared<simaai::neat::Run>(
-          forward.build(SampleList{dummy}, simaai::neat::RunMode::Async, run_opt));
+          forward.build(Sample{dummy}, simaai::neat::RunMode::Async, run_opt));
       runs_.push_back(std::move(run));
     }
   } catch (const std::exception& ex) {
@@ -166,27 +165,27 @@ bool UdpOutputNodeGroup::init(const UdpOutputNodeGroupOptions& opt, size_t strea
   return true;
 }
 
-bool UdpOutputNodeGroup::push_video(size_t idx, const simaai::neat::Sample& sample) const {
+bool UdpOutputGraph::push_video(size_t idx, const simaai::neat::Sample& sample) const {
   if (idx >= runs_.size() || !runs_[idx])
     return false;
-  return runs_[idx]->push(SampleList{sample});
+  return runs_[idx]->push(Sample{sample});
 }
 
-bool UdpOutputNodeGroup::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
+bool UdpOutputGraph::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
   if (idx >= runs_.size() || !runs_[idx])
     return false;
-  return runs_[idx]->try_push(SampleList{sample});
+  return runs_[idx]->try_push(Sample{sample});
 }
 
-void UdpOutputNodeGroup::stop() {
+void UdpOutputGraph::stop() {
   for (auto& run : runs_) {
     if (run)
       run->stop();
   }
 }
 
-bool OptiViewOutputNodeGroup::init(const OptiViewOutputNodeGroupOptions& opt, size_t streams,
-                                   std::string* err) {
+bool OptiViewOutputGraph::init(const OptiViewOutputGraphOptions& opt, size_t streams,
+                               std::string* err) {
   opt_ = opt;
   senders_.clear();
   if (opt_.labels.empty()) {
@@ -196,7 +195,7 @@ bool OptiViewOutputNodeGroup::init(const OptiViewOutputNodeGroupOptions& opt, si
   std::string udp_err;
   if (!udp_.init(opt_.udp, streams, &udp_err)) {
     if (err)
-      *err = "OptiViewOutputNodeGroup: UDP init failed: " + udp_err;
+      *err = "OptiViewOutputGraph: UDP init failed: " + udp_err;
     return false;
   }
 
@@ -216,7 +215,7 @@ bool OptiViewOutputNodeGroup::init(const OptiViewOutputNodeGroupOptions& opt, si
       auto sender = std::make_unique<simaai::neat::OptiViewJsonOutput>(sender_opt, &sender_err);
       if (!sender->ok()) {
         if (err)
-          *err = "OptiViewOutputNodeGroup: sender init failed: " + sender_err;
+          *err = "OptiViewOutputGraph: sender init failed: " + sender_err;
         stop();
         return false;
       }
@@ -231,16 +230,15 @@ bool OptiViewOutputNodeGroup::init(const OptiViewOutputNodeGroupOptions& opt, si
   return true;
 }
 
-bool OptiViewOutputNodeGroup::push_video(size_t idx, const simaai::neat::Sample& sample) const {
+bool OptiViewOutputGraph::push_video(size_t idx, const simaai::neat::Sample& sample) const {
   return udp_.push_video(idx, sample);
 }
 
-bool OptiViewOutputNodeGroup::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
+bool OptiViewOutputGraph::try_push_video(size_t idx, const simaai::neat::Sample& sample) const {
   return udp_.try_push_video(idx, sample);
 }
 
-bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
-                                        OptiViewJsonResult* out) const {
+bool OptiViewOutputGraph::emit_json(const OptiViewJsonInput& in, OptiViewJsonResult* out) const {
   OptiViewJsonResult local;
   if (!out)
     out = &local;
@@ -338,12 +336,12 @@ bool OptiViewOutputNodeGroup::emit_json(const OptiViewJsonInput& in,
   return true;
 }
 
-void OptiViewOutputNodeGroup::stop() {
+void OptiViewOutputGraph::stop() {
   udp_.stop();
   senders_.clear();
 }
 
-int64_t OptiViewOutputNodeGroup::pick_timestamp_ms_(const OptiViewJsonInput& in) const {
+int64_t OptiViewOutputGraph::pick_timestamp_ms_(const OptiViewJsonInput& in) const {
   if (in.capture_ms >= 0)
     return in.capture_ms;
   if (in.decoded_sample && in.decoded_sample->pts_ns >= 0) {

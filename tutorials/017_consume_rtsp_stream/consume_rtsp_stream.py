@@ -28,13 +28,13 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
-  # Configure RtspDecodedInputOptions, build a Session whose only stages are
+  # Configure RtspDecodedInputOptions, build a Graph whose only stages are
   # the RTSP group and an output node, and pull decoded frames.
   rtsp_opt = pyneat.RtspDecodedInputOptions()
   rtsp_opt.url = args.url
   rtsp_opt.tcp = True
 
-  s = pyneat.Session()
+  s = pyneat.Graph()
   s.add(pyneat.groups.rtsp_decoded_input(rtsp_opt))
   s.add(pyneat.nodes.output())
   run = s.build(pyneat.RunOptions())

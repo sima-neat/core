@@ -44,9 +44,9 @@ def main(argv: list[str]) -> int:
   inp.depth = 3
   inp.is_live = True
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(inp))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(inp))
+  graph.add(pyneat.nodes.output())
 
   # CORE LOGIC
   opt = pyneat.RunOptions()
@@ -55,7 +55,7 @@ def main(argv: list[str]) -> int:
   opt.output_memory = pyneat.OutputMemory.Owned
   opt.enable_metrics = True
 
-  run = session.build(tensor, pyneat.RunMode.Async, opt)
+  run = graph.build([tensor], pyneat.RunMode.Async, opt)
   for _ in range(args.iters):
     run.try_push(tensor)
   run.close_input()

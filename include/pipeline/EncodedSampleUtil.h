@@ -8,12 +8,12 @@
  * frames or tensors. This header exposes a caps-string codec sniff and a
  * factory that wraps an owned byte buffer plus timing metadata into a `Sample`.
  *
- * @see SessionOptions.h for `EncodedSpec::Codec`.
+ * @see GraphOptions.h for `EncodedSpec::Codec`.
  * @see Tensor.h for the underlying `Sample` type.
  */
 #pragma once
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 
 #include <cstdint>

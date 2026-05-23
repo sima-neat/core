@@ -54,7 +54,7 @@ done
 SOAK_TESTS=(
   stress_graph_execution_test
   stress_run_try_push_holder_race_test
-  stress_session_validate_rtsp_churn_test
+  stress_graph_validate_rtsp_churn_test
   stress_graph_strict_sync_join_race_test
 )
 

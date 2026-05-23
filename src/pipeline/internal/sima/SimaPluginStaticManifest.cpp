@@ -1489,6 +1489,7 @@ private:
       out.spec.payload.processcvu.out_dtype =
           stage.processcvu.out_dtype.empty() ? nullptr : stage.processcvu.out_dtype.c_str();
 
+      out.spec.payload.processcvu.pad_value = stage.processcvu.pad_value;
       out.spec.payload.processcvu.scaled_width = stage.processcvu.scaled_width;
       out.spec.payload.processcvu.scaled_height = stage.processcvu.scaled_height;
       out.spec.payload.processcvu.input_stride = stage.processcvu.input_stride;

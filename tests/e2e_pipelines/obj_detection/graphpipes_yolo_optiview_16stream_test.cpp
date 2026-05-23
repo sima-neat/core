@@ -4,7 +4,7 @@
 #include "nodes/groups/OptiViewOutputGroup.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
@@ -46,8 +46,8 @@ int run_case(const fs::path& root) {
 
   using simaai::neat::nodes::groups::OptiViewJsonInput;
   using simaai::neat::nodes::groups::OptiViewJsonResult;
-  using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-  using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+  using simaai::neat::nodes::groups::OptiViewOutputGraph;
+  using simaai::neat::nodes::groups::OptiViewOutputGraphOptions;
 
   const int json_base = rtsp_find_free_port_range(/*base_port=*/18000,
                                                   /*ports_needed=*/kStreams,
@@ -60,8 +60,8 @@ int run_case(const fs::path& root) {
     receivers.emplace_back(json_base + i, "127.0.0.1");
   }
 
-  OptiViewOutputNodeGroup optiview;
-  OptiViewOutputNodeGroupOptions opt;
+  OptiViewOutputGraph optiview;
+  OptiViewOutputGraphOptions opt;
   opt.send_json = true;
   opt.udp.h264_caps = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
   opt.udp.host = "127.0.0.1";
@@ -79,11 +79,11 @@ int run_case(const fs::path& root) {
     if (sima_test::likely_runtime_missing(init_err)) {
       skip_long_test_exception("OptiView runtime unavailable: " + init_err);
     }
-    throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+    throw std::runtime_error("OptiViewOutputGraph init failed: " + init_err);
   }
 
   struct Guard {
-    simaai::neat::nodes::groups::OptiViewOutputNodeGroup* group = nullptr;
+    simaai::neat::nodes::groups::OptiViewOutputGraph* group = nullptr;
     simaai::neat::Run* run = nullptr;
     ~Guard() {
       if (run) {
@@ -112,7 +112,7 @@ int run_case(const fs::path& root) {
   model_opt.top_k = kTopK;
   simaai::neat::Model model(tar_gz, model_opt);
 
-  simaai::neat::Session pipeline;
+  simaai::neat::Graph pipeline;
   pipeline.add(simaai::neat::nodes::Input());
   pipeline.add(simaai::neat::nodes::groups::Preprocess(model));
   pipeline.add(simaai::neat::nodes::groups::Infer(model));
@@ -125,19 +125,21 @@ int run_case(const fs::path& root) {
   run_opt.queue_depth = 1;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
-  simaai::neat::Run run = pipeline.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                                             img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)},
-                                         simaai::neat::RunMode::Async, run_opt);
+  simaai::neat::Run run = pipeline.build(
+      simaai::neat::Sample{simaai::neat::Sample::from_image(
+          img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+      simaai::neat::RunMode::Async, run_opt);
   guard.run = &run;
 
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
   std::unordered_set<std::string> expected_frame_ids;
 
   for (int i = 0; i < kStreams; ++i) {
-    require(run.push(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)}),
-            "graphpipes push failed");
-    simaai::neat::SampleList outs = run.pull_samples(15000);
+    require(
+        run.push(simaai::neat::Sample{simaai::neat::Sample::from_image(
+            img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)}),
+        "graphpipes push failed");
+    simaai::neat::Sample outs = run.pull_samples(15000);
     require(!outs.empty(), "graphpipes expected at least one sample");
     simaai::neat::Sample out = std::move(outs.front());
 

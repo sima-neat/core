@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.16)
 
 # ------------------------------------------------------------------------------
-# PipelineSession tests
+# Graph API tests
 # ------------------------------------------------------------------------------
-message(STATUS "Configuring PipelineSession tests")
+message(STATUS "Configuring Graph API tests")
 
 enable_testing()
 include(CMakeParseArguments)
@@ -70,20 +70,21 @@ set(PIPELINESESSION_TEST_BLACKLIST
 # ------------------------------------------------------------------------------
 # Helper: fixture preparation
 # ------------------------------------------------------------------------------
-set(SIMA_TEST_MPK_FIXTURE_ROOT "${CMAKE_SOURCE_DIR}/tests/assets/mpk")
-set(SIMA_TEST_MPK_FIXTURE_MANIFEST "${CMAKE_SOURCE_DIR}/tests/assets/mpk/fixtures_manifest.json")
+set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT "${CMAKE_BINARY_DIR}/test-assets/model-archive")
+set(SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 set(SIMA_TEST_DECODER_FIXTURE "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
 
-add_custom_target(prepare_test_fixtures
+add_custom_target(prepare_test_fixtures ALL
   COMMAND ${Python3_EXECUTABLE}
-    ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_mpk_fixtures.py
-    --root ${SIMA_TEST_MPK_FIXTURE_ROOT}
-    --manifest ${SIMA_TEST_MPK_FIXTURE_MANIFEST}
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_model_archive_fixtures.py
+    --root ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}
+    --manifest ${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST}
   COMMAND ${Python3_EXECUTABLE}
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/make_decoder_dynamic_fixture.py
     --output ${SIMA_TEST_DECODER_FIXTURE}
   WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
   COMMENT "Preparing deterministic test fixtures"
+  VERBATIM
 )
 
 # ------------------------------------------------------------------------------
@@ -184,6 +185,7 @@ function(add_pipeline_test_strict name)
   message(STATUS "  [tests] Added strict test executable: ${name}")
 
   list(APPEND PIPELINESESSION_TEST_TARGETS ${name})
+  set(PIPELINESESSION_TEST_TARGETS "${PIPELINESESSION_TEST_TARGETS}" PARENT_SCOPE)
 endfunction()
 
 # ------------------------------------------------------------------------------
@@ -191,6 +193,7 @@ endfunction()
 # ------------------------------------------------------------------------------
 function(add_pipeline_test_long name)
   add_pipeline_test_strict(${name} ${ARGN})
+  set(PIPELINESESSION_TEST_TARGETS "${PIPELINESESSION_TEST_TARGETS}" PARENT_SCOPE)
   if (name IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     return()
   endif()
@@ -203,6 +206,7 @@ endfunction()
 # Backward-compatible alias: default all tests to strict unless explicitly long.
 function(add_pipeline_test name)
   add_pipeline_test_strict(${name} ${ARGN})
+  set(PIPELINESESSION_TEST_TARGETS "${PIPELINESESSION_TEST_TARGETS}" PARENT_SCOPE)
 endfunction()
 
 function(append_pipeline_test_env name)
@@ -272,7 +276,6 @@ set(UNIT_TESTS
   unit_tensorbuffer_padded_hwc_gap_inference_test
   unit_tensorbuffer_runtime_contract_identity_overlay_test
   unit_tensorbuffer_strided_parent_view_materialize_test
-  unit_modelpack_extract_test
   unit_asset_utils_readable_model_tar_test
   unit_model_infer_output_name_test
   unit_model_input_spec_contract_test
@@ -291,8 +294,7 @@ set(UNIT_TESTS
   unit_mpk_fuse_sibling_pre_mla_test
   unit_mpk_contract_legacy_ingress_test
   unit_mla_elf_io_topology_test
-  unit_mpk_loader_test
-  unit_mpk_pipeline_adapter_test
+  unit_model_archive_loader_test
   unit_outputspec_test
   unit_pcie_nodes_test
   pull_timeout_regression_test
@@ -307,11 +309,11 @@ set(UNIT_TESTS
   unit_runtime_metrics_test
   unit_samplespec_test
   unit_sample_bundle_holder_test
-  unit_session_api_surface_test
-  unit_session_build_input_strategy_test
-  unit_session_io_contract_test
-  unit_session_naming_transform_test
-  session_stage_contract_equivalence_test
+  unit_graph_api_surface_test
+  unit_graph_build_input_strategy_test
+  unit_graph_io_contract_test
+  unit_graph_naming_transform_test
+  unit_stage_contract_equivalence_test
   unit_simaai_guard_test
   unit_simaai_allocator_share_test
   unit_static_spec_builders_dtype_token_test
@@ -331,7 +333,6 @@ set(UNIT_TESTS
   unit_sima_plugin_context_replacement_test
   unit_sima_plugin_context_destroyed_pipeline_test
   unit_sima_plugins_test
-  unit_pipeline_sequence_parse_test
   unit_processmla_model_load_failure_test
   unit_processmla_requires_explicit_output_contract_test
   unit_tensor_set_meta_route_contract_test
@@ -433,9 +434,9 @@ set(E2E_TESTS
   output_appsink_policy_test
   gst_data_adapter_runtime_regression_test
   preproc_standalone_test
-  session_naming_pipeline_integration_test
-  session_rtsp_lifecycle_regression_test
-  session_validate_report_regression_test
+  graph_naming_pipeline_integration_test
+  graph_rtsp_lifecycle_regression_test
+  graph_validate_report_regression_test
   stage_routing_regression_test
   udp_output_loopback_integration_test
 )
@@ -512,8 +513,8 @@ set(STRESS_TESTS
   stress_udp_json_burst_test
   stress_pipeline_build_repeated_test
   stress_model_lifecycle_test
-  stress_session_lifecycle_test
-  stress_session_validate_rtsp_churn_test
+  stress_graph_lifecycle_test
+  stress_graph_validate_rtsp_churn_test
   stress_run_async_pressure_test
   stress_run_try_push_holder_race_test
   stress_graph_execution_test
@@ -531,7 +532,7 @@ foreach(test ${STRESS_TESTS})
 endforeach()
 
 # ------------------------------------------------------------------------------
-# Security tests (MPK / archive / JSON abuse)
+# Security tests (model archive / MPK-contract / JSON abuse)
 # ------------------------------------------------------------------------------
 set(SECURITY_TESTS
   security_modelpack_matrix_test
@@ -552,9 +553,8 @@ endforeach()
 # Performance suites (binary metrics emitters; not default ctest)
 # ------------------------------------------------------------------------------
 set(PERF_TARGETS
-  perf_mpk_parse_smoke_test
-  perf_runtime_session_sync_rgb_test
-  perf_runtime_session_async_rgb_test
+  perf_runtime_graph_sync_rgb_test
+  perf_runtime_graph_async_rgb_test
   perf_runtime_graph_fanout_test
   perf_runtime_graph_join_bundle_test
 )
@@ -579,6 +579,8 @@ set(PERF_PYTHON_TESTS
   test_perf_classifier
   test_perf_comparator
   test_perf_matrix_failfast
+  test_graph_run_schema
+  test_graph_run_visualizer
 )
 
 foreach(pytest ${PERF_PYTHON_TESTS})
@@ -617,6 +619,7 @@ if (FUZZING)
       RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/fuzz
     )
     list(APPEND PIPELINESESSION_TEST_TARGETS ${name})
+    set(PIPELINESESSION_TEST_TARGETS "${PIPELINESESSION_TEST_TARGETS}" PARENT_SCOPE)
   endfunction()
 
   add_pipeline_fuzz_target(
@@ -624,13 +627,397 @@ if (FUZZING)
     ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/fuzz_modelpack_json.cpp
   )
   add_pipeline_fuzz_target(
-    fuzz_pipeline_sequence
-    ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/fuzz_pipeline_sequence.cpp
-  )
-  add_pipeline_fuzz_target(
     fuzz_gst_pipeline_string
     ${CMAKE_CURRENT_SOURCE_DIR}/fuzz/fuzz_gst_pipeline_string.cpp
   )
+endif()
+
+# ------------------------------------------------------------------------------
+# Graph migration baselines and unified Graph tests
+# ------------------------------------------------------------------------------
+set(GRAPH_MIGRATION_LEGACY_UNIT_TESTS
+  graph_migration_legacy_graph_compiler_determinism_test
+  graph_migration_legacy_graph_compiler_topology_test
+  graph_migration_legacy_graph_compiler_spec_validation_test
+  graph_migration_legacy_graph_join_bundle_test
+  graph_migration_legacy_graph_join_encoded_with_meta_test
+  graph_migration_legacy_graph_join_nodes_test
+  graph_migration_legacy_graph_stamp_frame_id_test
+  graph_migration_legacy_graph_strict_sync_store_test
+  graph_migration_legacy_graph_strict_sync_test
+  graph_migration_legacy_graph_backpressure_timeout_test
+  graph_migration_legacy_graph_run_option_validation_test
+  graph_migration_legacy_graph_stop_sequencing_test
+)
+
+set(GRAPH_MIGRATION_LEGACY_UNIT_SOURCES
+  graph_compiler_determinism_legacy_runtime_test.cpp
+  graph_compiler_topology_legacy_runtime_test.cpp
+  graph_compiler_spec_validation_legacy_runtime_test.cpp
+  graph_join_bundle_legacy_runtime_test.cpp
+  graph_join_encoded_with_meta_legacy_runtime_test.cpp
+  graph_join_nodes_legacy_runtime_test.cpp
+  graph_stamp_frame_id_legacy_runtime_test.cpp
+  graph_strict_sync_store_legacy_runtime_test.cpp
+  graph_strict_sync_legacy_runtime_test.cpp
+  graph_backpressure_timeout_legacy_runtime_test.cpp
+  graph_run_option_validation_legacy_runtime_test.cpp
+  graph_stop_sequencing_legacy_runtime_test.cpp
+)
+
+list(LENGTH GRAPH_MIGRATION_LEGACY_UNIT_TESTS graph_migration_legacy_unit_count)
+math(EXPR graph_migration_legacy_unit_last "${graph_migration_legacy_unit_count} - 1")
+foreach(index RANGE ${graph_migration_legacy_unit_last})
+  list(GET GRAPH_MIGRATION_LEGACY_UNIT_TESTS ${index} graph_migration_test)
+  list(GET GRAPH_MIGRATION_LEGACY_UNIT_SOURCES ${index} graph_migration_source)
+  add_pipeline_test(
+    ${graph_migration_test}
+    ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/${graph_migration_source}
+  )
+
+  if (NOT graph_migration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST ${graph_migration_test} APPEND PROPERTY LABELS "unit;graph-migration;legacy")
+  endif()
+endforeach()
+
+set(GRAPH_MIGRATION_LEGACY_E2E_TESTS
+  graph_migration_legacy_hybrid_graph_basic_test
+  graph_migration_legacy_hybrid_graph_bundle_test
+  graph_migration_legacy_hybrid_graph_fanout_test
+  graph_migration_legacy_hybrid_graph_multistream_scheduler_test
+  graph_migration_legacy_graph_deterministic_routing_regression_test
+  graph_migration_legacy_stage_routing_regression_test
+  graph_migration_legacy_hybrid_graph_stage_model_test
+)
+
+set(GRAPH_MIGRATION_LEGACY_E2E_SOURCES
+  hybrid_graph_basic_legacy_runtime_test.cpp
+  hybrid_graph_bundle_legacy_runtime_test.cpp
+  hybrid_graph_fanout_legacy_runtime_test.cpp
+  hybrid_graph_multistream_scheduler_legacy_runtime_test.cpp
+  graph_deterministic_routing_legacy_runtime_test.cpp
+  stage_routing_legacy_runtime_test.cpp
+  hybrid_graph_stage_model_legacy_runtime_test.cpp
+)
+
+list(LENGTH GRAPH_MIGRATION_LEGACY_E2E_TESTS graph_migration_legacy_e2e_count)
+math(EXPR graph_migration_legacy_e2e_last "${graph_migration_legacy_e2e_count} - 1")
+foreach(index RANGE ${graph_migration_legacy_e2e_last})
+  list(GET GRAPH_MIGRATION_LEGACY_E2E_TESTS ${index} graph_migration_test)
+  list(GET GRAPH_MIGRATION_LEGACY_E2E_SOURCES ${index} graph_migration_source)
+  add_pipeline_test(
+    ${graph_migration_test}
+    ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/${graph_migration_source}
+  )
+
+  if (NOT graph_migration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+    set_property(TEST ${graph_migration_test} APPEND PROPERTY LABELS "e2e;graph-migration;legacy")
+  endif()
+endforeach()
+
+add_pipeline_test(
+  graph_migration_legacy_yolov8_variant_route_matrix_test
+  graph_migration/legacy/yolov8_variant_route_matrix_legacy_graph_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+)
+
+if (NOT graph_migration_legacy_yolov8_variant_route_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_legacy_yolov8_variant_route_matrix_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;legacy")
+endif()
+
+add_pipeline_test(
+  graph_migration_legacy_preproc_yolov8_matrix_test
+  graph_migration/legacy/preproc_yolov8_matrix_legacy_graph_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT graph_migration_legacy_preproc_yolov8_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_legacy_preproc_yolov8_matrix_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;legacy")
+endif()
+
+add_executable(
+  evo_route_matrix_legacy_runner
+  ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/evo_route_matrix_legacy_runner.cpp
+)
+add_dependencies(evo_route_matrix_legacy_runner prepare_test_fixtures)
+target_link_libraries(evo_route_matrix_legacy_runner PRIVATE sima_neat_internal)
+target_include_directories(evo_route_matrix_legacy_runner
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+list(APPEND PIPELINESESSION_TEST_TARGETS evo_route_matrix_legacy_runner)
+
+add_pipeline_test(
+  graph_migration_phase1_graph_api_surface_test
+  graph_migration/unified/graph_phase1_api_surface_test.cpp
+)
+
+if (NOT graph_migration_phase1_graph_api_surface_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase1_graph_api_surface_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase2_composition_storage_test
+  graph_migration/unified/graph_phase2_composition_storage_test.cpp
+)
+
+if (NOT graph_migration_phase2_composition_storage_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase2_composition_storage_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_architecture_guard_test
+  graph_migration/unified/graph_phase3_architecture_guard_test.cpp
+)
+
+if (NOT graph_migration_phase3_architecture_guard_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_architecture_guard_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified;architecture")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_public_source_build_test
+  graph_migration/unified/graph_phase3_public_source_build_test.cpp
+)
+
+if (NOT graph_migration_phase3_public_source_build_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_public_source_build_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_public_graph_branching_test
+  graph_migration/unified/phase3_public_graph_branching_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phase3_public_graph_branching_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_public_graph_branching_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phase3;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase4_named_endpoint_api_test
+  graph_migration/unified/phase4_named_endpoint_api_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phase4_named_endpoint_api_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase4_named_endpoint_api_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phase4;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA0_endpoint_semantics_test
+  graph_migration/unified/phaseA0_endpoint_semantics_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA0_endpoint_semantics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA0_endpoint_semantics_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified;phaseA0;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA1_connected_fragment_import_test
+  graph_migration/unified/phaseA1_connected_fragment_import_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA1_connected_fragment_import_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA1_connected_fragment_import_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified;phaseA1;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA2_connect_overload_facade_test
+  graph_migration/unified/phaseA2_connect_overload_facade_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA2_connect_overload_facade_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA2_connect_overload_facade_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA2;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA3_branch_helper_test
+  graph_migration/unified/phaseA3_branch_helper_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA3_branch_helper_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA3_branch_helper_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA3;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA3_combine_helper_test
+  graph_migration/unified/phaseA3_combine_helper_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA3_combine_helper_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA3_combine_helper_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA3;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA4_connected_introspection_test
+  graph_migration/unified/phaseA4_connected_introspection_test.cpp
+)
+
+if (NOT graph_migration_phaseA4_connected_introspection_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA4_connected_introspection_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified;phaseA4;introspection")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA4_connected_save_load_test
+  graph_migration/unified/phaseA4_connected_save_load_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA4_connected_save_load_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA4_connected_save_load_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;io")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA4_graph_run_export_test
+  graph_migration/unified/phaseA4_graph_run_export_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA4_graph_run_export_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA4_graph_run_export_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;export")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseC_model_endpoint_exposure_test
+  graph_migration/unified/phaseC_model_endpoint_exposure_test.cpp
+)
+
+if (NOT graph_migration_phaseC_model_endpoint_exposure_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseC_model_endpoint_exposure_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified;phaseC;model")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_lifecycle_backpressure_test
+  graph_migration/unified/phase3_lifecycle_backpressure_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phase3_lifecycle_backpressure_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_lifecycle_backpressure_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phase3;routing")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_metrics_report_test
+  graph_migration/unified/phase3_metrics_report_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phase3_metrics_report_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_metrics_report_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phase3;metrics")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_negative_diagnostics_test
+  graph_migration/unified/phase3_negative_diagnostics_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phase3_negative_diagnostics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_negative_diagnostics_test
+    APPEND PROPERTY LABELS "unit;graph-migration;unified;phase3;diagnostics")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_lazy_dynamic_spec_test
+  graph_migration/unified/phase3_lazy_dynamic_spec_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phase3_lazy_dynamic_spec_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_lazy_dynamic_spec_test
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phase3")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_yolov8_bgr_bf16_preproc_test
+  graph_migration/unified/phase3_yolov8_bgr_bf16_preproc_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+)
+
+if (NOT graph_migration_phase3_yolov8_bgr_bf16_preproc_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_yolov8_bgr_bf16_preproc_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;phase3")
+endif()
+
+add_pipeline_test(
+  graph_migration_phase3_connected_yolo_route_test
+  graph_migration/unified/phase3_connected_yolo_route_test.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+)
+
+if (NOT graph_migration_phase3_connected_yolo_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phase3_connected_yolo_route_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;phase3")
+endif()
+
+add_pipeline_test(
+  graph_migration_unified_yolov8_variant_route_matrix_test
+  graph_migration/unified/yolov8_variant_route_matrix_unified_graph_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+)
+
+if (NOT graph_migration_unified_yolov8_variant_route_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_unified_yolov8_variant_route_matrix_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified")
+endif()
+
+add_pipeline_test(
+  graph_migration_unified_yolov8_graph_model_composition_test
+  graph_migration/unified/yolov8_graph_model_composition_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+)
+
+if (NOT graph_migration_unified_yolov8_graph_model_composition_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_unified_yolov8_graph_model_composition_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;graph-model-composition")
+endif()
+
+add_pipeline_test(
+  graph_migration_unified_preproc_yolov8_matrix_test
+  graph_migration/unified/preproc_yolov8_matrix_unified_graph_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT graph_migration_unified_preproc_yolov8_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_unified_preproc_yolov8_matrix_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -677,14 +1064,11 @@ foreach(test
     unit_model_metadata_test
     unit_model_route_planner_test
     unit_model_stage_fragments_test
-    session_naming_pipeline_integration_test
+    graph_naming_pipeline_integration_test
     gst_data_adapter_runtime_regression_test
-    unit_modelpack_extract_test
-    unit_pipeline_sequence_parse_test
-    unit_mpk_loader_test
-    unit_mpk_pipeline_adapter_test
-    session_rtsp_lifecycle_regression_test
-    session_validate_report_regression_test
+    unit_model_archive_loader_test
+    graph_rtsp_lifecycle_regression_test
+    graph_validate_report_regression_test
     security_modelpack_matrix_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "crash-gate;regression")
@@ -701,8 +1085,8 @@ foreach(test
     unit_model_output_spec_contract_test
     unit_model_metadata_test
     unit_model_stage_fragments_test
-    unit_session_io_contract_test
-    unit_session_naming_transform_test
+    unit_graph_io_contract_test
+    unit_graph_naming_transform_test
     unit_pipeline_internal_build_test
     unit_gst_data_adapter_edge_test
     unit_caps_bridge_test
@@ -710,17 +1094,14 @@ foreach(test
     unit_tensor_conversion_policy_test
     unit_tensor_image_mapping_test
     unit_detection_types_bbox_test
-    unit_modelpack_extract_test
-    unit_pipeline_sequence_parse_test
-    unit_mpk_loader_test
-    unit_mpk_pipeline_adapter_test
+    unit_model_archive_loader_test
     unit_modalix_contract_preflight_test
-    session_validate_report_regression_test
-    session_rtsp_lifecycle_regression_test
-    session_naming_pipeline_integration_test
+    graph_validate_report_regression_test
+    graph_rtsp_lifecycle_regression_test
+    graph_naming_pipeline_integration_test
     gst_data_adapter_runtime_regression_test
     stress_run_try_push_holder_race_test
-    stress_session_validate_rtsp_churn_test
+    stress_graph_validate_rtsp_churn_test
     stress_pipeline_build_repeated_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "runtime-core")
@@ -732,16 +1113,14 @@ endforeach()
 # ------------------------------------------------------------------------------
 foreach(test
     unit_run_api_matrix_test
-    unit_session_io_contract_test
+    unit_graph_io_contract_test
     unit_graph_compiler_topology_test
     unit_graph_compiler_spec_validation_test
-        unit_modelpack_extract_test
-    unit_pipeline_sequence_parse_test
-    unit_mpk_loader_test
+    unit_model_archive_loader_test
     security_modelpack_matrix_test
     pull_timeout_regression_test
-    session_validate_report_regression_test
-    session_rtsp_lifecycle_regression_test
+    graph_validate_report_regression_test
+    graph_rtsp_lifecycle_regression_test
     gst_data_adapter_runtime_regression_test)
   if (NOT test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
     set_property(TEST ${test} APPEND PROPERTY LABELS "negative")
@@ -967,15 +1346,42 @@ install(
   COMPONENT extras
 )
 
-# MPK + decoder fixtures used by the unit_mpk_loader / unit_modelpack_extract
-# / security_modelpack_matrix / unit_pipeline_sequence_parse suites. Without
-# this, tests on the CI runner (and any deb-installed environment) call
-# MpKLoader::inspect/extract against a non-existent .mpk path and trip the
-# "archive path does not exist" InvalidArchive branch — masking the real
-# error-class assertions the tests are written for.
+# Model-archive + decoder fixtures used by the modelpack/security suites.
+# Keep install/package jobs self-contained too. Some CI/CD paths package or
+# install the test extras without explicitly building an individual test
+# executable first; in that case the build-time prepare_test_fixtures target
+# may not have been requested yet. Regenerate the deterministic fixture tree
+# immediately before installing it so installed runners see the same manifest
+# and archives as build-tree CTest.
 install(
-  DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/mpk/"
-  DESTINATION lib/sima-neat/test-assets/mpk
+  CODE "
+execute_process(
+  COMMAND \"${Python3_EXECUTABLE}\"
+          \"${CMAKE_CURRENT_SOURCE_DIR}/tools/make_model_archive_fixtures.py\"
+          --root \"${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_ROOT}\"
+          --manifest \"${SIMA_TEST_MODEL_ARCHIVE_FIXTURE_MANIFEST}\"
+  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
+  RESULT_VARIABLE _sima_model_archive_fixture_rv
+)
+if (NOT _sima_model_archive_fixture_rv EQUAL 0)
+  message(FATAL_ERROR \"failed to prepare model-archive test fixtures\")
+endif()
+execute_process(
+  COMMAND \"${Python3_EXECUTABLE}\"
+          \"${CMAKE_CURRENT_SOURCE_DIR}/tools/make_decoder_dynamic_fixture.py\"
+          --output \"${SIMA_TEST_DECODER_FIXTURE}\"
+  WORKING_DIRECTORY \"${CMAKE_SOURCE_DIR}\"
+  RESULT_VARIABLE _sima_decoder_fixture_rv
+)
+if (NOT _sima_decoder_fixture_rv EQUAL 0)
+  message(FATAL_ERROR \"failed to prepare decoder test fixture\")
+endif()
+"
+  COMPONENT extras
+)
+install(
+  DIRECTORY "${CMAKE_BINARY_DIR}/test-assets/model-archive/"
+  DESTINATION lib/sima-neat/test-assets/model-archive
   COMPONENT extras
 )
 install(
@@ -997,14 +1403,4 @@ install(
   FILES_MATCHING
     PATTERN "*.cpp"
     PATTERN "*.h"
-)
-
-# Install built test binaries from the build tree (for extras packaging)
-install(
-  DIRECTORY ${CMAKE_BINARY_DIR}/tests/
-  DESTINATION lib/sima-neat/tests
-  COMPONENT extras
-  USE_SOURCE_PERMISSIONS
-  FILES_MATCHING
-    PATTERN "*"
 )

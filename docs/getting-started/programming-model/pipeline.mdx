@@ -6,7 +6,7 @@ sidebar_position: 5
 
 # Pipeline
 
-In SiMa Neat, a pipeline is an ordered composition of nodes and node groups assembled through [`Session`](/reference/{lsa}/classes/simaai-neat-session).
+In SiMa Neat, a pipeline is an ordered composition of Nodes, Models, and reusable Graph fragments assembled through [`Graph`](/reference/{lsa}/classes/simaai-neat-graph).
 
 The result is deterministic graph wiring and a reproducible gst-launch representation.
 
@@ -14,8 +14,8 @@ The result is deterministic graph wiring and a reproducible gst-launch represent
 ## Building blocks
 
 - **Node**: atomic stage unit (decode, convert, preprocess, sink, etc.).
-- **NodeGroup**: reusable ordered set of nodes (for example model stages or input groups).
-- **Session**: composition boundary and runtime build/validate point.
+- **Reusable Graph fragment**: reusable ordered set of nodes (for example model stages or input fragments).
+- **Graph**: composition boundary and runtime build/validate point.
 
 Reference:
 - [`Run`](/reference/{lsa}/classes/simaai-neat-run)
@@ -68,7 +68,7 @@ Reference:
 - [Inference Workflow](/getting-started/programming-model/overview)
 - [Node](/getting-started/programming-model/node)
 - [Graph](/getting-started/programming-model/graph)
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Input and Output](/getting-started/programming-model/io)
 
 ## Tutorials

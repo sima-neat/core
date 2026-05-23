@@ -34,9 +34,9 @@ critical_tests=(
   unit_run_pull_variants_api_test
   unit_run_try_push_api_test
   unit_run_api_variants_test
-  unit_session_io_roundtrip_test
-  unit_session_io_negative_test
-  unit_session_naming_transform_test
+  unit_graph_io_contract_test
+  unit_graph_io_contract_test
+  unit_graph_naming_transform_test
   unit_simaai_guard_test
   unit_stageconfig_mla_info_test
   unit_tensor_conversion_policy_test
@@ -49,9 +49,9 @@ critical_tests=(
   caps_negotiation_matrix_regression_test
   gst_data_adapter_runtime_regression_test
   pull_timeout_regression_test
-  session_naming_pipeline_integration_test
-  session_rtsp_lifecycle_regression_test
-  session_validate_report_regression_test
+  graph_naming_pipeline_integration_test
+  graph_rtsp_lifecycle_regression_test
+  graph_validate_report_regression_test
   stage_routing_regression_test
 )
 
@@ -69,9 +69,9 @@ repeat_tests=(
   unit_model_input_spec_contract_test
   unit_model_output_spec_contract_test
   unit_run_api_variants_test
-  session_naming_pipeline_integration_test
-  session_rtsp_lifecycle_regression_test
-  session_validate_report_regression_test
+  graph_naming_pipeline_integration_test
+  graph_rtsp_lifecycle_regression_test
+  graph_validate_report_regression_test
   stage_routing_regression_test
 )
 

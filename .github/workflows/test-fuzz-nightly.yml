@@ -68,7 +68,7 @@ jobs:
         run: |
           FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests/fuzz"
           missing=0
-          for target in fuzz_modelpack_json fuzz_pipeline_sequence fuzz_gst_pipeline_string; do
+          for target in fuzz_modelpack_json fuzz_gst_pipeline_string; do
             if [[ ! -x "${FUZZ_BIN_DIR}/${target}" ]]; then
               echo "Missing prebuilt fuzz binary: ${FUZZ_BIN_DIR}/${target}" >&2
               missing=1

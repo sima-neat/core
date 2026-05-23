@@ -310,7 +310,7 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
   run_opt.queue_depth = queue_depth;
   run_opt.enable_metrics = true;
   auto runner = model.build(std::vector<cv::Mat>{mnist.images.front()},
-                            simaai::neat::Model::SessionOptions{}, run_opt);
+                            simaai::neat::Model::RouteOptions{}, run_opt);
   Result r;
   r.mode = read_outputs ? "option_c_two_thread_pull_read" : "option_c_two_thread_pull_no_read";
 
@@ -329,7 +329,7 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
     try {
       while (r.total < static_cast<int>(mnist.images.size()) && !stop.load()) {
         const auto t0 = std::chrono::steady_clock::now();
-        simaai::neat::SampleList samples = runner.pull(timeout_ms);
+        simaai::neat::Sample samples = runner.pull(timeout_ms);
         const auto t1 = std::chrono::steady_clock::now();
         r.pull_ns += duration_ns(t0, t1);
         if (samples.empty()) {
@@ -449,6 +449,10 @@ int main(int argc, char** argv) {
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
     model_opt.preprocess.input_max_depth = 1;
     model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::GRAY8;
+    model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    model_opt.preprocess.normalize.mean = std::array<float, 3>{0.1307f, 0.1307f, 0.1307f};
+    model_opt.preprocess.normalize.stddev = std::array<float, 3>{0.3081f, 0.3081f, 0.3081f};
+    model_opt.preprocess.normalize.has_explicit_stats = true;
 
     std::cout << "[CONTROL] model=" << model_path << " limit=" << mnist.images.size()
               << " queue_depth=" << queue_depth << " consumer_work_us=" << consumer_work_us << "\n";

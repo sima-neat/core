@@ -2,7 +2,7 @@
 #include "model/internal/InputPlanner.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/RoutePlanner.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 
 #include <algorithm>
@@ -14,7 +14,7 @@ RUN_TEST(
       using namespace simaai::neat::internal;
 
       const auto fixture =
-          sima_test::make_strict_mpk_tar_fixture("route_capability_mpk_static_contract", {});
+          sima_test::make_strict_model_archive_fixture("route_capability_mpk_static_contract", {});
       ModelPack capability_pack(fixture.tar_path);
       const PreprocessCapabilities capabilities = inspect_preprocess_capabilities(capability_pack);
       const PreprocessPlannerResult preprocess_plan =

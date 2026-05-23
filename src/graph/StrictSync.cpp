@@ -246,7 +246,7 @@ void ReleasePacer::worker_loop(size_t idx) {
 
     bool ok = false;
     if (idx < runs_.size() && runs_[idx]) {
-      ok = runs_[idx]->push(SampleList{sample});
+      ok = runs_[idx]->push(Sample{sample});
     }
 
     if (on_send_result_) {

@@ -1,5 +1,5 @@
 #include "model/Model.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -7,7 +7,8 @@
 
 namespace {
 
-sima_test::MpkFixture make_metadata_fixture(const std::string& tag, bool include_metadata) {
+sima_test::ModelArchiveFixture make_metadata_fixture(const std::string& tag,
+                                                     bool include_metadata) {
   std::vector<std::pair<std::string, std::string>> files = {
       {"etc/pipeline_sequence.json",
        R"json({
@@ -66,7 +67,7 @@ sima_test::MpkFixture make_metadata_fixture(const std::string& tag, bool include
 })json"});
   }
 
-  return sima_test::make_strict_mpk_tar_fixture(tag, files, true);
+  return sima_test::make_strict_model_archive_fixture(tag, files, true);
 }
 
 } // namespace
@@ -100,7 +101,7 @@ RUN_TEST("unit_model_metadata_test", ([] {
            }
 
            {
-             const auto legacy = sima_test::make_mpk_tar_fixture(
+             const auto legacy = sima_test::make_model_archive_fixture(
                  "model_metadata_legacy_missing_mpk", {
                                                           {"etc/pipeline_sequence.json",
                                                            R"json({

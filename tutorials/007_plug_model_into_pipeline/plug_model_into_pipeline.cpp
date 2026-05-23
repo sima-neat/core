@@ -1,7 +1,7 @@
-// Three Session composition patterns: direct nodes, model.session(), attached session.
+// Three Graph composition patterns: direct nodes, model.graph(), attached Graph.
 //
 // Usage:
-//   tutorial_007_plug_model_into_pipeline [--mpk /path/to/model.tar.gz]
+//   tutorial_007_plug_model_into_pipeline [--model /path/to/model.tar.gz]
 
 #include "neat.h"
 
@@ -37,7 +37,7 @@ int main(int argc, char** argv) {
     if (!rgb.isContinuous())
       rgb = rgb.clone();
 
-    // Pattern 1: build a Session by adding Input/Output nodes directly.
+    // Pattern 1: build a Graph by adding Input/Output nodes directly.
     simaai::neat::InputOptions in;
     in.format = "RGB";
     in.width = width;
@@ -46,42 +46,45 @@ int main(int argc, char** argv) {
     in.do_timestamp = true;
 
     // CORE LOGIC
-    simaai::neat::Session direct;
+    simaai::neat::Graph direct;
     direct.add(simaai::neat::nodes::Input(in));
     direct.add(simaai::neat::nodes::Output());
     // END CORE LOGIC
 
-    std::string mpk;
-    if (get_arg(argc, argv, "--mpk", mpk) && fs::exists(mpk)) {
-      simaai::neat::Model model(mpk);
+    std::string model_path;
+    if (get_arg(argc, argv, "--model", model_path) && fs::exists(model_path)) {
+      simaai::neat::Model model(model_path);
 
-      // Pattern 2: ingest the model's default session group.
+      // Pattern 2: ask model.graph() to include explicit public Input/Output boundaries.
+      simaai::neat::Model::RouteOptions runnable_opt;
+      runnable_opt.include_input = true;
+      runnable_opt.include_output = true;
       // CORE LOGIC
-      simaai::neat::Session from_model;
-      from_model.add(model.session());
+      simaai::neat::Graph from_model;
+      from_model.add(model.graph(runnable_opt));
       // END CORE LOGIC
-      std::cout << "model_session_size=" << model.session().size() << "\n";
+      std::cout << "model_graph_backend=\n" << from_model.describe_backend() << "\n";
 
       // Pattern 3: attach the model under an upstream name with custom options.
-      simaai::neat::Model::SessionOptions sopt;
-      sopt.include_appsrc = false;
-      sopt.include_appsink = true;
+      simaai::neat::Model::RouteOptions sopt;
+      sopt.include_input = false;
+      sopt.include_output = true;
       sopt.upstream_name = "camera0";
       sopt.name_suffix = "_camera0";
       sopt.buffer_name = "camera0";
 
       // CORE LOGIC
-      simaai::neat::Session attached;
-      attached.add(model.session(sopt));
+      simaai::neat::Graph attached;
+      attached.add(model.graph(sopt));
       // END CORE LOGIC
-      std::cout << "attached_session_backend=\n" << attached.describe_backend() << "\n";
+      std::cout << "attached_graph_backend=\n" << attached.describe_backend() << "\n";
     }
 
     auto run = direct.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
     simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
 
     if (out.empty())
-      throw std::runtime_error("direct session output missing tensor");
+      throw std::runtime_error("direct Graph output missing tensor");
     std::cout << "direct_rank=" << out.front().shape.size() << "\n";
     std::cout << "[OK] 007_plug_model_into_pipeline\n";
     return 0;

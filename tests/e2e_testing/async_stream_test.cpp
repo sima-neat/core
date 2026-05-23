@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 
@@ -71,7 +71,7 @@ int main() {
     if (!img.isContinuous())
       img = img.clone();
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     simaai::neat::InputOptions src_opt;
     src_opt.format = simaai::neat::FormatTag::RGB;
     src_opt.width = kW;

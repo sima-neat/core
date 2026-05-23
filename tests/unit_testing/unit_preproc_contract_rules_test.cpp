@@ -1,5 +1,5 @@
 #include "model/Model.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/Quant.h"
 #include "test_main.h"
@@ -17,11 +17,11 @@ void require_not_contains(const std::string& haystack, const std::string& needle
   }
 }
 
-sima_test::MpkFixture make_preproc_fixture(const std::string& tag) {
-  return sima_test::make_mpk_tar_fixture(tag,
-                                         {
-                                             {"etc/test_model_mpk.json",
-                                              R"json({
+sima_test::ModelArchiveFixture make_preproc_fixture(const std::string& tag) {
+  return sima_test::make_model_archive_fixture(tag,
+                                               {
+                                                   {"etc/test_model_mpk.json",
+                                                    R"json({
   "name": "preproc_contract_model",
   "model_path": "preproc_contract_model.onnx",
   "model_sdk_version": "2.0.0",
@@ -94,8 +94,8 @@ sima_test::MpkFixture make_preproc_fixture(const std::string& tag) {
     }
   ]
 })json"},
-                                             {"etc/pipeline_sequence.json",
-                                              R"json({
+                                                   {"etc/pipeline_sequence.json",
+                                                    R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -119,8 +119,8 @@ sima_test::MpkFixture make_preproc_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                             {"etc/0_preproc.json",
-                                              R"json({
+                                                   {"etc/0_preproc.json",
+                                                    R"json({
   "node_name": "preproc_0",
   "graph_name": "preproc",
   "input_width": 1280,
@@ -135,8 +135,8 @@ sima_test::MpkFixture make_preproc_fixture(const std::string& tag) {
   "output_dtype": "BF16",
   "tessellate": false
 })json"},
-                                             {"etc/0_process_mla.json",
-                                              R"json({
+                                                   {"etc/0_process_mla.json",
+                                                    R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["EV81_BFLOAT16"],
@@ -144,15 +144,15 @@ sima_test::MpkFixture make_preproc_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                         },
-                                         true);
+                                               },
+                                               true);
 }
 
-sima_test::MpkFixture make_infer_only_fixture(const std::string& tag) {
-  return sima_test::make_mpk_tar_fixture(tag,
-                                         {
-                                             {"etc/test_model_mpk.json",
-                                              R"json({
+sima_test::ModelArchiveFixture make_infer_only_fixture(const std::string& tag) {
+  return sima_test::make_model_archive_fixture(tag,
+                                               {
+                                                   {"etc/test_model_mpk.json",
+                                                    R"json({
   "name": "infer_only_contract_model",
   "model_path": "infer_only_contract_model.onnx",
   "model_sdk_version": "2.0.0",
@@ -199,8 +199,8 @@ sima_test::MpkFixture make_infer_only_fixture(const std::string& tag) {
     }
   ]
 })json"},
-                                             {"etc/pipeline_sequence.json",
-                                              R"json({
+                                                   {"etc/pipeline_sequence.json",
+                                                    R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -215,8 +215,8 @@ sima_test::MpkFixture make_infer_only_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                             {"etc/0_process_mla.json",
-                                              R"json({
+                                                   {"etc/0_process_mla.json",
+                                                    R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}],
   "data_type": ["EV81_BFLOAT16"],
@@ -224,8 +224,8 @@ sima_test::MpkFixture make_infer_only_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                         },
-                                         true);
+                                               },
+                                               true);
 }
 
 simaai::neat::OutputSpec make_rgb_input_spec(int width, int height) {

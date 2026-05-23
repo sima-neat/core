@@ -29,14 +29,14 @@ Language mapping:
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-#include "neat/session.h"
+#include "neat/runtime.h"
 #include "neat/node_groups.h"
 
-simaai::neat::Session session;
+simaai::neat::Graph graph;
 
 simaai::neat::nodes::groups::VideoInputGroupOptions vopt;
 vopt.path = "/data/sample.mp4";
-session.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
+graph.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
 ```
 
 </CodeTab>
@@ -45,11 +45,11 @@ session.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
 ```python
 import pyneat as neat
 
-session = neat.Session()
+graph = neat.Graph()
 
 vopt = neat.VideoInputGroupOptions()
 vopt.path = "/data/sample.mp4"
-session.add(neat.groups.video_input(vopt))
+graph.add(neat.groups.video_input(vopt))
 ```
 
 </CodeTab>
@@ -66,23 +66,23 @@ Use the input node pattern for application-driven frame/tensor push.
 This is the most common pattern for inference services.
 
 Language mapping:
-- C++: `session.add(simaai::neat::nodes::Input(...))`
-- Python: `session.add(neat.nodes.input(...))`
+- C++: `graph.add(simaai::neat::nodes::Input(...))`
+- Python: `graph.add(neat.nodes.input(...))`
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-#include "neat/session.h"
+#include "neat/runtime.h"
 #include "neat/nodes.h"
 
-simaai::neat::Session session;
+simaai::neat::Graph graph;
 
 simaai::neat::InputOptions iopt;
 iopt.format = "RGB";
 iopt.width = 224;
 iopt.height = 224;
-session.add(simaai::neat::nodes::Input(iopt));
+graph.add(simaai::neat::nodes::Input(iopt));
 ```
 
 </CodeTab>
@@ -91,13 +91,13 @@ session.add(simaai::neat::nodes::Input(iopt));
 ```python
 import pyneat as neat
 
-session = neat.Session()
+graph = neat.Graph()
 
 iopt = neat.InputOptions()
 iopt.format = "RGB"
 iopt.width = 224
 iopt.height = 224
-session.add(neat.nodes.input(iopt))
+graph.add(neat.nodes.input(iopt))
 ```
 
 </CodeTab>
@@ -119,21 +119,21 @@ Key options and contracts:
 Use the output node pattern when you need sample output with pull-side buffering policy.
 
 Language mapping:
-- C++: `session.add(simaai::neat::nodes::Output(...))`
-- Python: `session.add(neat.nodes.output(...))`
+- C++: `graph.add(simaai::neat::nodes::Output(...))`
+- Python: `graph.add(neat.nodes.output(...))`
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-#include "neat/session.h"
+#include "neat/runtime.h"
 #include "neat/nodes.h"
 
-simaai::neat::Session session;
-session.add(simaai::neat::nodes::Input({}));
-session.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::Latest()));
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input({}));
+graph.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::Latest()));
 
-auto run = session.build(simaai::neat::Tensor{}, simaai::neat::RunMode::Async);
+auto run = graph.build(simaai::neat::Tensor{}, simaai::neat::RunMode::Async);
 run.push(simaai::neat::Tensor{});
 auto sample = run.pull(1000);  // returns Sample (metadata + payload)
 ```
@@ -144,11 +144,11 @@ auto sample = run.pull(1000);  // returns Sample (metadata + payload)
 ```python
 import pyneat as neat
 
-session = neat.Session()
-session.add(neat.nodes.input(neat.InputOptions()))
-session.add(neat.nodes.output(neat.OutputOptions()))
+graph = neat.Graph()
+graph.add(neat.nodes.input(neat.InputOptions()))
+graph.add(neat.nodes.output(neat.OutputOptions()))
 
-run = session.build(neat.Tensor(), neat.RunMode.Async)
+run = graph.build(neat.Tensor(), neat.RunMode.Async)
 run.push(neat.Tensor())
 sample = run.pull(1000)  # returns Sample (metadata + payload)
 ```
@@ -163,7 +163,7 @@ Use this pattern when:
 
 ### Tensor-first output (`add_output_tensor`)
 
-Use `Session::add_output_tensor(...)` for a simpler tensor-oriented output path with format/shape normalization.
+Use `Graph::add_output_tensor(...)` for a simpler tensor-oriented output path with format/shape normalization.
 
 Use this pattern when:
 - Your consumer expects predictable tensor format/shape.
@@ -174,14 +174,14 @@ Use this pattern when:
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-#include "neat/session.h"
+#include "neat/runtime.h"
 #include "neat/nodes.h"
 
-simaai::neat::Session session;
-session.add(simaai::neat::nodes::Input({}));
-session.add_output_tensor({});
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input({}));
+graph.add_output_tensor({});
 
-auto run = session.build(simaai::neat::Tensor{}, simaai::neat::RunMode::Async);
+auto run = graph.build(simaai::neat::Tensor{}, simaai::neat::RunMode::Async);
 run.push(simaai::neat::Tensor{});
 auto out = run.pull_tensor(1000);  // tensor-first consumption
 ```
@@ -192,11 +192,11 @@ auto out = run.pull_tensor(1000);  // tensor-first consumption
 ```python
 import pyneat as neat
 
-session = neat.Session()
-session.add(neat.nodes.input(neat.InputOptions()))
-session.add_output_tensor(neat.OutputTensorOptions())
+graph = neat.Graph()
+graph.add(neat.nodes.input(neat.InputOptions()))
+graph.add_output_tensor(neat.OutputTensorOptions())
 
-run = session.build(neat.Tensor(), neat.RunMode.Async)
+run = graph.build(neat.Tensor(), neat.RunMode.Async)
 run.push(neat.Tensor())
 tensor = run.pull_tensor(1000)  # tensor-first consumption
 ```
@@ -206,7 +206,7 @@ tensor = run.pull_tensor(1000)  # tensor-first consumption
 
 ## RTSP mode
 
-For server-style output, use `Session::run_rtsp(...)` and configure [`RtspServerOptions`](/reference/{lsa}/structs/simaai-neat-rtspserveroptions).
+For server-style output, use `Graph::run_rtsp(...)` and configure [`RtspServerOptions`](/reference/{lsa}/structs/simaai-neat-rtspserveroptions).
 
 Use this when:
 - The pipeline should publish an endpoint for viewers/downstream systems.
@@ -223,7 +223,7 @@ Use this when:
 ## See also
 
 - [Inference Workflow](/getting-started/programming-model/overview)
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 
 ## Tutorials

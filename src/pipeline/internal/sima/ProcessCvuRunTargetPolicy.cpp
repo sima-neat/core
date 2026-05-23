@@ -23,7 +23,7 @@ std::string lower_copy(std::string value) {
 }
 
 // SIMA_PROCESSCVU_RUN_TARGET is retained as a legacy/debug override for
-// callers that do not use explicit Model/Session processcvu placement.
+// callers that do not use explicit Model/Graph processcvu placement.
 std::string env_run_target_override() {
   const char* raw = std::getenv("SIMA_PROCESSCVU_RUN_TARGET");
   if (!raw || !*raw) {

@@ -86,21 +86,21 @@ Typical sample fields:
 
 Related references:
 - [`Sample`](/reference/{lsa}/structs/simaai-neat-sample)
-- [`SessionOptions.h`](/reference/{lsa}/files/include-pipeline-sessionoptions-h)
+- [`GraphOptions.h`](/reference/{lsa}/files/include-pipeline-graphoptions-h)
 - [`PullError`](/reference/{lsa}/structs/simaai-neat-pullerror)
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-#include "neat/session.h"
+#include "neat/runtime.h"
 #include "neat/nodes.h"
 
-simaai::neat::Session session;
-session.add(simaai::neat::nodes::Input({}));
-session.add(simaai::neat::nodes::Output({}));
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input({}));
+graph.add(simaai::neat::nodes::Output({}));
 
-auto run = session.build(simaai::neat::Sample{}, simaai::neat::RunMode::Async);
+auto run = graph.build(simaai::neat::Sample{}, simaai::neat::RunMode::Async);
 
 simaai::neat::Sample in;
 in.kind = simaai::neat::SampleKind::Tensor;
@@ -123,11 +123,11 @@ if (out) {
 ```python
 import pyneat as neat
 
-session = neat.Session()
-session.add(neat.nodes.input(neat.InputOptions()))
-session.add(neat.nodes.output(neat.OutputOptions()))
+graph = neat.Graph()
+graph.add(neat.nodes.input(neat.InputOptions()))
+graph.add(neat.nodes.output(neat.OutputOptions()))
 
-run = session.build(neat.Sample(), neat.RunMode.Async)
+run = graph.build(neat.Sample(), neat.RunMode.Async)
 
 sample = neat.Sample()
 sample.kind = neat.SampleKind.Tensor
@@ -150,7 +150,7 @@ Both types flow through [`Run`](/reference/{lsa}/classes/simaai-neat-run) (`push
 
 ## See also
 
-- [Session](/getting-started/programming-model/session)
+- [Graph](/getting-started/programming-model/graph)
 - [Pipeline](/getting-started/programming-model/pipeline)
 - [Input and Output](/getting-started/programming-model/io)
 

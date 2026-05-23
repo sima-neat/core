@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
@@ -67,9 +67,9 @@ int main() {
     {
       simaai::neat::Tensor input = make_nv12_tensor(w, h);
 
-      Session p;
+      Graph p;
       InputOptions src_opt;
-      src_opt.media_type = "video/x-raw";
+      src_opt.payload_type = simaai::neat::PayloadType::Image;
       src_opt.format = simaai::neat::FormatTag::NV12;
       src_opt.use_simaai_pool = false;
       p.add(nodes::Input(src_opt));
@@ -107,9 +107,9 @@ int main() {
     {
       simaai::neat::Tensor input = make_i420_tensor(w, h);
 
-      Session p;
+      Graph p;
       InputOptions src_opt;
-      src_opt.media_type = "video/x-raw";
+      src_opt.payload_type = simaai::neat::PayloadType::Image;
       src_opt.format = simaai::neat::FormatTag::I420;
       src_opt.use_simaai_pool = false;
       p.add(nodes::Input(src_opt));

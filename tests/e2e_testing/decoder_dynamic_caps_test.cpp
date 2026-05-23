@@ -1,7 +1,7 @@
 #include "asset_utils.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_utils.h"
 
 #include <gst/app/gstappsink.h>
@@ -225,7 +225,7 @@ int main() {
       throw std::runtime_error(oss.str());
     }
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.add(simaai::neat::nodes::FileInput(combined.string()));
     simaai::neat::H264ParseOptions parse_opt;
     parse_opt.config_interval = 1;

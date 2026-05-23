@@ -1,6 +1,6 @@
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
-#include "mpk/MpKLoader.h"
+#include "model/internal/ModelArchiveLoader.h"
 
 #include "builder/NodeContractConfigurable.h"
 #include "builder/CompiledChildStageProvider.h"
@@ -867,7 +867,7 @@ static std::string extract_and_organize(const std::string& tar_path,
   }
 
   const std::string cache_key = archive_cache_key(tar_path);
-  simaai::neat::mpk::MpKLoaderOptions opt;
+  simaai::neat::internal::ModelArchiveLoaderOptions opt;
   // Runtime model packs may include auxiliary build/report artifacts.
   // Keep strict type validation in security/unit tests (default options),
   // but allow these extras in ModelPack runtime extraction.
@@ -881,7 +881,7 @@ static std::string extract_and_organize(const std::string& tar_path,
       return found->second;
     }
 
-    const auto extracted = simaai::neat::mpk::MpKLoader::extract(
+    const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
         tar_path, modelpack_output_root(cleanup_extracted_model_data), opt);
     const fs::path target_dir(extracted.package_root);
 
@@ -910,7 +910,7 @@ static std::string extract_and_organize(const std::string& tar_path,
 
     cache[cache_key] = target_dir.string();
     return target_dir.string();
-  } catch (const simaai::neat::mpk::MpKError& e) {
+  } catch (const simaai::neat::internal::ModelArchiveError& e) {
     throw std::runtime_error(std::string("ModelPack: ") + e.what());
   }
 }
@@ -2456,18 +2456,14 @@ publish_mla_outputs_as_packed_parent(pipeline_internal::sima::MlaStaticContract*
   }
 
   constexpr const char* kPackedParentSegmentName = "mla_output_tensor";
-  pipeline_internal::sima::PhysicalBufferStaticSpec parent;
-  parent.physical_index = 0;
-  parent.allocator_index = 0;
   // The dispatcher still has N real OFM outputs.  This published parent is an
   // aggregate runtime allocation over those N outputs, so source_physical_index
   // is only a compatibility anchor for older one-source descriptors; processmla
   // validates the dense aggregate-parent shape explicitly.
-  parent.source_physical_index = 0;
-  parent.source_byte_offset = 0;
-  parent.device_kind = pipeline_internal::sima::DeviceKind::Mla;
-  parent.segment_name = kPackedParentSegmentName;
-  parent.size_bytes = total_size;
+  auto parent = pipeline_internal::sima::specbuilders::build_physical_buffer_static_spec(
+      /*physical_index=*/0, /*allocator_index=*/0, /*size_bytes=*/total_size,
+      pipeline_internal::sima::DeviceKind::Mla, kPackedParentSegmentName,
+      /*source_physical_index=*/0, /*source_byte_offset=*/0);
 
   for (std::size_t i = 0; i < contract->logical_outputs.size(); ++i) {
     auto& logical = contract->logical_outputs[i];
@@ -3028,13 +3024,13 @@ private:
   std::shared_ptr<const ModelLineageBinding> model_lineage_;
 };
 
-static NodeGroup
-make_fragment_group(const ModelFragment& frag, const std::string& label,
+static std::vector<std::shared_ptr<Node>>
+make_fragment_nodes(const ModelFragment& frag, const std::string& label,
                     std::shared_ptr<const ModelLineageBinding> model_lineage = nullptr) {
   std::vector<std::shared_ptr<Node>> nodes;
   nodes.push_back(std::make_shared<ModelFragmentNode>(
       "ModelFragment", label, frag.gst, frag.elements, frag.stage_facts, std::move(model_lineage)));
-  return NodeGroup(std::move(nodes));
+  return nodes;
 }
 
 static bool validate_terminal_mla_metadata(
@@ -3204,7 +3200,7 @@ static PipelineType get_pipeline_type(PipelineType requested_pipeline_type) {
   return requested_pipeline_type;
 }
 
-// Sequence parsing moved to mpk/PipelineSequence.{h,cpp}
+// Sequence parsing is internal to the model archive loader.
 
 static std::string find_config_by_substr(const std::string& etc_dir, const std::string& needle) {
   if (needle.empty())
@@ -3823,16 +3819,17 @@ std::string ModelPack::backend_fragment(ModelStage stage) const {
   return fragment(stage).gst;
 }
 
-NodeGroup ModelPack::to_node_group(ModelStage stage) const {
+std::vector<std::shared_ptr<Node>> ModelPack::to_nodes(ModelStage stage) const {
   ModelFragment frag = fragment(stage);
   if (frag.gst.empty())
-    return NodeGroup{};
+    return {};
   const std::string label = stage_label(stage);
-  return make_fragment_group(frag, label);
+  return make_fragment_nodes(frag, label);
 }
 
-NodeGroup ModelPack::infer_block(const std::string& upstream_name,
-                                 std::shared_ptr<const ModelLineageBinding> model_lineage) const {
+std::vector<std::shared_ptr<Node>>
+ModelPack::infer_block(const std::string& upstream_name,
+                       std::shared_ptr<const ModelLineageBinding> model_lineage) const {
   const ExecutionPlan plan = execution_plan();
   if (plan.infer.empty()) {
     throw std::runtime_error("ModelPack::infer_block: pipeline has no infer stages");
@@ -3890,8 +3887,8 @@ NodeGroup ModelPack::infer_block(const std::string& upstream_name,
       build_fragment_linear(infer_seq, upstream, options_.num_buffers_cvu, options_.num_buffers_mla,
                             options_.name_suffix, mpk_contract_, std::move(stage_facts));
   if (frag.gst.empty())
-    return NodeGroup{};
-  return make_fragment_group(frag, "infer", std::move(model_lineage));
+    return {};
+  return make_fragment_nodes(frag, "infer", std::move(model_lineage));
 }
 
 std::string ModelPack::apply_name_suffix(const std::string& base) const {
@@ -3921,8 +3918,8 @@ InputOptions ModelPack::input_appsrc_options(bool tensor_mode) const {
       tensor_format = "EVXX_FLOAT32";
     }
 
-    opt.media_type = "application/vnd.simaai.tensor";
-    opt.format = normalize_caps_format_for_media(opt.media_type, tensor_format);
+    opt.payload_type = PayloadType::Tensor;
+    opt.format = normalize_caps_format_for_media(resolve_input_media_type(opt), tensor_format);
     const std::string input_format_up = to_upper(opt.format.str());
     if (input_format_up.find("BF16") != std::string::npos ||
         input_format_up.find("BFLOAT16") != std::string::npos) {
@@ -3955,7 +3952,7 @@ InputOptions ModelPack::input_appsrc_options(bool tensor_mode) const {
   if (fmt == "GRAY")
     fmt = "GRAY8";
 
-  opt.media_type = "video/x-raw";
+  opt.payload_type = PayloadType::Image;
   opt.format = fmt;
   opt.max_width = options_.max_input_width;
   opt.max_height = options_.max_input_height;

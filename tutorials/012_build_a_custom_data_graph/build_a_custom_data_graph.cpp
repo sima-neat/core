@@ -1,15 +1,12 @@
-// Compose a minimal Neat Graph: PipelineNode -> StampFrameIdNode, push one sample, pull output.
+// Compose a minimal public Neat Graph: named Input -> named Output.
 //
 // Usage:
 //   tutorial_012_build_a_custom_data_graph
 
-#include "neat/graph.h"
-#include "neat/nodes.h"
-#include "neat/session.h"
+#include "neat.h"
 
 #include <cstdint>
 #include <iostream>
-#include <memory>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -54,7 +51,8 @@ simaai::neat::Sample make_sample() {
   s.kind = simaai::neat::SampleKind::Tensor;
   s.tensor = std::move(t);
   s.stream_id = "graph";
-  s.frame_id = -1;
+  s.frame_id = 42;
+  s.pts_ns = 123456789;
   return s;
 }
 
@@ -62,29 +60,29 @@ simaai::neat::Sample make_sample() {
 
 int main() {
   try {
-    using namespace simaai::neat::graph;
-
     // CORE LOGIC
-    // A Graph is a DAG of nodes. Here: a PipelineNode (wraps a classic gst node)
-    // feeds a StampFrameIdNode, which assigns a monotonic frame id.
-    Graph g;
+    // `Graph` is the public composition type. Input("image") declares the name
+    // used by Run::push("image", ...). Output("out") declares the name used by
+    // Run::pull("out", ...).
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::nodes::Input("image"));
+    graph.add(simaai::neat::nodes::Output("out"));
+    graph.connect("image", "out");
 
-    const NodeId pipe = g.add(
-        std::make_shared<nodes::PipelineNode>(simaai::neat::nodes::VideoConvert(), "convert"));
-    const NodeId stamp = g.add(nodes::StampFrameIdNode("stamp"));
-    g.connect(pipe, stamp);
+    std::cout << graph.describe() << "\n";
 
-    std::cout << GraphPrinter::to_text(g) << "\n";
-
-    GraphRun run = GraphSession(std::move(g)).build();
-    run.push(pipe, make_sample());
-    auto out = run.pull(stamp, /*timeout_ms=*/2000);
-    run.stop();
+    simaai::neat::Run run = graph.build();
+    if (!run.push("image", make_sample())) {
+      throw std::runtime_error("push failed: " + run.last_error());
+    }
+    auto out = run.pull("out", /*timeout_ms=*/2000);
+    run.close();
     // END CORE LOGIC
 
     if (!out.has_value())
       throw std::runtime_error("graph produced no output");
-    std::cout << "stream=" << out->stream_id << " frame=" << out->frame_id << "\n";
+    std::cout << "stream=" << out->stream_id << " frame=" << out->frame_id
+              << " pts_ns=" << out->pts_ns << "\n";
     std::cout << "[OK] 012_build_a_custom_data_graph\n";
     return 0;
   } catch (const std::exception& e) {

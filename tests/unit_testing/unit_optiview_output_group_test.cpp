@@ -12,33 +12,31 @@ RUN_TEST(
       using nlohmann::json;
       using simaai::neat::nodes::groups::OptiViewJsonInput;
       using simaai::neat::nodes::groups::OptiViewJsonResult;
-      using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-      using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+      using simaai::neat::nodes::groups::OptiViewOutputGraph;
+      using simaai::neat::nodes::groups::OptiViewOutputGraphOptions;
 
       // Configuration failure paths.
       {
-        OptiViewOutputNodeGroup group;
-        OptiViewOutputNodeGroupOptions bad;
+        OptiViewOutputGraph group;
+        OptiViewOutputGraphOptions bad;
         bad.udp.h264_caps.clear();
         bad.frame_w = 640;
         bad.frame_h = 480;
 
         std::string err;
-        require(!group.init(bad, 1, &err), "OptiViewOutputNodeGroup should reject empty h264_caps");
-        require_contains(err, "missing h264_caps",
-                         "OptiViewOutputNodeGroup h264_caps error mismatch");
+        require(!group.init(bad, 1, &err), "OptiViewOutputGraph should reject empty h264_caps");
+        require_contains(err, "missing h264_caps", "OptiViewOutputGraph h264_caps error mismatch");
 
         err.clear();
         bad.udp.h264_caps = "video/x-h264";
-        require(!group.init(bad, 0, &err), "OptiViewOutputNodeGroup should reject zero streams");
-        require_contains(err, "streams must be > 0",
-                         "OptiViewOutputNodeGroup streams error mismatch");
+        require(!group.init(bad, 0, &err), "OptiViewOutputGraph should reject zero streams");
+        require_contains(err, "streams must be > 0", "OptiViewOutputGraph streams error mismatch");
       }
 
       sima_test::UdpReceiver rx;
 
-      OptiViewOutputNodeGroup group;
-      OptiViewOutputNodeGroupOptions opt;
+      OptiViewOutputGraph group;
+      OptiViewOutputGraphOptions opt;
       opt.send_json = true;
       opt.udp.h264_caps = "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
       opt.udp.host = "127.0.0.1";
@@ -54,14 +52,14 @@ RUN_TEST(
       std::string init_err;
       if (!group.init(opt, 1, &init_err)) {
         if (sima_test::likely_runtime_missing(init_err)) {
-          throw std::runtime_error("Skipping OptiViewOutputNodeGroup runtime-dependent checks: " +
+          throw std::runtime_error("Skipping OptiViewOutputGraph runtime-dependent checks: " +
                                    init_err);
         }
-        throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+        throw std::runtime_error("OptiViewOutputGraph init failed: " + init_err);
       }
 
       struct GroupStopGuard {
-        OptiViewOutputNodeGroup* g = nullptr;
+        OptiViewOutputGraph* g = nullptr;
         ~GroupStopGuard() {
           if (!g)
             return;
@@ -78,9 +76,9 @@ RUN_TEST(
         in.stream_idx = 1;
         OptiViewJsonResult out;
         require(!group.emit_json(in, &out),
-                "OptiViewOutputNodeGroup should reject invalid JSON stream index");
+                "OptiViewOutputGraph should reject invalid JSON stream index");
         require_contains(out.error, "invalid stream index",
-                         "OptiViewOutputNodeGroup invalid stream error mismatch");
+                         "OptiViewOutputGraph invalid stream error mismatch");
       }
 
       // Failure path: missing yolo sample.
@@ -89,9 +87,9 @@ RUN_TEST(
         in.stream_idx = 0;
         OptiViewJsonResult out;
         require(!group.emit_json(in, &out),
-                "OptiViewOutputNodeGroup should reject missing yolo sample");
+                "OptiViewOutputGraph should reject missing yolo sample");
         require_contains(out.error, "missing yolo sample",
-                         "OptiViewOutputNodeGroup missing yolo sample error mismatch");
+                         "OptiViewOutputGraph missing yolo sample error mismatch");
       }
 
       // Failure path: malformed/non-bbox payload.
@@ -108,9 +106,9 @@ RUN_TEST(
 
         OptiViewJsonResult out;
         require(!group.emit_json(in, &out),
-                "OptiViewOutputNodeGroup should reject non-bbox yolo sample");
+                "OptiViewOutputGraph should reject non-bbox yolo sample");
         require_contains(out.error, "bbox tensor not found",
-                         "OptiViewOutputNodeGroup non-bbox error mismatch");
+                         "OptiViewOutputGraph non-bbox error mismatch");
       }
 
       // Failure path: malformed bbox payload with BBOX tag.
@@ -125,9 +123,9 @@ RUN_TEST(
 
         OptiViewJsonResult out;
         require(!group.emit_json(in, &out),
-                "OptiViewOutputNodeGroup should reject malformed bbox payload");
+                "OptiViewOutputGraph should reject malformed bbox payload");
         require_contains(out.error, "bbox parse failed",
-                         "OptiViewOutputNodeGroup malformed bbox error mismatch");
+                         "OptiViewOutputGraph malformed bbox error mismatch");
       }
 
       // Happy path: valid bbox payload produces JSON datagram.
@@ -146,22 +144,22 @@ RUN_TEST(
 
         OptiViewJsonResult out;
         require(group.emit_json(in, &out),
-                "OptiViewOutputNodeGroup should emit JSON for valid bbox payload");
-        require(out.ok, "OptiViewOutputNodeGroup result should mark success");
-        require(out.nonempty, "OptiViewOutputNodeGroup should report non-empty detection set");
-        require(out.boxes == 1, "OptiViewOutputNodeGroup box count mismatch");
+                "OptiViewOutputGraph should emit JSON for valid bbox payload");
+        require(out.ok, "OptiViewOutputGraph result should mark success");
+        require(out.nonempty, "OptiViewOutputGraph should report non-empty detection set");
+        require(out.boxes == 1, "OptiViewOutputGraph box count mismatch");
 
         std::string payload_json;
         require(rx.recv_one(&payload_json, 2000),
-                "OptiViewOutputNodeGroup valid emit_json payload not received");
+                "OptiViewOutputGraph valid emit_json payload not received");
 
         const json parsed = json::parse(payload_json);
         require(parsed["frame_id"].get<std::string>() == "77",
-                "OptiViewOutputNodeGroup emitted frame_id mismatch");
+                "OptiViewOutputGraph emitted frame_id mismatch");
         require(parsed["timestamp"].get<int64_t>() == 555,
-                "OptiViewOutputNodeGroup emitted timestamp mismatch");
+                "OptiViewOutputGraph emitted timestamp mismatch");
         require(parsed["data"]["objects"].size() == 1,
-                "OptiViewOutputNodeGroup emitted object count mismatch");
+                "OptiViewOutputGraph emitted object count mismatch");
       }
 
       guard.g = nullptr;

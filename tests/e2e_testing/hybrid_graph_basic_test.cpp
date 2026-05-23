@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
@@ -153,10 +153,8 @@ RUN_TEST("hybrid_graph_basic_test", [] {
 
   g.connect(pipe_in, stage);
   g.connect(stage, pipe_out);
-
-  simaai::neat::graph::GraphSession session(std::move(g));
   simaai::neat::graph::GraphRunOptions run_opt;
-  simaai::neat::graph::GraphRun run = session.build(run_opt);
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g), run_opt);
   struct RunStopGuard {
     simaai::neat::graph::GraphRun* run_ptr = nullptr;
     ~RunStopGuard() {
@@ -176,7 +174,7 @@ RUN_TEST("hybrid_graph_basic_test", [] {
   sample.frame_id = 42;
   sample.stream_id = "stream0";
 
-  require(run.push(pipe_in, sample), "GraphRun::push failed");
+  require(run.push(pipe_in, simaai::neat::Sample{sample}), "GraphRun::push failed");
 
   auto out = run.pull(pipe_out, 2000);
   if (!out.has_value()) {

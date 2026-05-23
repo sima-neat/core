@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Production blueprint: Model + ModelSessionOptions + async RunOptions.
+"""Production blueprint: Model + ModelRouteOptions + async RunOptions.
 
 Usage:
-  python3 build_production_pipeline.py --mpk /path/to/resnet_50.tar.gz [--iters 4]
+  python3 build_production_pipeline.py --model /path/to/resnet_50.tar.gz [--iters 4]
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import numpy as np
 
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--iters", type=int, default=4)
   args = ap.parse_args(argv[1:])
 
@@ -36,11 +36,11 @@ def main(argv: list[str]) -> int:
   mopt.input_max_height = int(tensor.shape[0])
   mopt.input_max_depth = int(tensor.shape[2])
   mopt.name_suffix = "_prod"
-  model = pyneat.Model(str(args.mpk), mopt)
+  model = pyneat.Model(str(args.model), mopt)
 
-  sopt = pyneat.ModelSessionOptions()
-  sopt.include_appsrc = True
-  sopt.include_appsink = True
+  sopt = pyneat.ModelRouteOptions()
+  sopt.include_input = True
+  sopt.include_output = True
   sopt.name_suffix = "_prod"
 
   ropt = pyneat.RunOptions()
@@ -49,10 +49,10 @@ def main(argv: list[str]) -> int:
   ropt.output_memory = pyneat.OutputMemory.Owned
   ropt.enable_metrics = True
 
-  runner = model.build(tensor, sopt, ropt)
+  runner = model.build([tensor], sopt, ropt)
   ok = 0
   for _ in range(args.iters):
-    if not runner.push(tensor):
+    if not runner.push([tensor]):
       continue
     if runner.pull(timeout_ms=2000) is not None:
       ok += 1

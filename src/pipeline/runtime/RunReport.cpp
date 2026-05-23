@@ -12,46 +12,49 @@
 
 namespace simaai::neat {
 
-RunStats Run::stats() const {
+RunStats runtime::RunCore::stats() const {
   RunStats out;
-  if (!state_)
-    return out;
-  auto st = state_;
-  out.inputs_enqueued = st->inputs_enqueued.load();
-  out.inputs_dropped = st->inputs_dropped.load();
-  out.inputs_pushed = st->inputs_pushed.load();
-  out.outputs_ready = st->outputs_ready.load();
-  out.outputs_pulled = st->outputs_pulled.load();
-  out.outputs_dropped = st->outputs_dropped.load();
+  out.inputs_enqueued = inputs_enqueued.load();
+  out.inputs_dropped = inputs_dropped.load();
+  out.inputs_pushed = inputs_pushed.load();
+  out.outputs_ready = outputs_ready.load();
+  out.outputs_pulled = outputs_pulled.load();
+  out.outputs_dropped = outputs_dropped.load();
   {
-    std::lock_guard<std::mutex> lock(st->latency_mu);
-    if (st->latency_count > 0) {
-      out.avg_latency_ms = st->latency_mean_ms;
-      out.min_latency_ms = st->latency_min_ms;
-      out.max_latency_ms = st->latency_max_ms;
+    std::lock_guard<std::mutex> lock(latency_mu);
+    if (latency_count > 0) {
+      out.avg_latency_ms = latency_mean_ms;
+      out.min_latency_ms = latency_min_ms;
+      out.max_latency_ms = latency_max_ms;
     }
   }
   return out;
 }
 
+InputStreamStats runtime::RunCore::input_stats() const {
+  return pipeline.stream.stats();
+}
+
+RunStats Run::stats() const {
+  return core_ ? core_->stats() : RunStats{};
+}
+
 InputStreamStats Run::input_stats() const {
-  if (!state_)
-    return {};
-  return state_->stream.stats();
+  return core_ ? core_->input_stats() : InputStreamStats{};
 }
 
 PowerSummary Run::power_summary() const {
-  if (!state_ || !state_->power_monitor)
+  if (!core_ || !core_->power_monitor)
     return {};
-  return state_->power_monitor->summary();
+  return core_->power_monitor->summary();
 }
 
 RuntimeMetrics Run::metrics(const RuntimeMetricsOptions& opt) const {
   RuntimeMetrics out;
   out.source_kind = "run";
-  if (!state_)
+  if (!core_)
     return out;
-  auto st = state_;
+  auto st = core_;
 
   const RunStats run_stats = stats();
   out.counters.inputs_enqueued = run_stats.inputs_enqueued;
@@ -101,7 +104,7 @@ RuntimeMetrics Run::metrics(const RuntimeMetricsOptions& opt) const {
   };
   out.groups.push_back(std::move(input_group));
 
-  const auto diag = st->stream.diag_ctx();
+  const auto diag = st->pipeline.stream.diag_ctx();
   if (opt.include_pipeline && diag && !diag->pipeline_string.empty()) {
     out.metadata.emplace_back("pipeline", diag->pipeline_string);
   }
@@ -153,7 +156,7 @@ std::string Run::metrics_report(RuntimeMetricsFormat format) const {
 
 RunMeasurementSummary Run::measurement_summary() const {
   RunMeasurementSummary out;
-  if (!state_)
+  if (!core_)
     return out;
   out.stats = stats();
   out.input_stats = input_stats();
@@ -166,9 +169,9 @@ RunMeasurementSummary Run::measurement_summary() const {
 
 RunDiagSnapshot Run::diag_snapshot() const {
   RunDiagSnapshot out;
-  if (!state_)
+  if (!core_)
     return out;
-  const auto diag = state_->stream.diag_ctx();
+  const auto diag = core_->pipeline.stream.diag_ctx();
   if (!diag)
     return out;
 
@@ -252,10 +255,10 @@ RunDiagSnapshot Run::diag_snapshot() const {
 }
 
 std::string Run::report(const RunReportOptions& opt) const {
-  if (!state_)
+  if (!core_)
     return {};
-  auto st = state_;
-  const auto diag = st->stream.diag_ctx();
+  auto st = core_;
+  const auto diag = st->pipeline.stream.diag_ctx();
   std::ostringstream oss;
   oss << "[REPORT] Run\n";
 

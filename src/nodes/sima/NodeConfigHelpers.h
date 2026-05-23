@@ -207,6 +207,7 @@ build_processcvu_runtime_config(const json& cfg, ProcessCvuRuntimeConfigOptions 
   runtime.input_stride = json_or<int>(cfg, "input_stride", 0);
   runtime.output_stride = json_or<int>(cfg, "output_stride", 0);
   runtime.input_offset = json_or<int>(cfg, "input_offset", 0);
+  runtime.pad_value = json_or<int>(cfg, "pad_value", 0);
   if (!output_layout.empty()) {
     runtime.runtime_output_logical_layout_list.assign(runtime.output_shapes.size(), output_layout);
   }

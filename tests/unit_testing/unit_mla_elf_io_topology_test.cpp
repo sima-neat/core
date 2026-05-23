@@ -8,7 +8,7 @@
 //      parser must accept and prefer placeholders, surfacing a warning.
 
 #define SIMA_NEAT_INTERNAL 1
-#include "mpk/MlaElfIoTopology.h"
+#include "pipeline/internal/sima/MlaElfIoTopology.h"
 
 #include <cassert>
 #include <cstdint>

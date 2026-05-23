@@ -4,7 +4,7 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "rtsp_port_utils.h"
 
 #include "cli_utils.h"
@@ -175,8 +175,8 @@ int main(int argc, char** argv) {
       const int enc_h = 256;
       const int fps = 30;
 
-      simaai::neat::SessionOptions sess_opt;
-      simaai::neat::Session s(sess_opt);
+      simaai::neat::GraphOptions sess_opt;
+      simaai::neat::Graph s(sess_opt);
       s.add(simaai::neat::nodes::StillImageInput(image_path, content_w, content_h, enc_w, enc_h,
                                                  fps));
       // Use software encoder to force frequent IDR (x264enc uses key-int-max=1).
@@ -221,8 +221,8 @@ int main(int argc, char** argv) {
       throw std::runtime_error("--server-only requires --local or no --rtsp.");
     }
 
-    simaai::neat::SessionOptions sess_opt;
-    simaai::neat::Session p(sess_opt);
+    simaai::neat::GraphOptions sess_opt;
+    simaai::neat::Graph p(sess_opt);
     simaai::neat::nodes::groups::RtspDecodedInputOptions ropt;
     ropt.url = url;
     ropt.latency_ms = 200;

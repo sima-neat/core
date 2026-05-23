@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "test_main.h"
@@ -93,9 +93,7 @@ RUN_TEST("stage_routing_regression_test", ([] {
 
            g.connect(router, cpu_sink, "cpu", "in");
            g.connect(router, mla_sink, "mla", "in");
-
-           simaai::neat::graph::GraphSession session(std::move(g));
-           simaai::neat::graph::GraphRun run = session.build();
+           simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
            const std::vector<RouteCase> route_cases = {
                RouteCase{.stream_id = "cpu-main", .port_name = "cpu", .to_mla = false},
@@ -118,7 +116,7 @@ RUN_TEST("stage_routing_regression_test", ([] {
              sample.stream_id = c.stream_id;
              sample.port_name = c.port_name;
 
-             require(run.push(router, sample), "routing test push failed");
+             require(run.push(router, simaai::neat::Sample{sample}), "routing test push failed");
 
              const auto expected_sink = c.to_mla ? mla_sink : cpu_sink;
              const auto other_sink = c.to_mla ? cpu_sink : mla_sink;

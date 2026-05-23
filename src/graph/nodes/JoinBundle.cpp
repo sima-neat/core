@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace simaai::neat::graph::nodes {
@@ -11,6 +13,11 @@ std::int64_t now_ns() {
   return std::chrono::duration_cast<std::chrono::nanoseconds>(
              std::chrono::steady_clock::now().time_since_epoch())
       .count();
+}
+
+bool join_bundle_debug_enabled() {
+  const char* raw = std::getenv("SIMA_JOIN_BUNDLE_DEBUG");
+  return raw && *raw && std::string(raw) != "0";
 }
 
 } // namespace
@@ -66,20 +73,36 @@ void JoinBundle::set_ports(const StagePorts& ports) {
 }
 
 std::string JoinBundle::make_key_(const Sample& sample) const {
-  std::string stream = sample.stream_id.empty() ? "stream0" : sample.stream_id;
+  const std::string stream = sample.stream_id.empty() ? "stream0" : sample.stream_id;
+  const std::string prefix = opt_.include_stream_id_in_key ? stream + "|" : std::string{};
   if (opt_.key_policy == JoinKeyPolicy::StreamPts) {
-    if (sample.pts_ns >= 0)
-      return stream + "|pts|" + std::to_string(sample.pts_ns);
-    if (sample.frame_id >= 0)
-      return stream + "|fid|" + std::to_string(sample.frame_id);
-    throw std::runtime_error("JoinBundle: missing pts/frame_id (add StampFrameId)");
+    if (sample.pts_ns >= 0) {
+      const std::string key = prefix + "pts|" + std::to_string(sample.pts_ns);
+      if (join_bundle_debug_enabled()) {
+        std::fprintf(stderr,
+                     "[JOIN_BUNDLE] make_key policy=ByPts key=%s stream=%s frame_id=%lld "
+                     "pts_ns=%lld dts_ns=%lld duration_ns=%lld include_stream=%d fallback=%d\n",
+                     key.c_str(), stream.c_str(), static_cast<long long>(sample.frame_id),
+                     static_cast<long long>(sample.pts_ns), static_cast<long long>(sample.dts_ns),
+                     static_cast<long long>(sample.duration_ns),
+                     opt_.include_stream_id_in_key ? 1 : 0, opt_.allow_key_fallback ? 1 : 0);
+      }
+      return key;
+    }
+    if (opt_.allow_key_fallback && sample.frame_id >= 0)
+      return prefix + "fid|" + std::to_string(sample.frame_id);
+    throw std::runtime_error(opt_.allow_key_fallback
+                                 ? "JoinBundle: missing pts/frame_id (add StampFrameId)"
+                                 : "JoinBundle: missing pts_ns for strict ByPts combine");
   }
 
   if (sample.frame_id >= 0)
-    return stream + "|fid|" + std::to_string(sample.frame_id);
-  if (sample.pts_ns >= 0)
-    return stream + "|pts|" + std::to_string(sample.pts_ns);
-  throw std::runtime_error("JoinBundle: missing frame_id/pts (add StampFrameId)");
+    return prefix + "fid|" + std::to_string(sample.frame_id);
+  if (opt_.allow_key_fallback && sample.pts_ns >= 0)
+    return prefix + "pts|" + std::to_string(sample.pts_ns);
+  throw std::runtime_error(opt_.allow_key_fallback
+                               ? "JoinBundle: missing frame_id/pts (add StampFrameId)"
+                               : "JoinBundle: missing frame_id for strict ByFrame combine");
 }
 
 void JoinBundle::touch_key_(const std::string& key) {
@@ -149,11 +172,26 @@ void JoinBundle::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out) {
   entry.last_seen_ns = ts;
   touch_key_(key);
 
+  if (join_bundle_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[JOIN_BUNDLE] on_input port=%u key=%s pending_keys=%zu fields_for_key=%zu "
+                 "required=%zu out_before=%zu\n",
+                 static_cast<unsigned>(msg.in_port), key.c_str(), pending_.size(),
+                 entry.samples.size(), required_ports_.size(), out.size());
+  }
+
   evict_expired_(ts);
   evict_oldest_();
 
-  if (!ready_(entry))
+  if (!ready_(entry)) {
+    if (join_bundle_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[JOIN_BUNDLE] not_ready key=%s fields_for_key=%zu required=%zu "
+                   "pending_keys=%zu\n",
+                   key.c_str(), entry.samples.size(), required_ports_.size(), pending_.size());
+    }
     return;
+  }
 
   Sample bundle;
   bundle.kind = SampleKind::Bundle;
@@ -185,6 +223,10 @@ void JoinBundle::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out) {
   erase_key_(key);
 
   out.push_back(StageOutMsg{.out_port = out_port_, .sample = std::move(bundle)});
+  if (join_bundle_debug_enabled()) {
+    std::fprintf(stderr, "[JOIN_BUNDLE] emitted key=%s out_port=%u out_after=%zu\n", key.c_str(),
+                 static_cast<unsigned>(out_port_), out.size());
+  }
 }
 
 void JoinBundle::on_tick(std::int64_t now_ns, std::vector<StageOutMsg>& /*out*/) {

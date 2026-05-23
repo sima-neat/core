@@ -1,6 +1,7 @@
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
 #include "model/Model.h"
+#include "model/internal/ModelInternal.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/internal/InputStreamUtil.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
@@ -365,7 +366,8 @@ DTypeFamily expected_preproc_dtype_for_model(const simaai::neat::Model& model,
   if (expected.quantize) {
     return DTypeFamily::Int8;
   }
-  const auto mla_info = rendered_stage_query::mla_input_info(model.inference());
+  const auto mla_info = rendered_stage_query::mla_input_info_from_nodes(
+      simaai::neat::internal::ModelAccess::build_public_inference_nodes(model));
   const DTypeFamily mla_dtype = dtype_family_from_token(mla_info.input_dtype);
   if (mla_dtype == DTypeFamily::BFloat16 || mla_dtype == DTypeFamily::Int16) {
     return mla_dtype;
@@ -756,7 +758,7 @@ simaai::neat::Tensor make_model_input_tensor(const cv::Mat& input_frame,
                                              const simaai::neat::Model::Options& opt,
                                              const char* where) {
   simaai::neat::InputOptions src_opt = model.input_appsrc_options(false);
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.width = input_frame.cols;
   src_opt.height = input_frame.rows;
   src_opt.depth = input_frame.channels();
@@ -779,7 +781,7 @@ AccuracyResult run_boxdecode_accuracy(simaai::neat::Model& model, const cv::Mat&
     require(static_cast<bool>(runner), "runner build failed for " + model_id);
     require(runner.push(simaai::neat::TensorList{input_tensor}),
             "runner push failed for " + model_id);
-    simaai::neat::SampleList outputs = runner.pull(120000);
+    simaai::neat::Sample outputs = runner.pull(120000);
     require(outputs.size() == 1U, "runner output size mismatch for " + model_id);
     simaai::neat::Sample result = outputs.front();
 
@@ -875,10 +877,11 @@ void run_model_case(const fs::path& tar_path, const cv::Mat& frame_bgr, bool acc
   require(forced_info.needs.pre_cast == expected.cast,
           "forced model pre_cast changed unexpectedly for " + model_id);
 
-  const auto pre_group = forced_model->preprocess();
-  require(!pre_group.empty(), "forced model preprocess group is empty for " + model_id);
+  const auto pre_nodes =
+      simaai::neat::internal::ModelAccess::build_public_preprocess_nodes(*forced_model);
+  require(!pre_nodes.empty(), "forced model preprocess graph is empty for " + model_id);
 
-  const auto pre_info = rendered_stage_query::preproc_output_info(pre_group);
+  const auto pre_info = rendered_stage_query::preproc_output_info_from_nodes(pre_nodes);
   const bool observed_packed_handoff =
       pre_info.transport_kind == simaai::neat::stages::PreprocOutputTransportKind::Packed;
   const DTypeFamily observed_cfg_dtype = dtype_family_from_token(pre_info.output_dtype);

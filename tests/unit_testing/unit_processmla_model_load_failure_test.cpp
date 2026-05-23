@@ -48,7 +48,7 @@ TempModelFile write_invalid_model_file() {
 
 SimaPluginStaticManifest make_processmla_manifest(const std::string& model_path) {
   SimaPluginStaticManifest manifest;
-  manifest.session_id = "processmla-load-failure-session";
+  manifest.session_id = "processmla-load-failure-graph";
   manifest.model_id = "processmla-load-failure-model";
 
   StageStaticSpec stage;

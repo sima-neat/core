@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/Preproc.h"
@@ -263,10 +263,10 @@ int main() {
     const int out_w = 640;
     const int out_h = 640;
 
-    Session p;
+    Graph p;
 
     InputOptions src_opt;
-    src_opt.media_type = "video/x-raw";
+    src_opt.payload_type = PayloadType::Image;
     src_opt.format = simaai::neat::FormatTag::RGB;
     src_opt.use_simaai_pool = true;
     p.add(nodes::Input(src_opt));
@@ -324,7 +324,7 @@ int main() {
     };
 
     require(run.push(TensorList{make_rgb_tensor(images[0].rgb)}), "preproc: first push failed");
-    SampleList outs1 = run.pull_samples(5000);
+    Sample outs1 = run.pull_samples(5000);
     require(outs1.size() == 1, "preproc: expected one output sample");
     Sample out1 = std::move(outs1.front());
     check_image(images[0], out1);
@@ -349,7 +349,7 @@ int main() {
       require(run.push(TensorList{make_rgb_tensor(images[i].rgb)}),
               "preproc: push new size #2 failed");
 
-      SampleList outs = run.pull_samples(5000);
+      Sample outs = run.pull_samples(5000);
       require(outs.size() == 1, "appsink: expected one output after renegotiation");
       check_image(images[i], outs.front());
 
@@ -374,9 +374,9 @@ int main() {
     {
       PreprocOptions fmt_opt = pre_opt;
 
-      Session p2;
+      Graph p2;
       InputOptions fmt_src;
-      fmt_src.media_type = "video/x-raw";
+      fmt_src.payload_type = PayloadType::Image;
       fmt_src.format = "";
       fmt_src.use_simaai_pool = true;
       p2.add(nodes::Input(fmt_src));

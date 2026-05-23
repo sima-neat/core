@@ -89,8 +89,8 @@ bool is_parseable_optiview_json(const std::string& payload) {
 RUN_TEST("stress_udp_json_burst_test", ([] {
            using simaai::neat::nodes::groups::OptiViewJsonInput;
            using simaai::neat::nodes::groups::OptiViewJsonResult;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroup;
-           using simaai::neat::nodes::groups::OptiViewOutputNodeGroupOptions;
+           using simaai::neat::nodes::groups::OptiViewOutputGraph;
+           using simaai::neat::nodes::groups::OptiViewOutputGraphOptions;
 
            const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 180));
            const int streams = 2;
@@ -99,8 +99,8 @@ RUN_TEST("stress_udp_json_burst_test", ([] {
            sima_test::UdpReceiver rx0(json_port_base);
            sima_test::UdpReceiver rx1(json_port_base + 1);
 
-           OptiViewOutputNodeGroup group;
-           OptiViewOutputNodeGroupOptions opt;
+           OptiViewOutputGraph group;
+           OptiViewOutputGraphOptions opt;
            opt.send_json = true;
            opt.udp.h264_caps =
                "video/x-h264,stream-format=(string)byte-stream,alignment=(string)au";
@@ -120,11 +120,11 @@ RUN_TEST("stress_udp_json_burst_test", ([] {
                skip_long_test_exception("Skipping UDP JSON burst stress due runtime limitations: " +
                                         init_err);
              }
-             throw std::runtime_error("OptiViewOutputNodeGroup init failed: " + init_err);
+             throw std::runtime_error("OptiViewOutputGraph init failed: " + init_err);
            }
 
            struct Guard {
-             OptiViewOutputNodeGroup* group_ptr = nullptr;
+             OptiViewOutputGraph* group_ptr = nullptr;
              ~Guard() {
                if (!group_ptr)
                  return;

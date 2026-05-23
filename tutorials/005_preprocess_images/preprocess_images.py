@@ -2,7 +2,7 @@
 """Configure preproc knobs on ModelOptions and inspect the preprocess() node group.
 
 Usage:
-  python3 preprocess_images.py --mpk /path/to/resnet_50.tar.gz [--size 224]
+  python3 preprocess_images.py --model /path/to/resnet_50.tar.gz [--size 224]
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import numpy as np
 
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--size", type=int, default=224)
   args = ap.parse_args(argv[1:])
 
@@ -41,14 +41,14 @@ def main(argv: list[str]) -> int:
   opt.preproc.channel_stddev = [0.5, 0.5, 0.5]
 
   # CORE LOGIC
-  model = pyneat.Model(str(args.mpk), opt)
+  model = pyneat.Model(str(args.model), opt)
   preproc_group = model.preprocess()
   print(f"preproc_group_size={preproc_group.size()}")
   # END CORE LOGIC
 
   rgb = np.full((args.size, args.size, 3), 120, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
-  sample = model.run(tensor, timeout_ms=2000)
+  sample = model.run([tensor], timeout_ms=2000)
   print(f"output_kind={sample.kind}")
   return 0
 

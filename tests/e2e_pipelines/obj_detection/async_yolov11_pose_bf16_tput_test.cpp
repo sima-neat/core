@@ -1,7 +1,7 @@
 #include "gst/GstHelpers.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
 #include "e2e_pipelines/obj_detection/yolov8_test_utils.h"
@@ -79,11 +79,6 @@ std::string resolve_yolov11_pose_bf16_tar_or_skip(const fs::path& root) {
   const fs::path local = root / "tmp" / "yolov11_mpk_bf16.tar.gz";
   if (fs::exists(local))
     return local.string();
-
-  static const fs::path hardcoded =
-      "/home/sima/stable_pipeline_session/PipelineSession/tmp/yolov11_mpk_bf16.tar.gz";
-  if (fs::exists(hardcoded))
-    return hardcoded.string();
 
   skip_long_test_exception(
       "Missing yolov11 BF16 tarball. Set SIMA_MODEL_TAR (or SIMA_YOLO11_POSE_BF16_TAR) or place "
@@ -254,15 +249,12 @@ simaai::neat::TensorList as_build_inputs(const simaai::neat::Tensor& input) {
   return {input};
 }
 
-const simaai::neat::SampleList& as_build_inputs(const simaai::neat::SampleList& inputs) {
+const simaai::neat::Sample& as_build_inputs(const simaai::neat::Sample& inputs) {
   return inputs;
-}
-simaai::neat::SampleList as_build_inputs(const simaai::neat::Sample& input) {
-  return {input};
 }
 
 template <typename BuildInputT, typename PushInputT>
-RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& session,
+RunSummary run_async_pipeline(const std::string& name, simaai::neat::Graph& graph,
                               const BuildInputT& build_input, const PushInputT& push_input,
                               const AsyncTestConfig& cfg, bool expect_bbox) {
   RunSummary res;
@@ -273,7 +265,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
   step_log((name + ": before build").c_str());
-  auto async = session.build(as_build_inputs(build_input), simaai::neat::RunMode::Async, run_opt);
+  auto async = graph.build(as_build_inputs(build_input), simaai::neat::RunMode::Async, run_opt);
   step_log((name + ": after build").c_str());
 
   try {
@@ -390,7 +382,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Session& se
     }
   }
 
-  res.pipeline = session.last_pipeline();
+  res.pipeline = graph.last_pipeline();
   return res;
 }
 
@@ -400,7 +392,7 @@ RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories
   const int model_h = 640;
 
   simaai::neat::InputOptions in;
-  in.media_type = "application/vnd.simaai.tensor";
+  in.payload_type = simaai::neat::PayloadType::Tensor;
   in.format = simaai::neat::FormatTag::BF16;
   in.width = model_w;
   in.height = model_h;
@@ -409,29 +401,28 @@ RunSummary run_tess_bf16_path(const PipelineConfigs& cfgs, const PluginFactories
   in.max_height = model_h;
   in.max_depth = 3;
 
-  simaai::neat::Session session;
-  session.add(simaai::neat::nodes::Input(in));
-  session.custom(factories.processcvu + " name=tessellate_1 stage-id=tessellate_1 config=\"" +
-                 cfgs.tess_cfg + "\" num-buffers=4");
-  session.custom(factories.processmla +
-                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" + cfgs.mla_cfg +
-                 "\" multi-pipeline=true num-buffers=4");
-  session.custom(factories.boxdecode + " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" +
-                 cfgs.box_cfg +
-                 "\" silent=true emit-signals=false sima-allocator-type=2 decode-type=yolo "
-                 "detection-threshold=0.5 nms-iou-threshold=0.5 topk=24 transmit=false "
-                 "num-buffers=4");
-  session.add(simaai::neat::nodes::Output());
+  simaai::neat::Graph graph;
+  graph.add(simaai::neat::nodes::Input(in));
+  graph.custom(factories.processcvu + " name=tessellate_1 stage-id=tessellate_1 config=\"" +
+               cfgs.tess_cfg + "\" num-buffers=4");
+  graph.custom(factories.processmla + " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
+               cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
+  graph.custom(factories.boxdecode + " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" +
+               cfgs.box_cfg +
+               "\" silent=true emit-signals=false sima-allocator-type=2 decode-type=yolo "
+               "detection-threshold=0.5 nms-iou-threshold=0.5 topk=24 transmit=false "
+               "num-buffers=4");
+  graph.add(simaai::neat::nodes::Output());
 
   const simaai::neat::Tensor input_bf16 = make_bf16_rgb_tensor(img_bgr, model_w, model_h);
-  return run_async_pipeline("yolov11_tess_bf16", session, input_bf16, input_bf16, cfg, true);
+  return run_async_pipeline("yolov11_tess_bf16", graph, input_bf16, input_bf16, cfg, true);
 }
 
 RunSummary run_preproc_bf16_boxdecode_path(const PipelineConfigs& cfgs,
                                            const PluginFactories& factories, const cv::Mat& img_bgr,
                                            const AsyncTestConfig& cfg) {
   simaai::neat::InputOptions in;
-  in.media_type = "video/x-raw";
+  in.payload_type = simaai::neat::PayloadType::Image;
   in.format = simaai::neat::FormatTag::BGR;
   in.width = img_bgr.cols;
   in.height = img_bgr.rows;
@@ -440,28 +431,27 @@ RunSummary run_preproc_bf16_boxdecode_path(const PipelineConfigs& cfgs,
   in.max_height = std::max(img_bgr.rows, 720);
   in.max_depth = 3;
 
-  simaai::neat::Session session;
-  session.add(simaai::neat::nodes::Input(in));
-  session.custom(factories.processcvu + " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
-                 cfgs.pre_cfg + "\" num-buffers=4");
-  session.custom(factories.processmla +
-                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" + cfgs.mla_cfg +
-                 "\" multi-pipeline=true num-buffers=4");
-  session.custom(factories.boxdecode + " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" +
-                 cfgs.box_cfg +
-                 "\" silent=true emit-signals=false sima-allocator-type=2 decode-type=yolo "
-                 "detection-threshold=0.5 nms-iou-threshold=0.5 topk=24 transmit=false "
-                 "num-buffers=4");
-  session.add(simaai::neat::nodes::Output());
+  simaai::neat::Graph graph;
+  graph.add(simaai::neat::nodes::Input(in));
+  graph.custom(factories.processcvu + " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
+               cfgs.pre_cfg + "\" num-buffers=4");
+  graph.custom(factories.processmla + " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
+               cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
+  graph.custom(factories.boxdecode + " name=n3_boxdecode_1 stage-id=n3_boxdecode_1 config=\"" +
+               cfgs.box_cfg +
+               "\" silent=true emit-signals=false sima-allocator-type=2 decode-type=yolo "
+               "detection-threshold=0.5 nms-iou-threshold=0.5 topk=24 transmit=false "
+               "num-buffers=4");
+  graph.add(simaai::neat::nodes::Output());
 
-  return run_async_pipeline("yolov11_preproc_bf16_boxdecode", session, img_bgr, img_bgr, cfg, true);
+  return run_async_pipeline("yolov11_preproc_bf16_boxdecode", graph, img_bgr, img_bgr, cfg, true);
 }
 
 RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs,
                                         const PluginFactories& factories, const cv::Mat& img_bgr,
                                         const AsyncTestConfig& cfg) {
   simaai::neat::InputOptions in;
-  in.media_type = "video/x-raw";
+  in.payload_type = simaai::neat::PayloadType::Image;
   in.format = simaai::neat::FormatTag::BGR;
   in.width = img_bgr.cols;
   in.height = img_bgr.rows;
@@ -470,18 +460,17 @@ RunSummary run_preproc_bf16_detess_path(const PipelineConfigs& cfgs,
   in.max_height = std::max(img_bgr.rows, 720);
   in.max_depth = 3;
 
-  simaai::neat::Session session;
-  session.add(simaai::neat::nodes::Input(in));
-  session.custom(factories.processcvu + " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
-                 cfgs.pre_cfg + "\" num-buffers=4");
-  session.custom(factories.processmla +
-                 " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" + cfgs.mla_cfg +
-                 "\" multi-pipeline=true num-buffers=4");
-  session.custom(factories.processcvu + " name=detessdequant_1 stage-id=detessdequant_1 config=\"" +
-                 cfgs.post_cfg + "\" silent=true num-buffers=4");
-  session.add(simaai::neat::nodes::Output());
+  simaai::neat::Graph graph;
+  graph.add(simaai::neat::nodes::Input(in));
+  graph.custom(factories.processcvu + " name=neatpreproc_1 stage-id=neatpreproc_1 config=\"" +
+               cfgs.pre_cfg + "\" num-buffers=4");
+  graph.custom(factories.processmla + " name=neatprocessmla_1 stage-id=neatprocessmla_1 config=\"" +
+               cfgs.mla_cfg + "\" multi-pipeline=true num-buffers=4");
+  graph.custom(factories.processcvu + " name=detessdequant_1 stage-id=detessdequant_1 config=\"" +
+               cfgs.post_cfg + "\" silent=true num-buffers=4");
+  graph.add(simaai::neat::nodes::Output());
 
-  return run_async_pipeline("yolov11_preproc_bf16_detess", session, img_bgr, img_bgr, cfg, false);
+  return run_async_pipeline("yolov11_preproc_bf16_detess", graph, img_bgr, img_bgr, cfg, false);
 }
 
 } // namespace

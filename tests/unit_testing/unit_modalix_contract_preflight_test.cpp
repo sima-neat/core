@@ -24,7 +24,7 @@ fs::path find_repo_root() {
     return fs::current_path();
   }
   while (!path.empty()) {
-    if (fs::exists(path / "tests" / "assets" / "mpk" / "valid" / "basic_valid.mpk", ec) && !ec) {
+    if (fs::exists(path / "tests" / "assets" / "decoder" / "dynamic_caps.h264", ec) && !ec) {
       return path;
     }
     const fs::path parent = path.parent_path();
@@ -82,13 +82,9 @@ RUN_TEST("unit_modalix_contract_preflight_test", ([] {
            }());
 
            const fs::path repo_root = find_repo_root();
-           const fs::path mpk_fixture =
-               repo_root / "tests" / "assets" / "mpk" / "valid" / "basic_valid.mpk";
            const fs::path decoder_fixture =
                repo_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
 
-           require(fs::exists(mpk_fixture),
-                   "Modalix preflight: missing MPK fixture basic_valid.mpk");
            require(fs::exists(decoder_fixture),
                    "Modalix preflight: missing decoder dynamic_caps.h264 fixture");
          }));

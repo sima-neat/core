@@ -130,7 +130,7 @@ std::string InputStream::diagnostics_summary() const {
   if (!elements.empty())
     oss << elements;
   if (inputstream_debug_enabled()) {
-    SessionReport rep = state_->diag->snapshot_basic();
+    GraphReport rep = state_->diag->snapshot_basic();
     if (!rep.bus.empty()) {
       oss << "Bus:\n";
       const size_t max_lines = std::min<size_t>(rep.bus.size(), 10);

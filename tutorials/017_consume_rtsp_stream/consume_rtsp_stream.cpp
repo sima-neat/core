@@ -45,13 +45,13 @@ int main(int argc, char** argv) {
     const int frames = parse_int_arg(argc, argv, "--frames", 5);
 
     // CORE LOGIC
-    // Configure RtspDecodedInputOptions, build a Session whose only stages
+    // Configure RtspDecodedInputOptions, build a Graph whose only stages
     // are the RTSP group and an Output node, and pull decoded frames.
     simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_opt;
     rtsp_opt.url = url;
     rtsp_opt.tcp = true;
 
-    simaai::neat::Session s;
+    simaai::neat::Graph s;
     s.add(simaai::neat::nodes::groups::RtspDecodedInput(rtsp_opt));
     s.add(simaai::neat::nodes::Output());
     auto run = s.build(simaai::neat::RunOptions{});
