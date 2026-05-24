@@ -1815,6 +1815,7 @@ configure_cmake() {
       -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
       -DPython3_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
       -DPython_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
+      -DSIMANEAT_CTEST_FOR_DEVKIT=ON
     )
   fi
 

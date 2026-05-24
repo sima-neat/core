@@ -382,9 +382,9 @@ jobs:
               -e "s|/[^\"[:space:]]*/tutorials/build\\.sh|${TUTORIALS_SHARE_ROOT}/build.sh|g" \
               "${f}"
           done
-          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+          if grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
             echo "Unresolved build-tree paths after CTest rebasing:" >&2
-            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
+            grep -En '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
             echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
             exit 1
           fi
