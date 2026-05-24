@@ -286,10 +286,9 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   p.add(simaai::neat::nodes::Output());
 
   const std::vector<objdet::ExpectedBox> expected =
-      cfg.skip_boxdecode
-          ? std::vector<objdet::ExpectedBox>{}
-          : scale_expected_boxes(objdet::expected_zidane_person_boxes(), source_img.cols,
-                                 source_img.rows, img.cols, img.rows);
+      cfg.skip_boxdecode ? std::vector<objdet::ExpectedBox>{}
+                         : scale_expected_boxes(objdet::expected_people_boxes(), source_img.cols,
+                                                source_img.rows, img.cols, img.rows);
 
   step_log("async: before build");
   const auto build_start = std::chrono::steady_clock::now();

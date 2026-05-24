@@ -61,17 +61,12 @@ float box_iou(const ExpectedBox& exp, const Box& pred) {
   return box_iou_xyxy(exp.x1, exp.y1, exp.x2, exp.y2, pred.x1, pred.y1, pred.x2, pred.y2);
 }
 
-std::vector<ExpectedBox> expected_zidane_person_boxes() {
+std::vector<ExpectedBox> expected_people_boxes() {
   return {
       {747.0f, 42.0f, 1131.0f, 711.0f, 0},
       {149.0f, 201.0f, 1092.0f, 710.0f, 0},
+      {437.0f, 434.0f, 532.0f, 717.0f, 27},
   };
-}
-
-std::vector<ExpectedBox> expected_people_boxes() {
-  auto boxes = expected_zidane_person_boxes();
-  boxes.push_back({437.0f, 434.0f, 532.0f, 717.0f, 27});
-  return boxes;
 }
 
 MatchResult match_expected_boxes(const std::vector<Box>& boxes,

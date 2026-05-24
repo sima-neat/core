@@ -109,7 +109,7 @@ int run_case(const fs::path& root) {
       simaai::neat::RunMode::Async, run_opt);
   guard.run = &run;
 
-  const std::vector<objdet::ExpectedBox> expected = objdet::expected_zidane_person_boxes();
+  const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
   std::unordered_set<std::string> expected_frame_ids;
 
   for (int i = 0; i < kStreams; ++i) {
