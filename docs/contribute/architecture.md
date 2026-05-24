@@ -166,7 +166,11 @@ Public convenience entry headers:
 - `include/neat/models.h`
 - `include/neat/nodes.h`
 - `include/neat/node_groups.h`
-- `include/neat/graph.h`
+
+There is intentionally no `include/neat/graph.h` public umbrella. Runtime/compiler tests that
+need the lower-level graph substrate include the narrow `include/graph/...` headers directly.
+Applications, examples, and public docs should use the single public `simaai::neat::Graph` from
+`<neat.h>`.
 
 ### Internal headers and runtime plugin paths
 

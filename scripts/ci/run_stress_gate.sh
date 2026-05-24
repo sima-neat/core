@@ -17,14 +17,14 @@ stress_tests=(
   stress_run_async_pressure_test
   stress_run_try_push_holder_race_test
   stress_graph_execution_test
-  stress_udp_json_burst_test
+  stress_udp_metadata_burst_test
 )
 
 repeat_tests=(
   stress_graph_strict_sync_join_race_test
   stress_graph_validate_rtsp_churn_test
   stress_run_try_push_holder_race_test
-  stress_udp_json_burst_test
+  stress_udp_metadata_burst_test
 )
 
 join_regex() {

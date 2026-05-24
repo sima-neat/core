@@ -1,7 +1,11 @@
 /**
  * @file
  * @ingroup graph
- * @brief Build helpers for runtime `graph::Graph`.
+ * @brief Internal build helper for the actor-style runtime graph substrate.
+ *
+ * Public application code should call `simaai::neat::Graph::build()` and consume
+ * the returned `simaai::neat::Run`. This header remains for runtime/compiler
+ * internals and focused tests until the low-level graph substrate is fully hidden.
  */
 #pragma once
 
@@ -11,11 +15,11 @@
 namespace simaai::neat::graph {
 
 /**
- * @brief Compile a runtime graph and return a runnable `GraphRun`.
+ * @brief Compile an internal runtime graph and return a runnable `GraphRun`.
  *
- * This is the canonical low-level runtime graph build API. It replaces the old
- * runtime-graph builder object: a graph is built directly, with no intermediate public
- * builder object.
+ * Do not use this from applications. Use public `simaai::neat::Graph::build()` so
+ * pipeline nodes, runtime-stage nodes, model fragments, named endpoints, export,
+ * metrics, and Python bindings all go through the unified public path.
  *
  * @param graph Runtime graph topology. Ownership is moved into the build path.
  * @param opt Runtime tuning knobs (scheduler queues, push/pull timeouts, telemetry).

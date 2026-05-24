@@ -9,7 +9,8 @@ Usage: tools/prepare_s3_artifacts.sh \
   --wheel <path> \
   --internals-manifest <path> \
   --output-dir <path> \
-  [--internals-base-url <url>]
+  [--internals-base-url <url>] \
+  [--llima-base-url <url>]
 USAGE
 }
 
@@ -19,6 +20,7 @@ WHEEL_PATH=""
 INTERNALS_MANIFEST=""
 OUTPUT_DIR=""
 INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
+LLIMA_BASE_URL="${NEAT_LLIMA_BASE_URL:-https://artifacts.sima-neat.com/llima}"
 INSTALL_SCRIPT_PATH="tools/install_neat_framework.sh"
 
 while [[ $# -gt 0 ]]; do
@@ -45,6 +47,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --internals-base-url)
       INTERNALS_BASE_URL="${2:-}"
+      shift 2
+      ;;
+    --llima-base-url)
+      LLIMA_BASE_URL="${2:-}"
       shift 2
       ;;
     -h|--help)
@@ -78,9 +84,24 @@ cleanup() {
 trap cleanup EXIT
 
 extract_dir="${tmp_dir}/internals-extract"
-mkdir -p "${extract_dir}"
+llima_extract_dir="${tmp_dir}/llima-extract"
+mkdir -p "${extract_dir}" "${llima_extract_dir}"
 rm -rf "${OUTPUT_DIR}"
 mkdir -p "${OUTPUT_DIR}"
+
+if ! command -v dpkg-deb >/dev/null 2>&1; then
+  echo "dpkg-deb is required to validate core DEB contents." >&2
+  exit 1
+fi
+core_extract_dir="${tmp_dir}/core-deb-extract"
+mkdir -p "${core_extract_dir}"
+dpkg-deb -x "${CORE_DEB}" "${core_extract_dir}"
+for required_cli in usr/bin/fix_devkit_runtime.sh usr/bin/neat; do
+  if [[ ! -x "${core_extract_dir}/${required_cli}" ]]; then
+    echo "Core DEB missing executable ${required_cli}." >&2
+    exit 1
+  fi
+done
 
 cp "${CORE_DEB}" "${OUTPUT_DIR}/"
 cp "${EXTRAS_TAR}" "${OUTPUT_DIR}/"
@@ -96,7 +117,20 @@ manifest = Path(sys.argv[1])
 data = json.loads(manifest.read_text(encoding="utf-8"))
 tag = str(data.get("internals", "")).strip()
 if not tag:
-    raise SystemExit("internals missing in deps manifest")
+    raise SystemExit("internals missing in resolved deps manifest")
+print(tag)
+PY
+)"
+
+LLIMA_TAG="$(python3 - <<'PY' "${INTERNALS_MANIFEST}"
+import json
+import sys
+from pathlib import Path
+manifest = Path(sys.argv[1])
+data = json.loads(manifest.read_text(encoding="utf-8"))
+tag = str(data.get("llima", "")).strip()
+if not tag:
+    raise SystemExit("llima missing in deps manifest")
 print(tag)
 PY
 )"
@@ -106,12 +140,26 @@ INTERNALS_ARCHIVE_PATH="${tmp_dir}/${INTERNALS_ARCHIVE}"
 curl -fsSL "${INTERNALS_BASE_URL}/${INTERNALS_ARCHIVE}" -o "${INTERNALS_ARCHIVE_PATH}"
 tar -xzf "${INTERNALS_ARCHIVE_PATH}" -C "${extract_dir}"
 
+LLIMA_ARCHIVE="sima-llima-${LLIMA_TAG}.tar.gz"
+LLIMA_ARCHIVE_PATH="${tmp_dir}/${LLIMA_ARCHIVE}"
+curl -fsSL "${LLIMA_BASE_URL}/${LLIMA_ARCHIVE}" -o "${LLIMA_ARCHIVE_PATH}"
+tar -xzf "${LLIMA_ARCHIVE_PATH}" -C "${llima_extract_dir}"
+
 mapfile -t INTERNALS_DEBS < <(find "${extract_dir}" -type f -name '*.deb' | sort)
 if [[ "${#INTERNALS_DEBS[@]}" -eq 0 ]]; then
   echo "No deps .deb files found in ${INTERNALS_ARCHIVE}." >&2
   exit 1
 fi
 for f in "${INTERNALS_DEBS[@]}"; do
+  cp "${f}" "${OUTPUT_DIR}/"
+done
+
+mapfile -t LLIMA_DEBS < <(find "${llima_extract_dir}" -type f -name 'sima-lmm-*.deb' | sort)
+if [[ "${#LLIMA_DEBS[@]}" -eq 0 ]]; then
+  echo "No sima-lmm .deb files found in ${LLIMA_ARCHIVE}." >&2
+  exit 1
+fi
+for f in "${LLIMA_DEBS[@]}"; do
   cp "${f}" "${OUTPUT_DIR}/"
 done
 

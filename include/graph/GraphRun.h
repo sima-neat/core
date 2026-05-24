@@ -1,15 +1,15 @@
 /**
  * @file
  * @ingroup graph
- * @brief `GraphRun` — runtime handle for a compiled actor-style graph.
+ * @brief Internal `GraphRun` — runtime handle for the actor-style graph substrate.
  *
- * `GraphRun` is the runtime-graph counterpart of `pipeline::Run`: a live, running graph
- * the caller pushes inputs into and pulls outputs out of. Unlike `pipeline::Run`,
- * `GraphRun` uses **named ports**, and exposes per-node `Input` / `Output` handles plus
- * an opinionated `PullLoop` for the common collect-until-stall workflow.
+ * Application code should use `simaai::neat::Graph::build() -> simaai::neat::Run`.
+ * This type remains available in the source tree for runtime/compiler internals and
+ * focused internal tests while the old low-level graph API is absorbed by the public
+ * Graph/Run surface.
  *
- * @see graph::build to build one
- * @see pipeline::Run for the linear-pipeline counterpart
+ * @see simaai::neat::Graph
+ * @see simaai::neat::Run
  */
 #pragma once
 
@@ -31,7 +31,11 @@
 namespace simaai::neat::graph {
 
 /**
- * @brief Tuning knobs for a `GraphRun` — queue capacities, push/pull timeouts, verbosity.
+ * @brief Internal tuning knobs for the actor-runtime substrate.
+ *
+ * Public callers configure graph execution through `RunOptions` on
+ * `simaai::neat::Graph::build()`.
+ *
  * @ingroup graph
  */
 struct GraphRunOptions {

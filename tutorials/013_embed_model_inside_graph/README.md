@@ -23,7 +23,7 @@ graph.add(model)
 graph.add(pyneat.nodes.output("result"))
 ```
 
-NEAT lowers the model fragment into the correct internal runtime execution plan at build time. Application code does not use `StageModelExecutorOptions` or `pyneat.graph`.
+NEAT lowers the model fragment into the correct internal runtime execution plan at build time. Application code does not use `StageModelExecutorOptions`, node IDs, or `pyneat.graph`.
 
 **APIs introduced**
 - `pyneat.Model(path)` — load a compiled model archive.

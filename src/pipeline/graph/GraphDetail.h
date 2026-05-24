@@ -109,17 +109,61 @@ struct Graph::BuiltState {
 // =====================================================================================
 // CompositionGraph — private source of truth for top-level Graph composition.
 //
-// Phase 2 keeps the public surface linear (`Graph::add(...)`) while storing composition as
-// vertices + edges. The existing GStreamer build path still consumes a linear snapshot, so
-// this intentionally does not expose ports, public connect(), or runtime graph lowering yet.
+// The public API has one Graph. Internally this structure records the public composition
+// as a vertex/edge graph before the runtime compiler lowers it into ExecutionGraphPlan.
+// A vertex may be a normal pipeline Node or an internal runtime-stage node.  Keep this
+// type private: users should never see the lower-level `graph::Graph`/NodeId substrate.
 // =====================================================================================
 struct Graph::CompositionGraph {
   using VertexId = std::size_t;
   using NodePtr = std::shared_ptr<Node>;
+  using RuntimeNodePtr = std::shared_ptr<simaai::neat::graph::Node>;
 
   static constexpr VertexId kInvalid = static_cast<VertexId>(-1);
 
-  std::vector<NodePtr> vertices;
+  struct CompositionVertex {
+    enum class Kind {
+      PipelineNode,
+      RuntimeNode,
+    };
+
+    Kind kind = Kind::PipelineNode;
+    NodePtr pipeline_node;
+    RuntimeNodePtr runtime_node;
+
+    CompositionVertex() = default;
+    CompositionVertex(NodePtr node) : kind(Kind::PipelineNode), pipeline_node(std::move(node)) {}
+    static CompositionVertex runtime(RuntimeNodePtr node) {
+      CompositionVertex vertex;
+      vertex.kind = Kind::RuntimeNode;
+      vertex.runtime_node = std::move(node);
+      return vertex;
+    }
+
+    explicit operator bool() const noexcept {
+      return static_cast<bool>(pipeline_node);
+    }
+    operator const NodePtr&() const noexcept {
+      return pipeline_node;
+    }
+    operator NodePtr&() noexcept {
+      return pipeline_node;
+    }
+    const Node* get() const noexcept {
+      return pipeline_node.get();
+    }
+    Node* get() noexcept {
+      return pipeline_node.get();
+    }
+    const Node* operator->() const noexcept {
+      return pipeline_node.get();
+    }
+    Node* operator->() noexcept {
+      return pipeline_node.get();
+    }
+  };
+
+  std::vector<CompositionVertex> vertices;
   std::vector<CompositionEdge> edges;
   std::vector<runtime::FragmentPlan> fragments;
   std::vector<NamedFragment> named_fragments;
@@ -144,7 +188,7 @@ struct Graph::CompositionGraph {
   }
 
   VertexId append_vertex(NodePtr node);
-  std::pair<VertexId, VertexId> append_linear_fragment_copy(const std::vector<NodePtr>& nodes);
+  VertexId append_runtime_vertex(RuntimeNodePtr node);
   void recompute_unique_tail() noexcept;
   void connect_runtime_port(VertexId from, VertexId to, std::string from_port, std::string to_port);
   void connect_endpoint(VertexId from, VertexId to, std::string from_endpoint,
@@ -152,6 +196,10 @@ struct Graph::CompositionGraph {
   std::pair<VertexId, VertexId> append_node(NodePtr node);
   bool is_linear() const noexcept;
   std::vector<NodePtr> linear_nodes_or_throw(const char* where) const;
+  std::vector<NodePtr> pipeline_vertices_snapshot() const;
+  std::vector<RuntimeNodePtr> runtime_vertices_snapshot() const;
+  RuntimeNodePtr runtime_node(VertexId id) const;
+  bool has_runtime_vertices() const noexcept;
 };
 
 // =====================================================================================

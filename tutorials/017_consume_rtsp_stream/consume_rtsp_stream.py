@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Consume a live H.264 RTSP stream via the RtspDecodedInput node group.
+"""Consume a live H.264 RTSP stream via the RtspDecodedInput Graph fragment.
 
-The group handles RTSP connect, depacketize, and H.264 decode — you hand it a
-URL and pull decoded frames. This chapter is about the input group only.
+The fragment handles RTSP connect, depacketize, and H.264 decode — you hand it a
+URL and pull decoded frames. This chapter is about the input fragment only.
 
 Usage:
   python3 consume_rtsp_stream.py --url rtsp://host/path [--frames 5]

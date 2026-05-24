@@ -177,6 +177,34 @@ EdgeRouterCallbacks make_edge_router_callbacks(const std::shared_ptr<RunCore>& c
   return callbacks;
 }
 
+bool route_stage_output(const std::shared_ptr<RunCore>& core, StageRuntime& st,
+                        StageOutMsg&& out_msg) {
+  if (!core || core->graph_stop_requested()) {
+    return false;
+  }
+
+  PortId out_port = out_msg.out_port;
+  if (out_port == kInvalidPort && st.output_ports.size() == 1) {
+    out_port = st.output_ports[0];
+  }
+
+  auto& execution = core->graph_execution();
+  EdgeRouter router(execution);
+  const auto router_options = core->graph_options.router_options();
+  const auto router_callbacks = make_edge_router_callbacks(core);
+  EdgeRouterDispatchOptions dispatch_options;
+  dispatch_options.sanitize_pipeline_input_before_enqueue = true;
+
+  const auto* targets = router.targets(st.node_id, out_port);
+  if (!targets) {
+    return router.push_to_sink(st.node_id, std::move(out_msg.sample), router_options,
+                               router_callbacks, st.node_id);
+  }
+
+  return router.dispatch_to_targets(*targets, std::move(out_msg.sample), router_options,
+                                    router_callbacks, dispatch_options);
+}
+
 void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
   ExecutionGraphRuntime& execution = core->graph_execution();
   execution.pipelines.reserve(execution.plan.pipeline_segments.size());
@@ -314,7 +342,21 @@ void materialize_stage_runtimes(const std::shared_ptr<RunCore>& core) {
         rt->ports.out.emplace(port.name, pid);
       }
       if (rt->exec) {
+        auto weak_core = std::weak_ptr<RunCore>(core);
+        StageRuntime* stage_runtime = rt.get();
+        rt->emitter.stop_requested_fn = [weak_core] {
+          auto locked = weak_core.lock();
+          return !locked || locked->graph_stop_requested();
+        };
+        rt->emitter.emit_fn = [weak_core, stage_runtime](StageOutMsg msg) {
+          auto locked = weak_core.lock();
+          if (!locked || stage_runtime == nullptr) {
+            return false;
+          }
+          return route_stage_output(locked, *stage_runtime, std::move(msg));
+        };
         rt->exec->set_ports(rt->ports);
+        rt->exec->set_emitter(&rt->emitter);
       }
 
       group.instances.push_back(execution.stages.size());
@@ -437,11 +479,6 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
           flag.store(true);
         }
       } done_guard{st.worker_done};
-      EdgeRouter router(execution);
-      const auto router_options = core->graph_options.router_options();
-      const auto router_callbacks = make_edge_router_callbacks(core);
-      EdgeRouterDispatchOptions dispatch_options;
-      dispatch_options.sanitize_pipeline_input_before_enqueue = true;
       while (!core->graph_stop_requested()) {
         StageMsg msg;
         if (!st.mailbox.inbox.pop(msg, core->graph_options.pull_timeout_ms)) {
@@ -462,19 +499,9 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
         }
 
         for (auto& out_msg : outputs) {
-          PortId out_port = out_msg.out_port;
-          if (out_port == kInvalidPort && st.output_ports.size() == 1) {
-            out_port = st.output_ports[0];
+          if (!route_stage_output(core, st, std::move(out_msg))) {
+            break;
           }
-          const auto* targets = router.targets(st.node_id, out_port);
-          if (!targets) {
-            (void)router.push_to_sink(st.node_id, std::move(out_msg.sample), router_options,
-                                      router_callbacks, st.node_id);
-            continue;
-          }
-
-          (void)router.dispatch_to_targets(*targets, std::move(out_msg.sample), router_options,
-                                           router_callbacks, dispatch_options);
         }
       }
     });

@@ -1745,7 +1745,7 @@ std::string parse_named_element_for_error(const std::string& pipeline, const std
 
 std::string infer_error_node_name(const std::string& pipeline) {
   for (const char* element : {"neatdecoder", "neatencoder", "neatprocesscvu", "neatprocessmla",
-                              "neatboxdecode", "neatdequant", "neatdetess"}) {
+                              "neatobjectdecode", "neatboxdecode", "neatdequant", "neatdetess"}) {
     const std::string name = parse_named_element_for_error(pipeline, element);
     if (!name.empty())
       return name;

@@ -1,7 +1,5 @@
-#include "graph/GraphBuild.h"
 #include "model/Model.h"
 #include "neat.h"
-#include "neat/graph.h"
 #include "neat/models.h"
 #include "neat/node_groups.h"
 #include "neat/nodes.h"
@@ -36,10 +34,6 @@ RUN_TEST(
                          simaai::neat::Graph>);
       static_assert(std::is_same_v<decltype(std::declval<const simaai::neat::Model&>().graph()),
                                    simaai::neat::Graph>);
-      static_assert(std::is_same_v<decltype(simaai::neat::graph::build(
-                                       std::declval<simaai::neat::graph::Graph>())),
-                                   simaai::neat::graph::GraphRun>);
-
       simaai::neat::Graph graph_pipeline;
       simaai::neat::GraphOptions graph_opt;
       simaai::neat::GraphReport graph_report;
@@ -52,8 +46,6 @@ RUN_TEST(
       simaai::neat::VerboseOptions debug_plugins = simaai::neat::VerboseOptions::debug_plugins();
       simaai::neat::VerboseOptions debug_all = simaai::neat::VerboseOptions::debug_all();
       simaai::neat::stages::BoxDecodeOptions decode_opt(simaai::neat::BoxDecodeType::YoloV8);
-      simaai::neat::graph::Graph graph;
-      simaai::neat::graph::GraphRunOptions graph_run_opt;
       auto in = simaai::neat::nodes::Input();
       auto out = simaai::neat::nodes::Output();
       simaai::neat::nodes::groups::ImageInputGroupOptions image_opt;
@@ -72,8 +64,6 @@ RUN_TEST(
       (void)debug_plugins;
       (void)debug_all;
       (void)decode_opt;
-      (void)graph;
-      (void)graph_run_opt;
       (void)in;
       (void)out;
       (void)group;

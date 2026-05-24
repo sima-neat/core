@@ -11,6 +11,7 @@
 
 #include "GraphDetail.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -23,7 +24,7 @@ Graph::CompositionGraph::VertexId Graph::CompositionGraph::append_vertex(NodePtr
     throw std::runtime_error("Graph::add after endpoint branching is ambiguous; use connect()");
   }
   const VertexId id = vertices.size();
-  vertices.push_back(std::move(node));
+  vertices.emplace_back(std::move(node));
   if (tail != kInvalid) {
     edges.push_back(
         CompositionEdge{.from = tail, .to = id, .kind = CompositionEdgeKind::ImplicitLinear});
@@ -32,19 +33,19 @@ Graph::CompositionGraph::VertexId Graph::CompositionGraph::append_vertex(NodePtr
   return id;
 }
 
-std::pair<Graph::CompositionGraph::VertexId, Graph::CompositionGraph::VertexId>
-Graph::CompositionGraph::append_linear_fragment_copy(const std::vector<NodePtr>& nodes) {
-  const VertexId start = vertices.size();
-  vertices.insert(vertices.end(), nodes.begin(), nodes.end());
-  const VertexId end = vertices.size();
-  for (VertexId id = start + 1U; id < end; ++id) {
+Graph::CompositionGraph::VertexId
+Graph::CompositionGraph::append_runtime_vertex(RuntimeNodePtr node) {
+  if (!vertices.empty() && tail == kInvalid) {
+    throw std::runtime_error("Graph::add after endpoint branching is ambiguous; use connect()");
+  }
+  const VertexId id = vertices.size();
+  vertices.push_back(CompositionVertex::runtime(std::move(node)));
+  if (tail != kInvalid) {
     edges.push_back(
-        CompositionEdge{.from = id - 1U, .to = id, .kind = CompositionEdgeKind::ImplicitLinear});
+        CompositionEdge{.from = tail, .to = id, .kind = CompositionEdgeKind::ImplicitLinear});
   }
-  if (end > start) {
-    tail = end - 1U;
-  }
-  return {start, end};
+  tail = id;
+  return id;
 }
 
 void Graph::CompositionGraph::recompute_unique_tail() noexcept {
@@ -140,6 +141,11 @@ bool Graph::CompositionGraph::is_linear() const noexcept {
   if (vertices.empty()) {
     return true;
   }
+  for (const auto& vertex : vertices) {
+    if (vertex.kind == CompositionVertex::Kind::RuntimeNode) {
+      return false;
+    }
+  }
   if (edges.size() + 1U != vertices.size()) {
     return false;
   }
@@ -165,7 +171,37 @@ Graph::CompositionGraph::linear_nodes_or_throw(const char* where) const {
     throw std::runtime_error(std::string(where ? where : "Graph") +
                              ": internal composition is not linear yet");
   }
-  return vertices; // Preserve nulls; existing validation catches them later.
+  return pipeline_vertices_snapshot(); // Preserve nulls; existing validation catches them later.
+}
+
+std::vector<Graph::CompositionGraph::NodePtr>
+Graph::CompositionGraph::pipeline_vertices_snapshot() const {
+  std::vector<NodePtr> out;
+  out.reserve(vertices.size());
+  for (const auto& vertex : vertices) {
+    out.push_back(vertex.pipeline_node);
+  }
+  return out;
+}
+
+std::vector<Graph::CompositionGraph::RuntimeNodePtr>
+Graph::CompositionGraph::runtime_vertices_snapshot() const {
+  std::vector<RuntimeNodePtr> out;
+  out.reserve(vertices.size());
+  for (const auto& vertex : vertices) {
+    out.push_back(vertex.runtime_node);
+  }
+  return out;
+}
+
+Graph::CompositionGraph::RuntimeNodePtr Graph::CompositionGraph::runtime_node(VertexId id) const {
+  return id < vertices.size() ? vertices[id].runtime_node : nullptr;
+}
+
+bool Graph::CompositionGraph::has_runtime_vertices() const noexcept {
+  return std::any_of(vertices.begin(), vertices.end(), [](const auto& vertex) {
+    return vertex.kind == CompositionVertex::Kind::RuntimeNode && vertex.runtime_node != nullptr;
+  });
 }
 
 } // namespace simaai::neat

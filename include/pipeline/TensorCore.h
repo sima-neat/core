@@ -34,6 +34,7 @@
 #include <optional>
 #include <string>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -164,6 +165,17 @@ struct AudioSpec {
 /// Token-tensor metadata for NLP-style tensors.
 struct TokensSpec {
   int vocab_size = 0; ///< Vocabulary size (used for one-hot widths and bounds checks).
+};
+
+/**
+ * @brief UTF-8 text tensor metadata.
+ *
+ * Text is carried as a normal dense `UInt8` 1D tensor containing UTF-8 bytes.
+ * Prompt interpretation is intentionally not part of this semantic; graph nodes
+ * decide how text samples are interpreted.
+ */
+struct TextSpec {
+  std::string encoding = "utf-8"; ///< Text encoding. The only supported value is UTF-8.
 };
 
 /**
@@ -317,6 +329,7 @@ struct Semantic {
   std::optional<ImageSpec> image;            ///< Set for image tensors.
   std::optional<AudioSpec> audio;            ///< Set for audio tensors.
   std::optional<TokensSpec> tokens;          ///< Set for token-stream tensors (NLP).
+  std::optional<TextSpec> text;              ///< Set for UTF-8 text tensors.
   std::optional<ByteStreamSpec> byte_stream; ///< Set for opaque raw-byte tensors.
   std::optional<TessSpec> tess;              ///< Set for tessellated tile-layout tensors.
   std::optional<EncodedSpec> encoded;        ///< Set for encoded-stream tensors (H.264, etc.).
@@ -742,6 +755,11 @@ struct Tensor {
 
   /// Human-readable single-line summary (for logs and error messages).
   std::string debug_string() const;
+
+  /// Construct a CPU-owned UTF-8 text tensor.
+  static Tensor from_text(std::string_view text);
+  /// Decode a UTF-8 text tensor back into a string.
+  std::string to_text() const;
 
 #if defined(SIMA_WITH_OPENCV)
   /// Construct a Tensor wrapping a `cv::Mat` as CPU-backed storage.

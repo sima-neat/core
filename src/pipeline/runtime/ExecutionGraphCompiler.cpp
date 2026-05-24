@@ -52,20 +52,32 @@ bool is_terminal_output_only_segment(const graph::CompiledPipelineSegment& seg) 
   return dynamic_cast<const simaai::neat::Output*>(nodes.front().get()) != nullptr;
 }
 
+bool is_direct_source_input_only_segment(const graph::CompiledPipelineSegment& seg) {
+  const auto& nodes = seg.nodes;
+  if (nodes.size() != 1U || !nodes.front()) {
+    return false;
+  }
+  return dynamic_cast<const simaai::neat::Input*>(nodes.front().get()) != nullptr;
+}
+
 BoundaryPolicy decide_boundary_policy(const graph::Graph& graph,
                                       const graph::CompiledPipelineSegment& seg) {
   BoundaryPolicy out;
   out.source_like = seg.source_like;
 
+  const bool is_graph_source = !seg.node_ids.empty() && graph.in_degree(seg.node_ids.front()) == 0U;
   const bool is_graph_sink = !seg.node_ids.empty() && graph.out_degree(seg.node_ids.back()) == 0U;
   const bool need_output = !seg.output_edges.empty() || is_graph_sink;
+  const bool direct_graph_source =
+      is_graph_source && !seg.output_edges.empty() && is_direct_source_input_only_segment(seg);
   const bool direct_graph_sink = is_graph_sink && is_terminal_output_only_segment(seg);
 
+  out.direct_graph_source = direct_graph_source;
   out.direct_graph_sink = direct_graph_sink;
-  out.needs_input = !seg.source_like && !direct_graph_sink;
-  out.needs_output = need_output && !direct_graph_sink;
+  out.needs_input = !seg.source_like && !direct_graph_source && !direct_graph_sink;
+  out.needs_output = need_output && !direct_graph_source && !direct_graph_sink;
   out.terminal_output = is_graph_sink;
-  out.graph_internal_output = !seg.output_edges.empty();
+  out.graph_internal_output = !direct_graph_source && !seg.output_edges.empty();
   return out;
 }
 
@@ -85,7 +97,7 @@ void resolve_default_endpoints(const graph::Graph& graph, ExecutionGraphPlan* pl
     if (seg.node_ids.empty()) {
       continue;
     }
-    if (seg.boundary.needs_input && seg.input_edges.empty()) {
+    if ((seg.boundary.direct_graph_source || seg.boundary.needs_input) && seg.input_edges.empty()) {
       inputs.push_back(Endpoint{
           .kind = Endpoint::Kind::PipelineInput,
           .node = seg.node_ids.front(),
@@ -170,6 +182,7 @@ struct NormalizedPublicView {
   static constexpr std::size_t kInvalid = static_cast<std::size_t>(-1);
 
   std::vector<std::shared_ptr<simaai::neat::Node>> vertices;
+  std::vector<std::shared_ptr<simaai::neat::graph::Node>> runtime_vertices;
   std::vector<NormalizedCompositionEdge> edges;
   std::vector<FragmentPlan> fragments;
   std::vector<std::size_t> original_for_vertex;
@@ -262,6 +275,18 @@ bool vertex_is_output(std::span<const std::shared_ptr<simaai::neat::Node>> verti
          dynamic_cast<const simaai::neat::Output*>(vertices[index].get()) != nullptr;
 }
 
+bool vertex_is_runtime_node(
+    std::span<const std::shared_ptr<simaai::neat::graph::Node>> runtime_vertices,
+    std::size_t index) {
+  return index < runtime_vertices.size() && runtime_vertices[index] != nullptr;
+}
+
+bool vertex_is_runtime_node(
+    const std::vector<std::shared_ptr<simaai::neat::graph::Node>>& runtime_vertices,
+    std::size_t index) {
+  return index < runtime_vertices.size() && runtime_vertices[index] != nullptr;
+}
+
 NormalizedCompositionEdgeKind normalized_kind_from_public_edge_kind(const auto& edge,
                                                                     bool bypassed_boundary) {
   if (is_implicit_composition_edge(edge)) {
@@ -313,6 +338,7 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   }
 
   out.vertices.reserve(n);
+  out.runtime_vertices.reserve(n);
   out.original_for_vertex.reserve(n);
   for (std::size_t original = 0; original < n; ++original) {
     if (elide[original]) {
@@ -321,6 +347,8 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
     out.vertex_for_original[original] = out.vertices.size();
     out.original_for_vertex.push_back(original);
     out.vertices.push_back(view.vertices[original]);
+    out.runtime_vertices.push_back(
+        original < view.runtime_vertices.size() ? view.runtime_vertices[original] : nullptr);
   }
 
   std::unordered_set<std::string> emitted_edges;
@@ -428,6 +456,10 @@ NormalizedPublicView normalize_public_boundaries_for_execution(const View& view)
   }
   for (auto& edge : out.edges) {
     if (edge.kind == NormalizedCompositionEdgeKind::ImplicitLinear) {
+      continue;
+    }
+    if (vertex_is_runtime_node(out.runtime_vertices, edge.from) ||
+        vertex_is_runtime_node(out.runtime_vertices, edge.to)) {
       continue;
     }
     const bool default_ports = (edge.from_port.empty() || edge.from_port == "out") &&
@@ -545,6 +577,13 @@ build_runtime_graph_from_connected_public_view(const View& view,
       }
       continue;
     }
+    if (vertex_is_runtime_node(view.runtime_vertices, edge.from) ||
+        vertex_is_runtime_node(view.runtime_vertices, edge.to)) {
+      // Runtime-stage vertices are executable units on their own.  An add()-style
+      // implicit edge crossing a runtime node is semantically a runtime edge with
+      // default ports; it must not fuse the stage into a PipelineNode fragment.
+      continue;
+    }
     if (implicit_next[edge.from] != static_cast<std::size_t>(-1)) {
       throw std::runtime_error("compile_public_graph: ambiguous implicit linear successor");
     }
@@ -557,7 +596,24 @@ build_runtime_graph_from_connected_public_view(const View& view,
 
   std::vector<graph::NodeId> runtime_node_for_vertex(view.vertices.size(), graph::kInvalidNode);
   std::vector<bool> visited(view.vertices.size(), false);
+  for (std::size_t id = 0; id < view.vertices.size(); ++id) {
+    if (!vertex_is_runtime_node(view.runtime_vertices, id)) {
+      continue;
+    }
+    const auto& runtime_node = view.runtime_vertices[id];
+    if (!runtime_node) {
+      throw std::runtime_error("compile_public_graph: runtime vertex has no runtime node");
+    }
+    const graph::NodeId runtime_id = out.graph.add(runtime_node);
+    out.graph_range_by_node[runtime_id] = {id, id + 1U};
+    runtime_node_for_vertex[id] = runtime_id;
+    visited[id] = true;
+  }
+
   for (std::size_t start = 0; start < view.vertices.size(); ++start) {
+    if (visited[start] || vertex_is_runtime_node(view.runtime_vertices, start)) {
+      continue;
+    }
     if (implicit_prev[start] != static_cast<std::size_t>(-1)) {
       continue;
     }
@@ -570,6 +626,10 @@ build_runtime_graph_from_connected_public_view(const View& view,
       }
       if (visited[cur]) {
         throw std::runtime_error("compile_public_graph: cycle in implicit linear chain");
+      }
+      if (vertex_is_runtime_node(view.runtime_vertices, cur)) {
+        throw std::runtime_error(
+            "compile_public_graph: runtime node unexpectedly appeared inside a pipeline chain");
       }
       visited[cur] = true;
       nodes.push_back(view.vertices[cur]);
@@ -710,7 +770,11 @@ build_runtime_graph_from_connected_public_view(const View& view,
 
   for (std::size_t edge_index = 0; edge_index < view.edges.size(); ++edge_index) {
     const auto& edge = view.edges[edge_index];
-    if (!is_explicit_composition_edge(edge)) {
+    const bool fused_implicit_pipeline_edge =
+        !is_explicit_composition_edge(edge) &&
+        !vertex_is_runtime_node(view.runtime_vertices, edge.from) &&
+        !vertex_is_runtime_node(view.runtime_vertices, edge.to);
+    if (fused_implicit_pipeline_edge) {
       continue;
     }
     if (combine_handled_edges.find(edge_index) != combine_handled_edges.end()) {
@@ -770,6 +834,21 @@ bool input_options_complete(const InputOptions& opt) {
     return !opt.format.empty() && opt.width > 0 && opt.height > 0 && depth > 0;
   }
   return !opt.format.empty();
+}
+
+bool output_spec_complete(const OutputSpec& spec) {
+  const std::string media =
+      !spec.media_type.empty() ? spec.media_type : media_type_from_payload_type(spec.payload_type);
+  if (media.empty()) {
+    return false;
+  }
+  if (media == "video/x-raw") {
+    return !spec.format.empty() && spec.width > 0 && spec.height > 0;
+  }
+  if (media == "application/vnd.simaai.tensor") {
+    return !spec.format.empty() && spec.width > 0 && spec.height > 0 && spec.depth > 0;
+  }
+  return true;
 }
 
 const char* dtype_token(TensorDType dtype) {
@@ -840,6 +919,107 @@ bool nodes_have_output_appsink(std::span<const std::shared_ptr<simaai::neat::Nod
     }
   }
   return false;
+}
+
+bool nodes_are_source_like(std::span<const std::shared_ptr<simaai::neat::Node>> nodes) {
+  bool has_source = false;
+  bool has_push = false;
+  for (const auto& node : nodes) {
+    if (!node) {
+      continue;
+    }
+    const InputRole role = node->input_role();
+    if (role == InputRole::Source) {
+      has_source = true;
+    }
+    if (role == InputRole::Push) {
+      has_push = true;
+    }
+  }
+  return has_source && !has_push;
+}
+
+bool is_terminal_output_only_nodes(std::span<const std::shared_ptr<simaai::neat::Node>> nodes) {
+  if (nodes.size() != 1U || !nodes.front()) {
+    return false;
+  }
+  return dynamic_cast<const simaai::neat::Output*>(nodes.front().get()) != nullptr;
+}
+
+void resolve_single_pipeline_endpoints(ExecutionGraphPlan* plan) {
+  if (!plan) {
+    return;
+  }
+  plan->default_input.reset();
+  plan->default_output.reset();
+  plan->input_endpoints.clear();
+  plan->output_endpoints.clear();
+  if (plan->pipeline_segments.empty()) {
+    return;
+  }
+
+  const auto& seg = plan->pipeline_segments.front();
+  if (seg.node_ids.empty()) {
+    return;
+  }
+  if (seg.boundary.needs_input && seg.input_edges.empty()) {
+    Endpoint input;
+    input.kind = Endpoint::Kind::PipelineInput;
+    input.node = seg.node_ids.front();
+    input.port = graph::kInvalidPort;
+    input.segment = seg.id;
+    plan->input_endpoints.push_back(input);
+    plan->default_input = input;
+  }
+  if (seg.boundary.terminal_output) {
+    Endpoint output;
+    output.kind =
+        seg.boundary.direct_graph_sink ? Endpoint::Kind::GraphSink : Endpoint::Kind::PipelineOutput;
+    output.node = seg.node_ids.back();
+    output.port = graph::kInvalidPort;
+    output.segment = seg.id;
+    plan->output_endpoints.push_back(output);
+    plan->default_output = output;
+  }
+}
+
+ExecutionGraphPlan
+build_single_pipeline_execution_plan(std::vector<std::shared_ptr<simaai::neat::Node>> nodes,
+                                     const RunOptions& opt,
+                                     const std::optional<OutputSpec>& root_input_spec) {
+  ExecutionGraphPlan plan;
+  plan.linear_compat = true;
+  plan.node_labels.push_back("linear");
+
+  PipelineSegmentPlan segment;
+  segment.id = 0;
+  segment.node_ids.push_back(0);
+  segment.nodes = std::move(nodes);
+  segment.run_options = opt;
+  segment.boundary.source_like = nodes_are_source_like(segment.nodes);
+  segment.boundary.direct_graph_sink = is_terminal_output_only_nodes(segment.nodes);
+
+  const bool has_explicit_input = nodes_have_input_appsrc(segment.nodes);
+  const bool has_explicit_output = nodes_have_output_appsink(segment.nodes);
+  segment.boundary.needs_input =
+      !segment.boundary.source_like && !segment.boundary.direct_graph_sink && has_explicit_input;
+  segment.boundary.needs_output = !segment.boundary.direct_graph_sink && has_explicit_output;
+  segment.boundary.terminal_output = segment.boundary.direct_graph_sink || has_explicit_output;
+  segment.boundary.graph_internal_output = false;
+
+  if (root_input_spec.has_value()) {
+    segment.input_spec = *root_input_spec;
+    segment.input_complete = output_spec_complete(segment.input_spec);
+  }
+
+  Provenance provenance;
+  provenance.runtime_node = 0;
+  provenance.segment_id = segment.id;
+  segment.provenance.push_back(std::move(provenance));
+
+  plan.pipeline_segments.push_back(std::move(segment));
+  resolve_single_pipeline_endpoints(&plan);
+  return plan;
 }
 
 bool ranges_overlap(std::size_t a_start, std::size_t a_end, std::size_t b_start,
@@ -932,6 +1112,35 @@ std::string public_node_label(const std::shared_ptr<simaai::neat::Node>& node, s
   return label;
 }
 
+std::string public_node_label(const std::shared_ptr<simaai::neat::Node>& node,
+                              const std::shared_ptr<simaai::neat::graph::Node>& runtime_node,
+                              std::size_t index) {
+  if (node) {
+    return public_node_label(node, index);
+  }
+  if (runtime_node) {
+    std::string label = runtime_node->user_label();
+    if (label.empty()) {
+      label = runtime_node->kind();
+    }
+    if (!label.empty()) {
+      return label;
+    }
+  }
+  return "node" + std::to_string(index);
+}
+
+std::string public_node_kind(const std::shared_ptr<simaai::neat::Node>& node,
+                             const std::shared_ptr<simaai::neat::graph::Node>& runtime_node) {
+  if (node) {
+    return node->kind();
+  }
+  if (runtime_node) {
+    return runtime_node->kind();
+  }
+  return "Unknown";
+}
+
 template <typename Edge> std::string public_edge_kind_name(const Edge& edge) {
   if (is_implicit_composition_edge(edge)) {
     return "implicit_linear";
@@ -1008,10 +1217,11 @@ void attach_public_graph_view(const View& view,
   plan->public_nodes.reserve(view.vertices.size());
   for (std::size_t i = 0; i < view.vertices.size(); ++i) {
     const auto& node = view.vertices[i];
+    const auto runtime_node = i < view.runtime_vertices.size() ? view.runtime_vertices[i] : nullptr;
     PublicGraphNodePlan n;
     n.id = i;
-    n.kind = node ? node->kind() : std::string("Unknown");
-    n.label = public_node_label(node, i);
+    n.kind = public_node_kind(node, runtime_node);
+    n.label = public_node_label(node, runtime_node, i);
     n.endpoint_name = explicit_public_endpoint_name(node);
     n.input_endpoint = dynamic_cast<const simaai::neat::Input*>(node.get()) != nullptr;
     n.output_endpoint = dynamic_cast<const simaai::neat::Output*>(node.get()) != nullptr;
@@ -1060,14 +1270,16 @@ void normalize_public_graph_boundaries(const graph::Graph& graph, ExecutionGraph
     const bool has_explicit_input = nodes_have_input_appsrc(segment.nodes);
     const bool has_explicit_output = nodes_have_output_appsink(segment.nodes);
 
-    segment.boundary.needs_input = !segment.boundary.source_like &&
-                                   !segment.boundary.direct_graph_sink &&
-                                   (!segment.input_edges.empty() || has_explicit_input);
+    segment.boundary.needs_input =
+        !segment.boundary.source_like && !segment.boundary.direct_graph_source &&
+        !segment.boundary.direct_graph_sink && (!segment.input_edges.empty() || has_explicit_input);
     segment.boundary.needs_output = !segment.boundary.direct_graph_sink &&
+                                    !segment.boundary.direct_graph_source &&
                                     (!segment.output_edges.empty() || has_explicit_output);
     segment.boundary.terminal_output =
         is_graph_sink && (segment.boundary.direct_graph_sink || has_explicit_output);
-    segment.boundary.graph_internal_output = !segment.output_edges.empty();
+    segment.boundary.graph_internal_output =
+        !segment.boundary.direct_graph_source && !segment.output_edges.empty();
   }
 
   resolve_default_endpoints(graph, plan);
@@ -1456,21 +1668,16 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
 
   const auto lower_start = pipeline_internal::build_timing_now();
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes = view.linear_nodes;
-  graph::Graph runtime_graph;
-  auto pipeline_node = std::make_shared<graph::nodes::PipelineNode>(std::move(nodes), "linear");
-  const graph::NodeId runtime_id = runtime_graph.add(std::move(pipeline_node));
   const auto lower_us = pipeline_internal::build_timing_us(lower_start);
 
-  const auto compile_start = pipeline_internal::build_timing_now();
-  RuntimeCompileOptions compile_opt;
-  compile_opt.run_options = opt;
-  compile_opt.seed = std::move(seed);
+  const auto plan_start = pipeline_internal::build_timing_now();
+  std::optional<OutputSpec> root_input_spec;
   if (seed_spec.has_value()) {
-    compile_opt.root_input_spec = output_spec_from_sample_spec(*seed_spec);
+    root_input_spec = output_spec_from_sample_spec(*seed_spec);
   }
-  compile_opt.linear_compat = true;
-  ExecutionGraphPlan plan = compile_runtime_graph(runtime_graph, compile_opt);
-  const auto compile_us = pipeline_internal::build_timing_us(compile_start);
+  ExecutionGraphPlan plan =
+      build_single_pipeline_execution_plan(std::move(nodes), opt, root_input_spec);
+  const auto plan_us = pipeline_internal::build_timing_us(plan_start);
 
   const auto metadata_start = pipeline_internal::build_timing_now();
   plan.public_graph_id = view.graph_id;
@@ -1479,10 +1686,11 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     segment.route_options = view.options;
   }
   std::unordered_map<graph::NodeId, std::pair<std::size_t, std::size_t>> graph_range_by_node;
+  const graph::NodeId runtime_id = 0;
   graph_range_by_node[runtime_id] = {0U, view.vertices.size()};
   std::vector<graph::NodeId> runtime_node_for_vertex(view.vertices.size(), runtime_id);
   apply_public_fragment_metadata(view, graph_range_by_node, &plan);
-  normalize_public_graph_boundaries(runtime_graph, &plan);
+  resolve_single_pipeline_endpoints(&plan);
   if (plan.default_input.has_value() && !view.vertices.empty()) {
     std::string name = explicit_public_endpoint_name(view.vertices.front());
     if (!name.empty()) {
@@ -1501,7 +1709,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
   pipeline_internal::emit_build_timing(
       "compile_public_graph",
       {{"lower", lower_us},
-       {"runtime_compile", compile_us},
+       {"plan", plan_us},
        {"metadata", metadata_us},
        {"total", pipeline_internal::build_timing_us(total_start)}},
       "mode=linear vertices=" + std::to_string(view.vertices.size()) +

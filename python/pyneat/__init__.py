@@ -4,8 +4,6 @@ import ctypes as _ctypes
 import os as _os
 from pathlib import Path as _Path
 import sys as _sys
-import types as _types
-import warnings as _warnings
 
 
 def _existing_library_dirs():
@@ -154,32 +152,6 @@ from ._pyneat_core import *
 from ._wrappers import install_wrappers
 
 
-class _DeprecatedModule(_types.ModuleType):
-  def __init__(self, name, target, message):
-    super().__init__(name)
-    self.__dict__["_target"] = target
-    self.__dict__["_message"] = message
-    self.__doc__ = getattr(target, "__doc__", None)
-
-  def __getattr__(self, attr):
-    _warnings.warn(self.__dict__["_message"], DeprecationWarning, stacklevel=2)
-    return getattr(self.__dict__["_target"], attr)
-
-  def __dir__(self):
-    return dir(self.__dict__["_target"])
-
-
-_graph = _core._graph
-_sys.modules[__name__ + "._graph"] = _graph
-graph = _DeprecatedModule(
-    __name__ + ".graph",
-    _graph,
-    "pyneat.graph is the old low-level runtime graph surface and is deprecated. "
-    "Use public pyneat.Graph/pyneat.graphs for application composition; use "
-    "pyneat._graph only for internal runtime tests.",
-)
-_sys.modules[__name__ + ".graph"] = graph
-
 def _set_doc(obj, doc: str) -> None:
   try:
     obj.__doc__ = doc
@@ -196,15 +168,43 @@ _REMOVED_NAMES = {
   "SessionOptions": "SessionOptions was removed. Use pyneat.GraphOptions.",
   "ModelSessionOptions": "ModelSessionOptions was removed. Use pyneat.ModelRouteOptions.",
   "NodeGroup": "NodeGroup was removed. Reusable fragments are pyneat.Graph objects.",
+  "graph": (
+      "pyneat.graph was removed from the public API. Use pyneat.Graph/pyneat.graphs for "
+      "application composition."
+  ),
+  "_graph": (
+      "pyneat._graph was removed from the public API. Use pyneat.Graph/pyneat.graphs for "
+      "application composition."
+  ),
   "UdpOutputNodeGroupOptions": (
-      "UdpOutputNodeGroupOptions was renamed to pyneat.UdpOutputGraphOptions."
+      "UdpOutputNodeGroupOptions was removed. Use pyneat.VideoSenderOptions."
   ),
   "OptiViewOutputNodeGroupOptions": (
-      "OptiViewOutputNodeGroupOptions was renamed to pyneat.OptiViewOutputGraphOptions."
+      "OptiViewOutputNodeGroupOptions was removed. Use pyneat.VideoSenderOptions "
+      "and pyneat.MetadataSenderOptions."
   ),
   "OptiViewOutputNodeGroup": (
-      "OptiViewOutputNodeGroup was renamed to pyneat.OptiViewOutputGraph."
+      "OptiViewOutputNodeGroup was removed. Use pyneat.groups.video_sender and "
+      "pyneat.MetadataSender."
   ),
+  "UdpOutputGraphOptions": "UdpOutputGraphOptions was removed. Use pyneat.VideoSenderOptions.",
+  "OptiViewObject": "OptiViewObject was removed. Use pyneat.MetadataSender JSON payloads.",
+  "OptiViewChannelOptions": (
+      "OptiViewChannelOptions was removed. Use pyneat.VideoSenderOptions and "
+      "pyneat.MetadataSenderOptions."
+  ),
+  "OptiViewOutputGraphOptions": (
+      "OptiViewOutputGraphOptions was removed. Use pyneat.VideoSenderOptions and "
+      "pyneat.MetadataSenderOptions."
+  ),
+  "OptiViewOutputGraph": (
+      "OptiViewOutputGraph was removed. Use pyneat.groups.video_sender and "
+      "pyneat.MetadataSender."
+  ),
+  "OptiViewJsonInput": "OptiViewJsonInput was removed. Use pyneat.MetadataSender JSON payloads.",
+  "OptiViewJsonResult": "OptiViewJsonResult was removed. Use pyneat.MetadataSender results.",
+  "OptiViewJsonOutput": "OptiViewJsonOutput was removed. Use pyneat.MetadataSender.",
+  "OptiViewMakeJson": "OptiViewMakeJson was removed. Build JSON payloads directly.",
 }
 
 

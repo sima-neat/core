@@ -1,6 +1,10 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
+set(SIMANEAT_WITH_LLIMA @SIMANEAT_CONFIG_WITH_LLIMA@)
+if (SIMANEAT_WITH_LLIMA)
+  find_dependency(SimaLMM CONFIG REQUIRED)
+endif()
 find_dependency(NeatInternals CONFIG REQUIRED)
 
 # Exported targets

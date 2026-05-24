@@ -2,7 +2,7 @@
 #include "RunInternal.h"
 
 #include "internal/InputStream.h"
-#include "pipeline/GraphRunExport.h"
+#include "pipeline/RunExport.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/TensorMath.h"
@@ -140,18 +140,23 @@ std::string collect_system_info() {
 } // namespace
 
 Run::Run(std::shared_ptr<runtime::RunCore> core) : core_(std::move(core)) {
-  if (!core_ || core_->opt.graph_run_export.path.empty()) {
+  if (!core_) {
+    return;
+  }
+  const RunAutoExportOptions& export_options =
+      !core_->opt.run_export.path.empty() ? core_->opt.run_export : core_->opt.graph_run_export;
+  if (export_options.path.empty()) {
     return;
   }
 
-  GraphRunExportOptions opt;
-  opt.label = core_->opt.graph_run_export.label;
-  opt.include_metrics = core_->opt.graph_run_export.include_metrics;
-  opt.include_power = core_->opt.graph_run_export.include_power;
-  opt.indent = core_->opt.graph_run_export.indent;
+  RunExportOptions opt;
+  opt.label = export_options.label;
+  opt.include_metrics = export_options.include_metrics;
+  opt.include_power = export_options.include_power;
+  opt.indent = export_options.indent;
 
   std::string err;
-  if (!save_graph_run_json(*this, core_->opt.graph_run_export.path, opt, &err)) {
+  if (!save_run_json(*this, export_options.path, opt, &err)) {
     throw std::runtime_error(err.empty() ? "Run graph export failed" : err);
   }
 }

@@ -97,8 +97,8 @@ Use this when CI or a debugging tool needs a graph artifact even before samples 
 
 ```cpp
 sima::RunOptions opt;
-opt.graph_run_export.path = "/tmp/startup.graph_run.json";
-opt.graph_run_export.label = "resnet_startup";
+opt.run_export.path = "/tmp/startup.graph_run.json";
+opt.run_export.label = "resnet_startup";
 
 sima::Run run = app.build(opt);
 ```
@@ -111,8 +111,8 @@ Python:
 
 ```python
 opt = pyneat.RunOptions()
-opt.graph_run_export.path = "/tmp/startup.graph_run.json"
-opt.graph_run_export.label = "resnet_startup"
+opt.run_export.path = "/tmp/startup.graph_run.json"
+opt.run_export.label = "resnet_startup"
 
 run = app.build(opt)
 ```
@@ -126,12 +126,12 @@ sima::Run run = app.build();
 run.push("image", sima::TensorList{image});
 auto y = run.pull("classes");
 
-sima::GraphRunExportOptions export_opt;
+sima::RunExportOptions export_opt;
 export_opt.label = "resnet_with_metrics";
 export_opt.metadata = {{"test_name", "smoke"}};
 
 std::string err;
-if (!sima::save_graph_run_json(run, "/tmp/final.graph_run.json", export_opt, &err)) {
+if (!sima::save_run_json(run, "/tmp/final.graph_run.json", export_opt, &err)) {
   throw std::runtime_error(err);
 }
 ```
@@ -143,11 +143,11 @@ run = app.build()
 run.push("image", [image])
 y = run.pull("classes")
 
-export_opt = pyneat.GraphRunExportOptions()
+export_opt = pyneat.RunExportOptions()
 export_opt.label = "resnet_with_metrics"
 export_opt.metadata = [("test_name", "smoke")]
 
-run.save_graph_run_json("/tmp/final.graph_run.json", export_opt)
+run.save_json("/tmp/final.graph_run.json", export_opt)
 ```
 
 The exporter is a snapshot operation: it does **not** stop the run. If you want final numbers for a
@@ -255,12 +255,12 @@ camera -> model -> display
 
 while still remembering that the logical route was `camera -> route("image") -> route("classes") -> display`.
 
-### Relationship to the lower-level runtime graph
+### Relationship to the internal runtime substrate
 
-The lower-level `simaai::neat::graph::Graph` still has runtime ports because the scheduler needs
-precise internal routing. Public `simaai::neat::Graph` intentionally does not expose those runtime
-ports for normal composition. Public composition is expressed with Graph fragments and named
-`Input`/`Output` declarations.
+The internal scheduler still has runtime ports because it needs precise routing between pipeline
+segments, stage executors, queues, and compiler-generated Branch/Combine helpers. Public
+`simaai::neat::Graph` intentionally does not expose those runtime ports for normal composition.
+Public composition is expressed with Graph fragments and named `Input`/`Output` declarations.
 
 When a public graph is built, the compiler translates public endpoint names into the internal port
 and queue layout. That translation is private and deterministic. Customers should reason in terms of
@@ -321,42 +321,21 @@ NEAT stores the model archive path plus the model construction options and route
 rehydrate that fragment on `Graph::load(path)`. If the original model archive is no longer present,
 loading fails with an actionable error instead of silently building a stale or incomplete route.
 
-## `simaai::neat::graph::Graph` - internal runtime graph
+## Internal runtime substrate
 
-Defined in [`graph/Graph.h`](/reference/cppapi/files/include-graph-graph-h). This is the
-lower-level actor-style runtime graph used by NEAT internals. It schedules `StageExecutor` nodes via
-mailboxes and uses named runtime ports on each node so compiler-generated stages can route data
-precisely.
+NEAT still has source-tree runtime/compiler machinery under the `simaai::neat::graph` namespace.
+That code schedules `StageExecutor` nodes via mailboxes and uses named runtime ports so
+compiler-generated stages can route data precisely. It is not installed as public API and is not
+documented in the public C++ reference.
 
-Public application code should normally not author this graph directly. Public `simaai::neat::Graph`
-lowers to this runtime substrate when it needs scheduler stages, branch/combined runtime nodes, or
-other non-linear execution machinery.
+Public application code should not author that internal graph directly. Build one public
+`simaai::neat::Graph`; the compiler lowers it into the runtime substrate when it needs scheduler
+stages, branch/combine runtime nodes, or other non-linear execution machinery.
 
-In Python, the old `pyneat.graph` module is a deprecated compatibility alias for the internal
-runtime substrate. New application code should use `pyneat.Graph` plus `pyneat.graphs.branch(...)`
-and `pyneat.graphs.combine(...)`. Internal runtime tests that intentionally exercise the lowered
-port graph can use `pyneat._graph`.
-
-## Helper comparison
-
-| Aspect | `simaai::neat::Graph` (public) | `simaai::neat::graph::Graph` (runtime/internal) |
-|--------|----------------------------------|-----------------------------------------------|
-| Purpose | User-facing pipeline/model composition | Lowered runtime substrate for scheduler/stage internals |
-| Threads | Owns runtime after `build()` | Owns scheduler threads, mailboxes, queues |
-| Backend | Compiles to the unified `Run` backend | Internal graph runtime |
-| Ports | `connect(...)`; named public endpoints through `Run` | Edges carry named runtime `from_port` / `to_port` |
-| Common case | `g.add(model); run.push(...); run.pull(...)` | Internal compiler/runtime tests |
-
-## How to tell them apart in code
-
-- `simaai::neat::Graph` lives in the outer `simaai::neat` namespace and is the public API.
-- `simaai::neat::graph::Graph` lives in the inner `simaai::neat::graph` namespace and is a
-  lower-level runtime/compiler type. Its `connect()` takes named runtime port strings; nodes hold
-  `std::shared_ptr<simaai::neat::graph::Node>`.
+In Python, the old `pyneat.graph` module has been removed from the public API. New application
+code should use `pyneat.Graph` plus `pyneat.graphs.branch(...)` and
+`pyneat.graphs.combine(...)`. The lowered port graph is not exported through the Python package.
 
 ## Further reading
 
 - "Graphs" - sections 0.14, 10, and 73 of the design deep dive ([Architecture](/contribute/architecture)).
-- [`graph/Graph.h`](/reference/cppapi/files/include-graph-graph-h)
-- [`graph/GraphBuild.h`](/reference/cppapi/files/include-graph-graphbuild-h)
-- [`graph/StageExecutor.h`](/reference/cppapi/files/include-graph-stageexecutor-h)

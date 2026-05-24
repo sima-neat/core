@@ -49,6 +49,6 @@ This map links common tasks to concrete in-repo references. Tutorials live under
 ## Reference apps (not tutorials)
 
 Larger end-to-end examples live in the `sima-neat/apps` repository under
-`apps/examples/`. Use those for production-scale integration patterns (OptiView
-publishing, multistream detection, face detection, pose, tracking, depth, RTSP
+`apps/examples/`. Use those for production-scale integration patterns (VideoSender
+and MetadataSender publishing, multistream detection, face detection, pose, tracking, depth, RTSP
 publishing, etc.). Tutorials in this repo stay minimal and single-topic.

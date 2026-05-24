@@ -126,22 +126,25 @@ struct RunAdvancedOptions {
 };
 
 /**
- * @brief Optional build-time graph-run JSON export.
+ * @brief Optional build-time Run JSON export.
  *
  * Set `path` before calling `Graph::build(...)` to write a topology snapshot as
  * soon as the Run is built. This is useful for CI artifacts and graph
  * visualization even if the application has not pushed samples yet.
  *
- * For final throughput/latency/power numbers, call `save_graph_run_json(run, ...)`
+ * For final throughput/latency/power numbers, call `save_run_json(run, ...)`
  * after the run has executed/drained. Build-time export is an initial snapshot.
  */
-struct GraphRunAutoExportOptions {
+struct RunAutoExportOptions {
   std::string path;  ///< Empty disables build-time export.
   std::string label; ///< Optional label; empty uses the exporter default.
   bool include_metrics = true;
   bool include_power = true;
   int indent = 2;
 };
+
+/// Backward-compatible name for the previous graph-run export option spelling.
+using GraphRunAutoExportOptions = RunAutoExportOptions;
 
 /**
  * @brief Per-Run runtime options. Passed to `Graph::build()` and `Model::run()`.
@@ -180,9 +183,11 @@ struct RunOptions {
    * `pull()`.
    */
   bool startup_preflight = true;
-  RunAdvancedOptions advanced{};                ///< Advanced tuning (rarely needed).
-  PowerMonitorOptions power_monitor{};          ///< Optional board rail power telemetry.
-  GraphRunAutoExportOptions graph_run_export{}; ///< Optional build-time graph JSON export.
+  RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
+  PowerMonitorOptions power_monitor{}; ///< Optional board rail power telemetry.
+  RunAutoExportOptions run_export{};   ///< Optional build-time Run/graph JSON export.
+  /// Backward-compatible spelling for the previous graph-run export field.
+  RunAutoExportOptions graph_run_export{};
 
   /**
    * @brief Enable board power monitoring using built-in auto-detect.

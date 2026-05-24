@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Configure preproc knobs on ModelOptions and inspect the preprocess() node group.
+"""Configure preproc knobs on ModelOptions and inspect the preprocess() Graph fragment.
 
 Usage:
   python3 preprocess_images.py --model /path/to/resnet_50.tar.gz [--size 224]

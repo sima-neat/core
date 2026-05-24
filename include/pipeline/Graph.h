@@ -57,6 +57,9 @@ namespace simaai::neat {
 namespace internal {
 struct ModelAccess;
 }
+namespace graph {
+class Node;
+}
 namespace pipeline_internal {
 struct InputRouteProcessor;
 }
@@ -192,9 +195,11 @@ public:
    * @return `*this` to allow chaining.
    */
   Graph& add(std::shared_ptr<Node> node);
-  /// Append another Graph as a linear fragment. Connected fragments are rejected; use connect().
+  /// Append another Graph as a linear fragment. A connected fragment may only initialize an empty
+  /// Graph; compose non-linear topology with connect().
   Graph& add(const Graph& fragment);
-  /// Append another Graph as a linear fragment. Connected fragments are rejected; use connect().
+  /// Append another Graph as a linear fragment. A connected fragment may only initialize an empty
+  /// Graph; compose non-linear topology with connect().
   Graph& add(Graph&& fragment);
   /// Append a model route as a linear graph fragment.
   Graph& add(const Model& model);
@@ -220,6 +225,17 @@ public:
   Graph& connect(const Graph& from, const Model& to);
   Graph& connect(const Model& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Model& to);
+
+#ifdef SIMA_NEAT_INTERNAL
+  /// Internal bridge: append a public/pipeline vertex without creating an implicit add() edge.
+  std::size_t append_pipeline_vertex_for_internal_graph_(std::shared_ptr<Node> node);
+  /// Internal bridge: append a runtime-stage vertex without exposing graph::Graph publicly.
+  std::size_t
+  append_runtime_vertex_for_internal_graph_(std::shared_ptr<simaai::neat::graph::Node> node);
+  /// Internal bridge: connect two composition vertices by runtime port names.
+  void connect_runtime_port_for_internal_graph_(std::size_t from, std::string_view from_port,
+                                                std::size_t to, std::string_view to_port);
+#endif
 
   // ── Custom GStreamer escape hatch ────────────────────────────────────────────────────────
   /**
@@ -379,7 +395,8 @@ private:
 #ifdef SIMA_NEAT_INTERNAL
   struct CompositionView {
     std::vector<std::shared_ptr<Node>> linear_nodes;
-    std::span<const std::shared_ptr<Node>> vertices;
+    std::vector<std::shared_ptr<Node>> vertices;
+    std::vector<std::shared_ptr<simaai::neat::graph::Node>> runtime_vertices;
     std::span<const CompositionEdge> edges;
     std::span<const GroupMeta> groups;
     std::span<const runtime::FragmentPlan> fragments;
@@ -455,10 +472,6 @@ private:
   void mark_composition_changed();
   std::pair<std::size_t, std::size_t> append_linear_fragment_(const Graph& fragment,
                                                               const char* where);
-  std::pair<std::size_t, std::size_t> import_linear_fragment_(const Graph& fragment,
-                                                              const char* where);
-  std::pair<std::size_t, std::size_t> import_or_reuse_linear_fragment_(const Graph& fragment,
-                                                                       const char* where);
   std::pair<std::size_t, std::size_t> import_composition_fragment_(const Graph& fragment,
                                                                    const char* where);
   std::pair<std::size_t, std::size_t> import_or_reuse_composition_fragment_(const Graph& fragment,

@@ -1,14 +1,18 @@
 /**
  * @file
  * @ingroup graph
- * @brief Actor-like stage executor interface — the runtime-graph extension point.
+ * @brief Internal actor-like stage executor interface used by the unified Graph runtime.
  *
  * `StageExecutor` is to the runtime graph what `Node` is to the builder graph: the
  * abstract base every stage subclasses. The runtime drives stages by calling `on_input()`
  * for each arriving sample and `on_tick()` periodically; the stage emits zero or more
  * `StageOutMsg`s back to the runtime, which routes them on outgoing edges.
  *
- * @see Graph, build, GraphRun
+ * Public applications should use `simaai::neat::Graph` / `simaai::neat::Run`. This
+ * interface is for runtime/compiler internals and Graph-fragment implementations that
+ * need actor-style work behind the public Graph surface.
+ *
+ * @see simaai::neat::Graph, simaai::neat::Run, GraphRun
  * @see "Runtime graph stages" (§73 / §84 of the design deep dive)
  */
 #pragma once
@@ -44,6 +48,28 @@ struct StageMsg {
 struct StageOutMsg {
   PortId out_port = kInvalidPort; ///< Output port id to emit on.
   Sample sample;                  ///< The sample payload.
+};
+
+/**
+ * @brief Runtime-owned output handle for stages that stream while `on_input()` is active.
+ *
+ * Most stages can keep appending to the `out` vector passed to `on_input()`. Long-running
+ * stages, such as LLM/ASR token streams, may use this emitter to route samples immediately,
+ * before `on_input()` returns.
+ *
+ * The pointer supplied through `StageExecutor::set_emitter()` is owned by the graph runtime
+ * and remains valid until the executor is stopped.
+ * @ingroup graph
+ */
+class StageEmitter {
+public:
+  virtual ~StageEmitter() = default;
+
+  /// Route one output sample through the same graph paths used for returned `StageOutMsg`s.
+  virtual bool emit(StageOutMsg msg) = 0;
+
+  /// True once the graph runtime has begun stopping.
+  virtual bool stop_requested() const = 0;
 };
 
 /**
@@ -87,12 +113,13 @@ struct StagePorts {
  * the queues, and the routing; the stage just transforms incoming `StageMsg`s into
  * outgoing `StageOutMsg`s.
  *
- * **Lifecycle**: `set_ports()` → `start()` → repeated `on_input()` / `on_tick()` →
- * `stop()` → destruction.
+ * **Lifecycle**: `set_ports()` → `set_emitter()` → `start()` → repeated `on_input()` /
+ * `on_tick()` → `stop()` → destruction.
  *
  * **Threading**: the runtime guarantees serial invocation per stage instance — `on_input`
  * and `on_tick` will not be called concurrently on the same stage. Stages may keep
- * non-atomic per-instance state without locks.
+ * non-atomic per-instance state without locks. `StageEmitter::emit()` may be called from
+ * inside `on_input()` to stream outputs before `on_input()` returns.
  *
  * @ingroup graph
  */
@@ -104,8 +131,15 @@ public:
   /// Provide resolved port ids for caching. Optional — default is a no-op.
   virtual void set_ports(const StagePorts& /*ports*/) {}
 
+  /// Provide the runtime output emitter. Optional — default is a no-op.
+  virtual void set_emitter(StageEmitter* /*emitter*/) {}
+
   /// Start any background work. Called once before the first `on_input`.
   virtual void start() {}
+
+  /// Ask an active stage to cancel long-running work. Optional — default is a no-op.
+  virtual void request_stop() {}
+
   /// Tear down. Called once after the last `on_input`/`on_tick`.
   virtual void stop() {}
 

@@ -85,7 +85,7 @@ def test_graph_named_endpoint_runtime_smoke():
         run.close()
 
 
-def test_graph_run_export_runtime_smoke(tmp_path):
+def test_run_export_runtime_smoke(tmp_path):
     _require_phase3_runtime()
 
     source = pyneat.Graph("image")
@@ -98,8 +98,8 @@ def test_graph_run_export_runtime_smoke(tmp_path):
 
     auto_path = tmp_path / "auto.graph_run.json"
     build_opt = pyneat.RunOptions()
-    build_opt.graph_run_export.path = str(auto_path)
-    build_opt.graph_run_export.label = "py_auto_export"
+    build_opt.run_export.path = str(auto_path)
+    build_opt.run_export.label = "py_auto_export"
 
     arr = np.full((24, 32, 3), 0x57, dtype=np.uint8)
     run = app.build(build_opt)
@@ -126,9 +126,9 @@ def test_graph_run_export_runtime_smoke(tmp_path):
         out = run.pull_tensors("classes", 5000)
         assert len(out) >= 1
 
-        export_opt = pyneat.GraphRunExportOptions()
+        export_opt = pyneat.RunExportOptions()
         export_opt.label = "py_post_export"
-        body = run.graph_run_json(export_opt)
+        body = run.json(export_opt)
         post_json = json.loads(body)
         assert post_json["label"] == "py_post_export"
         if graph_run_schema is not None:
@@ -137,7 +137,7 @@ def test_graph_run_export_runtime_smoke(tmp_path):
         assert post_json["graph"]["public_view"]["edges"]
 
         post_path = tmp_path / "post.graph_run.json"
-        pyneat.save_graph_run_json(run, str(post_path), export_opt)
+        pyneat.save_run_json(run, str(post_path), export_opt)
         assert json.loads(post_path.read_text())["schema"] == "sima.neat.graph_run"
     finally:
         run.close()

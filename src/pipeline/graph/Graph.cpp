@@ -118,8 +118,8 @@ std::string endpoint_token(std::string_view text, std::string_view fallback) {
   return out;
 }
 
-std::string infer_endpoint_name_from_nodes(const std::vector<std::shared_ptr<Node>>& nodes,
-                                           std::string_view fallback) {
+template <typename Nodes>
+std::string infer_endpoint_name_from_nodes(const Nodes& nodes, std::string_view fallback) {
   for (const auto& node : nodes) {
     if (!node) {
       continue;
@@ -599,8 +599,8 @@ Graph::CompositionView Graph::composition_view_for_internal_compile() const {
   return CompositionView{
       .linear_nodes = linear ? composition_->linear_nodes_or_throw("Graph::compile")
                              : std::vector<std::shared_ptr<Node>>{},
-      .vertices = std::span<const std::shared_ptr<Node>>(composition_->vertices.data(),
-                                                         composition_->vertices.size()),
+      .vertices = composition_->pipeline_vertices_snapshot(),
+      .runtime_vertices = composition_->runtime_vertices_snapshot(),
       .edges =
           std::span<const CompositionEdge>(composition_->edges.data(), composition_->edges.size()),
       .groups = std::span<const GroupMeta>(groups_.data(), groups_.size()),
@@ -1050,53 +1050,6 @@ std::pair<std::size_t, std::size_t> Graph::append_linear_fragment_(const Graph& 
   return {start, end};
 }
 
-std::pair<std::size_t, std::size_t> Graph::import_linear_fragment_(const Graph& fragment,
-                                                                   const char* where) {
-  if (!composition_) {
-    composition_ = std::make_unique<CompositionGraph>();
-  }
-  if (!fragment.composition_) {
-    throw std::runtime_error(std::string(where ? where : "Graph::connect") +
-                             ": cannot import a moved-from Graph fragment");
-  }
-  const auto nodes = fragment.composition_->linear_nodes_or_throw(where);
-  const auto [start, end] = composition_->append_linear_fragment_copy(nodes);
-  for (const auto& group : fragment.groups_) {
-    if (group.end <= group.start)
-      continue;
-    groups_.push_back(GroupMeta{
-        .start = start + group.start,
-        .end = start + group.end,
-        .caps_behavior = group.caps_behavior,
-        .label = group.label,
-    });
-  }
-  for (const auto& meta : fragment.composition_->fragments) {
-    composition_->fragments.push_back(rebase_fragment_plan(meta, start));
-  }
-  if (end > start) {
-    const bool user_named = !fragment.endpoint_name_.empty();
-    const std::string name =
-        user_named ? fragment.endpoint_name_
-                   : infer_endpoint_name_from_nodes(nodes, "fragment" + std::to_string(start));
-    composition_->named_fragments.push_back(NamedFragment{
-        .start = start,
-        .end = end,
-        .name = name,
-        .user_named = user_named,
-    });
-  }
-  if (fragment.input_route_processor_) {
-    if (input_route_processor_ && input_route_processor_ != fragment.input_route_processor_) {
-      throw std::runtime_error(std::string(where ? where : "Graph::connect") +
-                               ": cannot merge multiple input route processors; use explicit "
-                               "Sample routing or split model ingress at the top level");
-    }
-    input_route_processor_ = fragment.input_route_processor_;
-  }
-  return {start, end};
-}
-
 std::pair<std::size_t, std::size_t> Graph::import_composition_fragment_(const Graph& fragment,
                                                                         const char* where) {
   if (!composition_) {
@@ -1241,39 +1194,6 @@ std::pair<std::size_t, std::size_t> Graph::import_output_collection_fragment_(co
   return {start, end};
 }
 
-std::pair<std::size_t, std::size_t> Graph::import_or_reuse_linear_fragment_(const Graph& fragment,
-                                                                            const char* where) {
-  if (!composition_) {
-    composition_ = std::make_unique<CompositionGraph>();
-  }
-  if (&fragment == this) {
-    throw std::runtime_error(std::string(where ? where : "Graph::connect") +
-                             ": cannot import this Graph into itself");
-  }
-  if (!fragment.composition_) {
-    throw std::runtime_error(std::string(where ? where : "Graph::connect") +
-                             ": cannot import a moved-from Graph fragment");
-  }
-
-  const std::uint64_t source_version = fragment.nodes_version_.load(std::memory_order_relaxed);
-  auto existing = composition_->imported_fragments.find(fragment.graph_id_);
-  if (existing != composition_->imported_fragments.end()) {
-    if (existing->second.source_version != source_version) {
-      throw std::runtime_error(
-          std::string(where ? where : "Graph::connect") +
-          ": source Graph was modified after it was imported into this Graph; create a separate "
-          "Graph fragment if you intended a second copy");
-    }
-    return {existing->second.start, existing->second.end};
-  }
-
-  const auto [start, end] = import_linear_fragment_(fragment, where);
-  composition_->imported_fragments.emplace(
-      fragment.graph_id_, CompositionGraph::ImportedFragment{
-                              .source_version = source_version, .start = start, .end = end});
-  return {start, end};
-}
-
 std::pair<std::size_t, std::size_t>
 Graph::import_or_reuse_composition_fragment_(const Graph& fragment, const char* where) {
   if (!composition_) {
@@ -1357,7 +1277,7 @@ Graph::import_or_reuse_node_fragment_(std::shared_ptr<Node> node, const char* wh
   }
 
   const std::size_t start = composition_->vertices.size();
-  composition_->vertices.push_back(std::move(node));
+  composition_->vertices.emplace_back(std::move(node));
   const std::size_t end = composition_->vertices.size();
 
   const auto& inserted = composition_->vertices[start];
@@ -1470,6 +1390,52 @@ void Graph::attach_fragment_boundary_hints_(std::size_t start, std::size_t end,
   composition_->fragments.push_back(std::move(fragment));
 }
 
+std::size_t Graph::append_pipeline_vertex_for_internal_graph_(std::shared_ptr<Node> node) {
+  if (!composition_) {
+    composition_ = std::make_unique<CompositionGraph>();
+  }
+  if (!node) {
+    throw std::runtime_error("Graph::append_pipeline_vertex_for_internal_graph_: node is null");
+  }
+
+  const std::size_t id = composition_->vertices.size();
+  const NodeCapsBehavior behavior = node->caps_behavior();
+  composition_->vertices.emplace_back(std::move(node));
+  composition_->tail = CompositionGraph::kInvalid;
+  groups_.push_back(GroupMeta{
+      .start = id,
+      .end = id + 1U,
+      .caps_behavior = behavior,
+      .label = "",
+  });
+  mark_composition_changed();
+  return id;
+}
+
+std::size_t
+Graph::append_runtime_vertex_for_internal_graph_(std::shared_ptr<simaai::neat::graph::Node> node) {
+  if (!composition_) {
+    composition_ = std::make_unique<CompositionGraph>();
+  }
+  if (!node) {
+    throw std::runtime_error("Graph::append_runtime_vertex_for_internal_graph_: node is null");
+  }
+  const std::size_t id = composition_->vertices.size();
+  composition_->vertices.push_back(CompositionGraph::CompositionVertex::runtime(std::move(node)));
+  composition_->tail = CompositionGraph::kInvalid;
+  mark_composition_changed();
+  return id;
+}
+
+void Graph::connect_runtime_port_for_internal_graph_(std::size_t from, std::string_view from_port,
+                                                     std::size_t to, std::string_view to_port) {
+  if (!composition_) {
+    throw std::runtime_error("Graph::connect_runtime_port_for_internal_graph_: moved-from Graph");
+  }
+  composition_->connect_runtime_port(from, to, std::string(from_port), std::string(to_port));
+  mark_composition_changed();
+}
+
 Graph& Graph::add(std::shared_ptr<Node> node) {
   if (!composition_) {
     composition_ = std::make_unique<CompositionGraph>();
@@ -1484,15 +1450,25 @@ Graph& Graph::add(std::shared_ptr<Node> node) {
 }
 
 Graph& Graph::add(const Graph& fragment) {
-  append_linear_fragment_(fragment, "Graph::add(Graph)");
+  if (!fragment.composition_) {
+    throw std::runtime_error("Graph::add(Graph): cannot append a moved-from Graph fragment");
+  }
+  if (fragment.composition_->is_linear()) {
+    append_linear_fragment_(fragment, "Graph::add(Graph)");
+  } else {
+    if (composition_ && !composition_->empty()) {
+      throw std::runtime_error(
+          "Graph::add(Graph): cannot append a connected/runtime Graph fragment to a non-empty "
+          "Graph; use connect() to compose topology explicitly");
+    }
+    import_composition_fragment_(fragment, "Graph::add(Graph)");
+  }
   mark_composition_changed();
   return *this;
 }
 
 Graph& Graph::add(Graph&& fragment) {
-  append_linear_fragment_(fragment, "Graph::add(Graph&&)");
-  mark_composition_changed();
-  return *this;
+  return add(static_cast<const Graph&>(fragment));
 }
 
 Graph& Graph::connect(std::string_view from_endpoint, std::string_view to_endpoint) {

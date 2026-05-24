@@ -19,7 +19,7 @@ run.push("image", [sample])
 sample = run.pull("out")
 ```
 
-The old low-level `pyneat.graph` module is an internal runtime substrate. New application code should use `pyneat.Graph`.
+The old low-level `pyneat.graph` module has been removed. Application code should use `pyneat.Graph` and reusable public Graph fragments.
 
 **APIs introduced**
 - `pyneat.Graph()` — the public graph container.

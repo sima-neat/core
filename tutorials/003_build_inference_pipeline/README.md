@@ -12,10 +12,10 @@
 
 Compose a `Graph` by hand — input node, output node, no model — and run one frame through it. See the pipeline primitives in isolation before a model is added to the picture.
 
-A `Graph` is where you define pipeline structure by adding nodes and node groups in order. It is not a one-off inference call; it is a reusable runtime graph definition that can be built once and executed many times.
+A `Graph` is where you define pipeline structure by adding nodes and reusable Graph fragments in order. It is not a one-off inference call; it is a reusable runtime graph definition that can be built once and executed many times.
 
 `build(...)` turns that definition into a runnable `Run` handle — the transition from "graph description" to "executable runtime":
-- Resolves the added nodes/groups into a concrete pipeline.
+- Resolves the added nodes/fragments into a concrete pipeline.
 - Validates input/output contracts for the selected input type.
 - Configures runtime behavior (sync vs async mode, output memory policy).
 - Returns a `Run` object for push/pull calls.

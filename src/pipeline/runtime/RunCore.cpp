@@ -197,17 +197,28 @@ bool RunCore::graph_stop_requested() const {
 }
 
 void RunCore::graph_signal_stop() {
-  if (graph_debug_enabled_for_core()) {
+  const bool already_stopping = stop_requested.exchange(true, std::memory_order_relaxed);
+  if (!already_stopping && graph_debug_enabled_for_core()) {
     std::fprintf(stderr, "[GRAPH] signal_stop\n");
   }
-  stop_requested.store(true, std::memory_order_relaxed);
 
   if (!graph_execution_)
     return;
 
   for (auto& stage : graph_execution_->stages) {
-    if (stage)
+    if (stage) {
+      if (!already_stopping && stage->exec) {
+        try {
+          stage->exec->request_stop();
+        } catch (const std::exception& e) {
+          if (graph_debug_enabled_for_core()) {
+            std::fprintf(stderr, "[GRAPH] stage_request_stop_error node=%zu err=%s\n",
+                         static_cast<std::size_t>(stage->node_id), e.what());
+          }
+        }
+      }
       stage->mailbox.inbox.close();
+    }
   }
   for (auto& sink : graph_execution_->sinks) {
     if (sink.second)
@@ -386,6 +397,47 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
   auto it_pipe = execution.node_to_pipeline.find(node_id);
   if (it_pipe != execution.node_to_pipeline.end()) {
     auto& pipe = *execution.pipelines[it_pipe->second];
+    if (pipe.seg.boundary.direct_graph_source) {
+      EdgeRouter router(execution);
+      auto* targets = router.targets(node_id, has_port ? port : simaai::neat::graph::kInvalidPort);
+      if (!targets && !has_port) {
+        for (const std::size_t edge_index : pipe.seg.output_edges) {
+          if (edge_index < execution.plan.edges.size()) {
+            targets = router.targets(node_id, execution.plan.edges[edge_index].from_port);
+            if (targets) {
+              break;
+            }
+          }
+        }
+      }
+      if (!targets) {
+        graph_request_stop("GraphRun::push failed: direct graph source has no downstream target");
+        return false;
+      }
+
+      EdgeRouterCallbacks callbacks;
+      callbacks.dispatch_to_stage_group = [this, &options](std::size_t group,
+                                                           simaai::neat::graph::PortId target_port,
+                                                           Sample&& next) {
+        return graph_dispatch_to_stage_group(group, target_port, std::move(next), options);
+      };
+      callbacks.ensure_pipeline_built = [this](std::size_t index, const Sample& seed,
+                                               std::string* err) {
+        return ensure_graph_pipeline_built(index, seed, err);
+      };
+      callbacks.sanitize_pipeline_input = [this](std::size_t index, Sample& next) {
+        graph_sanitize_pipeline_input(index, next);
+      };
+      callbacks.request_stop = [this](const std::string& err) { graph_request_stop(err); };
+      callbacks.stop_requested = [this] { return graph_stop_requested(); };
+
+      EdgeRouterDispatchOptions dispatch_options;
+      dispatch_options.sanitize_pipeline_input_before_enqueue = true;
+      dispatch_options.sink_backpressure_context = static_cast<std::size_t>(node_id);
+      return router.dispatch_to_targets(*targets, Sample{sample}, options, callbacks,
+                                        dispatch_options);
+    }
+
     if (!pipe.transport.input_queue) {
       if (has_port) {
         std::fprintf(stderr,

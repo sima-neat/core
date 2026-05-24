@@ -78,14 +78,4 @@ RUN_TEST("graph_migration_phase3_negative_diagnostics_test", [] {
     require_throws_contains([&] { app.add(tail); }, "Graph::add after branching is ambiguous",
                             "Graph::add connected fragment should fail closed");
   }
-
-  {
-    auto source = input_fragment();
-    auto sink = output_fragment();
-    simaai::neat::Graph connected;
-    connected.connect(source, sink);
-    simaai::neat::Graph receiver;
-    require_throws_contains([&] { receiver.add(connected); }, "not linear",
-                            "linear splice of connected graph should fail closed");
-  }
 });

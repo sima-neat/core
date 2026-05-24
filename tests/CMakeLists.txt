@@ -238,6 +238,13 @@ set(UNIT_TESTS
   unit_dispatcher_watchdog_test
   unit_error_code_taxonomy_test
   unit_encoded_sample_test
+  unit_genai_prompt_builder_test
+  unit_genai_image_types_test
+  unit_genai_audio_types_test
+  unit_genai_header_compile_surface_test
+  unit_genai_text_tensor_test
+  unit_node_metadata_sender_test
+  unit_video_sender_test
   unit_env_util_profile_test
   unit_framestream_test
   unit_graph_compiler_determinism_test
@@ -246,6 +253,7 @@ set(UNIT_TESTS
   unit_graph_join_bundle_test
   unit_graph_join_encoded_with_meta_test
   unit_graph_join_nodes_test
+  unit_graph_stage_emitter_test
   unit_graph_stamp_frame_id_test
   unit_graph_backpressure_timeout_test
   unit_graph_run_option_validation_test
@@ -488,6 +496,85 @@ if (NOT modelzoo_bulk_models_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST modelzoo_bulk_models_test APPEND PROPERTY LABELS "e2e;modelzoo;long")
 endif()
 
+add_pipeline_test(
+  metadata_sender_udp_integration_test
+  e2e_testing/metadata_sender_udp_integration_test.cpp
+)
+
+if (NOT metadata_sender_udp_integration_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST metadata_sender_udp_integration_test APPEND PROPERTY LABELS "e2e;metadata")
+endif()
+
+add_pipeline_test_long(
+  genai_llm_run_test
+  e2e_testing/genai_llm_run_test.cpp
+)
+
+if (NOT genai_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;long")
+  set_property(TEST genai_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_llm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_vlm_run_test
+  SOURCES e2e_testing/genai_vlm_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;vlm;long")
+  set_property(TEST genai_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_vlm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_graph_llm_run_test
+  e2e_testing/genai_graph_llm_run_test.cpp
+)
+
+if (NOT genai_graph_llm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;long")
+  set_property(TEST genai_graph_llm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_llm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_graph_vlm_run_test
+  SOURCES e2e_testing/genai_graph_vlm_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_graph_vlm_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;vlm;long")
+  set_property(TEST genai_graph_vlm_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_vlm_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_asr_run_test
+  SOURCES e2e_testing/genai_asr_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;asr;long")
+  set_property(TEST genai_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_asr_run_test PROPERTIES DISABLED TRUE)
+endif()
+
+add_pipeline_test_long(
+  genai_graph_asr_run_test
+  SOURCES e2e_testing/genai_graph_asr_run_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT genai_graph_asr_run_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY LABELS "e2e;genai;llima;graph;asr;long")
+  set_property(TEST genai_graph_asr_run_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+  set_tests_properties(genai_graph_asr_run_test PROPERTIES DISABLED TRUE)
+endif()
+
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_property(TEST decoder_quality_compare_test
@@ -510,7 +597,7 @@ endif()
 # ------------------------------------------------------------------------------
 set(STRESS_TESTS
   stress_graph_strict_sync_join_race_test
-  stress_udp_json_burst_test
+  stress_udp_metadata_burst_test
   stress_pipeline_build_repeated_test
   stress_model_lifecycle_test
   stress_graph_lifecycle_test
@@ -893,13 +980,13 @@ if (NOT graph_migration_phaseA4_connected_save_load_test IN_LIST PIPELINESESSION
 endif()
 
 add_pipeline_test(
-  graph_migration_phaseA4_graph_run_export_test
-  graph_migration/unified/phaseA4_graph_run_export_test.cpp
+  graph_migration_phaseA4_run_export_test
+  graph_migration/unified/phaseA4_run_export_test.cpp
   graph_migration/common/phase3_graph_test_utils.cpp
 )
 
-if (NOT graph_migration_phaseA4_graph_run_export_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST graph_migration_phaseA4_graph_run_export_test
+if (NOT graph_migration_phaseA4_run_export_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA4_run_export_test
     APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;export")
 endif()
 
@@ -1203,15 +1290,15 @@ if (NOT preproc_yolov8_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
 endif()
 
 add_pipeline_test(
-  graphpipes_yolo_optiview_16stream_test
-  e2e_pipelines/obj_detection/graphpipes_yolo_optiview_16stream_test.cpp
+  graphpipes_yolo_metadata_sender_16stream_test
+  e2e_pipelines/obj_detection/graphpipes_yolo_metadata_sender_16stream_test.cpp
   e2e_pipelines/e2e_utils.cpp
   e2e_pipelines/obj_detection/obj_detection_utils.cpp
   ARGS ${CMAKE_SOURCE_DIR}
 )
 
-if (NOT graphpipes_yolo_optiview_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST graphpipes_yolo_optiview_16stream_test APPEND PROPERTY LABELS "e2e;obj_detection")
+if (NOT graphpipes_yolo_metadata_sender_16stream_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graphpipes_yolo_metadata_sender_16stream_test APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
 # ------------------------------------------------------------------------------

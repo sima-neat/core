@@ -4283,8 +4283,12 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
   const int timeout_ms = default_model_run_timeout_ms();
   const int retry_timeout_ms = std::max(timeout_ms, 30000);
   auto run_once = [&](int attempt, int pull_timeout_ms) -> simaai::neat::Sample {
+    auto attempt_opt = run_opt;
+    attempt_opt.startup_preflight = false;
+    attempt_opt.input_timeout_ms = pull_timeout_ms;
+
     auto runner =
-        post.build(simaai::neat::Sample{stage_input}, simaai::neat::RunMode::Async, run_opt);
+        post.build(simaai::neat::Sample{stage_input}, simaai::neat::RunMode::Async, attempt_opt);
     require(static_cast<bool>(runner), "postrun_boxdecode: runner build failed");
     require(runner.push(simaai::neat::Sample{stage_input}),
             "postrun_boxdecode: runner push failed");

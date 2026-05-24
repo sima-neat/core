@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -41,10 +42,24 @@ struct DownstreamTarget {
   simaai::neat::graph::PortId port = simaai::neat::graph::kInvalidPort;
 };
 
+struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
+  std::function<bool(simaai::neat::graph::StageOutMsg)> emit_fn;
+  std::function<bool()> stop_requested_fn;
+
+  bool emit(simaai::neat::graph::StageOutMsg msg) override {
+    return emit_fn ? emit_fn(std::move(msg)) : false;
+  }
+
+  bool stop_requested() const override {
+    return stop_requested_fn ? stop_requested_fn() : true;
+  }
+};
+
 struct StageRuntime {
   explicit StageRuntime(std::size_t capacity = 0) : mailbox(capacity) {}
 
   simaai::neat::graph::NodeId node_id = simaai::neat::graph::kInvalidNode;
+  RuntimeStageEmitter emitter;
   std::unique_ptr<simaai::neat::graph::StageExecutor> exec;
   simaai::neat::graph::runtime::StageMailbox mailbox;
   std::thread worker;

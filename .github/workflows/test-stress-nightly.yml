@@ -30,7 +30,7 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./metadata*.json ./install_neat_framework.sh || true
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Install runtime from latest main metadata-all
@@ -105,7 +105,7 @@ jobs:
             exit 1
           fi
           export SIMA_STRESS_ITERS="${STRESS_ITERS}"
-          STRESS_REGEX='^(stress_graph_strict_sync_join_race_test|stress_pipeline_build_repeated_test|stress_model_lifecycle_test|stress_session_lifecycle_test|stress_session_validate_rtsp_churn_test|stress_run_async_pressure_test|stress_run_try_push_holder_race_test|stress_graph_execution_test|stress_udp_json_burst_test)$'
+          STRESS_REGEX='^(stress_graph_strict_sync_join_race_test|stress_pipeline_build_repeated_test|stress_model_lifecycle_test|stress_session_lifecycle_test|stress_session_validate_rtsp_churn_test|stress_run_async_pressure_test|stress_run_try_push_holder_race_test|stress_graph_execution_test|stress_udp_metadata_burst_test)$'
           ctest --test-dir "${TEST_DIR}" --output-on-failure -R "${STRESS_REGEX}"
 
       - name: Repeat race-sensitive stress subset until fail
@@ -120,5 +120,5 @@ jobs:
             echo "repeat_count=${REPEAT_COUNT}; skipping until-fail loop."
             exit 0
           fi
-          REPEAT_REGEX='^(stress_graph_strict_sync_join_race_test|stress_session_validate_rtsp_churn_test|stress_run_try_push_holder_race_test|stress_udp_json_burst_test)$'
+          REPEAT_REGEX='^(stress_graph_strict_sync_join_race_test|stress_session_validate_rtsp_churn_test|stress_run_try_push_holder_race_test|stress_udp_metadata_burst_test)$'
           ctest --test-dir "${TEST_DIR}" --output-on-failure --repeat "until-fail:${REPEAT_COUNT}" -R "${REPEAT_REGEX}"

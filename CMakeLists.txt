@@ -32,6 +32,7 @@ option(SIMANEAT_BUILD_SAMPLES "Build example applications" ON)
 option(SIMANEAT_BUILD_TUTORIALS "Build tutorial applications" ON)
 option(SIMANEAT_BUILD_TESTS "Build test targets" ON)
 option(SIMANEAT_BUILD_PYTHON "Build Python bindings via nanobind" OFF)
+option(SIMANEAT_BUILD_DOCS "Configure documentation targets" OFF)
 option(SIMANEAT_CPP_TIDY "Configure in analysis-only mode for clang-tidy" OFF)
 option(SIMANEAT_STRICT_WARNINGS "Enable strict compiler warnings and treat them as errors" OFF)
 option(SIMA_ENABLE_ASAN "Enable AddressSanitizer instrumentation" OFF)
@@ -49,6 +50,22 @@ endif()
 option(SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS
   "Require NEAT runtime libraries/headers during configure"
   ${SIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS_DEFAULT})
+
+set(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT ON)
+if (SIMANEAT_CPP_TIDY)
+  set(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT OFF)
+endif()
+option(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS
+  "Require LLiMa runtime libraries/headers during configure"
+  ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT})
+
+set(SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS})
+if (SIMANEAT_CPP_TIDY)
+  set(SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT OFF)
+endif()
+option(SIMANEAT_ENABLE_OPENAI_SERVER
+  "Build OpenAI-compatible GenAI HTTP server support"
+  ${SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT})
 
 if (UNIX)
   set(SIMANEAT_SOURCE_FS_TYPE "")
@@ -209,6 +226,56 @@ endif()
 # Dependencies
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
+if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
+  find_package(SimaLMM CONFIG REQUIRED)
+else()
+  # Core-only builds must not fail when LLiMa is absent, but if the package is
+  # present we should build the real GenAI implementation instead of silently
+  # shipping unavailable stubs.  This keeps local developer/CI environments
+  # coherent without making LLiMa a hard dependency for normal Graph/Core builds.
+  find_package(SimaLMM CONFIG QUIET)
+endif()
+if (SimaLMM_FOUND)
+  message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
+else()
+  message(STATUS
+    "SimaLMM package not found; building GenAI/LLiMa APIs with unavailable stubs. "
+    "Set SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON to make this a configure error.")
+endif()
+find_path(SIMANEAT_JSONCPP_INCLUDE_DIR
+  NAMES json/json.h
+  PATHS
+    "$ENV{SYSROOT}/usr/include/jsoncpp"
+    "${CMAKE_SYSROOT}/usr/include/jsoncpp"
+    "/usr/include/jsoncpp")
+find_path(SIMANEAT_EIGEN3_INCLUDE_DIR
+  NAMES Eigen/Core
+  PATHS
+    "$ENV{SYSROOT}/usr/include/eigen3"
+    "${CMAKE_SYSROOT}/usr/include/eigen3"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
+    "/usr/include/eigen3")
+find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
+  NAMES unsupported/Eigen/CXX11/Tensor
+  PATHS
+    "$ENV{SYSROOT}/usr/include/eigen3"
+    "${CMAKE_SYSROOT}/usr/include/eigen3"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
+    "/usr/include/eigen3")
+if (SIMANEAT_ENABLE_OPENAI_SERVER AND NOT SimaLMM_FOUND)
+  message(STATUS "OpenAI server disabled because SimaLMM package was not found.")
+  set(SIMANEAT_ENABLE_OPENAI_SERVER OFF)
+endif()
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
+  find_library(SIMANEAT_HTTPLIB_LIBRARY
+    NAMES cpp-httplib
+    PATHS ${HTTPLIB_LIBRARY_DIRS}
+    NO_DEFAULT_PATH)
+  if (NOT SIMANEAT_HTTPLIB_LIBRARY)
+    message(FATAL_ERROR "Could not find libcpp-httplib. Install libcpp-httplib-dev.")
+  endif()
+endif()
 
 if (SIMANEAT_CPP_TIDY)
   pkg_check_modules(GST QUIET
@@ -350,6 +417,8 @@ if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
 endif()
 
 set(SIMANEAT_ELXR_SYSROOT /opt/toolchain/aarch64/modalix)
+set(SIMANEAT_LOCAL_DEP_HEADER_ROOT
+  ${CMAKE_CURRENT_SOURCE_DIR}/deps/headers/usr/include)
 set(SIMANEAT_INSTALLED_NEAT_PLUGIN_DIR_CANDIDATES
   ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/neat/gst-plugins
   ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/gstreamer-1.0
@@ -362,12 +431,14 @@ set(SIMANEAT_INSTALLED_NEAT_PLUGIN_DIR_CANDIDATES
 set(SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES
   ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu/neat/runtime
   ${SIMANEAT_ELXR_SYSROOT}/usr/lib/aarch64-linux-gnu
+  ${SIMANEAT_ELXR_SYSROOT}/usr/lib
   /usr/lib/aarch64-linux-gnu/neat/runtime
   /lib/aarch64-linux-gnu/neat/runtime
   /usr/lib/neat/runtime
   /lib/neat/runtime
 )
 set(SIMANEAT_INSTALLED_NEAT_INCLUDE_DIR_CANDIDATES
+  ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}/simaai
   ${SIMANEAT_ELXR_SYSROOT}/usr/include/simaai
   /usr/include/simaai
   /usr/local/include/simaai
@@ -514,6 +585,7 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE AND NOT SIMANEAT_NEAT_PUBLIC_INCLUDE_
   find_path(SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT
     NAMES gst/SimaPreparedRuntimeAbi.h
     HINTS
+      ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}
       /usr/include
       /usr/local/include
       $ENV{HOME}/.local/include
@@ -664,6 +736,33 @@ file(GLOB_RECURSE SIMANEAT_ALL_SOURCES
 # Apply blacklist
 # ------------------------------------------------------------------------------
 set(SIMANEAT_SOURCES ${SIMANEAT_ALL_SOURCES})
+if (SimaLMM_FOUND)
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIUnavailableStubs.cpp")
+endif()
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServerUnavailableStubs.cpp")
+else()
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp")
+endif()
+if (NOT SimaLMM_FOUND)
+  # Keep lightweight public GenAI types buildable for API discovery, but do not compile
+  # implementation TUs that require SimaLMM or call into LLiMa-backed model objects when the
+  # LLiMa SDK/package is intentionally absent (clang-tidy and core-only CI).  The unavailable
+  # stub TU above preserves linkability and reports a clear runtime diagnostic if those APIs are
+  # used in a non-LLiMa build.
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ASRModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GraphFragments.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIInternal.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/VisionLanguageModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/nodes/SpeechTranscriberNode.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/nodes/VisionLanguageNode.cpp")
+endif()
 
 foreach(blacklisted ${SIMANEAT_SRC_BLACKLIST})
   set(abs_path "${CMAKE_CURRENT_SOURCE_DIR}/src/${blacklisted}")
@@ -709,6 +808,16 @@ target_include_directories(sima_neat
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
 )
 
+foreach(_simaneat_llima_header_dep IN ITEMS
+    "${SIMANEAT_JSONCPP_INCLUDE_DIR}"
+    "${SIMANEAT_EIGEN3_INCLUDE_DIR}"
+    "${SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR}")
+  if (_simaneat_llima_header_dep AND
+      NOT _simaneat_llima_header_dep MATCHES "-NOTFOUND$")
+    target_include_directories(sima_neat SYSTEM PRIVATE "${_simaneat_llima_header_dep}")
+  endif()
+endforeach()
+
 if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_neat_include_dir IN ITEMS
       "${SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT}"
@@ -741,6 +850,9 @@ endif()
 if (OPENCV_FOUND)
   target_compile_options(sima_neat PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  target_compile_options(sima_neat PRIVATE ${HTTPLIB_CFLAGS_OTHER})
+endif()
 
 if (OPENCV_FOUND)
   target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
@@ -749,9 +861,17 @@ if (GST_FOUND)
   target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
 endif()
 
-target_link_libraries(sima_neat
-  PUBLIC
-)
+if (SimaLMM_FOUND)
+  target_link_libraries(sima_neat
+    PUBLIC
+      SimaLMM::sima_lmm_runtime
+  )
+endif()
+
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  target_include_directories(sima_neat SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
+  target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+endif()
 
 if (GST_FOUND)
   target_link_libraries(sima_neat PUBLIC ${GST_LIBRARIES})
@@ -894,6 +1014,12 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_ROOT_REL
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}/tests/assets/mpk")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}/tests/assets/mpk/fixtures_manifest.json")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
@@ -906,6 +1032,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
   "repo_tmp_root_rel": "@SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL@",
   "model_archive_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_ROOT_REL@",
   "model_archive_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL@",
+  "mpk_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL@",
+  "mpk_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL@",
   "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@"
 }
 ]=])
@@ -934,6 +1062,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
   "repo_tmp_root_rel": "",
   "model_archive_fixture_root_rel": "test-assets/model-archive",
   "model_archive_fixture_manifest_rel": "test-assets/model-archive/fixtures_manifest.json",
+  "mpk_fixture_root_rel": "test-assets/mpk",
+  "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
   "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264"
 }
 ]=])
@@ -1054,11 +1184,37 @@ install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   COMPONENT core
+  # Low-level actor-runtime graph headers are compiler/runtime internals.  The
+  # public application surface is simaai::neat::Graph / Run via neat.h; do not
+  # install a second public Graph concept.
+  PATTERN "graph" EXCLUDE
+  PATTERN "graph/*" EXCLUDE
+  PATTERN "genai/nodes" EXCLUDE
+  PATTERN "genai/nodes/*" EXCLUDE
+  PATTERN "pipeline/internal" EXCLUDE
+  PATTERN "pipeline/internal/*" EXCLUDE
+  PATTERN "ProcessMlaRuntimeConfig.h" EXCLUDE
+  PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
+  PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
+  PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
+  PATTERN "PreparedRuntimeBridge.h" EXCLUDE
 )
 
 install(
   DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/distribution/skills/sima-neat/
   DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/skills/sima-neat
+  COMPONENT core
+)
+
+install(
+  FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/fix_devkit_runtime.sh
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/neat
+  DESTINATION ${CMAKE_INSTALL_BINDIR}
+  PERMISSIONS
+    OWNER_READ OWNER_WRITE OWNER_EXECUTE
+    GROUP_READ GROUP_EXECUTE
+    WORLD_READ WORLD_EXECUTE
   COMPONENT core
 )
 
@@ -1076,6 +1232,11 @@ install(
 set(SimaNeat_INSTALL_CMAKEDIR
   ${CMAKE_INSTALL_LIBDIR}/cmake/SimaNeat
 )
+
+set(SIMANEAT_CONFIG_WITH_LLIMA FALSE)
+if (SimaLMM_FOUND)
+  set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)
+endif()
 
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SimaNeatConfig.cmake.in
@@ -1142,9 +1303,23 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 set(CPACK_DEBIAN_CORE_PACKAGE_NAME "sima-neat")
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_NAME "sima-neat-extras")
 
-set(CPACK_DEBIAN_CORE_PACKAGE_DEPENDS
-  "libgstreamer1.0-0, libgstrtspserver-1.0-0, libglib2.0-0, libopencv-core406, neat-internals-dev, neat-gst-plugins"
+set(SIMANEAT_CORE_DEBIAN_DEPENDS
+  "libgstreamer1.0-0"
+  "libgstrtspserver-1.0-0"
+  "libglib2.0-0"
+  "libopencv-core406"
+  "neat-internals-dev"
+  "neat-gst-plugins"
 )
+if (SimaLMM_FOUND)
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
+    "sima-lmm-core"
+    "sima-lmm-dev")
+endif()
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "libcpp-httplib0.11")
+endif()
+string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
   "sima-neat (= ${CPACK_PACKAGE_VERSION})"
 )
@@ -1158,15 +1333,17 @@ include(CPack)
 # ------------------------------------------------------------------------------
 # Docs (Doxygen)
 # ------------------------------------------------------------------------------
-find_package(Doxygen QUIET)
-if (DOXYGEN_FOUND)
-  set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile)
-  add_custom_target(docs
-    COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}
-    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-    COMMENT "Generating Doxygen documentation"
-    VERBATIM
-  )
-else()
-  message(STATUS "Doxygen not found: 'docs' target will be unavailable.")
+if (SIMANEAT_BUILD_DOCS)
+  find_package(Doxygen QUIET)
+  if (DOXYGEN_FOUND)
+    set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/docs/doxygen/Doxyfile)
+    add_custom_target(docs
+      COMMAND ${DOXYGEN_EXECUTABLE} ${DOXYGEN_IN}
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+      COMMENT "Generating Doxygen documentation"
+      VERBATIM
+    )
+  else()
+    message(STATUS "Doxygen not found: 'docs' target will be unavailable.")
+  endif()
 endif()

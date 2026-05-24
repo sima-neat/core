@@ -14,6 +14,7 @@ MARKDOWN_SUPPORT       = YES
 
 # Excludes
 EXCLUDE_PATTERNS       = */include/sima/* \
+                          */include/graph/* \
                           */tests/assets/* \
                           */examples/media/* \
                           */build* \
@@ -21,11 +22,6 @@ EXCLUDE_PATTERNS       = */include/sima/* \
                           */docs/reference/api/* \
                           */docs/reference/cppapi/* \
                           */include/policy/* \
-                          */include/neat/session.h \
-                          */include/pipeline/Session.h \
-                          */include/pipeline/SessionError.h \
-                          */include/pipeline/SessionOptions.h \
-                          */include/pipeline/SessionReport.h \
                           */include/nodes/groups/ImageToH264RtspGroup.h \
 
 # Extraction / warnings

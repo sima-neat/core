@@ -12,7 +12,7 @@ Use `Model` when you want model-aware pipeline assembly without manually wiring 
 
 ## What `Model` gives you
 
-- `graph()`: full model path as a node group.
+- `graph()`: full model path as a reusable Graph fragment.
 - `preprocess()`, `inference()`, `postprocess()`: stage-level composition.
 - `input_spec()` and `output_spec()`: tensor contract introspection.
 - `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.

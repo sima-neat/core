@@ -38,13 +38,21 @@ SIMA_ENABLE_UBSAN=OFF
 SIMA_ENABLE_TSAN=OFF
 SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
+INSTALL_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
 NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
+NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
+NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
+NEAT_INTERNALS_RESOLVED_REF=""
+NEAT_LLIMA_BASE_URL="${NEAT_LLIMA_BASE_URL:-https://artifacts.sima-neat.com/llima}"
+NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
+NEAT_LLIMA_BASIC_AUTH="${NEAT_LLIMA_BASIC_AUTH:-${NEAT_INTERNALS_BASIC_AUTH}}"
+NEAT_LLIMA_RESOLVED_REF=""
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -127,8 +135,13 @@ detect_fs_type() {
   printf '%s\n' "${fs_type}"
 }
 
+lowercase() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 is_remote_fs_type() {
-  local fs_type="${1,,}"
+  local fs_type
+  fs_type="$(lowercase "$1")"
   case "${fs_type}" in
     cifs|nfs|nfs4|smb2|smb3|smbfs|fuse.sshfs)
       return 0
@@ -183,7 +196,7 @@ maybe_reexec_from_shadow() {
 
   SOURCE_FS_TYPE="$(detect_fs_type "${ORIGINAL_SOURCE_DIR}")"
 
-  case "${SHADOW_BUILD_MODE,,}" in
+  case "$(lowercase "${SHADOW_BUILD_MODE}")" in
     off|0|false|no)
       return 0
       ;;
@@ -241,7 +254,7 @@ Options:
   --asan-ubsan   Enable ASan+UBSan instrumentation for this build
   --tsan         Enable TSan instrumentation for this build
   --install-neat-internals, --install-deps
-                 Download/install deps artifacts before build
+                 Download/install internals + LLiMa deps artifacts before build
   --doc          Build only docs
   --install      After build/package, install artifacts into the current environment.
                  In paired eLxr SDK mode, also deploy/install on the paired DevKit.
@@ -250,7 +263,7 @@ Options:
   --no-doc       Skip documentation build (even with --all)
   --no-node      Skip Node.js install (docs build will not work)
   --install-deps-only
-                 Install system dependencies only, then exit
+                 Install system dependencies and dependency headers, then exit
   -h, --help     Show this help
 
 Environment:
@@ -284,6 +297,7 @@ parse_args() {
         BUILD_DOCS=ON
         BUILD_PYTHON=ON
         INSTALL_NEAT_INTERNALS=ON
+        INSTALL_NEAT_LLIMA=ON
         BUILD_ALL=ON
         shift
         ;;
@@ -302,6 +316,7 @@ parse_args() {
         BUILD_DOCS=ON
         BUILD_PYTHON=ON
         INSTALL_NEAT_INTERNALS=ON
+        INSTALL_NEAT_LLIMA=ON
         shift
         ;;
       --python)
@@ -317,6 +332,7 @@ parse_args() {
         BUILD_ALL=ON
         BUILD_FUZZ=ON
         INSTALL_NEAT_INTERNALS=ON
+        INSTALL_NEAT_LLIMA=ON
         shift
         ;;
       --asan-ubsan)
@@ -347,6 +363,7 @@ parse_args() {
         ;;
       --install-neat-internals|--install-deps)
         INSTALL_NEAT_INTERNALS=ON
+        INSTALL_NEAT_LLIMA=ON
         shift
         ;;
       --example)
@@ -562,6 +579,101 @@ run_privileged() {
   return 1
 }
 
+ensure_llima_sdk_sysroot_deps() {
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    return
+  fi
+
+  local install_root="${SYSROOT:-}"
+  if [[ -z "${install_root}" ]]; then
+    echo "ERROR: eLxr SDK mode requires SYSROOT to be set before installing LLiMa dependencies." >&2
+    exit 1
+  fi
+
+  if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-deb >/dev/null 2>&1; then
+    echo "ERROR: apt-get and dpkg-deb are required to install LLiMa dependencies into the SDK sysroot." >&2
+    exit 1
+  fi
+
+  local -a missing_packages=()
+  if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
+        ! -f "${install_root}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
+    missing_packages+=("libeigen3-dev")
+  fi
+  if [[ ! -f "${install_root}/usr/include/fmt/core.h" ]]; then
+    missing_packages+=("libfmt-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
+    missing_packages+=("libfmt9:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/spdlog/spdlog.h" ]]; then
+    missing_packages+=("libspdlog-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
+    missing_packages+=("libspdlog1.10:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
+    missing_packages+=("nlohmann-json3-dev")
+  fi
+  if [[ ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
+    missing_packages+=("libbrotli-dev:arm64")
+  fi
+  if [[ ! -f "${install_root}/usr/include/httplib.h" ]]; then
+    missing_packages+=("libcpp-httplib-dev:arm64")
+  fi
+  if [[ ! -e "${install_root}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
+    missing_packages+=("libcpp-httplib0.11:arm64")
+  fi
+
+  if (( ${#missing_packages[@]} == 0 )); then
+    return
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-llima-deps-XXXXXX)"
+
+  echo "Installing LLiMa SDK sysroot dependencies:"
+  printf '  %s\n' "${missing_packages[@]}"
+  (
+    cd "${tmp_dir}"
+    apt-get download "${missing_packages[@]}"
+  )
+
+  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
+  if (( ${#downloaded_debs[@]} == 0 )); then
+    echo "ERROR: Failed to download LLiMa SDK sysroot dependencies." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local dep_deb
+  for dep_deb in "${downloaded_debs[@]}"; do
+    echo "  $(basename "${dep_deb}")"
+    if ! dpkg-deb -x "${dep_deb}" "${install_root}" 2>/dev/null; then
+      if ! run_privileged dpkg-deb -x "${dep_deb}" "${install_root}"; then
+        echo "ERROR: Failed to install $(basename "${dep_deb}") into SYSROOT=${install_root}" >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+      fi
+    fi
+  done
+
+  if [[ ! -f "${install_root}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
+        ! -f "${install_root}/usr/include/fmt/core.h" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ||
+        ! -f "${install_root}/usr/include/spdlog/spdlog.h" ||
+        ! -f "${install_root}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ||
+        ! -f "${install_root}/usr/include/nlohmann/json.hpp" ]]; then
+      echo "ERROR: LLiMa SDK sysroot dependencies are still incomplete after install." >&2
+      rm -rf "${tmp_dir}"
+      exit 1
+  fi
+
+  rm -rf "${tmp_dir}"
+}
+
 is_dep_satisfied_linux() {
   local pkg="$1"
   # Some tools are version-suffixed on devkits, so check common aliases first.
@@ -662,6 +774,12 @@ extract_json_string() {
   sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n1
 }
 
+manifest_has_json_string_key() {
+  local key="$1"
+  local file="$2"
+  grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "${file}"
+}
+
 download_file() {
   local url="$1"
   local out="$2"
@@ -690,6 +808,107 @@ download_file() {
     return $?
   fi
   return 1
+}
+
+sanitize_internals_branch_key() {
+  # Match internals publish naming from internals/.github/workflows/build-and-publish-tar.yml.
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
+    sed -E 's#[^a-z0-9._-]+#-#g; s/^-+//; s/-+$//'
+}
+
+current_core_branch() {
+  if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+    printf '%s\n' "${GITHUB_HEAD_REF}"
+    return 0
+  fi
+  if [[ -n "${GITHUB_REF_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 &&
+     git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${REPO_ROOT}" rev-parse --abbrev-ref HEAD 2>/dev/null
+    return 0
+  fi
+  printf '\n'
+}
+
+artifact_checksum_available() {
+  local url="$1"
+  local basic_auth="$2"
+  local temp_prefix="$3"
+  local probe_path
+  probe_path="$(mktemp "/tmp/${temp_prefix}-probe-XXXXXX")"
+  if download_file "${url}" "${probe_path}" "${basic_auth}" >/dev/null 2>&1; then
+    rm -f "${probe_path}"
+    return 0
+  fi
+  rm -f "${probe_path}"
+  return 1
+}
+
+resolve_manifest_artifact_ref() {
+  local manifest_key="$1"
+  local base_url="$2"
+  local artifact_prefix="$3"
+  local basic_auth="$4"
+  local display_name="$5"
+  local temp_prefix="$6"
+
+  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
+    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
+    return 1
+  fi
+
+  if ! manifest_has_json_string_key "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}"; then
+    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a ${manifest_key} string." >&2
+    return 1
+  fi
+
+  local manifest_ref
+  manifest_ref="$(extract_json_string "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}")"
+  if [[ -n "${manifest_ref}" ]]; then
+    printf '%s\n' "${manifest_ref}"
+    return 0
+  fi
+
+  local branch branch_key candidate checksum_url
+  branch="$(current_core_branch)"
+  branch_key="$(sanitize_internals_branch_key "${branch}")"
+  if [[ -n "${branch_key}" && "${branch_key}" != "head" ]]; then
+    candidate="${branch_key}-latest"
+    checksum_url="${base_url}/${artifact_prefix}-${candidate}.tar.gz.sha256"
+    if artifact_checksum_available "${checksum_url}" "${basic_auth}" "${temp_prefix}"; then
+      echo "Resolved empty ${manifest_key} manifest to matching branch artifact: ${candidate}" >&2
+      printf '%s\n' "${candidate}"
+      return 0
+    fi
+    echo "No ${display_name} artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
+  else
+    echo "Could not determine current branch for ${display_name} snap; using develop-latest." >&2
+  fi
+
+  printf '%s\n' "develop-latest"
+}
+
+resolve_neat_internals_ref() {
+  resolve_manifest_artifact_ref \
+    "internals" \
+    "${NEAT_INTERNALS_BASE_URL}" \
+    "sima-neat-internals" \
+    "${NEAT_INTERNALS_BASIC_AUTH}" \
+    "internals" \
+    "sima-neat-internals"
+}
+
+resolve_neat_llima_ref() {
+  resolve_manifest_artifact_ref \
+    "llima" \
+    "${NEAT_LLIMA_BASE_URL}" \
+    "sima-llima" \
+    "${NEAT_LLIMA_BASIC_AUTH}" \
+    "LLiMa" \
+    "sima-neat-llima"
 }
 
 compute_sha256() {
@@ -909,18 +1128,11 @@ copy_plugins_to_neat_internals() {
 
 ensure_neat_internals() {
   # Sync neat-internals from remote artifact, validate integrity, then materialize plugins.
-  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
-    exit 1
-  fi
-
   local internals_ref
-  # Manifest drives which internals artifact to fetch.
-  internals_ref="$(extract_json_string "internals" "${NEAT_INTERNALS_MANIFEST}")"
-  if [[ -z "${internals_ref}" ]]; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a non-empty internals string." >&2
+  if ! internals_ref="$(resolve_neat_internals_ref)"; then
     exit 1
   fi
+  NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.internals"
   local checksum_file="${NEAT_INTERNALS_DIR}/.artifact_sha256"
@@ -1009,6 +1221,369 @@ ensure_neat_internals() {
   rm -rf "${tmp_dir}"
 }
 
+ensure_neat_llima() {
+  # Sync LLiMa C++ runtime/dev packages from remote artifact and install them.
+  local llima_ref
+  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+    exit 1
+  fi
+  NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
+
+  local marker_file="${NEAT_INTERNALS_DIR}/.llima"
+  local checksum_file="${NEAT_INTERNALS_DIR}/.llima_artifact_sha256"
+  local deb_cache_dir="${NEAT_LLIMA_DEB_DIR}"
+  local archive_name="sima-llima-${llima_ref}.tar.gz"
+  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
+  local checksum_url="${archive_url}.sha256"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-llima-XXXXXX)"
+
+  local checksum_path="${tmp_dir}/${archive_name}.sha256"
+  local archive_path="${tmp_dir}/${archive_name}"
+  local extract_dir="${tmp_dir}/extract"
+
+  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
+    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local server_sha
+  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
+  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  echo "Fetching LLiMa packages: ${archive_url} (sha256=${server_sha})"
+  mkdir -p "${extract_dir}"
+
+  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
+    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local actual_sha
+  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
+    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+  if [[ "${actual_sha}" != "${server_sha}" ]]; then
+    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
+    echo "  expected: ${server_sha}" >&2
+    echo "  actual  : ${actual_sha}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+
+  local core_deb dev_deb
+  core_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
+  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  if [[ -z "${core_deb}" || -z "${dev_deb}" ]]; then
+    echo "ERROR: Expected sima-lmm core/dev debs were not found in ${archive_name}" >&2
+    find "${extract_dir}" -maxdepth 1 -type f -name '*.deb' -printf '  %f\n' | sort >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${deb_cache_dir}"
+  rm -f "${deb_cache_dir}"/sima-lmm-*.deb
+  cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
+  cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+
+  local -a llima_debs=("${core_deb}" "${dev_deb}")
+  local install_root="${SYSROOT:-}"
+
+  if [[ "${ELXR_SDK}" == "ON" ]]; then
+    if [[ -z "${install_root}" ]]; then
+      echo "ERROR: eLxr SDK mode requires SYSROOT to be set before installing LLiMa packages." >&2
+      rm -rf "${tmp_dir}"
+      exit 1
+    fi
+    if ! mkdir -p "${install_root}" 2>/dev/null; then
+      if ! run_privileged mkdir -p "${install_root}"; then
+        echo "ERROR: Unable to create SYSROOT directory: ${install_root}" >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+      fi
+    fi
+    echo "Installing LLiMa .deb payloads into eLxr sysroot: ${install_root}"
+    ensure_llima_sdk_sysroot_deps
+    local deb_path
+    for deb_path in "${llima_debs[@]}"; do
+      echo "  $(basename "${deb_path}")"
+      if ! dpkg-deb -x "${deb_path}" "${install_root}" 2>/dev/null; then
+        if ! run_privileged dpkg-deb -x "${deb_path}" "${install_root}"; then
+          echo "ERROR: Failed to install $(basename "${deb_path}") into SYSROOT=${install_root}" >&2
+          rm -rf "${tmp_dir}"
+          exit 1
+        fi
+      fi
+    done
+  else
+    if ! command -v dpkg >/dev/null 2>&1; then
+      echo "ERROR: dpkg is required to install LLiMa .deb packages." >&2
+      rm -rf "${tmp_dir}"
+      exit 1
+    fi
+    echo "Installing LLiMa .deb packages into host system..."
+    if command -v apt >/dev/null 2>&1; then
+      mapfile -t llima_deb_abs_files < <(for deb in "${llima_debs[@]}"; do realpath "${deb}"; done)
+      if ! run_privileged apt install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${llima_deb_abs_files[@]}"; then
+        echo "ERROR: Failed to install LLiMa packages via apt." >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+      fi
+    else
+      if ! run_privileged dpkg -i "${llima_debs[@]}"; then
+        echo "ERROR: Failed to install LLiMa packages." >&2
+        rm -rf "${tmp_dir}"
+        exit 1
+      fi
+    fi
+  fi
+
+  local cmake_config runtime_lib
+  if [[ "${ELXR_SDK}" == "ON" ]]; then
+    cmake_config="${install_root}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
+    runtime_lib="${install_root}/usr/lib/aarch64-linux-gnu/libsima_lmm_runtime.so"
+  else
+    cmake_config="/usr/lib/aarch64-linux-gnu/cmake/SimaLMM/SimaLMMConfig.cmake"
+    runtime_lib="/usr/lib/aarch64-linux-gnu/libsima_lmm_runtime.so"
+  fi
+
+  if [[ ! -f "${cmake_config}" ]]; then
+    echo "ERROR: SimaLMM CMake package not found after install: ${cmake_config}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+  if [[ ! -f "${runtime_lib}" ]]; then
+    echo "ERROR: LLiMa runtime library not found after install: ${runtime_lib}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  printf '%s\n' "${llima_ref}" > "${marker_file}"
+  printf '%s\n' "${server_sha}" > "${checksum_file}"
+  rm -rf "${tmp_dir}"
+}
+
+copy_deb_usr_include_to_header_cache() {
+  local deb_path="$1"
+  local extract_dir="$2"
+
+  mkdir -p "${extract_dir}"
+  dpkg-deb -x "${deb_path}" "${extract_dir}"
+  if [[ -d "${extract_dir}/usr/include" ]]; then
+    mkdir -p "${NEAT_DEP_HEADERS_DIR}/usr"
+    cp -a "${extract_dir}/usr/include" "${NEAT_DEP_HEADERS_DIR}/usr/"
+  fi
+}
+
+ensure_neat_internals_headers() {
+  # Header-only bootstrap for x86 analysis jobs. Do not install arm64 runtime/plugin packages.
+  local internals_ref
+  if ! internals_ref="$(resolve_neat_internals_ref)"; then
+    exit 1
+  fi
+  NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
+
+  local marker_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers"
+  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers_sha256"
+  local archive_name="sima-neat-internals-${internals_ref}.tar.gz"
+  local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
+  local checksum_url="${archive_url}.sha256"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-internals-headers-XXXXXX)"
+  local checksum_path="${tmp_dir}/${archive_name}.sha256"
+  local archive_path="${tmp_dir}/${archive_name}"
+  local extract_dir="${tmp_dir}/extract"
+  local deb_extract_dir="${tmp_dir}/deb-extract"
+
+  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
+    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local server_sha
+  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
+  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
+    echo "Using cached neat-internals headers (${internals_ref}, sha256=${server_sha})."
+    rm -rf "${tmp_dir}"
+    return 0
+  fi
+
+  echo "Fetching neat-internals headers: ${archive_url} (sha256=${server_sha})"
+  mkdir -p "${extract_dir}"
+
+  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
+    echo "ERROR: curl or wget is required to download neat-internals artifacts." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local actual_sha
+  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
+    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+  if [[ "${actual_sha}" != "${server_sha}" ]]; then
+    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
+    echo "  expected: ${server_sha}" >&2
+    echo "  actual  : ${actual_sha}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+
+  local dev_deb
+  dev_deb="$(find "${extract_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
+  if [[ -z "${dev_deb}" ]]; then
+    echo "ERROR: neat-internals-dev package was not found in ${archive_name}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_INTERNALS_DEB_DIR}"
+  cp -f "${dev_deb}" "${NEAT_INTERNALS_DEB_DIR}/$(basename "${dev_deb}")"
+  copy_deb_usr_include_to_header_cache "${dev_deb}" "${deb_extract_dir}"
+
+  if [[ ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ||
+        ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
+    echo "ERROR: neat-internals headers are incomplete under ${NEAT_DEP_HEADERS_DIR}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_DEP_HEADERS_DIR}"
+  printf '%s\n' "${internals_ref}" > "${marker_file}"
+  printf '%s\n' "${server_sha}" > "${checksum_file}"
+  rm -rf "${tmp_dir}"
+}
+
+ensure_neat_llima_headers() {
+  # Header-only bootstrap for x86 analysis jobs. GenAI tidy may still be skipped
+  # unless a full SimaLMM CMake package/runtime is available.
+  local llima_ref
+  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+    exit 1
+  fi
+  NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
+
+  local marker_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers"
+  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers_sha256"
+  local archive_name="sima-llima-${llima_ref}.tar.gz"
+  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
+  local checksum_url="${archive_url}.sha256"
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-neat-llima-headers-XXXXXX)"
+  local checksum_path="${tmp_dir}/${archive_name}.sha256"
+  local archive_path="${tmp_dir}/${archive_name}"
+  local extract_dir="${tmp_dir}/extract"
+  local deb_extract_dir="${tmp_dir}/deb-extract"
+
+  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
+    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local server_sha
+  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
+  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
+     [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/sima_lmm/chat.hpp" ]]; then
+    echo "Using cached LLiMa headers (${llima_ref}, sha256=${server_sha})."
+    rm -rf "${tmp_dir}"
+    return 0
+  fi
+
+  echo "Fetching LLiMa headers: ${archive_url} (sha256=${server_sha})"
+  mkdir -p "${extract_dir}"
+
+  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
+    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  local actual_sha
+  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
+    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+  if [[ "${actual_sha}" != "${server_sha}" ]]; then
+    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
+    echo "  expected: ${server_sha}" >&2
+    echo "  actual  : ${actual_sha}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  tar -xzf "${archive_path}" -C "${extract_dir}"
+
+  local dev_deb
+  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  if [[ -z "${dev_deb}" ]]; then
+    echo "ERROR: sima-lmm dev package was not found in ${archive_name}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_LLIMA_DEB_DIR}"
+  cp -f "${dev_deb}" "${NEAT_LLIMA_DEB_DIR}/$(basename "${dev_deb}")"
+  copy_deb_usr_include_to_header_cache "${dev_deb}" "${deb_extract_dir}"
+
+  if [[ ! -f "${NEAT_DEP_HEADERS_DIR}/usr/include/sima_lmm/chat.hpp" ]]; then
+    echo "ERROR: LLiMa headers are incomplete under ${NEAT_DEP_HEADERS_DIR}" >&2
+    rm -rf "${tmp_dir}"
+    exit 1
+  fi
+
+  mkdir -p "${NEAT_DEP_HEADERS_DIR}"
+  printf '%s\n' "${llima_ref}" > "${marker_file}"
+  printf '%s\n' "${server_sha}" > "${checksum_file}"
+  rm -rf "${tmp_dir}"
+}
+
+ensure_dependency_headers() {
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    echo "Skipping NEAT/LLiMa header artifact extraction on macOS."
+    return 0
+  fi
+  ensure_neat_internals_headers
+  ensure_neat_llima_headers
+}
+
 collect_install_artifact_files() {
   local -n out_files_ref="$1"
   out_files_ref=()
@@ -1025,7 +1600,17 @@ collect_install_artifact_files() {
     out_files_ref+=("${file}")
   done
 
-  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb; do
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/neat-*.deb \
+              "${NEAT_INTERNALS_DEB_DIR}"/simaai-common*.deb \
+              "${NEAT_INTERNALS_DEB_DIR}"/neat-appcomplex_*.deb; do
+    [[ -e "${file}" ]] || continue
+    basename_file="$(basename "${file}")"
+    [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
+    seen_basenames["${basename_file}"]=1
+    out_files_ref+=("${file}")
+  done
+
+  for file in "${NEAT_LLIMA_DEB_DIR}"/sima-lmm-*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
@@ -1161,6 +1746,7 @@ print_build_config() {
   echo "Build dir      : ${BUILD_DIR}"
   echo "Build jobs     : ${BUILD_JOBS}"
   echo "eLxr SDK       : ${ELXR_SDK}"
+  echo "Neat LLiMa     : ${INSTALL_NEAT_LLIMA}"
   if [[ "${ELXR_SDK}" == "ON" ]]; then
     echo "eLxr SDK ver   : ${ELXR_SDK_VERSION}"
     echo "eLXr ver       : ${ELXR_VERSION}"
@@ -1186,6 +1772,7 @@ configure_cmake() {
     -DSIMANEAT_BUILD_TESTS="${BUILD_TESTS}"
     -DSIMANEAT_BUILD_TUTORIALS="${BUILD_TUTORIALS}"
     -DSIMANEAT_BUILD_PYTHON="${BUILD_PYTHON}"
+    -DSIMANEAT_BUILD_DOCS="${BUILD_DOCS}"
     -DSIMANEAT_STRICT_WARNINGS="${STRICT_WARNINGS}"
     -DSIMA_ENABLE_ASAN="${SIMA_ENABLE_ASAN}"
     -DSIMA_ENABLE_UBSAN="${SIMA_ENABLE_UBSAN}"
@@ -1201,6 +1788,7 @@ configure_cmake() {
     # requirements for docs-only builds.
     cmake_args+=(
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
+      -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
     )
   fi
 
@@ -1316,6 +1904,37 @@ generate_platform_version_artifacts() {
   python3 tools/generate_platform_version_artifacts.py --repo-root "${REPO_ROOT}"
 }
 
+write_resolved_neat_internals_manifest_if_needed() {
+  if [[ -z "${NEAT_INTERNALS_RESOLVED_REF}" && -z "${NEAT_LLIMA_RESOLVED_REF}" ]]; then
+    return 0
+  fi
+
+  local output_path="${NEAT_INTERNALS_RESOLVED_MANIFEST}"
+  mkdir -p "$(dirname "${output_path}")"
+  python3 - "${NEAT_INTERNALS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+internals_ref = sys.argv[2]
+llima_ref = sys.argv[3]
+output_path = Path(sys.argv[4])
+
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+platform_version = str(data.get("platform-version", "")).strip()
+if not platform_version:
+    raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
+
+if internals_ref:
+    data["internals"] = internals_ref
+if llima_ref:
+    data["llima"] = llima_ref
+output_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+PY
+  echo "Resolved deps manifest: ${output_path} (internals=${NEAT_INTERNALS_RESOLVED_REF:-<unchanged>}, llima=${NEAT_LLIMA_RESOLVED_REF:-<unchanged>})"
+}
+
 build_python_wheel_if_requested() {
   if [[ "${BUILD_PYTHON}" != "ON" ]]; then
     return 0
@@ -1357,11 +1976,22 @@ PY
     py_triplet="$(elxr_ext_platform_triplet)"
     pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
     echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
+    local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
+    if [[ -n "${SYSROOT:-}" ]]; then
+      wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY"
+      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
+      wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
+      wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+    fi
     # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
     # (notably ninja), which are not executable on the host container.
     # Build without isolation and force Makefiles to keep host tools executable.
     _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
-      CMAKE_ARGS="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}" \
+      CMAKE_ARGS="${wheel_cmake_args}" \
       CMAKE_GENERATOR="Unix Makefiles" \
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
       "${wheel_python}" -m build --wheel --outdir dist --no-isolation
@@ -1645,13 +2275,20 @@ main() {
   detect_elxr_host_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
-    echo
-    echo "System dependencies installed. Exiting due to --install-deps-only."
-    exit 0
+    ensure_dependency_headers
   fi
 
   if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_INTERNALS}" == "ON" ]]; then
     ensure_neat_internals
+  fi
+  if [[ "${OS_NAME}" != "Darwin" && "${INSTALL_NEAT_LLIMA}" == "ON" ]]; then
+    ensure_neat_llima
+  fi
+
+  if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
+    echo
+    echo "System dependencies and dependency headers installed. Exiting due to --install-deps-only."
+    exit 0
   fi
 
   detect_build_jobs
@@ -1659,6 +2296,7 @@ main() {
   generate_platform_version_artifacts
   print_build_config
   clean_build_dir_if_requested
+  write_resolved_neat_internals_manifest_if_needed
   configure_cmake
   build_docs_only_if_requested
   build_targets

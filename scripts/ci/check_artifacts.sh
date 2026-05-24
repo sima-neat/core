@@ -33,9 +33,13 @@ if [[ ! -f deps/manifest.json ]]; then
   echo "ERROR: deps/manifest.json is required." >&2
   fail=1
 else
-  internals_ref="$(sed -n 's/.*"internals"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
-  if [[ -z "${internals_ref}" ]]; then
-    echo "ERROR: deps/manifest.json must define a non-empty internals." >&2
+  if ! grep -Eq '"internals"[[:space:]]*:[[:space:]]*"[^"]*"' deps/manifest.json; then
+    echo "ERROR: deps/manifest.json must define an internals string." >&2
+    fail=1
+  fi
+  platform_version="$(sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
+  if [[ -z "${platform_version}" ]]; then
+    echo "ERROR: deps/manifest.json must define a non-empty platform-version." >&2
     fail=1
   fi
 fi

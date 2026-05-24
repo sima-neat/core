@@ -5,7 +5,7 @@
  * Pulls in every built-in Node the framework ships, organized by subdirectory:
  * common GStreamer-backed nodes (FileInput, ImageDecode/Freeze, JpegDecode, Output,
  * Queue, VideoConvert/Rate/Scale, VideoTrackSelect, Caps), I/O nodes (Input,
- * RTSPInput, StillImageInput, UdpOutput, OptiViewJsonOutput), RTP helpers
+ * MetadataSender, RTSPInput, StillImageInput, UdpOutput), RTP helpers
  * (H264CapsFixup, H264Depacketize), and the SiMa-specific MLA-bearing nodes
  * (Cast, CastTess, Dequant, Detess, DetessCast, DetessDequant, H264DecodeSima,
  * H264EncodeSima, H264Packetize, H264Parse, PCIeSink/Src, Preproc, QuantTess,
@@ -27,7 +27,7 @@
 #include "nodes/common/VideoScale.h"
 #include "nodes/common/VideoTrackSelect.h"
 #include "nodes/io/Input.h"
-#include "nodes/io/OptiViewJsonOutput.h"
+#include "nodes/io/MetadataSender.h"
 #include "nodes/io/RTSPInput.h"
 #include "nodes/io/StillImageInput.h"
 #include "nodes/io/UdpOutput.h"

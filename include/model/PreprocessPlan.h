@@ -313,6 +313,7 @@ struct ResolvedPreprocessPlan {
       warnings; ///< Non-fatal advisories (e.g., "preset overridden by explicit stats").
 
   /// Render a multi-line debug summary of the plan — used in `Graph::describe()` and reports.
+  /// Render a multi-line debug summary of the plan — used in `Graph::describe()` and reports.
   std::string to_debug_string() const;
 };
 

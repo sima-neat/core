@@ -11,22 +11,18 @@
 
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
-#include "graph/Graph.h"
-#include "graph/GraphPrinter.h"
-#include "graph/GraphRun.h"
-#include "graph/GraphBuild.h"
-#include "graph/Node.h"
-#include "graph/nodes/FanOut.h"
-#include "graph/nodes/JoinBundle.h"
-#include "graph/nodes/PipelineNode.h"
-#include "graph/nodes/StageModelExecutor.h"
-#include "graph/nodes/StampFrameId.h"
-#include "graph/nodes/StreamScheduler.h"
+#include "genai/ASRModel.h"
+#include "genai/GenAIModel.h"
+#include "genai/GenAITypes.h"
+#include "genai/GraphFragments.h"
+#include "genai/OpenAIServer.h"
+#include "genai/VisionLanguageModel.h"
 #include "graphs/Fragments.h"
 #include "model/Model.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/groups/UdpH264OutputGroup.h"
+#include "nodes/groups/VideoSender.h"
 #include "nodes/sima/DetessDequant.h"
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Packetize.h"
@@ -37,24 +33,24 @@
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
-#include "nodes/groups/OptiViewOutputGroup.h"
 #include "nodes/groups/RtspDecodedInput.h"
 #include "nodes/groups/VideoInputGroup.h"
 #include "nodes/io/Input.h"
-#include "nodes/io/OptiViewJsonOutput.h"
+#include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphOptions.h"
-#include "pipeline/GraphRunExport.h"
+#include "pipeline/RunExport.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -86,9 +82,11 @@ using simaai::neat::PullError;
 using simaai::neat::PullStatus;
 using simaai::neat::Run;
 using simaai::neat::RunAdvancedOptions;
+using simaai::neat::RunAutoExportOptions;
 using simaai::neat::RunDiagSnapshot;
 using simaai::neat::RunElementFlowStats;
 using simaai::neat::RunElementTimingStats;
+using simaai::neat::RunExportOptions;
 using simaai::neat::RunMode;
 using simaai::neat::RunOptions;
 using simaai::neat::RunPreset;
@@ -212,6 +210,50 @@ std::optional<nlohmann::json> python_to_optional_json(nb::handle value) {
   if (value.is_none())
     return std::nullopt;
   return python_to_json(value);
+}
+
+simaai::neat::genai::Json python_to_genai_json(nb::handle value) {
+  return simaai::neat::genai::Json::parse(python_to_json(value).dump());
+}
+
+nb::object genai_json_to_python(const simaai::neat::genai::Json& value) {
+  return json_to_python(nlohmann::json::parse(value.dump()));
+}
+
+Sample make_text_sample_for_python(const std::string& port_name, const std::string& text) {
+  Sample out = simaai::neat::make_tensor_sample(port_name, Tensor::from_text(text));
+  out.port_name = port_name;
+  out.stream_label = port_name;
+  return out;
+}
+
+std::string sample_to_text_for_python(const Sample& sample) {
+  if (sample.kind == SampleKind::Tensor) {
+    if (!sample.tensor.has_value()) {
+      throw std::runtime_error("Sample.to_text: Tensor sample has no tensor payload");
+    }
+    return sample.tensor->to_text();
+  }
+
+  if (sample.kind == SampleKind::TensorSet) {
+    if (sample.tensors.size() != 1U) {
+      throw std::runtime_error("Sample.to_text: TensorSet sample must contain exactly one tensor");
+    }
+    return sample.tensors.front().to_text();
+  }
+
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      if (field.port_name == "text" || field.stream_label == "text") {
+        return sample_to_text_for_python(field);
+      }
+    }
+    if (!sample.fields.empty()) {
+      return sample_to_text_for_python(sample.fields.front());
+    }
+  }
+
+  throw std::runtime_error("Sample.to_text: sample is not a text tensor");
 }
 
 simaai::neat::FormatSpec python_to_format_spec(nb::handle value) {
@@ -930,6 +972,18 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
   throw std::runtime_error("expected list/tuple of Tensor or DLPack-compatible inputs");
 }
 
+std::vector<Tensor> genai_image_tensors_from_python(const nb::object& input) {
+  auto images = tensor_batch_from_python_input(
+      input, true, TensorLayout::HWC, ImageSpec::PixelFormat::RGB, std::nullopt, TensorMemory::CPU);
+  for (Tensor& image : images) {
+    if (!image.semantic.image.has_value()) {
+      image.semantic.image = ImageSpec{ImageSpec::PixelFormat::RGB, ""};
+    }
+    image = image.to_cpu_if_needed();
+  }
+  return images;
+}
+
 bool python_list_or_tuple(const nb::object& input) {
   return PyList_Check(input.ptr()) || PyTuple_Check(input.ptr());
 }
@@ -1232,6 +1286,10 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("vocab_size", &simaai::neat::TokensSpec::vocab_size);
 
+  nb::class_<simaai::neat::TextSpec>(m, "TextSpec")
+      .def(nb::init<>())
+      .def_rw("encoding", &simaai::neat::TextSpec::encoding);
+
   nb::class_<simaai::neat::EncodedSpec>(m, "EncodedSpec")
       .def(nb::init<>())
       .def_rw("codec", &simaai::neat::EncodedSpec::codec);
@@ -1270,6 +1328,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("image", &simaai::neat::Semantic::image)
       .def_rw("audio", &simaai::neat::Semantic::audio)
       .def_rw("tokens", &simaai::neat::Semantic::tokens)
+      .def_rw("text", &simaai::neat::Semantic::text)
       .def_rw("byte_stream", &simaai::neat::Semantic::byte_stream)
       .def_rw("tess", &simaai::neat::Semantic::tess)
       .def_rw("encoded", &simaai::neat::Semantic::encoded)
@@ -1325,12 +1384,16 @@ NB_MODULE(_pyneat_core, m) {
       .def("width", &simaai::neat::Tensor::width)
       .def("height", &simaai::neat::Tensor::height)
       .def("channels", &simaai::neat::Tensor::channels)
+      .def("to_text", &simaai::neat::Tensor::to_text)
       .def("image_format", &tensor_image_format_value)
       .def("is_nv12", &simaai::neat::Tensor::is_nv12)
       .def("is_i420", &simaai::neat::Tensor::is_i420)
       .def("debug_string", &simaai::neat::Tensor::debug_string)
       .def("__repr__",
            [](const simaai::neat::Tensor& t) { return "Tensor(" + t.debug_string() + ")"; })
+      .def_static(
+          "from_text",
+          [](const std::string& text) { return simaai::neat::Tensor::from_text(text); }, "text"_a)
       .def_static(
           "_from_dlpack_capsule",
           [](const nb::capsule& capsule, bool copy, std::optional<TensorLayout> layout,
@@ -1466,9 +1529,259 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("orig_input_seq", &Sample::orig_input_seq)
       .def_rw("pts_ns", &Sample::pts_ns)
       .def_rw("dts_ns", &Sample::dts_ns)
-      .def_rw("duration_ns", &Sample::duration_ns);
+      .def_rw("duration_ns", &Sample::duration_ns)
+      .def("to_text", &sample_to_text_for_python);
 
   m.def("make_tensor_sample", &simaai::neat::make_tensor_sample, "port_name"_a, "tensor"_a);
+  m.def("make_text_sample", &make_text_sample_for_python, "port_name"_a, "text"_a);
+
+  nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
+      .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)
+      .value("ASR", simaai::neat::genai::GenAITask::ASR);
+
+  nb::class_<simaai::neat::genai::ImageList>(m, "ImageList")
+      .def(nb::init<>())
+      .def(nb::init<std::vector<Tensor>>(), "images"_a)
+      .def(
+          "__init__",
+          [](simaai::neat::genai::ImageList* self, const nb::object& images) {
+            new (self) simaai::neat::genai::ImageList(genai_image_tensors_from_python(images));
+          },
+          "images"_a)
+      .def("empty", &simaai::neat::genai::ImageList::empty)
+      .def("size", &simaai::neat::genai::ImageList::size)
+      .def_prop_rw(
+          "tensors", [](const simaai::neat::genai::ImageList& images) { return images.tensors(); },
+          [](simaai::neat::genai::ImageList& images, const nb::object& tensors) {
+            images = genai_image_tensors_from_python(tensors);
+          });
+
+  nb::class_<simaai::neat::genai::ChatMessage>(m, "ChatMessage")
+      .def(nb::init<>())
+      .def_rw("role", &simaai::neat::genai::ChatMessage::role)
+      .def_rw("content", &simaai::neat::genai::ChatMessage::content)
+      .def_prop_rw(
+          "images",
+          [](const simaai::neat::genai::ChatMessage& message) { return message.images.tensors(); },
+          [](simaai::neat::genai::ChatMessage& message, const nb::object& images) {
+            message.images = genai_image_tensors_from_python(images);
+          })
+      .def_rw("use_cached_images", &simaai::neat::genai::ChatMessage::use_cached_images)
+      .def_prop_rw(
+          "tool_calls",
+          [](const simaai::neat::genai::ChatMessage& message) {
+            return genai_json_to_python(message.tool_calls);
+          },
+          [](simaai::neat::genai::ChatMessage& message, nb::handle value) {
+            message.tool_calls = python_to_genai_json(value);
+          })
+      .def_rw("tool_call_id", &simaai::neat::genai::ChatMessage::tool_call_id)
+      .def_rw("name", &simaai::neat::genai::ChatMessage::name);
+
+  nb::class_<simaai::neat::genai::GenerationMetrics>(m, "GenerationMetrics")
+      .def(nb::init<>())
+      .def_rw("generated_tokens", &simaai::neat::genai::GenerationMetrics::generated_tokens)
+      .def_rw("time_to_first_token_s",
+              &simaai::neat::genai::GenerationMetrics::time_to_first_token_s)
+      .def_rw("tokens_per_second", &simaai::neat::genai::GenerationMetrics::tokens_per_second);
+
+  nb::class_<simaai::neat::genai::GenerationRequest>(m, "GenerationRequest")
+      .def(nb::init<>())
+      .def_rw("prompt", &simaai::neat::genai::GenerationRequest::prompt)
+      .def_rw("system_prompt", &simaai::neat::genai::GenerationRequest::system_prompt)
+      .def_rw("messages", &simaai::neat::genai::GenerationRequest::messages)
+      .def_prop_rw(
+          "images",
+          [](const simaai::neat::genai::GenerationRequest& request) {
+            return request.images.tensors();
+          },
+          [](simaai::neat::genai::GenerationRequest& request, const nb::object& images) {
+            request.images = genai_image_tensors_from_python(images);
+          })
+      .def_rw("use_cached_images", &simaai::neat::genai::GenerationRequest::use_cached_images)
+      .def_rw("audio", &simaai::neat::genai::GenerationRequest::audio)
+      .def_rw("audio_file", &simaai::neat::genai::GenerationRequest::audio_file)
+      .def_rw("language", &simaai::neat::genai::GenerationRequest::language)
+      .def_rw("max_new_tokens", &simaai::neat::genai::GenerationRequest::max_new_tokens)
+      .def_prop_rw(
+          "tools",
+          [](const simaai::neat::genai::GenerationRequest& request) {
+            return genai_json_to_python(request.tools);
+          },
+          [](simaai::neat::genai::GenerationRequest& request, nb::handle value) {
+            request.tools = python_to_genai_json(value);
+          })
+      .def_prop_rw(
+          "tool_choice",
+          [](const simaai::neat::genai::GenerationRequest& request) {
+            return genai_json_to_python(request.tool_choice);
+          },
+          [](simaai::neat::genai::GenerationRequest& request, nb::handle value) {
+            request.tool_choice = python_to_genai_json(value);
+          });
+
+  nb::class_<simaai::neat::genai::GenerationResult>(m, "GenerationResult")
+      .def(nb::init<>())
+      .def_rw("text", &simaai::neat::genai::GenerationResult::text)
+      .def_rw("metrics", &simaai::neat::genai::GenerationResult::metrics)
+      .def_rw("finish_reason", &simaai::neat::genai::GenerationResult::finish_reason)
+      .def_prop_rw(
+          "tool_calls",
+          [](const simaai::neat::genai::GenerationResult& result) {
+            return genai_json_to_python(result.tool_calls);
+          },
+          [](simaai::neat::genai::GenerationResult& result, nb::handle value) {
+            result.tool_calls = python_to_genai_json(value);
+          });
+
+  nb::class_<simaai::neat::genai::TokenSample>(m, "TokenSample")
+      .def(nb::init<>())
+      .def_rw("text", &simaai::neat::genai::TokenSample::text)
+      .def_rw("metrics", &simaai::neat::genai::TokenSample::metrics)
+      .def_rw("is_final", &simaai::neat::genai::TokenSample::is_final)
+      .def_rw("finish_reason", &simaai::neat::genai::TokenSample::finish_reason)
+      .def_prop_rw(
+          "tool_calls",
+          [](const simaai::neat::genai::TokenSample& sample) {
+            return genai_json_to_python(sample.tool_calls);
+          },
+          [](simaai::neat::genai::TokenSample& sample, nb::handle value) {
+            sample.tool_calls = python_to_genai_json(value);
+          });
+
+  nb::class_<simaai::neat::genai::GenerationStream>(m, "GenerationStream")
+      .def("next", &simaai::neat::genai::GenerationStream::next,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("cancel", &simaai::neat::genai::GenerationStream::cancel,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "__iter__",
+          [](simaai::neat::genai::GenerationStream& stream)
+              -> simaai::neat::genai::GenerationStream& { return stream; },
+          nb::rv_policy::reference_internal)
+      .def("__next__", [](simaai::neat::genai::GenerationStream& stream) {
+        std::optional<simaai::neat::genai::TokenSample> token;
+        {
+          nb::gil_scoped_release release;
+          token = stream.next();
+        }
+        if (!token.has_value()) {
+          throw nb::stop_iteration();
+        }
+        return std::move(*token);
+      });
+
+  nb::class_<simaai::neat::genai::VisionLanguageModel>(m, "VisionLanguageModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("accepts_image", &simaai::neat::genai::VisionLanguageModel::accepts_image)
+      .def("model_id", &simaai::neat::genai::VisionLanguageModel::model_id)
+      .def("cached_image_count", &simaai::neat::genai::VisionLanguageModel::cached_image_count)
+      .def(
+          "encode",
+          [](simaai::neat::genai::VisionLanguageModel& model, const nb::object& images) {
+            auto tensors = genai_image_tensors_from_python(images);
+            nb::gil_scoped_release release;
+            return model.encode(tensors);
+          },
+          "images"_a)
+      .def("run", &simaai::neat::genai::VisionLanguageModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &simaai::neat::genai::VisionLanguageModel::stream, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
+
+  nb::class_<simaai::neat::genai::ASRModel>(m, "ASRModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("accepts_audio", &simaai::neat::genai::ASRModel::accepts_audio)
+      .def("model_id", &simaai::neat::genai::ASRModel::model_id)
+      .def("run", &simaai::neat::genai::ASRModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &simaai::neat::genai::ASRModel::stream, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
+
+  nb::class_<simaai::neat::genai::GenAIModel>(m, "GenAIModel")
+      .def(nb::init<std::filesystem::path>(), "model_dir"_a)
+      .def("task", &simaai::neat::genai::GenAIModel::task)
+      .def("accepts_text", &simaai::neat::genai::GenAIModel::accepts_text)
+      .def("accepts_image", &simaai::neat::genai::GenAIModel::accepts_image)
+      .def("accepts_audio", &simaai::neat::genai::GenAIModel::accepts_audio)
+      .def("model_id", &simaai::neat::genai::GenAIModel::model_id)
+      .def("run", &simaai::neat::genai::GenAIModel::run, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
+           nb::call_guard<nb::gil_scoped_release>());
+
+  nb::class_<simaai::neat::genai::OpenAIServerOptions>(m, "OpenAIServerOptions")
+      .def(nb::init<>())
+      .def_rw("host", &simaai::neat::genai::OpenAIServerOptions::host)
+      .def_rw("port", &simaai::neat::genai::OpenAIServerOptions::port);
+
+  nb::class_<simaai::neat::genai::OpenAIServer>(m, "OpenAIServer")
+      .def(nb::init<simaai::neat::genai::OpenAIServerOptions>(),
+           "options"_a = simaai::neat::genai::OpenAIServerOptions{})
+      .def(
+          "add_model",
+          [](simaai::neat::genai::OpenAIServer& server, const std::filesystem::path& model_dir) {
+            return server.add_model(model_dir);
+          },
+          "model_dir"_a)
+      .def(
+          "add_model",
+          [](simaai::neat::genai::OpenAIServer& server, const std::filesystem::path& model_dir,
+             const std::string& served_name) { return server.add_model(model_dir, served_name); },
+          "model_dir"_a, "served_name"_a)
+      .def("remove_model", &simaai::neat::genai::OpenAIServer::remove_model, "served_name"_a)
+      .def("model_names", &simaai::neat::genai::OpenAIServer::model_names)
+      .def("start", &simaai::neat::genai::OpenAIServer::start,
+           nb::call_guard<nb::gil_scoped_release>())
+      .def("stop", &simaai::neat::genai::OpenAIServer::stop,
+           nb::call_guard<nb::gil_scoped_release>());
+
+  nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
+  genai_mod.attr("GenAITask") = m.attr("GenAITask");
+  genai_mod.attr("ImageList") = m.attr("ImageList");
+  genai_mod.attr("ChatMessage") = m.attr("ChatMessage");
+  genai_mod.attr("GenerationMetrics") = m.attr("GenerationMetrics");
+  genai_mod.attr("GenerationRequest") = m.attr("GenerationRequest");
+  genai_mod.attr("GenerationResult") = m.attr("GenerationResult");
+  genai_mod.attr("TokenSample") = m.attr("TokenSample");
+  genai_mod.attr("GenerationStream") = m.attr("GenerationStream");
+  genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
+  genai_mod.attr("ASRModel") = m.attr("ASRModel");
+  genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
+  genai_mod.attr("OpenAIServerOptions") = m.attr("OpenAIServerOptions");
+  genai_mod.attr("OpenAIServer") = m.attr("OpenAIServer");
+
+  nb::class_<simaai::neat::genai::VisionLanguageOptions>(genai_mod, "VisionLanguageOptions")
+      .def(nb::init<>())
+      .def_rw("system_prompt", &simaai::neat::genai::VisionLanguageOptions::system_prompt)
+      .def_rw("max_new_tokens", &simaai::neat::genai::VisionLanguageOptions::max_new_tokens)
+      .def_rw("streaming", &simaai::neat::genai::VisionLanguageOptions::streaming)
+      .def_rw("encode_images_on_input",
+              &simaai::neat::genai::VisionLanguageOptions::encode_images_on_input);
+  nb::class_<simaai::neat::genai::SpeechTranscriberOptions>(genai_mod, "SpeechTranscriberOptions")
+      .def(nb::init<>())
+      .def_rw("language", &simaai::neat::genai::SpeechTranscriberOptions::language)
+      .def_rw("streaming", &simaai::neat::genai::SpeechTranscriberOptions::streaming);
+
+  nb::module_ genai_graphs_mod = genai_mod.def_submodule("graphs", "GenAI public Graph fragments");
+  genai_graphs_mod.def(
+      "vision_language",
+      [](std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
+         simaai::neat::genai::VisionLanguageOptions options, const std::string& label) {
+        return simaai::neat::genai::graphs::VisionLanguage(std::move(model), std::move(options),
+                                                           label);
+      },
+      "model"_a, "options"_a = simaai::neat::genai::VisionLanguageOptions{},
+      "label"_a = "vision_language");
+  genai_graphs_mod.def(
+      "speech_transcriber",
+      [](std::shared_ptr<simaai::neat::genai::ASRModel> model,
+         simaai::neat::genai::SpeechTranscriberOptions options, const std::string& label) {
+        return simaai::neat::genai::graphs::SpeechTranscriber(std::move(model), std::move(options),
+                                                              label);
+      },
+      "model"_a, "options"_a = simaai::neat::genai::SpeechTranscriberOptions{},
+      "label"_a = "speech_transcriber");
 
   nb::class_<simaai::neat::RtspServerOptions>(m, "RtspServerOptions")
       .def(nb::init<>())
@@ -1501,21 +1814,23 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("copy_input", &RunAdvancedOptions::copy_input)
       .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes);
 
-  nb::class_<GraphRunAutoExportOptions>(m, "GraphRunAutoExportOptions")
-      .def(nb::init<>())
-      .def_rw("path", &GraphRunAutoExportOptions::path)
-      .def_rw("label", &GraphRunAutoExportOptions::label)
-      .def_rw("include_metrics", &GraphRunAutoExportOptions::include_metrics)
-      .def_rw("include_power", &GraphRunAutoExportOptions::include_power)
-      .def_rw("indent", &GraphRunAutoExportOptions::indent);
+  nb::class_<RunAutoExportOptions> run_auto_export_options(m, "RunAutoExportOptions");
+  run_auto_export_options.def(nb::init<>())
+      .def_rw("path", &RunAutoExportOptions::path)
+      .def_rw("label", &RunAutoExportOptions::label)
+      .def_rw("include_metrics", &RunAutoExportOptions::include_metrics)
+      .def_rw("include_power", &RunAutoExportOptions::include_power)
+      .def_rw("indent", &RunAutoExportOptions::indent);
+  m.attr("GraphRunAutoExportOptions") = run_auto_export_options;
 
-  nb::class_<GraphRunExportOptions>(m, "GraphRunExportOptions")
-      .def(nb::init<>())
-      .def_rw("label", &GraphRunExportOptions::label)
-      .def_rw("include_metrics", &GraphRunExportOptions::include_metrics)
-      .def_rw("include_power", &GraphRunExportOptions::include_power)
-      .def_rw("indent", &GraphRunExportOptions::indent)
-      .def_rw("metadata", &GraphRunExportOptions::metadata);
+  nb::class_<RunExportOptions> run_export_options(m, "RunExportOptions");
+  run_export_options.def(nb::init<>())
+      .def_rw("label", &RunExportOptions::label)
+      .def_rw("include_metrics", &RunExportOptions::include_metrics)
+      .def_rw("include_power", &RunExportOptions::include_power)
+      .def_rw("indent", &RunExportOptions::indent)
+      .def_rw("metadata", &RunExportOptions::metadata);
+  m.attr("GraphRunExportOptions") = run_export_options;
 
   nb::class_<simaai::neat::InputDropInfo>(m, "InputDropInfo")
       .def(nb::init<>())
@@ -1539,6 +1854,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("enable_metrics", &RunOptions::enable_metrics)
       .def_rw("startup_preflight", &RunOptions::startup_preflight)
       .def_rw("advanced", &RunOptions::advanced)
+      .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
       .def_rw("on_input_drop", &RunOptions::on_input_drop);
 
@@ -1748,6 +2064,26 @@ NB_MODULE(_pyneat_core, m) {
       .def("last_error", &Run::last_error)
       .def("diagnostics_summary", &Run::diagnostics_summary)
       .def(
+          "json",
+          [](const Run& run, const RunExportOptions& options) {
+            std::string err;
+            const std::string body = simaai::neat::run_to_json(run, options, &err);
+            if (body.empty()) {
+              throw std::runtime_error(err.empty() ? "run_to_json failed" : err);
+            }
+            return body;
+          },
+          "options"_a = RunExportOptions{})
+      .def(
+          "save_json",
+          [](const Run& run, const std::string& path, const RunExportOptions& options) {
+            std::string err;
+            if (!simaai::neat::save_run_json(run, path, options, &err)) {
+              throw std::runtime_error(err.empty() ? "save_run_json failed" : err);
+            }
+          },
+          "path"_a, "options"_a = RunExportOptions{})
+      .def(
           "graph_run_json",
           [](const Run& run, const GraphRunExportOptions& options) {
             std::string err;
@@ -1769,6 +2105,28 @@ NB_MODULE(_pyneat_core, m) {
           "path"_a, "options"_a = GraphRunExportOptions{})
       .def("stop", &Run::stop)
       .def("close", &Run::close);
+
+  m.def(
+      "run_to_json",
+      [](const Run& run, const RunExportOptions& options) {
+        std::string err;
+        const std::string body = simaai::neat::run_to_json(run, options, &err);
+        if (body.empty()) {
+          throw std::runtime_error(err.empty() ? "run_to_json failed" : err);
+        }
+        return body;
+      },
+      "run"_a, "options"_a = RunExportOptions{});
+
+  m.def(
+      "save_run_json",
+      [](const Run& run, const std::string& path, const RunExportOptions& options) {
+        std::string err;
+        if (!simaai::neat::save_run_json(run, path, options, &err)) {
+          throw std::runtime_error(err.empty() ? "save_run_json failed" : err);
+        }
+      },
+      "run"_a, "path"_a, "options"_a = RunExportOptions{});
 
   m.def(
       "graph_run_to_json",
@@ -2172,154 +2530,90 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_sync)
       .def_rw("udp_async", &simaai::neat::nodes::groups::UdpH264OutputGroupOptions::udp_async);
 
-  nb::class_<simaai::neat::OptiViewObject>(m, "OptiViewObject")
+  nb::class_<simaai::neat::nodes::groups::VideoSenderRtpOptions>(m, "VideoSenderRtpOptions")
       .def(nb::init<>())
-      .def_rw("x", &simaai::neat::OptiViewObject::x)
-      .def_rw("y", &simaai::neat::OptiViewObject::y)
-      .def_rw("w", &simaai::neat::OptiViewObject::w)
-      .def_rw("h", &simaai::neat::OptiViewObject::h)
-      .def_rw("score", &simaai::neat::OptiViewObject::score)
-      .def_rw("class_id", &simaai::neat::OptiViewObject::class_id);
-
-  nb::class_<simaai::neat::OptiViewChannelOptions>(m, "OptiViewChannelOptions")
-      .def(nb::init<>())
-      .def_rw("host", &simaai::neat::OptiViewChannelOptions::host)
-      .def_rw("channel", &simaai::neat::OptiViewChannelOptions::channel)
-      .def_rw("video_port_base", &simaai::neat::OptiViewChannelOptions::video_port_base)
-      .def_rw("json_port_base", &simaai::neat::OptiViewChannelOptions::json_port_base);
-
-  nb::class_<simaai::neat::nodes::groups::UdpOutputGraphOptions>(m, "UdpOutputGraphOptions")
-      .def(nb::init<>())
-      .def_rw("h264_caps", &simaai::neat::nodes::groups::UdpOutputGraphOptions::h264_caps)
-      .def_rw("payload_type", &simaai::neat::nodes::groups::UdpOutputGraphOptions::payload_type)
+      .def_rw("payload_type", &simaai::neat::nodes::groups::VideoSenderRtpOptions::payload_type)
       .def_rw("config_interval",
-              &simaai::neat::nodes::groups::UdpOutputGraphOptions::config_interval)
-      .def_rw("enable_timings", &simaai::neat::nodes::groups::UdpOutputGraphOptions::enable_timings)
-      .def_rw("host", &simaai::neat::nodes::groups::UdpOutputGraphOptions::host)
-      .def_rw("video_port_base",
-              &simaai::neat::nodes::groups::UdpOutputGraphOptions::video_port_base)
-      .def_rw("udp_sync", &simaai::neat::nodes::groups::UdpOutputGraphOptions::udp_sync)
-      .def_rw("udp_async", &simaai::neat::nodes::groups::UdpOutputGraphOptions::udp_async);
+              &simaai::neat::nodes::groups::VideoSenderRtpOptions::config_interval);
 
-  nb::class_<simaai::neat::nodes::groups::OptiViewOutputGraphOptions>(m,
-                                                                      "OptiViewOutputGraphOptions")
+  nb::class_<simaai::neat::nodes::groups::VideoSenderEncoderOptions>(m, "VideoSenderEncoderOptions")
       .def(nb::init<>())
-      .def_rw("udp", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::udp)
-      .def_rw("send_json", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::send_json)
-      .def_rw("json_port_base",
-              &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::json_port_base)
-      .def_rw("frame_w", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::frame_w)
-      .def_rw("frame_h", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::frame_h)
-      .def_rw("topk", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::topk)
-      .def_rw("parse_debug", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::parse_debug)
-      .def_rw("json_delay_ms",
-              &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::json_delay_ms)
-      .def_rw("video_delay_ms",
-              &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::video_delay_ms)
-      .def_rw("labels", &simaai::neat::nodes::groups::OptiViewOutputGraphOptions::labels);
+      .def_rw("bitrate_kbps", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::bitrate_kbps)
+      .def_rw("profile", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::profile)
+      .def_rw("level", &simaai::neat::nodes::groups::VideoSenderEncoderOptions::level);
 
-  nb::class_<simaai::neat::nodes::groups::OptiViewJsonInput>(m, "OptiViewJsonInput")
-      .def(nb::init<>())
-      .def_rw("stream_idx", &simaai::neat::nodes::groups::OptiViewJsonInput::stream_idx)
-      .def_rw("stream_id", &simaai::neat::nodes::groups::OptiViewJsonInput::stream_id)
-      .def_rw("frame_id", &simaai::neat::nodes::groups::OptiViewJsonInput::frame_id)
-      .def_rw("capture_ms", &simaai::neat::nodes::groups::OptiViewJsonInput::capture_ms)
-      .def_rw("yolo_ms", &simaai::neat::nodes::groups::OptiViewJsonInput::yolo_ms)
-      .def_rw("output_frame_id", &simaai::neat::nodes::groups::OptiViewJsonInput::output_frame_id)
+  nb::class_<simaai::neat::nodes::groups::VideoSenderOptions>(m, "VideoSenderOptions")
+      .def_static("h264_rtp_udp_from_raw",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw, "width"_a,
+                  "height"_a, "fps"_a)
+      .def_static("h264_rtp_udp_from_encoded",
+                  &simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded)
+      .def("is_raw_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_raw_input)
+      .def("is_encoded_input", &simaai::neat::nodes::groups::VideoSenderOptions::is_encoded_input)
+      .def_prop_ro("width", &simaai::neat::nodes::groups::VideoSenderOptions::width)
+      .def_prop_ro("height", &simaai::neat::nodes::groups::VideoSenderOptions::height)
+      .def_prop_ro("fps", &simaai::neat::nodes::groups::VideoSenderOptions::fps)
+      .def_prop_ro("video_port", &simaai::neat::nodes::groups::VideoSenderOptions::video_port)
+      .def_rw("host", &simaai::neat::nodes::groups::VideoSenderOptions::host)
+      .def_rw("channel", &simaai::neat::nodes::groups::VideoSenderOptions::channel)
+      .def_rw("video_port_base", &simaai::neat::nodes::groups::VideoSenderOptions::video_port_base)
+      .def_rw("sync", &simaai::neat::nodes::groups::VideoSenderOptions::sync)
+      .def_rw("async_", &simaai::neat::nodes::groups::VideoSenderOptions::async)
       .def_prop_rw(
-          "yolo_sample",
-          [](const simaai::neat::nodes::groups::OptiViewJsonInput& input) {
-            return input.yolo_sample;
+          "async",
+          [](const simaai::neat::nodes::groups::VideoSenderOptions& options) {
+            return options.async;
           },
-          [](simaai::neat::nodes::groups::OptiViewJsonInput& input, const Sample* sample) {
-            input.yolo_sample = sample;
+          [](simaai::neat::nodes::groups::VideoSenderOptions& options, bool value) {
+            options.async = value;
           })
-      .def_prop_rw(
-          "decoded_sample",
-          [](const simaai::neat::nodes::groups::OptiViewJsonInput& input) {
-            return input.decoded_sample;
-          },
-          [](simaai::neat::nodes::groups::OptiViewJsonInput& input, const Sample* sample) {
-            input.decoded_sample = sample;
-          });
+      .def_rw("rtp", &simaai::neat::nodes::groups::VideoSenderOptions::rtp)
+      .def_rw("encoder", &simaai::neat::nodes::groups::VideoSenderOptions::encoder);
 
-  nb::class_<simaai::neat::nodes::groups::OptiViewJsonResult>(m, "OptiViewJsonResult")
+  nb::class_<simaai::neat::MetadataSenderOptions>(m, "MetadataSenderOptions")
       .def(nb::init<>())
-      .def_rw("ok", &simaai::neat::nodes::groups::OptiViewJsonResult::ok)
-      .def_rw("nonempty", &simaai::neat::nodes::groups::OptiViewJsonResult::nonempty)
-      .def_rw("boxes", &simaai::neat::nodes::groups::OptiViewJsonResult::boxes)
-      .def_rw("error", &simaai::neat::nodes::groups::OptiViewJsonResult::error);
+      .def_rw("host", &simaai::neat::MetadataSenderOptions::host)
+      .def_rw("channel", &simaai::neat::MetadataSenderOptions::channel)
+      .def_rw("metadata_port_base", &simaai::neat::MetadataSenderOptions::metadata_port_base);
 
-  nb::class_<simaai::neat::OptiViewJsonOutput>(m, "OptiViewJsonOutput")
+  nb::class_<simaai::neat::MetadataSender>(m, "MetadataSender")
       .def(
           "__init__",
-          [](simaai::neat::OptiViewJsonOutput* self,
-             const simaai::neat::OptiViewChannelOptions& opt) {
+          [](simaai::neat::MetadataSender* self, const simaai::neat::MetadataSenderOptions& opt) {
             std::string err;
-            new (self) simaai::neat::OptiViewJsonOutput(opt, &err);
+            new (self) simaai::neat::MetadataSender(opt, &err);
             if (!self->ok()) {
-              self->~OptiViewJsonOutput();
-              throw std::runtime_error(err.empty() ? "OptiViewJsonOutput init failed" : err);
+              self->~MetadataSender();
+              throw std::runtime_error(err.empty() ? "MetadataSender init failed" : err);
             }
           },
           "options"_a)
-      .def("ok", &simaai::neat::OptiViewJsonOutput::ok)
-      .def("host", &simaai::neat::OptiViewJsonOutput::host)
-      .def("json_port", &simaai::neat::OptiViewJsonOutput::json_port)
-      .def("video_port", &simaai::neat::OptiViewJsonOutput::video_port)
+      .def("ok", &simaai::neat::MetadataSender::ok)
+      .def("host", &simaai::neat::MetadataSender::host)
+      .def("metadata_port", &simaai::neat::MetadataSender::metadata_port)
       .def(
-          "send_json",
-          [](const simaai::neat::OptiViewJsonOutput& self, const std::string& payload) {
+          "send_raw_json",
+          [](const simaai::neat::MetadataSender& self, const std::string& payload) {
             std::string err;
-            const bool ok = self.send_json(payload, &err);
-            if (!ok && !err.empty())
+            const bool ok = self.send_raw_json(payload, &err);
+            if (!ok && !err.empty()) {
               throw std::runtime_error(err);
+            }
             return ok;
           },
           "payload"_a)
       .def(
-          "send_detection",
-          [](const simaai::neat::OptiViewJsonOutput& self, int64_t timestamp_ms,
-             const std::string& frame_id, const std::vector<simaai::neat::OptiViewObject>& objects,
-             const std::vector<std::string>& labels) {
+          "send_metadata",
+          [](const simaai::neat::MetadataSender& self, const std::string& type,
+             const std::string& data_json, int64_t timestamp_ms, const std::string& frame_id) {
             std::string err;
-            const bool ok = self.send_detection(timestamp_ms, frame_id, objects, labels, &err);
-            if (!ok && !err.empty())
+            const bool ok = self.send_metadata(type, data_json, timestamp_ms, frame_id, &err);
+            if (!ok && !err.empty()) {
               throw std::runtime_error(err);
+            }
             return ok;
           },
-          "timestamp_ms"_a, "frame_id"_a, "objects"_a, "labels"_a);
-
-  nb::class_<simaai::neat::nodes::groups::OptiViewOutputGraph>(m, "OptiViewOutputGraph")
-      .def(nb::init<>())
-      .def(
-          "init",
-          [](simaai::neat::nodes::groups::OptiViewOutputGraph& self,
-             const simaai::neat::nodes::groups::OptiViewOutputGraphOptions& opt, size_t streams) {
-            std::string err;
-            const bool ok = self.init(opt, streams, &err);
-            if (!ok)
-              throw std::runtime_error(err.empty() ? "OptiViewOutputGraph init failed" : err);
-            return ok;
-          },
-          "options"_a, "streams"_a)
-      .def("push_video", &simaai::neat::nodes::groups::OptiViewOutputGraph::push_video,
-           "stream_idx"_a, "sample"_a)
-      .def("try_push_video", &simaai::neat::nodes::groups::OptiViewOutputGraph::try_push_video,
-           "stream_idx"_a, "sample"_a)
-      .def(
-          "emit_json",
-          [](const simaai::neat::nodes::groups::OptiViewOutputGraph& self,
-             const simaai::neat::nodes::groups::OptiViewJsonInput& input) {
-            simaai::neat::nodes::groups::OptiViewJsonResult out;
-            self.emit_json(input, &out);
-            return out;
-          },
-          "input"_a)
-      .def("stop", &simaai::neat::nodes::groups::OptiViewOutputGraph::stop);
-
-  m.def("OptiViewMakeJson", &simaai::neat::OptiViewMakeJson, "timestamp_ms"_a, "frame_id"_a,
-        "objects"_a, "labels"_a);
+          "type"_a, "data_json"_a, "timestamp_ms"_a, "frame_id"_a);
 
   nb::class_<simaai::neat::UdpOutputOptions>(m, "UdpOutputOptions")
       .def(nb::init<>())
@@ -2380,6 +2674,7 @@ NB_MODULE(_pyneat_core, m) {
   groups_mod.def("rtsp_decoded_input", &simaai::neat::nodes::groups::RtspDecodedInput, "options"_a);
   groups_mod.def("udp_h264_output_group", &simaai::neat::nodes::groups::UdpH264OutputGroup,
                  "options"_a);
+  groups_mod.def("video_sender", &simaai::neat::nodes::groups::VideoSender, "options"_a);
   groups_mod.def("mla", &simaai::neat::nodes::groups::MLA, "model"_a);
   groups_mod.def("image_input_output_spec", &simaai::neat::nodes::groups::ImageInputGroupOutputSpec,
                  "options"_a);
@@ -2911,168 +3206,9 @@ NB_MODULE(_pyneat_core, m) {
       "detection_threshold"_a = 0.0, "nms_iou_threshold"_a = 0.0, "top_k"_a = 0,
       "resize_mode"_a = std::nullopt);
 
-  nb::module_ graph_mod =
-      m.def_submodule("_graph", "Internal hybrid graph runtime and helper nodes");
-
-  nb::enum_<simaai::neat::graph::Backend>(graph_mod, "Backend")
-      .value("Pipeline", simaai::neat::graph::Backend::Pipeline)
-      .value("Stage", simaai::neat::graph::Backend::Stage);
-
-  nb::class_<simaai::neat::graph::Node>(graph_mod, "Node")
-      .def("kind", &simaai::neat::graph::Node::kind)
-      .def("user_label", &simaai::neat::graph::Node::user_label)
-      .def("backend", &simaai::neat::graph::Node::backend);
-
-  nb::class_<simaai::neat::graph::Edge>(graph_mod, "Edge")
-      .def(nb::init<>())
-      .def_rw("from_node", &simaai::neat::graph::Edge::from)
-      .def_rw("from_port", &simaai::neat::graph::Edge::from_port)
-      .def_rw("to_node", &simaai::neat::graph::Edge::to)
-      .def_rw("to_port", &simaai::neat::graph::Edge::to_port);
-
-  nb::class_<simaai::neat::graph::Graph>(graph_mod, "Graph")
-      .def(nb::init<>())
-      .def("add", &simaai::neat::graph::Graph::add, "node"_a)
-      .def("connect", &simaai::neat::graph::Graph::connect, "from_node"_a, "to_node"_a,
-           "from_port"_a = "out", "to_port"_a = "in")
-      .def("node_count", &simaai::neat::graph::Graph::node_count)
-      .def("port_count", &simaai::neat::graph::Graph::port_count)
-      .def("port_names", &simaai::neat::graph::Graph::port_names)
-      .def("topo_order", &simaai::neat::graph::Graph::topo_order)
-      .def("is_dag", &simaai::neat::graph::Graph::is_dag)
-      .def("edges", [](const simaai::neat::graph::Graph& g) { return g.edges(); });
-
-  graph_mod.def(
-      "to_text",
-      [](const simaai::neat::graph::Graph& g) {
-        return simaai::neat::graph::GraphPrinter::to_text(g);
-      },
-      "graph"_a);
-  graph_mod.def(
-      "to_dot",
-      [](const simaai::neat::graph::Graph& g) {
-        return simaai::neat::graph::GraphPrinter::to_dot(g);
-      },
-      "graph"_a);
-
-  nb::class_<simaai::neat::graph::GraphRunOptions>(graph_mod, "GraphRunOptions")
-      .def(nb::init<>())
-      .def_rw("edge_queue", &simaai::neat::graph::GraphRunOptions::edge_queue)
-      .def_rw("push_timeout_ms", &simaai::neat::graph::GraphRunOptions::push_timeout_ms)
-      .def_rw("pull_timeout_ms", &simaai::neat::graph::GraphRunOptions::pull_timeout_ms)
-      .def_rw("pipeline", &simaai::neat::graph::GraphRunOptions::pipeline);
-
-  nb::class_<simaai::neat::graph::GraphRun::Input>(graph_mod, "Input")
-      .def("push", &simaai::neat::graph::GraphRun::Input::push, "samples"_a,
-           nb::call_guard<nb::gil_scoped_release>());
-
-  nb::class_<simaai::neat::graph::GraphRun::Output>(graph_mod, "Output")
-      .def(
-          "pull",
-          [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
-            return output.pull(timeout_ms);
-          },
-          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def(
-          "pull_or_throw",
-          [](const simaai::neat::graph::GraphRun::Output& output, int timeout_ms) {
-            return output.pull_or_throw(timeout_ms);
-          },
-          "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("node_id", &simaai::neat::graph::GraphRun::Output::node_id);
-
-  nb::class_<simaai::neat::graph::GraphRun>(graph_mod, "GraphRun")
-      .def(nb::init<>())
-      .def("__bool__",
-           [](const simaai::neat::graph::GraphRun& run) { return static_cast<bool>(run); })
-      .def("running", &simaai::neat::graph::GraphRun::running)
-      .def("push",
-           nb::overload_cast<simaai::neat::graph::NodeId, const Sample&>(
-               &simaai::neat::graph::GraphRun::push),
-           "node_id"_a, "samples"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def("push_port",
-           nb::overload_cast<simaai::neat::graph::NodeId, simaai::neat::graph::PortId,
-                             const Sample&>(&simaai::neat::graph::GraphRun::push),
-           "node_id"_a, "port_id"_a, "samples"_a, nb::call_guard<nb::gil_scoped_release>())
-      .def("pull", &simaai::neat::graph::GraphRun::pull, "node_id"_a, "timeout_ms"_a = -1,
-           nb::call_guard<nb::gil_scoped_release>())
-      .def("input",
-           nb::overload_cast<simaai::neat::graph::NodeId>(&simaai::neat::graph::GraphRun::input),
-           "node_id"_a, nb::keep_alive<0, 1>())
-      .def("input_port",
-           nb::overload_cast<simaai::neat::graph::NodeId, simaai::neat::graph::PortId>(
-               &simaai::neat::graph::GraphRun::input),
-           "node_id"_a, "port_id"_a, nb::keep_alive<0, 1>())
-      .def("output", &simaai::neat::graph::GraphRun::output, "node_id"_a, nb::keep_alive<0, 1>())
-      .def("describe", &simaai::neat::graph::GraphRun::describe)
-      .def("stop", &simaai::neat::graph::GraphRun::stop)
-      .def("last_error", &simaai::neat::graph::GraphRun::last_error)
-      .def("last_error_or_throw", &simaai::neat::graph::GraphRun::last_error_or_throw);
-
-  graph_mod.def(
-      "build",
-      [](simaai::neat::graph::Graph graph, const simaai::neat::graph::GraphRunOptions& options) {
-        return simaai::neat::graph::build(std::move(graph), options);
-      },
-      "graph"_a, "options"_a = simaai::neat::graph::GraphRunOptions{},
-      nb::call_guard<nb::gil_scoped_release>());
-
-  nb::module_ graph_nodes_mod = graph_mod.def_submodule("nodes", "Graph node factory helpers");
-
-  nb::enum_<simaai::neat::graph::nodes::StreamDropPolicy>(graph_nodes_mod, "StreamDropPolicy")
-      .value("DropOldest", simaai::neat::graph::nodes::StreamDropPolicy::DropOldest)
-      .value("DropNewest", simaai::neat::graph::nodes::StreamDropPolicy::DropNewest);
-
-  nb::class_<simaai::neat::graph::nodes::StreamSchedulerOptions>(graph_nodes_mod,
-                                                                 "StreamSchedulerOptions")
-      .def(nb::init<>())
-      .def_rw("per_stream_queue",
-              &simaai::neat::graph::nodes::StreamSchedulerOptions::per_stream_queue)
-      .def_rw("drop_policy", &simaai::neat::graph::nodes::StreamSchedulerOptions::drop_policy)
-      .def_rw("max_batch", &simaai::neat::graph::nodes::StreamSchedulerOptions::max_batch);
-
-  nb::class_<simaai::neat::graph::nodes::StageModelExecutorOptions>(graph_nodes_mod,
-                                                                    "StageModelExecutorOptions")
-      .def(nb::init<>())
-      .def_prop_rw(
-          "model",
-          [](const simaai::neat::graph::nodes::StageModelExecutorOptions& opt) {
-            return std::const_pointer_cast<simaai::neat::Model>(opt.model);
-          },
-          [](simaai::neat::graph::nodes::StageModelExecutorOptions& opt,
-             const std::shared_ptr<simaai::neat::Model>& model) { opt.model = model; })
-      .def_rw("do_preproc", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_preproc)
-      .def_rw("do_mla", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_mla)
-      .def_rw("do_boxdecode", &simaai::neat::graph::nodes::StageModelExecutorOptions::do_boxdecode);
-
-  graph_nodes_mod.def(
-      "pipeline_node",
-      [](std::shared_ptr<simaai::neat::Node> node, const std::string& label) {
-        return std::static_pointer_cast<simaai::neat::graph::Node>(
-            std::make_shared<simaai::neat::graph::nodes::PipelineNode>(std::move(node), label));
-      },
-      "node"_a, "label"_a = "");
-  graph_nodes_mod.def("stamp_frame_id", &simaai::neat::graph::nodes::StampFrameIdNode,
-                      "label"_a = "");
-  graph_nodes_mod.def(
-      "stage_model_executor",
-      [](const simaai::neat::graph::nodes::StageModelExecutorOptions& options,
-         const std::string& label) {
-        return simaai::neat::graph::nodes::StageModelExecutorNode(options, label);
-      },
-      "options"_a, "label"_a = "");
-  graph_nodes_mod.def("stream_scheduler", &simaai::neat::graph::nodes::StreamSchedulerNode,
-                      "options"_a = simaai::neat::graph::nodes::StreamSchedulerOptions{},
-                      "label"_a = "", "input"_a = "in", "output"_a = "out");
-  graph_nodes_mod.def("fan_out", &simaai::neat::graph::nodes::FanOutNode, "outputs"_a,
-                      "label"_a = "", "input"_a = "in");
-  graph_nodes_mod.def(
-      "join_bundle",
-      [](const std::vector<std::string>& inputs, const std::string& label,
-         const std::string& output) {
-        return simaai::neat::graph::nodes::JoinBundleNode(inputs, label, output);
-      },
-      "inputs"_a, "label"_a = "", "output"_a = "bundle");
+  // Do not bind the low-level graph::Graph / GraphRun substrate into Python.
+  // Python applications use pyneat.Graph/pyneat.Run only; C++ runtime/compiler
+  // tests cover the internal substrate directly.
 
   m.attr("ERROR_PIPELINE_SHAPE") = simaai::neat::error_codes::kPipelineShape;
   m.attr("ERROR_CAPS") = simaai::neat::error_codes::kCaps;

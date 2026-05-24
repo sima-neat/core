@@ -1,4 +1,4 @@
-#include "pipeline/GraphRunExport.h"
+#include "pipeline/RunExport.h"
 
 #include "RunInternal.h"
 
@@ -559,7 +559,7 @@ json graph_topology_to_json(const runtime::RunCore& core) {
 }
 
 json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
-                         const GraphRunExportOptions& opt) {
+                         const RunExportOptions& opt) {
   json j;
   j["identity"] = {
       {"uuid", core.run_id},
@@ -612,12 +612,12 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
 
 } // namespace
 
-std::string graph_run_to_json(const Run& run, const GraphRunExportOptions& opt, std::string* err) {
+std::string run_to_json(const Run& run, const RunExportOptions& opt, std::string* err) {
   try {
     const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
     if (!core) {
       if (err) {
-        *err = "graph_run_to_json: Run has no runtime core";
+        *err = "run_to_json: Run has no runtime core";
       }
       return {};
     }
@@ -649,15 +649,15 @@ std::string graph_run_to_json(const Run& run, const GraphRunExportOptions& opt, 
     return root.dump(opt.indent);
   } catch (const std::exception& e) {
     if (err) {
-      *err = std::string("graph_run_to_json failed: ") + e.what();
+      *err = std::string("run_to_json failed: ") + e.what();
     }
     return {};
   }
 }
 
-bool save_graph_run_json(const Run& run, const std::string& path, const GraphRunExportOptions& opt,
-                         std::string* err) {
-  const std::string body = graph_run_to_json(run, opt, err);
+bool save_run_json(const Run& run, const std::string& path, const RunExportOptions& opt,
+                   std::string* err) {
+  const std::string body = run_to_json(run, opt, err);
   if (body.empty()) {
     return false;
   }
@@ -668,14 +668,14 @@ bool save_graph_run_json(const Run& run, const std::string& path, const GraphRun
     std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
     if (!out) {
       if (err) {
-        *err = "save_graph_run_json: cannot open " + tmp.string();
+        *err = "save_run_json: cannot open " + tmp.string();
       }
       return false;
     }
     out.write(body.data(), static_cast<std::streamsize>(body.size()));
     if (!out) {
       if (err) {
-        *err = "save_graph_run_json: write failed for " + tmp.string();
+        *err = "save_run_json: write failed for " + tmp.string();
       }
       return false;
     }
@@ -690,7 +690,7 @@ bool save_graph_run_json(const Run& run, const std::string& path, const GraphRun
   }
   if (ec) {
     if (err) {
-      *err = "save_graph_run_json: rename failed: " + ec.message();
+      *err = "save_run_json: rename failed: " + ec.message();
     }
     return false;
   }

@@ -22,7 +22,6 @@
 namespace simaai::neat {
 
 class Node;
-
 /**
  * @brief How confident the source of an `OutputSpec` is.
  * @ingroup builder

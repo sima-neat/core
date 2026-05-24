@@ -2485,7 +2485,17 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
     return {};
   }
   const auto& contract = *pack.mpk_contract();
-  const auto& graph = contract.graph;
+  // Route diagnostics intentionally describe the MPK graph before NEAT's
+  // route-ready fusion passes.  Runtime/materialized regions are filtered from
+  // these raw regions below, so non-materialized view nodes (for example
+  // post-MLA slice views) remain visible in graph_post_chain_raw while still
+  // disappearing from the final executable route.
+  pipeline_internal::sima::MpkGraph raw_graph_view = contract.graph;
+  if (!contract.graph.raw_nodes.empty() && !contract.graph.raw_edges.empty()) {
+    raw_graph_view.nodes = contract.graph.raw_nodes;
+    raw_graph_view.edges = contract.graph.raw_edges;
+  }
+  const auto& graph = raw_graph_view;
   if (graph.nodes.empty()) {
     return {};
   }

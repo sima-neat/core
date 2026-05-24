@@ -30,6 +30,7 @@
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "builder/GraphPrinter.h"
+#include "graph/Node.h"
 #include "contracts/ContractRegistry.h"
 #include "contracts/Validators.h"
 #include "pipeline/Tensor.h"
@@ -1079,9 +1080,9 @@ node_model_lineage_binding_for_io(const std::shared_ptr<Node>& node) {
   return nullptr;
 }
 
+template <typename Vertices>
 const internal::ModelLineageBinding*
-lineage_for_fragment_range(const std::vector<std::shared_ptr<Node>>& vertices,
-                           const runtime::FragmentPlan& fragment) {
+lineage_for_fragment_range(const Vertices& vertices, const runtime::FragmentPlan& fragment) {
   for (std::size_t i = fragment.graph_start; i < fragment.graph_end && i < vertices.size(); ++i) {
     if (const auto* binding = node_model_lineage_binding_for_io(vertices[i])) {
       return binding;
@@ -1098,9 +1099,10 @@ bool has_any_model_fragment_provenance(const std::vector<runtime::FragmentPlan>&
   return std::any_of(fragments.begin(), fragments.end(), has_model_fragment_provenance);
 }
 
+template <typename Vertices>
 void write_model_fragments_json(std::ostream& oss,
                                 const std::vector<runtime::FragmentPlan>& fragments,
-                                const std::vector<std::shared_ptr<Node>>& vertices) {
+                                const Vertices& vertices) {
   oss << "  \"model_fragments\": [\n";
   bool first = true;
   for (const auto& fragment : fragments) {
@@ -1176,9 +1178,13 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
     oss << "  nodes:\n";
     for (std::size_t i = 0; i < composition_->vertices.size(); ++i) {
       const auto& node = composition_->vertices[i];
-      oss << "    n" << i << ": " << (node ? node->kind() : std::string("<null>"));
+      const auto runtime_node = composition_->runtime_node(i);
+      oss << "    n" << i << ": "
+          << (node ? node->kind() : (runtime_node ? runtime_node->kind() : std::string("<null>")));
       if (node && !node->user_label().empty()) {
         oss << " label=\"" << node->user_label() << "\"";
+      } else if (runtime_node && !runtime_node->user_label().empty()) {
+        oss << " label=\"" << runtime_node->user_label() << "\"";
       }
       if (const auto* input = dynamic_cast<const Input*>(node.get())) {
         if (!input->endpoint_name().empty()) {
@@ -1256,6 +1262,13 @@ std::string Graph::describe(const GraphPrinter::Options& opt) const {
 void Graph::save(const std::string& path) const {
   if (composition_ &&
       (!composition_->is_linear() || has_any_model_fragment_provenance(composition_->fragments))) {
+    if (composition_->has_runtime_vertices()) {
+      throw std::runtime_error(
+          "Graph::save does not serialize runtime-stage Graph fragments yet; rebuild this Graph "
+          "from the original factory (for example genai::graphs::VisionLanguage(...)) before "
+          "saving, or export a built Run with save_run_json(...) for visualization/metrics.");
+    }
+
     std::ostringstream oss;
     oss << "{\n  \"version\": 2,\n";
     oss << "  \"graph_name\":\"" << json_escape(endpoint_name_) << "\",\n";

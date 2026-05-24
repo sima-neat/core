@@ -41,7 +41,6 @@ public:
    * @brief Knobs controlling text-printer verbosity.
    */
   struct Options {
-    // Common
     bool show_index = true;      ///< Prepend deterministic Node index (0..N-1).
     bool show_kind = true;       ///< Print `Node::kind()` for each Node.
     bool show_user_label = true; ///< Print user-supplied label when non-empty.
@@ -56,10 +55,6 @@ public:
     std::size_t max_elements_per_node = 16; ///< Cap per-Node element list before "...(N more)".
   };
 
-  // --------------------------
-  // Text (linear lists)
-  // --------------------------
-
   /// @brief Print a linear node list in deterministic index order (0..N-1) with default options.
   static std::string to_text(std::span<const std::shared_ptr<Node>> nodes) {
     return to_text(nodes, Options{});
@@ -71,8 +66,9 @@ public:
 
     for (std::size_t i = 0; i < nodes.size(); ++i) {
       const auto& n = nodes[i];
-      if (!n)
+      if (!n) {
         continue;
+      }
 
       oss << format_node_line_(n, i, opt);
 
@@ -85,8 +81,9 @@ public:
         oss << "\n    elems: " << join_trunc_(elems, opt.max_elements_per_node);
       }
 
-      if (i + 1 < nodes.size())
+      if (i + 1 < nodes.size()) {
         oss << "\n";
+      }
     }
 
     return oss.str();
@@ -118,12 +115,15 @@ private:
   }
 
   static std::string truncate_(const std::string& s, std::size_t max_chars) {
-    if (max_chars == 0)
+    if (max_chars == 0) {
       return "";
-    if (s.size() <= max_chars)
+    }
+    if (s.size() <= max_chars) {
       return s;
-    if (max_chars <= 3)
+    }
+    if (max_chars <= 3) {
       return s.substr(0, max_chars);
+    }
     // Keep it simple + deterministic.
     return s.substr(0, max_chars - 3) + "...";
   }
@@ -134,13 +134,15 @@ private:
     const std::size_t m = (max_items == 0) ? 0 : (n < max_items ? n : max_items);
 
     for (std::size_t i = 0; i < m; ++i) {
-      if (i)
+      if (i) {
         oss << ", ";
+      }
       oss << items[i];
     }
     if (n > m) {
-      if (m)
+      if (m) {
         oss << ", ";
+      }
       oss << "...(" << (n - m) << " more)";
     }
     return oss.str();

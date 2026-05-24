@@ -99,6 +99,7 @@ struct BoundaryPolicy {
   bool source_like = false;
   bool terminal_output = false;
   bool graph_internal_output = false;
+  bool direct_graph_source = false;
   bool direct_graph_sink = false;
 };
 

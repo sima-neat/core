@@ -25,7 +25,7 @@ git ls-files -z \
 
 # Keep this allowlist intentionally small and visible.
 grep -Ev \
-  '(^include/pipeline/Session|^include/neat/session.h|^include/graph/GraphSession.h|python/pyneat/__init__.py|python/tests/test_api_surface.py|docs/contribute/naming.md|release|migration|SimaPluginStaticManifest|SimaPreparedRuntimeAbi|PreparedRuntimeAbi|session_id)' \
+  '(^include/graph/GraphSession.h|python/pyneat/__init__.py|python/tests/test_api_surface.py|docs/contribute/naming.md|release|migration|SimaPluginStaticManifest|SimaPreparedRuntimeAbi|PreparedRuntimeAbi|session_id)' \
   "$hits" > "$unallowed" || true
 
 if [[ -s "$unallowed" ]]; then

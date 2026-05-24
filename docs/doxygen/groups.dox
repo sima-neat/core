@@ -4,8 +4,8 @@
  */
 
 /**
- * @defgroup builder Builder and graph
- * @brief Node interfaces and STL-only graph/builder utilities.
+ * @defgroup builder Builder internals
+ * @brief Node interfaces and builder utilities used by the public Graph compiler.
  */
 
 /**
@@ -26,9 +26,9 @@
  */
 
 /**
- * @defgroup nodes_groups Node groups
+ * @defgroup nodes_groups Graph fragments
  * @ingroup nodes
- * @brief Higher-level recipes composed of multiple nodes.
+ * @brief Higher-level reusable Graph fragments composed of multiple nodes.
  */
 
 /**
@@ -74,8 +74,8 @@
  */
 
 /**
- * @defgroup graph Runtime graph
- * @brief Actor-style runtime DAG, named-port stages, and the graph::build/GraphRun pair.
+ * @defgroup graph Runtime graph internals
+ * @brief Actor-style runtime DAG, named-port stages, and compiler/runtime substrate used by public Graph.
  */
 
 /**

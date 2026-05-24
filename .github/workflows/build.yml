@@ -179,13 +179,18 @@ jobs:
           CORE_DEB="${CORE_DEBS[0]}"
           EXTRAS_TAR="${EXTRAS_TARS[0]}"
           WHEEL_PATH="${WHEELS[0]}"
+          RESOLVED_MANIFEST="build/resolved_manifest.json"
+          if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
+            echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
+            exit 1
+          fi
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest deps/manifest.json \
+            --internals-manifest "${RESOLVED_MANIFEST}" \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
-          cp deps/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+          cp "${RESOLVED_MANIFEST}" "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
       - name: Upload prepared artifacts for publish pipeline
         uses: actions/upload-artifact@v6
@@ -236,13 +241,18 @@ jobs:
           CORE_DEB="${CORE_DEBS[0]}"
           EXTRAS_TAR="${EXTRAS_TARS[0]}"
           WHEEL_PATH="${WHEELS[0]}"
+          RESOLVED_MANIFEST="build/resolved_manifest.json"
+          if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
+            echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
+            exit 1
+          fi
           bash tools/prepare_s3_artifacts.sh \
             --core-deb "${CORE_DEB}" \
             --extras-tar "${EXTRAS_TAR}" \
             --wheel "${WHEEL_PATH}" \
-            --internals-manifest deps/manifest.json \
+            --internals-manifest "${RESOLVED_MANIFEST}" \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
-          cp deps/manifest.json "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
+          cp "${RESOLVED_MANIFEST}" "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
       - name: Upload prepared fuzz artifacts for publish pipeline
         uses: actions/upload-artifact@v6
@@ -304,8 +314,14 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./metadata*.json ./install_neat_framework.sh || true
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
+
+      - name: Pre-install devkit runtime cleanup
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/fix_devkit_runtime.sh
 
       - name: Install test runtime from metadata-all
         env:
@@ -420,7 +436,7 @@ jobs:
           # interaction across ctest versions has been unreliable and the
           # name-based regex is unambiguous: it matches the exact test set
           # the user wants exercised this round.
-          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|preproc_yolov8_matrix_test|graphpipes_yolo_optiview_16stream_test)$'
+          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
 
           # unit_dispatcher_watchdog_test trips a residual EINVAL race in the
           # EVXX dispatcher path (frame_id=N "Dispatcher async run failed:
@@ -530,6 +546,7 @@ jobs:
             "${TMP_ROOT}/sima_neat_model_archive_fixtures" \
             "${TMP_ROOT}/sima_neat_mpk_tests" \
             "${TMP_ROOT}/sima_neat_mpk_fixtures" \
+            "${TMP_ROOT}/sima_neat_fuzz_pipeline_sequence" \
             "${TMP_ROOT}/sima_unit_asset_utils_readable_model_tar_test" \
             "${TMP_ROOT}/sima_imagenet_goldfish.jpg" \
             "${TMP_ROOT}/coco_sample.jpg" \
@@ -581,7 +598,8 @@ jobs:
             -DSIMANEAT_BUILD_TESTS=OFF \
             -DSIMANEAT_BUILD_TUTORIALS=OFF \
             -DSIMANEAT_BUILD_PYTHON=OFF \
-            -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
+            -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF \
+            -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
 
       - name: Build docs
         env:

@@ -14,7 +14,7 @@
 #include "pipeline/GraphOptions.h"
 #include "pipeline/Run.h"
 #include "pipeline/Graph.h"
-#include "pipeline/GraphRunExport.h"
+#include "pipeline/RunExport.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
 #include "pipeline/Tensor.h"

@@ -50,6 +50,8 @@ GstBuffer* build_copy_buffer_from_tensor(const simaai::neat::Tensor& tensor, con
 
 GstBuffer* buffer_from_holder_if_gstsample(const simaai::neat::Tensor& tensor, std::string* err);
 
+void copy_custom_meta(GstBuffer* dst, GstBuffer* src, const char* meta_name);
+
 bool validate_buffer_video_meta(GstBuffer* buffer, const SampleSpec& spec, std::string* err);
 
 bool resolve_encoded_payload_bytes(const simaai::neat::Tensor& tensor, const SampleSpec& spec,
