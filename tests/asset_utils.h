@@ -301,6 +301,9 @@ inline bool download_file(const std::string& url, const fs::path& out_path) {
 
   std::error_code ec;
   fs::create_directories(out_path.parent_path(), ec);
+  if (ec) {
+    return false;
+  }
 
   const std::string qurl = shell_quote(url);
   const std::string qout = shell_quote(out_path.string());

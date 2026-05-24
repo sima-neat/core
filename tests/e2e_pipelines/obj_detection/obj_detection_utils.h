@@ -51,6 +51,7 @@ float box_iou_xyxy(float ax1, float ay1, float ax2, float ay2, float bx1, float 
 float box_iou(const ExpectedBox& exp, const Box& pred);
 
 std::vector<ExpectedBox> expected_people_boxes();
+std::vector<ExpectedBox> expected_zidane_person_boxes();
 
 MatchResult match_expected_boxes(const std::vector<Box>& boxes,
                                  const std::vector<ExpectedBox>& expected, float min_score,

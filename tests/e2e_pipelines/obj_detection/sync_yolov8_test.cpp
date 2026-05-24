@@ -95,7 +95,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   p.add(simaai::neat::nodes::Output());
   // [canonical_pipeline]
 
-  const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
+  const std::vector<objdet::ExpectedBox> expected = objdet::expected_zidane_person_boxes();
 
   step_log("sync: before build");
   auto run = p.build(
