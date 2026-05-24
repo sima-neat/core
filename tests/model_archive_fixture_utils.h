@@ -96,15 +96,53 @@ make_model_archive_fixture(const std::string& tag,
   return ModelArchiveFixture{.root_dir = root_path.string(), .tar_path = tar_path.string()};
 }
 
-inline std::string read_text_file(const fs::path& path) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in.is_open()) {
-    throw std::runtime_error("model_archive_fixture_utils: failed to open file for read: " +
-                             path.string());
+inline std::string read_first_mpk_json_from_tar(const std::string& tar_path) {
+  const std::string list_cmd = "tar -tzf " + model_archive_shell_quote(tar_path);
+  FILE* list_pipe = ::popen(list_cmd.c_str(), "r");
+  if (!list_pipe) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to list modelzoo tar: " +
+                             tar_path);
   }
-  std::ostringstream oss;
-  oss << in.rdbuf();
-  return oss.str();
+
+  std::string selected;
+  char line[4096];
+  while (std::fgets(line, sizeof(line), list_pipe)) {
+    std::string entry(line);
+    while (!entry.empty() && (entry.back() == '\n' || entry.back() == '\r')) {
+      entry.pop_back();
+    }
+    if (selected.empty() && entry.size() >= 9 && entry.rfind("_mpk.json") == entry.size() - 9) {
+      selected = entry;
+    }
+  }
+  const int list_rc = ::pclose(list_pipe);
+  if (list_rc != 0) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to list modelzoo tar: " +
+                             tar_path);
+  }
+  if (selected.empty()) {
+    throw std::runtime_error("model_archive_fixture_utils: no *_mpk.json found in modelzoo tar: " +
+                             tar_path);
+  }
+
+  const std::string read_cmd = "tar -xOzf " + model_archive_shell_quote(tar_path) + " -- " +
+                               model_archive_shell_quote(selected);
+  FILE* read_pipe = ::popen(read_cmd.c_str(), "r");
+  if (!read_pipe) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to read " + selected +
+                             " from modelzoo tar: " + tar_path);
+  }
+
+  std::ostringstream out;
+  while (std::fgets(line, sizeof(line), read_pipe)) {
+    out << line;
+  }
+  const int read_rc = ::pclose(read_pipe);
+  if (read_rc != 0) {
+    throw std::runtime_error("model_archive_fixture_utils: failed to read " + selected +
+                             " from modelzoo tar: " + tar_path);
+  }
+  return out.str();
 }
 
 inline fs::path repo_root_for_modelzoo() {
@@ -126,45 +164,16 @@ inline fs::path repo_root_for_modelzoo() {
   return fs::current_path();
 }
 
-inline fs::path
-resolve_real_contract_json_from_modelzoo(const fs::path& root_in = {},
-                                         const std::string& model_name = "yolo_v9c_seg") {
-  const fs::path root = root_in.empty() ? repo_root_for_modelzoo() : root_in;
-
-  const std::string tar = sima_test::resolve_modelzoo_tar(model_name, root);
-  if (tar.empty() || !fs::exists(tar)) {
-    throw std::runtime_error("model_archive_fixture_utils: failed to resolve modelzoo tar for '" +
-                             model_name + "'");
-  }
-
-  const std::string extract_root = make_fixture_temp_dir("real_mpk_seed");
-  const fs::path extract_path(extract_root);
-  const std::string cmd = "tar -xzf " + model_archive_shell_quote(tar) + " -C " +
-                          model_archive_shell_quote(extract_root);
-  if (std::system(cmd.c_str()) != 0) {
-    throw std::runtime_error("model_archive_fixture_utils: failed to extract modelzoo tar: " + tar);
-  }
-
-  std::error_code ec;
-  fs::recursive_directory_iterator it(extract_path, ec), end;
-  for (; !ec && it != end; it.increment(ec)) {
-    if (!it->is_regular_file())
-      continue;
-    const std::string name = it->path().filename().string();
-    if (name.size() >= 9 && name.rfind("_mpk.json") == name.size() - 9) {
-      return it->path();
-    }
-  }
-
-  throw std::runtime_error("model_archive_fixture_utils: no *_mpk.json found in modelzoo tar: " +
-                           tar);
-}
-
 inline std::pair<std::string, std::string> strict_contract_json_entry_from_modelzoo() {
   static std::pair<std::string, std::string> cached = []() {
-    const fs::path mpk_path =
-        resolve_real_contract_json_from_modelzoo(repo_root_for_modelzoo(), "yolo_v9c_seg");
-    return std::make_pair(std::string("etc/strict_seed_mpk.json"), read_text_file(mpk_path));
+    const fs::path root = repo_root_for_modelzoo();
+    const std::string tar = sima_test::resolve_modelzoo_tar("yolo_v9c_seg", root);
+    if (tar.empty() || !fs::exists(tar)) {
+      throw std::runtime_error(
+          "model_archive_fixture_utils: failed to resolve modelzoo tar for 'yolo_v9c_seg'");
+    }
+    return std::make_pair(std::string("etc/strict_seed_mpk.json"),
+                          read_first_mpk_json_from_tar(tar));
   }();
   return cached;
 }
