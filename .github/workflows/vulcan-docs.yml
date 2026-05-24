@@ -1,6 +1,6 @@
 name: Vulcan Docs
 
-run-name: vulcan-docs (${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'stg' }})
+run-name: vulcan-docs (${{ inputs.deploy_environment || vars.VULCAN_ENV || 'stg' }})
 
 on:
   push:
@@ -10,14 +10,9 @@ on:
   workflow_dispatch:
     inputs:
       deploy_environment:
-        description: "Vulcan docs environment"
-        required: true
-        default: dev
-        type: choice
-        options:
-          - dev
-          - stg
-          - prod
+        description: "Optional Vulcan docs environment override: dev, stg/staging, or prod/production. Defaults to VULCAN_ENV."
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -44,14 +39,21 @@ jobs:
 
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             deploy_environment="${{ inputs.deploy_environment }}"
+            if [[ -z "${deploy_environment}" ]]; then
+              deploy_environment="${{ vars.VULCAN_ENV || 'stg' }}"
+            fi
           else
-            deploy_environment="stg"
+            deploy_environment="${{ vars.VULCAN_ENV || 'stg' }}"
           fi
 
           case "${deploy_environment}" in
-            dev|stg)
+            dev)
               ;;
-            prod)
+            stg|staging)
+              deploy_environment="stg"
+              ;;
+            prod|production)
+              deploy_environment="prod"
               if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
                 echo "Production docs deploy is only allowed from refs/heads/main. Current ref: ${GITHUB_REF}" >&2
                 exit 1
