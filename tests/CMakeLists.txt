@@ -1491,3 +1491,15 @@ install(
     PATTERN "*.cpp"
     PATTERN "*.h"
 )
+
+# Install the generated CTest manifests and any nested installed-test metadata
+# from the build tree. CI installs the extras tarball, then discovers tests by
+# finding lib/sima-neat/tests/CTestTestfile.cmake under the extracted prefix.
+install(
+  DIRECTORY ${CMAKE_BINARY_DIR}/tests/
+  DESTINATION lib/sima-neat/tests
+  COMPONENT extras
+  USE_SOURCE_PERMISSIONS
+  FILES_MATCHING
+    PATTERN "*"
+)
