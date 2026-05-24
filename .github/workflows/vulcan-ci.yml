@@ -162,7 +162,7 @@ jobs:
     needs:
       - resolve-vulcan-config
       - publish-vulcan-artifacts
-    runs-on: [self-hosted, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+    runs-on: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
