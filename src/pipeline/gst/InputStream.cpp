@@ -623,12 +623,18 @@ bool handle_appsrc_push_fail(InputStream::State& st, const char* where, GstFlowR
     pipeline_internal::throw_if_bus_error(st.pipeline, st.diag, "InputStream::push_fail");
     pipeline_internal::drain_bus(st.pipeline, st.diag, "InputStream::push_fail");
   }
-  set_stream_error(st, format_push_failure_error(st, where, ret));
   log_push_failure(st, where, ret);
   if (ret == GST_FLOW_FLUSHING || ret == GST_FLOW_EOS) {
+    if (st.stop_requested.load(std::memory_order_relaxed) ||
+        st.teardown_started.load(std::memory_order_relaxed)) {
+      st.stop_requested.store(true);
+      return false;
+    }
+    set_stream_error(st, format_push_failure_error(st, where, ret));
     st.stop_requested.store(true);
     return false;
   }
+  set_stream_error(st, format_push_failure_error(st, where, ret));
   return true;
 }
 
