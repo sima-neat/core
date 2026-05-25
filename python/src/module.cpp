@@ -1524,6 +1524,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("format", &Sample::format)
       .def_rw("frame_id", &Sample::frame_id)
       .def_rw("stream_id", &Sample::stream_id)
+      .def_rw("stream_label", &Sample::stream_label)
       .def_rw("port_name", &Sample::port_name)
       .def_rw("output_index", &Sample::output_index)
       .def_rw("input_seq", &Sample::input_seq)
