@@ -194,6 +194,7 @@ const config = {
   clientModules: [
     require.resolve("./src/clientModules/analytics-consent.js"),
     require.resolve("./src/clientModules/developer-center-nav.js"),
+    require.resolve("./src/clientModules/global-theme.js"),
     require.resolve("./src/clientModules/language-preference.js"),
     require.resolve("./src/clientModules/search-highlight.js"),
   ],
