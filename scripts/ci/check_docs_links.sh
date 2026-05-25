@@ -43,7 +43,7 @@ PY
 fi
 
 BASE_URL="http://${HOST}:${PORT}"
-SERVER_LOG="$(mktemp /tmp/sima-neat-docs-link-serve.XXXXXX.log)"
+SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/sima-neat-docs-link-serve.XXXXXX")"
 BASE_PATH="${DOCS_LINK_BASE_PATH:-${DOCS_BASE_URL:-/}}"
 
 case "${BASE_PATH}" in
@@ -60,7 +60,7 @@ esac
 if [[ "${BASE_PATH}" != "/" ]]; then
   BASE_PATH="/${BASE_PATH#/}"
   BASE_PATH="${BASE_PATH%/}/"
-  SERVE_DIR="$(mktemp -d /tmp/sima-neat-docs-link-root.XXXXXX)"
+  SERVE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-docs-link-root.XXXXXX")"
   mkdir -p "${SERVE_DIR}$(dirname "${BASE_PATH%/}")"
   ln -s "${SITE_DIR}" "${SERVE_DIR}${BASE_PATH%/}"
 else

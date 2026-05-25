@@ -72,7 +72,7 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        return f"/img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
+        return f"../img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
 
     @property
     def display_title(self) -> str:

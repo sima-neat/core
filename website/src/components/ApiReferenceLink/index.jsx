@@ -1,4 +1,5 @@
 import React, {useEffect, useMemo, useState} from 'react';
+import useBaseUrl from '@docusaurus/useBaseUrl';
 import {trackDocsEvent} from '@site/src/lib/analytics';
 import styles from './styles.module.css';
 
@@ -64,6 +65,10 @@ function isApiReferenceHref(href) {
   );
 }
 
+function isInternalRootHref(href) {
+  return typeof href === 'string' && href.startsWith('/') && !href.startsWith('//');
+}
+
 export default function ApiReferenceLink(props) {
   const {href, children, onClick, ...rest} = props;
   const [open, setOpen] = useState(false);
@@ -83,11 +88,15 @@ export default function ApiReferenceLink(props) {
   }, []);
 
   const resolvedHref = useMemo(() => resolveApiHref(href, preferredLang), [href, preferredLang]);
+  const baseHref = useBaseUrl(isInternalRootHref(href) ? href : '');
+  const resolvedBaseHref = useBaseUrl(isInternalRootHref(resolvedHref) ? resolvedHref : '');
+  const linkHref = isInternalRootHref(href) ? baseHref : href;
+  const resolvedLinkHref = isInternalRootHref(resolvedHref) ? resolvedBaseHref : resolvedHref;
 
   const title = useMemo(() => {
     if (typeof children === 'string') return children;
-    return resolvedHref;
-  }, [children, resolvedHref]);
+    return resolvedLinkHref;
+  }, [children, resolvedLinkHref]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -149,7 +158,7 @@ export default function ApiReferenceLink(props) {
   };
 
   if (!isApiReferenceHref(href)) {
-    return <a href={href} onClick={onClick} {...rest}>{children}</a>;
+    return <a href={linkHref} onClick={onClick} {...rest}>{children}</a>;
   }
 
   const handleClick = (event) => {
@@ -157,7 +166,7 @@ export default function ApiReferenceLink(props) {
     if (event.defaultPrevented) return;
     trackDocsEvent('api_reference_view', {
       language: resolvedHref.includes('/reference/pythonapi/') ? 'python' : 'cpp',
-      link_url: resolvedHref,
+      link_url: resolvedLinkHref,
       source: 'inline_preview',
     });
     if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -167,7 +176,7 @@ export default function ApiReferenceLink(props) {
 
   return (
     <>
-      <a href={resolvedHref} onClick={handleClick} {...rest}>
+      <a href={resolvedLinkHref} onClick={handleClick} {...rest}>
         {children}
       </a>
       {open ? (
@@ -176,7 +185,7 @@ export default function ApiReferenceLink(props) {
             <div className={styles.header}>
               <div className={styles.title}>{title}</div>
               <div className={styles.actions}>
-                <a className={styles.openButton} href={resolvedHref} target="_blank" rel="noreferrer">
+                <a className={styles.openButton} href={resolvedLinkHref} target="_blank" rel="noreferrer">
                   Open in new tab
                 </a>
                 <button className={styles.close} type="button" onClick={() => setOpen(false)}>
@@ -194,7 +203,7 @@ export default function ApiReferenceLink(props) {
               <iframe
                 key={iframeKey}
                 title={`API preview ${title}`}
-                src={resolvedHref}
+                src={resolvedLinkHref}
                 className={`${styles.iframe} ${loading ? styles.iframeHidden : ''}`}
                 onLoad={handleIframeLoad}
               />
