@@ -1,6 +1,6 @@
 name: Vulcan CI
 
-run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'dev' }})
+run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'staging' }})
 
 on:
   push:
@@ -37,7 +37,7 @@ jobs:
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
-      vulcan_env: ${{ vars.VULCAN_ENV || 'dev' }}
+      vulcan_env: ${{ vars.VULCAN_ENV || 'staging' }}
 
   build:
     name: Build Core on Vulcan
@@ -101,7 +101,7 @@ jobs:
             rm -f sima-cli-install.py
             export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
             sima-cli version
-            sima-cli vulcan install --help >/dev/null
+            sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace
             ./build.sh ${CORE_BUILD_ARGS}
@@ -135,7 +135,7 @@ jobs:
         test -f dist/neat-install-manifest.txt
         test -f build/resolved_manifest.json
 
-        sudo install -m 0644 build/resolved_manifest.json dist/manifest.json
+        sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json
         ls -lh dist
 
   publish-vulcan-artifacts:
@@ -199,7 +199,7 @@ jobs:
           SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-12)"
           PACKAGE_SPEC="core@${REF_NAME}:${SHORT_SHA}"
           echo "Installing ${PACKAGE_SPEC} from Vulcan env ${VULCAN_ENV}"
-          sima-cli install --vulcan --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all
+          sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all
 
       - name: Locate installed extras content
         run: |

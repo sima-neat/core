@@ -41,7 +41,7 @@ INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
-NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-dev}"
+NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-staging}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
 NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
@@ -282,7 +282,7 @@ Environment:
                  Override where the shadow workspace is created.
   NEAT_DEPS_MANIFEST=deps/manifest.json
                  Manifest used to resolve Vulcan dependency artifacts.
-  NEAT_VULCAN_ENV=dev
+  NEAT_VULCAN_ENV=staging
                  Vulcan environment used for dependency artifact installs.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
@@ -1106,15 +1106,16 @@ copy_plugins_to_neat_internals() {
   done
 }
 
-require_sima_cli_vulcan_install() {
+require_sima_cli_neat_install() {
   if ! command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1; then
-    echo "ERROR: sima-cli is required for Vulcan artifact access." >&2
-    echo "Set SIMA_CLI_BIN to a sima-cli executable with Vulcan install support if needed." >&2
+    echo "ERROR: sima-cli is required for Neat artifact access." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with Neat artifact install support if needed." >&2
     exit 1
   fi
-  if ! "${SIMA_CLI_BIN}" vulcan install --help >/dev/null 2>&1; then
-    echo "ERROR: sima-cli with Vulcan install support is required." >&2
-    echo "Set SIMA_CLI_BIN to a sima-cli executable with Vulcan install support if needed." >&2
+
+  if ! "${SIMA_CLI_BIN}" neat install --help >/dev/null 2>&1; then
+    echo "ERROR: sima-cli with Neat artifact install support is required." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with 'neat install' support if needed." >&2
     exit 1
   fi
 }
@@ -1123,18 +1124,15 @@ fetch_neat_internals_vulcan_artifacts() {
   local internals_ref="$1"
   local output_dir="$2"
 
-  require_sima_cli_vulcan_install
+  require_sima_cli_neat_install
 
-  local -a base_args=(
-    vulcan
-    --env "${NEAT_VULCAN_ENV}"
-  )
+  local -a base_args=(neat install --env "${NEAT_VULCAN_ENV}")
   if [[ -n "${NEAT_VULCAN_BASE_URL}" ]]; then
     base_args+=(--base-url "${NEAT_VULCAN_BASE_URL}")
   fi
 
   local resolve_output resolved_ref
-  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
     if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
@@ -1142,7 +1140,7 @@ fetch_neat_internals_vulcan_artifacts() {
 
     echo "No internals Vulcan artifact found for '${internals_ref}'; retrying develop:latest." >&2
     internals_ref="develop:latest"
-    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
       echo "ERROR: Failed to resolve fallback internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
     fi
@@ -1155,20 +1153,19 @@ import sys
 text = sys.argv[1]
 start = text.find("{")
 if start < 0:
-    raise SystemExit("missing JSON object in sima-cli vulcan install --json output")
+    raise SystemExit("missing JSON object in sima-cli neat install --json output")
 payload = json.loads(text[start:])
 ref = str(payload.get("ref", "")).strip()
 spec = str(payload.get("resolved_spec", "")).strip()
 if not ref or not spec:
-    raise SystemExit("sima-cli vulcan install --json did not return ref and resolved_spec")
+    raise SystemExit("sima-cli neat install --json did not return ref and resolved_spec")
 print(f"{ref}:{spec}")
 PY
-)"
+  )"
   NEAT_INTERNALS_RESOLVED_REF="${resolved_ref}"
 
   local -a install_args=(
     "${base_args[@]}"
-    install
     -d "${output_dir}"
     "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}"
   )
@@ -1186,18 +1183,15 @@ fetch_neat_llima_vulcan_artifacts() {
   local llima_ref="$1"
   local output_dir="$2"
 
-  require_sima_cli_vulcan_install
+  require_sima_cli_neat_install
 
-  local -a base_args=(
-    vulcan
-    --env "${NEAT_VULCAN_ENV}"
-  )
+  local -a base_args=(neat install --env "${NEAT_VULCAN_ENV}")
   if [[ -n "${NEAT_VULCAN_BASE_URL}" ]]; then
     base_args+=(--base-url "${NEAT_VULCAN_BASE_URL}")
   fi
 
   local resolve_output resolved_ref
-  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
     if [[ "${NEAT_LLIMA_SNAP_POLICY}" != "ON" || "${llima_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
       exit 1
@@ -1205,7 +1199,7 @@ fetch_neat_llima_vulcan_artifacts() {
 
     echo "No LLiMa Vulcan artifact found for '${llima_ref}'; retrying develop:latest." >&2
     llima_ref="develop:latest"
-    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" install "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
       echo "ERROR: Failed to resolve fallback LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
       exit 1
     fi
@@ -1218,20 +1212,19 @@ import sys
 text = sys.argv[1]
 start = text.find("{")
 if start < 0:
-    raise SystemExit("missing JSON object in sima-cli vulcan install --json output")
+    raise SystemExit("missing JSON object in sima-cli neat install --json output")
 payload = json.loads(text[start:])
 ref = str(payload.get("ref", "")).strip()
 spec = str(payload.get("resolved_spec", "")).strip()
 if not ref or not spec:
-    raise SystemExit("sima-cli vulcan install --json did not return ref and resolved_spec")
+    raise SystemExit("sima-cli neat install --json did not return ref and resolved_spec")
 print(f"{ref}:{spec}")
 PY
-)"
+  )"
   NEAT_LLIMA_RESOLVED_REF="${resolved_ref}"
 
   local -a install_args=(
     "${base_args[@]}"
-    install
     -d "${output_dir}"
     "${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}"
   )
@@ -2164,7 +2157,8 @@ stage_package_artifacts_to_dist() {
     "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     "dist/${NEAT_INSTALL_MANIFEST}" \
     dist/metadata*.json \
-    dist/manifest.json
+    dist/manifest.json \
+    dist/resolved-deps-manifest.json
 
   local staged_any=OFF
   local file
