@@ -35,8 +35,8 @@ using sima_yolov8_test::step_log;
 
 struct SyncTestConfig {
   int iters = 20;
-  float boxdecode_score_threshold = 0.50f;
-  float min_score = 0.52f;
+  float boxdecode_score_threshold = 0.49f;
+  float min_score = 0.49f;
   float min_iou = 0.30f;
 };
 

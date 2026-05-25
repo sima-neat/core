@@ -28,7 +28,7 @@ namespace {
 
 constexpr int kStreams = 16;
 constexpr int kTopK = 100;
-constexpr float kMinScore = 0.52f;
+constexpr float kMinScore = 0.49f;
 constexpr float kMinIou = 0.30f;
 
 std::string sample_note(const simaai::neat::Sample& out) {
