@@ -103,7 +103,7 @@ jobs:
             echo "[sanitizers] Installing ${MODE} artifacts..."
             METADATA_URL="https://artifacts.sima-neat.com/core/main/${SHORT_SHA}/${MODE}/metadata-all.json"
             echo "[sanitizers] Installing from ${METADATA_URL}"
-            sima-cli install -m "${METADATA_URL}"
+            SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli install -m "${METADATA_URL}"
 
             mapfile -t CTEST_FILES < <(find "${GITHUB_WORKSPACE}" -type f -path '*/lib/sima-neat/tests/CTestTestfile.cmake' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
             if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
