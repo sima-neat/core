@@ -26,6 +26,7 @@ set -euo pipefail
 #   - sima-neat-*-Linux-core.deb
 #   - neat-*.deb / simaai-common*.deb runtime dependencies
 #   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb / sima-lmm-*-Linux-dev.deb
+#   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
@@ -36,6 +37,7 @@ set -euo pipefail
 # - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
 # - NEAT_INSTALLER_SKIP_DEVKIT_SYNC: ON/OFF (default: OFF) skip SDK->DevKit sync
+# - NEAT_INSTALL_MANIFEST: install manifest filename (default: neat-install-manifest.txt)
 # - CODEX_HOME: optional Codex home override for skill install target
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
@@ -46,6 +48,7 @@ DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 DEVKIT_SYNC_REQUIRED="${DEVKIT_SYNC_REQUIRED:-ON}"
 NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
+NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
@@ -272,8 +275,55 @@ append_matching_files() {
   local pattern="$3"
   local -n out_array="${out_array_name}"
   local -a matches=()
-  mapfile -t matches < <(find "${search_dir}" -maxdepth 1 -type f -name "${pattern}" | sort)
+  local manifest_path="${search_dir}/${NEAT_INSTALL_MANIFEST}"
+
+  if [[ -f "${manifest_path}" ]]; then
+    local line basename file
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      line="${line%%#*}"
+      line="${line%$'\r'}"
+      [[ -n "${line}" ]] || continue
+      basename="$(basename "${line}")"
+      [[ "${basename}" == ${pattern} ]] || continue
+      file="${search_dir}/${basename}"
+      if [[ ! -f "${file}" ]]; then
+        echo "Install manifest references missing file: ${basename}" >&2
+        exit 1
+      fi
+      matches+=("${file}")
+    done < "${manifest_path}"
+  else
+    mapfile -t matches < <(find "${search_dir}" -maxdepth 1 -type f -name "${pattern}" | sort)
+  fi
+
   out_array+=("${matches[@]}")
+}
+
+collect_wheel_files() {
+  local search_dir="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+  local manifest_path="${search_dir}/${NEAT_INSTALL_MANIFEST}"
+  out_array=()
+
+  if [[ -f "${manifest_path}" ]]; then
+    local line basename file
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      line="${line%%#*}"
+      line="${line%$'\r'}"
+      [[ -n "${line}" ]] || continue
+      basename="$(basename "${line}")"
+      [[ "${basename}" == *.whl ]] || continue
+      file="${search_dir}/${basename}"
+      if [[ ! -f "${file}" ]]; then
+        echo "Install manifest references missing file: ${basename}" >&2
+        exit 1
+      fi
+      out_array+=("${file}")
+    done < "${manifest_path}"
+  else
+    mapfile -t out_array < <(find "${search_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
+  fi
 }
 
 collect_debs_in_install_order() {
@@ -284,6 +334,7 @@ collect_debs_in_install_order() {
 
   # Install low-level runtime packages first, then LLiMa, then NEAT core.
   append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
   append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
@@ -430,9 +481,11 @@ cache_install_artifacts_in_sysroot() {
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
     "${cache_dir}"/neat-*.deb \
     "${cache_dir}"/simaai-common*.deb \
+    "${cache_dir}"/neat-common_*.deb \
     "${cache_dir}"/neat-appcomplex_*.deb \
     "${cache_dir}"/sima-lmm-*.deb \
     "${cache_dir}"/*.whl \
+    "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}"/install_neat_framework.sh
 
   local file
@@ -441,11 +494,14 @@ cache_install_artifacts_in_sysroot() {
   done
 
   local -a wheel_files=()
-  mapfile -t wheel_files < <(find . -maxdepth 1 -type f -name '*.whl' | sort)
+  collect_wheel_files "." wheel_files
   for file in "${wheel_files[@]}"; do
     run_sudo cp -f "${file}" "${cache_dir}/"
   done
 
+  if [[ -f "./${NEAT_INSTALL_MANIFEST}" ]]; then
+    run_sudo cp -f "./${NEAT_INSTALL_MANIFEST}" "${cache_dir}/"
+  fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
 }
@@ -466,8 +522,9 @@ collect_cached_devkit_deploy_files() {
   local -a cached_core_debs=()
   mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
   collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
-  mapfile -t CACHED_WHEELS < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
+  collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
+  local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
 
   if [[ "${#cached_core_debs[@]}" -lt 1 ]]; then
     echo "No cached sima-neat core DEB found for paired DevKit sync in: ${cache_dir}" >&2
@@ -486,7 +543,24 @@ collect_cached_devkit_deploy_files() {
     exit 1
   fi
 
-  CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}" "${cached_installer}")
+  CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
+  if [[ -f "${cached_manifest}" ]]; then
+    CACHED_DEPLOY_FILES+=("${cached_manifest}")
+  fi
+  CACHED_DEPLOY_FILES+=("${cached_installer}")
+}
+
+apt_package_database_is_healthy() {
+  local apt_check_log
+  apt_check_log="$(mktemp /tmp/sima-neat-apt-check-XXXXXX)"
+
+  if run_sudo apt-get check >"${apt_check_log}" 2>&1; then
+    rm -f "${apt_check_log}"
+    return 0
+  fi
+
+  rm -f "${apt_check_log}"
+  return 1
 }
 
 install_debs_on_board() {
@@ -503,11 +577,15 @@ install_debs_on_board() {
   # local DEB set we are installing is self-consistent.  Fall back to installing
   # the local NEAT DEBs as one dpkg transaction to restore that package set
   # before continuing.
-  if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
-    return 0
+  if apt_package_database_is_healthy; then
+    if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+      return 0
+    fi
+    log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
+  else
+    log "apt package database has unresolved dependencies; using direct dpkg install for the local NEAT DEB set."
   fi
 
-  log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
 }
 
@@ -619,7 +697,9 @@ else
   print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 
-  WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
+  WHEEL_FILES=()
+  collect_wheel_files "." WHEEL_FILES
+  WHEEL_FILE="${WHEEL_FILES[0]:-}"
   if [[ -z "${WHEEL_FILE}" ]]; then
     echo "No wheel file found in current directory." >&2
     exit 1

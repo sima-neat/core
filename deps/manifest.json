@@ -1,5 +1,9 @@
 {
-  "internals": "",
-  "llima": "",
+  "internals": {
+    "policy": "snap"
+  },
+  "llima": {
+    "policy": "snap"
+  },
   "platform-version": "2.0.0"
 }

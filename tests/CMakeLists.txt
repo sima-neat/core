@@ -1095,4 +1095,20 @@ install(
   USE_SOURCE_PERMISSIONS
   FILES_MATCHING
     PATTERN "*"
+    PATTERN "pycache" EXCLUDE
+    PATTERN "__pycache__" EXCLUDE
+    PATTERN "CMakeFiles" EXCLUDE
+    PATTERN "fuzz" EXCLUDE
+    PATTERN "*.cmake" EXCLUDE
+    PATTERN "Makefile" EXCLUDE
+    PATTERN "*.make" EXCLUDE
+    PATTERN "*.o" EXCLUDE
+    PATTERN "*.o.d" EXCLUDE
+    PATTERN "*.ts" EXCLUDE
+)
+
+install(
+  FILES ${CMAKE_BINARY_DIR}/tests/CTestTestfile.cmake
+  DESTINATION lib/sima-neat/tests
+  COMPONENT extras
 )

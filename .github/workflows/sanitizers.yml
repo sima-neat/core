@@ -29,9 +29,10 @@ jobs:
 
       - name: Verify build artifacts
         run: |
-          ls -lh ./*.deb
-          ls -lh ./*extras.tar.gz
+          ls -lh dist/*.deb
+          ls -lh dist/*extras.tar.gz
           ls -lh dist/*.whl
+          ls -lh dist/metadata*.json
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
@@ -50,9 +51,6 @@ jobs:
 
       - name: Prepare sanitizer artifact payload and metadata
         run: |
-          CORE_DEB="$(ls -1 ./*-Linux-core.deb | head -n1)"
-          EXTRAS_TAR="$(ls -1 ./*extras.tar.gz | head -n1)"
-          WHEEL_PATH="$(ls -1 dist/*.whl | head -n1)"
           RESOLVED_MANIFEST="build/resolved_manifest.json"
           if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
             echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
@@ -60,10 +58,7 @@ jobs:
           fi
           OUT_DIR="${GITHUB_WORKSPACE}/_work/upload-artifacts-${{ matrix.mode }}"
           bash tools/prepare_s3_artifacts.sh \
-            --core-deb "${CORE_DEB}" \
-            --extras-tar "${EXTRAS_TAR}" \
-            --wheel "${WHEEL_PATH}" \
-            --internals-manifest "${RESOLVED_MANIFEST}" \
+            --artifacts-dir dist \
             --output-dir "${OUT_DIR}"
           cp "${RESOLVED_MANIFEST}" "${OUT_DIR}/manifest.json"
 

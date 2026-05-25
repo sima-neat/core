@@ -359,6 +359,7 @@ p.doxyGeneratedBy {
   line-height: 1.22;
   letter-spacing: 0.01em;
   text-shadow: 0 2px 8px rgba(8, 18, 36, 0.55);
+  text-decoration: none !important;
 }
 
 .tutorial-card-duration {

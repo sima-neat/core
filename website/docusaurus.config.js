@@ -44,6 +44,10 @@ const githubRepoUrl =
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
+const siteRoot = url.replace(/\/+$/, "");
+const developerCenterRoot = `${siteRoot}/`;
+const hardwareUrl = `${siteRoot}/hardware`;
+const examplesUrl = `${siteRoot}/examples/`;
 const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
 const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
 const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
@@ -123,11 +127,29 @@ const config = {
   plugins: [],
   themeConfig: {
     navbar: {
-      title: "SiMa Neat",
+      title: "Developer Center",
+      logo: {
+        alt: "SiMa.ai",
+        src: "img/favicon.png",
+        href: developerCenterRoot,
+      },
       items: [
-        { type: "doc", docId: "index", label: "Docs", position: "left" },
-        { label: "C++ API", to: "/reference/cppapi/", position: "left" },
-        { label: "Python API", to: "/reference/pythonapi/", position: "left" },
+        {
+          type: "html",
+          position: "left",
+          value: `<a class="navbar__item navbar__link" href="${hardwareUrl}">Hardware</a>`,
+        },
+        { to: "/", label: "Software", position: "left" },
+        {
+          type: "html",
+          position: "left",
+          value: `<a class="navbar__item navbar__link" href="${examplesUrl}">Examples</a>`,
+        },
+        { href: "https://huggingface.co/simaai", label: "Models", position: "left" },
+        { href: "https://developer.sima.ai", label: "Community", position: "left" },
+        { type: "doc", docId: "index", label: "Docs", position: "right" },
+        { label: "C++ API", to: "/reference/cppapi/", position: "right" },
+        { label: "Python API", to: "/reference/pythonapi/", position: "right" },
         { type: "search", position: "right" },
         {
           type: "html",
@@ -171,6 +193,8 @@ const config = {
   },
   clientModules: [
     require.resolve("./src/clientModules/analytics-consent.js"),
+    require.resolve("./src/clientModules/developer-center-nav.js"),
+    require.resolve("./src/clientModules/global-theme.js"),
     require.resolve("./src/clientModules/language-preference.js"),
     require.resolve("./src/clientModules/search-highlight.js"),
   ],

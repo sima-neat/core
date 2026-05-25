@@ -8,6 +8,7 @@ PORT="${DOCS_LINK_CHECK_PORT:-}"
 HOST="localhost"
 SERVER_PID=""
 SERVER_LOG=""
+SERVE_DIR=""
 
 die() {
   echo "check_docs_links: $*" >&2
@@ -21,6 +22,7 @@ cleanup() {
     wait "${SERVER_PID}" >/dev/null 2>&1 || true
   fi
   [[ -n "${SERVER_LOG}" ]] && rm -f "${SERVER_LOG}"
+  [[ -n "${SERVE_DIR}" && "${SERVE_DIR}" != "${SITE_DIR}" ]] && rm -rf "${SERVE_DIR}"
   exit "${rc}"
 }
 trap cleanup EXIT
@@ -41,14 +43,41 @@ PY
 fi
 
 BASE_URL="http://${HOST}:${PORT}"
-SERVER_LOG="$(mktemp /tmp/sima-neat-docs-link-serve.XXXXXX.log)"
+SERVER_LOG="$(mktemp "${TMPDIR:-/tmp}/sima-neat-docs-link-serve.XXXXXX")"
+BASE_PATH="${DOCS_LINK_BASE_PATH:-${DOCS_BASE_URL:-/}}"
 
-echo "Serving docs from ${SITE_DIR} at ${BASE_URL}"
-npx --yes serve@14.2.6 "${SITE_DIR}" -l "${PORT}" >"${SERVER_LOG}" 2>&1 &
+case "${BASE_PATH}" in
+  "")
+    BASE_PATH="/"
+    ;;
+  /*)
+    ;;
+  *)
+    BASE_PATH="/${BASE_PATH}"
+    ;;
+esac
+
+if [[ "${BASE_PATH}" != "/" ]]; then
+  BASE_PATH="/${BASE_PATH#/}"
+  BASE_PATH="${BASE_PATH%/}/"
+  SERVE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-docs-link-root.XXXXXX")"
+  mkdir -p "${SERVE_DIR}$(dirname "${BASE_PATH%/}")"
+  ln -s "${SITE_DIR}" "${SERVE_DIR}${BASE_PATH%/}"
+else
+  SERVE_DIR="${SITE_DIR}"
+fi
+
+READY_URL="${BASE_URL}"
+if [[ "${BASE_PATH}" != "/" ]]; then
+  READY_URL="${BASE_URL}${BASE_PATH}"
+fi
+
+echo "Serving docs from ${SITE_DIR} at ${READY_URL}"
+npx --yes serve@14.2.6 "${SERVE_DIR}" -l "${PORT}" >"${SERVER_LOG}" 2>&1 &
 SERVER_PID="$!"
 
 for _ in $(seq 1 100); do
-  if curl -fsS "${BASE_URL}" >/dev/null 2>&1; then
+  if curl -fsS "${READY_URL}" >/dev/null 2>&1; then
     break
   fi
   if ! kill -0 "${SERVER_PID}" >/dev/null 2>&1; then
@@ -58,15 +87,15 @@ for _ in $(seq 1 100); do
   sleep 0.2
 done
 
-if ! curl -fsS "${BASE_URL}" >/dev/null 2>&1; then
+if ! curl -fsS "${READY_URL}" >/dev/null 2>&1; then
   cat "${SERVER_LOG}" >&2 || true
-  die "docs server did not become ready at ${BASE_URL}"
+  die "docs server did not become ready at ${READY_URL}"
 fi
 
 url_for_start_path() {
   case "$1" in
     all)
-      printf '%s' "${BASE_URL}"
+      printf '%s' "${READY_URL}"
       ;;
     http://*|https://*)
       printf '%s' "$1"
