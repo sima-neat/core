@@ -3,6 +3,10 @@
 #include "asset_utils.h"
 #include "test_utils.h"
 
+#if defined(SIMA_WITH_OPENCV)
+#include "yolov8_test_utils.h"
+#endif
+
 #include <array>
 #include <cstdlib>
 #include <cstring>
@@ -67,8 +71,20 @@ fs::path resolve_yolov8n_variant_or_throw(const fs::path& root, std::string_view
     return found;
   }
 
+#if defined(SIMA_WITH_OPENCV)
+  // Match the YOLO matrix tests: these variants are mandatory in CI, so a
+  // missing staged tarball should be fetched on demand and validated instead
+  // of failing this focused phase3 coverage first.
+  const fs::path variants_dir = sima_yolov8_test::ensure_yolov8n_drive_variants(root);
+  const fs::path downloaded = variants_dir / name;
+  if (sima_test::is_listable_tar_gz(downloaded)) {
+    return downloaded;
+  }
+#endif
+
   throw std::runtime_error("failed to resolve YOLOv8n variant tarball: " + name +
-                           " (stage it under tmp/yolov8n_6_variants or tmp/yolov8n_drive)");
+                           " (stage it under tmp/yolov8n_6_variants or tmp/yolov8n_drive, "
+                           "or set SIMA_YOLOV8N_VARIANTS_BASE_URL to a mirror)");
 }
 
 std::vector<fs::path> resolve_yolov8n_variants_or_throw(const fs::path& root) {
