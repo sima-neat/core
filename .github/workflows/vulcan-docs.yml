@@ -67,44 +67,6 @@ jobs:
 
           echo "deploy_environment=${deploy_environment}" >> "${GITHUB_OUTPUT}"
 
-  build-docs:
-    name: Build Docs
-    needs:
-      - resolve-target
-      - resolve-docs-vars
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
-    with:
-      vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
-      sdk_cache: ${{ needs.resolve-docs-vars.outputs.sdk_cache }}
-      capacity: ${{ needs.resolve-docs-vars.outputs.docs_capacity }}
-      fetch_depth: 1
-      checkout_submodules: "false"
-      ensure_sdk_container: true
-      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
-      artifact_name: vulcan-docs-site
-      artifact_path: website/build/*
-      artifact_retention_days: 1
-      build_command: |
-        set -euo pipefail
-
-        export DOCS_URL='${{ needs.resolve-docs-vars.outputs.docs_base_url }}'
-        export DOCS_GA_MEASUREMENT_ID='${{ vars.DOCS_GA_MEASUREMENT_ID }}'
-        export DOCS_STRICT_LINKS=1
-        export DOCS_BASE_URL=/
-
-        if [[ -z "${DOCS_URL}" ]]; then
-          echo "Missing VULCAN_DOCS_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
-          exit 1
-        fi
-
-        ./build.sh --doc
-
-      post_build_command: |
-        set -euo pipefail
-        test -d website/build
-        test -f website/build/index.html
-        DOCS_LINK_SITE_DIR="${PWD}/website/build" DOCS_LINK_START_PATHS=all bash scripts/ci/check_docs_links.sh
-
   build-sysdoc-software:
     name: Build SysDoc Software Route
     needs:
@@ -126,7 +88,6 @@ jobs:
         set -euo pipefail
 
         export DOCS_URL='${{ needs.resolve-docs-vars.outputs.sysdoc_base_url }}'
-        export DOCS_GA_MEASUREMENT_ID='${{ vars.DOCS_GA_MEASUREMENT_ID }}'
         export DOCS_STRICT_LINKS=1
         export DOCS_BASE_URL=/software/
 
@@ -149,23 +110,6 @@ jobs:
     with:
       vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
 
-  publish-docs:
-    name: Publish Docs
-    needs:
-      - resolve-target
-      - resolve-docs-vars
-      - build-docs
-    uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
-    with:
-      environment_name: ${{ needs.resolve-target.outputs.deploy_environment }}
-      site_key: DOCS
-      aws_region: ${{ needs.resolve-docs-vars.outputs.aws_region }}
-      bucket: ${{ needs.resolve-docs-vars.outputs.docs_bucket }}
-      role_to_assume: ${{ needs.resolve-docs-vars.outputs.docs_publisher_role_arn }}
-      sse_kms_key_id: ${{ needs.resolve-docs-vars.outputs.docs_kms_key_id }}
-      cloudfront_distribution_id: ${{ needs.resolve-docs-vars.outputs.docs_cloudfront_distribution_id }}
-      artifact_pattern: vulcan-docs-site
-
   publish-sysdoc-software:
     name: Publish SysDoc Software Route
     needs:
@@ -174,16 +118,12 @@ jobs:
       - build-sysdoc-software
     uses: sima-neat/.github/.github/workflows/vulcan-publish-static-site.yml@main
     with:
-      # The Developer Center CloudFront distribution serves /software from the
-      # docs site content origin/prefix. This intentionally uploads the software
-      # docs route with the docs publisher while invalidating the sysdoc
-      # distribution that fronts build.{env}.neat.sima.ai.
       environment_name: ${{ needs.resolve-target.outputs.deploy_environment }}
-      site_key: DOCS
+      site_key: SYSDOC
       aws_region: ${{ needs.resolve-docs-vars.outputs.aws_region }}
-      bucket: ${{ needs.resolve-docs-vars.outputs.docs_bucket }}
-      role_to_assume: ${{ needs.resolve-docs-vars.outputs.docs_publisher_role_arn }}
-      sse_kms_key_id: ${{ needs.resolve-docs-vars.outputs.docs_kms_key_id }}
+      bucket: ${{ needs.resolve-docs-vars.outputs.sysdoc_bucket }}
+      role_to_assume: ${{ needs.resolve-docs-vars.outputs.sysdoc_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-docs-vars.outputs.sysdoc_kms_key_id }}
       cloudfront_distribution_id: ${{ needs.resolve-docs-vars.outputs.sysdoc_cloudfront_distribution_id }}
       cloudfront_paths: "/software /software/*"
       artifact_pattern: vulcan-sysdoc-software-site
