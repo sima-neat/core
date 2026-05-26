@@ -49,8 +49,7 @@ jobs:
   code-hygiene:
     name: Code Hygiene
     if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
-    runs-on:
-      group: generic-x86-linux
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
