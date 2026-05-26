@@ -71,6 +71,7 @@ NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framewo
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (samples/tutorials/tests)}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
+SIMANEAT_BOOTSTRAP_SIMA_CLI="${SIMANEAT_BOOTSTRAP_SIMA_CLI:-auto}"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -1106,7 +1107,42 @@ copy_plugins_to_neat_internals() {
   done
 }
 
+bootstrap_sima_cli_for_ci_if_needed() {
+  case "${SIMANEAT_BOOTSTRAP_SIMA_CLI}" in
+    OFF|off|0|false|FALSE|False)
+      return 1
+      ;;
+  esac
+
+  if [[ "${SIMANEAT_BOOTSTRAP_SIMA_CLI}" != "ON" &&
+        "${SIMANEAT_BOOTSTRAP_SIMA_CLI}" != "on" &&
+        "${SIMANEAT_BOOTSTRAP_SIMA_CLI}" != "1" &&
+        -z "${GITHUB_ACTIONS:-}" &&
+        -z "${CI:-}" ]]; then
+    return 1
+  fi
+
+  echo "Installing sima-cli with Neat artifact support for CI..."
+  local installer
+  installer="$(mktemp /tmp/sima-cli-install-XXXXXX.py)"
+  curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o "${installer}"
+  SIMA_CLI_CHECK_FOR_UPDATE=0 python3 "${installer}" main latest
+  rm -f "${installer}"
+
+  export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
+  if [[ -x "${HOME}/.sima-cli/.venv/bin/sima-cli" ]]; then
+    SIMA_CLI_BIN="${HOME}/.sima-cli/.venv/bin/sima-cli"
+  else
+    SIMA_CLI_BIN="$(command -v sima-cli || true)"
+  fi
+}
+
 require_sima_cli_neat_install() {
+  if ! command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1 ||
+     ! "${SIMA_CLI_BIN}" neat install --help >/dev/null 2>&1; then
+    bootstrap_sima_cli_for_ci_if_needed || true
+  fi
+
   if ! command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1; then
     echo "ERROR: sima-cli is required for Neat artifact access." >&2
     echo "Set SIMA_CLI_BIN to a sima-cli executable with Neat artifact install support if needed." >&2
