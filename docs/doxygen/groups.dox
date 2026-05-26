@@ -79,6 +79,18 @@
  */
 
 /**
+ * @defgroup graph_nodes Runtime graph nodes
+ * @ingroup graph
+ * @brief Stage, fan-out, join, scheduler, and adapter nodes for runtime graphs.
+ */
+
+/**
+ * @defgroup graph_runtime Runtime graph internals
+ * @ingroup graph
+ * @brief Queue and mailbox primitives used by runtime graph execution.
+ */
+
+/**
  * @defgroup policy Policy
  * @brief Decoder/encoder/RTSP/memory policy decision helpers used by the builder.
  */

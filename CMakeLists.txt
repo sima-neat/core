@@ -66,6 +66,8 @@ endif()
 option(SIMANEAT_ENABLE_OPENAI_SERVER
   "Build OpenAI-compatible GenAI HTTP server support"
   ${SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT})
+set(SIMANEAT_BUILDINFO_JSON "" CACHE FILEPATH
+  "Optional package provenance JSON to install as share/sima-neat/buildinfo.json")
 
 if (UNIX)
   set(SIMANEAT_SOURCE_FS_TYPE "")
@@ -109,9 +111,23 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
 
 # ------------------------------------------------------------------------------
-# Version from git (tag -> tag, else branch-hash)
+# Version from deps/manifest.json platform-version.
+# Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
-set(SIMANEAT_VERSION "1.0.0")
+set(SIMANEAT_PLATFORM_VERSION "")
+execute_process(
+  COMMAND python3 -c "import json; print(json.load(open('deps/manifest.json', encoding='utf-8'))['platform-version'])"
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  RESULT_VARIABLE PLATFORM_VERSION_RESULT
+  OUTPUT_VARIABLE SIMANEAT_PLATFORM_VERSION
+  ERROR_QUIET
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_PLATFORM_VERSION STREQUAL "")
+  message(FATAL_ERROR "Failed to read platform-version from deps/manifest.json")
+endif()
+
+set(SIMANEAT_VERSION "${SIMANEAT_PLATFORM_VERSION}")
 execute_process(
   COMMAND git describe --tags --exact-match
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -124,11 +140,19 @@ execute_process(
 if (GIT_TAG_RESULT EQUAL 0 AND NOT GIT_TAG STREQUAL "")
   set(SIMANEAT_VERSION "${GIT_TAG}")
 else()
+  set(GIT_BRANCH "")
+  set(GIT_HASH "")
+
+  if ("$ENV{GITHUB_REF_TYPE}" STREQUAL "tag" AND NOT "$ENV{GITHUB_REF_NAME}" STREQUAL "")
+    set(SIMANEAT_VERSION "$ENV{GITHUB_REF_NAME}")
+  endif()
+
   execute_process(
     COMMAND git rev-parse --abbrev-ref HEAD
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     RESULT_VARIABLE GIT_BRANCH_RESULT
     OUTPUT_VARIABLE GIT_BRANCH
+    ERROR_QUIET
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
   execute_process(
@@ -136,12 +160,35 @@ else()
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     RESULT_VARIABLE GIT_HASH_RESULT
     OUTPUT_VARIABLE GIT_HASH
+    ERROR_QUIET
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
 
-  if (GIT_BRANCH_RESULT EQUAL 0 AND GIT_HASH_RESULT EQUAL 0
+  if ((NOT GIT_BRANCH_RESULT EQUAL 0 OR GIT_BRANCH STREQUAL "" OR GIT_BRANCH STREQUAL "HEAD")
+      AND (NOT "$ENV{GITHUB_HEAD_REF}" STREQUAL "" OR NOT "$ENV{GITHUB_REF_NAME}" STREQUAL ""))
+    if (NOT "$ENV{GITHUB_HEAD_REF}" STREQUAL "")
+      set(GIT_BRANCH "$ENV{GITHUB_HEAD_REF}")
+    else()
+      set(GIT_BRANCH "$ENV{GITHUB_REF_NAME}")
+    endif()
+    set(GIT_BRANCH_RESULT 0)
+  endif()
+
+  if ((NOT GIT_HASH_RESULT EQUAL 0 OR GIT_HASH STREQUAL "") AND NOT "$ENV{GITHUB_SHA}" STREQUAL "")
+    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 GIT_HASH)
+    set(GIT_HASH_RESULT 0)
+  endif()
+
+  if (SIMANEAT_VERSION STREQUAL SIMANEAT_PLATFORM_VERSION
+      AND GIT_BRANCH_RESULT EQUAL 0 AND GIT_HASH_RESULT EQUAL 0
       AND NOT GIT_BRANCH STREQUAL "" AND NOT GIT_HASH STREQUAL "")
-    set(SIMANEAT_VERSION "${GIT_BRANCH}-${GIT_HASH}")
+    string(TOLOWER "${GIT_BRANCH}" GIT_BRANCH_VERSION)
+    string(REGEX REPLACE "[^a-z0-9.]+" "." GIT_BRANCH_VERSION "${GIT_BRANCH_VERSION}")
+    string(REGEX REPLACE "^\\.+|\\.+$" "" GIT_BRANCH_VERSION "${GIT_BRANCH_VERSION}")
+    if (GIT_BRANCH_VERSION STREQUAL "")
+      set(GIT_BRANCH_VERSION "branch")
+    endif()
+    set(SIMANEAT_VERSION "${SIMANEAT_PLATFORM_VERSION}+${GIT_BRANCH_VERSION}.${GIT_HASH}")
   endif()
 endif()
 
@@ -154,8 +201,13 @@ if (SIMANEAT_VERSION MATCHES "^v[0-9].*")
   string(REGEX REPLACE "^v" "" SIMANEAT_VERSION "${SIMANEAT_VERSION}")
 endif()
 
-if (NOT SIMANEAT_VERSION MATCHES "^[0-9].*")
-  set(SIMANEAT_VERSION "0.0.0+${SIMANEAT_VERSION}")
+set(SIMANEAT_ABI_VERSION "${SIMANEAT_PLATFORM_VERSION}")
+if (SIMANEAT_ABI_VERSION MATCHES "^v[0-9].*")
+  string(REGEX REPLACE "^v" "" SIMANEAT_ABI_VERSION "${SIMANEAT_ABI_VERSION}")
+endif()
+string(REGEX REPLACE "^([0-9]+).*$" "\\1" SIMANEAT_ABI_VERSION "${SIMANEAT_ABI_VERSION}")
+if (NOT SIMANEAT_ABI_VERSION MATCHES "^[0-9]+$")
+  set(SIMANEAT_ABI_VERSION "0")
 endif()
 
 if (SIMANEAT_STRICT_WARNINGS)
@@ -778,30 +830,56 @@ endforeach()
 # ------------------------------------------------------------------------------
 # Library: sima_neat
 # ------------------------------------------------------------------------------
-add_library(sima_neat STATIC
+add_library(sima_neat_objects OBJECT
   ${SIMANEAT_SOURCES}
 )
+set_target_properties(sima_neat_objects PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
+target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_INTERNAL=1)
 
 if (NOT GIT_HASH)
   set(GIT_HASH "unknown")
 endif()
 
-target_compile_definitions(sima_neat
-  PRIVATE
-    SIMA_NEAT_INTERNAL=1
-    SIMANEAT_VERSION_STRING="${SIMANEAT_VERSION}"
-    SIMANEAT_GIT_SHA="${GIT_HASH}"
+add_library(sima_neat_common INTERFACE)
+
+add_library(sima_neat STATIC
+  $<TARGET_OBJECTS:sima_neat_objects>
+)
+
+add_library(sima_neat_shared SHARED
+  $<TARGET_OBJECTS:sima_neat_objects>
+)
+set_target_properties(sima_neat_shared PROPERTIES
+  OUTPUT_NAME sima_neat
+  VERSION "${SIMANEAT_PLATFORM_VERSION}"
+  SOVERSION "${SIMANEAT_ABI_VERSION}"
+)
+
+target_link_libraries(sima_neat PUBLIC sima_neat_common)
+target_link_libraries(sima_neat_shared PUBLIC sima_neat_common)
+target_link_libraries(sima_neat_objects PRIVATE sima_neat_common)
+add_custom_target(sima_neat_libraries DEPENDS sima_neat sima_neat_shared)
+target_compile_definitions(sima_neat_objects PRIVATE
+  SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
+  SIMA_NEAT_PLATFORM_VERSION_STRING="${SIMANEAT_PLATFORM_VERSION}"
+  SIMA_NEAT_ABI_VERSION_STRING="${SIMANEAT_ABI_VERSION}"
+  SIMANEAT_VERSION_STRING="${SIMANEAT_VERSION}"
+  SIMANEAT_GIT_SHA="${GIT_HASH}"
 )
 
 set(SIMANEAT_REPO_NEAT_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/include")
 set(SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/gst_plugins/include")
 
-target_include_directories(sima_neat
-  PUBLIC
+target_include_directories(sima_neat_common
+  INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/pipeline>
+)
+target_include_directories(sima_neat_objects
   PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
@@ -814,7 +892,7 @@ foreach(_simaneat_llima_header_dep IN ITEMS
     "${SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR}")
   if (_simaneat_llima_header_dep AND
       NOT _simaneat_llima_header_dep MATCHES "-NOTFOUND$")
-    target_include_directories(sima_neat SYSTEM PRIVATE "${_simaneat_llima_header_dep}")
+    target_include_directories(sima_neat_objects SYSTEM PRIVATE "${_simaneat_llima_header_dep}")
   endif()
 endforeach()
 
@@ -828,91 +906,94 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
       "${SIMANEAT_NEAT_PUBLIC_INCLUDE_ROOT}")
     if (_simaneat_neat_include_dir AND
         NOT _simaneat_neat_include_dir MATCHES "-NOTFOUND$")
-      target_include_directories(sima_neat PRIVATE
+      target_include_directories(sima_neat_objects PRIVATE
         "${_simaneat_neat_include_dir}")
     endif()
   endforeach()
 endif()
 
 if (GST_FOUND)
-  target_include_directories(sima_neat SYSTEM PUBLIC ${GST_INCLUDE_DIRS})
+  target_include_directories(sima_neat_common SYSTEM INTERFACE ${GST_INCLUDE_DIRS})
 endif()
 if (OPENCV_FOUND)
-  target_include_directories(sima_neat SYSTEM PUBLIC ${OPENCV_INCLUDE_DIRS})
+  target_include_directories(sima_neat_common SYSTEM INTERFACE ${OPENCV_INCLUDE_DIRS})
 endif()
 
-target_compile_options(sima_neat PRIVATE
+target_compile_options(sima_neat_objects PRIVATE
 )
 
 if (GST_FOUND)
-  target_compile_options(sima_neat PRIVATE ${GST_CFLAGS_OTHER})
+  target_compile_options(sima_neat_objects PRIVATE ${GST_CFLAGS_OTHER})
 endif()
 if (OPENCV_FOUND)
-  target_compile_options(sima_neat PRIVATE ${OPENCV_CFLAGS_OTHER})
+  target_compile_options(sima_neat_objects PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
 if (SIMANEAT_ENABLE_OPENAI_SERVER)
-  target_compile_options(sima_neat PRIVATE ${HTTPLIB_CFLAGS_OTHER})
+  target_compile_options(sima_neat_objects PRIVATE ${HTTPLIB_CFLAGS_OTHER})
 endif()
 
 if (OPENCV_FOUND)
   target_link_directories(sima_neat PRIVATE ${OPENCV_LIBRARY_DIRS})
+  target_link_directories(sima_neat_shared PRIVATE ${OPENCV_LIBRARY_DIRS})
 endif()
 if (GST_FOUND)
   target_link_directories(sima_neat PRIVATE ${GST_LIBRARY_DIRS})
+  target_link_directories(sima_neat_shared PRIVATE ${GST_LIBRARY_DIRS})
 endif()
 
 if (SimaLMM_FOUND)
-  target_link_libraries(sima_neat
-    PUBLIC
+  target_link_libraries(sima_neat_common
+    INTERFACE
       SimaLMM::sima_lmm_runtime
   )
 endif()
 
 if (SIMANEAT_ENABLE_OPENAI_SERVER)
-  target_include_directories(sima_neat SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
+  target_include_directories(sima_neat_objects SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
   target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
+  target_link_libraries(sima_neat_shared PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
 endif()
 
 if (GST_FOUND)
-  target_link_libraries(sima_neat PUBLIC ${GST_LIBRARIES})
+  target_link_libraries(sima_neat_common INTERFACE ${GST_LIBRARIES})
 endif()
 if (OPENCV_FOUND)
-  target_link_libraries(sima_neat PUBLIC ${OPENCV_LIBRARIES})
+  target_link_libraries(sima_neat_common INTERFACE ${OPENCV_LIBRARIES})
 endif()
 
 if (SIMA_WITH_OPENCV)
-  target_compile_definitions(sima_neat PUBLIC SIMA_WITH_OPENCV)
+  target_compile_definitions(sima_neat_common INTERFACE SIMA_WITH_OPENCV)
 endif()
 
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-  target_link_libraries(sima_neat PUBLIC
+  target_link_libraries(sima_neat_common INTERFACE
     NeatInternals::Allocator
     NeatInternals::BufferPool
     NeatInternals::TensorBuffer)
 else()
   if (SIMANEAT_NEAT_ALLOCATOR_LIB)
-    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_ALLOCATOR_LIB})
+    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_ALLOCATOR_LIB})
   endif()
   if (SIMANEAT_NEAT_BUFFERPOOL_LIB)
-    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
+    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_BUFFERPOOL_LIB})
   endif()
   if (SIMANEAT_NEAT_TENSORBUFFER_LIB)
-    target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
+    target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_TENSORBUFFER_LIB})
   endif()
 endif()
 if (SIMANEAT_SIMAAIMEM_LIB)
-  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_SIMAAIMEM_LIB})
+  target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_SIMAAIMEM_LIB})
 endif()
 if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
-    target_link_libraries(sima_neat PUBLIC NeatInternals::PreparedRuntimeBridge)
+    target_link_libraries(sima_neat_common INTERFACE NeatInternals::PreparedRuntimeBridge)
   else()
     if (SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB)
-      target_link_libraries(sima_neat PUBLIC
+      target_link_libraries(sima_neat_common INTERFACE
         ${SIMANEAT_NEAT_PREPARED_RUNTIME_BRIDGE_LIB})
     endif()
     if (SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB)
-      target_link_libraries(sima_neat PUBLIC
+      target_link_libraries(sima_neat_common INTERFACE
         ${SIMANEAT_NEAT_PROCESSMLA_RUNTIME_LIB})
     endif()
   endif()
@@ -939,17 +1020,17 @@ if (NOT SIMANEAT_NEAT_PROFILER_LIB)
   )
 endif()
 if (SIMANEAT_NEAT_PROFILER_LIB)
-  target_link_libraries(sima_neat PUBLIC ${SIMANEAT_NEAT_PROFILER_LIB})
-  target_include_directories(sima_neat PUBLIC
+  target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_PROFILER_LIB})
+  target_include_directories(sima_neat_common INTERFACE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/profiler>)
-  target_compile_definitions(sima_neat PUBLIC SIMA_HAS_NEAT_PROFILER=1)
+  target_compile_definitions(sima_neat_common INTERFACE SIMA_HAS_NEAT_PROFILER=1)
 else()
   message(STATUS
     "libsimaaineatprofiler.so not found: per-kernel latency profiler "
     "will be unavailable. Build internals/core/profiler first to enable.")
 endif()
 
-target_compile_definitions(sima_neat PUBLIC SIMA_HAS_SIMAAI_POOL=1)
+target_compile_definitions(sima_neat_common INTERFACE SIMA_HAS_SIMAAI_POOL=1)
 
 set(SIMANEAT_NEAT_ALLOCATOR_DIR "")
 if (SIMANEAT_NEAT_ALLOCATOR_LIB)
@@ -1099,15 +1180,18 @@ endfunction()
 
 if (SIMANEAT_NEAT_ALLOCATOR_DIR)
   target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_ALLOCATOR_DIR}")
+  target_link_options(sima_neat_shared PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_ALLOCATOR_DIR}")
 endif()
 if (SIMANEAT_NEAT_BUFFERPOOL_DIR AND
     NOT SIMANEAT_NEAT_BUFFERPOOL_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR)
   target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_BUFFERPOOL_DIR}")
+  target_link_options(sima_neat_shared PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_BUFFERPOOL_DIR}")
 endif()
 if (SIMANEAT_NEAT_TENSORBUFFER_DIR AND
     NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_ALLOCATOR_DIR AND
     NOT SIMANEAT_NEAT_TENSORBUFFER_DIR STREQUAL SIMANEAT_NEAT_BUFFERPOOL_DIR)
   target_link_options(sima_neat PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_TENSORBUFFER_DIR}")
+  target_link_options(sima_neat_shared PUBLIC "-Wl,-rpath,${SIMANEAT_NEAT_TENSORBUFFER_DIR}")
 endif()
 
 # ------------------------------------------------------------------------------
@@ -1172,7 +1256,7 @@ endif()
 # Install / Package
 # ------------------------------------------------------------------------------
 install(
-  TARGETS sima_neat
+  TARGETS sima_neat sima_neat_shared sima_neat_common
   EXPORT SimaNeatTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -1205,6 +1289,18 @@ install(
   DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat/skills/sima-neat
   COMPONENT core
 )
+
+if (SIMANEAT_BUILDINFO_JSON)
+  if (NOT EXISTS "${SIMANEAT_BUILDINFO_JSON}")
+    message(FATAL_ERROR "SIMANEAT_BUILDINFO_JSON does not exist: ${SIMANEAT_BUILDINFO_JSON}")
+  endif()
+  install(
+    FILES ${SIMANEAT_BUILDINFO_JSON}
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/sima-neat
+    RENAME buildinfo.json
+    COMPONENT core
+  )
+endif()
 
 install(
   FILES
@@ -1246,7 +1342,7 @@ configure_package_config_file(
 
 write_basic_package_version_file(
   ${CMAKE_CURRENT_BINARY_DIR}/SimaNeatConfigVersion.cmake
-  VERSION ${PROJECT_VERSION}
+  VERSION ${SIMANEAT_PLATFORM_VERSION}
   COMPATIBILITY SameMajorVersion
 )
 
@@ -1282,7 +1378,7 @@ install(
 set(CPACK_PACKAGE_NAME "sima-neat")
 set(CPACK_PACKAGE_VENDOR "SiMa.ai")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY
-    "SiMa NEAT core static library and headers")
+    "SiMa NEAT core libraries and headers")
 
 set(CPACK_COMPONENTS_ALL core)
 set(CPACK_DEB_COMPONENT_INSTALL ON)

@@ -1,5 +1,9 @@
 {
-  "internals": "beta02_graph_changes-latest",
-  "llima": "",
+  "internals": {
+    "policy": "snap"
+  },
+  "llima": {
+    "policy": "snap"
+  },
   "platform-version": "2.0.0"
 }

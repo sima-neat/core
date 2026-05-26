@@ -5,7 +5,7 @@ PROJECT_BRIEF          = "Typed, composable GStreamer pipelines in C++20"
 OUTPUT_DIRECTORY       = docs/doxygen/out
 
 # Inputs
-INPUT                  = include docs README.md
+INPUT                  = include README.md docs/doxygen
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.hpp *.cpp *.md *.dox
 EXAMPLE_PATH           = tests docs/doxygen

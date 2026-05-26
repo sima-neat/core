@@ -157,17 +157,18 @@ jobs:
 
       - name: Verify build artifacts
         run: |
-          ls -lh ./*.deb
-          ls -lh ./*extras.tar.gz
+          ls -lh dist/*.deb
+          ls -lh dist/*extras.tar.gz
           ls -lh dist/*.whl
+          ls -lh dist/metadata*.json
 
       - name: Prepare artifact payload and metadata
         run: |
-          mapfile -t CORE_DEBS < <(find . -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
-          mapfile -t EXTRAS_TARS < <(find . -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t CORE_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find dist -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
           mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
           if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
-            echo "Expected exactly one core .deb, one extras tar.gz, and one wheel." >&2
+            echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel." >&2
             echo "core debs: ${#CORE_DEBS[@]}" >&2
             printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
             echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
@@ -176,19 +177,13 @@ jobs:
             printf '  %s\n' "${WHEELS[@]}" >&2 || true
             exit 1
           fi
-          CORE_DEB="${CORE_DEBS[0]}"
-          EXTRAS_TAR="${EXTRAS_TARS[0]}"
-          WHEEL_PATH="${WHEELS[0]}"
           RESOLVED_MANIFEST="build/resolved_manifest.json"
           if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
             echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
             exit 1
           fi
           bash tools/prepare_s3_artifacts.sh \
-            --core-deb "${CORE_DEB}" \
-            --extras-tar "${EXTRAS_TAR}" \
-            --wheel "${WHEEL_PATH}" \
-            --internals-manifest "${RESOLVED_MANIFEST}" \
+            --artifacts-dir dist \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
           cp "${RESOLVED_MANIFEST}" "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 
@@ -219,17 +214,18 @@ jobs:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
           ./build.sh --fuzz --clean --no-doc
-          ls -lh ./*.deb
-          ls -lh ./*extras.tar.gz
+          ls -lh dist/*.deb
+          ls -lh dist/*extras.tar.gz
           ls -lh dist/*.whl
+          ls -lh dist/metadata*.json
 
       - name: Prepare fuzz artifact payload and metadata
         run: |
-          mapfile -t CORE_DEBS < <(find . -maxdepth 1 -type f -name '*-Linux-core.deb' | sort)
-          mapfile -t EXTRAS_TARS < <(find . -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+          mapfile -t CORE_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+          mapfile -t EXTRAS_TARS < <(find dist -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
           mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
           if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
-            echo "Expected exactly one core .deb, one extras tar.gz, and one wheel." >&2
+            echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel." >&2
             echo "core debs: ${#CORE_DEBS[@]}" >&2
             printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
             echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
@@ -238,19 +234,13 @@ jobs:
             printf '  %s\n' "${WHEELS[@]}" >&2 || true
             exit 1
           fi
-          CORE_DEB="${CORE_DEBS[0]}"
-          EXTRAS_TAR="${EXTRAS_TARS[0]}"
-          WHEEL_PATH="${WHEELS[0]}"
           RESOLVED_MANIFEST="build/resolved_manifest.json"
           if [[ ! -f "${RESOLVED_MANIFEST}" ]]; then
             echo "Missing resolved internals manifest: ${RESOLVED_MANIFEST}" >&2
             exit 1
           fi
           bash tools/prepare_s3_artifacts.sh \
-            --core-deb "${CORE_DEB}" \
-            --extras-tar "${EXTRAS_TAR}" \
-            --wheel "${WHEEL_PATH}" \
-            --internals-manifest "${RESOLVED_MANIFEST}" \
+            --artifacts-dir dist \
             --output-dir "${GITHUB_WORKSPACE}/_work/upload-artifacts"
           cp "${RESOLVED_MANIFEST}" "${GITHUB_WORKSPACE}/_work/upload-artifacts/manifest.json"
 

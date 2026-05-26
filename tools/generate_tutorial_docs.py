@@ -72,7 +72,7 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        return f"/img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
+        return f"../img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
 
     @property
     def display_title(self) -> str:
@@ -443,17 +443,17 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
             )
             lines.extend(
                 [
-                    f'  <a class="tutorial-card tutorial-difficulty-{diff_class}" href="{module.doc_slug}" aria-label="{title}">',
+                    f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
                     '    <div class="tutorial-card-image-wrap">',
                     f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
-                    f'      <span class="tutorial-card-image-title">{title}</span>',
+                    f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
                     f'      <span class="tutorial-card-duration">{duration}</span>',
                     "    </div>",
                     '    <div class="tutorial-card-body">',
                     f'      <p class="tutorial-card-summary">{summary}</p>',
                     f'      <div class="tutorial-card-tags">{label_tags}</div>',
                     "    </div>",
-                    "  </a>",
+                    "  </div>",
                 ]
             )
 

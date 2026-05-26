@@ -96,7 +96,7 @@ If you want to recompile a chapter (to tweak it, or because the shipped binary d
 
 ### C++ — integrate Neat into your own project {#compile-a-copy-yourself}
 
-Copying a chapter's `.cpp` into your own codebase? Drop this minimal `CMakeLists.txt` alongside it — no extras folder required, only the base `sima-neat` package (which provides `libsima_neat.a` and `SimaNeatConfig.cmake`):
+Copying a chapter's `.cpp` into your own codebase? Drop this minimal `CMakeLists.txt` alongside it — no extras folder required, only the base `sima-neat` package (which provides `libsima_neat.a`, `libsima_neat.so`, and `SimaNeatConfig.cmake`):
 
 ```cmake
 cmake_minimum_required(VERSION 3.16)

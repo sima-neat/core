@@ -3,7 +3,7 @@ set -euo pipefail
 
 PROGRAM_NAME="$(basename "$0")"
 
-CORE_BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-https://artifacts.sima-neat.com/core}"
+CORE_BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-}"
 INSIGHT_BASE_URL="${NEAT_INSIGHT_BASE_URL:-https://apps.sima-neat.com/insight/download}"
 DEFAULT_SYSROOT="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 PORT_MAP_FILE="${NEAT_PORT_MAP_FILE:-${HOME}/.insight-config/neat-port-map.json}"
@@ -12,6 +12,7 @@ UPDATE_CONNECT_TIMEOUT_SECONDS="${NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS:-3}"
 UPDATE_TIMEOUT_SECONDS="${NEAT_UPDATE_TIMEOUT_SECONDS:-8}"
 SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 BUILDINFO_FILE="${NEAT_BUILDINFO_FILE:-/etc/buildinfo}"
+PACKAGE_BUILDINFO_FILE_OVERRIDE="${NEAT_PACKAGE_BUILDINFO_FILE:-}"
 STATUS_OFFLINE=0
 COLOR_MODE="auto"
 OUTPUT_JSON=0
@@ -55,6 +56,12 @@ SIMA_CLI_PATH=""
 CORE_LATEST_TAG=""
 CORE_LATEST_VERSION=""
 CORE_METADATA_URL=""
+CORE_PACKAGE_BUILDINFO_FILE=""
+CORE_VULCAN_ENV=""
+CORE_VULCAN_BASE_URL=""
+CORE_VULCAN_REF=""
+CORE_VULCAN_REF_KEY=""
+CORE_VULCAN_SPEC=""
 INSIGHT_LATEST_TAG=""
 INSIGHT_LATEST_VERSION=""
 INSIGHT_METADATA_URL=""
@@ -67,8 +74,10 @@ Usage:
   neat update [--yes] [--core-only|--insight-only] [--channel <name>] [--tag <latest|sha>] [--color=auto|always|never]
 
 Environment:
-  NEAT_ARTIFACTS_BASE_URL  Core artifact index (default: https://artifacts.sima-neat.com/core)
+  NEAT_ARTIFACTS_BASE_URL  Core artifact index override; otherwise derived from installed buildinfo.json
   NEAT_INSIGHT_BASE_URL    Insight artifact index (default: https://apps.sima-neat.com/insight/download)
+  NEAT_PACKAGE_BUILDINFO_FILE
+                           Installed package provenance JSON override
   NEAT_UPDATE_TIMEOUT_SECONDS
                            Per-request update check timeout in seconds (default: 8)
   NEAT_UPDATE_CONNECT_TIMEOUT_SECONDS
@@ -205,6 +214,15 @@ record_empty_update_response() {
   UPDATE_FAILURES+="${label}: ${url} returned an empty response"
 }
 
+record_update_config_failure() {
+  local label="$1"
+  local detail="$2"
+  if [[ -n "${UPDATE_FAILURES}" ]]; then
+    UPDATE_FAILURES+=$'\n'
+  fi
+  UPDATE_FAILURES+="${label}: ${detail}"
+}
+
 print_update_failures() {
   local line
   [[ -n "${UPDATE_FAILURES}" ]] || return 0
@@ -246,6 +264,42 @@ download_text_or_record() {
 json_field() {
   local field="$1"
   python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get(sys.argv[1], ""))' "${field}" 2>/dev/null || true
+}
+
+json_file_field() {
+  local file="$1"
+  local dotted_key="$2"
+  [[ -f "${file}" ]] || return 0
+  python3 - "${file}" "${dotted_key}" <<'PY' 2>/dev/null || true
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+try:
+    value = json.loads(path.read_text(encoding="utf-8"))
+except Exception:
+    raise SystemExit(0)
+for part in key.split("."):
+    if not isinstance(value, dict) or part not in value:
+        raise SystemExit(0)
+    value = value[part]
+if value is None or isinstance(value, (dict, list)):
+    raise SystemExit(0)
+print(str(value))
+PY
+}
+
+vulcan_artifact_base_url() {
+  local env_name
+  env_name="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  case "${env_name}" in
+    dev) printf '%s' "https://artifacts.neat.paconsultings.com" ;;
+    stg|staging) printf '%s' "https://artifacts.stg.neat.sima.ai" ;;
+    prod|production) printf '%s' "https://artifacts.neat.sima.ai" ;;
+    *) printf '%s' "" ;;
+  esac
 }
 
 version_from_wheel() {
@@ -465,6 +519,37 @@ discover_devkit_components() {
   fi
 }
 
+discover_core_package_buildinfo() {
+  if [[ -n "${PACKAGE_BUILDINFO_FILE_OVERRIDE}" ]]; then
+    CORE_PACKAGE_BUILDINFO_FILE="${PACKAGE_BUILDINFO_FILE_OVERRIDE}"
+  elif [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
+    CORE_PACKAGE_BUILDINFO_FILE="${SYSROOT_PATH}/usr/share/sima-neat/buildinfo.json"
+  else
+    CORE_PACKAGE_BUILDINFO_FILE="/usr/share/sima-neat/buildinfo.json"
+  fi
+
+  [[ -f "${CORE_PACKAGE_BUILDINFO_FILE}" ]] || return 0
+
+  CORE_VULCAN_ENV="$(json_file_field "${CORE_PACKAGE_BUILDINFO_FILE}" "vulcan.environment")"
+  CORE_VULCAN_REF="$(json_file_field "${CORE_PACKAGE_BUILDINFO_FILE}" "vulcan.ref")"
+  CORE_VULCAN_REF_KEY="$(json_file_field "${CORE_PACKAGE_BUILDINFO_FILE}" "vulcan.ref_key")"
+  CORE_VULCAN_SPEC="$(json_file_field "${CORE_PACKAGE_BUILDINFO_FILE}" "vulcan.spec")"
+
+  if [[ -n "${CORE_VULCAN_ENV}" ]]; then
+    CORE_VULCAN_BASE_URL="$(vulcan_artifact_base_url "${CORE_VULCAN_ENV}")"
+  fi
+  if [[ -n "${CORE_VULCAN_BASE_URL}" && -z "${NEAT_ARTIFACTS_BASE_URL:-}" ]]; then
+    CORE_BASE_URL="${CORE_VULCAN_BASE_URL%/}/core"
+  fi
+  if [[ -n "${CORE_VULCAN_REF}" ]]; then
+    CORE_CHANNEL="${CORE_VULCAN_REF}"
+    CORE_CHANNEL_ASSUMED=0
+  fi
+  if [[ -n "${CORE_VULCAN_SPEC}" ]]; then
+    CORE_TAG="${CORE_VULCAN_SPEC}"
+  fi
+}
+
 discover_insight() {
   local status_output=""
   if [[ -n "${NEAT_INSIGHT_VENV_DIR:-}" ]]; then
@@ -542,7 +627,10 @@ discover_all() {
   fi
   discover_insight
   discover_model_sdk
-  infer_channel_and_tag "${CORE_VERSION}" "main" CORE_CHANNEL CORE_TAG CORE_CHANNEL_ASSUMED
+  discover_core_package_buildinfo
+  if [[ -z "${CORE_CHANNEL}" || -z "${CORE_TAG}" ]]; then
+    infer_channel_and_tag "${CORE_VERSION}" "main" CORE_CHANNEL CORE_TAG CORE_CHANNEL_ASSUMED
+  fi
   infer_channel_and_tag "${INSIGHT_VERSION}" "main" INSIGHT_CHANNEL INSIGHT_TAG INSIGHT_CHANNEL_ASSUMED
 }
 
@@ -552,7 +640,17 @@ resolve_core_latest() {
   local metadata
   local latest_url
   local raw_tag
-  channel_key="$(sanitize_channel_key "${channel}")"
+  if [[ -z "${CORE_BASE_URL}" ]]; then
+    record_update_config_failure \
+      "Neat core artifact index" \
+      "unable to determine artifact environment; install a package with /usr/share/sima-neat/buildinfo.json or set NEAT_ARTIFACTS_BASE_URL"
+    return 1
+  fi
+  if [[ -n "${CORE_VULCAN_REF_KEY}" && "${channel}" == "${CORE_VULCAN_REF}" ]]; then
+    channel_key="${CORE_VULCAN_REF_KEY}"
+  else
+    channel_key="$(sanitize_channel_key "${channel}")"
+  fi
   if [[ "${TAG_INPUT}" == "latest" ]]; then
     latest_url="${CORE_BASE_URL}/${channel_key}/latest.tag"
     if ! download_text_or_record "Neat core latest tag" "${latest_url}" raw_tag; then
@@ -756,6 +854,11 @@ print_status_json() {
     NEAT_JSON_CORE_LATEST_TAG="${CORE_LATEST_TAG}" \
     NEAT_JSON_CORE_LATEST_VERSION="${CORE_LATEST_VERSION}" \
     NEAT_JSON_CORE_METADATA_URL="${CORE_METADATA_URL}" \
+    NEAT_JSON_CORE_PACKAGE_BUILDINFO_FILE="${CORE_PACKAGE_BUILDINFO_FILE}" \
+    NEAT_JSON_CORE_VULCAN_ENV="${CORE_VULCAN_ENV}" \
+    NEAT_JSON_CORE_VULCAN_BASE_URL="${CORE_VULCAN_BASE_URL}" \
+    NEAT_JSON_CORE_VULCAN_REF="${CORE_VULCAN_REF}" \
+    NEAT_JSON_CORE_VULCAN_SPEC="${CORE_VULCAN_SPEC}" \
     NEAT_JSON_PYNEAT_VERSION="${PYNEAT_VERSION}" \
     NEAT_JSON_RUNTIME_VERSION="${RUNTIME_VERSION}" \
     NEAT_JSON_GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION}" \
@@ -899,6 +1002,13 @@ payload = {
             "latestVersion": optional(env("NEAT_JSON_CORE_LATEST_VERSION")),
             "metadataUrl": optional(env("NEAT_JSON_CORE_METADATA_URL")),
             "updateAvailable": update_available(core_tag, core_latest_tag),
+            "provenance": {
+                "buildinfoFile": optional(env("NEAT_JSON_CORE_PACKAGE_BUILDINFO_FILE")),
+                "vulcanEnvironment": optional(env("NEAT_JSON_CORE_VULCAN_ENV")),
+                "vulcanBaseUrl": optional(env("NEAT_JSON_CORE_VULCAN_BASE_URL")),
+                "vulcanRef": optional(env("NEAT_JSON_CORE_VULCAN_REF")),
+                "vulcanSpec": optional(env("NEAT_JSON_CORE_VULCAN_SPEC")),
+            },
         },
         "pyneat": {"name": "PyNeat", "version": optional(env("NEAT_JSON_PYNEAT_VERSION"))},
         "runtime": {
@@ -978,6 +1088,7 @@ print_status() {
 
   if [[ -n "${CORE_CHANNEL}" ]]; then
     core_detail="channel=${CORE_CHANNEL}"
+    [[ -n "${CORE_VULCAN_ENV}" ]] && core_detail="${core_detail} env=${CORE_VULCAN_ENV}"
     [[ "${CORE_CHANNEL_ASSUMED}" -eq 1 ]] && core_detail="${core_detail} (assumed)"
     if [[ -n "${CORE_LATEST_TAG}" ]]; then
       core_detail="${core_detail} latest=${CORE_LATEST_TAG}"

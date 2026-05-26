@@ -40,19 +40,22 @@ SIMANEAT_SANITIZER_GATE_ONLY_EXTRAS=OFF
 INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
-NEAT_INTERNALS_MANIFEST="${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}"
-NEAT_INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
+NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
+NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-staging}"
+NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
+NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
+NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
 NEAT_INTERNALS_RESOLVED_MANIFEST="${NEAT_INTERNALS_RESOLVED_MANIFEST:-${BUILD_DIR}/resolved_manifest.json}"
+NEAT_PACKAGE_BUILDINFO_JSON="${NEAT_PACKAGE_BUILDINFO_JSON:-${BUILD_DIR}/buildinfo.json}"
 NEAT_INTERNALS_DIR="${NEAT_INTERNALS_DIR:-deps}"
 NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
-NEAT_INTERNALS_BASIC_AUTH="${NEAT_INTERNALS_BASIC_AUTH:-}"
 NEAT_INTERNALS_RESOLVED_REF=""
-NEAT_LLIMA_BASE_URL="${NEAT_LLIMA_BASE_URL:-https://artifacts.sima-neat.com/llima}"
+NEAT_INTERNALS_SNAP_POLICY=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
-NEAT_LLIMA_BASIC_AUTH="${NEAT_LLIMA_BASIC_AUTH:-${NEAT_INTERNALS_BASIC_AUTH}}"
 NEAT_LLIMA_RESOLVED_REF=""
+NEAT_LLIMA_SNAP_POLICY=OFF
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -62,6 +65,12 @@ ELXR_VERSION=""
 ELXR_WHEEL_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM:-}"
 ELXR_HOST_PYTHON_EXECUTABLE=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
+NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
+NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
+NEAT_PACKAGE_INSTALL_SCRIPT="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
+NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
+NEAT_EXTRAS_SELECTABLE_NAME="${NEAT_EXTRAS_SELECTABLE_NAME:-SiMa NEAT extras (samples/tutorials/tests)}"
+SIMA_CLI_BIN="${SIMA_CLI_BIN:-sima-cli}"
 
 # ------------------------------------------------------------------------------
 # System dependencies
@@ -271,6 +280,12 @@ Environment:
                  Auto-stage a local shadow workspace for builds from remote filesystems.
   SIMANEAT_SHADOW_ROOT=/tmp/sima-neat-shadow-<id>
                  Override where the shadow workspace is created.
+  NEAT_DEPS_MANIFEST=deps/manifest.json
+                 Manifest used to resolve Vulcan dependency artifacts.
+  NEAT_VULCAN_ENV=staging
+                 Vulcan environment used for dependency artifact installs.
+  SIMA_CLI_BIN=sima-cli
+                 sima-cli executable used for Vulcan installs and metadata generation.
 
 Examples:
   ./build.sh
@@ -767,53 +782,44 @@ install_system_deps() {
   fi
 }
 
-extract_json_string() {
-  # Lightweight JSON field extraction for simple manifest keys.
+manifest_dependency_spec() {
   local key="$1"
   local file="$2"
-  sed -n "s/.*\"${key}\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "${file}" | head -n1
-}
+  python3 - "${key}" "${file}" <<'PY'
+import json
+import sys
+from pathlib import Path
 
-manifest_has_json_string_key() {
-  local key="$1"
-  local file="$2"
-  grep -Eq "\"${key}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "${file}"
-}
+key = sys.argv[1]
+manifest_path = Path(sys.argv[2])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+if key not in data:
+    raise SystemExit(f"ERROR: {manifest_path} must define '{key}'.")
 
-download_file() {
-  local url="$1"
-  local out="$2"
-  local basic_auth="${3:-}"
-  # Prefer curl; fall back to wget for minimal environments.
-  if command -v curl >/dev/null 2>&1; then
-    if [[ -n "${basic_auth}" ]]; then
-      curl -fL -u "${basic_auth}" "${url}" -o "${out}"
-    else
-      curl -fL "${url}" -o "${out}"
-    fi
-    return $?
-  fi
-  if command -v wget >/dev/null 2>&1; then
-    if [[ -n "${basic_auth}" ]]; then
-      local wget_user="${basic_auth%%:*}"
-      local wget_pass="${basic_auth#*:}"
-      if [[ "${wget_user}" == "${wget_pass}" ]]; then
-        echo "ERROR: NEAT_INTERNALS_BASIC_AUTH must be in 'user:password' format for wget." >&2
-        return 1
-      fi
-      wget --user="${wget_user}" --password="${wget_pass}" -O "${out}" "${url}"
-    else
-      wget -O "${out}" "${url}"
-    fi
-    return $?
-  fi
-  return 1
-}
+value = data[key]
+if isinstance(value, str):
+    print("__SNAP__" if not value.strip() else value.strip())
+    raise SystemExit(0)
 
-sanitize_internals_branch_key() {
-  # Match internals publish naming from internals/.github/workflows/build-and-publish-tar.yml.
-  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' |
-    sed -E 's#[^a-z0-9._-]+#-#g; s/^-+//; s/-+$//'
+if isinstance(value, dict):
+    policy = str(value.get("policy", "")).strip().lower()
+    if policy == "snap":
+        print("__SNAP__")
+        raise SystemExit(0)
+    if policy:
+        raise SystemExit(f"ERROR: unsupported {key}.policy in {manifest_path}: {policy!r}")
+
+    spec = str(value.get("spec", "")).strip()
+    branch = str(value.get("branch", value.get("ref", ""))).strip()
+    if branch:
+        print(f"{branch}:{spec or 'latest'}")
+        raise SystemExit(0)
+
+raise SystemExit(
+    f"ERROR: {manifest_path} field '{key}' must be a string, "
+    "or an object with {'policy':'snap'} or {'branch':'...', 'spec':'...'}."
+)
+PY
 }
 
 current_core_branch() {
@@ -833,96 +839,64 @@ current_core_branch() {
   printf '\n'
 }
 
-artifact_checksum_available() {
-  local url="$1"
-  local basic_auth="$2"
-  local temp_prefix="$3"
-  local probe_path
-  probe_path="$(mktemp "/tmp/${temp_prefix}-probe-XXXXXX")"
-  if download_file "${url}" "${probe_path}" "${basic_auth}" >/dev/null 2>&1; then
-    rm -f "${probe_path}"
-    return 0
-  fi
-  rm -f "${probe_path}"
-  return 1
-}
-
-resolve_manifest_artifact_ref() {
-  local manifest_key="$1"
-  local base_url="$2"
-  local artifact_prefix="$3"
-  local basic_auth="$4"
-  local display_name="$5"
-  local temp_prefix="$6"
-
-  if [[ ! -f "${NEAT_INTERNALS_MANIFEST}" ]]; then
-    echo "ERROR: Missing manifest: ${NEAT_INTERNALS_MANIFEST}" >&2
-    return 1
-  fi
-
-  if ! manifest_has_json_string_key "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}"; then
-    echo "ERROR: ${NEAT_INTERNALS_MANIFEST} must define a ${manifest_key} string." >&2
-    return 1
-  fi
-
-  local manifest_ref
-  manifest_ref="$(extract_json_string "${manifest_key}" "${NEAT_INTERNALS_MANIFEST}")"
-  if [[ -n "${manifest_ref}" ]]; then
-    printf '%s\n' "${manifest_ref}"
-    return 0
-  fi
-
-  local branch branch_key candidate checksum_url
-  branch="$(current_core_branch)"
-  branch_key="$(sanitize_internals_branch_key "${branch}")"
-  if [[ -n "${branch_key}" && "${branch_key}" != "head" ]]; then
-    candidate="${branch_key}-latest"
-    checksum_url="${base_url}/${artifact_prefix}-${candidate}.tar.gz.sha256"
-    if artifact_checksum_available "${checksum_url}" "${basic_auth}" "${temp_prefix}"; then
-      echo "Resolved empty ${manifest_key} manifest to matching branch artifact: ${candidate}" >&2
-      printf '%s\n' "${candidate}"
-      return 0
-    fi
-    echo "No ${display_name} artifact found for branch '${branch}' (${candidate}); using develop-latest." >&2
-  else
-    echo "Could not determine current branch for ${display_name} snap; using develop-latest." >&2
-  fi
-
-  printf '%s\n' "develop-latest"
-}
-
 resolve_neat_internals_ref() {
-  resolve_manifest_artifact_ref \
-    "internals" \
-    "${NEAT_INTERNALS_BASE_URL}" \
-    "sima-neat-internals" \
-    "${NEAT_INTERNALS_BASIC_AUTH}" \
-    "internals" \
-    "sima-neat-internals"
+  if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
+    echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
+    return 1
+  fi
+
+  local manifest_spec
+  if ! manifest_spec="$(manifest_dependency_spec "internals" "${NEAT_DEPS_MANIFEST}")"; then
+    return 1
+  fi
+
+  local branch spec
+  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
+    NEAT_INTERNALS_SNAP_POLICY=ON
+    branch="$(current_core_branch)"
+    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+      echo "Could not determine current branch for internals snap; using develop." >&2
+      branch="develop"
+    fi
+  elif [[ "${manifest_spec}" == *":"* ]]; then
+    branch="${manifest_spec%%:*}"
+    spec="${manifest_spec#*:}"
+  else
+    branch="${manifest_spec}"
+  fi
+  spec="${spec:-latest}"
+
+  printf '%s:%s\n' "${branch}" "${spec}"
 }
 
 resolve_neat_llima_ref() {
-  resolve_manifest_artifact_ref \
-    "llima" \
-    "${NEAT_LLIMA_BASE_URL}" \
-    "sima-llima" \
-    "${NEAT_LLIMA_BASIC_AUTH}" \
-    "LLiMa" \
-    "sima-neat-llima"
-}
+  if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
+    echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
+    return 1
+  fi
 
-compute_sha256() {
-  local path="$1"
-  # Prefer GNU sha256sum; fall back to shasum for macOS compatibility.
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "${path}" | awk '{print $1}'
-    return 0
+  local manifest_spec
+  if ! manifest_spec="$(manifest_dependency_spec "llima" "${NEAT_DEPS_MANIFEST}")"; then
+    return 1
   fi
-  if command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "${path}" | awk '{print $1}'
-    return 0
+
+  local branch spec
+  if [[ "${manifest_spec}" == "__SNAP__" ]]; then
+    NEAT_LLIMA_SNAP_POLICY=ON
+    branch="$(current_core_branch)"
+    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+      echo "Could not determine current branch for LLiMa snap; using develop." >&2
+      branch="develop"
+    fi
+  elif [[ "${manifest_spec}" == *":"* ]]; then
+    branch="${manifest_spec%%:*}"
+    spec="${manifest_spec#*:}"
+  else
+    branch="${manifest_spec}"
   fi
-  return 1
+  spec="${spec:-latest}"
+
+  printf '%s:%s\n' "${branch}" "${spec}"
 }
 
 find_legacy_plugin_dir() {
@@ -1051,17 +1025,23 @@ collect_plugin_files_from_debs() {
 
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "SYSROOT library paths:"
-      local found_sysroot_paths=0
       local rel_path
+      local sysroot_path
+      local -a sysroot_paths=()
       for rel_path in usr/lib usr/libexec; do
         if [[ -d "${deb_extract_dir}/${rel_path}" ]]; then
-          found_sysroot_paths=1
-          find "${deb_extract_dir}/${rel_path}" -mindepth 1 -print | \
-            sed "s|^${deb_extract_dir}|${install_root}|"
+          while IFS= read -r sysroot_path; do
+            sysroot_paths+=("${sysroot_path}")
+          done < <(
+            find "${deb_extract_dir}/${rel_path}" -mindepth 1 -print |
+              sed "s|^${deb_extract_dir}|${install_root}|"
+          )
         fi
-      done | awk '{ print "  " $0 }'
-      if [[ "${found_sysroot_paths}" -eq 0 ]]; then
+      done
+      if [[ "${#sysroot_paths[@]}" -eq 0 ]]; then
         echo "  (no /usr/lib* or /usr/libexec paths reported)"
+      else
+        printf '  %s\n' "${sysroot_paths[@]}"
       fi
     else
       echo "System library paths:"
@@ -1126,8 +1106,140 @@ copy_plugins_to_neat_internals() {
   done
 }
 
+require_sima_cli_neat_install() {
+  if ! command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1; then
+    echo "ERROR: sima-cli is required for Neat artifact access." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with Neat artifact install support if needed." >&2
+    exit 1
+  fi
+
+  if ! "${SIMA_CLI_BIN}" neat install --help >/dev/null 2>&1; then
+    echo "ERROR: sima-cli with Neat artifact install support is required." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with 'neat install' support if needed." >&2
+    exit 1
+  fi
+}
+
+fetch_neat_internals_vulcan_artifacts() {
+  local internals_ref="$1"
+  local output_dir="$2"
+
+  require_sima_cli_neat_install
+
+  local -a base_args=(neat install --env "${NEAT_VULCAN_ENV}")
+  if [[ -n "${NEAT_VULCAN_BASE_URL}" ]]; then
+    base_args+=(--base-url "${NEAT_VULCAN_BASE_URL}")
+  fi
+
+  local resolve_output resolved_ref
+  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+    if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
+      echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
+      exit 1
+    fi
+
+    echo "No internals Vulcan artifact found for '${internals_ref}'; retrying develop:latest." >&2
+    internals_ref="develop:latest"
+    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+      echo "ERROR: Failed to resolve fallback internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
+      exit 1
+    fi
+  fi
+
+  resolved_ref="$(python3 - <<'PY' "${resolve_output}"
+import json
+import sys
+
+text = sys.argv[1]
+start = text.find("{")
+if start < 0:
+    raise SystemExit("missing JSON object in sima-cli neat install --json output")
+payload = json.loads(text[start:])
+ref = str(payload.get("ref", "")).strip()
+spec = str(payload.get("resolved_spec", "")).strip()
+if not ref or not spec:
+    raise SystemExit("sima-cli neat install --json did not return ref and resolved_spec")
+print(f"{ref}:{spec}")
+PY
+  )"
+  NEAT_INTERNALS_RESOLVED_REF="${resolved_ref}"
+
+  local -a install_args=(
+    "${base_args[@]}"
+    -d "${output_dir}"
+    "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}"
+  )
+
+  echo "Fetching neat-internals packages from Vulcan: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}"
+  rm -rf "${output_dir}"
+  mkdir -p "${output_dir}"
+  if ! "${SIMA_CLI_BIN}" "${install_args[@]}"; then
+    echo "ERROR: Failed to fetch internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${resolved_ref}" >&2
+    exit 1
+  fi
+}
+
+fetch_neat_llima_vulcan_artifacts() {
+  local llima_ref="$1"
+  local output_dir="$2"
+
+  require_sima_cli_neat_install
+
+  local -a base_args=(neat install --env "${NEAT_VULCAN_ENV}")
+  if [[ -n "${NEAT_VULCAN_BASE_URL}" ]]; then
+    base_args+=(--base-url "${NEAT_VULCAN_BASE_URL}")
+  fi
+
+  local resolve_output resolved_ref
+  if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+    if [[ "${NEAT_LLIMA_SNAP_POLICY}" != "ON" || "${llima_ref}" == "develop:latest" ]]; then
+      echo "ERROR: Failed to resolve LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
+      exit 1
+    fi
+
+    echo "No LLiMa Vulcan artifact found for '${llima_ref}'; retrying develop:latest." >&2
+    llima_ref="develop:latest"
+    if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+      echo "ERROR: Failed to resolve fallback LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
+      exit 1
+    fi
+  fi
+
+  resolved_ref="$(python3 - <<'PY' "${resolve_output}"
+import json
+import sys
+
+text = sys.argv[1]
+start = text.find("{")
+if start < 0:
+    raise SystemExit("missing JSON object in sima-cli neat install --json output")
+payload = json.loads(text[start:])
+ref = str(payload.get("ref", "")).strip()
+spec = str(payload.get("resolved_spec", "")).strip()
+if not ref or not spec:
+    raise SystemExit("sima-cli neat install --json did not return ref and resolved_spec")
+print(f"{ref}:{spec}")
+PY
+  )"
+  NEAT_LLIMA_RESOLVED_REF="${resolved_ref}"
+
+  local -a install_args=(
+    "${base_args[@]}"
+    -d "${output_dir}"
+    "${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}"
+  )
+
+  echo "Fetching LLiMa packages from Vulcan: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}"
+  rm -rf "${output_dir}"
+  mkdir -p "${output_dir}"
+  if ! "${SIMA_CLI_BIN}" "${install_args[@]}"; then
+    echo "ERROR: Failed to fetch LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${resolved_ref}" >&2
+    exit 1
+  fi
+}
+
 ensure_neat_internals() {
-  # Sync neat-internals from remote artifact, validate integrity, then materialize plugins.
+  # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
   if ! internals_ref="$(resolve_neat_internals_ref)"; then
     exit 1
@@ -1135,94 +1247,45 @@ ensure_neat_internals() {
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.internals"
-  local checksum_file="${NEAT_INTERNALS_DIR}/.artifact_sha256"
   local deb_cache_dir="${NEAT_INTERNALS_DEB_DIR}"
-  local archive_name="sima-neat-internals-${internals_ref}.tar.gz"
-  local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
-  local checksum_url="${archive_url}.sha256"
 
   local tmp_dir
   # Use an isolated temp workspace so partial failures do not pollute tree state.
   tmp_dir="$(mktemp -d /tmp/sima-neat-internals-XXXXXX)"
 
-  local checksum_path="${tmp_dir}/${archive_name}.sha256"
-  local archive_path="${tmp_dir}/${archive_name}"
-  local extract_dir="${tmp_dir}/extract"
+  local artifact_dir="${tmp_dir}/package"
   local plugins_list_file="${tmp_dir}/plugin-files.list"
-
-  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
-    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local server_sha
-  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
-  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
 
   if [[ -f "${marker_file}" ]] && [[ -d "${NEAT_INTERNALS_PLUGIN_DIR}" ]]; then
     local current_tag
     current_tag="$(tr -d '[:space:]' < "${marker_file}")"
-    local cached_sha=""
-    if [[ -f "${checksum_file}" ]]; then
-      cached_sha="$(tr -d '[:space:]' < "${checksum_file}")"
-    fi
-    # Cache hit requires matching tag, checksum, and a known plugin sentinel.
+    # Cache hit requires matching resolved Vulcan spec and a known plugin sentinel.
     if [[ "${current_tag}" == "${internals_ref}" ]] &&
-       [[ "${cached_sha}" == "${server_sha}" ]] &&
        [[ -f "${NEAT_INTERNALS_PLUGIN_DIR}/libgstneatdecoder.so" ]] &&
        compgen -G "${deb_cache_dir}/neat-*.deb" >/dev/null 2>&1; then
-      echo "Using cached neat-internals plugins/debs (${internals_ref}, sha256=${server_sha})."
+      echo "Using cached neat-internals plugins/debs (${internals_ref})."
       rm -rf "${tmp_dir}"
       return 0
     fi
   fi
 
-  echo "Fetching neat-internals plugins: ${archive_url} (sha256=${server_sha})"
+  fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
+  internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
 
-  mkdir -p "${extract_dir}"
-
-  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
-    echo "ERROR: curl or wget is required to download neat-internals artifacts." >&2
+  if ! collect_plugin_files_from_debs "${artifact_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
+    echo "ERROR: Vulcan internals artifact did not contain .deb packages." >&2
     rm -rf "${tmp_dir}"
     exit 1
-  fi
-
-  local actual_sha
-  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
-    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-  # Hard fail on checksum mismatch; never use unverified internals artifacts.
-  if [[ "${actual_sha}" != "${server_sha}" ]]; then
-    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
-    echo "  expected: ${server_sha}" >&2
-    echo "  actual  : ${actual_sha}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  tar -xzf "${archive_path}" -C "${extract_dir}"
-
-  # Prefer .deb flow; fall back to legacy flat-plugin tarballs for compatibility.
-  if ! collect_plugin_files_from_debs "${extract_dir}" "${plugins_list_file}" "${deb_cache_dir}"; then
-    collect_plugin_files_from_legacy_tar "${extract_dir}" "${plugins_list_file}"
   fi
 
   copy_plugins_to_neat_internals "${plugins_list_file}"
 
   printf '%s\n' "${internals_ref}" > "${marker_file}"
-  printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
 
 ensure_neat_llima() {
-  # Sync LLiMa C++ runtime/dev packages from remote artifact and install them.
+  # Sync LLiMa C++ runtime/dev packages from Vulcan package artifacts and install them.
   local llima_ref
   if ! llima_ref="$(resolve_neat_llima_ref)"; then
     exit 1
@@ -1230,72 +1293,40 @@ ensure_neat_llima() {
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.llima"
-  local checksum_file="${NEAT_INTERNALS_DIR}/.llima_artifact_sha256"
   local deb_cache_dir="${NEAT_LLIMA_DEB_DIR}"
-  local archive_name="sima-llima-${llima_ref}.tar.gz"
-  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
-  local checksum_url="${archive_url}.sha256"
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-XXXXXX)"
 
-  local checksum_path="${tmp_dir}/${archive_name}.sha256"
-  local archive_path="${tmp_dir}/${archive_name}"
-  local extract_dir="${tmp_dir}/extract"
-
-  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
+  local artifact_dir="${tmp_dir}/package"
+  local using_cached_debs=0
+  if [[ -f "${marker_file}" ]] &&
+     [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
+     compgen -G "${deb_cache_dir}/sima-lmm-*.deb" >/dev/null 2>&1; then
+    echo "Using cached LLiMa debs (${llima_ref})."
+    artifact_dir="${deb_cache_dir}"
+    using_cached_debs=1
+  else
+    fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
+    llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
   fi
-
-  local server_sha
-  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
-  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  echo "Fetching LLiMa packages: ${archive_url} (sha256=${server_sha})"
-  mkdir -p "${extract_dir}"
-
-  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local actual_sha
-  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
-    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-  if [[ "${actual_sha}" != "${server_sha}" ]]; then
-    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
-    echo "  expected: ${server_sha}" >&2
-    echo "  actual  : ${actual_sha}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  tar -xzf "${archive_path}" -C "${extract_dir}"
 
   local core_deb dev_deb
-  core_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
-  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  core_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
   if [[ -z "${core_deb}" || -z "${dev_deb}" ]]; then
-    echo "ERROR: Expected sima-lmm core/dev debs were not found in ${archive_name}" >&2
-    find "${extract_dir}" -maxdepth 1 -type f -name '*.deb' -printf '  %f\n' | sort >&2
+    echo "ERROR: Expected sima-lmm core/dev debs were not found in Vulcan LLiMa artifact." >&2
+    find "${artifact_dir}" -maxdepth 3 -type f -name '*.deb' -printf '  %f\n' | sort >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
 
-  mkdir -p "${deb_cache_dir}"
-  rm -f "${deb_cache_dir}"/sima-lmm-*.deb
-  cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
-  cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+  if [[ "${using_cached_debs}" != "1" ]]; then
+    mkdir -p "${deb_cache_dir}"
+    rm -f "${deb_cache_dir}"/sima-lmm-*.deb
+    cp -f "${core_deb}" "${deb_cache_dir}/$(basename "${core_deb}")"
+    cp -f "${dev_deb}" "${deb_cache_dir}/$(basename "${dev_deb}")"
+  fi
 
   local -a llima_debs=("${core_deb}" "${dev_deb}")
   local install_root="${SYSROOT:-}"
@@ -1370,7 +1401,6 @@ ensure_neat_llima() {
   fi
 
   printf '%s\n' "${llima_ref}" > "${marker_file}"
-  printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1395,71 +1425,28 @@ ensure_neat_internals_headers() {
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers"
-  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers_sha256"
-  local archive_name="sima-neat-internals-${internals_ref}.tar.gz"
-  local archive_url="${NEAT_INTERNALS_BASE_URL}/${archive_name}"
-  local checksum_url="${archive_url}.sha256"
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-internals-headers-XXXXXX)"
-  local checksum_path="${tmp_dir}/${archive_name}.sha256"
-  local archive_path="${tmp_dir}/${archive_name}"
-  local extract_dir="${tmp_dir}/extract"
+  local artifact_dir="${tmp_dir}/package"
   local deb_extract_dir="${tmp_dir}/deb-extract"
 
-  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
-    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local server_sha
-  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
-  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+  if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${internals_ref}" ]] &&
-     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
      [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/simaai/gstsimaaitensorbuffer.h" ]] &&
      [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/gst/SimaTensorSetMetaAbi.h" ]]; then
-    echo "Using cached neat-internals headers (${internals_ref}, sha256=${server_sha})."
+    echo "Using cached neat-internals headers (${internals_ref})."
     rm -rf "${tmp_dir}"
     return 0
   fi
 
-  echo "Fetching neat-internals headers: ${archive_url} (sha256=${server_sha})"
-  mkdir -p "${extract_dir}"
-
-  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_INTERNALS_BASIC_AUTH}"; then
-    echo "ERROR: curl or wget is required to download neat-internals artifacts." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local actual_sha
-  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
-    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-  if [[ "${actual_sha}" != "${server_sha}" ]]; then
-    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
-    echo "  expected: ${server_sha}" >&2
-    echo "  actual  : ${actual_sha}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  tar -xzf "${archive_path}" -C "${extract_dir}"
+  fetch_neat_internals_vulcan_artifacts "${internals_ref}" "${artifact_dir}"
+  internals_ref="${NEAT_INTERNALS_RESOLVED_REF:-${internals_ref}}"
 
   local dev_deb
-  dev_deb="$(find "${extract_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -type f -name 'neat-internals-dev_*.deb' | sort | head -n 1)"
   if [[ -z "${dev_deb}" ]]; then
-    echo "ERROR: neat-internals-dev package was not found in ${archive_name}" >&2
+    echo "ERROR: neat-internals-dev package was not found in Vulcan artifact ${internals_ref}" >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
@@ -1477,7 +1464,6 @@ ensure_neat_internals_headers() {
 
   mkdir -p "${NEAT_DEP_HEADERS_DIR}"
   printf '%s\n' "${internals_ref}" > "${marker_file}"
-  printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1491,70 +1477,27 @@ ensure_neat_llima_headers() {
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers"
-  local checksum_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers_sha256"
-  local archive_name="sima-llima-${llima_ref}.tar.gz"
-  local archive_url="${NEAT_LLIMA_BASE_URL}/${archive_name}"
-  local checksum_url="${archive_url}.sha256"
 
   local tmp_dir
   tmp_dir="$(mktemp -d /tmp/sima-neat-llima-headers-XXXXXX)"
-  local checksum_path="${tmp_dir}/${archive_name}.sha256"
-  local archive_path="${tmp_dir}/${archive_name}"
-  local extract_dir="${tmp_dir}/extract"
+  local artifact_dir="${tmp_dir}/package"
   local deb_extract_dir="${tmp_dir}/deb-extract"
 
-  if ! download_file "${checksum_url}" "${checksum_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: Unable to download checksum sidecar: ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local server_sha
-  server_sha="$(awk '{print $1}' "${checksum_path}" | tr -d '[:space:]' | head -n1)"
-  if [[ -z "${server_sha}" || ! "${server_sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
-    echo "ERROR: Invalid sha256 content in ${checksum_url}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  if [[ -f "${marker_file}" && -f "${checksum_file}" ]] &&
+  if [[ -f "${marker_file}" ]] &&
      [[ "$(tr -d '[:space:]' < "${marker_file}")" == "${llima_ref}" ]] &&
-     [[ "$(tr -d '[:space:]' < "${checksum_file}")" == "${server_sha}" ]] &&
      [[ -f "${NEAT_DEP_HEADERS_DIR}/usr/include/sima_lmm/chat.hpp" ]]; then
-    echo "Using cached LLiMa headers (${llima_ref}, sha256=${server_sha})."
+    echo "Using cached LLiMa headers (${llima_ref})."
     rm -rf "${tmp_dir}"
     return 0
   fi
 
-  echo "Fetching LLiMa headers: ${archive_url} (sha256=${server_sha})"
-  mkdir -p "${extract_dir}"
-
-  if ! download_file "${archive_url}" "${archive_path}" "${NEAT_LLIMA_BASIC_AUTH}"; then
-    echo "ERROR: curl or wget is required to download LLiMa artifacts." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  local actual_sha
-  if ! actual_sha="$(compute_sha256 "${archive_path}")"; then
-    echo "ERROR: Unable to compute sha256 checksum for ${archive_path}." >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-  if [[ "${actual_sha}" != "${server_sha}" ]]; then
-    echo "ERROR: sha256 mismatch for ${archive_name}" >&2
-    echo "  expected: ${server_sha}" >&2
-    echo "  actual  : ${actual_sha}" >&2
-    rm -rf "${tmp_dir}"
-    exit 1
-  fi
-
-  tar -xzf "${archive_path}" -C "${extract_dir}"
+  fetch_neat_llima_vulcan_artifacts "${llima_ref}" "${artifact_dir}"
+  llima_ref="${NEAT_LLIMA_RESOLVED_REF:-${llima_ref}}"
 
   local dev_deb
-  dev_deb="$(find "${extract_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
+  dev_deb="$(find "${artifact_dir}" -maxdepth 3 -type f -name 'sima-lmm-*-Linux-dev.deb' | sort | head -n 1)"
   if [[ -z "${dev_deb}" ]]; then
-    echo "ERROR: sima-lmm dev package was not found in ${archive_name}" >&2
+    echo "ERROR: sima-lmm dev package was not found in Vulcan LLiMa artifact." >&2
     rm -rf "${tmp_dir}"
     exit 1
   fi
@@ -1571,7 +1514,6 @@ ensure_neat_llima_headers() {
 
   mkdir -p "${NEAT_DEP_HEADERS_DIR}"
   printf '%s\n' "${llima_ref}" > "${marker_file}"
-  printf '%s\n' "${server_sha}" > "${checksum_file}"
   rm -rf "${tmp_dir}"
 }
 
@@ -1592,7 +1534,7 @@ collect_install_artifact_files() {
   local file
   local basename_file
 
-  for file in ./*.deb; do
+  for file in dist/*.deb ./*.deb; do
     [[ -e "${file}" ]] || continue
     basename_file="$(basename "${file}")"
     [[ -n "${seen_basenames[${basename_file}]:-}" ]] && continue
@@ -1781,6 +1723,14 @@ configure_cmake() {
     -DFUZZING="${BUILD_FUZZ}"
   )
 
+  if [[ -f "${NEAT_PACKAGE_BUILDINFO_JSON}" ]]; then
+    local buildinfo_json_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
+    if [[ "${buildinfo_json_path}" != /* ]]; then
+      buildinfo_json_path="${REPO_ROOT}/${buildinfo_json_path}"
+    fi
+    cmake_args+=("-DSIMANEAT_BUILDINFO_JSON=${buildinfo_json_path}")
+  fi
+
   if [[ "${DOCS_ONLY}" == "ON" ]]; then
     # The docs job only needs the Doxygen target and public headers.  Some
     # x64 docs runners do not have the ARM NEAT/GStreamer runtime artifacts
@@ -1880,7 +1830,7 @@ build_docs_only_if_requested() {
 build_targets() {
   # For dev-only builds, avoid building tests/tutorials/samples by targeting core lib.
   if [[ "${BUILD_SAMPLES}" == "OFF" && "${BUILD_TESTS}" == "OFF" && "${BUILD_DOCS}" == "OFF" ]]; then
-    cmake --build "${BUILD_DIR}" --target sima_neat -j"${BUILD_JOBS}"
+    cmake --build "${BUILD_DIR}" --target sima_neat_libraries -j"${BUILD_JOBS}"
   else
     cmake --build "${BUILD_DIR}" -j"${BUILD_JOBS}"
   fi
@@ -1905,6 +1855,26 @@ generate_platform_version_artifacts() {
   python3 tools/generate_platform_version_artifacts.py --repo-root "${REPO_ROOT}"
 }
 
+compute_neat_package_version() {
+  "${REPO_ROOT}/tools/compute_version.sh"
+}
+
+generate_package_buildinfo_json() {
+  local output_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
+  local package_version
+  package_version="$(compute_neat_package_version)"
+
+  python3 scripts/build/generate_package_buildinfo.py \
+    --repo-root "${REPO_ROOT}" \
+    --output "${output_path}" \
+    --package-name "${NEAT_PACKAGE_NAME}" \
+    --package-version "${package_version}" \
+    --vulcan-env "${NEAT_VULCAN_ENV}" \
+    --internals-ref "${NEAT_INTERNALS_RESOLVED_REF}" \
+    --llima-ref "${NEAT_LLIMA_RESOLVED_REF}"
+  echo "Generated package build info: ${output_path}"
+}
+
 write_resolved_neat_internals_manifest_if_needed() {
   if [[ -z "${NEAT_INTERNALS_RESOLVED_REF}" && -z "${NEAT_LLIMA_RESOLVED_REF}" ]]; then
     return 0
@@ -1912,7 +1882,7 @@ write_resolved_neat_internals_manifest_if_needed() {
 
   local output_path="${NEAT_INTERNALS_RESOLVED_MANIFEST}"
   mkdir -p "$(dirname "${output_path}")"
-  python3 - "${NEAT_INTERNALS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
+  python3 - "${NEAT_DEPS_MANIFEST}" "${NEAT_INTERNALS_RESOLVED_REF}" "${NEAT_LLIMA_RESOLVED_REF}" "${output_path}" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -1949,6 +1919,10 @@ build_python_wheel_if_requested() {
   fi
 
   local wheel_python="python3"
+  local pyproject_path="${REPO_ROOT}/pyproject.toml"
+  local pyproject_backup
+  local pyneat_package_version
+
   # Use isolated venv if python-build module is missing on the host.
   if ! python3 -m build --version >/dev/null 2>&1; then
     local venv_dir="${BUILD_DIR}/.wheel-venv"
@@ -1961,47 +1935,90 @@ build_python_wheel_if_requested() {
     "${wheel_python}" -m pip install --upgrade pip build
   fi
 
-  rm -rf dist
-  if [[ "${ELXR_SDK}" == "ON" ]]; then
-    echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
-    echo "Preparing non-isolated wheel backend environment for cross-build..."
-    "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind ninja
-    local py_abi
-    local py_triplet
-    local pyneat_ext_suffix
-    py_abi="$("${wheel_python}" - <<'PY'
+  pyneat_package_version="$(compute_neat_package_version)"
+  echo "Using pyneat package version: ${pyneat_package_version}"
+
+  pyproject_backup="$(mktemp)"
+  cp "${pyproject_path}" "${pyproject_backup}"
+  restore_pyneat_pyproject() {
+    if [[ -n "${pyproject_backup:-}" && -f "${pyproject_backup}" ]]; then
+      cp "${pyproject_backup}" "${pyproject_path}"
+      rm -f "${pyproject_backup}"
+    fi
+  }
+
+  python3 - "${pyproject_path}" "${pyneat_package_version}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+version = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+updated, count = re.subn(
+    r'(?m)^version = "[^"]*"$',
+    f'version = "{version}"',
+    text,
+    count=1,
+)
+if count != 1:
+    raise SystemExit(f"Failed to update version in {path}")
+path.write_text(updated, encoding="utf-8")
+PY
+
+  local wheel_build_status=0
+  set +e
+  (
+    set -e
+    rm -rf dist
+    if [[ "${ELXR_SDK}" == "ON" ]]; then
+      echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
+      echo "Preparing non-isolated wheel backend environment for cross-build..."
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind ninja
+      local py_abi
+      local py_triplet
+      local pyneat_ext_suffix
+      py_abi="$("${wheel_python}" - <<'PY'
 import sys
 print(f"{sys.version_info.major}{sys.version_info.minor}")
 PY
 )"
-    py_triplet="$(elxr_ext_platform_triplet)"
-    pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
-    echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
-    local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
-    if [[ -n "${SYSROOT:-}" ]]; then
-      wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
-      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
-      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
-      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY"
-      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY"
-      wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
-      wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
-      wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
-    fi
-    # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
-    # (notably ninja), which are not executable on the host container.
-    # Build without isolation and force Makefiles to keep host tools executable.
-    _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
-      CMAKE_ARGS="${wheel_cmake_args}" \
-      CMAKE_GENERATOR="Unix Makefiles" \
+      py_triplet="$(elxr_ext_platform_triplet)"
+      pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
+      echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
+      local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
+      if [[ -n "${SYSROOT:-}" ]]; then
+        wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
+        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
+        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
+        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=ONLY"
+        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=ONLY"
+        wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
+        wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
+        wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+      fi
+      # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
+      # (notably ninja), which are not executable on the host container.
+      # Build without isolation and force Makefiles to keep host tools executable.
+      _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
+        CMAKE_ARGS="${wheel_cmake_args}" \
+        CMAKE_GENERATOR="Unix Makefiles" \
+        CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
+        "${wheel_python}" -m build --wheel --outdir dist --no-isolation
+    else
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-      "${wheel_python}" -m build --wheel --outdir dist --no-isolation
-  else
-    CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-      "${wheel_python}" -m build --wheel --outdir dist
+        "${wheel_python}" -m build --wheel --outdir dist
+    fi
+    echo "Built wheel(s):"
+    ls -lh dist/*.whl
+  )
+  wheel_build_status=$?
+  set -e
+
+  restore_pyneat_pyproject
+  if [[ "${wheel_build_status}" -ne 0 ]]; then
+    exit "${wheel_build_status}"
   fi
-  echo "Built wheel(s):"
-  ls -lh dist/*.whl
 }
 
 run_install_sanity_check() {
@@ -2010,15 +2027,21 @@ run_install_sanity_check() {
   local install_test_dir="/tmp/sima-neat-install-test"
   rm -rf "${install_test_dir}"
 
-  cmake --install "${BUILD_DIR}" --prefix "${install_test_dir}"
+  cmake --install "${BUILD_DIR}" --component core --prefix "${install_test_dir}"
 
   echo "Installed files:"
   find "${install_test_dir}" | sed 's|^|  |'
 
-  # Ensure core archive is present in the install tree
+  # Ensure core libraries are present in the install tree
   if [[ ! -f "${install_test_dir}/lib/libsima_neat.a" ]]; then
     echo
     echo "ERROR: libsima_neat.a missing from install tree."
+    echo "Refusing to package an incomplete core .deb."
+    exit 1
+  fi
+  if [[ ! -e "${install_test_dir}/lib/libsima_neat.so" ]]; then
+    echo
+    echo "ERROR: libsima_neat.so missing from install tree."
     echo "Refusing to package an incomplete core .deb."
     exit 1
   fi
@@ -2092,7 +2115,7 @@ build_extras_archive_if_requested() {
       fi
 
       # Keep extras version aligned with the generated core .deb version.
-      core_deb="$(ls -1 ./*-Linux-core.deb 2>/dev/null | head -n1 || true)"
+      core_deb="$(ls -1 ./sima-neat-*-Linux-core.deb 2>/dev/null | head -n1 || true)"
       if [[ -n "${core_deb}" ]]; then
         local core_base
         core_base="$(basename "${core_deb}")"
@@ -2118,6 +2141,195 @@ build_extras_archive_if_requested() {
   fi
 }
 
+stage_package_artifacts_to_dist() {
+  # Keep dist/ as the complete local artifact directory for full builds.
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
+    return 0
+  fi
+
+  mkdir -p dist
+  rm -f \
+    dist/*-Linux-core.deb \
+    dist/*-Linux-extras.tar.gz \
+    dist/neat-*.deb \
+    dist/simaai-common*.deb \
+    dist/appcomplex_*.deb \
+    dist/sima-lmm-*.deb \
+    "dist/${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    "dist/${NEAT_INSTALL_MANIFEST}" \
+    dist/metadata*.json \
+    dist/manifest.json \
+    dist/resolved-deps-manifest.json
+
+  local staged_any=OFF
+  local file
+  for file in ./*.deb ./*extras.tar.gz; do
+    [[ -e "${file}" ]] || continue
+    mv -f "${file}" "dist/$(basename "${file}")"
+    staged_any=ON
+  done
+  for file in "${NEAT_INTERNALS_DEB_DIR}"/*.deb "${NEAT_LLIMA_DEB_DIR}"/*.deb; do
+    [[ -e "${file}" ]] || continue
+    cp -f "${file}" "dist/$(basename "${file}")"
+    staged_any=ON
+  done
+  if [[ -f "tools/install_neat_framework.sh" ]]; then
+    cp -f "tools/install_neat_framework.sh" "dist/install_neat_framework.sh"
+    chmod +x "dist/install_neat_framework.sh"
+    staged_any=ON
+  fi
+
+  if [[ "${staged_any}" == "ON" ]]; then
+    echo
+    echo "Moved package artifacts into dist/:"
+    ls -lh dist/*.deb dist/*.whl dist/*extras.tar.gz dist/install_neat_framework.sh 2>/dev/null || true
+  fi
+}
+
+append_dist_manifest_matches() {
+  local manifest_path="$1"
+  local pattern="$2"
+  local -a matches=()
+  local file
+
+  while IFS= read -r file; do
+    matches+=("${file}")
+  done < <(find dist -maxdepth 1 -type f -name "${pattern}" | sort)
+
+  for file in "${matches[@]}"; do
+    basename "${file}" >> "${manifest_path}"
+  done
+}
+
+write_install_manifest() {
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
+    return 0
+  fi
+
+  local manifest_path="dist/${NEAT_INSTALL_MANIFEST}"
+  if [[ ! -d dist ]]; then
+    echo "ERROR: Cannot write install manifest; missing dist/." >&2
+    exit 1
+  fi
+
+  {
+    echo "# Generated by build.sh. The installer must only consume artifacts listed here."
+    echo "# Keep this file next to ${NEAT_PACKAGE_INSTALL_SCRIPT}."
+  } > "${manifest_path}"
+
+  append_dist_manifest_matches "${manifest_path}" 'simaai-common*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-common_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-appcomplex_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-ev74-firmware_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-runtime_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-gst-plugins_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'neat-internals-dev_*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'sima-lmm-*.deb'
+  append_dist_manifest_matches "${manifest_path}" 'sima-neat-*-Linux-core.deb'
+  append_dist_manifest_matches "${manifest_path}" '*.whl'
+
+  echo "Built install manifest: ${manifest_path}"
+}
+
+require_sima_cli_packages_build() {
+  if ! command -v "${SIMA_CLI_BIN}" >/dev/null 2>&1; then
+    echo "ERROR: sima-cli is required to build package metadata." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with packages build support if needed." >&2
+    exit 1
+  fi
+  if ! "${SIMA_CLI_BIN}" packages build --help >/dev/null 2>&1; then
+    echo "ERROR: sima-cli packages build support is required to build package metadata." >&2
+    echo "Set SIMA_CLI_BIN to a sima-cli executable with packages build support if needed." >&2
+    exit 1
+  fi
+}
+
+collect_single_dist_artifact() {
+  local pattern="$1"
+  local label="$2"
+  local -n out_ref="$3"
+  local -a matches=()
+
+  while IFS= read -r file; do
+    matches+=("${file}")
+  done < <(find dist -maxdepth 1 -type f -name "${pattern}" | sort)
+
+  if [[ "${#matches[@]}" -ne 1 ]]; then
+    echo "ERROR: Expected exactly one ${label} in dist; found ${#matches[@]}." >&2
+    printf '  %s\n' "${matches[@]}" >&2 || true
+    exit 1
+  fi
+
+  out_ref="${matches[0]}"
+}
+
+generate_package_metadata_if_requested() {
+  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
+    return 0
+  fi
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    echo
+    echo "Skipping package metadata generation on macOS."
+    return 0
+  fi
+
+  echo
+  echo "Building package metadata variants..."
+  require_sima_cli_packages_build
+
+  local core_deb=""
+  local extras_tar=""
+  local wheel_path=""
+  collect_single_dist_artifact 'sima-neat-*-Linux-core.deb' 'NEAT core .deb' core_deb
+  collect_single_dist_artifact '*-Linux-extras.tar.gz' 'extras tarball' extras_tar
+  collect_single_dist_artifact '*.whl' 'Python wheel' wheel_path
+
+  local install_script_path="dist/${NEAT_PACKAGE_INSTALL_SCRIPT}"
+  if [[ ! -f "${install_script_path}" ]]; then
+    echo "ERROR: Missing install script: ${install_script_path}" >&2
+    exit 1
+  fi
+  if [[ ! -f "dist/${NEAT_INSTALL_MANIFEST}" ]]; then
+    echo "ERROR: Missing install manifest: dist/${NEAT_INSTALL_MANIFEST}" >&2
+    exit 1
+  fi
+
+  local core_deb_basename
+  local package_version
+  local extras_basename
+  core_deb_basename="$(basename "${core_deb}")"
+  package_version="${core_deb_basename#sima-neat-}"
+  package_version="${package_version%-Linux-core.deb}"
+  extras_basename="$(basename "${extras_tar}")"
+
+  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
+
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script "${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    --selectables "${NEAT_EXTRAS_SELECTABLE_NAME}:${extras_basename}"
+
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script "${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    --exclude "${extras_basename}" \
+    --variant minimal
+
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script "${NEAT_PACKAGE_INSTALL_SCRIPT}" \
+    --variant all
+
+  echo "Built package metadata:"
+  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
+}
+
 print_artifact_summary() {
   # Final artifact listing for CI logs and local developer visibility.
   echo
@@ -2136,6 +2348,14 @@ print_artifact_summary() {
     echo "Python wheel artifacts:"
     ls -lh dist/*.whl
   fi
+  if compgen -G "dist/*.deb" >/dev/null 2>&1 || compgen -G "dist/*extras.tar.gz" >/dev/null 2>&1; then
+    echo "Dist package artifacts:"
+    ls -lh dist/*.deb dist/*extras.tar.gz 2>/dev/null || true
+  fi
+  if compgen -G "dist/metadata*.json" >/dev/null 2>&1; then
+    echo "Package metadata:"
+    ls -lh dist/metadata*.json
+  fi
 }
 
 should_deploy_to_devkit() {
@@ -2144,7 +2364,10 @@ should_deploy_to_devkit() {
   [[ -n "${DEVKIT_SYNC_DEVKIT_IP:-}" ]] || return 1
   [[ "${OS_NAME}" != "Darwin" ]] || return 1
 
-  compgen -G "./*.deb" >/dev/null 2>&1 || [[ "${BUILD_PYTHON}" == "ON" && -n "$(compgen -G 'dist/*.whl' || true)" ]] || return 1
+  compgen -G "./*.deb" >/dev/null 2>&1 ||
+    compgen -G "dist/*.deb" >/dev/null 2>&1 ||
+    [[ "${BUILD_PYTHON}" == "ON" && -n "$(compgen -G 'dist/*.whl' || true)" ]] ||
+    return 1
 }
 
 run_devkit_ssh() {
@@ -2298,6 +2521,7 @@ main() {
   print_build_config
   clean_build_dir_if_requested
   write_resolved_neat_internals_manifest_if_needed
+  generate_package_buildinfo_json
   configure_cmake
   build_docs_only_if_requested
   build_targets
@@ -2307,6 +2531,9 @@ main() {
   run_install_sanity_check
   build_deb_if_requested
   build_extras_archive_if_requested
+  stage_package_artifacts_to_dist
+  write_install_manifest
+  generate_package_metadata_if_requested
   print_artifact_summary
   install_artifacts_into_current_environment_if_requested
   deploy_artifacts_to_devkit_if_requested
