@@ -47,15 +47,8 @@ const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
 const siteRoot = url.replace(/\/+$/, "");
 const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "/";
-const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
-const docsAnalyticsConfig = {
-  measurementId: docsGaMeasurementId,
-};
 const footerLinks = [
   { label: "SiMa.ai Neat Framework Documentation", to: "/" },
-  {
-    html: '<button type="button" class="footer__link-item cookie-preferences-link" data-cookie-preferences>Cookie preferences</button>',
-  },
 ];
 
 const buildBranch = normalizeBranch(
@@ -95,13 +88,6 @@ const config = {
   organizationName: org,
   projectName: project,
   headTags: [
-    {
-      tagName: "script",
-      attributes: {},
-      innerHTML: `window.__NEAT_DOCS_ANALYTICS__ = ${JSON.stringify(
-        docsAnalyticsConfig,
-      )};`,
-    },
     {
       tagName: "script",
       attributes: {},
@@ -166,12 +152,10 @@ const config = {
       commitUrl: buildCommitUrl,
       builtAt: buildTime.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"),
     },
-    analytics: docsAnalyticsConfig,
     githubRepoUrl,
     githubOrgUrl,
   },
   clientModules: [
-    require.resolve("./src/clientModules/analytics-consent.js"),
     require.resolve("./src/clientModules/developer-center-shell.js"),
     require.resolve("./src/clientModules/developer-center-nav.js"),
     require.resolve("./src/clientModules/global-theme.js"),

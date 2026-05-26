@@ -88,7 +88,6 @@ jobs:
         set -euo pipefail
 
         export DOCS_URL='${{ needs.resolve-docs-vars.outputs.sysdoc_base_url }}'
-        export DOCS_GA_MEASUREMENT_ID='${{ vars.DOCS_GA_MEASUREMENT_ID }}'
         export DOCS_STRICT_LINKS=1
         export DOCS_BASE_URL=/software/
         export DOCS_DEVELOPER_CENTER_SHELL_BASE=/

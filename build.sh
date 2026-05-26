@@ -32,6 +32,7 @@ INSTALL_AFTER_BUILD=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
+ALLOW_FUZZ_IN_NEAT_SDK="${SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK:-OFF}"
 BUILD_SANITIZER_MODE=""
 SIMA_ENABLE_ASAN=OFF
 SIMA_ENABLE_UBSAN=OFF
@@ -1632,9 +1633,10 @@ configure_fuzz_toolchain_if_needed() {
     return 0
   fi
 
-  if [[ "${ELXR_SDK}" == "ON" ]]; then
-    echo "ERROR: --fuzz is not supported in eLxr SDK environment." >&2
+  if [[ "${ELXR_SDK}" == "ON" && "${ALLOW_FUZZ_IN_NEAT_SDK}" != "ON" ]]; then
+    echo "ERROR: --fuzz is not supported in local NEAT SDK environments by default." >&2
     echo "Run fuzz builds on Modalix ARM64 runners/devkits where libFuzzer targets execute natively." >&2
+    echo "Set SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK=ON only for the Vulcan CI container fuzz lane." >&2
     exit 1
   fi
 
