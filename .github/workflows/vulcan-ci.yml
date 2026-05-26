@@ -58,6 +58,12 @@ jobs:
           clean: true
           fetch-depth: 0
 
+      - name: Install sima-cli
+        run: |
+          curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" version
+
       - name: Install code hygiene tools
         run: |
           ./scripts/ci/install_code_hygiene_deps.sh
