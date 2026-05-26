@@ -841,6 +841,20 @@ target_include_directories(evo_route_matrix_legacy_runner
 )
 list(APPEND PIPELINESESSION_TEST_TARGETS evo_route_matrix_legacy_runner)
 
+add_executable(
+  evo_tput_bench
+  ${CMAKE_CURRENT_SOURCE_DIR}/graph_migration/legacy/evo_tput_bench.cpp
+)
+add_dependencies(evo_tput_bench prepare_test_fixtures)
+target_link_libraries(evo_tput_bench PRIVATE sima_neat_internal)
+target_include_directories(evo_tput_bench
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+list(APPEND PIPELINESESSION_TEST_TARGETS evo_tput_bench)
+
 add_pipeline_test(
   graph_migration_phase1_graph_api_surface_test
   graph_migration/unified/graph_phase1_api_surface_test.cpp
