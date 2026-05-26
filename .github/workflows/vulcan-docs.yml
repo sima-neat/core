@@ -97,7 +97,34 @@ jobs:
           exit 1
         fi
 
-        ./build.sh --doc
+        sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
+        if [[ -z "${sdk_container}" ]]; then
+          sdk_container="$(docker ps --filter 'name=sdk' --format '{{.Names}}' | head -n 1)"
+        fi
+        if [[ -z "${sdk_container}" ]]; then
+          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+          echo "Could not find running SDK container." >&2
+          exit 1
+        fi
+
+        docker exec \
+          -e DOCS_URL \
+          -e DOCS_STRICT_LINKS \
+          -e DOCS_BASE_URL \
+          -e DOCS_DEVELOPER_CENTER_SHELL_BASE \
+          -e GITHUB_HEAD_REF="${{ github.head_ref }}" \
+          -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+          -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
+          -e GITHUB_REPOSITORY="${{ github.repository }}" \
+          -e GITHUB_RUN_ATTEMPT="${{ github.run_attempt }}" \
+          -e GITHUB_RUN_ID="${{ github.run_id }}" \
+          -e GITHUB_SHA="${{ github.sha }}" \
+          "${sdk_container}" \
+          bash -lc '
+            set -euo pipefail
+            cd /workspace
+            ./build.sh --doc
+          '
 
       post_build_command: |
         set -euo pipefail
