@@ -44,7 +44,7 @@ The framework's public surface is a small set of primary concepts. They form a c
 | 1 | **Model archive** | Sealed `.tar.gz` file from the compiler — kernels, weights, configs, and the MPK contract. | [`Model`](/reference/cppapi/classes/simaai-neat-model), [MPK contract](/concepts/mpk_contract) |
 | 2 | **Model** | Loaded form of a model archive; the simplified entry point. | [`Model`](/reference/cppapi/classes/simaai-neat-model) |
 | 3 | **Tensor** | Typed data unit that flows between stages. | [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Memory model](/concepts/memory_model), [dtype contract](/concepts/dtype_contract) |
-| 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [`Node`](/reference/cppapi/classes/simaai-neat-graph-node), [GStreamer underneath](/concepts/gstreamer_layer) |
+| 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [Node APIs](/reference/cppapi/groups/nodes), [GStreamer underneath](/concepts/gstreamer_layer) |
 | 5 | **Reusable Graph fragments** | Pre-made `Graph` fragments capturing common patterns. | [Reusable Graph fragments](/reference/cppapi/groups/nodes-groups) |
 | 6 | **Graph** | Assembly stage that turns Nodes, Models, and reusable Graph fragments into a runnable pipeline. | [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`GraphOptions`](/reference/cppapi/structs/simaai-neat-graphoptions) |
 | 7 | **Run** | Live, running pipeline produced by `Graph::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
@@ -81,4 +81,4 @@ The full story of why the framework is good for agents — fifteen specific desi
 - Every public header has a file-level `@file` / `@ingroup` / `@brief` block. Group definitions live in `docs/doxygen/groups.dox`.
 - Errors are returned as `NeatError` exceptions carrying a structured `GraphReport`. See the [Error code catalog](/concepts/error_codes) for the full taxonomy.
 
-The rest of this site is the API itself. Start by browsing [classes](/reference/cppapi/classes), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [`Node`](/reference/cppapi/classes/simaai-neat-graph-node).
+The rest of this site is the API itself. Start by browsing [classes](/reference/cppapi/classes), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Node APIs](/reference/cppapi/groups/nodes).

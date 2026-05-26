@@ -44,5 +44,5 @@ Even if you're not an agent, you benefit from agent-friendly API design: the sam
 
 - "Introducing Neat" — §0.1 of the design deep dive.
 - [`Graph::describe()`](/reference/cppapi/classes/simaai-neat-graph) — programmatic plan summary.
-- [`NeatError`](/reference/cppapi/classes/simaai-neat-grapherror) — structured error type.
+- [`NeatError`](/reference/cppapi/classes/simaai-neat-neaterror) — structured error type.
 - [`Model`](/reference/cppapi/classes/simaai-neat-model) — loaded model archive and parsed MPK contract.

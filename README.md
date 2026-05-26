@@ -55,7 +55,8 @@ auto metrics = run.metrics();
 ```
 
 That single `metrics()` surface is the preferred way to gather latency, throughput,
-and optional board power. `Model::Runner` and `graph::GraphRun` expose the same API.
+and optional board power. `Model::Runner` forwards to the same Run-backed metrics
+surface; app-level graph execution should use `Graph::build() -> Run`.
 
 ## Build NEAT
 

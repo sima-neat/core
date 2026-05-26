@@ -79,6 +79,6 @@ The `GraphReport` attached to the error names the failing Node and the build pha
 ## Further reading
 
 - [Plugin error format](/reference/error_format) — how GStreamer-side plugin errors are encoded into the debug string.
-- [`NeatError`](/reference/cppapi/classes/simaai-neat-grapherror) — the exception type.
+- [`NeatError`](/reference/cppapi/classes/simaai-neat-neaterror) — the exception type.
 - [`GraphReport`](/reference/cppapi/structs/simaai-neat-graphreport) — the structured context attached to every error.
 - "Validation, GraphReport" — §29 and §41 of the design deep dive.
