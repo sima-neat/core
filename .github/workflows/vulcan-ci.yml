@@ -8,6 +8,13 @@ on:
       - "**"
     tags:
       - "*"
+  workflow_call:
+    inputs:
+      build_mode:
+        description: "Build mode: standard or fuzz"
+        required: false
+        default: "standard"
+        type: string
   workflow_dispatch:
     inputs:
       build_mode:
@@ -39,9 +46,46 @@ jobs:
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'staging' }}
 
+  code-hygiene:
+    name: Code Hygiene
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Install sima-cli
+        run: |
+          curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" version
+
+      - name: Install code hygiene tools
+        run: |
+          ./scripts/ci/install_code_hygiene_deps.sh
+          ./build.sh --install-deps-only
+
+      - name: Verify host C++ headers for clang-tidy
+        run: |
+          echo '#include <memory>' | clang++ -std=c++20 -x c++ - -fsyntax-only
+          echo '#include <cstdint>' | clang++ -std=c++20 -x c++ - -fsyntax-only
+
+      - name: Run changed-code hygiene
+        env:
+          SIMANEAT_STRICT_WARNINGS: "ON"
+        run: |
+          ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
+
   build:
     name: Build Core on Vulcan
-    needs: resolve-vulcan-config
+    if: ${{ always() && !failure() && !cancelled() }}
+    needs:
+      - resolve-vulcan-config
+      - code-hygiene
     uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
     with:
       vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
@@ -66,6 +110,14 @@ jobs:
         neat_vulcan_env="${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"
         echo "Resolved build mode: ${core_build_mode}"
 
+        if [[ "${core_build_mode}" == "fuzz" ]]; then
+          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
+          ALLOW_FUZZ_IN_NEAT_SDK=ON
+        else
+          CORE_BUILD_ARGS="--all --clean --no-doc"
+          ALLOW_FUZZ_IN_NEAT_SDK=OFF
+        fi
+
         sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
         if [[ -z "${sdk_container}" ]]; then
           sdk_container="$(docker ps --filter 'name=sdk' --format '{{.Names}}' | head -n 1)"
@@ -74,12 +126,6 @@ jobs:
           docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
           echo "Could not find running SDK container." >&2
           exit 1
-        fi
-
-        if [[ "${core_build_mode}" == "fuzz" ]]; then
-          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
-        else
-          CORE_BUILD_ARGS="--all --clean --no-doc"
         fi
 
         docker exec \
@@ -91,6 +137,7 @@ jobs:
           -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
           -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Neural Edge Acceleration Toolkit" \
           -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
+          -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
           -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
           "${sdk_container}" \
           bash -lc '
@@ -151,10 +198,10 @@ jobs:
       role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
       sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
       cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
-      artifact_folder: "."
+      artifact_folder: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 'core-fuzz' || '.' }}
       artifact_pattern: neat-core-dist
       artifact_glob: "*"
-      min_artifact_count: 10
+      min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 9 || 10 }}
 
   test-devkit:
     name: Test Core on DevKit
