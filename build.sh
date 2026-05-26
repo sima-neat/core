@@ -552,8 +552,27 @@ detect_elxr_host_python() {
 
 select_system_deps() {
   # Start from the baseline dependency lists for each OS.
-  SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
-  SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
+  if [[ "${DOCS_ONLY}" == "ON" ]]; then
+    SELECTED_SYSTEM_DEPS_LINUX=(
+      build-essential
+      cmake
+      pkg-config
+      git
+      curl
+      doxygen
+      graphviz
+    )
+    SELECTED_SYSTEM_DEPS_MAC=(
+      cmake
+      pkg-config
+      git
+      doxygen
+      graphviz
+    )
+  else
+    SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
+    SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
+  fi
 
   # Python runtime is required for docs helper scripts and wheel builds.
   if [[ "${BUILD_DOCS}" == "ON" || "${BUILD_PYTHON}" == "ON" ]]; then
