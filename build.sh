@@ -53,9 +53,11 @@ NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_RESOLVED_REF=""
+NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
+NEAT_LLIMA_REQUESTED_REF=""
 NEAT_LLIMA_SNAP_POLICY=OFF
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
@@ -867,7 +869,7 @@ resolve_neat_internals_ref() {
   fi
   spec="${spec:-latest}"
 
-  printf '%s:%s\n' "${branch}" "${spec}"
+  NEAT_INTERNALS_REQUESTED_REF="${branch}:${spec}"
 }
 
 resolve_neat_llima_ref() {
@@ -897,7 +899,7 @@ resolve_neat_llima_ref() {
   fi
   spec="${spec:-latest}"
 
-  printf '%s:%s\n' "${branch}" "${spec}"
+  NEAT_LLIMA_REQUESTED_REF="${branch}:${spec}"
 }
 
 find_legacy_plugin_dir() {
@@ -1242,9 +1244,10 @@ PY
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
-  if ! internals_ref="$(resolve_neat_internals_ref)"; then
+  if ! resolve_neat_internals_ref; then
     exit 1
   fi
+  internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.internals"
@@ -1288,9 +1291,10 @@ ensure_neat_internals() {
 ensure_neat_llima() {
   # Sync LLiMa C++ runtime/dev packages from Vulcan package artifacts and install them.
   local llima_ref
-  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+  if ! resolve_neat_llima_ref; then
     exit 1
   fi
+  llima_ref="${NEAT_LLIMA_REQUESTED_REF}"
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.llima"
@@ -1420,9 +1424,10 @@ copy_deb_usr_include_to_header_cache() {
 ensure_neat_internals_headers() {
   # Header-only bootstrap for x86 analysis jobs. Do not install arm64 runtime/plugin packages.
   local internals_ref
-  if ! internals_ref="$(resolve_neat_internals_ref)"; then
+  if ! resolve_neat_internals_ref; then
     exit 1
   fi
+  internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers"
@@ -1472,9 +1477,10 @@ ensure_neat_llima_headers() {
   # Header-only bootstrap for x86 analysis jobs. GenAI tidy may still be skipped
   # unless a full SimaLMM CMake package/runtime is available.
   local llima_ref
-  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+  if ! resolve_neat_llima_ref; then
     exit 1
   fi
+  llima_ref="${NEAT_LLIMA_REQUESTED_REF}"
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers"
