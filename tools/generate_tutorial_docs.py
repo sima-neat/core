@@ -26,6 +26,15 @@ from typing import Dict, List
 REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 
 
+def docs_static_url(path: str) -> str:
+    base_url = os.environ.get("DOCS_BASE_URL", "/").strip() or "/"
+    if not base_url.startswith("/"):
+        base_url = f"/{base_url}"
+    if not base_url.endswith("/"):
+        base_url = f"{base_url}/"
+    return f"{base_url}{path.lstrip('/')}"
+
+
 def detect_repo_ref(default: str = "main") -> str:
     env_ref = (
         os.environ.get("TUTORIAL_SOURCE_REF")
@@ -72,7 +81,7 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        return f"../img/tutorials/cards/{self.difficulty.strip().lower()}.svg"
+        return docs_static_url(f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg")
 
     @property
     def display_title(self) -> str:
