@@ -1764,6 +1764,7 @@ configure_cmake() {
     # installed, so do not make those runtime libraries configure-time
     # requirements for docs-only builds.
     cmake_args+=(
+      -DSIMANEAT_DOCS_ONLY_CONFIGURE=ON
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
       -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
     )
