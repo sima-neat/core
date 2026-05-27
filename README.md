@@ -1,6 +1,6 @@
 # SiMa NEAT Framework
 
-[![CI Build](https://github.com/manuel-roldan/PipelineSession/actions/workflows/build.yml/badge.svg)](https://github.com/manuel-roldan/PipelineSession/actions/workflows/build.yml)
+[![Vulcan CI](https://github.com/sima-neat/core/actions/workflows/vulcan-ci.yml/badge.svg)](https://github.com/sima-neat/core/actions/workflows/vulcan-ci.yml)
 ![SDK](https://img.shields.io/badge/SDK-2.0-green)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-informational)
 
