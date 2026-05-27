@@ -33,9 +33,9 @@ fi
 
 landing_page="${SITE_DIR}/index.html"
 if [[ -f "${landing_page}" ]] &&
-   grep -Eq 'class="overview-link-card" href="[^./#][^":]*"' "${landing_page}"; then
-  grep -En 'class="overview-link-card" href="[^./#][^":]*"' "${landing_page}" >&2 || true
-  die "overview landing cards must use ./-relative links so /software resolves under the software route"
+   grep -Eq '<a[^>]*href="([^"/#][^":]*|\.\/[^":]*)"[^>]*class="overview-link-card"|<a[^>]*class="overview-link-card"[^>]*href="([^"/#][^":]*|\.\/[^":]*)"' "${landing_page}"; then
+  grep -En '<a[^>]*href="([^"/#][^":]*|\.\/[^":]*)"[^>]*class="overview-link-card"|<a[^>]*class="overview-link-card"[^>]*href="([^"/#][^":]*|\.\/[^":]*)"' "${landing_page}" >&2 || true
+  die "overview landing cards must use route-absolute /software/ links so /software resolves under the software route"
 fi
 
 if [[ -z "${PORT}" ]]; then
