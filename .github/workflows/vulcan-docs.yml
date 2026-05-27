@@ -72,37 +72,41 @@ jobs:
     needs:
       - resolve-target
       - resolve-docs-vars
-    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
-    with:
-      vulcan_env: ${{ needs.resolve-target.outputs.deploy_environment }}
-      sdk_cache: ${{ needs.resolve-docs-vars.outputs.sdk_cache }}
-      capacity: ${{ needs.resolve-docs-vars.outputs.docs_capacity }}
-      fetch_depth: 1
-      checkout_submodules: "false"
-      ensure_sdk_container: true
-      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
-      artifact_name: vulcan-sysdoc-software-site
-      artifact_path: website/build/*
-      artifact_retention_days: 1
-      build_command: |
-        set -euo pipefail
+    runs-on: ubuntu-latest
+    env:
+      DOCS_URL: ${{ needs.resolve-docs-vars.outputs.sysdoc_base_url }}
+      DOCS_STRICT_LINKS: "1"
+      DOCS_BASE_URL: /software/
+      DOCS_DEVELOPER_CENTER_SHELL_BASE: /
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          submodules: "false"
 
-        export DOCS_URL='${{ needs.resolve-docs-vars.outputs.sysdoc_base_url }}'
-        export DOCS_STRICT_LINKS=1
-        export DOCS_BASE_URL=/software/
-        export DOCS_DEVELOPER_CENTER_SHELL_BASE=/
+      - name: Build software docs site
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        if [[ -z "${DOCS_URL}" ]]; then
-          echo "Missing VULCAN_SYSDOC_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
-          exit 1
-        fi
+          if [[ -z "${DOCS_URL}" ]]; then
+            echo "Missing VULCAN_SYSDOC_URL for environment ${{ needs.resolve-target.outputs.deploy_environment }}." >&2
+            exit 1
+          fi
 
-        ./build.sh --doc
+          ./build.sh --doc
 
-      post_build_command: |
-        set -euo pipefail
-        test -d website/build
-        test -f website/build/index.html
+          test -d website/build
+          test -f website/build/index.html
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: vulcan-sysdoc-software-site
+          path: website/build/*
+          if-no-files-found: error
+          retention-days: 1
 
   resolve-docs-vars:
     name: Resolve Docs Vars
