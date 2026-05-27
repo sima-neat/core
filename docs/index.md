@@ -56,10 +56,10 @@ The getting-started guides help you install and build Neat, the programming-mode
     <h2>Start Here</h2>
     <p>Use these first steps to get Neat installed, built, and running with the core mental model in place.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="getting-started/installation"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
-      <li><a class="overview-link-card" href="getting-started/build"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
-      <li><a class="overview-link-card" href="getting-started/minimal_example"><strong>Hello Neat!</strong><span>Validate your environment with a minimal Neat application.</span></a></li>
-      <li><a class="overview-link-card" href="getting-started/programming-model/overview"><strong>Programming Model</strong><span>Learn the `Model`, `Session`, and `Run` workflow in more detail.</span></a></li>
+      <li><a class="overview-link-card" href="./getting-started/installation/"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
+      <li><a class="overview-link-card" href="./getting-started/build/"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
+      <li><a class="overview-link-card" href="./getting-started/minimal_example/"><strong>Hello Neat!</strong><span>Validate your environment with a minimal Neat application.</span></a></li>
+      <li><a class="overview-link-card" href="./getting-started/programming-model/overview/"><strong>Programming Model</strong><span>Learn the `Model`, `Session`, and `Run` workflow in more detail.</span></a></li>
     </ul>
   </section>
 
@@ -67,10 +67,10 @@ The getting-started guides help you install and build Neat, the programming-mode
     <h2>Explore</h2>
     <p>Once the basics are working, use the rest of the docs to deepen your understanding and move faster.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="tutorials"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
-      <li><a class="overview-link-card" href="how-to/runtime_tuning"><strong>How-To Guides</strong><span>Jump into focused topics such as runtime tuning and practical workflows.</span></a></li>
-      <li><a class="overview-link-card" href="reference/cppapi"><strong>Reference</strong><span>Browse the C++ API and supporting reference material.</span></a></li>
-      <li><a class="overview-link-card" href="contribute/architecture"><strong>Contribute</strong><span>Understand the architecture, contributor expectations, and repo conventions.</span></a></li>
+      <li><a class="overview-link-card" href="./tutorials/"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
+      <li><a class="overview-link-card" href="./how-to/runtime_tuning/"><strong>How-To Guides</strong><span>Jump into focused topics such as runtime tuning and practical workflows.</span></a></li>
+      <li><a class="overview-link-card" href="./reference/cppapi/"><strong>Reference</strong><span>Browse the C++ API and supporting reference material.</span></a></li>
+      <li><a class="overview-link-card" href="./contribute/architecture/"><strong>Contribute</strong><span>Understand the architecture, contributor expectations, and repo conventions.</span></a></li>
     </ul>
   </section>
 </div>
