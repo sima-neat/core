@@ -74,4 +74,9 @@ inline bool dtype_source_is_inferred_only(const DTypeSource source) {
   return source == DTypeSource::InferredFromSize;
 }
 
+inline bool dtype_source_is_public_logical_contract_authoritative(const DTypeSource source) {
+  return source == DTypeSource::ExplicitMpk || source == DTypeSource::TypedObject ||
+         source == DTypeSource::Alias || source == DTypeSource::InternalContract;
+}
+
 } // namespace simaai::neat::pipeline_internal::sima

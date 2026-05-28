@@ -203,7 +203,7 @@ bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
     return false;
   }
   for (const auto& logical : stage.logical_outputs) {
-    if (sima::dtype_source_is_inferred_only(logical.dtype_source)) {
+    if (!sima::dtype_source_is_public_logical_contract_authoritative(logical.dtype_source)) {
       return false;
     }
     const auto dtype = tensor_dtype_from_static_token(logical.dtype);
@@ -653,10 +653,11 @@ bool validate_publication_stage_strict(const sima::StageStaticSpec& publication_
   }
 
   for (const auto& logical : publication_stage.logical_outputs) {
-    if (sima::dtype_source_is_inferred_only(logical.dtype_source)) {
+    if (!sima::dtype_source_is_public_logical_contract_authoritative(logical.dtype_source)) {
       if (error_message) {
         *error_message = "terminal publication output '" + logical.logical_name +
-                         "' dtype '" + logical.dtype + "' was inferred from byte size only";
+                         "' dtype '" + logical.dtype +
+                         "' does not have authoritative public provenance";
       }
       return false;
     }
