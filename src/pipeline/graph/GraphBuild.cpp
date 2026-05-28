@@ -2429,7 +2429,7 @@ static std::string clamp_queue_buffers(std::string pipeline, int max_buffers) {
 
 static int max_num_buffers_in_pipeline_strict(const std::string& pipeline);
 
-std::string clamp_terminal_processcvu_num_buffers(std::string pipeline, int num_buffers_override) {
+std::string clamp_terminal_appsink_num_buffers(std::string pipeline, int num_buffers_override) {
   const int forced_min = (num_buffers_override > 0) ? std::max(2, num_buffers_override) : 2;
 
   auto trim = [](std::string& s) {
@@ -2450,10 +2450,6 @@ std::string clamp_terminal_processcvu_num_buffers(std::string pipeline, int num_
     }
     return s;
   };
-
-  // The original code carried its own num-buffers scanner here, duplicated again
-  // inside clamp_sync_pipeline below. Both replaced by the single gst_props::set_prop
-  // primitive — same correctness, one canonical implementation.
   std::vector<std::string> parts;
   size_t start = 0;
   while (start < pipeline.size()) {
@@ -2489,13 +2485,20 @@ std::string clamp_terminal_processcvu_num_buffers(std::string pipeline, int num_
         starts_with_token(lower, "capsfilter")) {
       continue;
     }
-    if (lower.find("neatprocesscvu") == std::string::npos) {
-      return pipeline;
+
+    // Sync mode intentionally collapses internal pools to a single buffer, but
+    // an appsink output boundary can retain a pulled GstSample/GstBuffer until
+    // after the next push/pull has started.  If the real producer immediately
+    // upstream of appsink also has only one output buffer, that legitimate
+    // lifetime overlap starves the producer's pool.  Keep exactly one spare at
+    // this terminal boundary, generically: walk left from appsink, skip transparent
+    // elements, and override the closest already-rendered num-buffers token.  That is
+    // more surgical than adding a property by factory name and avoids relying on
+    // registry introspection for plugins whose properties were already rendered into
+    // the launch string.
+    if (gst_props::find_prop(seg, "num-buffers=").state == gst_props::State::Absent) {
+      continue;
     }
-    // Only bump the value if the property is present-and-numeric and already
-    // below the floor. Absent / empty / non-numeric all fall through to the
-    // forced set below — the original code took the same conservative path
-    // but via a -1 sentinel that conflated those three cases.
     if (const auto cur = parse_num_buffers_in_segment(seg); cur.has_value() && *cur >= forced_min) {
       return pipeline;
     }
@@ -2520,7 +2523,7 @@ std::string clamp_terminal_processcvu_num_buffers(std::string pipeline, int num_
   }
 
   if (env_bool("SIMA_MLA_NUM_BUFFERS_DEBUG", false)) {
-    std::fprintf(stderr, "[DBG] Graph::build(input) clamp_terminal_processcvu_num_buffers min=%d\n",
+    std::fprintf(stderr, "[DBG] Graph::build(input) clamp_terminal_appsink_num_buffers min=%d\n",
                  forced_min);
   }
   return out.str();
@@ -2626,7 +2629,7 @@ std::string clamp_sync_pipeline(std::string pipeline, int num_buffers_override) 
   }
 
   if (forced <= 1) {
-    pipeline = clamp_terminal_processcvu_num_buffers(std::move(pipeline), num_buffers_override);
+    pipeline = clamp_terminal_appsink_num_buffers(std::move(pipeline), num_buffers_override);
   }
 
   return pipeline;
