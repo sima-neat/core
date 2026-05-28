@@ -128,6 +128,7 @@ LogicalTensorStaticSpec build_logical_output_static_spec(
   logical.size_bytes = size_bytes_override > 0U ? size_bytes_override
                                                 : tensor_size_bytes_from_shape_dtype(shape, dtype);
   logical.dtype = dtype;
+  logical.dtype_source = DTypeSource::InternalContract;
   logical.layout = layout;
   logical.logical_name = logical_name;
   logical.backend_name = backend_name;

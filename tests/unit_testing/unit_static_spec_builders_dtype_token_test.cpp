@@ -29,6 +29,8 @@ RUN_TEST("unit_static_spec_builders_dtype_token_test", ([] {
 
            require(logical.size_bytes == 80ULL * 80ULL * 64ULL * 4ULL,
                    "FP32 logical output must size from 4-byte elements");
+           require(logical.dtype_source == DTypeSource::InternalContract,
+                   "builder-created logical outputs must carry internal dtype provenance");
            require(logical.stride_bytes.size() == 3U,
                    "FP32 logical output must preserve rank when building strides");
            require(logical.stride_bytes[0] == 80LL * 64LL * 4LL,
