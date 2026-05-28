@@ -38,6 +38,53 @@ inline simaai::neat::Tensor
 apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
                                    const OutputTensorOverrideEntry& entry, bool materialize_output);
 
+inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
+                                               const OutputTensorOverrideEntry& entry,
+                                               std::size_t fallback_index) {
+  tensor.route.logical_index =
+      (entry.logical_output_index >= 0) ? entry.logical_output_index
+                                       : static_cast<int>(fallback_index);
+  tensor.route.memory_index = entry.memory_index;
+  tensor.route.physical_index =
+      (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
+  tensor.route.physical_byte_offset = entry.byte_offset;
+  tensor.route.segment_name =
+      !entry.segment_name.empty()
+          ? entry.segment_name
+          : (!entry.name.empty() ? entry.name : tensor.route.segment_name);
+  if (!entry.name.empty()) {
+    tensor.route.name = entry.name;
+  }
+}
+
+inline const simaai::neat::Tensor*
+select_output_tensor_override_base(const TensorList& tensors,
+                                   const OutputTensorOverrideEntry& entry,
+                                   std::size_t fallback_index) {
+  if (tensors.empty()) {
+    return nullptr;
+  }
+  if (entry.logical_output_index >= 0) {
+    for (const auto& tensor : tensors) {
+      if (tensor.route.logical_index == entry.logical_output_index) {
+        return &tensor;
+      }
+    }
+  }
+  if (entry.memory_index >= 0) {
+    for (const auto& tensor : tensors) {
+      if (tensor.route.memory_index == entry.memory_index ||
+          tensor.route.physical_index == entry.memory_index) {
+        return &tensor;
+      }
+    }
+  }
+  if (fallback_index < tensors.size()) {
+    return &tensors[fallback_index];
+  }
+  return &tensors.front();
+}
+
 inline Sample build_output_tensor_override_bundle(const Sample& canonical,
                                                   const Tensor& base_tensor,
                                                   const OutputTensorOverride& override,
@@ -77,18 +124,16 @@ inline Sample build_output_tensor_override_bundle(const Sample& canonical,
   bundle.tensors.reserve(override.outputs.size());
   for (size_t i = 0; i < override.outputs.size(); ++i) {
     const OutputTensorOverrideEntry& entry = override.outputs[i];
-    Tensor tensor = apply_output_tensor_override_entry(base_tensor, entry, materialize_output);
-    tensor.route.logical_index =
-        (entry.logical_output_index >= 0) ? entry.logical_output_index : static_cast<int>(i);
-    tensor.route.memory_index = entry.memory_index;
-    tensor.route.physical_index =
-        (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
-    tensor.route.physical_byte_offset = entry.byte_offset;
-    tensor.route.segment_name =
-        !entry.segment_name.empty()
-            ? entry.segment_name
-            : (!entry.name.empty() ? entry.name : ("output" + std::to_string(i)));
-    tensor.route.name = !entry.name.empty() ? entry.name : ("output" + std::to_string(i));
+    Tensor base = base_tensor;
+    base.byte_offset = 0;
+    Tensor tensor = apply_output_tensor_override_entry(base, entry, materialize_output);
+    apply_output_tensor_override_route(tensor, entry, i);
+    if (tensor.route.segment_name.empty()) {
+      tensor.route.segment_name = "output" + std::to_string(i);
+    }
+    if (tensor.route.name.empty()) {
+      tensor.route.name = "output" + std::to_string(i);
+    }
     bundle.tensors.emplace_back(std::move(tensor));
   }
   return bundle;
@@ -177,55 +222,24 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
                                                  materialize_output);
     }
     Sample out = canonical;
-    const std::size_t field_count = std::min(out.tensors.size(), override.outputs.size());
-    for (std::size_t i = 0; i < field_count; ++i) {
+    out.tensors.clear();
+    out.tensors.reserve(override.outputs.size());
+    for (std::size_t i = 0; i < override.outputs.size(); ++i) {
       const auto& entry = override.outputs[i];
-      auto& tensor = out.tensors[i];
-      if (canonical.tensors.size() == 1U) {
-        if (materialize_output) {
-          tensor = apply_output_tensor_override_entry(canonical.tensors[i], entry, true);
-        } else {
-          overlay_output_tensor_override_entry(tensor, entry);
-        }
-      } else {
-        // TensorSet metadata already describes the per-output physical layout.
-        // In the multi-tensor case, the override only needs to patch routing/names.
-        if (tensor.shape.empty() && !entry.shape.empty()) {
-          tensor.shape = entry.shape;
-        }
-        if (tensor.layout == TensorLayout::Unknown && entry.layout != TensorLayout::Unknown) {
-          tensor.layout = entry.layout;
-        }
-        if (tensor.strides_bytes.empty() && !tensor.shape.empty()) {
-          const std::size_t elem_bytes = pipeline_internal::dtype_bytes(tensor.dtype);
-          if (elem_bytes > 0U) {
-            tensor.strides_bytes =
-                pipeline_internal::contiguous_strides_bytes(tensor.shape, elem_bytes);
-          }
-        }
-        if (!entry.format.empty()) {
-          if (!tensor.semantic.tess.has_value()) {
-            simaai::neat::TessSpec tess;
-            tess.format = entry.format;
-            tensor.semantic.tess = tess;
-          } else {
-            tensor.semantic.tess->format = entry.format;
-          }
-        }
+      const Tensor* selected_base =
+          select_output_tensor_override_base(canonical.tensors, entry, i);
+      if (!selected_base) {
+        continue;
       }
-      tensor.route.logical_index =
-          (entry.logical_output_index >= 0) ? entry.logical_output_index : static_cast<int>(i);
-      tensor.route.memory_index = entry.memory_index;
-      tensor.route.physical_index =
-          (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
-      tensor.route.physical_byte_offset = entry.byte_offset;
-      tensor.route.segment_name =
-          !entry.segment_name.empty()
-              ? entry.segment_name
-              : (!entry.name.empty() ? entry.name : tensor.route.segment_name);
-      if (!entry.name.empty()) {
-        tensor.route.name = entry.name;
-      }
+      Tensor base_tensor = *selected_base;
+      // Public overrides are authoritative.  TensorSet metadata may describe a
+      // downstream/internal view, so do not add its stale byte_offset to the
+      // selected public contract's byte_offset.
+      base_tensor.byte_offset = 0;
+      Tensor tensor =
+          apply_output_tensor_override_entry(base_tensor, entry, materialize_output);
+      apply_output_tensor_override_route(tensor, entry, i);
+      out.tensors.emplace_back(std::move(tensor));
     }
     out.kind = SampleKind::TensorSet;
     return out;
