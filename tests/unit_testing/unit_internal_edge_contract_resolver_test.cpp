@@ -1,8 +1,12 @@
 #include "pipeline/internal/sima/InternalEdgeContractResolver.h"
+#include "pipeline/internal/sima/PreparedRuntimeBuild.h"
 #include "pipeline/internal/sima/StaticSpecBuilders.h"
+#include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
 #include <cassert>
 #include <cstdint>
+#include <gst/gst.h>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -51,6 +55,16 @@ InputBindingStaticSpec binding_to_producer(int producer_index, const std::string
   binding.src_stage_index = producer_index;
   binding.src_stage_id = producer_id;
   return binding;
+}
+
+sima_ev_tensor_desc dense_desc(std::vector<int> shape, const std::string& dtype,
+                               const std::string& layout) {
+  sima_ev_tensor_desc desc{};
+  std::string error;
+  assert(tensorsemantics::build_dense_tensor_desc(
+      shape, dtype, layout, &desc, &error, "missing output", "bad rank", "bad dim", "bad dtype",
+      "bad stride"));
+  return desc;
 }
 
 SimaPluginStaticManifest direct_manifest() {
@@ -179,6 +193,65 @@ void all_consumer_edges_resolve_together() {
   assert(resolved[0].binding_index == 0U);
 }
 
+void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
+  int argc = 0;
+  char** argv = nullptr;
+  gst_init(&argc, &argv);
+
+  SimaPluginStaticManifest manifest;
+
+  StageStaticSpec producer;
+  producer.logical_stage_id = "branching_producer";
+  producer.physical_outputs.push_back(physical(0, 4U, "head0"));
+  producer.physical_outputs.push_back(physical(1, 8U, "head1"));
+  producer.logical_outputs.push_back(logical_output(0, 0, 0, {1, 1, 1}, "UINT8", "head0", 1U));
+  producer.logical_outputs.push_back(logical_output(1, 1, 1, {1, 2, 1}, "INT32", "head1", 8U));
+  producer.output_order.push_back(build_output_route_static_spec(0, 0, 0, "head0", "head0"));
+  producer.output_order.push_back(build_output_route_static_spec(1, 1, 1, "head1", "head1"));
+  manifest.stages.push_back(std::move(producer));
+
+  StageStaticSpec consumer;
+  consumer.logical_stage_id = "consumer_cvu";
+  consumer.payload_kind = StagePayloadKind::ProcessCvu;
+  consumer.processcvu.canonical_contract = true;
+  consumer.processcvu.graph_family = "cast";
+  consumer.processcvu.graph_name = "cast";
+  consumer.processcvu.default_input_name = "consumer_input";
+  consumer.processcvu.default_output_names = {"consumer_out"};
+  consumer.processcvu.primary_output_name = "consumer_out";
+  consumer.processcvu.input_dtype = "INT32";
+  consumer.processcvu.output_dtype = "INT32";
+  consumer.processcvu.out_dtype = "INT32";
+  consumer.processcvu.input_tensors = {dense_desc({1, 2, 1}, "INT32", "HWC")};
+  consumer.processcvu.output_tensors = {dense_desc({1, 2, 1}, "INT32", "HWC")};
+  consumer.physical_inputs.push_back(physical(0, 8U, "consumer_head1"));
+  consumer.logical_inputs.push_back(logical_input(0, 0, {1, 2, 1}, "INT32", "consumer_head1",
+                                                 0, 8U));
+  consumer.input_bindings.push_back(
+      binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 8U));
+  consumer.physical_outputs.push_back(physical(0, 8U, "consumer_out"));
+  consumer.logical_outputs.push_back(
+      logical_output(0, 0, 0, {1, 2, 1}, "INT32", "consumer_out", 8U));
+  consumer.output_order.push_back(
+      build_output_route_static_spec(0, 0, 0, "consumer_out", "consumer_out"));
+  manifest.stages.push_back(std::move(consumer));
+
+  std::string error;
+  const auto prepared = build_prepared_runtime_context(
+      nullptr, manifest, std::nullopt, {}, {}, simaai::neat::NameTransform{}, &error);
+
+  assert(prepared.has_value() && error.empty());
+  assert(prepared->stages.size() == 1U);
+  assert(prepared->stages[0].processcvu.has_value());
+  const auto& input_bindings = prepared->stages[0].processcvu->routing_contract.input_bindings;
+  assert(input_bindings.size() == 1U);
+  assert(input_bindings[0].source_logical_index == 1);
+  assert(input_bindings[0].source_output_slot == 1);
+  assert(input_bindings[0].source_physical_index == 1);
+  assert(input_bindings[0].segment_name == "head1");
+  assert(input_bindings[0].shape == std::vector<std::int64_t>({1, 2, 1}));
+}
+
 } // namespace
 
 int main() {
@@ -187,5 +260,6 @@ int main() {
   branched_multi_output_edge_selects_requested_output_slot();
   missing_producer_fails_closed_with_error();
   all_consumer_edges_resolve_together();
+  prepared_runtime_processcvu_routing_uses_manifest_edge_resolution();
   return 0;
 }
