@@ -484,6 +484,82 @@ std::vector<std::string> read_string_alias_values(const json& obj,
   return {};
 }
 
+struct TypedTensorValuesLocal {
+  std::vector<std::string> dtypes;
+  std::vector<std::vector<std::int64_t>> shapes;
+};
+
+std::vector<std::int64_t> read_shape_vector_values_any(const json& value);
+
+std::vector<std::int64_t> read_typed_tensor_shape_local(const json& obj) {
+  if (!obj.is_object()) {
+    return {};
+  }
+  for (const char* key : {"shape", "tensor_shape", "dims"}) {
+    if (!key || !*key || !obj.contains(key)) {
+      continue;
+    }
+    auto shape = read_shape_vector_values_any(obj.at(key));
+    if (!shape.empty()) {
+      return shape;
+    }
+  }
+  return {};
+}
+
+void append_typed_tensor_value_local(const json& value, TypedTensorValuesLocal* out) {
+  if (!out) {
+    return;
+  }
+  if (value.is_string()) {
+    const std::string dtype = value.get<std::string>();
+    if (!dtype.empty()) {
+      out->dtypes.push_back(dtype);
+    }
+    return;
+  }
+  if (!value.is_object()) {
+    return;
+  }
+
+  if (const auto dtype = read_string_alias(value, {"scalar", "dtype", "type", "data_type"});
+      dtype.has_value()) {
+    out->dtypes.push_back(*dtype);
+  }
+  auto shape = read_typed_tensor_shape_local(value);
+  if (!shape.empty()) {
+    out->shapes.push_back(std::move(shape));
+  }
+}
+
+TypedTensorValuesLocal read_typed_tensor_values_any_local(const json& value) {
+  TypedTensorValuesLocal out;
+  if (value.is_array()) {
+    out.dtypes.reserve(value.size());
+    out.shapes.reserve(value.size());
+    for (const auto& item : value) {
+      append_typed_tensor_value_local(item, &out);
+    }
+    return out;
+  }
+  append_typed_tensor_value_local(value, &out);
+  return out;
+}
+
+TypedTensorValuesLocal read_typed_tensor_alias_values_local(
+    const json& obj, std::initializer_list<const char*> keys) {
+  for (const char* key : keys) {
+    if (!key || !*key || !obj.contains(key)) {
+      continue;
+    }
+    auto values = read_typed_tensor_values_any_local(obj.at(key));
+    if (!values.dtypes.empty() || !values.shapes.empty()) {
+      return values;
+    }
+  }
+  return {};
+}
+
 std::vector<std::vector<std::int64_t>> read_shape_values_any(const json& value) {
   std::vector<std::vector<std::int64_t>> out;
   if (!value.is_array()) {
@@ -656,6 +732,15 @@ std::string normalize_dtype_local(const std::string& raw_dtype) {
   if (up.find("INT32") != std::string::npos || up == "S32") {
     return "INT32";
   }
+  if (up.find("FLOAT64") != std::string::npos || up == "FP64" || up == "F64") {
+    return "FP64";
+  }
+  if (up.find("UINT64") != std::string::npos || up == "U64") {
+    return "UINT64";
+  }
+  if (up.find("INT64") != std::string::npos || up == "S64") {
+    return "INT64";
+  }
   return up;
 }
 
@@ -710,6 +795,9 @@ std::size_t dtype_size_bytes_local(const std::string& raw_dtype) {
   }
   if (dtype == "FP32" || dtype == "INT32" || dtype == "UINT32") {
     return 4U;
+  }
+  if (dtype == "FP64" || dtype == "INT64" || dtype == "UINT64") {
+    return 8U;
   }
   return 1U;
 }
@@ -5931,6 +6019,24 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       output_dtypes =
           read_string_alias_values(*params, {"tensor_types", "output_types", "output_dtype",
                                              "out_dtype", "output_data_type", "data_type"});
+      const auto typed_input_values = read_typed_tensor_alias_values_local(
+          *params, {"input_types", "input_dtype", "in_dtype", "input_data_type"});
+      const auto typed_output_values =
+          read_typed_tensor_alias_values_local(*params, {"tensor_types", "output_types",
+                                                        "output_dtype", "out_dtype",
+                                                        "output_data_type", "data_type"});
+      if (input_shapes.empty() && !typed_input_values.shapes.empty()) {
+        input_shapes = typed_input_values.shapes;
+      }
+      if (output_shapes.empty() && !typed_output_values.shapes.empty()) {
+        output_shapes = typed_output_values.shapes;
+      }
+      if (input_dtypes.empty() && !typed_input_values.dtypes.empty()) {
+        input_dtypes = typed_input_values.dtypes;
+      }
+      if (output_dtypes.empty() && !typed_output_values.dtypes.empty()) {
+        output_dtypes = typed_output_values.dtypes;
+      }
       fallback_input_dtype =
           read_string_alias(*params, {"in_dtype", "input_dtype", "input_data_type", "frame_type"})
               .value_or("");

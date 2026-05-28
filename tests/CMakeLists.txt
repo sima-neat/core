@@ -301,6 +301,7 @@ set(UNIT_TESTS
   unit_mpk_graph_dump_test
   unit_mpk_fuse_sibling_pre_mla_test
   unit_mpk_contract_legacy_ingress_test
+  unit_mpk_typed_tensor_object_contract_test
   unit_mla_elf_io_topology_test
   unit_model_archive_loader_test
   unit_outputspec_test
