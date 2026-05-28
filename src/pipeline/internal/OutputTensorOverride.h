@@ -10,6 +10,7 @@
 #include "pipeline/internal/TensorUtil.h"
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -33,6 +34,58 @@ struct OutputTensorOverrideEntry {
 struct OutputTensorOverride {
   std::vector<OutputTensorOverrideEntry> outputs;
 };
+
+inline std::uint64_t
+output_override_entry_physical_span_bytes(const OutputTensorOverrideEntry& entry) {
+  const std::uint64_t elem_bytes =
+      static_cast<std::uint64_t>(pipeline_internal::dtype_bytes(entry.dtype));
+  if (elem_bytes == 0U || entry.shape.empty()) {
+    return 0U;
+  }
+  if (!entry.strides_bytes.empty() && entry.strides_bytes.size() == entry.shape.size()) {
+    std::uint64_t max_offset = 0U;
+    for (std::size_t i = 0; i < entry.shape.size(); ++i) {
+      const std::int64_t dim = entry.shape[i];
+      const std::int64_t stride = entry.strides_bytes[i];
+      if (dim <= 0 || stride < 0 || (dim > 1 && stride == 0)) {
+        return 0U;
+      }
+      if (dim == 1) {
+        continue;
+      }
+      const auto dim_minus_one = static_cast<std::uint64_t>(dim - 1);
+      const auto stride_bytes = static_cast<std::uint64_t>(stride);
+      if (stride_bytes > std::numeric_limits<std::uint64_t>::max() / dim_minus_one) {
+        return 0U;
+      }
+      const std::uint64_t delta = dim_minus_one * stride_bytes;
+      if (max_offset > std::numeric_limits<std::uint64_t>::max() - delta) {
+        return 0U;
+      }
+      max_offset += delta;
+    }
+    if (max_offset > std::numeric_limits<std::uint64_t>::max() - elem_bytes) {
+      return 0U;
+    }
+    return max_offset + elem_bytes;
+  }
+
+  std::uint64_t elements = 1U;
+  for (const auto dim : entry.shape) {
+    if (dim <= 0) {
+      return 0U;
+    }
+    const auto u_dim = static_cast<std::uint64_t>(dim);
+    if (elements > std::numeric_limits<std::uint64_t>::max() / u_dim) {
+      return 0U;
+    }
+    elements *= u_dim;
+  }
+  if (elements > std::numeric_limits<std::uint64_t>::max() / elem_bytes) {
+    return 0U;
+  }
+  return elements * elem_bytes;
+}
 
 inline simaai::neat::Tensor
 apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
