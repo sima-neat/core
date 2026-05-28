@@ -566,6 +566,227 @@ Rules:
 4. If dtype is unknown, expose unknown/raw/byte semantics or fail diagnostics
    rather than silently lying.
 
+## Pre-implementation runtime verification pass
+
+Before implementing Step 1, run a short verification pass to turn assumptions
+into facts. This pass should not change production code. If a temporary probe is
+needed, keep it test/tool-only and commit it separately only after it proves
+useful.
+
+### Verification 0: DevKit and build preflight
+
+Goal: make sure every runtime result below is from the current `core_graph_changes`
+tree.
+
+Commands/checks:
+
+```bash
+cd /home/docker/sima-cli
+
+type dk || true
+ls -l /usr/local/bin/dk /root/.devkit-sync.rc 2>/dev/null || true
+
+grep -E '^CMAKE_HOME_DIRECTORY:INTERNAL=' \
+  core_graph_changes/build-codex-graph-sdk/CMakeCache.txt \
+  core_graph_changes/build-graph-devkit/CMakeCache.txt 2>/dev/null || true
+
+cmake --build core_graph_changes/build-graph-devkit \
+  --target evo_route_matrix_legacy_runner
+file core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner
+```
+
+If a build directory was configured from a stale path such as `/workspace`, use a
+build directory whose `CMAKE_HOME_DIRECTORY` is `/home/docker/sima-cli/core_graph_changes`
+or reconfigure a fresh build directory. If `dk` is unavailable, current live
+DevKit verification is blocked; historical logs are useful context but not proof
+for the current tree.
+
+### Verification 1: Baseline EVO route health
+
+Goal: confirm broad current route health before touching terminal contracts.
+
+Run the existing 12-model x 4-route EVO matrix and save the full log:
+
+```bash
+cd /home/docker/sima-cli
+mkdir -p core/tmp tmp/verification_logs
+cp core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner \
+  core/tmp/evo_route_matrix_runner
+cp core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner \
+  core/tmp/evo_route_matrix_legacy_runner
+file core/tmp/evo_route_matrix_runner
+dk /home/docker/sima-cli/tmp/run_evo_route_matrix_12x4.sh | \
+  tee tmp/verification_logs/evo_route_matrix_baseline_$(date +%Y%m%d_%H%M%S).log
+```
+
+Pass criteria:
+
+```text
+48 SUMMARY lines
+48 status=PASS
+0 TIMEOUT / RC_* / NO_RESULT
+```
+
+This matrix proves broad routing liveness over EV74/A65 pre/post combinations,
+MLA/EV74 tess variants, BF16/INT8 variants, and multi-buffer variants. It does
+**not** prove terminal public metadata correctness by itself because the legacy
+runner only checks successful `Model::run()` and output count.
+
+### Verification 2: Mark-model terminal contract dump
+
+Goal: identify the exact terminal producer and the exact source of the wrong
+`Float32 768x1024x1` metadata.
+
+Run Mark's graph in both output-memory modes with manifest/debug enabled:
+
+```text
+SIMA_MANIFEST_DEBUG=1
+SIMA_MLA_CONTRACT_DEBUG=1
+SIMA_MPK_CONTRACT_DEBUG=1
+SIMA_INPUTSTREAM_META_DEBUG=1
+```
+
+Capture for the executed `Input -> Preproc -> MLA -> Output` graph:
+
+- rendered manifest stage order and terminal stage key;
+- terminal stage `payload_kind`, `plugin_kind`, `kernel_kind`;
+- terminal `physical_outputs`;
+- terminal `logical_outputs`;
+- terminal `output_order`;
+- terminal `processmla.dispatcher_output_sizes/names`;
+- every downstream MPK slice/A65 node that is present in MPK but not executed;
+- where dtype first becomes `FP32`: MPK parser, rendered manifest, tensor-set
+  meta, output override, or public tensor decode.
+
+Expected motivating-case facts to confirm or reject:
+
+```text
+terminal producer = ProcessMLA
+raw dispatcher/MPK output size = 12582912 bytes
+downstream slice logical shape = 1x768x1024x1
+downstream slice byte span = 3145728 bytes
+public zero-copy currently exposes downstream logical metadata
+```
+
+### Verification 3: Sample/GstMemory shape proof
+
+Goal: determine whether the public tensor is decoded from stale TensorSet meta,
+from an override, or from raw GstMemory.
+
+For Mark owned and zero-copy runs, record before and after any output override:
+
+- `SampleKind`;
+- tensor count / field count;
+- each tensor dtype, layout, shape, strides, byte offset;
+- tensor route fields: logical index, physical index, memory index, route slot,
+  segment/name;
+- logical readable span from dtype/shape/strides/offset;
+- storage kind;
+- `view_read().size_bytes`;
+- `GstBuffer` memory count;
+- each `GstMemory` valid `size`, offset, maxsize, and map size.
+
+Run this matrix:
+
+```text
+Mark model, terminal MLA, OutputMemory::Owned
+Mark model, terminal MLA, OutputMemory::ZeroCopy
+```
+
+Pass/fail question before implementation:
+
+```text
+Do owned and zero-copy disagree because metadata differs, because memory index
+differs, or because owned copies the whole GstMemory while zero-copy maps the
+logical span from stale metadata?
+```
+
+### Verification 4: physical index vs GstMemory index
+
+Goal: prove whether `logical.physical_index == GstBuffer memory index` is safe.
+
+For Mark and a representative EVO multi-buffer case, record:
+
+- manifest physical outputs in vector order;
+- each `physical_index`;
+- segment names;
+- actual `GstBuffer` memory block order and sizes;
+- each public tensor's selected `memory_index`.
+
+If any physical index is sparse, reordered, or not equal to memory order, the
+implementation must build an explicit physical-index-to-memory-index map before
+installing public overrides.
+
+### Verification 5: EVO metadata/span probe
+
+Goal: use EVO to protect the many slice/stride/padded/multibuffer cases that can
+be broken by a generic terminal selector.
+
+The existing EVO runner is not enough. Add or use a test-only probe runner that
+prints, for every output tensor in every case:
+
+```text
+model route output_index sample_kind tensor_count dtype shape strides byte_offset
+logical_span view_read_size storage_capacity route.logical route.physical
+route.memory route.slot segment_name
+```
+
+Run at least:
+
+```text
+12 EVO models x 4 routes x OutputMemory::Owned
+12 EVO models x 4 routes x OutputMemory::ZeroCopy
+```
+
+Required checks:
+
+- owned and zero-copy logical signatures match for the same model/route;
+- logical span never exceeds selected physical memory;
+- multi-buffer models use the expected memory index/segment;
+- no post-route output still exposes an internal slice/view shape when the final
+  real post stage should define the public output;
+- no infer-only terminal output is rewritten by a downstream non-executed view.
+
+### Verification 6: internal-edge preservation
+
+Goal: prove the fix will not remove slice/view metadata that a real downstream
+consumer needs.
+
+Use graph-internal routes that execute a real consumer after a view transform:
+
+```text
+MLA -> slice/view -> A65/host/post stage
+MLA -> view/multibuffer -> EV74/ProcessCVU
+```
+
+Record:
+
+- `segment.boundary.graph_internal_output`;
+- whether `InputStreamOptions::public_output_contract` would be false;
+- edge logical shape/strides/offset delivered into the downstream consumer;
+- downstream consumer input binding source stage/logical/physical indices.
+
+Pass criteria: graph-internal appsinks preserve edge/view metadata, while public
+appsinks publish terminal producer metadata.
+
+### Verification 7: contract-only edge cases before code
+
+Goal: cover cases faster than hardware can. Add x86 unit tests or a small
+contract-only probe for synthetic manifests:
+
+1. terminal real producer with normal logical output;
+2. terminal real producer with no logical output -> raw physical fallback;
+3. terminal producer followed in MPK by non-executed slice -> public ignores slice;
+4. real consumer after slice -> edge includes slice;
+5. materialized cast/dequant/detess terminal -> not skipped as view;
+6. padded stride with logical span smaller than physical size;
+7. nonzero byte offset;
+8. multi-buffer outputs;
+9. sparse/reordered physical indices;
+10. unsupported explicit dtype such as `int64`.
+
+Only after these facts are captured should implementation Step 1 start.
+
 ## Detailed implementation plan
 
 This section is the concrete implementation guide. Each step should be small,
