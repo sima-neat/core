@@ -605,16 +605,25 @@ for the current tree.
 
 Goal: confirm broad current route health before touching terminal contracts.
 
-Run the existing 12-model x 4-route EVO matrix and save the full log:
+Run the existing 12-model x 4-route EVO matrix and save the full log. Rebuild
+the runner immediately before copying it into `core/tmp`; do not reuse a stale
+runner from an earlier commit:
 
 ```bash
 cd /home/docker/sima-cli
+latest_commit_ts=$(git -C core_graph_changes log -1 --format=%ct)
+cmake --build core_graph_changes/build-graph-devkit \
+  --target evo_route_matrix_legacy_runner
+file core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner
+stat -c '%Y %y %n' core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner
+test "$(stat -c '%Y' core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner)" -ge "$latest_commit_ts"
 mkdir -p core/tmp tmp/verification_logs
 cp core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner \
   core/tmp/evo_route_matrix_runner
 cp core_graph_changes/build-graph-devkit/tests/evo_route_matrix_legacy_runner \
   core/tmp/evo_route_matrix_legacy_runner
 file core/tmp/evo_route_matrix_runner
+sha256sum core/tmp/evo_route_matrix_runner
 dk /home/docker/sima-cli/tmp/run_evo_route_matrix_12x4.sh | \
   tee tmp/verification_logs/evo_route_matrix_baseline_$(date +%Y%m%d_%H%M%S).log
 ```
@@ -797,25 +806,40 @@ reviewable, and validated before moving to the next one.
 After **every** implementation step below:
 
 1. Make the source changes only under `core_graph_changes/`.
-2. Build and run the step-specific tests listed in that step.
-3. Run the EVO matrix.
-4. If and only if the step-specific tests and EVO matrix pass, commit the
-   successful checkpoint in git before starting the next step.
+2. Rebuild every step-specific test target from the current `core_graph_changes`
+   source tree before running it. Never run a previously built test binary just
+   because it exists.
+3. Build and run the step-specific tests listed in that step.
+4. Rebuild the EVO validation binary from the current `core_graph_changes` source
+   tree before running EVO. Never count an EVO result from a stale binary.
+5. Run the EVO matrix.
+6. If and only if the rebuilt step-specific tests and rebuilt EVO matrix pass,
+   commit the successful checkpoint in git before starting the next step.
 
-Do not continue to the next step if any route fails, times out, or reports no
+Do not continue to the next step if any test binary or EVO binary predates the
+source commit being validated, any route fails, times out, or reports no
 `EVO_RESULT`. Do not commit a failed or partially validated step.
 
 Use the existing EVO matrix runner/script. The runner is `aarch64`, so always
 check it with `file` and run it on the DevKit via `dk`; do not execute it on the
-x86 host.
+x86 host. The same no-stale-binary rule applies to EVO throughput/tput runners
+such as `evo_tput_bench`.
 
 ```bash
 cd /home/docker/sima-cli
+
+grep -E '^CMAKE_HOME_DIRECTORY:INTERNAL=' \
+  core_graph_changes/build-codex-graph-sdk/CMakeCache.txt
+
+latest_commit_ts=$(git -C core_graph_changes log -1 --format=%ct)
 
 cmake --build core_graph_changes/build-codex-graph-sdk \
   --target evo_route_matrix_legacy_runner
 
 file core_graph_changes/build-codex-graph-sdk/tests/evo_route_matrix_legacy_runner
+stat -c '%Y %y %n' core_graph_changes/build-codex-graph-sdk/tests/evo_route_matrix_legacy_runner
+test "$(stat -c '%Y' core_graph_changes/build-codex-graph-sdk/tests/evo_route_matrix_legacy_runner)" -ge "$latest_commit_ts"
+sha256sum core_graph_changes/build-codex-graph-sdk/tests/evo_route_matrix_legacy_runner
 
 mkdir -p core/tmp
 cp core_graph_changes/build-codex-graph-sdk/tests/evo_route_matrix_legacy_runner \
@@ -1000,6 +1024,11 @@ Implementation details:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1009,7 +1038,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/unit_contract_render_manifes
 file core_graph_changes/build-codex-graph-sdk/tests/unit_mla_boundary_output_contract_test
 ```
 
-Then run the mandatory EVO matrix gate above. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate above, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 2: Implement producer-local publication stage construction
 
@@ -1124,6 +1153,11 @@ Test cases:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1137,7 +1171,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/unit_detessdequant_output_in
 file core_graph_changes/build-codex-graph-sdk/tests/unit_model_output_spec_contract_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 3: Convert publication contracts to `OutputTensorOverride`
 
@@ -1196,6 +1230,11 @@ Implementation details:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1207,7 +1246,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/unit_tensor_set_meta_route_c
 file core_graph_changes/build-codex-graph-sdk/tests/unit_tensorbuffer_runtime_contract_identity_overlay_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 4: Integrate only for public appsink endpoints
 
@@ -1296,6 +1335,11 @@ Required behavior:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1309,7 +1353,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/graph_migration_phase3_publi
 file core_graph_changes/build-codex-graph-sdk/tests/graph_migration_phase3_connected_yolo_route_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 5: Replace early ad-hoc overrides with manifest-based terminal override
 
@@ -1400,6 +1444,11 @@ stream_opt.public_output_contract && br.rendered_manifest.has_value()
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1415,7 +1464,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/stage_routing_regression_tes
 file core_graph_changes/build-codex-graph-sdk/tests/output_appsink_policy_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 6: Add MPK typed-object parsing for future terminal A65/.so outputs
 
@@ -1539,6 +1588,11 @@ silently converting to Float32 or UInt8.
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1552,7 +1606,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/unit_model_output_spec_contr
 file core_graph_changes/build-codex-graph-sdk/tests/unit_model_route_planner_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 7: Stop unsafe four-byte `FP32` inference for public contracts
 
@@ -1587,6 +1641,11 @@ Implementation approach:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1600,7 +1659,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/unit_yolov8_contract_subset_
 file core_graph_changes/build-codex-graph-sdk/tests/unit_model_output_spec_contract_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 8: Prove owned and zero-copy agree
 
@@ -1671,6 +1730,11 @@ Implementation details:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1684,7 +1748,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/unit_tensorbuffer_runtime_co
 file core_graph_changes/build-codex-graph-sdk/tests/graph_deterministic_routing_regression_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 9: Remove stale special-case override builders
 
@@ -1713,6 +1777,11 @@ Only after all previous steps and EVO gates are green:
 
 Required validation after this step:
 
+Before running these commands, verify the build directory points at
+`/home/docker/sima-cli/core_graph_changes`, rebuild the listed targets from the
+current commit, and reject any test binary whose `stat` timestamp predates the
+commit being validated.
+
 ```bash
 cd /home/docker/sima-cli
 cmake --build core_graph_changes/build-codex-graph-sdk \
@@ -1730,7 +1799,7 @@ file core_graph_changes/build-codex-graph-sdk/tests/graph_migration_unified_yolo
 file core_graph_changes/build-codex-graph-sdk/tests/graph_migration_legacy_yolov8_variant_route_matrix_test
 ```
 
-Then run the mandatory EVO matrix gate. After it passes, commit this step's intentional changes under `core_graph_changes` before continuing.
+Then rebuild the EVO runner, verify its timestamp/hash, run the mandatory EVO matrix gate, and commit this step's intentional changes under `core_graph_changes` only after the fresh EVO run passes.
 
 ### Step 10: Mark-model runtime proof
 
@@ -1760,6 +1829,10 @@ Owned and zero-copy should report the same public tensor metadata and logical
 span.
 
 Required validation after this step:
+
+Before running the Mark proof and EVO, rebuild every involved test/probe/EVO
+binary from the current `core_graph_changes` commit and record `file`, `stat`,
+and `sha256sum` in the validation log.
 
 1. Mark runtime proof, owned.
 2. Mark runtime proof, zero-copy.
