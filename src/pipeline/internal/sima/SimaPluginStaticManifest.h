@@ -27,6 +27,7 @@
 #include <nlohmann/json.hpp>
 
 #include "pipeline/BoxDecodeType.h"
+#include "pipeline/internal/sima/DTypeSource.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 #include <ev/ev_tensor_abi.h>
 
@@ -128,6 +129,7 @@ struct LogicalTensorStaticSpec {
   std::vector<std::int64_t> shape;        ///< Tensor shape.
   std::vector<std::int64_t> stride_bytes; ///< Per-dim byte strides.
   std::string dtype;                      ///< Dtype token.
+  DTypeSource dtype_source = DTypeSource::Unknown; ///< Where `dtype` came from.
   std::string layout;                     ///< Layout token.
   int logical_name_id = -1;               ///< Name-table index for `logical_name`.
   std::string logical_name;               ///< Logical (model-facing) tensor name.
@@ -148,6 +150,7 @@ struct LogicalInputStaticSpec {
   std::int64_t byte_offset = 0;           ///< Byte offset within the physical buffer.
   std::uint64_t size_bytes = 0;           ///< Tensor byte size.
   std::string dtype;                      ///< Dtype token.
+  DTypeSource dtype_source = DTypeSource::Unknown; ///< Where `dtype` came from.
   std::string layout;                     ///< Layout token.
   int logical_name_id = -1;               ///< Name-table index for `logical_name`.
   std::string logical_name;               ///< Logical (model-facing) input name.

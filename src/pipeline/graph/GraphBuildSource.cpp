@@ -104,7 +104,6 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
   stream_opt.public_output_contract = public_output_contract;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_nodes);
-  session_build_maybe_apply_detess_output_override(build_nodes, stream_opt);
   const bool insert_queue2 = session_build_should_insert_async_queue2(mode, merged_opt);
 
   // --- 4. compile -------------------------------------------------------------------
@@ -115,9 +114,10 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
                                        name_transform, &sess_opt);
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
+    const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
     std::string error;
     auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
-        *br.rendered_manifest, {}, &error);
+        *br.rendered_manifest, endpoint, &error);
     if (override.has_value()) {
       stream_opt.output_override = std::move(*override);
     } else if (pipeline_internal::env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false)) {

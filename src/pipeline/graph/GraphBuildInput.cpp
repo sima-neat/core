@@ -20,7 +20,6 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/GstDataAdapter.h"
-#include "pipeline/internal/OutputTensorOverride.h"
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/contract/ContractFacts.h"
@@ -558,105 +557,32 @@ int find_output_appsink_index_local(const std::vector<std::shared_ptr<Node>>& no
   return found;
 }
 
-bool has_output_appsink_local(const std::vector<std::shared_ptr<Node>>& nodes) {
-  return find_output_appsink_index_local(nodes) >= 0;
-}
-
-std::optional<OutputTensorOverride>
-build_detess_output_override(const std::vector<std::shared_ptr<Node>>& nodes) {
-  if (!has_output_appsink_local(nodes))
-    return std::nullopt;
-
-  std::shared_ptr<Node> last;
-  for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-    if (!*it)
-      continue;
-    if ((*it)->kind() == "Output")
-      continue;
-    last = *it;
-    break;
+pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
+public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& nodes) {
+  pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector selector;
+  const int output_index = find_output_appsink_index_local(nodes);
+  if (output_index < 0 || static_cast<std::size_t>(output_index) >= nodes.size() ||
+      !nodes[static_cast<std::size_t>(output_index)]) {
+    return selector;
   }
-  if (!last || last->kind() != "DetessDequant")
-    return std::nullopt;
 
-  const std::vector<std::shared_ptr<Node>> detess_nodes{last};
-  const auto info = rendered_stage_query::detessdequant_output_info(detess_nodes);
-  if (info.outputs.empty())
-    return std::nullopt;
-
-  if (detess_override_debug_enabled()) {
-    const std::size_t elem_bytes = pipeline_internal::dtype_bytes(info.dtype);
-    std::fprintf(stderr, "[detess-override] outputs=%zu elem_bytes=%zu dtype=%d layout=%d\n",
-                 info.outputs.size(), elem_bytes, static_cast<int>(info.dtype),
-                 static_cast<int>(info.layout));
-    for (std::size_t i = 0; i < info.outputs.size(); ++i) {
-      const auto& tensor = info.outputs[i];
-      std::ostringstream shape_ss;
-      shape_ss << "[";
-      int64_t bytes = static_cast<int64_t>(elem_bytes);
-      for (std::size_t j = 0; j < tensor.shape.size(); ++j) {
-        if (j > 0U) {
-          shape_ss << ",";
-        }
-        shape_ss << tensor.shape[j];
-        bytes *= tensor.shape[j];
+  const std::string label = nodes[static_cast<std::size_t>(output_index)]->user_label();
+  if (!label.empty()) {
+    selector.output_segment_name = label;
+    const bool numeric = std::all_of(label.begin(), label.end(), [](unsigned char c) {
+      return std::isdigit(c) != 0;
+    });
+    if (numeric) {
+      try {
+        selector.route_slot = std::stoi(label);
+        selector.output_slot = selector.route_slot;
+      } catch (...) {
+        selector.route_slot = -1;
+        selector.output_slot = -1;
       }
-      shape_ss << "]";
-      std::fprintf(stderr, "[detess-override]   output[%zu] shape=%s byte_offset=%lld bytes=%lld\n",
-                   i, shape_ss.str().c_str(), static_cast<long long>(tensor.byte_offset),
-                   static_cast<long long>(bytes));
     }
   }
-
-  OutputTensorOverride out;
-  out.outputs.reserve(info.outputs.size());
-  for (const auto& tensor : info.outputs) {
-    OutputTensorOverrideEntry entry;
-    entry.shape = tensor.shape;
-    entry.strides_bytes = tensor.stride_bytes;
-    entry.byte_offset = tensor.byte_offset;
-    entry.logical_output_index = static_cast<int>(out.outputs.size());
-    entry.route_slot = entry.logical_output_index;
-    entry.segment_name = "output" + std::to_string(entry.logical_output_index);
-    entry.dtype = info.dtype;
-    entry.layout = info.layout;
-    out.outputs.push_back(std::move(entry));
-  }
-  return out;
-}
-
-TensorDType tensor_dtype_from_contract_token_local(std::string token) {
-  std::transform(token.begin(), token.end(), token.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-  constexpr const char* kPrefix = "EVXX_";
-  if (token.rfind(kPrefix, 0U) == 0U) {
-    token.erase(0U, std::char_traits<char>::length(kPrefix));
-  }
-  if (token.find("BFLOAT16") != std::string::npos || token.find("BF16") != std::string::npos) {
-    return TensorDType::BFloat16;
-  }
-  if (token.find("FP64") != std::string::npos || token.find("FLOAT64") != std::string::npos) {
-    return TensorDType::Float64;
-  }
-  if (token.find("FP32") != std::string::npos || token.find("FLOAT32") != std::string::npos) {
-    return TensorDType::Float32;
-  }
-  if (token.find("UINT16") != std::string::npos) {
-    return TensorDType::UInt16;
-  }
-  if (token.find("INT16") != std::string::npos) {
-    return TensorDType::Int16;
-  }
-  if (token.find("INT32") != std::string::npos) {
-    return TensorDType::Int32;
-  }
-  if (token.find("INT8") != std::string::npos) {
-    return TensorDType::Int8;
-  }
-  if (token.find("UINT8") != std::string::npos) {
-    return TensorDType::UInt8;
-  }
-  return TensorDType::UInt8;
+  return selector;
 }
 
 std::string dtype_token_from_value(TensorDType dtype) {
@@ -1017,158 +943,6 @@ template <typename InputT> std::optional<Sample> contract_compile_sample_from_in
   return std::nullopt;
 }
 
-std::optional<OutputTensorOverride>
-build_mla_output_override(const std::vector<std::shared_ptr<Node>>& nodes) {
-  if (!has_output_appsink_local(nodes))
-    return std::nullopt;
-
-  std::shared_ptr<Node> last;
-  for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-    if (!*it)
-      continue;
-    if ((*it)->kind() == "Output")
-      continue;
-    last = *it;
-    break;
-  }
-  if (!last || last->kind() != "ModelFragment")
-    return std::nullopt;
-
-  const std::vector<std::shared_ptr<Node>> mla_nodes{last};
-  const auto outputs = rendered_stage_query::mla_output_tensors_from_nodes(mla_nodes);
-  if (outputs.size() <= 1U) {
-    return std::nullopt;
-  }
-
-  OutputTensorOverride out;
-  out.outputs.reserve(outputs.size());
-  for (std::size_t i = 0; i < outputs.size(); ++i) {
-    const auto& tensor = outputs[i];
-    if (tensor.shape.empty()) {
-      return std::nullopt;
-    }
-    OutputTensorOverrideEntry entry;
-    entry.shape = tensor.shape;
-    entry.strides_bytes = tensor.stride_bytes;
-    entry.byte_offset = tensor.byte_offset;
-    entry.memory_index = tensor.memory_index;
-    entry.logical_output_index = static_cast<int>(i);
-    entry.route_slot = static_cast<int>(i);
-    entry.dtype = tensor_dtype_from_contract_token_local(tensor.data_type);
-    entry.layout = tensor.layout;
-    entry.format = tensor.output_format;
-    entry.name = tensor.name.empty() ? ("output" + std::to_string(i)) : tensor.name;
-    entry.segment_name = !tensor.segment_name.empty() ? tensor.segment_name : entry.name;
-    out.outputs.push_back(std::move(entry));
-  }
-
-  if (detess_override_debug_enabled()) {
-    std::fprintf(stderr, "[output-override] mla outputs=%zu\n", out.outputs.size());
-    for (std::size_t i = 0; i < out.outputs.size(); ++i) {
-      const auto& entry = out.outputs[i];
-      std::ostringstream shape_ss;
-      shape_ss << "[";
-      for (std::size_t j = 0; j < entry.shape.size(); ++j) {
-        if (j > 0U) {
-          shape_ss << ",";
-        }
-        shape_ss << entry.shape[j];
-      }
-      shape_ss << "]";
-      std::fprintf(stderr,
-                   "[output-override]   output[%zu] name=%s mem=%d shape=%s byte_offset=%lld\n", i,
-                   entry.name.c_str(), entry.memory_index, shape_ss.str().c_str(),
-                   static_cast<long long>(entry.byte_offset));
-    }
-  }
-
-  return out;
-}
-
-std::optional<OutputTensorOverride>
-build_cast_output_override(const std::vector<std::shared_ptr<Node>>& nodes) {
-  if (!has_output_appsink_local(nodes))
-    return std::nullopt;
-
-  std::shared_ptr<Node> last;
-  std::shared_ptr<Node> upstream;
-  for (auto it = nodes.rbegin(); it != nodes.rend(); ++it) {
-    if (!*it)
-      continue;
-    if ((*it)->kind() == "Output")
-      continue;
-    if (!last) {
-      last = *it;
-      continue;
-    }
-    upstream = *it;
-    break;
-  }
-  if (!last || last->kind() != "Cast" || !upstream || upstream->kind() != "ModelFragment")
-    return std::nullopt;
-
-  const std::vector<std::shared_ptr<Node>> upstream_nodes{upstream};
-  const auto outputs = rendered_stage_query::mla_output_tensors_from_nodes(upstream_nodes);
-  if (outputs.size() <= 1U) {
-    return std::nullopt;
-  }
-
-  OutputTensorOverride out;
-  out.outputs.reserve(outputs.size());
-  for (std::size_t i = 0; i < outputs.size(); ++i) {
-    const auto& tensor = outputs[i];
-    if (tensor.shape.empty()) {
-      return std::nullopt;
-    }
-    OutputTensorOverrideEntry entry;
-    entry.shape = tensor.shape;
-    entry.memory_index = tensor.memory_index;
-    entry.logical_output_index = static_cast<int>(i);
-    entry.route_slot = static_cast<int>(i);
-
-    const TensorDType in_dtype = tensor_dtype_from_contract_token_local(tensor.data_type);
-    TensorDType out_dtype = in_dtype;
-    if (in_dtype == TensorDType::BFloat16) {
-      out_dtype = TensorDType::Float32;
-    } else if (in_dtype == TensorDType::Float32) {
-      out_dtype = TensorDType::BFloat16;
-    }
-    entry.dtype = out_dtype;
-    entry.layout = tensor.layout;
-    entry.format = tensor.output_format;
-    entry.name = tensor.name.empty() ? ("output" + std::to_string(i)) : tensor.name;
-    entry.segment_name = !tensor.segment_name.empty() ? tensor.segment_name : entry.name;
-
-    const std::size_t in_elem_bytes = pipeline_internal::dtype_bytes(in_dtype);
-    const std::size_t out_elem_bytes = pipeline_internal::dtype_bytes(out_dtype);
-    if (in_elem_bytes > 0U && out_elem_bytes > 0U) {
-      entry.byte_offset = static_cast<int64_t>(
-          (static_cast<std::uint64_t>(tensor.byte_offset) / in_elem_bytes) * out_elem_bytes);
-      if (!tensor.stride_bytes.empty()) {
-        entry.strides_bytes.reserve(tensor.stride_bytes.size());
-        for (const auto stride : tensor.stride_bytes) {
-          if (stride > 0) {
-            entry.strides_bytes.push_back(static_cast<int64_t>(
-                (static_cast<std::uint64_t>(stride) / in_elem_bytes) * out_elem_bytes));
-          } else {
-            entry.strides_bytes.push_back(stride);
-          }
-        }
-      }
-    } else {
-      entry.byte_offset = tensor.byte_offset;
-      entry.strides_bytes = tensor.stride_bytes;
-    }
-    out.outputs.push_back(std::move(entry));
-  }
-
-  if (detess_override_debug_enabled()) {
-    std::fprintf(stderr, "[output-override] cast outputs=%zu\n", out.outputs.size());
-  }
-
-  return out;
-}
-
 bool has_rtsp_input_nodes(const std::vector<std::shared_ptr<Node>>& nodes) {
   for (const auto& node : nodes) {
     if (!node)
@@ -1191,32 +965,16 @@ void maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
   }
 }
 
-void maybe_apply_detess_output_override(const std::vector<std::shared_ptr<Node>>& nodes,
-                                        InputStreamOptions& stream_opt) {
-  if (!stream_opt.public_output_contract)
-    return;
-  if (stream_opt.output_override.has_value())
-    return;
-  std::optional<OutputTensorOverride> override;
-  if (!override.has_value()) {
-    override = build_cast_output_override(nodes);
-  }
-  if (!override.has_value()) {
-    override = build_mla_output_override(nodes);
-  }
-  if (override.has_value()) {
-    stream_opt.output_override = std::move(*override);
-  }
-}
-
 void maybe_apply_public_terminal_output_override(
-    const BuildResult& build_result, InputStreamOptions& stream_opt, const char* where) {
+    const BuildResult& build_result, const std::vector<std::shared_ptr<Node>>& nodes,
+    InputStreamOptions& stream_opt, const char* where) {
   if (!stream_opt.public_output_contract || !build_result.rendered_manifest.has_value()) {
     return;
   }
+  const auto endpoint = public_output_endpoint_selector_local(nodes);
   std::string error;
   auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
-      *build_result.rendered_manifest, {}, &error);
+      *build_result.rendered_manifest, endpoint, &error);
   if (override.has_value()) {
     stream_opt.output_override = std::move(*override);
   } else if (detess_override_debug_enabled()) {
@@ -1610,7 +1368,6 @@ BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<
   ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode);
   ctx.stream_opt.public_output_contract = public_output_contract;
   maybe_enable_rtsp_appsink_drop(ctx.stream_opt, nodes);
-  maybe_apply_detess_output_override(nodes, ctx.stream_opt);
   ctx.insert_queue2 = should_insert_async_queue2(ctx.mode, ctx.merged_opt);
   maybe_log_build_mode("Graph::build(input)", ctx.mode, ctx.insert_queue2);
 
@@ -2000,7 +1757,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
       contract_compile_sample_from_input(sample), "Graph::build(input)");
   InputStreamOptions stream_opt = opt;
   if (has_sink) {
-    maybe_apply_public_terminal_output_override(br, stream_opt, "Graph::build(input)");
+    maybe_apply_public_terminal_output_override(br, build_nodes, stream_opt, "Graph::build(input)");
   }
   if (sync_mode) {
     br.pipeline_string =
@@ -2909,9 +2666,9 @@ void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt
   maybe_enable_rtsp_appsink_drop(stream_opt, nodes);
 }
 
-void session_build_maybe_apply_detess_output_override(
-    const std::vector<std::shared_ptr<Node>>& nodes, InputStreamOptions& stream_opt) {
-  maybe_apply_detess_output_override(nodes, stream_opt);
+pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
+session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes) {
+  return public_output_endpoint_selector_local(nodes);
 }
 
 BuildInputContext

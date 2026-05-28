@@ -179,6 +179,88 @@ void materialized_processcvu_terminal_is_not_demoted_by_detess_name() {
   assert((override->outputs[0].shape == std::vector<std::int64_t>{8}));
 }
 
+void endpoint_selector_filters_by_route_slot() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec stage;
+  stage.logical_stage_id = "terminal_multi";
+  stage.payload_kind = sima::StagePayloadKind::ProcessCvu;
+  stage.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Cast;
+  stage.physical_outputs.push_back(physical(0, 4U, "head0"));
+  stage.physical_outputs.push_back(physical(1, 8U, "head1"));
+  stage.logical_outputs.push_back(logical(0, 0, {4}, {1}, "UINT8", "head0", "head0", 4U));
+  stage.logical_outputs.push_back(logical(1, 1, {2}, {4}, "INT32", "head1", "head1", 8U));
+  sima::StageOutputRoute route0;
+  route0.output_slot = 0;
+  route0.logical_output_index = 0;
+  route0.tensor_index = 0;
+  route0.cm_output_name = "head0";
+  route0.segment_name = "head0";
+  stage.output_order.push_back(route0);
+  sima::StageOutputRoute route1;
+  route1.output_slot = 1;
+  route1.logical_output_index = 1;
+  route1.tensor_index = 1;
+  route1.cm_output_name = "head1";
+  route1.segment_name = "head1";
+  stage.output_order.push_back(route1);
+  manifest.stages.push_back(stage);
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.route_slot = 1;
+  std::string err;
+  auto override = build_output_override_from_manifest(manifest, endpoint, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].dtype == TensorDType::Int32);
+  assert((override->outputs[0].shape == std::vector<std::int64_t>{2}));
+  assert(override->outputs[0].memory_index == 1);
+  assert(override->outputs[0].route_slot == 1);
+  assert(override->outputs[0].name == "head1");
+}
+
+void endpoint_selector_filters_by_public_output_name() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec stage;
+  stage.logical_stage_id = "terminal_named";
+  stage.payload_kind = sima::StagePayloadKind::ProcessCvu;
+  stage.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Cast;
+  stage.physical_outputs.push_back(physical(0, 4U, "scores"));
+  stage.physical_outputs.push_back(physical(1, 4U, "classes"));
+  stage.logical_outputs.push_back(logical(0, 0, {4}, {1}, "UINT8", "scores", "scores", 4U));
+  stage.logical_outputs.push_back(logical(1, 1, {1}, {4}, "INT32", "classes", "classes", 4U));
+  manifest.stages.push_back(stage);
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.output_segment_name = "classes";
+  std::string err;
+  auto override = build_output_override_from_manifest(manifest, endpoint, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].dtype == TensorDType::Int32);
+  assert(override->outputs[0].name == "classes");
+}
+
+void inferred_dtype_terminal_falls_back_to_raw_bytes() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec stage;
+  stage.logical_stage_id = "terminal_inferred";
+  stage.payload_kind = sima::StagePayloadKind::ProcessCvu;
+  stage.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Unknown;
+  stage.physical_outputs.push_back(physical(0, 16U, "raw_parent"));
+  auto inferred = logical(0, 0, {4}, {4}, "FP32", "semantic_guess", "raw_parent", 16U);
+  inferred.dtype_source = sima::DTypeSource::InferredFromSize;
+  stage.logical_outputs.push_back(std::move(inferred));
+  manifest.stages.push_back(stage);
+
+  std::string err;
+  auto override = build_output_override_from_manifest(manifest, {}, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].dtype == TensorDType::UInt8);
+  assert((override->outputs[0].shape == std::vector<std::int64_t>{16}));
+  assert(override->outputs[0].name == "raw_parent");
+}
+
 void output_override_route_slot_is_authoritative() {
   Tensor base;
   base.storage = make_cpu_owned_storage(16U);
@@ -226,6 +308,9 @@ int main() {
   terminal_raw_fallback_keeps_non_view_dispatcher_name();
   terminal_selector_skips_boundary_view_transit();
   materialized_processcvu_terminal_is_not_demoted_by_detess_name();
+  endpoint_selector_filters_by_route_slot();
+  endpoint_selector_filters_by_public_output_name();
+  inferred_dtype_terminal_falls_back_to_raw_bytes();
   output_override_route_slot_is_authoritative();
   return 0;
 }

@@ -203,6 +203,9 @@ bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
     return false;
   }
   for (const auto& logical : stage.logical_outputs) {
+    if (sima::dtype_source_is_inferred_only(logical.dtype_source)) {
+      return false;
+    }
     const auto dtype = tensor_dtype_from_static_token(logical.dtype);
     if (!dtype.has_value()) {
       return false;
@@ -325,6 +328,7 @@ raw_logical_outputs_from_physical(const std::vector<PhysicalBufferStaticSpec>& p
     logical.shape = {static_cast<std::int64_t>(physical.size_bytes)};
     logical.stride_bytes = {1};
     logical.dtype = "UINT8";
+    logical.dtype_source = sima::DTypeSource::InternalContract;
     logical.layout.clear();
     logical.logical_name = !physical.segment_name.empty() ? physical.segment_name
                                                          : ("output" + std::to_string(i));
@@ -369,6 +373,158 @@ bool logical_to_override_entry(const StageStaticSpec& stage, const LogicalTensor
                                               : (!logical.backend_name.empty() ? logical.backend_name
                                                                               : "output");
   entry->segment_name = !logical.segment_name.empty() ? logical.segment_name : entry->name;
+  return true;
+}
+
+bool endpoint_has_output_selector(const PublicOutputEndpointSelector& endpoint) {
+  return !endpoint.output_segment_name.empty() || endpoint.output_slot >= 0 ||
+         endpoint.route_slot >= 0;
+}
+
+bool string_matches_endpoint_name(std::string_view value,
+                                  const PublicOutputEndpointSelector& endpoint) {
+  return !value.empty() && !endpoint.output_segment_name.empty() &&
+         value == endpoint.output_segment_name;
+}
+
+bool route_matches_endpoint(const sima::StageOutputRoute& route,
+                            const PublicOutputEndpointSelector& endpoint) {
+  if (!endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+  if (endpoint.output_slot >= 0 && route.output_slot == endpoint.output_slot) {
+    return true;
+  }
+  if (endpoint.route_slot >= 0 &&
+      (route.output_slot == endpoint.route_slot ||
+       route.logical_output_index == endpoint.route_slot ||
+       route.tensor_index == endpoint.route_slot)) {
+    return true;
+  }
+  return string_matches_endpoint_name(route.cm_output_name, endpoint) ||
+         string_matches_endpoint_name(route.segment_name, endpoint);
+}
+
+bool logical_matches_endpoint(const LogicalTensorStaticSpec& logical,
+                              const PublicOutputEndpointSelector& endpoint) {
+  if (!endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+  if (endpoint.output_slot >= 0 && logical.output_slot == endpoint.output_slot) {
+    return true;
+  }
+  if (endpoint.route_slot >= 0 &&
+      (logical.output_slot == endpoint.route_slot ||
+       logical.logical_index == endpoint.route_slot ||
+       logical.tensor_index == endpoint.route_slot)) {
+    return true;
+  }
+  return string_matches_endpoint_name(logical.logical_name, endpoint) ||
+         string_matches_endpoint_name(logical.backend_name, endpoint) ||
+         string_matches_endpoint_name(logical.segment_name, endpoint);
+}
+
+bool physical_matches_endpoint(const PhysicalBufferStaticSpec& physical,
+                               const PublicOutputEndpointSelector& endpoint) {
+  if (!endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+  if (endpoint.output_slot >= 0 && physical.physical_index == endpoint.output_slot) {
+    return true;
+  }
+  if (endpoint.route_slot >= 0 && physical.physical_index == endpoint.route_slot) {
+    return true;
+  }
+  return string_matches_endpoint_name(physical.segment_name, endpoint);
+}
+
+bool stage_outputs_match_endpoint(const StageStaticSpec& stage,
+                                  const PublicOutputEndpointSelector& endpoint) {
+  if (!endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+  for (const auto& route : stage.output_order) {
+    if (route_matches_endpoint(route, endpoint)) {
+      return true;
+    }
+  }
+  for (const auto& logical : stage.logical_outputs) {
+    if (logical_matches_endpoint(logical, endpoint)) {
+      return true;
+    }
+  }
+  for (const auto& physical : stage.physical_outputs) {
+    if (physical_matches_endpoint(physical, endpoint)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool filter_publication_stage_for_endpoint(StageStaticSpec* publication,
+                                           const PublicOutputEndpointSelector& endpoint,
+                                           std::string* error_message) {
+  if (!publication || !endpoint_has_output_selector(endpoint)) {
+    return true;
+  }
+
+  std::vector<LogicalTensorStaticSpec> selected_logical;
+  selected_logical.reserve(publication->logical_outputs.size());
+  for (const auto& logical : publication->logical_outputs) {
+    if (logical_matches_endpoint(logical, endpoint)) {
+      selected_logical.push_back(logical);
+    }
+  }
+
+  if (selected_logical.empty() && !publication->output_order.empty()) {
+    for (const auto& route : publication->output_order) {
+      if (!route_matches_endpoint(route, endpoint)) {
+        continue;
+      }
+      for (const auto& logical : publication->logical_outputs) {
+        const bool logical_match =
+            (route.logical_output_index >= 0 && logical.logical_index == route.logical_output_index) ||
+            (route.output_slot >= 0 && logical.output_slot == route.output_slot) ||
+            (route.tensor_index >= 0 && logical.tensor_index == route.tensor_index) ||
+            (!route.cm_output_name.empty() &&
+             (logical.logical_name == route.cm_output_name ||
+              logical.backend_name == route.cm_output_name)) ||
+            (!route.segment_name.empty() && logical.segment_name == route.segment_name);
+        if (logical_match) {
+          selected_logical.push_back(logical);
+        }
+      }
+    }
+  }
+
+  if (selected_logical.empty()) {
+    if (error_message) {
+      *error_message = "terminal publication endpoint selector did not match any logical output";
+    }
+    return false;
+  }
+
+  publication->logical_outputs = std::move(selected_logical);
+  std::vector<sima::StageOutputRoute> selected_routes;
+  selected_routes.reserve(publication->output_order.size());
+  for (const auto& route : publication->output_order) {
+    if (route_matches_endpoint(route, endpoint)) {
+      selected_routes.push_back(route);
+    }
+  }
+  if (selected_routes.empty()) {
+    selected_routes.reserve(publication->logical_outputs.size());
+    for (const auto& logical : publication->logical_outputs) {
+      sima::StageOutputRoute route;
+      route.output_slot = logical.output_slot;
+      route.logical_output_index = logical.logical_index;
+      route.tensor_index = logical.tensor_index;
+      route.cm_output_name = logical.logical_name;
+      route.segment_name = logical.segment_name;
+      selected_routes.push_back(std::move(route));
+    }
+  }
+  publication->output_order = std::move(selected_routes);
   return true;
 }
 
@@ -437,15 +593,10 @@ const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
     if (!found) {
       return nullptr;
     }
-  } else if (!endpoint.output_segment_name.empty()) {
+  } else if (endpoint_has_output_selector(endpoint)) {
     for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
       const auto& stage = manifest.stages[i];
-      const auto output_matches = [&](const auto& output) {
-        return output.segment_name == endpoint.output_segment_name ||
-               output.logical_name == endpoint.output_segment_name ||
-               output.backend_name == endpoint.output_segment_name;
-      };
-      if (std::any_of(stage.logical_outputs.begin(), stage.logical_outputs.end(), output_matches)) {
+      if (stage_outputs_match_endpoint(stage, endpoint)) {
         start = i;
       }
     }
@@ -502,6 +653,13 @@ bool validate_publication_stage_strict(const sima::StageStaticSpec& publication_
   }
 
   for (const auto& logical : publication_stage.logical_outputs) {
+    if (sima::dtype_source_is_inferred_only(logical.dtype_source)) {
+      if (error_message) {
+        *error_message = "terminal publication output '" + logical.logical_name +
+                         "' dtype '" + logical.dtype + "' was inferred from byte size only";
+      }
+      return false;
+    }
     const auto dtype = tensor_dtype_from_static_token(logical.dtype);
     if (!dtype.has_value()) {
       if (error_message) {
@@ -568,6 +726,13 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
   }
 
   StageStaticSpec publication = make_publication_stage_for_terminal(*terminal);
+  std::string endpoint_error;
+  if (!filter_publication_stage_for_endpoint(&publication, endpoint, &endpoint_error)) {
+    if (error_message) {
+      *error_message = endpoint_error;
+    }
+    return std::nullopt;
+  }
   std::string validation_error;
   if (!validate_publication_stage_strict(publication, &validation_error)) {
     if (error_message) {
@@ -586,6 +751,9 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
         *error_message = entry_error;
       }
       return std::nullopt;
+    }
+    if (endpoint.route_slot >= 0 && out.outputs.empty()) {
+      entry.route_slot = endpoint.route_slot;
     }
     out.outputs.push_back(std::move(entry));
   }

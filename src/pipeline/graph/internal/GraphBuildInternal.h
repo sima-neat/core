@@ -12,6 +12,10 @@
 
 namespace simaai::neat {
 
+namespace pipeline_internal::terminal_output_contract {
+struct PublicOutputEndpointSelector;
+} // namespace pipeline_internal::terminal_output_contract
+
 std::string session_build_decorate_with_error_code(const std::string& code,
                                                    const std::string& message);
 
@@ -34,8 +38,8 @@ bool session_build_should_insert_async_queue2(RunMode mode, const RunOptions& op
 InputStreamOptions session_build_make_stream_options(const RunOptions& opt, RunMode mode);
 void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
                                                   const std::vector<std::shared_ptr<Node>>& nodes);
-void session_build_maybe_apply_detess_output_override(
-    const std::vector<std::shared_ptr<Node>>& nodes, InputStreamOptions& stream_opt);
+pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
+session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes);
 void session_build_maybe_dump_pipeline_string(const std::string& pipeline, const char* label);
 std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buffers_override);
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);
