@@ -13,6 +13,79 @@ All future implementation work for this plan must happen inside:
 Do not make production-source changes in sibling copies such as `core/`, repo
 root scratch files, or packaged/extracted artifacts.
 
+## Multi-agent review hardening
+
+This plan was reviewed by three independent codebase agents plus local review. The
+core direction was validated, but the implementation plan must be hardened in the
+following ways before any code is written:
+
+1. **Endpoint-aware from day one.** Do not implement a generic utility whose only
+   behavior is "walk the manifest backward and pick the last real stage". That is
+   acceptable only as an explicitly scoped single-output-segment fallback. The
+   public contract selector must accept an endpoint selector or terminal-stage
+   identity when available, and must use rendered route/binding information rather
+   than global MPK order.
+2. **Public/internal decision must exist before override selection.** The flag
+   distinguishing public appsinks from graph-internal transport appsinks must be
+   plumbed into input/source build preparation, or all override selection must be
+   deferred until after manifest compilation. Setting the flag only after
+   `session_build_prepare_build_input_context(...)` is too late because legacy
+   override installation currently happens inside that preparation path.
+3. **Do not reuse file-local publish code by wishful thinking.**
+   `build_publish_contract_from_manifest_stage_local(...)` is inside an anonymous
+   namespace in `PreparedRuntimeBuild.cpp`, and it mutates physical sizes upward
+   when logical span exceeds the declared physical buffer. Public terminal
+   publication needs either a small extracted shared builder with strict/no-grow
+   mode, or a direct `StageStaticSpec -> OutputTensorOverride` conversion with
+   explicit validation.
+4. **Materialized transforms are real producers.** Cast/dequant/detess may be
+   actual materialized ProcessCVU stages. Do not demote them to view-only by
+   substring matching. Boundary/view classification must prefer manifest/runtime
+   semantics first and use string tokens only as a conservative fallback.
+5. **Public overrides must be authoritative even for TensorSet metadata.** The
+   current multi-tensor branch in `OutputTensorOverride.h` mostly patches names
+   and routing. If the incoming TensorSet metadata is stale/downstream-derived,
+   that is not enough. The implementation must either bypass stale TensorSet meta
+   when a public override exists or fully rewrite dtype/shape/stride/offset/count
+   from `OutputTensorOverrideEntry`.
+6. **Physical index is not automatically memory index.** Every use of
+   `logical.physical_index` as `memory_index` must validate that physical outputs
+   are dense and ordered like GstBuffer memory blocks, or build an explicit
+   physical-index-to-memory-index map.
+7. **Dtype provenance matters.** After MPK parsing, code must know whether dtype
+   was explicit, typed-object-derived, alias-derived, or inferred from size. A
+   public terminal contract must not trust an element-size-only `FP32` inference.
+8. **Unsupported public dtypes need explicit policy.** Typed objects may contain
+   dtypes such as `int64`, while current public/runtime enums may not represent
+   all such types. Do not silently coerce unsupported typed-object dtypes to
+   `UInt8` or `Float32`; either add support deliberately, publish raw bytes with
+   diagnostic, or fail validation.
+9. **A65/.so genericity is future-facing unless represented today.** Current
+   `StagePayloadKind` does not have a first-class A65/shared-object payload. This
+   plan must not add a fake special case just to claim support. Treat existing
+   represented stages generically now; add a real payload/materialization model
+   for host/A65 stages only when the codebase actually represents those stages.
+10. **Owned vs zero-copy equality means logical equality.** Backing storage
+    capacity may differ, but dtype, shape, stride bytes, byte offset, route
+    metadata, and logical readable span must match. Tests must cover nonzero
+    byte offsets, padded strides, multiple GstMemory blocks, and stale TensorSet
+    metadata.
+
+Official GStreamer references supporting the runtime assumptions:
+
+- appsink owns an internal queue controlled by `max-buffers`, `max-bytes`,
+  `max-time`, and leaky/drop behavior:
+  https://gstreamer.freedesktop.org/documentation/app/appsink.html
+- `GstBuffer` carries metadata and one or more `GstMemory` blocks; buffer/pool
+  lifetime is reference-counted:
+  https://gstreamer.freedesktop.org/documentation/gstreamer/gstbuffer.html
+- `GstMemory` has valid `size`, `offset`, `maxsize`, and map/unmap lifetime
+  semantics:
+  https://gstreamer.freedesktop.org/documentation/gstreamer/gstmemory.html
+- `GstSample` is the application exchange object containing typed memory plus
+  timing/caps information:
+  https://gstreamer.freedesktop.org/documentation/gstreamer/gstsample.html
+
 ## Problem statement
 
 Problem 2 is not an MLA-specific issue. The observed failure happened when the
@@ -121,6 +194,17 @@ terminal boundary.
 ## Stage-role model
 
 We should classify stages/MPK nodes by role, not by hard-coded special cases.
+Classification must be based on explicit rendered/runtime semantics first:
+
+- `StagePayloadKind`;
+- `processcvu.graph_family_enum`;
+- whether the stage has a real materialized runtime contract;
+- whether it owns `physical_outputs` and valid producer-local `logical_outputs`;
+- stage bindings/route identity.
+
+String tokens such as `slice` or `batchflatten` may be used only as a
+conservative fallback, never as the primary authority. Ambiguous stages should
+not be guessed into a new public contract.
 
 Proposed roles:
 
@@ -244,9 +328,23 @@ build_publish_contract_from_manifest_stage_local(...)
 ```
 
 This already converts a `StageStaticSpec` into a
-`TensorBufferPublishContract`.
+`TensorBufferPublishContract`, but two constraints are important:
 
-The plan should reuse this as the final publication step instead of inventing
+1. it currently has internal linkage inside an anonymous namespace, so new files
+   cannot call it directly;
+2. it currently grows `physical_outputs[*].size_bytes` upward when a logical
+   span exceeds the physical size. That behavior is useful for some prepared
+   runtime paths, but it is unsafe as public-terminal validation because it can
+   hide an invalid or downstream-derived logical contract.
+
+Implementation must therefore choose one of two surgical options:
+
+- extract a small shared internal publish-contract builder with an explicit
+  `StrictNoPhysicalExpansion` mode for public terminal selection; or
+- convert `StageStaticSpec` directly into `OutputTensorOverride` inside the
+  terminal-output utility and keep all span/physical validation strict there.
+
+Do not duplicate a large second publish-contract subsystem, and do not add
 MLA-specific output override logic.
 
 ### Existing terminal-stage idea in ProcessCVU semantics
@@ -377,16 +475,19 @@ select_public_output_contract(rendered_manifest, output_endpoint)
 Responsibilities:
 
 1. Start from an actual public `Output` / appsink endpoint.
-2. Resolve the upstream executed producer path.
+2. Resolve the upstream executed producer path for that endpoint using rendered
+   route/binding information where available.
 3. Walk backward through transport adapters.
 4. Do not treat boundary/view transforms as public terminal producers unless
    they are actual materialized runtime stages.
-5. Select the nearest real compute/materialization producer.
-6. Build a `TensorBufferPublishContract` from that stage using the generic
-   publish-contract builder.
+5. Select the nearest real compute/materialization producer for that endpoint.
+6. Build a strict public publication contract from that stage.
 
 This must be endpoint-aware, not only "last stage in manifest", because future
-graphs may branch or expose multiple outputs.
+graphs may branch or expose multiple outputs. If the current runtime only gives
+us a single rendered segment with one appsink, the implementation may expose that
+as a narrow fallback path, but the API should not pretend a whole-manifest
+reverse scan is generally endpoint-safe.
 
 ### Phase 2: Add edge-contract resolution for real consumer edges
 
@@ -404,15 +505,14 @@ This is where slice/batch-flatten/unpack/offset-view metadata belongs.
 Public output selection and internal edge selection should therefore be separate
 queries.
 
-### Phase 3: Reuse existing generic publish-contract path
+### Phase 3: Reuse or extract the generic publish-contract path carefully
 
-Once the terminal producer `StageStaticSpec` is selected, use:
-
-```cpp
-build_publish_contract_from_manifest_stage_local(...)
-```
-
-as the normal way to construct public output metadata.
+Once the terminal producer `StageStaticSpec` is selected, public metadata should
+come from one shared contract-building path. Because the existing
+`build_publish_contract_from_manifest_stage_local(...)` is file-local and
+non-strict, either extract it into a shared internal helper with strict/no-grow
+validation or convert directly to `OutputTensorOverride` while reusing only the
+small dtype/layout/span helpers needed.
 
 If the selected producer has only physical output metadata and no trustworthy
 logical tensor metadata, expose a conservative raw/physical contract rather than
@@ -509,11 +609,16 @@ Expected result:
 
 ```text
 12 models * 4 routes = 48 summaries
-every SUMMARY line must contain status=PASS
+exactly 48 SUMMARY lines
+exactly 48 status=PASS lines
 no TIMEOUT
 no RC_*
 no NO_RESULT
 ```
+
+Save each step's EVO output log under a temporary/run-log path and inspect it
+before committing. EVO proves broad routing health, but it does not replace the
+step-specific owned/zero-copy contract parity tests above.
 
 If `dk` is not found, check `/usr/local/bin/dk` and source
 `/root/.devkit-sync.rc` before concluding it is unavailable.
@@ -590,65 +695,86 @@ Proposed public-internal API:
 ```cpp
 enum class StagePublicationRole {
   RealProducer,
+  MaterializedTransform,
   BoundaryView,
   TransportOnly,
+};
+
+struct PublicOutputEndpointSelector {
+  // Optional in the first implementation, but explicit in the API so branches
+  // and multi-output segments do not require another redesign.
+  std::string terminal_stage_key;
+  std::string output_segment_name;
+  int output_slot = -1;
+  int route_slot = -1;
 };
 
 StagePublicationRole classify_stage_for_publication(
     const sima::StageStaticSpec& stage);
 
-const sima::StageStaticSpec* find_terminal_real_producer(
-    const sima::SimaPluginStaticManifest& manifest);
+const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
+    const sima::SimaPluginStaticManifest& manifest,
+    const PublicOutputEndpointSelector& endpoint);
 
 sima::StageStaticSpec make_publication_stage_for_terminal(
     const sima::StageStaticSpec& terminal_stage);
 
-bool validate_publication_stage(
+bool validate_publication_stage_strict(
     const sima::StageStaticSpec& publication_stage,
     std::string* error_message);
 
 std::optional<OutputTensorOverride> build_output_override_from_manifest(
     const sima::SimaPluginStaticManifest& manifest,
+    const PublicOutputEndpointSelector& endpoint = {},
     std::string* error_message = nullptr);
 ```
 
 Implementation details:
 
-1. `find_terminal_real_producer(...)`
-   - Iterate `manifest.stages` backward.
+1. `find_terminal_real_producer_for_endpoint(...)`
+   - If the endpoint selector contains a stage key/route slot/output segment,
+     use it to identify the terminal route and walk upstream through
+     `StageStaticSpec::input_bindings` where possible.
+   - If no endpoint identity is available and the rendered manifest is known to
+     be a single-output linear segment, use a clearly documented fallback that
+     iterates `manifest.stages` backward.
    - Skip stages classified as `TransportOnly`.
    - Skip stages classified as `BoundaryView` unless a view stage is explicitly
      represented as a materialized runtime stage.
-   - Return the first `RealProducer`.
+   - Return the nearest `RealProducer` or `MaterializedTransform` for the selected
+     endpoint.
 
 2. `classify_stage_for_publication(...)`
-   - Use generic stage properties:
+   - Use generic stage properties first:
      - `stage.payload_kind`
      - `stage.plugin_kind`
      - `stage.kernel_kind`
-     - `stage.processcvu.graph_family`
+     - `stage.processcvu.graph_family_enum`
+     - presence of real `physical_outputs` / `logical_outputs`
+     - bindings/route identity
    - `TransportOnly` examples:
      - empty payload / no logical or physical outputs;
      - pass-through transport-only wrappers;
      - pipeline adapters that do not own semantic output.
    - `BoundaryView` examples:
-     - kernel tokens containing `slice`;
-     - `batchflatten`;
-     - `unpack_transform`;
-     - pure offset-view/pass-through view transforms.
-   - `RealProducer` examples:
+     - confirmed slice/view/batch-flatten/offset projection stages that do not
+       materialize a new public buffer.
+   - `RealProducer` / `MaterializedTransform` examples:
      - `StagePayloadKind::ProcessMla`;
-     - `StagePayloadKind::ProcessCvu` when it is an actual processcvu graph,
-       not a view-only adapter;
+     - `StagePayloadKind::ProcessCvu` when it is an actual materialized processcvu
+       graph, including materialized cast/dequant/detess;
      - `StagePayloadKind::BoxDecode`;
      - `StagePayloadKind::Dequant`;
-     - future A65/`.so` stage payloads once rendered.
+     - future A65/`.so` payloads only once they are represented by real stage
+       metadata.
+   - Do not classify a stage as view-only solely because its name contains
+     `cast`, `dequant`, `detess`, or similar.
 
 3. `build_output_override_from_manifest(...)`
-   - Find the terminal real producer.
+   - Find the terminal real producer for the selected endpoint.
    - Convert it to a publication stage with
      `make_publication_stage_for_terminal(...)`.
-   - Validate the publication stage.
+   - Validate the publication stage with strict/no-physical-expansion rules.
    - Convert its logical outputs to `OutputTensorOverride`.
 
 Required validation after this step:
@@ -693,8 +819,13 @@ Rules:
 
 3. Producer-local check:
    - Every logical output must reference an existing physical output.
+   - Build and validate an explicit physical-index-to-vector/memory-index map;
+     do not assume `physical_index == vector position` unless the physical outputs
+     are dense and sorted.
    - `byte_offset + physical_span(shape, stride, dtype)` must fit inside the
      selected physical output.
+   - The dtype must be explicit or typed-object/alias-derived; an element-size
+     inference alone is not trustworthy for public terminal publication.
    - If a logical output's segment/name clearly points to a downstream
      view-transform stage while the selected terminal producer is different,
      treat it as non-producer-local and use raw physical fallback.
@@ -714,9 +845,18 @@ Rules:
 
 5. ProcessMLA details under the generic fallback:
    - `StageStaticSpec::processmla.dispatcher_output_sizes` carries the actual
-     dispatcher/producer buffer sizes.
-   - If `stage.physical_outputs` is present, prefer it because it already has
-     physical indices and segment names.
+     dispatcher/producer buffer sizes and is the most important producer-local
+     fact for terminal raw MLA publication.
+   - First validate whether `stage.physical_outputs` is producer-local and agrees
+     with dispatcher sizes/names. If it is already downstream-view-influenced or
+     cannot be validated, do not trust it for public raw fallback.
+   - Prefer dispatcher sizes/names for raw terminal MLA fallback when producer
+     locality is uncertain. Use `stage.physical_outputs` only when it clearly
+     matches dispatcher raw buffers and provides useful physical indices/segment
+     names.
+   - If dispatcher names are absent for a single output, synthesize a stable name
+     from the physical segment name, MPK output node name, or `output_i`; do not
+     require multi-output-only dispatcher names.
    - If `stage.physical_outputs` is empty but dispatcher sizes exist, synthesize
      physical outputs from:
 
@@ -808,13 +948,19 @@ Implementation details:
 
 1. Convert each `LogicalTensorStaticSpec` in the publication stage into one
    `OutputTensorOverrideEntry`.
-2. Set `entry.memory_index = logical.physical_index`.
+2. Resolve `entry.memory_index` through a validated physical-index-to-memory-index
+   map. Only set `memory_index = logical.physical_index` when the physical output
+   vector is dense/sorted and that identity mapping has been proven.
 3. Set `entry.logical_output_index = logical.logical_index`.
 4. Set `entry.route_slot = logical.output_slot`.
 5. Set `entry.byte_offset = logical.byte_offset`.
 6. Preserve `shape`, `stride_bytes`, `dtype`, `layout`, `logical_name`, and
    `segment_name`.
-7. Add local dtype/layout conversion helpers rather than reusing unrelated caps
+7. If dtype/layout conversion returns unsupported/unknown for an explicit typed
+   object, follow the explicit unsupported-dtype policy: deliberate enum support,
+   raw-byte publication with diagnostic, or validation failure. Never silently
+   map unsupported explicit dtype to `Float32` or `UInt8`.
+8. Add local dtype/layout conversion helpers rather than reusing unrelated caps
    projection helpers:
 
    ```cpp
@@ -822,9 +968,9 @@ Implementation details:
    TensorLayout tensor_layout_from_static_token(std::string_view layout);
    ```
 
-8. Unknown dtype rule:
+9. Unknown dtype rule:
    - If the terminal contract had explicit unknown dtype but physical bytes are
-     available, use synthesized raw `UINT8` publication.
+     available, use synthesized raw `UINT8` publication with a diagnostic.
    - Do not default unknown four-byte data to `Float32`.
 
 Required validation after this step:
@@ -868,18 +1014,29 @@ Meaning:
 - `false`: this appsink is graph-internal transport; do not apply terminal
   public publication overrides.
 
-Update runtime segment startup:
+Update runtime segment startup and build preparation:
 
 ```text
 core_graph_changes/src/pipeline/runtime/RunCore.cpp
+core_graph_changes/src/pipeline/runtime/RunCoreGraphStart.cpp
 ```
 
-After `session_build_prepare_build_input_context(...)`:
+Important ordering: do **not** wait until after
+`session_build_prepare_build_input_context(...)` to set this decision if legacy
+override selection is still in the preparation path. Either remove/defer all
+override installation from preparation first, or pass the decision into
+preparation.
+
+Concrete rule:
 
 ```cpp
-InputStreamOptions build_stream_opt = ctx.stream_opt;
-build_stream_opt.public_output_contract = !segment.boundary.graph_internal_output;
+const bool public_output_contract = !segment.boundary.graph_internal_output;
 ```
+
+Pass that value into both push-style and source-like build paths. Graph-internal
+output policy is already identified in `RunCoreGraphStart.cpp` through
+`seg.boundary.graph_internal_output`; keep that as the single source of truth for
+transport appsinks.
 
 For source-like segment paths, pass the same boolean into source-stream build
 instead of deriving it from public `RunOptions`.
@@ -892,6 +1049,20 @@ core_graph_changes/src/pipeline/graph/GraphBuildInput.cpp
 core_graph_changes/src/pipeline/graph/GraphBuildSource.cpp
 ```
 
+Required signature/plumbing change:
+
+```cpp
+BuildInputContext session_build_prepare_build_input_context(...,
+                                                            bool public_output_contract);
+SourceStreamBuildContext session_build_source_stream_internal(...,
+                                                             bool public_output_contract,
+                                                             const char* where);
+```
+
+If the exact function ordering changes while implementing, the invariant remains:
+`InputStreamOptions::public_output_contract` is set before any legacy or generic
+output override can be installed.
+
 Required behavior:
 
 1. Direct `Graph::build(...)->Output` remains public by default.
@@ -899,6 +1070,8 @@ Required behavior:
 3. Graph-internal segment output does **not** use terminal publication override.
 4. Internal MLA->slice->A65 transport still sees the slice/view metadata when
    the A65 stage is actually executed.
+5. Source-like graph-internal routes get the same protection as push-style
+   graph-internal routes.
 
 Required validation after this step:
 
@@ -945,17 +1118,25 @@ function: run_input_stream_internal_typed(...)
 ```
 
 Immediately after `maybe_compile_build_result_contracts(...)` and before
-creating `InputStream`, do:
+creating `InputStream`, do the manifest-based selection using the same mutable
+`InputStreamOptions stream_opt` that will be passed to `InputStream::create`. Do
+not create a late shadow copy that loses the public/internal decision.
+
+Conceptually:
 
 ```cpp
 InputStreamOptions stream_opt = opt;
-if (stream_opt.public_output_contract && !stream_opt.output_override.has_value() &&
-    br.rendered_manifest.has_value()) {
+if (stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
+  terminal_output_contract::PublicOutputEndpointSelector endpoint =
+      make_endpoint_selector_from_build_result(br);
   std::string terminal_error;
   auto terminal_override =
       terminal_output_contract::build_output_override_from_manifest(*br.rendered_manifest,
+                                                                    endpoint,
                                                                     &terminal_error);
   if (terminal_override.has_value()) {
+    // Generic manifest-derived public contract is authoritative. It may replace
+    // a legacy override installed earlier during the migration window.
     stream_opt.output_override = std::move(*terminal_override);
   }
 }
@@ -969,8 +1150,11 @@ maybe_apply_detess_output_override(nodes, ctx.stream_opt);
 
 Migration approach:
 
-1. First wire generic manifest override.
-2. Keep legacy override as fallback only if generic returns no override.
+1. First wire generic manifest override after manifest compilation.
+2. Legacy override installation must be either removed from preparation or gated
+   by `public_output_contract` and treated only as fallback when the generic
+   selector returns no override. It must not prevent a successful generic
+   manifest override from replacing stale MLA/cast/detess special-case metadata.
 3. Once tests/EVO matrix are green, remove the MLA/cast special-case builders or
    make them private fallback tests-only code.
 
@@ -1086,8 +1270,32 @@ Implementation details:
 
 4. Existing string-array behavior must remain unchanged.
 
-5. This is needed so that, when an A65/`.so` stage is the actual terminal
-   producer, we can expose its own typed output contract instead of raw bytes.
+5. This is needed so that, when an already-rendered host/A65/`.so` stage is the
+   actual terminal producer, we can expose its own typed output contract instead
+   of raw bytes. This step must not invent a fake A65 special case if the stage is
+   not represented by `StageStaticSpec` yet.
+6. Add dtype source/provenance while parsing or finalizing contracts, e.g.
+
+   ```cpp
+   enum class DTypeSource {
+     Unknown,
+     ExplicitMpk,
+     TypedObject,
+     Alias,
+     InferredFromSize,
+   };
+   ```
+
+   Public terminal publication may trust explicit/typed-object/alias sources, but
+   must not trust `InferredFromSize` for `FP32`.
+7. Unsupported public dtype policy must be explicit. For example, if typed object
+   parsing yields `int64` and public `TensorDType`/tensorbuffer metadata cannot
+   represent `Int64`, choose one documented behavior:
+   - add proper enum/ABI/public support deliberately;
+   - publish raw `UINT8` for that terminal with a diagnostic; or
+   - fail strict contract validation.
+
+   Do not silently coerce unsupported explicit dtype to `Float32` or `UInt8`.
 
 Required tests:
 
@@ -1106,7 +1314,7 @@ Test:
 
 If the framework does not currently support public `TensorDType::Int64`, the
 test should document the conservative fallback policy explicitly instead of
-silently converting to Float32.
+silently converting to Float32 or UInt8.
 
 Required validation after this step:
 
@@ -1188,12 +1396,25 @@ Important current behavior:
 - `copy_tensor_from_sample_memory(...)` copies the whole selected `GstMemory`.
 - `tensor_view_from_sample_memory(...)` zero-copy maps the selected memory.
 - `apply_output_tensor_override_entry(...)` then overlays shape/dtype/stride.
+- The current multi-tensor TensorSet branch in `apply_output_tensor_override(...)`
+  does not fully rewrite dtype/shape/stride/offset/count; it mostly patches
+  routing/name fields. That is not authoritative enough when TensorSet metadata
+  itself is stale/downstream-derived.
 
 For a raw terminal publication, shape `{physical.size_bytes}` and dtype `UInt8`
 make both owned and zero-copy expose the same logical span.
 
 For a true logical terminal publication, shape/stride/dtype must already be
 valid and fit within the physical memory.
+
+Owned vs zero-copy equality is defined as logical equality:
+
+```text
+dtype, shape, strides_bytes, byte_offset, route metadata, logical readable span
+```
+
+Backing storage capacity may differ because owned mode can copy the whole
+selected `GstMemory` while zero-copy keeps a view.
 
 Implementation details:
 
@@ -1209,12 +1430,22 @@ Implementation details:
    - shape and strides compatible;
    - span fits selected physical output size from the publication stage.
 
-3. Add a runtime/contract test that creates a fake one-memory tensor sample and
-   applies the same override with `materialize_output=true` and `false`.
+3. Make public overrides authoritative for TensorSet samples. Either bypass
+   decoded TensorSet metadata when `output_override` exists, or fully rewrite
+   every tensor from `OutputTensorOverrideEntry`, including dtype/shape/stride,
+   byte offset, memory mapping, route fields, and tensor count mismatches.
+4. Add runtime/contract tests that create fake tensor samples and apply the same
+   override with `materialize_output=true` and `false`. Include:
+   - one-memory sample;
+   - multi-memory sample;
+   - nonzero `byte_offset`;
+   - padded strides;
+   - stale TensorSet metadata with wrong dtype/shape/count.
    Expected:
    - same `dtype`;
    - same `shape`;
    - same `strides_bytes`;
+   - same byte offset and route metadata;
    - same `view_read().size_bytes` / logical span.
 
 Required validation after this step:
@@ -1412,9 +1643,12 @@ Also validate:
    - Executed graph ends at ProcessCVU/EV74.
    - Expected: public output contract comes from ProcessCVU terminal stage.
 
-4. **A65 terminal**
-   - Executed graph ends at `.so`.
-   - Expected: public output contract comes from `.so` terminal stage.
+4. **A65 / host terminal when represented**
+   - Executed graph ends at `.so` / host stage represented by `StageStaticSpec`.
+   - Expected: public output contract comes from that terminal stage.
+   - If the codebase does not yet render A65/host `.so` stages as real
+     `StageStaticSpec` producers, this test remains future-facing and should not
+     be faked with a one-off MLA rule.
 
 5. **Long chained graph**
    - MLA + view + `.so` + EV74 + MLA + `.so`.
