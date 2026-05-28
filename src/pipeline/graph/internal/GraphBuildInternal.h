@@ -86,7 +86,8 @@ struct BuildInputContext {
 BuildInputContext
 session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node>>& nodes,
                                           const GraphOptions& sess_opt, RunMode mode,
-                                          const RunOptions& opt);
+                                          const RunOptions& opt,
+                                          bool public_output_contract = true);
 
 struct SourceStreamBuildContext {
   InputStream stream;
@@ -98,7 +99,8 @@ SourceStreamBuildContext
 session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
                                      const std::shared_ptr<void>& guard, std::string& last_pipeline,
                                      const GraphOptions& sess_opt, const RunOptions& opt,
-                                     RunMode mode, bool require_sink, const char* where);
+                                     RunMode mode, bool require_sink, bool public_output_contract,
+                                     const char* where);
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,

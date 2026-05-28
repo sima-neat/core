@@ -343,6 +343,7 @@ set(UNIT_TESTS
   unit_sima_plugins_test
   unit_processmla_model_load_failure_test
   unit_processmla_requires_explicit_output_contract_test
+  unit_terminal_output_contract_query_test
   unit_tensor_set_meta_route_contract_test
   unit_tensorbuffer_bind_preserve_source_view_test
   unit_tensorbuffer_publish_view_segment_name_precedence_test

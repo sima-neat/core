@@ -13,12 +13,15 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
 #include "pipeline/internal/BuildTiming.h"
+#include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/UxLogging.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -67,7 +70,8 @@ void maybe_compile_source_contracts(BuildResult* build_result,
 
 PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     const std::vector<std::shared_ptr<Node>>& nodes, const GraphOptions& sess_opt, RunMode mode,
-    const RunOptions& opt, bool require_sink, std::string& last_pipeline, const char* where) {
+    const RunOptions& opt, bool require_sink, bool public_output_contract,
+    std::string& last_pipeline, const char* where) {
   const pipeline_internal::ScopedBuildTiming timing(
       "prepare_source_pipeline_from_nodes",
       std::string("where=") + (where ? where : "Graph::build(source)") + " nodes=" +
@@ -98,6 +102,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   const RunOptions requested_opt = session_build_resolve_build_opt(mode, opt);
   RunOptions merged_opt = session_build_apply_run_defaults(requested_opt, sess_opt);
   InputStreamOptions stream_opt = session_build_make_stream_options(merged_opt, mode);
+  stream_opt.public_output_contract = public_output_contract;
   session_build_maybe_enable_rtsp_appsink_drop(stream_opt, build_nodes);
   session_build_maybe_apply_detess_output_override(build_nodes, stream_opt);
   const bool insert_queue2 = session_build_should_insert_async_queue2(mode, merged_opt);
@@ -109,6 +114,17 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   BuildResult br = build_pipeline_full(build_nodes, insert_boundaries, "mysink", insert_queue2,
                                        name_transform, &sess_opt);
   maybe_compile_source_contracts(&br, build_nodes, sess_opt, where);
+  if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
+    std::string error;
+    auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+        *br.rendered_manifest, {}, &error);
+    if (override.has_value()) {
+      stream_opt.output_override = std::move(*override);
+    } else if (pipeline_internal::env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false)) {
+      std::fprintf(stderr, "[output-override] %s terminal override unavailable: %s\n",
+                   where ? where : "Graph::build(source)", error.c_str());
+    }
+  }
   last_pipeline = br.pipeline_string;
   session_build_enforce_mla_num_buffers(last_pipeline, where);
   session_build_maybe_dump_pipeline_string(last_pipeline, where);
@@ -176,7 +192,8 @@ Graph::PreparedSource Graph::prepare_source_(RunMode mode, const RunOptions& opt
                                              SinkRequirement sink_req, const char* where) {
   const auto nodes = linear_nodes_snapshot(where);
   PreparedSourcePipeline src = prepare_source_pipeline_from_nodes(
-      nodes, opt_, mode, opt, sink_req == SinkRequirement::Required, last_pipeline_, where);
+      nodes, opt_, mode, opt, sink_req == SinkRequirement::Required,
+      /*public_output_contract=*/true, last_pipeline_, where);
 
   return PreparedSource{
       /*pipeline=*/std::move(src.pipeline),
@@ -193,11 +210,12 @@ SourceStreamBuildContext
 session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
                                      const std::shared_ptr<void>& guard, std::string& last_pipeline,
                                      const GraphOptions& sess_opt, const RunOptions& opt,
-                                     RunMode mode, bool require_sink, const char* where) {
+                                     RunMode mode, bool require_sink, bool public_output_contract,
+                                     const char* where) {
   gst_init_once();
 
   PreparedSourcePipeline src = prepare_source_pipeline_from_nodes(
-      nodes, sess_opt, mode, opt, require_sink, last_pipeline, where);
+      nodes, sess_opt, mode, opt, require_sink, public_output_contract, last_pipeline, where);
 
   set_state_or_throw(src.pipeline.get(), GST_STATE_PLAYING, where, src.diag);
 

@@ -821,9 +821,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
           "RunCore::start_pipeline_segment: push-style segment requires an input seed");
     }
     const auto source_start = pipeline_internal::build_timing_now();
+    const bool public_output_contract = !segment.boundary.graph_internal_output;
     SourceStreamBuildContext source = session_build_source_stream_internal(
         nodes, opt.guard, last_pipeline, route_options, opt.run_options, opt.mode, opt.require_sink,
-        "RunCore::start(plan/source)");
+        public_output_contract, "RunCore::start(plan/source)");
     const auto source_us = pipeline_internal::build_timing_us(source_start);
     const auto start_single_start = pipeline_internal::build_timing_now();
     auto core = RunCore::start_single_pipeline(
@@ -842,8 +843,10 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   }
 
   const auto context_start = pipeline_internal::build_timing_now();
+  const bool public_output_contract = !segment.boundary.graph_internal_output;
   const BuildInputContext ctx =
-      session_build_prepare_build_input_context(nodes, route_options, opt.mode, opt.run_options);
+      session_build_prepare_build_input_context(nodes, route_options, opt.mode, opt.run_options,
+                                                public_output_contract);
   const auto context_us = pipeline_internal::build_timing_us(context_start);
   InputStreamOptions build_stream_opt = ctx.stream_opt;
   build_stream_opt.startup_preflight =

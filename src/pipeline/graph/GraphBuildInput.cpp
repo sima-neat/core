@@ -30,6 +30,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/sima/ContractRender.h"
 #include "pipeline/internal/SyncBuild.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/RunCore.h"
@@ -1192,6 +1193,8 @@ void maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
 
 void maybe_apply_detess_output_override(const std::vector<std::shared_ptr<Node>>& nodes,
                                         InputStreamOptions& stream_opt) {
+  if (!stream_opt.public_output_contract)
+    return;
   if (stream_opt.output_override.has_value())
     return;
   std::optional<OutputTensorOverride> override;
@@ -1203,6 +1206,22 @@ void maybe_apply_detess_output_override(const std::vector<std::shared_ptr<Node>>
   }
   if (override.has_value()) {
     stream_opt.output_override = std::move(*override);
+  }
+}
+
+void maybe_apply_public_terminal_output_override(
+    const BuildResult& build_result, InputStreamOptions& stream_opt, const char* where) {
+  if (!stream_opt.public_output_contract || !build_result.rendered_manifest.has_value()) {
+    return;
+  }
+  std::string error;
+  auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+      *build_result.rendered_manifest, {}, &error);
+  if (override.has_value()) {
+    stream_opt.output_override = std::move(*override);
+  } else if (detess_override_debug_enabled()) {
+    std::fprintf(stderr, "[output-override] %s terminal override unavailable: %s\n",
+                 where ? where : "Graph::build(input)", error.c_str());
   }
 }
 
@@ -1576,7 +1595,8 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
 
 BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<Node>>& nodes,
                                               const GraphOptions& sess_opt, RunMode mode,
-                                              const RunOptions& opt) {
+                                              const RunOptions& opt,
+                                              bool public_output_contract) {
   BuildInputContext ctx;
   ctx.mode = mode;
   const RunOptions requested_opt = resolve_build_opt(mode, opt);
@@ -1588,6 +1608,7 @@ BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<
   require_input_appsrc(nodes, "Graph::build(input)", &ctx.src_node);
 
   ctx.stream_opt = make_stream_options(ctx.merged_opt, ctx.mode);
+  ctx.stream_opt.public_output_contract = public_output_contract;
   maybe_enable_rtsp_appsink_drop(ctx.stream_opt, nodes);
   maybe_apply_detess_output_override(nodes, ctx.stream_opt);
   ctx.insert_queue2 = should_insert_async_queue2(ctx.mode, ctx.merged_opt);
@@ -1977,6 +1998,10 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   maybe_compile_build_result_contracts(
       &br, &build_nodes, sess_opt, input_contract_from_input(sample), seed_spec,
       contract_compile_sample_from_input(sample), "Graph::build(input)");
+  InputStreamOptions stream_opt = opt;
+  if (has_sink) {
+    maybe_apply_public_terminal_output_override(br, stream_opt, "Graph::build(input)");
+  }
   if (sync_mode) {
     br.pipeline_string =
         session_build_clamp_sync_pipeline(std::move(br.pipeline_string), sync_num_buffers_override);
@@ -2023,7 +2048,7 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
                                                    "' not found.\nPipeline:\n" + last_pipeline,
                                                "Add Output() as the last node.", last_pipeline);
     }
-    session_build_configure_appsink_for_input_stream(sink, opt);
+    session_build_configure_appsink_for_input_stream(sink, stream_opt);
     session_build_configure_appsink_allocation_preference(sink, nodes);
   }
 
@@ -2053,7 +2078,6 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
     src_opt.pool_max_buffers = std::max(1, max_buffers);
   }
 
-  InputStreamOptions stream_opt = opt;
   const std::size_t bounded_estimate_bytes =
       static_cast<std::size_t>(session_build_estimate_frame_bytes_limit(src_opt, spec));
   const auto resolved_input_policy = pipeline_internal::resolve_graph_input_policy(
@@ -2893,8 +2917,9 @@ void session_build_maybe_apply_detess_output_override(
 BuildInputContext
 session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node>>& nodes,
                                           const GraphOptions& sess_opt, RunMode mode,
-                                          const RunOptions& opt) {
-  return prepare_build_input_context(nodes, sess_opt, mode, opt);
+                                          const RunOptions& opt,
+                                          bool public_output_contract) {
+  return prepare_build_input_context(nodes, sess_opt, mode, opt, public_output_contract);
 }
 
 InputStream

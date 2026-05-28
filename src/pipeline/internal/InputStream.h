@@ -94,6 +94,10 @@ struct InputStreamOptions {
   // SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 for legacy compatibility.
   bool require_device_visible_input = false;
   bool reuse_input_buffer = false;
+  // True for user-visible Output/appsink endpoints.  False for graph-internal
+  // transport appsinks, where downstream edge/view contracts must be preserved
+  // instead of being rewritten as public terminal outputs.
+  bool public_output_contract = true;
   DynamicCapability dynamic_capability = DynamicCapability::StaticOnly;
   ShapePolicy shape_policy = ShapePolicy::BoundedDynamic;
   ResolvedShapeLimits shape_limits{};
