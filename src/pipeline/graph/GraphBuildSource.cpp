@@ -116,7 +116,7 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
     const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
     std::string error;
-    auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+    auto override = build_public_terminal_output_override_with_fallback(
         *br.rendered_manifest, endpoint, &error);
     if (override.has_value()) {
       stream_opt.output_override = std::move(*override);

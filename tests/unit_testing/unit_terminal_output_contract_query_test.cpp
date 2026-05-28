@@ -243,6 +243,36 @@ void endpoint_selector_filters_by_public_output_name() {
   assert(override->outputs[0].name == "classes");
 }
 
+void terminal_stage_key_selects_non_last_branch() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec branch_a;
+  branch_a.logical_stage_id = "branch_a_terminal";
+  branch_a.payload_kind = sima::StagePayloadKind::ProcessCvu;
+  branch_a.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Cast;
+  branch_a.physical_outputs.push_back(physical(0, 4U, "branch_a_out"));
+  branch_a.logical_outputs.push_back(
+      logical(0, 0, {1}, {4}, "INT32", "branch_a_out", "branch_a_out", 4U));
+  manifest.stages.push_back(branch_a);
+
+  sima::StageStaticSpec branch_b;
+  branch_b.logical_stage_id = "branch_b_terminal";
+  branch_b.payload_kind = sima::StagePayloadKind::ProcessCvu;
+  branch_b.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Cast;
+  branch_b.physical_outputs.push_back(physical(0, 8U, "branch_b_out"));
+  branch_b.logical_outputs.push_back(
+      logical(0, 0, {2}, {4}, "INT32", "branch_b_out", "branch_b_out", 8U));
+  manifest.stages.push_back(branch_b);
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "branch_a_terminal";
+  std::string err;
+  auto override = build_output_override_from_manifest(manifest, endpoint, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].name == "branch_a_out");
+  assert((override->outputs[0].shape == std::vector<std::int64_t>{1}));
+}
+
 void inferred_dtype_terminal_falls_back_to_raw_bytes() {
   sima::SimaPluginStaticManifest manifest;
   sima::StageStaticSpec stage;
@@ -333,6 +363,7 @@ int main() {
   materialized_processcvu_terminal_is_not_demoted_by_detess_name();
   endpoint_selector_filters_by_route_slot();
   endpoint_selector_filters_by_public_output_name();
+  terminal_stage_key_selects_non_last_branch();
   inferred_dtype_terminal_falls_back_to_raw_bytes();
   unknown_dtype_source_terminal_falls_back_to_raw_bytes();
   output_override_route_slot_is_authoritative();

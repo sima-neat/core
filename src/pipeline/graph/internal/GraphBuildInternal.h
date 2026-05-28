@@ -5,6 +5,7 @@
 #include "internal/InputStream.h"
 #include "builder/InputContractConfigurable.h"
 #include "pipeline/internal/contract/ContractFacts.h"
+#include "pipeline/internal/TerminalOutputContractQuery.h"
 
 #include <memory>
 #include <string>
@@ -40,6 +41,11 @@ void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt
                                                   const std::vector<std::shared_ptr<Node>>& nodes);
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes);
+std::optional<OutputTensorOverride>
+build_public_terminal_output_override_with_fallback(
+    const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
+    const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,
+    std::string* error);
 void session_build_maybe_dump_pipeline_string(const std::string& pipeline, const char* label);
 std::string session_build_clamp_sync_pipeline(std::string pipeline, int num_buffers_override);
 std::string session_build_clamp_detess_num_buffers(std::string pipeline, int num_buffers_override);

@@ -46,6 +46,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -566,6 +567,21 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
     return selector;
   }
 
+  for (int i = output_index - 1; i >= 0; --i) {
+    const auto& upstream = nodes[static_cast<std::size_t>(i)];
+    if (!upstream || upstream->kind() == "Output") {
+      continue;
+    }
+    selector.terminal_stage_key = upstream->user_label();
+    if (selector.terminal_stage_key.empty()) {
+      const auto names = upstream->element_names(i);
+      if (!names.empty()) {
+        selector.terminal_stage_key = names.front();
+      }
+    }
+    break;
+  }
+
   const std::string label = nodes[static_cast<std::size_t>(output_index)]->user_label();
   if (!label.empty()) {
     selector.output_segment_name = label;
@@ -973,7 +989,7 @@ void maybe_apply_public_terminal_output_override(
   }
   const auto endpoint = public_output_endpoint_selector_local(nodes);
   std::string error;
-  auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+  auto override = build_public_terminal_output_override_with_fallback(
       *build_result.rendered_manifest, endpoint, &error);
   if (override.has_value()) {
     stream_opt.output_override = std::move(*override);
@@ -2343,6 +2359,61 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
 }
 
 } // namespace
+
+std::optional<OutputTensorOverride>
+build_public_terminal_output_override_with_fallback(
+    const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
+    const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,
+    std::string* error) {
+  std::string strict_error;
+  auto override =
+      pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+          manifest, endpoint, &strict_error);
+  if (override.has_value()) {
+    if (error) {
+      error->clear();
+    }
+    return override;
+  }
+  if (endpoint.terminal_stage_key.empty()) {
+    if (error) {
+      *error = strict_error;
+    }
+    return std::nullopt;
+  }
+
+  // The upstream node identity is a precision hint, not a hard requirement:
+  // not every public Node maps 1:1 onto a rendered StageStaticSpec, especially
+  // during model-bound materialization.  Only fall back when the hint itself is
+  // unresolved; if it resolved but the selected stage failed endpoint/contract
+  // validation, keep the stricter error instead of silently choosing another
+  // branch.
+  constexpr std::string_view kUnresolvedStageKeyError =
+      "could not resolve terminal real producer for public output";
+  if (strict_error != kUnresolvedStageKeyError) {
+    if (error) {
+      *error = strict_error;
+    }
+    return std::nullopt;
+  }
+
+  auto fallback_endpoint = endpoint;
+  fallback_endpoint.terminal_stage_key.clear();
+  std::string fallback_error;
+  auto fallback =
+      pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+          manifest, fallback_endpoint, &fallback_error);
+  if (fallback.has_value()) {
+    if (error) {
+      error->clear();
+    }
+    return fallback;
+  }
+  if (error) {
+    *error = fallback_error.empty() ? strict_error : fallback_error;
+  }
+  return std::nullopt;
+}
 
 void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Node>>* nodes) {
   if (!nodes || nodes->empty()) {
