@@ -44,6 +44,8 @@ inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
   tensor.route.logical_index =
       (entry.logical_output_index >= 0) ? entry.logical_output_index
                                        : static_cast<int>(fallback_index);
+  tensor.route.route_slot =
+      (entry.route_slot >= 0) ? entry.route_slot : tensor.route.route_slot;
   tensor.route.memory_index = entry.memory_index;
   tensor.route.physical_index =
       (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;

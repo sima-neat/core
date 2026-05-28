@@ -135,6 +135,44 @@ void materialized_processcvu_terminal_is_not_demoted_by_detess_name() {
   assert((override->outputs[0].shape == std::vector<std::int64_t>{8}));
 }
 
+void output_override_route_slot_is_authoritative() {
+  Tensor base;
+  base.storage = make_cpu_owned_storage(16U);
+  base.dtype = TensorDType::UInt8;
+  base.shape = {16};
+  base.strides_bytes = {1};
+  base.route.logical_index = 99;
+  base.route.route_slot = 99;
+  base.route.memory_index = 0;
+  base.route.name = "stale";
+  base.route.segment_name = "stale_segment";
+
+  Sample sample;
+  sample.kind = SampleKind::Tensor;
+  sample.tensor = base;
+
+  OutputTensorOverride override;
+  OutputTensorOverrideEntry entry;
+  entry.shape = {16};
+  entry.strides_bytes = {1};
+  entry.dtype = TensorDType::UInt8;
+  entry.logical_output_index = 0;
+  entry.route_slot = 0;
+  entry.memory_index = 0;
+  entry.name = "public_output";
+  entry.segment_name = "public_segment";
+  override.outputs.push_back(entry);
+
+  Sample out = apply_output_tensor_override(sample, override, /*materialize_output=*/false);
+  assert(out.kind == SampleKind::TensorSet);
+  assert(out.tensors.size() == 1U);
+  assert(out.tensors[0].route.logical_index == 0);
+  assert(out.tensors[0].route.route_slot == 0);
+  assert(out.tensors[0].route.memory_index == 0);
+  assert(out.tensors[0].route.name == "public_output");
+  assert(out.tensors[0].route.segment_name == "public_segment");
+}
+
 } // namespace
 
 int main() {
@@ -142,5 +180,6 @@ int main() {
   terminal_mla_with_downstream_slice_metadata_falls_back_to_raw_physical();
   terminal_selector_skips_boundary_view_transit();
   materialized_processcvu_terminal_is_not_demoted_by_detess_name();
+  output_override_route_slot_is_authoritative();
   return 0;
 }
