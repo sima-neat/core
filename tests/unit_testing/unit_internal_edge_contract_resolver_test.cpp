@@ -67,6 +67,17 @@ sima_ev_tensor_desc dense_desc(std::vector<int> shape, const std::string& dtype,
   return desc;
 }
 
+void ensure_gst_ready() {
+  static bool ready = false;
+  if (ready) {
+    return;
+  }
+  int argc = 0;
+  char** argv = nullptr;
+  gst_init(&argc, &argv);
+  ready = true;
+}
+
 SimaPluginStaticManifest direct_manifest() {
   SimaPluginStaticManifest manifest;
 
@@ -193,19 +204,16 @@ void all_consumer_edges_resolve_together() {
   assert(resolved[0].binding_index == 0U);
 }
 
-void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
-  int argc = 0;
-  char** argv = nullptr;
-  gst_init(&argc, &argv);
-
+SimaPluginStaticManifest processcvu_routing_manifest(InputBindingStaticSpec binding,
+                                                     bool view_input) {
   SimaPluginStaticManifest manifest;
 
   StageStaticSpec producer;
   producer.logical_stage_id = "branching_producer";
   producer.physical_outputs.push_back(physical(0, 4U, "head0"));
-  producer.physical_outputs.push_back(physical(1, 8U, "head1"));
+  producer.physical_outputs.push_back(physical(1, 16U, "head1"));
   producer.logical_outputs.push_back(logical_output(0, 0, 0, {1, 1, 1}, "UINT8", "head0", 1U));
-  producer.logical_outputs.push_back(logical_output(1, 1, 1, {1, 2, 1}, "INT32", "head1", 8U));
+  producer.logical_outputs.push_back(logical_output(1, 1, 1, {1, 4, 1}, "INT32", "head1", 16U));
   producer.output_order.push_back(build_output_route_static_spec(0, 0, 0, "head0", "head0"));
   producer.output_order.push_back(build_output_route_static_spec(1, 1, 1, "head1", "head1"));
   manifest.stages.push_back(std::move(producer));
@@ -222,20 +230,31 @@ void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
   consumer.processcvu.input_dtype = "INT32";
   consumer.processcvu.output_dtype = "INT32";
   consumer.processcvu.out_dtype = "INT32";
-  consumer.processcvu.input_tensors = {dense_desc({1, 2, 1}, "INT32", "HWC")};
-  consumer.processcvu.output_tensors = {dense_desc({1, 2, 1}, "INT32", "HWC")};
-  consumer.physical_inputs.push_back(physical(0, 8U, "consumer_head1"));
-  consumer.logical_inputs.push_back(logical_input(0, 0, {1, 2, 1}, "INT32", "consumer_head1",
-                                                 0, 8U));
-  consumer.input_bindings.push_back(
-      binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 8U));
-  consumer.physical_outputs.push_back(physical(0, 8U, "consumer_out"));
+  const auto input_shape = view_input ? std::vector<int>{1, 1, 1} : std::vector<int>{1, 4, 1};
+  consumer.processcvu.input_tensors = {dense_desc(input_shape, "INT32", "HWC")};
+  consumer.processcvu.output_tensors = {dense_desc(input_shape, "INT32", "HWC")};
+  const std::uint64_t input_size = view_input ? 4U : 16U;
+  const std::int64_t input_offset = view_input ? 4 : 0;
+  consumer.physical_inputs.push_back(physical(0, input_size, "consumer_head1"));
+  consumer.logical_inputs.push_back(logical_input(
+      0, 0, {input_shape[0], input_shape[1], input_shape[2]}, "INT32", "consumer_head1",
+      input_offset, input_size,
+      view_input ? TensorMaterializationKind::OffsetView : TensorMaterializationKind::Direct));
+  consumer.input_bindings.push_back(std::move(binding));
+  consumer.physical_outputs.push_back(physical(0, input_size, "consumer_out"));
   consumer.logical_outputs.push_back(
-      logical_output(0, 0, 0, {1, 2, 1}, "INT32", "consumer_out", 8U));
+      logical_output(0, 0, 0, {input_shape[0], input_shape[1], input_shape[2]}, "INT32",
+                     "consumer_out", input_size));
   consumer.output_order.push_back(
       build_output_route_static_spec(0, 0, 0, "consumer_out", "consumer_out"));
   manifest.stages.push_back(std::move(consumer));
 
+  return manifest;
+}
+
+simaai::gst::CvuInputMemoryBinding
+single_prepared_processcvu_input_binding(SimaPluginStaticManifest manifest) {
+  ensure_gst_ready();
   std::string error;
   const auto prepared = build_prepared_runtime_context(
       nullptr, manifest, std::nullopt, {}, {}, simaai::neat::NameTransform{}, &error);
@@ -245,11 +264,76 @@ void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
   assert(prepared->stages[0].processcvu.has_value());
   const auto& input_bindings = prepared->stages[0].processcvu->routing_contract.input_bindings;
   assert(input_bindings.size() == 1U);
-  assert(input_bindings[0].source_logical_index == 1);
-  assert(input_bindings[0].source_output_slot == 1);
-  assert(input_bindings[0].source_physical_index == 1);
-  assert(input_bindings[0].segment_name == "head1");
-  assert(input_bindings[0].shape == std::vector<std::int64_t>({1, 2, 1}));
+  return input_bindings[0];
+}
+
+void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
+  const auto input_binding = single_prepared_processcvu_input_binding(
+      processcvu_routing_manifest(
+          binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 16U), false));
+
+  assert(input_binding.source_logical_index == 1);
+  assert(input_binding.source_output_slot == 1);
+  assert(input_binding.source_physical_index == 1);
+  assert(input_binding.source_size_bytes == 16U);
+  assert(input_binding.source_byte_offset == 0);
+  assert(input_binding.segment_name == "head1");
+  assert(input_binding.shape == std::vector<std::int64_t>({1, 4, 1}));
+}
+
+void prepared_runtime_fills_missing_source_fields_from_resolved_edge() {
+  const auto input_binding = single_prepared_processcvu_input_binding(
+      processcvu_routing_manifest(
+          binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), false));
+
+  assert(input_binding.source_logical_index == 1);
+  assert(input_binding.source_output_slot == 1);
+  assert(input_binding.source_physical_index == 1);
+  assert(input_binding.source_size_bytes == 16U);
+  assert(input_binding.source_byte_offset == 0);
+  assert(input_binding.segment_name == "head1");
+}
+
+void prepared_runtime_keeps_explicit_source_fields_when_edge_resolves() {
+  const auto input_binding = single_prepared_processcvu_input_binding(
+      processcvu_routing_manifest(
+          binding_to_producer(0, "branching_producer", 7, 1, 9, "explicit_parent", 123U, 5),
+          false));
+
+  assert(input_binding.source_logical_index == 7);
+  assert(input_binding.source_output_slot == 1);
+  assert(input_binding.source_physical_index == 9);
+  assert(input_binding.source_size_bytes == 123U);
+  assert(input_binding.source_byte_offset == 5);
+  assert(input_binding.segment_name == "explicit_parent");
+}
+
+void prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete() {
+  const auto input_binding = single_prepared_processcvu_input_binding(
+      processcvu_routing_manifest(
+          binding_to_producer(0, "branching_producer", 1, 1, 1, "explicit_parent", 16U, 0),
+          true));
+
+  assert(input_binding.source_logical_index == 1);
+  assert(input_binding.source_output_slot == 1);
+  assert(input_binding.source_physical_index == 1);
+  assert(input_binding.source_size_bytes == 16U);
+  assert(input_binding.source_byte_offset == 0);
+  assert(input_binding.segment_name == "explicit_parent");
+}
+
+void prepared_runtime_view_edge_fills_source_offset_from_consumer_view() {
+  const auto input_binding = single_prepared_processcvu_input_binding(
+      processcvu_routing_manifest(
+          binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), true));
+
+  assert(input_binding.source_logical_index == 1);
+  assert(input_binding.source_output_slot == 1);
+  assert(input_binding.source_physical_index == 1);
+  assert(input_binding.source_size_bytes == 16U);
+  assert(input_binding.source_byte_offset == 4);
+  assert(input_binding.segment_name == "head1");
+  assert(input_binding.shape == std::vector<std::int64_t>({1, 1, 1}));
 }
 
 } // namespace
@@ -261,5 +345,9 @@ int main() {
   missing_producer_fails_closed_with_error();
   all_consumer_edges_resolve_together();
   prepared_runtime_processcvu_routing_uses_manifest_edge_resolution();
+  prepared_runtime_fills_missing_source_fields_from_resolved_edge();
+  prepared_runtime_keeps_explicit_source_fields_when_edge_resolves();
+  prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete();
+  prepared_runtime_view_edge_fills_source_offset_from_consumer_view();
   return 0;
 }

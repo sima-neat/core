@@ -1715,6 +1715,7 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
                                   : binding_spec.sink_pad_index;
     const auto* legacy_logical = processcvu_find_logical_input_by_index_local(stage, logical_index);
     const auto* logical = legacy_logical;
+    std::optional<edgecontract::ResolvedEdgeContract> resolved_edge;
     if (manifest && stage_index != kStageIndexUnavailableLocal) {
       std::string edge_error;
       const auto resolved = edgecontract::resolve_edge_contract_for_binding(
@@ -1724,6 +1725,7 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
       // Missing/external producer edges and any disagreement keep the previous routing behavior.
       if (resolved && resolved->consumer_logical_input == legacy_logical) {
         logical = resolved->consumer_logical_input;
+        resolved_edge = resolved;
       }
     }
     if (!logical) {
@@ -1736,14 +1738,58 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     binding.sink_pad_index = binding_spec.sink_pad_index;
     binding.logical_input_index = logical_index;
     binding.local_physical_index = logical->physical_index;
-    binding.source_logical_index = binding_spec.src_logical_output_index;
-    binding.source_output_slot = binding_spec.src_output_slot;
-    binding.source_physical_index = binding_spec.src_physical_output_index;
+    const auto* source_logical =
+        resolved_edge ? resolved_edge->producer_logical_output : nullptr;
+    const auto* source_physical =
+        resolved_edge ? resolved_edge->producer_physical_output : nullptr;
+    const bool binding_source_fields_incomplete =
+        binding_spec.src_logical_output_index < 0 || binding_spec.src_output_slot < 0 ||
+        binding_spec.src_physical_output_index < 0 ||
+        binding_spec.src_physical_size_bytes == 0U || binding_spec.source_segment_name.empty();
+    binding.source_logical_index =
+        binding_spec.src_logical_output_index >= 0
+            ? binding_spec.src_logical_output_index
+            : (source_logical ? source_logical->logical_index
+                              : binding_spec.src_logical_output_index);
+    binding.source_output_slot =
+        binding_spec.src_output_slot >= 0
+            ? binding_spec.src_output_slot
+            : (source_logical ? source_logical->output_slot : binding_spec.src_output_slot);
+    binding.source_physical_index =
+        binding_spec.src_physical_output_index >= 0
+            ? binding_spec.src_physical_output_index
+            : (source_physical ? source_physical->physical_index
+                               : (source_logical ? source_logical->physical_index
+                                                 : binding_spec.src_physical_output_index));
     binding.source_size_bytes = binding_spec.src_physical_size_bytes;
+    if (binding.source_size_bytes == 0U && source_physical) {
+      binding.source_size_bytes = source_physical->size_bytes;
+    }
+    if (binding.source_size_bytes == 0U && source_logical) {
+      binding.source_size_bytes = source_logical->size_bytes;
+    }
     binding.source_byte_offset = binding_spec.src_physical_byte_offset;
+    if (binding.source_byte_offset == 0 && resolved_edge && binding_source_fields_incomplete) {
+      if (logical->byte_offset > 0) {
+        binding.source_byte_offset = logical->byte_offset;
+      } else if (source_logical && source_logical->byte_offset > 0) {
+        binding.source_byte_offset = source_logical->byte_offset;
+      } else if (resolved_edge->consumer_physical_input &&
+                 resolved_edge->consumer_physical_input->source_byte_offset > 0) {
+        binding.source_byte_offset = resolved_edge->consumer_physical_input->source_byte_offset;
+      }
+    }
     binding.group_name = "sink_pad_" + std::to_string(binding_spec.sink_pad_index);
-    binding.segment_name =
-        !binding_spec.source_segment_name.empty() ? binding_spec.source_segment_name : "parent";
+    binding.segment_name = binding_spec.source_segment_name;
+    if (binding.segment_name.empty() && source_logical) {
+      binding.segment_name = source_logical->segment_name;
+    }
+    if (binding.segment_name.empty() && source_physical) {
+      binding.segment_name = source_physical->segment_name;
+    }
+    if (binding.segment_name.empty()) {
+      binding.segment_name = "parent";
+    }
     binding.graph_input_name =
         !binding_spec.cm_input_name.empty()
             ? binding_spec.cm_input_name
