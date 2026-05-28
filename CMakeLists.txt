@@ -884,6 +884,12 @@ target_include_directories(sima_neat_objects
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
+    # Keep the source tree's public/internal bridge headers ahead of the
+    # sibling internals checkout.  The sibling headers can lag while this repo
+    # is under graph-contract development; source files in this target must see
+    # the matching headers from core_graph_changes first.
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
 )
 
 foreach(_simaneat_llima_header_dep IN ITEMS
