@@ -238,17 +238,31 @@ bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
 }
 
 std::string fallback_physical_name(const StageStaticSpec& stage, std::size_t index) {
-  if (index < stage.physical_outputs.size() && !stage.physical_outputs[index].segment_name.empty()) {
+  const auto usable_public_name = [](std::string_view name) {
+    return !name.empty() && !is_boundary_view_token(name);
+  };
+  const std::size_t output_count = !stage.processmla.dispatcher_output_sizes.empty()
+                                       ? stage.processmla.dispatcher_output_sizes.size()
+                                       : stage.physical_outputs.size();
+
+  if (index < stage.physical_outputs.size() &&
+      usable_public_name(stage.physical_outputs[index].segment_name)) {
     return stage.physical_outputs[index].segment_name;
   }
   if (index < stage.processmla.dispatcher_output_names.size() &&
-      !stage.processmla.dispatcher_output_names[index].empty()) {
+      usable_public_name(stage.processmla.dispatcher_output_names[index])) {
     return stage.processmla.dispatcher_output_names[index];
   }
-  if (!stage.logical_stage_id.empty()) {
+  if (output_count <= 1U && usable_public_name(stage.logical_stage_id)) {
+    return stage.logical_stage_id;
+  }
+  if (usable_public_name(stage.logical_stage_id)) {
     return stage.logical_stage_id + "/output_" + std::to_string(index);
   }
-  if (!stage.element_name.empty()) {
+  if (output_count <= 1U && usable_public_name(stage.element_name)) {
+    return stage.element_name;
+  }
+  if (usable_public_name(stage.element_name)) {
     return stage.element_name + "/output_" + std::to_string(index);
   }
   return "output" + std::to_string(index);

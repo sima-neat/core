@@ -86,6 +86,50 @@ void terminal_mla_with_downstream_slice_metadata_falls_back_to_raw_physical() {
   assert(override->outputs[0].name == "MLA_0");
 }
 
+void terminal_raw_fallback_drops_boundary_view_physical_name() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec stage;
+  stage.logical_stage_id = "MLA_0";
+  stage.element_name = "simaaiprocessmla_1";
+  stage.payload_kind = sima::StagePayloadKind::ProcessMla;
+  stage.processmla.dispatcher_output_sizes = {12582912U};
+  stage.physical_outputs.push_back(physical(0, 12582912U, "slice_MLA_0_slice_transform"));
+  stage.logical_outputs.push_back(logical(0, 0, {768, 1024, 1}, {4096, 4, 4}, "FP32",
+                                          "slice_MLA_0_slice_transform",
+                                          "slice_MLA_0_slice_transform", 3145728U));
+  manifest.stages.push_back(stage);
+
+  std::string err;
+  auto override = build_output_override_from_manifest(manifest, {}, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].dtype == TensorDType::UInt8);
+  assert((override->outputs[0].shape == std::vector<std::int64_t>{12582912}));
+  assert(override->outputs[0].name == "MLA_0");
+  assert(override->outputs[0].segment_name == "MLA_0");
+}
+
+void terminal_raw_fallback_keeps_non_view_dispatcher_name() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec stage;
+  stage.logical_stage_id = "MLA_0";
+  stage.payload_kind = sima::StagePayloadKind::ProcessMla;
+  stage.processmla.dispatcher_output_sizes = {64U};
+  stage.processmla.dispatcher_output_names = {"raw_dispatcher_ofm"};
+  stage.physical_outputs.push_back(physical(0, 64U, "slice_MLA_0_slice_transform"));
+  stage.logical_outputs.push_back(logical(0, 0, {4, 4}, {16, 4}, "FP32",
+                                          "slice_MLA_0_slice_transform",
+                                          "slice_MLA_0_slice_transform", 64U));
+  manifest.stages.push_back(stage);
+
+  std::string err;
+  auto override = build_output_override_from_manifest(manifest, {}, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].name == "raw_dispatcher_ofm");
+  assert(override->outputs[0].segment_name == "raw_dispatcher_ofm");
+}
+
 void terminal_selector_skips_boundary_view_transit() {
   sima::SimaPluginStaticManifest manifest;
 
@@ -178,6 +222,8 @@ void output_override_route_slot_is_authoritative() {
 int main() {
   normal_terminal_logical_contract_is_preserved();
   terminal_mla_with_downstream_slice_metadata_falls_back_to_raw_physical();
+  terminal_raw_fallback_drops_boundary_view_physical_name();
+  terminal_raw_fallback_keeps_non_view_dispatcher_name();
   terminal_selector_skips_boundary_view_transit();
   materialized_processcvu_terminal_is_not_demoted_by_detess_name();
   output_override_route_slot_is_authoritative();
