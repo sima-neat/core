@@ -45,6 +45,7 @@
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/RunExport.h"
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 
@@ -1324,6 +1325,12 @@ NB_MODULE(_pyneat_core, m) {
       .def("set_slice_shape", &simaai::neat::TessSpec::set_slice_shape, "shape"_a)
       .def_rw("format", &simaai::neat::TessSpec::format);
 
+  nb::class_<simaai::neat::DetectionSpec>(m, "DetectionSpec",
+      "Detection-decoder output metadata: identifies the wire format the consumer "
+      "should parse (e.g. 'BBOX'). Lives in Semantic.detection.")
+      .def(nb::init<>())
+      .def_rw("format", &simaai::neat::DetectionSpec::format);
+
   nb::class_<simaai::neat::Semantic>(m, "Semantic")
       .def(nb::init<>())
       .def_rw("image", &simaai::neat::Semantic::image)
@@ -1333,7 +1340,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("byte_stream", &simaai::neat::Semantic::byte_stream)
       .def_rw("tess", &simaai::neat::Semantic::tess)
       .def_rw("encoded", &simaai::neat::Semantic::encoded)
-      .def_rw("quant", &simaai::neat::Semantic::quant);
+      .def_rw("quant", &simaai::neat::Semantic::quant)
+      .def_rw("detection", &simaai::neat::Semantic::detection);
 
   nb::class_<simaai::neat::Segment>(m, "Segment")
       .def(nb::init<>())
@@ -1536,6 +1544,48 @@ NB_MODULE(_pyneat_core, m) {
 
   m.def("make_tensor_sample", &simaai::neat::make_tensor_sample, "port_name"_a, "tensor"_a);
   m.def("make_text_sample", &make_text_sample_for_python, "port_name"_a, "text"_a);
+
+  m.def("decode_bbox",
+      [](const TensorList& bbox_tensors,
+         std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k,
+         bool strict) {
+        const int w = clamp_to ? clamp_to->first  : 0;
+        const int h = clamp_to ? clamp_to->second : 0;
+        const int k = top_k.value_or(0);
+        try {
+          return simaai::neat::decode_bbox(bbox_tensors, w, h, k, strict);
+        } catch (const std::runtime_error& e) {
+          const std::string msg = e.what();
+          // Wrong-type inputs surface as TypeError; malformed-payload (strict)
+          // and other runtime failures stay RuntimeError.
+          if (msg.find("is not a BBOX tensor") != std::string::npos ||
+              msg.find("expected 'BBOX'") != std::string::npos ||
+              msg.find("format mismatch") != std::string::npos) {
+            throw nb::type_error(e.what());
+          }
+          throw;
+        }
+      },
+      "Decode BBOX-format tensors into decoded-boxes tensors, positional 1:1.\n\n"
+      "Pass a model's run output (a list of Tensors); each BBOX-format tensor is\n"
+      "decoded into a float32 tensor of shape [num_detections, 6] with columns\n"
+      "(x1, y1, x2, y2, score, class_id). The returned list has the same length as\n"
+      "the input.\n\n"
+      "Args:\n"
+      "  bbox_tensors: list[Tensor] of BBOX-format tensors (e.g. model.run(...)).\n"
+      "  clamp_to:     Optional (width, height) - clamp coordinates to that rectangle.\n"
+      "  top_k:        Optional cap on detections per tensor.\n"
+      "  strict:       When True, raise on malformed buffers instead of best-effort.\n\n"
+      "Returns:\n"
+      "  list[Tensor] - one [num_detections, 6] float32 tensor per input.\n\n"
+      "Raises:\n"
+      "  TypeError: an input tensor is not BBOX-format.\n"
+      "  RuntimeError: strict=True and a payload is malformed.",
+      "bbox_tensors"_a, nb::kw_only(),
+      "clamp_to"_a = nb::none(),
+      "top_k"_a    = nb::none(),
+      "strict"_a   = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
       .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)

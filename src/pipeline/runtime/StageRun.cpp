@@ -1663,11 +1663,12 @@ bool sample_is_bbox_tensor(const Sample& sample) {
   if (fmt.empty()) {
     fmt = sample.format;
   }
-  if (fmt.empty() && tensor.semantic.tess.has_value()) {
-    fmt = tensor.semantic.tess->format;
+  if (fmt.empty()) {
+    fmt = read_detection_format(tensor);
   }
   return upper_copy(fmt) == "BBOX";
 }
+
 
 std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sample, int img_w,
                                                                 int img_h, int expected_topk) {
@@ -2557,6 +2558,7 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
   log_stage_tensor_stats("Postprocess: staged input", stage_input);
   Sample out = run_single_sample(*runner, stage_input, timeout_ms, "Postprocess");
   propagate_preprocess_meta_to_sample_if_missing(selected_tensor, &out);
+  tag_detection_format_in_sample(out);
   log_stage_output_sample("Postprocess: output sample", out);
   log_stage_tensor_stats("Postprocess: output sample", out);
   return out;

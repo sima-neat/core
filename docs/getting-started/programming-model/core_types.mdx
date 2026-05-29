@@ -18,12 +18,78 @@ Use `Tensor` when you only need numeric data and shape/type semantics.
 Typical metadata in tensor:
 - shape / dtype / layout
 - storage and mapping behavior
-- optional image/audio/encoded semantic tags
+- a `semantic` field carrying typed per-domain sub-metas (image, detection, preprocess, etc.) — see [Typed semantic sub-metas](#typed-semantic-sub-metas) below
 
 Related references:
 - [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor)
 - [`TensorConstraint`](/reference/{lsa}/structs/simaai-neat-tensorconstraint)
 - [`TensorTypes.h`](/reference/{lsa}/files/include-pipeline-tensortypes-h)
+
+### Typed semantic sub-metas
+
+Every `Tensor` carries a `semantic` field — a discriminated union of per-domain
+sub-metas describing what the bytes mean. Each sub-meta is an `std::optional`
+(C++) / `Optional` (Python); only the ones relevant to the tensor are set.
+
+| Sub-meta                | Set when                                                              |
+|-------------------------|-----------------------------------------------------------------------|
+| `semantic.image`        | Pixel data (RGB / NV12 / etc.).                                       |
+| `semantic.audio`        | Audio samples.                                                        |
+| `semantic.tokens`       | NLP token stream.                                                     |
+| `semantic.text`         | UTF-8 text.                                                           |
+| `semantic.byte_stream`  | Opaque raw bytes.                                                     |
+| `semantic.encoded`      | Encoded video frame (H.264, etc.).                                    |
+| `semantic.quant`        | Quantized integer tensor (scale / zero-point).                        |
+| `semantic.tess`         | MLA tile-blocked layout.                                              |
+| `semantic.detection`    | Detection-decoder output (BBOX today; masks / keypoints later).       |
+| `semantic.preprocess`   | Inverse-transform breadcrumb left by the preprocess stage.            |
+
+Consumers query the optional that matters to them:
+
+<CodeTabs>
+<CodeTab label="Python" lang="python">
+
+```python
+if bbox.semantic.detection is not None:
+    assert bbox.semantic.detection.format == "BBOX"
+```
+
+</CodeTab>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+if (bbox.semantic.detection.has_value()) {
+    assert(bbox.semantic.detection->format == "BBOX");
+}
+```
+
+</CodeTab>
+</CodeTabs>
+
+#### Detection outputs (BBOX)
+
+When `Model.run` returns the output of a detection model — for example YOLOv8
+with `decode_type = BoxDecodeType.YoloV8` — the output is a packed BBOX tensor.
+Decode the whole run output with `decode_bbox`, a `TensorList → TensorList`
+transform (positional 1:1): each BBOX tensor becomes a `float32` tensor of shape
+`[num_detections, 6]` with columns `(x1, y1, x2, y2, score, class_id)`.
+`decode_bbox` recognizes a BBOX tensor by its `semantic.detection.format` tag
+when present, and otherwise by its canonical rank-1 `UInt8` wire shape; a tensor
+that is neither raises a typed error rather than being silently skipped.
+
+```python
+outputs = model.run([image_tensor])   # TensorList
+decoded = neat.decode_bbox(outputs)    # TensorList, same length
+boxes   = decoded[0].to_numpy()        # ndarray [num_detections, 6]
+```
+
+:::note A note on `tess.format`
+Historically the BBOX wire format was tagged via `semantic.tess.format`. That
+slot is for MLA tile geometry — BBOX is not tessellated — so the overload is
+deprecated. New code should read and write BBOX-format via `semantic.detection`.
+The legacy path still works for one release as a back-compat fallback inside
+`decode_bbox_tensor` / `read_detection_format`.
+:::
 
 ### NumPy and PyTorch interop
 

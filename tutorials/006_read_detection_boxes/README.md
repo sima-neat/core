@@ -204,10 +204,11 @@ Practical consequences:
 - Leaving `detection_threshold` and `nms_iou_threshold` at `0.0` is the
   safest way to get the model archive's validated defaults; only override when you are
   deliberately retuning.
-- For YOLOv8-family packs, a resolved `detection_threshold <= 0.5` triggers
-  a `[WARN] SimaBoxDecode: resolved detection-threshold=...` on `stderr` at
-  construction time. Prefer `>= 0.51` (the tutorial uses `0.55`) to avoid
-  severe pre-NMS latency cliffs from borderline 0-logit candidates.
+- Be deliberate with a low `detection_threshold`. The lower it is, the more
+  candidate boxes survive thresholding, and NMS cost grows with the square of
+  the surviving-box count — so a very low threshold can sharply increase
+  postprocess compute and latency. Lower it only as far as you need to catch
+  weak detections; pair it with `top_k` to cap the worst case.
 
 ## Learning Process
 1. Configure model/postproc options for a detector-style pipeline.

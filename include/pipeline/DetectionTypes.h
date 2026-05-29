@@ -15,6 +15,7 @@
 #pragma once
 
 #include "pipeline/TensorCore.h"
+#include "pipeline/Tensor.h"
 
 #include <cstdint>
 #include <string>
@@ -85,5 +86,76 @@ std::vector<Box> parse_bbox_bytes(const std::vector<uint8_t>& bytes, int img_w, 
  */
 BoxDecodeResult decode_bbox_tensor(const simaai::neat::Tensor& tensor, int img_w, int img_h,
                                    int expected_topk, bool strict);
+
+/// Number of columns in a decoded-boxes tensor: x1, y1, x2, y2, score, class_id.
+inline constexpr int64_t kDecodedBoxColumns = 6;
+
+/**
+ * @brief Build a decoded-boxes Tensor from parsed `Box` records.
+ *
+ * Produces a dense CPU `float32` tensor of shape `[boxes.size(), 6]`. Columns are
+ * `x1, y1, x2, y2, score, class_id` (class_id stored as float; exact for the integer range).
+ */
+simaai::neat::Tensor boxes_to_tensor(const std::vector<Box>& boxes);
+
+/**
+ * @brief Decode a list of BBOX-format tensors into a list of decoded-boxes tensors.
+ *
+ * Positional, 1:1 — output `[i]` is the decode of input `[i]`. Each output is a dense CPU
+ * `float32` tensor of shape `[num_detections, 6]` (columns `x1, y1, x2, y2, score, class_id`).
+ *
+ * Every input tensor must be BBOX-format (`semantic.detection.format == "BBOX"`); a tensor
+ * that is not raises (no silent skip).
+ *
+ * @param bbox_tensors The BBOX-format tensors (e.g. a model's run output).
+ * @param img_w Optional source width to clamp coordinates to (0 = no clamp).
+ * @param img_h Optional source height to clamp coordinates to (0 = no clamp).
+ * @param top_k Optional cap on detections per tensor (0 = no cap).
+ * @param strict When true, malformed buffers throw instead of best-effort parsing.
+ * @return A `TensorList` of the same length as @p bbox_tensors.
+ */
+simaai::neat::TensorList decode_bbox(const simaai::neat::TensorList& bbox_tensors, int img_w = 0,
+                                     int img_h = 0, int top_k = 0, bool strict = false);
+
+/**
+ * @brief Tag a tensor as carrying a detection-decoder wire format.
+ *
+ * Sets `tensor.semantic.detection = DetectionSpec{.format = format}` so downstream
+ * consumers (and `decode_bbox_tensor`, `pyneat.decode_bbox`) can recognize the payload
+ * via the type-honest `DetectionSpec` slot instead of overloading `TessSpec::format`.
+ *
+ * @param tensor Tensor to mutate.
+ * @param format Wire-format token (e.g., `"BBOX"`).
+ */
+void tag_detection_format(simaai::neat::Tensor& tensor, std::string format);
+
+/**
+ * @brief Read the detection-format token from a tensor, if present.
+ *
+ * Checks `tensor.semantic.detection->format` first. Falls back to the legacy
+ * `tensor.semantic.tess->format` location for back-compat with un-migrated producers;
+ * the fallback is scheduled for removal once all producers tag via `tag_detection_format`.
+ *
+ * @return The format token, or empty string if neither slot carries one.
+ */
+std::string read_detection_format(const simaai::neat::Tensor& tensor);
+
+} // namespace simaai::neat
+
+// Forward decl from Sample.h to avoid an extra include in this header.
+namespace simaai::neat {
+struct Sample;
+
+/**
+ * @brief Walk a Sample tree and tag every recognized BBOX-payload Tensor with
+ *        `semantic.detection.format = "BBOX"`.
+ *
+ * Called as a runtime finalizer at every chokepoint where detection-stage outputs
+ * exit the framework into user code (e.g., `Run::pull_tensors_strict`,
+ * `Postprocess`). Normalises the type metadata so consumers can rely on the
+ * type-honest `DetectionSpec` slot instead of inspecting `payload_tag`,
+ * `Sample::format`, or the legacy `TessSpec::format` overload.
+ */
+void tag_detection_format_in_sample(simaai::neat::Sample& sample);
 
 } // namespace simaai::neat

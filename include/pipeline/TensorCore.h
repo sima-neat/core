@@ -257,6 +257,26 @@ struct TessSpec {
 };
 
 /**
+ * @brief Detection-decoder metadata — tags tensors that carry packed detection output.
+ *
+ * Set on tensors produced by detection-decoder stages (`BoxDecode` today; segmentation /
+ * keypoint decoders in the future). The `format` token identifies the wire layout the
+ * consumer should parse — for example `"BBOX"` for the standard
+ * `uint32 count + N × 24-byte RawBox` layout consumed by
+ * `decode_bbox_tensor` / `pyneat.decode_bbox`.
+ *
+ * Historically this information was overloaded onto `TessSpec::format`, but tessellation is
+ * about MLA tile geometry, not about detection payload formats. `DetectionSpec` is the
+ * type-honest home for detection-stage output tags.
+ *
+ * @ingroup tensors
+ */
+struct DetectionSpec {
+  /// Wire-format token (e.g., `"BBOX"`). Consumer dispatches on this string.
+  std::string format;
+};
+
+/**
  * @brief Per-buffer preprocessing context — the inverse-transform breadcrumb trail.
  *
  * When the framework's preprocess stage resizes/letterboxes/normalizes an input image, it
@@ -334,6 +354,7 @@ struct Semantic {
   std::optional<TessSpec> tess;              ///< Set for tessellated tile-layout tensors.
   std::optional<EncodedSpec> encoded;        ///< Set for encoded-stream tensors (H.264, etc.).
   std::optional<QuantSpec> quant;            ///< Set for quantized integer tensors.
+  std::optional<DetectionSpec> detection;    ///< Set for detection-decoder outputs (BBOX, etc.).
   std::optional<PreprocessRuntimeMeta>
       preprocess; ///< Set when the tensor was produced by a preprocess stage.
 };
