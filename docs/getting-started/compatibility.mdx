@@ -1,0 +1,119 @@
+---
+title: Compatibility
+description: What Neat runs on — host SDK, Modalix DevKit, pyneat, and the version-matched set
+sidebar_position: 1.5
+---
+
+import info from '@site/src/data/buildinfo.json';
+
+# Compatibility
+
+Neat spans **two environments**: the **host SDK** (a container where you cross-compile)
+and the **Modalix DevKit** (aarch64, where the framework actually runs). Keep them
+separate — a requirement on one side rarely applies to the other.
+
+The version numbers on this page are rendered from the build's `buildinfo.json`,
+not hand-maintained. This page reflects **Neat&nbsp;{info.version}** (build&nbsp;`{info.build.git_short_sha}`).
+
+## On-device — Modalix DevKit
+
+<table>
+<thead><tr><th>Component</th><th>Requirement</th></tr></thead>
+<tbody>
+<tr><td>Board</td><td>{info.compatibility.target.board} (the "3.0" in the product name is not a version gate — any Modalix DevKit runs Neat)</td></tr>
+<tr><td>Architecture</td><td>{info.compatibility.target.arch}</td></tr>
+<tr><td>Platform software</td><td>{info.compatibility.target.platform_sw}</td></tr>
+<tr><td>glibc</td><td>≥ {info.compatibility.target.glibc_min}</td></tr>
+<tr><td>OpenCV</td><td>{info.compatibility.target.opencv}</td></tr>
+<tr><td>GStreamer</td><td>{info.compatibility.target.gstreamer}</td></tr>
+<tr><td>C++ standard</td><td>C++{info.compatibility.target.cxx_std}</td></tr>
+</tbody>
+</table>
+
+## Host development — Neat SDK (container)
+
+The SDK runs in **Docker** on the host and cross-compiles to the DevKit.
+
+<table>
+<thead><tr><th>Component</th><th>Supported</th></tr></thead>
+<tbody>
+<tr><td>Host OS</td><td><ul>{info.compatibility.host_sdk.os.map(o => <li key={o}>{o}</li>)}</ul></td></tr>
+<tr><td>SDK version</td><td>{info.compatibility.host_sdk.sdk}</td></tr>
+<tr><td>eLxr version</td><td>{info.compatibility.host_sdk.elxr}</td></tr>
+<tr><td>Cross toolchain</td><td>{info.compatibility.host_sdk.toolchain}</td></tr>
+<tr><td>Sysroot</td><td><code>{info.compatibility.host_sdk.sysroot}</code></td></tr>
+</tbody>
+</table>
+
+## pyneat (Python bindings — run on the DevKit)
+
+`pyneat` is built by the SDK and runs **on the DevKit**, not on the host.
+
+<table>
+<thead><tr><th>Property</th><th>Value</th></tr></thead>
+<tbody>
+<tr><td>Prebuilt wheel</td><td>{info.compatibility.pyneat.python_abi} · {info.compatibility.pyneat.platform}</td></tr>
+<tr><td>NumPy</td><td>{info.compatibility.pyneat.numpy}</td></tr>
+<tr><td>PyTorch</td><td>{info.compatibility.pyneat.torch} (DLPack interop)</td></tr>
+<tr><td>From source</td><td>Python ≥ {info.compatibility.pyneat.source_python_min}</td></tr>
+</tbody>
+</table>
+
+There is **no x86 / non-aarch64 pyneat** — it exists only for the DevKit. The host SDK
+cross-builds it and installs it on the paired DevKit (venv at `/media/nvme/pyneat`
+if there's writable NVMe, otherwise `$HOME/pyneat`, always reachable as `~/pyneat`).
+
+## Tools
+
+Use the **latest `sima-cli`** — there is no pinned floor.
+
+## The version-matched set (firmware ↔ runtime)
+
+The on-device packages — `neat-runtime`, `neat-gst-plugins`, `neat-appcomplex`,
+`neat-ev74-firmware` — are built together from one internals commit and share that
+commit's **hash** in their version string (e.g. `2.0.0-<branch>-<hash>`). **Install
+the matched set (same hash) together.** `neat-internals-dev` is the umbrella that
+pulls the matched stack.
+
+A partial update — a new `neat-runtime` against an older `neat-ev74-firmware` — leaves
+the runtime asking the EV74 for a kernel the firmware doesn't have, which surfaces as
+`No channel available` at run time. The coupling key (the internals hash) is recorded
+on the device in `/usr/share/sima-neat/buildinfo.json`.
+
+## Known-incompatible / not supported
+
+| Situation | Why |
+|---|---|
+| **NumPy ≥ 2** with `pyneat` | pin is `{info.compatibility.pyneat.numpy}` |
+| **Mismatched runtime ↔ firmware hash** | not a matched set → `No channel available` |
+| **CPython other than 3.11** for the prebuilt wheel | wheel is `cp311` only (build from source for other 3.x ≥ 3.9) |
+| **Non-aarch64 target** | no x86 / ARMv7 pyneat or runtime exists |
+| **Host glibc < 2.34** on the DevKit | `neat-runtime` requires `libc6 ≥ {info.compatibility.target.glibc_min}` |
+| **CUDA / GPU acceleration** | N/A — the host is build-only; inference runs on the Modalix MLA/EV74 |
+
+## Verify your install
+
+```bash
+# SDK / eLxr version (host container)
+cat /etc/sdk-release
+
+# Neat version + the internals coupling hash (on the DevKit)
+cat /usr/share/sima-neat/buildinfo.json
+
+# pyneat version (on the DevKit)
+~/pyneat/bin/python3 -c "import pyneat; print(pyneat.__version__)"
+```
+
+If you hit `No channel available` or `undefined symbol …submitPrepared`, check that
+`neat-runtime` and `neat-ev74-firmware` report the **same hash** — that's the most
+common compatibility failure. See [Troubleshooting](/getting-started/troubleshooting).
+
+:::note Pending — needs an owner
+These belong on this page but require a product/release-eng decision and are not yet
+documented:
+
+- **Support lifecycle / EOL** — how long each Neat release + its firmware is supported.
+- **Deprecation policy** — notice period and forward-looking requirement changes.
+- **Model-archive portability** — whether a compiled `.tar.gz` is tied to a runtime/format
+  version or board revision, and the compiler ↔ runtime compatibility rule.
+:::

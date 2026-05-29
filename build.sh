@@ -1812,6 +1812,9 @@ build_docs_site() {
   # Shared docs pipeline used by both --doc and --all/--no-doc flows.
   cd "${REPO_ROOT}"
   echo
+  echo "Refreshing compatibility snapshot..."
+  sync_compatibility_snapshot
+  echo
   echo "Building docs..."
   cmake --build "${BUILD_DIR}" --target docs -j"${BUILD_JOBS}"
   echo
@@ -1900,6 +1903,13 @@ generate_package_buildinfo_json() {
   local package_version
   package_version="$(compute_neat_package_version)"
 
+  # Best-effort cross-toolchain version string for the compatibility block.
+  local toolchain_version=""
+  local cxx_bin="${ELXR_CXX:-aarch64-linux-gnu-g++}"
+  if command -v "${cxx_bin}" >/dev/null 2>&1; then
+    toolchain_version="$("${cxx_bin}" --version 2>/dev/null | head -1 | sed 's/(.*) //')"
+  fi
+
   python3 scripts/build/generate_package_buildinfo.py \
     --repo-root "${REPO_ROOT}" \
     --output "${output_path}" \
@@ -1907,8 +1917,27 @@ generate_package_buildinfo_json() {
     --package-version "${package_version}" \
     --vulcan-env "${NEAT_VULCAN_ENV}" \
     --internals-ref "${NEAT_INTERNALS_RESOLVED_REF}" \
-    --llima-ref "${NEAT_LLIMA_RESOLVED_REF}"
+    --llima-ref "${NEAT_LLIMA_RESOLVED_REF}" \
+    --toolchain "${toolchain_version}"
   echo "Generated package build info: ${output_path}"
+}
+
+sync_compatibility_snapshot() {
+  # Refresh the committed buildinfo snapshot the Compatibility doc renders from,
+  # whenever a freshly generated buildinfo is available. Standalone --doc builds
+  # (no package build) keep the existing committed snapshot.
+  local src="${NEAT_PACKAGE_BUILDINFO_JSON}"
+  if [[ "${src}" != /* ]]; then
+    src="${REPO_ROOT}/${src}"
+  fi
+  local dst="${REPO_ROOT}/website/src/data/buildinfo.json"
+  if [[ -f "${src}" ]]; then
+    mkdir -p "$(dirname "${dst}")"
+    cp "${src}" "${dst}"
+    echo "Synced compatibility snapshot: ${dst}"
+  else
+    echo "No fresh buildinfo.json; keeping committed compatibility snapshot at ${dst}."
+  fi
 }
 
 write_resolved_neat_internals_manifest_if_needed() {

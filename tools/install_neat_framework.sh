@@ -43,6 +43,11 @@ set -euo pipefail
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
 # - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
+# - NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP: ON/OFF (default: ON) relax the
+#   external LLiMa package's exact simaai-memory-lib dependency when the board
+#   carries the SDK's git-suffixed compatible memory package.
+# - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
+#   dpkg fallback after apt-get has had a chance to resolve dependencies.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -52,9 +57,20 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
 NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
+NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
+INSTALLER_TMP_DIRS=()
+
+cleanup_installer_tmp_dirs() {
+  local dir
+  for dir in "${INSTALLER_TMP_DIRS[@]}"; do
+    [[ -n "${dir}" && -d "${dir}" ]] && rm -rf "${dir}"
+  done
+}
+trap cleanup_installer_tmp_dirs EXIT
 
 usage() {
   cat <<'EOF'
@@ -566,7 +582,123 @@ apt_package_database_is_healthy() {
   return 1
 }
 
+maybe_relax_simaai_memory_dep() {
+  local deb="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+
+  if [[ "${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP}" != "ON" ]]; then
+    out_array+=("${deb}")
+    return 0
+  fi
+  case "$(basename "${deb}")" in
+    sima-lmm-*-Linux-core.deb) ;;
+    *)
+      out_array+=("${deb}")
+      return 0
+      ;;
+  esac
+  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    out_array+=("${deb}")
+    return 0
+  fi
+
+  local installed_memory_version
+  installed_memory_version="$(dpkg-query -W -f='${Version}' simaai-memory-lib 2>/dev/null || true)"
+  if [[ -z "${installed_memory_version}" ]]; then
+    out_array+=("${deb}")
+    return 0
+  fi
+
+  local tmp_dir unpack_dir out_deb changed_marker
+  tmp_dir="$(mktemp -d /tmp/sima-neat-deb-normalize-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${tmp_dir}")
+  unpack_dir="${tmp_dir}/unpack"
+  out_deb="${tmp_dir}/$(basename "${deb}")"
+  changed_marker="${tmp_dir}/changed"
+
+  dpkg-deb -R "${deb}" "${unpack_dir}"
+  if python3 - "${unpack_dir}/DEBIAN/control" "${installed_memory_version}" "${changed_marker}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+control = Path(sys.argv[1])
+installed = sys.argv[2]
+changed_marker = Path(sys.argv[3])
+text = control.read_text()
+
+# Some SDK/DevKit images ship simaai-memory-lib as a git-suffixed build such as
+# 2.0.0~git..., while the externally produced LLiMa DEB depends on the unsuffixed
+# exact version 2.0.0.  Debian treats 2.0.0~git as lower than 2.0.0, so the exact
+# dependency makes otherwise compatible boards uninstallable.  Only relax this
+# one dependency when the installed version is the matching git-suffixed build.
+def repl(match: re.Match[str]) -> str:
+    required = match.group(1).strip()
+    if installed == required or installed.startswith(required + "~"):
+        changed_marker.write_text("1")
+        return f"simaai-memory-lib (>= {required}~)"
+    return match.group(0)
+
+new_text = re.sub(r"simaai-memory-lib\s*\(=\s*([^)]+)\)", repl, text)
+if new_text != text:
+    control.write_text(new_text)
+PY
+  then
+    if [[ -f "${changed_marker}" ]]; then
+      log "Relaxed $(basename "${deb}") dependency on simaai-memory-lib for installed version ${installed_memory_version}"
+      dpkg-deb -b "${unpack_dir}" "${out_deb}" >/dev/null
+      out_array+=("${out_deb}")
+      return 0
+    fi
+  fi
+
+  out_array+=("${deb}")
+}
+
+prepare_debs_for_board_install() {
+  local -a prepared=()
+  local deb
+  for deb in "${DEBS[@]}"; do
+    maybe_relax_simaai_memory_dep "${deb}" prepared
+  done
+  DEBS=("${prepared[@]}")
+}
+
+verify_board_runtime_services() {
+  local service="simaai-appcomplex.service"
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
+    return 0
+  fi
+
+  # The Debian maintainer script is intentionally generated through debhelper,
+  # and deb-systemd-invoke treats service start failures as non-fatal so package
+  # transactions can still complete.  For this installer the runtime is not
+  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
+  # try one start/restart if the unit is inactive, then fail with the unit status
+  # instead of leaving users with later "Connecting to server failed" errors.
+  if ! systemctl is-active --quiet "${service}"; then
+    log "${service} is not active after package install; attempting to start it once."
+    run_sudo systemctl start "${service}" || true
+    sleep 1
+  fi
+
+  if ! systemctl is-active --quiet "${service}"; then
+    echo "${service} is not active after NEAT package installation." >&2
+    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
+    exit 1
+  fi
+
+  log "Verified ${service} is active."
+}
+
 install_debs_on_board() {
+  prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
@@ -575,21 +707,28 @@ install_debs_on_board() {
   # Some CI/self-hosted DevKit runners can be left in a transiently broken
   # exact-version state after a previous partial NEAT install, e.g.
   # neat-gst-plugins(main) depending on neat-runtime(main) while
-  # neat-runtime(beta) is already unpacked.  In that state apt refuses to start
-  # dependency resolution and suggests apt --fix-broken install, even though the
-  # local DEB set we are installing is self-consistent.  Fall back to installing
-  # the local NEAT DEBs as one dpkg transaction to restore that package set
-  # before continuing.
-  if apt_package_database_is_healthy; then
-    if run_sudo apt-get install -y --allow-downgrades -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
-      return 0
-    fi
-    log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
+  # neat-runtime(beta) is already unpacked.  Still try apt first even when
+  # `apt-get check` is already unhappy: passing the local DEB set gives apt the
+  # replacement packages it needs to repair the transaction and fetch normal
+  # Debian dependencies.  Direct dpkg is only a last resort because it cannot
+  # fetch missing dependencies and can leave CI boards half-configured.
+  if ! apt_package_database_is_healthy; then
+    log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
+  fi
+  if run_sudo apt-get install -y --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    verify_board_runtime_services
+    return 0
+  fi
+
+  if [[ "${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}" != "ON" ]]; then
+    echo "apt-get install failed and NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}; refusing direct dpkg fallback." >&2
+    exit 1
   else
-    log "apt package database has unresolved dependencies; using direct dpkg install for the local NEAT DEB set."
+    log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
   fi
 
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  verify_board_runtime_services
 }
 
 remove_stale_global_sima_lmm_pip_install() {

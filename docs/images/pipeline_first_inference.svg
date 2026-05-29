@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 180" role="img" aria-label="Pipeline assembled by Neat for the first-inference example: an input Tensor of RGB pixels flows into a Preproc node on EV74, then into a ProcessMLA node on the MLA, then into a BoxDecode node on EV74, producing an output Tensor that holds a BBOX buffer.">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <style>
+      .label   { font: 600 14px ui-sans-serif, system-ui, -apple-system, sans-serif; fill: #1e293b; }
+      .sub     { font: 500 11px ui-sans-serif, system-ui, -apple-system, sans-serif; fill: #475569; }
+      .pill    { font: 700 10px ui-sans-serif, system-ui, -apple-system, sans-serif; fill: #ffffff; letter-spacing: 0.5px; }
+      .node    { fill: #f1f5f9; stroke: #334155; stroke-width: 1.5; }
+      .tensor  { fill: #fffbeb; stroke: #334155; stroke-width: 1.5; stroke-dasharray: 4 3; }
+      .ev74    { fill: #0ea5e9; }
+      .mla     { fill: #f59e0b; }
+      .arrow   { stroke: #334155; stroke-width: 2; fill: none; }
+    </style>
+  </defs>
+
+  <rect class="tensor" x="10"  y="50" width="130" height="80" rx="8"/>
+  <text class="label"  x="75"  y="85"  text-anchor="middle">Tensor</text>
+  <text class="sub"    x="75"  y="105" text-anchor="middle">RGB pixels</text>
+
+  <line class="arrow" x1="140" y1="90" x2="180" y2="90" marker-end="url(#arrow)"/>
+
+  <rect class="node"   x="180" y="50" width="150" height="80" rx="8"/>
+  <text class="label"  x="255" y="80"  text-anchor="middle">Preproc</text>
+  <text class="sub"    x="255" y="98"  text-anchor="middle">resize + normalize</text>
+  <rect class="ev74"   x="225" y="108" width="60" height="16" rx="4"/>
+  <text class="pill"   x="255" y="120" text-anchor="middle">EV74</text>
+
+  <line class="arrow" x1="330" y1="90" x2="370" y2="90" marker-end="url(#arrow)"/>
+
+  <rect class="node"   x="370" y="50" width="150" height="80" rx="8"/>
+  <text class="label"  x="445" y="80"  text-anchor="middle">ProcessMLA</text>
+  <text class="sub"    x="445" y="98"  text-anchor="middle">YOLOv8 inference</text>
+  <rect class="mla"    x="423" y="108" width="44" height="16" rx="4"/>
+  <text class="pill"   x="445" y="120" text-anchor="middle">MLA</text>
+
+  <line class="arrow" x1="520" y1="90" x2="560" y2="90" marker-end="url(#arrow)"/>
+
+  <rect class="node"   x="560" y="50" width="150" height="80" rx="8"/>
+  <text class="label"  x="635" y="80"  text-anchor="middle">BoxDecode</text>
+  <text class="sub"    x="635" y="98"  text-anchor="middle">filter + NMS</text>
+  <rect class="ev74"   x="605" y="108" width="60" height="16" rx="4"/>
+  <text class="pill"   x="635" y="120" text-anchor="middle">EV74</text>
+
+  <line class="arrow" x1="710" y1="90" x2="750" y2="90" marker-end="url(#arrow)"/>
+
+  <rect class="tensor" x="750" y="50" width="140" height="80" rx="8"/>
+  <text class="label"  x="820" y="85"  text-anchor="middle">Tensor</text>
+  <text class="sub"    x="820" y="105" text-anchor="middle">BBOX buffer</text>
+</svg>

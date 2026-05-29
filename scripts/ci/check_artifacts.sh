@@ -33,8 +33,30 @@ if [[ ! -f deps/manifest.json ]]; then
   echo "ERROR: deps/manifest.json is required." >&2
   fail=1
 else
-  if ! grep -Eq '"internals"[[:space:]]*:[[:space:]]*"[^"]*"' deps/manifest.json; then
-    echo "ERROR: deps/manifest.json must define an internals string." >&2
+  if ! python3 - deps/manifest.json <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+value = data.get("internals")
+if isinstance(value, str) and value.strip():
+    raise SystemExit(0)
+if isinstance(value, dict):
+    policy = str(value.get("policy", "")).strip().lower()
+    if policy == "snap":
+        raise SystemExit(0)
+    spec = str(value.get("spec", "")).strip()
+    branch = str(value.get("branch", value.get("ref", ""))).strip()
+    if branch and (spec or value.get("spec", "") == ""):
+        raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+  then
+    echo "ERROR: deps/manifest.json must define internals as a non-empty string, {'policy':'snap'}, or {'branch':'...', 'spec':'...'}." >&2
     fail=1
   fi
   platform_version="$(sed -n 's/.*"platform-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
