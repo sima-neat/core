@@ -60,6 +60,10 @@ int main(int argc, char** argv) {
     for (const auto& tar : packs) {
       try {
         auto model_options = canonical_model_options(boxdecode_mode);
+        if (boxdecode_mode == BoxDecodeRunMode::Model) {
+          model_options.boxdecode_original_width = img_bgr.cols;
+          model_options.boxdecode_original_height = img_bgr.rows;
+        }
         apply_processcvu_placement(processcvu_placement, &model_options.processcvu);
         apply_async_options(async_selection, async_queue_depth, &model_options, nullptr);
         apply_processmla_options(processmla_defer_output_invalidate, &model_options, nullptr);

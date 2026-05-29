@@ -5147,10 +5147,25 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     float nms_iou_threshold = opt.nms_iou_threshold;
     int top_k = opt.top_k;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+    const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
+    int model_width = 0;
+    int model_height = 0;
+    if (resolved.effective.resize.width > 0 && resolved.effective.resize.height > 0) {
+      model_width = resolved.effective.resize.width;
+      model_height = resolved.effective.resize.height;
+    } else if (resolved.mla_contract.width > 0 && resolved.mla_contract.height > 0) {
+      model_width = resolved.mla_contract.width;
+      model_height = resolved.mla_contract.height;
+    }
+    std::optional<ResizeMode> resize_mode_override;
+    if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 &&
+        model_width > 0 && model_height > 0) {
+      resize_mode_override = resolved.effective.resize.mode;
+    }
     return simaai::neat::nodes::SimaBoxDecode(
         model, decode_type, detection_threshold, nms_iou_threshold, top_k, stage_name,
-        route_tess_needed, route_quant_needed, /*original_width=*/0, /*original_height=*/0,
-        /*model_width=*/0, /*model_height=*/0, /*resize_mode_override=*/std::nullopt,
+        route_tess_needed, route_quant_needed, opt.boxdecode_original_width,
+        opt.boxdecode_original_height, model_width, model_height, resize_mode_override,
         decode_type_option);
   }
   case GraphKind::Detess: {
