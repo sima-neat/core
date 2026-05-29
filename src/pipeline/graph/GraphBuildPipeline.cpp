@@ -219,11 +219,12 @@ GstStateChangeReturn set_state_with_timeout(GstElement* pipeline, GstState targe
 
 int resolve_state_change_timeout_ms(const char* where) {
   const bool is_build_input = (where && std::strstr(where, "Graph::build(input)") != nullptr);
-  // 30s on both paths absorbs MLA cold-start outliers (mlashm_load_model up to
-  // ~7s on first load of a session) plus EV74 firmware handshake + preroll.
-  // 15s was leaving < 8s headroom and surfacing as flaky set_state timeouts on
-  // self-hosted runners with unwarm boards.
-  const int default_timeout_ms = 30000;
+  // Keep this aligned with the dispatcher MLASHM request/control default
+  // (60s).  Pipeline state changes can synchronously cover MLASHM transport
+  // connect, model load, EV74 handshake, and preroll; using the same outer
+  // window prevents the graph build timeout from firing before the underlying
+  // MLASHM operation has reached its own bounded outcome.
+  const int default_timeout_ms = 60000;
 
   int timeout_ms = env_int("SIMA_STATE_CHANGE_TIMEOUT_MS", default_timeout_ms);
   if (is_build_input) {
