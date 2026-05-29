@@ -23,6 +23,7 @@ enum class ModelArchiveErrorClass {
   UnsupportedVersion,
   SizeLimitExceeded,
   UnsupportedExtension,
+  OutputStorageUnavailable,
 };
 
 const char* model_archive_error_class_name(ModelArchiveErrorClass code);
@@ -64,6 +65,7 @@ struct ModelArchiveLoaderOptions {
   std::size_t max_total_json_bytes = 32ULL * 1024ULL * 1024ULL;
   std::size_t max_entries = 2048;
   std::size_t max_json_depth = 64;
+  std::uint64_t min_output_free_bytes = 16ULL * 1024ULL * 1024ULL;
 
   bool require_pipeline_sequence = true;
   bool require_model_binary = true;
@@ -71,6 +73,7 @@ struct ModelArchiveLoaderOptions {
   bool reject_duplicate_json_keys = true;
   bool reject_invalid_utf8_paths = true;
   bool reject_unicode_path_confusables = true;
+  bool check_output_free_space = true;
 };
 
 struct ModelArchiveExtractResult {

@@ -34,6 +34,8 @@
 #include <cctype>
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <cstdlib>
 #include <cstdio>
@@ -63,6 +65,7 @@ namespace {
 constexpr const char* kDefaultBaseOutputDir = "/data/simaai/coprocessing/models/";
 constexpr const char* kDirConf = "etc";
 constexpr const char* kModelPackKeepMarkerFile = ".sima_modelpack_keep";
+constexpr std::uint64_t kDefaultExtractFreeReserveBytes = 16ULL * 1024ULL * 1024ULL;
 
 constexpr const char* kDefaultPreviousNodeName = "decoder";
 
@@ -84,6 +87,91 @@ static bool env_truthy_local(const char* name) {
   const char* v = std::getenv(name);
   return v && *v && std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 &&
          std::strcmp(v, "FALSE") != 0;
+}
+
+static bool env_enabled_local(const char* name, bool default_value) {
+  const char* v = std::getenv(name);
+  if (!v || !*v)
+    return default_value;
+  return std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 && std::strcmp(v, "FALSE") != 0 &&
+         std::strcmp(v, "off") != 0 && std::strcmp(v, "OFF") != 0;
+}
+
+static bool modelpack_space_check_enabled() {
+  return env_enabled_local("SIMA_NEAT_SPACE_CHECK", true);
+}
+
+static std::uint64_t parse_env_u64_bytes(const char* key, std::uint64_t fallback) {
+  const char* raw = std::getenv(key);
+  if (!raw || !*raw)
+    return fallback;
+  char* end = nullptr;
+  errno = 0;
+  const unsigned long long value = std::strtoull(raw, &end, 10);
+  if (errno != 0 || !end || *end != '\0') {
+    return fallback;
+  }
+  return static_cast<std::uint64_t>(value);
+}
+
+static std::uint64_t modelpack_extract_free_reserve_bytes() {
+  return parse_env_u64_bytes("SIMA_MPK_EXTRACT_MIN_FREE_BYTES", kDefaultExtractFreeReserveBytes);
+}
+
+static bool checked_add_u64_local(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
+  if (!out)
+    return false;
+  if (a > std::numeric_limits<std::uint64_t>::max() - b)
+    return false;
+  *out = a + b;
+  return true;
+}
+
+static std::uint64_t
+required_modelpack_extract_bytes(const simaai::neat::internal::ModelArchiveManifest& manifest,
+                                 std::uint64_t reserve_bytes) {
+  std::uint64_t required = reserve_bytes;
+  for (const auto& entry : manifest.entries) {
+    if (entry.type != '-')
+      continue;
+    if (!checked_add_u64_local(required, entry.size_bytes, &required)) {
+      throw std::runtime_error("ModelPack: size_limit_exceeded: extracted archive size plus "
+                               "free-space reserve overflows uint64");
+    }
+  }
+  return required;
+}
+
+static std::string format_bytes(std::uint64_t bytes) {
+  std::ostringstream oss;
+  constexpr double kMiB = 1024.0 * 1024.0;
+  constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
+  if (bytes >= static_cast<std::uint64_t>(kGiB)) {
+    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kGiB) << " GiB)";
+  } else if (bytes >= static_cast<std::uint64_t>(kMiB)) {
+    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kMiB) << " MiB)";
+  } else {
+    oss << bytes << " bytes";
+  }
+  return oss.str();
+}
+
+static bool dir_has_available_space(const fs::path& dir, std::uint64_t required_available_bytes,
+                                    std::uint64_t* available_out = nullptr) {
+  if (!modelpack_space_check_enabled() || required_available_bytes == 0) {
+    return true;
+  }
+  std::error_code ec;
+  const auto space = fs::space(dir, ec);
+  if (ec)
+    return false;
+  const std::uint64_t available =
+      space.available > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())
+          ? std::numeric_limits<std::uint64_t>::max()
+          : static_cast<std::uint64_t>(space.available);
+  if (available_out)
+    *available_out = available;
+  return available >= required_available_bytes;
 }
 
 static bool processcvu_family_is_fused_local(std::string family) {
@@ -728,63 +816,115 @@ static void cleanup_modelpack_process_root() {
   fs::remove_all(fs::path(root), ec);
 }
 
-static std::string modelpack_output_root(bool cleanup_enabled_request) {
+static std::string modelpack_output_root(bool cleanup_enabled_request,
+                                         std::uint64_t required_available_bytes) {
   if (!modelpack_cleanup_enabled_for_request(cleanup_enabled_request)) {
     modelpack_process_cleanup_enabled_storage() = false;
   }
 
-  auto is_writable_dir = [](const fs::path& dir) {
+  auto is_writable_dir = [&](const fs::path& dir, std::string* reason = nullptr) {
     std::error_code ec;
     fs::create_directories(dir, ec);
-    if (ec)
+    if (ec) {
+      if (reason)
+        *reason = "create_directories failed: " + ec.message();
       return false;
+    }
+    cleanup_stale_modelpack_process_roots(dir);
     const fs::path probe = dir / ".sima_modelpack_write_probe";
     std::ofstream out(probe, std::ios::out | std::ios::trunc);
-    if (!out.is_open())
+    if (!out.is_open()) {
+      if (reason)
+        *reason = "write probe failed";
       return false;
+    }
     out << "ok";
     out.close();
     fs::remove(probe, ec);
+    std::uint64_t available = 0;
+    if (!dir_has_available_space(dir, required_available_bytes, &available)) {
+      if (reason) {
+        *reason = "insufficient free space: required=" + format_bytes(required_available_bytes) +
+                  " available=" + format_bytes(available);
+      }
+      return false;
+    }
     return true;
   };
 
   auto choose_base = [&]() -> fs::path {
     const char* env_root = std::getenv("SIMA_MPK_EXTRACT_ROOT");
-    if (env_root && *env_root)
-      return fs::path(env_root);
+    if (env_root && *env_root) {
+      std::string reason;
+      fs::path explicit_root(env_root);
+      if (!is_writable_dir(explicit_root, &reason)) {
+        throw std::runtime_error("ModelPack: output_storage_unavailable: explicit "
+                                 "SIMA_MPK_EXTRACT_ROOT is not usable: " +
+                                 explicit_root.string() + " (" + reason + ")");
+      }
+      return explicit_root;
+    }
 
+    std::vector<std::string> rejected;
     const fs::path preferred(kDefaultBaseOutputDir);
-    if (is_writable_dir(preferred))
+    std::string reason;
+    if (is_writable_dir(preferred, &reason))
       return preferred;
+    rejected.push_back(preferred.string() + " (" + reason + ")");
 
     const char* tmpdir = std::getenv("TMPDIR");
     fs::path tmp_base = (tmpdir && *tmpdir) ? fs::path(tmpdir) : fs::path("/tmp");
     tmp_base /= "simaai/coprocessing/models";
-    if (is_writable_dir(tmp_base))
+    reason.clear();
+    if (is_writable_dir(tmp_base, &reason))
       return tmp_base;
+    rejected.push_back(tmp_base.string() + " (" + reason + ")");
 
     fs::path cwd_base = fs::current_path() / "tmp" / "model_extract";
-    if (is_writable_dir(cwd_base))
+    reason.clear();
+    if (is_writable_dir(cwd_base, &reason))
       return cwd_base;
+    rejected.push_back(cwd_base.string() + " (" + reason + ")");
 
-    return preferred;
+    std::ostringstream oss;
+    oss << "ModelPack: output_storage_unavailable: no usable extraction root";
+    if (required_available_bytes > 0) {
+      oss << " with required free space " << format_bytes(required_available_bytes);
+    }
+    oss << ". Tried:";
+    for (const auto& item : rejected) {
+      oss << " [" << item << "]";
+    }
+    oss << ". Set SIMA_MPK_EXTRACT_ROOT to a filesystem with enough space or clean /data and /tmp.";
+    throw std::runtime_error(oss.str());
   };
 
-  static const std::string root = [&]() {
-    fs::path base = choose_base();
-    cleanup_stale_modelpack_process_roots(base);
-    fs::path proc_root = base / ("proc_" + std::to_string(static_cast<long long>(::getpid())));
+  static std::mutex root_mu;
+  static std::string root;
+  std::lock_guard<std::mutex> lock(root_mu);
+  if (root.empty()) {
+    const fs::path base = choose_base();
+    const fs::path proc_root =
+        base / ("proc_" + std::to_string(static_cast<long long>(::getpid())));
     std::error_code ec;
     fs::create_directories(proc_root, ec);
-    const std::string root_path = proc_root.string();
-    modelpack_process_root_storage() = root_path;
+    if (ec) {
+      throw std::runtime_error("ModelPack: output_storage_unavailable: failed to create "
+                               "per-process extraction root: " +
+                               proc_root.string() + " (" + ec.message() + ")");
+    }
+    root = proc_root.string();
+    modelpack_process_root_storage() = root;
     static const bool registered = []() {
       std::atexit(cleanup_modelpack_process_root);
       return true;
     }();
     (void)registered;
-    return root_path;
-  }();
+  } else if (!dir_has_available_space(fs::path(root), required_available_bytes)) {
+    throw std::runtime_error("ModelPack: output_storage_unavailable: selected extraction root "
+                             "does not have enough free space: " +
+                             root + " required=" + format_bytes(required_available_bytes));
+  }
   if (!modelpack_process_cleanup_enabled_storage()) {
     mark_modelpack_process_root_keep(root);
   }
@@ -805,6 +945,43 @@ static bool directory_has_json(const fs::path& dir) {
       return true;
   }
   return false;
+}
+
+static void write_json_file_atomic(const fs::path& path, const json& value, const char* label) {
+  const std::string payload = value.dump(4);
+  const fs::path parent = path.parent_path().empty() ? fs::path(".") : path.parent_path();
+  std::error_code ec;
+  fs::create_directories(parent, ec);
+  if (ec) {
+    throw std::runtime_error(std::string(label) +
+                             ": output_storage_unavailable: failed to create directory for " +
+                             path.string() + " (" + ec.message() + ")");
+  }
+  const fs::path tmp = parent / (path.filename().string() + ".tmp." +
+                                 std::to_string(static_cast<long long>(::getpid())));
+  {
+    std::ofstream out(tmp, std::ios::out | std::ios::binary | std::ios::trunc);
+    if (!out.is_open()) {
+      throw std::runtime_error(std::string(label) +
+                               ": output_storage_unavailable: failed to open temp config " +
+                               tmp.string());
+    }
+    out.write(payload.data(), static_cast<std::streamsize>(payload.size()));
+    out.flush();
+    if (!out.good()) {
+      fs::remove(tmp, ec);
+      throw std::runtime_error(std::string(label) +
+                               ": output_storage_unavailable: failed writing temp config " +
+                               tmp.string());
+    }
+  }
+  fs::rename(tmp, path, ec);
+  if (ec) {
+    fs::remove(tmp, ec);
+    throw std::runtime_error(std::string(label) +
+                             ": output_storage_unavailable: failed to replace config " +
+                             path.string());
+  }
 }
 
 static bool extracted_layout_ready(const fs::path& package_root) {
@@ -873,7 +1050,21 @@ static std::string extract_and_organize(const std::string& tar_path,
   // but allow these extras in ModelPack runtime extraction.
   opt.reject_unsupported_file_types = false;
   opt.require_pipeline_sequence = false;
+  opt.min_output_free_bytes = modelpack_extract_free_reserve_bytes();
   try {
+    {
+      std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
+      auto& cache = modelpack_extract_cache();
+      const auto found = cache.find(cache_key);
+      if (found != cache.end() && extracted_layout_ready(fs::path(found->second))) {
+        return found->second;
+      }
+    }
+
+    const auto manifest = simaai::neat::internal::ModelArchiveLoader::inspect(tar_path, opt);
+    const std::uint64_t required_available_bytes =
+        required_modelpack_extract_bytes(manifest, opt.min_output_free_bytes);
+
     std::lock_guard<std::mutex> lock(modelpack_extract_cache_mutex());
     auto& cache = modelpack_extract_cache();
     const auto found = cache.find(cache_key);
@@ -882,30 +1073,34 @@ static std::string extract_and_organize(const std::string& tar_path,
     }
 
     const auto extracted = simaai::neat::internal::ModelArchiveLoader::extract(
-        tar_path, modelpack_output_root(cleanup_extracted_model_data), opt);
+        tar_path, modelpack_output_root(cleanup_extracted_model_data, required_available_bytes),
+        opt);
     const fs::path target_dir(extracted.package_root);
 
     // Preserve existing behavior: materialize model-relative paths as absolute paths
     // anchored at extracted package root.
-    for (const auto& entry : fs::directory_iterator(extracted.etc_dir)) {
-      if (!entry.is_regular_file())
-        continue;
-      if (entry.path().extension() != ".json")
-        continue;
-      std::ifstream in(entry.path());
-      if (!in.is_open())
-        continue;
-      json cfg;
-      try {
-        in >> cfg;
-      } catch (const std::exception&) {
-        continue;
+    try {
+      for (const auto& entry : fs::directory_iterator(extracted.etc_dir)) {
+        if (!entry.is_regular_file())
+          continue;
+        if (entry.path().extension() != ".json")
+          continue;
+        std::ifstream in(entry.path());
+        if (!in.is_open())
+          continue;
+        json cfg;
+        try {
+          in >> cfg;
+        } catch (const std::exception&) {
+          continue;
+        }
+        append_model_paths_if_exists(cfg, target_dir.string());
+        write_json_file_atomic(entry.path(), cfg, "ModelPack");
       }
-      append_model_paths_if_exists(cfg, target_dir.string());
-      std::ofstream out(entry.path());
-      if (!out.is_open())
-        continue;
-      out << cfg.dump(4);
+    } catch (...) {
+      std::error_code cleanup_ec;
+      fs::remove_all(target_dir, cleanup_ec);
+      throw;
     }
 
     cache[cache_key] = target_dir.string();

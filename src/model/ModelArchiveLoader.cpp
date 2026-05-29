@@ -3,7 +3,9 @@
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <cerrno>
 #include <cctype>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
@@ -94,6 +96,38 @@ std::string package_name_from_archive(const fs::path& archive_path) {
 bool has_canonical_archive_extension(std::string_view path) {
   constexpr std::string_view suffix = ".tar.gz";
   return path.size() >= suffix.size() && path.substr(path.size() - suffix.size()) == suffix;
+}
+
+bool output_space_check_enabled() {
+  const char* raw = std::getenv("SIMA_NEAT_SPACE_CHECK");
+  if (!raw || !*raw)
+    return true;
+  return std::strcmp(raw, "0") != 0 && std::strcmp(raw, "false") != 0 &&
+         std::strcmp(raw, "FALSE") != 0 && std::strcmp(raw, "off") != 0 &&
+         std::strcmp(raw, "OFF") != 0;
+}
+
+std::string format_bytes(std::uint64_t bytes) {
+  std::ostringstream oss;
+  constexpr double kMiB = 1024.0 * 1024.0;
+  constexpr double kGiB = 1024.0 * 1024.0 * 1024.0;
+  if (bytes >= static_cast<std::uint64_t>(kGiB)) {
+    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kGiB) << " GiB)";
+  } else if (bytes >= static_cast<std::uint64_t>(kMiB)) {
+    oss << bytes << " bytes (" << (static_cast<double>(bytes) / kMiB) << " MiB)";
+  } else {
+    oss << bytes << " bytes";
+  }
+  return oss.str();
+}
+
+bool checked_add_u64(std::uint64_t a, std::uint64_t b, std::uint64_t* out) {
+  if (!out)
+    return false;
+  if (a > std::numeric_limits<std::uint64_t>::max() - b)
+    return false;
+  *out = a + b;
+  return true;
 }
 
 std::vector<std::string> tar_list_verbose(const std::string& archive_path) {
@@ -601,6 +635,72 @@ std::vector<std::uint8_t> read_tar_entry(const std::string& archive_path,
   return out;
 }
 
+std::uint64_t planned_extracted_regular_bytes(const std::vector<TarEntry>& entries) {
+  std::uint64_t total = 0;
+  for (const auto& entry : entries) {
+    if (entry.type != '-')
+      continue;
+    if (entry.entry_class == EntryClass::Directory)
+      continue;
+    if (!checked_add_u64(total, entry.size_bytes, &total)) {
+      throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                    "size_limit_exceeded: total extracted archive size overflows uint64");
+    }
+  }
+  return total;
+}
+
+void require_output_space(const fs::path& root, std::uint64_t extracted_bytes,
+                          const ModelArchiveLoaderOptions& opt) {
+  if (!opt.check_output_free_space || !output_space_check_enabled())
+    return;
+
+  std::uint64_t required = 0;
+  if (!checked_add_u64(extracted_bytes, opt.min_output_free_bytes, &required)) {
+    throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
+                  "size_limit_exceeded: requested extracted bytes plus free-space reserve "
+                  "overflows uint64");
+  }
+
+  std::error_code ec;
+  const auto space = fs::space(root, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable,
+                  "unable to determine free space for extraction root: " + root.string() + " (" +
+                      ec.message() + ")");
+  }
+
+  const std::uint64_t available =
+      space.available > static_cast<std::uintmax_t>(std::numeric_limits<std::uint64_t>::max())
+          ? std::numeric_limits<std::uint64_t>::max()
+          : static_cast<std::uint64_t>(space.available);
+  if (available < required) {
+    std::ostringstream oss;
+    oss << "insufficient free space extracting model archive"
+        << " path=" << root.string() << " extracted=" << format_bytes(extracted_bytes)
+        << " reserve=" << format_bytes(opt.min_output_free_bytes)
+        << " required=" << format_bytes(required) << " available=" << format_bytes(available)
+        << " hint=set SIMA_MPK_EXTRACT_ROOT to a filesystem with enough space, "
+           "or clean /data and /tmp on the target";
+    throw_archive(ModelArchiveErrorClass::OutputStorageUnavailable, oss.str());
+  }
+}
+
+ModelArchiveErrorClass write_error_class_for_path(int saved_errno, const fs::path& path) {
+  if (saved_errno == ENOSPC || saved_errno == EDQUOT) {
+    return ModelArchiveErrorClass::OutputStorageUnavailable;
+  }
+  if (saved_errno == 0) {
+    std::error_code ec;
+    const auto space =
+        fs::space(path.parent_path().empty() ? fs::path(".") : path.parent_path(), ec);
+    if (!ec && space.available == 0) {
+      return ModelArchiveErrorClass::OutputStorageUnavailable;
+    }
+  }
+  return ModelArchiveErrorClass::InvalidArchive;
+}
+
 std::uint64_t stream_tar_entry_to_file(const std::string& archive_path,
                                        const std::string& raw_entry_path, const fs::path& out_path,
                                        std::size_t max_bytes) {
@@ -613,11 +713,16 @@ std::uint64_t stream_tar_entry_to_file(const std::string& archive_path,
                   "invalid_archive: failed to read tar entry stream");
   }
 
+  errno = 0;
   std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
   if (!out.is_open()) {
+    const int saved_errno = errno;
     ::pclose(pipe);
-    throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                  "invalid_archive: failed to open extraction output file: " + out_path.string());
+    std::string msg = "failed to open extraction output file: " + out_path.string();
+    if (saved_errno != 0) {
+      msg += " (" + std::string(std::strerror(saved_errno)) + ")";
+    }
+    throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
   }
 
   std::array<char, 8192> buf{};
@@ -632,11 +737,16 @@ std::uint64_t stream_tar_entry_to_file(const std::string& archive_path,
         throw_archive(ModelArchiveErrorClass::SizeLimitExceeded,
                       "size_limit_exceeded: extracted entry exceeds per-entry size limit");
       }
+      errno = 0;
       out.write(buf.data(), static_cast<std::streamsize>(n));
       if (!out.good()) {
+        const int saved_errno = errno;
         ::pclose(pipe);
-        throw_archive(ModelArchiveErrorClass::InvalidArchive,
-                      "invalid_archive: failed writing extracted entry: " + out_path.string());
+        std::string msg = "failed writing extracted entry: " + out_path.string();
+        if (saved_errno != 0) {
+          msg += " (" + std::string(std::strerror(saved_errno)) + ")";
+        }
+        throw_archive(write_error_class_for_path(saved_errno, out_path), msg);
       }
     }
 
@@ -915,6 +1025,8 @@ const char* model_archive_error_class_name(ModelArchiveErrorClass code) {
     return "size_limit_exceeded";
   case ModelArchiveErrorClass::UnsupportedExtension:
     return "unsupported_extension";
+  case ModelArchiveErrorClass::OutputStorageUnavailable:
+    return "output_storage_unavailable";
   }
   return "invalid_archive";
 }
@@ -943,7 +1055,13 @@ ModelArchiveExtractResult ModelArchiveLoader::extract(const std::string& archive
 
   const fs::path package_root = root / validated.manifest.package_name;
   fs::remove_all(package_root, ec);
+  if (ec) {
+    throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                  "invalid_archive: failed to remove previous extraction output: " +
+                      package_root.string());
+  }
   ec.clear();
+  require_output_space(root, planned_extracted_regular_bytes(validated.entries), opt);
   try {
     fs::create_directories(package_root / "etc", ec);
     if (ec) {
