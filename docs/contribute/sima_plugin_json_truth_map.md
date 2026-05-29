@@ -245,7 +245,7 @@ Any JSON field removal must include all of:
 5. Keep strict CI gate enabled:
    - `unit_sima_plugin_manifest_strict_model_pipeline_test`
    - `unit_sima_plugin_manifest_strict_fallback_test`
-   - and workflow lane `Manifest Strict Fallback Gate` in `.github/workflows/build.yml`.
+   - and the corresponding Vulcan CI test lane in `.github/workflows/vulcan-ci.yml`.
 
 ## 4. Current risks found
 

@@ -28,7 +28,7 @@ required_files=(
   ".github/workflows/install-smoke.yml"
   ".github/workflows/perf-regression.yml"
   ".github/workflows/test-soak-weekly.yml"
-  ".github/workflows/test-fuzz-nightly.yml"
+  ".github/workflows/vulcan-fuzz-nightly.yml"
   ".github/workflows/sanitizers.yml"
   ".github/workflows/test-stress-nightly.yml"
   ".github/workflows/release-gate.yml"

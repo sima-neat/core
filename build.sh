@@ -32,6 +32,7 @@ INSTALL_AFTER_BUILD=OFF
 SKIP_DIST=OFF
 BUILD_PYTHON=OFF
 BUILD_FUZZ=OFF
+ALLOW_FUZZ_IN_NEAT_SDK="${SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK:-OFF}"
 BUILD_SANITIZER_MODE=""
 SIMA_ENABLE_ASAN=OFF
 SIMA_ENABLE_UBSAN=OFF
@@ -52,9 +53,11 @@ NEAT_DEP_HEADERS_DIR="${REPO_ROOT}/deps/headers"
 NEAT_INTERNALS_PLUGIN_DIR="${NEAT_INTERNALS_DIR}/gst-plugins"
 NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_RESOLVED_REF=""
+NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
+NEAT_LLIMA_REQUESTED_REF=""
 NEAT_LLIMA_SNAP_POLICY=OFF
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
@@ -550,8 +553,27 @@ detect_elxr_host_python() {
 
 select_system_deps() {
   # Start from the baseline dependency lists for each OS.
-  SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
-  SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
+  if [[ "${DOCS_ONLY}" == "ON" ]]; then
+    SELECTED_SYSTEM_DEPS_LINUX=(
+      build-essential
+      cmake
+      pkg-config
+      git
+      curl
+      doxygen
+      graphviz
+    )
+    SELECTED_SYSTEM_DEPS_MAC=(
+      cmake
+      pkg-config
+      git
+      doxygen
+      graphviz
+    )
+  else
+    SELECTED_SYSTEM_DEPS_LINUX=("${SYSTEM_DEPS_LINUX[@]}")
+    SELECTED_SYSTEM_DEPS_MAC=("${SYSTEM_DEPS_MAC[@]}")
+  fi
 
   # Python runtime is required for docs helper scripts and wheel builds.
   if [[ "${BUILD_DOCS}" == "ON" || "${BUILD_PYTHON}" == "ON" ]]; then
@@ -867,7 +889,7 @@ resolve_neat_internals_ref() {
   fi
   spec="${spec:-latest}"
 
-  printf '%s:%s\n' "${branch}" "${spec}"
+  NEAT_INTERNALS_REQUESTED_REF="${branch}:${spec}"
 }
 
 resolve_neat_llima_ref() {
@@ -897,7 +919,7 @@ resolve_neat_llima_ref() {
   fi
   spec="${spec:-latest}"
 
-  printf '%s:%s\n' "${branch}" "${spec}"
+  NEAT_LLIMA_REQUESTED_REF="${branch}:${spec}"
 }
 
 find_legacy_plugin_dir() {
@@ -1277,9 +1299,10 @@ PY
 ensure_neat_internals() {
   # Sync neat-internals from Vulcan package artifacts, then materialize plugins.
   local internals_ref
-  if ! internals_ref="$(resolve_neat_internals_ref)"; then
+  if ! resolve_neat_internals_ref; then
     exit 1
   fi
+  internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.internals"
@@ -1323,9 +1346,10 @@ ensure_neat_internals() {
 ensure_neat_llima() {
   # Sync LLiMa C++ runtime/dev packages from Vulcan package artifacts and install them.
   local llima_ref
-  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+  if ! resolve_neat_llima_ref; then
     exit 1
   fi
+  llima_ref="${NEAT_LLIMA_REQUESTED_REF}"
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_INTERNALS_DIR}/.llima"
@@ -1455,9 +1479,10 @@ copy_deb_usr_include_to_header_cache() {
 ensure_neat_internals_headers() {
   # Header-only bootstrap for x86 analysis jobs. Do not install arm64 runtime/plugin packages.
   local internals_ref
-  if ! internals_ref="$(resolve_neat_internals_ref)"; then
+  if ! resolve_neat_internals_ref; then
     exit 1
   fi
+  internals_ref="${NEAT_INTERNALS_REQUESTED_REF}"
   NEAT_INTERNALS_RESOLVED_REF="${internals_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.internals_headers"
@@ -1507,9 +1532,10 @@ ensure_neat_llima_headers() {
   # Header-only bootstrap for x86 analysis jobs. GenAI tidy may still be skipped
   # unless a full SimaLMM CMake package/runtime is available.
   local llima_ref
-  if ! llima_ref="$(resolve_neat_llima_ref)"; then
+  if ! resolve_neat_llima_ref; then
     exit 1
   fi
+  llima_ref="${NEAT_LLIMA_REQUESTED_REF}"
   NEAT_LLIMA_RESOLVED_REF="${llima_ref}"
 
   local marker_file="${NEAT_DEP_HEADERS_DIR}/.llima_headers"
@@ -1662,9 +1688,10 @@ configure_fuzz_toolchain_if_needed() {
     return 0
   fi
 
-  if [[ "${ELXR_SDK}" == "ON" ]]; then
-    echo "ERROR: --fuzz is not supported in eLxr SDK environment." >&2
+  if [[ "${ELXR_SDK}" == "ON" && "${ALLOW_FUZZ_IN_NEAT_SDK}" != "ON" ]]; then
+    echo "ERROR: --fuzz is not supported in local NEAT SDK environments by default." >&2
     echo "Run fuzz builds on Modalix ARM64 runners/devkits where libFuzzer targets execute natively." >&2
+    echo "Set SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK=ON only for the Vulcan CI container fuzz lane." >&2
     exit 1
   fi
 
@@ -1773,6 +1800,7 @@ configure_cmake() {
     # installed, so do not make those runtime libraries configure-time
     # requirements for docs-only builds.
     cmake_args+=(
+      -DSIMANEAT_DOCS_ONLY_CONFIGURE=ON
       -DSIMANEAT_REQUIRE_NEAT_RUNTIME_ARTIFACTS=OFF
       -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
     )

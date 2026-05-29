@@ -65,7 +65,7 @@ These checks are implemented in:
 - `.github/workflows/zero-skip.yml`
 - `.github/workflows/test-soak-weekly.yml`
 - `.github/workflows/long-tests-weekly.yml`
-- `.github/workflows/test-fuzz-nightly.yml`
+- `.github/workflows/vulcan-fuzz-nightly.yml`
 - `.github/workflows/test-stress-nightly.yml`
 - `.github/workflows/sanitizers.yml`
 

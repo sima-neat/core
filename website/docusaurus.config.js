@@ -41,25 +41,14 @@ const org = process.env.DOCS_ORG || repoParts[0] || "sima-neat";
 const project = process.env.DOCS_PROJECT || repoParts[1] || "core";
 const githubRepoUrl =
   process.env.DOCS_REPO_URL || `https://github.com/${org}/${project}`;
+const githubOrgUrl = process.env.DOCS_GITHUB_ORG_URL || `https://github.com/${org}`;
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
 const siteRoot = url.replace(/\/+$/, "");
-const developerCenterRoot = `${siteRoot}/`;
-const hardwareUrl = `${siteRoot}/hardware`;
-const examplesUrl = `${siteRoot}/examples/`;
-const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
-const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
-const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
-const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
-const docsAnalyticsConfig = {
-  measurementId: docsGaMeasurementId,
-};
+const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "/";
 const footerLinks = [
   { label: "SiMa.ai Neat Framework Documentation", to: "/" },
-  {
-    html: '<button type="button" class="footer__link-item cookie-preferences-link" data-cookie-preferences>Cookie preferences</button>',
-  },
 ];
 
 const buildBranch = normalizeBranch(
@@ -102,9 +91,9 @@ const config = {
     {
       tagName: "script",
       attributes: {},
-      innerHTML: `window.__NEAT_DOCS_ANALYTICS__ = ${JSON.stringify(
-        docsAnalyticsConfig,
-      )};`,
+      innerHTML: `window.__NEAT_DEVELOPER_CENTER_SHELL__ = ${JSON.stringify({
+        base: developerCenterShellBase,
+      })};`,
     },
   ],
   presets: [
@@ -127,60 +116,34 @@ const config = {
   plugins: [],
   themeConfig: {
     navbar: {
-      title: "Developer Center",
-      logo: {
-        alt: "SiMa.ai",
-        src: "img/favicon.png",
-        href: developerCenterRoot,
-      },
       items: [
+        { label: "Installation", to: "/getting-started/installation/", position: "left" },
+        { label: "C++ API", to: "/reference/cppapi/", position: "left" },
+        { label: "Python API", to: "/reference/pythonapi/", position: "left" },
         {
           type: "html",
           position: "left",
-          value: `<a class="navbar__item navbar__link" href="${hardwareUrl}">Hardware</a>`,
-        },
-        { to: "/", label: "Software", position: "left" },
-        {
-          type: "html",
-          position: "left",
-          value: `<a class="navbar__item navbar__link" href="${examplesUrl}">Examples</a>`,
-        },
-        { href: "https://huggingface.co/simaai", label: "Models", position: "left" },
-        { href: "https://developer.sima.ai", label: "Community", position: "left" },
-        { type: "doc", docId: "index", label: "Docs", position: "right" },
-        { label: "C++ API", to: "/reference/cppapi/", position: "right" },
-        { label: "Python API", to: "/reference/pythonapi/", position: "right" },
-        { type: "search", position: "right" },
-        {
-          type: "html",
-          position: "right",
           value:
-            '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
+            '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" data-language-pref-select aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
         },
         {
-          href: githubRepoUrl,
+          href: githubOrgUrl,
           label: "GitHub",
-          position: "right",
+          position: "left",
+          className: "software-subnav__github-mobile",
         },
       ],
+    },
+    colorMode: {
+      disableSwitch: true,
     },
     footer: {
       style: "dark",
       links: footerLinks,
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
     },
-    algolia: {
-      appId: algoliaAppId,
-      apiKey: algoliaApiKey,
-      indexName: algoliaIndexName,
-    },
   },
   customFields: {
-    algoliaSearch: {
-      appId: algoliaAppId,
-      apiKey: algoliaApiKey,
-      indexName: algoliaIndexName,
-    },
     buildInfo: {
       showBanner: showBuildBanner,
       branch: buildBranch,
@@ -189,10 +152,11 @@ const config = {
       commitUrl: buildCommitUrl,
       builtAt: buildTime.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"),
     },
-    analytics: docsAnalyticsConfig,
+    githubRepoUrl,
+    githubOrgUrl,
   },
   clientModules: [
-    require.resolve("./src/clientModules/analytics-consent.js"),
+    require.resolve("./src/clientModules/developer-center-shell.js"),
     require.resolve("./src/clientModules/developer-center-nav.js"),
     require.resolve("./src/clientModules/global-theme.js"),
     require.resolve("./src/clientModules/language-preference.js"),

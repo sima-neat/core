@@ -1,4 +1,6 @@
-name: Fuzz Nightly
+name: Vulcan Fuzz Nightly
+
+run-name: Vulcan fuzz nightly (${{ vars.VULCAN_ENV || 'staging' }})
 
 on:
   schedule:
@@ -14,20 +16,34 @@ on:
 permissions:
   actions: write
   contents: read
+  id-token: write
+  packages: read
 
 jobs:
+  resolve-vulcan-config:
+    name: Resolve Vulcan Config
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ vars.VULCAN_ENV || 'staging' }}
+
   build-fuzz-artifacts:
-    if: github.ref_name == 'main' || github.ref_name == 'feature/nightly'
-    uses: ./.github/workflows/build.yml
+    if: github.event_name != 'push' || github.ref_name == 'feature/nightly' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/vulcan-ci.yml
     with:
       build_mode: fuzz
     secrets: inherit
 
   run-fuzz:
     name: run-fuzz
-    runs-on: [self-hosted, Linux, ARM64, modalix]
-    if: github.ref_name == 'main' || github.ref_name == 'feature/nightly'
-    needs: build-fuzz-artifacts
+    runs-on: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+    if: github.event_name != 'push' || github.ref_name == 'feature/nightly' || startsWith(github.ref, 'refs/heads/release/') || startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - resolve-vulcan-config
+      - build-fuzz-artifacts
+    env:
+      VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      VULCAN_ARTIFACT_BASE_URL: ${{ needs.resolve-vulcan-config.outputs.artifact_base_url }}
+      SIMA_CLI_CHECK_FOR_UPDATE: "0"
 
     steps:
       - name: Checkout
@@ -37,21 +53,33 @@ jobs:
         run: |
           rm -rf _work
           mkdir -p _work
-          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh || true
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
       - name: Install fuzz runtime from metadata-all
         run: |
-          if ! command -v sima-cli >/dev/null 2>&1; then
+          if command -v sima-cli >/dev/null 2>&1; then
+            SIMA_CLI_BIN="$(command -v sima-cli)"
+          elif [[ -x /mnt/vulcan/bin/sima-cli ]]; then
+            SIMA_CLI_BIN=/mnt/vulcan/bin/sima-cli
+          else
             echo "sima-cli not found on fuzz runner." >&2
             exit 1
           fi
-          BRANCH_RAW="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
-          BRANCH_KEY="$(echo "${BRANCH_RAW}" | tr '/ ' '--')"
-          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-7)"
-          METADATA_URL="https://artifacts.sima-neat.com/core/${BRANCH_KEY}/${SHORT_SHA}/fuzz/metadata-all.json"
+          if [[ -z "${VULCAN_ARTIFACT_BASE_URL:-}" ]]; then
+            echo "VULCAN_ARTIFACT_BASE_URL is not set." >&2
+            exit 1
+          fi
+          "${SIMA_CLI_BIN}" neat install --help >/dev/null
+
+          REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          BRANCH_KEY="$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${REF_NAME}")"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-12)"
+          METADATA_URL="${VULCAN_ARTIFACT_BASE_URL%/}/core/${BRANCH_KEY}/${SHORT_SHA}/core-fuzz/metadata-all.json"
           echo "Installing from ${METADATA_URL}"
-          SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli install -m "${METADATA_URL}"
+          curl -fsSL "${METADATA_URL}" -o _work/fuzz-metadata-all.json
+          python3 -m json.tool _work/fuzz-metadata-all.json >/dev/null
+          "${SIMA_CLI_BIN}" neat install -m "${METADATA_URL}"
 
       - name: Locate installed extras content
         run: |
@@ -68,7 +96,7 @@ jobs:
         run: |
           FUZZ_BIN_DIR="$(cat _work/extras_lib_dir.txt)/tests/fuzz"
           missing=0
-          for target in fuzz_modelpack_json fuzz_gst_pipeline_string; do
+          for target in fuzz_modelpack_json fuzz_pipeline_sequence fuzz_gst_pipeline_string; do
             if [[ ! -x "${FUZZ_BIN_DIR}/${target}" ]]; then
               echo "Missing prebuilt fuzz binary: ${FUZZ_BIN_DIR}/${target}" >&2
               missing=1

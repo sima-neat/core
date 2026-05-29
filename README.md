@@ -1,6 +1,6 @@
 # SiMa NEAT Framework
 
-[![CI Build](https://github.com/manuel-roldan/sima-neat/actions/workflows/build.yml/badge.svg)](https://github.com/manuel-roldan/sima-neat/actions/workflows/build.yml)
+[![Vulcan CI](https://github.com/sima-neat/core/actions/workflows/vulcan-ci.yml/badge.svg)](https://github.com/sima-neat/core/actions/workflows/vulcan-ci.yml)
 ![SDK](https://img.shields.io/badge/SDK-2.0-green)
 ![Language](https://img.shields.io/badge/C%2B%2B-20-informational)
 
@@ -22,15 +22,12 @@ NEAT is built around three core concepts:
 
 Typical flow:
 
-1. Build a `Model` from compiled `.tar.gz` model archive.
-2. Add model stages (and optional custom nodes) to a `Graph`.
+1. Build a `Model` from a compiled `.tar.gz` model archive.
+2. Add model routes, reusable fragments, and optional custom nodes to a `Graph`.
 3. `build(...)` to get a `Run`, then `run()` or `push()/pull()` tensors/samples.
 
 ```cpp
-#include "model/Model.h"
-#include "pipeline/Graph.h"
-#include "nodes/io/Input.h"
-#include "nodes/common/Output.h"
+#include <neat.h>
 
 simaai::neat::Model model("resnet_50.tar.gz");
 

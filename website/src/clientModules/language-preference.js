@@ -23,25 +23,30 @@ const setPreferredLang = (lang) => {
 };
 
 const syncLanguageSelect = (lang) => {
-  const select = document.getElementById("language-pref-select");
-  if (!select) return;
-  select.value = normalizeLang(lang);
+  document.querySelectorAll("[data-language-pref-select]").forEach((select) => {
+    select.value = normalizeLang(lang);
+  });
 };
 
 const initLanguageSelect = () => {
-  const select = document.getElementById("language-pref-select");
-  if (!select || select.dataset.bound === "1") return;
-  select.dataset.bound = "1";
-  syncLanguageSelect(getPreferredLang());
+  const selects = document.querySelectorAll("[data-language-pref-select]");
+  if (!selects.length) return;
 
-  select.addEventListener("change", () => {
-    const lang = normalizeLang(select.value);
-    setPreferredLang(lang);
-    trackDocsEvent("language_tab_select", {
-      language: lang,
-      source: "navbar",
+  selects.forEach((select) => {
+    if (select.dataset.bound === "1") return;
+    select.dataset.bound = "1";
+
+    select.addEventListener("change", () => {
+      const lang = normalizeLang(select.value);
+      setPreferredLang(lang);
+      trackDocsEvent("language_tab_select", {
+        language: lang,
+        source: "navbar",
+      });
     });
   });
+
+  syncLanguageSelect(getPreferredLang());
 
   window.addEventListener("neat:langchange", (event) => {
     const next = event?.detail?.lang || getPreferredLang();
