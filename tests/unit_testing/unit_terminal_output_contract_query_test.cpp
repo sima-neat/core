@@ -1,7 +1,10 @@
 #include "pipeline/internal/TerminalOutputContractQuery.h"
+#include "pipeline/graph/internal/GraphBuildInternal.h"
 
 #include <cassert>
 #include <cstdint>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace simaai::neat;
@@ -273,6 +276,117 @@ void terminal_stage_key_selects_non_last_branch() {
   assert((override->outputs[0].shape == std::vector<std::int64_t>{1}));
 }
 
+void matched_boxdecode_without_outputs_does_not_walk_to_mla() {
+  sima::SimaPluginStaticManifest manifest;
+
+  sima::StageStaticSpec mla;
+  mla.logical_stage_id = "MLA_0";
+  mla.element_name = "simaaiprocessmla_1";
+  mla.payload_kind = sima::StagePayloadKind::ProcessMla;
+  mla.processmla.dispatcher_output_sizes = {409600U, 102400U, 25600U,
+                                            512000U, 128000U, 32000U};
+  manifest.stages.push_back(std::move(mla));
+
+  sima::StageStaticSpec boxdecode;
+  boxdecode.logical_stage_id = "boxdecode_0";
+  boxdecode.element_name = "boxdecode_0";
+  boxdecode.plugin_kind = "neatobjectdecode";
+  boxdecode.kernel_kind = "boxdecode";
+  boxdecode.payload_kind = sima::StagePayloadKind::BoxDecode;
+  manifest.stages.push_back(std::move(boxdecode));
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "boxdecode_0";
+  endpoint.terminal_node_kind = "SimaBoxDecode";
+  endpoint.terminal_stage_key_required = true;
+  endpoint.allow_unresolved_terminal_stage_fallback = false;
+
+  std::string err;
+  OutputOverrideFailureReason reason = OutputOverrideFailureReason::None;
+  auto override = build_output_override_from_manifest(manifest, endpoint, &err, &reason);
+  assert(!override.has_value());
+  assert(reason == OutputOverrideFailureReason::TerminalStageNotPublishable);
+  assert(err.find("no publishable output contract") != std::string::npos);
+}
+
+void unresolved_boxdecode_terminal_key_does_not_fallback_to_mla() {
+  sima::SimaPluginStaticManifest manifest;
+
+  sima::StageStaticSpec mla;
+  mla.logical_stage_id = "MLA_0";
+  mla.element_name = "simaaiprocessmla_1";
+  mla.payload_kind = sima::StagePayloadKind::ProcessMla;
+  mla.processmla.dispatcher_output_sizes = {409600U, 102400U, 25600U,
+                                            512000U, 128000U, 32000U};
+  manifest.stages.push_back(std::move(mla));
+
+  sima::StageStaticSpec transformed_boxdecode;
+  transformed_boxdecode.logical_stage_id = "prefix_boxdecode_0_suffix";
+  transformed_boxdecode.element_name = "prefix_boxdecode_0_suffix";
+  transformed_boxdecode.plugin_kind = "neatobjectdecode";
+  transformed_boxdecode.kernel_kind = "boxdecode";
+  transformed_boxdecode.payload_kind = sima::StagePayloadKind::BoxDecode;
+  manifest.stages.push_back(std::move(transformed_boxdecode));
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "boxdecode_0";
+  endpoint.terminal_node_kind = "SimaBoxDecode";
+  endpoint.terminal_stage_key_required = true;
+  endpoint.allow_unresolved_terminal_stage_fallback = false;
+
+  std::string err;
+  OutputOverrideFailureReason reason = OutputOverrideFailureReason::None;
+  auto override = build_output_override_from_manifest(manifest, endpoint, &err, &reason);
+  assert(!override.has_value());
+  assert(reason == OutputOverrideFailureReason::UnresolvedTerminalStageKey);
+}
+
+void unresolved_argmax_terminal_key_does_not_fallback_to_mla() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec mla;
+  mla.logical_stage_id = "MLA_0";
+  mla.element_name = "simaaiprocessmla_1";
+  mla.payload_kind = sima::StagePayloadKind::ProcessMla;
+  mla.processmla.dispatcher_output_sizes = {4U};
+  manifest.stages.push_back(std::move(mla));
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "neatargmax_1";
+  endpoint.terminal_node_kind = "SimaArgMax";
+  endpoint.terminal_stage_key_required = true;
+  endpoint.allow_unresolved_terminal_stage_fallback = false;
+
+  std::string err;
+  OutputOverrideFailureReason reason = OutputOverrideFailureReason::None;
+  auto override = build_output_override_from_manifest(manifest, endpoint, &err, &reason);
+  assert(!override.has_value());
+  assert(reason == OutputOverrideFailureReason::UnresolvedTerminalStageKey);
+}
+
+void model_fragment_terminal_hint_still_allows_manifest_fallback() {
+  sima::SimaPluginStaticManifest manifest;
+  sima::StageStaticSpec mla;
+  mla.logical_stage_id = "MLA_0";
+  mla.element_name = "simaaiprocessmla_1";
+  mla.payload_kind = sima::StagePayloadKind::ProcessMla;
+  mla.processmla.dispatcher_output_sizes = {64U};
+  manifest.stages.push_back(std::move(mla));
+
+  PublicOutputEndpointSelector endpoint;
+  endpoint.terminal_stage_key = "infer";
+  endpoint.terminal_node_kind = "ModelFragment";
+  endpoint.terminal_stage_key_required = false;
+  endpoint.allow_unresolved_terminal_stage_fallback = true;
+
+  std::string err;
+  auto override = simaai::neat::build_public_terminal_output_override_with_fallback(
+      manifest, endpoint, &err);
+  assert(override.has_value() && err.empty());
+  assert(override->outputs.size() == 1U);
+  assert(override->outputs[0].dtype == TensorDType::UInt8);
+  assert((override->outputs[0].shape == std::vector<std::int64_t>{64}));
+}
+
 void inferred_dtype_terminal_falls_back_to_raw_bytes() {
   sima::SimaPluginStaticManifest manifest;
   sima::StageStaticSpec stage;
@@ -364,6 +478,10 @@ int main() {
   endpoint_selector_filters_by_route_slot();
   endpoint_selector_filters_by_public_output_name();
   terminal_stage_key_selects_non_last_branch();
+  matched_boxdecode_without_outputs_does_not_walk_to_mla();
+  unresolved_boxdecode_terminal_key_does_not_fallback_to_mla();
+  unresolved_argmax_terminal_key_does_not_fallback_to_mla();
+  model_fragment_terminal_hint_still_allows_manifest_fallback();
   inferred_dtype_terminal_falls_back_to_raw_bytes();
   unknown_dtype_source_terminal_falls_back_to_raw_bytes();
   output_override_route_slot_is_authoritative();

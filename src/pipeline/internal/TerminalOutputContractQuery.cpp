@@ -8,6 +8,7 @@
 #include <limits>
 #include <sstream>
 #include <string_view>
+#include <utility>
 
 namespace simaai::neat::pipeline_internal::terminal_output_contract {
 namespace {
@@ -39,6 +40,16 @@ bool contains_token(std::string_view haystack, std::string_view needle) {
   lower_haystack = lower_copy(std::move(lower_haystack));
   lower_needle = lower_copy(std::move(lower_needle));
   return lower_haystack.find(lower_needle) != std::string::npos;
+}
+
+void set_failure(OutputOverrideFailureReason* failure_reason, std::string* error_message,
+                 OutputOverrideFailureReason reason, std::string message) {
+  if (failure_reason) {
+    *failure_reason = reason;
+  }
+  if (error_message) {
+    *error_message = std::move(message);
+  }
 }
 
 bool is_boundary_view_token(std::string_view token) {
@@ -576,12 +587,31 @@ StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec&
 }
 
 const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
-    const sima::SimaPluginStaticManifest& manifest, const PublicOutputEndpointSelector& endpoint) {
+    const sima::SimaPluginStaticManifest& manifest, const PublicOutputEndpointSelector& endpoint,
+    OutputOverrideFailureReason* failure_reason, std::string* error_message) {
+  if (failure_reason) {
+    *failure_reason = OutputOverrideFailureReason::None;
+  }
+  if (error_message) {
+    error_message->clear();
+  }
   if (manifest.stages.empty()) {
+    set_failure(failure_reason, error_message, OutputOverrideFailureReason::EmptyManifest,
+                "terminal public output manifest is empty");
+    return nullptr;
+  }
+  if (endpoint.terminal_stage_key_required && endpoint.terminal_stage_key.empty()) {
+    set_failure(failure_reason, error_message,
+                OutputOverrideFailureReason::UnresolvedTerminalStageKey,
+                "public terminal node '" +
+                    (endpoint.terminal_node_kind.empty() ? std::string("<unknown>")
+                                                         : endpoint.terminal_node_kind) +
+                    "' did not expose a stage key; refusing upstream output override");
     return nullptr;
   }
 
   std::size_t start = manifest.stages.size() - 1U;
+  bool explicit_terminal_stage_matched = false;
   if (!endpoint.terminal_stage_key.empty()) {
     bool found = false;
     for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
@@ -591,14 +621,41 @@ const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
       }
     }
     if (!found) {
+      set_failure(failure_reason, error_message,
+                  OutputOverrideFailureReason::UnresolvedTerminalStageKey,
+                  "could not resolve terminal real producer for public output");
       return nullptr;
     }
+    explicit_terminal_stage_matched = true;
   } else if (endpoint_has_output_selector(endpoint)) {
     for (std::size_t i = 0; i < manifest.stages.size(); ++i) {
       const auto& stage = manifest.stages[i];
       if (stage_outputs_match_endpoint(stage, endpoint)) {
         start = i;
       }
+    }
+  }
+
+  if (explicit_terminal_stage_matched) {
+    const auto& matched = manifest.stages[start];
+    if (!stage_has_publishable_outputs(matched)) {
+      set_failure(failure_reason, error_message,
+                  OutputOverrideFailureReason::TerminalStageNotPublishable,
+                  "terminal public output stage '" + endpoint.terminal_stage_key +
+                      "' has no publishable output contract");
+      return nullptr;
+    }
+    const StagePublicationRole role = classify_stage_for_publication(matched);
+    if (role == StagePublicationRole::RealProducer ||
+        role == StagePublicationRole::MaterializedTransform) {
+      return &matched;
+    }
+    if (role != StagePublicationRole::BoundaryView) {
+      set_failure(failure_reason, error_message,
+                  OutputOverrideFailureReason::TerminalStageNotPublishable,
+                  "terminal public output stage '" + endpoint.terminal_stage_key +
+                      "' is not a publishable terminal producer");
+      return nullptr;
     }
   }
 
@@ -612,6 +669,9 @@ const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
       break;
     }
   }
+  set_failure(failure_reason, error_message,
+              OutputOverrideFailureReason::TerminalStageNotPublishable,
+              "could not resolve terminal real producer for public output");
   return nullptr;
 }
 
@@ -717,11 +777,25 @@ bool validate_publication_stage_strict(const sima::StageStaticSpec& publication_
 
 std::optional<OutputTensorOverride> build_output_override_from_manifest(
     const sima::SimaPluginStaticManifest& manifest, const PublicOutputEndpointSelector& endpoint,
-    std::string* error_message) {
-  const StageStaticSpec* terminal = find_terminal_real_producer_for_endpoint(manifest, endpoint);
+    std::string* error_message, OutputOverrideFailureReason* failure_reason) {
+  if (failure_reason) {
+    *failure_reason = OutputOverrideFailureReason::None;
+  }
+  if (error_message) {
+    error_message->clear();
+  }
+  OutputOverrideFailureReason find_failure = OutputOverrideFailureReason::None;
+  std::string find_error;
+  const StageStaticSpec* terminal =
+      find_terminal_real_producer_for_endpoint(manifest, endpoint, &find_failure, &find_error);
   if (!terminal) {
+    if (failure_reason) {
+      *failure_reason = find_failure;
+    }
     if (error_message) {
-      *error_message = "could not resolve terminal real producer for public output";
+      *error_message =
+          find_error.empty() ? "could not resolve terminal real producer for public output"
+                             : std::move(find_error);
     }
     return std::nullopt;
   }
@@ -729,6 +803,9 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
   StageStaticSpec publication = make_publication_stage_for_terminal(*terminal);
   std::string endpoint_error;
   if (!filter_publication_stage_for_endpoint(&publication, endpoint, &endpoint_error)) {
+    if (failure_reason) {
+      *failure_reason = OutputOverrideFailureReason::EndpointSelectorNoMatch;
+    }
     if (error_message) {
       *error_message = endpoint_error;
     }
@@ -736,6 +813,9 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
   }
   std::string validation_error;
   if (!validate_publication_stage_strict(publication, &validation_error)) {
+    if (failure_reason) {
+      *failure_reason = OutputOverrideFailureReason::InvalidPublicationContract;
+    }
     if (error_message) {
       *error_message = validation_error;
     }
@@ -748,6 +828,9 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
     OutputTensorOverrideEntry entry;
     std::string entry_error;
     if (!logical_to_override_entry(publication, logical, &entry, &entry_error)) {
+      if (failure_reason) {
+        *failure_reason = OutputOverrideFailureReason::InvalidPublicationContract;
+      }
       if (error_message) {
         *error_message = entry_error;
       }

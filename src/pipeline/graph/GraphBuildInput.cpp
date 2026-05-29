@@ -572,6 +572,10 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
     if (!upstream || upstream->kind() == "Output") {
       continue;
     }
+    selector.terminal_node_kind = upstream->kind();
+    const bool is_container_terminal = selector.terminal_node_kind == "ModelFragment";
+    selector.terminal_stage_key_required = !is_container_terminal;
+    selector.allow_unresolved_terminal_stage_fallback = is_container_terminal;
     selector.terminal_stage_key = upstream->user_label();
     if (selector.terminal_stage_key.empty()) {
       const auto names = upstream->element_names(i);
@@ -2366,9 +2370,11 @@ build_public_terminal_output_override_with_fallback(
     const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,
     std::string* error) {
   std::string strict_error;
+  pipeline_internal::terminal_output_contract::OutputOverrideFailureReason strict_reason =
+      pipeline_internal::terminal_output_contract::OutputOverrideFailureReason::None;
   auto override =
       pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
-          manifest, endpoint, &strict_error);
+          manifest, endpoint, &strict_error, &strict_reason);
   if (override.has_value()) {
     if (error) {
       error->clear();
@@ -2382,15 +2388,15 @@ build_public_terminal_output_override_with_fallback(
     return std::nullopt;
   }
 
-  // The upstream node identity is a precision hint, not a hard requirement:
-  // not every public Node maps 1:1 onto a rendered StageStaticSpec, especially
-  // during model-bound materialization.  Only fall back when the hint itself is
-  // unresolved; if it resolved but the selected stage failed endpoint/contract
-  // validation, keep the stricter error instead of silently choosing another
-  // branch.
-  constexpr std::string_view kUnresolvedStageKeyError =
-      "could not resolve terminal real producer for public output";
-  if (strict_error != kUnresolvedStageKeyError) {
+  // The upstream node identity may be a container hint (for example a
+  // ModelFragment label such as "infer") rather than a rendered StageStaticSpec.
+  // Only those explicitly container-like terminals may fall back to an unhinted
+  // manifest scan.  Concrete terminal plugins (boxdecode, argmax, CustomNode,
+  // etc.) must fail closed so we never publish an upstream MLA contract in place
+  // of the actual terminal plugin payload.
+  if (strict_reason != pipeline_internal::terminal_output_contract::
+                           OutputOverrideFailureReason::UnresolvedTerminalStageKey ||
+      !endpoint.allow_unresolved_terminal_stage_fallback) {
     if (error) {
       *error = strict_error;
     }
@@ -2399,10 +2405,14 @@ build_public_terminal_output_override_with_fallback(
 
   auto fallback_endpoint = endpoint;
   fallback_endpoint.terminal_stage_key.clear();
+  fallback_endpoint.terminal_stage_key_required = false;
+  fallback_endpoint.allow_unresolved_terminal_stage_fallback = false;
   std::string fallback_error;
+  pipeline_internal::terminal_output_contract::OutputOverrideFailureReason fallback_reason =
+      pipeline_internal::terminal_output_contract::OutputOverrideFailureReason::None;
   auto fallback =
       pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
-          manifest, fallback_endpoint, &fallback_error);
+          manifest, fallback_endpoint, &fallback_error, &fallback_reason);
   if (fallback.has_value()) {
     if (error) {
       error->clear();
