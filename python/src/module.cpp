@@ -1325,7 +1325,8 @@ NB_MODULE(_pyneat_core, m) {
       .def("set_slice_shape", &simaai::neat::TessSpec::set_slice_shape, "shape"_a)
       .def_rw("format", &simaai::neat::TessSpec::format);
 
-  nb::class_<simaai::neat::DetectionSpec>(m, "DetectionSpec",
+  nb::class_<simaai::neat::DetectionSpec>(
+      m, "DetectionSpec",
       "Detection-decoder output metadata: identifies the wire format the consumer "
       "should parse (e.g. 'BBOX'). Lives in Semantic.detection.")
       .def(nb::init<>())
@@ -1545,12 +1546,11 @@ NB_MODULE(_pyneat_core, m) {
   m.def("make_tensor_sample", &simaai::neat::make_tensor_sample, "port_name"_a, "tensor"_a);
   m.def("make_text_sample", &make_text_sample_for_python, "port_name"_a, "text"_a);
 
-  m.def("decode_bbox",
-      [](const TensorList& bbox_tensors,
-         std::optional<std::pair<int, int>> clamp_to,
-         std::optional<int> top_k,
-         bool strict) {
-        const int w = clamp_to ? clamp_to->first  : 0;
+  m.def(
+      "decode_bbox",
+      [](const TensorList& bbox_tensors, std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k, bool strict) {
+        const int w = clamp_to ? clamp_to->first : 0;
         const int h = clamp_to ? clamp_to->second : 0;
         const int k = top_k.value_or(0);
         try {
@@ -1582,10 +1582,8 @@ NB_MODULE(_pyneat_core, m) {
       "Raises:\n"
       "  TypeError: an input tensor is not BBOX-format.\n"
       "  RuntimeError: strict=True and a payload is malformed.",
-      "bbox_tensors"_a, nb::kw_only(),
-      "clamp_to"_a = nb::none(),
-      "top_k"_a    = nb::none(),
-      "strict"_a   = false);
+      "bbox_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
+      "strict"_a = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
       .value("VisionLanguage", simaai::neat::genai::GenAITask::VisionLanguage)

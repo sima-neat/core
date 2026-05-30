@@ -41,8 +41,7 @@ void session_build_maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt
                                                   const std::vector<std::shared_ptr<Node>>& nodes);
 pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector
 session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<Node>>& nodes);
-std::optional<OutputTensorOverride>
-build_public_terminal_output_override_with_fallback(
+std::optional<OutputTensorOverride> build_public_terminal_output_override_with_fallback(
     const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
     const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,
     std::string* error);
@@ -93,11 +92,9 @@ struct BuildInputContext {
   NameTransform name_transform{};
 };
 
-BuildInputContext
-session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node>>& nodes,
-                                          const GraphOptions& sess_opt, RunMode mode,
-                                          const RunOptions& opt,
-                                          bool public_output_contract = true);
+BuildInputContext session_build_prepare_build_input_context(
+    const std::vector<std::shared_ptr<Node>>& nodes, const GraphOptions& sess_opt, RunMode mode,
+    const RunOptions& opt, bool public_output_contract = true);
 
 struct SourceStreamBuildContext {
   InputStream stream;
@@ -105,12 +102,10 @@ struct SourceStreamBuildContext {
   InputStreamOptions stream_opt{};
 };
 
-SourceStreamBuildContext
-session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
-                                     const GraphOptions& sess_opt, const RunOptions& opt,
-                                     RunMode mode, bool require_sink, bool public_output_contract,
-                                     const char* where);
+SourceStreamBuildContext session_build_source_stream_internal(
+    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
+    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
+    bool require_sink, bool public_output_contract, const char* where);
 
 void session_build_compile_contracts(BuildResult* build_result,
                                      const std::vector<std::shared_ptr<Node>>& source_nodes,

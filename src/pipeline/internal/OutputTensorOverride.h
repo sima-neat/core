@@ -94,28 +94,23 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
 inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
                                                const OutputTensorOverrideEntry& entry,
                                                std::size_t fallback_index) {
-  tensor.route.logical_index =
-      (entry.logical_output_index >= 0) ? entry.logical_output_index
-                                       : static_cast<int>(fallback_index);
-  tensor.route.route_slot =
-      (entry.route_slot >= 0) ? entry.route_slot : tensor.route.route_slot;
+  tensor.route.logical_index = (entry.logical_output_index >= 0) ? entry.logical_output_index
+                                                                 : static_cast<int>(fallback_index);
+  tensor.route.route_slot = (entry.route_slot >= 0) ? entry.route_slot : tensor.route.route_slot;
   tensor.route.memory_index = entry.memory_index;
   tensor.route.physical_index =
       (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
   tensor.route.physical_byte_offset = entry.byte_offset;
-  tensor.route.segment_name =
-      !entry.segment_name.empty()
-          ? entry.segment_name
-          : (!entry.name.empty() ? entry.name : tensor.route.segment_name);
+  tensor.route.segment_name = !entry.segment_name.empty()
+                                  ? entry.segment_name
+                                  : (!entry.name.empty() ? entry.name : tensor.route.segment_name);
   if (!entry.name.empty()) {
     tensor.route.name = entry.name;
   }
 }
 
-inline const simaai::neat::Tensor*
-select_output_tensor_override_base(const TensorList& tensors,
-                                   const OutputTensorOverrideEntry& entry,
-                                   std::size_t fallback_index) {
+inline const simaai::neat::Tensor* select_output_tensor_override_base(
+    const TensorList& tensors, const OutputTensorOverrideEntry& entry, std::size_t fallback_index) {
   if (tensors.empty()) {
     return nullptr;
   }
@@ -281,8 +276,7 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
     out.tensors.reserve(override.outputs.size());
     for (std::size_t i = 0; i < override.outputs.size(); ++i) {
       const auto& entry = override.outputs[i];
-      const Tensor* selected_base =
-          select_output_tensor_override_base(canonical.tensors, entry, i);
+      const Tensor* selected_base = select_output_tensor_override_base(canonical.tensors, entry, i);
       if (!selected_base) {
         continue;
       }
@@ -291,8 +285,7 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
       // downstream/internal view, so do not add its stale byte_offset to the
       // selected public contract's byte_offset.
       base_tensor.byte_offset = 0;
-      Tensor tensor =
-          apply_output_tensor_override_entry(base_tensor, entry, materialize_output);
+      Tensor tensor = apply_output_tensor_override_entry(base_tensor, entry, materialize_output);
       apply_output_tensor_override_route(tensor, entry, i);
       out.tensors.emplace_back(std::move(tensor));
     }

@@ -20,8 +20,7 @@ bool matches_index_or_position(int requested, int declared, std::size_t position
   if (requested < 0) {
     return false;
   }
-  return declared == requested ||
-         (declared < 0 && static_cast<std::size_t>(requested) == position);
+  return declared == requested || (declared < 0 && static_cast<std::size_t>(requested) == position);
 }
 
 bool same_nonempty(std::string_view lhs, std::string_view rhs) {
@@ -29,9 +28,8 @@ bool same_nonempty(std::string_view lhs, std::string_view rhs) {
 }
 
 bool stage_identity_matches(const StageStaticSpec& stage, const std::string& key) {
-  return !key.empty() &&
-         (stage.logical_stage_id == key || stage.element_name == key || stage.plugin_kind == key ||
-          stage.kernel_kind == key);
+  return !key.empty() && (stage.logical_stage_id == key || stage.element_name == key ||
+                          stage.plugin_kind == key || stage.kernel_kind == key);
 }
 
 bool output_route_matches_binding(const StageOutputRoute& route,
@@ -71,8 +69,7 @@ bool logical_output_matches_binding(const LogicalTensorStaticSpec& logical, std:
   return false;
 }
 
-bool physical_output_matches_binding(const PhysicalBufferStaticSpec& physical,
-                                     std::size_t position,
+bool physical_output_matches_binding(const PhysicalBufferStaticSpec& physical, std::size_t position,
                                      const InputBindingStaticSpec& binding) {
   if (matches_index_or_position(binding.src_physical_output_index, physical.physical_index,
                                 position)) {
@@ -110,8 +107,8 @@ bool stage_outputs_match_binding(const StageStaticSpec& stage,
 std::pair<const StageStaticSpec*, std::size_t>
 find_producer_stage(const SimaPluginStaticManifest& manifest, std::size_t consumer_stage_index,
                     const InputBindingStaticSpec& binding) {
-  const bool has_explicit_stage_selector = binding.src_stage_index >= 0 ||
-                                           !binding.src_stage_id.empty();
+  const bool has_explicit_stage_selector =
+      binding.src_stage_index >= 0 || !binding.src_stage_id.empty();
   if (binding.src_stage_index >= 0) {
     const auto index = static_cast<std::size_t>(binding.src_stage_index);
     if (index < manifest.stages.size()) {
@@ -161,7 +158,7 @@ find_producer_stage(const SimaPluginStaticManifest& manifest, std::size_t consum
 }
 
 const LogicalInputStaticSpec* find_consumer_logical_input(const StageStaticSpec& consumer,
-                                                         const InputBindingStaticSpec& binding) {
+                                                          const InputBindingStaticSpec& binding) {
   for (std::size_t i = 0; i < consumer.logical_inputs.size(); ++i) {
     const auto& logical = consumer.logical_inputs[i];
     if (matches_index_or_position(binding.local_logical_input_index, logical.logical_index, i)) {
@@ -189,9 +186,8 @@ const LogicalInputStaticSpec* find_consumer_logical_input(const StageStaticSpec&
   return nullptr;
 }
 
-const LogicalTensorStaticSpec*
-find_producer_logical_output(const StageStaticSpec& producer,
-                             const InputBindingStaticSpec& binding) {
+const LogicalTensorStaticSpec* find_producer_logical_output(const StageStaticSpec& producer,
+                                                            const InputBindingStaticSpec& binding) {
   for (std::size_t i = 0; i < producer.logical_outputs.size(); ++i) {
     const auto& logical = producer.logical_outputs[i];
     if (matches_index_or_position(binding.src_logical_output_index, logical.logical_index, i)) {
@@ -345,9 +341,10 @@ std::string binding_label(std::size_t consumer_stage_index, std::size_t binding_
 
 } // namespace
 
-std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
-    const SimaPluginStaticManifest& manifest, std::size_t consumer_stage_index,
-    std::size_t binding_index, std::string* error_message) {
+std::optional<ResolvedEdgeContract>
+resolve_edge_contract_for_binding(const SimaPluginStaticManifest& manifest,
+                                  std::size_t consumer_stage_index, std::size_t binding_index,
+                                  std::string* error_message) {
   if (consumer_stage_index >= manifest.stages.size()) {
     set_error(error_message, "consumer stage index is out of range");
     return std::nullopt;
@@ -357,9 +354,8 @@ std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
     set_error(error_message, "input binding index is out of range");
     return std::nullopt;
   }
-  auto out = resolve_edge_contract_for_binding(manifest, consumer_stage_index,
-                                               consumer.input_bindings[binding_index],
-                                               error_message);
+  auto out = resolve_edge_contract_for_binding(
+      manifest, consumer_stage_index, consumer.input_bindings[binding_index], error_message);
   if (out) {
     out->binding_index = binding_index;
   }
@@ -374,8 +370,8 @@ std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
     return std::nullopt;
   }
   const auto& consumer = manifest.stages[consumer_stage_index];
-  const auto [producer, producer_index] = find_producer_stage(manifest, consumer_stage_index,
-                                                             binding);
+  const auto [producer, producer_index] =
+      find_producer_stage(manifest, consumer_stage_index, binding);
   if (!producer) {
     set_error(error_message, "could not resolve producer stage for " +
                                  binding_label(consumer_stage_index, kNoIndex));
@@ -395,10 +391,9 @@ std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
       find_consumer_physical_input(consumer, resolved.consumer_logical_input, binding);
   resolved.producer_physical_output =
       find_producer_physical_output(*producer, resolved.producer_logical_output, binding);
-  resolved.consumer_requires_view_contract =
-      consumer_requires_view_contract(binding, resolved.consumer_logical_input,
-                                      resolved.producer_logical_output,
-                                      resolved.consumer_physical_input);
+  resolved.consumer_requires_view_contract = consumer_requires_view_contract(
+      binding, resolved.consumer_logical_input, resolved.producer_logical_output,
+      resolved.consumer_physical_input);
 
   if (!resolved.consumer_logical_input) {
     set_error(error_message, "could not resolve consumer logical input for " +
@@ -420,9 +415,9 @@ std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
   return resolved;
 }
 
-std::vector<ResolvedEdgeContract> resolve_consumer_edge_contracts(
-    const SimaPluginStaticManifest& manifest, std::size_t consumer_stage_index,
-    std::string* error_message) {
+std::vector<ResolvedEdgeContract>
+resolve_consumer_edge_contracts(const SimaPluginStaticManifest& manifest,
+                                std::size_t consumer_stage_index, std::string* error_message) {
   std::vector<ResolvedEdgeContract> out;
   if (consumer_stage_index >= manifest.stages.size()) {
     set_error(error_message, "consumer stage index is out of range");

@@ -493,18 +493,6 @@ bool is_default_run_options(const RunOptions& opt) {
   return run_options_equal_for_cache_local(opt, d) && !opt.on_input_drop;
 }
 
-bool effective_zero_copy_output(const RunOptions& opt) {
-  switch (opt.output_memory) {
-  case OutputMemory::ZeroCopy:
-    return true;
-  case OutputMemory::Owned:
-    return false;
-  case OutputMemory::Auto:
-    return preset_default_zero_copy(opt.preset);
-  }
-  return preset_default_zero_copy(opt.preset);
-}
-
 bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
   if (!zero_copy) {
     return false;
@@ -514,6 +502,52 @@ bool resolve_prepare_output_cpu_visible(const RunOptions& opt, bool zero_copy) {
     return env_bool("SIMA_PREPARE_OUTPUT_CPU_VISIBLE", false);
   }
   return opt.advanced.prepare_output_cpu_visible;
+}
+
+// Resolved public-output memory policy. Single authority consulted by the
+// public-boundary stream-option builder so every entry point (Model::build,
+// Graph::build/source) agrees on output storage kind.
+struct OutputMemoryResolution {
+  bool zero_copy;           ///< output tensors share backing GstSample (device-visible)
+  bool prepare_cpu_visible; ///< issue cache-visibility maintenance for CPU readers
+};
+
+// THE definition of what Auto/ZeroCopy/Owned mean for a public output.
+//
+// - Explicit ZeroCopy/Owned are always honored verbatim.
+// - Auto preserves the existing preset mapping (preset_default_zero_copy) so
+//   the async (preset x mode) matrix is unchanged, and additionally enforces
+//   the framework principle "owned for sync, zero-copy for async": a Sync run
+//   never silently returns a lifetime-coupled zero-copy output.
+// - SIMA_OUTPUT_MEMORY_DEFAULT={owned|zerocopy} is a reversible, Auto-only
+//   global override for staged rollout / incident response. It never overrides
+//   an explicit per-run ZeroCopy/Owned choice.
+//
+// NOTE: this governs the PUBLIC output boundary only. Internal stage-chaining
+// defaults (StageRun ZeroCopy forces, Model ingress-branch sub-runs) deliberately
+// stay ZeroCopy to preserve packed tensor topology and must NOT be routed here.
+OutputMemoryResolution resolve_output_memory(const RunOptions& opt, RunMode mode) {
+  bool zero_copy;
+  switch (opt.output_memory) {
+  case OutputMemory::ZeroCopy:
+    zero_copy = true;
+    break;
+  case OutputMemory::Owned:
+    zero_copy = false;
+    break;
+  case OutputMemory::Auto:
+    zero_copy = preset_default_zero_copy(opt.preset) && (mode != RunMode::Sync);
+    if (const char* raw = std::getenv("SIMA_OUTPUT_MEMORY_DEFAULT"); raw && *raw) {
+      const std::string value(raw);
+      if (value == "owned") {
+        zero_copy = false;
+      } else if (value == "zerocopy") {
+        zero_copy = true;
+      }
+    }
+    break;
+  }
+  return {zero_copy, resolve_prepare_output_cpu_visible(opt, zero_copy)};
 }
 
 int resolved_input_timeout_ms(const RunOptions& opt) {
@@ -589,9 +623,8 @@ public_output_endpoint_selector_local(const std::vector<std::shared_ptr<Node>>& 
   const std::string label = nodes[static_cast<std::size_t>(output_index)]->user_label();
   if (!label.empty()) {
     selector.output_segment_name = label;
-    const bool numeric = std::all_of(label.begin(), label.end(), [](unsigned char c) {
-      return std::isdigit(c) != 0;
-    });
+    const bool numeric = std::all_of(label.begin(), label.end(),
+                                     [](unsigned char c) { return std::isdigit(c) != 0; });
     if (numeric) {
       try {
         selector.route_slot = std::stoi(label);
@@ -985,9 +1018,10 @@ void maybe_enable_rtsp_appsink_drop(InputStreamOptions& stream_opt,
   }
 }
 
-void maybe_apply_public_terminal_output_override(
-    const BuildResult& build_result, const std::vector<std::shared_ptr<Node>>& nodes,
-    InputStreamOptions& stream_opt, const char* where) {
+void maybe_apply_public_terminal_output_override(const BuildResult& build_result,
+                                                 const std::vector<std::shared_ptr<Node>>& nodes,
+                                                 InputStreamOptions& stream_opt,
+                                                 const char* where) {
   if (!stream_opt.public_output_contract || !build_result.rendered_manifest.has_value()) {
     return;
   }
@@ -1006,14 +1040,16 @@ void maybe_apply_public_terminal_output_override(
 InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   InputStreamOptions stream_opt;
   const int queue_depth = (opt.queue_depth > 0) ? opt.queue_depth : 0;
-  const bool zero_copy = effective_zero_copy_output(opt);
+  // Single source of truth for public-output memory kind (mode-aware Auto +
+  // reversible env override). See resolve_output_memory().
+  const OutputMemoryResolution output_mem = resolve_output_memory(opt, mode);
   stream_opt.appsink_sync = false;
   stream_opt.appsink_drop = (opt.overflow_policy != OverflowPolicy::Block);
   stream_opt.appsink_max_buffers = queue_depth;
   stream_opt.stability_frames = preset_default_stability_frames(opt.preset);
   stream_opt.max_input_bytes = opt.advanced.max_input_bytes;
-  stream_opt.copy_output = !zero_copy;
-  stream_opt.prepare_output_cpu_visible = resolve_prepare_output_cpu_visible(opt, zero_copy);
+  stream_opt.copy_output = !output_mem.zero_copy;
+  stream_opt.prepare_output_cpu_visible = output_mem.prepare_cpu_visible;
   // Honor opt.advanced.copy_input as the single source of truth for input
   // lifetime semantics. The previous "|| mode == RunMode::Sync" override
   // was a heuristic from when Sync-mode callers were assumed to pass
@@ -1373,8 +1409,7 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
 
 BuildInputContext prepare_build_input_context(const std::vector<std::shared_ptr<Node>>& nodes,
                                               const GraphOptions& sess_opt, RunMode mode,
-                                              const RunOptions& opt,
-                                              bool public_output_contract) {
+                                              const RunOptions& opt, bool public_output_contract) {
   BuildInputContext ctx;
   ctx.mode = mode;
   const RunOptions requested_opt = resolve_build_opt(mode, opt);
@@ -2364,17 +2399,15 @@ Sample run_sync_cached_input(const std::vector<std::shared_ptr<Node>>& nodes,
 
 } // namespace
 
-std::optional<OutputTensorOverride>
-build_public_terminal_output_override_with_fallback(
+std::optional<OutputTensorOverride> build_public_terminal_output_override_with_fallback(
     const pipeline_internal::sima::SimaPluginStaticManifest& manifest,
     const pipeline_internal::terminal_output_contract::PublicOutputEndpointSelector& endpoint,
     std::string* error) {
   std::string strict_error;
   pipeline_internal::terminal_output_contract::OutputOverrideFailureReason strict_reason =
       pipeline_internal::terminal_output_contract::OutputOverrideFailureReason::None;
-  auto override =
-      pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
-          manifest, endpoint, &strict_error, &strict_reason);
+  auto override = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+      manifest, endpoint, &strict_error, &strict_reason);
   if (override.has_value()) {
     if (error) {
       error->clear();
@@ -2394,8 +2427,8 @@ build_public_terminal_output_override_with_fallback(
   // manifest scan.  Concrete terminal plugins (boxdecode, argmax, CustomNode,
   // etc.) must fail closed so we never publish an upstream MLA contract in place
   // of the actual terminal plugin payload.
-  if (strict_reason != pipeline_internal::terminal_output_contract::
-                           OutputOverrideFailureReason::UnresolvedTerminalStageKey ||
+  if (strict_reason != pipeline_internal::terminal_output_contract::OutputOverrideFailureReason::
+                           UnresolvedTerminalStageKey ||
       !endpoint.allow_unresolved_terminal_stage_fallback) {
     if (error) {
       *error = strict_error;
@@ -2410,9 +2443,8 @@ build_public_terminal_output_override_with_fallback(
   std::string fallback_error;
   pipeline_internal::terminal_output_contract::OutputOverrideFailureReason fallback_reason =
       pipeline_internal::terminal_output_contract::OutputOverrideFailureReason::None;
-  auto fallback =
-      pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
-          manifest, fallback_endpoint, &fallback_error, &fallback_reason);
+  auto fallback = pipeline_internal::terminal_output_contract::build_output_override_from_manifest(
+      manifest, fallback_endpoint, &fallback_error, &fallback_reason);
   if (fallback.has_value()) {
     if (error) {
       error->clear();
@@ -2755,8 +2787,7 @@ session_build_public_output_endpoint_selector(const std::vector<std::shared_ptr<
 BuildInputContext
 session_build_prepare_build_input_context(const std::vector<std::shared_ptr<Node>>& nodes,
                                           const GraphOptions& sess_opt, RunMode mode,
-                                          const RunOptions& opt,
-                                          bool public_output_contract) {
+                                          const RunOptions& opt, bool public_output_contract) {
   return prepare_build_input_context(nodes, sess_opt, mode, opt, public_output_contract);
 }
 

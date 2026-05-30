@@ -45,16 +45,18 @@ struct ResolvedEdgeContract {
   bool consumer_requires_view_contract = false;
 };
 
-std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
-    const SimaPluginStaticManifest& manifest, std::size_t consumer_stage_index,
-    std::size_t binding_index, std::string* error_message = nullptr);
+std::optional<ResolvedEdgeContract>
+resolve_edge_contract_for_binding(const SimaPluginStaticManifest& manifest,
+                                  std::size_t consumer_stage_index, std::size_t binding_index,
+                                  std::string* error_message = nullptr);
 
 std::optional<ResolvedEdgeContract> resolve_edge_contract_for_binding(
     const SimaPluginStaticManifest& manifest, std::size_t consumer_stage_index,
     const InputBindingStaticSpec& binding, std::string* error_message = nullptr);
 
-std::vector<ResolvedEdgeContract> resolve_consumer_edge_contracts(
-    const SimaPluginStaticManifest& manifest, std::size_t consumer_stage_index,
-    std::string* error_message = nullptr);
+std::vector<ResolvedEdgeContract>
+resolve_consumer_edge_contracts(const SimaPluginStaticManifest& manifest,
+                                std::size_t consumer_stage_index,
+                                std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima::edgecontract

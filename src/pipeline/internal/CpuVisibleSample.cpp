@@ -1,11 +1,13 @@
 #include "pipeline/internal/CpuVisibleSample.h"
 
+#include "pipeline/internal/SimaMemApi.h"
 #include "pipeline/internal/SimaaiMemory.h"
 
 #include <gst/gst.h>
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
@@ -21,42 +23,9 @@ gsize gst_simaai_memory_get_segment_count(const GstMemory* memory);
 void* gst_simaai_memory_get_segment_at(const GstMemory* memory, gsize index);
 }
 
-struct simaai_memory;
-using simaai_memory_t = simaai_memory;
-
-struct SimaMemApi {
-  using AttachFn = simaai_memory_t* (*)(uint64_t);
-  using InvalidateFn = void (*)(simaai_memory_t*);
-  using GetPhysFn = guintptr (*)(GstMemory*);
-
-  AttachFn attach = nullptr;
-  InvalidateFn invalidate = nullptr;
-  GetPhysFn get_phys = nullptr;
-  bool tried = false;
-};
-
-SimaMemApi& sima_mem_api() {
-  static SimaMemApi api;
-  if (api.tried) {
-    return api;
-  }
-  api.tried = true;
-
-  void* handle = dlopen("libsimaaimem.so", RTLD_LAZY | RTLD_LOCAL);
-  if (!handle) {
-    handle = dlopen("libsimaaimem.so.1", RTLD_LAZY | RTLD_LOCAL);
-  }
-  if (!handle) {
-    return api;
-  }
-
-  api.attach = reinterpret_cast<SimaMemApi::AttachFn>(dlsym(handle, "simaai_memory_attach"));
-  api.invalidate =
-      reinterpret_cast<SimaMemApi::InvalidateFn>(dlsym(handle, "simaai_memory_invalidate_cache"));
-  api.get_phys =
-      reinterpret_cast<SimaMemApi::GetPhysFn>(dlsym(handle, "gst_simaai_memory_get_phys_addr"));
-  return api;
-}
+// SimaMemApi, sima_mem_api(), and simaai_memory_t come from the shared internal
+// header pipeline/internal/SimaMemApi.h (single source of truth, one process-wide
+// dlsym resolution). Previously duplicated here and in TensorUtil.cpp.
 
 bool buffer_memory_uses_segment_allocator(const GstMemory* memory) {
   if (!memory || !memory->allocator || !memory->allocator->mem_type) {
@@ -237,36 +206,40 @@ simaai_memory_t* get_or_attach_memory(uint64_t buffer_id) {
   return mem;
 }
 
-bool seen_sima_segment(const std::vector<simaai_memory_t*>& seen, simaai_memory_t* mem) {
-  return std::find(seen.begin(), seen.end(), mem) != seen.end();
-}
-
 std::size_t invalidate_buffer_segment_backing_for_cpu_read(GstBuffer* buffer,
                                                            const SimaMemApi& api) {
-  if (!buffer || !api.invalidate) {
+  if (!buffer) {
     return 0U;
   }
-  std::size_t invalidated = 0U;
-  std::vector<simaai_memory_t*> seen;
+  // Prefer the allocator's single coherency authority (ownership-skip-gated
+  // invalidate over all segments + mark-CPU-clean on the inline per-allocation
+  // state), so the framework's CPU-read prepare shares one state and one skip
+  // decision with the allocator map(READ) path. If the loaded allocator predates
+  // that symbol (api.cpu_read_begin == null), fall back to the legacy
+  // unconditional per-segment invalidate — always-invalidate, correct but
+  // unoptimised — so the framework stays loadable on any allocator.
+  std::size_t prepared = 0U;
   const guint mem_count = gst_buffer_n_memory(buffer);
   for (guint mi = 0; mi < mem_count; ++mi) {
     GstMemory* gst_mem = gst_buffer_peek_memory(buffer, mi);
     if (!buffer_memory_uses_segment_allocator(gst_mem)) {
       continue;
     }
-    const gsize seg_count = gst_simaai_memory_get_segment_count(gst_mem);
-    for (gsize si = 0; si < seg_count; ++si) {
-      auto* segment =
-          reinterpret_cast<simaai_memory_t*>(gst_simaai_memory_get_segment_at(gst_mem, si));
-      if (!segment || seen_sima_segment(seen, segment)) {
-        continue;
+    if (api.cpu_read_begin) {
+      api.cpu_read_begin(gst_mem);
+    } else if (api.invalidate) {
+      const gsize seg_count = gst_simaai_memory_get_segment_count(gst_mem);
+      for (gsize si = 0; si < seg_count; ++si) {
+        auto* seg =
+            reinterpret_cast<simaai_memory_t*>(gst_simaai_memory_get_segment_at(gst_mem, si));
+        if (seg) {
+          api.invalidate(seg);
+        }
       }
-      seen.push_back(segment);
-      api.invalidate(segment);
-      ++invalidated;
     }
+    ++prepared;
   }
-  return invalidated;
+  return prepared;
 }
 
 } // namespace
@@ -280,29 +253,22 @@ CpuVisibleBufferState cpu_visible_buffer_state(GstBuffer* buffer) {
     return out;
   }
 
+  // The producer/dirty marks are queried for DIAGNOSTICS ONLY. They live as
+  // GQuark qdata on the GstBuffer/GstSample WRAPPER, which GStreamer buffer
+  // pools recycle over the same physical segment. Trusting a "Cpu" or "clean"
+  // wrapper mark to SKIP the invalidate is the recycling bug: a device write
+  // into the recycled segment is then missed and the CPU reads stale cache.
+  // Until coherency state is keyed to the ALLOCATION (Tier-A Phase 1: inline
+  // SegCoherency on GstSimaaiSegmentMemory + an end_device_access mark on the
+  // device-write path), every cached SiMa-backed buffer is synced before a CPU
+  // read. This matches the allocator's own map(READ) invalidate and the
+  // Tensor::map(Read) conservative fallback; it costs redundant invalidates,
+  // never a missed one.
   SimaBufferProducer producer = SimaBufferProducer::Unknown;
   out.has_producer = query_buffer_producer(buffer, &producer);
   out.producer = static_cast<unsigned>(producer);
-  if (out.has_producer) {
-    if (producer == SimaBufferProducer::Device) {
-      out.requires_sync = true;
-      return out;
-    }
-    if (producer == SimaBufferProducer::Cpu) {
-      out.requires_sync = false;
-      return out;
-    }
-  }
-
   out.has_cpu_dirty = query_buffer_cpu_dirty(buffer, &out.cpu_dirty);
-  if (out.has_cpu_dirty) {
-    out.requires_sync = out.cpu_dirty;
-    return out;
-  }
 
-  // Unknown cached SiMa-backed producer remains conservative. This mirrors the
-  // Tensor::map(Read) correctness fallback and is intentionally shared with the
-  // async output preparation path.
   out.requires_sync = true;
   return out;
 }
@@ -330,7 +296,7 @@ CpuVisiblePrepareResult prepare_gst_buffer_for_cpu_read(GstBuffer* buffer) {
   }
 
   SimaMemApi& api = sima_mem_api();
-  if (!api.invalidate) {
+  if (!api.invalidate && !api.cpu_read_begin) {
     return result;
   }
 
@@ -372,7 +338,7 @@ CpuVisiblePrepareResult prepare_gst_sample_for_cpu_read(GstSample* sample) {
   return result;
 }
 
-CpuVisiblePrepareResult prepare_tensor_for_cpu_read(Tensor& tensor) {
+CpuVisiblePrepareResult prepare_tensor_for_cpu_read(const Tensor& tensor) {
   if (!tensor.storage || tensor.storage->kind != StorageKind::GstSample ||
       !tensor.storage->holder) {
     return {};

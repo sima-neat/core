@@ -1682,8 +1682,8 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
 }
 
 bool build_processcvu_routing_contract_from_manifest_stage_local(
-    const StageStaticSpec& stage, simaai::gst::CvuRoutingContract* out,
-    std::string* error_message, const SimaPluginStaticManifest* manifest = nullptr,
+    const StageStaticSpec& stage, simaai::gst::CvuRoutingContract* out, std::string* error_message,
+    const SimaPluginStaticManifest* manifest = nullptr,
     const std::size_t stage_index = kStageIndexUnavailableLocal) {
   if (!out) {
     if (error_message) {
@@ -1738,19 +1738,16 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     binding.sink_pad_index = binding_spec.sink_pad_index;
     binding.logical_input_index = logical_index;
     binding.local_physical_index = logical->physical_index;
-    const auto* source_logical =
-        resolved_edge ? resolved_edge->producer_logical_output : nullptr;
-    const auto* source_physical =
-        resolved_edge ? resolved_edge->producer_physical_output : nullptr;
+    const auto* source_logical = resolved_edge ? resolved_edge->producer_logical_output : nullptr;
+    const auto* source_physical = resolved_edge ? resolved_edge->producer_physical_output : nullptr;
     const bool binding_source_fields_incomplete =
         binding_spec.src_logical_output_index < 0 || binding_spec.src_output_slot < 0 ||
-        binding_spec.src_physical_output_index < 0 ||
-        binding_spec.src_physical_size_bytes == 0U || binding_spec.source_segment_name.empty();
-    binding.source_logical_index =
-        binding_spec.src_logical_output_index >= 0
-            ? binding_spec.src_logical_output_index
-            : (source_logical ? source_logical->logical_index
-                              : binding_spec.src_logical_output_index);
+        binding_spec.src_physical_output_index < 0 || binding_spec.src_physical_size_bytes == 0U ||
+        binding_spec.source_segment_name.empty();
+    binding.source_logical_index = binding_spec.src_logical_output_index >= 0
+                                       ? binding_spec.src_logical_output_index
+                                       : (source_logical ? source_logical->logical_index
+                                                         : binding_spec.src_logical_output_index);
     binding.source_output_slot =
         binding_spec.src_output_slot >= 0
             ? binding_spec.src_output_slot
@@ -4577,16 +4574,12 @@ discover_graph_contract_local(const SimaPluginStaticManifest& transformed_manife
   return contract_opt;
 }
 
-bool build_graph_owned_prepared_stage_local(const StageStaticSpec& transformed_stage,
-                                            const StageStaticSpec* original_stage,
-                                            const MpkContract& contract,
-                                            const std::filesystem::path& pack_root,
-                                            simaai::gst::PreparedStageSpec* out,
-                                            std::string* error_message,
-                                            const SimaPluginStaticManifest* transformed_manifest =
-                                                nullptr,
-                                            std::size_t transformed_stage_index =
-                                                kStageIndexUnavailableLocal) {
+bool build_graph_owned_prepared_stage_local(
+    const StageStaticSpec& transformed_stage, const StageStaticSpec* original_stage,
+    const MpkContract& contract, const std::filesystem::path& pack_root,
+    simaai::gst::PreparedStageSpec* out, std::string* error_message,
+    const SimaPluginStaticManifest* transformed_manifest = nullptr,
+    std::size_t transformed_stage_index = kStageIndexUnavailableLocal) {
   if (!out) {
     if (error_message) {
       *error_message = "graph-owned prepared stage requires output storage";
@@ -5249,10 +5242,8 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
       }
 
       simaai::gst::ProcessCvuPreparedStage processcvu_stage;
-      if (!build_processcvu_prepared_stage_from_manifest_stage_local(stage, &processcvu_stage,
-                                                                     error_message,
-                                                                     &transformed_manifest,
-                                                                     stage_index)) {
+      if (!build_processcvu_prepared_stage_from_manifest_stage_local(
+              stage, &processcvu_stage, error_message, &transformed_manifest, stage_index)) {
         return std::nullopt;
       }
       simaai::gst::PreparedStageSpec prepared;

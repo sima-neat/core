@@ -21,27 +21,39 @@ std::string arg_value(int argc, char** argv, const std::string& key) {
   const std::string prefix = key + "=";
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i] ? argv[i] : "";
-    if (arg.rfind(prefix, 0) == 0) return arg.substr(prefix.size());
-    if (arg == key && i + 1 < argc) return argv[++i] ? argv[i] : "";
+    if (arg.rfind(prefix, 0) == 0)
+      return arg.substr(prefix.size());
+    if (arg == key && i + 1 < argc)
+      return argv[++i] ? argv[i] : "";
   }
   return {};
 }
 int int_arg(int argc, char** argv, const std::string& key, int fallback) {
   const std::string raw = arg_value(argc, argv, key);
-  if (raw.empty()) return fallback;
-  try { return std::stoi(raw); } catch (...) { return fallback; }
+  if (raw.empty())
+    return fallback;
+  try {
+    return std::stoi(raw);
+  } catch (...) {
+    return fallback;
+  }
 }
 bool bool_arg(int argc, char** argv, const std::string& key, bool fallback) {
   const std::string raw = arg_value(argc, argv, key);
-  if (raw.empty()) return fallback;
-  if (raw == "1" || raw == "true" || raw == "on" || raw == "yes") return true;
-  if (raw == "0" || raw == "false" || raw == "off" || raw == "no") return false;
+  if (raw.empty())
+    return fallback;
+  if (raw == "1" || raw == "true" || raw == "on" || raw == "yes")
+    return true;
+  if (raw == "0" || raw == "false" || raw == "off" || raw == "no")
+    return false;
   return fallback;
 }
 std::size_t element_count(const std::vector<int64_t>& shape) {
   std::size_t count = 1;
-  if (shape.empty()) return 1;
-  for (auto dim : shape) count *= static_cast<std::size_t>(dim > 0 ? dim : 1);
+  if (shape.empty())
+    return 1;
+  for (auto dim : shape)
+    count *= static_cast<std::size_t>(dim > 0 ? dim : 1);
   return count;
 }
 neat::Tensor make_tensor(const neat::TensorSpec& spec, float fill) {
@@ -50,7 +62,8 @@ neat::Tensor make_tensor(const neat::TensorSpec& spec, float fill) {
   return neat::Tensor::from_vector(data, shape, neat::TensorMemory::EV74);
 }
 double percentile_ms(std::vector<double> samples, double p) {
-  if (samples.empty()) return 0.0;
+  if (samples.empty())
+    return 0.0;
   std::sort(samples.begin(), samples.end());
   const double idx = (p / 100.0) * static_cast<double>(samples.size() - 1U);
   const auto lo = static_cast<std::size_t>(idx);
@@ -62,7 +75,7 @@ std::string base_name(const std::string& path) {
   const auto pos = path.find_last_of('/');
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
-}
+} // namespace
 
 int main(int argc, char** argv) {
   const std::string model_path = arg_value(argc, argv, "--model");
@@ -74,7 +87,8 @@ int main(int argc, char** argv) {
   const bool cleanup = bool_arg(argc, argv, "--cleanup", true);
   const bool plugin_latency = bool_arg(argc, argv, "--plugin-latency", true);
   const bool startup_preflight = bool_arg(argc, argv, "--startup-preflight", true);
-  const std::string mode = arg_value(argc, argv, "--mode").empty() ? "sync" : arg_value(argc, argv, "--mode");
+  const std::string mode =
+      arg_value(argc, argv, "--mode").empty() ? "sync" : arg_value(argc, argv, "--mode");
   const int inflight = std::max(1, int_arg(argc, argv, "--inflight", 4));
   if (model_path.empty() || pre.empty() || post.empty() || measured <= 0 || warmup < 0) {
     std::cerr << "Usage: evo_tput_bench --model <path> --pre <A65|EV74> --post <A65|EV74> "
@@ -98,14 +112,16 @@ int main(int argc, char** argv) {
               << " pre=" << pre << " post=" << post << " warmup=" << warmup
               << " measured=" << measured << " timeout_ms=" << timeout_ms
               << " plugin_latency=" << (plugin_latency ? 1 : 0)
-              << " startup_preflight=" << (startup_preflight ? 1 : 0)
-              << " mode=" << mode << " inflight=" << inflight << "\n" << std::flush;
+              << " startup_preflight=" << (startup_preflight ? 1 : 0) << " mode=" << mode
+              << " inflight=" << inflight << "\n"
+              << std::flush;
 
     const auto ctor0 = std::chrono::steady_clock::now();
     neat::Model model(model_path, opt);
     const auto ctor1 = std::chrono::steady_clock::now();
     std::cout << "EVO_TPUT_CTOR_DONE ctor_seconds="
-              << std::chrono::duration<double>(ctor1 - ctor0).count() << "\n" << std::flush;
+              << std::chrono::duration<double>(ctor1 - ctor0).count() << "\n"
+              << std::flush;
 
     neat::TensorList inputs;
     const auto specs = model.input_specs();
@@ -198,7 +214,8 @@ int main(int argc, char** argv) {
                     << " reason=missing_push_timestamp\n";
           return 7;
         }
-        lat_ms.push_back(std::chrono::duration<double, std::milli>(t_pull - push_times.front()).count());
+        lat_ms.push_back(
+            std::chrono::duration<double, std::milli>(t_pull - push_times.front()).count());
         push_times.pop_front();
         ++pulled;
         ++output_count;
@@ -218,21 +235,19 @@ int main(int argc, char** argv) {
     const auto report = scope.stop();
 
     const double meas_s = std::chrono::duration<double>(meas1 - meas0).count();
-    const double mean_ms = std::accumulate(lat_ms.begin(), lat_ms.end(), 0.0) /
-                           static_cast<double>(lat_ms.size());
+    const double mean_ms =
+        std::accumulate(lat_ms.begin(), lat_ms.end(), 0.0) / static_cast<double>(lat_ms.size());
     const auto [min_it, max_it] = std::minmax_element(lat_ms.begin(), lat_ms.end());
     std::cout << std::fixed << std::setprecision(3);
     std::cout << "EVO_TPUT_RESULT status=PASS model_name=" << base_name(model_path)
-              << " pre=" << pre << " post=" << post << " mode=" << mode
-              << " inflight=" << inflight << " measured=" << measured
-              << " outputs=" << output_count << " measured_seconds=" << meas_s
-              << " fps=" << (static_cast<double>(measured) / meas_s)
-              << " mean_ms=" << mean_ms << " min_ms=" << *min_it
-              << " p50_ms=" << percentile_ms(lat_ms, 50.0)
+              << " pre=" << pre << " post=" << post << " mode=" << mode << " inflight=" << inflight
+              << " measured=" << measured << " outputs=" << output_count
+              << " measured_seconds=" << meas_s
+              << " fps=" << (static_cast<double>(measured) / meas_s) << " mean_ms=" << mean_ms
+              << " min_ms=" << *min_it << " p50_ms=" << percentile_ms(lat_ms, 50.0)
               << " p90_ms=" << percentile_ms(lat_ms, 90.0)
               << " p95_ms=" << percentile_ms(lat_ms, 95.0)
-              << " p99_ms=" << percentile_ms(lat_ms, 99.0)
-              << " max_ms=" << *max_it << "\n";
+              << " p99_ms=" << percentile_ms(lat_ms, 99.0) << " max_ms=" << *max_it << "\n";
     std::cout << report.to_text() << std::flush;
 
     const auto summary = runner.measurement_summary();
@@ -246,8 +261,7 @@ int main(int argc, char** argv) {
               << " avg_map_us=" << summary.input_stats.avg_map_us
               << " avg_copy_us=" << summary.input_stats.avg_copy_us
               << " push_count=" << summary.input_stats.push_count
-              << " pull_count=" << summary.input_stats.pull_count
-              << "\n";
+              << " pull_count=" << summary.input_stats.pull_count << "\n";
 
     const auto diag = runner.diag_snapshot();
     std::vector<neat::RunStageStats> stages = diag.stages;
@@ -258,13 +272,12 @@ int main(int argc, char** argv) {
     const std::size_t stage_n = std::min<std::size_t>(stages.size(), 8U);
     for (std::size_t i = 0; i < stage_n; ++i) {
       const auto& s = stages[i];
-      const double avg_ms = s.samples ? (static_cast<double>(s.total_us) / s.samples / 1000.0) : 0.0;
-      std::cout << "EVO_STAGE_TOP rank=" << (i + 1)
-                << " name=" << s.stage_name
+      const double avg_ms =
+          s.samples ? (static_cast<double>(s.total_us) / s.samples / 1000.0) : 0.0;
+      std::cout << "EVO_STAGE_TOP rank=" << (i + 1) << " name=" << s.stage_name
                 << " samples=" << s.samples
                 << " total_ms=" << (static_cast<double>(s.total_us) / 1000.0)
-                << " avg_ms=" << avg_ms
-                << " max_ms=" << (static_cast<double>(s.max_us) / 1000.0)
+                << " avg_ms=" << avg_ms << " max_ms=" << (static_cast<double>(s.max_us) / 1000.0)
                 << "\n";
     }
     std::vector<neat::RunElementTimingStats> elements = diag.element_timings;
@@ -275,17 +288,14 @@ int main(int argc, char** argv) {
     const std::size_t elem_n = std::min<std::size_t>(elements.size(), 12U);
     for (std::size_t i = 0; i < elem_n; ++i) {
       const auto& e = elements[i];
-      const double avg_ms = e.samples ? (static_cast<double>(e.total_us) / e.samples / 1000.0) : 0.0;
-      std::cout << "EVO_ELEMENT_TOP rank=" << (i + 1)
-                << " name=" << e.element_name
+      const double avg_ms =
+          e.samples ? (static_cast<double>(e.total_us) / e.samples / 1000.0) : 0.0;
+      std::cout << "EVO_ELEMENT_TOP rank=" << (i + 1) << " name=" << e.element_name
                 << " samples=" << e.samples
                 << " total_ms=" << (static_cast<double>(e.total_us) / 1000.0)
-                << " avg_ms=" << avg_ms
-                << " min_ms=" << (static_cast<double>(e.min_us) / 1000.0)
+                << " avg_ms=" << avg_ms << " min_ms=" << (static_cast<double>(e.min_us) / 1000.0)
                 << " max_ms=" << (static_cast<double>(e.max_us) / 1000.0)
-                << " missed_in=" << e.missed_in
-                << " missed_out=" << e.missed_out
-                << "\n";
+                << " missed_in=" << e.missed_in << " missed_out=" << e.missed_out << "\n";
     }
     runner.close();
     return 0;

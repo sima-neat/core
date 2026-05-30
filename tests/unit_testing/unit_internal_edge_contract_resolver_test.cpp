@@ -22,33 +22,27 @@ PhysicalBufferStaticSpec physical(int index, std::uint64_t size, const std::stri
 }
 
 LogicalTensorStaticSpec logical_output(int logical_index, int physical_index, int slot,
-                                       std::vector<std::int64_t> shape,
-                                       const std::string& dtype,
-                                       const std::string& segment,
-                                       std::uint64_t size_bytes = 0U) {
+                                       std::vector<std::int64_t> shape, const std::string& dtype,
+                                       const std::string& segment, std::uint64_t size_bytes = 0U) {
   return build_logical_output_static_spec(logical_index, logical_index, physical_index, slot,
                                           logical_index, shape, dtype, "HWC", segment, segment,
                                           segment, 0, size_bytes);
 }
 
-LogicalInputStaticSpec logical_input(int logical_index, int physical_index,
-                                     std::vector<std::int64_t> shape,
-                                     const std::string& dtype, const std::string& segment,
-                                     std::int64_t byte_offset = 0,
-                                     std::uint64_t size_bytes = 0U,
-                                     TensorMaterializationKind materialization =
-                                         TensorMaterializationKind::Direct) {
-  return build_logical_input_static_spec(logical_index, logical_index, physical_index, shape,
-                                         dtype, "HWC", segment, segment, segment, byte_offset,
-                                         size_bytes, materialization);
+LogicalInputStaticSpec
+logical_input(int logical_index, int physical_index, std::vector<std::int64_t> shape,
+              const std::string& dtype, const std::string& segment, std::int64_t byte_offset = 0,
+              std::uint64_t size_bytes = 0U,
+              TensorMaterializationKind materialization = TensorMaterializationKind::Direct) {
+  return build_logical_input_static_spec(logical_index, logical_index, physical_index, shape, dtype,
+                                         "HWC", segment, segment, segment, byte_offset, size_bytes,
+                                         materialization);
 }
 
-InputBindingStaticSpec binding_to_producer(int producer_index, const std::string& producer_id,
-                                           int logical_output_index, int output_slot,
-                                           int physical_output_index,
-                                           const std::string& source_segment,
-                                           std::uint64_t source_size,
-                                           std::int64_t source_byte_offset = 0) {
+InputBindingStaticSpec
+binding_to_producer(int producer_index, const std::string& producer_id, int logical_output_index,
+                    int output_slot, int physical_output_index, const std::string& source_segment,
+                    std::uint64_t source_size, std::int64_t source_byte_offset = 0) {
   auto binding = build_input_binding_static_spec(
       0, 0, "consumer_input", source_segment, logical_output_index, output_slot,
       physical_output_index, source_size, source_byte_offset, true);
@@ -61,9 +55,9 @@ sima_ev_tensor_desc dense_desc(std::vector<int> shape, const std::string& dtype,
                                const std::string& layout) {
   sima_ev_tensor_desc desc{};
   std::string error;
-  assert(tensorsemantics::build_dense_tensor_desc(
-      shape, dtype, layout, &desc, &error, "missing output", "bad rank", "bad dim", "bad dtype",
-      "bad stride"));
+  assert(tensorsemantics::build_dense_tensor_desc(shape, dtype, layout, &desc, &error,
+                                                  "missing output", "bad rank", "bad dim",
+                                                  "bad dtype", "bad stride"));
   return desc;
 }
 
@@ -126,7 +120,7 @@ void slice_view_edge_resolves_as_consumer_side_view_contract() {
   consumer.input_bindings.clear();
   consumer.physical_inputs.push_back(physical(0, 4U, "slice_view"));
   consumer.logical_inputs.push_back(logical_input(0, 0, {4}, "UINT8", "slice_view", 4, 4U,
-                                                 TensorMaterializationKind::OffsetView));
+                                                  TensorMaterializationKind::OffsetView));
   consumer.input_bindings.push_back(
       binding_to_producer(0, "producer", 0, 0, 0, "producer_out", 16U, 4));
 
@@ -256,8 +250,8 @@ simaai::gst::CvuInputMemoryBinding
 single_prepared_processcvu_input_binding(SimaPluginStaticManifest manifest) {
   ensure_gst_ready();
   std::string error;
-  const auto prepared = build_prepared_runtime_context(
-      nullptr, manifest, std::nullopt, {}, {}, simaai::neat::NameTransform{}, &error);
+  const auto prepared = build_prepared_runtime_context(nullptr, manifest, std::nullopt, {}, {},
+                                                       simaai::neat::NameTransform{}, &error);
 
   assert(prepared.has_value() && error.empty());
   assert(prepared->stages.size() == 1U);
@@ -268,9 +262,8 @@ single_prepared_processcvu_input_binding(SimaPluginStaticManifest manifest) {
 }
 
 void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
-  const auto input_binding = single_prepared_processcvu_input_binding(
-      processcvu_routing_manifest(
-          binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 16U), false));
+  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", 1, 1, 1, "head1", 16U), false));
 
   assert(input_binding.source_logical_index == 1);
   assert(input_binding.source_output_slot == 1);
@@ -282,9 +275,8 @@ void prepared_runtime_processcvu_routing_uses_manifest_edge_resolution() {
 }
 
 void prepared_runtime_fills_missing_source_fields_from_resolved_edge() {
-  const auto input_binding = single_prepared_processcvu_input_binding(
-      processcvu_routing_manifest(
-          binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), false));
+  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), false));
 
   assert(input_binding.source_logical_index == 1);
   assert(input_binding.source_output_slot == 1);
@@ -295,10 +287,8 @@ void prepared_runtime_fills_missing_source_fields_from_resolved_edge() {
 }
 
 void prepared_runtime_keeps_explicit_source_fields_when_edge_resolves() {
-  const auto input_binding = single_prepared_processcvu_input_binding(
-      processcvu_routing_manifest(
-          binding_to_producer(0, "branching_producer", 7, 1, 9, "explicit_parent", 123U, 5),
-          false));
+  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", 7, 1, 9, "explicit_parent", 123U, 5), false));
 
   assert(input_binding.source_logical_index == 7);
   assert(input_binding.source_output_slot == 1);
@@ -309,10 +299,8 @@ void prepared_runtime_keeps_explicit_source_fields_when_edge_resolves() {
 }
 
 void prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete() {
-  const auto input_binding = single_prepared_processcvu_input_binding(
-      processcvu_routing_manifest(
-          binding_to_producer(0, "branching_producer", 1, 1, 1, "explicit_parent", 16U, 0),
-          true));
+  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", 1, 1, 1, "explicit_parent", 16U, 0), true));
 
   assert(input_binding.source_logical_index == 1);
   assert(input_binding.source_output_slot == 1);
@@ -323,9 +311,8 @@ void prepared_runtime_keeps_explicit_zero_offset_when_source_fields_are_complete
 }
 
 void prepared_runtime_view_edge_fills_source_offset_from_consumer_view() {
-  const auto input_binding = single_prepared_processcvu_input_binding(
-      processcvu_routing_manifest(
-          binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), true));
+  const auto input_binding = single_prepared_processcvu_input_binding(processcvu_routing_manifest(
+      binding_to_producer(0, "branching_producer", -1, 1, -1, "", 0U), true));
 
   assert(input_binding.source_logical_index == 1);
   assert(input_binding.source_output_slot == 1);

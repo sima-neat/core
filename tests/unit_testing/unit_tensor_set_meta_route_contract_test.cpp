@@ -25,12 +25,12 @@ namespace {
 
 using simaai::neat::apply_output_tensor_override;
 using simaai::neat::Mapping;
+using simaai::neat::output_override_entry_physical_span_bytes;
 using simaai::neat::OutputTensorOverride;
 using simaai::neat::OutputTensorOverrideEntry;
-using simaai::neat::output_override_entry_physical_span_bytes;
+using simaai::neat::Sample;
 using simaai::neat::sample_from_tensors;
 using simaai::neat::sample_has_tensor_list;
-using simaai::neat::Sample;
 using simaai::neat::Tensor;
 using simaai::neat::TensorDType;
 using simaai::neat::TensorLayout;
@@ -245,8 +245,8 @@ GstSamplePtr make_sample_with_memories(std::initializer_list<std::size_t> memory
     fill = static_cast<std::uint8_t>(fill + 17U);
   }
 
-  GstCaps* caps = gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING,
-                                      "MLA", nullptr);
+  GstCaps* caps =
+      gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING, "MLA", nullptr);
   require(caps != nullptr, "failed to allocate tensor caps");
   GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
   gst_caps_unref(caps);
@@ -289,9 +289,8 @@ Sample make_stale_tensor_set_sample(GstSample* sample, std::size_t stale_tensor_
 
 OutputTensorOverrideEntry make_override_entry(std::vector<int64_t> shape,
                                               std::vector<int64_t> strides, int64_t byte_offset,
-                                              int memory_index, int logical_index,
-                                              int route_slot, TensorDType dtype,
-                                              std::string name) {
+                                              int memory_index, int logical_index, int route_slot,
+                                              TensorDType dtype, std::string name) {
   OutputTensorOverrideEntry entry;
   entry.shape = std::move(shape);
   entry.strides_bytes = std::move(strides);
@@ -307,14 +306,12 @@ OutputTensorOverrideEntry make_override_entry(std::vector<int64_t> shape,
 }
 
 void require_same_public_contract(const Tensor& owned, const Tensor& view,
-                                  const OutputTensorOverrideEntry& entry,
-                                  const char* context) {
+                                  const OutputTensorOverrideEntry& entry, const char* context) {
   require(owned.dtype == view.dtype, std::string(context) + ": dtype mismatch");
   require(owned.dtype == entry.dtype, std::string(context) + ": override dtype not applied");
   require(owned.shape == view.shape, std::string(context) + ": shape mismatch");
   require(owned.shape == entry.shape, std::string(context) + ": override shape not applied");
-  require(owned.strides_bytes == view.strides_bytes,
-          std::string(context) + ": strides mismatch");
+  require(owned.strides_bytes == view.strides_bytes, std::string(context) + ": strides mismatch");
   require(owned.strides_bytes == entry.strides_bytes,
           std::string(context) + ": override strides not applied");
   require(owned.byte_offset == view.byte_offset, std::string(context) + ": byte_offset mismatch");
@@ -370,8 +367,7 @@ void require_override_owned_zero_copy_parity(const Sample& base,
   require(view.tensors.size() == override.outputs.size(),
           std::string(context) + ": zero-copy tensor count should follow override");
   for (std::size_t i = 0; i < override.outputs.size(); ++i) {
-    require_same_public_contract(owned.tensors[i], view.tensors[i], override.outputs[i],
-                                 context);
+    require_same_public_contract(owned.tensors[i], view.tensors[i], override.outputs[i], context);
   }
 }
 
@@ -380,8 +376,8 @@ void override_owned_zero_copy_parity_one_memory() {
   const Sample base = make_stale_tensor_set_sample(sample.get());
 
   OutputTensorOverride override;
-  override.outputs.push_back(make_override_entry({16}, {1}, 0, 0, 0, 0, TensorDType::UInt8,
-                                                 "raw_terminal"));
+  override.outputs.push_back(
+      make_override_entry({16}, {1}, 0, 0, 0, 0, TensorDType::UInt8, "raw_terminal"));
   require_override_owned_zero_copy_parity(base, override, "one-memory override parity");
 }
 
@@ -392,8 +388,8 @@ void override_owned_zero_copy_parity_multi_memory_nonzero_offset() {
   base.tensors.front().route.physical_index = 1;
 
   OutputTensorOverride override;
-  override.outputs.push_back(make_override_entry({7}, {4}, 8, 1, 3, 9, TensorDType::Int32,
-                                                 "class_ids"));
+  override.outputs.push_back(
+      make_override_entry({7}, {4}, 8, 1, 3, 9, TensorDType::Int32, "class_ids"));
   require_override_owned_zero_copy_parity(base, override,
                                           "multi-memory nonzero-offset override parity");
 }
@@ -403,8 +399,8 @@ void override_owned_zero_copy_parity_padded_stride() {
   const Sample base = make_stale_tensor_set_sample(sample.get());
 
   OutputTensorOverride override;
-  override.outputs.push_back(make_override_entry({3, 3}, {8, 2}, 5, 0, 4, 12,
-                                                 TensorDType::UInt8, "padded_view"));
+  override.outputs.push_back(
+      make_override_entry({3, 3}, {8, 2}, 5, 0, 4, 12, TensorDType::UInt8, "padded_view"));
   require(output_override_entry_physical_span_bytes(override.outputs.front()) == 21U,
           "padded override span should account for row gaps");
   require_override_owned_zero_copy_parity(base, override, "padded-stride override parity");
@@ -415,10 +411,10 @@ void override_authoritative_over_stale_tensor_set_metadata() {
   const Sample base = make_stale_tensor_set_sample(sample.get(), 3U);
 
   OutputTensorOverride override;
-  override.outputs.push_back(make_override_entry({2, 3}, {16, 4}, 4, 0, 0, 20,
-                                                 TensorDType::Int32, "terminal_class_ids"));
-  override.outputs.push_back(make_override_entry({8}, {1}, 64, 0, 1, 21, TensorDType::UInt8,
-                                                 "terminal_aux_bytes"));
+  override.outputs.push_back(
+      make_override_entry({2, 3}, {16, 4}, 4, 0, 0, 20, TensorDType::Int32, "terminal_class_ids"));
+  override.outputs.push_back(
+      make_override_entry({8}, {1}, 64, 0, 1, 21, TensorDType::UInt8, "terminal_aux_bytes"));
   require_override_owned_zero_copy_parity(base, override,
                                           "stale TensorSet authoritative override parity");
 }

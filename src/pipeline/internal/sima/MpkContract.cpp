@@ -546,8 +546,8 @@ TypedTensorValuesLocal read_typed_tensor_values_any_local(const json& value) {
   return out;
 }
 
-TypedTensorValuesLocal read_typed_tensor_alias_values_local(
-    const json& obj, std::initializer_list<const char*> keys) {
+TypedTensorValuesLocal
+read_typed_tensor_alias_values_local(const json& obj, std::initializer_list<const char*> keys) {
   for (const char* key : keys) {
     if (!key || !*key || !obj.contains(key)) {
       continue;
@@ -2045,10 +2045,9 @@ void derive_logical_output_contracts(MpkContract* contract) {
                   : ((producer_input && !producer_input->dtype.empty()) ? producer_input->dtype
                                                                         : output.dtype);
           output.logical_dtype = normalize_dtype_local(dtype);
-          output.logical_dtype_source =
-              (producer_input && dtype == producer_input->dtype)
-                  ? producer_input->dtype_source
-                  : DTypeSource::InternalContract;
+          output.logical_dtype_source = (producer_input && dtype == producer_input->dtype)
+                                            ? producer_input->dtype_source
+                                            : DTypeSource::InternalContract;
           output.logical_source_plugin = producer.name;
           output.logical_source_kernel = producer.kernel;
           output.logical_source_sequence = producer.sequence;
@@ -5929,9 +5928,9 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     contract.model_path = root_json["model_path"].get<std::string>();
   }
   if (root_json.contains("input_nodes")) {
-    contract.ingress_tensors = parse_tensor_nodes(root_json["input_nodes"], {}, {}, "",
-                                                  DTypeSource::Unknown, DTypeSource::Unknown,
-                                                  MpkShapeSemantics::Unknown);
+    contract.ingress_tensors =
+        parse_tensor_nodes(root_json["input_nodes"], {}, {}, "", DTypeSource::Unknown,
+                           DTypeSource::Unknown, MpkShapeSemantics::Unknown);
   }
 
   const auto& plugins = root_json["plugins"];
@@ -6057,10 +6056,9 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       }
       const auto typed_input_values = read_typed_tensor_alias_values_local(
           *params, {"input_types", "input_dtype", "in_dtype", "input_data_type"});
-      const auto typed_output_values =
-          read_typed_tensor_alias_values_local(*params, {"tensor_types", "output_types",
-                                                        "output_dtype", "out_dtype",
-                                                        "output_data_type", "data_type"});
+      const auto typed_output_values = read_typed_tensor_alias_values_local(
+          *params, {"tensor_types", "output_types", "output_dtype", "out_dtype", "output_data_type",
+                    "data_type"});
       if (input_shapes.empty() && !typed_input_values.shapes.empty()) {
         input_shapes = typed_input_values.shapes;
       }
@@ -6116,10 +6114,9 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     if (plugin.contains("output_nodes")) {
       const MpkShapeSemantics output_shape_semantics =
           classify_mpk_tensor_shape_semantics_local(stage, false);
-      stage.output_tensors =
-          parse_tensor_nodes(plugin["output_nodes"], output_shapes, output_dtypes,
-                             fallback_output_dtype, output_dtype_source,
-                             fallback_output_dtype_source, output_shape_semantics);
+      stage.output_tensors = parse_tensor_nodes(
+          plugin["output_nodes"], output_shapes, output_dtypes, fallback_output_dtype,
+          output_dtype_source, fallback_output_dtype_source, output_shape_semantics);
     }
     if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
       const std::string kernel_token =

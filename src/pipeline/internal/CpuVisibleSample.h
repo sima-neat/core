@@ -40,7 +40,7 @@ bool gst_buffer_cpu_read_requires_sync(GstBuffer* buffer);
 bool gst_sample_cpu_read_prepared(GstSample* sample);
 CpuVisiblePrepareResult prepare_gst_buffer_for_cpu_read(GstBuffer* buffer);
 CpuVisiblePrepareResult prepare_gst_sample_for_cpu_read(GstSample* sample);
-CpuVisiblePrepareResult prepare_tensor_for_cpu_read(Tensor& tensor);
+CpuVisiblePrepareResult prepare_tensor_for_cpu_read(const Tensor& tensor);
 CpuVisiblePrepareResult prepare_sample_for_cpu_read(Sample& sample);
 
 } // namespace simaai::neat::pipeline_internal

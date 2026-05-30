@@ -87,6 +87,52 @@ bool tensor_requires_cpu_to_device_copy_for_push(const simaai::neat::Tensor& ten
   return tensor.device.type == simaai::neat::DeviceType::CPU;
 }
 
+// Set-complete scan: true if ANY tensor in the sample (tensor-list, single
+// tensor, or nested bundle field) is CPU-backed and would need a copy to be
+// pushed into a device-visible route. The previous inline guards only checked
+// the front tensor, which misses mixed CPU/device tensor sets.
+bool sample_has_cpu_backed_tensor_for_device_push(const simaai::neat::Sample& sample) {
+  if (sample_has_tensor_list(sample)) {
+    for (const auto& t : sample.tensors) {
+      if (tensor_requires_cpu_to_device_copy_for_push(t)) {
+        return true;
+      }
+    }
+  }
+  if (sample.tensor.has_value() && tensor_requires_cpu_to_device_copy_for_push(*sample.tensor)) {
+    return true;
+  }
+  for (const auto& field : sample.fields) {
+    if (sample_has_cpu_backed_tensor_for_device_push(field)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Single source of truth for the actionable guidance shown when a CPU-backed
+// tensor reaches a device-visible route. Reused by the raw-path guard and the
+// tensor-envelope failure path so both surface identical guidance.
+const char* device_visible_push_guard_message() {
+  return "CPU-backed Tensor pushed into a device-visible EV74/DMS route. Create the Tensor "
+         "with TensorMemory::EV74 (or TensorMemory::MLA for DMS routes) so the copy is owned by "
+         "Tensor creation, or set SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 to allow the slow "
+         "compatibility copy in runner.push().";
+}
+
+// Shared fail-fast guard. Throws the actionable message when the route demands
+// device-visible input, the compat-copy escape is off, and any tensor in the
+// pushed sample is CPU-backed.
+void enforce_device_visible_push_or_throw(bool require_device_visible,
+                                          const simaai::neat::Sample& sample, const char* where) {
+  if (!require_device_visible || allow_inputstream_cpu_to_device_copy()) {
+    return;
+  }
+  if (sample_has_cpu_backed_tensor_for_device_push(sample)) {
+    throw std::runtime_error(std::string(where) + ": " + device_visible_push_guard_message());
+  }
+}
+
 const Tensor* first_tensor_for_preprocess_meta(const Sample& sample) {
   if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
     return &sample.tensors.front();
@@ -1259,20 +1305,10 @@ bool InputStream::try_push_message(const Sample& msg) {
   cache_preprocess_meta(*st, transport_msg, seq.input_seq, seq.orig_input_seq);
   SampleSpec spec = derive_sample_spec_or_throw(transport_msg);
   const bool use_tensor_envelope_transport = spec.tensor_envelope_transport;
-  const simaai::neat::Tensor* device_visibility_tensor = input_tensor;
-  if (!device_visibility_tensor) {
-    device_visibility_tensor = first_tensor_for_preprocess_meta(transport_msg);
-  }
-  if (st->opt.require_device_visible_input && device_visibility_tensor &&
-      tensor_requires_cpu_to_device_copy_for_push(*device_visibility_tensor) &&
-      !allow_inputstream_cpu_to_device_copy()) {
-    throw std::runtime_error(
-        "InputStream::try_push_message: CPU-backed Tensor pushed into a device-visible "
-        "EV74/DMS input route. Create the Tensor with TensorMemory::EV74 (or TensorMemory::MLA "
-        "for DMS routes) so the copy is owned by Tensor creation, or set "
-        "SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 to allow the slow compatibility copy in "
-        "runner.push().");
-  }
+  // Fail-fast (set-complete) guard: covers every transport kind below,
+  // including the tensor-envelope branch which previously had no guard.
+  enforce_device_visible_push_or_throw(st->opt.require_device_visible_input, transport_msg,
+                                       "InputStream::try_push_message");
   if (spec.kind == SampleMediaKind::RawVideo) {
     spec.fps_n = st->src_opt.fps_n;
     spec.fps_d = st->src_opt.fps_d;
@@ -1324,8 +1360,17 @@ bool InputStream::try_push_message(const Sample& msg) {
                                                 ? std::chrono::steady_clock::now()
                                                 : std::chrono::steady_clock::time_point{};
     if (!holder) {
-      throw std::runtime_error(
-          err.empty() ? "InputStream::try_push_message: tensor envelope conversion failed" : err);
+      std::string detail =
+          err.empty() ? "InputStream::try_push_message: tensor envelope conversion failed" : err;
+      // The low-level envelope builder reports holder/GstSample-shaped errors
+      // (e.g. "holder: storage is not GstSample") when a CPU-backed tensor can't
+      // back a device envelope. Append actionable guidance so the failure is
+      // self-explanatory regardless of whether require_device_visible_input was
+      // armed for this route.
+      if (sample_has_cpu_backed_tensor_for_device_push(transport_msg)) {
+        detail += " [" + std::string(device_visible_push_guard_message()) + "]";
+      }
+      throw std::runtime_error(detail);
     }
     const bool ok = push_holder_transport(
         *st, holder, "InputStream::try_push_message(holder_envelope)",
@@ -1412,15 +1457,8 @@ bool InputStream::try_push_message(const Sample& msg) {
     }
   }
 
-  if (st->opt.require_device_visible_input && tensor_requires_cpu_to_device_copy_for_push(input) &&
-      !allow_inputstream_cpu_to_device_copy()) {
-    throw std::runtime_error(
-        "InputStream::try_push_message: CPU-backed Tensor pushed into a device-visible "
-        "EV74/DMS input route. Create the Tensor with TensorMemory::EV74 (or TensorMemory::MLA "
-        "for DMS routes) so the copy is owned by Tensor creation, or set "
-        "SIMA_ALLOW_INPUTSTREAM_CPU_TO_EV74_COPY=1 to allow the slow compatibility copy in "
-        "runner.push().");
-  }
+  // Device-visibility guard already enforced set-completely at the top of
+  // try_push_message (covers this copy path too).
 
   const auto fill = make_tensor_copy_fill(input, input_bytes, "InputStream::try_push_message");
 

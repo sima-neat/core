@@ -53,8 +53,8 @@ std::vector<Box> parse_bbox_bytes(const std::vector<uint8_t>& bytes, int img_w, 
       throw std::runtime_error("bbox header exceeds expected topk");
     }
     if (!strict) {
-      header = static_cast<uint32_t>(
-          std::min<std::size_t>(header, static_cast<size_t>(expected_topk)));
+      header =
+          static_cast<uint32_t>(std::min<std::size_t>(header, static_cast<size_t>(expected_topk)));
     }
   }
 
@@ -158,9 +158,8 @@ simaai::neat::TensorList decode_bbox(const simaai::neat::TensorList& bbox_tensor
         in.shape.size() == 1U && in.dtype == simaai::neat::TensorDType::UInt8;
     if (!fmt.empty()) {
       if (fmt != "BBOX") {
-        throw std::runtime_error(
-            "decode_bbox: input tensor " + std::to_string(i) +
-            " has detection format '" + fmt + "', expected 'BBOX'");
+        throw std::runtime_error("decode_bbox: input tensor " + std::to_string(i) +
+                                 " has detection format '" + fmt + "', expected 'BBOX'");
       }
     } else if (!looks_like_bbox_wire) {
       throw std::runtime_error(
@@ -197,8 +196,10 @@ std::string read_detection_format(const simaai::neat::Tensor& tensor) {
 namespace {
 
 std::string sample_payload_format(const simaai::neat::Sample& sample) {
-  if (!sample.payload_tag.empty()) return sample.payload_tag;
-  if (!sample.format.empty())      return sample.format;
+  if (!sample.payload_tag.empty())
+    return sample.payload_tag;
+  if (!sample.format.empty())
+    return sample.format;
   return {};
 }
 
@@ -209,7 +210,7 @@ void tag_detection_format_in_sample(simaai::neat::Sample& sample) {
     simaai::neat::Tensor& tensor = sample.tensors.front();
     std::string fmt = sample_payload_format(sample);
     if (fmt.empty()) {
-      fmt = read_detection_format(tensor);  // may pick up legacy tess-tagged BBOX
+      fmt = read_detection_format(tensor); // may pick up legacy tess-tagged BBOX
     }
     if (upper_copy(fmt) == "BBOX") {
       tag_detection_format(tensor, "BBOX");

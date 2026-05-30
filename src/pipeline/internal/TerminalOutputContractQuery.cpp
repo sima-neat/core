@@ -66,8 +66,8 @@ bool stage_identity_matches(const StageStaticSpec& stage, const std::string& key
   const std::string lower_key = lower_copy(key);
   return stage.logical_stage_id == key || stage.element_name == key || stage.plugin_kind == key ||
          stage.kernel_kind == key || lower_copy(stage.logical_stage_id) == lower_key ||
-         lower_copy(stage.element_name) == lower_key || lower_copy(stage.plugin_kind) == lower_key ||
-         lower_copy(stage.kernel_kind) == lower_key;
+         lower_copy(stage.element_name) == lower_key ||
+         lower_copy(stage.plugin_kind) == lower_key || lower_copy(stage.kernel_kind) == lower_key;
 }
 
 bool stage_has_publishable_outputs(const StageStaticSpec& stage) {
@@ -188,7 +188,8 @@ const PhysicalBufferStaticSpec* physical_for_logical(const StageStaticSpec& stag
       }
     }
     const auto requested = static_cast<std::size_t>(logical.physical_index);
-    if (requested < stage.physical_outputs.size() && stage.physical_outputs[requested].physical_index < 0) {
+    if (requested < stage.physical_outputs.size() &&
+        stage.physical_outputs[requested].physical_index < 0) {
       if (vector_index) {
         *vector_index = requested;
       }
@@ -205,7 +206,8 @@ const PhysicalBufferStaticSpec* physical_for_logical(const StageStaticSpec& stag
 }
 
 bool logical_name_looks_like_boundary_view(const LogicalTensorStaticSpec& logical) {
-  return is_boundary_view_token(logical.logical_name) || is_boundary_view_token(logical.backend_name) ||
+  return is_boundary_view_token(logical.logical_name) ||
+         is_boundary_view_token(logical.backend_name) ||
          is_boundary_view_token(logical.segment_name);
 }
 
@@ -227,8 +229,8 @@ bool logical_outputs_are_producer_local(const StageStaticSpec& stage) {
       return false;
     }
     const std::size_t elem_bytes = dtype_bytes(*dtype);
-    const std::uint64_t span = std::max<std::uint64_t>(logical_span_bytes(logical, elem_bytes),
-                                                       logical.size_bytes);
+    const std::uint64_t span =
+        std::max<std::uint64_t>(logical_span_bytes(logical, elem_bytes), logical.size_bytes);
     if (span == 0U || logical.byte_offset < 0) {
       return false;
     }
@@ -282,7 +284,8 @@ std::string fallback_physical_name(const StageStaticSpec& stage, std::size_t ind
   return "output" + std::to_string(index);
 }
 
-std::vector<PhysicalBufferStaticSpec> raw_physical_outputs_for_terminal(const StageStaticSpec& stage) {
+std::vector<PhysicalBufferStaticSpec>
+raw_physical_outputs_for_terminal(const StageStaticSpec& stage) {
   std::vector<PhysicalBufferStaticSpec> out;
   if (!stage.processmla.dispatcher_output_sizes.empty()) {
     out.reserve(stage.processmla.dispatcher_output_sizes.size());
@@ -325,13 +328,15 @@ raw_logical_outputs_from_physical(const std::vector<PhysicalBufferStaticSpec>& p
   for (std::size_t i = 0; i < physical_outputs.size(); ++i) {
     const auto& physical = physical_outputs[i];
     if (physical.size_bytes == 0U ||
-        physical.size_bytes > static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        physical.size_bytes >
+            static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
       continue;
     }
     LogicalTensorStaticSpec logical;
     logical.logical_index = static_cast<int>(i);
     logical.backend_output_index = static_cast<int>(i);
-    logical.physical_index = physical.physical_index >= 0 ? physical.physical_index : static_cast<int>(i);
+    logical.physical_index =
+        physical.physical_index >= 0 ? physical.physical_index : static_cast<int>(i);
     logical.output_slot = static_cast<int>(i);
     logical.tensor_index = static_cast<int>(i);
     logical.byte_offset = 0;
@@ -341,8 +346,8 @@ raw_logical_outputs_from_physical(const std::vector<PhysicalBufferStaticSpec>& p
     logical.dtype = "UINT8";
     logical.dtype_source = sima::DTypeSource::InternalContract;
     logical.layout.clear();
-    logical.logical_name = !physical.segment_name.empty() ? physical.segment_name
-                                                         : ("output" + std::to_string(i));
+    logical.logical_name =
+        !physical.segment_name.empty() ? physical.segment_name : ("output" + std::to_string(i));
     logical.backend_name = logical.logical_name;
     logical.segment_name = logical.logical_name;
     out.push_back(std::move(logical));
@@ -380,9 +385,9 @@ bool logical_to_override_entry(const StageStaticSpec& stage, const LogicalTensor
   entry->route_slot = logical.output_slot >= 0 ? logical.output_slot : entry->logical_output_index;
   entry->dtype = *dtype;
   entry->layout = tensor_layout_from_static_token(logical.layout);
-  entry->name = !logical.logical_name.empty() ? logical.logical_name
-                                              : (!logical.backend_name.empty() ? logical.backend_name
-                                                                              : "output");
+  entry->name = !logical.logical_name.empty()
+                    ? logical.logical_name
+                    : (!logical.backend_name.empty() ? logical.backend_name : "output");
   entry->segment_name = !logical.segment_name.empty() ? logical.segment_name : entry->name;
   return true;
 }
@@ -406,10 +411,9 @@ bool route_matches_endpoint(const sima::StageOutputRoute& route,
   if (endpoint.output_slot >= 0 && route.output_slot == endpoint.output_slot) {
     return true;
   }
-  if (endpoint.route_slot >= 0 &&
-      (route.output_slot == endpoint.route_slot ||
-       route.logical_output_index == endpoint.route_slot ||
-       route.tensor_index == endpoint.route_slot)) {
+  if (endpoint.route_slot >= 0 && (route.output_slot == endpoint.route_slot ||
+                                   route.logical_output_index == endpoint.route_slot ||
+                                   route.tensor_index == endpoint.route_slot)) {
     return true;
   }
   return string_matches_endpoint_name(route.cm_output_name, endpoint) ||
@@ -425,8 +429,7 @@ bool logical_matches_endpoint(const LogicalTensorStaticSpec& logical,
     return true;
   }
   if (endpoint.route_slot >= 0 &&
-      (logical.output_slot == endpoint.route_slot ||
-       logical.logical_index == endpoint.route_slot ||
+      (logical.output_slot == endpoint.route_slot || logical.logical_index == endpoint.route_slot ||
        logical.tensor_index == endpoint.route_slot)) {
     return true;
   }
@@ -494,12 +497,12 @@ bool filter_publication_stage_for_endpoint(StageStaticSpec* publication,
       }
       for (const auto& logical : publication->logical_outputs) {
         const bool logical_match =
-            (route.logical_output_index >= 0 && logical.logical_index == route.logical_output_index) ||
+            (route.logical_output_index >= 0 &&
+             logical.logical_index == route.logical_output_index) ||
             (route.output_slot >= 0 && logical.output_slot == route.output_slot) ||
             (route.tensor_index >= 0 && logical.tensor_index == route.tensor_index) ||
-            (!route.cm_output_name.empty() &&
-             (logical.logical_name == route.cm_output_name ||
-              logical.backend_name == route.cm_output_name)) ||
+            (!route.cm_output_name.empty() && (logical.logical_name == route.cm_output_name ||
+                                               logical.backend_name == route.cm_output_name)) ||
             (!route.segment_name.empty() && logical.segment_name == route.segment_name);
         if (logical_match) {
           selected_logical.push_back(logical);
@@ -547,7 +550,8 @@ StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec&
   }
 
   if (is_boundary_view_token(stage.kernel_kind) || is_boundary_view_token(stage.plugin_kind) ||
-      is_boundary_view_token(stage.logical_stage_id) || is_boundary_view_token(stage.element_name)) {
+      is_boundary_view_token(stage.logical_stage_id) ||
+      is_boundary_view_token(stage.element_name)) {
     return StagePublicationRole::BoundaryView;
   }
 
@@ -662,7 +666,8 @@ const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
   for (std::size_t i = start + 1U; i-- > 0U;) {
     const auto& stage = manifest.stages[i];
     const StagePublicationRole role = classify_stage_for_publication(stage);
-    if (role == StagePublicationRole::RealProducer || role == StagePublicationRole::MaterializedTransform) {
+    if (role == StagePublicationRole::RealProducer ||
+        role == StagePublicationRole::MaterializedTransform) {
       return &stage;
     }
     if (i == 0U) {
@@ -675,7 +680,8 @@ const sima::StageStaticSpec* find_terminal_real_producer_for_endpoint(
   return nullptr;
 }
 
-sima::StageStaticSpec make_publication_stage_for_terminal(const sima::StageStaticSpec& terminal_stage) {
+sima::StageStaticSpec
+make_publication_stage_for_terminal(const sima::StageStaticSpec& terminal_stage) {
   StageStaticSpec publication = terminal_stage;
   if (logical_outputs_are_producer_local(publication)) {
     return publication;
@@ -715,9 +721,8 @@ bool validate_publication_stage_strict(const sima::StageStaticSpec& publication_
   for (const auto& logical : publication_stage.logical_outputs) {
     if (!sima::dtype_source_is_public_logical_contract_authoritative(logical.dtype_source)) {
       if (error_message) {
-        *error_message = "terminal publication output '" + logical.logical_name +
-                         "' dtype '" + logical.dtype +
-                         "' does not have authoritative public provenance";
+        *error_message = "terminal publication output '" + logical.logical_name + "' dtype '" +
+                         logical.dtype + "' does not have authoritative public provenance";
       }
       return false;
     }
@@ -746,8 +751,8 @@ bool validate_publication_stage_strict(const sima::StageStaticSpec& publication_
     }
     if (logical.byte_offset < 0) {
       if (error_message) {
-        *error_message = "terminal publication output '" + logical.logical_name +
-                         "' has negative byte offset";
+        *error_message =
+            "terminal publication output '" + logical.logical_name + "' has negative byte offset";
       }
       return false;
     }
@@ -759,8 +764,8 @@ bool validate_publication_stage_strict(const sima::StageStaticSpec& publication_
       }
       return false;
     }
-    const std::uint64_t span =
-        std::max<std::uint64_t>(logical_span_bytes(logical, dtype_bytes(*dtype)), logical.size_bytes);
+    const std::uint64_t span = std::max<std::uint64_t>(
+        logical_span_bytes(logical, dtype_bytes(*dtype)), logical.size_bytes);
     if (span == 0U || span > physical->size_bytes - offset) {
       if (error_message) {
         std::ostringstream oss;
@@ -793,9 +798,9 @@ std::optional<OutputTensorOverride> build_output_override_from_manifest(
       *failure_reason = find_failure;
     }
     if (error_message) {
-      *error_message =
-          find_error.empty() ? "could not resolve terminal real producer for public output"
-                             : std::move(find_error);
+      *error_message = find_error.empty()
+                           ? "could not resolve terminal real producer for public output"
+                           : std::move(find_error);
     }
     return std::nullopt;
   }

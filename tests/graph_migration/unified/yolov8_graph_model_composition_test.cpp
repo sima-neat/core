@@ -4,7 +4,13 @@ namespace {
 
 simaai::neat::RunOptions graph_model_run_options() {
   simaai::neat::RunOptions opt;
-  opt.output_memory = simaai::neat::OutputMemory::Owned;
+  // These graph outputs are re-pushed into a standalone SiMa device-transport
+  // boxdecode (run_framework_boxdecode_accuracy). A device route can only accept
+  // a device-backed (zero-copy GstSample) tensor; an Owned/CPU copy is not
+  // device-re-pushable by design (the push guard fails fast on it). Use the same
+  // async zero-copy contract as the Model::build path (run_canonical_model_sample),
+  // so both entry points feed the boxdecode an equivalent device-backed output.
+  opt.output_memory = simaai::neat::OutputMemory::Auto;
   opt.queue_depth = 1;
   if (const char* raw_depth = std::getenv("SIMA_E2E_RUN_QUEUE_DEPTH"); raw_depth && *raw_depth) {
     const int depth = std::atoi(raw_depth);

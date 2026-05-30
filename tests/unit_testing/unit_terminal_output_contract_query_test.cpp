@@ -23,12 +23,11 @@ sima::PhysicalBufferStaticSpec physical(int index, std::uint64_t size, const cha
   return out;
 }
 
-sima::LogicalTensorStaticSpec logical(int index, int physical_index, std::vector<std::int64_t> shape,
-                                      std::vector<std::int64_t> strides, const char* dtype,
-                                      const char* name, const char* segment,
-                                      std::uint64_t size_bytes = 0,
-                                      sima::DTypeSource dtype_source =
-                                          sima::DTypeSource::InternalContract) {
+sima::LogicalTensorStaticSpec
+logical(int index, int physical_index, std::vector<std::int64_t> shape,
+        std::vector<std::int64_t> strides, const char* dtype, const char* name, const char* segment,
+        std::uint64_t size_bytes = 0,
+        sima::DTypeSource dtype_source = sima::DTypeSource::InternalContract) {
   sima::LogicalTensorStaticSpec out;
   out.logical_index = index;
   out.backend_output_index = index;
@@ -144,8 +143,8 @@ void terminal_selector_skips_boundary_view_transit() {
   producer.payload_kind = sima::StagePayloadKind::ProcessMla;
   producer.processmla.dispatcher_output_sizes = {16U};
   producer.physical_outputs.push_back(physical(0, 16U, "producer_raw"));
-  producer.logical_outputs.push_back(logical(0, 0, {16}, {1}, "UINT8", "producer_raw",
-                                           "producer_raw", 16U));
+  producer.logical_outputs.push_back(
+      logical(0, 0, {16}, {1}, "UINT8", "producer_raw", "producer_raw", 16U));
   manifest.stages.push_back(producer);
 
   sima::StageStaticSpec view;
@@ -175,7 +174,8 @@ void materialized_processcvu_terminal_is_not_demoted_by_detess_name() {
   stage.payload_kind = sima::StagePayloadKind::ProcessCvu;
   stage.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Detess;
   stage.physical_outputs.push_back(physical(0, 32U, "detess_out"));
-  stage.logical_outputs.push_back(logical(0, 0, {8}, {4}, "INT32", "detess_out", "detess_out", 32U));
+  stage.logical_outputs.push_back(
+      logical(0, 0, {8}, {4}, "INT32", "detess_out", "detess_out", 32U));
   manifest.stages.push_back(stage);
 
   assert(classify_stage_for_publication(stage) == StagePublicationRole::MaterializedTransform);
@@ -283,8 +283,7 @@ void matched_boxdecode_without_outputs_does_not_walk_to_mla() {
   mla.logical_stage_id = "MLA_0";
   mla.element_name = "simaaiprocessmla_1";
   mla.payload_kind = sima::StagePayloadKind::ProcessMla;
-  mla.processmla.dispatcher_output_sizes = {409600U, 102400U, 25600U,
-                                            512000U, 128000U, 32000U};
+  mla.processmla.dispatcher_output_sizes = {409600U, 102400U, 25600U, 512000U, 128000U, 32000U};
   manifest.stages.push_back(std::move(mla));
 
   sima::StageStaticSpec boxdecode;
@@ -316,8 +315,7 @@ void unresolved_boxdecode_terminal_key_does_not_fallback_to_mla() {
   mla.logical_stage_id = "MLA_0";
   mla.element_name = "simaaiprocessmla_1";
   mla.payload_kind = sima::StagePayloadKind::ProcessMla;
-  mla.processmla.dispatcher_output_sizes = {409600U, 102400U, 25600U,
-                                            512000U, 128000U, 32000U};
+  mla.processmla.dispatcher_output_sizes = {409600U, 102400U, 25600U, 512000U, 128000U, 32000U};
   manifest.stages.push_back(std::move(mla));
 
   sima::StageStaticSpec transformed_boxdecode;
@@ -379,8 +377,8 @@ void model_fragment_terminal_hint_still_allows_manifest_fallback() {
   endpoint.allow_unresolved_terminal_stage_fallback = true;
 
   std::string err;
-  auto override = simaai::neat::build_public_terminal_output_override_with_fallback(
-      manifest, endpoint, &err);
+  auto override =
+      simaai::neat::build_public_terminal_output_override_with_fallback(manifest, endpoint, &err);
   assert(override.has_value() && err.empty());
   assert(override->outputs.size() == 1U);
   assert(override->outputs[0].dtype == TensorDType::UInt8);
@@ -415,8 +413,8 @@ void unknown_dtype_source_terminal_falls_back_to_raw_bytes() {
   stage.payload_kind = sima::StagePayloadKind::ProcessCvu;
   stage.processcvu.graph_family_enum = sima::ProcessCvuGraphFamily::Unknown;
   stage.physical_outputs.push_back(physical(0, 16U, "raw_parent"));
-  stage.logical_outputs.push_back(logical(0, 0, {4}, {4}, "FP32", "semantic_unknown",
-                                          "raw_parent", 16U, sima::DTypeSource::Unknown));
+  stage.logical_outputs.push_back(logical(0, 0, {4}, {4}, "FP32", "semantic_unknown", "raw_parent",
+                                          16U, sima::DTypeSource::Unknown));
   manifest.stages.push_back(stage);
 
   std::string err;

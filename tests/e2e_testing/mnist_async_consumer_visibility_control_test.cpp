@@ -324,6 +324,16 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
     stop.store(true);
   };
 
+  // input_seq is an INTERNAL transport counter (RunCore re-stamps it from a
+  // per-segment fetch_add(0..N)). Model::build() seeds/warms the runner with a
+  // dummy frame, which consumes the first sequence value(s) BEFORE the push
+  // loop, so the user's frame i arrives with input_seq = i + seed_offset (an
+  // off-by-one for a single warm-up frame). We therefore rebase input_seq to the
+  // first value the consumer observes, which corresponds to pushed image[0].
+  // This keeps the output->input correlation (robust to reordering) while
+  // absorbing the warm-up offset, instead of indexing labels by the raw,
+  // offset internal counter.
+  int64_t base_input_seq = -1;
   const auto start = std::chrono::steady_clock::now();
   std::thread consumer([&]() {
     try {
@@ -340,12 +350,14 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
           if (r.total >= static_cast<int>(mnist.images.size()))
             break;
           int sample_index = r.total;
-          if (sample.input_seq >= 0 &&
-              sample.input_seq < static_cast<int64_t>(mnist.labels.size())) {
-            sample_index = static_cast<int>(sample.input_seq);
-          } else if (sample.orig_input_seq >= 0 &&
-                     sample.orig_input_seq < static_cast<int64_t>(mnist.labels.size())) {
-            sample_index = static_cast<int>(sample.orig_input_seq);
+          int64_t seq = sample.input_seq >= 0 ? sample.input_seq : sample.orig_input_seq;
+          if (seq >= 0) {
+            if (base_input_seq < 0)
+              base_input_seq = seq; // first observed output == pushed image[0]
+            const int64_t rebased = seq - base_input_seq;
+            if (rebased >= 0 && rebased < static_cast<int64_t>(mnist.labels.size())) {
+              sample_index = static_cast<int>(rebased);
+            }
           }
           if (read_outputs) {
             simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample);

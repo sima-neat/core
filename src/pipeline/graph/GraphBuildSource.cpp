@@ -116,8 +116,8 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
   if (has_sink && stream_opt.public_output_contract && br.rendered_manifest.has_value()) {
     const auto endpoint = session_build_public_output_endpoint_selector(build_nodes);
     std::string error;
-    auto override = build_public_terminal_output_override_with_fallback(
-        *br.rendered_manifest, endpoint, &error);
+    auto override = build_public_terminal_output_override_with_fallback(*br.rendered_manifest,
+                                                                        endpoint, &error);
     if (override.has_value()) {
       stream_opt.output_override = std::move(*override);
     } else if (pipeline_internal::env_bool("SIMA_DETESS_OVERRIDE_DEBUG", false)) {
@@ -206,12 +206,10 @@ Graph::PreparedSource Graph::prepare_source_(RunMode mode, const RunOptions& opt
   };
 }
 
-SourceStreamBuildContext
-session_build_source_stream_internal(const std::vector<std::shared_ptr<Node>>& nodes,
-                                     const std::shared_ptr<void>& guard, std::string& last_pipeline,
-                                     const GraphOptions& sess_opt, const RunOptions& opt,
-                                     RunMode mode, bool require_sink, bool public_output_contract,
-                                     const char* where) {
+SourceStreamBuildContext session_build_source_stream_internal(
+    const std::vector<std::shared_ptr<Node>>& nodes, const std::shared_ptr<void>& guard,
+    std::string& last_pipeline, const GraphOptions& sess_opt, const RunOptions& opt, RunMode mode,
+    bool require_sink, bool public_output_contract, const char* where) {
   gst_init_once();
 
   PreparedSourcePipeline src = prepare_source_pipeline_from_nodes(

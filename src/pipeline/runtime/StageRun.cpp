@@ -1669,7 +1669,6 @@ bool sample_is_bbox_tensor(const Sample& sample) {
   return upper_copy(fmt) == "BBOX";
 }
 
-
 std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sample, int img_w,
                                                                 int img_h, int expected_topk) {
   if (sample_is_bbox_tensor(sample)) {

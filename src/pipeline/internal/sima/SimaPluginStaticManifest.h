@@ -119,45 +119,45 @@ struct PhysicalBufferStaticSpec {
 
 /// Static spec for one logical (publishable) output tensor on a stage.
 struct LogicalTensorStaticSpec {
-  int logical_index = -1;                 ///< Stage-local logical-output index.
-  int backend_output_index = -1;          ///< Backend (compiled) output index.
-  int physical_index = -1;                ///< Backing physical-output index.
-  int output_slot = -1;                   ///< Output slot on the parent stage.
-  int tensor_index = -1;                  ///< Tensor index in the contract.
-  std::int64_t byte_offset = 0;           ///< Byte offset within the physical buffer.
-  std::uint64_t size_bytes = 0;           ///< Tensor byte size.
-  std::vector<std::int64_t> shape;        ///< Tensor shape.
-  std::vector<std::int64_t> stride_bytes; ///< Per-dim byte strides.
-  std::string dtype;                      ///< Dtype token.
+  int logical_index = -1;                          ///< Stage-local logical-output index.
+  int backend_output_index = -1;                   ///< Backend (compiled) output index.
+  int physical_index = -1;                         ///< Backing physical-output index.
+  int output_slot = -1;                            ///< Output slot on the parent stage.
+  int tensor_index = -1;                           ///< Tensor index in the contract.
+  std::int64_t byte_offset = 0;                    ///< Byte offset within the physical buffer.
+  std::uint64_t size_bytes = 0;                    ///< Tensor byte size.
+  std::vector<std::int64_t> shape;                 ///< Tensor shape.
+  std::vector<std::int64_t> stride_bytes;          ///< Per-dim byte strides.
+  std::string dtype;                               ///< Dtype token.
   DTypeSource dtype_source = DTypeSource::Unknown; ///< Where `dtype` came from.
-  std::string layout;                     ///< Layout token.
-  int logical_name_id = -1;               ///< Name-table index for `logical_name`.
-  std::string logical_name;               ///< Logical (model-facing) tensor name.
-  int backend_name_id = -1;               ///< Name-table index for `backend_name`.
-  std::string backend_name;               ///< Backend (compiled artifact) tensor name.
-  int segment_name_id = -1;               ///< Name-table index for `segment_name`.
-  std::string segment_name;               ///< Backing segment name.
-  std::optional<QuantStaticSpec> quant;   ///< Quant params, if quantized.
+  std::string layout;                              ///< Layout token.
+  int logical_name_id = -1;                        ///< Name-table index for `logical_name`.
+  std::string logical_name;                        ///< Logical (model-facing) tensor name.
+  int backend_name_id = -1;                        ///< Name-table index for `backend_name`.
+  std::string backend_name;                        ///< Backend (compiled artifact) tensor name.
+  int segment_name_id = -1;                        ///< Name-table index for `segment_name`.
+  std::string segment_name;                        ///< Backing segment name.
+  std::optional<QuantStaticSpec> quant;            ///< Quant params, if quantized.
 };
 
 /// Static spec for one logical input tensor on a stage (the consumer-side counterpart).
 struct LogicalInputStaticSpec {
-  int logical_index = -1;                 ///< Stage-local logical-input index.
-  int backend_input_index = -1;           ///< Backend input index.
-  int physical_index = -1;                ///< Backing physical-input index.
-  std::vector<std::int64_t> shape;        ///< Tensor shape.
-  std::vector<std::int64_t> stride_bytes; ///< Per-dim byte strides.
-  std::int64_t byte_offset = 0;           ///< Byte offset within the physical buffer.
-  std::uint64_t size_bytes = 0;           ///< Tensor byte size.
-  std::string dtype;                      ///< Dtype token.
+  int logical_index = -1;                          ///< Stage-local logical-input index.
+  int backend_input_index = -1;                    ///< Backend input index.
+  int physical_index = -1;                         ///< Backing physical-input index.
+  std::vector<std::int64_t> shape;                 ///< Tensor shape.
+  std::vector<std::int64_t> stride_bytes;          ///< Per-dim byte strides.
+  std::int64_t byte_offset = 0;                    ///< Byte offset within the physical buffer.
+  std::uint64_t size_bytes = 0;                    ///< Tensor byte size.
+  std::string dtype;                               ///< Dtype token.
   DTypeSource dtype_source = DTypeSource::Unknown; ///< Where `dtype` came from.
-  std::string layout;                     ///< Layout token.
-  int logical_name_id = -1;               ///< Name-table index for `logical_name`.
-  std::string logical_name;               ///< Logical (model-facing) input name.
-  int backend_name_id = -1;               ///< Name-table index for `backend_name`.
-  std::string backend_name;               ///< Backend input name.
-  int segment_name_id = -1;               ///< Name-table index for `segment_name`.
-  std::string segment_name;               ///< Source segment name.
+  std::string layout;                              ///< Layout token.
+  int logical_name_id = -1;                        ///< Name-table index for `logical_name`.
+  std::string logical_name;                        ///< Logical (model-facing) input name.
+  int backend_name_id = -1;                        ///< Name-table index for `backend_name`.
+  std::string backend_name;                        ///< Backend input name.
+  int segment_name_id = -1;                        ///< Name-table index for `segment_name`.
+  std::string segment_name;                        ///< Source segment name.
   TensorMaterializationKind materialization_kind =
       TensorMaterializationKind::Direct; ///< Materialization kind.
   std::optional<QuantStaticSpec> quant;  ///< Quant params, if quantized.

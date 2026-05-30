@@ -5158,8 +5158,8 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       model_height = resolved.mla_contract.height;
     }
     std::optional<ResizeMode> resize_mode_override;
-    if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 &&
-        model_width > 0 && model_height > 0) {
+    if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 && model_width > 0 &&
+        model_height > 0) {
       resize_mode_override = resolved.effective.resize.mode;
     }
     return simaai::neat::nodes::SimaBoxDecode(
