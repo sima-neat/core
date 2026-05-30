@@ -1,3 +1,4 @@
+#include "asset_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/io/StillImageInput.h"
@@ -27,21 +28,6 @@ int env_int(const char* key, int fallback) {
 
 int clamp_iters(int value) {
   return std::max(10, std::min(value, 500));
-}
-
-std::filesystem::path find_repo_root() {
-  namespace fs = std::filesystem;
-  fs::path cur = fs::current_path();
-  for (int i = 0; i < 8; ++i) {
-    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "test.jpg")) {
-      return cur;
-    }
-    if (!cur.has_parent_path()) {
-      break;
-    }
-    cur = cur.parent_path();
-  }
-  return fs::current_path();
 }
 
 } // namespace
@@ -89,9 +75,10 @@ RUN_TEST("stress_graph_validate_rtsp_churn_test", ([] {
                      "stress_graph_validate_rtsp_churn: empty repro note in validate report");
            }
 
-           const fs::path image = find_repo_root() / "test.jpg";
+           const fs::path image = sima_test::test_image_fixture_path();
            if (!fs::exists(image)) {
-             skip_long_test_exception("Skipping RTSP churn stress: test.jpg not found");
+             skip_long_test_exception("Skipping RTSP churn stress: test.jpg not found at " +
+                                      image.string());
            }
 
            // RTSP start/stop churn loop.

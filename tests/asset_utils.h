@@ -108,6 +108,7 @@ struct TestRuntimePaths {
   fs::path manifest_path;
   fs::path build_root;
   fs::path source_root;
+  fs::path shared_test_asset_root;
   fs::path repo_tmp_root;
   fs::path model_archive_fixture_root;
   fs::path model_archive_fixture_manifest;
@@ -235,6 +236,8 @@ inline const TestRuntimePaths& test_runtime_paths() {
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         value.source_root =
             resolve_manifest_relative_path(text, "source_root_rel", value.build_root);
+        value.shared_test_asset_root =
+            resolve_manifest_relative_path(text, "shared_test_asset_root_rel", value.build_root);
         value.repo_tmp_root =
             resolve_manifest_relative_path(text, "repo_tmp_root_rel", value.build_root);
         value.model_archive_fixture_root = resolve_manifest_relative_path(
@@ -248,6 +251,16 @@ inline const TestRuntimePaths& test_runtime_paths() {
 
     if (value.source_root.empty())
       value.source_root = discover_source_root_from_runtime();
+    if (value.shared_test_asset_root.empty() && !value.build_root.empty()) {
+      std::error_code ec;
+      const fs::path installed_share_assets =
+          (value.build_root / ".." / ".." / "share" / "sima-neat" / "test-assets")
+              .lexically_normal();
+      if (fs::is_directory(installed_share_assets, ec) && !ec)
+        value.shared_test_asset_root = installed_share_assets;
+    }
+    if (value.shared_test_asset_root.empty())
+      value.shared_test_asset_root = value.source_root;
     if (value.repo_tmp_root.empty())
       value.repo_tmp_root = value.source_root / "tmp";
     if (value.model_archive_fixture_root.empty())
@@ -267,6 +280,22 @@ inline const TestRuntimePaths& test_runtime_paths() {
 
 inline fs::path test_source_root() {
   return test_runtime_paths().source_root;
+}
+
+inline fs::path test_shared_asset_root() {
+  return test_runtime_paths().shared_test_asset_root;
+}
+
+inline fs::path test_shared_asset_path(const fs::path& rel) {
+  if (rel.empty())
+    return test_shared_asset_root();
+  if (rel.is_absolute())
+    return rel.lexically_normal();
+  return (test_shared_asset_root() / rel).lexically_normal();
+}
+
+inline fs::path test_image_fixture_path() {
+  return test_shared_asset_path("test.jpg");
 }
 
 inline fs::path test_tmp_root() {

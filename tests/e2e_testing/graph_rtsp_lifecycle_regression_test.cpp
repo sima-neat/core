@@ -1,3 +1,4 @@
+#include "asset_utils.h"
 #include "nodes/io/StillImageInput.h"
 #include "pipeline/Graph.h"
 #include "runtime_test_utils.h"
@@ -15,20 +16,6 @@ bool runtime_missing_rtsp_elements(const std::string& msg) {
   return msg.find("missing element") != std::string::npos ||
          msg.find("No such element") != std::string::npos ||
          msg.find("not found") != std::string::npos;
-}
-
-std::filesystem::path find_repo_root() {
-  namespace fs = std::filesystem;
-  fs::path cur = fs::current_path();
-  for (int i = 0; i < 6; ++i) {
-    if (fs::exists(cur / "CMakeLists.txt") && fs::exists(cur / "tests")) {
-      return cur;
-    }
-    if (!cur.has_parent_path())
-      break;
-    cur = cur.parent_path();
-  }
-  return fs::current_path();
 }
 
 } // namespace
@@ -63,9 +50,10 @@ RUN_TEST("graph_rtsp_lifecycle_regression_test", ([] {
                               "Graph::run_rtsp should reject non-StillImageInput pipelines");
            }
 
-           const fs::path image = find_repo_root() / "test.jpg";
+           const fs::path image = sima_test::test_image_fixture_path();
            if (!fs::exists(image)) {
-             throw std::runtime_error("graph_rtsp_lifecycle_regression_test: missing test.jpg");
+             throw std::runtime_error("graph_rtsp_lifecycle_regression_test: missing test.jpg at " +
+                                      image.string());
            }
 
            auto make_rtsp_graph = [&]() {

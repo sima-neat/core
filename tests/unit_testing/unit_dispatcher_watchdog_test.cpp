@@ -74,6 +74,9 @@ std::string pick_image_path() {
   }
   if (file_exists("test.jpg"))
     return "test.jpg";
+  const fs::path packaged_img = sima_test::test_image_fixture_path();
+  if (fs::exists(packaged_img))
+    return packaged_img.string();
   const fs::path root = find_repo_root();
   const fs::path root_img = root / "test.jpg";
   if (fs::exists(root_img))

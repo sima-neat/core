@@ -283,6 +283,10 @@ static std::string find_image_path(int argc, char** argv) {
   if (!image_path.empty())
     return image_path;
 
+  const std::filesystem::path packaged_image = sima_test::test_image_fixture_path();
+  if (std::filesystem::exists(packaged_image))
+    return packaged_image.string();
+
   std::error_code ec;
   std::filesystem::path cur = std::filesystem::current_path(ec);
   for (int i = 0; i < 6 && !cur.empty(); ++i) {

@@ -1111,6 +1111,9 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}")
 
 set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
 {
@@ -1122,7 +1125,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
   "model_archive_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL@",
   "mpk_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL@",
   "mpk_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL@",
-  "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@"
+  "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@",
+  "shared_test_asset_root_rel": "@SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL@"
 }
 ]=])
 string(CONFIGURE "${SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT}"
@@ -1152,7 +1156,8 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
   "model_archive_fixture_manifest_rel": "test-assets/model-archive/fixtures_manifest.json",
   "mpk_fixture_root_rel": "test-assets/mpk",
   "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
-  "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264"
+  "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264",
+  "shared_test_asset_root_rel": "../../share/sima-neat/test-assets"
 }
 ]=])
 file(WRITE "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED}"

@@ -36,6 +36,7 @@ cv::Mat load_input_image_or_skip(const fs::path& root) {
   const std::vector<fs::path> candidates = {
       root / "tests" / "images" / "people.jpg",
       root / "test.jpg",
+      sima_test::test_image_fixture_path(),
       root / "tmp" / "coco_sample.jpg",
   };
 
