@@ -43,9 +43,9 @@ set -euo pipefail
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
 # - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
-# - NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP: ON/OFF (default: ON) relax the
-#   external LLiMa package's exact simaai-memory-lib dependency when the board
-#   carries the SDK's git-suffixed compatible memory package.
+# - NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP: ON/OFF (default: ON) relax selected
+#   exact simaai-memory-lib dependencies to the matching minor-version family
+#   when the board carries the SDK's git-suffixed compatible memory package.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
 
@@ -592,7 +592,7 @@ maybe_relax_simaai_memory_dep() {
     return 0
   fi
   case "$(basename "${deb}")" in
-    sima-lmm-*-Linux-core.deb) ;;
+    sima-lmm-*-Linux-core.deb | neat-appcomplex_*.deb | appcomplex_*.deb) ;;
     *)
       out_array+=("${deb}")
       return 0
@@ -629,15 +629,29 @@ changed_marker = Path(sys.argv[3])
 text = control.read_text()
 
 # Some SDK/DevKit images ship simaai-memory-lib as a git-suffixed build such as
-# 2.0.0~git..., while the externally produced LLiMa DEB depends on the unsuffixed
-# exact version 2.0.0.  Debian treats 2.0.0~git as lower than 2.0.0, so the exact
-# dependency makes otherwise compatible boards uninstallable.  Only relax this
-# one dependency when the installed version is the matching git-suffixed build.
+# 2.0.0~git..., while selected runtime DEBs can depend on the unsuffixed exact
+# version 2.0.0. Debian treats 2.0.0~git as lower than 2.0.0, so the exact
+# dependency makes otherwise compatible boards uninstallable. Only relax this
+# dependency when the installed version is the matching git-suffixed build, and
+# cap the relaxed range to the same minor-version family.
+def next_minor_bound(version: str):
+    match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:[.+~-].*)?$", version)
+    if not match:
+        match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)\.\d+(?:[.+~-].*)?$", version)
+    if not match:
+        return None
+    epoch, major, minor = match.groups()
+    prefix = f"{epoch}:" if epoch else ""
+    return f"{prefix}{major}.{int(minor) + 1}~"
+
 def repl(match: re.Match[str]) -> str:
     required = match.group(1).strip()
     if installed == required or installed.startswith(required + "~"):
+        upper = next_minor_bound(required)
+        if upper is None:
+            return match.group(0)
         changed_marker.write_text("1")
-        return f"simaai-memory-lib (>= {required}~)"
+        return f"simaai-memory-lib (>= {required}~), simaai-memory-lib (<< {upper})"
     return match.group(0)
 
 new_text = re.sub(r"simaai-memory-lib\s*\(=\s*([^)]+)\)", repl, text)
