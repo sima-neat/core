@@ -33,6 +33,8 @@ jobs:
     steps:
       - name: Resolve deployment target
         id: target
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
@@ -55,8 +57,35 @@ jobs:
             prod|production)
               deploy_environment="prod"
               if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-                echo "Production docs deploy is only allowed from refs/heads/main. Current ref: ${GITHUB_REF}" >&2
-                exit 1
+                if [[ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ]]; then
+                  echo "Production docs deploy is only allowed from refs/heads/main unless manually dispatched by a sima-neat org admin. Current ref: ${GITHUB_REF}" >&2
+                  exit 1
+                fi
+
+                actor="${GITHUB_TRIGGERING_ACTOR:-${GITHUB_ACTOR}}"
+                membership_file="${RUNNER_TEMP}/sima-neat-membership.json"
+                http_code="$(curl -sS \
+                  -H "Accept: application/vnd.github+json" \
+                  -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+                  -H "X-GitHub-Api-Version: 2022-11-28" \
+                  -o "${membership_file}" \
+                  -w "%{http_code}" \
+                  "https://api.github.com/orgs/sima-neat/memberships/${actor}")"
+
+                if [[ "${http_code}" != "200" ]]; then
+                  echo "Unable to verify sima-neat org admin status for '${actor}' (GitHub API HTTP ${http_code}); refusing production docs deploy from ${GITHUB_REF}." >&2
+                  cat "${membership_file}" >&2 || true
+                  exit 1
+                fi
+
+                org_role="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("role", ""))' "${membership_file}")"
+
+                if [[ "${org_role}" != "admin" ]]; then
+                  echo "Production docs deploy from ${GITHUB_REF} requires a sima-neat org admin. Actor '${actor}' has org role '${org_role:-unknown}'." >&2
+                  exit 1
+                fi
+
+                echo "Allowing production docs deploy from ${GITHUB_REF}; manual dispatch actor '${actor}' is a sima-neat org admin."
               fi
               ;;
             *)
