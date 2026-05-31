@@ -45,6 +45,35 @@ cleanup_tmp_sima_if_root_low_space() {
   '
 }
 
+repair_stale_global_dispatcher_lib() {
+  local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
+  local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
+
+  if [[ ! -e "${runtime_lib}" ]]; then
+    printf "[recovery] dispatcher lib repair skipped: runtime lib not found at %s\n" "${runtime_lib}"
+    return 0
+  fi
+
+  if [[ -L "${global_lib}" && "$(readlink -f "${global_lib}")" == "${runtime_lib}" ]]; then
+    printf "[recovery] dispatcher lib repair skipped: %s already points at runtime lib\n" "${global_lib}"
+    return 0
+  fi
+
+  if [[ -e "${global_lib}" ]]; then
+    if dpkg-query -S "${global_lib}" >/dev/null 2>&1; then
+      printf "[recovery] dispatcher lib repair skipped: %s is package-owned\n" "${global_lib}"
+      return 0
+    fi
+
+    local backup="${global_lib}.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+    run_step "quarantine stale unowned ${global_lib}" mv -f "${global_lib}" "${backup}"
+  fi
+
+  if [[ ! -e "${global_lib}" ]]; then
+    run_step "link ${global_lib} to packaged runtime lib" ln -s "${runtime_lib}" "${global_lib}"
+  fi
+}
+
 empty_coprocessing() {
   if [[ "${TARGET_COPROCESSING_DIR}" != "/data/simaai/coprocessing" ]]; then
     printf "[recovery] empty coprocessing skipped: unexpected target %s\n" "${TARGET_COPROCESSING_DIR}"
@@ -66,6 +95,17 @@ empty_coprocessing() {
   '
 }
 
+stop_runtime_services() {
+  run_step "stop simaai-pipeline-manager.service" systemctl stop simaai-pipeline-manager.service
+  run_step "stop rctd.service" systemctl stop rctd.service
+  run_step "stop simaai-appcomplex.service" systemctl stop simaai-appcomplex.service
+  run_step "terminate stale runtime processes" pkill -TERM -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
+  sleep 1
+  run_step "kill stale runtime processes" pkill -KILL -f '(/usr/bin/)?(mlashmcomplex|simaai_pipeline_handler_new|rctd)( |$)'
+}
+
+repair_stale_global_dispatcher_lib
+stop_runtime_services
 empty_coprocessing
 cleanup_tmp_sima_if_root_low_space
 run_step "remoteproc0 stop" sh -c 'echo stop > /sys/class/remoteproc/remoteproc0/state'

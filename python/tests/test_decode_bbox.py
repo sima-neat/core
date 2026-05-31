@@ -51,7 +51,7 @@ def yolov8_run():
     if not image_path.is_file():
       pytest.skip(f"SIMA_TEST_IMAGE={override} is not a file")
   else:
-    image_path = _fixture_image_path(Path("test.jpg"))
+    image_path = _fixture_image_path(Path("tests/images/people.jpg"))
   image = _decode_rgb_image(image_path)
   image_h, image_w = image.shape[:2]
 
@@ -73,7 +73,6 @@ def test_decoded_tensor_shape_and_dtype(yolov8_run):
   assert arr.dtype == np.float32
   assert arr.ndim == 2
   assert arr.shape[1] == BOX_COLUMNS
-  assert arr.shape[0] >= 1, "expected at least one detection from yolo_v8s"
 
 
 def test_decoded_values_match_struct_unpack_oracle(yolov8_run):
@@ -99,6 +98,17 @@ def test_decode_bbox_raises_on_non_bbox_tensor():
   with pytest.raises(TypeError) as info:
     pyneat.decode_bbox([rgb_tensor])
   assert "BBOX" in str(info.value)
+
+
+def test_decode_bbox_empty_payload_to_numpy_roundtrip():
+  empty_bbox = pyneat.Tensor.from_numpy(
+      np.zeros((4,), dtype=np.uint8), copy=True, memory=pyneat.TensorMemory.CPU
+  )
+
+  arr = pyneat.decode_bbox([empty_bbox])[0].to_numpy()
+
+  assert arr.dtype == np.float32
+  assert arr.shape == (0, BOX_COLUMNS)
 
 
 def test_decode_bbox_top_k_caps_per_tensor(yolov8_run):

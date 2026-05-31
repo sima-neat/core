@@ -1,13 +1,19 @@
 #pragma once
 
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 namespace sima_test {
 
@@ -41,6 +47,43 @@ inline bool move_to_tmp(const fs::path& src, const fs::path& dst) {
   fs::remove(src, ec);
   return true;
 }
+
+class ScopedFileLock {
+public:
+  explicit ScopedFileLock(const fs::path& path) {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    if (ec) {
+      throw std::runtime_error("failed to create lock directory " + path.parent_path().string() +
+                               ": " + ec.message());
+    }
+    fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (fd_ < 0) {
+      throw std::runtime_error("failed to open lock file " + path.string());
+    }
+    while (::flock(fd_, LOCK_EX) != 0) {
+      if (errno != EINTR) {
+        const int err = errno;
+        (void)::close(fd_);
+        fd_ = -1;
+        throw std::runtime_error("failed to lock " + path.string() + ": " + std::to_string(err));
+      }
+    }
+  }
+
+  ScopedFileLock(const ScopedFileLock&) = delete;
+  ScopedFileLock& operator=(const ScopedFileLock&) = delete;
+
+  ~ScopedFileLock() {
+    if (fd_ >= 0) {
+      (void)::flock(fd_, LOCK_UN);
+      (void)::close(fd_);
+    }
+  }
+
+private:
+  int fd_ = -1;
+};
 
 inline bool is_usable_regular_file(const fs::path& path) {
   if (path.empty())
@@ -422,6 +465,7 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
   }
 
   const fs::path local = root / "tmp" / "resnet_50_mpk.tar.gz";
+  const ScopedFileLock lock(local.string() + ".lock");
   if (is_usable_regular_file(local))
     return local.string();
 
@@ -452,6 +496,7 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
 inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
   const fs::path root = default_asset_root(root_in);
   const fs::path tmp_tar = root / "tmp" / "yolo_v8s_mpk.tar.gz";
+  const ScopedFileLock lock(tmp_tar.string() + ".lock");
 
   // Drop corrupt cached tars up front so the subsequent search/download
   // path can refresh them. is_usable_regular_file only checks size>0;
@@ -684,6 +729,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   }
 
   const fs::path local = tmp_dir / (base + "_mpk.tar.gz");
+  const ScopedFileLock lock(local.string() + ".lock");
   // Only validate listability for the *cached* tmp tar (the path that
   // gets handed back to callers and consumed by ModelPack). Candidates
   // discovered via the search loop below may be unit-test fixtures

@@ -1163,6 +1163,10 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
 file(WRITE "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED}"
   "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT}")
 
+option(SIMANEAT_CTEST_UNIQUE_GST_REGISTRY
+  "Use an isolated GStreamer registry file per CTest test. This preserves the legacy maximum-isolation behavior but makes installed DevKit CI much slower."
+  OFF)
+
 function(simaneat_append_ctest_env test_name)
   set(_plugin_dir "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}")
   set(_ld_library_path "${SIMANEAT_CTEST_NEAT_LD_LIBRARY_PATH}")
@@ -1174,10 +1178,19 @@ function(simaneat_append_ctest_env test_name)
     set(_ld_library_path "${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
   endif()
 
-  set(_gst_registry "${CMAKE_BINARY_DIR}/sima_gst_registry_${test_name}.bin")
-  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY=${_gst_registry}")
-  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_1_0=${_gst_registry}")
-  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_REUSE_PLUGIN_SCANNER=no")
+  # Default to the shared, content-addressed registry cache created by GstInit.cpp.
+  # That cache key includes the selected NEAT plugin directory and filtered system
+  # plugin set, so tests still avoid stale plugin metadata without forcing every
+  # process to rescan all plugins. Keep an escape hatch for tests/debug sessions
+  # that need the pre-existing one-registry-file-per-test isolation.
+  if (SIMANEAT_CTEST_UNIQUE_GST_REGISTRY)
+    set(_gst_registry "${CMAKE_BINARY_DIR}/sima_gst_registry_${test_name}.bin")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY=${_gst_registry}")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_1_0=${_gst_registry}")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+      "GST_REGISTRY_REUSE_PLUGIN_SCANNER=no")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "SIMA_GST_UNIQUE_REGISTRY=1")
+  endif()
   if (NOT "${_plugin_dir}" STREQUAL "")
     set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_PATH=${_plugin_dir}")
     set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_PATH_1_0=${_plugin_dir}")

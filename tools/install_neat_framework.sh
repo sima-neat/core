@@ -711,6 +711,37 @@ verify_board_runtime_services() {
   log "Verified ${service} is active."
 }
 
+repair_stale_global_dispatcher_lib() {
+  local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
+  local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
+
+  if [[ ! -e "${runtime_lib}" ]]; then
+    log "Dispatcher lib repair skipped; runtime lib not found at ${runtime_lib}"
+    return 0
+  fi
+
+  if [[ -L "${global_lib}" && "$(readlink -f "${global_lib}")" == "${runtime_lib}" ]]; then
+    log "Dispatcher lib repair skipped; ${global_lib} already points at the packaged runtime lib."
+    return 0
+  fi
+
+  if [[ -e "${global_lib}" ]]; then
+    if dpkg-query -S "${global_lib}" >/dev/null 2>&1; then
+      log "Dispatcher lib repair skipped; ${global_lib} is package-owned."
+      return 0
+    fi
+
+    local backup="${global_lib}.bak-neat-installer-$(date -u +%Y%m%dT%H%M%SZ)"
+    log "Quarantining stale unowned dispatcher lib ${global_lib} -> ${backup}"
+    run_sudo mv -f "${global_lib}" "${backup}"
+  fi
+
+  if [[ ! -e "${global_lib}" ]]; then
+    log "Linking ${global_lib} to packaged runtime lib ${runtime_lib}"
+    run_sudo ln -s "${runtime_lib}" "${global_lib}"
+  fi
+}
+
 install_debs_on_board() {
   prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
@@ -730,6 +761,7 @@ install_debs_on_board() {
     log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
   fi
   if run_sudo apt-get install -y --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    repair_stale_global_dispatcher_lib
     verify_board_runtime_services
     return 0
   fi
@@ -742,6 +774,7 @@ install_debs_on_board() {
   fi
 
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  repair_stale_global_dispatcher_lib
   verify_board_runtime_services
 }
 

@@ -1,7 +1,9 @@
+import gc
 import json
 import struct
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import cv2
@@ -72,6 +74,9 @@ def _resolve_fixture_image(rel_path: Path) -> Path | None:
     candidate = root / rel_path
     if candidate.is_file():
       return candidate
+    installed_candidate = root / "lib" / "sima-neat" / rel_path
+    if installed_candidate.is_file():
+      return installed_candidate
 
   return None
 
@@ -151,6 +156,19 @@ def _sample_tensors(sample: pyneat.Sample) -> list[pyneat.Tensor]:
   if sample.kind == pyneat.SampleKind.TensorSet:
     return list(sample.tensors)
   raise AssertionError(f"expected tensor sample, got {sample.kind}")
+
+
+def _release_accelerator_outputs() -> None:
+  """Drop Python-side refs before starting the next accelerator-backed graph.
+
+  The DevKit has a small number of RPMsg/EV channels. Keeping output tensor
+  objects from one graph alive while building/running the next graph can keep
+  device-side resources pinned long enough for the next graph to report
+  transient "channel busy" or mailbox-fd errors. Convert outputs to plain Python
+  metadata/payload bytes first, then call this helper before the next run.
+  """
+  gc.collect()
+  time.sleep(0.2)
 
 
 def _run_one_sample(runner, tensor: pyneat.Tensor, timeout_ms: int) -> pyneat.Sample:
@@ -441,6 +459,11 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
   model = _image_input_model(model_tar)
 
   mla_tensors = _run_mla_on_byte_stream(model, model_tar)
+  mla_shapes = [list(tensor.shape) for tensor in mla_tensors]
+  mla_dtypes = [tensor.dtype for tensor in mla_tensors]
+  del mla_tensors
+  _release_accelerator_outputs()
+
   explicit_output = _run_model_on_image(
       model,
       image,
@@ -448,13 +471,15 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
       pyneat.groups.mla(model),
   )
   explicit_tensors = _sample_tensors(explicit_output)
+  explicit_shapes = [list(tensor.shape) for tensor in explicit_tensors]
+  explicit_dtypes = [tensor.dtype for tensor in explicit_tensors]
+  del explicit_output, explicit_tensors
+  _release_accelerator_outputs()
 
-  assert len(mla_tensors) == len(explicit_tensors) == 6
-  assert [list(tensor.shape) for tensor in mla_tensors] == [
-      list(tensor.shape) for tensor in explicit_tensors
-  ]
-  assert all(tensor.dtype == pyneat.TensorDType.Int8 for tensor in mla_tensors)
-  assert all(tensor.dtype == pyneat.TensorDType.Int8 for tensor in explicit_tensors)
+  assert len(mla_shapes) == len(explicit_shapes) == 6
+  assert mla_shapes == explicit_shapes
+  assert all(dtype == pyneat.TensorDType.Int8 for dtype in mla_dtypes)
+  assert all(dtype == pyneat.TensorDType.Int8 for dtype in explicit_dtypes)
 
 
 def test_yolo_mla_group_rejects_image_input_with_byte_stream_contract_message():
@@ -493,6 +518,11 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
       model_tar,
       pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)),
   )
+  detess_shapes = [list(tensor.shape) for tensor in detess_tensors]
+  detess_dtypes = [tensor.dtype for tensor in detess_tensors]
+  del detess_tensors
+  _release_accelerator_outputs()
+
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input(boxdecode_model.input_appsrc_options(False)))
   graph.add(_custom_preproc_node(boxdecode_model, image))
@@ -516,8 +546,8 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
   finally:
     runner.close()
 
-  assert len(detess_tensors) == 6
-  assert [list(tensor.shape) for tensor in detess_tensors] == [
+  assert len(detess_shapes) == 6
+  assert detess_shapes == [
       [1, 80, 80, 64],
       [1, 40, 40, 64],
       [1, 20, 20, 64],
@@ -525,7 +555,7 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
       [1, 40, 40, 80],
       [1, 20, 20, 80],
   ]
-  assert all(tensor.dtype == pyneat.TensorDType.Float32 for tensor in detess_tensors)
+  assert all(dtype == pyneat.TensorDType.Float32 for dtype in detess_dtypes)
 
   box_tensor = _sample_tensor(box_output)
   assert box_output.payload_tag in ("", "BBOX")

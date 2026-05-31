@@ -172,6 +172,7 @@ inline fs::path ensure_yolov8n_drive_variants(const fs::path& root) {
   }
   require(!ec, "ensure_yolov8n_drive_variants: failed to create " + drive_dir.string() + " (" +
                    ec.message() + ")");
+  const sima_test::ScopedFileLock lock(drive_dir / ".download.lock");
 
   std::string base_url = yolov8n_variant_base_url();
   while (!base_url.empty() && base_url.back() == '/')

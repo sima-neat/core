@@ -1243,7 +1243,8 @@ add_pipeline_test(
 )
 
 if (NOT async_yolov8_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST async_yolov8_tput_test APPEND PROPERTY LABELS "e2e;obj_detection")
+  set_property(TEST async_yolov8_tput_test APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
+  set_property(TEST async_yolov8_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
 endif()
 
 add_pipeline_test(
@@ -1279,7 +1280,9 @@ add_pipeline_test(
 )
 
 if (NOT async_yolov11_pose_bf16_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY LABELS "e2e;obj_detection")
+  set_property(TEST async_yolov11_pose_bf16_tput_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
+  set_property(TEST async_yolov11_pose_bf16_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
   set_tests_properties(async_yolov11_pose_bf16_tput_test PROPERTIES DISABLED TRUE)
 endif()
 
@@ -1413,9 +1416,100 @@ add_pipeline_test(
 )
 
 if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
-  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY LABELS "e2e;img_classification")
+  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test
+    APPEND PROPERTY LABELS "e2e;img_classification;perf;tput")
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
 endif()
+
+# Give CTest's parallel scheduler better information. High-cost tests are
+# started first, which lets short tests run underneath long model/matrix tests
+# instead of waiting behind them in declaration order. This preserves coverage
+# while reducing wall time in CI.
+function(set_pipeline_test_cost name cost)
+  if (TEST ${name})
+    set_tests_properties(${name} PROPERTIES COST ${cost})
+  endif()
+endfunction()
+
+function(append_pipeline_test_resource_lock name lock)
+  if (TEST ${name})
+    set_property(TEST ${name} APPEND PROPERTY RESOURCE_LOCK "${lock}")
+  endif()
+endfunction()
+
+# The DevKit has finite EV/MLA runtime channels. Running two model/CVU-heavy
+# E2E tests concurrently is faster when it works, but it also reproduces
+# preflight pull timeouts and missing-output failures under load. Keep CTest
+# parallelism for the many non-accelerator E2E tests while allowing only one
+# accelerator-heavy test to own the device runtime at a time.
+foreach(test
+    hybrid_graph_stage_model_test
+    preproc_standalone_test
+    preproc_build_input_repro_test
+    mnist_preproc_channels1_accuracy_test
+    modelzoo_bulk_models_test
+    preproc_dynamic_renegotiate_test
+    graph_migration_legacy_hybrid_graph_stage_model_test
+    graph_migration_legacy_yolov8_variant_route_matrix_test
+    graph_migration_legacy_preproc_yolov8_matrix_test
+    graph_migration_phase3_lazy_dynamic_spec_test
+    graph_migration_phase3_yolov8_bgr_bf16_preproc_test
+    graph_migration_phase3_connected_yolo_route_test
+    graph_migration_unified_yolov8_variant_route_matrix_test
+    graph_migration_unified_yolov8_graph_model_composition_test
+    graph_migration_unified_preproc_yolov8_matrix_test
+    async_yolov8_tput_test
+    sync_yolov8_test
+    sync_yolov8_test_detessdequant
+    yolov8_variant_route_matrix_test
+    preproc_yolov8_matrix_test
+    graphpipes_yolo_metadata_sender_16stream_test
+    model_resnet50_multi_test
+    model_unique_names_test
+    resnet50_modelpack_direct
+    resnet50_modelpack_jpeg
+    resnet50_modelpack_rtsp
+    resnet50_neatargmax_test
+    rtsp_pull_frame_test
+    hybrid_graph_rtsp_resnet50_tput_test)
+  append_pipeline_test_resource_lock(${test} accelerator-device)
+endforeach()
+
+foreach(test
+    graph_migration_legacy_yolov8_variant_route_matrix_test
+    graph_migration_unified_yolov8_variant_route_matrix_test
+    yolov8_variant_route_matrix_test)
+  set_pipeline_test_cost(${test} 180)
+endforeach()
+
+foreach(test
+    graph_migration_legacy_preproc_yolov8_matrix_test
+    graph_migration_unified_preproc_yolov8_matrix_test
+    preproc_yolov8_matrix_test
+    modelzoo_bulk_models_test
+    unit_yolov8_contract_subset_test)
+  set_pipeline_test_cost(${test} 90)
+endforeach()
+
+foreach(test
+    unit_model_input_spec_contract_test
+    unit_model_output_spec_contract_test
+    unit_model_route_planner_test
+    unit_model_route_retarget_helper_test
+    unit_route_capability_mpk_static_contract_test
+    unit_boxdecode_render_manifest_from_model_test
+    unit_neatdecoder_keepalive_test
+    unit_neatencoder_keepalive_test
+    unit_modelpack_mla_handoff_segment_test
+    unit_yolov8_mla_handoff_segment_test
+    graph_migration_phase3_lazy_dynamic_spec_test
+    graph_migration_phase3_yolov8_bgr_bf16_preproc_test
+    graph_migration_phase3_connected_yolo_route_test
+    async_yolov8_tput_test
+    hybrid_graph_rtsp_resnet50_tput_test)
+  set_pipeline_test_cost(${test} 45)
+endforeach()
 
 add_executable(
   tess_a65_vs_ev74_bench
