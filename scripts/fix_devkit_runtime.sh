@@ -5,6 +5,9 @@ set +e
 # restarting remote processors and related services.
 TARGET_COPROCESSING_DIR="/data/simaai/coprocessing"
 ROOT_FREE_SPACE_THRESHOLD_MB=500
+EV74_FIRMWARE_INSTALLER="/usr/libexec/sima-neat-firmware/install.sh"
+EV74_FIRMWARE_TARGET="/lib/firmware/modalix-cvu-fw"
+EV74_FIRMWARE_SHA_FILE="/usr/share/sima-neat-firmware/modalix-cvu-fw.sha256"
 
 if [[ $# -gt 0 ]]; then
   pass="$1"
@@ -19,6 +22,57 @@ run_step() {
   local rc=$?
   printf "[recovery] %s rc=%d\n" "$label" "$rc"
   return $rc
+}
+
+staged_ev74_firmware_sha() {
+  [[ -f "${EV74_FIRMWARE_SHA_FILE}" ]] || return 1
+  tr -d '[:space:]' < "${EV74_FIRMWARE_SHA_FILE}"
+}
+
+active_ev74_firmware_sha() {
+  [[ -f "${EV74_FIRMWARE_TARGET}" ]] || return 1
+  sha256sum "${EV74_FIRMWARE_TARGET}" | awk '{print $1}'
+}
+
+activate_staged_ev74_firmware_if_needed() {
+  local expected active rc
+
+  if [[ ! -x "${EV74_FIRMWARE_INSTALLER}" || ! -f "${EV74_FIRMWARE_SHA_FILE}" ]]; then
+    printf "[recovery] EV74 firmware activation skipped: staged firmware package not installed\n"
+    return 0
+  fi
+
+  expected="$(staged_ev74_firmware_sha || true)"
+  if [[ -z "${expected}" ]]; then
+    printf "[recovery] EV74 firmware activation failed: unable to read staged firmware sha from %s\n" "${EV74_FIRMWARE_SHA_FILE}"
+    return 1
+  fi
+
+  active="$(active_ev74_firmware_sha || true)"
+  if [[ "${active}" == "${expected}" ]]; then
+    printf "[recovery] EV74 firmware activation skipped: active firmware already matches staged sha=%s\n" "${expected}"
+    return 0
+  fi
+
+  printf "[recovery] active EV74 firmware sha=%s does not match staged sha=%s; activating staged firmware\n" \
+    "${active:-<missing>}" "${expected}"
+  run_step "activate staged EV74 firmware" "${EV74_FIRMWARE_INSTALLER}" --activate
+  rc=$?
+
+  active="$(active_ev74_firmware_sha || true)"
+  if [[ "${active}" == "${expected}" ]]; then
+    # Compatibility with older neat-ev74-firmware packages: activation can
+    # return non-zero solely because simaai-log.service is masked on CI/lab
+    # devkits, after the firmware was copied and EV74 dispatch health passed.
+    # Treat the SHA match as sufficient here; the rest of this recovery script
+    # will restart the runtime services again before tests run.
+    printf "[recovery] staged EV74 firmware is active after activation (helper rc=%d)\n" "${rc}"
+    return 0
+  fi
+
+  printf "[recovery] EV74 firmware activation failed: active sha=%s expected staged sha=%s helper rc=%d\n" \
+    "${active:-<missing>}" "${expected}" "${rc}"
+  return 1
 }
 
 cleanup_tmp_sima_if_root_low_space() {
@@ -105,6 +159,9 @@ stop_runtime_services() {
 }
 
 repair_stale_global_dispatcher_lib
+if ! activate_staged_ev74_firmware_if_needed; then
+  exit 1
+fi
 stop_runtime_services
 empty_coprocessing
 cleanup_tmp_sima_if_root_low_space

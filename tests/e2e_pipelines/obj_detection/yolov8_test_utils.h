@@ -91,11 +91,17 @@ inline std::filesystem::path resolve_people_image_path(const fs::path& root = {}
   return default_people_image_path(root);
 }
 
+inline bool path_exists_no_throw(const fs::path& path) {
+  std::error_code ec;
+  const bool exists = fs::exists(path, ec);
+  return exists && !ec;
+}
+
 inline cv::Mat load_people_image_or_skip(const fs::path& root = {}) {
   fs::path img_path = resolve_people_image_path(root);
-  if (!fs::exists(img_path)) {
+  if (!path_exists_no_throw(img_path)) {
     const fs::path downloaded = sima_e2e::ensure_coco_sample(root);
-    if (downloaded.empty() || !fs::exists(downloaded)) {
+    if (downloaded.empty() || !path_exists_no_throw(downloaded)) {
       skip_long_test_exception("Missing yolov8 test image and failed to download zidane sample. "
                                "Set SIMA_COCO_URL to override.");
     }

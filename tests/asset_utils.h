@@ -361,6 +361,52 @@ inline fs::path default_asset_root(const fs::path& root_in = {}) {
   return root_in.empty() ? test_source_root() : root_in;
 }
 
+inline bool ensure_writable_directory(const fs::path& dir) {
+  if (dir.empty())
+    return false;
+
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec)
+    return false;
+
+  const fs::path probe =
+      dir / (".sima-neat-write-test-" + std::to_string(static_cast<long long>(::getpid())));
+  {
+    std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+    if (!out.is_open())
+      return false;
+    out << "ok\n";
+  }
+  fs::remove(probe, ec);
+  return true;
+}
+
+inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& fallback_name) {
+  const fs::path primary = root / "tmp";
+  if (ensure_writable_directory(primary))
+    return primary;
+
+  fs::path temp_root;
+  try {
+    temp_root = fs::temp_directory_path();
+  } catch (...) {
+    temp_root = fs::path("/tmp");
+  }
+
+  const std::vector<fs::path> fallbacks = {
+      temp_root / fallback_name,
+      fs::path("/tmp") / fallback_name,
+  };
+  for (const auto& candidate : fallbacks) {
+    if (ensure_writable_directory(candidate))
+      return candidate;
+  }
+
+  // Let the original path surface the concrete create/open error to callers.
+  return primary;
+}
+
 inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
   const std::string cmd =
       "SIMA_CLI_CHECK_FOR_UPDATE=0 sima-cli modelzoo get " + shell_quote(model_name);
@@ -495,7 +541,9 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
 
 inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
   const fs::path root = default_asset_root(root_in);
-  const fs::path tmp_tar = root / "tmp" / "yolo_v8s_mpk.tar.gz";
+  const fs::path root_tmp = root / "tmp";
+  const fs::path tmp_dir = writable_asset_tmp_dir(root, "sima-yolov8s-cache");
+  const fs::path tmp_tar = tmp_dir / "yolo_v8s_mpk.tar.gz";
   const ScopedFileLock lock(tmp_tar.string() + ".lock");
 
   // Drop corrupt cached tars up front so the subsequent search/download
@@ -510,6 +558,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   // validation they perform on the path we return.
   purge_unlistable_tar_gz(tmp_tar);
   purge_unlistable_tar_gz(root / "yolo_v8s_mpk.tar.gz");
+  purge_unlistable_tar_gz(root_tmp / "yolo_v8s_mpk.tar.gz");
 
   const std::string env_tar = env_existing_model_tar_path("SIMA_YOLO_TAR");
   if (!env_tar.empty()) {
@@ -520,16 +569,40 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   if (is_usable_regular_file(direct_tar))
     return direct_tar.string();
 
+  const fs::path root_tmp_tar = root_tmp / "yolo_v8s_mpk.tar.gz";
+  if (root_tmp_tar != tmp_tar && is_usable_regular_file(root_tmp_tar)) {
+    if (move_to_tmp(root_tmp_tar, tmp_tar))
+      return tmp_tar.string();
+    return root_tmp_tar.string();
+  }
+
   if (is_usable_regular_file(tmp_tar))
     return tmp_tar.string();
 
+  auto stage_candidate = [&](const fs::path& candidate) -> std::string {
+    if (!is_usable_regular_file(candidate))
+      return "";
+    if (candidate == tmp_tar)
+      return tmp_tar.string();
+    if (move_to_tmp(candidate, tmp_tar))
+      return tmp_tar.string();
+    return candidate.string();
+  };
+
   const char* home = std::getenv("HOME");
   const fs::path home_path = home ? fs::path(home) : fs::path();
+  fs::path temp_root;
+  try {
+    temp_root = fs::temp_directory_path();
+  } catch (...) {
+    temp_root = fs::path("/tmp");
+  }
   const std::vector<fs::path> search_dirs = {
       root,
       fs::current_path(),
-      root / "tmp",
-      fs::temp_directory_path(),
+      root_tmp,
+      tmp_dir,
+      temp_root,
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
       home_path / ".sima" / "modelzoo",
@@ -547,10 +620,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     if (dir.empty())
       continue;
     for (const auto& name : names) {
-      fs::path candidate = dir / name;
-      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
-        return tmp_tar.string();
-      }
+      const std::string staged = stage_candidate(dir / name);
+      if (!staged.empty())
+        return staged;
     }
   }
 
@@ -598,12 +670,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     const fs::path subdir = base / "yolo_v8s";
     for (const auto& name : names) {
       const fs::path candidate = subdir / name;
-      if (is_usable_regular_file(candidate)) {
-        if (move_to_tmp(candidate, tmp_tar)) {
-          return tmp_tar.string();
-        }
-        return candidate.string();
-      }
+      const std::string staged = stage_candidate(candidate);
+      if (!staged.empty())
+        return staged;
     }
   }
 
@@ -653,10 +722,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
         // skipping here was the bug behind the "Failed to locate" CI flake
         // when sima-cli's board-mode cache layout puts the file under a
         // per-model subdir (e.g. `<cwd>/yolo_v8s/yolo_v8s_mpk.tar.gz`).
-        if (move_to_tmp(found, tmp_tar)) {
-          return tmp_tar.string();
-        }
-        return found.string();
+        const std::string staged = stage_candidate(found);
+        if (!staged.empty())
+          return staged;
       }
     }
   }
@@ -829,7 +897,7 @@ inline fs::path ensure_coco_sample(const fs::path& root_in = {}) {
   // runner, so curl/wget bail with "Failure writing output to destination"
   // even though the URL resolves cleanly and the test would otherwise pass.
   const fs::path primary = root / "tmp" / "coco_sample.jpg";
-  if (download_file(url, primary))
+  if (ensure_writable_directory(primary.parent_path()) && download_file(url, primary))
     return primary;
 
   std::error_code ec;
