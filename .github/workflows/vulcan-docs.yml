@@ -55,8 +55,12 @@ jobs:
             prod|production)
               deploy_environment="prod"
               if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-                echo "Production docs deploy is only allowed from refs/heads/main. Current ref: ${GITHUB_REF}" >&2
-                exit 1
+                if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${GITHUB_REF}" == "refs/heads/develop" ]]; then
+                  echo "Allowing temporary production docs deploy from refs/heads/develop via manual dispatch."
+                else
+                  echo "Production docs deploy is only allowed from refs/heads/main, with a temporary manual-dispatch exception for refs/heads/develop. Current ref: ${GITHUB_REF}" >&2
+                  exit 1
+                fi
               fi
               ;;
             *)
