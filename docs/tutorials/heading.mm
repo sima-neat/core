@@ -120,6 +120,6 @@ cmake -S . -B build && cmake --build build -j
 
 `find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
-For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see the [Hello Neat Minimal Example](/getting-started/minimal_example).
+For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see [Hello Neat](/getting-started/minimal_example).
 
 <p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>

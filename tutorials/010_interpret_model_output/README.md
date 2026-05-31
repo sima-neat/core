@@ -29,7 +29,7 @@ Before you optimize throughput or add complex graph logic, you need a stable way
 Chapter 001.
 
 **References**
-- [Input and Output](/getting-started/programming-model/io)
+- [Node boundaries and I/O](/getting-started/programming-model/node#boundary-nodes)
 - [Tensor and Sample](/getting-started/programming-model/core_types)
 
 ## Learning Process

@@ -1,7 +1,7 @@
 ---
 title: Graph
 description: Build a runnable application from Nodes, Models, and reusable Graph fragments
-sidebar_position: 6
+sidebar_position: 3
 ---
 
 # Graph
@@ -75,162 +75,19 @@ run.push("image", simaai::neat::TensorList{image_tensor});
 auto classes = run.pull("classes");
 ```
 
-## `Input("name")` and `Output("name")` are named doors
+## Nodes, groups, and boundaries
 
-The most important rule is:
+A `Graph` is the assembly boundary; [`Node`](/getting-started/programming-model/node) is the building block.
 
-> A named `Input` or `Output` describes a public boundary of a Graph fragment. It is a **door**, not always a physical runtime source or sink.
+That includes:
 
-That sentence matters because reusable graph fragments are meant to be composed.
+- atomic nodes such as decode, preprocess, postprocess, source, and sink stages;
+- pre-built node groups, which are reusable bundles of nodes;
+- boundary nodes such as `Input("image")` and `Output("classes")`.
 
-Example reusable fragment:
+For the detailed rules around pre-built groups and boundary nodes, see [Node → Pre-built node groups](/getting-started/programming-model/node#pre-built-node-groups) and [Node → Boundary nodes](/getting-started/programming-model/node#boundary-nodes).
 
-```cpp
-simaai::neat::Graph route("route");
-route.add(simaai::neat::nodes::Input("image"));
-route.add(model);
-route.add(simaai::neat::nodes::Output("classes"));
-```
-
-This fragment says:
-
-- "I accept something called `image`."
-- "I produce something called `classes`."
-- "Between those names, run `model`."
-
-It does **not** necessarily mean Neat should create a separate physical input queue and a separate physical output queue every time the fragment is used. If this fragment is placed inside a larger graph, its `Input("image")` and `Output("classes")` are often just connection points.
-
-### Plain-language analogy
-
-A Graph fragment is like a function:
-
-```cpp
-classes = route(image)
-```
-
-The function has a parameter named `image` and a return value named `classes`.
-When you call the function from another function, you do not create a new keyboard and monitor inside the function. You just connect the caller's value to the parameter and connect the return value to the next step.
-
-Neat treats Graph boundaries the same way.
-
-## Boundary materialization: when doors become real runtime I/O
-
-During `build()`, Neat performs a boundary materialization pass. This pass decides which named doors become real runtime I/O and which named doors are just internal wiring labels.
-
-The rules are intentionally simple:
-
-| Boundary node | If it is on the outside of the final app | If it is connected inside a larger graph |
-|---|---|---|
-| `Input("name")` | Becomes a public `run.push("name", ...)` entry point. | Is removed from the executable pipeline and replaced by a direct internal connection. |
-| `Output("name")` | Becomes a public `run.pull("name")` exit point. | Is removed from the executable pipeline and replaced by a direct internal connection. |
-
-So this reusable fragment:
-
-```cpp
-simaai::neat::Graph route("route");
-route.add(simaai::neat::nodes::Input("image"));
-route.add(model);
-route.add(simaai::neat::nodes::Output("classes"));
-```
-
-becomes one of two things depending on where it is used.
-
-### Used as a complete app
-
-```cpp
-auto run = route.build();
-run.push("image", simaai::neat::TensorList{image_tensor});
-auto classes = run.pull("classes");
-```
-
-`Input("image")` is materialized as a public input. `Output("classes")` is materialized as a public output.
-
-### Used inside a larger app
-
-```cpp
-simaai::neat::Graph app("app");
-app.connect(camera, route);
-app.connect(route, display);
-```
-
-The route fragment's `Input("image")` and `Output("classes")` are internal connection points. Neat removes those boundary declarations from the executable pipeline and connects the real work directly:
-
-```text
-camera -> model -> display
-```
-
-The logical names are still kept for diagnostics, named `Run` APIs, and visualization. They are just not extra runtime sinks/sources.
-
-## Why Neat does this
-
-This design avoids several common problems.
-
-### 1. Reusable fragments behave like ML modules
-
-ML users expect modules to compose:
-
-```text
-image -> preprocess -> model -> postprocess -> classes
-```
-
-You should be able to package `preprocess -> model -> postprocess` as a reusable Graph and insert it into a larger app without changing the app's mental model.
-
-### 2. Internal boundaries do not create fake outputs
-
-Without boundary materialization, a fragment like this:
-
-```cpp
-route.add(Input("image"));
-route.add(model);
-route.add(Output("classes"));
-```
-
-could accidentally create a real output sink inside the middle of a larger graph. Then the real final output would be a second sink. Many media runtimes do not allow that shape in a single linear segment, and even when they do, it usually means the wrong thing.
-
-Boundary materialization prevents that. Internal `Input`/`Output` nodes are treated as declarations and are removed before executable pipeline construction.
-
-### 3. It avoids hidden copies and bridge overhead
-
-A boundary that becomes a real runtime input or output may require a queue, a memory handoff, or a device/CPU boundary.
-
-If a boundary is only there to name a reusable fragment's input or output, creating that physical handoff would be wasteful. It could add latency, reduce throughput, or accidentally move data out of device-visible memory.
-
-The compiler therefore keeps data on the most direct path it can.
-
-### 4. Error messages can stay customer-friendly
-
-Even though Neat removes internal boundary nodes from the executable pipeline, it keeps a mapping from the customer-facing Graph to the lowered runtime graph.
-
-That means diagnostics can still say things like:
-
-```text
-Graph endpoint "classes" is connected to multiple producers.
-Use graphs::Combine(..., CombinePolicy::ByFrame) or split the output names.
-```
-
-instead of exposing low-level runtime element names.
-
-## How Neat lowers a Graph at build time
-
-When you call:
-
-```cpp
-auto run = graph.build();
-```
-
-Neat roughly does this:
-
-1. **Collects the public Graph**: all Nodes, Models, reusable Graph fragments, names, and connections.
-2. **Resolves named boundaries**: finds `Input("name")` and `Output("name")` declarations.
-3. **Classifies boundaries**:
-   - external inputs become `run.push(...)` entry points;
-   - external outputs become `run.pull(...)` exit points;
-   - internal boundaries become graph wiring only.
-4. **Builds an executable graph**: removes internal boundary declarations and keeps only real executable work.
-5. **Preserves a map back to your Graph**: used by `describe()`, diagnostics, metrics, and visualization.
-6. **Runs one unified `Run`**: the same `Run` API is used for linear and connected graphs.
-
-You do not need to choose pipeline mode vs graph mode. `Graph::build()` builds the whole application.
+When you call `Graph::build()`, Neat lowers the public graph into one executable runtime graph, preserving the customer-facing names for diagnostics and named `Run` APIs.
 
 ## `add()` vs `connect()`
 
@@ -406,8 +263,6 @@ When used inside another graph, this can compile down to a direct wire. Neat kee
 
 - [Node](/getting-started/programming-model/node)
 - [Model](/getting-started/programming-model/model)
-- [Input and Output](/getting-started/programming-model/io)
-- [Pipeline](/getting-started/programming-model/pipeline)
 - [Public Graph and graph helpers](/concepts/graphs)
 
 ## Tutorials

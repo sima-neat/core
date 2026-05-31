@@ -33,7 +33,7 @@ Chapters 002 (async), 004 (ModelOptions), 007 (ModelRouteOptions), 015 (RunOptio
 **References**
 - [Model](/getting-started/programming-model/model)
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
+- [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
 1. Prepare deterministic input and shared runtime options for production-like behavior.

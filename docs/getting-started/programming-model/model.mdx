@@ -8,12 +8,12 @@ sidebar_position: 2
 
 [`Model`](/reference/{lsa}/classes/simaai-neat-model) is the top-level API for loading a compiled model (`.tar.gz`) and exposing reusable stage fragments.
 
-Use `Model` when you want model-aware pipeline assembly without manually wiring every model plugin.
+Use `Model` when you want model-aware graph assembly without manually wiring every model plugin.
 
 ## What `Model` gives you
 
 - `graph()`: full model path as a reusable Graph fragment.
-- `preprocess()`, `inference()`, `postprocess()`: stage-level composition.
+- `preprocess()`, `inference()`, `postprocess()`: reusable node-stage fragments.
 - `input_spec()` and `output_spec()`: tensor contract introspection.
 - `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
 
@@ -63,7 +63,6 @@ before inspecting detailed bus logs.
 
 - [Inference Workflow](/getting-started/programming-model/overview)
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
 
 ## Tutorials
 

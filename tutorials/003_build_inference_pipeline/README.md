@@ -34,7 +34,7 @@ Chapter 001.
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
+- [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
 1. Create a minimal `Graph` with explicit input and output nodes.

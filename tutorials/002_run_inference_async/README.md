@@ -29,7 +29,7 @@ Chapter 001. Familiarity with `pyneat.Model` and `model.run()` is assumed.
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
+- [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
 1. Prepare runtime inputs: parse CLI args, load ResNet50 model archive, and construct local input samples.

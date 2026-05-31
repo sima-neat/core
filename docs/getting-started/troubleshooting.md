@@ -40,7 +40,7 @@ sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
 
 ### `find_package(SimaNeat CONFIG)` cannot find the package
 **Cause:** CMake can't locate `SimaNeatConfig.cmake` (installed under `lib/cmake/SimaNeat/`). On native DevKit installs it's on the default system prefix; in SDK cross-builds the sysroot isn't on `CMAKE_PREFIX_PATH`.
-**Fix:** export `SYSROOT` and let your `CMakeLists` add it to the prefix path (the [first-inference template](/getting-started/first_inference) does this):
+**Fix:** export `SYSROOT` and let your `CMakeLists` add it to the prefix path (the [Hello Neat template](/getting-started/minimal_example) does this):
 ```cmake
 if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
   list(APPEND CMAKE_PREFIX_PATH "$ENV{SYSROOT}/usr/lib/aarch64-linux-gnu")

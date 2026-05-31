@@ -30,7 +30,7 @@ Chapter 002 or 003 (Graph/Run basics).
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
+- [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
 1. Validate Graph contract and backend parse path (`validate()`).

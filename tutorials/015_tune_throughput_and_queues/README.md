@@ -33,7 +33,7 @@ The chapter exercises `RunOptions` at the level a production pipeline needs to c
 Chapter 002 (async basics). Chapter 011 (diagnostics).
 
 **References**
-- [Pipeline](/getting-started/programming-model/pipeline)
+- [Graph](/getting-started/programming-model/graph)
 - [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process

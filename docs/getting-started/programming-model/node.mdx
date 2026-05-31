@@ -1,13 +1,13 @@
 ---
 title: Node
-description: Atomic pipeline building block and composition unit
+description: Atomic building blocks, pre-built groups, and graph boundary nodes
 sidebar_position: 4
 ---
 
 # Node
 
-A `Node` is the smallest composable unit in a SiMa Neat pipeline.
-Each node contributes deterministic pipeline fragments and metadata used by the builder and runtime.
+A `Node` is the smallest composable unit in SiMa Neat.
+Nodes are the things a [`Graph`](/getting-started/programming-model/graph) wires together: decode stages, preprocess stages, model stages, postprocess stages, sources, sinks, and application boundaries.
 
 Reference:
 - [`nodes` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes)
@@ -15,30 +15,202 @@ Reference:
 
 ## What a Node represents
 
-- One logical stage in the pipeline (decode, convert, preprocess, sink, etc.).
-- A deterministic gst fragment with stable element naming.
-- Caps behavior and wiring hints used by `Graph` build/validation.
+A node contributes one logical piece of work plus the metadata the builder needs to wire it safely:
 
-## Node vs reusable Graph fragment
+- runtime work, such as decode, convert, preprocess, inference, postprocess, or sink behavior;
+- input/output contracts, such as expected media type, tensor shape, dtype, or caps;
+- deterministic backend naming, so `describe()`, diagnostics, metrics, and probes stay stable.
 
-- **Node**: single stage.
-- **Reusable Graph fragment**: premade `Graph` containing an ordered reusable list of nodes
-  (for example input fragments or model stages).
+The main rule is simple:
 
-You add both through [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) with `add(...)`.
+```text
+Graph = nodes wired together
+```
 
-## Why it matters
+`Model` is the model-aware node source. A `Model` can be added directly to a `Graph`, or can provide reusable stage fragments such as preprocess, inference, and postprocess.
 
-- Predictable pipeline structure and naming.
-- Easier debugging with `describe()` and `describe_backend()`.
-- Reusable building blocks for custom and model-driven flows.
+<a id="pre-built-node-groups"></a>
+## Pre-built node groups
+
+Some common patterns are more than one low-level node. Neat exposes those as pre-built groups so users do not have to hand-wire every source, decoder, converter, queue, or sink.
+
+Think of a group as a reusable mini-graph: a named bundle of nodes with a clear contract.
+
+Examples:
+
+- `VideoInputGroup(...)`: file/video source + decode path.
+- `RtspDecodedInput(...)`: RTSP source + decode path.
+- model route fragments: preprocess + inference + decode/postprocess around a compiled model.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/runtime.h"
+#include "neat/node_groups.h"
+
+simaai::neat::Graph graph;
+
+simaai::neat::nodes::groups::VideoInputGroupOptions vopt;
+vopt.path = "/data/sample.mp4";
+graph.add(simaai::neat::nodes::groups::VideoInputGroup(vopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+graph = neat.Graph()
+
+vopt = neat.VideoInputGroupOptions()
+vopt.path = "/data/sample.mp4"
+graph.add(neat.groups.video_input(vopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use pre-built groups when the shape is standard and the interesting part of your app is not the internal media plumbing. If you need custom topology, build the equivalent `Graph` yourself from lower-level nodes.
+
+<a id="boundary-nodes"></a>
+## Boundary nodes: `Input` and `Output`
+
+`Input` and `Output` are nodes too. They are special because they describe where data enters or leaves a graph fragment.
+
+The important mental model:
+
+> `Input("name")` and `Output("name")` are named doors.
+
+At the outside of the final app, those doors become public runtime APIs:
+
+- `Input("image")` becomes `run.push("image", ...)`.
+- `Output("classes")` becomes `run.pull("classes", ...)`.
+
+Inside a larger graph, those same doors are just connection points. Neat removes the internal boundary nodes while building the executable runtime path and wires the real work directly.
+
+```cpp
+simaai::neat::Graph route("route");
+route.add(simaai::neat::nodes::Input("image"));
+route.add(model);
+route.add(simaai::neat::nodes::Output("classes"));
+```
+
+Used as a complete app:
+
+```cpp
+auto run = route.build();
+run.push("image", simaai::neat::TensorList{image_tensor});
+auto classes = run.pull("classes");
+```
+
+Used inside a larger app:
+
+```cpp
+simaai::neat::Graph app("app");
+app.connect(camera, route);
+app.connect(route, telemetry);
+```
+
+Conceptually, the internal boundary nodes lower to direct wiring:
+
+```text
+camera -> model -> telemetry
+```
+
+The names are still preserved for diagnostics, endpoint inspection, metrics, and visualization. They just do not create extra queues, copies, or fake runtime sinks in the middle of the app.
+
+### App-pushed input
+
+Use `nodes::Input` when your application already has the frame or tensor and wants to push it into Neat.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+
+simaai::neat::InputOptions iopt;
+iopt.format = "RGB";
+iopt.width = 224;
+iopt.height = 224;
+graph.add(simaai::neat::nodes::Input("image", iopt));
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+graph = neat.Graph()
+
+iopt = neat.InputOptions()
+iopt.format = "RGB"
+iopt.width = 224
+iopt.height = 224
+graph.add(neat.nodes.input("image", iopt))
+```
+
+</CodeTab>
+</CodeTabs>
+
+### Sample output
+
+Use `nodes::Output` when the consumer needs a full [`Sample`](/getting-started/programming-model/core_types#sample): payload plus stream/frame/timestamp metadata.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input("image"));
+graph.add(model);
+graph.add(simaai::neat::nodes::Output("classes"));
+
+const auto run = graph.build();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+graph = neat.Graph()
+graph.add(neat.nodes.input("image"))
+graph.add(model)
+graph.add(neat.nodes.output("classes"))
+
+run = graph.build()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use `Graph::add_output_tensor(...)` when you want the simpler tensor-first output path with predictable tensor shape/format and do not need the richer sample envelope.
+
+## Quick decision guide
+
+- Source is file, camera, or RTSP: use a pre-built input group from `nodes::groups`.
+- Source is app-produced tensor/frame: use `nodes::Input`.
+- Output consumer needs stream/frame/timestamp metadata: use `nodes::Output` and pull `Sample` objects.
+- Output consumer only needs numeric data: use tensor-first output helpers and pull `Tensor` objects.
+- Need a reusable bundle: make a `Graph` fragment from nodes and add/connect it like any other building block.
+
+## Why this matters
+
+- One concept covers atomic stages, boundary declarations, and pre-built groups.
+- Reusable graph fragments behave like functions: inputs in, outputs out, no accidental runtime sources/sinks in the middle.
+- Diagnostics stay friendly because node names and boundary names survive lowering.
+- Runtime stays efficient because internal boundaries do not force hidden copies or queues.
 
 ## See also
 
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
-- [Graph](/getting-started/programming-model/graph)
-- [Input and Output](/getting-started/programming-model/io)
+- [Model](/getting-started/programming-model/model)
+- [Tensor and Sample](/getting-started/programming-model/core_types)
 
 ## Tutorials
 

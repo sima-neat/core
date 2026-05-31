@@ -39,7 +39,7 @@ Chapter 012 (Graph basics). Chapter 009 (bundle samples) helps for join semantic
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
-- [Pipeline](/getting-started/programming-model/pipeline)
+- [Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
 1. Generate deterministic per-stream/per-frame samples with explicit tags.
