@@ -1,6 +1,7 @@
 {
   "internals": {
-    "policy": "snap"
+    "branch": "beta02_graph_changes",
+    "spec": "0ba608ab81a132c49dcff063ee6784de5cd50c0c"
   },
   "llima": {
     "branch": "develop",
