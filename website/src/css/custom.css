@@ -266,7 +266,13 @@ p.doxyGeneratedBy {
 }
 
 #minimal-tab-cpp:checked ~ label[for="minimal-tab-cpp"],
-#minimal-tab-py:checked ~ label[for="minimal-tab-py"] {
+#minimal-tab-py:checked ~ label[for="minimal-tab-py"],
+#hello-step1-tab-cpp:checked ~ label[for="hello-step1-tab-cpp"],
+#hello-step1-tab-py:checked ~ label[for="hello-step1-tab-py"],
+#hello-step2-tab-cpp:checked ~ label[for="hello-step2-tab-cpp"],
+#hello-step2-tab-py:checked ~ label[for="hello-step2-tab-py"],
+#hello-step3-tab-cpp:checked ~ label[for="hello-step3-tab-cpp"],
+#hello-step3-tab-py:checked ~ label[for="hello-step3-tab-py"] {
   border-bottom-color: var(--ifm-color-primary);
 }
 
@@ -277,7 +283,13 @@ p.doxyGeneratedBy {
 }
 
 #minimal-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
-#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
+#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step1-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step1-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step2-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step2-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step3-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step3-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
   display: block;
 }
 

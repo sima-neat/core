@@ -1,9 +1,5 @@
 {
   "label": "Hello Neat!",
   "position": 3,
-  "collapsed": true,
-  "link": {
-    "type": "doc",
-    "id": "getting-started/minimal_example/index"
-  }
+  "collapsed": true
 }

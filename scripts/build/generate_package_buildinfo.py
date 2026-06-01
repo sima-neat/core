@@ -34,6 +34,12 @@ COMPAT_DEFAULTS = {
             "macOS (Colima + Docker)",
         ],
         "sysroot": "/opt/toolchain/aarch64/modalix",
+        # Fallbacks so the Compatibility table never renders blank rows when
+        # building outside the SDK container (no /etc/sdk-release, no --toolchain).
+        # Overridden by read_sdk_release() and --toolchain when those are available.
+        "sdk": "2.0.0",
+        "elxr": "2.0.0",
+        "toolchain": "aarch64-linux-gnu-g++ 12.2.0",
     },
     "pyneat": {
         "platform": "linux_aarch64",

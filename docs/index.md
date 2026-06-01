@@ -58,7 +58,7 @@ The getting-started guides help you install and build Neat, the programming-mode
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/software/getting-started/installation/"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
       <li><a class="overview-link-card" href="/software/contribute/build/"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
-      <li><a class="overview-link-card" href="/software/getting-started/minimal_example/"><strong>Hello Neat!</strong><span>Run your first Neat inference with YOLOv8 and decoded boxes.</span></a></li>
+      <li><a class="overview-link-card" href="/software/getting-started/minimal_example/minimal/"><strong>Hello Neat!</strong><span>Run your first Neat inference with YOLOv8 and decoded boxes.</span></a></li>
       <li><a class="overview-link-card" href="/software/reference/programming-model/overview/"><strong>Programming Model</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
     </ul>
   </section>

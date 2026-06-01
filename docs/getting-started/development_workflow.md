@@ -22,7 +22,7 @@ A typical Neat development cycle looks like this:
 
 ## Core Concepts at a Glance
 
-The Programming Model (now under Reference) breaks each of these down in depth. At a glance:
+The Programming Model breaks each of these down in depth. At a glance:
 
 - [Model](/reference/programming-model/model) — load a compiled model package and expose it as a runnable unit.
 - [Run](/reference/programming-model/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
@@ -38,7 +38,7 @@ Step-by-step entry points for new users:
 
 - [Installation](/getting-started/installation) — pick the right setup path for your environment.
 - [Build](/contribute/build) — build Neat from source with `build.sh` (contributor workflow).
-- [Hello Neat!](/getting-started/minimal_example) — minimal CMake application that links against the installed library.
+- [Hello Neat!](/getting-started/minimal_example/minimal) — minimal CMake application that links against the installed library.
 - [Tutorials](/tutorials) — guided chapters that scale from "first model" to "production pipeline".
 
 Reference material for when you need depth:
@@ -54,9 +54,9 @@ Neat owns the runtime: model loading, validation, pipeline construction, schedul
 If you only remember three lines of code from Neat, remember these:
 
 ```cpp
-simaai::neat::Model  model(mpk_path);
-simaai::neat::Sample out = model.run(input, /*timeout_ms=*/2000);
-// inspect out.tensor
+simaai::neat::Model   model(mpk_path);
+simaai::neat::Sample  out  = model.run(input, /*timeout_ms=*/2000);
+simaai::neat::Mapping view = out.tensor->map_read();  // inspect the output bytes
 ```
 
 Everything else in this documentation — pipelines, graphs, async queues, multi-stream — is a controlled expansion of that core three-line story.
