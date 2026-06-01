@@ -7,8 +7,12 @@
 #include "graph/nodes/JoinBundle.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
+#include "model/internal/ModelInternal.h"
+#include "model/internal/ModelRouteRetarget.h"
 #include "nodes/common/Output.h"
+#include "nodes/common/Queue.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/Preproc.h"
 #include "pipeline/Graph.h"
 #include "pipeline/internal/BuildTiming.h"
 #include "pipeline/internal/InputPolicy.h"
@@ -19,6 +23,7 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -851,6 +856,153 @@ bool output_spec_complete(const OutputSpec& spec) {
   return true;
 }
 
+bool raw_video_seed_spec_complete_for_model_route(const SampleSpec& spec) {
+  return spec.media_type == "video/x-raw" && !spec.format.empty() && spec.width > 0 &&
+         spec.height > 0;
+}
+
+std::string raw_video_seed_debug_string(const SampleSpec& spec) {
+  std::string out = "media=" + (spec.media_type.empty() ? std::string("<empty>") : spec.media_type);
+  out += " format=" + (spec.format.empty() ? std::string("<empty>") : spec.format);
+  out += " shape=" + std::to_string(spec.width) + "x" + std::to_string(spec.height);
+  if (spec.depth > 0) {
+    out += "x" + std::to_string(spec.depth);
+  }
+  return out;
+}
+
+[[noreturn]] void throw_raw_image_seed_without_model_preproc(const FragmentPlan& fragment,
+                                                             const SampleSpec& seed_spec) {
+  std::string model_ref = fragment.provenance.model_source_path;
+  if (model_ref.empty()) {
+    model_ref = fragment.provenance.model_id.empty() ? std::string("<unknown model>")
+                                                     : fragment.provenance.model_id;
+  }
+  throw std::invalid_argument(
+      "Graph::build(image): received a raw image seed (" + raw_video_seed_debug_string(seed_spec) +
+      ") for Model::graph() route '" + model_ref +
+      "', but that route has no model-managed Preproc node. If this model is intended to accept "
+      "images, construct Model with Model::Options::preprocess.kind = InputKind::Image and set "
+      "an explicit preprocess.color_convert.input_format plus "
+      "preprocess.input_max_width/input_max_height/input_max_depth before calling "
+      "model.graph(...). If the model expects preprocessed tensors, pass tensor input instead "
+      "or use Model::Options::preprocess.kind = InputKind::Tensor.");
+}
+
+const internal::ModelLineageBinding* model_managed_preproc_lineage_for_fragment(
+    std::span<const std::shared_ptr<simaai::neat::Node>> nodes, const FragmentPlan& fragment) {
+  if (fragment.graph_end <= fragment.graph_start || fragment.graph_end > nodes.size()) {
+    return nullptr;
+  }
+  for (std::size_t i = fragment.graph_start; i < fragment.graph_end; ++i) {
+    const auto& node = nodes[i];
+    if (!node) {
+      continue;
+    }
+    const auto* preproc = dynamic_cast<const simaai::neat::Preproc*>(node.get());
+    if (!preproc) {
+      continue;
+    }
+    const auto& opt = preproc->options();
+    if (opt.model_managed_contract && opt.model_lineage) {
+      return opt.model_lineage.get();
+    }
+  }
+  return nullptr;
+}
+
+bool transparent_root_seed_node(const std::shared_ptr<simaai::neat::Node>& node) {
+  if (!node) {
+    return true;
+  }
+  return dynamic_cast<const simaai::neat::Input*>(node.get()) != nullptr ||
+         dynamic_cast<const simaai::neat::Queue*>(node.get()) != nullptr;
+}
+
+bool fragment_can_use_root_seed(std::span<const std::shared_ptr<simaai::neat::Node>> nodes,
+                                const FragmentPlan& fragment) {
+  if (fragment.graph_start > nodes.size()) {
+    return false;
+  }
+  for (std::size_t i = 0; i < fragment.graph_start; ++i) {
+    if (!transparent_root_seed_node(nodes[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+Model::RouteOptions route_options_from_model_route_fragment(
+    const FragmentPlan& fragment, std::span<const std::shared_ptr<simaai::neat::Node>> nodes) {
+  Model::RouteOptions opt;
+  const auto& provenance = fragment.provenance.model_route;
+  opt.upstream_name = provenance.upstream_name;
+  opt.name_suffix = provenance.name_suffix;
+  opt.buffer_name = provenance.buffer_name;
+  opt.processcvu_requested_run_target = provenance.processcvu_requested_run_target;
+  opt.processcvu = provenance.processcvu;
+  opt.processmla = provenance.processmla;
+  opt.prepared_runner = provenance.prepared_runner;
+  opt.async_queue_depth = provenance.async_queue_depth;
+  opt.expose_all_outputs = provenance.expose_all_outputs;
+
+  if (fragment.graph_start < fragment.graph_end && fragment.graph_end <= nodes.size()) {
+    opt.include_input =
+        dynamic_cast<const simaai::neat::Input*>(nodes[fragment.graph_start].get()) != nullptr;
+    opt.include_output =
+        dynamic_cast<const simaai::neat::Output*>(nodes[fragment.graph_end - 1U].get()) != nullptr;
+  }
+  return opt;
+}
+
+std::vector<std::shared_ptr<simaai::neat::Node>> specialize_linear_model_preproc_route_for_seed(
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes, std::span<const FragmentPlan> fragments,
+    const Sample& seed, const SampleSpec& seed_spec) {
+  if (nodes.empty() || fragments.empty() ||
+      !raw_video_seed_spec_complete_for_model_route(seed_spec)) {
+    return nodes;
+  }
+
+  for (const auto& fragment : fragments) {
+    if (!fragment.provenance.model_route.present || fragment.graph_end <= fragment.graph_start ||
+        fragment.graph_end > nodes.size()) {
+      continue;
+    }
+    if (fragment.boundary_hints.has_value() && fragment.boundary_hints->bundled_fan_in) {
+      continue;
+    }
+    if (!fragment_can_use_root_seed(nodes, fragment)) {
+      continue;
+    }
+
+    const internal::ModelLineageBinding* binding =
+        model_managed_preproc_lineage_for_fragment(nodes, fragment);
+    if (!binding) {
+      throw_raw_image_seed_without_model_preproc(fragment, seed_spec);
+    }
+    if (binding->source_path.empty()) {
+      continue;
+    }
+
+    Model model(binding->source_path, binding->base_options);
+    Model::RouteOptions route_opt = route_options_from_model_route_fragment(fragment, nodes);
+    auto replacement =
+        internal::ModelAccess::build_public_route_nodes_for_seed(model, route_opt, seed);
+    const std::size_t expected_size = fragment.graph_end - fragment.graph_start;
+    if (replacement.size() != expected_size) {
+      throw std::runtime_error(
+          "compile_public_graph: model route seed specialization changed node count for fragment " +
+          std::to_string(fragment.graph_start) + ".." + std::to_string(fragment.graph_end));
+    }
+    for (std::size_t i = 0; i < expected_size; ++i) {
+      nodes[fragment.graph_start + i] = std::move(replacement[i]);
+    }
+    break;
+  }
+
+  return nodes;
+}
+
 const char* dtype_token(TensorDType dtype) {
   switch (dtype) {
   case TensorDType::UInt8:
@@ -1668,13 +1820,17 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
 
   const auto lower_start = pipeline_internal::build_timing_now();
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes = view.linear_nodes;
-  const auto lower_us = pipeline_internal::build_timing_us(lower_start);
-
-  const auto plan_start = pipeline_internal::build_timing_now();
   std::optional<OutputSpec> root_input_spec;
   if (seed_spec.has_value()) {
     root_input_spec = output_spec_from_sample_spec(*seed_spec);
   }
+  if (seed.has_value() && seed_spec.has_value()) {
+    nodes = specialize_linear_model_preproc_route_for_seed(std::move(nodes), view.fragments, *seed,
+                                                           *seed_spec);
+  }
+  const auto lower_us = pipeline_internal::build_timing_us(lower_start);
+
+  const auto plan_start = pipeline_internal::build_timing_now();
   ExecutionGraphPlan plan =
       build_single_pipeline_execution_plan(std::move(nodes), opt, root_input_spec);
   const auto plan_us = pipeline_internal::build_timing_us(plan_start);

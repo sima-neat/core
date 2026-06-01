@@ -297,6 +297,7 @@ set(UNIT_TESTS
   unit_route_graph_slice_kernel_test
   unit_modelpack_mla_handoff_segment_test
   unit_model_stage_fragments_test
+  unit_model_graph_seed_preproc_specialization_test
   unit_modalix_contract_preflight_test
   unit_mpk_graph_dump_test
   unit_mpk_fuse_sibling_pre_mla_test
