@@ -12,7 +12,7 @@ bash -lic 'type dk || type devkit-run'
 
 2. Confirm the build will target ARM64.
 3. Confirm required assets exist before coding around them:
-   - model pack
+   - model archive
    - test image or video
 4. If running from SDK, ensure the binary or script will be under `/workspace`.
 

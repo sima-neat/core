@@ -1,16 +1,14 @@
-// Multistream Graph: StampFrameId -> StreamScheduler -> FanOut -> LambdaStage -> JoinBundle.
+// Multistream public Graph: named inputs -> Combine(ByFrame) -> named output bundle.
 //
 // Usage:
 //   tutorial_014_run_multiple_streams [--streams 8] [--frames 4]
 
-#include "neat/graph.h"
+#include "neat.h"
 
-#include <chrono>
 #include <cstdint>
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -83,60 +81,38 @@ int main(int argc, char** argv) {
     const int frames = parse_int_arg(argc, argv, "--frames", 4);
 
     // CORE LOGIC
-    using namespace simaai::neat::graph;
-    using namespace simaai::neat::graph::dsl;
+    // `graphs::Combine` is a normal public Graph fragment. It declares two
+    // named inputs ("left", "right") and one named output ("combined"). ByFrame
+    // means the runtime emits one bundle only after both inputs have delivered
+    // samples with the same Sample::frame_id.
+    simaai::neat::Graph graph = simaai::neat::graphs::Combine({"left", "right"}, "combined",
+                                                              simaai::neat::CombinePolicy::ByFrame);
 
-    Graph g;
+    std::cout << graph.describe() << "\n";
 
-    // Assign frame ids, then fair-schedule across streams, fan out into two
-    // parallel paths, run a mock model on one, and join both back into a bundle.
-    auto stamp = add(g, nodes::StampFrameIdNode("stamp"));
-
-    nodes::StreamSchedulerOptions sched_opt;
-    sched_opt.per_stream_queue = 2;
-    sched_opt.drop_policy = nodes::StreamDropPolicy::DropOldest;
-    auto sched = add(g, nodes::StreamSchedulerNode(sched_opt, "sched"));
-
-    auto fan = add(g, nodes::FanOutNode({"image", "infer"}, "fan"));
-
-    nodes::StageNodeOptions pool_opt;
-    pool_opt.instances = 4;
-    pool_opt.key_by = nodes::StageKeyBy::StreamId;
-    pool_opt.max_inflight = 64;
-
-    auto model =
-        add(g, nodes::LambdaStageNode(
-                   "FakeModel", {"in"}, {"out"},
-                   [](StageMsg&& msg, std::vector<StageOutMsg>& out, const StagePorts& ports) {
-                     out.push_back(
-                         StageOutMsg{.out_port = ports.out_port("out"), .sample = msg.sample});
-                   },
-                   "model_pool", pool_opt));
-
-    auto join = add(g, nodes::JoinBundleNode({"image", "bbox"}, "join"));
-
-    stamp >> sched >> fan;
-    fan["image"] >> join["image"];
-    fan["infer"] >> model >> join["bbox"];
-
-    std::cout << GraphPrinter::to_text(g) << "\n";
-
-    GraphRun run = GraphSession(std::move(g)).build();
-    auto in = run.input(stamp);
-    auto out = run.output(join);
+    simaai::neat::Run run = graph.build();
 
     for (int frame = 0; frame < frames; ++frame) {
       for (int sid = 0; sid < streams; ++sid) {
-        in.push(make_rgb_sample(std::to_string(sid), frame));
+        const int logical_frame = frame * streams + sid;
+        if (!run.push("left", make_rgb_sample(std::to_string(sid), logical_frame))) {
+          throw std::runtime_error("left push failed: " + run.last_error());
+        }
+        if (!run.push("right", make_rgb_sample(std::to_string(sid), logical_frame))) {
+          throw std::runtime_error("right push failed: " + run.last_error());
+        }
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(2));
     }
 
     const int expected = streams * frames;
     int received = 0;
     int first_fields = -1;
     for (int i = 0; i < expected; ++i) {
-      auto bundle = out.pull_or_throw(/*timeout_ms=*/2000);
+      auto maybe_bundle = run.pull("combined", /*timeout_ms=*/2000);
+      if (!maybe_bundle.has_value()) {
+        throw std::runtime_error("timed out waiting for combined output");
+      }
+      const auto& bundle = *maybe_bundle;
       if (first_fields < 0)
         first_fields = static_cast<int>(bundle.fields.size());
       ++received;
@@ -146,7 +122,7 @@ int main(int argc, char** argv) {
       }
     }
 
-    run.stop();
+    run.close();
     // END CORE LOGIC
 
     if (received != expected)

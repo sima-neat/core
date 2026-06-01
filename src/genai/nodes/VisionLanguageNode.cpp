@@ -1,9 +1,9 @@
-#include "genai/nodes/VisionLanguage.h"
+#include "genai/internal/VisionLanguageNodeFactory.h"
 
 #include "genai/VisionLanguageModel.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 
 #include <algorithm>

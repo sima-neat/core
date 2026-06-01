@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StrictSync.h"
 #include "graph/nodes/JoinBundle.h"
 #include "graph_test_utils.h"
@@ -36,7 +36,7 @@ RUN_TEST(
       using simaai::neat::graph::Graph;
       using simaai::neat::graph::GraphRun;
       using simaai::neat::graph::GraphRunOptions;
-      using simaai::neat::graph::GraphSession;
+      using simaai::neat::graph::build;
       using simaai::neat::graph::PortId;
       using simaai::neat::graph::strict_sync::PendingVideoStore;
       using simaai::neat::graph::strict_sync::YoloTokenStore;
@@ -110,13 +110,11 @@ RUN_TEST(
 
         const PortId encoded_port = g.intern_port("encoded");
         const PortId meta_port = g.intern_port("meta");
-
-        GraphSession session(std::move(g));
         GraphRunOptions run_opt;
         run_opt.edge_queue = static_cast<size_t>(std::max(512, frames_per_cycle * 4));
         run_opt.pull_timeout_ms = 150;
 
-        GraphRun run = session.build(run_opt);
+        GraphRun run = simaai::neat::graph::build(std::move(g), run_opt);
 
         std::mutex err_mu;
         std::string producer_err;
@@ -130,7 +128,7 @@ RUN_TEST(
             for (int i = 0; i < frames_per_cycle; ++i) {
               simaai::neat::Sample sample =
                   sima_test::make_tensor_sample(i, "join-race", -1, static_cast<uint8_t>(i & 0xFF));
-              if (!run.push(join, encoded_port, sample)) {
+              if (!run.push(join, encoded_port, simaai::neat::Sample{sample})) {
                 throw std::runtime_error("encoded push failed");
               }
               produced_encoded.fetch_add(1);
@@ -149,7 +147,7 @@ RUN_TEST(
             for (int i = 0; i < frames_per_cycle; ++i) {
               simaai::neat::Sample sample = sima_test::make_tensor_sample(
                   i, "join-race", -1, static_cast<uint8_t>((i + 33) & 0xFF));
-              if (!run.push(join, meta_port, sample)) {
+              if (!run.push(join, meta_port, simaai::neat::Sample{sample})) {
                 throw std::runtime_error("meta push failed");
               }
               produced_meta.fetch_add(1);

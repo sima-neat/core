@@ -21,7 +21,7 @@ namespace simaai::neat::nodes {
  * @brief Escape hatch — emit an arbitrary GStreamer launch-string fragment.
  *
  * Use only when no typed Node fits. Element names inside `fragment` should follow the
- * `n<idx>_<role>` convention if you want them to show up cleanly in `Session::describe()`.
+ * `n<idx>_<role>` convention if you want them to show up cleanly in `Graph::describe()`.
  *
  * @param fragment Raw GStreamer fragment text (no leading `!`).
  * @param role     The Node's `InputRole`. Set to `Source` if your fragment generates

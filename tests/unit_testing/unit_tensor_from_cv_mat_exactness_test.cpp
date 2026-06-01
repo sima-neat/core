@@ -16,7 +16,7 @@ RUN_TEST("unit_tensor_from_cv_mat_exactness_test", [] {
   using simaai::neat::InputOptions;
 
   InputOptions fp32_opt;
-  fp32_opt.media_type = "application/vnd.simaai.tensor";
+  fp32_opt.payload_type = simaai::neat::PayloadType::Tensor;
   fp32_opt.format = "FP32";
 
   cv::Mat fp32(4, 5, CV_32FC3, cv::Scalar(0.1f, 0.2f, 0.3f));
@@ -39,7 +39,7 @@ RUN_TEST("unit_tensor_from_cv_mat_exactness_test", [] {
   require(threw_u8, "expected U8 tensor cv::Mat ingress to fail");
 
   InputOptions bf16_opt;
-  bf16_opt.media_type = "application/vnd.simaai.tensor";
+  bf16_opt.payload_type = simaai::neat::PayloadType::Tensor;
   bf16_opt.format = "BF16";
   bool threw_bf16 = false;
   try {

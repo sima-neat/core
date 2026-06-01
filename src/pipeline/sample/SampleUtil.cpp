@@ -241,6 +241,7 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t /*index*/) {
   field.kind = SampleKind::TensorSet;
   field.owned = true;
   field.tensors = TensorList{tensor};
+  field.payload_type = tensor.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor;
   field.media_type =
       tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   if (tensor.semantic.image.has_value()) {
@@ -1966,6 +1967,8 @@ bool collect_bundle_tensor_fields(const Sample& bundle,
     for (const auto& tensor : bundle.tensors) {
       Sample field = tensor_sample_from_tensor(tensor, 0);
       field.owned = bundle.owned;
+      field.payload_type =
+          tensor.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor;
       field.media_type =
           tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
       if (!append_field(std::move(field))) {
@@ -2284,8 +2287,14 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     } else if (bundle.tensors.size() == 1U && bundle.fields.empty()) {
       Sample first_field = tensor_sample_from_tensor(bundle.tensors.front(), 0);
       first_field.owned = bundle.owned;
+      if (bundle.payload_type != PayloadType::Auto) {
+        first_field.payload_type = bundle.payload_type;
+      }
       if (!bundle.media_type.empty()) {
         first_field.media_type = bundle.media_type;
+        if (first_field.payload_type == PayloadType::Auto) {
+          first_field.payload_type = payload_type_from_media_type(bundle.media_type);
+        }
       }
       if (!bundle.payload_tag.empty()) {
         first_field.payload_tag = bundle.payload_tag;
@@ -2435,6 +2444,7 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
     if (sample_has_tensor_list(bundle) && !bundle.tensors.empty()) {
       first_field = tensor_sample_from_tensor(bundle.tensors.front(), 0);
       first_field.owned = bundle.owned;
+      first_field.payload_type = PayloadType::Image;
       first_field.media_type = "video/x-raw";
       if (bundle.tensors.front().semantic.image.has_value()) {
         first_field.payload_tag =
@@ -2630,6 +2640,8 @@ std::shared_ptr<void> make_sample_holder_from_bundle(const Sample& bundle, std::
 std::shared_ptr<void> tensor_to_gst_envelope_holder(const Tensor& tensor, std::string* err) {
   Sample sample = sample_from_tensors(TensorList{tensor});
   sample.owned = true;
+  sample.payload_type =
+      tensor.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor;
   sample.media_type =
       tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   sample.payload_tag =
@@ -2665,7 +2677,10 @@ std::shared_ptr<void> tensor_list_to_gst_envelope_holder(const TensorList& tenso
     const bool all_image_tensors =
         std::all_of(tensors.begin(), tensors.end(),
                     [](const Tensor& tensor) { return tensor.semantic.image.has_value(); });
+    sample.payload_type = all_image_tensors ? PayloadType::Image : PayloadType::Tensor;
     sample.media_type = all_image_tensors ? "video/x-raw" : "application/vnd.simaai.tensor";
+  } else if (sample.payload_type == PayloadType::Auto) {
+    sample.payload_type = payload_type_from_media_type(sample.media_type);
   }
   if (sample.segment_name.empty()) {
     sample.segment_name = tensor_runtime_segment_name(tensors.front());
@@ -2738,6 +2753,7 @@ Sample tensor_sample_from_tensor(const Tensor& tensor, std::size_t index) {
   field.kind = SampleKind::TensorSet;
   field.owned = true;
   field.tensors = TensorList{tensor};
+  field.payload_type = tensor.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor;
   field.media_type =
       tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   if (tensor.semantic.image.has_value()) {
@@ -2822,8 +2838,11 @@ Sample pipeline_internal::canonicalize_tensor_transport_sample(const Sample& sam
   out.fields.clear();
   out.tensors = TensorList{tensor};
   if (out.media_type.empty()) {
+    out.payload_type = tensor.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor;
     out.media_type =
         tensor.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
+  } else if (out.payload_type == PayloadType::Auto) {
+    out.payload_type = payload_type_from_media_type(out.media_type);
   }
   if (out.payload_tag.empty() && tensor.semantic.image.has_value()) {
     out.payload_tag = Sample::image_format_string(tensor.semantic.image->format);
@@ -2917,6 +2936,7 @@ Sample sample_from_tensors(const TensorList& tensors) {
   const bool all_image_tensors =
       std::all_of(out.tensors.begin(), out.tensors.end(),
                   [](const Tensor& tensor) { return tensor.semantic.image.has_value(); });
+  out.payload_type = all_image_tensors ? PayloadType::Image : PayloadType::Tensor;
   out.media_type = all_image_tensors ? "video/x-raw" : "application/vnd.simaai.tensor";
   if (out.tensors.size() == 1U && out.tensors.front().semantic.byte_stream.has_value()) {
     out.format = format_tag_to_string(FormatTag::ByteStream);
@@ -2937,8 +2957,12 @@ Sample pipeline_internal::collapse_single_tensor_sample(Sample sample) {
   sample.tensor = std::move(tensor);
 
   if (sample.media_type.empty()) {
+    sample.payload_type =
+        sample.tensor->semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor;
     sample.media_type =
         sample.tensor->semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
+  } else if (sample.payload_type == PayloadType::Auto) {
+    sample.payload_type = payload_type_from_media_type(sample.media_type);
   }
   if (sample.payload_tag.empty() && sample.tensor->semantic.image.has_value()) {
     sample.payload_tag = Sample::image_format_string(sample.tensor->semantic.image->format);
@@ -2973,7 +2997,7 @@ Sample pipeline_internal::sample_from_tensors_for_input(const TensorList& tensor
                                                         const InputOptions& opt) {
   Sample out = sample_from_tensors(tensors);
   if (out.media_type == "application/vnd.simaai.tensor" &&
-      lower_copy(opt.media_type) == "application/vnd.simaai.tensor") {
+      lower_copy(resolve_input_media_type(opt)) == "application/vnd.simaai.tensor") {
     const std::string format = normalize_caps_format_for_media(out.media_type, opt.format.str());
     if (!format.empty()) {
       out.format = format;

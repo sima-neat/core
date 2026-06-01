@@ -480,11 +480,7 @@ void copy_custom_meta(GstBuffer* dst, GstBuffer* src, const char* meta_name) {
   GstCustomMeta* src_meta = gst_buffer_get_custom_meta(src, meta_name);
   if (!src_meta)
     return;
-
-  GstCustomMeta* dst_meta = gst_buffer_get_custom_meta(dst, meta_name);
-  if (!dst_meta) {
-    dst_meta = gst_buffer_add_custom_meta(dst, meta_name);
-  }
+  GstCustomMeta* dst_meta = gst_buffer_add_custom_meta(dst, meta_name);
   if (!dst_meta)
     return;
   GstStructure* src_struct = gst_custom_meta_get_structure(src_meta);
@@ -717,10 +713,10 @@ bool derive_field_spec(const Sample& field, SampleSpec* out, std::string* err) {
 
   const simaai::neat::Tensor& t = normalized.tensors.front();
   InputOptions opt;
-  opt.media_type = normalized.media_type;
-  if (opt.media_type.empty()) {
-    opt.media_type = t.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
-  }
+  opt.payload_type =
+      !normalized.media_type.empty()
+          ? input_type_from_media_type(normalized.media_type)
+          : (t.semantic.image.has_value() ? PayloadType::Image : PayloadType::Tensor);
   if (!normalized.payload_tag.empty()) {
     opt.format = normalized.payload_tag;
   } else if (!normalized.format.empty()) {

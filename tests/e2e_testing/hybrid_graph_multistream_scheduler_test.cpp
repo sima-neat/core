@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "graph/nodes/StreamScheduler.h"
@@ -137,9 +137,7 @@ RUN_TEST("hybrid_graph_multistream_scheduler_test", [] {
   auto sink = g.add(make_pass_node("sink"));
 
   g.connect(sched, sink, "out", "in");
-
-  simaai::neat::graph::GraphSession session(std::move(g));
-  simaai::neat::graph::GraphRun run = session.build();
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
   const int fast_inputs = 30;
   const int slow_inputs = 6;
@@ -149,7 +147,7 @@ RUN_TEST("hybrid_graph_multistream_scheduler_test", [] {
   int slow_out = 0;
 
   for (int i = 0; i < fast_inputs; ++i) {
-    require(run.push(sched, make_sample("fast", i)), "push fast failed");
+    require(run.push(sched, simaai::neat::Sample{make_sample("fast", i)}), "push fast failed");
     ExpectedSample exp_fast = expected.push_and_emit("fast", i);
     auto out_fast = run.pull(sink, 5000);
     require(out_fast.has_value(), "GraphRun::pull timed out (fast)");
@@ -160,7 +158,7 @@ RUN_TEST("hybrid_graph_multistream_scheduler_test", [] {
       slow_out++;
 
     if (i < slow_inputs) {
-      require(run.push(sched, make_sample("slow", i)), "push slow failed");
+      require(run.push(sched, simaai::neat::Sample{make_sample("slow", i)}), "push slow failed");
       ExpectedSample exp_slow = expected.push_and_emit("slow", i);
       auto out_slow = run.pull(sink, 5000);
       require(out_slow.has_value(), "GraphRun::pull timed out (slow)");

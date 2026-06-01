@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/FileInput.h"
 #include "nodes/common/ImageDecode.h"
 #include "nodes/common/ImageFreeze.h"
@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
     if (argc > 1)
       image_path = argv[1];
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.add(simaai::neat::nodes::FileInput(image_path));
     p.add(simaai::neat::nodes::ImageDecode());
     p.add(simaai::neat::nodes::ImageFreeze(1));
@@ -26,7 +26,7 @@ int main(int argc, char** argv) {
     const std::string save_path = "pipeline_saved.json";
     p.save(save_path);
 
-    simaai::neat::Session loaded = simaai::neat::Session::load(save_path);
+    simaai::neat::Graph loaded = simaai::neat::Graph::load(save_path);
     const std::string original = p.describe_backend(false);
     const std::string restored = loaded.describe_backend(false);
 

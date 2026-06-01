@@ -1,9 +1,9 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/nodes/StageModelExecutor.h"
 #include "model/Model.h"
 #include "asset_utils.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -42,11 +42,11 @@ simaai::neat::Tensor make_fp32_tensor(int w, int h, int d) {
   return t;
 }
 
-sima_test::MpkFixture make_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture("hybrid_graph_stage_model",
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_fixture() {
+  return sima_test::make_strict_model_archive_fixture("hybrid_graph_stage_model",
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -70,8 +70,8 @@ sima_test::MpkFixture make_fixture() {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 64,
   "input_height": 48,
@@ -80,8 +80,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": 48,
   "output_img_type": "RGB"
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -89,8 +89,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": [48],
   "output_depth": [3]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
 } // namespace
@@ -109,9 +109,7 @@ RUN_TEST("hybrid_graph_stage_model_test", [] {
 
   simaai::neat::graph::Graph g;
   auto node_id = g.add(simaai::neat::graph::nodes::StageModelExecutorNode(opt, "stage_model"));
-
-  simaai::neat::graph::GraphSession session(std::move(g));
-  simaai::neat::graph::GraphRun run = session.build();
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
   simaai::neat::InputOptions tensor_opt = model->input_appsrc_options(true);
   const int input_w = (tensor_opt.width > 0) ? tensor_opt.width : tensor_opt.max_width;
@@ -126,7 +124,7 @@ RUN_TEST("hybrid_graph_stage_model_test", [] {
   input.frame_id = 1;
   input.stream_id = "model";
 
-  require(run.push(node_id, input), "GraphRun::push failed");
+  require(run.push(node_id, simaai::neat::Sample{input}), "GraphRun::push failed");
   auto out = run.pull(node_id, 2000);
   require(out.has_value(), "GraphRun::pull timed out");
   require(out->tensor.has_value(), "StageModelExecutor output missing simaai::neat::Tensor");

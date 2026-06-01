@@ -484,6 +484,82 @@ std::vector<std::string> read_string_alias_values(const json& obj,
   return {};
 }
 
+struct TypedTensorValuesLocal {
+  std::vector<std::string> dtypes;
+  std::vector<std::vector<std::int64_t>> shapes;
+};
+
+std::vector<std::int64_t> read_shape_vector_values_any(const json& value);
+
+std::vector<std::int64_t> read_typed_tensor_shape_local(const json& obj) {
+  if (!obj.is_object()) {
+    return {};
+  }
+  for (const char* key : {"shape", "tensor_shape", "dims"}) {
+    if (!key || !*key || !obj.contains(key)) {
+      continue;
+    }
+    auto shape = read_shape_vector_values_any(obj.at(key));
+    if (!shape.empty()) {
+      return shape;
+    }
+  }
+  return {};
+}
+
+void append_typed_tensor_value_local(const json& value, TypedTensorValuesLocal* out) {
+  if (!out) {
+    return;
+  }
+  if (value.is_string()) {
+    const std::string dtype = value.get<std::string>();
+    if (!dtype.empty()) {
+      out->dtypes.push_back(dtype);
+    }
+    return;
+  }
+  if (!value.is_object()) {
+    return;
+  }
+
+  if (const auto dtype = read_string_alias(value, {"scalar", "dtype", "type", "data_type"});
+      dtype.has_value()) {
+    out->dtypes.push_back(*dtype);
+  }
+  auto shape = read_typed_tensor_shape_local(value);
+  if (!shape.empty()) {
+    out->shapes.push_back(std::move(shape));
+  }
+}
+
+TypedTensorValuesLocal read_typed_tensor_values_any_local(const json& value) {
+  TypedTensorValuesLocal out;
+  if (value.is_array()) {
+    out.dtypes.reserve(value.size());
+    out.shapes.reserve(value.size());
+    for (const auto& item : value) {
+      append_typed_tensor_value_local(item, &out);
+    }
+    return out;
+  }
+  append_typed_tensor_value_local(value, &out);
+  return out;
+}
+
+TypedTensorValuesLocal
+read_typed_tensor_alias_values_local(const json& obj, std::initializer_list<const char*> keys) {
+  for (const char* key : keys) {
+    if (!key || !*key || !obj.contains(key)) {
+      continue;
+    }
+    auto values = read_typed_tensor_values_any_local(obj.at(key));
+    if (!values.dtypes.empty() || !values.shapes.empty()) {
+      return values;
+    }
+  }
+  return {};
+}
+
 std::vector<std::vector<std::int64_t>> read_shape_values_any(const json& value) {
   std::vector<std::vector<std::int64_t>> out;
   if (!value.is_array()) {
@@ -656,6 +732,15 @@ std::string normalize_dtype_local(const std::string& raw_dtype) {
   if (up.find("INT32") != std::string::npos || up == "S32") {
     return "INT32";
   }
+  if (up.find("FLOAT64") != std::string::npos || up == "FP64" || up == "F64") {
+    return "FP64";
+  }
+  if (up.find("UINT64") != std::string::npos || up == "U64") {
+    return "UINT64";
+  }
+  if (up.find("INT64") != std::string::npos || up == "S64") {
+    return "INT64";
+  }
   return up;
 }
 
@@ -699,7 +784,10 @@ void finalize_tensor_contract(MpkTensorContract* tensor) {
   if (tensor->dtype.empty()) {
     if (const auto inferred = infer_dtype_from_shape_and_size(*tensor); inferred.has_value()) {
       tensor->dtype = *inferred;
+      tensor->dtype_source = DTypeSource::InferredFromSize;
     }
+  } else if (tensor->dtype_source == DTypeSource::Unknown) {
+    tensor->dtype_source = DTypeSource::ExplicitMpk;
   }
 }
 
@@ -710,6 +798,9 @@ std::size_t dtype_size_bytes_local(const std::string& raw_dtype) {
   }
   if (dtype == "FP32" || dtype == "INT32" || dtype == "UINT32") {
     return 4U;
+  }
+  if (dtype == "FP64" || dtype == "INT64" || dtype == "UINT64") {
+    return 8U;
   }
   return 1U;
 }
@@ -1279,6 +1370,7 @@ projected_slice_begin_offset_bytes_local(const std::vector<std::int64_t>& begin,
 std::vector<MpkTensorContract>
 parse_tensor_nodes(const json& nodes, const std::vector<std::vector<std::int64_t>>& shapes,
                    const std::vector<std::string>& dtypes, const std::string& fallback_dtype,
+                   const DTypeSource dtype_source, const DTypeSource fallback_dtype_source,
                    const MpkShapeSemantics shape_semantics) {
   std::vector<MpkTensorContract> out;
   if (!nodes.is_array()) {
@@ -1311,8 +1403,12 @@ parse_tensor_nodes(const json& nodes, const std::vector<std::vector<std::int64_t
     }
     if (!dtypes.empty()) {
       tensor.dtype = normalize_dtype_local((i < dtypes.size()) ? dtypes[i] : dtypes.front());
+      tensor.dtype_source = dtype_source;
     } else {
       tensor.dtype = normalize_dtype_local(fallback_dtype);
+      if (!tensor.dtype.empty()) {
+        tensor.dtype_source = fallback_dtype_source;
+      }
     }
     finalize_tensor_contract(&tensor);
     out.push_back(std::move(tensor));
@@ -1792,6 +1888,7 @@ bool resolve_contract_edges_strict(MpkContract* contract, std::string* error_mes
       }
       if (input.dtype.empty() && !source.dtype.empty()) {
         input.dtype = source.dtype;
+        input.dtype_source = source.dtype_source;
       }
       if (input.size_bytes == 0U && source.size_bytes > 0U) {
         input.size_bytes = source.size_bytes;
@@ -1802,6 +1899,7 @@ bool resolve_contract_edges_strict(MpkContract* contract, std::string* error_mes
       }
       if (source.dtype.empty() && !input.dtype.empty()) {
         source.dtype = input.dtype;
+        source.dtype_source = input.dtype_source;
       }
       if (source.size_bytes == 0U && input.size_bytes > 0U) {
         source.size_bytes = input.size_bytes;
@@ -1947,6 +2045,9 @@ void derive_logical_output_contracts(MpkContract* contract) {
                   : ((producer_input && !producer_input->dtype.empty()) ? producer_input->dtype
                                                                         : output.dtype);
           output.logical_dtype = normalize_dtype_local(dtype);
+          output.logical_dtype_source = (producer_input && dtype == producer_input->dtype)
+                                            ? producer_input->dtype_source
+                                            : DTypeSource::InternalContract;
           output.logical_source_plugin = producer.name;
           output.logical_source_kernel = producer.kernel;
           output.logical_source_sequence = producer.sequence;
@@ -1961,6 +2062,7 @@ void derive_logical_output_contracts(MpkContract* contract) {
         if (physical_shape_structured) {
           output.logical_shape = physical_shape;
           output.logical_dtype = normalize_dtype_local(output.dtype);
+          output.logical_dtype_source = output.dtype_source;
         }
         continue;
       }
@@ -1985,6 +2087,7 @@ void derive_logical_output_contracts(MpkContract* contract) {
         if (physical_shape_structured) {
           output.logical_shape = physical_shape;
           output.logical_dtype = normalize_dtype_local(output.dtype);
+          output.logical_dtype_source = output.dtype_source;
         }
         continue;
       }
@@ -2058,6 +2161,7 @@ void derive_logical_output_contracts(MpkContract* contract) {
       if (!producer_is_mla && dtype_preserving_consumer && logical_source &&
           !logical_source->dtype.empty()) {
         output.logical_dtype = normalize_dtype_local(logical_source->dtype);
+        output.logical_dtype_source = logical_source->dtype_source;
       }
 
       if (output.logical_shape.empty() && physical_shape_structured) {
@@ -2066,9 +2170,11 @@ void derive_logical_output_contracts(MpkContract* contract) {
       if (producer_is_mla && !output.dtype.empty()) {
         // MLA boundary contracts are physical; cast/dequant are separate nodes.
         output.logical_dtype = normalize_dtype_local(output.dtype);
+        output.logical_dtype_source = output.dtype_source;
       }
       if (output.logical_dtype.empty() && !output.dtype.empty() && !output.logical_shape.empty()) {
         output.logical_dtype = normalize_dtype_local(output.dtype);
+        output.logical_dtype_source = output.dtype_source;
       }
 
       output.logical_source_plugin = consumer.name;
@@ -2125,6 +2231,7 @@ void derive_logical_input_contracts(MpkContract* contract) {
         if (input_shape_structured) {
           input.logical_shape = input_geometry_shape;
           input.logical_dtype = normalize_dtype_local(input.dtype);
+          input.logical_dtype_source = input.dtype_source;
         }
         continue;
       }
@@ -2134,6 +2241,7 @@ void derive_logical_input_contracts(MpkContract* contract) {
         if (input_shape_structured) {
           input.logical_shape = input_geometry_shape;
           input.logical_dtype = normalize_dtype_local(input.dtype);
+          input.logical_dtype_source = input.dtype_source;
         }
         continue;
       }
@@ -2143,6 +2251,7 @@ void derive_logical_input_contracts(MpkContract* contract) {
         if (input_shape_structured) {
           input.logical_shape = input_geometry_shape;
           input.logical_dtype = normalize_dtype_local(input.dtype);
+          input.logical_dtype_source = input.dtype_source;
         }
         continue;
       }
@@ -2166,10 +2275,13 @@ void derive_logical_input_contracts(MpkContract* contract) {
 
       if (!source->logical_dtype.empty()) {
         input.logical_dtype = normalize_dtype_local(source->logical_dtype);
+        input.logical_dtype_source = source->logical_dtype_source;
       } else if (!source->dtype.empty()) {
         input.logical_dtype = normalize_dtype_local(source->dtype);
+        input.logical_dtype_source = source->dtype_source;
       } else if (!input.dtype.empty()) {
         input.logical_dtype = normalize_dtype_local(input.dtype);
+        input.logical_dtype_source = input.dtype_source;
       }
 
       input.logical_source_plugin = producer.name;
@@ -2479,7 +2591,7 @@ MpkGraphKernelContract kernel_contract_template_local(const std::string& actual_
     add_kernel_fields_local(&contract, MpkGraphKernelFieldKind::Value,
                             {"input_shape", "input_offset", "input_stride", "output_stride",
                              "scaled_width", "scaled_height", "slice_shape", "q_scale", "q_zp",
-                             "channel_mean", "channel_stddev", "batch_size"});
+                             "channel_mean", "channel_stddev", "pad_value", "batch_size"});
     add_kernel_fields_local(&contract, MpkGraphKernelFieldKind::Parameter,
                             {"aspect_ratio", "tessellate", "normalize", "input_img_type",
                              "output_img_type", "output_dtype", "output_shapes", "scaling_type",
@@ -5817,7 +5929,8 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
   }
   if (root_json.contains("input_nodes")) {
     contract.ingress_tensors =
-        parse_tensor_nodes(root_json["input_nodes"], {}, {}, "", MpkShapeSemantics::Unknown);
+        parse_tensor_nodes(root_json["input_nodes"], {}, {}, "", DTypeSource::Unknown,
+                           DTypeSource::Unknown, MpkShapeSemantics::Unknown);
   }
 
   const auto& plugins = root_json["plugins"];
@@ -5853,8 +5966,12 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
     std::vector<std::vector<std::int64_t>> output_shapes;
     std::vector<std::string> input_dtypes;
     std::vector<std::string> output_dtypes;
+    DTypeSource input_dtype_source = DTypeSource::Unknown;
+    DTypeSource output_dtype_source = DTypeSource::Unknown;
     std::string fallback_input_dtype;
     std::string fallback_output_dtype;
+    DTypeSource fallback_input_dtype_source = DTypeSource::Unknown;
+    DTypeSource fallback_output_dtype_source = DTypeSource::Unknown;
     int config_actual_batch_size = 0;
 
     const json* params = nullptr;
@@ -5931,6 +6048,31 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       output_dtypes =
           read_string_alias_values(*params, {"tensor_types", "output_types", "output_dtype",
                                              "out_dtype", "output_data_type", "data_type"});
+      if (!input_dtypes.empty()) {
+        input_dtype_source = DTypeSource::Alias;
+      }
+      if (!output_dtypes.empty()) {
+        output_dtype_source = DTypeSource::Alias;
+      }
+      const auto typed_input_values = read_typed_tensor_alias_values_local(
+          *params, {"input_types", "input_dtype", "in_dtype", "input_data_type"});
+      const auto typed_output_values = read_typed_tensor_alias_values_local(
+          *params, {"tensor_types", "output_types", "output_dtype", "out_dtype", "output_data_type",
+                    "data_type"});
+      if (input_shapes.empty() && !typed_input_values.shapes.empty()) {
+        input_shapes = typed_input_values.shapes;
+      }
+      if (output_shapes.empty() && !typed_output_values.shapes.empty()) {
+        output_shapes = typed_output_values.shapes;
+      }
+      if (input_dtypes.empty() && !typed_input_values.dtypes.empty()) {
+        input_dtypes = typed_input_values.dtypes;
+        input_dtype_source = DTypeSource::TypedObject;
+      }
+      if (output_dtypes.empty() && !typed_output_values.dtypes.empty()) {
+        output_dtypes = typed_output_values.dtypes;
+        output_dtype_source = DTypeSource::TypedObject;
+      }
       fallback_input_dtype =
           read_string_alias(*params, {"in_dtype", "input_dtype", "input_data_type", "frame_type"})
               .value_or("");
@@ -5938,6 +6080,12 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
           read_string_alias(
               *params, {"out_dtype", "output_dtype", "output_data_type", "data_type", "frame_type"})
               .value_or("");
+      if (!fallback_input_dtype.empty()) {
+        fallback_input_dtype_source = DTypeSource::FallbackAlias;
+      }
+      if (!fallback_output_dtype.empty()) {
+        fallback_output_dtype_source = DTypeSource::FallbackAlias;
+      }
       if (!fallback_input_dtype.empty()) {
         stage.canonical_input_dtype = normalize_dtype_local(fallback_input_dtype);
       }
@@ -5960,14 +6108,15 @@ std::optional<MpkContract> load_mpk_contract_from_pack_root(const std::string& p
       const MpkShapeSemantics input_shape_semantics =
           classify_mpk_tensor_shape_semantics_local(stage, true);
       stage.input_tensors = parse_tensor_nodes(plugin["input_nodes"], input_shapes, input_dtypes,
-                                               fallback_input_dtype, input_shape_semantics);
+                                               fallback_input_dtype, input_dtype_source,
+                                               fallback_input_dtype_source, input_shape_semantics);
     }
     if (plugin.contains("output_nodes")) {
       const MpkShapeSemantics output_shape_semantics =
           classify_mpk_tensor_shape_semantics_local(stage, false);
-      stage.output_tensors =
-          parse_tensor_nodes(plugin["output_nodes"], output_shapes, output_dtypes,
-                             fallback_output_dtype, output_shape_semantics);
+      stage.output_tensors = parse_tensor_nodes(
+          plugin["output_nodes"], output_shapes, output_dtypes, fallback_output_dtype,
+          output_dtype_source, fallback_output_dtype_source, output_shape_semantics);
     }
     if (stage.batch_sz_model <= 0 && config_actual_batch_size > 1) {
       const std::string kernel_token =
@@ -6424,6 +6573,7 @@ get_mla_boundary_physical_inputs_contract(const MpkContract& contract) {
     }
     if (carrier.logical_dtype.empty()) {
       carrier.logical_dtype = carrier.dtype;
+      carrier.logical_dtype_source = carrier.dtype_source;
     }
     if (carrier.segment_name.empty()) {
       carrier.segment_name = !carrier.name.empty() ? carrier.name : producer.name;
@@ -7371,6 +7521,7 @@ std::vector<MpkTensorContract> get_mla_logical_outputs_contract(const MpkContrac
         // unpack tensor here; downstream publication must see one canonical semantic shape.
         tensor.logical_shape = tensor.mpk_shape;
         tensor.logical_dtype = normalize_dtype_local(tensor.dtype);
+        tensor.logical_dtype_source = tensor.dtype_source;
         set_dense_tensor_contract_size_preserve_stride_local(&tensor, 0U, boundary_context);
         validate_mla_boundary_tensor_contract_local(tensor, boundary_context, false,
                                                     view.boundary_stage);

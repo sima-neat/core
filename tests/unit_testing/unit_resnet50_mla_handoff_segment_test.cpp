@@ -1,5 +1,4 @@
 #include "asset_utils.h"
-#include "builder/NodeGroup.h"
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
@@ -29,13 +28,12 @@ RUN_TEST(
       model_opt.inference_terminal.last_plugin_id = "processmla";
       Model model(tar_path, model_opt);
 
-      const NodeGroup infer = nodes::groups::Infer(model);
-      require(!infer.nodes().empty(),
-              "ResNet50 MLA-only fragment should compile from the local MPK");
+      const auto infer_nodes = internal::ModelAccess::build_public_inference_nodes(model);
+      require(!infer_nodes.empty(), "ResNet50 MLA-only fragment should compile from the local MPK");
 
       pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
       const auto compiled =
-          compile_node_contracts(infer.nodes(), ContractCompileInput{}, &diagnostics);
+          compile_node_contracts(infer_nodes, ContractCompileInput{}, &diagnostics);
       require(diagnostics.errors.empty(), "ResNet50 MLA-only contract compile failed");
       require(!compiled.stages.empty(), "ResNet50 MLA-only fragment should emit a container stage");
 

@@ -1,4 +1,5 @@
-#include "pipeline/Session.h"
+#include "pipeline/GraphOptions.h"
+#include "pipeline/TensorCore.h"
 #include "test_main.h"
 
 #include <functional>

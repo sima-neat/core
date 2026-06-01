@@ -1,5 +1,5 @@
 #include "model/Model.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -117,10 +117,10 @@ RUN_TEST(
       }
 
       {
-        const auto legacy = sima_test::make_mpk_tar_fixture("model_output_spec_legacy_missing_mpk",
-                                                            {
-                                                                {"etc/pipeline_sequence.json",
-                                                                 R"json({
+        const auto legacy = sima_test::make_model_archive_fixture(
+            "model_output_spec_legacy_missing_mpk", {
+                                                        {"etc/pipeline_sequence.json",
+                                                         R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -135,12 +135,12 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                {"etc/0_process_mla.json",
-                                                                 R"json({
+                                                        {"etc/0_process_mla.json",
+                                                         R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-                                                            });
+                                                    });
         bool threw = false;
         try {
           Model legacy_model(legacy.tar_path);

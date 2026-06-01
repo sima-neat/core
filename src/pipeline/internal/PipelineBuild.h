@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/internal/TensorMath.h"
 
 #include <memory>
@@ -19,7 +19,7 @@ struct NameTransform {
   std::string suffix;
 };
 
-NameTransform make_name_transform(const SessionOptions& opt);
+NameTransform make_name_transform(const GraphOptions& opt);
 
 bool name_transform_enabled(const NameTransform& t);
 
@@ -36,7 +36,7 @@ namespace simaai::neat::pipeline_internal {
 
 class PipelineBuildContext {
 public:
-  explicit PipelineBuildContext(const SessionOptions& opt);
+  explicit PipelineBuildContext(const GraphOptions& opt);
   explicit PipelineBuildContext(const NameTransform& transform);
 
   const NameTransform& name_transform() const {

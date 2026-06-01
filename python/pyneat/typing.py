@@ -5,5 +5,5 @@ from . import _pyneat_core as core
 TensorLike = core.Tensor
 SampleLike = core.Sample
 RunLike = core.Run
-SessionLike = core.Session
+GraphLike = core.Graph
 ModelLike = core.Model

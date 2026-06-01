@@ -5,7 +5,7 @@
  *
  * Defines the legal range of encoder bitrates accepted by the framework. Encoder-bearing
  * nodes (e.g., the H.264 encoder feeding RTSP/UDP outputs) consult this policy at build
- * time and reject configurations outside the range with a SessionError.
+ * time and reject configurations outside the range with a NeatError.
  *
  * @see Policy.h
  * @see DefaultPolicy

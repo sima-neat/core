@@ -1,4 +1,4 @@
-// Inspect a Sample returned by a Session: kind, tensor, fields, rank.
+// Inspect a Sample returned by a Graph: kind, tensor, fields, rank.
 //
 // Usage:
 //   tutorial_010_interpret_model_output
@@ -22,10 +22,10 @@ int main() {
     in.height = rgb.rows;
     in.depth = rgb.channels();
 
-    simaai::neat::Session session;
-    session.add(simaai::neat::nodes::Input(in));
-    session.add(simaai::neat::nodes::Output());
-    auto run = session.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::nodes::Input(in));
+    graph.add(simaai::neat::nodes::Output());
+    auto run = graph.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
 
     // CORE LOGIC
     // push_and_pull is the one-frame synchronous shortcut; Sample has .kind,

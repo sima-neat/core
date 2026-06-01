@@ -18,7 +18,7 @@ namespace simaai::neat {
 // =============================
 
 /**
- * @brief How a Node (or Session) wants buffer memory to be sourced/handed back.
+ * @brief How a Node (or Graph) wants buffer memory to be sourced/handed back.
  *
  * Drives the runner's behavior at output time and contributes to caps
  * negotiation: requiring CPU-mappable memory forces a (potentially copying)

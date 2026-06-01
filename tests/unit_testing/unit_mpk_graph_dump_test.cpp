@@ -1,4 +1,4 @@
-#include "mpk_test_utils.h"
+#include "model_archive_test_utils.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "test_main.h"
 

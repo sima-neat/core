@@ -1,6 +1,8 @@
 // src/pipeline/TensorUtil.cpp
 #include "pipeline/internal/TensorUtil.h"
 
+#include "pipeline/internal/SimaMemApi.h"
+
 #include "pipeline/internal/CpuVisibleSample.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -157,53 +159,8 @@ std::vector<simaai::neat::Segment> extract_runtime_segments_from_buffer(GstBuffe
   return segments;
 }
 
-struct simaai_memory;
-using simaai_memory_t = simaai_memory;
-
-struct SimaMemApi {
-  using AttachFn = simaai_memory_t* (*)(uint64_t);
-  using InvalidateFn = void (*)(simaai_memory_t*);
-  using InvalidatePartFn = void (*)(simaai_memory_t*, unsigned int, unsigned int);
-  using FlushFn = void (*)(simaai_memory_t*);
-  using MapFn = void* (*)(simaai_memory_t*);
-  using UnmapFn = void (*)(simaai_memory_t*);
-  using GetPhysFn = guintptr (*)(GstMemory*);
-
-  AttachFn attach = nullptr;
-  InvalidateFn invalidate = nullptr;
-  InvalidatePartFn invalidate_part = nullptr;
-  FlushFn flush = nullptr;
-  MapFn map = nullptr;
-  UnmapFn unmap = nullptr;
-  GetPhysFn get_phys = nullptr;
-  bool tried = false;
-};
-
-SimaMemApi& sima_mem_api() {
-  static SimaMemApi api;
-  if (api.tried)
-    return api;
-  api.tried = true;
-
-  void* handle = dlopen("libsimaaimem.so", RTLD_LAZY | RTLD_LOCAL);
-  if (!handle) {
-    handle = dlopen("libsimaaimem.so.1", RTLD_LAZY | RTLD_LOCAL);
-  }
-  if (!handle)
-    return api;
-
-  api.attach = reinterpret_cast<SimaMemApi::AttachFn>(dlsym(handle, "simaai_memory_attach"));
-  api.invalidate =
-      reinterpret_cast<SimaMemApi::InvalidateFn>(dlsym(handle, "simaai_memory_invalidate_cache"));
-  api.invalidate_part = reinterpret_cast<SimaMemApi::InvalidatePartFn>(
-      dlsym(handle, "simaai_memory_invalidate_cache_part"));
-  api.flush = reinterpret_cast<SimaMemApi::FlushFn>(dlsym(handle, "simaai_memory_flush_cache"));
-  api.map = reinterpret_cast<SimaMemApi::MapFn>(dlsym(handle, "simaai_memory_map"));
-  api.unmap = reinterpret_cast<SimaMemApi::UnmapFn>(dlsym(handle, "simaai_memory_unmap"));
-  api.get_phys =
-      reinterpret_cast<SimaMemApi::GetPhysFn>(dlsym(handle, "gst_simaai_memory_get_phys_addr"));
-  return api;
-}
+// SimaMemApi, sima_mem_api(), and simaai_memory_t come from the shared internal
+// header pipeline/internal/SimaMemApi.h (single source of truth).
 
 uint64_t resolve_buffer_id(GstBuffer* buffer) {
   if (!buffer)
@@ -323,38 +280,6 @@ void mark_buffer_cpu_read_clean(GstBuffer* buffer) {
 
 bool buffer_cpu_read_requires_invalidate(GstBuffer* buffer) {
   return gst_buffer_cpu_read_requires_sync(buffer);
-}
-
-bool seen_sima_segment(const std::vector<simaai_memory_t*>& seen, simaai_memory_t* mem) {
-  return std::find(seen.begin(), seen.end(), mem) != seen.end();
-}
-
-std::size_t invalidate_buffer_segment_backing_for_cpu_read(GstBuffer* buffer,
-                                                           const SimaMemApi& api) {
-  if (!buffer || !api.invalidate) {
-    return 0U;
-  }
-  std::size_t invalidated = 0U;
-  std::vector<simaai_memory_t*> seen;
-  const guint mem_count = gst_buffer_n_memory(buffer);
-  for (guint mi = 0; mi < mem_count; ++mi) {
-    GstMemory* gst_mem = gst_buffer_peek_memory(buffer, mi);
-    if (!buffer_memory_uses_segment_allocator(gst_mem)) {
-      continue;
-    }
-    const gsize seg_count = gst_simaai_memory_get_segment_count(gst_mem);
-    for (gsize si = 0; si < seg_count; ++si) {
-      auto* segment =
-          reinterpret_cast<simaai_memory_t*>(gst_simaai_memory_get_segment_at(gst_mem, si));
-      if (!segment || seen_sima_segment(seen, segment)) {
-        continue;
-      }
-      seen.push_back(segment);
-      api.invalidate(segment);
-      ++invalidated;
-    }
-  }
-  return invalidated;
 }
 
 void invalidate_cached_buffer(GstBuffer* buffer) {
@@ -1082,12 +1007,17 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
               dbg_state.has_producer ? 1 : 0, dbg_state.producer, dbg_state.has_cpu_dirty ? 1 : 0,
               dbg_state.cpu_dirty ? 1 : 0, static_cast<void*>(buffer));
         }
-        if (needs_cpu_invalidate && api.invalidate) {
-          // Segment-backed CPU reads must invalidate the segment backing, not
-          // only the logical tensor span; the allocator/MPK backing may be
-          // larger than the exposed binding bytes and cache maintenance is
-          // cache-line based.
-          api.invalidate(segment_mem);
+        if (needs_cpu_invalidate) {
+          // Prefer the allocator's coherency authority (ownership-skip +
+          // invalidate whole allocation + mark CPU-clean) so the direct map path
+          // shares the skip decision with mem_map_full. Fall back to a plain
+          // segment invalidate if the loaded allocator predates that symbol.
+          // (Idempotent with the earlier full-backing prepare at ~1040.)
+          if (api.cpu_read_begin) {
+            api.cpu_read_begin(const_cast<GstMemory*>(root_memory));
+          } else if (api.invalidate) {
+            api.invalidate(segment_mem);
+          }
         }
         void* base = api.map(segment_mem);
         if (base) {

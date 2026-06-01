@@ -81,7 +81,7 @@ struct RuntimeMetricGroup {
 };
 
 /**
- * @brief Unified runtime metrics returned by Run, Model::Runner, GraphRun, and tools.
+ * @brief Unified runtime metrics returned by Run, Model::Runner, and tools.
  * @ingroup diagnostics
  */
 struct RuntimeMetrics {

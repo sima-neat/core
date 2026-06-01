@@ -1,4 +1,4 @@
-#include "mpk_test_utils.h"
+#include "model_archive_test_utils.h"
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"

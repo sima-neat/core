@@ -2,7 +2,7 @@
  * @example sync_yolov8_test.cpp
  * Canonical production pipeline: input -> preprocess -> Infer -> postprocess.
  */
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/DetessDequant.h"
@@ -326,7 +326,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   enable_detess_debug_defaults();
   std::cerr << debug_env_snapshot() << "\n";
 
-  require(!tar_gz.empty(), "Failed to locate yolo_v8s MPK tarball");
+  require(!tar_gz.empty(), "Failed to locate yolo_v8s model archive");
 
   const int num_both = env_int("SIMA_SYNC_NUM_BUFFERS", -1);
   int num_cvu = env_int("SIMA_SYNC_NUM_BUFFERS_CVU", num_both);
@@ -361,7 +361,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   const int topk = 100;
 
   // [canonical_pipeline]
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
   p.add(simaai::neat::nodes::groups::Infer(model));
@@ -374,9 +374,10 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = 1;
   step_log("sync: before build");
-  simaai::neat::Run runner = p.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                                         img, simaai::neat::ImageSpec::PixelFormat::BGR)},
-                                     simaai::neat::RunMode::Sync, run_opt);
+  simaai::neat::Run runner = p.build(
+      simaai::neat::Sample{simaai::neat::Sample::from_image(
+          img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+      simaai::neat::RunMode::Sync, run_opt);
   step_log("sync: after build");
 
   const auto start = std::chrono::steady_clock::now();
@@ -394,9 +395,10 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     simaai::neat::Sample out;
     try {
       step_log("sync: before run");
-      auto outs = runner.run(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                                 img, simaai::neat::ImageSpec::PixelFormat::BGR)},
-                             pull_timeout_ms);
+      auto outs = runner.run(
+          simaai::neat::Sample{simaai::neat::Sample::from_image(
+              img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+          pull_timeout_ms);
       require(outs.size() == 1, "sync: expected one output sample");
       out = std::move(outs.front());
       step_log("sync: after run");

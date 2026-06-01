@@ -1,6 +1,6 @@
 # Send Video
 
-Use `VideoSender` when a pipeline should send video to an external receiver. `VideoSender` is a real `NodeGroup`, so it is added through `Session::add(...)`.
+Use `VideoSender` when a Graph should send video to an external receiver. `VideoSender` returns a reusable `Graph` fragment, so add it with `Graph::add(...)`.
 
 The current wire format is H.264 over RTP/UDP. The default UDP port rule is `video_port_base + channel`, with `video_port_base = 9000`.
 If the receiver runs behind container port remapping, pass the mapped host and a matching `video_port_base` from the app.
@@ -14,7 +14,7 @@ VideoConvert -> H264EncodeSima -> H264Parse -> H264Packetize -> UdpOutput
 ```
 
 ```cpp
-simaai::neat::Session session;
+simaai::neat::Graph graph;
 const int channel = 0;
 
 auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromRaw(
@@ -24,7 +24,7 @@ opt.channel = channel;
 opt.video_port_base = 9000;
 opt.encoder.bitrate_kbps = 2500;
 
-session.add(simaai::neat::nodes::groups::VideoSender(opt));
+graph.add(simaai::neat::nodes::groups::VideoSender(opt));
 ```
 
 Python:
@@ -42,7 +42,8 @@ opt.channel = channel
 opt.video_port_base = 9000
 opt.encoder.bitrate_kbps = 2500
 
-session.add(pyneat.groups.video_sender(opt))
+graph = pyneat.Graph()
+graph.add(pyneat.groups.video_sender(opt))
 ```
 
 ## Encoded H.264
@@ -54,6 +55,7 @@ H264Parse -> H264Packetize -> UdpOutput
 ```
 
 ```cpp
+simaai::neat::Graph graph;
 const int channel = 0;
 
 auto opt = simaai::neat::nodes::groups::VideoSenderOptions::H264RtpUdpFromEncoded();
@@ -61,7 +63,7 @@ opt.host = "127.0.0.1";
 opt.channel = channel;
 opt.video_port_base = 9000;
 
-session.add(simaai::neat::nodes::groups::VideoSender(opt));
+graph.add(simaai::neat::nodes::groups::VideoSender(opt));
 ```
 
 Python:
@@ -74,5 +76,6 @@ opt.host = "127.0.0.1"
 opt.channel = channel
 opt.video_port_base = 9000
 
-session.add(pyneat.groups.video_sender(opt))
+graph = pyneat.Graph()
+graph.add(pyneat.groups.video_sender(opt))
 ```

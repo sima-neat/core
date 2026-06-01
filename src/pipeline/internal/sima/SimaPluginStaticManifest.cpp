@@ -410,6 +410,7 @@ nlohmann::json to_json(const LogicalTensorStaticSpec& spec) {
   j["shape"] = spec.shape;
   j["stride_bytes"] = spec.stride_bytes;
   j["dtype"] = spec.dtype;
+  j["dtype_source"] = dtype_source_name(spec.dtype_source);
   j["layout"] = spec.layout;
   j["logical_name_id"] = spec.logical_name_id;
   j["logical_name"] = spec.logical_name;
@@ -433,6 +434,7 @@ nlohmann::json to_json(const LogicalInputStaticSpec& spec) {
   j["byte_offset"] = spec.byte_offset;
   j["size_bytes"] = spec.size_bytes;
   j["dtype"] = spec.dtype;
+  j["dtype_source"] = dtype_source_name(spec.dtype_source);
   j["layout"] = spec.layout;
   j["logical_name_id"] = spec.logical_name_id;
   j["logical_name"] = spec.logical_name;
@@ -635,6 +637,9 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
           input.size_bytes = raw > 0.0 ? static_cast<std::uint64_t>(raw) : 0U;
         }
         read_string_key(in_j, "dtype", input.dtype);
+        if (in_j.contains("dtype_source") && in_j["dtype_source"].is_string()) {
+          input.dtype_source = dtype_source_from_name(in_j["dtype_source"].get<std::string>());
+        }
         read_string_key(in_j, "layout", input.layout);
         read_int_key(in_j, "logical_name_id", input.logical_name_id);
         read_string_key(in_j, "logical_name", input.logical_name);
@@ -776,6 +781,9 @@ std::optional<SimaPluginStaticManifest> parse_manifest_json(const std::string& m
         read_number_vector_key<std::int64_t>(out_j, "shape", tensor.shape);
         read_number_vector_key<std::int64_t>(out_j, "stride_bytes", tensor.stride_bytes);
         read_string_key(out_j, "dtype", tensor.dtype);
+        if (out_j.contains("dtype_source") && out_j["dtype_source"].is_string()) {
+          tensor.dtype_source = dtype_source_from_name(out_j["dtype_source"].get<std::string>());
+        }
         read_string_key(out_j, "layout", tensor.layout);
         read_int_key(out_j, "logical_name_id", tensor.logical_name_id);
         read_string_key(out_j, "logical_name", tensor.logical_name);
@@ -1489,6 +1497,7 @@ private:
       out.spec.payload.processcvu.out_dtype =
           stage.processcvu.out_dtype.empty() ? nullptr : stage.processcvu.out_dtype.c_str();
 
+      out.spec.payload.processcvu.pad_value = stage.processcvu.pad_value;
       out.spec.payload.processcvu.scaled_width = stage.processcvu.scaled_width;
       out.spec.payload.processcvu.scaled_height = stage.processcvu.scaled_height;
       out.spec.payload.processcvu.input_stride = stage.processcvu.input_stride;

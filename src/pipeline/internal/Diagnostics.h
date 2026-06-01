@@ -3,7 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
-#include "pipeline/SessionReport.h"
+#include "pipeline/GraphReport.h"
 
 #include <atomic>
 #include <cstdint>
@@ -239,8 +239,8 @@ struct DiagCtx {
     bus.push_back(BusMessage{type, src, detail, now_us()});
   }
 
-  SessionReport snapshot_basic() const {
-    SessionReport rep;
+  GraphReport snapshot_basic() const {
+    GraphReport rep;
     rep.pipeline_string = pipeline_string;
     rep.nodes = node_reports;
 

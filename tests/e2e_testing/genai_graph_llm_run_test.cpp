@@ -1,9 +1,7 @@
 #include "genai/VisionLanguageModel.h"
-#include "genai/nodes/VisionLanguage.h"
-#include "graph/Graph.h"
-#include "graph/GraphRun.h"
-#include "graph/GraphSession.h"
-#include "pipeline/SessionOptions.h"
+#include "genai/GraphFragments.h"
+#include "pipeline/Graph.h"
+#include "pipeline/Run.h"
 #include "pipeline/TensorCore.h"
 #include "test_utils.h"
 
@@ -124,27 +122,25 @@ struct GraphOutputs {
   bool saw_error = false;
 };
 
-GraphOutputs pull_graph_outputs(simaai::neat::graph::GraphRun& run,
-                                simaai::neat::graph::NodeId node_id, bool stop_on_error = false) {
+GraphOutputs pull_graph_outputs(simaai::neat::Run& run, bool stop_on_error = false) {
   GraphOutputs outputs;
-  for (int i = 0; i < 64; ++i) {
-    auto sample = run.pull(node_id, 60000);
-    require(sample.has_value(), "GraphRun::pull timed out");
-    if (sample->port_name == "tokens" || sample->stream_label == "tokens") {
+  for (int i = 0; i < 256; ++i) {
+    if (auto sample = run.pull("tokens", 250)) {
       outputs.tokens += sample_text(*sample);
       outputs.token_samples += 1;
-    } else if (sample->port_name == "done" || sample->stream_label == "done") {
+      continue;
+    }
+    if (auto sample = run.pull("done", 10)) {
       outputs.done = *sample;
       outputs.saw_done = true;
       break;
-    } else if (sample->port_name == "error" || sample->stream_label == "error") {
+    }
+    if (auto sample = run.pull("error", 10)) {
       outputs.error = sample_text(*sample);
       outputs.saw_error = true;
       if (stop_on_error) {
         break;
       }
-    } else {
-      throw std::runtime_error("unexpected graph output port: " + sample->port_name);
     }
   }
   return outputs;
@@ -161,31 +157,20 @@ int main() {
     auto model = std::make_shared<simaai::neat::genai::VisionLanguageModel>(model_dir);
     require(!model->accepts_image(), "Text-only LLiMa model should not accept image input");
 
-    simaai::neat::graph::Graph graph;
-    const auto prompt_port = graph.intern_port("prompt");
-    const auto streaming_language = graph.add(simaai::neat::genai::nodes::VisionLanguage(
-        model,
-        simaai::neat::genai::nodes::VisionLanguageOptions{
-            .system_prompt = "You are concise.",
-            .max_new_tokens = 24,
-            .streaming = true,
-        },
-        "vision_language_streaming"));
-    const auto sync_language = graph.add(simaai::neat::genai::nodes::VisionLanguage(
-        model,
-        simaai::neat::genai::nodes::VisionLanguageOptions{
-            .system_prompt = "You are concise.",
-            .max_new_tokens = 24,
-            .streaming = false,
-        },
-        "vision_language_sync"));
+    simaai::neat::Graph streaming_graph;
+    streaming_graph.add(
+        simaai::neat::genai::graphs::VisionLanguage(model,
+                                                    simaai::neat::genai::VisionLanguageOptions{
+                                                        .system_prompt = "You are concise.",
+                                                        .max_new_tokens = 24,
+                                                        .streaming = true,
+                                                    },
+                                                    "vision_language_streaming"));
+    simaai::neat::Run streaming_run = streaming_graph.build();
 
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
-
-    require(run.push(streaming_language, prompt_port,
-                     make_text_input("What is the capital of Germany?", 1)),
-            "GraphRun::push streaming prompt failed");
-    const GraphOutputs streaming_prompt_outputs = pull_graph_outputs(run, streaming_language);
+    require(streaming_run.push("prompt", make_text_input("What is the capital of Germany?", 1)),
+            "Run::push streaming prompt failed");
+    const GraphOutputs streaming_prompt_outputs = pull_graph_outputs(streaming_run);
     require(streaming_prompt_outputs.saw_done, "GenAI graph streaming prompt did not emit done");
     require(!streaming_prompt_outputs.saw_error,
             "GenAI graph streaming prompt emitted error: " + streaming_prompt_outputs.error);
@@ -201,10 +186,20 @@ int main() {
     require(std::stoul(bundle_field_text(streaming_prompt_outputs.done, "generated_tokens")) > 0,
             "GenAI graph streaming done should report generated tokens");
 
-    require(
-        run.push(sync_language, prompt_port, make_text_input("What is the capital of Germany?", 2)),
-        "GraphRun::push sync prompt failed");
-    const GraphOutputs sync_prompt_outputs = pull_graph_outputs(run, sync_language);
+    simaai::neat::Graph sync_graph;
+    sync_graph.add(
+        simaai::neat::genai::graphs::VisionLanguage(model,
+                                                    simaai::neat::genai::VisionLanguageOptions{
+                                                        .system_prompt = "You are concise.",
+                                                        .max_new_tokens = 24,
+                                                        .streaming = false,
+                                                    },
+                                                    "vision_language_sync"));
+    simaai::neat::Run sync_run = sync_graph.build();
+
+    require(sync_run.push("prompt", make_text_input("What is the capital of Germany?", 2)),
+            "Run::push sync prompt failed");
+    const GraphOutputs sync_prompt_outputs = pull_graph_outputs(sync_run);
     require(sync_prompt_outputs.saw_done, "GenAI graph sync prompt did not emit done");
     require(!sync_prompt_outputs.saw_error,
             "GenAI graph sync prompt emitted error: " + sync_prompt_outputs.error);
@@ -219,13 +214,13 @@ int main() {
     require(std::stoul(bundle_field_text(sync_prompt_outputs.done, "generated_tokens")) > 0,
             "GenAI graph done should report generated tokens");
 
-    require(run.push(streaming_language, prompt_port, make_non_text_input()),
-            "GraphRun::push invalid prompt failed");
-    const GraphOutputs error_outputs = pull_graph_outputs(run, streaming_language, true);
+    require(streaming_run.push("prompt", make_non_text_input()), "Run::push invalid prompt failed");
+    const GraphOutputs error_outputs = pull_graph_outputs(streaming_run, true);
     require(error_outputs.saw_error, "GenAI graph invalid prompt should emit error");
     require(!error_outputs.error.empty(), "GenAI graph error text should be non-empty");
 
-    run.stop();
+    streaming_run.stop();
+    sync_run.stop();
     std::cout << "[OK] genai_graph_llm_run_test passed\n";
     return 0;
   } catch (const SkipTest& e) {

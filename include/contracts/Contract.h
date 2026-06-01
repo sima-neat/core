@@ -3,7 +3,7 @@
  * @ingroup contracts
  * @brief Builder-level validation contracts.
  *
- * Defines the `Contract` base class — a typed predicate over a `NodeGroup` —
+ * Defines the `Contract` base class — a typed predicate over an ordered node list —
  * plus the `ValidationContext` passed to each contract during validation.
  * Contracts are pure builder-level checks (STL only, no GStreamer); they
  * report findings through `ValidationReport` rather than throwing.
@@ -16,29 +16,31 @@
 #pragma once
 
 #include <memory>
+#include <span>
 #include <string>
+#include <vector>
 
-#include "builder/NodeGroup.h"
 #include "contracts/ContractTypes.h"
 #include "contracts/ValidationReport.h"
 
 namespace simaai::neat {
 
 // Forward-declare policy surface (contracts may consult it, but must remain STL-only).
+class Node;
 class Policy;
 
 /**
  * @brief Context passed to contracts during validation.
  *
  * Contracts are *builder-level* checks (no GStreamer). They validate structural
- * expectations before Session builds a gst-launch string.
+ * expectations before Graph builds a gst-launch string.
  *
  * @ingroup contracts
  * @see Contract
  */
 struct ValidationContext {
   /**
-   * @brief Which Session entry point is being validated.
+   * @brief Which Graph entry point is being validated.
    *
    * Some contracts only fire in specific modes (e.g., `SinkLastForRun` only
    * checks for the `Output` terminal in `Run` mode).
@@ -49,7 +51,7 @@ struct ValidationContext {
     Rtsp,         ///< `run_rtsp()` path (expects StillImageInput, encoder/pay if modeled).
   };
 
-  Mode mode = Mode::Validate; ///< Active Session mode.
+  Mode mode = Mode::Validate; ///< Active Graph mode.
 
   /// @brief Desired runner memory posture (used only for reporting / soft checks).
   MemoryContract runner_memory_contract = MemoryContract::AllowEitherButReport;
@@ -62,15 +64,15 @@ struct ValidationContext {
 };
 
 /**
- * @brief A single validation rule applied to a NodeGroup.
+ * @brief A single validation rule applied to an ordered node list.
  *
  * Contracts must:
  * - never include or call GStreamer APIs
- * - only use Node/NodeGroup/Graph/policy and STL
+ * - only use Node/Graph/policy and STL
  * - report issues via ValidationReport (do not throw for normal violations)
  *
  * Concrete contracts implement `id()`, optionally `description()`, and the
- * core `validate()` method that inspects the NodeGroup and appends issues to
+ * core `validate()` method that inspects the node list and appends issues to
  * the report.
  *
  * @ingroup contracts
@@ -92,13 +94,13 @@ public:
   }
 
   /**
-   * @brief Validate the node group and append issues to `report`.
+   * @brief Validate the node list and append issues to `report`.
    *
-   * @param nodes  The NodeGroup being validated.
+   * @param nodes  The ordered node list being validated.
    * @param ctx    Validation context (mode, policy, strictness).
    * @param report Output report; the contract appends issues to it.
    */
-  virtual void validate(const NodeGroup& nodes, const ValidationContext& ctx,
+  virtual void validate(std::span<const std::shared_ptr<Node>> nodes, const ValidationContext& ctx,
                         ValidationReport& report) const = 0;
 };
 

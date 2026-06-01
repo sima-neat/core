@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Consume a live H.264 RTSP stream via the RtspDecodedInput node group.
+"""Consume a live H.264 RTSP stream via the RtspDecodedInput Graph fragment.
 
-The group handles RTSP connect, depacketize, and H.264 decode — you hand it a
-URL and pull decoded frames. This chapter is about the input group only.
+The fragment handles RTSP connect, depacketize, and H.264 decode — you hand it a
+URL and pull decoded frames. This chapter is about the input fragment only.
 
 Usage:
   python3 consume_rtsp_stream.py --url rtsp://host/path [--frames 5]
@@ -28,13 +28,13 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
-  # Configure RtspDecodedInputOptions, build a Session whose only stages are
+  # Configure RtspDecodedInputOptions, build a Graph whose only stages are
   # the RTSP group and an output node, and pull decoded frames.
   rtsp_opt = pyneat.RtspDecodedInputOptions()
   rtsp_opt.url = args.url
   rtsp_opt.tcp = True
 
-  s = pyneat.Session()
+  s = pyneat.Graph()
   s.add(pyneat.groups.rtsp_decoded_input(rtsp_opt))
   s.add(pyneat.nodes.output())
   run = s.build(pyneat.RunOptions())

@@ -1,13 +1,19 @@
 #pragma once
 
+#include <cerrno>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <system_error>
 #include <vector>
+
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 namespace sima_test {
 
@@ -41,6 +47,43 @@ inline bool move_to_tmp(const fs::path& src, const fs::path& dst) {
   fs::remove(src, ec);
   return true;
 }
+
+class ScopedFileLock {
+public:
+  explicit ScopedFileLock(const fs::path& path) {
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    if (ec) {
+      throw std::runtime_error("failed to create lock directory " + path.parent_path().string() +
+                               ": " + ec.message());
+    }
+    fd_ = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (fd_ < 0) {
+      throw std::runtime_error("failed to open lock file " + path.string());
+    }
+    while (::flock(fd_, LOCK_EX) != 0) {
+      if (errno != EINTR) {
+        const int err = errno;
+        (void)::close(fd_);
+        fd_ = -1;
+        throw std::runtime_error("failed to lock " + path.string() + ": " + std::to_string(err));
+      }
+    }
+  }
+
+  ScopedFileLock(const ScopedFileLock&) = delete;
+  ScopedFileLock& operator=(const ScopedFileLock&) = delete;
+
+  ~ScopedFileLock() {
+    if (fd_ >= 0) {
+      (void)::flock(fd_, LOCK_UN);
+      (void)::close(fd_);
+    }
+  }
+
+private:
+  int fd_ = -1;
+};
 
 inline bool is_usable_regular_file(const fs::path& path) {
   if (path.empty())
@@ -108,9 +151,10 @@ struct TestRuntimePaths {
   fs::path manifest_path;
   fs::path build_root;
   fs::path source_root;
+  fs::path shared_test_asset_root;
   fs::path repo_tmp_root;
-  fs::path mpk_fixture_root;
-  fs::path mpk_fixture_manifest;
+  fs::path model_archive_fixture_root;
+  fs::path model_archive_fixture_manifest;
   fs::path decoder_fixture;
 };
 
@@ -195,8 +239,10 @@ inline std::optional<std::string> json_string_field(const std::string& text,
 inline fs::path resolve_manifest_relative_path(const std::string& text, const std::string& key,
                                                const fs::path& build_root) {
   const std::optional<std::string> rel = json_string_field(text, key);
-  if (!rel.has_value() || rel->empty())
+  if (!rel.has_value())
     return {};
+  if (rel->empty())
+    return build_root.lexically_normal();
   const fs::path raw(*rel);
   if (raw.is_absolute())
     return raw;
@@ -233,12 +279,14 @@ inline const TestRuntimePaths& test_runtime_paths() {
         std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         value.source_root =
             resolve_manifest_relative_path(text, "source_root_rel", value.build_root);
+        value.shared_test_asset_root =
+            resolve_manifest_relative_path(text, "shared_test_asset_root_rel", value.build_root);
         value.repo_tmp_root =
             resolve_manifest_relative_path(text, "repo_tmp_root_rel", value.build_root);
-        value.mpk_fixture_root =
-            resolve_manifest_relative_path(text, "mpk_fixture_root_rel", value.build_root);
-        value.mpk_fixture_manifest =
-            resolve_manifest_relative_path(text, "mpk_fixture_manifest_rel", value.build_root);
+        value.model_archive_fixture_root = resolve_manifest_relative_path(
+            text, "model_archive_fixture_root_rel", value.build_root);
+        value.model_archive_fixture_manifest = resolve_manifest_relative_path(
+            text, "model_archive_fixture_manifest_rel", value.build_root);
         value.decoder_fixture =
             resolve_manifest_relative_path(text, "decoder_fixture_rel", value.build_root);
       }
@@ -246,12 +294,24 @@ inline const TestRuntimePaths& test_runtime_paths() {
 
     if (value.source_root.empty())
       value.source_root = discover_source_root_from_runtime();
+    if (value.shared_test_asset_root.empty() && !value.build_root.empty()) {
+      std::error_code ec;
+      const fs::path installed_share_assets =
+          (value.build_root / ".." / ".." / "share" / "sima-neat" / "test-assets")
+              .lexically_normal();
+      if (fs::is_directory(installed_share_assets, ec) && !ec)
+        value.shared_test_asset_root = installed_share_assets;
+    }
+    if (value.shared_test_asset_root.empty())
+      value.shared_test_asset_root = value.source_root;
     if (value.repo_tmp_root.empty())
       value.repo_tmp_root = value.source_root / "tmp";
-    if (value.mpk_fixture_root.empty())
-      value.mpk_fixture_root = value.source_root / "tests" / "assets" / "mpk";
-    if (value.mpk_fixture_manifest.empty())
-      value.mpk_fixture_manifest = value.mpk_fixture_root / "fixtures_manifest.json";
+    if (value.model_archive_fixture_root.empty())
+      value.model_archive_fixture_root =
+          value.source_root / "build" / "test-assets" / "model-archive";
+    if (value.model_archive_fixture_manifest.empty())
+      value.model_archive_fixture_manifest =
+          value.model_archive_fixture_root / "fixtures_manifest.json";
     if (value.decoder_fixture.empty())
       value.decoder_fixture =
           value.source_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
@@ -265,16 +325,32 @@ inline fs::path test_source_root() {
   return test_runtime_paths().source_root;
 }
 
+inline fs::path test_shared_asset_root() {
+  return test_runtime_paths().shared_test_asset_root;
+}
+
+inline fs::path test_shared_asset_path(const fs::path& rel) {
+  if (rel.empty())
+    return test_shared_asset_root();
+  if (rel.is_absolute())
+    return rel.lexically_normal();
+  return (test_shared_asset_root() / rel).lexically_normal();
+}
+
+inline fs::path test_image_fixture_path() {
+  return test_shared_asset_path("test.jpg");
+}
+
 inline fs::path test_tmp_root() {
   return test_runtime_paths().repo_tmp_root;
 }
 
-inline fs::path test_mpk_fixture_root_path() {
-  return test_runtime_paths().mpk_fixture_root;
+inline fs::path test_model_archive_fixture_root_path() {
+  return test_runtime_paths().model_archive_fixture_root;
 }
 
-inline fs::path test_mpk_fixture_manifest_path() {
-  return test_runtime_paths().mpk_fixture_manifest;
+inline fs::path test_model_archive_fixture_manifest_path() {
+  return test_runtime_paths().model_archive_fixture_manifest;
 }
 
 inline fs::path test_decoder_fixture_path() {
@@ -283,6 +359,52 @@ inline fs::path test_decoder_fixture_path() {
 
 inline fs::path default_asset_root(const fs::path& root_in = {}) {
   return root_in.empty() ? test_source_root() : root_in;
+}
+
+inline bool ensure_writable_directory(const fs::path& dir) {
+  if (dir.empty())
+    return false;
+
+  std::error_code ec;
+  fs::create_directories(dir, ec);
+  if (ec)
+    return false;
+
+  const fs::path probe =
+      dir / (".sima-neat-write-test-" + std::to_string(static_cast<long long>(::getpid())));
+  {
+    std::ofstream out(probe, std::ios::binary | std::ios::trunc);
+    if (!out.is_open())
+      return false;
+    out << "ok\n";
+  }
+  fs::remove(probe, ec);
+  return true;
+}
+
+inline fs::path writable_asset_tmp_dir(const fs::path& root, const std::string& fallback_name) {
+  const fs::path primary = root / "tmp";
+  if (ensure_writable_directory(primary))
+    return primary;
+
+  fs::path temp_root;
+  try {
+    temp_root = fs::temp_directory_path();
+  } catch (...) {
+    temp_root = fs::path("/tmp");
+  }
+
+  const std::vector<fs::path> fallbacks = {
+      temp_root / fallback_name,
+      fs::path("/tmp") / fallback_name,
+  };
+  for (const auto& candidate : fallbacks) {
+    if (ensure_writable_directory(candidate))
+      return candidate;
+  }
+
+  // Let the original path surface the concrete create/open error to callers.
+  return primary;
 }
 
 inline int run_modelzoo_get_noninteractive(const std::string& model_name) {
@@ -297,6 +419,9 @@ inline bool download_file(const std::string& url, const fs::path& out_path) {
 
   std::error_code ec;
   fs::create_directories(out_path.parent_path(), ec);
+  if (ec) {
+    return false;
+  }
 
   const std::string qurl = shell_quote(url);
   const std::string qout = shell_quote(out_path.string());
@@ -386,6 +511,7 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
   }
 
   const fs::path local = root / "tmp" / "resnet_50_mpk.tar.gz";
+  const ScopedFileLock lock(local.string() + ".lock");
   if (is_usable_regular_file(local))
     return local.string();
 
@@ -415,7 +541,10 @@ inline std::string resolve_resnet50_tar(const fs::path& root_in = {}) {
 
 inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool skip_download) {
   const fs::path root = default_asset_root(root_in);
-  const fs::path tmp_tar = root / "tmp" / "yolo_v8s_mpk.tar.gz";
+  const fs::path root_tmp = root / "tmp";
+  const fs::path tmp_dir = writable_asset_tmp_dir(root, "sima-yolov8s-cache");
+  const fs::path tmp_tar = tmp_dir / "yolo_v8s_mpk.tar.gz";
+  const ScopedFileLock lock(tmp_tar.string() + ".lock");
 
   // Drop corrupt cached tars up front so the subsequent search/download
   // path can refresh them. is_usable_regular_file only checks size>0;
@@ -429,6 +558,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   // validation they perform on the path we return.
   purge_unlistable_tar_gz(tmp_tar);
   purge_unlistable_tar_gz(root / "yolo_v8s_mpk.tar.gz");
+  purge_unlistable_tar_gz(root_tmp / "yolo_v8s_mpk.tar.gz");
 
   const std::string env_tar = env_existing_model_tar_path("SIMA_YOLO_TAR");
   if (!env_tar.empty()) {
@@ -439,16 +569,40 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   if (is_usable_regular_file(direct_tar))
     return direct_tar.string();
 
+  const fs::path root_tmp_tar = root_tmp / "yolo_v8s_mpk.tar.gz";
+  if (root_tmp_tar != tmp_tar && is_usable_regular_file(root_tmp_tar)) {
+    if (move_to_tmp(root_tmp_tar, tmp_tar))
+      return tmp_tar.string();
+    return root_tmp_tar.string();
+  }
+
   if (is_usable_regular_file(tmp_tar))
     return tmp_tar.string();
 
+  auto stage_candidate = [&](const fs::path& candidate) -> std::string {
+    if (!is_usable_regular_file(candidate))
+      return "";
+    if (candidate == tmp_tar)
+      return tmp_tar.string();
+    if (move_to_tmp(candidate, tmp_tar))
+      return tmp_tar.string();
+    return candidate.string();
+  };
+
   const char* home = std::getenv("HOME");
   const fs::path home_path = home ? fs::path(home) : fs::path();
+  fs::path temp_root;
+  try {
+    temp_root = fs::temp_directory_path();
+  } catch (...) {
+    temp_root = fs::path("/tmp");
+  }
   const std::vector<fs::path> search_dirs = {
       root,
       fs::current_path(),
-      root / "tmp",
-      fs::temp_directory_path(),
+      root_tmp,
+      tmp_dir,
+      temp_root,
       home_path / ".simaai",
       home_path / ".simaai" / "modelzoo",
       home_path / ".sima" / "modelzoo",
@@ -466,10 +620,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     if (dir.empty())
       continue;
     for (const auto& name : names) {
-      fs::path candidate = dir / name;
-      if (is_usable_regular_file(candidate) && move_to_tmp(candidate, tmp_tar)) {
-        return tmp_tar.string();
-      }
+      const std::string staged = stage_candidate(dir / name);
+      if (!staged.empty())
+        return staged;
     }
   }
 
@@ -517,12 +670,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
     const fs::path subdir = base / "yolo_v8s";
     for (const auto& name : names) {
       const fs::path candidate = subdir / name;
-      if (is_usable_regular_file(candidate)) {
-        if (move_to_tmp(candidate, tmp_tar)) {
-          return tmp_tar.string();
-        }
-        return candidate.string();
-      }
+      const std::string staged = stage_candidate(candidate);
+      if (!staged.empty())
+        return staged;
     }
   }
 
@@ -532,7 +682,7 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
   // not directly observable from the resolver — it can't see sima-cli's
   // stdout. The top-level + per-known-cache-dir scan above misses these
   // sub-cached copies and the test then trips with
-  // "Failed to locate yolo_v8s MPK tarball" even though sima-cli succeeded.
+  // "Failed to locate yolo_v8s model archive" even though sima-cli succeeded.
   // Walk a bounded set of cache roots one level deep so we recover the file
   // wherever sima-cli's modelzoo layout put it, then move it into tmp_tar so
   // subsequent calls hit the fast path. Skip if a candidate cache root is
@@ -572,10 +722,9 @@ inline std::string resolve_yolov8s_tar_local_first(const fs::path& root_in, bool
         // skipping here was the bug behind the "Failed to locate" CI flake
         // when sima-cli's board-mode cache layout puts the file under a
         // per-model subdir (e.g. `<cwd>/yolo_v8s/yolo_v8s_mpk.tar.gz`).
-        if (move_to_tmp(found, tmp_tar)) {
-          return tmp_tar.string();
-        }
-        return found.string();
+        const std::string staged = stage_candidate(found);
+        if (!staged.empty())
+          return staged;
       }
     }
   }
@@ -648,6 +797,7 @@ inline std::string resolve_modelzoo_tar(const std::string& model_name,
   }
 
   const fs::path local = tmp_dir / (base + "_mpk.tar.gz");
+  const ScopedFileLock lock(local.string() + ".lock");
   // Only validate listability for the *cached* tmp tar (the path that
   // gets handed back to callers and consumed by ModelPack). Candidates
   // discovered via the search loop below may be unit-test fixtures
@@ -747,7 +897,7 @@ inline fs::path ensure_coco_sample(const fs::path& root_in = {}) {
   // runner, so curl/wget bail with "Failure writing output to destination"
   // even though the URL resolves cleanly and the test would otherwise pass.
   const fs::path primary = root / "tmp" / "coco_sample.jpg";
-  if (download_file(url, primary))
+  if (ensure_writable_directory(primary.parent_path()) && download_file(url, primary))
     return primary;
 
   std::error_code ec;

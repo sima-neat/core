@@ -534,11 +534,11 @@ def compile_candidate(model_path: Path, output_dir: Path) -> dict[str, Any]:
         )
         quant_model.compile(output_path=str(output_dir), batch_size=1, log_level=logging.INFO)
 
-        mpks = sorted(output_dir.glob("**/*_mpk.tar.gz"))
-        if not mpks:
-            return {"status": "failed", "reason": "compile completed but no *_mpk.tar.gz found"}
-        mpk = mpks[-1]
-        with tarfile.open(mpk) as tar:
+        archives = sorted(output_dir.glob("**/*.tar.gz"))
+        if not archives:
+            return {"status": "failed", "reason": "compile completed but no .tar.gz model archive found"}
+        archive = archives[-1]
+        with tarfile.open(archive) as tar:
             names = tar.getnames()
             mpk_json_name = next(name for name in names if name.endswith("_mpk.json"))
             mpk_json = json.load(tar.extractfile(mpk_json_name))  # type: ignore[arg-type]
@@ -548,7 +548,7 @@ def compile_candidate(model_path: Path, output_dir: Path) -> dict[str, Any]:
                 processor_counts[processor] = processor_counts.get(processor, 0) + 1
             return {
                 "status": "compiled",
-                "mpk": str(mpk),
+                "model_archive": str(archive),
                 "mla_elf_count": sum(name.endswith("_mla.elf") for name in names),
                 "so_count": sum(name.endswith(".so") for name in names),
                 "process_tvm_count": sum("process_tvm" in name for name in names),

@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
@@ -122,14 +122,12 @@ RUN_TEST("unit_graph_stop_sequencing_test", ([] {
 
            g.connect(pipe_in, stage);
            g.connect(stage, pipe_out);
-
-           graph::GraphSession session(std::move(g));
            graph::GraphRunOptions run_opt;
            run_opt.edge_queue = 8;
            run_opt.push_timeout_ms = 250;
            run_opt.pull_timeout_ms = 20;
 
-           graph::GraphRun run = session.build(run_opt);
+           graph::GraphRun run = simaai::neat::graph::build(std::move(g), run_opt);
 
            Sample sample;
            sample.kind = SampleKind::Tensor;
@@ -137,7 +135,8 @@ RUN_TEST("unit_graph_stop_sequencing_test", ([] {
            sample.frame_id = 17;
            sample.stream_id = "graph-stop-sequencing";
 
-           require(run.push(pipe_in, sample), "graph stop sequencing: initial push failed");
+           require(run.push(pipe_in, simaai::neat::Sample{sample}),
+                   "graph stop sequencing: initial push failed");
            require(wait_for_entered(block_state, 3000),
                    "graph stop sequencing: blocking stage did not receive input");
 

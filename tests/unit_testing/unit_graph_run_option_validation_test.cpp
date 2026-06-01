@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "test_main.h"
@@ -50,18 +50,17 @@ RUN_TEST("unit_graph_run_option_validation_test", [] {
   simaai::neat::graph::Graph g;
   auto pass = g.add(make_pass_node("only"));
   (void)pass;
-  simaai::neat::graph::GraphSession session(std::move(g));
 
   simaai::neat::graph::GraphRunOptions run_opt;
   run_opt.push_timeout_ms = -1;
 
   bool threw = false;
   try {
-    (void)session.build(run_opt);
+    (void)simaai::neat::graph::build(std::move(g), run_opt);
   } catch (const std::invalid_argument& e) {
     threw = true;
     require_contains(std::string(e.what()), "push_timeout_ms",
                      "expected invalid timeout option error");
   }
-  require(threw, "expected GraphSession::build to reject negative push_timeout_ms");
+  require(threw, "expected graph::build to reject negative push_timeout_ms");
 });

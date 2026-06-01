@@ -4,7 +4,7 @@
 #include "pipeline/internal/TensorMath.h"
 
 #include "pipeline/ErrorCodes.h"
-#include "pipeline/SessionError.h"
+#include "pipeline/NeatError.h"
 
 #include <gst/app/gstappsink.h>
 #include <gst/gstdebugutils.h>
@@ -569,7 +569,7 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
 
   maybe_dump_dot(pipeline, std::string(where) + "_error");
 
-  SessionReport rep = diag ? diag->snapshot_basic() : SessionReport{};
+  GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
   rep.error_code = error_codes::kCaps;
   std::ostringstream note;
   note << "where=" << (where ? where : "GstDiagnosticsUtil::throw_if_bus_error")
@@ -579,8 +579,8 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   if (diag)
     rep.repro_note += "\n" + boundary_summary(diag);
   rep.repro_note += "\nHint: inspect offending caps and upstream/downstream element contract.";
-  throw SessionError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                     std::move(rep));
+  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
+                  std::move(rep));
 }
 
 std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElement* appsink,

@@ -3,7 +3,7 @@
 Preferred debugging sequence:
 
 1. Build with diagnostics enabled (default runtime report path).
-2. Call `Session::validate(...)` before runtime when possible.
+2. Call `Graph::validate(...)` before runtime when possible.
 3. For runtime issues, inspect:
    - `PipelineRun::last_error()`
    - `PipelineRun::diagnostics_summary()`

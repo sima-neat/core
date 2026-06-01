@@ -5,7 +5,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/internal/PipelineBuild.h"
 #include "pipeline/internal/contract/ContractApply.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
@@ -38,7 +38,7 @@ namespace simaai::neat::stages {
 using simaai::neat::pipeline_internal::upper_copy;
 namespace {
 Sample run_single_sample(Run& runner, const Sample& input, int timeout_ms, const char* where) {
-  SampleList outputs = runner.run(SampleList{input}, timeout_ms);
+  Sample outputs = runner.run(Sample{input}, timeout_ms);
   if (outputs.size() != 1) {
     throw std::runtime_error(std::string(where ? where : "StageRun") +
                              ": expected exactly 1 sample output");
@@ -173,15 +173,15 @@ TensorDims contract_tensor_dims_projection_from_shape(std::vector<int64_t> shape
                                                       TensorLayout layout);
 namespace rendered_stage_query = simaai::neat::pipeline_internal::rendered_stage_query;
 
-PreprocOutputInfo stage_preproc_output_info(const NodeGroup& group) {
-  const PreprocOutputInfo info = rendered_stage_query::preproc_output_info(group);
+PreprocOutputInfo stage_preproc_output_info(const std::vector<std::shared_ptr<Node>>& group) {
+  const PreprocOutputInfo info = rendered_stage_query::preproc_output_info_from_nodes(group);
   if (info.primary_output_name.empty()) {
     throw std::runtime_error("StageRun: missing preproc output contract in rendered manifest");
   }
   return info;
 }
 
-std::string stage_primary_input_buffer_name(const NodeGroup& group) {
+std::string stage_primary_input_buffer_name(const std::vector<std::shared_ptr<Node>>& group) {
   const std::string buffer_name = rendered_stage_query::primary_input_buffer_name(group);
   if (buffer_name.empty()) {
     throw std::runtime_error("StageRun: missing primary input buffer name in rendered manifest");
@@ -189,12 +189,13 @@ std::string stage_primary_input_buffer_name(const NodeGroup& group) {
   return buffer_name;
 }
 
-std::vector<MlaOutputTensorInfo> stage_mla_output_tensors_info(const NodeGroup& group) {
-  return rendered_stage_query::mla_output_tensors(group);
+std::vector<MlaOutputTensorInfo>
+stage_mla_output_tensors_info(const std::vector<std::shared_ptr<Node>>& group) {
+  return rendered_stage_query::mla_output_tensors_from_nodes(group);
 }
 
-MlaInputTensorInfo stage_mla_input_tensor_info(const NodeGroup& group) {
-  MlaInputTensorInfo info = rendered_stage_query::mla_input_tensor_info(group);
+MlaInputTensorInfo stage_mla_input_tensor_info(const std::vector<std::shared_ptr<Node>>& group) {
+  MlaInputTensorInfo info = rendered_stage_query::mla_input_tensor_info_from_nodes(group);
   if (info.logical_shape.empty()) {
     throw std::runtime_error("StageRun: missing MLA input contract in rendered manifest");
   }
@@ -210,10 +211,11 @@ std::string stage_meta_error_message(const StagePreprocessMetaRequirement& req,
 }
 
 std::optional<StagePreprocessMetaRequirement>
-collect_preprocess_meta_requirement(const NodeGroup& group, const std::string& default_stage_name) {
+collect_preprocess_meta_requirement(const std::vector<std::shared_ptr<Node>>& group,
+                                    const std::string& default_stage_name) {
   StagePreprocessMetaRequirement out;
   bool found = false;
-  for (const auto& node : group.nodes()) {
+  for (const auto& node : group) {
     if (!node)
       continue;
     const auto* provider = dynamic_cast<const PreprocessMetaRequirementProvider*>(node.get());
@@ -443,11 +445,11 @@ bool sample_requires_message_path(const Sample& sample) {
     return true;
   }
   if (!sample_has_tensor_list(sample)) {
-    return !sample.media_type.empty() || !sample.format.empty() || !sample.payload_tag.empty() ||
-           !sample.caps_string.empty() || !sample.port_name.empty() ||
-           !sample.segment_name.empty() || sample.memory_index >= 0 || sample.route_slot >= 0 ||
-           sample.logical_output_index >= 0 || sample.frame_id >= 0 || sample.pts_ns >= 0 ||
-           sample.dts_ns >= 0 || sample.duration_ns >= 0;
+    return sample.payload_type != PayloadType::Auto || !sample.media_type.empty() ||
+           !sample.format.empty() || !sample.payload_tag.empty() || !sample.caps_string.empty() ||
+           !sample.port_name.empty() || !sample.segment_name.empty() || sample.memory_index >= 0 ||
+           sample.route_slot >= 0 || sample.logical_output_index >= 0 || sample.frame_id >= 0 ||
+           sample.pts_ns >= 0 || sample.dts_ns >= 0 || sample.duration_ns >= 0;
   }
   if (sample.tensors.size() != 1U || !sample.fields.empty()) {
     return true;
@@ -629,13 +631,14 @@ void log_stage_holder_buffer_memories(const char* label, const simaai::neat::Ten
   gst_buffer_unref(buf);
 }
 
-void log_stage_group_nodes(const char* stage_name, const NodeGroup& group) {
+void log_stage_group_nodes(const char* stage_name,
+                           const std::vector<std::shared_ptr<Node>>& group) {
   if (!stage_debug_enabled())
     return;
   std::fprintf(stderr, "[stage][group] %s nodes=%zu\n", stage_name ? stage_name : "unknown",
                group.size());
   size_t index = 0;
-  for (const auto& node : group.nodes()) {
+  for (const auto& node : group) {
     const std::string kind = node ? node->kind() : std::string("<null>");
     std::fprintf(stderr, "[stage][group] %s[%zu]=%s\n", stage_name ? stage_name : "unknown", index,
                  kind.c_str());
@@ -674,14 +677,15 @@ void log_stage_output_sample(const char* stage_name, const Sample& sample) {
   if (!stage_debug_enabled())
     return;
   std::fprintf(stderr,
-               "[stage][sample] %s kind=%s media=%s format=%s payload=%s caps=%s "
+               "[stage][sample] %s kind=%s payload_type=%d media=%s format=%s payload=%s caps=%s "
                "owned=%d tensors=%zu fields=%zu output_index=%d logical_output_index=%d "
                "memory_index=%d route_slot=%d segment=%s\n",
                stage_name ? stage_name : "unknown", sample_kind_name(sample.kind),
-               sample.media_type.c_str(), sample.format.c_str(), sample.payload_tag.c_str(),
-               sample.caps_string.c_str(), sample.owned ? 1 : 0, sample.tensors.size(),
-               sample.fields.size(), sample.output_index, sample.logical_output_index,
-               sample.memory_index, sample.route_slot,
+               static_cast<int>(sample.payload_type), sample.media_type.c_str(),
+               sample.format.c_str(), sample.payload_tag.c_str(), sample.caps_string.c_str(),
+               sample.owned ? 1 : 0, sample.tensors.size(), sample.fields.size(),
+               sample.output_index, sample.logical_output_index, sample.memory_index,
+               sample.route_slot,
                sample.segment_name.empty() ? "<empty>" : sample.segment_name.c_str());
   for (std::size_t i = 0; i < sample.tensors.size(); ++i) {
     log_stage_tensor_holder_state(("sample.tensors[" + std::to_string(i) + "]").c_str(),
@@ -1133,7 +1137,7 @@ bool mla_info_indicates_packed_envelope(const MlaOutputInfo& info) {
 }
 
 void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_input,
-                                       const NodeGroup& infer_group,
+                                       const std::vector<std::shared_ptr<Node>>& infer_group,
                                        const simaai::neat::Model& model, const char* stage_name) {
   if (!shadow_change_env_enabled()) {
     return;
@@ -1253,7 +1257,8 @@ void apply_mla_output_override(simaai::neat::Tensor& tensor, const MlaOutputInfo
   }
 }
 
-WireCaps build_wire_caps_from_tensor(const NodeGroup& group, const simaai::neat::Tensor& input,
+WireCaps build_wire_caps_from_tensor(const std::vector<std::shared_ptr<Node>>& group,
+                                     const simaai::neat::Tensor& input,
                                      const TensorDims* dims_override, const char* media_type,
                                      const char* default_format) {
   WireCaps wire;
@@ -1330,8 +1335,9 @@ TensorDims contract_tensor_dims_projection_from_shape(std::vector<int64_t> shape
   return dims;
 }
 
-WireCaps build_mla_wire_caps_from_contract_or_tensor(const NodeGroup& group,
-                                                     const simaai::neat::Tensor& input) {
+WireCaps
+build_mla_wire_caps_from_contract_or_tensor(const std::vector<std::shared_ptr<Node>>& group,
+                                            const simaai::neat::Tensor& input) {
   const MlaInputTensorInfo mla_input = stage_mla_input_tensor_info(group);
   if (mla_input.span_size_bytes <= 0 || mla_input.logical_dtype.empty()) {
     throw std::runtime_error("StageRun: missing strict MLA wire contract in rendered manifest");
@@ -1444,9 +1450,9 @@ struct StageKeyHash {
 std::mutex g_cache_mu;
 std::unordered_map<StageKey, std::shared_ptr<Run>, StageKeyHash> g_cache;
 
-InputOptions appsrc_for_mat(const cv::Mat& input, const NodeGroup& group) {
+InputOptions appsrc_for_mat(const cv::Mat& input, const std::vector<std::shared_ptr<Node>>& group) {
   InputOptions opt;
-  opt.media_type = "video/x-raw";
+  opt.payload_type = PayloadType::Image;
   opt.width = input.cols;
   opt.height = input.rows;
   opt.depth = input.channels();
@@ -1474,7 +1480,8 @@ int shape_dim(const std::vector<int64_t>& shape, size_t index) {
 // Wire caps are for plugin negotiation only; user-facing tensor metadata stays INT8/BF16.
 InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const WireCaps& wire) {
   InputOptions opt;
-  opt.media_type = wire.media_type.empty() ? "application/vnd.simaai.tensor" : wire.media_type;
+  opt.payload_type =
+      wire.media_type.empty() ? PayloadType::Tensor : input_type_from_media_type(wire.media_type);
   const std::string input_fmt = format_from_tensor(input);
   opt.format = wire.format.empty() ? input_fmt : wire.format;
   if (opt.format.empty()) {
@@ -1539,9 +1546,9 @@ InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const Wir
 StageInputKey make_input_key(const InputOptions& opt,
                              const simaai::neat::Tensor* tensor = nullptr) {
   StageInputKey key;
-  key.media_type = opt.media_type;
+  key.media_type = resolve_input_media_type(opt);
   key.format = upper_copy(opt.format);
-  if (tensor && upper_copy(opt.media_type) == "APPLICATION/VND.SIMAAI.TENSOR") {
+  if (tensor && upper_copy(resolve_input_media_type(opt)) == "APPLICATION/VND.SIMAAI.TENSOR") {
     key.dtype = tensor->dtype;
     key.layout = tensor->layout;
     key.shape = tensor->shape;
@@ -1579,6 +1586,7 @@ simaai::neat::Tensor take_tensor(const Sample& out, const char* where) {
 
 Sample tensor_as_sample(const simaai::neat::Tensor& input) {
   Sample out = sample_from_tensors(TensorList{input});
+  out.payload_type = PayloadType::Tensor;
   out.media_type = "application/vnd.simaai.tensor";
   out.format = format_from_tensor(input);
   if (input.semantic.tess.has_value() && !input.semantic.tess->format.empty()) {
@@ -1604,6 +1612,7 @@ Sample make_stage_tensor_input_sample(const Sample& source, const simaai::neat::
     }
   }
   if (!wire.media_type.empty()) {
+    out.payload_type = payload_type_from_media_type(wire.media_type);
     out.media_type = wire.media_type;
   }
   if (!wire.format.empty()) {
@@ -1634,6 +1643,7 @@ Sample make_stage_tensor_input_sample(const Sample& source, const simaai::neat::
 Sample make_stage_multi_output_input_sample(const Sample& source, const WireCaps& wire) {
   Sample out = source;
   if (!wire.media_type.empty()) {
+    out.payload_type = payload_type_from_media_type(wire.media_type);
     out.media_type = wire.media_type;
   }
   if (!wire.format.empty()) {
@@ -1653,8 +1663,8 @@ bool sample_is_bbox_tensor(const Sample& sample) {
   if (fmt.empty()) {
     fmt = sample.format;
   }
-  if (fmt.empty() && tensor.semantic.tess.has_value()) {
-    fmt = tensor.semantic.tess->format;
+  if (fmt.empty()) {
+    fmt = read_detection_format(tensor);
   }
   return upper_copy(fmt) == "BBOX";
 }
@@ -1674,6 +1684,7 @@ std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sa
     }
     for (const auto& tensor : sample.tensors) {
       Sample field = sample_from_tensors(TensorList{tensor});
+      field.payload_type = PayloadType::Tensor;
       field.media_type = "application/vnd.simaai.tensor";
       field.output_index = tensor.route.logical_index;
       field.logical_output_index = tensor.route.logical_index;
@@ -2013,7 +2024,7 @@ TensorList Tensors(const simaai::neat::Sample& sample) {
 }
 
 simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_preprocess_group(model, true);
+  auto group = simaai::neat::internal::ModelAccess::build_preprocess_nodes(model, true);
   InputOptions src_opt = appsrc_for_mat(input, group);
   log_stage_group_nodes("Preproc", group);
 
@@ -2092,14 +2103,16 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
     return p.build(std::vector<cv::Mat>{input}, RunMode::Sync, opt);
   });
@@ -2152,6 +2165,7 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
   tensor = require_supported_tessellated_dtype(std::move(tensor), "Preproc");
 
   out = sample_from_tensors(TensorList{std::move(tensor)});
+  out.payload_type = PayloadType::Tensor;
   out.media_type = "application/vnd.simaai.tensor";
   out.format = format_from_tensor(out.tensors.front());
   out.segment_name = selected_output_name;
@@ -2178,7 +2192,7 @@ TensorList Preproc(const std::vector<cv::Mat>& inputs, const simaai::neat::Model
 
 simaai::neat::Sample InferSample(const simaai::neat::Sample& input,
                                  const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_infer_group(model, true);
+  auto group = simaai::neat::internal::ModelAccess::build_infer_nodes(model, true);
   log_stage_group_nodes("Infer", group);
   const std::vector<MlaOutputTensorInfo> infer_outputs = stage_mla_output_tensors_info(group);
   if (infer_outputs.empty()) {
@@ -2218,16 +2232,18 @@ simaai::neat::Sample InferSample(const simaai::neat::Sample& input,
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(SampleList{stage_input}, RunMode::Sync, opt);
+    return p.build(Sample{stage_input}, RunMode::Sync, opt);
   });
   stage_trace("StageRun::Infer: after get_or_build");
 
@@ -2246,12 +2262,11 @@ simaai::neat::Sample InferSample(const simaai::neat::Tensor& input,
   return InferSample(tensor_as_sample(input), model);
 }
 
-Sample Infer(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
-  return InferSample(input, model);
-}
-
-SampleList Infer(const SampleList& inputs, const simaai::neat::Model& model) {
-  SampleList out;
+Sample Infer(const Sample& inputs, const simaai::neat::Model& model) {
+  if (inputs.kind != SampleKind::Bundle) {
+    return InferSample(inputs, model);
+  }
+  Sample out;
   out.reserve(inputs.size());
   for (const auto& input : inputs) {
     out.push_back(InferSample(input, model));
@@ -2279,7 +2294,7 @@ TensorList Infer(const TensorList& inputs, const simaai::neat::Model& model) {
 }
 
 simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_infer_group(model, true);
+  auto group = simaai::neat::internal::ModelAccess::build_infer_nodes(model, true);
   const std::vector<MlaOutputTensorInfo> infer_outputs = stage_mla_output_tensors_info(group);
   if (infer_outputs.empty()) {
     throw std::runtime_error("Infer: MLA contract preflight failed: missing MLA output tensor "
@@ -2325,7 +2340,7 @@ simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat
 
 simaai::neat::Sample MLASample(const simaai::neat::Sample& input,
                                const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_infer_group(model, true);
+  auto group = simaai::neat::internal::ModelAccess::build_infer_nodes(model, true);
   log_stage_group_nodes("MLA", group);
   const std::vector<MlaOutputTensorInfo> mla_outputs = stage_mla_output_tensors_info(group);
   if (mla_outputs.empty()) {
@@ -2364,16 +2379,18 @@ simaai::neat::Sample MLASample(const simaai::neat::Sample& input,
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(SampleList{stage_input}, RunMode::Sync, opt);
+    return p.build(Sample{stage_input}, RunMode::Sync, opt);
   });
   stage_trace("StageRun::MLA: after get_or_build");
 
@@ -2391,12 +2408,11 @@ simaai::neat::Sample MLASample(const simaai::neat::Tensor& input,
   return MLASample(tensor_as_sample(input), model);
 }
 
-Sample MLA(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
-  return MLASample(input, model);
-}
-
-SampleList MLA(const SampleList& inputs, const simaai::neat::Model& model) {
-  SampleList out;
+Sample MLA(const Sample& inputs, const simaai::neat::Model& model) {
+  if (inputs.kind != SampleKind::Bundle) {
+    return MLASample(inputs, model);
+  }
+  Sample out;
   out.reserve(inputs.size());
   for (const auto& input : inputs) {
     out.push_back(MLASample(input, model));
@@ -2418,7 +2434,7 @@ TensorList MLA(const TensorList& inputs, const simaai::neat::Model& model) {
 
 simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
   const std::vector<MlaOutputTensorInfo> mla_outputs = stage_mla_output_tensors_info(
-      simaai::neat::internal::ModelAccess::build_infer_group(model, true));
+      simaai::neat::internal::ModelAccess::build_infer_nodes(model, true));
   MlaOutputInfo mla_info = mla_output_info_from_contract_tensor(mla_outputs.front());
   Sample out = MLASample(tensor_as_sample(input), model);
   const SelectedTensorSample selected = select_tensor_sample(out, "MLA");
@@ -2453,8 +2469,16 @@ simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::
 }
 
 Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
-  NodeGroup group = model.postprocess();
-  if (group.nodes().empty()) {
+  if (input.kind == SampleKind::Bundle) {
+    Sample out;
+    out.reserve(input.size());
+    for (const auto& field : input) {
+      out.push_back(Postprocess(field, model));
+    }
+    return out;
+  }
+  auto group = simaai::neat::internal::ModelAccess::build_public_postprocess_nodes(model);
+  if (group.empty()) {
     return input;
   }
   log_stage_group_nodes("Postprocess", group);
@@ -2515,22 +2539,25 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(SampleList{stage_input}, RunMode::Sync, run_opt);
+    return p.build(Sample{stage_input}, RunMode::Sync, run_opt);
   });
 
   const int timeout_ms = default_timeout_ms();
   log_stage_tensor_stats("Postprocess: staged input", stage_input);
   Sample out = run_single_sample(*runner, stage_input, timeout_ms, "Postprocess");
   propagate_preprocess_meta_to_sample_if_missing(selected_tensor, &out);
+  tag_detection_format_in_sample(out);
   log_stage_output_sample("Postprocess: output sample", out);
   log_stage_tensor_stats("Postprocess: output sample", out);
   return out;
@@ -2550,15 +2577,6 @@ TensorList PostprocessOutputs(const simaai::neat::Tensor& input, const simaai::n
 
 TensorList Postprocess(const TensorList& inputs, const simaai::neat::Model& model) {
   return PostprocessOutputs(sample_from_tensors(inputs), model);
-}
-
-SampleList Postprocess(const SampleList& inputs, const simaai::neat::Model& model) {
-  SampleList out;
-  out.reserve(inputs.size());
-  for (const auto& input : inputs) {
-    out.push_back(Postprocess(input, model));
-  }
-  return out;
 }
 
 Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Model& model,
@@ -2618,7 +2636,7 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
       model, opt.decode_type, opt.detection_threshold, opt.nms_iou_threshold, opt.top_k, "",
       route_tess_needed, route_quant_needed, original_width, original_height);
   (void)node->backend_fragment(0);
-  NodeGroup group(std::vector<std::shared_ptr<Node>>{node});
+  std::vector<std::shared_ptr<Node>> group{node};
   log_stage_group_nodes("BoxDecode", group);
   if (const auto req = collect_preprocess_meta_requirement(group, "boxdecode")) {
     const PreprocessRuntimeMeta meta =
@@ -2649,13 +2667,9 @@ Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Mo
   return Postprocess(input, box_model);
 }
 
-Sample BoxDecodeSample(const simaai::neat::Tensor& input, const simaai::neat::Model& model,
-                       const BoxDecodeOptions& opt) {
-  return BoxDecodeSample(tensor_as_sample(input), model, opt);
-}
-
-BoxDecodeResult BoxDecode(const simaai::neat::Sample& input, const simaai::neat::Model& model,
-                          const BoxDecodeOptions& opt) {
+BoxDecodeResult DecodeBoxDecodeResultSample(const simaai::neat::Sample& input,
+                                            const simaai::neat::Model& model,
+                                            const BoxDecodeOptions& opt) {
   const SelectedTensorSample selected_input = select_tensor_sample(input, "BoxDecode input");
   const TensorList& selected_input_tensors =
       sample_tensor_list(const_cast<Sample&>(*selected_input.sample), "BoxDecode input");
@@ -2690,17 +2704,22 @@ BoxDecodeResult BoxDecode(const simaai::neat::Sample& input, const simaai::neat:
   return decode_bbox_tensor(tensor, original_width, original_height, opt.top_k, true);
 }
 
-BoxDecodeResult BoxDecode(const simaai::neat::Tensor& input, const simaai::neat::Model& model,
-                          const BoxDecodeOptions& opt) {
-  return BoxDecode(tensor_as_sample(input), model, opt);
-}
-
-SampleList BoxDecode(const SampleList& inputs, const simaai::neat::Model& model,
-                     const BoxDecodeOptions& opt) {
-  SampleList out;
+Sample BoxDecode(const Sample& inputs, const simaai::neat::Model& model,
+                 const BoxDecodeOptions& opt) {
+  Sample out;
   out.reserve(inputs.size());
   for (const auto& input : inputs) {
     out.push_back(BoxDecodeSample(input, model, opt));
+  }
+  return out;
+}
+
+BoxDecodeResultList BoxDecodeResults(const Sample& inputs, const simaai::neat::Model& model,
+                                     const BoxDecodeOptions& opt) {
+  BoxDecodeResultList out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(DecodeBoxDecodeResultSample(input, model, opt));
   }
   return out;
 }

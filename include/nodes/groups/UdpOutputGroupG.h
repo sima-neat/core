@@ -5,15 +5,15 @@
  *
  * A more generic UDP-output preset than `UdpH264OutputGroup`: bundles an optional
  * render stage (driven by `render_config`), an encode/mux step, and a UDP sink so
- * Sessions can broadcast rendered output without committing to a specific encoder
- * configuration up front. Typical placement: tail end of a Session that needs a
+ * Graphs can broadcast rendered output without committing to a specific encoder
+ * configuration up front. Typical placement: tail end of a Graph that needs a
  * configurable render+stream-out path.
  *
  * @see UdpH264OutputGroup
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "pipeline/Graph.h"
 
 #include <string>
 
@@ -43,18 +43,18 @@ struct UdpOutputGroupGOptions {
 };
 
 /**
- * @brief Build a NodeGroup that renders, encodes, and sends frames over UDP.
+ * @brief Build a Graph that renders, encodes, and sends frames over UDP.
  *
  * More flexible counterpart to `UdpH264OutputGroup`: accepts a render-stage
  * configuration string and explicit encoder geometry, then mux/packetize and send
  * to the configured UDP endpoint.
  *
  * @param opt Render, encoder, and UDP-sink configuration.
- * @return The configured `NodeGroup` ready to be `add()`ed to a Session.
+ * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *
  * @see UdpH264OutputGroup
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup UdpOutputGroupG(const UdpOutputGroupGOptions& opt);
+simaai::neat::Graph UdpOutputGroupG(const UdpOutputGroupGOptions& opt);
 
 } // namespace simaai::neat::nodes::groups

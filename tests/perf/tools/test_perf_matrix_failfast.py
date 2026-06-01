@@ -41,11 +41,11 @@ class PerfMatrixFailfastTest(unittest.TestCase):
             )
             # Only one scenario baseline; the rest should fail fast as missing.
             write_json(
-                profile_dir / "mpk_parse_smoke.json",
+                profile_dir / "runtime_graph_fanout.json",
                 {
-                    "scenario_id": "mpk_parse_smoke",
+                    "scenario_id": "runtime_graph_fanout",
                     "model_id": "none",
-                    "pipeline_id": "mpk_parse",
+                    "pipeline_id": "runtime_graph_fanout",
                     "run_mode": "parse",
                     "iterations": 100,
                     "metrics_thresholds": {

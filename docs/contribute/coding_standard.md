@@ -55,7 +55,7 @@ Keep dependency rules strict:
 - `builder/` must not depend on GStreamer or `pipeline/`.
 - `gst/` must not depend on `pipeline/`.
 - `nodes/` must not depend on `pipeline/`.
-- `pipeline/` is the orchestrator and may depend on `gst/`, `builder/`, `nodes/`, `contracts/`, `policy/`, and `mpk/`.
+- `pipeline/` is the orchestrator and may depend on `gst/`, `builder/`, `nodes/`, `contracts/`, `policy/`, and model internals.
 
 ## Determinism requirements
 

@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include "test_utils.h"
 
@@ -13,7 +13,7 @@ int main() {
   try {
     // Explicit one-buffer policy: latest frame, no clock sync.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
@@ -29,7 +29,7 @@ int main() {
 
     // Latest/drop: only the most recent buffer should remain.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=5", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
@@ -49,7 +49,7 @@ int main() {
 
     // Every-frame: keep all buffers (bounded).
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=5", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
@@ -67,7 +67,7 @@ int main() {
 
     // add_output_tensor uses default Output() sink policy.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
 
       simaai::neat::OutputTensorOptions out;
@@ -82,7 +82,7 @@ int main() {
 
     // Clocked: verify sync=true in the pipeline string.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));

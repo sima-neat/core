@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/FanOut.h"
 #include "graph/nodes/StageNode.h"
@@ -70,14 +70,12 @@ int main() {
     graph.connect(fan, sink_left, "left", "in");
     graph.connect(fan, sink_right, "right", "in");
 
-    GraphSession session(std::move(graph));
-
     GraphRunOptions run_opt;
     run_opt.edge_queue = 128;
     run_opt.pull_timeout_ms = 5000;
 
     const auto startup_t0 = sima_perf::Clock::now();
-    GraphRun run = session.build(run_opt);
+    GraphRun run = simaai::neat::graph::build(std::move(graph), run_opt);
     const auto startup_t1 = sima_perf::Clock::now();
 
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
@@ -90,7 +88,7 @@ int main() {
       push_timestamps[static_cast<std::size_t>(i)] = sima_perf::Clock::now();
       const simaai::neat::Sample input =
           make_sample(static_cast<int64_t>(i), static_cast<uint8_t>(0x30 + (i % 64)));
-      if (!run.push(fan, input)) {
+      if (!run.push(fan, simaai::neat::Sample{input})) {
         throw std::runtime_error("graph fanout push failed");
       }
     }

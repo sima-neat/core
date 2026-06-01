@@ -5,7 +5,7 @@
 
 #include "model/Model.h"
 #include "model/internal/ModelPack.h"
-#include "mpk/MpKLoader.h"
+#include "model/internal/ModelArchiveLoader.h"
 
 #include <cstdint>
 #include <string>
@@ -27,7 +27,7 @@ struct ModelContractReportOptions {
 };
 
 struct ModelContractReportContext {
-  const simaai::neat::mpk::MpKManifest* manifest = nullptr;
+  const simaai::neat::internal::ModelArchiveManifest* manifest = nullptr;
   const Model::ModelInfo* model_info = nullptr;
   const ResolvedPreprocessPlan* preprocess_plan = nullptr;
   std::string selected_post_kind;

@@ -112,8 +112,8 @@ Legacy per-variable debug toggles still work and override profile defaults when 
 
 ## Model (legacy env var names retained)
 - `SIMA_MLA_NEXT_CPU=<domain>` — override MLA next_cpu.
-- `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for extracted MPK runtime artifacts.
-- `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted MPK data on normal exit (default `1`).
+- `SIMA_MPK_EXTRACT_ROOT=<dir>` — base directory for extracted model-archive runtime artifacts.
+- `SIMA_MPK_CLEANUP_EXTRACTED=0/1` — delete per-process extracted model-archive data on normal exit (default `1`).
 - `SIMA_MPK_EXTRACT_GC_STALE_PROC=0/1` — remove stale dead-`proc_*` extraction roots on startup (default `1`).
 - `SIMA_MODEL_TAR=<path>` — base model-pack path used by examples/tests.
   Per-model overrides (`SIMA_RESNET50_TAR`, `SIMA_YOLO_TAR`, etc.) still take precedence.

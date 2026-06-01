@@ -959,6 +959,7 @@ void build_output_contracts(MlaStaticContract* contract,
                              : tensor_logical_size_bytes_from_static_spec_local(tensor);
     logical.shape = tensor.shape;
     logical.dtype = packed_extent_output ? std::string("INT8") : tensor.dtype;
+    logical.dtype_source = packed_extent_output ? DTypeSource::InternalContract : src.dtype_source;
     if (packed_extent_output) {
       if (!src.stride_bytes.empty()) {
         logical.stride_bytes = src.stride_bytes;

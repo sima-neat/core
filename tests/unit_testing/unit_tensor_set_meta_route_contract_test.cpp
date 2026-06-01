@@ -1,13 +1,19 @@
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/OutputTensorOverride.h"
+#include "pipeline/internal/TensorUtil.h"
 
 #include "test_utils.h"
 
 #include <gst/gst.h>
 
+#include <algorithm>
 #include <cstring>
+#include <cstdint>
+#include <initializer_list>
 #include <iostream>
+#include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace simaai::neat {
@@ -16,6 +22,30 @@ Sample output_from_sample_stream(GstSample* sample, const char* where, bool copy
 }
 
 namespace {
+
+using simaai::neat::apply_output_tensor_override;
+using simaai::neat::Mapping;
+using simaai::neat::output_override_entry_physical_span_bytes;
+using simaai::neat::OutputTensorOverride;
+using simaai::neat::OutputTensorOverrideEntry;
+using simaai::neat::Sample;
+using simaai::neat::sample_from_tensors;
+using simaai::neat::sample_has_tensor_list;
+using simaai::neat::Tensor;
+using simaai::neat::TensorDType;
+using simaai::neat::TensorLayout;
+using simaai::neat::TensorList;
+namespace pipeline_internal = simaai::neat::pipeline_internal;
+
+struct GstSampleUnref {
+  void operator()(GstSample* sample) const {
+    if (sample) {
+      gst_sample_unref(sample);
+    }
+  }
+};
+
+using GstSamplePtr = std::unique_ptr<GstSample, GstSampleUnref>;
 
 void ensure_tensor_set_meta_registered() {
   int argc = 0;
@@ -197,6 +227,198 @@ GstSample* make_bf16_byte_addressed_tensor_sample() {
   return sample;
 }
 
+GstSamplePtr make_sample_with_memories(std::initializer_list<std::size_t> memory_sizes) {
+  GstBuffer* buffer = gst_buffer_new();
+  require(buffer != nullptr, "failed to allocate GstBuffer");
+
+  std::uint8_t fill = 0U;
+  for (const std::size_t size : memory_sizes) {
+    GstMemory* memory = gst_allocator_alloc(nullptr, size, nullptr);
+    require(memory != nullptr, "failed to allocate GstMemory");
+    GstMapInfo map{};
+    require(gst_memory_map(memory, &map, GST_MAP_WRITE), "failed to map GstMemory");
+    for (gsize i = 0; i < map.size; ++i) {
+      map.data[i] = static_cast<guint8>(fill + i);
+    }
+    gst_memory_unmap(memory, &map);
+    gst_buffer_append_memory(buffer, memory);
+    fill = static_cast<std::uint8_t>(fill + 17U);
+  }
+
+  GstCaps* caps =
+      gst_caps_new_simple("application/vnd.simaai.tensor", "format", G_TYPE_STRING, "MLA", nullptr);
+  require(caps != nullptr, "failed to allocate tensor caps");
+  GstSample* sample = gst_sample_new(buffer, caps, nullptr, nullptr);
+  gst_caps_unref(caps);
+  gst_buffer_unref(buffer);
+  require(sample != nullptr, "failed to create override parity GstSample");
+  return GstSamplePtr(sample);
+}
+
+Tensor make_stale_sample_tensor(GstSample* sample, int logical_index, int memory_index,
+                                std::string name) {
+  Tensor tensor;
+  tensor.storage = pipeline_internal::make_gst_sample_storage(sample);
+  require(tensor.storage != nullptr, "failed to create GstSample tensor storage");
+  tensor.dtype = TensorDType::Float32;
+  tensor.layout = TensorLayout::HWC;
+  tensor.shape = {768, 1024, 1};
+  tensor.strides_bytes = {4096, 4, 4};
+  tensor.byte_offset = 11;
+  tensor.read_only = true;
+  tensor.route.logical_index = logical_index;
+  tensor.route.physical_index = memory_index;
+  tensor.route.memory_index = memory_index;
+  tensor.route.route_slot = logical_index + 100;
+  tensor.route.physical_byte_offset = tensor.byte_offset;
+  tensor.route.name = std::move(name);
+  tensor.route.backend_name = tensor.route.name;
+  tensor.route.segment_name = tensor.route.name + "_segment";
+  return tensor;
+}
+
+Sample make_stale_tensor_set_sample(GstSample* sample, std::size_t stale_tensor_count = 1U) {
+  TensorList tensors;
+  tensors.reserve(stale_tensor_count);
+  for (std::size_t i = 0; i < stale_tensor_count; ++i) {
+    tensors.push_back(make_stale_sample_tensor(sample, static_cast<int>(50 + i), 0,
+                                               "stale_tensor_" + std::to_string(i)));
+  }
+  return sample_from_tensors(tensors);
+}
+
+OutputTensorOverrideEntry make_override_entry(std::vector<int64_t> shape,
+                                              std::vector<int64_t> strides, int64_t byte_offset,
+                                              int memory_index, int logical_index, int route_slot,
+                                              TensorDType dtype, std::string name) {
+  OutputTensorOverrideEntry entry;
+  entry.shape = std::move(shape);
+  entry.strides_bytes = std::move(strides);
+  entry.byte_offset = byte_offset;
+  entry.memory_index = memory_index;
+  entry.logical_output_index = logical_index;
+  entry.route_slot = route_slot;
+  entry.dtype = dtype;
+  entry.layout = TensorLayout::HW;
+  entry.name = std::move(name);
+  entry.segment_name = entry.name + "_segment";
+  return entry;
+}
+
+void require_same_public_contract(const Tensor& owned, const Tensor& view,
+                                  const OutputTensorOverrideEntry& entry, const char* context) {
+  require(owned.dtype == view.dtype, std::string(context) + ": dtype mismatch");
+  require(owned.dtype == entry.dtype, std::string(context) + ": override dtype not applied");
+  require(owned.shape == view.shape, std::string(context) + ": shape mismatch");
+  require(owned.shape == entry.shape, std::string(context) + ": override shape not applied");
+  require(owned.strides_bytes == view.strides_bytes, std::string(context) + ": strides mismatch");
+  require(owned.strides_bytes == entry.strides_bytes,
+          std::string(context) + ": override strides not applied");
+  require(owned.byte_offset == view.byte_offset, std::string(context) + ": byte_offset mismatch");
+  require(owned.byte_offset == entry.byte_offset,
+          std::string(context) + ": override byte_offset not applied");
+  require(owned.route.logical_index == view.route.logical_index,
+          std::string(context) + ": logical route mismatch");
+  require(owned.route.logical_index == entry.logical_output_index,
+          std::string(context) + ": logical route not applied");
+  require(owned.route.route_slot == view.route.route_slot,
+          std::string(context) + ": route_slot mismatch");
+  require(owned.route.route_slot == entry.route_slot,
+          std::string(context) + ": route_slot not applied");
+  require(owned.route.memory_index == view.route.memory_index,
+          std::string(context) + ": memory_index mismatch");
+  require(owned.route.memory_index == entry.memory_index,
+          std::string(context) + ": memory_index not applied");
+  require(owned.route.physical_index == view.route.physical_index,
+          std::string(context) + ": physical_index mismatch");
+  require(owned.route.physical_byte_offset == view.route.physical_byte_offset,
+          std::string(context) + ": physical byte offset mismatch");
+  require(owned.route.physical_byte_offset == entry.byte_offset,
+          std::string(context) + ": physical byte offset not applied");
+  require(owned.route.name == view.route.name, std::string(context) + ": route name mismatch");
+  require(owned.route.name == entry.name, std::string(context) + ": route name not applied");
+  require(owned.route.segment_name == view.route.segment_name,
+          std::string(context) + ": segment name mismatch");
+  require(owned.route.segment_name == entry.segment_name,
+          std::string(context) + ": segment name not applied");
+
+  const std::uint64_t logical_span = output_override_entry_physical_span_bytes(entry);
+  require(logical_span > 0U, std::string(context) + ": invalid override logical span");
+
+  const Mapping owned_map = owned.view_read();
+  const Mapping view_map = view.view_read();
+  require(owned_map.data != nullptr, std::string(context) + ": owned map failed");
+  require(view_map.data != nullptr, std::string(context) + ": zero-copy map failed");
+  require(owned_map.size_bytes == view_map.size_bytes,
+          std::string(context) + ": readable span differs between owned and zero-copy");
+  require(owned_map.size_bytes >= logical_span,
+          std::string(context) + ": readable span is smaller than logical tensor span");
+}
+
+void require_override_owned_zero_copy_parity(const Sample& base,
+                                             const OutputTensorOverride& override,
+                                             const char* context) {
+  const Sample owned = apply_output_tensor_override(base, override, /*materialize_output=*/true);
+  const Sample view = apply_output_tensor_override(base, override, /*materialize_output=*/false);
+  require(sample_has_tensor_list(owned), std::string(context) + ": owned output has no tensors");
+  require(sample_has_tensor_list(view), std::string(context) + ": zero-copy output has no tensors");
+  require(owned.tensors.size() == override.outputs.size(),
+          std::string(context) + ": owned tensor count should follow override");
+  require(view.tensors.size() == override.outputs.size(),
+          std::string(context) + ": zero-copy tensor count should follow override");
+  for (std::size_t i = 0; i < override.outputs.size(); ++i) {
+    require_same_public_contract(owned.tensors[i], view.tensors[i], override.outputs[i], context);
+  }
+}
+
+void override_owned_zero_copy_parity_one_memory() {
+  auto sample = make_sample_with_memories({64U});
+  const Sample base = make_stale_tensor_set_sample(sample.get());
+
+  OutputTensorOverride override;
+  override.outputs.push_back(
+      make_override_entry({16}, {1}, 0, 0, 0, 0, TensorDType::UInt8, "raw_terminal"));
+  require_override_owned_zero_copy_parity(base, override, "one-memory override parity");
+}
+
+void override_owned_zero_copy_parity_multi_memory_nonzero_offset() {
+  auto sample = make_sample_with_memories({17U, 64U});
+  Sample base = make_stale_tensor_set_sample(sample.get());
+  base.tensors.front().route.memory_index = 1;
+  base.tensors.front().route.physical_index = 1;
+
+  OutputTensorOverride override;
+  override.outputs.push_back(
+      make_override_entry({7}, {4}, 8, 1, 3, 9, TensorDType::Int32, "class_ids"));
+  require_override_owned_zero_copy_parity(base, override,
+                                          "multi-memory nonzero-offset override parity");
+}
+
+void override_owned_zero_copy_parity_padded_stride() {
+  auto sample = make_sample_with_memories({48U});
+  const Sample base = make_stale_tensor_set_sample(sample.get());
+
+  OutputTensorOverride override;
+  override.outputs.push_back(
+      make_override_entry({3, 3}, {8, 2}, 5, 0, 4, 12, TensorDType::UInt8, "padded_view"));
+  require(output_override_entry_physical_span_bytes(override.outputs.front()) == 21U,
+          "padded override span should account for row gaps");
+  require_override_owned_zero_copy_parity(base, override, "padded-stride override parity");
+}
+
+void override_authoritative_over_stale_tensor_set_metadata() {
+  auto sample = make_sample_with_memories({96U});
+  const Sample base = make_stale_tensor_set_sample(sample.get(), 3U);
+
+  OutputTensorOverride override;
+  override.outputs.push_back(
+      make_override_entry({2, 3}, {16, 4}, 4, 0, 0, 20, TensorDType::Int32, "terminal_class_ids"));
+  override.outputs.push_back(
+      make_override_entry({8}, {1}, 64, 0, 1, 21, TensorDType::UInt8, "terminal_aux_bytes"));
+  require_override_owned_zero_copy_parity(base, override,
+                                          "stale TensorSet authoritative override parity");
+}
+
 } // namespace
 
 int main() {
@@ -259,6 +481,11 @@ int main() {
     // tensor-set conversion change above; the smoke-check below is kept to
     // exercise the conversion API without throwing.
     (void)bf16_out;
+
+    override_owned_zero_copy_parity_one_memory();
+    override_owned_zero_copy_parity_multi_memory_nonzero_offset();
+    override_owned_zero_copy_parity_padded_stride();
+    override_authoritative_over_stale_tensor_set_metadata();
 
     std::cout << "[OK] unit_tensor_set_meta_route_contract_test passed\n";
     return 0;

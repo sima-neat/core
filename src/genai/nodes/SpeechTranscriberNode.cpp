@@ -1,9 +1,9 @@
-#include "genai/nodes/SpeechTranscriber.h"
+#include "genai/internal/SpeechTranscriberNodeFactory.h"
 
 #include "genai/ASRModel.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 
 #include <filesystem>

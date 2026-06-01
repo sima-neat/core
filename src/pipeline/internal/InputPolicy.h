@@ -12,7 +12,7 @@
 
 namespace simaai::neat {
 
-class SampleSpec;
+struct SampleSpec;
 
 namespace pipeline_internal {
 
@@ -34,7 +34,7 @@ struct ModelInputPolicyResult {
   bool resolved_normalize = false;
 };
 
-struct SessionInputPolicyResult {
+struct GraphInputPolicyResult {
   InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
   InputStreamOptions::ResolvedShapeLimits shape_limits{};
   std::size_t max_input_bytes_guard = 0;
@@ -45,6 +45,13 @@ struct SessionInputPolicyResult {
 using ResolvedLimits = InputStreamOptions::ResolvedShapeLimits;
 
 InputOptions normalize_shape_bounds(const InputOptions& opt);
+
+// Complete an Input node's caps/pool shape options from the first concrete seed
+// sample used to build a Graph. This is compile-time metadata only: explicit
+// user fields are preserved, and only missing media/format/shape bounds are
+// filled so downstream nodes can derive contracts before the runtime appsrc
+// has seen its first buffer.
+InputOptions complete_input_options_from_seed_spec(const InputOptions& opt, const SampleSpec& seed);
 
 bool has_explicit_shape_bounds(const InputOptions& opt);
 
@@ -65,16 +72,15 @@ std::size_t resolve_input_bytes_guard(std::size_t requested_max_input_bytes,
                                       std::size_t bounded_estimate_bytes,
                                       InputStreamOptions::ByteGuardOrigin* out_origin);
 
-SessionInputPolicyResult resolve_session_input_policy(const InputOptions& opt,
-                                                      const SampleSpec& seed,
-                                                      std::size_t requested_max_input_bytes,
-                                                      std::size_t bounded_estimate_bytes);
+GraphInputPolicyResult resolve_graph_input_policy(const InputOptions& opt, const SampleSpec& seed,
+                                                  std::size_t requested_max_input_bytes,
+                                                  std::size_t bounded_estimate_bytes);
 
 ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest& req);
 
-SessionInputPolicyResult resolve_for_session(const InputOptions& opt, const SampleSpec& seed,
-                                             std::size_t requested_max_input_bytes,
-                                             std::size_t bounded_estimate_bytes);
+GraphInputPolicyResult resolve_for_graph(const InputOptions& opt, const SampleSpec& seed,
+                                         std::size_t requested_max_input_bytes,
+                                         std::size_t bounded_estimate_bytes);
 
 ModelInputPolicyResult resolve_for_model(const ModelInputPolicyRequest& req);
 

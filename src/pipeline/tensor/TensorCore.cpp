@@ -309,13 +309,19 @@ std::size_t plane_span_bytes_checked(const Plane& plane, std::size_t elem_bytes)
 
 std::shared_ptr<Storage> make_cpu_owned_storage(std::size_t size_bytes) {
   void* ptr = nullptr;
-  if (size_bytes > 0) {
+  // Keep zero-size tensors mappable. DLPack/NumPy consumers may legally receive
+  // tensors with a zero extent (for example an empty decoded-detections tensor
+  // shaped [0, 6]), but they still expect the exported storage pointer to be
+  // non-null. Preserve the logical storage size while allocating a one-byte
+  // sentinel for the backing holder.
+  const std::size_t alloc_bytes = size_bytes > 0 ? size_bytes : 1U;
+  if (alloc_bytes > 0) {
     // POSIX aligned allocation; fallback to malloc if needed.
-    if (posix_memalign(&ptr, 64, size_bytes) != 0) {
-      ptr = std::malloc(size_bytes);
+    if (posix_memalign(&ptr, 64, alloc_bytes) != 0) {
+      ptr = std::malloc(alloc_bytes);
     }
   }
-  if (size_bytes > 0 && !ptr)
+  if (alloc_bytes > 0 && !ptr)
     throw std::bad_alloc();
 
   auto buf = std::shared_ptr<uint8_t>(static_cast<uint8_t*>(ptr), [](uint8_t* p) { std::free(p); });

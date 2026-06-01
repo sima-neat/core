@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "test_main.h"
@@ -107,9 +107,7 @@ RUN_TEST("stress_graph_execution_test", [] {
 
     g.connect(fan, sink_a, "left", "in");
     g.connect(fan, sink_b, "right", "in");
-
-    simaai::neat::graph::GraphSession session(std::move(g));
-    simaai::neat::graph::GraphRun run = session.build();
+    simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
     for (int frame = 0; frame < frames_per_cycle; ++frame) {
       simaai::neat::Sample sample;
@@ -118,7 +116,7 @@ RUN_TEST("stress_graph_execution_test", [] {
                                         static_cast<uint8_t>(frame & 0xFF));
       sample.frame_id = frame;
       sample.stream_id = "stress-graph";
-      require(run.push(fan, sample), "stress graph push failed");
+      require(run.push(fan, simaai::neat::Sample{sample}), "stress graph push failed");
     }
 
     for (int frame = 0; frame < frames_per_cycle; ++frame) {

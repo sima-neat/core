@@ -1,4 +1,4 @@
-// Tune async Session throughput via RunOptions: queue_depth, overflow_policy, metrics.
+// Tune async Graph throughput via RunOptions: queue_depth, overflow_policy, metrics.
 //
 // Usage:
 //   tutorial_015_tune_throughput_and_queues [--iters 32] [--queue 4] [--drop block|latest|incoming]
@@ -52,15 +52,15 @@ int main(int argc, char** argv) {
     if (!rgb.isContinuous())
       rgb = rgb.clone();
 
-    simaai::neat::Session session;
+    simaai::neat::Graph graph;
     simaai::neat::InputOptions in;
     in.format = "RGB";
     in.width = rgb.cols;
     in.height = rgb.rows;
     in.depth = rgb.channels();
     in.is_live = true;
-    session.add(simaai::neat::nodes::Input(in));
-    session.add(simaai::neat::nodes::Output());
+    graph.add(simaai::neat::nodes::Input(in));
+    graph.add(simaai::neat::nodes::Output());
 
     // CORE LOGIC
     // RunOptions controls how the async runner buffers and drops frames.
@@ -70,7 +70,7 @@ int main(int argc, char** argv) {
     opt.output_memory = simaai::neat::OutputMemory::Owned;
     opt.enable_metrics = true;
 
-    auto run = session.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Async, opt);
+    auto run = graph.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Async, opt);
 
     // try_push never blocks; pair it with close_input + drain pull loop.
     for (int i = 0; i < iters; ++i)

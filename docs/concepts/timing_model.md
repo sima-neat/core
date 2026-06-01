@@ -1,14 +1,14 @@
 ---
 title: Async vs sync timing model
-description: How `Session::run()` and `Run::push()/pull()` relate — when work happens, when results return.
+description: How `Graph::run()` and `Run::push()/pull()` relate — when work happens, when results return.
 sidebar_position: 4
 ---
 
 # Async vs sync timing model
 
-`Session` and `Run` expose two ways to drive a pipeline:
+`Graph` and `Run` expose two ways to drive a pipeline:
 
-- **Synchronous** (`Session::run()` with no inputs): the framework opens the pipeline, runs it to completion, and returns. Control returns once the source has emitted EOS.
+- **Synchronous** (`Graph::run()` with no inputs): the framework opens the pipeline, runs it to completion, and returns. Control returns once the source has emitted EOS.
 - **Asynchronous** (`Run::push()` / `Run::pull()`): the application owns the loop. Work happens whenever there are samples in the queue; control returns to the application between pushes / pulls.
 
 Both modes use the same Nodes, the same plan, and the same hardware. The difference is who drives the clock.
@@ -16,10 +16,10 @@ Both modes use the same Nodes, the same plan, and the same hardware. The differe
 ## Synchronous mode
 
 ```cpp
-sima::Session sess;
-sess.add(sima::nodes::groups::FileMp4H264In("input.mp4"));
-sess.add(model.session());
-sess.add(sima::nodes::groups::Mp4FileOut("output.mp4"));
+sima::Graph graph;
+graph.add(sima::nodes::groups::FileMp4H264In("input.mp4"));
+graph.add(model.graph());
+graph.add(sima::nodes::groups::Mp4FileOut("output.mp4"));
 sess.run();   // blocks until EOS or error
 ```
 
@@ -34,11 +34,11 @@ Use sync mode for:
 ## Asynchronous mode
 
 ```cpp
-sima::Session sess;
-sess.add(sima::nodes::Push("rgb"));
-sess.add(model.session());
-sess.add(sima::nodes::Pull("detections"));
-auto run = sess.build();
+sima::Graph graph;
+graph.add(sima::nodes::Push("rgb"));
+graph.add(model.graph());
+graph.add(sima::nodes::Pull("detections"));
+auto run = graph.build();
 run.start();
 
 while (have_more_inputs()) {
@@ -86,10 +86,10 @@ Useful when async mode shows unexpected back-pressure — the snapshot tells you
 
 ## Related types
 
-- [`Session::run()`](/reference/cppapi/classes/simaai-neat-session) — synchronous entry point.
-- [`Session::build()`](/reference/cppapi/classes/simaai-neat-session) — async entry point (returns a `Run`).
+- [`Graph::run()`](/reference/cppapi/classes/simaai-neat-graph) — synchronous entry point.
+- [`Graph::build()`](/reference/cppapi/classes/simaai-neat-graph) — async entry point (returns a `Run`).
 - [`Run::push()` / `pull()`](/reference/cppapi/classes/simaai-neat-run) — async drive methods.
-- [`OverflowPolicy`](/reference/cppapi/files/include-pipeline-sessionoptions-h) — back-pressure behavior.
+- [`OverflowPolicy`](/reference/cppapi/files/include-pipeline-graphoptions-h) — back-pressure behavior.
 - [`RunStats` / `RunDiagSnapshot`](/reference/cppapi/files/include-pipeline-run-h) — post-hoc telemetry.
 
 ## Further reading

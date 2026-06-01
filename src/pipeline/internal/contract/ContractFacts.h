@@ -5,7 +5,7 @@
 
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include <optional>
 #include <string>

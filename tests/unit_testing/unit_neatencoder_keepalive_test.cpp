@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/H264EncodeSima.h"
@@ -30,7 +30,7 @@ int main() {
     const int fps = 30;
 
     simaai::neat::InputOptions src_opt;
-    src_opt.media_type = "video/x-raw";
+    src_opt.payload_type = simaai::neat::PayloadType::Image;
     src_opt.format = simaai::neat::FormatTag::NV12;
     src_opt.width = width;
     src_opt.height = height;
@@ -42,7 +42,7 @@ int main() {
     src_opt.stream_type = 0;
     src_opt.use_simaai_pool = false;
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.add(simaai::neat::nodes::Input(src_opt));
     p.add(simaai::neat::nodes::H264EncodeSima(width, height, fps, 400, "baseline", "4.0"));
     p.add(simaai::neat::nodes::Output());

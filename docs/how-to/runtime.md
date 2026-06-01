@@ -2,15 +2,15 @@
 
 ## Build vs run
 
-- `Session::build(...)` constructs the pipeline and returns a
+- `Graph::build(...)` constructs the pipeline and returns a
   `Run` handle for push/pull control.
-- `Session::run(...)` is the synchronous convenience path: it builds
+- `Graph::run(...)` is the synchronous convenience path: it builds
   (if needed), pushes one input, and pulls one output.
 
 ## Sync vs async
 
 - **Sync mode** (`RunMode::Sync`) is optimized for correctness and
-  simplicity. You typically use `push_and_pull(...)` or `Session::run(...)`.
+  simplicity. You typically use `push_and_pull(...)` or `Graph::run(...)`.
 - **Async mode** (`RunMode::Async`) separates producer and consumer
   threads. You call `push(...)` and `pull(...)` independently.
 
@@ -39,9 +39,9 @@ Advanced knobs are opt-in under `RunOptions::advanced`:
 - `advanced.copy_input`: force defensive input copies.
 
 Use `Run::metrics()` to inspect latency, derived throughput, input counters,
-and optional board PMIC power telemetry in one call. `Model::Runner` and `GraphRun`
-expose the same `metrics()` / `metrics_report()` surface through runtime-specific
-adapters. For lower-level compatibility diagnostics, use `Run::stats()` and
+and optional board PMIC power telemetry in one call. `Model::Runner` forwards the
+same `metrics()` / `metrics_report()` surface through its public runner adapter.
+For lower-level compatibility diagnostics, use `Run::stats()` and
 `Run::diag_snapshot()`.
 
 To include board power, enable it in code (no environment variable required):
@@ -49,7 +49,7 @@ To include board power, enable it in code (no environment variable required):
 ```cpp
 simaai::neat::RunOptions run_opt;
 run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
-auto run = session.build(inputs, simaai::neat::RunMode::Async, run_opt);
+auto run = graph.build(inputs, simaai::neat::RunMode::Async, run_opt);
 auto metrics = run.metrics();
 ```
 
@@ -58,14 +58,14 @@ Python uses the same shape:
 ```python
 run_opt = neat.RunOptions()
 run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
-run = session.build(tensor, neat.RunMode.Async, run_opt)
+run = graph.build(tensor, neat.RunMode.Async, run_opt)
 metrics = run.metrics()
 ```
 
-`Model::build(run_opt)` and `Model::build(session_opt, run_opt)` forward the same
-runtime options to the underlying `Run`. For graphs, prefer
-`graph::GraphRunOptions::enable_board_power()` to get one graph-level board
-power monitor instead of per-pipeline duplicate rail sampling.
+`Model::build(run_opt)`, `Model::build(route_opt, run_opt)`, and
+`Graph::build(run_opt)` forward the same runtime options to the underlying
+`Run`, so one graph-level board power monitor is used instead of per-pipeline
+duplicate rail sampling.
 
 If you need to force a specific built-in profile, board-specific helpers remain
 available:
@@ -75,8 +75,8 @@ available:
 
 ## Verbosity presets
 
-Framework build/run messaging is controlled with `VerboseOptions` on `SessionOptions`,
-`Model::Options`, `Model::SessionOptions`, and `graph::GraphRunOptions`.
+Framework build/run messaging is controlled with `VerboseOptions` on `GraphOptions`,
+`Model::Options`, and `Model::RouteOptions`.
 
 Current development default: `VerboseOptions::debug_all()`.
 Call `production()` or `quiet()` explicitly when you want less output.

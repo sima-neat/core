@@ -2,7 +2,7 @@
 """Configure a YOLO Model with ModelOptions knobs and introspect its specs.
 
 Usage:
-  python3 configure_model_options.py --mpk /path/to/yolo_v8s.tar.gz
+  python3 configure_model_options.py --model /path/to/yolo_v8s.tar.gz
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import numpy as np
 
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--model", type=Path, required=True)
   args = ap.parse_args(argv[1:])
 
   opt = pyneat.ModelOptions()
@@ -43,7 +43,7 @@ def main(argv: list[str]) -> int:
   opt.preproc.channel_stddev = [0.229, 0.224, 0.225]
 
   # CORE LOGIC
-  model = pyneat.Model(str(args.mpk), opt)
+  model = pyneat.Model(str(args.model), opt)
   print(f"input_rank={model.input_spec().rank}")
   print(f"output_rank={model.output_spec().rank}")
   print(f"metadata_keys={len(model.metadata())}")
@@ -51,7 +51,7 @@ def main(argv: list[str]) -> int:
 
   bgr = np.full((640, 640, 3), 44, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(bgr, copy=True, image_format=pyneat.PixelFormat.BGR)
-  sample = model.run(tensor, timeout_ms=2000)
+  sample = model.run([tensor], timeout_ms=2000)
   print(f"output_kind={sample.kind}")
   return 0
 

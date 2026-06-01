@@ -1,5 +1,6 @@
 #include "asset_utils.h"
 #include "model/Model.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -115,7 +116,7 @@ RUN_TEST("stress_model_lifecycle_test", [] {
       (void)model.input_spec();
       (void)model.output_spec();
       (void)model.metadata();
-      (void)model.session();
+      (void)model.graph();
       (void)model.fragment(simaai::neat::Model::Stage::Inference);
 
       if (run_build) {

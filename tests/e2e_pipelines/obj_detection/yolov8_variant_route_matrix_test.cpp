@@ -5,7 +5,7 @@
 #include "model/internal/ModelPack.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/TessellatedTensor.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/RenderedMlaContractQuery.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -39,6 +39,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -1332,7 +1333,7 @@ simaai::neat::Tensor make_fp32_input_tensor_cpu(const cv::Mat& img_bgr,
                                                 RouteKind route) {
   (void)route;
   const auto opt = model.input_appsrc_options(true);
-  if (upper_copy(opt.media_type) != "APPLICATION/VND.SIMAAI.TENSOR") {
+  if (upper_copy(simaai::neat::resolve_input_media_type(opt)) != "APPLICATION/VND.SIMAAI.TENSOR") {
     throw std::runtime_error("FP32 route expected tensor media type");
   }
 
@@ -1467,7 +1468,8 @@ simaai::neat::Tensor build_canonical_preprocessed_input(const cv::Mat& img_bgr,
                                                         const simaai::neat::Model& model) {
   const auto spec = model.input_spec();
   const simaai::neat::InputOptions ingress_opt = model.input_appsrc_options(true);
-  require(upper_copy(ingress_opt.media_type) == "APPLICATION/VND.SIMAAI.TENSOR",
+  require(upper_copy(simaai::neat::resolve_input_media_type(ingress_opt)) ==
+              "APPLICATION/VND.SIMAAI.TENSOR",
           "canonical e2e path requires tensor ingress");
 
   simaai::neat::Tensor input = make_fp32_input_tensor_cpu(img_bgr, model, spec);
@@ -1507,7 +1509,7 @@ void require_preprocess_meta_on_output_local(const simaai::neat::Sample& sample,
 }
 
 simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::neat::Model& model,
-                                                const simaai::neat::Model::SessionOptions& sess_opt,
+                                                const simaai::neat::Model::RouteOptions& sess_opt,
                                                 int frames = 1) {
   const simaai::neat::Tensor input = build_canonical_preprocessed_input(img_bgr, model);
   const simaai::neat::TensorList input_tensorlist{input};
@@ -1834,7 +1836,8 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
   const bool strict_adapter_profile = pre_adapter_kind == PreAdapterKind::Quant ||
                                       pre_adapter_kind == PreAdapterKind::Tess ||
                                       pre_adapter_kind == PreAdapterKind::QuantTess;
-  const auto mla_info = rendered_stage_query::mla_input_info(model.inference());
+  const auto mla_info = rendered_stage_query::mla_input_info_from_nodes(
+      simaai::neat::internal::ModelAccess::build_public_inference_nodes(model));
   const auto preproc_contract = read_preproc_contract_from_model(model);
   out.quantize_needed = dtype_is_int8_like(mla_info.input_dtype);
   out.tessellate_needed =
@@ -1946,7 +1949,7 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
       }
     }
     simaai::neat::InputOptions tensor_opt;
-    tensor_opt.media_type = "application/vnd.simaai.tensor";
+    tensor_opt.payload_type = simaai::neat::PayloadType::Tensor;
     tensor_opt.format = "BF16";
     tensor_opt.width = tensor_w;
     tensor_opt.height = tensor_h;
@@ -1988,7 +1991,7 @@ AdapterIngressTensorInput build_adapter_tensor_ingress_input(const cv::Mat& inpu
     prepped.convertTo(fp32, fp32_type, input_scale, input_bias);
   }
   simaai::neat::InputOptions tensor_opt;
-  tensor_opt.media_type = "application/vnd.simaai.tensor";
+  tensor_opt.payload_type = simaai::neat::PayloadType::Tensor;
   tensor_opt.format = "EVXX_FLOAT32";
   tensor_opt.width = fp32.cols;
   tensor_opt.height = fp32.rows;
@@ -2060,7 +2063,7 @@ cv::Mat normalize_model_input(const cv::Mat& input, const simaai::neat::Model& m
   }
 
   auto opt = model.input_appsrc_options(false);
-  if (upper_copy(opt.media_type) != "VIDEO/X-RAW") {
+  if (upper_copy(simaai::neat::resolve_input_media_type(opt)) != "VIDEO/X-RAW") {
     return input;
   }
 
@@ -2110,10 +2113,10 @@ bool tensor_is_bf16_like(const simaai::neat::Tensor& tensor) {
          simaai::neat::is_tessellated_bf16_format(fmt);
 }
 
-PreAdapterKind detect_pre_kind(const simaai::neat::NodeGroup& group) {
-  if (group.empty())
+PreAdapterKind detect_pre_kind(const std::vector<std::shared_ptr<simaai::neat::Node>>& nodes) {
+  if (nodes.empty())
     return PreAdapterKind::None;
-  const std::string kind = group.nodes().front() ? group.nodes().front()->kind() : "";
+  const std::string kind = nodes.front() ? nodes.front()->kind() : "";
   if (kind == "Preproc")
     return PreAdapterKind::Preproc;
   if (kind == "Quant")
@@ -2125,12 +2128,12 @@ PreAdapterKind detect_pre_kind(const simaai::neat::NodeGroup& group) {
   return PreAdapterKind::Unknown;
 }
 
-PostAdapterKind detect_post_kind(const simaai::neat::NodeGroup& group) {
-  if (group.empty())
+PostAdapterKind detect_post_kind(const std::vector<std::shared_ptr<simaai::neat::Node>>& nodes) {
+  if (nodes.empty())
     return PostAdapterKind::None;
   bool saw_detessdequant = false;
   bool saw_dequant = false;
-  for (const auto& node : group.nodes()) {
+  for (const auto& node : nodes) {
     const std::string kind = node ? node->kind() : "";
     if (kind == "SimaBoxDecode")
       return PostAdapterKind::BoxDecode;
@@ -2188,10 +2191,10 @@ std::string join_strings(const std::vector<std::string>& items, const char* sep 
   return os.str();
 }
 
-std::vector<std::string> group_node_kinds(const simaai::neat::NodeGroup& group) {
+std::vector<std::string> node_kinds(const std::vector<std::shared_ptr<simaai::neat::Node>>& nodes) {
   std::vector<std::string> kinds;
-  kinds.reserve(group.nodes().size());
-  for (const auto& node : group.nodes()) {
+  kinds.reserve(nodes.size());
+  for (const auto& node : nodes) {
     if (!node)
       continue;
     kinds.push_back(node->kind());
@@ -2199,8 +2202,9 @@ std::vector<std::string> group_node_kinds(const simaai::neat::NodeGroup& group) 
   return kinds;
 }
 
-bool group_contains_kind(const simaai::neat::NodeGroup& group, const char* needle) {
-  for (const auto& node : group.nodes()) {
+bool nodes_contain_kind(const std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
+                        const char* needle) {
+  for (const auto& node : nodes) {
     if (node && node->kind() == needle) {
       return true;
     }
@@ -2208,14 +2212,14 @@ bool group_contains_kind(const simaai::neat::NodeGroup& group, const char* needl
   return false;
 }
 
-TerminalOutputKind detect_terminal_output_kind(const simaai::neat::NodeGroup& post_group,
-                                               const ProbeResult& probe) {
-  if (group_contains_kind(post_group, "SimaBoxDecode")) {
+TerminalOutputKind
+detect_terminal_output_kind(const std::vector<std::shared_ptr<simaai::neat::Node>>& post_nodes,
+                            const ProbeResult& probe) {
+  if (nodes_contain_kind(post_nodes, "SimaBoxDecode")) {
     return TerminalOutputKind::BoxDecodePayload;
   }
-  if (group_contains_kind(post_group, "Cast") || group_contains_kind(post_group, "Dequant") ||
-      group_contains_kind(post_group, "DetessDequant") ||
-      group_contains_kind(post_group, "Detess")) {
+  if (nodes_contain_kind(post_nodes, "Cast") || nodes_contain_kind(post_nodes, "Dequant") ||
+      nodes_contain_kind(post_nodes, "DetessDequant") || nodes_contain_kind(post_nodes, "Detess")) {
     return TerminalOutputKind::TensorFloatLike;
   }
   if (probe.mla_output_int8) {
@@ -2269,7 +2273,7 @@ simaai::neat::Model build_model_for_case(const ProbeResult& probe) {
   auto opt = default_model_options();
   // Model-managed boxdecode routes may return decoded payloads directly when the
   // strict MPK boxdecode contract is available. Fallback cases still decode through
-  // the standalone post session below.
+  // the standalone post graph below.
   return simaai::neat::Model(probe.tar_path, opt);
 }
 
@@ -2279,9 +2283,10 @@ simaai::neat::Sample run_model_sample(const cv::Mat& img_bgr, simaai::neat::Mode
   const int kRetryTimeoutMs = std::max(kRunTimeoutMs, kRunRetryTimeoutMs);
   const auto spec = model.input_spec();
   const auto ingress_opt = model.input_appsrc_options(false);
-  const bool tensor_ingress = upper_copy(ingress_opt.media_type) == "APPLICATION/VND.SIMAAI.TENSOR";
+  const bool tensor_ingress = upper_copy(simaai::neat::resolve_input_media_type(ingress_opt)) ==
+                              "APPLICATION/VND.SIMAAI.TENSOR";
 
-  auto require_single_sample = [&](const simaai::neat::SampleList& outputs,
+  auto require_single_sample = [&](const simaai::neat::Sample& outputs,
                                    const char* where) -> simaai::neat::Sample {
     require(outputs.size() == 1U, std::string(where) + ": expected exactly 1 sample, got " +
                                       std::to_string(outputs.size()));
@@ -3089,7 +3094,7 @@ bool tensor_to_cv32f_hwc3_local(const simaai::neat::Tensor& tensor, cv::Mat& out
 simaai::neat::Sample run_preproc_probe_sample_local(const cv::Mat& img_bgr,
                                                     const std::string& output_dtype) {
   simaai::neat::InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::BGR;
   src_opt.width = img_bgr.cols;
   src_opt.height = img_bgr.rows;
@@ -3113,7 +3118,7 @@ simaai::neat::Sample run_preproc_probe_sample_local(const cv::Mat& img_bgr,
   pre_opt.upstream_name = "decoder";
   pre_opt.graph_input_name = "input_image";
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   auto pre_node = simaai::neat::nodes::Preproc(pre_opt);
   p.add(simaai::neat::nodes::Input(src_opt));
   p.add(pre_node);
@@ -3123,7 +3128,7 @@ simaai::neat::Sample run_preproc_probe_sample_local(const cv::Mat& img_bgr,
   run_opt.queue_depth = 1;
   auto run = p.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Async, run_opt);
   require(run.push(std::vector<cv::Mat>{img_bgr}), "preproc_probe: push failed");
-  simaai::neat::SampleList outs = run.pull_samples(default_model_run_timeout_ms());
+  simaai::neat::Sample outs = run.pull_samples(default_model_run_timeout_ms());
   require(outs.size() == 1U, "preproc_probe: expected exactly 1 output sample");
   simaai::neat::Sample out = outs.front();
   run.close();
@@ -3381,7 +3386,8 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
 
   try {
     simaai::neat::Model matrix_model = build_model_for_case(probe);
-    const PreAdapterKind pre_kind = detect_pre_kind(matrix_model.preprocess());
+    const PreAdapterKind pre_kind = detect_pre_kind(
+        simaai::neat::internal::ModelAccess::build_public_preprocess_nodes(matrix_model));
     const bool is_adapter_pre = pre_kind == PreAdapterKind::Quant ||
                                 pre_kind == PreAdapterKind::Tess ||
                                 pre_kind == PreAdapterKind::QuantTess;
@@ -3410,14 +3416,14 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
         build_adapter_tensor_ingress_input(matrix_seed, matrix_model, matrix_spec, route, pre_kind);
 
     auto matrix_input_opt = matrix_model.input_appsrc_options(false);
-    simaai::neat::Session matrix_session;
-    matrix_session.add(simaai::neat::nodes::Input(matrix_input_opt));
-    matrix_session.add(simaai::neat::nodes::groups::Preprocess(matrix_model));
-    matrix_session.add(simaai::neat::nodes::Output());
-    auto matrix_run = matrix_session.build(simaai::neat::TensorList{matrix_ingress.tensor},
-                                           simaai::neat::RunMode::Sync);
-    simaai::neat::SampleList matrix_outputs =
-        matrix_run.run(simaai::neat::SampleList{simaai::neat::sample_from_tensors(
+    simaai::neat::Graph matrix_graph;
+    matrix_graph.add(simaai::neat::nodes::Input(matrix_input_opt));
+    matrix_graph.add(simaai::neat::nodes::groups::Preprocess(matrix_model));
+    matrix_graph.add(simaai::neat::nodes::Output());
+    auto matrix_run = matrix_graph.build(simaai::neat::TensorList{matrix_ingress.tensor},
+                                         simaai::neat::RunMode::Sync);
+    simaai::neat::Sample matrix_outputs =
+        matrix_run.run(simaai::neat::Sample{simaai::neat::sample_from_tensors(
                            simaai::neat::TensorList{matrix_ingress.tensor})},
                        default_model_run_timeout_ms());
     require(matrix_outputs.size() == 1U, "pre_mla_parity: expected one matrix pre-MLA sample");
@@ -3430,15 +3436,15 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     sync_opt.upstream_name = "decoder";
     simaai::neat::Model sync_model(probe.tar_path, sync_opt);
 
-    simaai::neat::Session sync_session;
-    sync_session.add(simaai::neat::nodes::Input());
-    sync_session.add(simaai::neat::nodes::groups::Preprocess(sync_model));
-    sync_session.add(simaai::neat::nodes::Output());
-    auto sync_run = sync_session.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Sync);
-    simaai::neat::SampleList sync_outputs =
-        sync_run.run(simaai::neat::SampleList{simaai::neat::make_image_sample(
-                         img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR)},
-                     default_model_run_timeout_ms());
+    simaai::neat::Graph sync_graph;
+    sync_graph.add(simaai::neat::nodes::Input());
+    sync_graph.add(simaai::neat::nodes::groups::Preprocess(sync_model));
+    sync_graph.add(simaai::neat::nodes::Output());
+    auto sync_run = sync_graph.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Sync);
+    simaai::neat::Sample sync_outputs = sync_run.run(
+        simaai::neat::Sample{simaai::neat::make_image_sample(
+            img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+        default_model_run_timeout_ms());
     require(sync_outputs.size() == 1U, "pre_mla_parity: expected one sync pre-MLA sample");
     const simaai::neat::Sample sync_pre_mla = sync_outputs.front();
 
@@ -4267,7 +4273,7 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
   require(stage_tensor.has_value(), "postrun_boxdecode: sample missing tensor payload");
   const std::string boxdecode_name = "matrix_post_boxdecode";
 
-  simaai::neat::Session post;
+  simaai::neat::Graph post;
   post.add(simaai::neat::nodes::Input());
   post.add(simaai::neat::nodes::SimaBoxDecode(
       simaai::neat::BoxDecodeType::YoloV8, score_threshold, nms_iou_threshold, topk, boxdecode_name,
@@ -4280,11 +4286,10 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
 
   const int timeout_ms = default_model_run_timeout_ms();
   auto runner =
-      post.build(simaai::neat::SampleList{stage_input}, simaai::neat::RunMode::Async, run_opt);
+      post.build(simaai::neat::Sample{stage_input}, simaai::neat::RunMode::Async, run_opt);
   require(static_cast<bool>(runner), "postrun_boxdecode: runner build failed");
-  require(runner.push(simaai::neat::SampleList{stage_input}),
-          "postrun_boxdecode: runner push failed");
-  simaai::neat::SampleList outs;
+  require(runner.push(simaai::neat::Sample{stage_input}), "postrun_boxdecode: runner push failed");
+  simaai::neat::Sample outs;
   try {
     outs = runner.pull_samples(timeout_ms);
   } catch (const std::exception& ex) {
@@ -4320,7 +4325,7 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
           preferred_input_hw(model, RouteKind::PreInferPost, spec);
       const int model_width = model_w_pref > 0 ? model_w_pref : img_bgr.cols;
       const int model_height = model_h_pref > 0 ? model_h_pref : img_bgr.rows;
-      decode_note = "boxdecode=standalone_post_session";
+      decode_note = "boxdecode=standalone_post_graph";
       decoded = run_standalone_boxdecode_sample_local(
           infer_sample, canonical_boxdecode_options().detection_threshold,
           canonical_boxdecode_options().nms_iou_threshold, canonical_boxdecode_options().top_k,
@@ -4476,22 +4481,23 @@ ProbeResult probe_model(const fs::path& tar) {
 
   simaai::neat::Model model = build_model_for_case(probe);
 
-  const auto pre_group = model.preprocess();
-  probe.has_pre_adapter = !pre_group.empty();
-  probe.pre_kind = detect_pre_kind(pre_group);
+  const auto pre_nodes = simaai::neat::internal::ModelAccess::build_public_preprocess_nodes(model);
+  probe.has_pre_adapter = !pre_nodes.empty();
+  probe.pre_kind = detect_pre_kind(pre_nodes);
   probe.evidence.push_back(std::string("has_pre_adapter=") + (probe.has_pre_adapter ? "1" : "0"));
   probe.evidence.push_back("pre_kind=" + pre_kind_name(probe.pre_kind));
 
-  const auto post_group = model.postprocess();
-  probe.has_post_adapter = !post_group.empty();
-  probe.post_kind = detect_post_kind(post_group);
+  const auto post_nodes =
+      simaai::neat::internal::ModelAccess::build_public_postprocess_nodes(model);
+  probe.has_post_adapter = !post_nodes.empty();
+  probe.post_kind = detect_post_kind(post_nodes);
   probe.evidence.push_back(std::string("has_post_adapter=") + (probe.has_post_adapter ? "1" : "0"));
   probe.evidence.push_back("post_kind=" + post_kind_name(probe.post_kind));
-  probe.evidence.push_back("post_nodes=" + join_strings(group_node_kinds(post_group)));
+  probe.evidence.push_back("post_nodes=" + join_strings(node_kinds(post_nodes)));
 
-  const auto infer_group = model.inference();
-  const auto mla_input = rendered_stage_query::mla_input_info(infer_group);
-  const auto mla_output = rendered_stage_query::mla_output_info(infer_group);
+  const auto infer_nodes = simaai::neat::internal::ModelAccess::build_public_inference_nodes(model);
+  const auto mla_input = rendered_stage_query::mla_input_info_from_nodes(infer_nodes);
+  const auto mla_output = rendered_stage_query::mla_output_info_from_nodes(infer_nodes);
 
   probe.mla_input_dtype_raw = mla_input.input_dtype;
   probe.mla_output_dtype_raw = mla_output.data_type;
@@ -4501,7 +4507,7 @@ ProbeResult probe_model(const fs::path& tar) {
   probe.mla_input_int8 = dtype_is_int8_like(probe.mla_input_dtype_raw);
   probe.mla_output_bf16 = dtype_is_bf16_like(probe.mla_output_dtype_raw);
   probe.mla_output_int8 = dtype_is_int8_like(probe.mla_output_dtype_raw);
-  probe.terminal_output_kind = detect_terminal_output_kind(post_group, probe);
+  probe.terminal_output_kind = detect_terminal_output_kind(post_nodes, probe);
 
   const auto input_spec = model.input_spec();
   bool only_uint8 = !input_spec.dtypes.empty();
@@ -4810,7 +4816,7 @@ std::string resolve_prepared_runner_dequant_flags(int argc, char** argv) {
 void apply_prepared_runner_options(const std::string& mode, int ring_depth, bool profile,
                                    const std::string& dequant_flags,
                                    simaai::neat::Model::Options* model_options,
-                                   simaai::neat::Model::SessionOptions* session_options) {
+                                   simaai::neat::Model::RouteOptions* route_options) {
   if (mode.empty() && ring_depth <= 0 && !profile && dequant_flags.empty()) {
     return;
   }
@@ -4820,11 +4826,11 @@ void apply_prepared_runner_options(const std::string& mode, int ring_depth, bool
     model_options->prepared_runner.profile = profile;
     model_options->prepared_runner.dequant_flags = dequant_flags;
   }
-  if (session_options) {
-    session_options->prepared_runner.mode = mode;
-    session_options->prepared_runner.ring_depth = ring_depth;
-    session_options->prepared_runner.profile = profile;
-    session_options->prepared_runner.dequant_flags = dequant_flags;
+  if (route_options) {
+    route_options->prepared_runner.mode = mode;
+    route_options->prepared_runner.ring_depth = ring_depth;
+    route_options->prepared_runner.profile = profile;
+    route_options->prepared_runner.dequant_flags = dequant_flags;
   }
 }
 
@@ -4876,7 +4882,7 @@ std::string async_selection_name(const AsyncSelection& sel) {
 
 void apply_async_options(const AsyncSelection& async, int async_queue_depth,
                          simaai::neat::Model::Options* model_options,
-                         simaai::neat::Model::SessionOptions* session_options) {
+                         simaai::neat::Model::RouteOptions* route_options) {
   if (model_options) {
     model_options->processcvu.async = async.processcvu;
     model_options->processmla.async = async.processmla;
@@ -4884,26 +4890,26 @@ void apply_async_options(const AsyncSelection& async, int async_queue_depth,
       model_options->async_queue_depth = async_queue_depth;
     }
   }
-  if (session_options) {
-    session_options->processcvu.async = async.processcvu;
-    session_options->processmla.async = async.processmla;
+  if (route_options) {
+    route_options->processcvu.async = async.processcvu;
+    route_options->processmla.async = async.processmla;
     if (async_queue_depth > 0) {
-      session_options->async_queue_depth = async_queue_depth;
+      route_options->async_queue_depth = async_queue_depth;
     }
   }
 }
 
 void apply_processmla_options(bool defer_output_invalidate,
                               simaai::neat::Model::Options* model_options,
-                              simaai::neat::Model::SessionOptions* session_options) {
+                              simaai::neat::Model::RouteOptions* route_options) {
   if (!defer_output_invalidate) {
     return;
   }
   if (model_options) {
     model_options->processmla.defer_output_invalidate = true;
   }
-  if (session_options) {
-    session_options->processmla.defer_output_invalidate = true;
+  if (route_options) {
+    route_options->processmla.defer_output_invalidate = true;
   }
 }
 
@@ -4962,7 +4968,7 @@ void apply_processcvu_placement(const std::string& placement,
     set_pair("A65", "A65");
     return;
   }
-  // Compact model/session option syntax requested by the runtime work:
+  // Compact model/route option syntax requested by the runtime work:
   //   --processcvu-placement=pre=ev74,post=a65
   //   --processcvu-placement=pre:a65,post:ev74
   if (placement.rfind("pre", 0) == 0) {
@@ -5115,6 +5121,10 @@ int main(int argc, char** argv) {
     for (const auto& tar : packs) {
       try {
         auto model_options = canonical_model_options(boxdecode_mode);
+        if (boxdecode_mode == BoxDecodeRunMode::Model) {
+          model_options.boxdecode_original_width = img_bgr.cols;
+          model_options.boxdecode_original_height = img_bgr.rows;
+        }
         apply_processcvu_placement(processcvu_placement, &model_options.processcvu);
         apply_async_options(async_selection, async_queue_depth, &model_options, nullptr);
         apply_processmla_options(processmla_defer_output_invalidate, &model_options, nullptr);
@@ -5122,14 +5132,14 @@ int main(int argc, char** argv) {
                                       prepared_runner_profile, prepared_runner_dequant_flags,
                                       &model_options, nullptr);
         simaai::neat::Model model(tar.string(), model_options);
-        simaai::neat::Model::SessionOptions session_opt;
-        session_opt.processcvu_requested_run_target = processcvu_run_target;
-        apply_processcvu_placement(processcvu_placement, &session_opt.processcvu);
-        apply_async_options(async_selection, async_queue_depth, nullptr, &session_opt);
-        apply_processmla_options(processmla_defer_output_invalidate, nullptr, &session_opt);
+        simaai::neat::Model::RouteOptions route_opt;
+        route_opt.processcvu_requested_run_target = processcvu_run_target;
+        apply_processcvu_placement(processcvu_placement, &route_opt.processcvu);
+        apply_async_options(async_selection, async_queue_depth, nullptr, &route_opt);
+        apply_processmla_options(processmla_defer_output_invalidate, nullptr, &route_opt);
         apply_prepared_runner_options(prepared_runner_mode, prepared_runner_ring_depth,
                                       prepared_runner_profile, prepared_runner_dequant_flags,
-                                      nullptr, &session_opt);
+                                      nullptr, &route_opt);
         (void)model.info();
         (void)model.input_spec();
         (void)model.inference();
@@ -5151,7 +5161,7 @@ int main(int argc, char** argv) {
         const auto tensor_io_before = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();
         const auto run_t0 = std::chrono::steady_clock::now();
         const simaai::neat::Sample infer_sample =
-            run_canonical_model_sample(img_bgr, model, session_opt, frames);
+            run_canonical_model_sample(img_bgr, model, route_opt, frames);
         const auto run_t1 = std::chrono::steady_clock::now();
         const double run_ms = std::chrono::duration<double, std::milli>(run_t1 - run_t0).count();
         const double fps =

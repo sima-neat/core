@@ -15,16 +15,10 @@
 
 namespace simaai::neat::graph::nodes {
 
-/// @brief Wrap a `NodeGroup` (by const ref) in a `PipelineNode` graph node.
-inline std::shared_ptr<simaai::neat::graph::Node> Pipeline(const simaai::neat::NodeGroup& group,
-                                                           std::string label = {}) {
-  return std::make_shared<PipelineNode>(group, std::move(label));
-}
-
-/// @brief Wrap a `NodeGroup` (by rvalue) in a `PipelineNode` graph node.
-inline std::shared_ptr<simaai::neat::graph::Node> Pipeline(simaai::neat::NodeGroup&& group,
-                                                           std::string label = {}) {
-  return std::make_shared<PipelineNode>(std::move(group), std::move(label));
+/// @brief Wrap a node vector in a `PipelineNode` graph node.
+inline std::shared_ptr<simaai::neat::graph::Node>
+Pipeline(std::vector<std::shared_ptr<simaai::neat::Node>> nodes, std::string label = {}) {
+  return std::make_shared<PipelineNode>(std::move(nodes), std::move(label));
 }
 
 /// @brief Wrap a builder-`Node` shared pointer in a `PipelineNode` graph node.

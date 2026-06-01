@@ -27,6 +27,8 @@
 #include <string>
 #include <vector>
 
+#include "pipeline/internal/sima/DTypeSource.h"
+
 namespace simaai::neat::pipeline_internal::sima {
 
 /// Whether an MPK shape describes raw geometry or a packed transport extent.
@@ -53,6 +55,7 @@ struct MpkTensorContract {
   std::string segment_name;
   std::string kind;
   std::string dtype;
+  DTypeSource dtype_source = DTypeSource::Unknown;
   std::vector<std::int64_t> mpk_shape;
   MpkShapeSemantics shape_semantics = MpkShapeSemantics::Unknown;
   std::size_t size_bytes = 0;
@@ -61,6 +64,7 @@ struct MpkTensorContract {
   std::vector<std::int64_t> stride_bytes;
   std::vector<std::int64_t> logical_shape;
   std::string logical_dtype;
+  DTypeSource logical_dtype_source = DTypeSource::Unknown;
   std::vector<double> input_range;
   std::string logical_source_plugin;
   std::string logical_source_kernel;

@@ -111,12 +111,12 @@ RUN_TEST(
                     "selected_post_kind should match the authoritative tail region for " +
                         model_path.filename().string());
 
-            const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
-            require(post.nodes().size() == expected_node_kinds.size(),
+            const auto post = ModelAccess::build_postprocess_nodes(model, false);
+            require(post.size() == expected_node_kinds.size(),
                     "unexpected materialized post node count for " +
                         model_path.filename().string());
             for (std::size_t i = 0; i < expected_node_kinds.size(); ++i) {
-              require(post.nodes()[i]->kind() == expected_node_kinds[i],
+              require(post[i]->kind() == expected_node_kinds[i],
                       "unexpected materialized post node kind at index " + std::to_string(i) +
                           " for " + model_path.filename().string());
             }
@@ -171,10 +171,9 @@ RUN_TEST(
                 "packed routed-input regression expects six published upstream tensors for " +
                     model_path.filename().string());
 
-        const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
+        const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled =
-            compile_node_contracts(post.nodes(), ContractCompileInput{}, &diagnostics);
+        const auto compiled = compile_node_contracts(post, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty(), "post group should compile without diagnostics for " +
                                                 model_path.filename().string());
         require(compiled.stages.size() == 1U,
@@ -201,10 +200,9 @@ RUN_TEST(
         opt.preprocess.enable = AutoFlag::On;
         Model model(int8_model_path().string(), opt);
 
-        const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
+        const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled =
-            compile_node_contracts(post.nodes(), ContractCompileInput{}, &diagnostics);
+        const auto compiled = compile_node_contracts(post, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty(),
                 "INT8 EV74 post group should compile without diagnostics");
         require(compiled.stages.size() == 1U,
@@ -223,10 +221,9 @@ RUN_TEST(
         opt.preprocess.enable = AutoFlag::On;
         Model model(bf16_int8_model_path().string(), opt);
 
-        const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
+        const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled =
-            compile_node_contracts(post.nodes(), ContractCompileInput{}, &diagnostics);
+        const auto compiled = compile_node_contracts(post, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty(), "BF16 post group should compile without diagnostics");
         require(!compiled.stages.empty(),
                 "BF16 post group should materialize at least one compiled stage");
@@ -338,10 +335,9 @@ RUN_TEST(
                 "packed routed-input regression expects six published upstream tensors for " +
                     model_path.filename().string());
 
-        const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
+        const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled =
-            compile_node_contracts(post.nodes(), ContractCompileInput{}, &diagnostics);
+        const auto compiled = compile_node_contracts(post, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty(), "post group should compile without diagnostics for " +
                                                 model_path.filename().string());
         require(compiled.stages.size() == 1U,
@@ -374,10 +370,9 @@ RUN_TEST(
         require(published_inputs.size() >= 6U,
                 "INT8 EV74 packed routed-input regression expects six published upstream tensors");
 
-        const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
+        const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled =
-            compile_node_contracts(post.nodes(), ContractCompileInput{}, &diagnostics);
+        const auto compiled = compile_node_contracts(post, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty(),
                 "INT8 EV74 post group should compile without diagnostics");
         require(compiled.stages.size() == 1U,
@@ -464,10 +459,9 @@ RUN_TEST(
             dequant_stage_fact->processcvu_contract->runtime_contract, published_inputs,
             "stage fact", model_path.filename().string());
 
-        const NodeGroup post = ModelAccess::build_postprocess_group(model, false);
+        const auto post = ModelAccess::build_postprocess_nodes(model, false);
         pipeline_internal::sima::ManifestBuildDiagnostics diagnostics;
-        const auto compiled =
-            compile_node_contracts(post.nodes(), ContractCompileInput{}, &diagnostics);
+        const auto compiled = compile_node_contracts(post, ContractCompileInput{}, &diagnostics);
         require(diagnostics.errors.empty(), "model-managed dequant regression expects post group "
                                             "to compile without diagnostics for " +
                                                 model_path.filename().string());

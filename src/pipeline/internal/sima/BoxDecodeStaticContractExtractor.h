@@ -19,7 +19,7 @@
 #endif
 
 #include "pipeline/BoxDecodeType.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "builder/InputContractConfigurable.h"
 #include "builder/OutputSpec.h"
 #include "pipeline/internal/contract/CompiledNodeContract.h"

@@ -29,16 +29,13 @@ OutputOptions OutputOptions::Clocked(int max_buffers) {
 
 std::string Output::backend_fragment(int /*node_index*/) const {
   const int max_buffers = (opt_.max_buffers < 0) ? 0 : opt_.max_buffers;
-  const bool disable_last_sample = (max_buffers <= 1);
 
   std::ostringstream ss;
   ss << "appsink name=mysink emit-signals=false "
      << "sync=" << (opt_.sync ? "true" : "false") << " "
      << "max-buffers=" << max_buffers << " "
-     << "drop=" << (opt_.drop ? "true" : "false");
-  if (disable_last_sample) {
-    ss << " enable-last-sample=false";
-  }
+     << "drop=" << (opt_.drop ? "true" : "false") << " "
+     << "enable-last-sample=false";
   return ss.str();
 }
 
@@ -52,6 +49,10 @@ namespace simaai::neat::nodes {
 
 std::shared_ptr<simaai::neat::Node> Output(OutputOptions opt) {
   return std::make_shared<simaai::neat::Output>(std::move(opt));
+}
+
+std::shared_ptr<simaai::neat::Node> Output(std::string name, OutputOptions opt) {
+  return std::make_shared<simaai::neat::Output>(std::move(name), std::move(opt));
 }
 
 } // namespace simaai::neat::nodes

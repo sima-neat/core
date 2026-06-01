@@ -6,7 +6,7 @@
  * The `simaai::neat::stages` namespace exposes the individual pipeline stages
  * (preprocessing, MLA inference, EV74 postprocessing, BoxDecode) as standalone
  * functions over `Tensor`/`Sample` lists. Most users should drive the model via
- * `simaai::neat::Run` / `Session`; these helpers exist for tooling and tests
+ * `simaai::neat::Run` / `Graph`; these helpers exist for tooling and tests
  * that want to invoke a single stage in isolation.
  *
  * @see Run for the higher-level orchestrator.
@@ -16,7 +16,7 @@
 
 #include "pipeline/BoxDecodeType.h"
 #include "pipeline/DetectionTypes.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/TensorCore.h"
 
 #include <vector>
@@ -65,13 +65,13 @@ TensorList MLA(const TensorList& inputs, const simaai::neat::Model& model);
 /// @brief Run only the model's postprocessing stage on inference outputs.
 TensorList Postprocess(const TensorList& inputs, const simaai::neat::Model& model);
 /// @brief Sample-list overload of the preprocessing stage.
-SampleList Preproc(const SampleList& inputs, const simaai::neat::Model& model);
+Sample Preproc(const Sample& inputs, const simaai::neat::Model& model);
 /// @brief Sample-list overload of the inference stage.
-SampleList Infer(const SampleList& inputs, const simaai::neat::Model& model);
+Sample Infer(const Sample& inputs, const simaai::neat::Model& model);
 /// @brief Sample-list overload of the MLA stage.
-SampleList MLA(const SampleList& inputs, const simaai::neat::Model& model);
+Sample MLA(const Sample& inputs, const simaai::neat::Model& model);
 /// @brief Sample-list overload of the postprocessing stage.
-SampleList Postprocess(const SampleList& inputs, const simaai::neat::Model& model);
+Sample Postprocess(const Sample& inputs, const simaai::neat::Model& model);
 /**
  * @brief Run the BoxDecode stage on inference outputs.
  *
@@ -80,12 +80,18 @@ SampleList Postprocess(const SampleList& inputs, const simaai::neat::Model& mode
  * @param opt   Decode-family selection and filtering thresholds.
  * @return Sample list whose payloads carry decoded detections.
  */
-SampleList BoxDecode(const SampleList& inputs, const simaai::neat::Model& model,
-                     const BoxDecodeOptions& opt);
-BoxDecodeResult BoxDecode(const simaai::neat::Sample& input, const simaai::neat::Model& model,
-                          const BoxDecodeOptions& opt);
-BoxDecodeResult BoxDecode(const simaai::neat::Tensor& input, const simaai::neat::Model& model,
-                          const BoxDecodeOptions& opt);
+Sample BoxDecode(const Sample& inputs, const simaai::neat::Model& model,
+                 const BoxDecodeOptions& opt);
+
+/**
+ * @brief Run BoxDecode and parse each output into typed bounding boxes.
+ *
+ * This is the structured-result companion to `BoxDecode(...)`. It preserves the
+ * list-only public API rule: pass `Sample{sample}` for a single inference
+ * output, and read `results.front()` when only one result is expected.
+ */
+BoxDecodeResultList BoxDecodeResults(const Sample& inputs, const simaai::neat::Model& model,
+                                     const BoxDecodeOptions& opt);
 
 } // namespace stages
 } // namespace simaai::neat

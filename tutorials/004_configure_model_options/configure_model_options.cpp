@@ -1,7 +1,7 @@
 // Model::Options chapter: configure input/preproc/boxdecode via Options, inspect specs.
 //
 // Usage:
-//   tutorial_004_configure_model_options --mpk /path/to/yolo_v8s.tar.gz
+//   tutorial_004_configure_model_options --model /path/to/yolo_v8s.tar.gz
 
 #include "neat.h"
 
@@ -33,9 +33,9 @@ void print_spec(const char* label, const simaai::neat::TensorConstraint& spec) {
 
 int main(int argc, char** argv) {
   try {
-    std::string mpk;
-    if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_004_configure_model_options --mpk <path>\n";
+    std::string model_path;
+    if (!get_arg(argc, argv, "--model", model_path)) {
+      std::cerr << "Usage: tutorial_004_configure_model_options --model <path>\n";
       return 1;
     }
 
@@ -58,7 +58,7 @@ int main(int argc, char** argv) {
     opt.name_suffix = "_chapter";
 
     // CORE LOGIC
-    simaai::neat::Model model(mpk, opt);
+    simaai::neat::Model model(model_path, opt);
     print_spec("input_spec", model.input_spec());
     print_spec("output_spec", model.output_spec());
     std::cout << "metadata_keys=" << model.metadata().size() << "\n";

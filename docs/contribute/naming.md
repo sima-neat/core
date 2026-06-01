@@ -13,7 +13,7 @@ This document defines the canonical naming contract for the SiMa Neat codebase.
 - Product name: `SiMa Neat`
 - CMake project: `SimaNeat`
 - C++ namespace: `simaai::neat`
-- Core runtime types: `Model`, `Session`, `Run`
+- Core runtime types: `Model`, `Graph`, `Run`
 
 ## Public include surface
 
@@ -23,7 +23,7 @@ Examples:
 
 ```cpp
 #include "model/Model.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/Run.h"
 ```
 
@@ -31,7 +31,7 @@ Examples:
 
 Legacy names are supported only as compatibility references and migration guides.
 
-- `PipelineSession` -> `Session`
+- `PipelineSession` -> `Graph`
 - `PipelineRun` -> `Run`
 - `NeatModel` -> `Model`
 - `InputAppSrc` -> `Input`

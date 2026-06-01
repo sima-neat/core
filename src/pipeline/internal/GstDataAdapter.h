@@ -4,7 +4,7 @@
 #endif
 
 #include "pipeline/TensorCore.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include <cstddef>
 #include <cstdint>

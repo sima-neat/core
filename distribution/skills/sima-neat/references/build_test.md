@@ -60,7 +60,7 @@ Only fall back to direct SSH if `dk` is unavailable.
 For app iteration, prefer a simple on-device smoke test after build:
 
 ```bash
-dk /workspace/path/to/build/my_app --model /workspace/path/to/model.mpk --image /workspace/path/to/image.jpg
+dk /workspace/path/to/build/my_app --model /workspace/path/to/model.tar.gz --image /workspace/path/to/image.jpg
 ```
 
 Typical pass criteria:

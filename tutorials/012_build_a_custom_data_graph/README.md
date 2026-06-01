@@ -10,34 +10,42 @@
 
 ## Concept
 
-Build the smallest useful Neat graph — one pipeline node wired to one stage node — then push a sample through and verify metadata survives traversal. This is the baseline before hybrid or multistream graph tutorials.
+Build the smallest useful public Neat `Graph` — one named `Input` wired to one named `Output` — then push a sample through and verify metadata survives traversal. This is the baseline before hybrid or multistream graph tutorials.
 
-A graph is an explicit DAG of nodes you build programmatically, separate from the pipeline/session abstraction. You add nodes with `graph.add(...)`, wire them with `graph.connect(...)`, and run the whole thing via `GraphSession`.
+A public `Graph` is the application composition surface. You add Nodes with `graph.add(...)`, wire named public endpoints with `graph.connect("input_name", "output_name")`, build once with `graph.build()`, then use named runtime calls:
+
+```python
+run.push("image", [sample])
+sample = run.pull("out")
+```
+
+The old low-level `pyneat.graph` module has been removed. Application code should use `pyneat.Graph` and reusable public Graph fragments.
 
 **APIs introduced**
-- `pyneat.graph.Graph()` — the graph container.
-- `graph.add(node)` — add a node; returns an ID.
-- `graph.connect(src_id, dst_id)` — wire outputs to inputs.
-- `pyneat.graph.nodes.pipeline_node(inner_node, name)` — wrap a regular pipeline node for use inside a graph.
-- `pyneat.graph.nodes.stamp_frame_id(name)` — a stage node that tags samples with frame identity.
-- `pyneat.graph.GraphSession(graph).build()` — materialize the graph into a runnable.
+- `pyneat.Graph()` — the public graph container.
+- `pyneat.nodes.input("image")` — a named push endpoint.
+- `pyneat.nodes.output("out")` — a named pull endpoint.
+- `graph.add(node)` — add a Node or reusable Graph fragment.
+- `graph.connect("image", "out")` — wire public endpoint names.
+- `graph.build()` — materialize the Graph into a `Run`.
+- `run.push("image", [sample])` / `run.pull("out")` — named runtime I/O.
 
 **When to use this**
-- Custom orchestration where pipeline/session semantics don't fit (fan-out, fan-in, per-stream routing).
+- Custom orchestration where linear model calls are not enough (fan-out, fan-in, per-stream routing).
 - Multistream scheduling (see chapter 014).
 - Embedding model execution as one stage of a larger flow (see chapter 013).
 
 **Prerequisites**
-Chapter 003 (Session basics).
+Chapter 003 (Graph basics).
 
 **References**
 - [Graph](/getting-started/programming-model/graph)
-- [Session](/getting-started/programming-model/session)
+- [Public Graph](/getting-started/programming-model/graph)
 
 ## Learning Process
-1. Build a minimal graph and push one deterministic tensor sample.
-2. Run preferred pipeline+stage composition, with stage-only fallback when needed.
-3. Pull graph output and validate stream/frame metadata stamping.
+1. Build a minimal public Graph and push one deterministic tensor sample.
+2. Use named endpoints rather than node IDs.
+3. Pull graph output and validate stream/frame/timestamp metadata preservation.
 
 ## Run
 

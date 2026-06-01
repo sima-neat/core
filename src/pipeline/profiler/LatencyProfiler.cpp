@@ -1,7 +1,7 @@
 #include "pipeline/LatencyProfiler.h"
 
 #include "pipeline/Run.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include <algorithm>
 #include <map>
@@ -126,8 +126,8 @@ void LatencyProfiler::attach(Run& run) {
   attached_run_ = &run;
 }
 
-void LatencyProfiler::attach(Session& session) {
-  attached_session_ = &session;
+void LatencyProfiler::attach(Graph& graph) {
+  attached_graph_ = &graph;
 }
 
 void LatencyProfiler::mark_warmup_done() {

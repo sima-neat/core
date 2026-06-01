@@ -1,9 +1,10 @@
 #include "InputStreamUtil.h"
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/TensorOpenCV.h"
 #include "pipeline/TessellatedTensor.h"
@@ -356,8 +357,7 @@ bool sample_uses_single_tensor_envelope_transport(const Sample& sample) {
     fmt = upper_copy(tensor->semantic.tess->format);
   }
   const std::string caps_fmt = caps_transport_format();
-  const bool raw_video_sample = sample.media_type.rfind("video/x-raw", 0) == 0 ||
-                                (sample.media_type.empty() && tensor->semantic.image.has_value());
+  const bool raw_video_sample = sample_payload_type(sample) == PayloadType::Image;
   if (raw_video_sample && !tensor->semantic.tess.has_value()) {
     return false;
   }
@@ -428,8 +428,10 @@ SampleSpec tensor_envelope_spec_from_sample_or_throw(const Sample& sample, const
   }
 
   InputOptions first_tensor_opt;
-  first_tensor_opt.media_type =
-      sample.media_type.empty() ? std::string("application/vnd.simaai.tensor") : sample.media_type;
+  first_tensor_opt.payload_type = sample_payload_type(sample);
+  if (first_tensor_opt.payload_type == PayloadType::Auto) {
+    first_tensor_opt.payload_type = PayloadType::Tensor;
+  }
   if (!sample.payload_tag.empty()) {
     first_tensor_opt.format = sample.payload_tag;
   } else if (!sample.format.empty()) {
@@ -994,7 +996,7 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
   spec.layout = input.layout;
   spec.shape = input.shape;
 
-  std::string media = opt.media_type;
+  std::string media = resolve_input_media_type(opt);
   if (media.empty()) {
     media = input.semantic.image.has_value() ? "video/x-raw" : "application/vnd.simaai.tensor";
   }
@@ -1311,7 +1313,7 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
     throw std::invalid_argument(tag + ": input frame is empty");
   }
 
-  std::string media = opt.media_type;
+  std::string media = resolve_input_media_type(opt);
   if (media.empty()) {
     media = (mat.depth() == CV_32F) ? "application/vnd.simaai.tensor" : "video/x-raw";
   }
@@ -1343,6 +1345,12 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
       pf = simaai::neat::ImageSpec::PixelFormat::RGB;
     if (fmt == "GRAY8")
       pf = simaai::neat::ImageSpec::PixelFormat::GRAY8;
+    if (opt.memory_policy == InputMemoryPolicy::Ev74) {
+      return simaai::neat::from_cv_mat(mat, pf, simaai::neat::TensorMemory::EV74);
+    }
+    if (opt.memory_policy == InputMemoryPolicy::Dms0) {
+      return simaai::neat::from_cv_mat(mat, pf, simaai::neat::TensorMemory::MLA);
+    }
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -1393,6 +1401,19 @@ simaai::neat::Tensor tensor_from_cv_mat(const cv::Mat& mat, const InputOptions& 
       out.strides_bytes = {static_cast<int64_t>(holder->step),
                            static_cast<int64_t>(holder->elemSize()),
                            static_cast<int64_t>(holder->elemSize1())};
+    }
+    if (opt.memory_policy == InputMemoryPolicy::Ev74 ||
+        opt.memory_policy == InputMemoryPolicy::Dms0) {
+      const Device target = opt.memory_policy == InputMemoryPolicy::Ev74
+                                ? Device{DeviceType::SIMA_CVU, 0}
+                                : Device{DeviceType::SIMA_MLA, 0};
+      const std::size_t device_bytes = out.dense_bytes_tight();
+      if (device_bytes == 0U) {
+        throw std::runtime_error(tag + ": unable to determine dense byte size for device tensor");
+      }
+      std::vector<Segment> segments{{"ifm0", device_bytes}};
+      return pipeline_internal::transfer_to_device(out, target, &segments,
+                                                   /*required_segment_names=*/nullptr);
     }
     return out;
   }
@@ -1454,7 +1475,7 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
     }
 
     InputOptions opt;
-    opt.media_type = sample.media_type;
+    opt.payload_type = sample_payload_type(sample);
     if (!sample.payload_tag.empty()) {
       opt.format = sample.payload_tag;
     } else if (!sample.format.empty()) {
@@ -1473,9 +1494,10 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
       // logical appsrc caps must match the representative tensor contract used
       // by downstream stages. The real envelope bytes are tracked separately.
       InputOptions first_tensor_opt;
-      first_tensor_opt.media_type = sample.media_type.empty()
-                                        ? std::string("application/vnd.simaai.tensor")
-                                        : sample.media_type;
+      first_tensor_opt.payload_type = sample_payload_type(sample);
+      if (first_tensor_opt.payload_type == PayloadType::Auto) {
+        first_tensor_opt.payload_type = PayloadType::Tensor;
+      }
       if (!sample.payload_tag.empty()) {
         first_tensor_opt.format = sample.payload_tag;
       } else if (!sample.format.empty()) {
@@ -1578,7 +1600,7 @@ SampleSpec derive_sample_spec_or_throw(const Sample& sample) {
     }
 
     InputOptions opt;
-    opt.media_type = sample.media_type;
+    opt.payload_type = sample_payload_type(sample);
     if (!sample.payload_tag.empty()) {
       opt.format = sample.payload_tag;
     } else if (!sample.format.empty()) {
@@ -1690,7 +1712,7 @@ GstCaps* caps_from_spec(const SampleSpec& spec) {
 GstBuffer* allocate_input_buffer(size_t bytes, const InputOptions& opt,
                                  InputBufferPoolGuard& guard) {
 #if SIMA_HAS_SIMAAI_POOL
-  const std::string media_type_up = upper_copy(opt.media_type);
+  const std::string media_type_up = upper_copy(resolve_input_media_type(opt));
   const std::string format_up = upper_copy(opt.format.str());
   const bool tensor_media = (media_type_up == "APPLICATION/VND.SIMAAI.TENSOR");
   const bool bf16_tensor = tensor_media && (format_up.find("BF16") != std::string::npos ||
@@ -2135,6 +2157,190 @@ bool update_simaai_meta_fields(GstBuffer* buffer, const std::optional<int64_t>& 
   (void)origin_output_slot_override;
   return false;
 #endif
+}
+
+SampleTimingOverrides sample_timing_overrides_from_sample(const Sample& sample) {
+  SampleTimingOverrides out;
+  if (sample.frame_id >= 0) {
+    out.frame_id = sample.frame_id;
+  }
+  if (sample.pts_ns >= 0) {
+    out.pts_ns = static_cast<uint64_t>(sample.pts_ns);
+  }
+  if (sample.dts_ns >= 0) {
+    out.dts_ns = static_cast<uint64_t>(sample.dts_ns);
+  }
+  if (sample.duration_ns >= 0) {
+    out.duration_ns = static_cast<uint64_t>(sample.duration_ns);
+  }
+  return out;
+}
+
+bool write_sample_timing_to_gst_buffer(GstBuffer* buffer, const SampleTimingOverrides& timing) {
+  if (!buffer) {
+    return false;
+  }
+
+  const bool debug_timing = pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  const GstClockTime before_pts = GST_BUFFER_PTS(buffer);
+  const GstClockTime before_dts = GST_BUFFER_DTS(buffer);
+  const GstClockTime before_dur = GST_BUFFER_DURATION(buffer);
+
+  if (timing.pts_ns.has_value()) {
+    GST_BUFFER_PTS(buffer) = static_cast<GstClockTime>(*timing.pts_ns);
+  }
+  if (timing.dts_ns.has_value()) {
+    GST_BUFFER_DTS(buffer) = static_cast<GstClockTime>(*timing.dts_ns);
+  }
+  if (timing.duration_ns.has_value()) {
+    GST_BUFFER_DURATION(buffer) = static_cast<GstClockTime>(*timing.duration_ns);
+  }
+
+  if (debug_timing) {
+    std::fprintf(stderr,
+                 "[SAMPLE_TIMING] write buffer=%p pts_valid=%d pts=%llu dts_valid=%d dts=%llu "
+                 "dur_valid=%d dur=%llu before_pts=%llu after_pts=%llu before_dts=%llu "
+                 "after_dts=%llu before_dur=%llu after_dur=%llu\n",
+                 static_cast<void*>(buffer), timing.pts_ns.has_value() ? 1 : 0,
+                 static_cast<unsigned long long>(timing.pts_ns.value_or(0)),
+                 timing.dts_ns.has_value() ? 1 : 0,
+                 static_cast<unsigned long long>(timing.dts_ns.value_or(0)),
+                 timing.duration_ns.has_value() ? 1 : 0,
+                 static_cast<unsigned long long>(timing.duration_ns.value_or(0)),
+                 static_cast<unsigned long long>(before_pts),
+                 static_cast<unsigned long long>(GST_BUFFER_PTS(buffer)),
+                 static_cast<unsigned long long>(before_dts),
+                 static_cast<unsigned long long>(GST_BUFFER_DTS(buffer)),
+                 static_cast<unsigned long long>(before_dur),
+                 static_cast<unsigned long long>(GST_BUFFER_DURATION(buffer)));
+  }
+
+#if SIMA_HAS_SIMAAI_POOL
+  GstCustomMeta* custom = nullptr;
+  GstStructure* s = nullptr;
+  if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
+    return timing.empty();
+  }
+
+  const gboolean pts_valid = timing.pts_ns.has_value() ? TRUE : FALSE;
+  const gboolean dts_valid = timing.dts_ns.has_value() ? TRUE : FALSE;
+  const gboolean duration_valid = timing.duration_ns.has_value() ? TRUE : FALSE;
+  const gboolean frame_id_valid = timing.frame_id.has_value() ? TRUE : FALSE;
+  gst_structure_set(s, "sample-frame-id-valid", G_TYPE_BOOLEAN, frame_id_valid, "sample-frame-id",
+                    G_TYPE_INT64, static_cast<gint64>(timing.frame_id.value_or(0)),
+                    "sample-pts-valid", G_TYPE_BOOLEAN, pts_valid, "sample-pts-ns", G_TYPE_UINT64,
+                    static_cast<guint64>(timing.pts_ns.value_or(0)), "sample-dts-valid",
+                    G_TYPE_BOOLEAN, dts_valid, "sample-dts-ns", G_TYPE_UINT64,
+                    static_cast<guint64>(timing.dts_ns.value_or(0)), "sample-duration-valid",
+                    G_TYPE_BOOLEAN, duration_valid, "sample-duration-ns", G_TYPE_UINT64,
+                    static_cast<guint64>(timing.duration_ns.value_or(0)), nullptr);
+
+  // Preserve the legacy SimaMeta timestamp field for existing plugins/tools, but make
+  // Sample reconstruction key off the explicit sample-pts-valid/sample-pts-ns pair above.
+  if (timing.pts_ns.has_value()) {
+    gst_structure_set(s, "timestamp", G_TYPE_UINT64, static_cast<guint64>(*timing.pts_ns), nullptr);
+  }
+  (void)custom;
+#else
+  if (!timing.empty()) {
+    return true;
+  }
+#endif
+  return true;
+}
+
+void restore_sample_timing_from_gst_buffer(GstBuffer* buffer, Sample* out) {
+  if (!buffer || !out) {
+    return;
+  }
+
+  const bool debug_timing = pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false);
+  const GstClockTime pts = GST_BUFFER_PTS(buffer);
+  const GstClockTime dts = GST_BUFFER_DTS(buffer);
+  const GstClockTime dur = GST_BUFFER_DURATION(buffer);
+  if (pts != GST_CLOCK_TIME_NONE) {
+    out->pts_ns = static_cast<int64_t>(pts);
+  }
+  if (dts != GST_CLOCK_TIME_NONE) {
+    out->dts_ns = static_cast<int64_t>(dts);
+  }
+  if (dur != GST_CLOCK_TIME_NONE) {
+    out->duration_ns = static_cast<int64_t>(dur);
+  }
+
+  int64_t restored_pts = out->pts_ns;
+  int64_t restored_dts = out->dts_ns;
+  int64_t restored_dur = out->duration_ns;
+
+#if SIMA_HAS_SIMAAI_POOL
+  GstCustomMeta* meta = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
+  if (!s) {
+    if (debug_timing) {
+      std::fprintf(stderr,
+                   "[SAMPLE_TIMING] restore buffer=%p meta=0 gst_pts=%llu sample_pts=%lld "
+                   "gst_dts=%llu sample_dts=%lld gst_dur=%llu sample_dur=%lld\n",
+                   static_cast<void*>(buffer), static_cast<unsigned long long>(pts),
+                   static_cast<long long>(out->pts_ns), static_cast<unsigned long long>(dts),
+                   static_cast<long long>(out->dts_ns), static_cast<unsigned long long>(dur),
+                   static_cast<long long>(out->duration_ns));
+    }
+    return;
+  }
+
+  gboolean valid = FALSE;
+  gint64 frame_value = -1;
+  if (gst_structure_get_boolean(s, "sample-frame-id-valid", &valid) == TRUE) {
+    if (valid == TRUE && gst_structure_get_int64(s, "sample-frame-id", &frame_value) == TRUE &&
+        frame_value >= 0) {
+      out->frame_id = static_cast<int64_t>(frame_value);
+    } else if (valid == FALSE) {
+      out->frame_id = -1;
+    }
+  }
+
+  valid = FALSE;
+  guint64 value = 0;
+  if (gst_structure_get_boolean(s, "sample-pts-valid", &valid) == TRUE) {
+    if (valid == TRUE && gst_structure_get_uint64(s, "sample-pts-ns", &value) == TRUE &&
+        value <= static_cast<guint64>(std::numeric_limits<int64_t>::max())) {
+      out->pts_ns = static_cast<int64_t>(value);
+    } else if (valid == FALSE) {
+      out->pts_ns = -1;
+    }
+  }
+  valid = FALSE;
+  value = 0;
+  if (gst_structure_get_boolean(s, "sample-dts-valid", &valid) == TRUE) {
+    if (valid == TRUE && gst_structure_get_uint64(s, "sample-dts-ns", &value) == TRUE &&
+        value <= static_cast<guint64>(std::numeric_limits<int64_t>::max())) {
+      out->dts_ns = static_cast<int64_t>(value);
+    } else if (valid == FALSE) {
+      out->dts_ns = -1;
+    }
+  }
+  valid = FALSE;
+  value = 0;
+  if (gst_structure_get_boolean(s, "sample-duration-valid", &valid) == TRUE) {
+    if (valid == TRUE && gst_structure_get_uint64(s, "sample-duration-ns", &value) == TRUE &&
+        value <= static_cast<guint64>(std::numeric_limits<int64_t>::max())) {
+      out->duration_ns = static_cast<int64_t>(value);
+    } else if (valid == FALSE) {
+      out->duration_ns = -1;
+    }
+  }
+#endif
+  if (debug_timing) {
+    std::fprintf(stderr,
+                 "[SAMPLE_TIMING] restore buffer=%p meta=1 gst_pts=%llu pre_meta_pts=%lld "
+                 "sample_pts=%lld gst_dts=%llu pre_meta_dts=%lld sample_dts=%lld gst_dur=%llu "
+                 "pre_meta_dur=%lld sample_dur=%lld\n",
+                 static_cast<void*>(buffer), static_cast<unsigned long long>(pts),
+                 static_cast<long long>(restored_pts), static_cast<long long>(out->pts_ns),
+                 static_cast<unsigned long long>(dts), static_cast<long long>(restored_dts),
+                 static_cast<long long>(out->dts_ns), static_cast<unsigned long long>(dur),
+                 static_cast<long long>(restored_dur), static_cast<long long>(out->duration_ns));
+  }
 }
 
 bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta& meta) {

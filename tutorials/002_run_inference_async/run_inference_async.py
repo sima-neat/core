@@ -2,7 +2,7 @@
 """Feed frames to a model asynchronously from a producer thread and pull results.
 
 Usage:
-  python3 run_inference_async.py --mpk /path/to/resnet_50.tar.gz [--n 4] [--image /path/to.jpg]
+  python3 run_inference_async.py --model /path/to/resnet_50.tar.gz [--n 4] [--image /path/to.jpg]
 """
 from __future__ import annotations
 
@@ -36,23 +36,26 @@ def load_image(path: Path | None, size: int) -> np.ndarray:
 
 def main(argv: list[str]) -> int:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--mpk", type=Path, required=True)
+  ap.add_argument("--model", type=Path, required=True)
   ap.add_argument("--image", type=Path)
   ap.add_argument("--n", type=int, default=4, help="number of frames to push")
   args = ap.parse_args(argv[1:])
 
   frame = load_image(args.image, size=224)
-  model = pyneat.Model(str(args.mpk))
+  model = pyneat.Model(str(args.model))
+  route_opt = pyneat.ModelRouteOptions()
+  route_opt.include_input = True
+  route_opt.include_output = True
 
   # CORE LOGIC
-  session = pyneat.Session()
-  session.add(model.session())
-  run = session.build(frame, pyneat.RunMode.Async)
+  graph = pyneat.Graph()
+  graph.add(model.graph(route_opt))
+  run = graph.build([frame], pyneat.RunMode.Async)
 
   # Producer thread pushes frames; main thread pulls predictions.
   def producer() -> None:
     for _ in range(args.n):
-      run.push(frame)
+      run.push([frame])
     run.close_input()
 
   thread = threading.Thread(target=producer, name="frame_producer")

@@ -28,7 +28,7 @@ bool caps_enabled(const ImageInputGroupOptions::OutputCaps& c) {
 
 } // namespace
 
-simaai::neat::NodeGroup ImageInputGroup(const ImageInputGroupOptions& opt) {
+simaai::neat::Graph ImageInputGroup(const ImageInputGroupOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
 
   nodes.push_back(nodes::FileInput(opt.path));
@@ -119,7 +119,11 @@ simaai::neat::NodeGroup ImageInputGroup(const ImageInputGroupOptions& opt) {
     nodes.push_back(nodes::CapsRaw(caps.format, caps.width, caps.height, caps.fps, caps.memory));
   }
 
-  return simaai::neat::NodeGroup(std::move(nodes));
+  simaai::neat::Graph graph;
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+  return graph;
 }
 
 } // namespace simaai::neat::nodes::groups

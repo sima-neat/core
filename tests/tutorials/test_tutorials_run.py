@@ -1,8 +1,8 @@
-"""Smoke test: each Python tutorial exits 0 when run with the required --mpk.
+"""Smoke test: each Python tutorial exits 0 when run with the required --model.
 
 Requires these env vars to actually exercise the tutorials (skipped otherwise):
-  SIMA_NEAT_TUTORIAL_MPK_RESNET=/path/to/resnet_50_mpk.tar.gz
-  SIMA_NEAT_TUTORIAL_MPK_YOLO=/path/to/yolo_v8s_mpk.tar.gz
+  SIMA_NEAT_TUTORIAL_MODEL_RESNET=/path/to/resnet_50.tar.gz
+  SIMA_NEAT_TUTORIAL_MODEL_YOLO=/path/to/yolo_v8s.tar.gz
   SIMA_NEAT_TUTORIAL_RTSP_URL=rtsp://host:port/stream   # chapter 017
 """
 from __future__ import annotations
@@ -21,13 +21,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 TUTORIALS_ROOT = REPO_ROOT / "tutorials"
 TIMEOUT_SEC = int(os.environ.get("SIMA_TUTORIAL_TIMEOUT_SEC", "180"))
 
-MPK_RESNET = os.environ.get("SIMA_NEAT_TUTORIAL_MPK_RESNET")
-MPK_YOLO = os.environ.get("SIMA_NEAT_TUTORIAL_MPK_YOLO")
+MODEL_RESNET = os.environ.get("SIMA_NEAT_TUTORIAL_MODEL_RESNET")
+MODEL_YOLO = os.environ.get("SIMA_NEAT_TUTORIAL_MODEL_YOLO")
 RTSP_URL = os.environ.get("SIMA_NEAT_TUTORIAL_RTSP_URL")
 PYNEAT_AVAILABLE = importlib.util.find_spec("pyneat") is not None
 
-# Which MPK each chapter needs. Keep in sync with the --mpk argparse calls
-# in each tutorial; chapters not listed here do not take --mpk.
+# Which model archive each chapter needs. Keep in sync with the --model argparse calls
+# in each tutorial; chapters not listed here do not take --model.
 RESNET_CHAPTERS = {"001", "002", "005", "016"}
 YOLO_CHAPTERS = {"004", "006", "007", "013"}
 RTSP_CHAPTERS = {"017"}
@@ -37,13 +37,13 @@ def _chapter_id(folder: str) -> str:
   return folder[:3]
 
 
-def _mpk_for(folder: str) -> str | None:
+def _model_for(folder: str) -> str | None:
   tid = _chapter_id(folder)
   if tid in RESNET_CHAPTERS:
-    return MPK_RESNET
+    return MODEL_RESNET
   if tid in YOLO_CHAPTERS:
-    return MPK_YOLO
-  return None  # no MPK needed
+    return MODEL_YOLO
+  return None  # no model archive needed
 
 
 def _tutorial_py_files() -> list[tuple[str, Path]]:
@@ -128,20 +128,20 @@ def test_python_usage_comments_use_current_script_names() -> None:
 )
 def test_tutorial_runs(folder: str, py_path: Path) -> None:
   tid = _chapter_id(folder)
-  needs_mpk = tid in RESNET_CHAPTERS | YOLO_CHAPTERS
+  needs_model = tid in RESNET_CHAPTERS | YOLO_CHAPTERS
   needs_rtsp = tid in RTSP_CHAPTERS
-  mpk = _mpk_for(folder)
+  model_path = _model_for(folder)
 
   if not PYNEAT_AVAILABLE:
     pytest.skip("pyneat is not importable in this Python environment")
-  if needs_mpk and not mpk:
-    pytest.skip(f"set SIMA_NEAT_TUTORIAL_MPK_RESNET / MPK_YOLO to run {folder}")
+  if needs_model and not model_path:
+    pytest.skip(f"set SIMA_NEAT_TUTORIAL_MODEL_RESNET / MODEL_YOLO to run {folder}")
   if needs_rtsp and not RTSP_URL:
     pytest.skip(f"set SIMA_NEAT_TUTORIAL_RTSP_URL to run {folder}")
 
   cmd = [sys.executable, str(py_path)]
-  if mpk:
-    cmd += ["--mpk", mpk]
+  if model_path:
+    cmd += ["--model", model_path]
   if needs_rtsp:
     cmd += ["--url", RTSP_URL]
 

@@ -1,7 +1,7 @@
 /**
  * @file
  * @ingroup diagnostics
- * @brief Canonical framework error code constants used in `SessionReport::error_code` and
+ * @brief Canonical framework error code constants used in `GraphReport::error_code` and
  * `PullError::code`.
  *
  * Error codes follow a `domain.reason` taxonomy: the domain identifies the failure category
@@ -30,6 +30,8 @@ inline constexpr const char* kPipelineShape = "misconfig.pipeline_shape";
 inline constexpr const char* kCaps = "misconfig.caps";
 /// Input tensor shape violates the model's contract (rank, spatial dims, channel count).
 inline constexpr const char* kInputShape = "misconfig.input_shape";
+/// Framework/runtime plugin ABI mismatch, usually from mixed PyNEAT and runtime artifacts.
+inline constexpr const char* kRuntimeAbiMismatch = "misconfig.runtime_abi_mismatch";
 
 // ── Build / runtime classes ──────────────────────────────────────────────────────────────
 /// `gst_parse_launch` failed to parse the generated GStreamer pipeline string.
@@ -38,7 +40,7 @@ inline constexpr const char* kParseLaunch = "build.parse_launch";
 inline constexpr const char* kRuntimePull = "runtime.pull";
 
 // ── I/O classes ──────────────────────────────────────────────────────────────────────────
-/// JSON or config parsing error (typically from the MPK manifest or a per-stage config).
+/// JSON or config parsing error (typically from the MPK contract or a per-stage config).
 inline constexpr const char* kIoParse = "io.parse";
 /// Failed to open a file or device path (file missing, permission denied, kernel device absent).
 inline constexpr const char* kIoOpen = "io.open";

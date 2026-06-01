@@ -41,8 +41,8 @@ void GraphRun::emit_rate_summary(const GraphRunStats& stats) const {
   const auto now = std::chrono::steady_clock::now();
   for (const auto& snap : snaps) {
     std::string label;
-    if (state_ && snap.node_id < state_->node_labels.size()) {
-      label = state_->node_labels[snap.node_id];
+    if (state_ && snap.node_id < state_->execution().node_labels.size()) {
+      label = state_->execution().node_labels[snap.node_id];
     }
     const double secs =
         std::chrono::duration_cast<std::chrono::duration<double>>(snap.last - snap.first).count();
@@ -67,9 +67,10 @@ void GraphRun::emit_rate_summary(const GraphRunStats& stats) const {
 }
 
 void GraphRun::emit_rate_summary() const {
-  if (!state_ || !state_->stats)
+  const GraphRunStats* graph_stats = stats();
+  if (!graph_stats)
     return;
-  emit_rate_summary(*state_->stats);
+  emit_rate_summary(*graph_stats);
 }
 
 void GraphRun::emit_stream_summary(const GraphRunStats& stats) const {
@@ -78,8 +79,8 @@ void GraphRun::emit_stream_summary(const GraphRunStats& stats) const {
     return;
   for (const auto& snap : snaps) {
     std::string label;
-    if (state_ && snap.node_id < state_->node_labels.size()) {
-      label = state_->node_labels[snap.node_id];
+    if (state_ && snap.node_id < state_->execution().node_labels.size()) {
+      label = state_->execution().node_labels[snap.node_id];
     }
     if (snap.counts.empty())
       continue;
@@ -102,9 +103,10 @@ void GraphRun::emit_stream_summary(const GraphRunStats& stats) const {
 }
 
 void GraphRun::emit_stream_summary() const {
-  if (!state_ || !state_->stats)
+  const GraphRunStats* graph_stats = stats();
+  if (!graph_stats)
     return;
-  emit_stream_summary(*state_->stats);
+  emit_stream_summary(*graph_stats);
 }
 
 void GraphRun::emit_summary(const GraphRunStats& stats) const {
@@ -113,9 +115,10 @@ void GraphRun::emit_summary(const GraphRunStats& stats) const {
 }
 
 void GraphRun::emit_summary() const {
-  if (!state_ || !state_->stats)
+  const GraphRunStats* graph_stats = stats();
+  if (!graph_stats)
     return;
-  emit_summary(*state_->stats);
+  emit_summary(*graph_stats);
 }
 
 RuntimeMetrics GraphRun::metrics(const RuntimeMetricsOptions& opt) const {
@@ -126,8 +129,8 @@ RuntimeMetrics GraphRun::metrics(const RuntimeMetricsOptions& opt) const {
   if (opt.include_pipeline) {
     out.metadata.emplace_back("graph", describe());
   }
-  if (opt.include_power && state_->power_monitor) {
-    out.power = state_->power_monitor->summary();
+  if (opt.include_power && state_->core && state_->core->power_monitor) {
+    out.power = state_->core->power_monitor->summary();
   }
 
   const GraphRunStats* graph_stats = stats();
@@ -148,8 +151,8 @@ RuntimeMetrics GraphRun::metrics(const RuntimeMetricsOptions& opt) const {
     total_events += snap.total;
 
     std::string label;
-    if (snap.node_id < state_->node_labels.size()) {
-      label = state_->node_labels[snap.node_id];
+    if (snap.node_id < state_->execution().node_labels.size()) {
+      label = state_->execution().node_labels[snap.node_id];
     }
     out.groups.push_back(graph_snapshot_group(snap, label));
   }
@@ -181,38 +184,36 @@ std::string GraphRun::describe() const {
   auto port_name = [&](PortId id) -> std::string {
     if (id == kInvalidPort)
       return "auto";
-    if (id < state_->compiled.port_names.size())
-      return state_->compiled.port_names[id];
+    if (id < state_->execution().plan.port_names.size())
+      return state_->execution().plan.port_names[id];
     return "port" + std::to_string(id);
   };
 
-  oss << "pipelines=" << state_->pipelines.size() << " stages=" << state_->stages.size()
-      << " stage_groups=" << state_->stage_groups.size() << "\n";
+  oss << "pipelines=" << state_->execution().pipelines.size()
+      << " stages=" << state_->execution().stages.size()
+      << " stage_groups=" << state_->execution().stage_groups.size() << "\n";
 
-  for (const auto& pipe : state_->pipelines) {
+  for (const auto& pipe : state_->execution().pipelines) {
     if (!pipe)
       continue;
     oss << "pipeline[" << pipe->seg.id << "] nodes=" << pipe->seg.node_ids.size()
-        << " source=" << (pipe->seg.source_like ? "true" : "false")
+        << " source=" << (pipe->seg.boundary.source_like ? "true" : "false")
         << " in_edges=" << pipe->seg.input_edges.size()
         << " out_edges=" << pipe->seg.output_edges.size() << "\n";
   }
 
-  for (const auto& st : state_->stages) {
+  for (const auto& st : state_->execution().stages) {
     if (!st)
       continue;
     oss << "stage node=" << st->node_id << " in_ports=" << st->input_ports.size()
         << " out_ports=" << st->output_ports.size() << "\n";
   }
 
-  for (std::size_t i = 0; i < state_->compiled.edges.size(); ++i) {
-    const Edge& e = state_->compiled.edges[i];
+  for (std::size_t i = 0; i < state_->execution().plan.edges.size(); ++i) {
+    const auto& e = state_->execution().plan.edges[i];
     oss << "edge[" << i << "] " << e.from << ":" << port_name(e.from_port) << " -> " << e.to << ":"
         << port_name(e.to_port);
-    if (i < state_->compiled.edge_specs.size()) {
-      const auto& es = state_->compiled.edge_specs[i];
-      oss << " spec=" << (es.complete ? "complete" : "partial");
-    }
+    oss << " spec=" << (e.spec_complete ? "complete" : "partial");
     oss << "\n";
   }
 

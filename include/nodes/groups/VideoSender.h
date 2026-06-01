@@ -1,11 +1,11 @@
 /**
  * @file
  * @ingroup nodes_groups
- * @brief Customer-facing video sender node group.
+ * @brief Customer-facing video sender Graph fragment.
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "pipeline/Graph.h"
 
 #include <string>
 
@@ -65,6 +65,6 @@ private:
   int fps_ = 0;
 };
 
-simaai::neat::NodeGroup VideoSender(const VideoSenderOptions& opt);
+simaai::neat::Graph VideoSender(const VideoSenderOptions& opt);
 
 } // namespace simaai::neat::nodes::groups

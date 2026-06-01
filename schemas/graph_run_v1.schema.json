@@ -1,0 +1,188 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sima.ai/schemas/neat/graph_run/v1.json",
+  "title": "SiMa NEAT Graph Run",
+  "description": "Snapshot of a built public Graph Run: public endpoint graph, lowered runtime graph, and runtime metrics.",
+  "type": "object",
+  "required": ["schema", "schema_version", "producer", "label", "metadata", "graph", "run"],
+  "properties": {
+    "schema": {"const": "sima.neat.graph_run"},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "producer": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {"name": {"type": "string"}},
+      "additionalProperties": true
+    },
+    "label": {"type": "string"},
+    "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
+    "graph": {
+      "type": "object",
+      "required": ["mode", "nodes", "edges", "named_inputs", "named_outputs"],
+      "properties": {
+        "mode": {"type": "string", "enum": ["linear", "connected"]},
+        "public_graph_id": {"type": "integer"},
+        "public_graph_version": {"type": "integer"},
+        "named_inputs": {"type": "array", "items": {"$ref": "#/$defs/named_endpoint"}},
+        "named_outputs": {"type": "array", "items": {"$ref": "#/$defs/named_endpoint"}},
+        "public_view": {"$ref": "#/$defs/public_view"},
+        "lowered_view": {"$ref": "#/$defs/lowered_view"},
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/lowered_node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/lowered_edge"}},
+        "pipeline_segments": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": true
+    },
+    "run": {
+      "type": "object",
+      "properties": {
+        "stats": {"type": "object"},
+        "identity": {
+          "type": "object",
+          "required": ["uuid", "created_at", "closed_at", "hostname", "pid", "argv"],
+          "properties": {
+            "uuid": {"type": "string"},
+            "created_at": {"type": ["string", "null"]},
+            "closed_at": {"type": ["string", "null"]},
+            "hostname": {"type": "string"},
+            "pid": {"type": "integer"},
+            "argv": {"type": "array", "items": {"type": "string"}}
+          },
+          "additionalProperties": true
+        },
+        "elapsed_seconds": {"type": "number"},
+        "throughput_fps": {"type": "number"},
+        "input_names": {"type": "array", "items": {"type": "string"}},
+        "output_names": {"type": "array", "items": {"type": "string"}},
+        "last_error": {"type": "string"},
+        "power": {"type": "object"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "named_endpoint": {
+      "type": "object",
+      "required": ["name", "kind", "node", "port"],
+      "properties": {
+        "name": {"type": "string"},
+        "kind": {"type": "string"},
+        "node": {"type": "string"},
+        "port": {"type": ["string", "null"]},
+        "segment": {"type": "integer"}
+      },
+      "additionalProperties": true
+    },
+    "public_view": {
+      "type": "object",
+      "required": ["nodes", "edges"],
+      "properties": {
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/public_node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/public_edge"}}
+      },
+      "additionalProperties": true
+    },
+    "public_node": {
+      "type": "object",
+      "required": ["id", "index", "kind", "label", "input_endpoint", "output_endpoint", "runtime_node"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^p[0-9]+$"},
+        "index": {"type": "integer"},
+        "kind": {"type": "string"},
+        "label": {"type": "string"},
+        "endpoint_name": {"type": ["string", "null"]},
+        "input_endpoint": {"type": "boolean"},
+        "output_endpoint": {"type": "boolean"},
+        "runtime_node": {"type": "string"}
+        ,
+        "source": {"$ref": "#/$defs/io_info"},
+        "sink": {"$ref": "#/$defs/io_info"},
+        "model": {"$ref": "#/$defs/model_info"}
+      },
+      "additionalProperties": true
+    },
+    "public_edge": {
+      "type": "object",
+      "required": ["id", "index", "from", "to", "kind", "runtime_from", "runtime_to", "runtime_edges"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^pe[0-9]+$"},
+        "index": {"type": "integer"},
+        "from": {"type": "string", "pattern": "^p[0-9]+$"},
+        "to": {"type": "string", "pattern": "^p[0-9]+$"},
+        "kind": {"type": "string"},
+        "from_endpoint": {"type": ["string", "null"]},
+        "to_endpoint": {"type": ["string", "null"]},
+        "runtime_from": {"type": "string"},
+        "runtime_to": {"type": "string"},
+        "runtime_edges": {"type": "array", "items": {"type": "string", "pattern": "^e[0-9]+$"}}
+      },
+      "additionalProperties": true
+    },
+    "lowered_view": {
+      "type": "object",
+      "required": ["nodes", "edges", "pipeline_segments"],
+      "properties": {
+        "nodes": {"type": "array", "items": {"$ref": "#/$defs/lowered_node"}},
+        "edges": {"type": "array", "items": {"$ref": "#/$defs/lowered_edge"}},
+        "pipeline_segments": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": true
+    },
+    "lowered_node": {
+      "type": "object",
+      "required": ["id", "stable_id", "backend", "kind", "compiler_generated"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^n[0-9]+$"},
+        "stable_id": {"type": "string"},
+        "backend": {"type": "string"},
+        "kind": {"type": "string"},
+        "compiler_generated": {"type": "boolean"}
+        ,
+        "source": {"$ref": "#/$defs/io_info"},
+        "sink": {"$ref": "#/$defs/io_info"},
+        "model": {"$ref": "#/$defs/model_info"}
+      },
+      "additionalProperties": true
+    },
+    "lowered_edge": {
+      "type": "object",
+      "required": ["id", "from", "to", "from_port", "to_port"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^(e|pe)[0-9]+$"},
+        "kind": {"type": "string"},
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "from_port": {"type": ["string", "null"]},
+        "to_port": {"type": ["string", "null"]},
+        "spec": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "io_info": {
+      "type": "object",
+      "required": ["kind", "uri"],
+      "properties": {
+        "kind": {"type": "string"},
+        "uri": {"type": ["string", "null"]},
+        "endpoint": {"type": ["string", "null"]},
+        "path": {"type": "string"},
+        "details": {"type": "object"}
+      },
+      "additionalProperties": true
+    },
+    "model_info": {
+      "type": "object",
+      "required": ["id", "stage_role"],
+      "properties": {
+        "id": {"type": "string"},
+        "name": {"type": ["string", "null"]},
+        "source_path": {"type": ["string", "null"]},
+        "stage_role": {"type": "string"},
+        "requested_post": {"type": "string"},
+        "requester_kind": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    }
+  }
+}

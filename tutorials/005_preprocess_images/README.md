@@ -28,7 +28,7 @@ This chapter focuses on the preproc controls you use most in real deployments:
 
 **APIs introduced**
 - `pyneat.ModelOptions().preproc.*` — the preprocessing sub-struct with the fields listed above.
-- `model.preprocess()` — retrieves the preprocessing node group so you can inspect it in isolation.
+- `model.preprocess()` — returns the preprocessing Graph fragment so you can inspect it in isolation.
 
 **Prerequisites**
 Chapter 001. Chapter 004 for the rest of `ModelOptions`.
@@ -39,7 +39,7 @@ Chapter 001. Chapter 004 for the rest of `ModelOptions`.
 
 ## Learning Process
 1. Configure `Model::Options` / `ModelOptions` with explicit preproc dimensions, format, and normalization policy.
-2. Build the model and inspect preprocessing-stage behavior (group composition and tensor contract cues).
+2. Build the model and inspect preprocessing-stage behavior (Graph-fragment composition and tensor contract cues).
 3. Execute a deterministic run path and verify resulting output/type signals.
 
 ## Run
@@ -47,20 +47,20 @@ Chapter 001. Chapter 004 for the rest of `ModelOptions`.
 **Python:**
 ```bash
 python3 share/sima-neat/tutorials/005_preprocess_images/preprocess_images.py \
-  --mpk /tmp/resnet_50_mpk.tar.gz --size 224
+  --model /tmp/resnet_50.tar.gz --size 224
 ```
 
 **C++ (prebuilt):**
 ```bash
 ./lib/sima-neat/tutorials/tutorial_005_preprocess_images \
-  --mpk /tmp/resnet_50_mpk.tar.gz --size 224
+  --model /tmp/resnet_50.tar.gz --size 224
 ```
 
 **C++ (build from source):**
 ```bash
 ./build.sh --target tutorial_005_preprocess_images
 ./build/tutorials-standalone/tutorial_005_preprocess_images \
-  --mpk /tmp/resnet_50_mpk.tar.gz --size 224
+  --model /tmp/resnet_50.tar.gz --size 224
 ```
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.

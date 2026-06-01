@@ -23,7 +23,7 @@ SimaPluginStaticManifest make_processmla_manifest_missing_explicit_contract() {
   stage.kernel_kind = "mla";
   stage.payload_kind = StagePayloadKind::ProcessMla;
   stage.processmla = ProcessMlaStagePayload{
-      .model_path = "/tmp/mla_explicit_contract_unused_model.mpk",
+      .model_path = "/tmp/mla_explicit_contract_unused_model.tar.gz",
       .batch_size = 1,
       .batch_sz_model = 1,
   };

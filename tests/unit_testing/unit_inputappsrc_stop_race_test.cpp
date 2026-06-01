@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 
@@ -21,7 +21,7 @@ int main() {
   const int iterations = 5;
 
   for (int i = 0; i < iterations; ++i) {
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     simaai::neat::InputOptions in;
     in.format = simaai::neat::FormatTag::RGB;
     in.width = w;

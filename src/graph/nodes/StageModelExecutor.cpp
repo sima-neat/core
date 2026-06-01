@@ -1,7 +1,7 @@
 #include "graph/nodes/StageModelExecutor.h"
 
 #include "model/Model.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
@@ -29,6 +29,7 @@ Sample make_bbox_sample(const Sample& in, const std::vector<uint8_t>& raw) {
   t.strides_bytes.clear();
 
   Sample out = sample_from_tensors(TensorList{std::move(t)});
+  out.payload_type = PayloadType::Tensor;
   out.media_type = "application/vnd.simaai.tensor";
   out.payload_tag = "BBOX";
   out.format = "BBOX";
@@ -88,6 +89,7 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
     }
     current = std::move(pre.front());
     current_sample = sample_from_tensors(TensorList{current});
+    current_sample.payload_type = PayloadType::Tensor;
     current_sample.media_type = "application/vnd.simaai.tensor";
     current_sample.format = current.semantic.tess.has_value() ? current.semantic.tess->format : "";
     current_sample.payload_tag = current_sample.format;
@@ -97,7 +99,7 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
   }
 
   if (opt_.do_mla) {
-    SampleList mla_out = simaai::neat::stages::MLA(SampleList{current_sample}, *opt_.model);
+    Sample mla_out = simaai::neat::stages::MLA(Sample{current_sample}, *opt_.model);
     if (mla_out.size() != 1) {
       throw std::runtime_error("StageModelExecutor: MLA returned unexpected sample count"
                                " (expected=1, actual=" +
@@ -109,8 +111,8 @@ void StageModelExecutor::on_input(StageMsg&& msg, std::vector<StageOutMsg>& out)
 
   Sample out_sample;
   if (opt_.do_boxdecode) {
-    SampleList decoded =
-        simaai::neat::stages::BoxDecode(SampleList{current_sample}, *opt_.model, opt_.box_opt);
+    Sample decoded =
+        simaai::neat::stages::BoxDecode(Sample{current_sample}, *opt_.model, opt_.box_opt);
     if (decoded.size() != 1) {
       throw std::runtime_error("StageModelExecutor: boxdecode returned unexpected sample count"
                                " (expected=1, actual=" +

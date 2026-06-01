@@ -2,7 +2,7 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "nodes/sima/SimaBoxDecode.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -11,11 +11,11 @@
 
 namespace {
 
-sima_test::MpkFixture make_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture("boxdecode_node_fragment",
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_fixture() {
+  return sima_test::make_strict_model_archive_fixture("boxdecode_node_fragment",
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -48,8 +48,8 @@ sima_test::MpkFixture make_fixture() {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -58,8 +58,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": 640,
   "output_img_type": "RGB"
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -69,8 +69,8 @@ sima_test::MpkFixture make_fixture() {
   "q_scale": [0.125],
   "q_zp": [-7]
 })json"},
-                                                    {"etc/0_boxdecoder.json",
-                                                     R"json({
+                                                          {"etc/0_boxdecoder.json",
+                                                           R"json({
   "node_name": "boxdecode_0",
   "decode_type": "yolov8",
   "topk": 100,
@@ -90,15 +90,15 @@ sima_test::MpkFixture make_fixture() {
   "dq_scale": [0.5],
   "dq_zp": [1]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
-sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture("boxdecode_node_fragment_quanttess",
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_quanttess_boxdecode_fixture() {
+  return sima_test::make_strict_model_archive_fixture("boxdecode_node_fragment_quanttess",
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -131,15 +131,15 @@ sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
     ]
   }]
 })json"},
-                                                    {"etc/0_quanttess.json",
-                                                     R"json({
+                                                          {"etc/0_quanttess.json",
+                                                           R"json({
   "node_name": "quanttess_0",
   "input_width": 640,
   "input_height": 640,
   "input_depth": 3
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "quanttess_0"}],
   "input_format": ["EV81_INT8"],
@@ -153,8 +153,8 @@ sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
   "q_scale": [0.125],
   "q_zp": [-7]
 })json"},
-                                                    {"etc/0_boxdecoder.json",
-                                                     R"json({
+                                                          {"etc/0_boxdecoder.json",
+                                                           R"json({
   "node_name": "boxdecode_0",
   "decode_type": "yolov8",
   "topk": 100,
@@ -170,8 +170,8 @@ sima_test::MpkFixture make_quanttess_boxdecode_fixture() {
   "dq_scale": [0.5],
   "dq_zp": [1]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
 } // namespace
@@ -257,7 +257,7 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            require(threw_partial_model_dims,
                    "manual boxdecode must fail when only one explicit model dimension is provided");
 
-           const auto legacy = sima_test::make_mpk_tar_fixture(
+           const auto legacy = sima_test::make_model_archive_fixture(
                "boxdecode_node_fragment_legacy_missing_mpk", {
                                                                  {"etc/pipeline_sequence.json",
                                                                   R"json({

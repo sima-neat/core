@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Session, enable metrics on the Run, then read stats/report/diagnostics.
+"""Validate a Graph, enable metrics on the Run, then read stats/report/diagnostics.
 
 Usage:
   python3 diagnose_a_pipeline.py
@@ -32,21 +32,21 @@ def main(argv: list[str]) -> int:
   inp.height = 96
   inp.depth = 3
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(inp))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(inp))
+  graph.add(pyneat.nodes.output())
 
   # CORE LOGIC
   # 1. Validate pipeline before building.
-  report = session.validate()
+  report = graph.validate()
   print(f"validate_error_code={report.error_code}")
 
   # 2. Build + run with metrics enabled.
   ropt = pyneat.RunOptions()
   ropt.enable_metrics = True
   ropt.output_memory = pyneat.OutputMemory.Owned
-  run = session.build(tensor, pyneat.RunMode.Sync, ropt)
-  run.run(tensor, timeout_ms=1000)
+  run = graph.build([tensor], pyneat.RunMode.Sync, ropt)
+  run.run([tensor], timeout_ms=1000)
 
   # 3. Read diagnostics.
   stats = run.stats()

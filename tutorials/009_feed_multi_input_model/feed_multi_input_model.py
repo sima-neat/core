@@ -38,22 +38,18 @@ def main(argv: list[str]) -> int:
   inp.height = args.height
   inp.depth = 3
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(inp))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(inp))
+  graph.add(pyneat.nodes.output())
 
   seed = make_fp32_tensor(args.width, args.height, 0.0)
-  run = session.build(seed, pyneat.RunMode.Sync)
+  run = graph.build([seed], pyneat.RunMode.Sync)
 
   # CORE LOGIC
-  bundle = pyneat.Sample()
-  bundle.kind = pyneat.SampleKind.Bundle
-  bundle.fields = [
+  run.push([
       pyneat.make_tensor_sample("left", make_fp32_tensor(args.width, args.height, 1.0)),
       pyneat.make_tensor_sample("right", make_fp32_tensor(args.width, args.height, 2.0)),
-  ]
-
-  run.push(bundle)
+  ])
   out = run.pull(timeout_ms=1000)
   # END CORE LOGIC
 

@@ -13,7 +13,7 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "rtsp_port_utils.h"
 #include "test_utils.h"
 
@@ -46,7 +46,7 @@ constexpr const char* kGoldfishUrl =
     "n01443537_goldfish.JPEG";
 
 struct RtspServerContext {
-  simaai::neat::Session session;
+  simaai::neat::Graph graph;
   simaai::neat::RtspServerHandle handle;
 };
 
@@ -119,13 +119,13 @@ static RtspServerContext start_rtsp_server(const std::string& image_path, int co
                                            int content_h, int enc_w, int enc_h, int fps, int port,
                                            int rtp_port_base, int rtp_port_count) {
   RtspServerContext ctx;
-  ctx.session.add(
+  ctx.graph.add(
       simaai::neat::nodes::StillImageInput(image_path, content_w, content_h, enc_w, enc_h, fps));
-  ctx.session.add(simaai::neat::nodes::H264EncodeSW(/*bitrate_kbps=*/400));
-  ctx.session.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
-  ctx.session.add(simaai::neat::nodes::H264Packetize(/*pt=*/kPayloadType, /*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264EncodeSW(/*bitrate_kbps=*/400));
+  ctx.graph.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264Packetize(/*pt=*/kPayloadType, /*config_interval=*/1));
 
-  ctx.handle = ctx.session.run_rtsp({
+  ctx.handle = ctx.graph.run_rtsp({
       .mount = "image",
       .port = port,
       .rtp_port_base = rtp_port_base,
@@ -283,6 +283,10 @@ static std::string find_image_path(int argc, char** argv) {
   if (!image_path.empty())
     return image_path;
 
+  const std::filesystem::path packaged_image = sima_test::test_image_fixture_path();
+  if (std::filesystem::exists(packaged_image))
+    return packaged_image.string();
+
   std::error_code ec;
   std::filesystem::path cur = std::filesystem::current_path(ec);
   for (int i = 0; i < 6 && !cur.empty(); ++i) {
@@ -305,7 +309,7 @@ static std::string find_image_path(int argc, char** argv) {
 static std::vector<Nv12Frame> decode_rtsp_frames(const std::string& url, const std::string& decoder,
                                                  bool use_neatdecoder, int max_frames,
                                                  int timeout_ms) {
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::RTSPInput(url, /*latency_ms=*/200, /*tcp=*/true));
   p.add(simaai::neat::nodes::H264Depacketize(/*payload_type=*/kPayloadType,
                                              /*h264_parse_config_interval=*/1));

@@ -76,9 +76,9 @@ asan_ubsan_tests=(
   unit_run_pull_variants_api_test
   unit_run_try_push_api_test
   unit_run_api_variants_test
-  unit_session_io_roundtrip_test
-  unit_session_io_negative_test
-  unit_session_naming_transform_test
+  unit_graph_io_contract_test
+  unit_graph_io_contract_test
+  unit_graph_naming_transform_test
   unit_simaai_guard_test
   unit_stageconfig_mla_info_test
   unit_tensor_conversion_policy_test
@@ -86,9 +86,9 @@ asan_ubsan_tests=(
   caps_negotiation_matrix_regression_test
   gst_data_adapter_runtime_regression_test
   pull_timeout_regression_test
-  session_naming_pipeline_integration_test
-  session_rtsp_lifecycle_regression_test
-  session_validate_report_regression_test
+  graph_naming_pipeline_integration_test
+  graph_rtsp_lifecycle_regression_test
+  graph_validate_report_regression_test
   stage_routing_regression_test
   graph_deterministic_routing_regression_test
   hybrid_graph_basic_test
@@ -101,9 +101,9 @@ tsan_tests=(
   unit_run_try_push_api_test
   unit_run_holder_api_test
   unit_run_api_variants_test
-  unit_session_naming_transform_test
-  session_validate_report_regression_test
-  session_naming_pipeline_integration_test
+  unit_graph_naming_transform_test
+  graph_validate_report_regression_test
+  graph_naming_pipeline_integration_test
   stage_routing_regression_test
   graph_deterministic_routing_regression_test
   hybrid_graph_fanout_test

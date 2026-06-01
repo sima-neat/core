@@ -151,6 +151,7 @@ del _existing_library_dirs
 from ._pyneat_core import *
 from ._wrappers import install_wrappers
 
+
 def _set_doc(obj, doc: str) -> None:
   try:
     obj.__doc__ = doc
@@ -160,16 +161,69 @@ def _set_doc(obj, doc: str) -> None:
 
 install_wrappers(_core)
 
+_REMOVED_NAMES = {
+  "Session": "Session was removed. Use pyneat.Graph.",
+  "SessionError": "SessionError was removed. Catch pyneat.NeatError.",
+  "SessionReport": "SessionReport was removed. Use pyneat.GraphReport.",
+  "SessionOptions": "SessionOptions was removed. Use pyneat.GraphOptions.",
+  "ModelSessionOptions": "ModelSessionOptions was removed. Use pyneat.ModelRouteOptions.",
+  "NodeGroup": "NodeGroup was removed. Reusable fragments are pyneat.Graph objects.",
+  "graph": (
+      "pyneat.graph was removed from the public API. Use pyneat.Graph/pyneat.graphs for "
+      "application composition."
+  ),
+  "_graph": (
+      "pyneat._graph was removed from the public API. Use pyneat.Graph/pyneat.graphs for "
+      "application composition."
+  ),
+  "UdpOutputNodeGroupOptions": (
+      "UdpOutputNodeGroupOptions was removed. Use pyneat.VideoSenderOptions."
+  ),
+  "OptiViewOutputNodeGroupOptions": (
+      "OptiViewOutputNodeGroupOptions was removed. Use pyneat.VideoSenderOptions "
+      "and pyneat.MetadataSenderOptions."
+  ),
+  "OptiViewOutputNodeGroup": (
+      "OptiViewOutputNodeGroup was removed. Use pyneat.groups.video_sender and "
+      "pyneat.MetadataSender."
+  ),
+  "UdpOutputGraphOptions": "UdpOutputGraphOptions was removed. Use pyneat.VideoSenderOptions.",
+  "OptiViewObject": "OptiViewObject was removed. Use pyneat.MetadataSender JSON payloads.",
+  "OptiViewChannelOptions": (
+      "OptiViewChannelOptions was removed. Use pyneat.VideoSenderOptions and "
+      "pyneat.MetadataSenderOptions."
+  ),
+  "OptiViewOutputGraphOptions": (
+      "OptiViewOutputGraphOptions was removed. Use pyneat.VideoSenderOptions and "
+      "pyneat.MetadataSenderOptions."
+  ),
+  "OptiViewOutputGraph": (
+      "OptiViewOutputGraph was removed. Use pyneat.groups.video_sender and "
+      "pyneat.MetadataSender."
+  ),
+  "OptiViewJsonInput": "OptiViewJsonInput was removed. Use pyneat.MetadataSender JSON payloads.",
+  "OptiViewJsonResult": "OptiViewJsonResult was removed. Use pyneat.MetadataSender results.",
+  "OptiViewJsonOutput": "OptiViewJsonOutput was removed. Use pyneat.MetadataSender.",
+  "OptiViewMakeJson": "OptiViewMakeJson was removed. Build JSON payloads directly.",
+}
+
+
+def __getattr__(name):
+  if name in _REMOVED_NAMES:
+    raise AttributeError(_REMOVED_NAMES[name])
+  raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 _set_doc(
   _core.Model,
-  """Model loads a compiled MPK package and exposes reusable stage fragments.
+  """Model loads a compiled `.tar.gz` model archive and exposes reusable stage fragments.
 
-  Use Model to assemble Sessions or run inference directly via build/run helpers.
+  Use Model to assemble Graphs or run inference directly via build/run helpers.
   """,
 )
 _set_doc(
-  _core.Session,
-  """Session assembles Nodes/NodeGroups into a deterministic pipeline."""
+  _core.Graph,
+  """Graph assembles Nodes, Models, and reusable Graph fragments into a deterministic pipeline."""
 )
 _set_doc(
   _core.Run,

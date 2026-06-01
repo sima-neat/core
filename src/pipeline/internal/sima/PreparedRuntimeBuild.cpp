@@ -3,6 +3,7 @@
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/SimaaiGstCompat.h"
 #include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/sima/InternalEdgeContractResolver.h"
 #include "pipeline/internal/sima/MpkContract.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
 
@@ -28,6 +29,8 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 namespace {
+
+constexpr std::size_t kStageIndexUnavailableLocal = static_cast<std::size_t>(-1);
 
 struct CapsTensorSpec {
   int tensor_index = -1;
@@ -188,6 +191,10 @@ bool build_processcvu_prepared_stage_from_graph_local(const StageStaticSpec& ori
 bool build_processcvu_prepared_stage_from_stage_contract_local(
     const StageStaticSpec& stage, simaai::gst::ProcessCvuPreparedStage* out,
     std::string* error_message);
+bool build_processcvu_prepared_stage_from_manifest_stage_local(
+    const StageStaticSpec& stage, simaai::gst::ProcessCvuPreparedStage* out,
+    std::string* error_message, const SimaPluginStaticManifest* manifest = nullptr,
+    std::size_t stage_index = kStageIndexUnavailableLocal);
 bool build_dequant_prepared_stage_from_stage_contract_local(const StageStaticSpec& stage,
                                                             simaai::gst::DequantPreparedStage* out,
                                                             std::string* error_message);
@@ -1603,6 +1610,7 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   cfg.round_off = payload.round_off;
   cfg.byte_align = payload.byte_align;
   cfg.opt_flags = payload.opt_flags;
+  cfg.pad_value = payload.pad_value;
   cfg.aspect_ratio = payload.aspect_ratio;
   cfg.normalize = payload.normalize;
   cfg.tessellate = payload.tessellate;
@@ -1674,8 +1682,9 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
 }
 
 bool build_processcvu_routing_contract_from_manifest_stage_local(
-    const StageStaticSpec& stage, simaai::gst::CvuRoutingContract* out,
-    std::string* error_message) {
+    const StageStaticSpec& stage, simaai::gst::CvuRoutingContract* out, std::string* error_message,
+    const SimaPluginStaticManifest* manifest = nullptr,
+    const std::size_t stage_index = kStageIndexUnavailableLocal) {
   if (!out) {
     if (error_message) {
       *error_message = "processcvu routing contract requires output storage";
@@ -1698,11 +1707,27 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
       processcvu_graph_family_uses_packed_input_transport_local(graph_family);
 
   out->input_bindings.reserve(stage.input_bindings.size());
-  for (const auto& binding_spec : stage.input_bindings) {
+  for (std::size_t binding_index = 0; binding_index < stage.input_bindings.size();
+       ++binding_index) {
+    const auto& binding_spec = stage.input_bindings[binding_index];
     const int logical_index = binding_spec.local_logical_input_index >= 0
                                   ? binding_spec.local_logical_input_index
                                   : binding_spec.sink_pad_index;
-    const auto* logical = processcvu_find_logical_input_by_index_local(stage, logical_index);
+    const auto* legacy_logical = processcvu_find_logical_input_by_index_local(stage, logical_index);
+    const auto* logical = legacy_logical;
+    std::optional<edgecontract::ResolvedEdgeContract> resolved_edge;
+    if (manifest && stage_index != kStageIndexUnavailableLocal) {
+      std::string edge_error;
+      const auto resolved = edgecontract::resolve_edge_contract_for_binding(
+          *manifest, stage_index, binding_index, &edge_error);
+      // Behavior-preserving first use: only substitute the centralized resolver result when it
+      // resolves the same consumer logical-input object the legacy local lookup already selected.
+      // Missing/external producer edges and any disagreement keep the previous routing behavior.
+      if (resolved && resolved->consumer_logical_input == legacy_logical) {
+        logical = resolved->consumer_logical_input;
+        resolved_edge = resolved;
+      }
+    }
     if (!logical) {
       if (error_message) {
         *error_message = "processcvu logical input missing for binding";
@@ -1713,14 +1738,55 @@ bool build_processcvu_routing_contract_from_manifest_stage_local(
     binding.sink_pad_index = binding_spec.sink_pad_index;
     binding.logical_input_index = logical_index;
     binding.local_physical_index = logical->physical_index;
-    binding.source_logical_index = binding_spec.src_logical_output_index;
-    binding.source_output_slot = binding_spec.src_output_slot;
-    binding.source_physical_index = binding_spec.src_physical_output_index;
+    const auto* source_logical = resolved_edge ? resolved_edge->producer_logical_output : nullptr;
+    const auto* source_physical = resolved_edge ? resolved_edge->producer_physical_output : nullptr;
+    const bool binding_source_fields_incomplete =
+        binding_spec.src_logical_output_index < 0 || binding_spec.src_output_slot < 0 ||
+        binding_spec.src_physical_output_index < 0 || binding_spec.src_physical_size_bytes == 0U ||
+        binding_spec.source_segment_name.empty();
+    binding.source_logical_index = binding_spec.src_logical_output_index >= 0
+                                       ? binding_spec.src_logical_output_index
+                                       : (source_logical ? source_logical->logical_index
+                                                         : binding_spec.src_logical_output_index);
+    binding.source_output_slot =
+        binding_spec.src_output_slot >= 0
+            ? binding_spec.src_output_slot
+            : (source_logical ? source_logical->output_slot : binding_spec.src_output_slot);
+    binding.source_physical_index =
+        binding_spec.src_physical_output_index >= 0
+            ? binding_spec.src_physical_output_index
+            : (source_physical ? source_physical->physical_index
+                               : (source_logical ? source_logical->physical_index
+                                                 : binding_spec.src_physical_output_index));
     binding.source_size_bytes = binding_spec.src_physical_size_bytes;
+    if (binding.source_size_bytes == 0U && source_physical) {
+      binding.source_size_bytes = source_physical->size_bytes;
+    }
+    if (binding.source_size_bytes == 0U && source_logical) {
+      binding.source_size_bytes = source_logical->size_bytes;
+    }
     binding.source_byte_offset = binding_spec.src_physical_byte_offset;
+    if (binding.source_byte_offset == 0 && resolved_edge && binding_source_fields_incomplete) {
+      if (logical->byte_offset > 0) {
+        binding.source_byte_offset = logical->byte_offset;
+      } else if (source_logical && source_logical->byte_offset > 0) {
+        binding.source_byte_offset = source_logical->byte_offset;
+      } else if (resolved_edge->consumer_physical_input &&
+                 resolved_edge->consumer_physical_input->source_byte_offset > 0) {
+        binding.source_byte_offset = resolved_edge->consumer_physical_input->source_byte_offset;
+      }
+    }
     binding.group_name = "sink_pad_" + std::to_string(binding_spec.sink_pad_index);
-    binding.segment_name =
-        !binding_spec.source_segment_name.empty() ? binding_spec.source_segment_name : "parent";
+    binding.segment_name = binding_spec.source_segment_name;
+    if (binding.segment_name.empty() && source_logical) {
+      binding.segment_name = source_logical->segment_name;
+    }
+    if (binding.segment_name.empty() && source_physical) {
+      binding.segment_name = source_physical->segment_name;
+    }
+    if (binding.segment_name.empty()) {
+      binding.segment_name = "parent";
+    }
     binding.graph_input_name =
         !binding_spec.cm_input_name.empty()
             ? binding_spec.cm_input_name
@@ -2098,7 +2164,8 @@ build_processcvu_src_caps_local(const simaai::gst::PreparedProcessCvuTypedConfig
 
 bool build_processcvu_prepared_stage_from_manifest_stage_local(
     const StageStaticSpec& stage, simaai::gst::ProcessCvuPreparedStage* out,
-    std::string* error_message) {
+    std::string* error_message, const SimaPluginStaticManifest* manifest,
+    const std::size_t stage_index) {
   if (!out) {
     if (error_message) {
       *error_message = "processcvu prepared stage requires output storage";
@@ -2161,7 +2228,7 @@ bool build_processcvu_prepared_stage_from_manifest_stage_local(
     prepared.physical_inputs.push_back(std::move(input));
   }
   if (!build_processcvu_routing_contract_from_manifest_stage_local(
-          stage, &prepared.routing_contract, error_message)) {
+          stage, &prepared.routing_contract, error_message, manifest, stage_index)) {
     return false;
   }
   if (!build_publish_contract_from_manifest_stage_local(stage, &prepared.output_publish_contract,
@@ -3172,6 +3239,7 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
   request.input_stride = payload.input_stride;
   request.output_stride = payload.output_stride;
   request.input_offset = payload.input_offset;
+  request.pad_value = payload.pad_value;
   request.input_img_type = payload.input_img_type;
   request.output_img_type = payload.output_img_type;
   request.scaling_type = payload.scaling_type;
@@ -4506,12 +4574,12 @@ discover_graph_contract_local(const SimaPluginStaticManifest& transformed_manife
   return contract_opt;
 }
 
-bool build_graph_owned_prepared_stage_local(const StageStaticSpec& transformed_stage,
-                                            const StageStaticSpec* original_stage,
-                                            const MpkContract& contract,
-                                            const std::filesystem::path& pack_root,
-                                            simaai::gst::PreparedStageSpec* out,
-                                            std::string* error_message) {
+bool build_graph_owned_prepared_stage_local(
+    const StageStaticSpec& transformed_stage, const StageStaticSpec* original_stage,
+    const MpkContract& contract, const std::filesystem::path& pack_root,
+    simaai::gst::PreparedStageSpec* out, std::string* error_message,
+    const SimaPluginStaticManifest* transformed_manifest = nullptr,
+    std::size_t transformed_stage_index = kStageIndexUnavailableLocal) {
   if (!out) {
     if (error_message) {
       *error_message = "graph-owned prepared stage requires output storage";
@@ -4587,8 +4655,9 @@ bool build_graph_owned_prepared_stage_local(const StageStaticSpec& transformed_s
     simaai::gst::ProcessCvuPreparedStage processcvu_stage;
     if (canonical_family == "detesscast" || canonical_family == "detessdequant" ||
         canonical_family == "dequantize" || processcvu_region_contract) {
-      if (!build_processcvu_prepared_stage_from_stage_contract_local(
-              transformed_stage, &processcvu_stage, error_message)) {
+      if (!build_processcvu_prepared_stage_from_manifest_stage_local(
+              transformed_stage, &processcvu_stage, error_message, transformed_manifest,
+              transformed_stage_index)) {
         return false;
       }
     } else {
@@ -5102,7 +5171,9 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
     }
   }
 
-  for (const auto& stage : transformed_manifest.stages) {
+  for (std::size_t stage_index = 0; stage_index < transformed_manifest.stages.size();
+       ++stage_index) {
+    const auto& stage = transformed_manifest.stages[stage_index];
     const StageStaticSpec* original_stage_ptr =
         (original_manifest.has_value() && !stage.logical_stage_id.empty())
             ? find_original_stage_for_transformed_key_local(*original_manifest, name_transform,
@@ -5118,7 +5189,8 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
       }
       simaai::gst::PreparedStageSpec prepared;
       if (!build_graph_owned_prepared_stage_local(stage, original_stage_ptr, *graph_contract,
-                                                  graph_pack_root, &prepared, error_message)) {
+                                                  graph_pack_root, &prepared, error_message,
+                                                  &transformed_manifest, stage_index)) {
         return std::nullopt;
       }
       context.stages.push_back(std::move(prepared));
@@ -5170,8 +5242,8 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
       }
 
       simaai::gst::ProcessCvuPreparedStage processcvu_stage;
-      if (!build_processcvu_prepared_stage_from_manifest_stage_local(stage, &processcvu_stage,
-                                                                     error_message)) {
+      if (!build_processcvu_prepared_stage_from_manifest_stage_local(
+              stage, &processcvu_stage, error_message, &transformed_manifest, stage_index)) {
         return std::nullopt;
       }
       simaai::gst::PreparedStageSpec prepared;

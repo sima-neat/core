@@ -8,7 +8,7 @@
  * **plan layer** — what the framework actually compiled, including which preprocess
  * graph family was chosen (`Preproc` / `Quant` / `Tess` / `QuantTess`) and the
  * negotiated MLA-side contract. The route planner produces the latter from the former
- * plus the model's MPK manifest.
+ * plus the model's MPK contract.
  *
  * @see Model — the type that produces these
  * @see "Input planner" (§82 of the design deep dive)
@@ -224,7 +224,7 @@ struct Transform {
 /**
  * @brief User-facing preprocess intent — what the application asks for.
  *
- * The planner takes this plus the model's MPK manifest and produces a
+ * The planner takes this plus the model's MPK contract and produces a
  * `ResolvedPreprocessPlan`. Most fields default to `Auto`/zero; set only what you need
  * to override.
  * @ingroup model
@@ -282,7 +282,7 @@ struct PreprocessMetaContract {
 /**
  * @brief Final resolved plan — what the framework actually compiled and runs.
  *
- * Produced by the route planner from `PreprocessOptions` + MPK manifest. Carries the
+ * Produced by the route planner from `PreprocessOptions` + MPK contract. Carries the
  * effective options, which graph family was chosen, the path to the compiled graph
  * config, and the negotiated input/MLA contracts.
  *
@@ -302,7 +302,7 @@ struct ResolvedPreprocessPlan {
       PreprocessGraphFamily::Preproc; ///< Which preprocess graph family was selected.
   std::string graph_kernel;           ///< Kernel name backing the graph (CVU/EV74 entry point).
   std::string graph_config_path;      ///< Filesystem path to the compiled graph config (inside the
-                                      ///< unpacked MPK).
+                                      ///< unpacked model archive).
 
   std::vector<PreprocessContract>
       ingress_contracts; ///< Per-input ingress contracts (multi-input models have multiple).
@@ -312,7 +312,8 @@ struct ResolvedPreprocessPlan {
   std::vector<std::string>
       warnings; ///< Non-fatal advisories (e.g., "preset overridden by explicit stats").
 
-  /// Render a multi-line debug summary of the plan — used in `Session::describe()` and reports.
+  /// Render a multi-line debug summary of the plan — used in `Graph::describe()` and reports.
+  /// Render a multi-line debug summary of the plan — used in `Graph::describe()` and reports.
   std::string to_debug_string() const;
 };
 

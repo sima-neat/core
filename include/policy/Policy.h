@@ -6,7 +6,7 @@
  * Defines the minimal Allow/Deny decision contract returned by every policy check
  * (decoder, encoder, RTSP, memory). Concrete policies — see DefaultPolicy — bundle
  * individual policy structs and call back into the framework with these `Evaluation`
- * results to validate user-supplied parameters before a Session is built.
+ * results to validate user-supplied parameters before a Graph is built.
  *
  * @see DefaultPolicy
  * @see DecoderPolicy
@@ -33,7 +33,7 @@ enum class Decision {
  * @brief Result of evaluating a parameter against a policy.
  *
  * Returned by every `validate_*` method on the per-domain policy structs. When `decision`
- * is `Decision::Deny`, `reason` carries a human-readable message suitable for a SessionError.
+ * is `Decision::Deny`, `reason` carries a human-readable message suitable for a NeatError.
  * @ingroup builder
  */
 struct Evaluation {

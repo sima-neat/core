@@ -1,8 +1,9 @@
 #include "pipeline/Run.h"
 #include "RunInternal.h"
 
+#include "pipeline/DetectionTypes.h"
 #include "pipeline/ErrorCodes.h"
-#include "pipeline/SessionError.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/ErrorUtil.h"
 #include "pipeline/internal/GstDiagnosticsUtil.h"
@@ -24,6 +25,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -63,7 +65,7 @@ bool input_options_expect_tensor_media_local(const std::optional<InputOptions>& 
   if (!opt.has_value()) {
     return false;
   }
-  const std::string media = pipeline_internal::lower_copy(opt->media_type);
+  const std::string media = pipeline_internal::lower_copy(resolve_input_media_type(*opt));
   return media == "application/vnd.simaai.tensor";
 }
 
@@ -84,7 +86,7 @@ bool input_options_expect_tensor_media_local(const std::optional<InputOptions>& 
   const char* tag = where ? where : "Run";
   const std::string code = err.code.empty() ? std::string(error_codes::kRuntimePull) : err.code;
   const std::string hint =
-      "inspect Run::report()/SessionReport bus diagnostics for the first terminal error.";
+      "inspect Run::report()/GraphReport bus diagnostics for the first terminal error.";
   if (status == PullStatus::Timeout) {
     throw std::runtime_error(decorate_with_error_code(
         code, with_hint(std::string(tag) + ": timeout waiting for output (status=Timeout)", hint)));
@@ -108,7 +110,7 @@ bool input_options_expect_tensor_media_local(const std::optional<InputOptions>& 
     }
     const std::string msg =
         err.message.empty() ? decorate_with_error_code(code, err.report->repro_note) : err.message;
-    throw SessionError(msg, std::move(*err.report));
+    throw NeatError(msg, std::move(*err.report));
   }
   if (!err.message.empty()) {
     throw std::runtime_error(decorate_with_error_code(code, err.message));
@@ -282,27 +284,110 @@ void warn_no_warmup_once() {
   std::printf("[WARN] Run::warmup: warm=0; throughput stability may vary without warmup.\n");
 }
 
+std::string available_output_names(const runtime::RunCore& core) {
+  if (!core.graph_execution_) {
+    return "[]";
+  }
+  std::vector<std::string> names;
+  names.reserve(core.graph_execution_->plan.named_outputs.size());
+  for (const auto& kv : core.graph_execution_->plan.named_outputs) {
+    names.push_back(kv.first);
+  }
+  std::sort(names.begin(), names.end());
+  std::ostringstream oss;
+  oss << "[";
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    if (i > 0)
+      oss << ", ";
+    oss << names[i];
+  }
+  oss << "]";
+  return oss.str();
+}
+
+std::optional<runtime::Endpoint> named_output_endpoint(const runtime::RunCore& core,
+                                                       std::string_view output_name) {
+  if (!core.graph_execution_) {
+    return std::nullopt;
+  }
+  const auto& named = core.graph_execution_->plan.named_outputs;
+  auto it = named.find(std::string(output_name));
+  if (it == named.end()) {
+    return std::nullopt;
+  }
+  return it->second;
+}
+
 } // namespace
 
 PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
+  if (!core_) {
+    pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                  "Run::pull: stream is closed");
+    return PullStatus::Closed;
+  }
+  return core_->pull(timeout_ms, out, err);
+}
+
+PullStatus Run::pull(std::string_view output_name, int timeout_ms, Sample& out, PullError* err) {
+  if (output_name.empty()) {
+    pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                  "Run::pull(name): output name is empty");
+    return PullStatus::Error;
+  }
+  if (!core_) {
+    pipeline_internal::error_util::set_pull_error(err, error_codes::kRuntimePull,
+                                                  "Run::pull(name): stream is closed");
+    return PullStatus::Closed;
+  }
+  return core_->pull_named_output(output_name, timeout_ms, out, err);
+}
+
+PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
   pipeline_internal::error_util::set_pull_error(err, "", "");
   const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
     pipeline_internal::error_util::set_pull_error(err, code, message);
   };
 
-  if (!state_) {
-    set_terminal_error(error_codes::kRuntimePull, "Run::pull: stream is closed");
-    return PullStatus::Closed;
+  auto* st = this;
+  if (st->graph_execution_) {
+    const auto& endpoint = st->graph_execution_->plan.default_output;
+    if (!endpoint.has_value()) {
+      set_terminal_error(error_codes::kRuntimePull,
+                         "Run::pull: graph has no unambiguous default output; use pull(name, "
+                         "...). Available outputs: " +
+                             available_output_names(*this));
+      return PullStatus::Error;
+    }
+    auto sample = st->graph_pull(endpoint->node, timeout_ms);
+    if (sample.has_value()) {
+      out = std::move(*sample);
+      st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+      const auto now = std::chrono::steady_clock::now();
+      std::lock_guard<std::mutex> timing_lock(st->latency_mu);
+      if (!st->pull_timing_init) {
+        st->first_pull_at = now;
+        st->pull_timing_init = true;
+      }
+      st->last_pull_at = now;
+      return PullStatus::Ok;
+    }
+    const std::string graph_err = st->last_error();
+    if (!graph_err.empty()) {
+      set_terminal_error(error_codes::kRuntimePull, graph_err);
+      return PullStatus::Error;
+    }
+    set_terminal_error(error_codes::kRuntimePull, "Run::pull: timeout waiting for graph output");
+    return PullStatus::Timeout;
   }
-  auto st = state_;
-  if (!st->supports_pull) {
+  if (!st->pipeline.supports_pull) {
     set_terminal_error(error_codes::kRuntimePull,
                        "Run::pull: pipeline has no Output (pull not supported)");
     return PullStatus::Error;
   }
-  auto diag = st->stream.diag_ctx();
+  auto diag = st->pipeline.stream.diag_ctx();
   const auto handle_stream_error = [&](const std::string& msg) {
-    SessionReport rep = diag ? diag->snapshot_basic() : SessionReport{};
+    GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
     std::string code = rep.error_code;
     if (code.empty()) {
       code = error_codes::kRuntimePull;
@@ -321,19 +406,20 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
   }
 
   auto done = [&]() {
-    if (st->supports_push) {
+    if (st->pipeline.supports_push) {
       const auto outputs_done = st->outputs_pulled.load() + st->outputs_dropped.load();
-      return st->input_closed && st->input_thread_done.load() &&
-             outputs_done >= st->inputs_pushed.load() && st->out_queue.empty();
+      return st->pipeline.input_closed && st->pipeline.input_thread_done.load() &&
+             outputs_done >= st->inputs_pushed.load() && st->pipeline.out_queue.empty();
     }
-    return (st->stop_requested.load() || !st->stream.running()) && st->out_queue.empty();
+    return (st->stop_requested.load() || !st->pipeline.stream.running()) &&
+           st->pipeline.out_queue.empty();
   };
   const auto wait_ready = [&]() {
-    return st->stop_requested.load() || !st->out_queue.empty() || done() ||
-           (st->supports_push && !st->stream.running());
+    return st->stop_requested.load() || !st->pipeline.out_queue.empty() || done() ||
+           (st->pipeline.supports_push && !st->pipeline.stream.running());
   };
 
-  std::unique_lock<std::mutex> lock(st->out_mu);
+  std::unique_lock<std::mutex> lock(st->pipeline.out_mu);
   if (timeout_ms < 0) {
     while (!wait_ready()) {
       const std::string loop_err = last_error();
@@ -341,7 +427,7 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
         lock.unlock();
         return handle_stream_error(loop_err);
       }
-      st->out_cv.wait_for(lock, kPullWaitPollQuantum);
+      st->pipeline.out_cv.wait_for(lock, kPullWaitPollQuantum);
     }
   } else {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
@@ -360,8 +446,9 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
           // "no extra sample available right now" must not look like a real stall.
           return PullStatus::Timeout;
         }
-        if (env_bool("SIMA_PULL_TIMEOUT_DIAG", true) && !st->pull_timeout_logged.exchange(true)) {
-          const auto diag = st->stream.diag_ctx();
+        if (env_bool("SIMA_PULL_TIMEOUT_DIAG", true) &&
+            !st->pipeline.pull_timeout_logged.exchange(true)) {
+          const auto diag = st->pipeline.stream.diag_ctx();
           if (diag) {
             std::ostringstream oss;
             oss << "[DIAG] pull_timeout Run::pull\n";
@@ -404,7 +491,7 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
                 // This query path can block inside GStreamer pad locks when the
                 // pipeline is already stalled. Keep it opt-in for deep debugging.
                 if (detess && env_bool("SIMA_PULL_TIMEOUT_POOL_DIAG", false)) {
-                  GstElement* pipeline = st->stream.pipeline_handle();
+                  GstElement* pipeline = st->pipeline.stream.pipeline_handle();
                   if (pipeline && !seg.name.empty()) {
                     dump_detess_output_pool(pipeline, seg.name);
                   }
@@ -417,13 +504,13 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
         return PullStatus::Timeout;
       }
       const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
-      st->out_cv.wait_for(lock, std::min(kPullWaitPollQuantum, remaining));
+      st->pipeline.out_cv.wait_for(lock, std::min(kPullWaitPollQuantum, remaining));
     }
   }
 
-  if (!st->out_queue.empty()) {
-    out = std::move(st->out_queue.front());
-    st->out_queue.pop_front();
+  if (!st->pipeline.out_queue.empty()) {
+    out = std::move(st->pipeline.out_queue.front());
+    st->pipeline.out_queue.pop_front();
     st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     {
       const auto now = std::chrono::steady_clock::now();
@@ -435,7 +522,7 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
       st->last_pull_at = now;
     }
     lock.unlock();
-    st->out_cv.notify_one();
+    st->pipeline.out_cv.notify_one();
     return PullStatus::Ok;
   }
 
@@ -457,16 +544,55 @@ PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
   return PullStatus::Closed;
 }
 
-void Run::require_async_pull_mode(const char* where) const {
-  if (state_ && state_->mode == RunMode::Sync) {
-    throw std::runtime_error(decorate_with_error_code(
-        error_codes::kRuntimePull, std::string(where ? where : "Run") +
-                                       ": pull is not allowed in sync mode; use run(...) instead"));
+PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int timeout_ms,
+                                               Sample& out, PullError* err) {
+  pipeline_internal::error_util::set_pull_error(err, "", "");
+  const auto set_terminal_error = [&](const std::string& code, const std::string& message) {
+    pipeline_internal::error_util::set_pull_error(err, code, message);
+  };
+
+  if (!graph_execution_) {
+    set_terminal_error(error_codes::kRuntimePull,
+                       "Run::pull(name): named outputs require a graph-backed Run");
+    return PullStatus::Error;
   }
+  if (output_name.empty()) {
+    set_terminal_error(error_codes::kRuntimePull, "Run::pull(name): output name is empty");
+    return PullStatus::Error;
+  }
+  const auto endpoint = named_output_endpoint(*this, output_name);
+  if (!endpoint.has_value()) {
+    set_terminal_error(error_codes::kRuntimePull, "Run::pull(\"" + std::string(output_name) +
+                                                      "\"): unknown output. Available outputs: " +
+                                                      available_output_names(*this));
+    return PullStatus::Error;
+  }
+
+  auto sample = graph_pull(endpoint->node, timeout_ms);
+  if (sample.has_value()) {
+    out = std::move(*sample);
+    outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+    const auto now = std::chrono::steady_clock::now();
+    std::lock_guard<std::mutex> timing_lock(latency_mu);
+    if (!pull_timing_init) {
+      first_pull_at = now;
+      pull_timing_init = true;
+    }
+    last_pull_at = now;
+    return PullStatus::Ok;
+  }
+
+  const std::string graph_err = last_error();
+  if (!graph_err.empty()) {
+    set_terminal_error(error_codes::kRuntimePull, graph_err);
+    return PullStatus::Error;
+  }
+  set_terminal_error(error_codes::kRuntimePull, "Run::pull(\"" + std::string(output_name) +
+                                                    "\"): timeout waiting for graph output");
+  return PullStatus::Timeout;
 }
 
-std::optional<Sample> Run::pull(int timeout_ms) {
-  require_async_pull_mode("Run::pull");
+std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {
   Sample out;
   PullError err;
   const PullStatus status = pull(timeout_ms, out, &err);
@@ -475,19 +601,19 @@ std::optional<Sample> Run::pull(int timeout_ms) {
   }
   if (status == PullStatus::Error) {
     if (err.report.has_value()) {
-      SessionReport rep = std::move(*err.report);
+      GraphReport rep = std::move(*err.report);
       if (rep.error_code.empty()) {
         rep.error_code = err.code.empty() ? error_codes::kRuntimePull : err.code;
       }
       if (rep.repro_note.empty()) {
         rep.repro_note = pipeline_internal::error_util::append_hint(
             "Run::pull: pull returned Error without report details",
-            "inspect Run::report()/SessionReport bus diagnostics for root cause.");
+            "inspect Run::report()/GraphReport bus diagnostics for root cause.");
       }
       const std::string msg = err.message.empty()
                                   ? decorate_with_error_code(rep.error_code, rep.repro_note)
                                   : err.message;
-      throw SessionError(msg, std::move(rep));
+      throw NeatError(msg, std::move(rep));
     }
     if (!err.message.empty()) {
       throw std::runtime_error(decorate_with_error_code(
@@ -495,14 +621,40 @@ std::optional<Sample> Run::pull(int timeout_ms) {
     }
     const std::string last_err = last_error();
     const std::string msg =
-        last_err.empty()
-            ? pipeline_internal::error_util::append_hint(
-                  "Run::pull: pull returned Error without detail",
-                  "inspect Run::report()/SessionReport bus diagnostics for root cause.")
-            : pipeline_internal::error_util::append_hint(
-                  "Run::pull: " + last_err,
-                  "inspect Run::report()/SessionReport bus diagnostics for root cause.");
+        last_err.empty() ? pipeline_internal::error_util::append_hint(
+                               "Run::pull: pull returned Error without detail",
+                               "inspect Run::report()/GraphReport bus diagnostics for root cause.")
+                         : pipeline_internal::error_util::append_hint(
+                               "Run::pull: " + last_err,
+                               "inspect Run::report()/GraphReport bus diagnostics for root cause.");
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull, msg));
+  }
+  return std::nullopt;
+}
+
+void Run::require_async_pull_mode(const char* where) const {
+  if (core_ && core_->mode == RunMode::Sync) {
+    throw std::runtime_error(decorate_with_error_code(
+        error_codes::kRuntimePull, std::string(where ? where : "Run") +
+                                       ": pull is not allowed in sync mode; use run(...) instead"));
+  }
+}
+
+std::optional<Sample> Run::pull(int timeout_ms) {
+  require_async_pull_mode("Run::pull");
+  return core_ ? core_->pull_optional(timeout_ms) : std::nullopt;
+}
+
+std::optional<Sample> Run::pull(std::string_view output_name, int timeout_ms) {
+  require_async_pull_mode("Run::pull(name)");
+  Sample out;
+  PullError err;
+  const PullStatus status = pull(output_name, timeout_ms, out, &err);
+  if (status == PullStatus::Ok) {
+    return out;
+  }
+  if (status == PullStatus::Error) {
+    throw_pull_failure_with_context("Run::pull(name)", status, std::move(err), last_error());
   }
   return std::nullopt;
 }
@@ -521,9 +673,23 @@ TensorList Run::pull_tensors(int timeout_ms) {
   throw_pull_failure_with_context("Run::pull_tensors", status, std::move(err), last_error());
 }
 
-SampleList Run::pull_samples(int timeout_ms) {
+TensorList Run::pull_tensors(std::string_view output_name, int timeout_ms) {
+  require_async_pull_mode("Run::pull_tensors(name)");
+  Sample out;
+  PullError err;
+  const PullStatus status = pull(output_name, timeout_ms, out, &err);
+  if (status == PullStatus::Ok) {
+    return tensors_from_sample(out, true);
+  }
+  if (status == PullStatus::Timeout || status == PullStatus::Closed) {
+    return {};
+  }
+  throw_pull_failure_with_context("Run::pull_tensors(name)", status, std::move(err), last_error());
+}
+
+Sample Run::pull_samples(int timeout_ms) {
   require_async_pull_mode("Run::pull_samples");
-  SampleList out;
+  Sample out;
   auto start = std::chrono::steady_clock::now();
   while (true) {
     PullError err;
@@ -553,38 +719,82 @@ SampleList Run::pull_samples(int timeout_ms) {
   }
 }
 
+Sample Run::pull_samples(std::string_view output_name, int timeout_ms) {
+  require_async_pull_mode("Run::pull_samples(name)");
+  Sample out;
+  auto start = std::chrono::steady_clock::now();
+  while (true) {
+    PullError err;
+    Sample sample;
+    int remaining = timeout_ms;
+    if (timeout_ms >= 0) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now() - start)
+                               .count();
+      remaining = static_cast<int>(timeout_ms - elapsed);
+      if (remaining < 0) {
+        remaining = 0;
+      }
+    }
+    const PullStatus status = pull(output_name, out.empty() ? remaining : 0, sample, &err);
+    if (status == PullStatus::Ok) {
+      out.push_back(std::move(sample));
+      continue;
+    }
+    if ((status == PullStatus::Timeout || status == PullStatus::Closed) && !out.empty()) {
+      return out;
+    }
+    if (status == PullStatus::Timeout || status == PullStatus::Closed) {
+      return out;
+    }
+    throw_pull_failure_with_context("Run::pull_samples(name)", status, std::move(err),
+                                    last_error());
+  }
+}
+
 TensorList Run::pull_tensors_strict(int timeout_ms) {
   Sample out;
   PullError err;
   const PullStatus status = pull(timeout_ms, out, &err);
   if (status == PullStatus::Ok) {
+    // Normalise detection-stage output tags before unwrapping to TensorList so the
+    // type-honest DetectionSpec slot is the source of truth even when the producing
+    // stage only signalled via Sample-level payload_tag / format.
+    tag_detection_format_in_sample(out);
     return tensors_from_sample(out, true);
   }
   throw_pull_failure_with_context("Run::run", status, std::move(err), last_error());
 }
 
-SampleList Run::pull_samples_strict(int timeout_ms) {
+Sample Run::pull_samples_strict(int timeout_ms) {
   Sample sample;
   PullError err;
   const PullStatus status = pull(timeout_ms, sample, &err);
   if (status == PullStatus::Ok) {
-    return SampleList{std::move(sample)};
+    tag_detection_format_in_sample(sample);
+    return Sample{std::move(sample)};
   }
   throw_pull_failure_with_context("Run::run", status, std::move(err), last_error());
 }
 
 void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
-  auto st = state_;
+  auto st = core_;
   validate_run_image_inputs(inputs, "Run::run");
   if (!st) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: stream is closed"));
   }
-  if (!st->supports_push) {
+  if (st->graph_execution_) {
+    if (!push(inputs)) {
+      throw_push_returned_false("Run::run", last_error());
+    }
+    return;
+  }
+  if (!st->pipeline.supports_push) {
     throw std::runtime_error(decorate_with_error_code(
         error_codes::kRuntimePull, "Run::run: pipeline has no Input (push not supported)"));
   }
-  if (!input_options_expect_tensor_media_local(st->tensor_input_opt_for_cv)) {
+  if (!input_options_expect_tensor_media_local(st->pipeline.tensor_input_opt_for_cv)) {
     if (inputs.size() != 1U) {
       throw std::runtime_error(decorate_with_error_code(
           error_codes::kRuntimePull,
@@ -599,11 +809,11 @@ void Run::enqueue_run_images(const std::vector<cv::Mat>& inputs) {
   tensors.reserve(inputs.size());
   for (const auto& input : inputs) {
     tensors.emplace_back(
-        tensor_from_cv_mat(input, *st->tensor_input_opt_for_cv, "Run::run(inputs)"));
+        tensor_from_cv_mat(input, *st->pipeline.tensor_input_opt_for_cv, "Run::run(inputs)"));
   }
-  if (!push_message_impl(
-          pipeline_internal::sample_from_tensors_for_input(tensors, *st->tensor_input_opt_for_cv),
-          true)) {
+  if (!push_message_impl(pipeline_internal::sample_from_tensors_for_input(
+                             tensors, *st->pipeline.tensor_input_opt_for_cv),
+                         true)) {
     throw_push_returned_false("Run::run", last_error());
   }
 }
@@ -613,30 +823,42 @@ void Run::enqueue_run_tensors(const TensorList& inputs) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: empty tensor list"));
   }
-  if (state_ && state_->input_route_processor) {
-    if (!push_message_impl(state_->input_route_processor->process_tensors(inputs, "Run::run"),
-                           true)) {
+  if (core_ && core_->graph_execution_) {
+    if (!push(inputs)) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;
   }
-  const Sample sample = (state_ && state_->tensor_input_opt_for_cv.has_value())
+  if (core_ && core_->pipeline.input_route_processor) {
+    if (!push_message_impl(
+            core_->pipeline.input_route_processor->process_tensors(inputs, "Run::run"), true)) {
+      throw_push_returned_false("Run::run", last_error());
+    }
+    return;
+  }
+  const Sample sample = (core_ && core_->pipeline.tensor_input_opt_for_cv.has_value())
                             ? pipeline_internal::sample_from_tensors_for_input(
-                                  inputs, *state_->tensor_input_opt_for_cv)
+                                  inputs, *core_->pipeline.tensor_input_opt_for_cv)
                             : sample_from_tensors(inputs);
   if (!push_message_impl(sample, true)) {
     throw_push_returned_false("Run::run", last_error());
   }
 }
 
-void Run::enqueue_run_samples(const SampleList& inputs) {
+void Run::enqueue_run_samples(const Sample& inputs) {
   if (inputs.empty()) {
     throw std::runtime_error(
         decorate_with_error_code(error_codes::kRuntimePull, "Run::run: empty sample list"));
   }
-  if (state_ && state_->input_route_processor) {
-    if (!push_message_impl(state_->input_route_processor->process_samples(inputs, "Run::run"),
-                           true)) {
+  if (core_ && core_->graph_execution_) {
+    if (!push(inputs)) {
+      throw_push_returned_false("Run::run", last_error());
+    }
+    return;
+  }
+  if (core_ && core_->pipeline.input_route_processor) {
+    if (!push_message_impl(
+            core_->pipeline.input_route_processor->process_samples(inputs, "Run::run"), true)) {
       throw_push_returned_false("Run::run", last_error());
     }
     return;
@@ -658,17 +880,25 @@ TensorList Run::run(const TensorList& inputs, int timeout_ms) {
   return pull_tensors_strict(timeout_ms);
 }
 
-SampleList Run::run(const SampleList& inputs, int timeout_ms) {
+Sample Run::run(const Sample& inputs, int timeout_ms) {
   enqueue_run_samples(inputs);
-  if (state_ && state_->input_route_processor) {
+  if (core_ && core_->pipeline.input_route_processor) {
     return pull_samples_strict(timeout_ms);
   }
-  SampleList out;
+  if (inputs.size() <= 1U) {
+    return pull_samples_strict(timeout_ms);
+  }
+  Sample out;
   out.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
-    SampleList batch = pull_samples_strict(timeout_ms);
-    out.insert(out.end(), std::make_move_iterator(batch.begin()),
-               std::make_move_iterator(batch.end()));
+    Sample batch = pull_samples_strict(timeout_ms);
+    if (batch.kind == SampleKind::Bundle) {
+      for (auto& field : batch.fields) {
+        out.push_back(std::move(field));
+      }
+    } else if (!batch.empty()) {
+      out.push_back(std::move(batch));
+    }
   }
   return out;
 }

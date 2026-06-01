@@ -34,6 +34,52 @@ InputOptions normalize_shape_bounds(const InputOptions& in) {
   return out;
 }
 
+InputOptions complete_input_options_from_seed_spec(const InputOptions& opt,
+                                                   const SampleSpec& seed) {
+  InputOptions out = normalize_shape_bounds(opt);
+  const InputOptions defaults{};
+  if (!out.caps_override.empty()) {
+    return out;
+  }
+
+  const bool default_media_seed = (out.payload_type == defaults.payload_type) &&
+                                  out.format.empty() && out.width <= 0 && out.height <= 0 &&
+                                  out.depth <= 0;
+  if ((out.payload_type == PayloadType::Auto || default_media_seed) && !seed.media_type.empty()) {
+    out.payload_type = input_type_from_media_type(seed.media_type);
+  }
+  if (out.format.empty() && !seed.format.empty()) {
+    out.format = seed.format;
+  }
+
+  if (seed.tensor_envelope_transport) {
+    return out;
+  }
+
+  const auto limits = resolve_shape_limits(out, seed);
+  if (out.width <= 0 && limits.seed_width > 0) {
+    out.width = limits.seed_width;
+  }
+  if (out.height <= 0 && limits.seed_height > 0) {
+    out.height = limits.seed_height;
+  }
+  if (out.depth <= 0 && limits.seed_depth > 0) {
+    out.depth = limits.seed_depth;
+  }
+
+  if (out.max_width <= 0 && limits.max_width > 0) {
+    out.max_width = limits.max_width;
+  }
+  if (out.max_height <= 0 && limits.max_height > 0) {
+    out.max_height = limits.max_height;
+  }
+  if (out.max_depth <= 0 && limits.max_depth > 0) {
+    out.max_depth = limits.max_depth;
+  }
+
+  return out;
+}
+
 bool has_explicit_shape_bounds(const InputOptions& opt) {
   return opt.width > 0 || opt.height > 0 || opt.depth > 0 || opt.max_width > 0 ||
          opt.max_height > 0 || opt.max_depth > 0;
@@ -159,11 +205,10 @@ std::size_t resolve_input_bytes_guard(std::size_t requested_max_input_bytes,
   return bounded_estimate_bytes;
 }
 
-SessionInputPolicyResult resolve_session_input_policy(const InputOptions& opt,
-                                                      const SampleSpec& seed,
-                                                      std::size_t requested_max_input_bytes,
-                                                      std::size_t bounded_estimate_bytes) {
-  SessionInputPolicyResult out;
+GraphInputPolicyResult resolve_graph_input_policy(const InputOptions& opt, const SampleSpec& seed,
+                                                  std::size_t requested_max_input_bytes,
+                                                  std::size_t bounded_estimate_bytes) {
+  GraphInputPolicyResult out;
   out.shape_policy = resolve_shape_policy(opt);
   out.shape_limits = resolve_shape_limits(opt, seed);
   out.max_input_bytes_guard = resolve_input_bytes_guard(
@@ -207,10 +252,10 @@ ModelInputPolicyResult resolve_model_input_policy(const ModelInputPolicyRequest&
   return out;
 }
 
-SessionInputPolicyResult resolve_for_session(const InputOptions& opt, const SampleSpec& seed,
-                                             std::size_t requested_max_input_bytes,
-                                             std::size_t bounded_estimate_bytes) {
-  return resolve_session_input_policy(opt, seed, requested_max_input_bytes, bounded_estimate_bytes);
+GraphInputPolicyResult resolve_for_graph(const InputOptions& opt, const SampleSpec& seed,
+                                         std::size_t requested_max_input_bytes,
+                                         std::size_t bounded_estimate_bytes) {
+  return resolve_graph_input_policy(opt, seed, requested_max_input_bytes, bounded_estimate_bytes);
 }
 
 ModelInputPolicyResult resolve_for_model(const ModelInputPolicyRequest& req) {

@@ -1,7 +1,7 @@
 #include "asset_utils.h"
-#include "builder/NodeGroup.h"
 #include "model/Model.h"
-#include "mpk_fixture_utils.h"
+#include "model/internal/ModelInternal.h"
+#include "model_archive_fixture_utils.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/BoxDecodeType.h"
@@ -13,11 +13,11 @@
 
 namespace {
 
-sima_test::MpkFixture make_fixture() {
-  return sima_test::make_strict_mpk_tar_fixture("boxdecode_render_manifest_model",
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_fixture() {
+  return sima_test::make_strict_model_archive_fixture("boxdecode_render_manifest_model",
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -50,8 +50,8 @@ sima_test::MpkFixture make_fixture() {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -60,8 +60,8 @@ sima_test::MpkFixture make_fixture() {
   "output_height": 640,
   "output_img_type": "RGB"
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "data_type": ["INT8"],
@@ -71,8 +71,8 @@ sima_test::MpkFixture make_fixture() {
   "q_scale": [0.125],
   "q_zp": [-7]
 })json"},
-                                                    {"etc/0_boxdecoder.json",
-                                                     R"json({
+                                                          {"etc/0_boxdecoder.json",
+                                                           R"json({
   "node_name": "boxdecode_0",
   "decode_type": "yolov8",
   "topk": 100,
@@ -88,8 +88,8 @@ sima_test::MpkFixture make_fixture() {
   "dq_scale": [0.5],
   "dq_zp": [1]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
 const simaai::neat::CompiledNodeContract*
@@ -173,10 +173,9 @@ RUN_TEST(
       // fixture; coverage should move to a fixture whose MPK declares
       // decode_type before re-enabling.
 
-      const NodeGroup infer = nodes::groups::Infer(model);
-      require(!infer.nodes().empty(), "inference fragment should contain renderable nodes");
+      auto nodes = internal::ModelAccess::build_public_inference_nodes(model);
+      require(!nodes.empty(), "inference fragment should contain renderable nodes");
 
-      std::vector<std::shared_ptr<Node>> nodes = infer.nodes();
       nodes.push_back(
           simaai::neat::nodes::SimaBoxDecode(model, BoxDecodeType::YoloV8, 0.25, 0.45, 100));
 

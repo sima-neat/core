@@ -91,11 +91,17 @@ inline std::filesystem::path resolve_people_image_path(const fs::path& root = {}
   return default_people_image_path(root);
 }
 
+inline bool path_exists_no_throw(const fs::path& path) {
+  std::error_code ec;
+  const bool exists = fs::exists(path, ec);
+  return exists && !ec;
+}
+
 inline cv::Mat load_people_image_or_skip(const fs::path& root = {}) {
   fs::path img_path = resolve_people_image_path(root);
-  if (!fs::exists(img_path)) {
+  if (!path_exists_no_throw(img_path)) {
     const fs::path downloaded = sima_e2e::ensure_coco_sample(root);
-    if (downloaded.empty() || !fs::exists(downloaded)) {
+    if (downloaded.empty() || !path_exists_no_throw(downloaded)) {
       skip_long_test_exception("Missing yolov8 test image and failed to download zidane sample. "
                                "Set SIMA_COCO_URL to override.");
     }
@@ -110,7 +116,7 @@ inline std::string resolve_yolov8s_tar_or_skip(const fs::path& root = {}) {
   const std::string tar_gz = sima_e2e::resolve_yolov8s_tar(root);
   if (tar_gz.empty()) {
     skip_long_test_exception(
-        "Failed to locate yolo_v8s MPK tarball. Set SIMA_MODEL_TAR (or SIMA_YOLO_TAR) or run "
+        "Failed to locate yolo_v8s model archive. Set SIMA_MODEL_TAR (or SIMA_YOLO_TAR) or run "
         "sima-cli modelzoo get yolo_v8s.");
   }
   return tar_gz;
@@ -172,6 +178,7 @@ inline fs::path ensure_yolov8n_drive_variants(const fs::path& root) {
   }
   require(!ec, "ensure_yolov8n_drive_variants: failed to create " + drive_dir.string() + " (" +
                    ec.message() + ")");
+  const sima_test::ScopedFileLock lock(drive_dir / ".download.lock");
 
   std::string base_url = yolov8n_variant_base_url();
   while (!base_url.empty() && base_url.back() == '/')

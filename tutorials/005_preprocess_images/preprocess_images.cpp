@@ -1,7 +1,7 @@
 // Run preprocessing standalone via stages::Preproc and inspect the resulting tensor.
 //
 // Usage:
-//   tutorial_005_preprocess_images --mpk /path/to/resnet_50.tar.gz [--size 224]
+//   tutorial_005_preprocess_images --model /path/to/resnet_50.tar.gz [--size 224]
 
 #include "neat.h"
 
@@ -37,9 +37,9 @@ int parse_int_arg(int argc, char** argv, const std::string& key, int def) {
 
 int main(int argc, char** argv) {
   try {
-    std::string mpk;
-    if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_005_preprocess_images --mpk <path> [--size <n>]\n";
+    std::string model_path;
+    if (!get_arg(argc, argv, "--model", model_path)) {
+      std::cerr << "Usage: tutorial_005_preprocess_images --model <path> [--size <n>]\n";
       return 1;
     }
     const int size = parse_int_arg(argc, argv, "--size", 224);
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
     opt.preprocess.normalize.mean = std::array<float, 3>{0.5f, 0.5f, 0.5f};
     opt.preprocess.normalize.stddev = std::array<float, 3>{0.5f, 0.5f, 0.5f};
 
-    simaai::neat::Model model(mpk, opt);
+    simaai::neat::Model model(model_path, opt);
 
     cv::Mat bgr(size, size, CV_8UC3, cv::Scalar(40, 80, 120));
     if (!bgr.isContinuous())

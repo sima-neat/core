@@ -1,10 +1,10 @@
 #include "genai/ASRModel.h"
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
+#include "genai/GraphFragments.h"
 #include "genai/OpenAIServer.h"
 #include "genai/VisionLanguageModel.h"
-#include "genai/nodes/SpeechTranscriber.h"
-#include "genai/nodes/VisionLanguage.h"
+#include "asset_utils.h"
 #include "test_main.h"
 
 #include <filesystem>
@@ -17,6 +17,16 @@
 RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            using namespace simaai::neat::genai;
 
+           const std::filesystem::path root = sima_test::test_source_root();
+           require(!std::filesystem::exists(root / "include/neat/graph.h"),
+                   "neat/graph.h must not be part of the source public header surface");
+           require(!std::filesystem::exists(root / "include/genai/nodes/VisionLanguage.h"),
+                   "genai/nodes/VisionLanguage.h must not be part of the source public GenAI "
+                   "header surface");
+           require(!std::filesystem::exists(root / "include/genai/nodes/SpeechTranscriber.h"),
+                   "genai/nodes/SpeechTranscriber.h must not be part of the source public GenAI "
+                   "header surface");
+
            GenAITask task = GenAITask::VisionLanguage;
            GenerationRequest request;
            request.prompt = std::string{"hello"};
@@ -27,8 +37,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            token.text = "tok";
            ChatMessage message{"user", "hello"};
            ImageList images;
-           nodes::VisionLanguageOptions vision_language_options;
-           nodes::SpeechTranscriberOptions speech_transcriber_options;
+           VisionLanguageOptions vision_language_options;
+           SpeechTranscriberOptions speech_transcriber_options;
            OpenAIServerOptions openai_options;
            openai_options.port = 9998;
            request.audio_file = std::filesystem::path{"audio.wav"};
@@ -50,8 +60,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            static_assert(std::is_move_constructible_v<GenerationStream>);
            static_assert(!std::is_copy_constructible_v<GenerationStream>);
            static_assert(std::is_copy_constructible_v<TokenSample>);
-           static_assert(std::is_default_constructible_v<nodes::VisionLanguageOptions>);
-           static_assert(std::is_default_constructible_v<nodes::SpeechTranscriberOptions>);
+           static_assert(std::is_default_constructible_v<VisionLanguageOptions>);
+           static_assert(std::is_default_constructible_v<SpeechTranscriberOptions>);
            static_assert(std::is_move_constructible_v<VisionLanguageModel>);
            static_assert(!std::is_copy_constructible_v<VisionLanguageModel>);
            static_assert(std::is_move_constructible_v<ASRModel>);
@@ -69,22 +79,22 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            auto genai_stream = &GenAIModel::stream;
            bool vision_language_rejected_null = false;
            try {
-             (void)nodes::VisionLanguage(nullptr);
+             (void)graphs::VisionLanguage(nullptr);
            } catch (const std::invalid_argument&) {
              vision_language_rejected_null = true;
            }
            if (!vision_language_rejected_null) {
-             throw std::runtime_error("genai::nodes::VisionLanguage should reject nullptr model");
+             throw std::runtime_error("genai::graphs::VisionLanguage should reject nullptr model");
            }
            bool speech_rejected_null = false;
            try {
-             (void)nodes::SpeechTranscriber(nullptr);
+             (void)graphs::SpeechTranscriber(nullptr);
            } catch (const std::invalid_argument&) {
              speech_rejected_null = true;
            }
            if (!speech_rejected_null) {
              throw std::runtime_error(
-                 "genai::nodes::SpeechTranscriber should reject nullptr model");
+                 "genai::graphs::SpeechTranscriber should reject nullptr model");
            }
 
            (void)task;

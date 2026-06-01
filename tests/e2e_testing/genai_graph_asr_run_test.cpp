@@ -1,9 +1,7 @@
 #include "genai/ASRModel.h"
-#include "genai/nodes/SpeechTranscriber.h"
-#include "graph/Graph.h"
-#include "graph/GraphRun.h"
-#include "graph/GraphSession.h"
-#include "pipeline/SessionOptions.h"
+#include "genai/GraphFragments.h"
+#include "pipeline/Graph.h"
+#include "pipeline/Run.h"
 #include "test_utils.h"
 
 #include <cstdlib>
@@ -202,25 +200,23 @@ struct GraphOutputs {
   bool saw_error = false;
 };
 
-GraphOutputs pull_graph_outputs(simaai::neat::graph::GraphRun& run,
-                                simaai::neat::graph::NodeId node_id, bool stop_on_error = false) {
+GraphOutputs pull_graph_outputs(simaai::neat::Run& run, bool stop_on_error = false) {
   GraphOutputs outputs;
-  for (int i = 0; i < 16; ++i) {
-    auto sample = run.pull(node_id, 60000);
-    require(sample.has_value(), "GraphRun::pull timed out");
-    if (sample->port_name == "tokens" || sample->stream_label == "tokens") {
+  for (int i = 0; i < 64; ++i) {
+    if (auto sample = run.pull("tokens", 500)) {
       outputs.tokens += sample_text(*sample);
-    } else if (sample->port_name == "done" || sample->stream_label == "done") {
+      continue;
+    }
+    if (auto sample = run.pull("done", 10)) {
       outputs.saw_done = true;
       break;
-    } else if (sample->port_name == "error" || sample->stream_label == "error") {
+    }
+    if (auto sample = run.pull("error", 10)) {
       outputs.error = sample_text(*sample);
       outputs.saw_error = true;
       if (stop_on_error) {
         break;
       }
-    } else {
-      throw std::runtime_error("unexpected graph output port: " + sample->port_name);
     }
   }
   return outputs;
@@ -243,57 +239,50 @@ int main(int argc, char** argv) {
     auto model = std::make_shared<simaai::neat::genai::ASRModel>(model_dir);
     require(model->accepts_audio(), "ASR model should accept audio");
 
-    simaai::neat::graph::Graph graph;
-    const auto audio_port = graph.intern_port("audio");
-    const auto audio_path_port = graph.intern_port("audio_path");
-    const auto asr_node = graph.add(simaai::neat::genai::nodes::SpeechTranscriber(
-        model, simaai::neat::genai::nodes::SpeechTranscriberOptions{.language = "en"},
+    simaai::neat::Graph graph;
+    graph.add(simaai::neat::genai::graphs::SpeechTranscriber(
+        model, simaai::neat::genai::SpeechTranscriberOptions{.language = "en"},
         "speech_transcriber"));
 
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
+    simaai::neat::Run run = graph.build();
 
-    require(run.push(asr_node, audio_path_port, make_audio_path_input(audio_path, 1)),
-            "GraphRun::push audio_path failed");
-    const GraphOutputs file_outputs = pull_graph_outputs(run, asr_node);
+    require(run.push("audio_path", make_audio_path_input(audio_path, 1)),
+            "Run::push audio_path failed");
+    const GraphOutputs file_outputs = pull_graph_outputs(run);
     require(file_outputs.saw_done, "ASR graph audio_path did not emit done");
     require(!file_outputs.saw_error, "ASR graph audio_path emitted error: " + file_outputs.error);
     std::cout << "GENAI_GRAPH_ASR_FILE text=\n" << file_outputs.tokens << "\n";
     require(normalize_transcript(file_outputs.tokens) == kExpectedTranscript,
             "ASR graph audio_path transcript mismatch: " + trim_text(file_outputs.tokens));
 
-    require(run.push(asr_node, audio_port, make_audio_input(pcm, 2)),
-            "GraphRun::push audio failed");
-    const GraphOutputs pcm_outputs = pull_graph_outputs(run, asr_node);
+    require(run.push("audio", make_audio_input(pcm, 2)), "Run::push audio failed");
+    const GraphOutputs pcm_outputs = pull_graph_outputs(run);
     require(pcm_outputs.saw_done, "ASR graph PCM did not emit done");
     require(!pcm_outputs.saw_error, "ASR graph PCM emitted error: " + pcm_outputs.error);
     std::cout << "GENAI_GRAPH_ASR_PCM text=\n" << pcm_outputs.tokens << "\n";
     require(normalize_transcript(pcm_outputs.tokens) == kExpectedTranscript,
             "ASR graph PCM transcript mismatch: " + trim_text(pcm_outputs.tokens));
 
-    require(run.push(asr_node, audio_port, make_invalid_audio_input()),
-            "GraphRun::push invalid audio failed");
-    const GraphOutputs error_outputs = pull_graph_outputs(run, asr_node, true);
+    require(run.push("audio", make_invalid_audio_input()), "Run::push invalid audio failed");
+    const GraphOutputs error_outputs = pull_graph_outputs(run, true);
     require(error_outputs.saw_error, "ASR graph invalid audio should emit error");
     require(!error_outputs.error.empty(), "ASR graph error text should be non-empty");
 
     run.stop();
 
-    simaai::neat::graph::Graph sync_graph;
-    const auto sync_audio_path_port = sync_graph.intern_port("audio_path");
-    const auto sync_asr_node = sync_graph.add(simaai::neat::genai::nodes::SpeechTranscriber(
+    simaai::neat::Graph sync_graph;
+    sync_graph.add(simaai::neat::genai::graphs::SpeechTranscriber(
         model,
-        simaai::neat::genai::nodes::SpeechTranscriberOptions{
+        simaai::neat::genai::SpeechTranscriberOptions{
             .language = "en",
             .streaming = false,
         },
         "speech_transcriber_sync"));
 
-    simaai::neat::graph::GraphRun sync_run =
-        simaai::neat::graph::GraphSession(std::move(sync_graph)).build();
-    require(
-        sync_run.push(sync_asr_node, sync_audio_path_port, make_audio_path_input(audio_path, 3)),
-        "GraphRun::push sync audio_path failed");
-    const GraphOutputs sync_outputs = pull_graph_outputs(sync_run, sync_asr_node);
+    simaai::neat::Run sync_run = sync_graph.build();
+    require(sync_run.push("audio_path", make_audio_path_input(audio_path, 3)),
+            "Run::push sync audio_path failed");
+    const GraphOutputs sync_outputs = pull_graph_outputs(sync_run);
     require(sync_outputs.saw_done, "ASR graph sync audio_path did not emit done");
     require(!sync_outputs.saw_error,
             "ASR graph sync audio_path emitted error: " + sync_outputs.error);

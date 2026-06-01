@@ -29,24 +29,33 @@ bool abort_on_hung_stop_threads() {
 
 } // namespace
 
-void Run::close_input() {
-  if (!state_)
-    return;
-  auto st = state_;
-  {
-    std::lock_guard<std::mutex> lock(st->in_mu);
-    st->input_closed = true;
-  }
-  st->in_cv.notify_all();
+runtime::RunCore::~RunCore() {
+  close();
 }
 
-void Run::stop() {
-  if (!state_)
+void runtime::RunCore::close_input() {
+  auto* st = this;
+  {
+    std::lock_guard<std::mutex> lock(st->pipeline.in_mu);
+    st->pipeline.input_closed = true;
+  }
+  st->pipeline.in_cv.notify_all();
+}
+
+void Run::close_input() {
+  if (core_)
+    core_->close_input();
+}
+
+void runtime::RunCore::stop() {
+  if (graph_execution_) {
+    stop_graph();
     return;
+  }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::stop begin\n");
   }
-  auto st = state_;
+  auto* st = this;
   if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
       pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
     std::fprintf(stderr, "[PIPELINE] stop called\n");
@@ -54,22 +63,22 @@ void Run::stop() {
   // Ensure the input thread can exit cleanly.
   close_input();
   {
-    std::lock_guard<std::mutex> lock(st->in_mu);
-    st->in_queue.clear();
+    std::lock_guard<std::mutex> lock(st->pipeline.in_mu);
+    st->pipeline.in_queue.clear();
   }
   st->stop_requested.store(true);
   if (st->power_monitor) {
     st->power_monitor->stop();
   }
-  st->in_cv.notify_all();
-  st->out_cv.notify_all();
-  st->stream.stop_async();
+  st->pipeline.in_cv.notify_all();
+  st->pipeline.out_cv.notify_all();
+  st->pipeline.stream.stop_async();
   // Stop the underlying stream first to unblock any appsrc push waiting on downstream.
   const int stream_stop_timeout_ms =
       std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_STREAM_STOP_TIMEOUT_MS", 2000));
   const int stream_stop_timeout_ms_2 = stream_stop_timeout_ms;
   if (stream_stop_timeout_ms <= 0) {
-    st->stream.stop();
+    st->pipeline.stream.stop();
   } else {
     struct StopCtx {
       std::atomic<bool> done{false};
@@ -77,7 +86,7 @@ void Run::stop() {
     auto ctx = std::make_shared<StopCtx>();
     std::thread stop_thread([st, ctx]() {
       try {
-        st->stream.stop();
+        st->pipeline.stream.stop();
       } catch (const std::exception& e) {
         if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
             pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
@@ -102,7 +111,7 @@ void Run::stop() {
                      "[PIPELINE] stop: stream.stop did not exit within %dms; forcing stop\n",
                      stream_stop_timeout_ms);
       }
-      st->stream.stop_async();
+      st->pipeline.stream.stop_async();
       if (stream_stop_timeout_ms_2 > 0) {
         const auto extra_deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(stream_stop_timeout_ms_2);
@@ -131,38 +140,38 @@ void Run::stop() {
       }
     }
   }
-  if (st->input_thread.joinable()) {
+  if (st->pipeline.input_thread.joinable()) {
     const int timeout_ms =
         std::max(0, pipeline_internal::env_int("SIMA_PIPELINE_INPUT_THREAD_STOP_TIMEOUT_MS", 2000));
     const int timeout_ms_2 = timeout_ms;
     if (timeout_ms > 0) {
       const auto deadline =
           std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-      while (!st->input_thread_done.load(std::memory_order_relaxed)) {
+      while (!st->pipeline.input_thread_done.load(std::memory_order_relaxed)) {
         if (std::chrono::steady_clock::now() >= deadline)
           break;
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
       }
     }
-    if (!st->input_thread_done.load(std::memory_order_relaxed)) {
+    if (!st->pipeline.input_thread_done.load(std::memory_order_relaxed)) {
       if (pipeline_internal::env_bool("SIMA_PIPELINE_DEBUG", false) ||
           pipeline_internal::env_bool("SIMA_GRAPH_DEBUG", false)) {
         std::fprintf(stderr,
                      "[PIPELINE] stop: input_thread did not exit within %dms; forcing stop\n",
                      timeout_ms);
       }
-      st->stream.stop_async();
+      st->pipeline.stream.stop_async();
       if (timeout_ms_2 > 0) {
         const auto extra_deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms_2);
-        while (!st->input_thread_done.load(std::memory_order_relaxed)) {
+        while (!st->pipeline.input_thread_done.load(std::memory_order_relaxed)) {
           if (std::chrono::steady_clock::now() >= extra_deadline)
             break;
           std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
       }
     }
-    if (!st->input_thread_done.load(std::memory_order_relaxed)) {
+    if (!st->pipeline.input_thread_done.load(std::memory_order_relaxed)) {
       const int waited_ms = timeout_ms + timeout_ms_2;
       if (abort_on_hung_stop_threads()) {
         std::fprintf(stderr,
@@ -175,54 +184,44 @@ void Run::stop() {
                    "[PIPELINE] stop: input_thread did not exit after %dms; detaching "
                    "input thread and continuing\n",
                    waited_ms);
-      st->input_thread.detach();
+      st->pipeline.input_thread.detach();
       return;
     }
-    st->input_thread.join();
+    st->pipeline.input_thread.join();
   }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::stop end\n");
   }
 }
 
-void Run::close() {
-  if (!state_)
+void Run::stop() {
+  if (core_)
+    core_->stop();
+}
+
+void runtime::RunCore::close() {
+  if (closed.exchange(true))
     return;
+  if (closed_wall_at.time_since_epoch().count() == 0) {
+    closed_wall_at = std::chrono::system_clock::now();
+  }
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::close begin\n");
   }
-  auto st = state_;
-  if (!owns_ref_) {
-    if (pipeline_internal::env_bool("SIMA_PIPELINE_TEARDOWN_DEBUG", false)) {
-      const int refs = st->handle_refs.load(std::memory_order_relaxed);
-      std::printf("[DBG] Run::close: no-handle-ref handle_refs=%d\n", refs);
-    }
-    state_.reset();
-    return;
-  }
-  owns_ref_ = false;
-  const int remaining = st->handle_refs.fetch_sub(1, std::memory_order_acq_rel) - 1;
+  auto* st = this;
   if (pipeline_internal::env_bool("SIMA_PIPELINE_TEARDOWN_DEBUG", false)) {
-    std::printf("[DBG] Run::close: handle_refs=%d action=%s\n", remaining,
-                (remaining > 0) ? "defer" : "teardown");
-  }
-  if (remaining > 0) {
-    state_.reset();
-    return;
-  }
-  if (remaining < 0) {
-    st->handle_refs.store(0, std::memory_order_relaxed);
+    std::printf("[DBG] Run::close: teardown\n");
   }
   stop();
   const int drain_ms = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_BEFORE_TEARDOWN_MS", 1500);
   const int drain_min_outputs = pipeline_internal::env_int("SIMA_PIPELINE_DRAIN_MIN_OUTPUTS", 1);
-  if (drain_ms > 0 && st->supports_pull &&
+  if (drain_ms > 0 && st->pipeline.supports_pull &&
       st->outputs_pulled.load(std::memory_order_relaxed) <= drain_min_outputs) {
-    st->stream.drain_before_teardown(drain_ms);
+    st->pipeline.stream.drain_before_teardown(drain_ms);
   }
   if (st->diag_enabled && !st->diag_logged.exchange(true)) {
     auto log_diag = [&](auto& st_ref) {
-      const auto diag = st_ref.stream.diag_ctx();
+      const auto diag = st_ref.pipeline.stream.diag_ctx();
       std::ostringstream oss;
       oss << "[DIAG] async_tput\n";
       if (diag && !diag->pipeline_string.empty()) {
@@ -322,7 +321,7 @@ void Run::close() {
           << " min_latency_ms=" << run_stats.min_latency_ms
           << " max_latency_ms=" << run_stats.max_latency_ms << "\n";
 
-      const InputStreamStats is = st_ref.stream.stats();
+      const InputStreamStats is = st_ref.pipeline.stream.stats();
       oss << "InputStreamStats: push_count=" << is.push_count
           << " push_failures=" << is.push_failures << " pull_count=" << is.pull_count
           << " poll_count=" << is.poll_count << " dropped_frames=" << is.dropped_frames
@@ -342,11 +341,17 @@ void Run::close() {
     };
     log_diag(*st);
   }
-  st->stream.close();
-  state_.reset();
+  st->pipeline.stream.close();
   if (stop_trace_enabled()) {
     std::fprintf(stderr, "[STOP] Run::close end\n");
   }
+}
+
+void Run::close() {
+  if (!core_)
+    return;
+  core_->close();
+  core_.reset();
 }
 
 } // namespace simaai::neat

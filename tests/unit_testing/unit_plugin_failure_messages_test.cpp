@@ -1,5 +1,5 @@
-#include "pipeline/Session.h"
-#include "pipeline/SessionError.h"
+#include "pipeline/Graph.h"
+#include "pipeline/NeatError.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/Caps.h"
@@ -32,12 +32,12 @@ static void maybe_dump_error(const std::string& label, const std::string& err) {
   std::cout << "[ERR] " << label << ": " << err << "\n";
 }
 
+using simaai::neat::Graph;
+using simaai::neat::NeatError;
 using simaai::neat::Run;
 using simaai::neat::RunMode;
 using simaai::neat::RunOptions;
 using simaai::neat::Sample;
-using simaai::neat::Session;
-using simaai::neat::SessionError;
 using simaai::neat::nodes::Custom;
 using simaai::neat::nodes::H264Decode;
 using simaai::neat::nodes::H264EncodeSima;
@@ -67,12 +67,12 @@ static std::string expect_pipeline_error(const std::string& label,
                                          const std::function<void()>& fn) {
   try {
     fn();
-  } catch (const SessionError& e) {
+  } catch (const NeatError& e) {
     return std::string(e.what());
   } catch (const std::exception& e) {
-    throw std::runtime_error(label + ": expected SessionError, got: " + e.what());
+    throw std::runtime_error(label + ": expected NeatError, got: " + e.what());
   }
-  throw std::runtime_error(label + ": expected SessionError, got success");
+  throw std::runtime_error(label + ": expected NeatError, got success");
 }
 
 static void require_node_field(const std::string& err, const std::string& node) {
@@ -269,9 +269,9 @@ static void test_processmla_failure() {
                                             "    ]\n"
                                             "  }\n"
                                             "}\n");
-  Session p;
+  Graph p;
   const std::string frag =
-      "fakesrc ! neatprocessmla name=mla_fail config=" + cfg.path + " ! fakesink";
+      "fakesrc ! neatprocessmla name=mla_fail config=" + cfg.path + " num-buffers=4 ! fakesink";
   p.add(Custom(frag, simaai::neat::InputRole::Source));
 
   RunOptions opt;
@@ -309,7 +309,7 @@ static void test_boxdecode_failure() {
                                             "    }\n"
                                             "  }\n"
                                             "}\n");
-  Session p;
+  Graph p;
   const std::string frag =
       "fakesrc ! neatboxdecode name=box_fail config=" + cfg.path + " ! fakesink";
   p.add(Custom(frag, simaai::neat::InputRole::Source));
@@ -644,12 +644,12 @@ static void test_neatdecoder_failure() {
                            "parsed=(boolean)true,width=64,height=64,framerate=30/1";
 
   simaai::neat::InputOptions src_opt;
-  src_opt.media_type = "video/x-h264";
+  src_opt.payload_type = simaai::neat::PayloadType::Encoded;
   src_opt.format = simaai::neat::FormatTag::H264;
   src_opt.caps_override = caps;
   src_opt.use_simaai_pool = false;
 
-  Session p;
+  Graph p;
   p.add(Input(src_opt));
   p.add(H264Decode(/*sima_allocator_type=*/2,
                    /*out_format=*/"NV12",
@@ -666,7 +666,7 @@ static void test_neatdecoder_failure() {
   opt.queue_depth = 1;
 
   const std::string err = expect_pipeline_error("neatdecoder", [&] {
-    Run run = p.build(simaai::neat::SampleList{sample}, RunMode::Async, opt);
+    Run run = p.build(simaai::neat::Sample{sample}, RunMode::Async, opt);
     (void)run;
   });
 
@@ -682,7 +682,7 @@ static void test_neatencoder_dynamic_caps() {
   const int in_h = 32;
 
   simaai::neat::InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
   src_opt.format = simaai::neat::FormatTag::NV12;
   src_opt.width = in_w;
   src_opt.height = in_h;
@@ -690,7 +690,7 @@ static void test_neatencoder_dynamic_caps() {
   src_opt.fps_d = 1;
   src_opt.use_simaai_pool = false;
 
-  Session p;
+  Graph p;
   p.add(Input(src_opt));
   p.add(H264EncodeSima(/*w=*/64, /*h=*/64, /*fps=*/30));
   p.add(Output(simaai::neat::OutputOptions::Latest()));

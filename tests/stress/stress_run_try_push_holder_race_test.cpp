@@ -1,6 +1,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -33,23 +33,23 @@ RUN_TEST("stress_run_try_push_holder_race_test", ([] {
 
            const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 200));
 
-           Session session;
+           Graph graph;
            InputOptions src_opt;
-           src_opt.media_type = "video/x-raw";
+           src_opt.payload_type = simaai::neat::PayloadType::Image;
            src_opt.format = simaai::neat::FormatTag::RGB;
            src_opt.use_simaai_pool = false;
            src_opt.max_width = 96;
            src_opt.max_height = 96;
            src_opt.max_depth = 3;
-           session.add(nodes::Input(src_opt));
-           session.add(nodes::Output(OutputOptions::EveryFrame(256)));
+           graph.add(nodes::Input(src_opt));
+           graph.add(nodes::Output(OutputOptions::EveryFrame(256)));
 
            RunOptions run_opt;
            run_opt.queue_depth = 256;
            run_opt.overflow_policy = OverflowPolicy::Block;
 
            Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x66);
-           Run run = session.build(TensorList{seed}, RunMode::Async, run_opt);
+           Run run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
 
            // Prime one holder from a regular push/pull path.
            TensorList prime = run.run(TensorList{seed}, 1000);

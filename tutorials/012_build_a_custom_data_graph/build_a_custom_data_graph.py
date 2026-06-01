@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a two-node pyneat.graph.Graph and push/pull one tensor Sample.
+"""Build a minimal public pyneat.Graph and push/pull one tensor Sample.
 
 Usage:
   python3 build_a_custom_data_graph.py
@@ -26,7 +26,8 @@ def make_rgb_sample():
   sample.kind = pyneat.SampleKind.Tensor
   sample.tensor = pyneat.Tensor.from_numpy(arr, copy=True, image_format=pyneat.PixelFormat.RGB)
   sample.stream_id = "graph"
-  sample.frame_id = -1
+  sample.frame_id = 42
+  sample.pts_ns = 123456789
   return sample
 
 
@@ -34,18 +35,18 @@ def main(argv: list[str]) -> int:
   argparse.ArgumentParser(description=__doc__).parse_args(argv[1:])
 
   # CORE LOGIC
-  graph = pyneat.graph.Graph()
-  pipe = graph.add(pyneat.graph.nodes.pipeline_node(pyneat.nodes.video_convert(), "convert"))
-  stamp = graph.add(pyneat.graph.nodes.stamp_frame_id("stamp"))
-  graph.connect(pipe, stamp)
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input("image"))
+  graph.add(pyneat.nodes.output("out"))
+  graph.connect("image", "out")
 
-  run = pyneat.graph.GraphSession(graph).build()
-  run.push(pipe, make_rgb_sample())
-  out = run.pull(stamp, 2000)
-  run.stop()
+  run = graph.build()
+  run.push("image", [make_rgb_sample()])
+  out = run.pull("out", 2000)
+  run.close()
   # END CORE LOGIC
 
-  print(f"stream_id={out.stream_id} frame_id={out.frame_id}")
+  print(f"stream_id={out.stream_id} frame_id={out.frame_id} pts_ns={out.pts_ns}")
   return 0
 
 

@@ -1,4 +1,4 @@
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
 #include "test_main.h"
 

@@ -6,7 +6,7 @@
 #pragma once
 
 #include "graph/Graph.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include <cstdint>
 #include <string>
@@ -90,6 +90,9 @@ inline void ensure_stream_metadata(Sample& sample, const StreamMetadataDefaults&
   }
   if (sample.media_type.empty() && !defaults.media_type.empty()) {
     sample.media_type = defaults.media_type;
+  }
+  if (sample.payload_type == PayloadType::Auto && !sample.media_type.empty()) {
+    sample.payload_type = payload_type_from_media_type(sample.media_type);
   }
   if (sample.format.empty() && !defaults.format.empty()) {
     sample.format = defaults.format;

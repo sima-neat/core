@@ -15,6 +15,7 @@
 #include "nodes/rtp/H264Depacketize.h"
 #include "nodes/sima/H264DecodeSima.h"
 #include "nodes/sima/H264Parse.h"
+#include "pipeline/Graph.h"
 
 #include "test_utils.h"
 
@@ -23,25 +24,40 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
 
-void compare_groups(const simaai::neat::NodeGroup& a, const simaai::neat::NodeGroup& b) {
-  const auto& an = a.nodes();
-  const auto& bn = b.nodes();
-  require(an.size() == bn.size(), "NodeGroup size mismatch");
+using simaai::neat::Graph;
 
-  for (size_t i = 0; i < an.size(); ++i) {
-    require(an[i] && bn[i], "Null node in group comparison");
-    require(an[i]->kind() == bn[i]->kind(), "Node kind mismatch");
-    require(an[i]->user_label() == bn[i]->user_label(), "Node label mismatch");
-    require(an[i]->backend_fragment(static_cast<int>(i)) ==
-                bn[i]->backend_fragment(static_cast<int>(i)),
-            "backend_fragment mismatch");
-    require(an[i]->element_names(static_cast<int>(i)) == bn[i]->element_names(static_cast<int>(i)),
-            "element_names mismatch");
+static_assert(
+    std::is_same_v<decltype(simaai::neat::nodes::groups::ImageInputGroup(
+                       std::declval<const simaai::neat::nodes::groups::ImageInputGroupOptions&>())),
+                   Graph>);
+static_assert(
+    std::is_same_v<decltype(simaai::neat::nodes::groups::VideoInputGroup(
+                       std::declval<const simaai::neat::nodes::groups::VideoInputGroupOptions&>())),
+                   Graph>);
+static_assert(std::is_same_v<
+              decltype(simaai::neat::nodes::groups::RtspDecodedInput(
+                  std::declval<const simaai::neat::nodes::groups::RtspDecodedInputOptions&>())),
+              Graph>);
+
+Graph graph_from_nodes(std::vector<std::shared_ptr<simaai::neat::Node>> nodes) {
+  Graph graph;
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
   }
+  return graph;
+}
+
+void compare_graph_fragments(const Graph& actual, const Graph& expected) {
+  const std::string actual_text = actual.describe();
+  const std::string expected_text = expected.describe();
+  require(actual_text == expected_text,
+          "Graph fragment mismatch\nactual:\n" + actual_text + "\nexpected:\n" + expected_text);
 }
 
 } // namespace
@@ -87,7 +103,7 @@ int main(int argc, char** argv) {
                                                       io.output_caps.height, img_fps,
                                                       io.output_caps.memory));
 
-    compare_groups(group_img, simaai::neat::NodeGroup(std::move(manual_img)));
+    compare_graph_fragments(group_img, graph_from_nodes(std::move(manual_img)));
 
     // ----------------------------
     // Video group
@@ -110,7 +126,7 @@ int main(int argc, char** argv) {
     manual_vid.push_back(simaai::neat::nodes::Queue());
     manual_vid.push_back(simaai::neat::nodes::H264Decode(vo.sima_allocator_type, vo.out_format));
 
-    compare_groups(group_vid, simaai::neat::NodeGroup(std::move(manual_vid)));
+    compare_graph_fragments(group_vid, graph_from_nodes(std::move(manual_vid)));
 
     // ----------------------------
     // RTSP group
@@ -138,7 +154,7 @@ int main(int argc, char** argv) {
         ro.sima_allocator_type, ro.out_format, ro.decoder_name, ro.decoder_raw_output,
         ro.decoder_next_element, ro.h264_width, ro.h264_height, ro.h264_fps));
 
-    compare_groups(group_rtsp, simaai::neat::NodeGroup(std::move(manual_rtsp)));
+    compare_graph_fragments(group_rtsp, graph_from_nodes(std::move(manual_rtsp)));
 
     std::cout << "[OK] unit_groups_test passed\n";
     return 0;

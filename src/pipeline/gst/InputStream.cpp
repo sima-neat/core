@@ -1,7 +1,7 @@
 // src/pipeline/internal/InputStream.cpp
 #include "InputStream.h"
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "InputStreamUtil.h"
 
@@ -343,7 +343,7 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
       ret == GST_FLOW_EOS) {
     oss << ". Hint: stream is stopping or EOS has been reached.";
   } else {
-    oss << ". Hint: inspect SessionReport/Run report bus diagnostics for upstream GST errors.";
+    oss << ". Hint: inspect GraphReport/Run report bus diagnostics for upstream GST errors.";
   }
   return oss.str();
 }
@@ -623,12 +623,18 @@ bool handle_appsrc_push_fail(InputStream::State& st, const char* where, GstFlowR
     pipeline_internal::throw_if_bus_error(st.pipeline, st.diag, "InputStream::push_fail");
     pipeline_internal::drain_bus(st.pipeline, st.diag, "InputStream::push_fail");
   }
-  set_stream_error(st, format_push_failure_error(st, where, ret));
   log_push_failure(st, where, ret);
   if (ret == GST_FLOW_FLUSHING || ret == GST_FLOW_EOS) {
+    if (st.stop_requested.load(std::memory_order_relaxed) ||
+        st.teardown_started.load(std::memory_order_relaxed)) {
+      st.stop_requested.store(true);
+      return false;
+    }
+    set_stream_error(st, format_push_failure_error(st, where, ret));
     st.stop_requested.store(true);
     return false;
   }
+  set_stream_error(st, format_push_failure_error(st, where, ret));
   return true;
 }
 
@@ -759,9 +765,9 @@ BuiltBuffer build_buffer_with_fill(
     const std::optional<int64_t>& orig_input_seq_override,
     const std::optional<std::string>& stream_id_override,
     const std::optional<std::string>& buffer_name_override,
-    const std::optional<uint64_t>& timestamp_override,
-    const std::function<void(GstBuffer**)>& prepare, bool record_timings, const char* op_tag,
-    bool release_reuse_buffer_on_fail, int input_width, int input_height) {
+    const SampleTimingOverrides& timing_override, const std::function<void(GstBuffer**)>& prepare,
+    bool record_timings, const char* op_tag, bool release_reuse_buffer_on_fail, int input_width,
+    int input_height) {
   const char* tag = (op_tag && *op_tag) ? op_tag : "build_buffer_with_fill";
   verify_buffer_name_override(st.src_opt, buffer_name_override, where);
   std::chrono::steady_clock::time_point t_alloc_start{};
@@ -847,7 +853,13 @@ BuiltBuffer build_buffer_with_fill(
     throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
   }
   update_simaai_meta_fields(buf, frame_id_override, input_seq_override, orig_input_seq_override,
-                            stream_id_override, buffer_name_override, timestamp_override);
+                            stream_id_override, buffer_name_override, timing_override.pts_ns);
+  if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":sample_timing_fail").c_str());
+    }
+    throw std::runtime_error(std::string(where) + ": failed to write sample timing metadata");
+  }
   if (!has_simaai_preprocess_meta(buf) && input_width > 0 && input_height > 0) {
     (void)apply_simaai_preprocess_meta_template(buf, st.src_opt, input_width, input_height);
   }
@@ -968,7 +980,7 @@ bool InputStream::push_with_fill(const char* where,
                                  const std::optional<int64_t>& orig_input_seq_override,
                                  const std::optional<std::string>& stream_id_override,
                                  const std::optional<std::string>& buffer_name_override,
-                                 const std::optional<uint64_t>& timestamp_override,
+                                 const SampleTimingOverrides& timing_override,
                                  const std::function<void(GstBuffer**)>& prepare, int input_width,
                                  int input_height) {
   auto st = state_;
@@ -985,8 +997,8 @@ bool InputStream::push_with_fill(const char* where,
       push_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   BuiltBuffer built = build_buffer_with_fill(
       *st, where, fill, required_bytes, frame_id_override, input_seq_override,
-      orig_input_seq_override, stream_id_override, buffer_name_override, timestamp_override,
-      prepare, timings || push_timing, "push_with_fill", true, input_width, input_height);
+      orig_input_seq_override, stream_id_override, buffer_name_override, timing_override, prepare,
+      timings || push_timing, "push_with_fill", true, input_width, input_height);
   const auto t_build_end =
       push_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   GstBuffer* buf = built.buffer;

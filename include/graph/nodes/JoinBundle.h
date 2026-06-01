@@ -46,6 +46,10 @@ struct JoinBundleOptions {
   std::vector<std::string> inputs;          ///< Names of input ports participating in the join.
   std::unordered_set<std::string> required; ///< Inputs required for emission; default: all inputs.
   JoinKeyPolicy key_policy = JoinKeyPolicy::StreamFrame; ///< How samples are keyed for joining.
+  bool include_stream_id_in_key =
+      true; ///< Legacy default: include stream_id in the join key before frame/PTS.
+  bool allow_key_fallback =
+      true; ///< Legacy default: fall back between frame_id and PTS when the selected key is absent.
   bool emit_partial = false; ///< If true, emit a bundle even when only required inputs are present.
   std::size_t max_pending_keys =
       4096;           ///< Upper bound on keys held in flight before evicting oldest.

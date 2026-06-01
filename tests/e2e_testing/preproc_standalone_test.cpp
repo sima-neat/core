@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/Preproc.h"
@@ -42,7 +42,7 @@ int main() {
     const simaai::neat::Tensor tensor_rgb = simaai::neat::Tensor::from_cv_mat(
         img, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74);
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
 
     simaai::neat::InputOptions src_opt;
     src_opt.format = simaai::neat::FormatTag::RGB;

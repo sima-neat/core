@@ -33,7 +33,7 @@ Your shell's current directory is now the root of the extras tree. All tutorial 
 
 ### Tutorial models
 
-Some chapters need Model Zoo MPKs. `build.sh` reads the tutorial metadata and the installed dependency manifest, then downloads the right model versions for your platform. By default, models are prepared under `/tmp`.
+Some chapters need Model Zoo model archives. `build.sh` reads the tutorial metadata and the installed dependency manifest, then downloads the right model versions for your platform. By default, models are prepared under `/tmp`.
 
 When you build C++ tutorials from source, models are downloaded automatically before the build:
 
@@ -120,6 +120,6 @@ cmake -S . -B build && cmake --build build -j
 
 `find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
-For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see the [Hello Neat Minimal Example](/getting-started/minimal_example).
+For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see [Hello Neat](/getting-started/minimal_example).
 
 <p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>

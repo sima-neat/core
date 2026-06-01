@@ -19,7 +19,7 @@ A release is blocked unless all conditions below are true:
 5. Working tree is clean after generation steps.
 6. Zero unresolved crash/correctness failures before push and on release refs.
 7. Crash/correctness/stress/sanitizer gates are green on the release ref.
-8. MPK security gate is green (`mpk-security-gate`).
+8. Model-archive security gate is green (`model-archive-security-gate`).
 9. Install smoke gate is green (`install-smoke`).
 10. Performance regression gate is green (`perf-regression-gate`).
 11. Soak stability lane is green for release tags (`soak-weekly`).
@@ -45,7 +45,7 @@ The following checks are required on release PRs and release tags:
 - `configure-build-sanity`
 - `docs-link-check`
 - `crash-correctness-gate`
-- `mpk-security-gate`
+- `model-archive-security-gate`
 - `install-smoke`
 - `perf-regression-gate`
 - `zero-skip-gate`
@@ -59,7 +59,7 @@ These checks are implemented in:
 
 - `.github/workflows/release-gate.yml`
 - `.github/workflows/test-crash-correctness-nightly.yml`
-- `.github/workflows/mpk-security.yml`
+- `.github/workflows/model-archive-security.yml`
 - `.github/workflows/install-smoke.yml`
 - `.github/workflows/perf-regression.yml`
 - `.github/workflows/zero-skip.yml`
@@ -71,7 +71,7 @@ These checks are implemented in:
 
 Trigger ownership to avoid duplicate gate execution:
 
-- Non-release PRs into `main` run `mpk-security`, `install-smoke`, `perf-regression`, and `zero-skip` from their standalone workflows.
+- Non-release PRs into `main` run `model-archive-security`, `install-smoke`, `perf-regression`, and `zero-skip` from their standalone workflows.
 - Release PRs (`release/*` head refs) and release refs (`release/**`, `v*`) run those same lanes from `.github/workflows/release-gate.yml`.
 
 ## GitHub Branch and Tag Protection
@@ -112,9 +112,8 @@ Configure GitHub repository settings:
   - `profile.json` defines the fixed Modalix environment contract.
   - one scenario file per scenario ID (`<scenario_id>.json`).
 - Required scenarios:
-  - `mpk_parse_smoke`
-  - `runtime_session_sync_rgb`
-  - `runtime_session_async_rgb`
+  - `runtime_graph_sync_rgb`
+  - `runtime_graph_async_rgb`
   - `runtime_graph_fanout`
   - `runtime_graph_join_bundle`
 - Every perf run publishes per-scenario result files in `build-perf-gate/perf_results/`.

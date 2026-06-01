@@ -31,7 +31,7 @@ Chapter 001.
 
 **References**
 - [Tensor and Sample](/getting-started/programming-model/core_types)
-- [Input and Output](/getting-started/programming-model/io)
+- [Node boundaries and I/O](/getting-started/programming-model/node#boundary-nodes)
 
 ## Learning Process
 1. Build deterministic tensor inputs in NumPy/PyTorch and C++ tensor storage.

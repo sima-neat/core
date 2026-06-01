@@ -26,7 +26,7 @@ bool caps_enabled(const RtspDecodedInputOptions::OutputCaps& c) {
 
 } // namespace
 
-simaai::neat::NodeGroup RtspDecodedInput(const RtspDecodedInputOptions& opt) {
+simaai::neat::Graph RtspDecodedInput(const RtspDecodedInputOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
 
   const bool force_sync = simaai::neat::pipeline_internal::sync_build_mode();
@@ -75,7 +75,11 @@ simaai::neat::NodeGroup RtspDecodedInput(const RtspDecodedInputOptions& opt) {
     nodes.push_back(nodes::Custom(opt.extra_fragment));
   }
 
-  return simaai::neat::NodeGroup(std::move(nodes));
+  simaai::neat::Graph graph;
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+  return graph;
 }
 
 } // namespace simaai::neat::nodes::groups

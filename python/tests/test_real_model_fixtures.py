@@ -1,7 +1,9 @@
+import gc
 import json
 import struct
 import sys
 import tarfile
+import time
 from pathlib import Path
 
 import cv2
@@ -72,6 +74,9 @@ def _resolve_fixture_image(rel_path: Path) -> Path | None:
     candidate = root / rel_path
     if candidate.is_file():
       return candidate
+    installed_candidate = root / "lib" / "sima-neat" / rel_path
+    if installed_candidate.is_file():
+      return installed_candidate
 
   return None
 
@@ -124,6 +129,11 @@ def _sample_from_tensor(tensor: pyneat.Tensor) -> pyneat.Sample:
 
 
 def _single_sample(samples) -> pyneat.Sample:
+  if isinstance(samples, pyneat.Sample):
+    if samples.kind == pyneat.SampleKind.Bundle:
+      assert len(samples.fields) == 1
+      return samples.fields[0]
+    return samples
   assert isinstance(samples, list)
   assert len(samples) == 1
   return samples[0]
@@ -148,18 +158,31 @@ def _sample_tensors(sample: pyneat.Sample) -> list[pyneat.Tensor]:
   raise AssertionError(f"expected tensor sample, got {sample.kind}")
 
 
+def _release_accelerator_outputs() -> None:
+  """Drop Python-side refs before starting the next accelerator-backed graph.
+
+  The DevKit has a small number of RPMsg/EV channels. Keeping output tensor
+  objects from one graph alive while building/running the next graph can keep
+  device-side resources pinned long enough for the next graph to report
+  transient "channel busy" or mailbox-fd errors. Convert outputs to plain Python
+  metadata/payload bytes first, then call this helper before the next run.
+  """
+  gc.collect()
+  time.sleep(0.2)
+
+
 def _run_one_sample(runner, tensor: pyneat.Tensor, timeout_ms: int) -> pyneat.Sample:
-  return _single_sample(runner.run(_sample_from_tensor(tensor), timeout_ms=timeout_ms))
+  return _single_sample(runner.run([_sample_from_tensor(tensor)], timeout_ms=timeout_ms))
 
 
 def _run_model_on_image(model: pyneat.Model, image: np.ndarray, *parts) -> pyneat.Sample:
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
   for part in parts:
-    session.add(part)
-  session.add(pyneat.nodes.output())
+    graph.add(part)
+  graph.add(pyneat.nodes.output())
   input_tensor = _rgb_tensor(image)
-  runner = session.build(input_tensor)
+  runner = graph.build([input_tensor])
   try:
     return _run_one_sample(runner, input_tensor, timeout_ms=30000)
   finally:
@@ -188,7 +211,7 @@ def _mla_input_byte_stream_contract(model_tar: Path) -> tuple[str, int]:
 def _mla_byte_stream_input_options(model_tar: Path) -> pyneat.InputOptions:
   name, num_bytes = _mla_input_byte_stream_contract(model_tar)
   opt = pyneat.InputOptions()
-  opt.media_type = "application/vnd.simaai.tensor"
+  opt.payload_type = pyneat.PayloadType.Tensor
   opt.format = "BYTESTREAM"
   opt.width = num_bytes
   opt.height = 1
@@ -207,16 +230,16 @@ def _run_mla_byte_stream_pipeline(
   payload = np.zeros((num_bytes,), dtype=np.int8)
   tensor = pyneat.Tensor.from_numpy(payload, copy=True, byte_format=pyneat.ByteFormat.Raw)
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(_mla_byte_stream_input_options(model_tar)))
-  session.add(pyneat.groups.mla(model))
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(_mla_byte_stream_input_options(model_tar)))
+  graph.add(pyneat.groups.mla(model))
   for part in post_mla_parts:
-    session.add(part)
-  session.add(pyneat.nodes.output())
+    graph.add(part)
+  graph.add(pyneat.nodes.output())
 
-  runner = session.build(tensor)
+  runner = graph.build([tensor])
   try:
-    outputs = runner.run(tensor, timeout_ms=30000)
+    outputs = runner.run([tensor], timeout_ms=30000)
   finally:
     runner.close()
 
@@ -366,7 +389,7 @@ def test_resnet_real_fixture_run_preserves_stable_classification_contract():
   image = _decode_rgb_image(_fixture_image_path(Path("test.jpg")))
 
   input_tensor = _rgb_tensor(image)
-  runner = model.build(input_tensor)
+  runner = model.build([input_tensor])
   summaries = []
   try:
     for _ in range(3):
@@ -436,6 +459,11 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
   model = _image_input_model(model_tar)
 
   mla_tensors = _run_mla_on_byte_stream(model, model_tar)
+  mla_shapes = [list(tensor.shape) for tensor in mla_tensors]
+  mla_dtypes = [tensor.dtype for tensor in mla_tensors]
+  del mla_tensors
+  _release_accelerator_outputs()
+
   explicit_output = _run_model_on_image(
       model,
       image,
@@ -443,13 +471,15 @@ def test_yolo_mla_group_matches_explicit_preprocess_plus_inference_structure():
       pyneat.groups.mla(model),
   )
   explicit_tensors = _sample_tensors(explicit_output)
+  explicit_shapes = [list(tensor.shape) for tensor in explicit_tensors]
+  explicit_dtypes = [tensor.dtype for tensor in explicit_tensors]
+  del explicit_output, explicit_tensors
+  _release_accelerator_outputs()
 
-  assert len(mla_tensors) == len(explicit_tensors) == 6
-  assert [list(tensor.shape) for tensor in mla_tensors] == [
-      list(tensor.shape) for tensor in explicit_tensors
-  ]
-  assert all(tensor.dtype == pyneat.TensorDType.Int8 for tensor in mla_tensors)
-  assert all(tensor.dtype == pyneat.TensorDType.Int8 for tensor in explicit_tensors)
+  assert len(mla_shapes) == len(explicit_shapes) == 6
+  assert mla_shapes == explicit_shapes
+  assert all(dtype == pyneat.TensorDType.Int8 for dtype in mla_dtypes)
+  assert all(dtype == pyneat.TensorDType.Int8 for dtype in explicit_dtypes)
 
 
 def test_yolo_mla_group_rejects_image_input_with_byte_stream_contract_message():
@@ -459,19 +489,19 @@ def test_yolo_mla_group_rejects_image_input_with_byte_stream_contract_message():
   _name, expected_bytes = _mla_input_byte_stream_contract(model_tar)
   got_bytes = int(image.nbytes)
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add(pyneat.groups.mla(model))
+  graph.add(pyneat.nodes.output())
 
   with pytest.raises(
-      pyneat.SessionError,
+      pyneat.NeatError,
       match=(
           "inference-only expects application/vnd.simaai.tensor / "
           "ByteFormat.Raw byte-stream input"
       ),
   ) as exc:
-    session.build(_rgb_tensor(image))
+    graph.build([_rgb_tensor(image)])
 
   assert f"expected {expected_bytes} bytes, got {got_bytes} bytes" in str(exc.value)
 
@@ -488,31 +518,36 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
       model_tar,
       pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)),
   )
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(boxdecode_model.input_appsrc_options(False)))
-  session.add(_custom_preproc_node(boxdecode_model, image))
-  session.add(pyneat.groups.mla(boxdecode_model))
-  session.add(
+  detess_shapes = [list(tensor.shape) for tensor in detess_tensors]
+  detess_dtypes = [tensor.dtype for tensor in detess_tensors]
+  del detess_tensors
+  _release_accelerator_outputs()
+
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(boxdecode_model.input_appsrc_options(False)))
+  graph.add(_custom_preproc_node(boxdecode_model, image))
+  graph.add(pyneat.groups.mla(boxdecode_model))
+  graph.add(
       pyneat.nodes.sima_box_decode(
           boxdecode_model,
           decode_type=pyneat.BoxDecodeType.YoloV8,
           top_k=boxdecode_top_k,
       )
   )
-  session.add(pyneat.nodes.output())
+  graph.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
+  backend = graph.describe_backend()
   assert "detection-threshold=" not in backend.lower()
 
   input_tensor = _rgb_tensor(image)
-  runner = session.build(input_tensor)
+  runner = graph.build([input_tensor])
   try:
     box_output = _run_one_sample(runner, input_tensor, timeout_ms=30000)
   finally:
     runner.close()
 
-  assert len(detess_tensors) == 6
-  assert [list(tensor.shape) for tensor in detess_tensors] == [
+  assert len(detess_shapes) == 6
+  assert detess_shapes == [
       [1, 80, 80, 64],
       [1, 40, 40, 64],
       [1, 20, 20, 64],
@@ -520,7 +555,7 @@ def test_yolo_detess_and_boxdecode_real_fixture_paths_are_runtime_usable(tmp_pat
       [1, 40, 40, 80],
       [1, 20, 20, 80],
   ]
-  assert all(tensor.dtype == pyneat.TensorDType.Float32 for tensor in detess_tensors)
+  assert all(dtype == pyneat.TensorDType.Float32 for dtype in detess_dtypes)
 
   box_tensor = _sample_tensor(box_output)
   assert box_output.payload_tag in ("", "BBOX")
@@ -539,7 +574,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
 
     assert input_spec.dtypes == [pyneat.TensorDType.Float32]
     assert list(input_spec.shape) == [640, 640, 3]
-    assert appsrc.media_type == "application/vnd.simaai.tensor"
+    assert appsrc.payload_type == pyneat.PayloadType.Tensor
     assert appsrc.format == "FP32"
     assert "quanttess" in backend
     assert "preproc" not in backend
@@ -568,11 +603,11 @@ def _run_quanttess_boxdecode_on_real_input(
     preprocess_part,
     detection_threshold: float,
 ) -> tuple[str, pyneat.Sample]:
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(model.input_appsrc_options(True)))
-  session.add(preprocess_part)
-  session.add(pyneat.groups.mla(model))
-  session.add(
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(True)))
+  graph.add(preprocess_part)
+  graph.add(pyneat.groups.mla(model))
+  graph.add(
       pyneat.nodes.sima_box_decode(
           model,
           decode_type=pyneat.BoxDecodeType.YoloV8,
@@ -593,11 +628,11 @@ def _run_quanttess_boxdecode_on_real_input(
           resize_mode=pyneat.ResizeMode.Letterbox,
       )
   )
-  session.add(pyneat.nodes.output())
+  graph.add(pyneat.nodes.output())
 
-  backend = session.describe_backend().lower()
+  backend = graph.describe_backend().lower()
   input_tensor = pyneat.Tensor.from_numpy(quant_input, copy=True)
-  runner = session.build(input_tensor)
+  runner = graph.build([input_tensor])
   try:
     box_output = _run_one_sample(runner, input_tensor, timeout_ms=30000)
   finally:
@@ -644,7 +679,7 @@ def test_tensor_model_quanttess_mla_boxdecode_writes_model_overlay(tmp_path):
   assert counts == sorted(counts, reverse=True)
 
 
-def test_custom_session_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
+def test_custom_graph_quanttess_mla_boxdecode_writes_explicit_overlay(tmp_path):
   image = _decode_rgb_image(_fixture_image_path(Path("tests/images/people.jpg")))
   model = _tensor_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)
   preproc_model = _image_input_model(_env_path("SIMA_YOLO_TAR"), pyneat.BoxDecodeType.YoloV8)

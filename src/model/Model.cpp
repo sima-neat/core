@@ -21,7 +21,7 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/InputPolicy.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -30,6 +30,7 @@
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/UxLogging.h"
+#include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/internal/contract/PluginCompiledContracts.h"
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
@@ -63,9 +64,9 @@
 namespace simaai::neat {
 namespace {
 
-simaai::neat::SessionOptions
-session_options_from_model_session_options(const Model::SessionOptions& opt,
-                                           const Model::Options* model_opt = nullptr);
+simaai::neat::GraphOptions
+route_options_from_model_route_options(const Model::RouteOptions& opt,
+                                       const Model::Options* model_opt = nullptr);
 
 struct SliceDims {
   int d = 1, h = 0, w = 0, c = 0;
@@ -1444,7 +1445,7 @@ bool operator==(const InputKey& a, const InputKey& b) {
 
 InputKey input_key_from_appsrc(const InputOptions& opt) {
   InputKey key;
-  key.media_type = opt.media_type;
+  key.media_type = resolve_input_media_type(opt);
   key.format = upper_copy(opt.format);
   key.width = opt.width;
   key.height = opt.height;
@@ -1606,8 +1607,9 @@ InputInfo input_info_from_image_sample(const simaai::neat::Sample& sample) {
   }
 
   InputInfo info = input_info_from_tensor(*tensor, true);
-  if (!sample.media_type.empty()) {
-    info.media_type = sample.media_type;
+  const std::string sample_media = sample_media_type(sample);
+  if (!sample_media.empty()) {
+    info.media_type = sample_media;
   }
   const std::string sample_format =
       !sample.payload_tag.empty() ? sample.payload_tag : sample.format;
@@ -1638,7 +1640,7 @@ void require_explicit_image_input_info(const InputInfo& info, const char* where)
 
 InputOptions appsrc_from_info(const InputInfo& info) {
   InputOptions opt;
-  opt.media_type = info.media_type;
+  opt.payload_type = input_type_from_media_type(info.media_type);
   opt.format = info.format;
   opt.width = info.width;
   opt.height = info.height;
@@ -1651,7 +1653,7 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   t.device = {DeviceType::CPU, 0};
   t.read_only = true;
 
-  if (opt.media_type == "application/vnd.simaai.tensor") {
+  if (resolve_input_media_type(opt) == "application/vnd.simaai.tensor") {
     const int w = (opt.width > 0) ? opt.width : opt.max_width;
     const int h = (opt.height > 0) ? opt.height : opt.max_height;
     const int d = (opt.depth > 0) ? opt.depth : opt.max_depth;
@@ -1804,6 +1806,97 @@ std::vector<std::string> ingress_names_from_contracts(
     }
   }
   return names;
+}
+
+std::string graph_endpoint_token(std::string_view text, std::string_view fallback) {
+  std::string out;
+  out.reserve(text.size());
+  for (char c : text) {
+    const unsigned char uc = static_cast<unsigned char>(c);
+    if (std::isalnum(uc)) {
+      out.push_back(static_cast<char>(std::tolower(uc)));
+    } else if (c == '_' || c == '-' || c == '.') {
+      out.push_back(c);
+    } else if (!out.empty() && out.back() != '_') {
+      out.push_back('_');
+    }
+  }
+  while (!out.empty() && out.front() == '_') {
+    out.erase(out.begin());
+  }
+  while (!out.empty() && out.back() == '_') {
+    out.pop_back();
+  }
+  if (out.empty()) {
+    out = std::string(fallback);
+  }
+  if (!out.empty() && std::isdigit(static_cast<unsigned char>(out.front()))) {
+    out.insert(out.begin(), '_');
+  }
+  return out;
+}
+
+std::vector<std::string> make_unique_endpoint_names(std::vector<std::string> names,
+                                                    std::string_view fallback_prefix) {
+  std::unordered_set<std::string> used;
+  for (std::size_t i = 0; i < names.size(); ++i) {
+    std::string base =
+        graph_endpoint_token(names[i], std::string(fallback_prefix) + std::to_string(i));
+    if (base.empty()) {
+      base = std::string(fallback_prefix) + std::to_string(i);
+    }
+    std::string candidate = base;
+    for (std::size_t suffix = 1U; !used.insert(candidate).second; ++suffix) {
+      candidate = base + "_" + std::to_string(suffix);
+    }
+    names[i] = std::move(candidate);
+  }
+  return names;
+}
+
+std::vector<std::string> egress_names_from_contracts(const internal::SessionRoutePlan& route_plan) {
+  const std::vector<internal::EgressTensorContract>* contracts = &route_plan.egress_contracts;
+  std::vector<internal::EgressTensorContract> single;
+  if (contracts->empty() && route_plan.egress_contract.valid) {
+    single.push_back(route_plan.egress_contract);
+    contracts = &single;
+  }
+
+  std::vector<std::string> names;
+  names.reserve(contracts->size());
+  for (std::size_t i = 0; i < contracts->size(); ++i) {
+    const auto& egress = (*contracts)[i];
+    if (!egress.source_tensor_name.empty()) {
+      names.push_back(egress.source_tensor_name);
+    } else if (!egress.source_stage.empty() && contracts->size() == 1U) {
+      names.push_back(egress.source_stage);
+    } else {
+      names.push_back("ofm" + std::to_string(i));
+    }
+  }
+  if (names.empty()) {
+    names.push_back("output");
+  }
+  return make_unique_endpoint_names(std::move(names), "ofm");
+}
+
+std::vector<std::string> aggregate_egress_name_for_model_route(const std::string& model_id,
+                                                               const Model::RouteOptions& opt) {
+  std::string name = !opt.buffer_name.empty() ? opt.buffer_name : model_id;
+  if (name.empty()) {
+    name = "output";
+  }
+  return make_unique_endpoint_names({std::move(name)}, "output");
+}
+
+bool model_route_exposes_individual_outputs(const internal::SessionRoutePlan& route_plan,
+                                            const Model::RouteOptions& opt) {
+  // Public Graph model routes default to one aggregate output Sample. Many models expose
+  // several logical tensors (for example YOLO bbox/class heads), but optimized kernels pack those
+  // tensors into a single physical output buffer. In that common case there is still only one
+  // public output endpoint, even when expose_all_outputs=true. The advanced flag only exposes
+  // individual endpoints when the model route actually has more than one physical output buffer.
+  return opt.expose_all_outputs && route_plan.output_physical_count > 1U;
 }
 
 void require_exact_ingress_count(
@@ -1978,19 +2071,66 @@ Sample apply_ingress_sample_identity(Sample sample,
   return sample;
 }
 
-Sample bundle_ingress_samples(const SampleList& inputs,
+void propagate_common_sample_identity(const Sample& inputs, Sample* out);
+
+Sample bundle_ingress_samples(const Sample& inputs,
                               const std::vector<internal::IngressTensorContract>& ingress_contracts,
                               const char* where) {
   require_exact_ingress_count(inputs.size(), ingress_contracts, where, "sample inputs");
   Sample bundle;
   bundle.kind = SampleKind::Bundle;
   bundle.owned = true;
+  bundle.payload_type = PayloadType::Tensor;
   bundle.media_type = "application/vnd.simaai.tensor";
   bundle.fields.reserve(inputs.size());
   for (std::size_t i = 0; i < inputs.size(); ++i) {
     bundle.fields.push_back(apply_ingress_sample_identity(inputs[i], ingress_contracts[i]));
   }
+  propagate_common_sample_identity(inputs, &bundle);
   return bundle;
+}
+
+void propagate_common_sample_identity(const Sample& inputs, Sample* out) {
+  if (!out || inputs.empty()) {
+    return;
+  }
+
+  const Sample& first = inputs.front();
+  const int64_t frame_id = first.frame_id;
+  const int64_t pts_ns = first.pts_ns;
+  const int64_t dts_ns = first.dts_ns;
+  const int64_t duration_ns = first.duration_ns;
+  const std::string stream_id = first.stream_id;
+
+  bool same_frame_id = frame_id >= 0;
+  bool same_pts_ns = pts_ns >= 0;
+  bool same_dts_ns = dts_ns >= 0;
+  bool same_duration_ns = duration_ns >= 0;
+  bool same_stream_id = !stream_id.empty();
+
+  for (const auto& sample : inputs) {
+    same_frame_id = same_frame_id && sample.frame_id == frame_id;
+    same_pts_ns = same_pts_ns && sample.pts_ns == pts_ns;
+    same_dts_ns = same_dts_ns && sample.dts_ns == dts_ns;
+    same_duration_ns = same_duration_ns && sample.duration_ns == duration_ns;
+    same_stream_id = same_stream_id && sample.stream_id == stream_id;
+  }
+
+  if (same_frame_id) {
+    out->frame_id = frame_id;
+  }
+  if (same_pts_ns) {
+    out->pts_ns = pts_ns;
+  }
+  if (same_dts_ns) {
+    out->dts_ns = dts_ns;
+  }
+  if (same_duration_ns) {
+    out->duration_ns = duration_ns;
+  }
+  if (same_stream_id) {
+    out->stream_id = stream_id;
+  }
 }
 
 bool sample_represents_multi_ingress_item(const Sample& sample) {
@@ -2002,8 +2142,9 @@ bool sample_represents_multi_ingress_item(const Sample& sample) {
 
 InputOptions input_options_from_ingress_contract(const internal::IngressTensorContract& ingress) {
   InputOptions opt;
-  opt.media_type = ingress.media_type.empty() ? std::string("application/vnd.simaai.tensor")
-                                              : ingress.media_type;
+  opt.payload_type = input_type_from_media_type(
+      ingress.media_type.empty() ? std::string_view("application/vnd.simaai.tensor")
+                                 : std::string_view(ingress.media_type));
   if (!ingress.dtype.empty()) {
     opt.format = ingress.dtype;
   }
@@ -2023,8 +2164,8 @@ InputOptions
 overlay_input_options_from_ingress_contract(InputOptions opt,
                                             const internal::IngressTensorContract& ingress) {
   const InputOptions route_opt = input_options_from_ingress_contract(ingress);
-  if (!route_opt.media_type.empty()) {
-    opt.media_type = route_opt.media_type;
+  if (route_opt.payload_type != PayloadType::Auto) {
+    opt.payload_type = route_opt.payload_type;
   }
   if (!route_opt.format.empty()) {
     opt.format = route_opt.format;
@@ -2056,11 +2197,12 @@ overlay_input_options_from_ingress_contract(InputOptions opt,
 InputOptions override_input_options_from_contract(InputOptions opt,
                                                   const PreprocessContract& contract) {
   if (!contract.media_type.empty()) {
-    opt.media_type = contract.media_type;
+    opt.payload_type = input_type_from_media_type(contract.media_type);
   }
   if (!contract.format.empty()) {
     std::string format = contract.format;
-    if (pipeline_internal::lower_copy(opt.media_type) == "application/vnd.simaai.tensor") {
+    const std::string media_type = resolve_input_media_type(opt);
+    if (pipeline_internal::lower_copy(media_type) == "application/vnd.simaai.tensor") {
       switch (dtype_from_format(format)) {
       case TensorDType::BFloat16:
         format = "EVXX_BFLOAT16";
@@ -2088,7 +2230,7 @@ InputOptions override_input_options_from_contract(InputOptions opt,
         break;
       }
     }
-    opt.format = normalize_caps_format_for_media(opt.media_type, format);
+    opt.format = normalize_caps_format_for_media(media_type, format);
   }
   if (contract.width > 0) {
     opt.width = contract.width;
@@ -2241,11 +2383,10 @@ std::shared_ptr<Node> build_ingress_node_from_op(const Model& model,
   return nullptr;
 }
 
-Session build_ingress_branch_session(const Model& model,
-                                     const internal::PreprocessPlannerResult& plan,
-                                     const internal::IngressTensorContract& ingress,
-                                     const Model::SessionOptions& session_opt) {
-  Session branch(session_options_from_model_session_options(session_opt));
+Graph build_ingress_branch_graph(const Model& model, const internal::PreprocessPlannerResult& plan,
+                                 const internal::IngressTensorContract& ingress,
+                                 const Model::RouteOptions& route_opt) {
+  Graph branch(route_options_from_model_route_options(route_opt));
   if (ingress.branch_ops.empty()) {
     return branch;
   }
@@ -2271,7 +2412,7 @@ Session build_ingress_branch_session(const Model& model,
   return branch;
 }
 
-Sample run_ingress_branch(Session& branch, Run& runner,
+Sample run_ingress_branch(Graph& branch, Run& runner,
                           const internal::IngressTensorContract& ingress, Sample sample,
                           const char* where) {
   sample = apply_ingress_sample_identity(std::move(sample), ingress);
@@ -2305,9 +2446,9 @@ Sample run_ingress_branch(Session& branch, Run& runner,
   branch_run_opt.overflow_policy = OverflowPolicy::Block;
   branch_run_opt.output_memory = OutputMemory::ZeroCopy;
   if (!runner) {
-    runner = branch.build(SampleList{sample}, RunMode::Sync, branch_run_opt);
+    runner = branch.build(Sample{sample}, RunMode::Sync, branch_run_opt);
   }
-  SampleList out = runner.run(SampleList{std::move(sample)}, 10000);
+  Sample out = runner.run(Sample{std::move(sample)}, 10000);
   if (out.size() != 1U) {
     std::ostringstream oss;
     oss << (where ? where : "Model ingress") << ": expected exactly one branch output for ingress["
@@ -2358,6 +2499,7 @@ Sample canonicalize_ingress_branch_output(Sample sample,
     out.pts_ns = sample.pts_ns;
     out.dts_ns = sample.dts_ns;
     out.duration_ns = sample.duration_ns;
+    out.payload_type = sample.payload_type;
     if (!sample.media_type.empty()) {
       out.media_type = sample.media_type;
     }
@@ -2389,6 +2531,7 @@ Sample canonicalize_ingress_branch_output(Sample sample,
     out.pts_ns = sample.pts_ns;
     out.dts_ns = sample.dts_ns;
     out.duration_ns = sample.duration_ns;
+    out.payload_type = sample.payload_type;
     if (!sample.media_type.empty()) {
       out.media_type = sample.media_type;
     }
@@ -2429,7 +2572,7 @@ internal::IngressConsumerTensorIdentity joined_tensor_identity_or_fallback(
 }
 
 std::vector<internal::IngressConsumerTensorIdentity>
-main_session_joined_input_identities(const Model& model) {
+main_route_joined_input_identities(const Model& model) {
   const auto identities_from_static_contract =
       [](const pipeline_internal::sima::MlaStaticContract& contract) {
         std::vector<internal::IngressConsumerTensorIdentity> out;
@@ -2521,9 +2664,9 @@ main_session_joined_input_identities(const Model& model) {
   }
 
   std::vector<internal::IngressConsumerTensorIdentity> out;
-  const NodeGroup infer = internal::ModelAccess::build_infer_group(model, false);
+  const auto infer = internal::ModelAccess::build_infer_nodes(model, false);
   const auto manifest =
-      rendered_stage_query::rendered_manifest_from_group(infer, "ModelIngressRouteProcessor");
+      rendered_stage_query::rendered_manifest_from_nodes(infer, "ModelIngressRouteProcessor");
   if (!manifest.has_value()) {
     return out;
   }
@@ -2588,7 +2731,7 @@ bool main_session_consumer_keeps_distinct_physical_inputs(const Model& model) {
   return false;
 }
 
-std::string main_session_joined_input_segment_name(const Model& model) {
+std::string main_route_joined_input_segment_name(const Model& model) {
   const auto& pack = internal::ModelAccess::pack(model);
   if (const auto& mpk_opt = pack.mpk_contract(); mpk_opt.has_value()) {
     const auto boundary_inputs =
@@ -2604,9 +2747,9 @@ std::string main_session_joined_input_segment_name(const Model& model) {
     }
   }
 
-  const NodeGroup infer = internal::ModelAccess::build_infer_group(model, false);
+  const auto infer = internal::ModelAccess::build_infer_nodes(model, false);
   const auto manifest =
-      rendered_stage_query::rendered_manifest_from_group(infer, "ModelIngressRouteProcessor");
+      rendered_stage_query::rendered_manifest_from_nodes(infer, "ModelIngressRouteProcessor");
   if (!manifest.has_value()) {
     return {};
   }
@@ -2868,11 +3011,11 @@ std::string ingress_tensor_debug_string(const Tensor& tensor) {
 class ModelIngressRouteProcessor final : public pipeline_internal::InputRouteProcessor {
 public:
   ModelIngressRouteProcessor(Model model, internal::PreprocessPlannerResult plan,
-                             Model::SessionOptions session_opt)
-      : model_(std::move(model)), plan_(std::move(plan)), session_opt_(std::move(session_opt)),
+                             Model::RouteOptions route_opt)
+      : model_(std::move(model)), plan_(std::move(plan)), route_opt_(std::move(route_opt)),
         ingress_contracts_(normalized_ingress_contracts(plan_.session_route_plan)),
-        joined_consumer_identities_(main_session_joined_input_identities(model_)),
-        joined_packed_segment_name_(main_session_joined_input_segment_name(model_)),
+        joined_consumer_identities_(main_route_joined_input_identities(model_)),
+        joined_packed_segment_name_(main_route_joined_input_segment_name(model_)),
         consumer_keeps_distinct_physical_inputs_(
             main_session_consumer_keeps_distinct_physical_inputs(model_)),
         is_fan_in_route_(plan_uses_bundled_fan_in(plan_)) {
@@ -2880,12 +3023,11 @@ public:
       // Legacy multi-ingress: spin up per-ingress branch sessions. The
       // bundled-appsrc fan-in path skips branch_sessions entirely; the
       // user's tensors flow directly through Run::push → InputStream's
-      // bundled multi-IO path (the same path Model::session() uses for
-      // fan-in, now reached via Model::build(...) too).
-      branch_sessions_.reserve(ingress_contracts_.size());
+      // bundled multi-IO path (the same path Model::graph({include_input=true})
+      // uses for fan-in, now reached via Model::build(...) too).
+      branch_graphs_.reserve(ingress_contracts_.size());
       for (const auto& ingress : ingress_contracts_) {
-        branch_sessions_.push_back(
-            build_ingress_branch_session(model_, plan_, ingress, session_opt_));
+        branch_graphs_.push_back(build_ingress_branch_graph(model_, plan_, ingress, route_opt_));
       }
       branch_runners_.resize(ingress_contracts_.size());
     }
@@ -2912,7 +3054,7 @@ public:
     return build_seed_sample(where);
   }
 
-  Sample seed_samples(const SampleList& inputs, const char* where) const override {
+  Sample seed_samples(const Sample& inputs, const char* where) const override {
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "ingress inputs");
     if (is_fan_in_route_) {
       return build_fan_in_sample_from_samples(inputs, where);
@@ -2932,7 +3074,7 @@ public:
       return build_fan_in_sample(inputs, where);
     }
     TensorList prepared = prepare_ingress_tensors(inputs, ingress_contracts_, where);
-    SampleList samples;
+    Sample samples;
     samples.reserve(prepared.size());
     for (std::size_t i = 0; i < prepared.size(); ++i) {
       Sample sample = sample_from_tensors(TensorList{prepared[i]});
@@ -2944,14 +3086,14 @@ public:
     return process_prepared_samples(samples, where);
   }
 
-  Sample process_samples(const SampleList& inputs, const char* where) const override {
+  Sample process_samples(const Sample& inputs, const char* where) const override {
     if (is_fan_in_route_) {
       if (inputs.size() == 1U && sample_represents_multi_ingress_item(inputs.front()) &&
           ingress_contracts_.size() > 1U) {
         Sample bundle = inputs.front();
         if (bundle.kind == SampleKind::Bundle &&
             bundle.fields.size() == ingress_contracts_.size()) {
-          return build_fan_in_sample_from_samples(bundle.fields, where);
+          return build_fan_in_sample_from_samples(bundle, where);
         }
       }
       return build_fan_in_sample_from_samples(inputs, where);
@@ -2960,11 +3102,11 @@ public:
         ingress_contracts_.size() > 1U) {
       Sample bundle = inputs.front();
       if (bundle.kind == SampleKind::Bundle && bundle.fields.size() == ingress_contracts_.size()) {
-        return process_prepared_samples(bundle.fields, where);
+        return process_prepared_samples(bundle, where);
       }
     }
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
-    SampleList prepared;
+    Sample prepared;
     prepared.reserve(inputs.size());
     for (std::size_t i = 0; i < inputs.size(); ++i) {
       prepared.push_back(apply_ingress_sample_identity(inputs[i], ingress_contracts_[i]));
@@ -2993,7 +3135,7 @@ public:
     return out;
   }
 
-  Sample build_fan_in_sample_from_samples(const SampleList& inputs, const char* where) const {
+  Sample build_fan_in_sample_from_samples(const Sample& inputs, const char* where) const {
     require_exact_ingress_count(inputs.size(), ingress_contracts_, where, "sample inputs");
     TensorList prepared;
     prepared.reserve(inputs.size());
@@ -3008,6 +3150,7 @@ public:
     }
     stamp_fan_in_packed_parent(&prepared);
     Sample out = sample_from_tensors(prepared);
+    propagate_common_sample_identity(inputs, &out);
     if (prepared.size() > 1U) {
       out.segment_name = fan_in_parent_segment_name();
     }
@@ -3063,6 +3206,8 @@ private:
     }
 
     Sample out = sample_from_tensors(owned);
+    out.payload_type =
+        sample.payload_type != PayloadType::Auto ? sample.payload_type : out.payload_type;
     out.media_type = !sample.media_type.empty() ? sample.media_type : out.media_type;
     out.format = sample.format;
     out.payload_tag = sample.payload_tag;
@@ -3126,6 +3271,7 @@ private:
     }
     Sample out = sample_from_tensors(TensorList{std::move(tensor)});
     out.owned = true;
+    out.payload_type = PayloadType::Tensor;
     out.media_type = "application/vnd.simaai.tensor";
     if (mla_handoff_contract_is_packed_1d(plan_)) {
       out.payload_tag = format_tag_to_string(FormatTag::ByteStream);
@@ -3134,13 +3280,13 @@ private:
     return out;
   }
 
-  Sample process_prepared_samples(const SampleList& prepared, const char* where) const {
+  Sample process_prepared_samples(const Sample& prepared, const char* where) const {
     require_exact_ingress_count(prepared.size(), ingress_contracts_, where, "ingress inputs");
-    SampleList branch_outputs;
+    Sample branch_outputs;
     branch_outputs.reserve(prepared.size());
     for (std::size_t i = 0; i < prepared.size(); ++i) {
       branch_outputs.push_back(canonicalize_ingress_branch_output(
-          run_ingress_branch(branch_sessions_[i], branch_runners_[i], ingress_contracts_[i],
+          run_ingress_branch(branch_graphs_[i], branch_runners_[i], ingress_contracts_[i],
                              prepared[i], where),
           ingress_contracts_[i]));
       if (runner_debug_enabled()) {
@@ -3238,7 +3384,9 @@ private:
       }
     }
     Sample joined = sample_from_tensors(joined_tensors);
+    propagate_common_sample_identity(branch_outputs, &joined);
     joined.owned = true;
+    joined.payload_type = PayloadType::Tensor;
     joined.media_type = "application/vnd.simaai.tensor";
     if (mla_handoff_contract_is_packed_1d(plan_)) {
       joined.payload_tag = format_tag_to_string(FormatTag::ByteStream);
@@ -3252,7 +3400,7 @@ private:
 
   Model model_;
   internal::PreprocessPlannerResult plan_;
-  Model::SessionOptions session_opt_;
+  Model::RouteOptions route_opt_;
   std::vector<internal::IngressTensorContract> ingress_contracts_;
   std::vector<internal::IngressConsumerTensorIdentity> joined_consumer_identities_;
   std::string joined_packed_segment_name_;
@@ -3263,11 +3411,11 @@ private:
   bool consumer_keeps_distinct_physical_inputs_ = false;
   // Whether this route is a multi-IO pre-MLA fan-in handled via the bundled
   // appsrc path (set by ctor, immutable thereafter). When true, ctor skips
-  // branch_sessions_ construction and the four virtual overrides emit a
+  // branch_graphs_ construction and the four virtual overrides emit a
   // single TensorSet Sample directly instead of running per-ingress branches
   // and joining. Gated on SIMA_NEAT_MULTI_IO_BUNDLED_APPSRC.
   bool is_fan_in_route_ = false;
-  mutable std::vector<Session> branch_sessions_;
+  mutable std::vector<Graph> branch_graphs_;
   mutable std::vector<Run> branch_runners_;
 };
 
@@ -3645,8 +3793,7 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
 
   plan.route_diagnostics = capability.evidence;
   plan.route_diagnostics.push_back(
-      std::string("session_route_plan{use_preproc=") +
-      (plan.session_route_plan.use_preproc ? "1" : "0") +
+      std::string("route_plan{use_preproc=") + (plan.session_route_plan.use_preproc ? "1" : "0") +
       ",include_pre=" + (plan.session_route_plan.include_pre_stage ? "1" : "0") +
       ",include_post=" + (plan.session_route_plan.include_post_stage ? "1" : "0") +
       ",boxdecode_selected=" + (plan.session_route_plan.boxdecode_selected ? "1" : "0") +
@@ -3654,9 +3801,9 @@ internal::PreprocessPlannerResult build_preprocess_plan(const std::string& tar_g
       (plan.session_route_plan.preproc_context.pre_quant_needed ? "1" : "0") + ",pre_tess_needed=" +
       (plan.session_route_plan.preproc_context.pre_tess_needed ? "1" : "0") + ",pre_cast_needed=" +
       (plan.session_route_plan.model_managed_route_flags.pre_cast_needed ? "1" : "0") + "}");
-  plan.route_diagnostics.push_back(std::string("session_route_plan_pre_chain_size=") +
+  plan.route_diagnostics.push_back(std::string("route_plan_pre_chain_size=") +
                                    std::to_string(plan.session_route_plan.pre_chain.size()));
-  plan.route_diagnostics.push_back(std::string("session_route_plan_post_chain_size=") +
+  plan.route_diagnostics.push_back(std::string("route_plan_post_chain_size=") +
                                    std::to_string(plan.session_route_plan.post_chain.size()));
   if (!route_ingress_contracts.empty()) {
     std::ostringstream ingress_oss;
@@ -3804,7 +3951,7 @@ struct Model::Impl {
     if (mla_dims.width <= 0 || mla_dims.height <= 0 || mla_dims.depth <= 0 ||
         mla_input_dtype.empty()) {
       const auto mla_input_tensor_info =
-          rendered_stage_query::mla_input_tensor_info(pack.infer_block(infer_upstream));
+          rendered_stage_query::mla_input_tensor_info_from_nodes(pack.infer_block(infer_upstream));
       if (mla_input_dtype.empty()) {
         mla_input_dtype = mla_input_tensor_info.logical_dtype;
       }
@@ -3943,10 +4090,10 @@ struct Model::Impl {
   }
 };
 
-Model::Model(const std::string& mpk_path) : Model(mpk_path, Options{}) {}
+Model::Model(const std::string& model_path) : Model(model_path, Options{}) {}
 
-Model::Model(const std::string& mpk_path, const Options& opt) {
-  impl_ = std::make_unique<Impl>(mpk_path, opt);
+Model::Model(const std::string& model_path, const Options& opt) {
+  impl_ = std::make_unique<Impl>(model_path, opt);
 }
 
 Model::Model(Model&&) noexcept = default;
@@ -4162,10 +4309,6 @@ std::string resolve_preproc_output_format(const internal::PreprocessPlannerResul
   if (effective.color_convert.output_format != PreprocessColorFormat::Auto) {
     return preprocess_color_format_name(effective.color_convert.output_format);
   }
-  if (effective.color_convert.input_format == PreprocessColorFormat::RGB ||
-      effective.color_convert.input_format == PreprocessColorFormat::BGR) {
-    return preprocess_color_format_name(effective.color_convert.input_format);
-  }
   if (effective.color_convert.input_format == PreprocessColorFormat::GRAY8 ||
       effective.input_max_depth == 1) {
     return "GRAY8";
@@ -4180,9 +4323,13 @@ std::string resolve_preproc_output_format(const internal::PreprocessPlannerResul
   if (resolved_ingress != nullptr && resolved_ingress->depth == 1) {
     return "GRAY8";
   }
-  // Typed preproc output_img_type accepts packed image outputs (RGB/BGR/GRAY).
-  // Transport formats like NV12/I420 describe ingress memory layout, not the
-  // colorized output image that preproc publishes toward normalize/quant/tess.
+  // input_format describes the user's ingress memory layout and must not be
+  // copied into the model-facing output layout.  In particular, BGR input means
+  // "trust the user's bytes are BGR"; model-managed preproc still publishes
+  // semantic RGB unless the user explicitly requested an output_format above.
+  // Transport formats like NV12/I420 likewise describe ingress memory layout,
+  // not the colorized output image that preproc publishes toward
+  // normalize/quant/tess.
   return "RGB";
 }
 
@@ -4374,6 +4521,7 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
   opt->single_output_handoff = true;
   if (effective.resize.enable == AutoFlag::On) {
     opt->scaling_type = effective.resize.scaling_type;
+    opt->pad_value = effective.resize.pad_value;
     switch (effective.resize.mode) {
     case ResizeMode::Letterbox:
       opt->aspect_ratio = true;
@@ -4999,10 +5147,25 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     float nms_iou_threshold = opt.nms_iou_threshold;
     int top_k = opt.top_k;
     BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+    const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
+    int model_width = 0;
+    int model_height = 0;
+    if (resolved.effective.resize.width > 0 && resolved.effective.resize.height > 0) {
+      model_width = resolved.effective.resize.width;
+      model_height = resolved.effective.resize.height;
+    } else if (resolved.mla_contract.width > 0 && resolved.mla_contract.height > 0) {
+      model_width = resolved.mla_contract.width;
+      model_height = resolved.mla_contract.height;
+    }
+    std::optional<ResizeMode> resize_mode_override;
+    if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 && model_width > 0 &&
+        model_height > 0) {
+      resize_mode_override = resolved.effective.resize.mode;
+    }
     return simaai::neat::nodes::SimaBoxDecode(
         model, decode_type, detection_threshold, nms_iou_threshold, top_k, stage_name,
-        route_tess_needed, route_quant_needed, /*original_width=*/0, /*original_height=*/0,
-        /*model_width=*/0, /*model_height=*/0, /*resize_mode_override=*/std::nullopt,
+        route_tess_needed, route_quant_needed, opt.boxdecode_original_width,
+        opt.boxdecode_original_height, model_width, model_height, resize_mode_override,
         decode_type_option);
   }
   case GraphKind::Detess: {
@@ -5109,17 +5272,18 @@ build_preprocess_node_from_region(const Model& model, const internal::ModelPack&
   throw std::runtime_error("Unsupported pre region kernel for model materialization.");
 }
 
-NodeGroup build_preprocess_group_impl(const Model& model, const internal::ModelPack& pack,
-                                      const internal::PreprocessPlannerResult& plan,
-                                      const InputInfo* input, const std::string& element_name,
-                                      const std::string& upstream_name, bool sync) {
+std::vector<std::shared_ptr<Node>>
+build_preprocess_nodes_impl(const Model& model, const internal::ModelPack& pack,
+                            const internal::PreprocessPlannerResult& plan, const InputInfo* input,
+                            const std::string& element_name, const std::string& upstream_name,
+                            bool sync) {
   if (!plan.session_route_plan.include_pre_stage) {
-    return NodeGroup{};
+    return {};
   }
 
   // Walk the structural pre_regions instead of the flat pre_chain. Each region
   // (Linear or FanoutMap) maps to exactly one materialized pre node. This
-  // mirrors build_postprocess_group_impl which walks post_regions for the
+  // mirrors build_postprocess_nodes_impl which walks post_regions for the
   // symmetric multi-IO post-MLA fan-out (e.g. detessdequant). For FanoutMap
   // regions the underlying compiled contract already carries
   // logical_inputs.size() == N (the renderer's multi-IO branch fires when the
@@ -5128,10 +5292,10 @@ NodeGroup build_preprocess_group_impl(const Model& model, const internal::ModelP
   // counterpart of the post side's multi-output element.
   const auto& pre_regions = plan.session_route_plan.pre_regions;
   if (pre_regions.empty()) {
-    return NodeGroup{};
+    return {};
   }
 
-  std::vector<NodeGroup::NodePtr> nodes;
+  std::vector<std::shared_ptr<Node>> nodes;
   nodes.reserve(pre_regions.size());
 
   auto region_element_name = [&](std::size_t index,
@@ -5148,7 +5312,7 @@ NodeGroup build_preprocess_group_impl(const Model& model, const internal::ModelP
   if (env_bool("SIMA_TYPED_ADAPTER_DEBUG", false)) {
     std::fprintf(
         stderr,
-        "[typed-adapter] build_preprocess_group_impl element_name=%s pre_regions_size=%zu\n",
+        "[typed-adapter] build_preprocess_nodes_impl element_name=%s pre_regions_size=%zu\n",
         element_name.c_str(), pre_regions.size());
   }
 
@@ -5165,20 +5329,21 @@ NodeGroup build_preprocess_group_impl(const Model& model, const internal::ModelP
                                                       stage_name, upstream_name));
   }
 
-  return NodeGroup(std::move(nodes));
+  return nodes;
 }
 
-NodeGroup build_postprocess_group_impl(const Model& model, const internal::ModelPack& pack,
-                                       const Model::Options& opt, bool sync,
-                                       const internal::SessionRoutePlan& route_plan) {
+std::vector<std::shared_ptr<Node>>
+build_postprocess_nodes_impl(const Model& model, const internal::ModelPack& pack,
+                             const Model::Options& opt, bool sync,
+                             const internal::SessionRoutePlan& route_plan) {
   if (!route_plan.include_post_stage) {
-    return NodeGroup{};
+    return {};
   }
   const auto& post_regions = route_plan.post_regions;
   if (post_regions.empty()) {
-    return NodeGroup{};
+    return {};
   }
-  std::vector<NodeGroup::NodePtr> nodes;
+  std::vector<std::shared_ptr<Node>> nodes;
   nodes.reserve(post_regions.size());
   for (std::size_t i = 0; i < post_regions.size(); ++i) {
     const auto& region = post_regions[i];
@@ -5214,7 +5379,7 @@ NodeGroup build_postprocess_group_impl(const Model& model, const internal::Model
     nodes.push_back(
         build_postprocess_node_from_region(model, pack, opt, sync, route_plan, region, i));
   }
-  return NodeGroup(std::move(nodes));
+  return nodes;
 }
 
 InputInfo require_input_info(const InputInfo& info, bool tensor_mode) {
@@ -5271,7 +5436,7 @@ void align_tensor_input_info_with_route_format(InputInfo& info, const InputOptio
   if (upper_copy(info.media_type) != "APPLICATION/VND.SIMAAI.TENSOR") {
     return;
   }
-  if (upper_copy(src_opt.media_type) != "APPLICATION/VND.SIMAAI.TENSOR") {
+  if (upper_copy(resolve_input_media_type(src_opt)) != "APPLICATION/VND.SIMAAI.TENSOR") {
     return;
   }
   const std::string selected_format = tensor_appsrc_format_for_plan(plan, src_opt);
@@ -5362,11 +5527,10 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
   throw std::invalid_argument(oss.str());
 }
 
-NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pack,
-                               const Model::Options& opt,
-                               const internal::PreprocessPlannerResult& plan,
-                               Model::SessionOptions popt, const InputInfo* input, bool sync,
-                               bool externalize_preprocess) {
+std::vector<std::shared_ptr<Node>>
+build_pipeline_nodes(const Model& model, const internal::ModelPack& pack, const Model::Options& opt,
+                     const internal::PreprocessPlannerResult& plan, Model::RouteOptions popt,
+                     const InputInfo* input, bool sync, bool externalize_preprocess) {
   const bool tensor_mode = externalize_preprocess ? true : pipeline_requires_tensor_input(plan);
   const bool include_preprocess_stage =
       externalize_preprocess ? false : plan.session_route_plan.include_pre_stage;
@@ -5378,7 +5542,7 @@ NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pa
   std::vector<std::shared_ptr<Node>> nodes;
 
   InputOptions src_opt;
-  if (popt.include_appsrc) {
+  if (popt.include_input) {
     if (input) {
       src_opt = appsrc_from_info(require_input_info(*input, tensor_mode));
     } else {
@@ -5423,7 +5587,7 @@ NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pa
                      "[model-runner] appsrc_source=input_info tensor_mode=%d input_whd=%dx%dx%d "
                      "input_fmt=%s pack_opt{media=%s format=%s max=%dx%dx%d}\n",
                      tensor_mode ? 1 : 0, input->width, input->height, input->depth,
-                     input->format.c_str(), pack_opt.media_type.c_str(),
+                     input->format.c_str(), resolve_input_media_type(pack_opt).c_str(),
                      pack_opt.format.str().c_str(), pack_opt.max_width, pack_opt.max_height,
                      pack_opt.max_depth);
       } else {
@@ -5431,8 +5595,9 @@ NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pa
             stderr,
             "[model-runner] appsrc_source=modelpack tensor_mode=%d pack_opt{media=%s format=%s "
             "max=%dx%dx%d}\n",
-            tensor_mode ? 1 : 0, pack_opt.media_type.c_str(), pack_opt.format.str().c_str(),
-            pack_opt.max_width, pack_opt.max_height, pack_opt.max_depth);
+            tensor_mode ? 1 : 0, resolve_input_media_type(pack_opt).c_str(),
+            pack_opt.format.str().c_str(), pack_opt.max_width, pack_opt.max_height,
+            pack_opt.max_depth);
       }
       const char* first_pre = "none";
       if (!plan.session_route_plan.pre_chain.empty()) {
@@ -5455,11 +5620,12 @@ NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pa
         }
       }
       std::fprintf(stderr,
-                   "[model-runner] build_pipeline_group sync=%d tensor_mode=%d input_ptr=%d "
+                   "[model-runner] build_pipeline_nodes sync=%d tensor_mode=%d input_ptr=%d "
                    "src_opt{media=%s format=%s w=%d h=%d d=%d mem_policy=%s use_simaai_pool=%d} "
                    "first_pre=%s include_pre=%d include_post=%d\n",
-                   sync ? 1 : 0, tensor_mode ? 1 : 0, input ? 1 : 0, src_opt.media_type.c_str(),
-                   src_opt.format.str().c_str(), src_opt.width, src_opt.height, src_opt.depth,
+                   sync ? 1 : 0, tensor_mode ? 1 : 0, input ? 1 : 0,
+                   resolve_input_media_type(src_opt).c_str(), src_opt.format.str().c_str(),
+                   src_opt.width, src_opt.height, src_opt.depth,
                    input_memory_policy_name(src_opt.memory_policy), src_opt.use_simaai_pool ? 1 : 0,
                    first_pre, include_preprocess_stage ? 1 : 0, include_postprocess_stage ? 1 : 0);
     }
@@ -5468,45 +5634,38 @@ NodeGroup build_pipeline_group(const Model& model, const internal::ModelPack& pa
 
   std::string upstream =
       popt.upstream_name.empty() ? (pre_name.empty() ? "decoder" : pre_name) : popt.upstream_name;
-  if (!include_preprocess_stage && popt.include_appsrc && popt.upstream_name.empty() &&
+  if (!include_preprocess_stage && popt.include_input && popt.upstream_name.empty() &&
       !src_opt.buffer_name.empty()) {
     upstream = src_opt.buffer_name;
   }
 
   if (include_preprocess_stage) {
     const std::string pre_upstream =
-        (popt.include_appsrc && !src_opt.buffer_name.empty()) ? src_opt.buffer_name : upstream;
-    NodeGroup pre_group =
-        build_preprocess_group_impl(model, pack, plan, input, pre_name, pre_upstream, sync);
-    for (const auto& node : pre_group.nodes()) {
-      nodes.push_back(node);
-    }
+        (popt.include_input && !src_opt.buffer_name.empty()) ? src_opt.buffer_name : upstream;
+    auto pre_nodes =
+        build_preprocess_nodes_impl(model, pack, plan, input, pre_name, pre_upstream, sync);
+    nodes.insert(nodes.end(), pre_nodes.begin(), pre_nodes.end());
   }
 
-  NodeGroup infer = pack.infer_block(
+  auto infer_nodes = pack.infer_block(
       upstream, make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer));
-  for (const auto& node : infer.nodes()) {
-    nodes.push_back(node);
-  }
+  nodes.insert(nodes.end(), infer_nodes.begin(), infer_nodes.end());
 
   if (include_postprocess_stage) {
-    NodeGroup post = build_postprocess_group_impl(model, pack, opt, sync, plan.session_route_plan);
-    for (const auto& node : post.nodes()) {
-      nodes.push_back(node);
-    }
+    auto post_nodes = build_postprocess_nodes_impl(model, pack, opt, sync, plan.session_route_plan);
+    nodes.insert(nodes.end(), post_nodes.begin(), post_nodes.end());
   }
 
-  if (popt.include_appsink) {
+  if (popt.include_output) {
     nodes.push_back(simaai::neat::nodes::Output());
   }
 
-  return NodeGroup(std::move(nodes));
+  return nodes;
 }
 
-simaai::neat::SessionOptions
-session_options_from_model_session_options(const Model::SessionOptions& opt,
-                                           const Model::Options* model_opt) {
-  simaai::neat::SessionOptions sess_opt;
+simaai::neat::GraphOptions route_options_from_model_route_options(const Model::RouteOptions& opt,
+                                                                  const Model::Options* model_opt) {
+  simaai::neat::GraphOptions sess_opt;
   sess_opt.verbose = opt.verbose;
   sess_opt.processcvu_requested_run_target = opt.processcvu_requested_run_target;
   if (model_opt) {
@@ -5553,45 +5712,177 @@ session_options_from_model_session_options(const Model::SessionOptions& opt,
   return sess_opt;
 }
 
+void add_nodes_to_graph(Graph& graph, std::vector<std::shared_ptr<Node>> nodes) {
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+}
+
+Graph graph_from_nodes(std::vector<std::shared_ptr<Node>> nodes, const GraphOptions& opt = {}) {
+  Graph graph(opt);
+  add_nodes_to_graph(graph, std::move(nodes));
+  return graph;
+}
+
+const char* public_stage_role_name(Model::Stage stage) {
+  switch (stage) {
+  case Model::Stage::Preprocess:
+    return "preprocess";
+  case Model::Stage::Inference:
+    return "inference";
+  case Model::Stage::Postprocess:
+    return "postprocess";
+  case Model::Stage::Full:
+    return "full";
+  }
+  return "fragment";
+}
+
+template <typename EnumT> int model_options_enum_int(EnumT value) {
+  return static_cast<int>(value);
+}
+
+nlohmann::ordered_json resize_spec_json(const ResizeSpec& spec) {
+  return {{"enable", model_options_enum_int(spec.enable)},
+          {"width", spec.width},
+          {"height", spec.height},
+          {"mode", model_options_enum_int(spec.mode)},
+          {"pad_value", spec.pad_value},
+          {"scaling_type", spec.scaling_type}};
+}
+
+nlohmann::ordered_json color_convert_spec_json(const ColorConvertSpec& spec) {
+  return {{"enable", model_options_enum_int(spec.enable)},
+          {"input_format", model_options_enum_int(spec.input_format)},
+          {"output_format", model_options_enum_int(spec.output_format)}};
+}
+
+nlohmann::ordered_json layout_convert_spec_json(const LayoutConvertSpec& spec) {
+  return {{"enable", model_options_enum_int(spec.enable)}, {"perm", spec.perm}};
+}
+
+nlohmann::ordered_json normalize_spec_json(const NormalizeSpec& spec) {
+  return {{"enable", model_options_enum_int(spec.enable)},
+          {"mean", spec.mean},
+          {"stddev", spec.stddev},
+          {"has_explicit_stats", spec.has_explicit_stats}};
+}
+
+nlohmann::ordered_json quantize_spec_json(const QuantizeSpec& spec) {
+  return {{"enable", model_options_enum_int(spec.enable)},
+          {"zero_point", spec.zero_point},
+          {"scale", spec.scale},
+          {"output_dtype", spec.output_dtype}};
+}
+
+nlohmann::ordered_json tessellate_spec_json(const TessellateSpec& spec) {
+  return {{"enable", model_options_enum_int(spec.enable)}, {"slice_shape", spec.slice_shape}};
+}
+
+nlohmann::ordered_json transform_json(const Transform& transform) {
+  return {{"type", model_options_enum_int(transform.type)},
+          {"resize", resize_spec_json(transform.resize)},
+          {"color_convert", color_convert_spec_json(transform.color_convert)},
+          {"layout_convert", layout_convert_spec_json(transform.layout_convert)},
+          {"normalize", normalize_spec_json(transform.normalize)},
+          {"quantize", quantize_spec_json(transform.quantize)},
+          {"tessellate", tessellate_spec_json(transform.tessellate)}};
+}
+
+nlohmann::ordered_json preprocess_options_json(const PreprocessOptions& opt) {
+  nlohmann::ordered_json transforms = nlohmann::ordered_json::array();
+  for (const auto& transform : opt.transforms) {
+    transforms.push_back(transform_json(transform));
+  }
+  return {{"kind", model_options_enum_int(opt.kind)},
+          {"enable", model_options_enum_int(opt.enable)},
+          {"input_max_width", opt.input_max_width},
+          {"input_max_height", opt.input_max_height},
+          {"input_max_depth", opt.input_max_depth},
+          {"resize", resize_spec_json(opt.resize)},
+          {"color_convert", color_convert_spec_json(opt.color_convert)},
+          {"layout_convert", layout_convert_spec_json(opt.layout_convert)},
+          {"normalize", normalize_spec_json(opt.normalize)},
+          {"quantize", quantize_spec_json(opt.quantize)},
+          {"tessellate", tessellate_spec_json(opt.tessellate)},
+          {"transforms", std::move(transforms)},
+          {"preset", model_options_enum_int(opt.preset)}};
+}
+
+nlohmann::ordered_json processcvu_options_json(const ProcessCvuOptions& opt) {
+  return {{"pre_run_target", opt.pre_run_target},
+          {"post_run_target", opt.post_run_target},
+          {"async", opt.async}};
+}
+
+nlohmann::ordered_json processmla_options_json(const ProcessMlaOptions& opt) {
+  return {{"async", opt.async},
+          {"output_pool_buffers", opt.output_pool_buffers},
+          {"defer_output_invalidate", opt.defer_output_invalidate}};
+}
+
+nlohmann::ordered_json prepared_runner_options_json(const PreparedRunnerOptions& opt) {
+  return {{"mode", opt.mode},
+          {"ring_depth", opt.ring_depth},
+          {"profile", opt.profile},
+          {"dequant_flags", opt.dequant_flags}};
+}
+
+std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
+  nlohmann::ordered_json terminal;
+  terminal["mla_only"] = opt.inference_terminal.mla_only;
+  if (opt.inference_terminal.last_stage_index.has_value()) {
+    terminal["last_stage_index"] = *opt.inference_terminal.last_stage_index;
+  }
+  if (opt.inference_terminal.last_stage_name.has_value()) {
+    terminal["last_stage_name"] = *opt.inference_terminal.last_stage_name;
+  }
+  if (opt.inference_terminal.last_plugin_id.has_value()) {
+    terminal["last_plugin_id"] = *opt.inference_terminal.last_plugin_id;
+  }
+  if (opt.inference_terminal.last_processor.has_value()) {
+    terminal["last_processor"] = *opt.inference_terminal.last_processor;
+  }
+
+  nlohmann::ordered_json out;
+  out["preprocess"] = preprocess_options_json(opt.preprocess);
+  out["decode_type"] = model_options_enum_int(opt.decode_type);
+  out["score_threshold"] = opt.score_threshold;
+  out["nms_iou_threshold"] = opt.nms_iou_threshold;
+  out["top_k"] = opt.top_k;
+  out["boxdecode_original_width"] = opt.boxdecode_original_width;
+  out["boxdecode_original_height"] = opt.boxdecode_original_height;
+  out["upstream_name"] = opt.upstream_name;
+  out["name_suffix"] = opt.name_suffix;
+  out["cleanup_extracted_model_data"] = opt.cleanup_extracted_model_data;
+  out["inference_terminal"] = std::move(terminal);
+  out["processcvu"] = processcvu_options_json(opt.processcvu);
+  out["processmla"] = processmla_options_json(opt.processmla);
+  out["prepared_runner"] = prepared_runner_options_json(opt.prepared_runner);
+  out["async_queue_depth"] = opt.async_queue_depth;
+  return out.dump();
+}
+
 } // namespace
 
-NodeGroup Model::preprocess() const {
-  if (!impl_->preprocess_plan.session_route_plan.include_pre_stage) {
-    return NodeGroup{};
-  }
-  const auto& pack = impl_->pack;
-  const std::string pre_name = resolved_pre_stage_name(pack, impl_->preprocess_plan);
-  return build_preprocess_group_impl(*this, pack, impl_->preprocess_plan, nullptr, pre_name,
-                                     "decoder", false);
+Graph Model::preprocess() const {
+  return internal::ModelAccess::build_stage_graph_fragment(*this, Model::Stage::Preprocess);
 }
 
-NodeGroup Model::inference() const {
-  const auto& pack = impl_->pack;
-  const std::string pre_name = resolved_pre_stage_name(pack, impl_->preprocess_plan);
-  const std::string upstream = impl_->preprocess_plan.session_route_plan.include_pre_stage
-                                   ? (pre_name.empty() ? std::string("decoder") : pre_name)
-                                   : std::string("decoder");
-  return pack.infer_block(
-      upstream, make_stage_lineage_binding(*this, internal::ModelLineageStageRole::Infer));
+Graph Model::inference() const {
+  return internal::ModelAccess::build_stage_graph_fragment(*this, Model::Stage::Inference);
 }
 
-NodeGroup Model::postprocess() const {
-  const auto& pack = impl_->pack;
-  return build_postprocess_group_impl(*this, pack, impl_->options, false,
-                                      impl_->preprocess_plan.session_route_plan);
+Graph Model::postprocess() const {
+  return internal::ModelAccess::build_stage_graph_fragment(*this, Model::Stage::Postprocess);
 }
 
-NodeGroup Model::session() const {
-  return session(Model::SessionOptions{});
+Graph Model::graph() const {
+  return graph(Model::RouteOptions{});
 }
 
-NodeGroup Model::session(Model::SessionOptions opt) const {
-  internal::ModelPack pack = impl_->pack;
-  if (!opt.name_suffix.empty()) {
-    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
-  }
-  return build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, std::move(opt),
-                              nullptr, false, false);
+Graph Model::graph(Model::RouteOptions opt) const {
+  return internal::ModelAccess::build_graph_fragment(*this, std::move(opt));
 }
 
 TensorSpec Model::input_spec() const {
@@ -5652,7 +5943,9 @@ std::vector<TensorSpec> Model::input_specs() const {
 
     const InputOptions opt = impl_->pack.input_appsrc_options(true);
     if (spec.shape.empty()) {
-      const auto mla_input_tensor_info = rendered_stage_query::mla_input_tensor_info(inference());
+      const auto infer = internal::ModelAccess::build_public_inference_nodes(*this);
+      const auto mla_input_tensor_info =
+          rendered_stage_query::mla_input_tensor_info_from_nodes(infer);
       const stages::TensorDims mla_dims = dims_from_mla_logical_contract_shape(
           mla_input_tensor_info.logical_shape, mla_input_tensor_info.logical_layout);
       int d = (mla_dims.depth > 0) ? mla_dims.depth : 0;
@@ -5786,7 +6079,8 @@ std::vector<TensorSpec> Model::output_specs() const {
     }
     return true;
   };
-  const auto append_from_rendered_terminal_stage = [&](const NodeGroup& group) -> bool {
+  const auto append_from_rendered_terminal_stage =
+      [&](const std::vector<std::shared_ptr<Node>>& group) -> bool {
     const auto info = rendered_stage_query::terminal_output_info(group, false);
     if (info.outputs.empty()) {
       return false;
@@ -5808,8 +6102,7 @@ std::vector<TensorSpec> Model::output_specs() const {
     return specs;
   }
   if (has_detess) {
-    NodeGroup post =
-        build_postprocess_group_impl(*this, impl_->pack, impl_->options, false, route_plan);
+    auto post = build_postprocess_nodes_impl(*this, impl_->pack, impl_->options, false, route_plan);
     if (append_from_rendered_terminal_stage(post)) {
       return specs;
     }
@@ -5833,8 +6126,7 @@ std::vector<TensorSpec> Model::output_specs() const {
         "rendered detess output contracts.");
   }
   if (has_dequant) {
-    NodeGroup post =
-        build_postprocess_group_impl(*this, impl_->pack, impl_->options, false, route_plan);
+    auto post = build_postprocess_nodes_impl(*this, impl_->pack, impl_->options, false, route_plan);
     if (append_from_rendered_terminal_stage(post)) {
       return specs;
     }
@@ -5857,8 +6149,7 @@ std::vector<TensorSpec> Model::output_specs() const {
         "rendered dequant output contracts.");
   }
   if (has_cast) {
-    NodeGroup post =
-        build_postprocess_group_impl(*this, impl_->pack, impl_->options, false, route_plan);
+    auto post = build_postprocess_nodes_impl(*this, impl_->pack, impl_->options, false, route_plan);
     if (append_from_rendered_terminal_stage(post)) {
       return specs;
     }
@@ -5874,8 +6165,8 @@ std::vector<TensorSpec> Model::output_specs() const {
   if (append_from_egress_contracts(true)) {
     return specs;
   }
-  NodeGroup infer = inference();
-  const auto mla_outputs = rendered_stage_query::mla_output_tensors(infer);
+  const auto infer = internal::ModelAccess::build_public_inference_nodes(*this);
+  const auto mla_outputs = rendered_stage_query::mla_output_tensors_from_nodes(infer);
   if (mla_outputs.empty()) {
     throw std::runtime_error(
         "Model::output_specs: inference group is missing rendered MLA output contracts.");
@@ -6009,23 +6300,8 @@ std::unordered_map<std::string, std::string> Model::metadata() const {
   return out;
 }
 
-NodeGroup Model::fragment(Stage stage) const {
-  internal::ModelStage s = internal::ModelStage::Full;
-  switch (stage) {
-  case Stage::Preprocess:
-    s = internal::ModelStage::Preprocess;
-    break;
-  case Stage::Inference:
-    s = internal::ModelStage::MlaOnly;
-    break;
-  case Stage::Postprocess:
-    s = internal::ModelStage::Postprocess;
-    break;
-  case Stage::Full:
-    s = internal::ModelStage::Full;
-    break;
-  }
-  return impl_->pack.to_node_group(s);
+Graph Model::fragment(Stage stage) const {
+  return internal::ModelAccess::build_stage_graph_fragment(*this, stage);
 }
 
 std::string Model::backend_fragment(Stage stage) const {
@@ -6104,8 +6380,14 @@ std::string Model::infer_output_name() const {
   return frag.elements.back();
 }
 
-const Model::SessionOptions& Model::default_session_options() {
-  static const Model::SessionOptions opt{};
+const Model::RouteOptions& Model::default_route_options() {
+  static const Model::RouteOptions opt{};
+  return opt;
+}
+
+Model::RouteOptions route_options_for_model_runner(Model::RouteOptions opt) {
+  opt.include_input = true;
+  opt.include_output = true;
   return opt;
 }
 
@@ -6164,7 +6446,7 @@ bool Model::Runner::push(const std::vector<cv::Mat>& inputs) {
       if (runner_debug_enabled()) {
         std::fprintf(
             stderr, "[model-runner] push(cv::Mat) -> tensor media=%s format=%s w=%d h=%d d=%d\n",
-            tensor_input_opt_for_cv_->media_type.c_str(),
+            resolve_input_media_type(*tensor_input_opt_for_cv_).c_str(),
             tensor_input_opt_for_cv_->format.str().c_str(), tensor_input_opt_for_cv_->width,
             tensor_input_opt_for_cv_->height, tensor_input_opt_for_cv_->depth);
       }
@@ -6186,11 +6468,11 @@ bool Model::Runner::push(const simaai::neat::TensorList& inputs) {
   return run_.push(inputs);
 }
 
-bool Model::Runner::push(const simaai::neat::SampleList& inputs) {
+bool Model::Runner::push(const simaai::neat::Sample& inputs) {
   return run_.push(inputs);
 }
 
-simaai::neat::SampleList Model::Runner::pull(int timeout_ms) {
+simaai::neat::Sample Model::Runner::pull(int timeout_ms) {
   return run_.pull_samples(timeout_ms);
 }
 
@@ -6217,7 +6499,7 @@ simaai::neat::TensorList Model::Runner::run(const std::vector<cv::Mat>& inputs, 
       if (runner_debug_enabled()) {
         std::fprintf(
             stderr, "[model-runner] run(cv::Mat) -> tensor media=%s format=%s w=%d h=%d d=%d\n",
-            tensor_input_opt_for_cv_->media_type.c_str(),
+            resolve_input_media_type(*tensor_input_opt_for_cv_).c_str(),
             tensor_input_opt_for_cv_->format.str().c_str(), tensor_input_opt_for_cv_->width,
             tensor_input_opt_for_cv_->height, tensor_input_opt_for_cv_->depth);
       }
@@ -6239,8 +6521,7 @@ simaai::neat::TensorList Model::Runner::run(const simaai::neat::TensorList& inpu
   return run_.run(inputs, timeout_ms);
 }
 
-simaai::neat::SampleList Model::Runner::run(const simaai::neat::SampleList& inputs,
-                                            int timeout_ms) {
+simaai::neat::Sample Model::Runner::run(const simaai::neat::Sample& inputs, int timeout_ms) {
   return run_.run(inputs, timeout_ms);
 }
 
@@ -6304,19 +6585,20 @@ void Model::Runner::close_input() {
 }
 
 Model::Runner Model::build() {
-  return build(Model::SessionOptions{}, simaai::neat::RunOptions{});
+  return build(Model::RouteOptions{}, simaai::neat::RunOptions{});
 }
 
-Model::Runner Model::build(const Model::SessionOptions& opt) {
+Model::Runner Model::build(const Model::RouteOptions& opt) {
   return build(opt, simaai::neat::RunOptions{});
 }
 
 Model::Runner Model::build(const simaai::neat::RunOptions& run_opt) {
-  return build(Model::SessionOptions{}, run_opt);
+  return build(Model::RouteOptions{}, run_opt);
 }
 
-Model::Runner Model::build(const Model::SessionOptions& opt,
+Model::Runner Model::build(const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
+  const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
@@ -6331,17 +6613,17 @@ Model::Runner Model::build(const Model::SessionOptions& opt,
     dummy_inputs.push_back(make_dummy_tensor(src_opt));
   }
   internal::ModelPack pack = impl_->pack;
-  if (!opt.name_suffix.empty()) {
-    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  if (!build_opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
   }
   const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
-  NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
-                                         nullptr, false, externalize_preprocess);
-  Session p(session_options_from_model_session_options(opt, &impl_->options));
-  p.add(group);
+  auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
+                                    nullptr, false, externalize_preprocess);
+  Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
+  add_nodes_to_graph(p, std::move(nodes));
   if (use_input_route_processor) {
-    internal::ModelAccess::configure_session_input_route(p, *this, opt);
+    internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
   Run run = p.build(dummy_inputs, RunMode::Async, run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
@@ -6354,14 +6636,15 @@ Model::Runner Model::build(const Model::SessionOptions& opt,
   return Runner(std::move(run), ingress_names);
 }
 
-Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::SessionOptions& opt,
+Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
+  const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty tensor list");
   }
   internal::ModelPack pack = impl_->pack;
-  if (!opt.name_suffix.empty()) {
-    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  if (!build_opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
   }
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   const auto ingress_contracts =
@@ -6371,11 +6654,11 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   } else if (inputs.size() != 1U) {
     throw std::runtime_error(
         "Model::build(TensorList): image-mode convenience expects exactly one image tensor; use "
-        "Session for explicit multi-input pipelines.");
+        "Graph for explicit multi-input pipelines.");
   } else if (ingress_contracts.size() > 1U) {
     throw std::runtime_error(
         "Model::build(TensorList): multi-ingress image convenience is unsupported; use "
-        "Model::build(SampleList)");
+        "Model::build(Sample)");
   }
   const bool use_input_route_processor = plan_uses_bundled_fan_in(impl_->preprocess_plan);
   const bool externalize_preprocess = false;
@@ -6384,13 +6667,13 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
     image_input_info = input_info_from_tensor(inputs.front(), true);
     require_explicit_image_input_info(*image_input_info, "Model::build(TensorList)");
   }
-  NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
-                                         image_input_info ? &*image_input_info : nullptr, false,
-                                         externalize_preprocess);
-  Session p(session_options_from_model_session_options(opt, &impl_->options));
-  p.add(group);
+  auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
+                                    image_input_info ? &*image_input_info : nullptr, false,
+                                    externalize_preprocess);
+  Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
+  add_nodes_to_graph(p, std::move(nodes));
   if (use_input_route_processor) {
-    internal::ModelAccess::configure_session_input_route(p, *this, opt);
+    internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
   Run run = p.build(inputs, RunMode::Async, run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
@@ -6403,20 +6686,21 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   if (runner_debug_enabled()) {
     std::fprintf(stderr,
                  "[model-runner] build(tensors) tensor_mode=1 media=%s format=%s w=%d h=%d d=%d\n",
-                 src_opt.media_type.c_str(), src_opt.format.str().c_str(), src_opt.width,
-                 src_opt.height, src_opt.depth);
+                 resolve_input_media_type(src_opt).c_str(), src_opt.format.str().c_str(),
+                 src_opt.width, src_opt.height, src_opt.depth);
   }
   return Runner(std::move(run), src_opt, ingress_names);
 }
 
-Model::Runner Model::build(const simaai::neat::SampleList& inputs, const Model::SessionOptions& opt,
+Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
+  const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty sample list");
   }
   internal::ModelPack pack = impl_->pack;
-  if (!opt.name_suffix.empty()) {
-    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  if (!build_opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
   }
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
@@ -6428,27 +6712,28 @@ Model::Runner Model::build(const simaai::neat::SampleList& inputs, const Model::
   if (!tensor_mode) {
     if (inputs.size() != 1U) {
       throw std::runtime_error(
-          "Model::build(SampleList): image-mode convenience expects exactly one image sample; "
-          "use Session for explicit multi-input pipelines.");
+          "Model::build(Sample): image-mode convenience expects exactly one image sample; "
+          "use Graph for explicit multi-input pipelines.");
     }
     image_input_info = input_info_from_image_sample(inputs.front());
-    require_explicit_image_input_info(*image_input_info, "Model::build(SampleList)");
+    require_explicit_image_input_info(*image_input_info, "Model::build(Sample)");
   }
-  NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
-                                         image_input_info ? &*image_input_info : nullptr, false,
-                                         externalize_preprocess);
-  Session p(session_options_from_model_session_options(opt, &impl_->options));
-  p.add(group);
+  auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
+                                    image_input_info ? &*image_input_info : nullptr, false,
+                                    externalize_preprocess);
+  Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
+  add_nodes_to_graph(p, std::move(nodes));
   if (use_input_route_processor) {
-    internal::ModelAccess::configure_session_input_route(p, *this, opt);
+    internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
   Run run = p.build(inputs, RunMode::Async, run_opt);
   return Runner(std::move(run), ingress_names);
 }
 
 #if defined(SIMA_WITH_OPENCV)
-Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::SessionOptions& opt,
+Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::RouteOptions& opt,
                            const simaai::neat::RunOptions& run_opt) {
+  const Model::RouteOptions build_opt = route_options_for_model_runner(opt);
   if (inputs.empty()) {
     throw std::runtime_error("Model::build: empty image list");
   }
@@ -6461,8 +6746,8 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Sess
   const bool tensor_mode = pipeline_requires_tensor_input(impl_->preprocess_plan);
   if (tensor_mode) {
     internal::ModelPack pack = impl_->pack;
-    if (!opt.name_suffix.empty()) {
-      pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+    if (!build_opt.name_suffix.empty()) {
+      pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
     }
     const InputOptions src_opt = pack.input_appsrc_options(true);
     TensorList tensors;
@@ -6473,11 +6758,11 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Sess
       tensors.emplace_back(
           simaai::neat::tensor_from_cv_mat(prepared_input, src_opt, "Model::build"));
     }
-    return build(tensors, opt, run_opt);
+    return build(tensors, build_opt, run_opt);
   }
   internal::ModelPack pack = impl_->pack;
-  if (!opt.name_suffix.empty()) {
-    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  if (!build_opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, build_opt.name_suffix);
   }
   InputInfo info = input_info_from_mat(inputs.front());
   if (!tensor_mode) {
@@ -6488,10 +6773,10 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Sess
       info.format_source = InputInfo::FormatSource::Explicit;
     }
   }
-  NodeGroup group = build_pipeline_group(*this, pack, impl_->options, impl_->preprocess_plan, opt,
-                                         &info, false, false);
-  Session p(session_options_from_model_session_options(opt, &impl_->options));
-  p.add(group);
+  auto nodes = build_pipeline_nodes(*this, pack, impl_->options, impl_->preprocess_plan, build_opt,
+                                    &info, false, false);
+  Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
+  add_nodes_to_graph(p, std::move(nodes));
   Run run = p.build(inputs, RunMode::Async, run_opt);
   return Runner(std::move(run));
 }
@@ -6505,7 +6790,7 @@ simaai::neat::TensorList Model::run(const std::vector<Tensor>& inputs, int timeo
   return runner.run(inputs, timeout_ms);
 }
 
-simaai::neat::SampleList Model::run(const simaai::neat::SampleList& inputs, int timeout_ms) {
+simaai::neat::Sample Model::run(const simaai::neat::Sample& inputs, int timeout_ms) {
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty sample list");
   }
@@ -6760,27 +7045,80 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   return require_model_managed_boxdecode_contract(pack);
 }
 
-void ModelAccess::configure_session_input_route(simaai::neat::Session& session, const Model& model,
-                                                const Model::SessionOptions& opt) {
+void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, const Model& model,
+                                                const Model::RouteOptions& opt) {
   Model owned_model = ModelAccess::clone_with_options(model, ModelAccess::options(model));
   session.input_route_processor_ = std::make_shared<ModelIngressRouteProcessor>(
       std::move(owned_model), model.impl_->preprocess_plan, opt);
 }
 
-NodeGroup ModelAccess::build_preprocess_group(const Model& model, bool sync) {
+std::vector<std::shared_ptr<Node>> ModelAccess::build_public_preprocess_nodes(const Model& model) {
+  if (!model.impl_->preprocess_plan.session_route_plan.include_pre_stage) {
+    return {};
+  }
+  const auto& pack = model.impl_->pack;
+  const std::string pre_name = resolved_pre_stage_name(pack, model.impl_->preprocess_plan);
+  return build_preprocess_nodes_impl(model, pack, model.impl_->preprocess_plan, nullptr, pre_name,
+                                     "decoder", false);
+}
+
+std::vector<std::shared_ptr<Node>> ModelAccess::build_public_inference_nodes(const Model& model) {
+  const auto& pack = model.impl_->pack;
+  const std::string pre_name = resolved_pre_stage_name(pack, model.impl_->preprocess_plan);
+  const std::string upstream = model.impl_->preprocess_plan.session_route_plan.include_pre_stage
+                                   ? (pre_name.empty() ? std::string("decoder") : pre_name)
+                                   : std::string("decoder");
+  return pack.infer_block(
+      upstream, make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer));
+}
+
+std::vector<std::shared_ptr<Node>> ModelAccess::build_public_postprocess_nodes(const Model& model) {
+  const auto& pack = model.impl_->pack;
+  return build_postprocess_nodes_impl(model, pack, model.impl_->options, false,
+                                      model.impl_->preprocess_plan.session_route_plan);
+}
+
+std::vector<std::shared_ptr<Node>> ModelAccess::build_public_route_nodes(const Model& model,
+                                                                         Model::RouteOptions opt) {
+  internal::ModelPack pack = model.impl_->pack;
+  if (!opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  }
+  return build_pipeline_nodes(model, pack, model.impl_->options, model.impl_->preprocess_plan,
+                              std::move(opt), nullptr, false, false);
+}
+
+std::vector<std::shared_ptr<Node>>
+ModelAccess::build_public_stage_fragment_nodes(const Model& model, Model::Stage stage) {
+  switch (stage) {
+  case Model::Stage::Preprocess:
+    return ModelAccess::build_public_preprocess_nodes(model);
+  case Model::Stage::Inference:
+    return ModelAccess::build_public_inference_nodes(model);
+  case Model::Stage::Postprocess:
+    return ModelAccess::build_public_postprocess_nodes(model);
+  case Model::Stage::Full:
+    return ModelAccess::build_public_route_nodes(model, Model::RouteOptions{});
+  }
+  return {};
+}
+
+std::vector<std::shared_ptr<Node>> ModelAccess::build_preprocess_nodes(const Model& model,
+                                                                       bool sync) {
   require_model_managed_stage(model, StageNodeKind::Preproc,
                               "Model::preprocess()/stages::Preproc(Model)");
   const ModelPack& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  return build_preprocess_group_impl(model, pack, model.impl_->preprocess_plan, nullptr,
+  return build_preprocess_nodes_impl(model, pack, model.impl_->preprocess_plan, nullptr,
                                      std::string{}, std::string{}, sync);
 }
 
-NodeGroup ModelAccess::build_preprocess_group_for_input(const Model& model,
-                                                        const InputOptions& input, bool sync) {
+std::vector<std::shared_ptr<Node>>
+ModelAccess::build_preprocess_nodes_for_input(const Model& model, const InputOptions& input,
+                                              bool sync) {
   require_model_managed_stage(model, StageNodeKind::Preproc, "stages::Preproc(input, Model)");
   const ModelPack& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   InputInfo info;
-  info.media_type = input.media_type;
+  info.media_type = resolve_input_media_type(input);
   info.format = upper_copy(input.format);
   info.width = input.width;
   info.height = input.height;
@@ -6788,11 +7126,11 @@ NodeGroup ModelAccess::build_preprocess_group_for_input(const Model& model,
   if (!info.format.empty()) {
     info.format_source = InputInfo::FormatSource::Explicit;
   }
-  return build_preprocess_group_impl(model, pack, model.impl_->preprocess_plan, &info,
+  return build_preprocess_nodes_impl(model, pack, model.impl_->preprocess_plan, &info,
                                      std::string{}, std::string{}, sync);
 }
 
-NodeGroup ModelAccess::build_infer_group(const Model& model, bool sync) {
+std::vector<std::shared_ptr<Node>> ModelAccess::build_infer_nodes(const Model& model, bool sync) {
   const ModelPack& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
   std::string upstream = "decoder";
   if (model.impl_->preprocess_plan.session_route_plan.include_pre_stage) {
@@ -6803,10 +7141,98 @@ NodeGroup ModelAccess::build_infer_group(const Model& model, bool sync) {
       upstream, make_stage_lineage_binding(model, internal::ModelLineageStageRole::Infer));
 }
 
-NodeGroup ModelAccess::build_postprocess_group(const Model& model, bool sync) {
+std::vector<std::shared_ptr<Node>> ModelAccess::build_postprocess_nodes(const Model& model,
+                                                                        bool sync) {
   const ModelPack& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  return build_postprocess_group_impl(model, pack, model.impl_->options, sync,
+  return build_postprocess_nodes_impl(model, pack, model.impl_->options, sync,
                                       model.impl_->preprocess_plan.session_route_plan);
+}
+
+Graph ModelAccess::build_stage_graph_fragment(const Model& model, Model::Stage stage) {
+  Graph graph = graph_from_nodes(ModelAccess::build_public_stage_fragment_nodes(model, stage));
+  const auto range_end =
+      graph.linear_nodes_snapshot("ModelAccess::build_stage_graph_fragment").size();
+  if (range_end == 0U) {
+    return graph;
+  }
+
+  runtime::FragmentBoundaryHints hints;
+  runtime::Provenance provenance;
+  provenance.model_id = ModelAccess::model_id(model);
+  provenance.model_source_path = ModelAccess::source_path(model);
+  provenance.model_stage_role = public_stage_role_name(stage);
+  provenance.model_options_json =
+      model_options_json_for_graph_provenance(ModelAccess::options(model));
+  graph.attach_fragment_boundary_hints_(0, range_end, std::move(hints), std::move(provenance));
+  return graph;
+}
+
+Graph ModelAccess::build_graph_fragment(const Model& model, Model::RouteOptions opt,
+                                        runtime::FragmentBoundaryHints* hints) {
+  Graph graph(route_options_from_model_route_options(opt, &model.impl_->options));
+  add_nodes_to_graph(graph, ModelAccess::build_public_route_nodes(model, opt));
+
+  runtime::FragmentBoundaryHints fragment_hints;
+  const bool tensor_mode = pipeline_requires_tensor_input(model.impl_->preprocess_plan);
+  const bool bundled_fan_in = plan_uses_bundled_fan_in(model.impl_->preprocess_plan);
+  fragment_hints.tensor_mode = tensor_mode;
+  fragment_hints.bundled_fan_in = bundled_fan_in;
+  fragment_hints.ingress_inputs = model.input_appsrc_options_list(tensor_mode);
+  fragment_hints.ingress_endpoint_names =
+      make_unique_endpoint_names(ingress_names_from_contracts(normalized_ingress_contracts(
+                                     model.impl_->preprocess_plan.session_route_plan)),
+                                 "ifm");
+  if (fragment_hints.ingress_endpoint_names.empty()) {
+    for (std::size_t i = 0; i < fragment_hints.ingress_inputs.size(); ++i) {
+      fragment_hints.ingress_endpoint_names.push_back(
+          !fragment_hints.ingress_inputs[i].buffer_name.empty()
+              ? fragment_hints.ingress_inputs[i].buffer_name
+              : ("ifm" + std::to_string(i)));
+    }
+    fragment_hints.ingress_endpoint_names =
+        make_unique_endpoint_names(std::move(fragment_hints.ingress_endpoint_names), "ifm");
+  }
+  const auto& route_plan = model.impl_->preprocess_plan.session_route_plan;
+  fragment_hints.egress_endpoint_names =
+      model_route_exposes_individual_outputs(route_plan, opt)
+          ? egress_names_from_contracts(route_plan)
+          : aggregate_egress_name_for_model_route(ModelAccess::model_id(model), opt);
+  if (bundled_fan_in) {
+    for (auto& ingress : fragment_hints.ingress_inputs) {
+      ingress.caps_override = "application/vnd.simaai.tensor, representation=(string)tensor-set, "
+                              "storage=(string)tensorbuffer";
+    }
+  }
+
+  if (bundled_fan_in) {
+    ModelAccess::configure_session_input_route(graph, model, opt);
+    fragment_hints.input_route_processor = graph.input_route_processor_;
+  }
+
+  if (hints) {
+    *hints = fragment_hints;
+  }
+  const auto range_end = graph.linear_nodes_snapshot("ModelAccess::build_graph_fragment").size();
+  runtime::Provenance provenance;
+  provenance.model_id = ModelAccess::model_id(model);
+  provenance.model_source_path = ModelAccess::source_path(model);
+  provenance.model_stage_role = "route";
+  provenance.model_options_json =
+      model_options_json_for_graph_provenance(ModelAccess::options(model));
+  provenance.model_route.present = true;
+  provenance.model_route.upstream_name = opt.upstream_name;
+  provenance.model_route.name_suffix = opt.name_suffix;
+  provenance.model_route.buffer_name = opt.buffer_name;
+  provenance.model_route.processcvu_requested_run_target = opt.processcvu_requested_run_target;
+  provenance.model_route.processcvu = opt.processcvu;
+  provenance.model_route.processmla = opt.processmla;
+  provenance.model_route.prepared_runner = opt.prepared_runner;
+  provenance.model_route.async_queue_depth = opt.async_queue_depth;
+  provenance.model_route.expose_all_outputs = opt.expose_all_outputs;
+  graph.attach_fragment_boundary_hints_(0, range_end, std::move(fragment_hints),
+                                        std::move(provenance));
+
+  return graph;
 }
 } // namespace internal
 

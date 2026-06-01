@@ -1,20 +1,19 @@
 /**
  * @file
  * @ingroup nodes_groups
- * @brief Model-stage NodeGroups: preprocess, MLA inference, postprocess, and full infer chains.
+ * @brief Model-stage Graph fragments: preprocess, MLA inference, and postprocess helpers.
  *
- * Wraps the four canonical Node sequences a `Model` expands into when added to a
- * Session — preprocess, MLA, postprocess, and the combined `Infer` group that chains
- * them together. The `_tar_gz` overloads build directly from an MPK on disk; the
- * `_Model&` overloads accept an already-parsed `Model` and are what `Model::session()`
- * uses internally.
+ * Wraps the canonical Graph fragments a `Model` expands into when added to a
+ * Graph — preprocess, MLA, postprocess, and the combined `Infer` fragment that chains
+ * them together. The `_tar_gz` overloads build directly from a `.tar.gz` model archive; the
+ * `_Model&` overloads accept an already-parsed `Model`.
  *
  * @see Model
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
 #include "model/PreprocessPlan.h"
+#include "pipeline/Graph.h"
 
 #include <string>
 #include <vector>
@@ -27,7 +26,7 @@ class Model;
 namespace simaai::neat::nodes::groups {
 
 /**
- * @brief Tunables for the preprocess and combined-infer groups.
+ * @brief Tunables for the preprocess and combined-infer Graph fragments.
  *
  * Selects the input color format expected by the model, optional mean/stddev
  * normalization, and the upstream-side queueing / buffering policy applied at the
@@ -52,68 +51,69 @@ struct InferOptions {
 };
 
 /**
- * @brief Build the preprocess NodeGroup for a model, given an MPK tarball path.
- * @param tar_gz Path to the model `.tar.gz`.
+ * @brief Build the preprocess Graph fragment for a model, given a model archive path.
+ * @param tar_gz Path to the `.tar.gz` model archive.
  * @param opt Preprocess tunables (color format, normalization, queueing).
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup preprocessing(const std::string& tar_gz, const InferOptions& opt = {});
+simaai::neat::Graph preprocessing(const std::string& tar_gz, const InferOptions& opt = {});
 
 /**
- * @brief Build a single-stage MLA-inference NodeGroup from an MPK tarball, with default options.
- * @param tar_gz Path to the model `.tar.gz`.
+ * @brief Build a single-stage MLA-inference Graph fragment from a model archive, with default
+ * options.
+ * @param tar_gz Path to the `.tar.gz` model archive.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup simple_infer(const std::string& tar_gz);
+simaai::neat::Graph simple_infer(const std::string& tar_gz);
 
 /**
- * @brief Build the postprocess NodeGroup for a model, given an MPK tarball path.
- * @param tar_gz Path to the model `.tar.gz`.
+ * @brief Build the postprocess Graph fragment for a model, given a model archive path.
+ * @param tar_gz Path to the `.tar.gz` model archive.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup postprocessing(const std::string& tar_gz);
+simaai::neat::Graph postprocessing(const std::string& tar_gz);
 
 /**
- * @brief Build the full preprocess + MLA + postprocess NodeGroup from an MPK tarball.
- * @param tar_gz Path to the model `.tar.gz`.
+ * @brief Build the current inference-only Graph fragment from a model archive.
+ * @param tar_gz Path to the `.tar.gz` model archive.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup infer(const std::string& tar_gz);
+simaai::neat::Graph infer(const std::string& tar_gz);
 
 /**
- * @brief Build the full preprocess + MLA + postprocess NodeGroup with explicit options.
- * @param tar_gz Path to the model `.tar.gz`.
+ * @brief Build the current inference-only Graph fragment with explicit options.
+ * @param tar_gz Path to the `.tar.gz` model archive.
  * @param opt Preprocess tunables propagated into the chain.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup infer(const std::string& tar_gz, const InferOptions& opt);
+simaai::neat::Graph infer(const std::string& tar_gz, const InferOptions& opt);
 
 /**
- * @brief Build the preprocess NodeGroup from an already-parsed `Model`.
- * @param model The parsed model (used by `Model::session()`).
+ * @brief Build the preprocess Graph fragment from an already-parsed `Model`.
+ * @param model The parsed model.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup Preprocess(const simaai::neat::Model& model);
+simaai::neat::Graph Preprocess(const simaai::neat::Model& model);
 
 /**
- * @brief Build the MLA-inference NodeGroup from an already-parsed `Model`.
- * @param model The parsed model (used by `Model::session()`).
+ * @brief Build the MLA-inference Graph fragment from an already-parsed `Model`.
+ * @param model The parsed model.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup MLA(const simaai::neat::Model& model);
+simaai::neat::Graph MLA(const simaai::neat::Model& model);
 
 /**
- * @brief Build the postprocess NodeGroup from an already-parsed `Model`.
- * @param model The parsed model (used by `Model::session()`).
+ * @brief Build the postprocess Graph fragment from an already-parsed `Model`.
+ * @param model The parsed model.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup Postprocess(const simaai::neat::Model& model);
+simaai::neat::Graph Postprocess(const simaai::neat::Model& model);
 
 /**
- * @brief Build the full preprocess + MLA + postprocess NodeGroup from an already-parsed `Model`.
- * @param model The parsed model (used by `Model::session()`).
+ * @brief Build the current inference-only Graph fragment from an already-parsed `Model`.
+ * @param model The parsed model.
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup Infer(const simaai::neat::Model& model);
+simaai::neat::Graph Infer(const simaai::neat::Model& model);
 
 } // namespace simaai::neat::nodes::groups

@@ -3,12 +3,12 @@
 This map links common tasks to concrete in-repo references. Tutorials live under
 `tutorials/NNN_<name>/` with paired C++ and Python sources (plus a README).
 
-## Core session and run patterns
+## Core Graph and Run patterns
 
 - First model run (synchronous): `tutorials/001_run_your_first_model/`
 - Async push/pull: `tutorials/002_run_inference_async/`
-- Build a Session by hand (no model): `tutorials/003_build_inference_pipeline/`
-- Plug a model into a Session: `tutorials/007_plug_model_into_pipeline/`
+- Build a Graph by hand (no model): `tutorials/003_build_inference_pipeline/`
+- Plug a model into a Graph: `tutorials/007_plug_model_into_pipeline/`
 
 ## Model configuration
 

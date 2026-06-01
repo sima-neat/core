@@ -1,7 +1,7 @@
 #include "asset_utils.h"
 #include "gst/GstInit.h"
 #include "model/Model.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "test_utils.h"
@@ -74,6 +74,9 @@ std::string pick_image_path() {
   }
   if (file_exists("test.jpg"))
     return "test.jpg";
+  const fs::path packaged_img = sima_test::test_image_fixture_path();
+  if (fs::exists(packaged_img))
+    return packaged_img.string();
   const fs::path root = find_repo_root();
   const fs::path root_img = root / "test.jpg";
   if (fs::exists(root_img))
@@ -131,12 +134,12 @@ cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
   src_opt.sima_decoder.decoder_name = "decoder";
   src_opt.sima_decoder.raw_output = true;
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::groups::ImageInputGroup(src_opt));
-  simaai::neat::Model::SessionOptions session_opt;
-  session_opt.include_appsrc = false;
-  session_opt.include_appsink = false;
-  p.add(model.session(session_opt));
+  simaai::neat::Model::RouteOptions route_opt;
+  route_opt.include_input = false;
+  route_opt.include_output = false;
+  p.add(model.graph(route_opt));
   p.add(simaai::neat::nodes::Output());
 
   simaai::neat::RunOptions run_opt;

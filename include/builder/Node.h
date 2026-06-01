@@ -5,7 +5,7 @@
  *
  * Every step in a Neat-framework pipeline is a `Node`: the file reader, the H.264 decoder,
  * the resizer, the model's preprocess, the model's MLA inference, the postprocess, the
- * output sink. Nodes snap together in a `Session` to form a pipeline. This header defines
+ * output sink. Nodes snap together in a `Graph` to form a pipeline. This header defines
  * the abstract `Node` base class that every concrete node implements, plus the small
  * vocabulary of metadata enums (`InputRole`, `NodeCapsBehavior`).
  *
@@ -13,8 +13,8 @@
  * Node" (§0.10) of the design deep dive. The contract is small: implement `kind()`,
  * `caps_behavior()`, `backend_fragment()`, `element_names()`, and you're done.
  *
- * @see NodeGroup for bundles of Nodes
- * @see Session for how Nodes get composed into a pipeline
+ * @see Graph for reusable graph fragments built from Nodes
+ * @see Graph for how Nodes get composed into a pipeline
  * @see "Nodes: the building-block philosophy" (§0.10 of the design deep dive)
  */
 #pragma once
@@ -29,8 +29,8 @@ namespace simaai::neat {
 /**
  * @brief Whether a Node accepts external input and how.
  *
- * Used by the framework to validate that the right run-mode is chosen — e.g., a Session
- * starting with a `Source`-role Node uses `run()` (no input), while a Session starting with
+ * Used by the framework to validate that the right run-mode is chosen — e.g., a Graph
+ * starting with a `Source`-role Node uses `run()` (no input), while a Graph starting with
  * a `Push`-role Node uses `run(inputs)` or `build(inputs)`.
  * @ingroup builder
  */
@@ -45,7 +45,7 @@ enum class InputRole {
  *
  * Nodes that always emit the same caps regardless of input (e.g., a constant generator)
  * are `Static`; nodes whose output caps depend on input caps (e.g., format conversion,
- * resize) are `Dynamic`. The Session uses this to validate caps negotiation paths.
+ * resize) are `Dynamic`. The Graph uses this to validate caps negotiation paths.
  * @ingroup builder
  */
 enum class NodeCapsBehavior {
@@ -68,7 +68,7 @@ inline const char* node_caps_behavior_name(NodeCapsBehavior behavior) {
  * @brief Abstract base class every concrete Node implements.
  *
  * A Node is a typed wrapper over a GStreamer fragment. It exposes a small set of pure-virtual
- * methods that the Session uses to stitch fragments together into a deterministic pipeline.
+ * methods that the Graph uses to stitch fragments together into a deterministic pipeline.
  *
  * **Minimum implementation**: override `kind()`, `caps_behavior()`, `backend_fragment()`, and
  * `element_names()`. The other methods have sensible defaults.
@@ -107,10 +107,10 @@ public:
    * @brief Returns the GStreamer launch-string fragment this Node emits.
    *
    * The fragment must use deterministic element names of the form `n<node_index>_<role>`. The
-   * Session concatenates fragments from all Nodes (with `!` separators) to form the full
+   * Graph concatenates fragments from all Nodes (with `!` separators) to form the full
    * pipeline string.
    *
-   * @param node_index The Node's position in the Session's ordered Node list.
+   * @param node_index The Node's position in the Graph's ordered Node list.
    * @return GStreamer fragment for this Node.
    */
   virtual std::string backend_fragment(int node_index) const = 0;
@@ -118,7 +118,7 @@ public:
   /**
    * @brief Lists the deterministic element names this Node will create.
    *
-   * Used by `Session::describe()`, the `repro_gst_launch` reproducer, and anywhere the
+   * Used by `Graph::describe()`, the `repro_gst_launch` reproducer, and anywhere the
    * framework needs a stable handle to specific elements.
    */
   virtual std::vector<std::string> element_names(int node_index) const = 0;

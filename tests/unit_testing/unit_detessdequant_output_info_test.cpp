@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 
 #include <iostream>
+#include <memory>
 #include <vector>
 
 int main() {
@@ -26,7 +27,7 @@ int main() {
     opt.config_json = cfg;
 
     auto node = simaai::neat::nodes::DetessDequant(opt);
-    simaai::neat::NodeGroup group({node});
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes{node};
 
     // The legacy detessdequant_output_info lookup that derived per-tensor
     // shape/stride/offset from a config_json fixture is no longer hooked up
@@ -34,9 +35,9 @@ int main() {
     // now requires a fully compiled pipeline manifest (covered via the MPK
     // path in unit_yolov8_contract_subset_test). Reduce this fixture to a
     // smoke check that the query returns without throwing.
-    const auto info = rendered_stage_query::detessdequant_output_info(group, false);
+    const auto info = rendered_stage_query::detessdequant_output_info(nodes, false);
     (void)info;
-    const auto info_batch = rendered_stage_query::detessdequant_output_info(group, true);
+    const auto info_batch = rendered_stage_query::detessdequant_output_info(nodes, true);
     (void)info_batch;
 
     std::cout << "[OK] unit_detessdequant_output_info_test passed\n";

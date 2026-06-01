@@ -153,6 +153,7 @@ bool transform_logical_output_for_cast(const pipeline_internal::sima::LogicalTen
     return false;
   }
   out->dtype = cast_output_dtype_local(direction);
+  out->dtype_source = DTypeSource::InternalContract;
   out->byte_offset = scaled_offset;
   out->size_bytes = scaled_size;
   for (auto& stride : out->stride_bytes) {

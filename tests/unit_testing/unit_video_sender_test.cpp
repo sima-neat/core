@@ -4,6 +4,7 @@
 #include <functional>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -16,6 +17,18 @@ void require_invalid_argument(const std::function<void()>& fn, const std::string
     throw std::runtime_error(msg + " (unexpected exception: " + ex.what() + ")");
   }
   throw std::runtime_error(msg + " (no exception)");
+}
+
+void require_in_order(const std::string& text, const std::vector<std::string>& needles,
+                      const std::string& msg) {
+  std::size_t pos = 0;
+  for (const auto& needle : needles) {
+    const std::size_t found = text.find(needle, pos);
+    if (found == std::string::npos) {
+      throw std::runtime_error(msg + " (missing or out of order: " + needle + ")");
+    }
+    pos = found + needle.size();
+  }
 }
 
 } // namespace
@@ -36,34 +49,25 @@ RUN_TEST(
         opt.encoder.profile = "main";
         opt.encoder.level = "4.1";
 
-        const auto group = VideoSender(opt);
-        const auto& nodes = group.nodes();
-        require(nodes.size() == 5,
-                "VideoSender raw path should include convert, encode, parse, pay, udp");
-        require(nodes[0]->kind() == "VideoConvert", "VideoSender raw node[0] mismatch");
-        require(nodes[1]->kind() == "H264EncodeSima", "VideoSender raw node[1] mismatch");
-        require(nodes[2]->kind() == "H264Parse", "VideoSender raw node[2] mismatch");
-        require(nodes[3]->kind() == "H264Packetize", "VideoSender raw node[3] mismatch");
-        require(nodes[4]->kind() == "UdpOutput", "VideoSender raw node[4] mismatch");
+        const auto graph = VideoSender(opt);
+        require_in_order(
+            graph.describe(),
+            {"VideoConvert", "H264EncodeSima", "H264Parse", "H264Packetize", "UdpOutput"},
+            "VideoSender raw path should include convert, encode, parse, pay, udp");
 
-        const std::string encoder_fragment = nodes[1]->backend_fragment(1);
-        require_contains(encoder_fragment, "enc-width=1280", "VideoSender encoder width mismatch");
-        require_contains(encoder_fragment, "enc-height=720", "VideoSender encoder height mismatch");
-        require_contains(encoder_fragment, "enc-frame-rate=30", "VideoSender encoder fps mismatch");
-        require_contains(encoder_fragment, "enc-bitrate=2500",
-                         "VideoSender encoder bitrate mismatch");
-        require_contains(encoder_fragment, "enc-profile=main",
-                         "VideoSender encoder profile mismatch");
-        require_contains(encoder_fragment, "enc-level=4.1", "VideoSender encoder level mismatch");
+        const std::string backend = graph.describe_backend();
+        require_contains(backend, "enc-width=1280", "VideoSender encoder width mismatch");
+        require_contains(backend, "enc-height=720", "VideoSender encoder height mismatch");
+        require_contains(backend, "enc-frame-rate=30", "VideoSender encoder fps mismatch");
+        require_contains(backend, "enc-bitrate=2500", "VideoSender encoder bitrate mismatch");
+        require_contains(backend, "enc-profile=main", "VideoSender encoder profile mismatch");
+        require_contains(backend, "enc-level=4.1", "VideoSender encoder level mismatch");
 
-        const std::string pay_fragment = nodes[3]->backend_fragment(3);
-        require_contains(pay_fragment, "pt=97", "VideoSender RTP payload type mismatch");
-        require_contains(pay_fragment, "config-interval=2",
-                         "VideoSender RTP config interval mismatch");
+        require_contains(backend, "pt=97", "VideoSender RTP payload type mismatch");
+        require_contains(backend, "config-interval=2", "VideoSender RTP config interval mismatch");
 
-        const std::string udp_fragment = nodes[4]->backend_fragment(4);
-        require_contains(udp_fragment, "host=10.0.0.5", "VideoSender UDP host mismatch");
-        require_contains(udp_fragment, "port=9000", "VideoSender UDP port mismatch");
+        require_contains(backend, "host=10.0.0.5", "VideoSender UDP host mismatch");
+        require_contains(backend, "port=9000", "VideoSender UDP port mismatch");
         require(opt.video_port() == 9000, "VideoSender computed video port mismatch");
       }
 
@@ -73,17 +77,13 @@ RUN_TEST(
         opt.video_port_base = 9000;
         opt.rtp.payload_type = 98;
 
-        const auto group = VideoSender(opt);
-        const auto& nodes = group.nodes();
-        require(nodes.size() == 3, "VideoSender encoded path should include parse, pay, udp only");
-        require(nodes[0]->kind() == "H264Parse", "VideoSender encoded node[0] mismatch");
-        require(nodes[1]->kind() == "H264Packetize", "VideoSender encoded node[1] mismatch");
-        require(nodes[2]->kind() == "UdpOutput", "VideoSender encoded node[2] mismatch");
+        const auto graph = VideoSender(opt);
+        require_in_order(graph.describe(), {"H264Parse", "H264Packetize", "UdpOutput"},
+                         "VideoSender encoded path should include parse, pay, udp only");
 
-        const std::string pay_fragment = nodes[1]->backend_fragment(1);
-        require_contains(pay_fragment, "pt=98", "VideoSender encoded RTP payload type mismatch");
-        const std::string udp_fragment = nodes[2]->backend_fragment(2);
-        require_contains(udp_fragment, "port=9001", "VideoSender encoded UDP port mismatch");
+        const std::string backend = graph.describe_backend();
+        require_contains(backend, "pt=98", "VideoSender encoded RTP payload type mismatch");
+        require_contains(backend, "port=9001", "VideoSender encoded UDP port mismatch");
       }
 
       require_invalid_argument([] { (void)VideoSenderOptions::H264RtpUdpFromRaw(0, 720, 30); },

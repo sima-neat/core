@@ -3,7 +3,7 @@
  * @ingroup nodes_io
  * @brief `UdpOutput` Node — terminal sink that writes packets to a UDP destination.
  *
- * Wraps `udpsink`. Place at the tail of a Session that streams over the network
+ * Wraps `udpsink`. Place at the tail of a Graph that streams over the network
  * (RTP video, telemetry forwarding, etc.). Pair with an upstream payloader for
  * RTP, or feed raw packets directly for custom protocols.
  */
@@ -32,7 +32,7 @@ struct UdpOutputOptions {
 /**
  * @brief UDP sink Node — writes packets to a UDP destination.
  *
- * Use as the final stage of an RTP streaming pipeline or any Session that
+ * Use as the final stage of an RTP streaming pipeline or any Graph that
  * forwards data over UDP. For RTP video, place after an H.264 payloader.
  *
  * @ingroup nodes_io
@@ -54,6 +54,11 @@ public:
   std::string backend_fragment(int node_index) const override;
   /// Deterministic element names this Node will create.
   std::vector<std::string> element_names(int node_index) const override;
+
+  /// Destination and sync options this Node was constructed with.
+  const UdpOutputOptions& options() const {
+    return opt_;
+  }
 
 private:
   UdpOutputOptions opt_;

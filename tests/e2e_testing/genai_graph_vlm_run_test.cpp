@@ -1,9 +1,7 @@
 #include "genai/VisionLanguageModel.h"
-#include "genai/nodes/VisionLanguage.h"
-#include "graph/Graph.h"
-#include "graph/GraphRun.h"
-#include "graph/GraphSession.h"
-#include "pipeline/SessionOptions.h"
+#include "genai/GraphFragments.h"
+#include "pipeline/Graph.h"
+#include "pipeline/Run.h"
 #include "pipeline/TensorCore.h"
 #include "test_utils.h"
 
@@ -154,46 +152,42 @@ struct GraphOutputs {
   bool saw_error = false;
 };
 
-GraphOutputs pull_until_done_or_error(simaai::neat::graph::GraphRun& run,
-                                      simaai::neat::graph::NodeId node_id) {
+GraphOutputs pull_until_done_or_error(simaai::neat::Run& run) {
   GraphOutputs outputs;
-  for (int i = 0; i < 128; ++i) {
-    auto sample = run.pull(node_id, 60000);
-    require(sample.has_value(), "GraphRun::pull timed out");
-    if (sample->port_name == "tokens" || sample->stream_label == "tokens") {
+  for (int i = 0; i < 256; ++i) {
+    if (auto sample = run.pull("tokens", 250)) {
       outputs.tokens += sample_text(*sample);
       outputs.token_samples += 1;
-    } else if (sample->port_name == "done" || sample->stream_label == "done") {
+      continue;
+    }
+    if (auto sample = run.pull("encoded", 10)) {
+      outputs.encoded = *sample;
+      outputs.saw_encoded = true;
+      continue;
+    }
+    if (auto sample = run.pull("done", 10)) {
       outputs.done = *sample;
       outputs.saw_done = true;
       break;
-    } else if (sample->port_name == "encoded" || sample->stream_label == "encoded") {
-      outputs.encoded = *sample;
-      outputs.saw_encoded = true;
-    } else if (sample->port_name == "error" || sample->stream_label == "error") {
+    }
+    if (auto sample = run.pull("error", 10)) {
       outputs.error = sample_text(*sample);
       outputs.saw_error = true;
       break;
-    } else {
-      throw std::runtime_error("unexpected graph output port: " + sample->port_name);
     }
   }
   return outputs;
 }
 
-simaai::neat::Sample pull_encoded(simaai::neat::graph::GraphRun& run,
-                                  simaai::neat::graph::NodeId node_id) {
+simaai::neat::Sample pull_encoded(simaai::neat::Run& run) {
   for (int i = 0; i < 16; ++i) {
-    auto sample = run.pull(node_id, 60000);
-    require(sample.has_value(), "GraphRun::pull encoded timed out");
-    if (sample->port_name == "encoded" || sample->stream_label == "encoded") {
+    if (auto sample = run.pull("encoded", 60000)) {
       return *sample;
     }
-    if (sample->port_name == "error" || sample->stream_label == "error") {
+    if (auto sample = run.pull("error", 10)) {
       throw std::runtime_error("GenAI graph VLM image input emitted error: " +
                                sample_text(*sample));
     }
-    throw std::runtime_error("unexpected graph output before encoded: " + sample->port_name);
   }
   throw std::runtime_error("GenAI graph VLM image input did not emit encoded sample");
 }
@@ -216,6 +210,15 @@ void require_vlm_outputs(const GraphOutputs& outputs, const std::string& label,
           label + " done should report generated tokens");
 }
 
+simaai::neat::Run build_vlm_run(std::shared_ptr<simaai::neat::genai::VisionLanguageModel> model,
+                                simaai::neat::genai::VisionLanguageOptions options,
+                                const std::string& label) {
+  simaai::neat::Graph graph;
+  graph.add(
+      simaai::neat::genai::graphs::VisionLanguage(std::move(model), std::move(options), label));
+  return graph.build();
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -236,91 +239,87 @@ int main(int argc, char** argv) {
     auto model = std::make_shared<simaai::neat::genai::VisionLanguageModel>(model_dir);
     require(model->accepts_image(), "Qwen3-VL model should accept image input");
 
-    simaai::neat::graph::Graph graph;
-    const auto prompt_port = graph.intern_port("prompt");
-    const auto image_port = graph.intern_port("image");
-    const auto use_cached_image_port = graph.intern_port("use_cached_image");
-
-    const auto direct_streaming_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
+    simaai::neat::Run direct_streaming_run =
+        build_vlm_run(model,
+                      simaai::neat::genai::VisionLanguageOptions{
+                          .max_new_tokens = 48, .streaming = true, .encode_images_on_input = false},
+                      "vision_language_direct_streaming");
+    simaai::neat::Run direct_sync_run = build_vlm_run(
         model,
-        simaai::neat::genai::nodes::VisionLanguageOptions{
-            .max_new_tokens = 48, .streaming = true, .encode_images_on_input = false},
-        "vision_language_direct_streaming"));
-    const auto direct_sync_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
-        model,
-        simaai::neat::genai::nodes::VisionLanguageOptions{
+        simaai::neat::genai::VisionLanguageOptions{
             .max_new_tokens = 48, .streaming = false, .encode_images_on_input = false},
-        "vision_language_direct_sync"));
-    const auto unsupported_cached_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
-        model,
-        simaai::neat::genai::nodes::VisionLanguageOptions{
-            .max_new_tokens = 48, .streaming = true, .encode_images_on_input = true},
-        "vision_language_unsupported_cached"));
-    const auto missing_image_node = graph.add(simaai::neat::genai::nodes::VisionLanguage(
-        model,
-        simaai::neat::genai::nodes::VisionLanguageOptions{
-            .max_new_tokens = 48, .streaming = true, .encode_images_on_input = false},
-        "vision_language_missing_image"));
+        "vision_language_direct_sync");
+    simaai::neat::Run unsupported_cached_run =
+        build_vlm_run(model,
+                      simaai::neat::genai::VisionLanguageOptions{
+                          .max_new_tokens = 48, .streaming = true, .encode_images_on_input = true},
+                      "vision_language_unsupported_cached");
+    simaai::neat::Run missing_image_run =
+        build_vlm_run(model,
+                      simaai::neat::genai::VisionLanguageOptions{
+                          .max_new_tokens = 48, .streaming = true, .encode_images_on_input = false},
+                      "vision_language_missing_image");
 
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
-
-    require(run.push(direct_streaming_node, image_port,
-                     make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 1)),
-            "GraphRun::push CPU image failed");
-    simaai::neat::Sample encoded = pull_encoded(run, direct_streaming_node);
+    require(direct_streaming_run.push(
+                "image", make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 1)),
+            "Run::push CPU image failed");
+    simaai::neat::Sample encoded = pull_encoded(direct_streaming_run);
     require(bundle_field_text(encoded, "mode") == "direct", "CPU image should stay direct");
 
-    require(run.push(direct_streaming_node, prompt_port, make_text_input("prompt", kPrompt, 2)),
-            "GraphRun::push direct streaming prompt failed");
-    require_vlm_outputs(pull_until_done_or_error(run, direct_streaming_node),
+    require(direct_streaming_run.push("prompt", make_text_input("prompt", kPrompt, 2)),
+            "Run::push direct streaming prompt failed");
+    require_vlm_outputs(pull_until_done_or_error(direct_streaming_run),
                         "GENAI_GRAPH_VLM_DIRECT_STREAMING", true);
 
-    require(run.push(direct_streaming_node, image_port,
-                     make_image_input(image_bgr, simaai::neat::TensorMemory::EV74, 3)),
-            "GraphRun::push EV74 image failed");
-    encoded = pull_encoded(run, direct_streaming_node);
+    require(direct_streaming_run.push(
+                "image", make_image_input(image_bgr, simaai::neat::TensorMemory::EV74, 3)),
+            "Run::push EV74 image failed");
+    encoded = pull_encoded(direct_streaming_run);
     require(bundle_field_text(encoded, "mode") == "direct", "EV74 image should stay direct");
 
-    require(run.push(direct_streaming_node, prompt_port, make_text_input("prompt", kPrompt, 4)),
-            "GraphRun::push EV74 direct prompt failed");
-    require_vlm_outputs(pull_until_done_or_error(run, direct_streaming_node),
+    require(direct_streaming_run.push("prompt", make_text_input("prompt", kPrompt, 4)),
+            "Run::push EV74 direct prompt failed");
+    require_vlm_outputs(pull_until_done_or_error(direct_streaming_run),
                         "GENAI_GRAPH_VLM_EV74_DIRECT_STREAMING", true);
 
-    require(run.push(direct_sync_node, image_port,
-                     make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 5)),
-            "GraphRun::push direct image failed");
-    encoded = pull_encoded(run, direct_sync_node);
+    require(direct_sync_run.push("image",
+                                 make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 5)),
+            "Run::push direct image failed");
+    encoded = pull_encoded(direct_sync_run);
     require(bundle_field_text(encoded, "mode") == "direct", "direct image should stay direct");
 
-    require(run.push(direct_sync_node, use_cached_image_port,
-                     make_text_input("use_cached_image", "false", 6)),
-            "GraphRun::push direct control failed");
-    require(run.push(direct_sync_node, prompt_port, make_text_input("prompt", kPrompt, 7)),
-            "GraphRun::push direct sync prompt failed");
-    require_vlm_outputs(pull_until_done_or_error(run, direct_sync_node),
-                        "GENAI_GRAPH_VLM_DIRECT_SYNC", false);
+    require(
+        direct_sync_run.push("use_cached_image", make_text_input("use_cached_image", "false", 6)),
+        "Run::push direct control failed");
+    require(direct_sync_run.push("prompt", make_text_input("prompt", kPrompt, 7)),
+            "Run::push direct sync prompt failed");
+    require_vlm_outputs(pull_until_done_or_error(direct_sync_run), "GENAI_GRAPH_VLM_DIRECT_SYNC",
+                        false);
 
-    require(run.push(unsupported_cached_node, image_port,
-                     make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 8)),
-            "GraphRun::push unsupported cached image failed");
-    GraphOutputs error_outputs = pull_until_done_or_error(run, unsupported_cached_node);
+    require(unsupported_cached_run.push(
+                "image", make_image_input(image_bgr, simaai::neat::TensorMemory::CPU, 8)),
+            "Run::push unsupported cached image failed");
+    GraphOutputs error_outputs = pull_until_done_or_error(unsupported_cached_run);
     require(error_outputs.saw_error, "unsupported cached image should emit error");
     require(error_outputs.error.find("cached reuse is not supported") != std::string::npos,
             "unsupported cached image error should explain cached reuse support");
 
-    require(run.push(direct_streaming_node, image_port, make_invalid_image_input()),
-            "GraphRun::push invalid image failed");
-    error_outputs = pull_until_done_or_error(run, direct_streaming_node);
+    require(direct_streaming_run.push("image", make_invalid_image_input()),
+            "Run::push invalid image failed");
+    error_outputs = pull_until_done_or_error(direct_streaming_run);
     require(error_outputs.saw_error, "invalid image should emit error");
     require(!error_outputs.error.empty(), "invalid image error should be non-empty");
 
-    require(run.push(missing_image_node, prompt_port, make_text_input("prompt", kPrompt, 9)),
-            "GraphRun::push missing image prompt failed");
-    error_outputs = pull_until_done_or_error(run, missing_image_node);
+    require(missing_image_run.push("prompt", make_text_input("prompt", kPrompt, 9)),
+            "Run::push missing image prompt failed");
+    error_outputs = pull_until_done_or_error(missing_image_run);
     require(error_outputs.saw_error, "missing image prompt should emit error");
     require(!error_outputs.error.empty(), "missing image error should be non-empty");
 
-    run.stop();
+    direct_streaming_run.stop();
+    direct_sync_run.stop();
+    unsupported_cached_run.stop();
+    missing_image_run.stop();
     std::cout << "[OK] genai_graph_vlm_run_test passed\n";
     return 0;
   } catch (const SkipTest& e) {

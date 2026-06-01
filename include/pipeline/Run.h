@@ -1,9 +1,9 @@
 /**
  * @file
  * @ingroup pipeline
- * @brief Run — the live pipeline returned by Session::build, plus runtime options and diagnostics.
+ * @brief Run — the live pipeline returned by Graph::build, plus runtime options and diagnostics.
  *
- * `Run` is what a `Session` becomes when built. It owns the running GStreamer pipeline,
+ * `Run` is what a `Graph` becomes when built. It owns the running GStreamer pipeline,
  * its internal threads (typically 5–15: one per element thread boundary, plus dispatcher
  * workers, plus a bus watcher), and its bounded queues. Application code interacts with a
  * Run by `push()`-ing inputs and `pull()`-ing outputs — or `run()` for a synchronous
@@ -16,8 +16,8 @@
  *   - `RunOptions` — runtime knobs (queue depth, overflow policy, output memory, metrics).
  *   - `RunStats` / `InputStreamStats` / `RunDiagSnapshot` — telemetry surfaces.
  *
- * @see Session::build for how a Run is constructed
- * @see SessionOptions for build-time options (Run takes runtime options here)
+ * @see Graph::build for how a Run is constructed
+ * @see GraphOptions for build-time options (Run takes runtime options here)
  * @see "Runs: the live pipeline (and the timing decision)" (§0.13 of the design deep dive)
  */
 #pragma once
@@ -25,13 +25,15 @@
 #include "nodes/io/Input.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/RuntimeMetrics.h"
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 
 #include <cstdint>
+#include <cstddef>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace cv {
@@ -42,12 +44,22 @@ namespace simaai::neat {
 
 class InputStream;
 class LatencyProfiler;
+class Run;
 struct InputStreamOptions;
 namespace pipeline_internal {
 struct InputRouteProcessor;
 /// Shared pointer to a const internal route-processor (framework-internal use).
 using InputRouteProcessorPtr = std::shared_ptr<const InputRouteProcessor>;
 } // namespace pipeline_internal
+namespace runtime {
+class RunCore;
+} // namespace runtime
+#ifdef SIMA_NEAT_INTERNAL
+namespace run_internal {
+std::shared_ptr<runtime::RunCore> release_core(Run& run);
+std::shared_ptr<const runtime::RunCore> core(const Run& run);
+} // namespace run_internal
+#endif
 
 /**
  * @brief What `push()` does when the input queue is full.
@@ -107,14 +119,35 @@ struct RunAdvancedOptions {
    * when producer metadata says a CPU reader could observe stale data.
    *
    * Keep this disabled for Graph-internal forwarding paths where an appsink is
-   * used only as transport to another device-facing Session. Tensor::map(Read)
+   * used only as transport to another device-facing Graph. Tensor::map(Read)
    * remains the correctness fallback for all outputs.
    */
   bool prepare_output_cpu_visible = false;
 };
 
 /**
- * @brief Per-Run runtime options. Passed to `Session::build()` and `Model::run()`.
+ * @brief Optional build-time Run JSON export.
+ *
+ * Set `path` before calling `Graph::build(...)` to write a topology snapshot as
+ * soon as the Run is built. This is useful for CI artifacts and graph
+ * visualization even if the application has not pushed samples yet.
+ *
+ * For final throughput/latency/power numbers, call `save_run_json(run, ...)`
+ * after the run has executed/drained. Build-time export is an initial snapshot.
+ */
+struct RunAutoExportOptions {
+  std::string path;  ///< Empty disables build-time export.
+  std::string label; ///< Optional label; empty uses the exporter default.
+  bool include_metrics = true;
+  bool include_power = true;
+  int indent = 2;
+};
+
+/// Backward-compatible name for the previous graph-run export option spelling.
+using GraphRunAutoExportOptions = RunAutoExportOptions;
+
+/**
+ * @brief Per-Run runtime options. Passed to `Graph::build()` and `Model::run()`.
  *
  * Most fields default to sensible values. The most commonly customized are `queue_depth`
  * (deeper for jittery sources, shallower for low latency) and `overflow_policy` (driven by
@@ -136,8 +169,25 @@ struct RunOptions {
    * passing an explicit `timeout_ms` to the relevant `pull()` or `run()` overload.
    */
   int input_timeout_ms = -1;
+  /**
+   * @brief Validate seeded `build(input, ...)` calls by pushing/pulling the seed once.
+   *
+   * This applies only to build overloads that receive an initial `cv::Mat`, `TensorList`, or
+   * `Sample`. It catches payload-level failures (for example invalid encoded bitstreams or
+   * caps that only the GStreamer element can reject) at build time instead of letting the first
+   * failure surface asynchronously after a `Run` has already been returned. Seedless/source builds
+   * ignore this option.
+   *
+   * Set to `false` for latency-sensitive callers that only want the seed for caps/shape
+   * adaptation and are prepared to observe first-sample errors through `Run::last_error()` or
+   * `pull()`.
+   */
+  bool startup_preflight = true;
   RunAdvancedOptions advanced{};       ///< Advanced tuning (rarely needed).
   PowerMonitorOptions power_monitor{}; ///< Optional board rail power telemetry.
+  RunAutoExportOptions run_export{};   ///< Optional build-time Run/graph JSON export.
+  /// Backward-compatible spelling for the previous graph-run export field.
+  RunAutoExportOptions graph_run_export{};
 
   /**
    * @brief Enable board power monitoring using built-in auto-detect.
@@ -158,7 +208,7 @@ struct RunOptions {
    * @code
    * RunOptions opt;
    * opt.enable_board_power();
-   * auto run = session.build(inputs, RunMode::Async, opt);
+   * auto run = graph.build(inputs, RunMode::Async, opt);
    * auto metrics = run.metrics();
    * @endcode
    */
@@ -281,7 +331,7 @@ struct RunMeasurementSummary {
  * @ingroup diagnostics
  */
 struct RunStageStats {
-  std::string stage_name;     ///< Stage label (typically the NodeGroup or major Node name).
+  std::string stage_name;     ///< Stage label (typically the Graph fragment or major Node name).
   std::uint64_t samples = 0;  ///< Number of samples processed by this stage.
   std::uint64_t total_us = 0; ///< Cumulative time spent in this stage (microseconds).
   std::uint64_t max_us = 0;   ///< Maximum per-sample time observed.
@@ -486,14 +536,14 @@ struct RunReportOptions {
 /**
  * @brief Live pipeline handle: push inputs in, pull outputs out.
  *
- * A `Run` is what `Session::build()` returns. It owns the live GStreamer pipeline plus its
+ * A `Run` is what `Graph::build()` returns. It owns the live GStreamer pipeline plus its
  * internal worker threads (typically 5–15 per Run, including streaming threads, dispatcher
  * pool threads, and a bus watcher). Application code drives the Run by `push()`-ing inputs
  * and `pull()`-ing outputs (or `run()` for one-shot synchronous use).
  *
  * @code
- *   auto run = sess.build(input);
- *   run.push(another_input);
+ *   auto run = graph.build(TensorList{input});
+ *   run.push(TensorList{another_input});
  *   auto sample = run.pull(/ * timeout_ms = * / 100);
  * @endcode
  *
@@ -504,14 +554,14 @@ struct RunReportOptions {
  * Runs are **non-copyable** but **movable**. Destroying a Run shuts down its pipeline cleanly
  * (sends EOS, drains, transitions to NULL).
  *
- * @see Session::build for how a Run is constructed
+ * @see Graph::build for how a Run is constructed
  * @see RunOptions for runtime configuration
  * @see "Runs and the parallelism story" (§0.13 of the design deep dive)
  * @ingroup pipeline
  */
 class Run {
 public:
-  /// Construct an empty Run; assign from `Session::build()` before use.
+  /// Construct an empty Run; assign from `Graph::build()` before use.
   Run() = default;
   Run(const Run&) = delete;            ///< Non-copyable.
   Run& operator=(const Run&) = delete; ///< Non-copyable.
@@ -520,7 +570,7 @@ public:
   Run& operator=(Run&&) noexcept; ///< Move-assignable.
   ~Run();                         ///< Cleanly tears down the pipeline.
 
-  /// Returns `true` if the Run is alive (constructed by Session::build, not yet stopped).
+  /// Returns `true` if the Run is alive (constructed by Graph::build, not yet stopped).
   explicit operator bool() const noexcept;
   /// Returns `true` if the input side accepts pushes (not closed).
   bool can_push() const;
@@ -528,22 +578,38 @@ public:
   bool can_pull() const;
   /// Returns `true` if the pipeline is in PLAYING state.
   bool running() const;
+  /// Names accepted by `push(name, ...)` for graph-backed Runs. Empty for unnamed/linear Runs.
+  std::vector<std::string> input_names() const;
+  /// Names accepted by `pull(name, ...)` for graph-backed Runs. Empty for unnamed/linear Runs.
+  std::vector<std::string> output_names() const;
 
   /**
    * @brief Push `cv::Mat` inputs into the pipeline. Multi-input models accept one Mat per ingress.
    * @return `true` on success; behavior on full queue is governed by `RunOptions::overflow_policy`.
    */
   bool push(const std::vector<cv::Mat>& inputs);
+  /// Push `cv::Mat` inputs into a named graph ingress. Use for multi-input graphs.
+  bool push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
   /// Non-blocking variant of `push`; returns `false` immediately if the queue is full.
   bool try_push(const std::vector<cv::Mat>& inputs);
+  /// Non-blocking named-ingress variant.
+  bool try_push(std::string_view input_name, const std::vector<cv::Mat>& inputs);
   /// Push `Tensor` inputs (one per ingress port).
   bool push(const TensorList& inputs);
+  /// Push `Tensor` inputs into a named graph ingress. Use for multi-input graphs.
+  bool push(std::string_view input_name, const TensorList& inputs);
   /// Non-blocking variant.
   bool try_push(const TensorList& inputs);
+  /// Non-blocking named-ingress variant.
+  bool try_push(std::string_view input_name, const TensorList& inputs);
   /// Push full `Sample` inputs (carrying per-buffer metadata).
-  bool push(const SampleList& msgs);
+  bool push(const Sample& msgs);
+  /// Push full `Sample` inputs into a named graph ingress. Use for multi-input graphs.
+  bool push(std::string_view input_name, const Sample& msgs);
   /// Non-blocking variant.
-  bool try_push(const SampleList& msgs);
+  bool try_push(const Sample& msgs);
+  /// Non-blocking named-ingress variant.
+  bool try_push(std::string_view input_name, const Sample& msgs);
   /// **Internal**: pushes a `GstBuffer` held by a tensor ref to preserve plugin metadata.
   bool push_holder(const std::shared_ptr<void>& holder);
   /// Non-blocking variant of `push_holder`.
@@ -559,18 +625,32 @@ public:
    * @return `Ok`, `Timeout`, `Closed`, or `Error`.
    */
   PullStatus pull(int timeout_ms, Sample& out, PullError* err = nullptr);
-  /// Convenience pull returning an optional `Sample` (empty on timeout/closed/error).
+  /**
+   * @brief Pull from a named graph output with structured status.
+   *
+   * Use this when a graph has multiple terminal outputs. `pull()` without a name remains the
+   * default-output convenience API for the common single-output case.
+   */
+  PullStatus pull(std::string_view output_name, int timeout_ms, Sample& out,
+                  PullError* err = nullptr);
+  /// Convenience pull returning an optional `Sample` (empty on timeout/closed; throws on error).
   std::optional<Sample> pull(int timeout_ms = -1);
+  /// Convenience named-output pull (empty on timeout/closed; throws on error).
+  std::optional<Sample> pull(std::string_view output_name, int timeout_ms = -1);
   /// Pull and unpack the next sample as a `TensorList`.
   TensorList pull_tensors(int timeout_ms = -1);
-  /// Pull the next sample as a `SampleList` (preserves per-sample metadata).
-  SampleList pull_samples(int timeout_ms = -1);
+  /// Pull and unpack from a named graph output as a `TensorList`.
+  TensorList pull_tensors(std::string_view output_name, int timeout_ms = -1);
+  /// Pull the next sample as a `Sample` (preserves per-sample metadata).
+  Sample pull_samples(int timeout_ms = -1);
+  /// Pull samples from a named graph output (preserves per-sample metadata).
+  Sample pull_samples(std::string_view output_name, int timeout_ms = -1);
   /// One-shot synchronous push+pull from `cv::Mat` inputs.
   TensorList run(const std::vector<cv::Mat>& inputs, int timeout_ms = -1);
   /// One-shot synchronous push+pull from `Tensor` inputs.
   TensorList run(const TensorList& inputs, int timeout_ms = -1);
   /// One-shot synchronous push+pull from `Sample` inputs.
-  SampleList run(const SampleList& inputs, int timeout_ms = -1);
+  Sample run(const Sample& inputs, int timeout_ms = -1);
 
   /// Start observing a caller-owned push/pull interval without consuming outputs.
   MeasureScope start_measurement(const MeasureOptions& opt = {});
@@ -613,18 +693,20 @@ public:
 
 private:
   friend class MeasureScope;
-  struct State;
-  std::shared_ptr<State> state_;
-  bool owns_ref_ = false;
+#ifdef SIMA_NEAT_INTERNAL
+  friend std::shared_ptr<runtime::RunCore> run_internal::release_core(Run& run);
+  friend std::shared_ptr<const runtime::RunCore> run_internal::core(const Run& run);
+#endif
+  std::shared_ptr<runtime::RunCore> core_;
 
-  explicit Run(std::shared_ptr<State> state);
+  explicit Run(std::shared_ptr<runtime::RunCore> core);
   void require_async_mode(const char* where) const;
   void require_async_pull_mode(const char* where) const;
   void enqueue_run_images(const std::vector<cv::Mat>& inputs);
   void enqueue_run_tensors(const TensorList& inputs);
-  void enqueue_run_samples(const SampleList& inputs);
+  void enqueue_run_samples(const Sample& inputs);
   TensorList pull_tensors_strict(int timeout_ms);
-  SampleList pull_samples_strict(int timeout_ms);
+  Sample pull_samples_strict(int timeout_ms);
   bool push_impl(const cv::Mat& input, bool block);
   bool push_impl(const simaai::neat::Tensor& input, bool block);
   bool push_holder_impl(const std::shared_ptr<void>& holder, bool block);
@@ -634,7 +716,7 @@ private:
                     const struct InputStreamOptions& stream_opt, RunMode mode = RunMode::Async,
                     const std::optional<InputOptions>& tensor_input_opt_for_cv = std::nullopt,
                     pipeline_internal::InputRouteProcessorPtr input_route_processor = nullptr);
-  friend class Session;
+  friend class Graph;
 };
 
 } // namespace simaai::neat

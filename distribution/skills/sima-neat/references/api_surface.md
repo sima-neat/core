@@ -11,8 +11,8 @@ Primary namespaces:
 
 Core public entry points:
 
-- `pipeline/Session.h`
-  - `Session`: compose nodes/groups and run/validate/build.
+- `pipeline/Graph.h`
+  - `Graph`: compose nodes/groups and run/validate/build.
 - `pipeline/PipelineRun.h`
   - `PipelineRun`: push/pull runtime handle.
 - `pipeline/PipelineOptions.h`

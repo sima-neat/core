@@ -5,8 +5,8 @@
  *
  * Wraps an `appsrc`-style element. Use this when the application owns frame production
  * (e.g. capturing from a custom source, replaying a buffer, or feeding test data) and
- * needs to deliver samples to the pipeline by hand. A Session that begins with an
- * `Input` Node is built with `Session::build()` and driven by `Run::push()` rather
+ * needs to deliver samples to the pipeline by hand. A Graph that begins with an
+ * `Input` Node is built with `Graph::build()` and driven by `Run::push()` rather
  * than `Run::run()`.
  */
 #pragma once
@@ -14,11 +14,13 @@
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "pipeline/FormatSpec.h"
+#include "pipeline/PayloadType.h"
 
 #include <memory>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace simaai::neat {
@@ -72,12 +74,11 @@ enum class InputMemoryPolicy {
  * @ingroup nodes_io
  */
 struct InputOptions {
-  std::string media_type =
-      "video/x-raw"; ///< Top-level GStreamer media type for the negotiated caps.
-  FormatSpec format; ///< Pixel/tensor format descriptor.
-  int width = -1;    ///< Frame width, in pixels. `-1` = unspecified.
-  int height = -1;   ///< Frame height, in pixels. `-1` = unspecified.
-  int depth = -1;    ///< Frame depth (e.g. tensor channels). `-1` = unspecified.
+  PayloadType payload_type = PayloadType::Auto; ///< Public payload family.
+  FormatSpec format;                            ///< Pixel/tensor format descriptor.
+  int width = -1;                               ///< Frame width, in pixels. `-1` = unspecified.
+  int height = -1;                              ///< Frame height, in pixels. `-1` = unspecified.
+  int depth = -1; ///< Frame depth (e.g. tensor channels). `-1` = unspecified.
   /// Optional dynamic-input limits used for validation/pool sizing.
   /// These do not constrain negotiated caps and are only checked at push time.
   int max_width = -1;  ///< Max width accepted at push time. `-1` = no cap.
@@ -110,11 +111,29 @@ struct InputOptions {
   std::optional<PreprocessMetaTemplate> preprocess_meta;
 };
 
+/// Resolve the internal caps media type requested by public `InputOptions`.
+inline std::string resolve_input_media_type(const InputOptions& opt) {
+  switch (opt.payload_type) {
+  case PayloadType::Image:
+    return "video/x-raw";
+  case PayloadType::Tensor:
+    return "application/vnd.simaai.tensor";
+  case PayloadType::Encoded:
+    if (opt.format.tag == FormatTag::H264) {
+      return "video/x-h264";
+    }
+    return "";
+  case PayloadType::Auto:
+  default:
+    return "";
+  }
+}
+
 /**
  * @brief Push-mode source Node. The application feeds samples via `Run::push()`.
  *
  * Add this Node when the application owns frame production. Because it carries
- * `InputRole::Push`, the Session must be driven through `Session::build()` plus
+ * `InputRole::Push`, the Graph must be driven through `Graph::build()` plus
  * `Run::push()` per sample (not `Run::run()`, which is for source-role pipelines).
  *
  * @ingroup nodes_io
@@ -123,6 +142,10 @@ class Input final : public Node, public OutputSpecProvider {
 public:
   /// Construct with caps / pool / memory options.
   explicit Input(InputOptions opt);
+  /// Construct with a public Graph input endpoint name.
+  explicit Input(std::string name);
+  /// Construct with a public Graph input endpoint name and caps / pool / memory options.
+  Input(std::string name, InputOptions opt);
 
   /// Type label for this Node kind.
   std::string kind() const override {
@@ -130,7 +153,14 @@ public:
   }
   /// User-facing label for this Node.
   std::string user_label() const override {
+    if (!endpoint_name_.empty()) {
+      return endpoint_name_;
+    }
     return "mysrc";
+  }
+  /// Explicit public endpoint name, empty when unnamed.
+  const std::string& endpoint_name() const noexcept {
+    return endpoint_name_;
   }
   /// Role this Node plays as a stream source.
   InputRole input_role() const override {
@@ -159,6 +189,7 @@ public:
 
 private:
   InputOptions opt_;
+  std::string endpoint_name_;
 };
 
 } // namespace simaai::neat
@@ -166,4 +197,6 @@ private:
 namespace simaai::neat::nodes {
 /// Convenience factory for an `Input` Node with optional `InputOptions`.
 std::shared_ptr<simaai::neat::Node> Input(InputOptions opt = {});
+/// Convenience factory for a named public Graph input endpoint.
+std::shared_ptr<simaai::neat::Node> Input(std::string name, InputOptions opt = {});
 } // namespace simaai::neat::nodes

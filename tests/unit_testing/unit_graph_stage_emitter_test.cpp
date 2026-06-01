@@ -1,7 +1,8 @@
-#include "graph/Graph.h"
-#include "graph/GraphSession.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
+#include "nodes/common/Output.h"
+#include "nodes/io/Input.h"
+#include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -13,11 +14,13 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 // Verifies that StageExecutor can emit graph outputs while on_input() is still
-// running, including terminal routing, downstream routing, and stop cancellation.
+// running through the public Graph -> Run path, including terminal routing,
+// downstream routing, and stop cancellation.
 namespace {
 
 struct StreamState {
@@ -149,6 +152,23 @@ std::shared_ptr<simaai::neat::graph::Node> make_pass_node() {
                                      std::move(outputs), "sink");
 }
 
+std::size_t add_input_endpoint(simaai::neat::Graph& graph, const char* name) {
+  simaai::neat::InputOptions opt;
+  opt.payload_type = simaai::neat::PayloadType::Tensor;
+  return graph.append_pipeline_vertex_for_internal_graph_(
+      std::make_shared<simaai::neat::Input>(std::string(name), std::move(opt)));
+}
+
+std::size_t add_output_endpoint(simaai::neat::Graph& graph, const char* name) {
+  return graph.append_pipeline_vertex_for_internal_graph_(
+      std::make_shared<simaai::neat::Output>(std::string(name)));
+}
+
+void connect_runtime(simaai::neat::Graph& graph, std::size_t from, const char* from_port,
+                     std::size_t to, const char* to_port) {
+  graph.connect_runtime_port_for_internal_graph_(from, from_port, to, to_port);
+}
+
 void release_stage(const std::shared_ptr<StreamState>& state) {
   {
     std::lock_guard<std::mutex> lock(state->mu);
@@ -161,16 +181,56 @@ void release_stage(const std::shared_ptr<StreamState>& state) {
 
 RUN_TEST("unit_graph_stage_emitter_test", [] {
   {
-    simaai::neat::graph::Graph graph;
-    const auto in_port = graph.intern_port("in");
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "in");
+    const auto stage = graph.append_runtime_vertex_for_internal_graph_(make_pass_node());
+    const auto output = add_output_endpoint(graph, "out");
+    connect_runtime(graph, input, "out", stage, "in");
+    connect_runtime(graph, stage, "out", output, "in");
+
+    simaai::neat::Run run = graph.build();
+
+    simaai::neat::Sample input_sample = make_text_sample("prompt", "metadata");
+    input_sample.frame_id = 42;
+    input_sample.pts_ns = 123456789;
+    input_sample.dts_ns = 123456000;
+    input_sample.duration_ns = 33333;
+    input_sample.input_seq = 7;
+    input_sample.orig_input_seq = 6;
+    input_sample.stream_id = "camera-0";
+    input_sample.stream_label = "primary";
+
+    require(run.push("in", input_sample), "push to metadata pass-through stage failed");
+    auto out = run.pull("out", 1000);
+    require(out.has_value(), "metadata pass-through stage output timed out");
+    require(sample_text(*out) == "metadata", "metadata pass-through payload changed");
+    require(out->frame_id == input_sample.frame_id, "runtime stage lost frame_id");
+    require(out->pts_ns == input_sample.pts_ns, "runtime stage lost pts_ns");
+    require(out->dts_ns == input_sample.dts_ns, "runtime stage lost dts_ns");
+    require(out->duration_ns == input_sample.duration_ns, "runtime stage lost duration_ns");
+    require(out->input_seq == input_sample.input_seq, "runtime stage lost input_seq");
+    require(out->orig_input_seq == input_sample.orig_input_seq,
+            "runtime stage lost orig_input_seq");
+    require(out->stream_id == input_sample.stream_id, "runtime stage lost stream_id");
+    require(out->stream_label == input_sample.stream_label, "runtime stage lost stream_label");
+    run.stop();
+  }
+
+  {
+    simaai::neat::Graph graph;
     auto state = std::make_shared<StreamState>();
-    const auto streamer = graph.add(make_blocking_emitter_node(state));
+    const auto input = add_input_endpoint(graph, "in");
+    const auto streamer =
+        graph.append_runtime_vertex_for_internal_graph_(make_blocking_emitter_node(state));
+    const auto output = add_output_endpoint(graph, "out");
+    connect_runtime(graph, input, "out", streamer, "in");
+    connect_runtime(graph, streamer, "out", output, "in");
 
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
+    simaai::neat::Run run = graph.build();
 
-    require(run.push(streamer, in_port, make_text_sample("prompt", "go")),
+    require(run.push("in", make_text_sample("prompt", "go")),
             "push to terminal streaming stage failed");
-    auto first = run.pull(streamer, 1000);
+    auto first = run.pull("out", 1000);
     require(first.has_value(), "live emitter output did not reach terminal sink");
     require(sample_text(*first) == "token-1", "unexpected first streamed token");
     require(wait_until([&] { return state->entered.load(std::memory_order_acquire); }, 3000),
@@ -179,51 +239,59 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
             "stage completed before the live token was pulled");
 
     release_stage(state);
-    auto final = run.pull(streamer, 1000);
+    auto final = run.pull("out", 1000);
     require(final.has_value(), "final returned output did not reach terminal sink");
     require(sample_text(*final) == "done", "unexpected final output");
     run.stop();
   }
 
   {
-    simaai::neat::graph::Graph graph;
-    const auto in_port = graph.intern_port("in");
+    simaai::neat::Graph graph;
     auto state = std::make_shared<StreamState>();
-    const auto streamer = graph.add(make_blocking_emitter_node(state));
-    const auto sink = graph.add(make_pass_node());
-    graph.connect(streamer, sink, "out", "in");
+    const auto input = add_input_endpoint(graph, "in");
+    const auto streamer =
+        graph.append_runtime_vertex_for_internal_graph_(make_blocking_emitter_node(state));
+    const auto sink = graph.append_runtime_vertex_for_internal_graph_(make_pass_node());
+    const auto output = add_output_endpoint(graph, "out");
+    connect_runtime(graph, input, "out", streamer, "in");
+    connect_runtime(graph, streamer, "out", sink, "in");
+    connect_runtime(graph, sink, "out", output, "in");
 
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
+    simaai::neat::Run run = graph.build();
 
-    require(run.push(streamer, in_port, make_text_sample("prompt", "go")),
+    require(run.push("in", make_text_sample("prompt", "go")),
             "push to downstream streaming stage failed");
-    auto first = run.pull(sink, 1000);
+    auto first = run.pull("out", 1000);
     require(first.has_value(), "live emitter output did not reach downstream stage");
     require(sample_text(*first) == "token-1", "unexpected downstream streamed token");
     require(!state->completed.load(std::memory_order_acquire),
             "source stage completed before downstream live token was pulled");
 
     release_stage(state);
-    auto final = run.pull(sink, 1000);
+    auto final = run.pull("out", 1000);
     require(final.has_value(), "final returned output did not reach downstream stage");
     require(sample_text(*final) == "done", "unexpected downstream final output");
     run.stop();
   }
 
   {
-    simaai::neat::graph::Graph graph;
-    const auto in_port = graph.intern_port("in");
+    simaai::neat::Graph graph;
     auto state = std::make_shared<StreamState>();
-    const auto streamer = graph.add(make_blocking_emitter_node(state));
+    const auto input = add_input_endpoint(graph, "in");
+    const auto streamer =
+        graph.append_runtime_vertex_for_internal_graph_(make_blocking_emitter_node(state));
+    const auto output = add_output_endpoint(graph, "out");
+    connect_runtime(graph, input, "out", streamer, "in");
+    connect_runtime(graph, streamer, "out", output, "in");
 
-    simaai::neat::graph::GraphRun run = simaai::neat::graph::GraphSession(std::move(graph)).build();
+    simaai::neat::Run run = graph.build();
 
-    require(run.push(streamer, in_port, make_text_sample("prompt", "go")),
+    require(run.push("in", make_text_sample("prompt", "go")),
             "push to stop streaming stage failed");
     require(wait_until([&] { return state->entered.load(std::memory_order_acquire); }, 1000),
             "stage did not enter blocking region before stop");
     run.stop();
     require(state->request_stop_called.load(std::memory_order_acquire),
-            "GraphRun::stop did not call StageExecutor::request_stop");
+            "Run::stop did not call StageExecutor::request_stop");
   }
 });

@@ -1,6 +1,6 @@
 <svg width="1440" height="900" viewBox="0 0 1440 900" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
   <title id="title">SiMa Neat three-step workflow infographic for Python</title>
-  <desc id="desc">An infographic showing the three main Neat steps in Python: load a compiled model as a Model, compose an application as a Session, and build and run it on a SiMa SoC.</desc>
+  <desc id="desc">An infographic showing the three main Neat steps in Python: load a compiled model as a Model, compose an application as a Graph, and build and run it on a SiMa SoC.</desc>
   <defs>
     <linearGradient id="bg" x1="120" y1="80" x2="1320" y2="820" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#FFFFFF"/>
@@ -52,7 +52,7 @@
     <rect x="112" y="242" width="128" height="42" rx="21" fill="url(#accent)"/>
     <text x="145" y="270" class="sans step">Step 1</text>
     <text x="112" y="330" class="sans cardTitle">Load a `Model`</text>
-    <text x="112" y="366" class="sans cardBody">Start with a compiled model package</text>
+    <text x="112" y="366" class="sans cardBody">Start with a compiled model archive</text>
     <text x="112" y="390" class="sans cardBody">and let Neat expose it as a reusable</text>
     <text x="112" y="414" class="sans cardBody">application building block.</text>
 
@@ -64,7 +64,7 @@
     <text x="123" y="576" class="mono codeLineNo">3</text>
     <text x="150" y="512" class="mono code">
       <tspan x="150" y="512">model = neat.Model(</tspan>
-      <tspan x="150" y="540">  "resnet_50_mpk.tar.gz")</tspan>
+      <tspan x="150" y="540">  "resnet_50.tar.gz")</tspan>
       <tspan x="150" y="574">result = model.run(rgb)</tspan>
     </text>
 
@@ -79,7 +79,7 @@
     <rect x="526" y="214" width="388" height="454" rx="30" fill="url(#panel)"/>
     <rect x="554" y="242" width="128" height="42" rx="21" fill="url(#accent)"/>
     <text x="587" y="270" class="sans step">Step 2</text>
-    <text x="554" y="330" class="sans cardTitle">Compose a `Session`</text>
+    <text x="554" y="330" class="sans cardTitle">Compose a `Graph`</text>
     <text x="554" y="366" class="sans cardBody">Assemble model stages, inputs, outputs,</text>
     <text x="554" y="390" class="sans cardBody">and application logic into one coherent</text>
     <text x="554" y="414" class="sans cardBody">AI application workflow.</text>
@@ -92,10 +92,10 @@
     <text x="565" y="574" class="mono codeLineNo">3</text>
     <text x="565" y="608" class="mono codeLineNo">4</text>
     <text x="592" y="504" class="mono code">
-      <tspan x="592" y="504">session = neat.Session()</tspan>
-      <tspan x="592" y="538">session.add(neat.nodes.input())</tspan>
-      <tspan x="592" y="572">session.add(model.session())</tspan>
-      <tspan x="592" y="606">session.add(neat.nodes.output())</tspan>
+      <tspan x="592" y="504">graph = neat.Graph()</tspan>
+      <tspan x="592" y="538">graph.add(neat.nodes.input())</tspan>
+      <tspan x="592" y="572">graph.add(model.graph())</tspan>
+      <tspan x="592" y="606">graph.add(neat.nodes.output())</tspan>
     </text>
 
     <rect x="548" y="646" width="344" height="16" rx="8" fill="#E8E9EB"/>
@@ -122,7 +122,7 @@
     <text x="1007" y="574" class="mono codeLineNo">3</text>
     <text x="1007" y="602" class="mono codeLineNo">4</text>
     <text x="1034" y="504" class="mono code">
-      <tspan x="1034" y="504">run = session.build(</tspan>
+      <tspan x="1034" y="504">run = graph.build(</tspan>
       <tspan x="1034" y="532">  input_tensor, neat.RunMode.Sync)</tspan>
       <tspan x="1034" y="572">out = run.push_and_pull(</tspan>
       <tspan x="1034" y="600">  input_tensor)</tspan>

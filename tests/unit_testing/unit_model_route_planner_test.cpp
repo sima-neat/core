@@ -2,22 +2,25 @@
 #include "model/internal/InputPlanner.h"
 #include "model/internal/ModelInternal.h"
 #include "model/internal/RoutePlanner.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
 
-sima_test::MpkFixture make_bf16_mla_tess_fixture(const std::string& tag) {
-  return sima_test::make_strict_mpk_tar_fixture(tag,
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_bf16_mla_tess_fixture(const std::string& tag) {
+  return sima_test::make_strict_model_archive_fixture(tag,
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -41,8 +44,8 @@ sima_test::MpkFixture make_bf16_mla_tess_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -52,8 +55,8 @@ sima_test::MpkFixture make_bf16_mla_tess_fixture(const std::string& tag) {
   "output_img_type": "RGB",
   "dynamic_input_dims": true
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "input_format": ["EV81_BFLOAT16"],
@@ -65,15 +68,15 @@ sima_test::MpkFixture make_bf16_mla_tess_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
-sima_test::MpkFixture make_quanttess_post_fixture(const std::string& tag) {
-  return sima_test::make_strict_mpk_tar_fixture(tag,
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_quanttess_post_fixture(const std::string& tag) {
+  return sima_test::make_strict_model_archive_fixture(tag,
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -106,8 +109,8 @@ sima_test::MpkFixture make_quanttess_post_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -117,15 +120,15 @@ sima_test::MpkFixture make_quanttess_post_fixture(const std::string& tag) {
   "output_img_type": "RGB",
   "dynamic_input_dims": true
 })json"},
-                                                    {"etc/0_quanttess.json",
-                                                     R"json({
+                                                          {"etc/0_quanttess.json",
+                                                           R"json({
   "node_name": "quanttess_0",
   "input_width": 640,
   "input_height": 640,
   "input_depth": 3
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "quanttess_0"}],
   "input_format": ["EV81_INT8"],
@@ -137,8 +140,8 @@ sima_test::MpkFixture make_quanttess_post_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                    {"etc/0_postproc.json",
-                                                     R"json({
+                                                          {"etc/0_postproc.json",
+                                                           R"json({
   "node_name": "detessdequant_0",
   "num_in_tensor": 1,
   "out_data_type": "FP32",
@@ -146,15 +149,15 @@ sima_test::MpkFixture make_quanttess_post_fixture(const std::string& tag) {
   "input_height": [80],
   "input_depth": [6]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
-sima_test::MpkFixture make_quant_no_post_fixture(const std::string& tag) {
-  return sima_test::make_strict_mpk_tar_fixture(tag,
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_quant_no_post_fixture(const std::string& tag) {
+  return sima_test::make_strict_model_archive_fixture(tag,
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -187,8 +190,8 @@ sima_test::MpkFixture make_quant_no_post_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -198,15 +201,15 @@ sima_test::MpkFixture make_quant_no_post_fixture(const std::string& tag) {
   "output_img_type": "RGB",
   "dynamic_input_dims": true
 })json"},
-                                                    {"etc/0_quanttess.json",
-                                                     R"json({
+                                                          {"etc/0_quanttess.json",
+                                                           R"json({
   "node_name": "quanttess_0",
   "input_width": 640,
   "input_height": 640,
   "input_depth": 3
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "quanttess_0"}],
   "input_format": ["EV81_INT8"],
@@ -218,8 +221,8 @@ sima_test::MpkFixture make_quant_no_post_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                    {"etc/0_postproc.json",
-                                                     R"json({
+                                                          {"etc/0_postproc.json",
+                                                           R"json({
   "node_name": "detessdequant_0",
   "num_in_tensor": 1,
   "out_data_type": "FP32",
@@ -227,15 +230,15 @@ sima_test::MpkFixture make_quant_no_post_fixture(const std::string& tag) {
   "input_height": [80],
   "input_depth": [6]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
-sima_test::MpkFixture make_ambiguous_tess_fixture(const std::string& tag) {
-  return sima_test::make_strict_mpk_tar_fixture(tag,
-                                                {
-                                                    {"etc/pipeline_sequence.json",
-                                                     R"json({
+sima_test::ModelArchiveFixture make_ambiguous_tess_fixture(const std::string& tag) {
+  return sima_test::make_strict_model_archive_fixture(tag,
+                                                      {
+                                                          {"etc/pipeline_sequence.json",
+                                                           R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -268,8 +271,8 @@ sima_test::MpkFixture make_ambiguous_tess_fixture(const std::string& tag) {
     ]
   }]
 })json"},
-                                                    {"etc/0_preproc.json",
-                                                     R"json({
+                                                          {"etc/0_preproc.json",
+                                                           R"json({
   "node_name": "preproc_0",
   "input_width": 1280,
   "input_height": 720,
@@ -279,8 +282,8 @@ sima_test::MpkFixture make_ambiguous_tess_fixture(const std::string& tag) {
   "output_img_type": "RGB",
   "dynamic_input_dims": true
 })json"},
-                                                    {"etc/0_process_mla.json",
-                                                     R"json({
+                                                          {"etc/0_process_mla.json",
+                                                           R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "input_format": ["EV81_BFLOAT16"],
@@ -292,8 +295,8 @@ sima_test::MpkFixture make_ambiguous_tess_fixture(const std::string& tag) {
   "output_height": [80],
   "output_depth": [6]
 })json"},
-                                                    {"etc/0_detessdequant.json",
-                                                     R"json({
+                                                          {"etc/0_detessdequant.json",
+                                                           R"json({
   "node_name": "detessdequant_0",
   "num_in_tensor": 1,
   "out_data_type": "FP32",
@@ -301,14 +304,14 @@ sima_test::MpkFixture make_ambiguous_tess_fixture(const std::string& tag) {
   "input_height": [80],
   "input_depth": [6]
 })json"},
-                                                },
-                                                true);
+                                                      },
+                                                      true);
 }
 
-sima_test::MpkFixture make_multi_ingress_cast_join_fixture(const std::string& tag) {
-  return sima_test::make_mpk_tar_fixture(tag, {
-                                                  {"etc/multi_ingress_cast_join_mpk.json",
-                                                   R"json({
+sima_test::ModelArchiveFixture make_multi_ingress_cast_join_fixture(const std::string& tag) {
+  return sima_test::make_model_archive_fixture(tag, {
+                                                        {"etc/multi_ingress_cast_join_mpk.json",
+                                                         R"json({
   "name": "multi_ingress_cast_join",
   "model_path": "multi_ingress_cast_join.onnx",
   "model_sdk_version": "2.0.0",
@@ -400,8 +403,8 @@ sima_test::MpkFixture make_multi_ingress_cast_join_fixture(const std::string& ta
     }
   ]
 })json"},
-                                                  {"etc/pipeline_sequence.json",
-                                                   R"json({
+                                                        {"etc/pipeline_sequence.json",
+                                                         R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -416,8 +419,8 @@ sima_test::MpkFixture make_multi_ingress_cast_join_fixture(const std::string& ta
     ]
   }]
 })json"},
-                                                  {"etc/0_process_mla.json",
-                                                   R"json({
+                                                        {"etc/0_process_mla.json",
+                                                         R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "pack_0"}],
   "data_type": ["BF16"],
@@ -425,7 +428,7 @@ sima_test::MpkFixture make_multi_ingress_cast_join_fixture(const std::string& ta
   "output_height": [2],
   "output_depth": [1]
 })json"},
-                                              });
+                                                    });
 }
 
 std::filesystem::path core_root() {
@@ -469,17 +472,20 @@ RUN_TEST(
       using namespace simaai::neat;
       using namespace simaai::neat::internal;
 
+      static_assert(std::is_same_v<decltype(std::declval<const Model&>().preprocess()), Graph>);
+      static_assert(std::is_same_v<decltype(std::declval<const Model&>().postprocess()), Graph>);
+
       {
         const auto fixture = make_bf16_mla_tess_fixture("model_route_bf16_mla_tess");
         Model model(fixture.tar_path);
 
-        const NodeGroup pre = model.preprocess();
-        const NodeGroup post = model.postprocess();
+        const auto pre = ModelAccess::build_public_preprocess_nodes(model);
+        const auto post = ModelAccess::build_public_postprocess_nodes(model);
         require(!pre.empty(), "strict MPK route should produce preprocess stage");
         require(!post.empty(), "strict MPK route should produce postprocess stage");
 
-        const std::string pre_kind = pre.nodes().front() ? pre.nodes().front()->kind() : "";
-        const std::string post_kind = post.nodes().front() ? post.nodes().front()->kind() : "";
+        const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
+        const std::string post_kind = post.front() ? post.front()->kind() : "";
         require(pre_kind == "QuantTess",
                 "strict MPK route should select QuantTess preprocess stage");
         require(post_kind == "DetessDequant",
@@ -494,13 +500,13 @@ RUN_TEST(
         const auto fixture = make_quanttess_post_fixture("model_route_quanttess_post");
         Model model(fixture.tar_path);
 
-        const NodeGroup pre = model.preprocess();
-        const NodeGroup post = model.postprocess();
+        const auto pre = ModelAccess::build_public_preprocess_nodes(model);
+        const auto post = ModelAccess::build_public_postprocess_nodes(model);
         require(!pre.empty(), "strict MPK route should keep preprocess stage");
         require(!post.empty(), "strict MPK route should keep postprocess stage");
 
-        const std::string pre_kind = pre.nodes().front() ? pre.nodes().front()->kind() : "";
-        const std::string post_kind = post.nodes().front() ? post.nodes().front()->kind() : "";
+        const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
+        const std::string post_kind = post.front() ? post.front()->kind() : "";
         require(pre_kind == "QuantTess", "strict MPK route should select QuantTess pre stage");
         require(post_kind == "DetessDequant",
                 "strict MPK route should keep DetessDequant post stage");
@@ -510,12 +516,12 @@ RUN_TEST(
         const auto fixture = make_quant_no_post_fixture("model_route_quant_no_post");
         Model model(fixture.tar_path);
 
-        const NodeGroup pre = model.preprocess();
-        const NodeGroup post = model.postprocess();
+        const auto pre = ModelAccess::build_public_preprocess_nodes(model);
+        const auto post = ModelAccess::build_public_postprocess_nodes(model);
         require(!pre.empty(), "strict MPK route should keep quant/tess preprocess");
         require(!post.empty(), "strict MPK route should keep strict postprocess stage");
 
-        const std::string pre_kind = pre.nodes().front() ? pre.nodes().front()->kind() : "";
+        const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
         require(pre_kind == "QuantTess", "strict MPK route should select QuantTess pre stage");
 
         const TensorSpec out_spec = model.output_spec();
@@ -537,17 +543,17 @@ RUN_TEST(
       {
         const auto fixture = make_ambiguous_tess_fixture("model_route_ambiguous_tess");
         Model model(fixture.tar_path);
-        const NodeGroup pre = model.preprocess();
-        const NodeGroup post = model.postprocess();
+        const auto pre = ModelAccess::build_public_preprocess_nodes(model);
+        const auto post = ModelAccess::build_public_postprocess_nodes(model);
         require(!pre.empty(), "strict MPK route should keep preprocess stage");
         require(!post.empty(), "strict MPK route should keep postprocess stage");
       }
 
       {
-        const auto legacy = sima_test::make_mpk_tar_fixture("model_route_legacy_missing_mpk",
-                                                            {
-                                                                {"etc/pipeline_sequence.json",
-                                                                 R"json({
+        const auto legacy = sima_test::make_model_archive_fixture("model_route_legacy_missing_mpk",
+                                                                  {
+                                                                      {"etc/pipeline_sequence.json",
+                                                                       R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -562,12 +568,12 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                {"etc/0_process_mla.json",
-                                                                 R"json({
+                                                                      {"etc/0_process_mla.json",
+                                                                       R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-                                                            });
+                                                                  });
         bool threw = false;
         try {
           Model legacy_model(legacy.tar_path);

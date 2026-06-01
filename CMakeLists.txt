@@ -281,9 +281,19 @@ endif()
 find_package(PkgConfig REQUIRED)
 if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
   find_package(SimaLMM CONFIG REQUIRED)
+else()
+  # Core-only builds must not fail when LLiMa is absent, but if the package is
+  # present we should build the real GenAI implementation instead of silently
+  # shipping unavailable stubs.  This keeps local developer/CI environments
+  # coherent without making LLiMa a hard dependency for normal Graph/Core builds.
+  find_package(SimaLMM CONFIG QUIET)
+endif()
+if (SimaLMM_FOUND)
   message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
 else()
-  message(STATUS "Skipping SimaLMM package lookup because SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF.")
+  message(STATUS
+    "SimaLMM package not found; building GenAI/LLiMa APIs with unavailable stubs. "
+    "Set SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON to make this a configure error.")
 endif()
 find_path(SIMANEAT_JSONCPP_INCLUDE_DIR
   NAMES json/json.h
@@ -779,9 +789,32 @@ file(GLOB_RECURSE SIMANEAT_ALL_SOURCES
 # Apply blacklist
 # ------------------------------------------------------------------------------
 set(SIMANEAT_SOURCES ${SIMANEAT_ALL_SOURCES})
-if (NOT SIMANEAT_ENABLE_OPENAI_SERVER)
+if (SimaLMM_FOUND)
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIUnavailableStubs.cpp")
+endif()
+if (SIMANEAT_ENABLE_OPENAI_SERVER)
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServerUnavailableStubs.cpp")
+else()
   list(REMOVE_ITEM SIMANEAT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp")
+endif()
+if (NOT SimaLMM_FOUND)
+  # Keep lightweight public GenAI types buildable for API discovery, but do not compile
+  # implementation TUs that require SimaLMM or call into LLiMa-backed model objects when the
+  # LLiMa SDK/package is intentionally absent (clang-tidy and core-only CI).  The unavailable
+  # stub TU above preserves linkability and reports a clear runtime diagnostic if those APIs are
+  # used in a non-LLiMa build.
+  list(REMOVE_ITEM SIMANEAT_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/ASRModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GraphFragments.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIInternal.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/VisionLanguageModel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/nodes/SpeechTranscriberNode.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/nodes/VisionLanguageNode.cpp")
 endif()
 
 foreach(blacklisted ${SIMANEAT_SRC_BLACKLIST})
@@ -800,12 +833,15 @@ endforeach()
 # ------------------------------------------------------------------------------
 add_library(sima_neat_objects OBJECT
   ${SIMANEAT_SOURCES}
-  ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/session/internal/SessionTestHooks.cpp
 )
 set_target_properties(sima_neat_objects PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
 target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_INTERNAL=1)
+
+if (NOT GIT_HASH)
+  set(GIT_HASH "unknown")
+endif()
 
 add_library(sima_neat_common INTERFACE)
 
@@ -830,6 +866,8 @@ target_compile_definitions(sima_neat_objects PRIVATE
   SIMA_NEAT_VERSION_STRING="${SIMANEAT_VERSION}"
   SIMA_NEAT_PLATFORM_VERSION_STRING="${SIMANEAT_PLATFORM_VERSION}"
   SIMA_NEAT_ABI_VERSION_STRING="${SIMANEAT_ABI_VERSION}"
+  SIMANEAT_VERSION_STRING="${SIMANEAT_VERSION}"
+  SIMANEAT_GIT_SHA="${GIT_HASH}"
 )
 
 set(SIMANEAT_REPO_NEAT_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/include")
@@ -847,6 +885,12 @@ target_include_directories(sima_neat_objects
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline
     ${CMAKE_CURRENT_SOURCE_DIR}/src/pipeline/internal
+    # Keep the source tree's public/internal bridge headers ahead of the
+    # sibling internals checkout.  The sibling headers can lag while this repo
+    # is under graph-contract development; source files in this target must see
+    # the matching headers from core_graph_changes first.
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
 )
 
 foreach(_simaneat_llima_header_dep IN ITEMS
@@ -1052,6 +1096,12 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SOURCE_ROOT_REL
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tmp")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_BINARY_DIR}/test-assets/model-archive")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_BINARY_DIR}/test-assets/model-archive/fixtures_manifest.json")
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tests/assets/mpk")
@@ -1061,6 +1111,9 @@ file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL
 file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL
   "${CMAKE_BINARY_DIR}"
   "${CMAKE_SOURCE_DIR}/tests/assets/decoder/dynamic_caps.h264")
+file(RELATIVE_PATH SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL
+  "${CMAKE_BINARY_DIR}"
+  "${CMAKE_SOURCE_DIR}")
 
 set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
 {
@@ -1068,9 +1121,12 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT [=[
   "generator": "core/CMakeLists.txt",
   "source_root_rel": "@SIMANEAT_TEST_RUNTIME_SOURCE_ROOT_REL@",
   "repo_tmp_root_rel": "@SIMANEAT_TEST_RUNTIME_REPO_TMP_ROOT_REL@",
+  "model_archive_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_ROOT_REL@",
+  "model_archive_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MODEL_ARCHIVE_FIXTURE_MANIFEST_REL@",
   "mpk_fixture_root_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_ROOT_REL@",
   "mpk_fixture_manifest_rel": "@SIMANEAT_TEST_RUNTIME_MPK_FIXTURE_MANIFEST_REL@",
-  "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@"
+  "decoder_fixture_rel": "@SIMANEAT_TEST_RUNTIME_DECODER_FIXTURE_REL@",
+  "shared_test_asset_root_rel": "@SIMANEAT_TEST_RUNTIME_SHARED_TEST_ASSET_ROOT_REL@"
 }
 ]=])
 string(CONFIGURE "${SIMANEAT_TEST_RUNTIME_MANIFEST_CONTENT}"
@@ -1096,13 +1152,20 @@ set(SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT [=[
   "generator": "core/CMakeLists.txt (installed-layout variant)",
   "source_root_rel": "",
   "repo_tmp_root_rel": "",
+  "model_archive_fixture_root_rel": "test-assets/model-archive",
+  "model_archive_fixture_manifest_rel": "test-assets/model-archive/fixtures_manifest.json",
   "mpk_fixture_root_rel": "test-assets/mpk",
   "mpk_fixture_manifest_rel": "test-assets/mpk/fixtures_manifest.json",
-  "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264"
+  "decoder_fixture_rel": "test-assets/decoder/dynamic_caps.h264",
+  "shared_test_asset_root_rel": "../../share/sima-neat/test-assets"
 }
 ]=])
 file(WRITE "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED}"
   "${SIMANEAT_TEST_RUNTIME_MANIFEST_INSTALLED_CONTENT}")
+
+option(SIMANEAT_CTEST_UNIQUE_GST_REGISTRY
+  "Use an isolated GStreamer registry file per CTest test. This preserves the legacy maximum-isolation behavior but makes installed DevKit CI much slower."
+  OFF)
 
 function(simaneat_append_ctest_env test_name)
   set(_plugin_dir "${SIMANEAT_CTEST_NEAT_PLUGIN_DIR}")
@@ -1115,10 +1178,19 @@ function(simaneat_append_ctest_env test_name)
     set(_ld_library_path "${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
   endif()
 
-  set(_gst_registry "${CMAKE_BINARY_DIR}/sima_gst_registry_${test_name}.bin")
-  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY=${_gst_registry}")
-  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_1_0=${_gst_registry}")
-  set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_REUSE_PLUGIN_SCANNER=no")
+  # Default to the shared, content-addressed registry cache created by GstInit.cpp.
+  # That cache key includes the selected NEAT plugin directory and filtered system
+  # plugin set, so tests still avoid stale plugin metadata without forcing every
+  # process to rescan all plugins. Keep an escape hatch for tests/debug sessions
+  # that need the pre-existing one-registry-file-per-test isolation.
+  if (SIMANEAT_CTEST_UNIQUE_GST_REGISTRY)
+    set(_gst_registry "${CMAKE_BINARY_DIR}/sima_gst_registry_${test_name}.bin")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY=${_gst_registry}")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_REGISTRY_1_0=${_gst_registry}")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT
+      "GST_REGISTRY_REUSE_PLUGIN_SCANNER=no")
+    set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "SIMA_GST_UNIQUE_REGISTRY=1")
+  endif()
   if (NOT "${_plugin_dir}" STREQUAL "")
     set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_PATH=${_plugin_dir}")
     set_property(TEST ${test_name} APPEND PROPERTY ENVIRONMENT "GST_PLUGIN_PATH_1_0=${_plugin_dir}")
@@ -1218,41 +1290,23 @@ install(
 )
 
 install(
-  DIRECTORY
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/builder
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/contracts
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/genai
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/graph
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/model
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/mpk
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/nodes
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/policy
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
   COMPONENT core
-)
-
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/gst/
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gst
-  COMPONENT core
+  # Low-level actor-runtime graph headers are compiler/runtime internals.  The
+  # public application surface is simaai::neat::Graph / Run via neat.h; do not
+  # install a second public Graph concept.
+  PATTERN "graph" EXCLUDE
+  PATTERN "graph/*" EXCLUDE
+  PATTERN "genai/nodes" EXCLUDE
+  PATTERN "genai/nodes/*" EXCLUDE
+  PATTERN "pipeline/internal" EXCLUDE
+  PATTERN "pipeline/internal/*" EXCLUDE
   PATTERN "ProcessMlaRuntimeConfig.h" EXCLUDE
   PATTERN "SimaPluginStaticManifestAbi.h" EXCLUDE
   PATTERN "SimaPreparedRuntimeAbi.h" EXCLUDE
   PATTERN "SimaTensorSetMetaAbi.h" EXCLUDE
-)
-
-install(
-  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/neat/
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/neat
-  COMPONENT core
   PATTERN "PreparedRuntimeBridge.h" EXCLUDE
-)
-
-install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/include/neat.h
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-  COMPONENT core
 )
 
 install(
@@ -1299,6 +1353,11 @@ install(
 set(SimaNeat_INSTALL_CMAKEDIR
   ${CMAKE_INSTALL_LIBDIR}/cmake/SimaNeat
 )
+
+set(SIMANEAT_CONFIG_WITH_LLIMA FALSE)
+if (SimaLMM_FOUND)
+  set(SIMANEAT_CONFIG_WITH_LLIMA TRUE)
+endif()
 
 configure_package_config_file(
   ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SimaNeatConfig.cmake.in
@@ -1372,9 +1431,12 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libopencv-core406"
   "neat-internals-dev"
   "neat-gst-plugins"
-  "sima-lmm-core"
-  "sima-lmm-dev"
 )
+if (SimaLMM_FOUND)
+  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
+    "sima-lmm-core"
+    "sima-lmm-dev")
+endif()
 if (SIMANEAT_ENABLE_OPENAI_SERVER)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "libcpp-httplib0.11")
 endif()

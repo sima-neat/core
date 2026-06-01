@@ -49,7 +49,7 @@ std::vector<std::string> split_buffer_names(const std::string& raw) {
 
 } // namespace
 
-PipelineBuildContext::PipelineBuildContext(const SessionOptions& opt)
+PipelineBuildContext::PipelineBuildContext(const GraphOptions& opt)
     : name_transform_(make_name_transform(opt)) {}
 
 PipelineBuildContext::PipelineBuildContext(const NameTransform& transform)

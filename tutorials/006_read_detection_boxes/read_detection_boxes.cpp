@@ -1,7 +1,7 @@
 // Decompose model execution into stages: Preproc -> Infer -> BoxDecode.
 //
 // Usage:
-//   tutorial_006_read_detection_boxes --mpk /path/to/yolo_v8s.tar.gz --image /path/to.jpg
+//   tutorial_006_read_detection_boxes --model /path/to/yolo_v8s.tar.gz --image /path/to.jpg
 
 #include "neat.h"
 
@@ -29,9 +29,9 @@ bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
 
 int main(int argc, char** argv) {
   try {
-    std::string mpk, image;
-    if (!get_arg(argc, argv, "--mpk", mpk) || !get_arg(argc, argv, "--image", image)) {
-      std::cerr << "Usage: tutorial_006_read_detection_boxes --mpk <path> --image <path>\n";
+    std::string model_path, image;
+    if (!get_arg(argc, argv, "--model", model_path) || !get_arg(argc, argv, "--image", image)) {
+      std::cerr << "Usage: tutorial_006_read_detection_boxes --model <path> --image <path>\n";
       return 1;
     }
 
@@ -46,13 +46,13 @@ int main(int argc, char** argv) {
     opt.preprocess.input_max_depth = bgr.channels();
     opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
 
-    simaai::neat::Model model(mpk, opt);
+    simaai::neat::Model model(model_path, opt);
 
     // CORE LOGIC
     // Stage-by-stage: each stages::* call runs one piece of the model pipeline.
     simaai::neat::TensorList pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model);
-    simaai::neat::SampleList infer_samples = simaai::neat::stages::Infer(
-        simaai::neat::SampleList{simaai::neat::sample_from_tensors(pre)}, model);
+    simaai::neat::Sample infer_samples = simaai::neat::stages::Infer(
+        simaai::neat::Sample{simaai::neat::sample_from_tensors(pre)}, model);
     if (infer_samples.empty())
       throw std::runtime_error("infer stage returned no samples");
     simaai::neat::Sample infer = infer_samples.front();
@@ -67,7 +67,11 @@ int main(int argc, char** argv) {
 
     // BoxDecode parses the "BBOX" tensor into {x1, y1, x2, y2, score, class_id}
     // entries clamped to original_width x original_height source pixels.
-    simaai::neat::BoxDecodeResult decoded = simaai::neat::stages::BoxDecode(infer, model, box);
+    simaai::neat::BoxDecodeResultList decoded_results =
+        simaai::neat::stages::BoxDecodeResults(simaai::neat::Sample{infer}, model, box);
+    if (decoded_results.empty())
+      throw std::runtime_error("boxdecode result parser returned no results");
+    const simaai::neat::BoxDecodeResult& decoded = decoded_results.front();
     // END CORE LOGIC
 
     std::cout << "boxes=" << decoded.boxes.size() << "\n";

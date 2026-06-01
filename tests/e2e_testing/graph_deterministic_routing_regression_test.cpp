@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph_test_utils.h"
 #include "graph/nodes/StageNode.h"
@@ -65,9 +65,7 @@ RoutedFrames run_once(const std::vector<RouteCase>& cases) {
 
   g.connect(router, cpu_sink, "cpu", "in");
   g.connect(router, mla_sink, "mla", "in");
-
-  simaai::neat::graph::GraphSession session(std::move(g));
-  simaai::neat::graph::GraphRun run = session.build();
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
   RoutedFrames out;
   int64_t frame = 0;
@@ -76,7 +74,7 @@ RoutedFrames run_once(const std::vector<RouteCase>& cases) {
         static_cast<int>(frame), c.stream_id, -1, static_cast<uint8_t>(frame & 0xFF));
     sample.port_name = c.port_name;
 
-    require(run.push(router, sample), "routing regression push failed");
+    require(run.push(router, simaai::neat::Sample{sample}), "routing regression push failed");
 
     const auto expected_sink = c.to_mla ? mla_sink : cpu_sink;
     const auto other_sink = c.to_mla ? cpu_sink : mla_sink;

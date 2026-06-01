@@ -83,7 +83,7 @@ This is now implemented via `SIMA_DEBUG_PROFILE` + `SIMA_DEBUG_LEVEL` as a defau
 
 ## Framework knob
 
-These are behavioral controls that should be first-class typed options on Session/Run/Graph/Node APIs.
+These are behavioral controls that should be first-class typed options on Graph/Run/Graph/Node APIs.
 
 - SIMA_APPSRC_DEFAULT_MAX_BUFFERS
 - SIMA_CLAMP_DETESS_NUM_BUFFERS

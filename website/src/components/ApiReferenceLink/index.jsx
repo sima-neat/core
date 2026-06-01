@@ -7,11 +7,11 @@ const LANG_PREF_KEY = 'neat-docs-language';
 const PYTHON_SLUG_MAP = {
   'simaai-neat-tensor': 'Tensor',
   'simaai-neat-sample': 'Sample',
-  'simaai-neat-session': 'Session',
+  'simaai-neat-session': 'Graph',
   'simaai-neat-model': 'Model',
   'simaai-neat-pipelinerun': 'Run',
   'simaai-neat-node': 'Node',
-  'simaai-neat-nodegroup': 'NodeGroup',
+  'simaai-neat-nodegroup': 'Graph',
   'simaai-neat-runoptions': 'RunOptions',
   'simaai-neat-outputtensoroptions': 'OutputTensorOptions',
   'simaai-neat-inputoptions': 'InputOptions',

@@ -77,6 +77,7 @@ struct PreprocOptions {
   std::string output_dtype = "INT16";    ///< Output element dtype (e.g. `"INT16"`, `"BF16"`).
   std::string scaling_type = "BILINEAR"; ///< Resize interpolation (`"BILINEAR"`, `"NEAREST"`).
   std::string padding_type = "CENTER";   ///< Letterbox padding mode (`"CENTER"`, `"TOPLEFT"`).
+  int pad_value = 0;                     ///< Raw image-space letterbox pad fill value.
 
   std::string graph_name = "preproc";      ///< CVU graph name in the kernel config.
   std::string node_name = "preproc";       ///< CVU node name in the kernel config.

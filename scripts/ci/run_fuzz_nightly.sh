@@ -13,13 +13,11 @@ FUZZ_BIN_DIR="${FUZZ_BIN_DIR:-${BUILD_DIR}/tests/fuzz}"
 
 FUZZ_TARGETS=(
   fuzz_modelpack_json
-  fuzz_pipeline_sequence
   fuzz_gst_pipeline_string
 )
 
 declare -A CORPUS_BY_TARGET=(
   [fuzz_modelpack_json]="modelpack_json"
-  [fuzz_pipeline_sequence]="pipeline_sequence"
   [fuzz_gst_pipeline_string]="gst_pipeline_string"
 )
 

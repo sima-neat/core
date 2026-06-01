@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/JoinBundle.h"
 #include "graph/nodes/StageNode.h"
@@ -72,14 +72,12 @@ int main() {
     graph.connect(src_meta, join, "meta", "meta");
     graph.connect(join, sink, "bundle", "in");
 
-    GraphSession session(std::move(graph));
-
     GraphRunOptions run_opt;
     run_opt.edge_queue = 128;
     run_opt.pull_timeout_ms = 5000;
 
     const auto startup_t0 = sima_perf::Clock::now();
-    GraphRun run = session.build(run_opt);
+    GraphRun run = simaai::neat::graph::build(std::move(graph), run_opt);
     const auto startup_t1 = sima_perf::Clock::now();
 
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
@@ -97,10 +95,10 @@ int main() {
           make_sample("runtime_graph_join_bundle", static_cast<int64_t>(i),
                       static_cast<uint8_t>(0x50 + (i % 64)));
 
-      if (!run.push(src_encoded, encoded)) {
+      if (!run.push(src_encoded, simaai::neat::Sample{encoded})) {
         throw std::runtime_error("graph join encoded push failed");
       }
-      if (!run.push(src_meta, meta)) {
+      if (!run.push(src_meta, simaai::neat::Sample{meta})) {
         throw std::runtime_error("graph join meta push failed");
       }
     }

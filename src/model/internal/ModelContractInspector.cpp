@@ -677,7 +677,7 @@ void append_mpk_plugin_metadata(std::ostringstream& oss, const int indent,
   append_mpk_quant(oss, indent, plugin.quant);
 }
 
-void append_archive_summary(std::ostringstream& oss, const mpk::MpKManifest& manifest,
+void append_archive_summary(std::ostringstream& oss, const ModelArchiveManifest& manifest,
                             const std::string& mpk_json_path = {},
                             const std::string& model_name = {}) {
   append_section_header(oss, "Archive Summary");
@@ -1171,7 +1171,7 @@ std::string selected_post_kind_name_from_model(const Model& model) {
   return "none";
 }
 
-std::string build_raw_only_report(const mpk::MpKManifest& manifest, const ModelPack& pack,
+std::string build_raw_only_report(const ModelArchiveManifest& manifest, const ModelPack& pack,
                                   const ModelContractReportOptions& options,
                                   const std::string& error_section_title,
                                   const std::string& error_message) {
@@ -1215,12 +1215,12 @@ ModelContractInspectionResult
 inspect_model_contract_archive(const std::string& tar_gz,
                                const ModelContractReportOptions& options) {
   ModelContractInspectionResult result;
-  mpk::MpKManifest manifest;
+  ModelArchiveManifest manifest;
   try {
-    mpk::MpKLoaderOptions loader_options;
+    ModelArchiveLoaderOptions loader_options;
     loader_options.reject_unsupported_file_types = false;
     loader_options.require_pipeline_sequence = false;
-    manifest = mpk::MpKLoader::inspect(tar_gz, loader_options);
+    manifest = ModelArchiveLoader::inspect(tar_gz, loader_options);
     result.archive_ok = true;
   } catch (const std::exception& e) {
     std::ostringstream oss;

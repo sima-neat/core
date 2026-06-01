@@ -1,7 +1,8 @@
 // Async push/pull: producer thread pushes frames, main thread pulls outputs.
 //
 // Usage:
-//   tutorial_002_run_inference_async --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg] [--n 4]
+//   tutorial_002_run_inference_async --model /path/to/resnet_50.tar.gz [--image /path/to.jpg] [--n
+//   4]
 
 #include "neat.h"
 
@@ -83,10 +84,10 @@ int top1_from_output(const simaai::neat::Sample& out) {
 
 int main(int argc, char** argv) {
   try {
-    std::string mpk, image;
-    if (!get_arg(argc, argv, "--mpk", mpk)) {
+    std::string model_path, image;
+    if (!get_arg(argc, argv, "--model", model_path)) {
       std::cerr
-          << "Usage: tutorial_002_run_inference_async --mpk <path> [--image <path>] [--n <n>]\n";
+          << "Usage: tutorial_002_run_inference_async --model <path> [--image <path>] [--n <n>]\n";
       return 1;
     }
     get_arg(argc, argv, "--image", image);
@@ -98,14 +99,17 @@ int main(int argc, char** argv) {
     std::vector<cv::Mat> frames(n, frame);
 
     // CORE LOGIC
-    // Build a Session around the model and run it async: one producer thread pushes,
+    // Build a Graph around the model and run it async: one producer thread pushes,
     // the main thread pulls outputs.
-    simaai::neat::Model model(mpk, build_options(size));
+    simaai::neat::Model model(model_path, build_options(size));
+    simaai::neat::Model::RouteOptions route_opt;
+    route_opt.include_input = true;
+    route_opt.include_output = true;
 
-    simaai::neat::Session session;
-    session.add(model.session());
+    simaai::neat::Graph graph;
+    graph.add(model.graph(route_opt));
 
-    auto run = session.build(std::vector<cv::Mat>{frames.front()}, simaai::neat::RunMode::Async);
+    auto run = graph.build(std::vector<cv::Mat>{frames.front()}, simaai::neat::RunMode::Async);
 
     std::atomic<int> pushed{0};
     std::atomic<bool> producer_done{false};

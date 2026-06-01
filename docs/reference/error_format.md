@@ -7,7 +7,7 @@ sidebar_position: 3
 # Plugin Error Format
 
 When a plugin encounters a fatal condition it posts a `GST_MESSAGE_ERROR` on the
-GStreamer bus. NEAT promotes these to `SessionError` exceptions. The error
+GStreamer bus. NEAT promotes these to `NeatError` exceptions. The error
 `debug` string embeds structured fields to make failures actionable.
 
 ## Error Domains and Codes
@@ -56,4 +56,4 @@ detail='caps_parse_failed=true'
 
 - `hint` is intended to be human‑actionable.
 - `detail` captures machine‑oriented context for debugging.
-- `SessionError::what()` includes both the GStreamer message and the debug string.
+- `NeatError::what()` includes both the GStreamer message and the debug string.

@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/common/Output.h"
 
@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
     opt.output_caps.width = 64;
     opt.output_caps.height = 64;
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.add(simaai::neat::nodes::groups::ImageInputGroup(opt));
     p.add(simaai::neat::nodes::Output());
 

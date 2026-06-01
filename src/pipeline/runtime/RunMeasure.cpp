@@ -115,8 +115,8 @@ MeasureScope::MeasureScope(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) 
 MeasureScope::MeasureScope(MeasureScope&&) noexcept = default;
 MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
   if (this != &other) {
-    if (impl_ && !impl_->stopped && impl_->run && impl_->run->state_) {
-      auto st = impl_->run->state_;
+    if (impl_ && !impl_->stopped && impl_->run && impl_->run->core_) {
+      auto st = impl_->run->core_;
       std::lock_guard<std::mutex> lock(st->latency_mu);
       st->measurement_active = false;
       st->measurement_output_timing_init = false;
@@ -128,8 +128,8 @@ MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
   return *this;
 }
 MeasureScope::~MeasureScope() {
-  if (impl_ && !impl_->stopped && impl_->run && impl_->run->state_) {
-    auto st = impl_->run->state_;
+  if (impl_ && !impl_->stopped && impl_->run && impl_->run->core_) {
+    auto st = impl_->run->core_;
     std::lock_guard<std::mutex> lock(st->latency_mu);
     st->measurement_active = false;
     st->measurement_output_timing_init = false;
@@ -169,8 +169,8 @@ MeasureReport MeasureScope::stop() {
       report.throughput_batches_per_s * static_cast<double>(report.options.logical_batch_size);
   std::vector<double> latency_samples;
   std::vector<double> frame_gap_samples;
-  if (impl_->run->state_) {
-    auto st = impl_->run->state_;
+  if (impl_->run->core_) {
+    auto st = impl_->run->core_;
     std::lock_guard<std::mutex> lock(st->latency_mu);
     st->measurement_active = false;
     latency_samples = st->measurement_latencies_ms;
@@ -201,12 +201,12 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
   impl->options = opt;
   impl->before = stats();
   impl->start = Clock::now();
-  if (state_) {
-    std::lock_guard<std::mutex> lock(state_->latency_mu);
-    state_->measurement_latencies_ms.clear();
-    state_->measurement_frame_gaps_ms.clear();
-    state_->measurement_output_timing_init = false;
-    state_->measurement_active = true;
+  if (core_) {
+    std::lock_guard<std::mutex> lock(core_->latency_mu);
+    core_->measurement_latencies_ms.clear();
+    core_->measurement_frame_gaps_ms.clear();
+    core_->measurement_output_timing_init = false;
+    core_->measurement_active = true;
   }
   if (opt.include_plugin_latency) {
     impl->profiler = std::make_unique<LatencyProfiler>();

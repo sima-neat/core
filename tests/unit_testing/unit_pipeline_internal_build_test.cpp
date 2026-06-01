@@ -27,7 +27,7 @@ RUN_TEST("unit_pipeline_internal_build_test", ([] {
            require(expected[2] == "ns_parser_v1", "expected transformed parser name missing");
            require(expected[3] == "parser", "expected legacy parser alias missing");
 
-           SessionOptions opt;
+           GraphOptions opt;
            opt.element_name_prefix = "aa_";
            opt.element_name_suffix = "_zz";
            PipelineBuildContext ctx(opt);

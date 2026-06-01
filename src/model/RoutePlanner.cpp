@@ -340,6 +340,7 @@ bool populate_tensor_contract_from_stage_tensor(
   // can read it directly without reconstructing from the (batch,h,w,d) scalars
   // + a layout token.
   out->logical_shape = shape;
+  out->source_tensor_name = tensor.name;
   out->source_stage = source_stage;
   return true;
 }
@@ -2188,7 +2189,7 @@ build_post_regions_from_lineages(const pipeline_internal::sima::RouteGraph& grap
 // fan-out / fan-in topology per branch_op depth (one FanoutMap per depth, plus
 // an optional FaninJoin when all ingresses converge into a single packer).
 //
-// `pre_regions` is what build_preprocess_group_impl walks to materialize the
+// `pre_regions` is what build_preprocess_nodes_impl walks to materialize the
 // pre stage. Building it from `ingress_regions` guarantees that:
 //   - For monolithic models with a single ingress contract, depth-0 emits a
 //     Linear region (one node per op level), exactly what the legacy flat
@@ -2484,7 +2485,17 @@ std::vector<RouteRegion> derive_post_regions_from_graph(const ModelPack& pack) {
     return {};
   }
   const auto& contract = *pack.mpk_contract();
-  const auto& graph = contract.graph;
+  // Route diagnostics intentionally describe the MPK graph before NEAT's
+  // route-ready fusion passes.  Runtime/materialized regions are filtered from
+  // these raw regions below, so non-materialized view nodes (for example
+  // post-MLA slice views) remain visible in graph_post_chain_raw while still
+  // disappearing from the final executable route.
+  pipeline_internal::sima::MpkGraph raw_graph_view = contract.graph;
+  if (!contract.graph.raw_nodes.empty() && !contract.graph.raw_edges.empty()) {
+    raw_graph_view.nodes = contract.graph.raw_nodes;
+    raw_graph_view.edges = contract.graph.raw_edges;
+  }
+  const auto& graph = raw_graph_view;
   if (graph.nodes.empty()) {
     return {};
   }
@@ -3360,6 +3371,8 @@ ModelSemantics build_model_semantics(const ModelPack& pack) {
 SessionRoutePlan build_route_plan(const Model::Options& options, const ModelSemantics& semantics,
                                   const RouteCapability* capability, const ModelPack* pack) {
   SessionRoutePlan out;
+  out.output_physical_count = semantics.output_physical_count;
+  out.output_logical_count = semantics.output_logical_count;
   const bool have_capability = capability != nullptr;
   if (have_capability && !capability->ingress_contracts.empty()) {
     out.ingress_contracts = capability->ingress_contracts;

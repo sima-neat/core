@@ -15,7 +15,7 @@
 #include <vector>
 
 #define SIMA_PREPARED_RUNTIME_CONTEXT_TYPE "sima.model.prepared-runtime"
-#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)1)
+#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)2)
 
 #define SIMA_PREPARED_RUNTIME_KEY_SESSION_ID "session_id"
 #define SIMA_PREPARED_RUNTIME_KEY_MODEL_ID "model_id"
@@ -212,6 +212,7 @@ struct PreparedProcessCvuTypedConfig {
   int32_t round_off = -1;
   int32_t byte_align = -1;
   std::uint32_t opt_flags = 0U;
+  int32_t pad_value = 0;
 
   int32_t aspect_ratio = -1;
   int32_t normalize = -1;

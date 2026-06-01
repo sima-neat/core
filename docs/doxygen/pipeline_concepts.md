@@ -1,12 +1,12 @@
 # Pipeline and automatic caps negotiation {#pipeline_concepts}
 
-## Building blocks (Node, NodeGroup, Graph)
+## Building blocks (Node, reusable Graph fragment, Graph)
 
 - **Node** (`include/builder/Node.h`) is the atomic unit.
-- **NodeGroup** (`include/builder/NodeGroup.h`) is an ordered set of nodes.
-- **Graph** (`include/builder/Graph.h`) is the DAG composition layer.
+- **Reusable Graph fragment** is a premade `Graph` that contains an ordered set of nodes.
+- **Graph** (`include/pipeline/Graph.h`) is the public composition and build layer.
 
-Session composes these into deterministic GStreamer pipelines.
+Graph composes these into deterministic GStreamer pipelines.
 
 ## Deterministic naming
 
@@ -62,7 +62,7 @@ Runtime enforces a strict input allocation policy:
 
 ## Output-side normalization
 
-`Session::add_output_tensor(...)` inserts convert/scale/caps + output sink, so
+`Graph::add_output_tensor(...)` inserts convert/scale/caps + output sink, so
 downstream output contracts are explicit and stable.
 
 ## Source pipelines

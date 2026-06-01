@@ -63,7 +63,7 @@ struct ValidationIssue {
   std::string message;     ///< Human-readable diagnostic.
 
   // Best-effort node location (builder-level)
-  int node_index = -1;    ///< Index in NodeGroup, or -1 if not Node-specific.
+  int node_index = -1;    ///< Index in the node list, or -1 if not Node-specific.
   std::string node_kind;  ///< `Node::kind()` of the offending Node, if any.
   std::string node_label; ///< User label of the offending Node, if any.
 };
@@ -117,7 +117,7 @@ public:
     contracts_run_.push_back(std::move(id));
   }
 
-  /// @brief Record which Session mode produced this report (integer to avoid Contract.h include).
+  /// @brief Record which Graph mode produced this report (integer to avoid Contract.h include).
   void set_mode(int mode) {
     mode_ = mode;
   }

@@ -41,7 +41,7 @@ known tessellated format (e.g., `MLA`). In this case:
 
 ## OutputTensorOptions limitations (important)
 
-`Session::add_output_tensor()` currently:
+`Graph::add_output_tensor()` currently:
 - Supports only `UInt8` output tensors.
 - Forces **SystemMemory** via a capsfilter.
 - Does **not** transform layout (e.g., `layout=CHW` is metadata only).

@@ -62,7 +62,6 @@ DEFAULT_EMPTY_METRICS: dict[str, float] = {
 }
 
 REQUIRED_SCENARIO_IDS = (
-    "mpk_parse_smoke",
     "runtime_session_sync_rgb",
     "runtime_session_async_rgb",
     "runtime_graph_fanout",

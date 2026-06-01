@@ -1,4 +1,4 @@
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/internal/SampleUtil.h"
 #include "pipeline/internal/TensorBufferEnvelope.h"

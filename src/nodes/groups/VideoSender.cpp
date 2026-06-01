@@ -57,7 +57,7 @@ VideoSenderOptions VideoSenderOptions::H264RtpUdpFromEncoded() {
   return opt;
 }
 
-simaai::neat::NodeGroup VideoSender(const VideoSenderOptions& opt) {
+simaai::neat::Graph VideoSender(const VideoSenderOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
   nodes.reserve(opt.is_raw_input() ? 5 : 3);
 
@@ -69,7 +69,12 @@ simaai::neat::NodeGroup VideoSender(const VideoSenderOptions& opt) {
   }
 
   append_h264_rtp_udp_nodes(nodes, opt);
-  return simaai::neat::NodeGroup(std::move(nodes));
+
+  simaai::neat::Graph graph("video_sender");
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+  return graph;
 }
 
 } // namespace simaai::neat::nodes::groups

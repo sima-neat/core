@@ -36,6 +36,7 @@ cv::Mat load_input_image_or_skip(const fs::path& root) {
   const std::vector<fs::path> candidates = {
       root / "tests" / "images" / "people.jpg",
       root / "test.jpg",
+      sima_test::test_image_fixture_path(),
       root / "tmp" / "coco_sample.jpg",
   };
 
@@ -116,7 +117,7 @@ bool tensor_list_has_tensor(const simaai::neat::TensorList& outs, std::string& e
   return false;
 }
 
-bool sample_list_has_tensor(const simaai::neat::SampleList& outs, std::string& err) {
+bool sample_list_has_tensor(const simaai::neat::Sample& outs, std::string& err) {
   if (outs.empty()) {
     err = "sample output empty";
     return false;

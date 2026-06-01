@@ -1,12 +1,12 @@
 /**
  * @file
  * @ingroup nodes_groups
- * @brief `ImageInputGroup` — still-image source NodeGroup that emits a video-shaped stream.
+ * @brief `ImageInputGroup` — still-image source Graph that emits a video-shaped stream.
  *
  * Bundles a file source, an image decoder (JPEG, PNG, or auto-detected), and an
  * `imagefreeze`-style stage that promotes the single still frame into a continuous
- * video stream at a chosen frame rate. Typical placement: very first NodeGroup in a
- * Session that wants to test or demo a vision pipeline against a single image instead
+ * video stream at a chosen frame rate. Typical placement: very first Graph in a
+ * Graph that wants to test or demo a vision pipeline against a single image instead
  * of a live source.
  *
  * @see VideoInputGroup
@@ -14,7 +14,7 @@
  */
 #pragma once
 
-#include "builder/NodeGroup.h"
+#include "pipeline/Graph.h"
 #include "contracts/ContractTypes.h"
 #include "pipeline/FormatSpec.h"
 
@@ -26,7 +26,7 @@ namespace simaai::neat::nodes::groups {
  * @brief Configuration for `ImageInputGroup`.
  *
  * Drives the image source path, the chosen decoder backend, and the optional output
- * caps that the group advertises downstream.
+ * caps that the Graph fragment advertises downstream.
  *
  * @ingroup nodes_groups
  */
@@ -83,20 +83,20 @@ struct ImageInputGroupOptions {
 };
 
 /**
- * @brief Build an image-input NodeGroup: file source, decoder, and `imagefreeze` to a video stream.
+ * @brief Build an image-input Graph: file source, decoder, and `imagefreeze` to a video stream.
  *
  * Typical chain: `FileInput` -> image decoder (`decodebin` / `jpegdec` / `pngdec` /
  * SiMa decoder) -> optional `videoconvert`/`videorate`/`videoscale` -> `imagefreeze`
- * with the configured output caps. Use this when a Session should be driven by a
+ * with the configured output caps. Use this when a Graph should be driven by a
  * single still image rather than a live or file-based video source.
  *
  * @param opt Configuration controlling source path, decoder backend, and output caps.
- * @return The configured `NodeGroup` ready to be `add()`ed to a Session.
+ * @return The configured `Graph` ready to be `add()`ed to a Graph.
  *
  * @see VideoInputGroup
  * @see RtspDecodedInput
  * @ingroup nodes_groups
  */
-simaai::neat::NodeGroup ImageInputGroup(const ImageInputGroupOptions& opt);
+simaai::neat::Graph ImageInputGroup(const ImageInputGroupOptions& opt);
 
 } // namespace simaai::neat::nodes::groups

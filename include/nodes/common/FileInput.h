@@ -3,8 +3,8 @@
  * @ingroup nodes_common
  * @brief `FileInput` Node — file-system source. Reads encoded media from a file path.
  *
- * Source-role Node (`InputRole::Source`), so a Session that starts with a `FileInput`
- * uses `Session::run()` (no `push()`).
+ * Source-role Node (`InputRole::Source`), so a Graph that starts with a `FileInput`
+ * uses `Graph::run()` (no `push()`).
  */
 #pragma once
 
@@ -19,7 +19,7 @@ namespace simaai::neat {
 /**
  * @brief Wraps GStreamer's `filesrc` element — reads encoded media from a path on disk.
  *
- * Typical placement: first Node in a Session that processes a video / image file.
+ * Typical placement: first Node in a Graph that processes a video / image file.
  *
  * Usage:
  * @code

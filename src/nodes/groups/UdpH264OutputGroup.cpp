@@ -25,7 +25,7 @@ std::string gst_escape(const std::string& s) {
 
 } // namespace
 
-simaai::neat::NodeGroup UdpH264OutputGroup(const UdpH264OutputGroupOptions& opt) {
+simaai::neat::Graph UdpH264OutputGroup(const UdpH264OutputGroupOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
   nodes.reserve(4);
 
@@ -43,7 +43,11 @@ simaai::neat::NodeGroup UdpH264OutputGroup(const UdpH264OutputGroupOptions& opt)
   udp_opt.async = opt.udp_async;
   nodes.push_back(nodes::UdpOutput(udp_opt));
 
-  return simaai::neat::NodeGroup(std::move(nodes));
+  simaai::neat::Graph graph;
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+  return graph;
 }
 
 } // namespace simaai::neat::nodes::groups

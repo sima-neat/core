@@ -7,7 +7,7 @@
  * Small free-function utilities the framework uses to interrogate the local GStreamer
  * registry: check whether a factory is installed, whether it exposes a particular
  * property, and where its plugin shared object lives. The `require_*` variants raise
- * a SessionError when the dependency is missing, with `context` baked into the message
+ * a NeatError when the dependency is missing, with `context` baked into the message
  * so callers can pinpoint which Node triggered the failure.
  */
 #pragma once
@@ -26,14 +26,14 @@ bool element_property_exists(const char* factory, const char* property_name);
 std::string factory_plugin_path(const char* factory);
 
 /**
- * @brief Throw a SessionError if `factory` is not registered.
+ * @brief Throw a NeatError if `factory` is not registered.
  * @param factory GStreamer element factory name (e.g., `"h264parse"`).
  * @param context Caller context interpolated into the error message (typically the Node kind).
  */
 void require_element(const char* factory, const char* context);
 
 /**
- * @brief Throw a SessionError if SiMa's `tensordecoder` element is not available.
+ * @brief Throw a NeatError if SiMa's `tensordecoder` element is not available.
  * @param context Caller context for the error message.
  */
 void require_tensordecoder(const char* context);

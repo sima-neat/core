@@ -2,7 +2,7 @@
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/InputStreamUtil.h"
@@ -104,29 +104,32 @@ int main(int argc, char** argv) {
     cv::resize(img_bgr, frame1,
                cv::Size(std::max(96, img_bgr.cols / 2), std::max(96, img_bgr.rows / 2)));
 
-    simaai::neat::Session session;
+    simaai::neat::Graph graph;
     simaai::neat::InputOptions in_opt;
-    in_opt.media_type = "video/x-raw";
+    in_opt.payload_type = simaai::neat::PayloadType::Image;
     in_opt.format = simaai::neat::FormatTag::BGR;
     in_opt.depth = 3;
-    session.add(simaai::neat::nodes::Input(in_opt));
-    session.add(simaai::neat::nodes::groups::Preprocess(model));
-    session.add(simaai::neat::nodes::groups::Infer(model));
-    session.add(simaai::neat::nodes::Output());
+    graph.add(simaai::neat::nodes::Input(in_opt));
+    graph.add(simaai::neat::nodes::groups::Preprocess(model));
+    graph.add(simaai::neat::nodes::groups::Infer(model));
+    graph.add(simaai::neat::nodes::Output());
 
     simaai::neat::RunOptions run_opt;
     // Dynamic-geometry test: disable stability gating so one frame per regime
     // is enough to trigger caps update and produce output.
     run_opt.preset = simaai::neat::RunPreset::Realtime;
-    auto run = session.build(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                                 frame0, simaai::neat::ImageSpec::PixelFormat::BGR)},
-                             simaai::neat::RunMode::Async, run_opt);
-    require(run.push(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                frame0, simaai::neat::ImageSpec::PixelFormat::BGR)}),
-            "async-meta: failed to push frame0");
-    require(run.push(simaai::neat::SampleList{simaai::neat::Sample::from_image(
-                frame1, simaai::neat::ImageSpec::PixelFormat::BGR)}),
-            "async-meta: failed to push frame1");
+    auto run = graph.build(
+        simaai::neat::Sample{simaai::neat::Sample::from_image(
+            frame0, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+        simaai::neat::RunMode::Async, run_opt);
+    require(
+        run.push(simaai::neat::Sample{simaai::neat::Sample::from_image(
+            frame0, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)}),
+        "async-meta: failed to push frame0");
+    require(
+        run.push(simaai::neat::Sample{simaai::neat::Sample::from_image(
+            frame1, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)}),
+        "async-meta: failed to push frame1");
 
     simaai::neat::stages::BoxDecodeOptions box_opt(simaai::neat::BoxDecodeType::YoloV8);
     box_opt.detection_threshold = 0.25;
@@ -145,10 +148,9 @@ int main(int argc, char** argv) {
       require(meta.affine_scale_x > 0.0 && meta.affine_scale_y > 0.0,
               "async-meta: affine scales must be positive");
       auto decode_tensor = clone_tensor_for_decode(sample.tensors.front(), "async-meta");
-      (void)simaai::neat::stages::BoxDecode(
-          simaai::neat::SampleList{
-              simaai::neat::sample_from_tensors(simaai::neat::TensorList{decode_tensor})},
-          model, box_opt);
+      (void)simaai::neat::stages::BoxDecode(simaai::neat::Sample{simaai::neat::sample_from_tensors(
+                                                simaai::neat::TensorList{decode_tensor})},
+                                            model, box_opt);
     }
     require(expected.empty(), "async-meta: did not observe expected per-frame original geometry");
 

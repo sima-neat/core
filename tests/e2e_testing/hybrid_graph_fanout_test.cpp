@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "test_main.h"
@@ -85,9 +85,7 @@ RUN_TEST("hybrid_graph_fanout_test", [] {
 
   g.connect(fan, sink_a, "left", "in");
   g.connect(fan, sink_b, "right", "in");
-
-  simaai::neat::graph::GraphSession session(std::move(g));
-  simaai::neat::graph::GraphRun run = session.build();
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
   const int total = 5;
   for (int i = 0; i < total; ++i) {
@@ -96,7 +94,7 @@ RUN_TEST("hybrid_graph_fanout_test", [] {
     sample.tensor = make_color_tensor(16, 12, simaai::neat::ImageSpec::PixelFormat::RGB);
     sample.frame_id = i;
     sample.stream_id = "fanout";
-    require(run.push(fan, sample), "GraphRun::push failed");
+    require(run.push(fan, simaai::neat::Sample{sample}), "GraphRun::push failed");
   }
 
   for (int i = 0; i < total; ++i) {

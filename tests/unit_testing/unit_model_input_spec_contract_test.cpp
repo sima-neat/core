@@ -1,6 +1,6 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -22,10 +22,10 @@ std::string require_yolov9_tar() {
   return tar;
 }
 
-sima_test::MpkFixture make_evo_style_multi_ingress_fixture(const std::string& tag) {
-  return sima_test::make_mpk_tar_fixture(tag, {
-                                                  {"etc/evo_style_multi_ingress_mpk.json",
-                                                   R"json({
+sima_test::ModelArchiveFixture make_evo_style_multi_ingress_fixture(const std::string& tag) {
+  return sima_test::make_model_archive_fixture(tag, {
+                                                        {"etc/evo_style_multi_ingress_mpk.json",
+                                                         R"json({
   "name": "evo_style_multi_ingress",
   "model_path": "evo_style_multi_ingress.onnx",
   "model_sdk_version": "2.0.0",
@@ -214,8 +214,8 @@ sima_test::MpkFixture make_evo_style_multi_ingress_fixture(const std::string& ta
     }
   ]
 })json"},
-                                                  {"etc/pipeline_sequence.json",
-                                                   R"json({
+                                                        {"etc/pipeline_sequence.json",
+                                                         R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -230,8 +230,8 @@ sima_test::MpkFixture make_evo_style_multi_ingress_fixture(const std::string& ta
     ]
   }]
 })json"},
-                                                  {"etc/0_process_mla.json",
-                                                   R"json({
+                                                        {"etc/0_process_mla.json",
+                                                         R"json({
   "node_name": "MLA_0",
   "input_buffers": [{"name": "MLA_0_ifm_pack_transform"}],
   "data_type": ["INT8"],
@@ -239,7 +239,7 @@ sima_test::MpkFixture make_evo_style_multi_ingress_fixture(const std::string& ta
   "output_height": [1],
   "output_depth": [1]
 })json"},
-                                              });
+                                                    });
 }
 
 Tensor make_route_tensor(int logical_index, int physical_index, int route_slot, int memory_index,
@@ -306,10 +306,10 @@ RUN_TEST(
       }
 
       {
-        const auto legacy = sima_test::make_mpk_tar_fixture("model_input_spec_legacy_missing_mpk",
-                                                            {
-                                                                {"etc/pipeline_sequence.json",
-                                                                 R"json({
+        const auto legacy = sima_test::make_model_archive_fixture(
+            "model_input_spec_legacy_missing_mpk", {
+                                                       {"etc/pipeline_sequence.json",
+                                                        R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -324,12 +324,12 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                {"etc/0_process_mla.json",
-                                                                 R"json({
+                                                       {"etc/0_process_mla.json",
+                                                        R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "decoder"}]
 })json"},
-                                                            });
+                                                   });
         bool threw = false;
         try {
           Model legacy_model(legacy.tar_path);

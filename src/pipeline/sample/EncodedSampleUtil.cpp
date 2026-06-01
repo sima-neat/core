@@ -64,6 +64,7 @@ Sample make_encoded_sample(std::vector<uint8_t> bytes, std::string caps_string, 
 
   Sample out;
   out.kind = SampleKind::TensorSet;
+  out.payload_type = PayloadType::Encoded;
   out.caps_string = std::move(caps_string);
   out.pts_ns = pts_ns;
   out.dts_ns = dts_ns;

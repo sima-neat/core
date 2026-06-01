@@ -101,3 +101,17 @@ install(
   DESTINATION share/sima-neat/scripts
   COMPONENT extras
 )
+
+install(
+  DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/tests/
+  DESTINATION share/sima-neat/python/tests
+  COMPONENT extras
+  FILES_MATCHING
+  PATTERN "*.py"
+)
+
+install(
+  PROGRAMS ${PROJECT_SOURCE_DIR}/scripts/neat
+  DESTINATION share/sima-neat/scripts
+  COMPONENT extras
+)

@@ -31,7 +31,7 @@ namespace simaai::neat {
 enum class ContractFieldSource {
   Fixed,         ///< Value is hard-coded in the contract definition.
   BuilderOption, ///< Value comes from a builder-level option/argument.
-  ModelOnly,     ///< Value is supplied by the model file (e.g., MPK manifest).
+  ModelOnly,     ///< Value is supplied by the model file (e.g., MPK contract).
   InputOnly,     ///< Value is determined by external input only.
   UpstreamOnly,  ///< Value is derived from the upstream Node's output spec.
   GraphOwned,    ///< Value is owned by the enclosing Graph (cross-Node).

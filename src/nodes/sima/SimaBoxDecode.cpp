@@ -741,7 +741,7 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         }
       } else if (!input.ingress.ingress_sample.has_value()) {
         if (err) {
-          *err = "SimaBoxDecode: inferred standalone contract requires Session::build/run input "
+          *err = "SimaBoxDecode: inferred standalone contract requires Graph::build/run input "
                  "sample";
         }
         return false;
