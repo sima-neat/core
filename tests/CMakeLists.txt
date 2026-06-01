@@ -673,10 +673,30 @@ set(PERF_PYTHON_TESTS
   test_graph_run_visualizer
 )
 
+set(PERF_PYTHON_TOOL_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/perf/tools")
+file(MAKE_DIRECTORY "${PERF_PYTHON_TOOL_BUILD_DIR}")
+file(GLOB PERF_PYTHON_TOOL_SOURCES
+  CONFIGURE_DEPENDS
+  "${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/*.py"
+)
+foreach(perf_tool ${PERF_PYTHON_TOOL_SOURCES})
+  get_filename_component(perf_tool_name "${perf_tool}" NAME)
+  configure_file(
+    "${perf_tool}"
+    "${PERF_PYTHON_TOOL_BUILD_DIR}/${perf_tool_name}"
+    COPYONLY
+  )
+endforeach()
+configure_file(
+  "${CMAKE_SOURCE_DIR}/tools/visualize_graph_run.py"
+  "${CMAKE_BINARY_DIR}/tools/visualize_graph_run.py"
+  COPYONLY
+)
+
 foreach(pytest ${PERF_PYTHON_TESTS})
   add_test(
     NAME ${pytest}
-    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/perf/tools/${pytest}.py
+    COMMAND ${Python3_EXECUTABLE} perf/tools/${pytest}.py
   )
   set_tests_properties(${pytest} PROPERTIES LABELS "perf;unit")
 endforeach()
@@ -1585,6 +1605,11 @@ install(
 install(
   DIRECTORY "${CMAKE_SOURCE_DIR}/tests/assets/decoder/"
   DESTINATION lib/sima-neat/test-assets/decoder
+  COMPONENT extras
+)
+install(
+  FILES "${CMAKE_SOURCE_DIR}/tools/visualize_graph_run.py"
+  DESTINATION lib/sima-neat/tools
   COMPONENT extras
 )
 install(
