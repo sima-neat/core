@@ -696,7 +696,7 @@ configure_file(
 foreach(pytest ${PERF_PYTHON_TESTS})
   add_test(
     NAME ${pytest}
-    COMMAND ${Python3_EXECUTABLE} perf/tools/${pytest}.py
+    COMMAND python3 perf/tools/${pytest}.py
   )
   set_tests_properties(${pytest} PROPERTIES LABELS "perf;unit")
 endforeach()
