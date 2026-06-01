@@ -763,6 +763,12 @@ InputContract input_contract_from_mat(const cv::Mat& input) {
   out.format = (out.depth == 1) ? "GRAY8" : "BGR";
   return out;
 }
+
+Sample graph_build_seed_from_mat(const cv::Mat& input) {
+  const ImageSpec::PixelFormat format =
+      input.channels() == 1 ? ImageSpec::PixelFormat::GRAY8 : ImageSpec::PixelFormat::BGR;
+  return Sample::from_image(input, format, TensorMemory::CPU);
+}
 #endif
 
 InputContract input_contract_from_output_spec(const OutputSpec& spec) {
@@ -2544,12 +2550,15 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOpti
       throw std::runtime_error("Graph::build(inputs): raw-image ingress supports exactly one "
                                "cv::Mat per inference item");
     }
-    TensorList compile_tensors =
-        tensor_list_from_mats(inputs, tensor_src_opt, "Graph::build(inputs)");
-    Sample compile_seed =
-        input_route_processor_
-            ? input_route_processor_->process_tensors(compile_tensors, "Graph::build(inputs)")
-            : pipeline_internal::sample_from_tensors_for_input(compile_tensors, tensor_src_opt);
+    Sample compile_seed;
+    if (input_route_processor_) {
+      TensorList compile_tensors =
+          tensor_list_from_mats(inputs, tensor_src_opt, "Graph::build(inputs)");
+      compile_seed =
+          input_route_processor_->process_tensors(compile_tensors, "Graph::build(inputs)");
+    } else {
+      compile_seed = graph_build_seed_from_mat(inputs.front());
+    }
     progress.step("Building graph...");
     runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, compile_seed);
     runtime::RunCoreStartOptions start_opt;

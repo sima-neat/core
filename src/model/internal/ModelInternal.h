@@ -93,6 +93,9 @@ struct ModelAccess {
   static std::vector<std::shared_ptr<Node>> build_public_postprocess_nodes(const Model& model);
   static std::vector<std::shared_ptr<Node>> build_public_route_nodes(const Model& model,
                                                                      Model::RouteOptions opt);
+  static std::vector<std::shared_ptr<Node>>
+  build_public_route_nodes_for_seed(const Model& model, Model::RouteOptions opt,
+                                    const Sample& seed);
   static std::vector<std::shared_ptr<Node>> build_public_stage_fragment_nodes(const Model& model,
                                                                               Model::Stage stage);
   static simaai::neat::Graph build_stage_graph_fragment(const Model& model, Model::Stage stage);
