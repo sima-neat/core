@@ -321,6 +321,15 @@ struct PreprocessRuntimeMeta {
   double affine_offset_x = 0.0; ///< Scalar X offset (typically pad_left) in model coordinates.
   double affine_offset_y = 0.0; ///< Scalar Y offset (typically pad_top) in model coordinates.
 
+  bool roi_enable = false;   ///< True when preprocess should use a signed full-frame ROI window.
+  int roi_x = 0;             ///< Signed ROI top-left X in source-frame pixels.
+  int roi_y = 0;             ///< Signed ROI top-left Y in source-frame pixels.
+  int roi_width = 0;         ///< ROI width in pixels.
+  int roi_height = 0;        ///< ROI height in pixels.
+  int roi_source_width = 0;  ///< Full source-frame width for ROI sampling, optional.
+  int roi_source_height = 0; ///< Full source-frame height for ROI sampling, optional.
+  int roi_source_stride_bytes = 0; ///< Full source-frame row stride in bytes, optional.
+
   /// True iff `axis_perm` is non-empty (a layout permutation was recorded).
   bool has_axis_perm() const noexcept {
     return !axis_perm.empty();

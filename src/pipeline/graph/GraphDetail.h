@@ -177,6 +177,7 @@ struct Graph::CompositionGraph {
   };
   std::unordered_map<std::uint64_t, ImportedFragment> imported_fragments;
   std::unordered_map<const Node*, ImportedFragment> imported_nodes;
+  std::unordered_map<const simaai::neat::graph::Node*, ImportedFragment> imported_runtime_nodes;
   std::unordered_map<std::string, ImportedFragment> imported_models;
 
   bool empty() const noexcept {

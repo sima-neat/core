@@ -2374,7 +2374,12 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
       "preproc_affine_scale_x", G_TYPE_DOUBLE, meta.affine_scale_x, "preproc_affine_scale_y",
       G_TYPE_DOUBLE, meta.affine_scale_y, "preproc_affine_offset_x", G_TYPE_DOUBLE,
       meta.affine_offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE, meta.affine_offset_y,
-      nullptr);
+      "preproc_roi_enable", G_TYPE_BOOLEAN, meta.roi_enable, "preproc_roi_x", G_TYPE_INT,
+      meta.roi_x, "preproc_roi_y", G_TYPE_INT, meta.roi_y, "preproc_roi_width", G_TYPE_INT,
+      meta.roi_width, "preproc_roi_height", G_TYPE_INT, meta.roi_height, "preproc_roi_source_width",
+      G_TYPE_INT, meta.roi_source_width, "preproc_roi_source_height", G_TYPE_INT,
+      meta.roi_source_height, "preproc_roi_source_stride_bytes", G_TYPE_INT,
+      meta.roi_source_stride_bytes, nullptr);
   if (!gst_structure_set_int_vector_field_local(s, "preproc_axis_perm", meta.axis_perm)) {
     return false;
   }
@@ -2479,6 +2484,17 @@ std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buff
   gst_structure_get_double(s, "preproc_affine_scale_y", &meta.affine_scale_y);
   gst_structure_get_double(s, "preproc_affine_offset_x", &meta.affine_offset_x);
   gst_structure_get_double(s, "preproc_affine_offset_y", &meta.affine_offset_y);
+  gboolean roi_enable = FALSE;
+  if (gst_structure_get_boolean(s, "preproc_roi_enable", &roi_enable)) {
+    meta.roi_enable = roi_enable == TRUE;
+  }
+  gst_structure_get_int(s, "preproc_roi_x", &meta.roi_x);
+  gst_structure_get_int(s, "preproc_roi_y", &meta.roi_y);
+  gst_structure_get_int(s, "preproc_roi_width", &meta.roi_width);
+  gst_structure_get_int(s, "preproc_roi_height", &meta.roi_height);
+  gst_structure_get_int(s, "preproc_roi_source_width", &meta.roi_source_width);
+  gst_structure_get_int(s, "preproc_roi_source_height", &meta.roi_source_height);
+  gst_structure_get_int(s, "preproc_roi_source_stride_bytes", &meta.roi_source_stride_bytes);
   return meta;
 #else
   (void)buffer;
@@ -2581,10 +2597,14 @@ validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
     std::optional<std::string> err;
     if (field == "preproc_original_width" || field == "preproc_original_height" ||
         field == "preproc_resized_width" || field == "preproc_resized_height" ||
-        field == "preproc_scaled_width" || field == "preproc_scaled_height") {
+        field == "preproc_scaled_width" || field == "preproc_scaled_height" ||
+        field == "preproc_roi_width" || field == "preproc_roi_height" ||
+        field == "preproc_roi_source_width" || field == "preproc_roi_source_height" ||
+        field == "preproc_roi_source_stride_bytes") {
       err = require_int(field.c_str(), /*positive=*/true);
     } else if (field == "preproc_pad_left" || field == "preproc_pad_right" ||
-               field == "preproc_pad_top" || field == "preproc_pad_bottom") {
+               field == "preproc_pad_top" || field == "preproc_pad_bottom" ||
+               field == "preproc_roi_x" || field == "preproc_roi_y") {
       err = require_int(field.c_str(), /*positive=*/false);
     } else if (field == "preproc_resize_mode" || field == "preproc_color_in" ||
                field == "preproc_color_out") {
@@ -2592,7 +2612,7 @@ validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
     } else if (field == "preproc_axis_perm") {
       err = require_int_list(field.c_str());
     } else if (field == "preproc_normalize" || field == "preproc_quantize" ||
-               field == "preproc_tessellate") {
+               field == "preproc_tessellate" || field == "preproc_roi_enable") {
       err = require_bool(field.c_str());
     } else if (field == "preproc_affine_m00" || field == "preproc_affine_m01" ||
                field == "preproc_affine_m02" || field == "preproc_affine_m10" ||

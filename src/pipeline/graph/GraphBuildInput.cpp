@@ -439,13 +439,11 @@ int preset_default_worker_poll_ms(RunPreset preset) {
 int preset_default_stability_frames(RunPreset preset) {
   switch (preset) {
   case RunPreset::Realtime:
-    return 1;
   case RunPreset::Balanced:
-    return 2;
   case RunPreset::Reliable:
-    return 2;
+    return 1;
   }
-  return 2;
+  return 1;
 }
 
 int preset_default_queue_depth(RunPreset preset) {
@@ -2183,8 +2181,8 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
 
   if (!saw_output) {
     std::ostringstream oss;
-    oss << "Graph::run(input): prefill stage produced no output"
-        << " pushes=" << target_pushes << " timeout_ms=" << timeout_ms;
+    oss << "Graph::run(input): prefill stage produced no output" << " pushes=" << target_pushes
+        << " timeout_ms=" << timeout_ms;
     if (!last_timeout.empty()) {
       oss << ": " << last_timeout;
     }

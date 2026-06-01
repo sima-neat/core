@@ -203,6 +203,10 @@ public:
   Graph& add(Graph&& fragment);
   /// Append a model route as a linear graph fragment.
   Graph& add(const Model& model);
+#ifdef SIMA_NEAT_INTERNAL
+  /// Append a runtime StageNode as a linear graph vertex.
+  Graph& add(std::shared_ptr<simaai::neat::graph::Node> node);
+#endif
 
   // ── Explicit graph composition ───────────────────────────────────────────────────────────
   /**
@@ -225,6 +229,14 @@ public:
   Graph& connect(const Graph& from, const Model& to);
   Graph& connect(const Model& from, std::shared_ptr<Node> to);
   Graph& connect(std::shared_ptr<Node> from, const Model& to);
+#ifdef SIMA_NEAT_INTERNAL
+  Graph& connect(std::shared_ptr<Node> from, std::shared_ptr<simaai::neat::graph::Node> to);
+  Graph& connect(std::shared_ptr<simaai::neat::graph::Node> from, std::shared_ptr<Node> to);
+  Graph& connect(std::shared_ptr<simaai::neat::graph::Node> from,
+                 std::shared_ptr<simaai::neat::graph::Node> to);
+  Graph& connect(const Graph& from, std::shared_ptr<simaai::neat::graph::Node> to);
+  Graph& connect(std::shared_ptr<simaai::neat::graph::Node> from, const Graph& to);
+#endif
 
 #ifdef SIMA_NEAT_INTERNAL
   /// Internal bridge: append a public/pipeline vertex without creating an implicit add() edge.
@@ -483,6 +495,11 @@ private:
   import_or_reuse_output_collection_fragment_(const Graph& fragment, const char* where);
   std::pair<std::size_t, std::size_t> import_or_reuse_node_fragment_(std::shared_ptr<Node> node,
                                                                      const char* where);
+#ifdef SIMA_NEAT_INTERNAL
+  std::pair<std::size_t, std::size_t>
+  import_or_reuse_runtime_node_fragment_(std::shared_ptr<simaai::neat::graph::Node> node,
+                                         const char* where);
+#endif
   std::pair<std::size_t, std::size_t> import_or_reuse_model_fragment_(const Model& model,
                                                                       const char* where);
   void connect_imported_ranges_(std::pair<std::size_t, std::size_t> from_range,

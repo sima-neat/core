@@ -8,6 +8,7 @@
 #include "gst/GstBusWatch.h"
 #include "gst/GstHelpers.h"
 
+#include "graph/Node.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphReport.h"
 #include "internal/InputStream.h"
@@ -1308,6 +1309,46 @@ Graph::import_or_reuse_node_fragment_(std::shared_ptr<Node> node, const char* wh
   return {start, end};
 }
 
+#ifdef SIMA_NEAT_INTERNAL
+std::pair<std::size_t, std::size_t>
+Graph::import_or_reuse_runtime_node_fragment_(std::shared_ptr<simaai::neat::graph::Node> node,
+                                              const char* where) {
+  if (!composition_) {
+    composition_ = std::make_unique<CompositionGraph>();
+  }
+  if (!node) {
+    throw std::runtime_error(std::string(where ? where : "Graph::connect") +
+                             ": cannot connect a null StageNode");
+  }
+
+  const simaai::neat::graph::Node* key = node.get();
+  auto existing = composition_->imported_runtime_nodes.find(key);
+  if (existing != composition_->imported_runtime_nodes.end()) {
+    return {existing->second.start, existing->second.end};
+  }
+
+  const std::size_t start = composition_->vertices.size();
+  std::string name = endpoint_token(node->user_label(), "v" + std::to_string(start));
+  if (name == "v" + std::to_string(start)) {
+    name = endpoint_token(node->kind(), name);
+  }
+  composition_->vertices.push_back(CompositionGraph::CompositionVertex::runtime(std::move(node)));
+  const std::size_t end = composition_->vertices.size();
+
+  composition_->named_fragments.push_back(NamedFragment{
+      .start = start,
+      .end = end,
+      .name = std::move(name),
+      .user_named = false,
+  });
+
+  composition_->imported_runtime_nodes.emplace(
+      key, CompositionGraph::ImportedFragment{.source_version = 0, .start = start, .end = end});
+  composition_->recompute_unique_tail();
+  return {start, end};
+}
+#endif
+
 std::pair<std::size_t, std::size_t> Graph::import_or_reuse_model_fragment_(const Model& model,
                                                                            const char* where) {
   if (!composition_) {
@@ -1471,6 +1512,20 @@ Graph& Graph::add(Graph&& fragment) {
   return add(static_cast<const Graph&>(fragment));
 }
 
+#ifdef SIMA_NEAT_INTERNAL
+Graph& Graph::add(std::shared_ptr<simaai::neat::graph::Node> node) {
+  if (!composition_) {
+    composition_ = std::make_unique<CompositionGraph>();
+  }
+  if (!node) {
+    throw std::runtime_error("Graph::add(StageNode): node is null");
+  }
+  composition_->append_runtime_vertex(std::move(node));
+  mark_composition_changed();
+  return *this;
+}
+#endif
+
 Graph& Graph::connect(std::string_view from_endpoint, std::string_view to_endpoint) {
   if (!composition_) {
     composition_ = std::make_unique<CompositionGraph>();
@@ -1615,6 +1670,52 @@ Graph& Graph::connect(std::shared_ptr<Node> from, const Model& to) {
   mark_composition_changed();
   return *this;
 }
+
+#ifdef SIMA_NEAT_INTERNAL
+Graph& Graph::connect(std::shared_ptr<Node> from, std::shared_ptr<simaai::neat::graph::Node> to) {
+  const auto from_range = import_or_reuse_node_fragment_(std::move(from), "Graph::connect(from)");
+  const auto to_range = import_or_reuse_runtime_node_fragment_(std::move(to), "Graph::connect(to)");
+  composition_->connect_runtime_port(from_range.second - 1U, to_range.first, "out", "in");
+  mark_composition_changed();
+  return *this;
+}
+
+Graph& Graph::connect(std::shared_ptr<simaai::neat::graph::Node> from, std::shared_ptr<Node> to) {
+  const auto from_range =
+      import_or_reuse_runtime_node_fragment_(std::move(from), "Graph::connect(from)");
+  const auto to_range = import_or_reuse_node_fragment_(std::move(to), "Graph::connect(to)");
+  composition_->connect_runtime_port(from_range.first, to_range.first, "out", "in");
+  mark_composition_changed();
+  return *this;
+}
+
+Graph& Graph::connect(std::shared_ptr<simaai::neat::graph::Node> from,
+                      std::shared_ptr<simaai::neat::graph::Node> to) {
+  const auto from_range =
+      import_or_reuse_runtime_node_fragment_(std::move(from), "Graph::connect(from)");
+  const auto to_range = import_or_reuse_runtime_node_fragment_(std::move(to), "Graph::connect(to)");
+  composition_->connect_runtime_port(from_range.first, to_range.first, "out", "in");
+  mark_composition_changed();
+  return *this;
+}
+
+Graph& Graph::connect(const Graph& from, std::shared_ptr<simaai::neat::graph::Node> to) {
+  const auto from_range = import_or_reuse_composition_fragment_(from, "Graph::connect(from)");
+  const auto to_range = import_or_reuse_runtime_node_fragment_(std::move(to), "Graph::connect(to)");
+  composition_->connect_runtime_port(from_range.second - 1U, to_range.first, "out", "in");
+  mark_composition_changed();
+  return *this;
+}
+
+Graph& Graph::connect(std::shared_ptr<simaai::neat::graph::Node> from, const Graph& to) {
+  const auto from_range =
+      import_or_reuse_runtime_node_fragment_(std::move(from), "Graph::connect(from)");
+  const auto to_range = import_or_reuse_composition_fragment_(to, "Graph::connect(to)");
+  composition_->connect_runtime_port(from_range.first, to_range.first, "out", "in");
+  mark_composition_changed();
+  return *this;
+}
+#endif
 
 Graph& Graph::custom(std::string fragment) {
   return add(nodes::Custom(std::move(fragment)));

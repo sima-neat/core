@@ -21,7 +21,7 @@ struct InputstreamRenegotiateSpec {
   int first_h = 0;
   int second_w = 0;
   int second_h = 0;
-  int stability_frames = 2;
+  int stability_frames = 1;
   int timeout_ms = 2000;
   size_t max_input_bytes = 0;
   bool check_output = false;
@@ -56,9 +56,8 @@ inline size_t default_format_change_pool_bytes(const InputstreamFormatChangeSpec
   return static_cast<size_t>(spec.width * spec.height * 3);
 }
 
-inline simaai::neat::RunPreset preset_for_stability(int stability_frames) {
-  return (stability_frames <= 1) ? simaai::neat::RunPreset::Realtime
-                                 : simaai::neat::RunPreset::Balanced;
+inline simaai::neat::RunPreset preset_for_stability(int /*stability_frames*/) {
+  return simaai::neat::RunPreset::Realtime;
 }
 
 template <typename MakeInputFn>

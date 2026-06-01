@@ -230,6 +230,8 @@ def install_wrappers(core) -> None:
       return self.add_graph(item)
     if isinstance(item, core.Model):
       return self.add_model(item)
+    if hasattr(core, "StageNode") and isinstance(item, core.StageNode):
+      return self.add_stage(item)
     return self.add_node(item)
 
   def graph_build(

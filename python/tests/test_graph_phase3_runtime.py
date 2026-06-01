@@ -173,6 +173,59 @@ def test_graph_named_output_auto_suffix_runtime_smoke():
         run.close()
 
 
+def test_graph_stage_node_pull_all_and_bare_input_fanout_runtime_smoke():
+    _require_phase3_runtime()
+
+    seen = {"n": 0}
+
+    def mark(sample):
+        seen["n"] += 1
+        sample.stream_label = "stage_ok"
+        return sample
+
+    graph = pyneat.Graph()
+    graph.add(pyneat.nodes.input("image"))
+    graph.add(pyneat.nodes.stage(mark, label="mark_meta"))
+    graph.add(pyneat.nodes.output("pose"))
+
+    arr = np.full((8, 8, 3), 7, dtype=np.uint8)
+    run = graph.build()
+    try:
+        assert run.push(
+            "image",
+            [arr],
+            layout=pyneat.TensorLayout.HWC,
+            image_format=pyneat.PixelFormat.RGB,
+        )
+        out = run.pull_all(timeout_ms=5000)
+        assert out["pose"] is not None
+        assert seen["n"] == 1
+    finally:
+        run.close()
+
+    # Regression: public Input fanout should not require app code to insert nodes.queue().
+    source = pyneat.Graph("image")
+    source.add(pyneat.nodes.input("image"))
+    sinks = pyneat.Graph("classes")
+    sinks.add(pyneat.nodes.output("a"))
+    sinks.add(pyneat.nodes.output("b"))
+    app = pyneat.Graph()
+    app.connect(source, sinks)
+    run = app.build()
+    try:
+        assert run.push(
+            "image",
+            [arr],
+            layout=pyneat.TensorLayout.HWC,
+            image_format=pyneat.PixelFormat.RGB,
+        )
+        out = run.pull_all(timeout_ms=5000)
+        assert set(out) == {"a", "b"}
+        assert all(sample is not None for sample in out.values())
+    finally:
+        run.close()
+
+
 def test_graph_add_model_resnet_runtime_smoke():
     _require_phase3_runtime()
     tar = _resnet_tar_or_skip()

@@ -264,6 +264,83 @@ void validate_spec_with_limits(const InputStream::State& st, const SampleSpec& s
   }
 }
 
+void apply_tensor_preprocess_meta_to_buffer_or_throw(
+    GstBuffer* buffer, const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta,
+    const char* where);
+
+bool preproc_roi_trace_enabled() {
+  return pipeline_internal::env_bool("SIMA_PREPROC_ROI_TRACE", false);
+}
+
+void trace_preprocess_meta_optional(const char* tag,
+                                    const std::optional<PreprocessRuntimeMeta>& meta) {
+  if (!preproc_roi_trace_enabled()) {
+    return;
+  }
+  if (!meta.has_value()) {
+    std::fprintf(stderr, "[ROI_TRACE_CORE] %s optional=0\n", tag ? tag : "<null>");
+    return;
+  }
+  std::fprintf(stderr,
+               "[ROI_TRACE_CORE] %s optional=1 orig=%dx%d resized=%dx%d roi_enable=%d "
+               "roi=(%d,%d %dx%d) roi_source=%dx%d stride=%d axis_perm=%zu\n",
+               tag ? tag : "<null>", meta->original_width, meta->original_height,
+               meta->resized_width, meta->resized_height, meta->roi_enable ? 1 : 0, meta->roi_x,
+               meta->roi_y, meta->roi_width, meta->roi_height, meta->roi_source_width,
+               meta->roi_source_height, meta->roi_source_stride_bytes, meta->axis_perm.size());
+}
+
+void trace_preprocess_meta_buffer(const char* tag, GstBuffer* buffer) {
+  if (!preproc_roi_trace_enabled()) {
+    return;
+  }
+  if (!buffer) {
+    std::fprintf(stderr, "[ROI_TRACE_CORE] %s buffer=null\n", tag ? tag : "<null>");
+    return;
+  }
+  GstCustomMeta* custom = gst_buffer_get_custom_meta(buffer, "GstSimaMeta");
+  GstStructure* s = custom ? gst_custom_meta_get_structure(custom) : nullptr;
+  const auto parsed = read_simaai_preprocess_meta(buffer);
+  gboolean raw_enable = FALSE;
+  gint raw_x = 0;
+  gint raw_y = 0;
+  gint raw_w = 0;
+  gint raw_h = 0;
+  gint raw_sw = 0;
+  gint raw_sh = 0;
+  gint raw_stride = 0;
+  const gboolean has_raw_enable =
+      s ? gst_structure_get_boolean(s, "preproc_roi_enable", &raw_enable) : FALSE;
+  const gboolean has_raw_x = s ? gst_structure_get_int(s, "preproc_roi_x", &raw_x) : FALSE;
+  const gboolean has_raw_y = s ? gst_structure_get_int(s, "preproc_roi_y", &raw_y) : FALSE;
+  const gboolean has_raw_w = s ? gst_structure_get_int(s, "preproc_roi_width", &raw_w) : FALSE;
+  const gboolean has_raw_h = s ? gst_structure_get_int(s, "preproc_roi_height", &raw_h) : FALSE;
+  const gboolean has_raw_sw =
+      s ? gst_structure_get_int(s, "preproc_roi_source_width", &raw_sw) : FALSE;
+  const gboolean has_raw_sh =
+      s ? gst_structure_get_int(s, "preproc_roi_source_height", &raw_sh) : FALSE;
+  const gboolean has_raw_stride =
+      s ? gst_structure_get_int(s, "preproc_roi_source_stride_bytes", &raw_stride) : FALSE;
+  std::fprintf(stderr,
+               "[ROI_TRACE_CORE] %s buffer=%p size=%zu mems=%u custom=%d struct=%d parsed=%d "
+               "parsed_roi=%d parsed_xywh=(%d,%d %dx%d) parsed_source=%dx%d stride=%d "
+               "raw_has=(en:%d x:%d y:%d w:%d h:%d sw:%d sh:%d stride:%d) "
+               "raw_roi=%d raw_xywh=(%d,%d %dx%d) raw_source=%dx%d stride=%d\n",
+               tag ? tag : "<null>", static_cast<void*>(buffer),
+               static_cast<std::size_t>(gst_buffer_get_size(buffer)),
+               static_cast<unsigned>(gst_buffer_n_memory(buffer)), custom ? 1 : 0, s ? 1 : 0,
+               parsed.has_value() ? 1 : 0, parsed.has_value() && parsed->roi_enable ? 1 : 0,
+               parsed.has_value() ? parsed->roi_x : 0, parsed.has_value() ? parsed->roi_y : 0,
+               parsed.has_value() ? parsed->roi_width : 0,
+               parsed.has_value() ? parsed->roi_height : 0,
+               parsed.has_value() ? parsed->roi_source_width : 0,
+               parsed.has_value() ? parsed->roi_source_height : 0,
+               parsed.has_value() ? parsed->roi_source_stride_bytes : 0, has_raw_enable ? 1 : 0,
+               has_raw_x ? 1 : 0, has_raw_y ? 1 : 0, has_raw_w ? 1 : 0, has_raw_h ? 1 : 0,
+               has_raw_sw ? 1 : 0, has_raw_sh ? 1 : 0, has_raw_stride ? 1 : 0, raw_enable ? 1 : 0,
+               raw_x, raw_y, raw_w, raw_h, raw_sw, raw_sh, raw_stride);
+}
+
 std::function<void(GstBuffer**)>
 make_prepare_for_spec(const SampleSpec& spec, const char* where,
                       GstBuffer* source_preproc_meta_buffer = nullptr,
@@ -292,24 +369,57 @@ make_prepare_for_spec(const SampleSpec& spec, const char* where,
         throw std::runtime_error(std::string(where ? where : "InputStream::make_prepare_for_spec") +
                                  ": failed to preserve preprocess metadata: " + copy_err);
       }
-      // Plan 1: framework owns preproc_axis_perm. Plugin-authored geometry was
-      // copied above; merge the user's resolved perm onto it without
-      // overwriting other fields.
-      if (tensor_preprocess_meta.has_value() && !tensor_preprocess_meta->axis_perm.empty()) {
-        merge_simaai_preprocess_axis_perm(*buf, tensor_preprocess_meta->axis_perm);
-      }
+      apply_tensor_preprocess_meta_to_buffer_or_throw(*buf, tensor_preprocess_meta, where);
       return;
     }
 
-    if (!tensor_preprocess_meta.has_value()) {
-      return;
-    }
-
-    if (!write_simaai_preprocess_meta(*buf, *tensor_preprocess_meta)) {
-      throw std::runtime_error(std::string(where ? where : "InputStream::make_prepare_for_spec") +
-                               ": failed to apply tensor preprocess metadata");
-    }
+    apply_tensor_preprocess_meta_to_buffer_or_throw(*buf, tensor_preprocess_meta, where);
   };
+}
+
+void apply_tensor_preprocess_meta_to_buffer_or_throw(
+    GstBuffer* buffer, const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta,
+    const char* where) {
+  if (preproc_roi_trace_enabled()) {
+    std::string prefix = std::string(where ? where : "InputStream::apply_preprocess_meta") +
+                         ":apply_preprocess_meta";
+    trace_preprocess_meta_optional((prefix + ":incoming").c_str(), tensor_preprocess_meta);
+    trace_preprocess_meta_buffer((prefix + ":before").c_str(), buffer);
+  }
+  if (!buffer || !tensor_preprocess_meta.has_value()) {
+    return;
+  }
+
+  const bool tensor_has_geometry =
+      tensor_preprocess_meta->original_width > 0 && tensor_preprocess_meta->original_height > 0;
+  if (has_simaai_preprocess_meta(buffer)) {
+    // If the Tensor carries complete geometry, make the transport buffer match
+    // the Tensor semantic.  This avoids stale GstSimaMeta on recycled zero-copy
+    // buffers and honors explicit per-frame runtime metadata such as ROI.
+    //
+    // If the Tensor only carries framework-authored layout information (for
+    // example axis_perm) and no geometry, keep plugin/buffer-authored geometry
+    // authoritative and merge only that narrow field.
+    if (tensor_has_geometry) {
+      if (!write_simaai_preprocess_meta(buffer, *tensor_preprocess_meta)) {
+        throw std::runtime_error(std::string(where ? where : "InputStream::apply_preprocess_meta") +
+                                 ": failed to refresh tensor preprocess metadata");
+      }
+      trace_preprocess_meta_buffer("apply_preprocess_meta:after_refresh", buffer);
+      return;
+    }
+    if (!tensor_preprocess_meta->axis_perm.empty()) {
+      merge_simaai_preprocess_axis_perm(buffer, tensor_preprocess_meta->axis_perm);
+    }
+    trace_preprocess_meta_buffer("apply_preprocess_meta:after_merge_axis_perm", buffer);
+    return;
+  }
+
+  if (!write_simaai_preprocess_meta(buffer, *tensor_preprocess_meta)) {
+    throw std::runtime_error(std::string(where ? where : "InputStream::apply_preprocess_meta") +
+                             ": failed to apply tensor preprocess metadata");
+  }
+  trace_preprocess_meta_buffer("apply_preprocess_meta:after_write", buffer);
 }
 
 SampleSpec derive_mat_spec_or_throw(const cv::Mat& contiguous, const InputOptions& relaxed) {
@@ -457,20 +567,22 @@ void validate_holder_video_meta_or_throw(const InputStream::State& st, GstBuffer
   }
 }
 
-void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec,
-                                         const MessageMetaOverrides& meta,
-                                         const std::optional<int64_t>& input_seq_override,
-                                         const std::optional<int64_t>& orig_input_seq_override,
-                                         const SampleTimingOverrides& timing_override,
-                                         const InputOptions& src_opt, InputBufferPoolGuard& guard,
-                                         const char* where) {
+void apply_holder_spec_and_meta_or_throw(
+    GstBuffer** buffer, const SampleSpec& spec, const MessageMetaOverrides& meta,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const SampleTimingOverrides& timing_override, const InputOptions& src_opt,
+    InputBufferPoolGuard& guard, const char* where,
+    std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = std::nullopt) {
   GstBuffer* const original = buffer ? *buffer : nullptr;
   const bool source_has_preproc_meta = has_simaai_preprocess_meta(original);
 
   if (spec.kind == SampleMediaKind::RawVideo) {
     apply_video_meta_or_throw(buffer, spec, where);
+    trace_preprocess_meta_buffer("apply_holder:after_video_meta", buffer ? *buffer : nullptr);
   } else if (spec.kind == SampleMediaKind::Tensor) {
     apply_tensor_size_or_throw(buffer, spec, where);
+    trace_preprocess_meta_buffer("apply_holder:after_tensor_size", buffer ? *buffer : nullptr);
   }
 
   if (original && *buffer && *buffer != original && source_has_preproc_meta) {
@@ -484,6 +596,7 @@ void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& s
   *buffer = attach_simaai_meta_inplace(*buffer, src_opt, guard, where, meta.frame_id,
                                        StreamIdOverride{meta.stream_id},
                                        BufferNameOverride{meta.stream_label});
+  trace_preprocess_meta_buffer("apply_holder:after_attach_simaai_meta", *buffer);
   if (!*buffer) {
     throw std::runtime_error(std::string(where ? where : "InputStream::push") +
                              ": failed to attach GstSimaMeta");
@@ -494,12 +607,17 @@ void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& s
     throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
                              ": failed to write GstSimaMeta fields");
   }
+  trace_preprocess_meta_buffer("apply_holder:after_update_simaai_meta_fields", *buffer);
   if (!write_sample_timing_to_gst_buffer(*buffer, timing_override)) {
     throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
                              ": failed to write sample timing metadata");
   }
+  trace_preprocess_meta_buffer("apply_holder:after_sample_timing", *buffer);
+  apply_tensor_preprocess_meta_to_buffer_or_throw(*buffer, tensor_preprocess_meta, where);
+  trace_preprocess_meta_buffer("apply_holder:after_tensor_preprocess_meta", *buffer);
   if (!has_simaai_preprocess_meta(*buffer) && spec.width > 0 && spec.height > 0) {
     (void)apply_simaai_preprocess_meta_template(*buffer, src_opt, spec.width, spec.height);
+    trace_preprocess_meta_buffer("apply_holder:after_template", *buffer);
   }
 }
 
@@ -526,6 +644,7 @@ bool push_holder_buffer_with_appsrc(InputStream::State& st, GstBuffer* buffer, c
                  static_cast<std::size_t>(gst_buffer_get_size(buffer)), gst_buffer_n_memory(buffer),
                  has_tensor_set ? 1 : 0);
   }
+  trace_preprocess_meta_buffer("push_holder_buffer_with_appsrc:before_push", buffer);
   GstFlowReturn ret = gst_app_src_push_buffer(GST_APP_SRC(st.appsrc), buffer);
   if (holder_debug_enabled()) {
     std::fprintf(stderr, "[HOLDER] push_holder_buffer_with_appsrc after_push where=%s ret=%d\n",
@@ -774,6 +893,7 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
     throw std::runtime_error(std::string(where ? where : "InputStream::push_holder_transport") +
                              ": failed to write sample timing metadata");
   }
+  trace_preprocess_meta_buffer("push_holder_transport:after_sample_timing", buf);
   if (preproc_trace) {
     GstCustomMeta* meta = gst_buffer_get_custom_meta(buf, "GstSimaMeta");
     GstStructure* s = meta ? gst_custom_meta_get_structure(meta) : nullptr;
@@ -793,8 +913,10 @@ bool push_holder_transport(InputStream::State& st, const std::shared_ptr<void>& 
     const CapKey& key = *st.current_key;
     if (!has_simaai_preprocess_meta(buf) && key.width > 0 && key.height > 0) {
       (void)apply_simaai_preprocess_meta_template(buf, st.src_opt, key.width, key.height);
+      trace_preprocess_meta_buffer("push_holder_transport:after_template", buf);
     }
   }
+  trace_preprocess_meta_buffer("push_holder_transport:before_route", buf);
   dump_buffer_memories(buf, where ? where : "InputStream::push_holder_transport");
   validate_holder_video_meta_or_throw(st, buf);
 
@@ -1038,7 +1160,8 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, timing_override, st.src_opt,
-                                          st.pool_guard, "InputStream::try_push_message(holder)");
+                                          st.pool_guard, "InputStream::try_push_message(holder)",
+                                          input.semantic.preprocess);
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -1065,7 +1188,8 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, timing_override, st.src_opt,
-                                          st.pool_guard, "InputStream::try_push_message(holder)");
+                                          st.pool_guard, "InputStream::try_push_message(holder)",
+                                          input.semantic.preprocess);
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;

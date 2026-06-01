@@ -83,7 +83,11 @@ struct InputStreamOptions {
   int appsink_max_buffers = 4;
   bool enable_timings = false;
   bool startup_preflight = false;
-  int stability_frames = 2;
+  // Dynamic input caps/shape changes should be accepted on the next pushed
+  // sample by default.  Higher-level sources that need debounce/hysteresis
+  // should implement that explicitly instead of making ML graph callers observe
+  // a successful push followed by no pullable output.
+  int stability_frames = 1;
   std::size_t max_input_bytes = 0;
   bool copy_output = true;
   bool copy_input = false;

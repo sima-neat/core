@@ -65,6 +65,11 @@ bool is_direct_source_input_only_segment(const graph::CompiledPipelineSegment& s
   return dynamic_cast<const simaai::neat::Input*>(nodes.front().get()) != nullptr;
 }
 
+bool is_public_input_only_fragment(std::span<const std::shared_ptr<simaai::neat::Node>> nodes) {
+  return nodes.size() == 1U && nodes.front() &&
+         dynamic_cast<const simaai::neat::Input*>(nodes.front().get()) != nullptr;
+}
+
 BoundaryPolicy decide_boundary_policy(const graph::Graph& graph,
                                       const graph::CompiledPipelineSegment& seg) {
   BoundaryPolicy out;
@@ -645,6 +650,22 @@ build_runtime_graph_from_connected_public_view(const View& view,
       cur = next;
     }
 
+    // A connected-graph fanout directly from a bare Input used to lower to a single appsrc
+    // pipeline segment feeding a runtime FanOut stage.  GStreamer parses "appsrc ..." as a
+    // standalone element rather than a bin in that shape, which made build fail with
+    // "parser returned non-bin root element".  Insert the same queue users had to add by hand
+    // whenever a public Input-only fragment has downstream graph edges: appsrc ! queue is a real
+    // segment boundary, provides a thread/caps handoff point, and keeps tensor/sample semantics
+    // unchanged.
+    if (is_public_input_only_fragment(nodes)) {
+      const bool has_downstream_edge =
+          std::any_of(view.edges.begin(), view.edges.end(),
+                      [&](const auto& edge) { return edge.from == start; });
+      if (has_downstream_edge) {
+        nodes.push_back(simaai::neat::nodes::Queue());
+      }
+    }
+
     auto pipeline_node = std::make_shared<graph::nodes::PipelineNode>(
         std::move(nodes), "fragment" + std::to_string(start));
     const graph::NodeId runtime_id = out.graph.add(std::move(pipeline_node));
@@ -879,8 +900,8 @@ std::string raw_video_seed_debug_string(const SampleSpec& spec) {
                                                      : fragment.provenance.model_id;
   }
   throw std::invalid_argument(
-      "Graph::build(image): received a raw image seed (" +
-      raw_video_seed_debug_string(seed_spec) + ") for Model::graph() route '" + model_ref +
+      "Graph::build(image): received a raw image seed (" + raw_video_seed_debug_string(seed_spec) +
+      ") for Model::graph() route '" + model_ref +
       "', but that route has no model-managed Preproc node. If this model is intended to accept "
       "images, construct Model with Model::Options::preprocess.kind = InputKind::Image and set "
       "an explicit preprocess.color_convert.input_format plus "
@@ -950,15 +971,14 @@ Model::RouteOptions route_options_from_model_route_fragment(
     opt.include_input =
         dynamic_cast<const simaai::neat::Input*>(nodes[fragment.graph_start].get()) != nullptr;
     opt.include_output =
-        dynamic_cast<const simaai::neat::Output*>(nodes[fragment.graph_end - 1U].get()) !=
-        nullptr;
+        dynamic_cast<const simaai::neat::Output*>(nodes[fragment.graph_end - 1U].get()) != nullptr;
   }
   return opt;
 }
 
 std::vector<std::shared_ptr<simaai::neat::Node>> specialize_linear_model_preproc_route_for_seed(
-    std::vector<std::shared_ptr<simaai::neat::Node>> nodes,
-    std::span<const FragmentPlan> fragments, const Sample& seed, const SampleSpec& seed_spec) {
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes, std::span<const FragmentPlan> fragments,
+    const Sample& seed, const SampleSpec& seed_spec) {
   if (nodes.empty() || fragments.empty() ||
       !raw_video_seed_spec_complete_for_model_route(seed_spec)) {
     return nodes;
