@@ -39,8 +39,8 @@ The old low-level `pyneat.graph` module has been removed. Application code shoul
 Chapter 003 (Graph basics).
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Public Graph](/getting-started/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
+- [Public Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Build a minimal public Graph and push one deterministic tensor sample.

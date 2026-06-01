@@ -26,7 +26,7 @@ Fastest way to verify an model archive loads and runs on hardware. For throughpu
 None — this is the entry chapter.
 
 **References**
-- [Model](/getting-started/programming-model/model)
+- [Model](/reference/programming-model/model)
 
 ## Learning Process
 1. Set up runtime inputs: parse CLI args, locate the compiled ResNet50 model archive, and prepare sample input data.

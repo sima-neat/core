@@ -33,8 +33,8 @@ Learning the `Graph` / `Run` lifecycle without a model in the loop, or building 
 Chapter 001.
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Graph](/getting-started/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Create a minimal `Graph` with explicit input and output nodes.

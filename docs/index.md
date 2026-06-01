@@ -1,17 +1,17 @@
 ---
 title: Overview
-description: SiMa Neat overview and entry points
+description: SiMa.ai Neat overview and entry points
 sidebar_position: 1
 ---
 
-# SiMa Neat Overview
+# SiMa.ai Neat Overview
 
 <div class="overview-section-label">What Neat Is</div>
 
-SiMa Neat (**Neural Edge Acceleration Toolkit**) is an application-development framework for building and running AI applications on the SiMa platform.
+SiMa.ai Neat (**Neural Edge Acceleration Toolkit**) is an application-development framework for building and running AI applications on the SiMa.ai platform.
 It provides developers a set of Python and C++ APIs to execute and test compiled model artifacts (`tar.gz models`), compose AI applications that leverage the SoC's hardware blocks, and manage runtime execution. 
 
-In the broader SiMa software ecosystem, Neat sits at the application layer, building on the SiMa runtime stack and using GStreamer-based execution underneath so developers can stay focused on application logic instead of manually stitching together lower-level runtime pieces.
+In the broader SiMa.ai software ecosystem, Neat sits at the application layer, building on the SiMa.ai runtime stack and using GStreamer-based execution underneath so developers can stay focused on application logic instead of manually stitching together lower-level runtime pieces.
 
 <div class="overview-section-label">How It Works</div>
 
@@ -57,9 +57,9 @@ The getting-started guides help you install and build Neat, the programming-mode
     <p>Use these first steps to get Neat installed, built, and running with the core mental model in place.</p>
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/software/getting-started/installation/"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
-      <li><a class="overview-link-card" href="/software/getting-started/build/"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
+      <li><a class="overview-link-card" href="/software/contribute/build/"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
       <li><a class="overview-link-card" href="/software/getting-started/minimal_example/"><strong>Hello Neat!</strong><span>Run your first Neat inference with YOLOv8 and decoded boxes.</span></a></li>
-      <li><a class="overview-link-card" href="/software/getting-started/programming-model/overview/"><strong>Programming Model</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
+      <li><a class="overview-link-card" href="/software/reference/programming-model/overview/"><strong>Programming Model</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
     </ul>
   </section>
 

@@ -28,8 +28,8 @@ Camera streams, batch processing, or any pipeline where inputs arrive faster tha
 Chapter 001. Familiarity with `pyneat.Model` and `model.run()` is assumed.
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Graph](/getting-started/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Prepare runtime inputs: parse CLI args, load ResNet50 model archive, and construct local input samples.

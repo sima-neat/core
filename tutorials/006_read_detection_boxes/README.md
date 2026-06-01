@@ -37,7 +37,7 @@ Common box-decode controls in this tutorial:
 Chapter 001. Chapter 004 for `ModelOptions` basics.
 
 **References**
-- [Model](/getting-started/programming-model/model)
+- [Model](/reference/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Output Structure

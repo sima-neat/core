@@ -29,8 +29,8 @@ Especially useful when onboarding new models or environments — repeatable, fas
 Chapter 002 or 003 (Graph/Run basics).
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Graph](/getting-started/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Validate Graph contract and backend parse path (`validate()`).

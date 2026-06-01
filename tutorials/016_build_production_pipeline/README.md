@@ -31,9 +31,9 @@ The template makes three things explicit that defaults leave implicit:
 Chapters 002 (async), 004 (ModelOptions), 007 (ModelRouteOptions), 015 (RunOptions and queues).
 
 **References**
-- [Model](/getting-started/programming-model/model)
-- [Graph](/getting-started/programming-model/graph)
-- [Graph](/getting-started/programming-model/graph)
+- [Model](/reference/programming-model/model)
+- [Graph](/reference/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Prepare deterministic input and shared runtime options for production-like behavior.

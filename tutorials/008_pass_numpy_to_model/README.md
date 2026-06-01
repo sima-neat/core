@@ -30,8 +30,8 @@ If you are integrating Neat into an existing Python inference stack, this is the
 Chapter 001.
 
 **References**
-- [Tensor and Sample](/getting-started/programming-model/core_types)
-- [Node boundaries and I/O](/getting-started/programming-model/node#boundary-nodes)
+- [Tensor and Sample](/reference/programming-model/core_types)
+- [Node boundaries and I/O](/reference/programming-model/node#boundary-nodes)
 
 ## Learning Process
 1. Build deterministic tensor inputs in NumPy/PyTorch and C++ tensor storage.

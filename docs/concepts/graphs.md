@@ -993,9 +993,9 @@ run.save_json("/tmp/app.graph_run.json")
 
 ## Further reading
 
-- [Model programming model](/getting-started/programming-model/model)
-- [Node programming model: groups and boundaries](/getting-started/programming-model/node#boundary-nodes)
-- [Tensor and Sample programming model](/getting-started/programming-model/core_types)
+- [Model programming model](/reference/programming-model/model)
+- [Node programming model: groups and boundaries](/reference/programming-model/node#boundary-nodes)
+- [Tensor and Sample programming model](/reference/programming-model/core_types)
 - [Runtime tuning](/how-to/runtime_tuning)
 - [Diagnostics](/how-to/diagnostics)
 - [GStreamer layer](/concepts/gstreamer_layer)

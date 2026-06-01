@@ -40,8 +40,8 @@ NEAT lowers the model fragment into the correct internal runtime execution plan 
 Chapter 001 (Model). Chapter 012 (Graph basics).
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Model](/getting-started/programming-model/model)
+- [Graph](/reference/programming-model/graph)
+- [Model](/reference/programming-model/model)
 
 ## Learning Process
 1. Load a model archive.

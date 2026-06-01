@@ -1,6 +1,6 @@
 ---
 title: Test Requirements
-description: Minimum testing expectations for SiMa Neat contributions
+description: Minimum testing expectations for SiMa.ai Neat contributions
 sidebar_position: 3
 ---
 
@@ -75,7 +75,7 @@ For docs-impacting changes, also run:
 ./build.sh --doc
 ```
 
-See [Build](/getting-started/build) for all supported build/test modes.
+See [Build](/contribute/build) for all supported build/test modes.
 
 ## Contributor checklist
 

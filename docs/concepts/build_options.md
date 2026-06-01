@@ -62,5 +62,5 @@ cmake -LA -B build      # include advanced
 ## Further reading
 
 - "Build profiles" — §32, §60 of the design deep dive.
-- [Build / install](/getting-started/build) — the user-facing build guide.
+- [Build / install](/contribute/build) — the user-facing build guide.
 - The top-level `CMakeLists.txt` is the source of truth for option names.

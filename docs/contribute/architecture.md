@@ -222,7 +222,7 @@ Key types:
 Examples:
 - `nodes/io/RTSPInput`, `nodes/io/StillImageInput`
 - `nodes/common/*` (Caps, Queue, Output, etc.)
-- `nodes/sima/*` (SiMa decode/encode/parse/pay nodes)
+- `nodes/sima/*` (SiMa.ai decode/encode/parse/pay nodes)
 - `nodes/rtp/*` (depay/payload helpers)
 - `nodes/groups/*` (common multi-node recipes)
 

@@ -25,6 +25,24 @@ from typing import Dict, List
 
 REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 
+# Curated learning-flow order, by tutorial number. Drives both the sidebar
+# (TOC) position and the in-section ordering on the tutorials index page.
+# Modules whose number is not listed here fall to the end in numeric order.
+LEARNING_FLOW_ORDER = [
+    1, 2, 3, 4,        # Beginner foundations
+    8, 5, 10, 6,       # Core I/O and pre/postprocessing
+    7, 9, 11, 12, 17,  # Pipelines, diagnostics, custom graphs, live input
+    13, 14, 15, 16,    # Advanced: hybrid graphs, multi-stream, perf, production
+]
+
+
+def _flow_key(number: int) -> tuple:
+    """Sort key: explicit flow position first, then numeric fallback."""
+    try:
+        return (0, LEARNING_FLOW_ORDER.index(number))
+    except ValueError:
+        return (1, number)
+
 
 def docs_static_url(path: str) -> str:
     base_url = os.environ.get("DOCS_BASE_URL", "/").strip() or "/"
@@ -143,26 +161,26 @@ def _difficulty_theme(difficulty: str) -> Dict[str, str]:
     key = difficulty.strip().lower()
     if key == "beginner":
         return {
-            "bg_a": "#0d5e4a",
-            "bg_b": "#38b57a",
-            "glow": "#89ffd0",
-            "chip_bg": "#153f33",
-            "chip_fg": "#bcffdf",
+            "bg_a": "#5c7510",
+            "bg_b": "#a4cc2d",
+            "glow": "#d3ec7d",
+            "chip_bg": "#3a4a0a",
+            "chip_fg": "#e9f5b8",
         }
     if key == "advanced":
         return {
-            "bg_a": "#6f1022",
-            "bg_b": "#e34a4a",
-            "glow": "#ffb2b2",
-            "chip_bg": "#3f1520",
-            "chip_fg": "#ffd2d2",
+            "bg_a": "#1d4f86",
+            "bg_b": "#5998dd",
+            "glow": "#bfdbff",
+            "chip_bg": "#15314f",
+            "chip_fg": "#d8e7fb",
         }
     return {
-        "bg_a": "#72520a",
-        "bg_b": "#f0b33a",
-        "glow": "#ffe39c",
-        "chip_bg": "#413116",
-        "chip_fg": "#ffe7ba",
+        "bg_a": "#15532a",
+        "bg_b": "#2a9c4f",
+        "glow": "#8be0a3",
+        "chip_bg": "#0d3a1c",
+        "chip_fg": "#c5ecd1",
     }
 
 
@@ -409,7 +427,7 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         key = module.difficulty if module.difficulty in groups else "Intermediate"
         groups[key].append(module)
     for key in groups:
-        groups[key] = sorted(groups[key], key=lambda m: m.number)
+        groups[key] = sorted(groups[key], key=lambda m: _flow_key(m.number))
 
     lines: List[str] = [
         "---",
@@ -487,6 +505,21 @@ def discover_modules(tutorials_dir: pathlib.Path) -> List[pathlib.Path]:
     return sorted(items, key=lambda p: p.name)
 
 
+DIFFICULTY_SUBDIRS = [
+    ("Beginner", "beginner", 2),
+    ("Intermediate", "intermediate", 3),
+    ("Advanced", "advanced", 4),
+]
+
+
+def _difficulty_subdir(difficulty: str) -> str:
+    key = (difficulty or "").strip().lower()
+    for _, slug, _ in DIFFICULTY_SUBDIRS:
+        if slug == key:
+            return slug
+    return "intermediate"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate tutorial docs from tutorial module folders.")
     parser.add_argument("--repo-root", default=".", help="Repository root (default: current directory)")
@@ -498,6 +531,7 @@ def main() -> int:
 
     module_dirs = discover_modules(tutorials_dir)
     modules = [parse_module(d, root) for d in module_dirs]
+    modules.sort(key=lambda m: _flow_key(m.number))
     repo_ref = detect_repo_ref()
 
     docs_tutorials_dir.mkdir(parents=True, exist_ok=True)
@@ -505,17 +539,36 @@ def main() -> int:
     heading_path = docs_tutorials_dir / "heading.mm"
     heading_body = heading_path.read_text(encoding="utf-8").strip() if heading_path.exists() else ""
 
-    # Purge stale auto-generated MDX from renamed/removed tutorial folders.
-    # Without this, Docusaurus indexes both old and new titles after a rename.
-    expected = {f"{m.doc_id}.mdx" for m in modules}
-    for stale in docs_tutorials_dir.glob("tutorial_*.mdx"):
-        if stale.name not in expected:
-            stale.unlink()
+    # Create difficulty subdirectories with category metadata so the sidebar
+    # nests tutorials under Beginner / Intermediate / Advanced.
+    for label, slug, position in DIFFICULTY_SUBDIRS:
+        sub = docs_tutorials_dir / slug
+        sub.mkdir(parents=True, exist_ok=True)
+        (sub / "_category_.json").write_text(
+            f'{{\n  "label": "{label}",\n  "position": {position},\n  "collapsed": true\n}}\n',
+            encoding="utf-8",
+        )
 
-    for idx, module in enumerate(modules, start=2):
-        out_path = docs_tutorials_dir / f"{module.doc_id}.mdx"
+    # Purge stale auto-generated MDX from prior generator runs (flat layout or
+    # renamed/removed tutorial folders). Docusaurus indexes everything it sees,
+    # so we sweep the parent directory and every difficulty subdir.
+    expected_paths = {
+        docs_tutorials_dir / _difficulty_subdir(m.difficulty) / f"{m.doc_id}.mdx"
+        for m in modules
+    }
+    for parent in [docs_tutorials_dir, *(docs_tutorials_dir / s for _, s, _ in DIFFICULTY_SUBDIRS)]:
+        for stale in parent.glob("tutorial_*.mdx"):
+            if stale not in expected_paths:
+                stale.unlink()
+
+    # Re-number sidebar_position per difficulty group so each subsection starts at 1.
+    per_group_idx: Dict[str, int] = {slug: 0 for _, slug, _ in DIFFICULTY_SUBDIRS}
+    for module in modules:
+        sub_slug = _difficulty_subdir(module.difficulty)
+        per_group_idx[sub_slug] += 1
+        out_path = docs_tutorials_dir / sub_slug / f"{module.doc_id}.mdx"
         out_path.write_text(
-            render_tutorial_doc(module, sidebar_position=idx, repo_ref=repo_ref),
+            render_tutorial_doc(module, sidebar_position=per_group_idx[sub_slug], repo_ref=repo_ref),
             encoding="utf-8",
         )
 
