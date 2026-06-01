@@ -5520,8 +5520,7 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
   if (ingress != nullptr && !ingress->source_stage.empty()) {
     oss << " source_stage=" << ingress->source_stage;
   }
-  oss << ". "
-      << "Received media=" << info.media_type << " format=" << info.format
+  oss << ". " << "Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth
       << ". Hint: resize to expected spatial size and convert BGR->RGB before calling run/build.";
   throw std::invalid_argument(oss.str());
@@ -7086,6 +7085,29 @@ std::vector<std::shared_ptr<Node>> ModelAccess::build_public_route_nodes(const M
   }
   return build_pipeline_nodes(model, pack, model.impl_->options, model.impl_->preprocess_plan,
                               std::move(opt), nullptr, false, false);
+}
+
+std::vector<std::shared_ptr<Node>>
+ModelAccess::build_public_route_nodes_for_seed(const Model& model, Model::RouteOptions opt,
+                                               const Sample& seed) {
+  internal::ModelPack pack = model.impl_->pack;
+  if (!opt.name_suffix.empty()) {
+    pack = pack.clone_with_overrides(std::string{}, opt.name_suffix);
+  }
+  const bool tensor_mode = pipeline_requires_tensor_input(model.impl_->preprocess_plan);
+  if (!tensor_mode && seed.size() != 1U) {
+    throw std::runtime_error(
+        "Graph::build(Sample): model-managed image route specialization expects exactly one "
+        "image sample");
+  }
+  std::optional<InputInfo> image_input_info;
+  if (!tensor_mode) {
+    image_input_info = input_info_from_image_sample(seed.front());
+    require_explicit_image_input_info(*image_input_info, "Graph::build(Sample)");
+  }
+  return build_pipeline_nodes(model, pack, model.impl_->options, model.impl_->preprocess_plan,
+                              std::move(opt), image_input_info ? &*image_input_info : nullptr,
+                              false, false);
 }
 
 std::vector<std::shared_ptr<Node>>
