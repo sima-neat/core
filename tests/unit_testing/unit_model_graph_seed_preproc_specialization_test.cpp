@@ -1,6 +1,8 @@
 #include "model/Model.h"
 #include "model/internal/ModelInternal.h"
 #include "model_archive_fixture_utils.h"
+#include "nodes/common/Output.h"
+#include "nodes/io/Input.h"
 #include "nodes/sima/Preproc.h"
 #include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
@@ -8,6 +10,7 @@
 #include "test_main.h"
 #include "test_utils.h"
 
+#include <algorithm>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -149,6 +152,31 @@ require_single_segment_preproc_options(const simaai::neat::runtime::ExecutionGra
   return require_model_preproc_options(plan.pipeline_segments.front().nodes, where);
 }
 
+std::vector<simaai::neat::PreprocOptions>
+collect_model_preproc_options(const simaai::neat::runtime::ExecutionGraphPlan& plan) {
+  std::vector<simaai::neat::PreprocOptions> out;
+  for (const auto& segment : plan.pipeline_segments) {
+    for (const auto& node : segment.nodes) {
+      const auto* preproc = dynamic_cast<const simaai::neat::Preproc*>(node.get());
+      if (!preproc) {
+        continue;
+      }
+      const auto& opt = preproc->options();
+      if (opt.model_managed_contract) {
+        out.push_back(opt);
+      }
+    }
+  }
+  return out;
+}
+
+bool contains_preproc_contract(const std::vector<simaai::neat::PreprocOptions>& options,
+                               const std::string& input_type, std::vector<int> shape) {
+  return std::any_of(options.begin(), options.end(), [&](const simaai::neat::PreprocOptions& opt) {
+    return opt.input_img_type == input_type && opt.input_shape == shape;
+  });
+}
+
 void require_same_preproc_seed_contract(const simaai::neat::PreprocOptions& expected,
                                         const simaai::neat::PreprocOptions& actual,
                                         const std::string& where) {
@@ -270,4 +298,57 @@ RUN_TEST(
       require_same_preproc_seed_contract(expected_cv, graph_cv,
                                          "Model::build(cv::Mat) vs graph cv::Mat seed route");
 #endif
+
+      const auto fixture_a = make_seed_preproc_fixture("model_graph_seed_preproc_fanout_a");
+      const auto fixture_b = make_seed_preproc_fixture("model_graph_seed_preproc_fanout_b");
+      Model model_a(fixture_a.tar_path, image_model_options());
+      Model model_b(fixture_b.tar_path, image_model_options());
+
+      Graph fanout_graph;
+      auto frame_input = nodes::Input("frame");
+      Graph route_a = model_a.graph(route_opt);
+      route_a.set_name("route_a");
+      Graph route_b = model_b.graph(route_opt);
+      route_b.set_name("route_b");
+      fanout_graph.connect(frame_input, route_a);
+      fanout_graph.connect(frame_input, route_b);
+
+      const runtime::ExecutionGraphPlan fanout_plan =
+          runtime::compile_public_graph(fanout_graph, RunOptions{}, bgr_seed);
+      const auto fanout_preprocs = collect_model_preproc_options(fanout_plan);
+      require(fanout_preprocs.size() == 2U,
+              "connected fanout should specialize both model-managed Preproc routes");
+      require(contains_preproc_contract(fanout_preprocs, "BGR", {123, 321, 3}),
+              "connected fanout route A should receive the raw-image seed contract");
+      require(std::all_of(fanout_preprocs.begin(), fanout_preprocs.end(),
+                          [](const PreprocOptions& opt) {
+                            return opt.input_img_type == "BGR" &&
+                                   opt.input_shape == std::vector<int>({123, 321, 3});
+                          }),
+              "connected fanout should apply the same single raw-image seed to every root route");
+
+      Graph multi_input_graph;
+      auto left_input = nodes::Input("left");
+      auto right_input = nodes::Input("right");
+      Graph left_route = model_a.graph(route_opt);
+      left_route.set_name("left_route");
+      Graph right_route = model_b.graph(route_opt);
+      right_route.set_name("right_route");
+      multi_input_graph.connect(left_input, left_route);
+      multi_input_graph.connect(right_input, right_route);
+
+      Sample multi_seed;
+      multi_seed.push_back(make_image_tensor_sample(111, 222, ImageSpec::PixelFormat::BGR));
+      multi_seed.fields.back().port_name = "left";
+      multi_seed.push_back(make_image_tensor_sample(333, 444, ImageSpec::PixelFormat::RGB));
+      multi_seed.fields.back().port_name = "right";
+      const runtime::ExecutionGraphPlan multi_input_plan =
+          runtime::compile_public_graph(multi_input_graph, RunOptions{}, multi_seed);
+      const auto multi_input_preprocs = collect_model_preproc_options(multi_input_plan);
+      require(multi_input_preprocs.size() == 2U,
+              "connected multi-input graph should specialize both model-managed Preproc routes");
+      require(contains_preproc_contract(multi_input_preprocs, "BGR", {222, 111, 3}),
+              "multi-input route should preserve first image seed geometry/color");
+      require(contains_preproc_contract(multi_input_preprocs, "RGB", {444, 333, 3}),
+              "multi-input route should preserve second image seed geometry/color");
     }));

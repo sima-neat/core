@@ -769,6 +769,18 @@ Sample graph_build_seed_from_mat(const cv::Mat& input) {
       input.channels() == 1 ? ImageSpec::PixelFormat::GRAY8 : ImageSpec::PixelFormat::BGR;
   return Sample::from_image(input, format, TensorMemory::CPU);
 }
+
+Sample graph_build_seed_from_mats(const std::vector<cv::Mat>& inputs) {
+  if (inputs.size() == 1U) {
+    return graph_build_seed_from_mat(inputs.front());
+  }
+  Sample out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(graph_build_seed_from_mat(input));
+  }
+  return out;
+}
 #endif
 
 InputContract input_contract_from_output_spec(const OutputSpec& spec) {
@@ -2183,8 +2195,8 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
 
   if (!saw_output) {
     std::ostringstream oss;
-    oss << "Graph::run(input): prefill stage produced no output" << " pushes=" << target_pushes
-        << " timeout_ms=" << timeout_ms;
+    oss << "Graph::run(input): prefill stage produced no output"
+        << " pushes=" << target_pushes << " timeout_ms=" << timeout_ms;
     if (!last_timeout.empty()) {
       oss << ": " << last_timeout;
     }
@@ -2523,7 +2535,8 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOpti
   }
   if (composition_ && !composition_->is_linear()) {
     progress.step("Building graph...");
-    runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
+    runtime::ExecutionGraphPlan plan =
+        runtime::compile_public_graph(*this, opt, graph_build_seed_from_mats(inputs));
     progress.step("Preparing input stream...");
     Sample seed =
         connected_seed_from_images(plan, inputs, input_route_processor_, "Graph::build(inputs)");
@@ -2667,7 +2680,7 @@ Run Graph::build(const Sample& inputs, RunMode mode, const RunOptions& opt) {
   }
   if (composition_ && !composition_->is_linear()) {
     progress.step("Building graph...");
-    runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, std::nullopt);
+    runtime::ExecutionGraphPlan plan = runtime::compile_public_graph(*this, opt, inputs);
     progress.step("Preparing input stream...");
     Sample seed =
         connected_seed_from_samples(plan, inputs, input_route_processor_, "Graph::build(inputs)");
@@ -2708,7 +2721,7 @@ Run Graph::build(const Sample& inputs, RunMode mode, const RunOptions& opt) {
 TensorList Graph::run(const std::vector<cv::Mat>& inputs, const RunOptions& opt) {
   (void)tensor_list_from_mats(inputs, InputOptions{}, "Graph::run(inputs)");
   if (composition_ && !composition_->is_linear()) {
-    Run runner = build(opt);
+    Run runner = build(inputs, RunMode::Sync, opt);
     return runner.run(inputs, resolved_input_timeout_ms(opt));
   }
   if (inputs.size() == 1U) {
@@ -2750,7 +2763,7 @@ Sample Graph::run(const Sample& inputs, const RunOptions& opt) {
     throw std::runtime_error("Graph::run(inputs): empty sample list");
   }
   if (composition_ && !composition_->is_linear()) {
-    Run runner = build(opt);
+    Run runner = build(inputs, RunMode::Sync, opt);
     return runner.run(inputs, resolved_input_timeout_ms(opt));
   }
   if (inputs.size() == 1U) {

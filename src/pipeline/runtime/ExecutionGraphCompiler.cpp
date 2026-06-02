@@ -871,6 +871,40 @@ std::string raw_video_seed_debug_string(const SampleSpec& spec) {
   return out;
 }
 
+struct RawVideoSeedLocal {
+  const Sample* sample = nullptr;
+  SampleSpec spec;
+};
+
+std::optional<RawVideoSeedLocal> raw_video_seed_from_sample(const Sample& sample) {
+  try {
+    SampleSpec spec = derive_sample_spec_or_throw(sample);
+    if (!raw_video_seed_spec_complete_for_model_route(spec)) {
+      return std::nullopt;
+    }
+    return RawVideoSeedLocal{.sample = &sample, .spec = std::move(spec)};
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+std::vector<RawVideoSeedLocal> raw_video_seeds_from_sample(const Sample& seed) {
+  std::vector<RawVideoSeedLocal> out;
+  if (seed.kind == SampleKind::Bundle) {
+    out.reserve(seed.fields.size());
+    for (const auto& field : seed.fields) {
+      if (auto item = raw_video_seed_from_sample(field)) {
+        out.push_back(std::move(*item));
+      }
+    }
+    return out;
+  }
+  if (auto item = raw_video_seed_from_sample(seed)) {
+    out.push_back(std::move(*item));
+  }
+  return out;
+}
+
 [[noreturn]] void throw_raw_image_seed_without_model_preproc(const FragmentPlan& fragment,
                                                              const SampleSpec& seed_spec) {
   std::string model_ref = fragment.provenance.model_source_path;
@@ -955,14 +989,94 @@ Model::RouteOptions route_options_from_model_route_fragment(
   return opt;
 }
 
-std::vector<std::shared_ptr<simaai::neat::Node>> specialize_linear_model_preproc_route_for_seed(
+bool transparent_boundary_node(const std::shared_ptr<simaai::neat::Node>& node) {
+  if (!node) {
+    return true;
+  }
+  return dynamic_cast<const simaai::neat::Input*>(node.get()) != nullptr ||
+         dynamic_cast<const simaai::neat::Queue*>(node.get()) != nullptr ||
+         dynamic_cast<const simaai::neat::Output*>(node.get()) != nullptr;
+}
+
+template <typename EdgeRange>
+bool connected_vertex_transparent_to_root_seed(
+    std::span<const std::shared_ptr<simaai::neat::Node>> vertices, const EdgeRange& edges,
+    std::size_t vertex, std::vector<bool>* visiting) {
+  if (vertex >= vertices.size()) {
+    return false;
+  }
+  if (!transparent_boundary_node(vertices[vertex])) {
+    return false;
+  }
+  if (!visiting) {
+    return false;
+  }
+  if ((*visiting)[vertex]) {
+    return false;
+  }
+  (*visiting)[vertex] = true;
+
+  bool has_incoming = false;
+  bool transparent = true;
+  for (const auto& edge : edges) {
+    if (edge.to != vertex) {
+      continue;
+    }
+    has_incoming = true;
+    if (!connected_vertex_transparent_to_root_seed(vertices, edges, edge.from, visiting)) {
+      transparent = false;
+      break;
+    }
+  }
+
+  (*visiting)[vertex] = false;
+  return !has_incoming || transparent;
+}
+
+template <typename EdgeRange>
+bool connected_fragment_can_use_root_seed(
+    std::span<const std::shared_ptr<simaai::neat::Node>> vertices, const EdgeRange& edges,
+    const FragmentPlan& fragment) {
+  if (fragment.graph_start >= fragment.graph_end || fragment.graph_end > vertices.size()) {
+    return false;
+  }
+
+  bool has_external_input = false;
+  for (const auto& edge : edges) {
+    const bool into_fragment = edge.to >= fragment.graph_start && edge.to < fragment.graph_end;
+    const bool from_fragment = edge.from >= fragment.graph_start && edge.from < fragment.graph_end;
+    if (!into_fragment || from_fragment) {
+      continue;
+    }
+    has_external_input = true;
+    std::vector<bool> visiting(vertices.size(), false);
+    if (!connected_vertex_transparent_to_root_seed(vertices, edges, edge.from, &visiting)) {
+      return false;
+    }
+  }
+
+  if (has_external_input) {
+    return true;
+  }
+
+  for (std::size_t i = fragment.graph_start; i < fragment.graph_end; ++i) {
+    if (dynamic_cast<const simaai::neat::Input*>(vertices[i].get()) != nullptr) {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::vector<std::shared_ptr<simaai::neat::Node>> replace_model_preproc_routes_for_seed(
     std::vector<std::shared_ptr<simaai::neat::Node>> nodes, std::span<const FragmentPlan> fragments,
-    const Sample& seed, const SampleSpec& seed_spec) {
-  if (nodes.empty() || fragments.empty() ||
-      !raw_video_seed_spec_complete_for_model_route(seed_spec)) {
+    std::span<const RawVideoSeedLocal> raw_seeds,
+    const std::function<bool(std::span<const std::shared_ptr<simaai::neat::Node>>,
+                             const FragmentPlan&)>& can_use_seed) {
+  if (nodes.empty() || fragments.empty() || raw_seeds.empty()) {
     return nodes;
   }
 
+  std::size_t multi_seed_index = 0U;
   for (const auto& fragment : fragments) {
     if (!fragment.provenance.model_route.present || fragment.graph_end <= fragment.graph_start ||
         fragment.graph_end > nodes.size()) {
@@ -971,23 +1085,29 @@ std::vector<std::shared_ptr<simaai::neat::Node>> specialize_linear_model_preproc
     if (fragment.boundary_hints.has_value() && fragment.boundary_hints->bundled_fan_in) {
       continue;
     }
-    if (!fragment_can_use_root_seed(nodes, fragment)) {
+    if (can_use_seed && !can_use_seed(std::span<const std::shared_ptr<simaai::neat::Node>>(
+                                          nodes.data(), nodes.size()),
+                                      fragment)) {
       continue;
     }
 
     const internal::ModelLineageBinding* binding =
         model_managed_preproc_lineage_for_fragment(nodes, fragment);
     if (!binding) {
-      throw_raw_image_seed_without_model_preproc(fragment, seed_spec);
+      throw_raw_image_seed_without_model_preproc(fragment, raw_seeds.front().spec);
     }
     if (binding->source_path.empty()) {
       continue;
     }
 
+    const RawVideoSeedLocal& route_seed =
+        raw_seeds.size() == 1U ? raw_seeds.front()
+                               : raw_seeds[std::min(multi_seed_index, raw_seeds.size() - 1U)];
+    ++multi_seed_index;
     Model model(binding->source_path, binding->base_options);
     Model::RouteOptions route_opt = route_options_from_model_route_fragment(fragment, nodes);
-    auto replacement =
-        internal::ModelAccess::build_public_route_nodes_for_seed(model, route_opt, seed);
+    auto replacement = internal::ModelAccess::build_public_route_nodes_for_seed(
+        model, route_opt, route_seed.sample ? *route_seed.sample : Sample{});
     const std::size_t expected_size = fragment.graph_end - fragment.graph_start;
     if (replacement.size() != expected_size) {
       throw std::runtime_error(
@@ -997,10 +1117,42 @@ std::vector<std::shared_ptr<simaai::neat::Node>> specialize_linear_model_preproc
     for (std::size_t i = 0; i < expected_size; ++i) {
       nodes[fragment.graph_start + i] = std::move(replacement[i]);
     }
-    break;
   }
 
   return nodes;
+}
+
+std::vector<std::shared_ptr<simaai::neat::Node>> specialize_linear_model_preproc_route_for_seed(
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes, std::span<const FragmentPlan> fragments,
+    const Sample& seed) {
+  const std::vector<RawVideoSeedLocal> raw_seeds = raw_video_seeds_from_sample(seed);
+  if (raw_seeds.size() != 1U) {
+    return nodes;
+  }
+  return replace_model_preproc_routes_for_seed(
+      std::move(nodes), fragments,
+      std::span<const RawVideoSeedLocal>(raw_seeds.data(), raw_seeds.size()),
+      [](std::span<const std::shared_ptr<simaai::neat::Node>> active_nodes,
+         const FragmentPlan& fragment) {
+        return fragment_can_use_root_seed(active_nodes, fragment);
+      });
+}
+
+template <typename EdgeRange>
+std::vector<std::shared_ptr<simaai::neat::Node>> specialize_connected_model_preproc_routes_for_seed(
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes, const EdgeRange& edges,
+    std::span<const FragmentPlan> fragments, const Sample& seed) {
+  const std::vector<RawVideoSeedLocal> raw_seeds = raw_video_seeds_from_sample(seed);
+  if (raw_seeds.empty()) {
+    return nodes;
+  }
+  return replace_model_preproc_routes_for_seed(
+      std::move(nodes), fragments,
+      std::span<const RawVideoSeedLocal>(raw_seeds.data(), raw_seeds.size()),
+      [&](std::span<const std::shared_ptr<simaai::neat::Node>> active_nodes,
+          const FragmentPlan& fragment) {
+        return connected_fragment_can_use_root_seed(active_nodes, edges, fragment);
+      });
 }
 
 const char* dtype_token(TensorDType dtype) {
@@ -1778,7 +1930,12 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     compile_opt.run_options = opt;
     compile_opt.seed = std::move(seed);
     compile_opt.linear_compat = false;
-    NormalizedPublicView normalized = normalize_public_boundaries_for_execution(view);
+    auto seeded_view = view;
+    if (seed.has_value()) {
+      seeded_view.vertices = specialize_connected_model_preproc_routes_for_seed(
+          std::move(seeded_view.vertices), seeded_view.edges, seeded_view.fragments, *seed);
+    }
+    NormalizedPublicView normalized = normalize_public_boundaries_for_execution(seeded_view);
     PublicGraphLowering lowering =
         build_runtime_graph_from_connected_public_view(normalized, seed_spec);
     const auto graph_range_by_node =
@@ -1825,8 +1982,7 @@ ExecutionGraphPlan compile_public_graph(const simaai::neat::Graph& public_graph,
     root_input_spec = output_spec_from_sample_spec(*seed_spec);
   }
   if (seed.has_value() && seed_spec.has_value()) {
-    nodes = specialize_linear_model_preproc_route_for_seed(std::move(nodes), view.fragments, *seed,
-                                                           *seed_spec);
+    nodes = specialize_linear_model_preproc_route_for_seed(std::move(nodes), view.fragments, *seed);
   }
   const auto lower_us = pipeline_internal::build_timing_us(lower_start);
 
