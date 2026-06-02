@@ -610,6 +610,11 @@ remove_installed_local_deb_packages() {
 
   log "Removing installed NEAT packages before retrying apt downgrade/repair:"
   printf '  %s\n' "${packages[@]}"
+  if run_sudo apt-get remove -y "${packages[@]}"; then
+    return 0
+  fi
+
+  log "apt-get remove failed; falling back to forced dpkg removal before apt repair."
   run_sudo dpkg --remove --force-depends "${packages[@]}"
 }
 
@@ -791,7 +796,7 @@ install_debs_on_board() {
   if ! apt_package_database_is_healthy; then
     log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
   fi
-  if run_sudo apt-get install -y --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     verify_board_runtime_services
     return 0
@@ -799,7 +804,7 @@ install_debs_on_board() {
 
   log "apt-get install failed; removing installed NEAT packages represented by the local DEB set and retrying apt."
   remove_installed_local_deb_packages
-  if run_sudo apt-get install -y --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     verify_board_runtime_services
     return 0
