@@ -228,11 +228,11 @@ jobs:
           rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
           find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
 
-      - name: Pre-install devkit runtime cleanup
+      - name: Pre-install devkit storage cleanup
         env:
           DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
         run: |
-          ./scripts/fix_devkit_runtime.sh
+          ./scripts/cleanup_devkit_storage.sh
 
       - name: Install test runtime from Vulcan artifact
         env:
