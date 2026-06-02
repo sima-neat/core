@@ -58,19 +58,17 @@ cd /media/nvme && mkdir -p neat && cd neat
 Use this option for the latest stable build from the `main` branch:
 
 ```bash
-wget -O /tmp/install-neat.sh https://tools.sima-neat.com/install-neat.sh && \
-  bash /tmp/install-neat.sh main
+sima-cli neat install core
 ```
 
 You can optionally install extras, including prebuilt tutorials, source-code tutorials, and tests.
 
 ## Install a Selected Branch or Release
 
-Use this option to try the latest automated build from any branch or release. This method prompts you to select artifacts from any available branch or release.
+Use this option to try the latest automated build from a specific branch or release. Append `@<branch-or-release>` to the package name — for example, to install the latest `develop` build:
 
 ```bash
-wget -O /tmp/install-neat.sh https://tools.sima-neat.com/install-neat.sh && \
-  bash /tmp/install-neat.sh
+sima-cli neat install core@develop
 ```
 
 ## After Installation
