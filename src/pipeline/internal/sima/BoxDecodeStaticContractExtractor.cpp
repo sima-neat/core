@@ -432,6 +432,41 @@ int dtype_size_bytes_local(std::string raw) {
   return 0;
 }
 
+int round_up_to_multiple_int_local(const int value, const int multiple) {
+  if (value <= 0 || multiple <= 0) {
+    return value;
+  }
+  const int remainder = value % multiple;
+  if (remainder == 0) {
+    return value;
+  }
+  if (value > std::numeric_limits<int>::max() - (multiple - remainder)) {
+    return value;
+  }
+  return value + (multiple - remainder);
+}
+
+std::uint64_t boxdecode_hwc_size_bytes_local(const int h, const int w, const int c,
+                                             const int elem_bytes) {
+  if (h <= 0 || w <= 0 || c <= 0 || elem_bytes <= 0) {
+    return 0U;
+  }
+  const std::uint64_t factors[] = {static_cast<std::uint64_t>(h), static_cast<std::uint64_t>(w),
+                                   static_cast<std::uint64_t>(c),
+                                   static_cast<std::uint64_t>(elem_bytes)};
+  std::uint64_t total = 1U;
+  for (const std::uint64_t factor : factors) {
+    if (factor == 0U) {
+      return 0U;
+    }
+    if (total > std::numeric_limits<std::uint64_t>::max() / factor) {
+      return 0U;
+    }
+    total *= factor;
+  }
+  return total;
+}
+
 std::optional<TensorLayout> tensor_layout_from_contract_token_local(std::string raw) {
   raw = lower_copy_local(std::move(raw));
   if (raw == "chw") {
@@ -993,6 +1028,8 @@ struct BoxDecodeTensorLineageFactsLocal {
   BoxDecodeTensorRoleLocal role = BoxDecodeTensorRoleLocal::Unknown;
   std::optional<int> head_index;
   std::optional<std::array<int, 3>> detess_slice;
+  bool detess_align_c16 = false;
+  bool detess_cblock = false;
   std::optional<double> dq_scale;
   std::optional<std::int64_t> dq_zp;
 };
@@ -1396,6 +1433,8 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
               "MPK branch")) {
         return std::nullopt;
       }
+      facts.detess_align_c16 = facts.detess_align_c16 || (stage.has_align_c16 && stage.align_c16);
+      facts.detess_cblock = facts.detess_cblock || (stage.has_cblock && stage.cblock);
     }
 
     if (stage_has_explicit_dequant_quant_local(stage) && quant_contract_complete(stage.quant)) {
@@ -2175,6 +2214,44 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
       out.tensors[i].slice_shape = {static_cast<int>((*lineage_facts[i].detess_slice)[1]),
                                     static_cast<int>((*lineage_facts[i].detess_slice)[0]),
                                     static_cast<int>((*lineage_facts[i].detess_slice)[2])};
+      if (lineage_facts[i].detess_align_c16 || lineage_facts[i].detess_cblock) {
+        // Detess-like stages publish the logical decode slice (for example YOLO26 bbox C=4)
+        // but their MLA transport is still C16/cblock padded (C=16).  Preserve the already
+        // extracted physical H/W from the MLA boundary view and only widen the storage channel
+        // dimension, mirroring the detess/dequant/cast handoff rules.
+        auto& tensor = out.tensors[i];
+        const int slice_h = out.tensors[i].slice_shape.size() > 0U
+                                ? static_cast<int>(out.tensors[i].slice_shape[0])
+                                : 0;
+        const int slice_w = out.tensors[i].slice_shape.size() > 1U
+                                ? static_cast<int>(out.tensors[i].slice_shape[1])
+                                : 0;
+        const int slice_c = out.tensors[i].slice_shape.size() > 2U
+                                ? static_cast<int>(out.tensors[i].slice_shape[2])
+                                : 0;
+        const int existing_physical_h =
+            tensor.input_shape.size() > 0U ? static_cast<int>(tensor.input_shape[0]) : slice_h;
+        const int existing_physical_w =
+            tensor.input_shape.size() > 1U ? static_cast<int>(tensor.input_shape[1]) : slice_w;
+        const int existing_physical_c =
+            tensor.input_shape.size() > 2U ? static_cast<int>(tensor.input_shape[2]) : slice_c;
+        const int physical_h = existing_physical_h > 0 ? existing_physical_h : slice_h;
+        const int physical_w = existing_physical_w > 0 ? existing_physical_w : slice_w;
+        const int padded_c = round_up_to_multiple_int_local(slice_c, 16);
+        const int physical_c = std::max(existing_physical_c, padded_c);
+        if (physical_h > 0 && physical_w > 0 && physical_c > 0) {
+          tensor.input_shape = {physical_h, physical_w, physical_c};
+          const int elem_bytes = dtype_size_bytes_local(tensor.data_type);
+          const std::uint64_t physical_size =
+              boxdecode_hwc_size_bytes_local(physical_h, physical_w, physical_c, elem_bytes);
+          if (physical_size > 0U) {
+            tensor.source_size_bytes = physical_size;
+            if (i < out.physical_inputs.size()) {
+              out.physical_inputs[i].size_bytes = physical_size;
+            }
+          }
+        }
+      }
     }
     out.input_dtype = out.tensors.front().data_type;
   }
