@@ -218,6 +218,73 @@ RUN_TEST("unit_graph_stage_emitter_test", [] {
 
   {
     simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "in");
+    const auto output_a = add_output_endpoint(graph, "left");
+    const auto output_b = add_output_endpoint(graph, "right");
+    connect_runtime(graph, input, "out", output_a, "in");
+    connect_runtime(graph, input, "out", output_b, "in");
+
+    simaai::neat::Run run = graph.build();
+
+    require(run.push("in", make_text_sample("prompt", "fanout-token")),
+            "push to direct input fanout failed");
+    auto left = run.pull("left", 1000);
+    auto right = run.pull("right", 1000);
+    require(left.has_value(), "left direct fanout output timed out");
+    require(right.has_value(), "right direct fanout output timed out");
+    require(sample_text(*left) == "fanout-token", "left direct fanout text changed");
+    require(sample_text(*right) == "fanout-token", "right direct fanout text changed");
+    run.stop();
+  }
+
+  {
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "in");
+    const auto stage_a = graph.append_runtime_vertex_for_internal_graph_(make_pass_node());
+    const auto stage_b = graph.append_runtime_vertex_for_internal_graph_(make_pass_node());
+    const auto output_a = add_output_endpoint(graph, "stage_left");
+    const auto output_b = add_output_endpoint(graph, "stage_right");
+    connect_runtime(graph, input, "out", stage_a, "in");
+    connect_runtime(graph, input, "out", stage_b, "in");
+    connect_runtime(graph, stage_a, "out", output_a, "in");
+    connect_runtime(graph, stage_b, "out", output_b, "in");
+
+    simaai::neat::Run run = graph.build();
+
+    require(run.push("in", make_text_sample("prompt", "stage-fanout-token")),
+            "push to direct input stage fanout failed");
+    auto left = run.pull("stage_left", 1000);
+    auto right = run.pull("stage_right", 1000);
+    require(left.has_value(), "left stage fanout output timed out");
+    require(right.has_value(), "right stage fanout output timed out");
+    require(sample_text(*left) == "stage-fanout-token", "left stage fanout text changed");
+    require(sample_text(*right) == "stage-fanout-token", "right stage fanout text changed");
+    run.stop();
+  }
+
+  {
+    simaai::neat::Graph graph;
+    const auto input = add_input_endpoint(graph, "in");
+    const auto output_a = add_output_endpoint(graph, "seeded_left");
+    const auto output_b = add_output_endpoint(graph, "seeded_right");
+    connect_runtime(graph, input, "out", output_a, "in");
+    connect_runtime(graph, input, "out", output_b, "in");
+
+    simaai::neat::Run run = graph.build(make_text_sample("prompt", "seed-token"));
+
+    require(run.push("in", make_text_sample("prompt", "live-text")),
+            "push after seeded direct input build failed");
+    auto left = run.pull("seeded_left", 1000);
+    auto right = run.pull("seeded_right", 1000);
+    require(left.has_value(), "left seeded direct fanout output timed out");
+    require(right.has_value(), "right seeded direct fanout output timed out");
+    require(sample_text(*left) == "live-text", "left seeded direct fanout text changed");
+    require(sample_text(*right) == "live-text", "right seeded direct fanout text changed");
+    run.stop();
+  }
+
+  {
+    simaai::neat::Graph graph;
     auto state = std::make_shared<StreamState>();
     const auto input = add_input_endpoint(graph, "in");
     const auto streamer =

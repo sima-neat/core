@@ -65,11 +65,6 @@ bool is_direct_source_input_only_segment(const graph::CompiledPipelineSegment& s
   return dynamic_cast<const simaai::neat::Input*>(nodes.front().get()) != nullptr;
 }
 
-bool is_public_input_only_fragment(std::span<const std::shared_ptr<simaai::neat::Node>> nodes) {
-  return nodes.size() == 1U && nodes.front() &&
-         dynamic_cast<const simaai::neat::Input*>(nodes.front().get()) != nullptr;
-}
-
 BoundaryPolicy decide_boundary_policy(const graph::Graph& graph,
                                       const graph::CompiledPipelineSegment& seg) {
   BoundaryPolicy out;
@@ -648,22 +643,6 @@ build_runtime_graph_from_connected_public_view(const View& view,
         break;
       }
       cur = next;
-    }
-
-    // A connected-graph fanout directly from a bare Input used to lower to a single appsrc
-    // pipeline segment feeding a runtime FanOut stage.  GStreamer parses "appsrc ..." as a
-    // standalone element rather than a bin in that shape, which made build fail with
-    // "parser returned non-bin root element".  Insert the same queue users had to add by hand
-    // whenever a public Input-only fragment has downstream graph edges: appsrc ! queue is a real
-    // segment boundary, provides a thread/caps handoff point, and keeps tensor/sample semantics
-    // unchanged.
-    if (is_public_input_only_fragment(nodes)) {
-      const bool has_downstream_edge =
-          std::any_of(view.edges.begin(), view.edges.end(),
-                      [&](const auto& edge) { return edge.from == start; });
-      if (has_downstream_edge) {
-        nodes.push_back(simaai::neat::nodes::Queue());
-      }
     }
 
     auto pipeline_node = std::make_shared<graph::nodes::PipelineNode>(

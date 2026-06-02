@@ -345,9 +345,7 @@ int main() {
     std::uint64_t expected_reneg = 0;
     for (size_t i = 1; i < images.size(); ++i) {
       require(run.push(TensorList{make_rgb_tensor(images[i].rgb)}),
-              "preproc: push new size #1 failed");
-      require(run.push(TensorList{make_rgb_tensor(images[i].rgb)}),
-              "preproc: push new size #2 failed");
+              "preproc: push new size failed");
 
       Sample outs = run.pull_samples(5000);
       require(outs.size() == 1, "appsink: expected one output after renegotiation");
@@ -355,7 +353,7 @@ int main() {
 
       expected_reneg++;
       require(wait_for_reneg(run, expected_reneg, 1000),
-              "preproc: renegotiation not observed after stability");
+              "preproc: renegotiation not observed after resize");
 
       const json* cfg_ptr = preproc->config_json();
       require(cfg_ptr != nullptr, "preproc: config json missing after renegotiation");

@@ -4447,6 +4447,58 @@ int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
                                                            plan.modelpack_input_depth);
 }
 
+int resolve_preproc_output_width(const internal::PreprocessPlannerResult& plan,
+                                 int fallback_input_width) {
+  const auto& effective = plan.resolved_plan.effective;
+  if (effective.resize.width > 0) {
+    return effective.resize.width;
+  }
+  const auto& mla = plan.resolved_plan.mla_contract;
+  if (mla.width > 0) {
+    return mla.width;
+  }
+  if (mla.max_width > 0) {
+    return mla.max_width;
+  }
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
+  if (ingress != nullptr && ingress->width > 0) {
+    return ingress->width;
+  }
+  const auto* resolved_ingress =
+      maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
+  if (resolved_ingress != nullptr && resolved_ingress->width > 0) {
+    return resolved_ingress->width;
+  }
+  return fallback_input_width;
+}
+
+int resolve_preproc_output_height(const internal::PreprocessPlannerResult& plan,
+                                  int fallback_input_height) {
+  const auto& effective = plan.resolved_plan.effective;
+  if (effective.resize.height > 0) {
+    return effective.resize.height;
+  }
+  const auto& mla = plan.resolved_plan.mla_contract;
+  if (mla.height > 0) {
+    return mla.height;
+  }
+  if (mla.max_height > 0) {
+    return mla.max_height;
+  }
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
+  if (ingress != nullptr && ingress->height > 0) {
+    return ingress->height;
+  }
+  const auto* resolved_ingress =
+      maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
+  if (resolved_ingress != nullptr && resolved_ingress->height > 0) {
+    return resolved_ingress->height;
+  }
+  return fallback_input_height;
+}
+
 void populate_model_managed_preproc_options(PreprocOptions* opt,
                                             const internal::PreprocessPlannerResult& plan,
                                             const InputInfo* input) {
@@ -4493,9 +4545,8 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
 
   opt->output_img_type = resolve_preproc_output_format(plan);
   {
-    std::vector<int> output_shape = {
-        (effective.resize.height > 0) ? effective.resize.height : opt->input_height(),
-        (effective.resize.width > 0) ? effective.resize.width : opt->input_width()};
+    std::vector<int> output_shape = {resolve_preproc_output_height(plan, opt->input_height()),
+                                     resolve_preproc_output_width(plan, opt->input_width())};
     const int output_depth = pipeline_internal::default_depth_for_image_format(
         opt->output_img_type, opt->input_channels());
     if (output_depth > 0) {
