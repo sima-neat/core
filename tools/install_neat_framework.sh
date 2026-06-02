@@ -48,6 +48,10 @@ set -euo pipefail
 #   when the board carries the SDK's git-suffixed compatible memory package.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
+# - NEAT_INSTALLER_RUNTIME_REPAIR: auto/always/off (default: auto) controls
+#   Modalix runtime readiness after board DEB install. auto repairs only when
+#   appcomplex is inactive, always resets/repairs through the packaged EV74
+#   firmware activator, and off skips runtime readiness management.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -59,6 +63,7 @@ NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
+NEAT_INSTALLER_RUNTIME_REPAIR="${NEAT_INSTALLER_RUNTIME_REPAIR:-auto}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
@@ -679,32 +684,88 @@ prepare_debs_for_board_install() {
   DEBS=("${prepared[@]}")
 }
 
-verify_board_runtime_services() {
+board_runtime_service_exists() {
   local service="simaai-appcomplex.service"
 
   if ! command -v systemctl >/dev/null 2>&1; then
-    return 0
+    return 1
   fi
 
   if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
+    return 1
+  fi
+
+  return 0
+}
+
+print_board_runtime_diagnostics() {
+  local service="simaai-appcomplex.service"
+
+  echo "${service} is not active after NEAT package installation." >&2
+  run_sudo systemctl --no-pager --full status "${service}" >&2 || true
+  run_sudo journalctl -u "${service}" --no-pager -n 100 >&2 || true
+}
+
+run_packaged_runtime_repair() {
+  local activator="/usr/libexec/sima-neat-firmware/install.sh"
+
+  if [[ ! -x "${activator}" ]]; then
+    log "Packaged EV74 runtime repair skipped; ${activator} is not installed/executable."
+    return 1
+  fi
+
+  log "Running packaged EV74 activation/runtime repair: ${activator} --activate"
+  run_sudo "${activator}" --activate
+}
+
+verify_board_runtime_services() {
+  local service="simaai-appcomplex.service"
+  local repair_mode="${NEAT_INSTALLER_RUNTIME_REPAIR,,}"
+
+  if ! board_runtime_service_exists; then
+    return 0
+  fi
+
+  case "${repair_mode}" in
+    auto|always|off) ;;
+    *)
+      echo "Unsupported NEAT_INSTALLER_RUNTIME_REPAIR=${NEAT_INSTALLER_RUNTIME_REPAIR}; expected auto, always, or off." >&2
+      exit 1
+      ;;
+  esac
+
+  if [[ "${repair_mode}" == "off" ]]; then
+    log "NEAT_INSTALLER_RUNTIME_REPAIR=off; skipping board runtime repair/verification."
     return 0
   fi
 
   # The Debian maintainer script is intentionally generated through debhelper,
   # and deb-systemd-invoke treats service start failures as non-fatal so package
   # transactions can still complete.  For this installer the runtime is not
-  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
-  # try one start/restart if the unit is inactive, then fail with the unit status
-  # instead of leaving users with later "Connecting to server failed" errors.
-  if ! systemctl is-active --quiet "${service}"; then
-    log "${service} is not active after package install; attempting to start it once."
-    run_sudo systemctl start "${service}" || true
-    sleep 1
+  # usable without the MLA shared-memory dispatcher.  A plain service start is
+  # insufficient on dirty DevKit runners because appcomplex's ExecStartPre runs
+  # init_mla_memory.sh without resetting remoteprocs.  When repair is needed,
+  # use the packaged EV74 firmware activator: it owns remoteproc reset, rpmsg
+  # readiness, init_mla_memory, service restart, and runtime health checks.
+  if [[ "${repair_mode}" == "always" ]]; then
+    if ! run_packaged_runtime_repair && systemctl is-active --quiet "${service}"; then
+      log "Packaged runtime repair returned non-zero, but ${service} is active; continuing with verification."
+    fi
+  elif ! systemctl is-active --quiet "${service}"; then
+    log "${service} is not active after package install; running packaged runtime repair."
+    run_packaged_runtime_repair || {
+      if systemctl is-active --quiet "${service}"; then
+        log "Packaged runtime repair returned non-zero, but ${service} is active; continuing with verification."
+      else
+        log "Packaged runtime repair failed/unavailable; falling back to systemctl start ${service}."
+        run_sudo systemctl start "${service}" || true
+        sleep 1
+      fi
+    }
   fi
 
   if ! systemctl is-active --quiet "${service}"; then
-    echo "${service} is not active after NEAT package installation." >&2
-    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
+    print_board_runtime_diagnostics
     exit 1
   fi
 
