@@ -2085,7 +2085,7 @@ PY
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
       echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind ninja
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja
       local py_abi
       local py_triplet
       local pyneat_ext_suffix
