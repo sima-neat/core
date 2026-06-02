@@ -451,8 +451,7 @@ std::uint64_t boxdecode_hwc_size_bytes_local(const int h, const int w, const int
   if (h <= 0 || w <= 0 || c <= 0 || elem_bytes <= 0) {
     return 0U;
   }
-  const std::uint64_t factors[] = {static_cast<std::uint64_t>(h),
-                                   static_cast<std::uint64_t>(w),
+  const std::uint64_t factors[] = {static_cast<std::uint64_t>(h), static_cast<std::uint64_t>(w),
                                    static_cast<std::uint64_t>(c),
                                    static_cast<std::uint64_t>(elem_bytes)};
   std::uint64_t total = 1U;
@@ -1434,8 +1433,7 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
               "MPK branch")) {
         return std::nullopt;
       }
-      facts.detess_align_c16 =
-          facts.detess_align_c16 || (stage.has_align_c16 && stage.align_c16);
+      facts.detess_align_c16 = facts.detess_align_c16 || (stage.has_align_c16 && stage.align_c16);
       facts.detess_cblock = facts.detess_cblock || (stage.has_cblock && stage.cblock);
     }
 

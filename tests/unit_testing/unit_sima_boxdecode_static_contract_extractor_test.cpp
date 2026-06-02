@@ -538,17 +538,15 @@ RUN_TEST(
           *extracted_c16_padded_subset);
       require(extracted_c16_padded->tensors.size() == 6U,
               "BF16 MLATess C16 padded route should preserve all YOLO heads");
-      require(extracted_c16_padded->tensors[0].input_shape == std::vector<int>({80, 80, 16}) &&
-                  extracted_c16_padded->tensors[0].slice_shape ==
-                      std::vector<int>({80, 80, 4}),
-              "BF16 MLATess C16 padded bbox head should expose physical C16 input and logical slice");
+      require(
+          extracted_c16_padded->tensors[0].input_shape == std::vector<int>({80, 80, 16}) &&
+              extracted_c16_padded->tensors[0].slice_shape == std::vector<int>({80, 80, 4}),
+          "BF16 MLATess C16 padded bbox head should expose physical C16 input and logical slice");
       require(extracted_c16_padded->tensors[1].input_shape == std::vector<int>({40, 40, 16}) &&
-                  extracted_c16_padded->tensors[2].input_shape ==
-                      std::vector<int>({20, 20, 16}),
+                  extracted_c16_padded->tensors[2].input_shape == std::vector<int>({20, 20, 16}),
               "all bbox heads should round physical channels to C16");
       require(extracted_c16_padded->tensors[3].input_shape == std::vector<int>({80, 80, 80}) &&
-                  extracted_c16_padded->tensors[3].slice_shape ==
-                      std::vector<int>({1, 80, 80}),
+                  extracted_c16_padded->tensors[3].slice_shape == std::vector<int>({1, 80, 80}),
               "already-aligned score head should preserve its physical channel count");
       std::uint64_t c16_expected_total = 0U;
       for (const auto& tensor : extracted_c16_padded->tensors) {
