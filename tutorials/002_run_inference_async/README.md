@@ -60,6 +60,10 @@ python3 share/sima-neat/tutorials/002_run_inference_async/run_inference_async.py
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
+## In Practice
+
+This chapter uses the async push/pull surface. For the full build-vs-run and sync-vs-async model plus the complete `RunOptions` surface, see [Build an Inference Pipeline](/tutorials/003-build-inference-pipeline). For queue depth, overflow policy, and metrics under load, see [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues).
+
 ## Source Files
 - C++: `tutorials/002_run_inference_async/run_inference_async.cpp`
 - Python: `tutorials/002_run_inference_async/run_inference_async.py`

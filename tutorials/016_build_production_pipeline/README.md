@@ -33,7 +33,7 @@ Chapters 002 (async), 004 (ModelOptions), 007 (ModelRouteOptions), 015 (RunOptio
 **References**
 - [Model](/reference/programming-model/model)
 - [Graph](/reference/programming-model/graph)
-- [Graph](/reference/programming-model/graph)
+- [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues) — queue sizing, overflow policy, and output-lifetime tuning.
 
 ## Learning Process
 1. Prepare deterministic input and shared runtime options for production-like behavior.

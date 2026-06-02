@@ -19,13 +19,30 @@
       ]
     },
     {
-      "key": "model-sdk",
-      "title": "Model SDK",
+      "key": "model-sdk-guides",
+      "title": "Compile Your Model",
+      "repo": "git@github.com:sima-neat/model-sdk",
+      "branch": "main",
+      "githash": "",
+      "docs_subpath": "docs/guides",
+      "mount": "compile-your-model",
+      "sidebar_position": 7,
+      "files_order": [
+        "index",
+        "compile_your_first_model",
+        "quantization",
+        "compilation",
+        "supported_operators"
+      ]
+    },
+    {
+      "key": "model-sdk-api",
+      "title": "API Reference",
       "repo": "git@github.com:sima-neat/model-sdk",
       "branch": "main",
       "githash": "",
       "docs_subpath": "docs/generated",
-      "mount": "model-sdk",
+      "mount": "compile-your-model/api-reference",
       "sidebar_position": 7,
       "files_order": [
         "index"
@@ -35,7 +52,7 @@
       ],
       "restructure_api": true,
       "landing_page": {
-        "title": "Model SDK APIs",
+        "title": "Model SDK API Reference",
         "intro": "The Model SDK exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
         "groups": [
           {

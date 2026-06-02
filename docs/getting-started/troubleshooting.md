@@ -108,7 +108,7 @@ opt.preprocess.preset = neat.NormalizePreset.COCO_YOLO
 
 - **"Where's my `.engine` / `.blob` / `.dlc` / `.hef`?"** — Neat loads a `.tar.gz` model archive; that's the equivalent compiled artifact.
 - **"How do I pin work to a CUDA stream / OpenCL queue?"** — you don't; decouple producer/consumer with async `push`/`pull` and tune `RunOptions` instead.
-- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Runtime Tuning](/how-to/runtime_tuning).
+- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues).
 
 ## When you're stuck: diagnostics
 

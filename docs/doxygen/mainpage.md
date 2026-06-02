@@ -59,7 +59,7 @@ The framework's public surface is a small set of primary concepts. They form a c
 | Conceptual deep-dives (dtype contract, memory model, error codes, etc.) | [dtype contract](/concepts/dtype_contract), [memory model](/concepts/memory_model), [graphs](/concepts/graphs), [timing model](/concepts/timing_model), [threading](/concepts/threading), [processor backends](/concepts/processor_backends), [GStreamer underneath](/concepts/gstreamer_layer), [CVU kernels](/concepts/cvu_kernels), [MPK contract](/concepts/mpk_contract), [error codes](/concepts/error_codes), [build options](/concepts/build_options), [agentic workflow](/concepts/agentic_workflow) |
 | Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/env_vars), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
 | Onboarding, build, first inference | [Installation](/getting-started/installation), [Build](/contribute/build), [Hello Neat](/getting-started/minimal_example/minimal) |
-| How to do specific things (debugging, runtime tuning, plugin failures) | [How-to: runtime tuning](/how-to/runtime_tuning), [How-to: diagnostics](/how-to/diagnostics), [How-to: plugin failures](/how-to/plugin_failures) |
+| How to do specific things (debugging, runtime tuning, plugin failures) | [Tutorial 015: tune throughput & queues](/tutorials/015-tune-throughput-and-queues), [Tutorial 011: diagnose a pipeline](/tutorials/011-diagnose-a-pipeline) |
 | Coding standards, MPK contract, contribution policy | [Coding standard](/contribute/coding_standard), [MPK contract](/contribute/mpk_contract), [Architecture](/contribute/architecture) |
 
 ## Why the framework is built for agents

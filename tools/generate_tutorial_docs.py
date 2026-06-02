@@ -86,6 +86,7 @@ class TutorialModule:
     concept: str
     process_steps: List[str]
     run_section: str
+    in_practice: str
     cpp_rel: str
     py_rel: str
 
@@ -302,6 +303,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     concept_section = _extract_section(text, "Concept")
     process_section = _extract_section(text, "Learning Process")
     run_section = _extract_section(text, "Run")
+    in_practice_section = _extract_section(text, "In Practice")
 
     meta = _parse_metadata_table(meta_section)
     difficulty = meta.get("difficulty", "Intermediate")
@@ -325,6 +327,7 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
         concept=concept_section,
         process_steps=process_steps,
         run_section=run_section,
+        in_practice=in_practice_section,
         cpp_rel=cpp_rel,
         py_rel=py_rel,
     )
@@ -383,6 +386,11 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     # single source of truth for run instructions — no hardcoded env-var blocks.
     if module.run_section.strip():
         lines.extend(["", "## Run", "", module.run_section])
+    # Pass the README's optional `## In Practice` section through verbatim so
+    # operational guidance (folded from the former How-To guides) is taught in
+    # context. Markdown tables pass through like the `## Run` block above.
+    if module.in_practice.strip():
+        lines.extend(["", "## In Practice", "", module.in_practice])
     lines.extend(
         [
             "",

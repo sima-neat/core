@@ -72,7 +72,6 @@ const docSectionFromPath = (pathname) => {
   if (pathname.startsWith("/reference/cppapi")) return "api-reference-cpp";
   if (pathname.startsWith("/reference/pythonapi")) return "api-reference-python";
   if (parts[0] === "getting-started") return "getting-started";
-  if (parts[0] === "how-to") return "how-to";
   if (parts[0] === "tutorials") return "tutorials";
   if (parts[0] === "reference") return "reference";
   if (parts[0] === "contribute") return "contribute";
