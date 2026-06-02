@@ -1,6 +1,6 @@
 ---
 title: Run an App
-description: Run a YOLOv8 model and compose it into a small Graph app
+description: Run YOLOv8 inside a Graph application and read decoded bounding boxes, in Python or C++
 sidebar_position: 2
 mdx:
   format: mdx
@@ -10,24 +10,22 @@ mdx:
 
 ![YOLOv8 detections from Neat on the source image](../../images/first_inference_hook.png)
 
-## What You’ll Build
+*Detections written by the program below, drawn on the source image.*
 
-This page builds a small object-detection app: it runs a YOLOv8 model on a sample image and prints how many objects were detected.
+This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly, you compose the model into a [`Graph`](/reference/programming-model/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
 
-The shortest path to run a model is to call `Model.run(...)` directly on a list of inputs — great for testing that a model loads and producing output. Most real applications need more structure, though: named inputs, one or more models, custom logic, branches, and outputs. [`Graph`](/reference/programming-model/graph) is the Neat API for authoring that application pipeline, and that is what we build here.
+For this first app the shape is intentionally simple:
 
-For this first app we keep the shape intentionally simple:
-
-- A named _input_ (`nodes.input()`) marks where data enters the app.
+- A named _input_ (`nodes.input("image")`) marks where data enters the app.
 - A _model_ (`graph.add(model)`) runs the model as one step in the pipeline.
-- A named _output_ (`nodes.output()`) marks where your application reads the result.
+- A named _output_ (`nodes.output("detections")`) marks where your application reads the result.
 
 ![Assembling your Graph](../../images/hello-neat-graph-add-animation.svg)
 
-The same API scales to much more complex applications later; here the goal is to learn the core composition pattern.
+The same API scales to much more complex applications later; here the goal is the core composition pattern.
 
 :::tip Pick your language
-Use the **Python / C++** tabs in any code block below — your choice follows the site-wide language selector, so every snippet and the full program switch together.
+Use the **Python / C++** tabs on any code block — your choice follows the site-wide language selector, so every snippet and the full program switch together.
 :::
 
 ## Set up the project
@@ -53,11 +51,9 @@ Use the **Python / C++** tabs in any code block below — your choice follows th
 
 ## Walk through the code
 
-Each step below is one part of the program. Read them in order, then copy the [full program](#full-program) at the end to build and run.
+The program is eight short pieces. Switch the language tab on each block.
 
-### 1. Load the image
-
-OpenCV reads the file; Neat enters at the next step. YOLOv8s expects a 640&nbsp;×&nbsp;640 input, so resize first.
+### 1. Read the image
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
@@ -65,156 +61,217 @@ OpenCV reads the file; Neat enters at the next step. YOLOv8s expects a 640&nbsp;
 ```python
 import cv2
 
-bgr = cv2.imread("assets/tutorial_sample_image.png", cv2.IMREAD_COLOR)
-bgr = cv2.resize(bgr, (640, 640))
+bgr = cv2.imread("assets/tutorial_sample_image.png")
+rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 ```
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-cv::Mat bgr = cv::imread("assets/tutorial_sample_image.png", cv::IMREAD_COLOR);
-cv::resize(bgr, bgr, cv::Size(640, 640));
+#include <opencv2/opencv.hpp>
+
+cv::Mat bgr = cv::imread("assets/tutorial_sample_image.png");
+cv::Mat rgb;
+cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 ```
 
 </CodeTab>
 </CodeTabs>
 
-### 2. Configure `ModelOptions` and load the model
+OpenCV reads BGR; YOLOv8 expects RGB. This step is not Neat — your application gets pixels from a file, camera, or decoder; Neat enters at the next step.
 
-`ModelOptions` declares how the input is preprocessed and how the detector output is decoded. `Model` then reads the `.tar.gz`, validates its **MPK contract** against those options, and instantiates the pipeline.
+### 2. Describe the pipeline
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
 ```python
-opt = pyneat.ModelOptions()
-opt.preprocess.kind = pyneat.InputKind.Image
-opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
-opt.preprocess.input_max_width = 640
-opt.preprocess.input_max_height = 640
-opt.preprocess.input_max_depth = 3
-opt.preprocess.normalize.enable = pyneat.AutoFlag.On
-opt.preprocess.normalize.mean = [0.485, 0.456, 0.406]
-opt.preprocess.normalize.stddev = [0.229, 0.224, 0.225]
-opt.decode_type = pyneat.BoxDecodeType.YoloV8
-opt.score_threshold = 0.55
-opt.nms_iou_threshold = 0.5
-opt.top_k = 100
-opt.boxdecode_original_width = 640
-opt.boxdecode_original_height = 640
+import pyneat as neat
 
-model = pyneat.Model("assets/yolo_v8s_mpk.tar.gz", opt)
+opt = neat.ModelOptions()
+opt.preprocess.kind   = neat.InputKind.Image
+opt.preprocess.preset = neat.NormalizePreset.COCO_YOLO
+opt.decode_type       = neat.BoxDecodeType.YoloV8
+opt.score_threshold   = 0.25
+opt.nms_iou_threshold = 0.45
+opt.top_k             = 100
 ```
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Model::Options opt;
-opt.preprocess.kind = simaai::neat::InputKind::Image;
-opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
-opt.preprocess.input_max_width = 640;
-opt.preprocess.input_max_height = 640;
-opt.preprocess.input_max_depth = 3;
-opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
-opt.preprocess.normalize.mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
-opt.preprocess.normalize.stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
-opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
-opt.score_threshold = 0.55f;
-opt.nms_iou_threshold = 0.5f;
-opt.top_k = 100;
-opt.boxdecode_original_width = 640;
-opt.boxdecode_original_height = 640;
+#include <neat.h>
+namespace neat = simaai::neat;
 
-simaai::neat::Model model("assets/yolo_v8s_mpk.tar.gz", opt);
+neat::Model::Options opt;
+opt.preprocess.kind   = neat::InputKind::Image;
+opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
+opt.decode_type       = neat::BoxDecodeType::YoloV8;
+opt.score_threshold   = 0.25f;
+opt.nms_iou_threshold = 0.45f;
+opt.top_k             = 100;
 ```
 
 </CodeTab>
 </CodeTabs>
 
-### 3. Compose the Graph
+`ModelOptions` declares the whole shape of the model pipeline in one object — how the input is preprocessed and how the detector output is decoded.
 
-A `Graph` is the application pipeline. Each `add(...)` appends the next step: a named input, the model, and a named output.
+| Field | What it sets |
+|---|---|
+| `preprocess.kind = Image` | Input is raw pixels, not a pre-shaped tensor. |
+| `preprocess.preset = COCO_YOLO` | Resize + letterbox to model input, RGB, scale by `1/255`, no mean subtraction. |
+| `decode_type = YoloV8` | Detection-head decoder family. |
+| `score_threshold` / `nms_iou_threshold` / `top_k` | Confidence floor, NMS overlap, and max boxes kept. |
+
+### 3. Load the model
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
 ```python
-graph = pyneat.Graph("hello_neat_app")
-graph.add(pyneat.nodes.input("image"))
+model = neat.Model("assets/yolo_v8s_mpk.tar.gz", opt)
+```
+
+</CodeTab>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+neat::Model model("assets/yolo_v8s_mpk.tar.gz", opt);
+```
+
+</CodeTab>
+</CodeTabs>
+
+`Model` reads the `.tar.gz`, validates its **MPK contract** against the `ModelOptions` you passed, and instantiates the model fragment. Nothing has run yet.
+
+### 4. Wrap your image as a `Tensor`
+
+<CodeTabs>
+<CodeTab label="Python" lang="python">
+
+```python
+tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
+```
+
+</CodeTab>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+neat::Tensor input = neat::from_cv_mat(rgb, neat::ImageSpec::PixelFormat::RGB);
+```
+
+</CodeTab>
+</CodeTabs>
+
+`Tensor` is Neat's typed data container — shape, dtype, layout, and the pixel format the framework needs to interpret the bytes. Passing the `PixelFormat` is required so Neat knows the layout, not just the bytes.
+
+### 5. Compose the Graph
+
+<CodeTabs>
+<CodeTab label="Python" lang="python">
+
+```python
+graph = neat.Graph("hello_neat_app")
+graph.add(neat.nodes.input("image"))
 graph.add(model)
-graph.add(pyneat.nodes.output("detections"))
+graph.add(neat.nodes.output("detections"))
 ```
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-simaai::neat::Graph graph("hello_neat_app");
-graph.add(simaai::neat::nodes::Input("image"));
+neat::Graph graph("hello_neat_app");
+graph.add(neat::nodes::Input("image"));
 graph.add(model);
-graph.add(simaai::neat::nodes::Output("detections"));
+graph.add(neat::nodes::Output("detections"));
 ```
 
 </CodeTab>
 </CodeTabs>
 
-### 4. Build, push, and pull
+A `Graph` is the application pipeline. Each `add(...)` appends the next step, so this builds the linear flow `image → model → detections`. The model fragment from step 3 becomes one step inside it.
 
-Build the graph once, then push your image into the named input and pull the result from the named output.
+### 6. Build and run the Graph
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
 ```python
-run = graph.build([bgr], copy=True, image_format=pyneat.PixelFormat.BGR)
-try:
-    run.push("image", [bgr], copy=True, image_format=pyneat.PixelFormat.BGR)
-    sample = run.pull_samples("detections", 20000)
-finally:
-    run.close()
+run = graph.build()
+run.push("image", [tensor])
+outputs = run.pull_tensors("detections")
 ```
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-auto run = graph.build(std::vector<cv::Mat>{bgr});
-run.push("image", std::vector<cv::Mat>{bgr});
-simaai::neat::Sample output = run.pull_samples("detections", 20000);
-run.close();
+neat::Run run = graph.build();
+run.push("image", neat::TensorList{input});
+neat::TensorList outputs = run.pull_tensors("detections");
 ```
 
 </CodeTab>
 </CodeTabs>
 
-### 5. Read the detections
+`build()` lowers the public graph into one executable runtime graph, preserving your node names. You then `push` inputs into named inputs and `pull` results from named outputs. `pull_tensors` returns a `TensorList` — the same shape `Model.run` would have produced — here the packed YOLOv8 `BBOX` output.
 
-The YOLOv8 BBOX output is a `uint8` buffer that begins with a `uint32` detection count.
+### 7. Decode the boxes
 
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
 ```python
-payload = bytes(sample.tensors[0].to_numpy(copy=False))
-detections = struct.unpack_from("<I", payload, 0)[0] if len(payload) >= 4 else 0
-print(f"detections={detections}")
+decoded = neat.decode_bbox(outputs)
 ```
 
 </CodeTab>
 <CodeTab label="C++" lang="cpp">
 
 ```cpp
-std::uint32_t detections = 0;
-simaai::neat::Mapping view = simaai::neat::require_single_tensor(output).map_read();
-if (view.size_bytes >= sizeof(detections))
-  std::memcpy(&detections, view.data, sizeof(detections));
-std::cout << "detections=" << detections << "\n";
+neat::TensorList decoded = neat::decode_bbox(outputs);
 ```
 
 </CodeTab>
 </CodeTabs>
+
+`decode_bbox` is a `TensorList → TensorList` transform, positional 1:1. Each decoded output is a `float32` tensor of shape `[num_detections, 6]` with columns `(x1, y1, x2, y2, score, class_id)`.
+
+### 8. Read the boxes
+
+<CodeTabs>
+<CodeTab label="Python" lang="python">
+
+```python
+labels = {0: "person", 27: "tie"}
+for x1, y1, x2, y2, score, cls in decoded[0].to_numpy():
+    name = labels.get(int(cls), f"id{int(cls)}")
+    print(f"{name:<8} {score:.2f}  [{x1:4.0f} {y1:4.0f} {x2:4.0f} {y2:4.0f}]")
+```
+
+</CodeTab>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+const neat::Tensor& boxes = decoded.front();      // [num_detections, 6] float32
+auto m = boxes.storage->map(neat::MapMode::Read);
+const float* d = static_cast<const float*>(m.data);
+for (int64_t i = 0; i < boxes.shape[0]; ++i) {
+  const float* r = d + i * 6;                     // x1 y1 x2 y2 score class_id
+  const int cls = static_cast<int>(r[5]);
+  const char* name = (cls == 0) ? "person" : (cls == 27) ? "tie" : "?";
+  std::printf("%-8s %.2f  [%4.0f %4.0f %4.0f %4.0f]\n", name, r[4], r[0], r[1], r[2], r[3]);
+}
+```
+
+</CodeTab>
+</CodeTabs>
+
+In Python the decoded tensor reads as an `[N, 6]` NumPy array via `to_numpy()`. In C++ you map the tensor and read the floats. The model emits COCO class IDs; mapping them to display names is on the application.
 
 ## Full program
 
@@ -223,18 +280,14 @@ Create the files in your project directory, then build and run.
 <CodeTabs>
 <CodeTab label="Python" lang="python">
 
-Create `hello_neat.py`:
+`app.py`:
 
 ```python
 #!/usr/bin/env python3
-from __future__ import annotations
-
-import struct
 import sys
-from pathlib import Path
 
 try:
-    import pyneat
+    import pyneat as neat
 except ImportError:
     sys.exit(
         "pyneat is not importable. Either Neat is not installed, or the venv is not activated.\n"
@@ -243,51 +296,44 @@ except ImportError:
 
 import cv2
 
+LABELS = {0: "person", 27: "tie"}
+
 
 def yolo_model_options():
-    opt = pyneat.ModelOptions()
-    opt.preprocess.kind = pyneat.InputKind.Image
-    opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
-    opt.preprocess.input_max_width = 640
-    opt.preprocess.input_max_height = 640
-    opt.preprocess.input_max_depth = 3
-    opt.preprocess.normalize.enable = pyneat.AutoFlag.On
-    opt.preprocess.normalize.mean = [0.485, 0.456, 0.406]
-    opt.preprocess.normalize.stddev = [0.229, 0.224, 0.225]
-    opt.decode_type = pyneat.BoxDecodeType.YoloV8
-    opt.score_threshold = 0.55
-    opt.nms_iou_threshold = 0.5
-    opt.top_k = 100
-    opt.boxdecode_original_width = 640
-    opt.boxdecode_original_height = 640
+    opt = neat.ModelOptions()
+    opt.preprocess.kind   = neat.InputKind.Image
+    opt.preprocess.preset = neat.NormalizePreset.COCO_YOLO
+    opt.decode_type       = neat.BoxDecodeType.YoloV8
+    opt.score_threshold   = 0.25
+    opt.nms_iou_threshold = 0.45
+    opt.top_k             = 100
     return opt
 
 
 def main() -> int:
-    bgr = cv2.imread("assets/tutorial_sample_image.png", cv2.IMREAD_COLOR)
+    bgr = cv2.imread("assets/tutorial_sample_image.png")
     if bgr is None:
         raise RuntimeError("failed to read assets/tutorial_sample_image.png")
-    bgr = cv2.resize(bgr, (640, 640))
+    rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-    model = pyneat.Model("assets/yolo_v8s_mpk.tar.gz", yolo_model_options())
+    model = neat.Model("assets/yolo_v8s_mpk.tar.gz", yolo_model_options())
+    tensor = neat.Tensor.from_numpy(rgb, copy=True, image_format=neat.PixelFormat.RGB)
 
-    # A Graph is the application pipeline. Each add(...) appends the next step.
-    graph = pyneat.Graph("hello_neat_app")
-    graph.add(pyneat.nodes.input("image"))
+    # Compose the model into a Graph application: image -> model -> detections.
+    graph = neat.Graph("hello_neat_app")
+    graph.add(neat.nodes.input("image"))
     graph.add(model)
-    graph.add(pyneat.nodes.output("detections"))
+    graph.add(neat.nodes.output("detections"))
 
-    # Build once, then push into the named input and pull from the named output.
-    run = graph.build([bgr], copy=True, image_format=pyneat.PixelFormat.BGR)
-    try:
-        run.push("image", [bgr], copy=True, image_format=pyneat.PixelFormat.BGR)
-        sample = run.pull_samples("detections", 20000)
-    finally:
-        run.close()
+    # Build the app, push the image into the named input, pull the named output.
+    run = graph.build()
+    run.push("image", [tensor])
+    outputs = run.pull_tensors("detections")
 
-    payload = bytes(sample.tensors[0].to_numpy(copy=False))
-    detections = struct.unpack_from("<I", payload, 0)[0] if len(payload) >= 4 else 0
-    print(f"detections={detections}")
+    decoded = neat.decode_bbox(outputs)
+    for x1, y1, x2, y2, score, cls in decoded[0].to_numpy():
+        name = LABELS.get(int(cls), f"id{int(cls)}")
+        print(f"{name:<8} {score:.2f}  [{x1:4.0f} {y1:4.0f} {x2:4.0f} {y2:4.0f}]")
     print("[OK] Graph app completed")
     return 0
 
@@ -301,11 +347,11 @@ if __name__ == "__main__":
 * **On the DevKit**
   ```bash
   source ~/pyneat/bin/activate
-  python3 hello_neat.py
+  python3 app.py
   ```
 * **On the Neat SDK from host**
   ```bash
-  dk hello_neat.py
+  dk app.py
   ```
 
 </CodeTab>
@@ -315,7 +361,7 @@ Create `CMakeLists.txt` and `main.cpp`:
 
 ```cmake title="CMakeLists.txt"
 cmake_minimum_required(VERSION 3.16)
-project(sima_neat_hello LANGUAGES CXX)
+project(sima_neat_app LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -335,8 +381,8 @@ find_package(SimaNeat REQUIRED CONFIG)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(OPENCV REQUIRED IMPORTED_TARGET opencv4)
 
-add_executable(sima_neat_hello main.cpp)
-target_link_libraries(sima_neat_hello
+add_executable(sima_neat_app main.cpp)
+target_link_libraries(sima_neat_app
   PRIVATE
     SimaNeat::sima_neat
     PkgConfig::OPENCV
@@ -349,66 +395,55 @@ target_link_libraries(sima_neat_hello
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-#include <array>
 #include <cstdint>
-#include <cstring>
-#include <iostream>
+#include <cstdio>
 #include <stdexcept>
-#include <vector>
 
-cv::Mat load_sample_image() {
-  cv::Mat bgr = cv::imread("assets/tutorial_sample_image.png", cv::IMREAD_COLOR);
-  if (bgr.empty())
-    throw std::runtime_error("failed to load sample image");
+namespace neat = simaai::neat;
 
-  // YOLOv8s expects a 640 x 640 input in this example.
-  cv::resize(bgr, bgr, cv::Size(640, 640));
-  return bgr;
-}
-
-simaai::neat::Model::Options yolo_model_options() {
-  simaai::neat::Model::Options opt;
-  opt.preprocess.kind = simaai::neat::InputKind::Image;
-  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
-  opt.preprocess.input_max_width = 640;
-  opt.preprocess.input_max_height = 640;
-  opt.preprocess.input_max_depth = 3;
-  opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
-  opt.preprocess.normalize.mean = std::array<float, 3>{0.485f, 0.456f, 0.406f};
-  opt.preprocess.normalize.stddev = std::array<float, 3>{0.229f, 0.224f, 0.225f};
-  opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
-  opt.score_threshold = 0.55f;
-  opt.nms_iou_threshold = 0.5f;
-  opt.top_k = 100;
-  opt.boxdecode_original_width = 640;
-  opt.boxdecode_original_height = 640;
+neat::Model::Options yolo_model_options() {
+  neat::Model::Options opt;
+  opt.preprocess.kind   = neat::InputKind::Image;
+  opt.preprocess.preset = neat::NormalizePreset::COCO_YOLO;
+  opt.decode_type       = neat::BoxDecodeType::YoloV8;
+  opt.score_threshold   = 0.25f;
+  opt.nms_iou_threshold = 0.45f;
+  opt.top_k             = 100;
   return opt;
 }
 
 int main() {
-  cv::Mat bgr = load_sample_image();
+  cv::Mat bgr = cv::imread("assets/tutorial_sample_image.png");
+  if (bgr.empty())
+    throw std::runtime_error("failed to read assets/tutorial_sample_image.png");
+  cv::Mat rgb;
+  cv::cvtColor(bgr, rgb, cv::COLOR_BGR2RGB);
 
-  simaai::neat::Model model("assets/yolo_v8s_mpk.tar.gz", yolo_model_options());
+  neat::Model model("assets/yolo_v8s_mpk.tar.gz", yolo_model_options());
+  neat::Tensor input = neat::from_cv_mat(rgb, neat::ImageSpec::PixelFormat::RGB);
 
-  // A Graph is the application pipeline. Each add(...) appends the next step.
-  simaai::neat::Graph graph("hello_neat_app");
-  graph.add(simaai::neat::nodes::Input("image"));
+  // Compose the model into a Graph application: image -> model -> detections.
+  neat::Graph graph("hello_neat_app");
+  graph.add(neat::nodes::Input("image"));
   graph.add(model);
-  graph.add(simaai::neat::nodes::Output("detections"));
+  graph.add(neat::nodes::Output("detections"));
 
-  // Build once, then push into the named input and pull from the named output.
-  auto run = graph.build(std::vector<cv::Mat>{bgr});
-  run.push("image", std::vector<cv::Mat>{bgr});
-  simaai::neat::Sample output = run.pull_samples("detections", 20000);
-  run.close();
+  // Build the app, push the image into the named input, pull the named output.
+  neat::Run run = graph.build();
+  run.push("image", neat::TensorList{input});
+  neat::TensorList outputs = run.pull_tensors("detections");
 
-  std::uint32_t detections = 0;
-  simaai::neat::Mapping view = simaai::neat::require_single_tensor(output).map_read();
-  if (view.size_bytes >= sizeof(detections))
-    std::memcpy(&detections, view.data, sizeof(detections));
-
-  std::cout << "detections=" << detections << "\n";
-  std::cout << "[OK] Graph app completed\n";
+  neat::TensorList decoded = neat::decode_bbox(outputs);
+  const neat::Tensor& boxes = decoded.front();      // [num_detections, 6] float32
+  auto m = boxes.storage->map(neat::MapMode::Read);
+  const float* d = static_cast<const float*>(m.data);
+  for (int64_t i = 0; i < boxes.shape[0]; ++i) {
+    const float* r = d + i * 6;                     // x1 y1 x2 y2 score class_id
+    const int cls = static_cast<int>(r[5]);
+    const char* name = (cls == 0) ? "person" : (cls == 27) ? "tie" : "?";
+    std::printf("%-8s %.2f  [%4.0f %4.0f %4.0f %4.0f]\n", name, r[4], r[0], r[1], r[2], r[3]);
+  }
+  std::printf("[OK] Graph app completed\n");
   return 0;
 }
 ```
@@ -424,34 +459,31 @@ cmake --build build -j
 
 * **On the DevKit**
   ```bash
-  ./build/sima_neat_hello
+  ./build/sima_neat_app
   ```
 * **On the Neat SDK from host**
   ```bash
-  dk build/sima_neat_hello
+  dk build/sima_neat_app
   ```
 
 </CodeTab>
 </CodeTabs>
 
-You should see a detection summary similar to:
+You should see one line per detection, then:
 
 ```text
-detections=3
 [OK] Graph app completed
 ```
 
-The exact count can vary by model pack and runtime version. The important part is that the app builds, runs, and reaches `[OK] Graph app completed`.
-
-## What you built
+## What Neat assembled
 
 ![Hello Neat Graph app flow](../../images/hello-neat-graph-app-flow.svg)
 
 The APIs map directly to that shape:
 
-- `Graph` holds the application pipeline.
-- `graph.add(...)` appends each step in order, so the three calls build the linear flow above.
-- The named input and output become the runtime endpoints: `run.push("image", ...)` and `run.pull_samples("detections", ...)`.
+- `Graph` holds the application pipeline; `graph.add(...)` appends each step in order.
+- The named input and output become the runtime endpoints: `run.push("image", ...)` and `run.pull_tensors("detections")`.
+- `Model` is the same fragment you would call directly with `Model.run`; here it runs as one node inside the app.
 
 ## Next steps
 
