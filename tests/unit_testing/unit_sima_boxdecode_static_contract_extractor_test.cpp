@@ -443,6 +443,122 @@ RUN_TEST(
                   extracted_decoupled->tensors[3].slice_shape == std::vector<int>({1, 80, 80}),
               "decoupled route should preserve upstream detess slice geometry in extracted order");
 
+      MpkContract c16_padded_mpk;
+      MpkPluginIoContract c16_mla;
+      c16_mla.name = "MLA_0";
+      c16_mla.processor = "MLA";
+      c16_mla.kernel = "mla";
+      c16_mla.canonical_output_dtype = "BF16";
+      c16_mla.output_tensors.push_back(MpkTensorContract{
+          .tensor_index = 0,
+          .physical_index = 0,
+          .name = "MLA_0",
+          .dtype = "BF16",
+          .mpk_shape = {1, 1612800},
+          .shape_semantics = MpkShapeSemantics::PackedExtent,
+          .size_bytes = 1612800,
+      });
+      c16_padded_mpk.plugins.push_back(std::move(c16_mla));
+
+      MpkPluginIoContract c16_unpack;
+      c16_unpack.name = "MLA_0_ofm_unpack_transform";
+      c16_unpack.kernel = "ofm_unpack";
+      const std::array<int, 6> c16_widths = {80, 40, 20, 80, 40, 20};
+      const std::array<int, 6> c16_logical_channels = {4, 4, 4, 80, 80, 80};
+      const std::array<const char*, 6> c16_names = {
+          "bbox_0", "bbox_1", "bbox_2", "class_logit_0", "class_logit_1", "class_logit_2",
+      };
+      for (std::size_t i = 0; i < c16_names.size(); ++i) {
+        c16_unpack.output_tensors.push_back(MpkTensorContract{
+            .tensor_index = static_cast<int>(i),
+            .name = c16_names[i],
+            .segment_name = "MLA_0",
+            .dtype = "BF16",
+            .mpk_shape = {c16_widths[i], c16_widths[i], c16_logical_channels[i]},
+            .shape_semantics = MpkShapeSemantics::Geometry,
+            .size_bytes = static_cast<std::size_t>(c16_widths[i] * c16_widths[i] *
+                                                   c16_logical_channels[i] * 2),
+            .byte_offset = 0,
+            .logical_shape = {c16_widths[i], c16_widths[i], c16_logical_channels[i]},
+        });
+      }
+      c16_padded_mpk.plugins.push_back(std::move(c16_unpack));
+      c16_padded_mpk.edges.push_back(MpkContractEdge{
+          .src_plugin_index = 0U,
+          .src_output_index = 0,
+          .dst_plugin_index = 1U,
+          .dst_input_index = 0,
+          .src_plugin = "MLA_0",
+          .dst_plugin = "MLA_0_ofm_unpack_transform",
+          .tensor_name = "MLA_0",
+      });
+      for (std::size_t i = 0; i < c16_names.size(); ++i) {
+        MpkPluginIoContract detess_stage;
+        detess_stage.name = std::string("detessellate_") + c16_names[i];
+        detess_stage.kernel = "detessellation_transform";
+        detess_stage.slice_shape = {(i < 3U) ? c16_widths[i] : 1, c16_widths[i],
+                                    c16_logical_channels[i]};
+        detess_stage.has_align_c16 = true;
+        detess_stage.align_c16 = true;
+        detess_stage.has_cblock = true;
+        detess_stage.cblock = true;
+        detess_stage.output_tensors.push_back(MpkTensorContract{
+            .tensor_index = 0,
+            .name = std::string(c16_names[i]) + "_detess",
+            .dtype = "BF16",
+            .mpk_shape = {c16_widths[i], c16_widths[i], c16_logical_channels[i]},
+            .shape_semantics = MpkShapeSemantics::Geometry,
+            .size_bytes = static_cast<std::size_t>(c16_widths[i] * c16_widths[i] *
+                                                   c16_logical_channels[i] * 2),
+            .logical_shape = {c16_widths[i], c16_widths[i], c16_logical_channels[i]},
+        });
+        c16_padded_mpk.plugins.push_back(std::move(detess_stage));
+        const std::size_t detess_index = c16_padded_mpk.plugins.size() - 1U;
+        c16_padded_mpk.edges.push_back(MpkContractEdge{
+            .src_plugin_index = 1U,
+            .src_output_index = static_cast<int>(i),
+            .dst_plugin_index = detess_index,
+            .dst_input_index = 0,
+            .src_plugin = "MLA_0_ofm_unpack_transform",
+            .dst_plugin = c16_padded_mpk.plugins[detess_index].name,
+            .tensor_name = c16_names[i],
+        });
+      }
+      const auto extracted_c16_padded =
+          build_boxdecode_static_contract_from_mpk(c16_padded_mpk, make_flags(false, true), &error);
+      require(extracted_c16_padded.has_value(),
+              "BF16 MLATess C16 padded MLA route should resolve a boxdecode contract: " + error);
+      const auto extracted_c16_padded_subset = extract_boxdecode_contract_subset_from_mpk(
+          c16_padded_mpk, make_flags(false, true), nullptr, &error);
+      require(extracted_c16_padded_subset.has_value(),
+              "BF16 MLATess C16 padded MLA subset should preserve padded source facts: " + error);
+      require_subset_matches_static_contract(*extracted_c16_padded_subset, *extracted_c16_padded,
+                                             "BF16 MLATess C16 padded MLA route");
+      (void)stagesemantics::build_boxdecode_compiled_contract_from_subset(
+          *extracted_c16_padded_subset);
+      require(extracted_c16_padded->tensors.size() == 6U,
+              "BF16 MLATess C16 padded route should preserve all YOLO heads");
+      require(extracted_c16_padded->tensors[0].input_shape == std::vector<int>({80, 80, 16}) &&
+                  extracted_c16_padded->tensors[0].slice_shape ==
+                      std::vector<int>({80, 80, 4}),
+              "BF16 MLATess C16 padded bbox head should expose physical C16 input and logical slice");
+      require(extracted_c16_padded->tensors[1].input_shape == std::vector<int>({40, 40, 16}) &&
+                  extracted_c16_padded->tensors[2].input_shape ==
+                      std::vector<int>({20, 20, 16}),
+              "all bbox heads should round physical channels to C16");
+      require(extracted_c16_padded->tensors[3].input_shape == std::vector<int>({80, 80, 80}) &&
+                  extracted_c16_padded->tensors[3].slice_shape ==
+                      std::vector<int>({1, 80, 80}),
+              "already-aligned score head should preserve its physical channel count");
+      std::uint64_t c16_expected_total = 0U;
+      for (const auto& tensor : extracted_c16_padded->tensors) {
+        c16_expected_total += tensor.source_size_bytes;
+      }
+      require(c16_expected_total == 1612800U,
+              "boxdecode C16 packed view sizes should add up to the BF16 raw MLA buffer size");
+      require(extracted_c16_padded->physical_inputs[0].size_bytes == 204800U,
+              "first bbox physical binding should use padded 80x80x16 BF16 transport bytes");
+
       MpkContract probability_quant_mpk = decoupled_mpk;
       for (auto& plugin : probability_quant_mpk.plugins) {
         if (plugin.name == "dequantize_3" || plugin.name == "dequantize_4" ||
