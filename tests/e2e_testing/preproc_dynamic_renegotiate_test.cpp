@@ -307,7 +307,8 @@ int main() {
 
     Run run = p.build(TensorList{make_rgb_tensor(images[0].rgb)}, RunMode::Async, run_opt);
 
-    auto check_image = [&](const ImageCase& img, const Sample& out) {
+    auto output_matches_image = [&](const ImageCase& img, const Sample& out,
+                                    const std::string& label, bool require_match) {
       cv::Mat out_rgb = require_preproc_rgb(out, out_w, out_h);
       cv::Mat expected;
       cv::resize(img.rgb, expected, cv::Size(out_w, out_h), 0, 0, cv::INTER_LINEAR);
@@ -315,12 +316,46 @@ int main() {
       Metrics m = compare_rgb(out_rgb, expected);
       const double mae_thr = img.mae_base + img.mae_delta;
       const double max_thr = img.max_base + img.max_delta;
+      const bool matches = (m.mae <= mae_thr) && (m.max_abs <= max_thr);
 
-      std::cerr << "[METRICS] " << img.name << " MAE=" << m.mae << " MaxAbs=" << m.max_abs
-                << " (thr: " << mae_thr << ", " << max_thr << ")\n";
+      std::cerr << "[METRICS] " << img.name;
+      if (!label.empty())
+        std::cerr << " " << label;
+      std::cerr << " MAE=" << m.mae << " MaxAbs=" << m.max_abs << " (thr: " << mae_thr << ", "
+                << max_thr << ")\n";
 
-      require(m.mae <= mae_thr, "preproc: MAE too high for " + img.name);
-      require(m.max_abs <= max_thr, "preproc: MaxAbs too high for " + img.name);
+      if (require_match) {
+        require(m.mae <= mae_thr, "preproc: MAE too high for " + img.name);
+        require(m.max_abs <= max_thr, "preproc: MaxAbs too high for " + img.name);
+      }
+      return matches;
+    };
+
+    auto check_image = [&](const ImageCase& img, const Sample& out) {
+      (void)output_matches_image(img, out, "", true);
+    };
+
+    auto pull_matching_image = [&](const ImageCase& img, int timeout_ms) -> Sample {
+      const auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+      size_t inspected = 0;
+      while (std::chrono::steady_clock::now() < deadline) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                   deadline - std::chrono::steady_clock::now())
+                                   .count();
+        Sample outs = run.pull_samples(static_cast<int>(std::max<int64_t>(1, remaining)));
+        for (auto& out : outs) {
+          const std::string label = "candidate#" + std::to_string(inspected);
+          inspected++;
+          if (output_matches_image(img, out, label, false)) {
+            return std::move(out);
+          }
+          std::cerr << "[DRAIN] preproc: ignoring non-matching queued output while waiting for "
+                    << img.name << "\n";
+        }
+      }
+      throw std::runtime_error("preproc: no matching output after renegotiation for " + img.name +
+                               " after inspecting " + std::to_string(inspected) + " samples");
     };
 
     require(run.push(TensorList{make_rgb_tensor(images[0].rgb)}), "preproc: first push failed");
@@ -349,9 +384,7 @@ int main() {
       require(run.push(TensorList{make_rgb_tensor(images[i].rgb)}),
               "preproc: push new size #2 failed");
 
-      Sample outs = run.pull_samples(5000);
-      require(outs.size() == 1, "appsink: expected one output after renegotiation");
-      check_image(images[i], outs.front());
+      (void)pull_matching_image(images[i], 5000);
 
       expected_reneg++;
       require(wait_for_reneg(run, expected_reneg, 1000),

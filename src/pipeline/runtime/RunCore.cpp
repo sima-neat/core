@@ -263,6 +263,15 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
       *err = "GraphRun: stopped";
     return false;
   }
+  if (pipe.seg.boundary.direct_graph_source) {
+    {
+      std::lock_guard<std::mutex> lock(pipe.transport.mu);
+      pipe.transport.building = false;
+      pipe.transport.built.store(true, std::memory_order_release);
+    }
+    pipe.transport.cv.notify_all();
+    return true;
+  }
 
   {
     std::unique_lock<std::mutex> lock(pipe.transport.mu);

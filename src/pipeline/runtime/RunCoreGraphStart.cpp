@@ -283,6 +283,13 @@ void materialize_pipeline_runtimes(const std::shared_ptr<RunCore>& core) {
     runtime->seg.run_options = runtime->run_options;
     runtime->transport.has_input = seg.boundary.needs_input;
     runtime->transport.has_output = seg.boundary.needs_output;
+    if (seg.boundary.direct_graph_source) {
+      // A public Input-only fragment is a graph ingress endpoint, not executable
+      // GStreamer work.  Keep the runtime node/endpoint mapping so Run::push()
+      // can route through EdgeRouter, but mark it ready so seeded builds and
+      // startup prebuild never materialize a one-node appsrc pipeline.
+      runtime->transport.built.store(true, std::memory_order_release);
+    }
     if (seg.boundary.direct_graph_sink && !seg.node_ids.empty()) {
       execution.direct_sink_nodes.insert(seg.node_ids.back());
     }
@@ -510,6 +517,12 @@ void start_stage_workers(const std::shared_ptr<RunCore>& core) {
 
 void build_source_pipeline_if_needed(const std::shared_ptr<RunCore>& core,
                                      PipelineSegmentRuntime& rt) {
+  if (rt.seg.boundary.direct_graph_source) {
+    rt.transport.built.store(true, std::memory_order_release);
+    rt.transport.cv.notify_all();
+    return;
+  }
+
   if (rt.transport.has_input || !rt.seg.boundary.source_like) {
     return;
   }
