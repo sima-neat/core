@@ -1093,6 +1093,49 @@ void maybe_normalize_legacy_yolo_decode_type_local(BoxDecodeStaticContract* cont
   }
 }
 
+// Positionally infer a segmentation / pose decode type for grouped-by-role DFL YOLO models whose
+// MPK carries no explicit decode_type. Runs AFTER the legacy detect normalizer, so a pure-detect
+// contract has already been bumped to YoloV8 and is skipped here. The seg layout emitted by surgery
+// is [bbox_0..h-1, class_prob_0..h-1, mask_coeff_0..h-1, mask_proto]; the pose layout is
+// [bbox_0..h-1, class_prob_0..h-1, keypoint_0..h-1] with no trailing 32-channel prototype. We key
+// off (a) the DFL bbox depth (==64) to exclude raw-ltrb YOLO_V26, and (b) the trailing 32-channel
+// mask prototype to separate seg from pose. Family base is YoloV8{Seg,Pose}: the kernel maps the
+// whole grouped-DFL family (v8/v9/v10/v11/v12) to MODEL_TYPE::YOLO_V8, so this is decode-correct.
+// Additive and detect-safe: only mutates when decode_type is Unspecified/Yolo and a positive
+// seg/pose signature matches.
+void maybe_infer_boxdecode_seg_pose_variant_local(BoxDecodeStaticContract* contract) {
+  if (!contract) {
+    return;
+  }
+  if (contract->decode_type != BoxDecodeType::Unspecified &&
+      contract->decode_type != BoxDecodeType::Yolo) {
+    return;
+  }
+  const auto& tensors = contract->tensors;
+  const std::size_t n = tensors.size();
+  if (n < 7U) {
+    return;
+  }
+  const auto channel_depth = [](const BoxDecodeTensorStaticContract& t) {
+    return t.input_shape.size() >= 3U ? t.input_shape[2] : 0;
+  };
+  // DFL regression bbox heads are 64 channels (16 DFL bins x 4 sides); raw-ltrb YOLO_V26 is 4.
+  if (channel_depth(tensors.front()) != 64) {
+    return;
+  }
+  // Segmentation: 3 tensors per head (bbox/cls/mask_coeff) + 1 trailing 32-channel mask prototype.
+  if (((n - 1U) % 3U) == 0U && ((n - 1U) / 3U) >= 2U && channel_depth(tensors.back()) == 32) {
+    contract->decode_type = BoxDecodeType::YoloV8Seg;
+    return;
+  }
+  // Pose: 3 tensors per head (bbox/cls/keypoint), no trailing 32-channel prototype. Require >=3
+  // heads so a 6-tensor (2-group) detect contract can never be misread as pose.
+  if ((n % 3U) == 0U && (n / 3U) >= 3U && channel_depth(tensors.back()) != 32) {
+    contract->decode_type = BoxDecodeType::YoloV8Pose;
+    return;
+  }
+}
+
 std::uint64_t output_key_local(std::size_t plugin_index, int output_index) {
   return (static_cast<std::uint64_t>(plugin_index) << 32U) |
          static_cast<std::uint32_t>(output_index + 1);
@@ -1259,14 +1302,6 @@ bool assign_unique_uint64_local(std::optional<std::uint64_t>* slot, std::uint64_
   return false;
 }
 
-std::uint64_t round_up_to_multiple_local(std::uint64_t value, std::uint64_t multiple) {
-  if (multiple == 0U) {
-    return value;
-  }
-  const std::uint64_t rem = value % multiple;
-  return rem == 0U ? value : value + (multiple - rem);
-}
-
 std::string detess_transport_dtype_token_local(const MpkPluginIoContract& stage,
                                                const MpkTensorContract* input_tensor) {
   if (!stage.frame_type.empty()) {
@@ -1321,19 +1356,45 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
               "boxdecode model-managed contract requires detess transport dtype facts");
     return std::nullopt;
   }
-  std::uint64_t physical_c = static_cast<std::uint64_t>(logical_c);
-  if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
-    physical_c = round_up_to_multiple_local(physical_c, 16U);
-  }
-  const std::uint64_t expected_bytes =
-      static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) * physical_c *
-      static_cast<std::uint64_t>(elem_bytes);
-  if (expected_bytes != static_cast<std::uint64_t>(input_tensor->size_bytes)) {
+  std::uint64_t spatial_bytes = 0U;
+  const auto h64 = static_cast<std::uint64_t>(h);
+  const auto w64 = static_cast<std::uint64_t>(w);
+  const auto elem64 = static_cast<std::uint64_t>(elem_bytes);
+  if (h64 == 0U || w64 == 0U || elem64 == 0U ||
+      h64 > (std::numeric_limits<std::uint64_t>::max() / w64)) {
     set_error(error_message,
-              "boxdecode model-managed contract detess transport byte span mismatch: frame_shape "
-              "and align_c16/cblock imply " +
-                  std::to_string(expected_bytes) + " bytes, MPK detess input declares " +
-                  std::to_string(input_tensor->size_bytes));
+              "boxdecode model-managed contract detess transport byte span overflow");
+    return std::nullopt;
+  }
+  spatial_bytes = h64 * w64;
+  if (spatial_bytes > (std::numeric_limits<std::uint64_t>::max() / elem64)) {
+    set_error(error_message,
+              "boxdecode model-managed contract detess transport byte span overflow");
+    return std::nullopt;
+  }
+  spatial_bytes *= elem64;
+  const auto declared_bytes = static_cast<std::uint64_t>(input_tensor->size_bytes);
+  if (spatial_bytes == 0U || (declared_bytes % spatial_bytes) != 0U) {
+    set_error(error_message,
+              "boxdecode model-managed contract detess transport byte span mismatch: MPK detess "
+              "input declares " +
+                  std::to_string(input_tensor->size_bytes) +
+                  " bytes, which is not divisible by frame_shape*dtype bytes " +
+                  std::to_string(spatial_bytes));
+    return std::nullopt;
+  }
+  const std::uint64_t physical_c = declared_bytes / spatial_bytes;
+  if (physical_c < static_cast<std::uint64_t>(logical_c)) {
+    set_error(error_message,
+              "boxdecode model-managed contract detess transport channel count is smaller than "
+              "frame_shape logical channels");
+    return std::nullopt;
+  }
+  if (((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) &&
+      (physical_c % 16U) != 0U) {
+    set_error(error_message,
+              "boxdecode model-managed contract detess transport expected c16-aligned packed "
+              "channels because MPK align_c16/cblock is set");
     return std::nullopt;
   }
   if (physical_c > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
@@ -1342,7 +1403,7 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
     return std::nullopt;
   }
   return std::make_pair(std::array<int, 3>{h, w, static_cast<int>(physical_c)},
-                        static_cast<std::uint64_t>(input_tensor->size_bytes));
+                        declared_bytes);
 }
 
 std::optional<int> parse_head_index_after_token_local(const std::string& raw_name,
@@ -2451,6 +2512,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
 
   maybe_restore_boxdecode_semantic_names_from_lineage_local(&out, lineage_facts);
   maybe_normalize_legacy_yolo_decode_type_local(&out);
+  maybe_infer_boxdecode_seg_pose_variant_local(&out);
   maybe_restore_grouped_role_semantic_names_from_structure_local(&out);
   maybe_infer_score_activation_from_boxdecode_contract_local(&out);
   maybe_override_quantized_yolov8_score_activation_local(&out);
