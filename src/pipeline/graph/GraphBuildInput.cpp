@@ -1586,6 +1586,38 @@ std::string infer_error_node_name(const std::string& pipeline) {
   return parse_named_element_for_error(pipeline, "name=");
 }
 
+std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
+  // List neat stage instance names in pipeline order. A preflight *timeout*
+  // posts no per-element bus error, so infer_error_node_name() can only return
+  // the first stage *type* present (e.g. neatprocesscvu -> "cast_1") and never
+  // the stage that actually stalled. Emitting the whole chain shows every
+  // candidate stage instead of mis-blaming the first one.
+  std::string chain;
+  std::size_t pos = 0;
+  while ((pos = pipeline.find("name=", pos)) != std::string::npos) {
+    std::size_t vpos = pos + 5;
+    std::size_t vend = vpos;
+    while (vend < pipeline.size()) {
+      const char c = pipeline[vend];
+      if (std::isspace(static_cast<unsigned char>(c)) || c == '!' || c == '"')
+        break;
+      ++vend;
+    }
+    if (vend > vpos) {
+      const std::string nm = pipeline.substr(vpos, vend - vpos);
+      // Keep neat compute/decode stages; drop transport/scaffolding elements.
+      const bool scaffolding =
+          nm.rfind("queue", 0) == 0 || nm.rfind("mysrc", 0) == 0 ||
+          nm.rfind("mysink", 0) == 0 || nm.rfind("appsrc", 0) == 0 ||
+          nm.rfind("appsink", 0) == 0 || nm.rfind("tap_", 0) == 0;
+      if (!scaffolding)
+        chain += (chain.empty() ? "" : " -> ") + nm;
+    }
+    pos = vend;
+  }
+  return chain;
+}
+
 [[noreturn]] void throw_preflight_failure(const char* where, const std::string& pipeline,
                                           const std::shared_ptr<DiagCtx>& diag,
                                           const std::string& detail) {
@@ -1595,16 +1627,31 @@ std::string infer_error_node_name(const std::string& pipeline) {
   std::ostringstream note;
   note << "where=" << (where ? where : "Graph::build(input)_preflight")
        << " code=" << rep.error_code << " summary=GST ERROR";
+  const bool is_timeout = detail.find("timeout") != std::string::npos;
   const std::string node = infer_error_node_name(pipeline);
   if (!node.empty()) {
     note << " node='" << node << "'";
+    if (is_timeout)
+      note << " (best-effort: first stage in the pipeline, not necessarily the staller)";
+  }
+  const std::string stage_chain = summarize_pipeline_stage_chain(pipeline);
+  if (is_timeout && !stage_chain.empty()) {
+    note << " stage_chain='" << stage_chain << "'";
   }
   note << " details='preflight failed: " << detail << "'";
   const std::string boundary = boundary_summary_local(diag);
   if (!boundary.empty()) {
     note << "\n" << boundary;
   }
-  note << "\nHint: inspect node configuration/caps and upstream bus diagnostics.";
+  if (is_timeout) {
+    note << "\nHint: a stage did not emit output within the preflight timeout and no element posted a "
+            "bus error, so 'node' is the first pipeline stage rather than a confirmed culprit -- inspect "
+            "every stage in stage_chain. This preflight stall is often intermittent (EV74 dispatch "
+            "warm-up); retry, raise the build/run timeout, or set Model::Options.verbose.planner=true "
+            "for per-stage progress.";
+  } else {
+    note << "\nHint: inspect node configuration/caps and upstream bus diagnostics.";
+  }
   rep.repro_note = note.str();
   throw NeatError(session_build_decorate_with_error_code(rep.error_code, rep.repro_note),
                   std::move(rep));

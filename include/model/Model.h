@@ -55,9 +55,9 @@ using TensorSpec = TensorConstraint;
  * derived from it. Once constructed it exposes:
  *   - **`Graph` fragments** — `preprocess()`, `inference()`, `postprocess()`, `graph()` —
  *     for composing into a user-built `Graph`.
- *   - **`run(input)`** convenience methods that build a one-shot `Graph`, push the input,
- *     pull the result, and tear down. The shortest path from "I have a tensor" to "here are
- *     detections."
+ *   - **`run(input)`** convenience methods that lazily build one internal runner on first use,
+ *     then reuse it for subsequent calls. The shortest path from "I have a tensor" to
+ *     "here are detections."
  *   - **`build(...)`** that returns a long-lived `Runner` for streaming use cases (push many
  *     inputs over time, pull results asynchronously).
  *   - **Introspection** (`input_spec()`, `output_spec()`, `info()`, `metadata()`) so application
@@ -224,6 +224,10 @@ public:
     float nms_iou_threshold =
         0.0f;      ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
     int top_k = 0; ///< BoxDecode top-K cap; 0 means no cap.
+    /// Number of classes produced by detection heads. Set this for detection MPKs whose raw
+    /// class-head depth cannot be inferred reliably (for example single-class YOLO split heads).
+    /// `0` keeps legacy inference / MPK-provided metadata.
+    int num_classes = 0;
     /// Original-image width hint for BoxDecode coordinate inversion.
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.
@@ -574,10 +578,11 @@ public:
 
   // ── One-shot execution (synchronous) ─────────────────────────────────────────────────────
   /**
-   * @brief One-shot inference: build, push, pull, return — for the simplest applications.
+   * @brief One-shot-style inference for the simplest applications.
    *
-   * Equivalent to `build(inputs).run(inputs, timeout_ms)` but cheaper because the Runner is
-   * scoped to the call. Use this for unit tests, single-image inference, batch processing.
+   * The first call lazily builds and caches an internal Runner; later calls reuse that Runner
+   * and only push/pull. Use this for unit tests, single-image inference, batch processing, or
+   * Python frame loops where rebuilding every frame would be expensive.
    *
    * @param inputs     Input tensors (one per ingress port).
    * @param timeout_ms Maximum wait for the result, in milliseconds; `-1` waits forever.

@@ -267,7 +267,7 @@ def install_wrappers(core) -> None:
   core.Graph.add = graph_add
   if not has_native_build_overloads:
     core.Graph.build = graph_build
-  core.Graph.run = graph_run
+    core.Graph.run = graph_run
 
 
   def model_build(

@@ -2075,13 +2075,6 @@ NB_MODULE(_pyneat_core, m) {
           "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def("pull_samples", static_cast<Sample (Run::*)(int)>(&Run::pull_samples),
            "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (Run::*)(const simaai::neat::TensorList&, int)>(
-               &Run::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (Run::*)(const simaai::neat::Sample&, int)>(&Run::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](Run& run, nb::object input, int timeout_ms, bool copy,
@@ -2312,24 +2305,33 @@ NB_MODULE(_pyneat_core, m) {
            "fragment"_a, "role"_a, nb::rv_policy::reference_internal)
       .def("run_source", static_cast<void (Graph::*)()>(&Graph::run),
            nb::call_guard<nb::gil_scoped_release>())
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (Graph::*)(const simaai::neat::TensorList&,
-                                                           const RunOptions&)>(&Graph::run),
-           "inputs"_a, "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (Graph::*)(const simaai::neat::Sample&,
-                                                       const RunOptions&)>(&Graph::run),
-           "inputs"_a, "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
-      .def("build_tensors",
-           static_cast<Run (Graph::*)(const simaai::neat::TensorList&, RunMode, const RunOptions&)>(
-               &Graph::build),
-           "inputs"_a, "mode"_a = RunMode::Async, "options"_a = RunOptions{},
+      .def("run", static_cast<void (Graph::*)()>(&Graph::run),
            nb::call_guard<nb::gil_scoped_release>())
-      .def("build_samples",
-           static_cast<Run (Graph::*)(const simaai::neat::Sample&, RunMode, const RunOptions&)>(
-               &Graph::build),
-           "inputs"_a, "mode"_a = RunMode::Async, "options"_a = RunOptions{},
-           nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "run",
+          [](Graph& self, nb::object input, const RunOptions& options, bool copy,
+             std::optional<TensorLayout> layout,
+             std::optional<ImageSpec::PixelFormat> image_format) -> nb::object {
+            reject_single_tensor_or_sample(input, "Graph.run");
+            if (python_sequence_all_samples(input)) {
+              auto samples = sample_batch_from_python_input(input);
+              simaai::neat::Sample out;
+              {
+                nb::gil_scoped_release release;
+                out = self.run(samples, options);
+              }
+              return nb::cast(std::move(out));
+            }
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            simaai::neat::TensorList out;
+            {
+              nb::gil_scoped_release release;
+              out = self.run(tensors, options);
+            }
+            return nb::cast(std::move(out));
+          },
+          "input"_a, "options"_a = RunOptions{}, "copy"_a = false, "layout"_a = nb::none(),
+          "image_format"_a = nb::none())
       .def("build_source", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
@@ -2906,6 +2908,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("score_threshold", &simaai::neat::Model::Options::score_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::Model::Options::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
+      .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
       .def_rw("upstream_name", &simaai::neat::Model::Options::upstream_name)
@@ -2957,14 +2960,6 @@ NB_MODULE(_pyneat_core, m) {
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def("pull", &simaai::neat::Model::Runner::pull, "timeout_ms"_a = -1,
            nb::call_guard<nb::gil_scoped_release>())
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (simaai::neat::Model::Runner::*)(
-               const simaai::neat::TensorList&, int)>(&simaai::neat::Model::Runner::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (simaai::neat::Model::Runner::*)(
-               const simaai::neat::Sample&, int)>(&simaai::neat::Model::Runner::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](simaai::neat::Model::Runner& runner, nb::object input, int timeout_ms, bool copy,
@@ -3039,18 +3034,6 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<simaai::neat::Model::Runner (simaai::neat::Model::*)(
                const simaai::neat::Model::RouteOptions&)>(&simaai::neat::Model::build),
            "options"_a)
-      .def("build_tensors",
-           static_cast<simaai::neat::Model::Runner (simaai::neat::Model::*)(
-               const simaai::neat::TensorList&, const simaai::neat::Model::RouteOptions&,
-               const RunOptions&)>(&simaai::neat::Model::build),
-           "inputs"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
-           "run_options"_a = RunOptions{})
-      .def("build_samples",
-           static_cast<simaai::neat::Model::Runner (simaai::neat::Model::*)(
-               const simaai::neat::Sample&, const simaai::neat::Model::RouteOptions&,
-               const RunOptions&)>(&simaai::neat::Model::build),
-           "inputs"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
-           "run_options"_a = RunOptions{})
       .def(
           "build",
           [](simaai::neat::Model& model, nb::object input,
@@ -3065,14 +3048,6 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
           "run_options"_a = RunOptions{}, "copy"_a = false)
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (simaai::neat::Model::*)(
-               const simaai::neat::TensorList&, int)>(&simaai::neat::Model::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (simaai::neat::Model::*)(
-               const simaai::neat::Sample&, int)>(&simaai::neat::Model::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](simaai::neat::Model& model, nb::object input, int timeout_ms,

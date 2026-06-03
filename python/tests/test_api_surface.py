@@ -283,12 +283,10 @@ def test_model_option_structs_are_mutable():
   opt.preprocess.input_max_height = 1080
   opt.boxdecode_original_width = 1280
   opt.boxdecode_original_height = 720
-
   assert opt.preprocess.input_max_width == 1920
   assert opt.preprocess.input_max_height == 1080
   assert opt.boxdecode_original_width == 1280
   assert opt.boxdecode_original_height == 720
-
 
 def test_input_stage_option_structs_expose_expected_fields():
   pre = pyneat.PreprocOptions()
@@ -926,9 +924,22 @@ def test_runtime_overload_methods_present():
   assert hasattr(pyneat.Run, "push")
   assert hasattr(pyneat.Run, "try_push")
   assert hasattr(pyneat.Run, "run")
+  assert hasattr(pyneat.Graph, "build")
+  assert hasattr(pyneat.Graph, "run")
   assert hasattr(pyneat.ModelRunner, "push")
   assert hasattr(pyneat.ModelRunner, "run")
+  assert hasattr(pyneat.Model, "build")
   assert hasattr(pyneat.Model, "run")
+
+
+def test_runtime_tensor_sample_aliases_are_not_public():
+  for cls in (pyneat.Run, pyneat.Graph, pyneat.ModelRunner, pyneat.Model):
+    assert not hasattr(cls, "run_tensors"), cls
+    assert not hasattr(cls, "run_samples"), cls
+
+  for cls in (pyneat.Graph, pyneat.Model):
+    assert not hasattr(cls, "build_tensors"), cls
+    assert not hasattr(cls, "build_samples"), cls
 
 
 def test_graph_build_accepts_numpy_without_type_error():
@@ -939,6 +950,17 @@ def test_graph_build_accepts_numpy_without_type_error():
   _assert_not_type_error(lambda: graph.build([arr], copy=True))
   _assert_not_type_error(
       lambda: graph.build([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
+  )
+
+
+def test_graph_run_accepts_numpy_without_type_error():
+  graph = pyneat.Graph()
+  arr = np.zeros((8, 8, 3), dtype=np.uint8)
+
+  _assert_not_type_error(lambda: graph.run([arr]))
+  _assert_not_type_error(lambda: graph.run([arr], copy=True))
+  _assert_not_type_error(
+      lambda: graph.run([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
   )
 
 

@@ -35,6 +35,7 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
+#include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/TensorMath.h"
 
@@ -679,6 +680,126 @@ require_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
     return *fact.boxdecode_compiled;
   }
   throw std::runtime_error("Model-managed boxdecode stage requires a canonical compiled contract");
+}
+
+std::optional<CompiledBoxDecodeContract>
+try_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
+  const auto post_plan = pack.execution_plan().post;
+  const auto post_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Postprocess);
+  if (post_plan.size() != post_facts.size()) {
+    throw std::runtime_error(
+        "Model-managed post-process stage facts are out of sync with execution plan");
+  }
+
+  bool saw_boxdecode_stage = false;
+  for (std::size_t index = 0; index < post_plan.size(); ++index) {
+    if (post_plan[index].kind != internal::ExecutionStageKind::BoxDecode) {
+      continue;
+    }
+    saw_boxdecode_stage = true;
+    const auto& fact = post_facts[index];
+    if (fact.boxdecode_compiled.has_value()) {
+      return *fact.boxdecode_compiled;
+    }
+  }
+  if (!saw_boxdecode_stage) {
+    throw std::runtime_error("Model-managed boxdecode stage requires a canonical compiled contract");
+  }
+  return std::nullopt;
+}
+
+struct BoxDecodeHwcLocal {
+  int h = 0;
+  int w = 0;
+  int c = 0;
+  int semantic_c = 0;
+};
+
+std::optional<BoxDecodeHwcLocal>
+boxdecode_hwc_from_input_shape_local(const pipeline_internal::sima::BoxDecodeTensorStaticContract& t) {
+  if (t.input_shape.size() < 3U) {
+    return std::nullopt;
+  }
+  const auto rank = t.input_shape.size();
+  const int h = t.input_shape[rank - 3U];
+  const int w = t.input_shape[rank - 2U];
+  const int c = t.input_shape[rank - 1U];
+  if (h <= 0 || w <= 0 || c <= 0) {
+    return std::nullopt;
+  }
+  int semantic_c = c;
+  if (t.slice_shape.size() >= 3U) {
+    const int slice_c = t.slice_shape[t.slice_shape.size() - 1U];
+    if (slice_c > 0 && slice_c < semantic_c) {
+      semantic_c = slice_c;
+    }
+  }
+  return BoxDecodeHwcLocal{h, w, c, semantic_c};
+}
+
+bool boxdecode_reg_cls_pair_matches_local(
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& reg,
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& cls, int num_classes) {
+  const auto r = boxdecode_hwc_from_input_shape_local(reg);
+  const auto c = boxdecode_hwc_from_input_shape_local(cls);
+  return r.has_value() && c.has_value() && r->h == c->h && r->w == c->w &&
+         r->semantic_c >= 16 && (r->semantic_c % 4) == 0 && c->semantic_c == num_classes;
+}
+
+bool boxdecode_looks_grouped_yolo_dfl_local(
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U ||
+      (contract.tensors.size() % 2U) != 0U) {
+    return false;
+  }
+  const std::size_t heads = contract.tensors.size() / 2U;
+  for (std::size_t i = 0; i < heads; ++i) {
+    if (!boxdecode_reg_cls_pair_matches_local(contract.tensors[i], contract.tensors[i + heads],
+                                              num_classes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool boxdecode_looks_interleaved_yolo_dfl_local(
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U ||
+      (contract.tensors.size() % 2U) != 0U) {
+    return false;
+  }
+  for (std::size_t i = 0; i < contract.tensors.size(); i += 2U) {
+    if (!boxdecode_reg_cls_pair_matches_local(contract.tensors[i], contract.tensors[i + 1U],
+                                              num_classes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string boxdecode_tensor_order_summary_local(
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract) {
+  std::ostringstream oss;
+  for (std::size_t i = 0; i < contract.tensors.size(); ++i) {
+    const auto& t = contract.tensors[i];
+    const auto dims = boxdecode_hwc_from_input_shape_local(t);
+    if (i != 0U) {
+      oss << ", ";
+    }
+    oss << (!t.logical_name.empty() ? t.logical_name : std::string("<unnamed>"));
+    if (dims.has_value()) {
+      oss << "[" << dims->h << "x" << dims->w << "x" << dims->c << "]";
+      if (dims->semantic_c != dims->c) {
+        oss << "(semantic_c=" << dims->semantic_c << ")";
+      }
+    }
+  }
+  return oss.str();
+}
+
+bool boxdecode_type_expects_grouped_yolo_dfl_local(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV8 || type == BoxDecodeType::YoloV9 ||
+         type == BoxDecodeType::YoloV10;
 }
 
 // Legacy processcvu wrappers removed; post-process model-managed stages now use canonical
@@ -5900,6 +6021,7 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
+  out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
   out["upstream_name"] = opt.upstream_name;
@@ -6836,16 +6958,24 @@ simaai::neat::TensorList Model::run(const std::vector<Tensor>& inputs, int timeo
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty input list");
   }
-  Runner runner = build(inputs);
-  return runner.run(inputs, timeout_ms);
+  std::lock_guard<std::mutex> lock(impl_->sync_mu);
+  if (!impl_->sync_ready) {
+    impl_->sync_runner = build(inputs);
+    impl_->sync_ready = true;
+  }
+  return impl_->sync_runner.run(inputs, timeout_ms);
 }
 
 simaai::neat::Sample Model::run(const simaai::neat::Sample& inputs, int timeout_ms) {
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty sample list");
   }
-  Runner runner = build(inputs);
-  return runner.run(inputs, timeout_ms);
+  std::lock_guard<std::mutex> lock(impl_->sync_mu);
+  if (!impl_->sync_ready) {
+    impl_->sync_runner = build(inputs);
+    impl_->sync_ready = true;
+  }
+  return impl_->sync_runner.run(inputs, timeout_ms);
 }
 
 #if defined(SIMA_WITH_OPENCV)
@@ -6853,8 +6983,12 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty image list");
   }
-  Runner runner = build(inputs);
-  return runner.run(inputs, timeout_ms);
+  std::lock_guard<std::mutex> lock(impl_->sync_mu);
+  if (!impl_->sync_ready) {
+    impl_->sync_runner = build(inputs);
+    impl_->sync_ready = true;
+  }
+  return impl_->sync_runner.run(inputs, timeout_ms);
 }
 #endif
 
@@ -7092,7 +7226,80 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                                                       bool sync) {
   require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  return require_model_managed_boxdecode_contract(pack);
+  if (auto compiled = try_model_managed_boxdecode_contract(pack); compiled.has_value()) {
+    if (model.impl_->options.num_classes > 0) {
+      compiled->payload.num_classes = model.impl_->options.num_classes;
+    }
+    return *compiled;
+  }
+
+  const auto& opt = model.impl_->options;
+  if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type) ||
+      opt.decode_type == BoxDecodeType::Yolo) {
+    throw std::runtime_error(
+        "Model-managed boxdecode stage requires a canonical compiled contract. The MPK did not "
+        "declare a concrete BoxDecode decode_type; set Model::Options.decode_type to a versioned "
+        "family such as BoxDecodeType::YoloV8.");
+  }
+
+  const auto& mpk = pack.mpk_contract();
+  if (!mpk.has_value()) {
+    throw std::runtime_error(
+        "Model-managed boxdecode fallback requires a parsed MPK contract");
+  }
+  auto route_flags = model_route_flags_for_boxdecode_stage(
+      model.impl_->preprocess_plan.session_route_plan);
+  if (!route_flags.has_value()) {
+    throw std::runtime_error(
+        "Model-managed boxdecode fallback requires the resolved route to select BoxDecode");
+  }
+  route_flags->boxdecode_selected = true;
+  route_flags->quant_contract_required = route_flags->quant_needed;
+
+  std::string contract_error;
+  auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
+      *mpk, *route_flags, &contract_error);
+  if (!contract.has_value()) {
+    throw std::runtime_error(
+        "Model-managed boxdecode fallback failed to derive tensor contract from MPK: " +
+        (contract_error.empty() ? std::string("missing MPK/upstream facts") : contract_error));
+  }
+
+  contract->decode_type = opt.decode_type;
+  contract->num_classes = opt.num_classes;
+  contract->topk = opt.top_k;
+  contract->detection_threshold = opt.score_threshold;
+  contract->nms_iou_threshold = opt.nms_iou_threshold;
+  contract->model_owned_flags = true;
+  contract->quant_contract_required = route_flags->quant_contract_required;
+  contract->required_preprocess_meta_fields =
+      model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields;
+
+  if (boxdecode_type_expects_grouped_yolo_dfl_local(opt.decode_type)) {
+    if (opt.num_classes <= 0) {
+      throw std::runtime_error(
+          "YOLO BoxDecode fallback requires Model::Options.num_classes for split raw DFL heads "
+          "(for the Anti-UAV one-class model, set opts.num_classes = 1).");
+    }
+    if (boxdecode_looks_interleaved_yolo_dfl_local(*contract, opt.num_classes)) {
+      throw std::runtime_error(
+          "YOLO BoxDecode contract has interleaved raw DFL outputs. Expected grouped-by-role "
+          "order [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5], but observed [" +
+          boxdecode_tensor_order_summary_local(*contract) +
+          "]. Fix the ONNX graph surgery/export output order and recompile the MPK.");
+    }
+    if (!boxdecode_looks_grouped_yolo_dfl_local(*contract, opt.num_classes)) {
+      throw std::runtime_error(
+          "YOLO BoxDecode fallback could not validate grouped-by-role raw DFL output order. "
+          "Expected [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5] with class depth equal to "
+          "Model::Options.num_classes; observed [" +
+          boxdecode_tensor_order_summary_local(*contract) + "].");
+    }
+    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+    contract->score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+  }
+
+  return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(*contract);
 }
 
 void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, const Model& model,

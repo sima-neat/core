@@ -26,6 +26,7 @@ struct BoxDecodeTensorLineageFactsLocal;
 enum class BoxDecodeTensorRoleLocal;
 std::optional<std::pair<BoxDecodeTensorRoleLocal, int>>
 classify_boxdecode_tensor_semantics_from_name_local(const std::string& raw_name);
+bool boxdecode_tensor_has_semantic_name_local(const BoxDecodeTensorStaticContract& tensor);
 bool contract_looks_grouped_by_role_yolov8_local(const BoxDecodeStaticContract& contract);
 std::string lower_copy_local(std::string value);
 int to_non_negative_int_local(std::int64_t value);
@@ -241,6 +242,34 @@ bool tensor_name_explicitly_declares_score_semantics_local(
          tensor_name_looks_class_logit_local(tensor.backend_name) ||
          tensor_name_looks_class_prob_local(tensor.source_segment_name) ||
          tensor_name_looks_class_logit_local(tensor.source_segment_name);
+}
+
+// The MLA segment output names are generic, so the surgery's semantic role
+// (e.g. "cast_N/class_prob_M") survives only on the boxdecode consumer's
+// input-node names.  Seed those onto the contract tensors so role/score-domain
+// classification reflects the surgery's intent.  Without this, all tensors look
+// unclassified and maybe_restore_grouped_role_semantic_names_from_structure_local
+// fabricates the score role from quant_needed alone -> BF16 (no quant contract)
+// is wrongly labeled "class_logit" -> a spurious Sigmoid (double-sigmoid on
+// already-probability heads).  Reuses the existing wrapper-aware name parser.
+void maybe_seed_boxdecode_names_from_terminal_inputs_local(
+    BoxDecodeStaticContract* contract, const MpkPluginIoContract* terminal_stage) {
+  if (!contract || !terminal_stage ||
+      terminal_stage->input_tensors.size() != contract->tensors.size()) {
+    return;
+  }
+  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
+    auto& tensor = contract->tensors[i];
+    if (boxdecode_tensor_has_semantic_name_local(tensor)) {
+      continue;
+    }
+    const std::string& consumer_name = terminal_stage->input_tensors[i].name;
+    if (consumer_name.empty() ||
+        !classify_boxdecode_tensor_semantics_from_name_local(consumer_name).has_value()) {
+      continue;
+    }
+    tensor.source_segment_name = consumer_name;
+  }
 }
 
 void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticContract* contract) {
@@ -993,6 +1022,8 @@ struct BoxDecodeTensorLineageFactsLocal {
   BoxDecodeTensorRoleLocal role = BoxDecodeTensorRoleLocal::Unknown;
   std::optional<int> head_index;
   std::optional<std::array<int, 3>> detess_slice;
+  std::optional<std::array<int, 3>> detess_transport_input_hwc;
+  std::optional<std::uint64_t> detess_transport_size_bytes;
   std::optional<double> dq_scale;
   std::optional<std::int64_t> dq_zp;
 };
@@ -1131,6 +1162,20 @@ const MpkTensorContract* pick_stage_output_for_input_local(const MpkPluginIoCont
   return &stage.output_tensors.front();
 }
 
+const MpkTensorContract* pick_stage_input_for_index_local(const MpkPluginIoContract& stage,
+                                                          int input_index) {
+  if (stage.input_tensors.empty()) {
+    return nullptr;
+  }
+  if (stage.input_tensors.size() == 1U) {
+    return &stage.input_tensors.front();
+  }
+  if (input_index >= 0 && static_cast<std::size_t>(input_index) < stage.input_tensors.size()) {
+    return &stage.input_tensors[static_cast<std::size_t>(input_index)];
+  }
+  return &stage.input_tensors.front();
+}
+
 bool assign_unique_int_local(std::optional<int>* slot, int value, std::string* error_message,
                              const std::string& message) {
   if (!slot) {
@@ -1234,6 +1279,108 @@ bool assign_unique_slice_local(std::optional<std::array<int, 3>>* slot,
   }
   set_error(error_message, message);
   return false;
+}
+
+bool assign_unique_uint64_local(std::optional<std::uint64_t>* slot, std::uint64_t value,
+                                std::string* error_message, const std::string& message) {
+  if (!slot) {
+    return false;
+  }
+  if (!slot->has_value()) {
+    *slot = value;
+    return true;
+  }
+  if (*slot == value) {
+    return true;
+  }
+  set_error(error_message, message);
+  return false;
+}
+
+std::uint64_t round_up_to_multiple_local(std::uint64_t value, std::uint64_t multiple) {
+  if (multiple == 0U) {
+    return value;
+  }
+  const std::uint64_t rem = value % multiple;
+  return rem == 0U ? value : value + (multiple - rem);
+}
+
+std::string detess_transport_dtype_token_local(const MpkPluginIoContract& stage,
+                                               const MpkTensorContract* input_tensor) {
+  if (!stage.frame_type.empty()) {
+    return normalize_mpk_dtype_token_local(stage.frame_type);
+  }
+  if (!stage.canonical_input_dtype.empty()) {
+    return normalize_mpk_dtype_token_local(stage.canonical_input_dtype);
+  }
+  if (input_tensor) {
+    if (!input_tensor->logical_dtype.empty()) {
+      return normalize_mpk_dtype_token_local(input_tensor->logical_dtype);
+    }
+    if (!input_tensor->dtype.empty()) {
+      return normalize_mpk_dtype_token_local(input_tensor->dtype);
+    }
+  }
+  if (!stage.canonical_output_dtype.empty()) {
+    return normalize_mpk_dtype_token_local(stage.canonical_output_dtype);
+  }
+  return {};
+}
+
+std::optional<std::pair<std::array<int, 3>, std::uint64_t>>
+detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
+                                          const MpkTensorContract* input_tensor,
+                                          std::string* error_message) {
+  if (!stage_is_detess_like_local(stage)) {
+    return std::nullopt;
+  }
+  if (!input_tensor) {
+    set_error(error_message,
+              "boxdecode model-managed contract requires detess input tensor transport facts");
+    return std::nullopt;
+  }
+  if (input_tensor->size_bytes == 0U) {
+    set_error(error_message,
+              "boxdecode model-managed contract requires non-zero detess input tensor size");
+    return std::nullopt;
+  }
+  int h = 0;
+  int w = 0;
+  int logical_c = 0;
+  if (!dims_from_mpk_shape_for_input_nhwc_local(stage.frame_shape, &h, &w, &logical_c)) {
+    set_error(error_message,
+              "boxdecode model-managed contract requires detess frame_shape transport facts");
+    return std::nullopt;
+  }
+  const std::string dtype = detess_transport_dtype_token_local(stage, input_tensor);
+  const int elem_bytes = dtype_size_bytes_local(dtype);
+  if (elem_bytes <= 0) {
+    set_error(error_message,
+              "boxdecode model-managed contract requires detess transport dtype facts");
+    return std::nullopt;
+  }
+  std::uint64_t physical_c = static_cast<std::uint64_t>(logical_c);
+  if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
+    physical_c = round_up_to_multiple_local(physical_c, 16U);
+  }
+  const std::uint64_t expected_bytes =
+      static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) * physical_c *
+      static_cast<std::uint64_t>(elem_bytes);
+  if (expected_bytes != static_cast<std::uint64_t>(input_tensor->size_bytes)) {
+    set_error(error_message,
+              "boxdecode model-managed contract detess transport byte span mismatch: frame_shape "
+              "and align_c16/cblock imply " +
+                  std::to_string(expected_bytes) + " bytes, MPK detess input declares " +
+                  std::to_string(input_tensor->size_bytes));
+    return std::nullopt;
+  }
+  if (physical_c > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
+    set_error(error_message,
+              "boxdecode model-managed contract detess transport channel count overflows int");
+    return std::nullopt;
+  }
+  return std::make_pair(std::array<int, 3>{h, w, static_cast<int>(physical_c)},
+                        static_cast<std::uint64_t>(input_tensor->size_bytes));
 }
 
 std::optional<int> parse_head_index_after_token_local(const std::string& raw_name,
@@ -1357,8 +1504,9 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     std::size_t source_plugin_index, int source_output_index, std::size_t terminal_pos,
     std::string* error_message) {
   BoxDecodeTensorLineageFactsLocal facts;
-  auto inspect_stage_output = [&](const MpkPluginIoContract& stage,
-                                  const MpkTensorContract* output_tensor)
+  auto inspect_stage_io = [&](const MpkPluginIoContract& stage,
+                              const MpkTensorContract* input_tensor,
+                              const MpkTensorContract* output_tensor)
       -> std::optional<BoxDecodeTensorLineageFactsLocal> {
     if (!maybe_record_boxdecode_tensor_semantics_from_name_local(
             &facts, stage.name, error_message, "boxdecode model-managed contract")) {
@@ -1396,6 +1544,25 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
               "MPK branch")) {
         return std::nullopt;
       }
+      if (input_tensor && input_tensor->size_bytes > 0U && !stage.frame_shape.empty()) {
+        const auto transport =
+            detess_transport_input_hwc_from_mpk_local(stage, input_tensor, error_message);
+        if (!transport.has_value()) {
+          return std::nullopt;
+        }
+        if (!assign_unique_slice_local(
+                &facts.detess_transport_input_hwc, transport->first, error_message,
+                "boxdecode model-managed contract resolved conflicting detess transport input "
+                "shapes on one MPK branch")) {
+          return std::nullopt;
+        }
+        if (!assign_unique_uint64_local(
+                &facts.detess_transport_size_bytes, transport->second, error_message,
+                "boxdecode model-managed contract resolved conflicting detess transport byte "
+                "spans on one MPK branch")) {
+          return std::nullopt;
+        }
+      }
     }
 
     if (stage_has_explicit_dequant_quant_local(stage) && quant_contract_complete(stage.quant)) {
@@ -1422,9 +1589,12 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
     return std::nullopt;
   }
   int seed_output_index = source_output_index;
+  const auto* seed_input =
+      pick_stage_input_for_index_local(contract.plugins[source_plugin_index], source_output_index);
   const auto* seed_output = pick_stage_output_for_input_local(
       contract.plugins[source_plugin_index], source_output_index, &seed_output_index);
-  if (!inspect_stage_output(contract.plugins[source_plugin_index], seed_output).has_value()) {
+  if (!inspect_stage_io(contract.plugins[source_plugin_index], seed_input, seed_output)
+           .has_value()) {
     return std::nullopt;
   }
 
@@ -1460,9 +1630,10 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
 
       const auto& consumer = contract.plugins[edge->dst_plugin_index];
       int next_output_index = -1;
+      const auto* input_tensor = pick_stage_input_for_index_local(consumer, edge->dst_input_index);
       const auto* output_tensor =
           pick_stage_output_for_input_local(consumer, edge->dst_input_index, &next_output_index);
-      if (!inspect_stage_output(consumer, output_tensor).has_value()) {
+      if (!inspect_stage_io(consumer, input_tensor, output_tensor).has_value()) {
         return std::nullopt;
       }
 
@@ -2177,6 +2348,65 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
                                     static_cast<int>((*lineage_facts[i].detess_slice)[2])};
     }
     out.input_dtype = out.tensors.front().data_type;
+
+    // A model-managed tessellated BoxDecode binds to the physical MPK transport buffer, not to the
+    // semantic detess output view.  The MPK detess stage declares both sides of that contract:
+    //   * slice_shape is the logical decode view (for example 80x80x4 boxes).
+    //   * input tensor size/frame_shape/align_c16 describe the packed source view consumed by the
+    //     next plugin (for example 80x80x16 boxes).
+    // Use those explicit MPK facts instead of inferring padding heuristically so INT8/BF16 and
+    // direct/tess routes share the same source-of-truth.
+    const bool detess_transport_any =
+        std::any_of(lineage_facts.begin(), lineage_facts.end(), [](const auto& facts) {
+          return facts.detess_transport_input_hwc.has_value() ||
+                 facts.detess_transport_size_bytes.has_value();
+        });
+    const bool detess_transport_all =
+        !lineage_facts.empty() &&
+        std::all_of(lineage_facts.begin(), lineage_facts.end(), [](const auto& facts) {
+          return facts.detess_transport_input_hwc.has_value() &&
+                 facts.detess_transport_size_bytes.has_value();
+        });
+    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) && detess_transport_any) {
+      if (!detess_transport_all) {
+        return fail("boxdecode tessellated route requires MPK detess transport facts for every "
+                    "packed input tensor");
+      }
+      for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+        auto& tensor = out.tensors[i];
+        const auto& physical_hwc = *lineage_facts[i].detess_transport_input_hwc;
+        tensor.input_shape = {physical_hwc[0], physical_hwc[1], physical_hwc[2]};
+        tensor.source_size_bytes = *lineage_facts[i].detess_transport_size_bytes;
+        if (i < out.physical_inputs.size()) {
+          out.physical_inputs[i].size_bytes = tensor.source_size_bytes;
+        }
+      }
+
+      const bool packed_single_mla_parent =
+          mla_stage->output_tensors.size() == 1U && out.tensors.size() > 1U;
+      if (packed_single_mla_parent) {
+        std::uint64_t source_byte_offset = 0;
+        for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+          if (source_byte_offset >
+              static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+            return fail("boxdecode packed tensor source byte offset overflows int64");
+          }
+          out.tensors[i].source_byte_offset = static_cast<std::int64_t>(source_byte_offset);
+          if (i < out.physical_inputs.size()) {
+            out.physical_inputs[i].byte_offset = out.tensors[i].source_byte_offset;
+          }
+          source_byte_offset += out.tensors[i].source_size_bytes;
+        }
+        const auto parent_size =
+            static_cast<std::uint64_t>(mla_stage->output_tensors.front().size_bytes);
+        if (parent_size > 0U && source_byte_offset != parent_size) {
+          return fail("boxdecode packed tensor byte spans do not sum to MPK MLA output size: "
+                      "sum=" +
+                      std::to_string(source_byte_offset) +
+                      " parent=" + std::to_string(parent_size));
+        }
+      }
+    }
   }
 
   if (route_flags.quant_needed) {
@@ -2257,6 +2487,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
 
+  maybe_seed_boxdecode_names_from_terminal_inputs_local(&out, terminal_stage);
   maybe_restore_boxdecode_semantic_names_from_lineage_local(&out, lineage_facts);
   maybe_normalize_legacy_yolo_decode_type_local(&out);
   maybe_restore_grouped_role_semantic_names_from_structure_local(&out);
