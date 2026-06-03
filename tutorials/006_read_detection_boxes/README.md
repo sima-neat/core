@@ -37,10 +37,10 @@ Common box-decode controls in this tutorial:
 Chapter 001. Chapter 004 for `ModelOptions` basics.
 
 **References**
-- [Model](/getting-started/programming-model/model)
+- [Model](/reference/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
-## Output Structure
+## In Practice
 
 `SimaBoxDecode` emits a single output tensor tagged `BBOX`. The tensor carries a
 packed byte buffer that the runtime parser interprets into floating-point
@@ -209,6 +209,57 @@ Practical consequences:
   the surviving-box count — so a very low threshold can sharply increase
   postprocess compute and latency. Lower it only as far as you need to catch
   weak detections; pair it with `top_k` to cap the worst case.
+
+### Decode types and tensor contracts
+
+`BoxDecodeType` is a typed API (`simaai::neat::BoxDecodeType` / `neat.BoxDecodeType`) and should always be set explicitly for decode stages. The runtime contract below comes from `internals/gst_plugins/genericboxdecode_v2/gstneatboxdecode.cpp` (`infer_num_classes`, `infer_yolo_decoupled_classes`, `infer_yolo_packed_classes`, `compute_required_output_size`).
+
+Core tensor contract rules:
+- YOLO-family decode types (`yolo`, `yolov5*`, `yolov7*`, `yolov8*`, `yolov9*`, `yolov10*`):
+  - Decoupled heads: class-head depths must be repeatable and `> 4`.
+  - Packed heads: each head depth must satisfy `depth = 3 * (num_classes + 5)` and be consistent across heads.
+- `yolo26`: decoupled grouped heads with 4-channel raw l/t/r/b bbox tensors and repeatable class-head depths `> 4`.
+- `detr`: class channels are inferred from the maximum depth across heads, and must be `> 4`.
+- Other non-YOLO decode types (`effdet`, `rcnn-stage1`, `centernet`): fallback class inference uses max depth and requires `> 4`.
+- Segmentation decode tokens (`*-seg`) enable segmentation-like output sizing in v2 (adds mask payload per detection).
+
+| API enum | Backend token | Expected contract |
+| --- | --- | --- |
+| `BoxDecodeType::Yolo` | `yolo` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV5` | `yolov5` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV5Seg` | `yolov5-seg` | YOLO depth contract + segmentation path |
+| `BoxDecodeType::YoloV7` | `yolov7` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV7Seg` | `yolov7-seg` | YOLO depth contract + segmentation path |
+| `BoxDecodeType::YoloV8` | `yolov8` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV8Seg` | `yolov8-seg` | YOLO depth contract + segmentation path |
+| `BoxDecodeType::YoloV8Pose` | `yolov8-pose` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV9` | `yolov9` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV9Seg` | `yolov9-seg` | YOLO depth contract + segmentation path |
+| `BoxDecodeType::YoloV10` | `yolov10` | YOLO decoupled or packed depth contract |
+| `BoxDecodeType::YoloV10Seg` | `yolov10-seg` | YOLO depth contract + segmentation path |
+| `BoxDecodeType::YoloV26` | `yolo26` | YOLO26 grouped raw l/t/r/b bbox heads + class-score heads |
+| `BoxDecodeType::Detr` | `detr` | `num_classes = max(depth)` (must be `> 4`) |
+| `BoxDecodeType::EffDet` | `effdet` | fallback max-depth inference (`> 4`) |
+| `BoxDecodeType::RcnnStage1` | `rcnn-stage1` | fallback max-depth inference (`> 4`) |
+| `BoxDecodeType::Centernet` | `centernet` | fallback max-depth inference (`> 4`) |
+
+Fail-fast behavior:
+- `stages::BoxDecodeOptions` requires explicit construction with a decode type.
+- `stages::BoxDecode(...)` and `nodes::SimaBoxDecode(...)` fail fast on `BoxDecodeType::Unspecified`.
+
+Setting the decode type explicitly:
+
+```cpp
+simaai::neat::stages::BoxDecodeOptions opt(simaai::neat::BoxDecodeType::YoloV8);
+opt.detection_threshold = 0.25;
+opt.nms_iou_threshold = 0.5;
+opt.top_k = 100;
+```
+
+```python
+opt = neat.ModelOptions()
+opt.decode_type = neat.BoxDecodeType.YoloV8
+```
 
 ## Learning Process
 1. Configure model/postproc options for a detector-style pipeline.

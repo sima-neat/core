@@ -77,7 +77,7 @@ auto classes = run.pull("classes");
 
 ## Nodes, groups, and boundaries
 
-A `Graph` is the assembly boundary; [`Node`](/getting-started/programming-model/node) is the building block.
+A `Graph` is the assembly boundary; [`Node`](/reference/programming-model/node) is the building block.
 
 That includes:
 
@@ -85,7 +85,7 @@ That includes:
 - pre-built node groups, which are reusable bundles of nodes;
 - boundary nodes such as `Input("image")` and `Output("classes")`.
 
-For the detailed rules around pre-built groups and boundary nodes, see [Node → Pre-built node groups](/getting-started/programming-model/node#pre-built-node-groups) and [Node → Boundary nodes](/getting-started/programming-model/node#boundary-nodes).
+For the detailed rules around pre-built groups and boundary nodes, see [Node → Pre-built node groups](/reference/programming-model/node#pre-built-node-groups) and [Node → Boundary nodes](/reference/programming-model/node#boundary-nodes).
 
 When you call `Graph::build()`, Neat lowers the public graph into one executable runtime graph, preserving the customer-facing names for diagnostics and named `Run` APIs.
 
@@ -261,8 +261,8 @@ When used inside another graph, this can compile down to a direct wire. Neat kee
 
 ## See also
 
-- [Node](/getting-started/programming-model/node)
-- [Model](/getting-started/programming-model/model)
+- [Node](/reference/programming-model/node)
+- [Model](/reference/programming-model/model)
 - [Public Graph and graph helpers](/concepts/graphs)
 
 ## Tutorials

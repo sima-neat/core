@@ -919,11 +919,18 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   endforeach()
 endif()
 
+# GStreamer/OpenCV headers are part of the public surface (e.g. pipeline/Graph.h),
+# but their absolute include paths are build-host specific (the SDK cross sysroot
+# under /opt/toolchain/... vs a DevKit's native /usr). Use them to build Neat
+# itself via $<BUILD_INTERFACE:...>, but do NOT bake them into the exported
+# target -- SimaNeatConfig.cmake re-discovers them with pkg-config on the
+# consuming machine so the installed package is relocatable (it works both when
+# cross-compiling in the Neat SDK and when building natively on the DevKit).
 if (GST_FOUND)
-  target_include_directories(sima_neat_common SYSTEM INTERFACE ${GST_INCLUDE_DIRS})
+  target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${GST_INCLUDE_DIRS}>")
 endif()
 if (OPENCV_FOUND)
-  target_include_directories(sima_neat_common SYSTEM INTERFACE ${OPENCV_INCLUDE_DIRS})
+  target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${OPENCV_INCLUDE_DIRS}>")
 endif()
 
 target_compile_options(sima_neat_objects PRIVATE

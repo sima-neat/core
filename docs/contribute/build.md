@@ -1,7 +1,7 @@
 ---
 title: Build
-description: Build SiMa Neat from source with build.sh
-sidebar_position: 2
+description: Build SiMa.ai Neat from source with build.sh
+sidebar_position: 4
 ---
 
 # Build Neat

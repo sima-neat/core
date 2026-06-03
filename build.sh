@@ -1855,6 +1855,13 @@ build_docs_site() {
   echo "Generating tutorial docs from C++ sources..."
   python3 tools/generate_tutorial_docs.py --repo-root .
   echo
+  echo "Running autodoc (pull external repo docs)..."
+  python3 tools/autodoc.py \
+    --conf "${REPO_ROOT}/tools/autodoc.conf.json" \
+    --repo-root "${REPO_ROOT}" \
+    --build-dir "${BUILD_DIR}" \
+    --out-root "${REPO_ROOT}/docs" || true
+  echo
   echo "Expanding code tabs..."
   local expanded_docs_dir
   expanded_docs_dir="${REPO_ROOT}/${BUILD_DIR}/docs-expanded"

@@ -7,7 +7,7 @@ sidebar_position: 4
 # Node
 
 A `Node` is the smallest composable unit in SiMa Neat.
-Nodes are the things a [`Graph`](/getting-started/programming-model/graph) wires together: decode stages, preprocess stages, model stages, postprocess stages, sources, sinks, and application boundaries.
+Nodes are the things a [`Graph`](/reference/programming-model/graph) wires together: decode stages, preprocess stages, model stages, postprocess stages, sources, sinks, and application boundaries.
 
 Reference:
 - [`nodes` namespace](/reference/{lsa}/namespaces/simaai-neat-nodes)
@@ -158,7 +158,7 @@ graph.add(neat.nodes.input("image", iopt))
 
 ### Sample output
 
-Use `nodes::Output` when the consumer needs a full [`Sample`](/getting-started/programming-model/core_types#sample): payload plus stream/frame/timestamp metadata.
+Use `nodes::Output` when the consumer needs a full [`Sample`](/reference/programming-model/core_types#sample): payload plus stream/frame/timestamp metadata.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -208,9 +208,9 @@ Use `Graph::add_output_tensor(...)` when you want the simpler tensor-first outpu
 
 ## See also
 
-- [Graph](/getting-started/programming-model/graph)
-- [Model](/getting-started/programming-model/model)
-- [Tensor and Sample](/getting-started/programming-model/core_types)
+- [Graph](/reference/programming-model/graph)
+- [Model](/reference/programming-model/model)
+- [Tensor and Sample](/reference/programming-model/core_types)
 
 ## Tutorials
 

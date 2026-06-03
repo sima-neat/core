@@ -4,7 +4,7 @@ Running `sima-cli install neat` installs **two** things:
 
 1. **The Neat library** (the `sima-neat` package). Goes system-wide via `apt`. You never interact with it directly — your code links against it through CMake's `find_package(SimaNeat CONFIG)`.
 
-2. **The tutorials** (the **SiMa Neat extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
+2. **The tutorials** (the **SiMa.ai Neat extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
 
    ```text
    sima-neat-0.0.0+<branch>-<sha>-Linux-extras/
@@ -19,7 +19,7 @@ Running `sima-cli install neat` installs **two** things:
 
 The folder name includes the Neat version, branch, and commit hash. For example, if you ran the installer from `~/neat/`, the folder ends up at `~/neat/sima-neat-0.0.0+<branch>-<sha>-Linux-extras/`.
 
-When prompted during install, select **SiMa Neat extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
+When prompted during install, select **SiMa.ai Neat extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
 
 ## How to Run Tutorials
 
@@ -51,7 +51,7 @@ To use a different download root, add `--model-target-folder <path>`.
 
 ### Verify the install
 
-Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa Neat extras** is selected.
+Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa.ai Neat extras** is selected.
 
 ```bash
 ls lib/sima-neat/tutorials/ | grep '^tutorial_'
