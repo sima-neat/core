@@ -283,10 +283,14 @@ def test_model_option_structs_are_mutable():
   opt.preprocess.input_max_height = 1080
   opt.boxdecode_original_width = 1280
   opt.boxdecode_original_height = 720
+  opt.boxdecode_resize_mode = pyneat.ResizeMode.Letterbox
+
   assert opt.preprocess.input_max_width == 1920
   assert opt.preprocess.input_max_height == 1080
   assert opt.boxdecode_original_width == 1280
   assert opt.boxdecode_original_height == 720
+  assert opt.boxdecode_resize_mode == pyneat.ResizeMode.Letterbox
+
 
 def test_input_stage_option_structs_expose_expected_fields():
   pre = pyneat.PreprocOptions()

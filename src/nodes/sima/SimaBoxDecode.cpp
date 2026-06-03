@@ -58,7 +58,7 @@ struct BoxDecodeOptionsInternal {
   // buffer GstSimaaiPreprocessMeta won't carry `preproc_resize_mode`. When
   // present the contract drops `preproc_resize_mode` from
   // required_preprocess_meta_fields, and the backend fragment emits the
-  // resize-mode token so a future GST plugin property can consume it. nullopt
+  // resize-mode token for the GST plugin override. nullopt
   // means "no override; expect the value from upstream meta as before".
   std::optional<ResizeMode> resize_mode_override;
   std::string element_name;
@@ -102,7 +102,14 @@ bool boxdecode_contract_needs_sample_semantic_refinement_local(
                         boxdecode_name_looks_generic_local(tensor.backend_name) ||
                         boxdecode_name_looks_generic_local(tensor.source_segment_name);
   }
-  return !saw_explicit_semantics && saw_generic_names;
+  if (saw_explicit_semantics) {
+    return false;
+  }
+  if (saw_generic_names) {
+    return true;
+  }
+  return contract.score_activation == pipeline_internal::sima::BoxDecodeScoreActivation::Unknown ||
+         contract.decode_type_option == BoxDecodeTypeOption::Auto;
 }
 
 json shape_descs_to_json(const std::vector<sima_ev_shape_desc>& shapes) {
@@ -594,6 +601,15 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
   }
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
     compiled_contract.payload.decode_type_option = decode_type_option;
+    if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleProbability ||
+        decode_type_option == BoxDecodeTypeOption::InterleavedByHeadProbability) {
+      compiled_contract.payload.score_activation =
+          pipeline_internal::sima::BoxDecodeScoreActivation::Identity;
+    } else if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit ||
+               decode_type_option == BoxDecodeTypeOption::InterleavedByHeadLogit) {
+      compiled_contract.payload.score_activation =
+          pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+    }
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
@@ -899,18 +915,12 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   if (opt_->model_height > 0) {
     ss << " model-height=" << opt_->model_height;
   }
-  // NOTE: `opt_->resize_mode_override` is intentionally NOT emitted into the
-  // GST fragment here. The neatobjectdecode plugin (in the internals repo)
-  // does not yet register a `resize-mode` GObject property, so emitting
-  // `resize-mode=<token>` would make gst_parse_launch fail with
-  // "no property 'resize-mode' in element 'neatobjectdecode'". The override's
-  // current job is purely contract-side: it relaxes the per-buffer required-
-  // meta check (`preproc_resize_mode` is stripped from
-  // `required_preprocess_meta_fields`), letting buffers flow through without
-  // the upstream-emitted field. Runtime box rescaling on the plugin side
-  // falls back to geometry-derived math from original-width/model-width.
-  // When the plugin gains a property, emit the token here and add a fallback
-  // case to the plugin's extract_runtime_config / field_has_property_fallback.
+  if (opt_->resize_mode_override.has_value()) {
+    const char* mode = "letterbox";
+    if (*opt_->resize_mode_override == ResizeMode::Stretch) mode = "stretch";
+    if (*opt_->resize_mode_override == ResizeMode::Crop) mode = "crop";
+    ss << " resize-mode=" << mode;
+  }
   return ss.str();
 }
 

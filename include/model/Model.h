@@ -220,6 +220,7 @@ public:
      * supported topologies (YoloV5, YoloV8, DETR, EffDet, …) when loading a detection model.
      */
     BoxDecodeType decode_type = BoxDecodeType::Unspecified;
+    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
     float score_threshold = 0.0f; ///< BoxDecode score threshold; 0 keeps all candidates.
     float nms_iou_threshold =
         0.0f;      ///< BoxDecode IoU threshold for non-max suppression; 0 disables NMS.
@@ -236,6 +237,7 @@ public:
     /// @deprecated BoxDecode original image size is now read from preprocess metadata. Kept for
     /// transition.
     int boxdecode_original_height = 0;
+    std::optional<ResizeMode> boxdecode_resize_mode;
 
     // ── Naming / wiring ────────────────────────────────────────────────────────────────────
     /// Name of the upstream Node feeding preprocess input (default: `"decoder"` — i.e., a video

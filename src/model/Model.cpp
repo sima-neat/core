@@ -5318,7 +5318,7 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     float detection_threshold = opt.score_threshold;
     float nms_iou_threshold = opt.nms_iou_threshold;
     int top_k = opt.top_k;
-    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+    BoxDecodeTypeOption decode_type_option = opt.decode_type_option;
     const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
     int model_width = 0;
     int model_height = 0;
@@ -5329,9 +5329,9 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       model_width = resolved.mla_contract.width;
       model_height = resolved.mla_contract.height;
     }
-    std::optional<ResizeMode> resize_mode_override;
+    std::optional<ResizeMode> resize_mode_override = opt.boxdecode_resize_mode;
     if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 && model_width > 0 &&
-        model_height > 0) {
+        model_height > 0 && !resize_mode_override.has_value()) {
       resize_mode_override = resolved.effective.resize.mode;
     }
     return simaai::neat::nodes::SimaBoxDecode(
@@ -6024,6 +6024,9 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
+  out["boxdecode_resize_mode"] =
+      opt.boxdecode_resize_mode ? nlohmann::ordered_json(model_options_enum_int(*opt.boxdecode_resize_mode))
+                                : nlohmann::ordered_json(nullptr);
   out["upstream_name"] = opt.upstream_name;
   out["name_suffix"] = opt.name_suffix;
   out["cleanup_extracted_model_data"] = opt.cleanup_extracted_model_data;

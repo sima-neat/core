@@ -26,7 +26,6 @@ struct BoxDecodeTensorLineageFactsLocal;
 enum class BoxDecodeTensorRoleLocal;
 std::optional<std::pair<BoxDecodeTensorRoleLocal, int>>
 classify_boxdecode_tensor_semantics_from_name_local(const std::string& raw_name);
-bool boxdecode_tensor_has_semantic_name_local(const BoxDecodeTensorStaticContract& tensor);
 bool contract_looks_grouped_by_role_yolov8_local(const BoxDecodeStaticContract& contract);
 std::string lower_copy_local(std::string value);
 int to_non_negative_int_local(std::int64_t value);
@@ -244,34 +243,6 @@ bool tensor_name_explicitly_declares_score_semantics_local(
          tensor_name_looks_class_logit_local(tensor.source_segment_name);
 }
 
-// The MLA segment output names are generic, so the surgery's semantic role
-// (e.g. "cast_N/class_prob_M") survives only on the boxdecode consumer's
-// input-node names.  Seed those onto the contract tensors so role/score-domain
-// classification reflects the surgery's intent.  Without this, all tensors look
-// unclassified and maybe_restore_grouped_role_semantic_names_from_structure_local
-// fabricates the score role from quant_needed alone -> BF16 (no quant contract)
-// is wrongly labeled "class_logit" -> a spurious Sigmoid (double-sigmoid on
-// already-probability heads).  Reuses the existing wrapper-aware name parser.
-void maybe_seed_boxdecode_names_from_terminal_inputs_local(
-    BoxDecodeStaticContract* contract, const MpkPluginIoContract* terminal_stage) {
-  if (!contract || !terminal_stage ||
-      terminal_stage->input_tensors.size() != contract->tensors.size()) {
-    return;
-  }
-  for (std::size_t i = 0; i < contract->tensors.size(); ++i) {
-    auto& tensor = contract->tensors[i];
-    if (boxdecode_tensor_has_semantic_name_local(tensor)) {
-      continue;
-    }
-    const std::string& consumer_name = terminal_stage->input_tensors[i].name;
-    if (consumer_name.empty() ||
-        !classify_boxdecode_tensor_semantics_from_name_local(consumer_name).has_value()) {
-      continue;
-    }
-    tensor.source_segment_name = consumer_name;
-  }
-}
-
 void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticContract* contract) {
   if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown) {
     return;
@@ -296,11 +267,6 @@ void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticC
     contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
     return;
   }
-  if (!saw_prob_tensor && !saw_logit_tensor &&
-      (contract->decode_type == BoxDecodeType::YoloV8 ||
-       contract->decode_type == BoxDecodeType::YoloV26)) {
-    contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
-  }
 }
 
 bool quantized_tensor_looks_probability_domain_local(const BoxDecodeTensorStaticContract& tensor,
@@ -320,7 +286,7 @@ bool quantized_tensor_looks_probability_domain_local(const BoxDecodeTensorStatic
 
 void maybe_override_quantized_yolov8_score_activation_local(BoxDecodeStaticContract* contract) {
   if (!contract || contract->decode_type != BoxDecodeType::YoloV8 || !contract->quant_needed ||
-      contract->score_activation != BoxDecodeScoreActivation::Sigmoid ||
+      contract->score_activation != BoxDecodeScoreActivation::Unknown ||
       contract->tensors.size() != contract->dq_scale.size() ||
       contract->tensors.size() != contract->dq_zp.size() || contract->tensors.empty()) {
     return;
@@ -415,9 +381,6 @@ void maybe_infer_yolov8_decode_type_option_local(BoxDecodeStaticContract* contra
   if (contract->score_activation == BoxDecodeScoreActivation::Identity) {
     contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleProbability;
     return;
-  }
-  if (contract->score_activation == BoxDecodeScoreActivation::Unknown) {
-    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
   }
 }
 
@@ -1038,8 +1001,7 @@ synthesize_boxdecode_tensor_name_from_lineage_local(const BoxDecodeTensorLineage
   case BoxDecodeTensorRoleLocal::Regression:
     return "bbox_" + std::to_string(*facts.head_index);
   case BoxDecodeTensorRoleLocal::Score:
-    return std::string(quant_needed ? "class_prob_" : "class_logit_") +
-           std::to_string(*facts.head_index);
+    return quant_needed ? ("class_prob_" + std::to_string(*facts.head_index)) : std::string{};
   case BoxDecodeTensorRoleLocal::Unknown:
   default:
     return {};
@@ -2487,7 +2449,6 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     }
   }
 
-  maybe_seed_boxdecode_names_from_terminal_inputs_local(&out, terminal_stage);
   maybe_restore_boxdecode_semantic_names_from_lineage_local(&out, lineage_facts);
   maybe_normalize_legacy_yolo_decode_type_local(&out);
   maybe_restore_grouped_role_semantic_names_from_structure_local(&out);

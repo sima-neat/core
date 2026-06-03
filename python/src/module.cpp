@@ -2791,6 +2791,18 @@ NB_MODULE(_pyneat_core, m) {
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet);
 
+  nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
+      .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
+      .value("PackedPerHead", simaai::neat::BoxDecodeTypeOption::PackedPerHead)
+      .value("InterleavedByHead", simaai::neat::BoxDecodeTypeOption::InterleavedByHead)
+      .value("GroupedByRole", simaai::neat::BoxDecodeTypeOption::GroupedByRole)
+      .value("Split3Interleaved", simaai::neat::BoxDecodeTypeOption::Split3Interleaved)
+      .value("Split3Grouped", simaai::neat::BoxDecodeTypeOption::Split3Grouped)
+      .value("InterleavedByHeadProbability", simaai::neat::BoxDecodeTypeOption::InterleavedByHeadProbability)
+      .value("InterleavedByHeadLogit", simaai::neat::BoxDecodeTypeOption::InterleavedByHeadLogit)
+      .value("GroupedByRoleProbability", simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability)
+      .value("GroupedByRoleLogit", simaai::neat::BoxDecodeTypeOption::GroupedByRoleLogit);
+
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
       .value("Production", simaai::neat::VerbosityLevel::Production)
@@ -2905,12 +2917,14 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("preprocess", &simaai::neat::Model::Options::preprocess)
       .def_rw("decode_type", &simaai::neat::Model::Options::decode_type)
+      .def_rw("decode_type_option", &simaai::neat::Model::Options::decode_type_option)
       .def_rw("score_threshold", &simaai::neat::Model::Options::score_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::Model::Options::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
       .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
+      .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
       .def_rw("upstream_name", &simaai::neat::Model::Options::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::Options::name_suffix)
       .def_rw("cleanup_extracted_model_data",
