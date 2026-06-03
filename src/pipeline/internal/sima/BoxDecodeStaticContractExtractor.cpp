@@ -1363,9 +1363,9 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
   if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
     physical_c = round_up_to_multiple_local(physical_c, 16U);
   }
-  const std::uint64_t expected_bytes =
-      static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) * physical_c *
-      static_cast<std::uint64_t>(elem_bytes);
+  const std::uint64_t expected_bytes = static_cast<std::uint64_t>(h) *
+                                       static_cast<std::uint64_t>(w) * physical_c *
+                                       static_cast<std::uint64_t>(elem_bytes);
   if (expected_bytes != static_cast<std::uint64_t>(input_tensor->size_bytes)) {
     set_error(error_message,
               "boxdecode model-managed contract detess transport byte span mismatch: frame_shape "

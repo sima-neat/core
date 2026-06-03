@@ -703,7 +703,8 @@ try_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
     }
   }
   if (!saw_boxdecode_stage) {
-    throw std::runtime_error("Model-managed boxdecode stage requires a canonical compiled contract");
+    throw std::runtime_error(
+        "Model-managed boxdecode stage requires a canonical compiled contract");
   }
   return std::nullopt;
 }
@@ -715,8 +716,8 @@ struct BoxDecodeHwcLocal {
   int semantic_c = 0;
 };
 
-std::optional<BoxDecodeHwcLocal>
-boxdecode_hwc_from_input_shape_local(const pipeline_internal::sima::BoxDecodeTensorStaticContract& t) {
+std::optional<BoxDecodeHwcLocal> boxdecode_hwc_from_input_shape_local(
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& t) {
   if (t.input_shape.size() < 3U) {
     return std::nullopt;
   }
@@ -742,14 +743,13 @@ bool boxdecode_reg_cls_pair_matches_local(
     const pipeline_internal::sima::BoxDecodeTensorStaticContract& cls, int num_classes) {
   const auto r = boxdecode_hwc_from_input_shape_local(reg);
   const auto c = boxdecode_hwc_from_input_shape_local(cls);
-  return r.has_value() && c.has_value() && r->h == c->h && r->w == c->w &&
-         r->semantic_c >= 16 && (r->semantic_c % 4) == 0 && c->semantic_c == num_classes;
+  return r.has_value() && c.has_value() && r->h == c->h && r->w == c->w && r->semantic_c >= 16 &&
+         (r->semantic_c % 4) == 0 && c->semantic_c == num_classes;
 }
 
 bool boxdecode_looks_grouped_yolo_dfl_local(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
-  if (num_classes <= 0 || contract.tensors.size() < 2U ||
-      (contract.tensors.size() % 2U) != 0U) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return false;
   }
   const std::size_t heads = contract.tensors.size() / 2U;
@@ -764,8 +764,7 @@ bool boxdecode_looks_grouped_yolo_dfl_local(
 
 bool boxdecode_looks_interleaved_yolo_dfl_local(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
-  if (num_classes <= 0 || contract.tensors.size() < 2U ||
-      (contract.tensors.size() % 2U) != 0U) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return false;
   }
   for (std::size_t i = 0; i < contract.tensors.size(); i += 2U) {
@@ -7244,11 +7243,10 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
 
   const auto& mpk = pack.mpk_contract();
   if (!mpk.has_value()) {
-    throw std::runtime_error(
-        "Model-managed boxdecode fallback requires a parsed MPK contract");
+    throw std::runtime_error("Model-managed boxdecode fallback requires a parsed MPK contract");
   }
-  auto route_flags = model_route_flags_for_boxdecode_stage(
-      model.impl_->preprocess_plan.session_route_plan);
+  auto route_flags =
+      model_route_flags_for_boxdecode_stage(model.impl_->preprocess_plan.session_route_plan);
   if (!route_flags.has_value()) {
     throw std::runtime_error(
         "Model-managed boxdecode fallback requires the resolved route to select BoxDecode");
