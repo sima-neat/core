@@ -2226,8 +2226,8 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
 
   if (!saw_output) {
     std::ostringstream oss;
-    oss << "Graph::run(input): prefill stage produced no output"
-        << " pushes=" << target_pushes << " timeout_ms=" << timeout_ms;
+    oss << "Graph::run(input): prefill stage produced no output" << " pushes=" << target_pushes
+        << " timeout_ms=" << timeout_ms;
     if (!last_timeout.empty()) {
       oss << ": " << last_timeout;
     }
