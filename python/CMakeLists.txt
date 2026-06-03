@@ -11,7 +11,7 @@ if (NOT nanobind_FOUND)
   FetchContent_Declare(
     nanobind
     GIT_REPOSITORY https://github.com/wjakob/nanobind.git
-    GIT_TAG v2.4.0
+    GIT_TAG v2.5.0
     GIT_SHALLOW TRUE
     GIT_SUBMODULES_RECURSE TRUE
   )

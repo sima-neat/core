@@ -1,13 +1,13 @@
 [build-system]
 requires = [
   "scikit-build-core>=0.10.0",
-  "nanobind>=2.4.0",
+  "nanobind==2.5.0",
 ]
 build-backend = "scikit_build_core.build"
 
 [project]
 name = "pyneat"
-version = "2.0.0"
+version = "0.1.0"
 description = "Python bindings for SiMa NEAT"
 readme = "README.md"
 requires-python = ">=3.9"

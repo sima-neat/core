@@ -78,7 +78,7 @@ This is where compatibility genuinely varies. The SDK runs **in a Docker contain
 | From-source floor | `requires-python >= 3.9`; CMake `find_package(Python 3.8 REQUIRED)` | `pyproject.toml`, `python/CMakeLists.txt` | ✅ |
 | Runtime dep — NumPy | **`numpy >= 1.24, < 2`** (NumPy **2.x not supported**) | `pyproject.toml` `dependencies` | ✅ |
 | Runtime dep — Torch | optional extra: `torch >= 2.3.0` (DLPack interop) | `pyproject.toml` `[optional-dependencies]` | ✅ |
-| Build backend | `scikit-build-core >= 0.10.0`, `nanobind >= 2.4.0` | `pyproject.toml` `build-system` | ✅ |
+| Build backend | `scikit-build-core >= 0.10.0`, `nanobind == 2.5.0` | `pyproject.toml` `build-system` | ✅ |
 | Platform | **`linux_aarch64` only** — no x86 pyneat wheel | `dist/`, registry (only aarch64 pyneat wheels exist) | ✅ |
 | Install location | `/media/nvme/pyneat` if writable NVMe, else `$HOME/pyneat`; always symlinked to `$HOME/pyneat` | `install_neat_framework.sh` `resolve_venv_dir()` / `ensure_home_pyneat_symlink()` | ✅ |
 | Activation | `source ~/pyneat/bin/activate` (on the DevKit) | install_neat_framework.sh / tutorials | ✅ |
