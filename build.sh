@@ -42,7 +42,7 @@ INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
-NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-staging}"
+NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-production}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
 NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
@@ -286,7 +286,7 @@ Environment:
                  Override where the shadow workspace is created.
   NEAT_DEPS_MANIFEST=deps/manifest.json
                  Manifest used to resolve Vulcan dependency artifacts.
-  NEAT_VULCAN_ENV=staging
+  NEAT_VULCAN_ENV=production
                  Vulcan environment used for dependency artifact installs.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
