@@ -23,7 +23,7 @@ if git describe --tags --exact-match >/dev/null 2>&1; then
   version="$(git describe --tags --exact-match 2>/dev/null || true)"
 else
   branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-  hash="$(git rev-parse --short HEAD 2>/dev/null || true)"
+  hash="$(git rev-parse --short=12 HEAD 2>/dev/null || true)"
 
   if [[ -n "${GITHUB_REF_TYPE:-}" && "${GITHUB_REF_TYPE}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
     version="${GITHUB_REF_NAME}"
@@ -32,7 +32,7 @@ else
       branch="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME:-}}"
     fi
     if [[ -z "${hash}" && -n "${GITHUB_SHA:-}" ]]; then
-      hash="${GITHUB_SHA:0:7}"
+      hash="${GITHUB_SHA:0:12}"
     fi
   fi
 
@@ -40,7 +40,7 @@ else
     branch="$(
       printf '%s' "${branch}" \
         | tr '[:upper:]' '[:lower:]' \
-        | sed -E 's#[^a-z0-9.]+#.#g; s#^\.+##; s#\.+$##'
+        | sed -E 's#[^a-z0-9.+~-]+#-#g; s#^-+##; s#-+$##'
     )"
     if [[ -z "${branch}" ]]; then
       branch="branch"

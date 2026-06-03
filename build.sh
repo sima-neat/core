@@ -1937,10 +1937,27 @@ compute_neat_package_version() {
   "${REPO_ROOT}/tools/compute_version.sh"
 }
 
+compute_neat_platform_version() {
+  python3 - "${NEAT_DEPS_MANIFEST}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+version = str(data.get("platform-version", "")).strip()
+if not version:
+    raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
+print(version)
+PY
+}
+
 generate_package_buildinfo_json() {
   local output_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
   local package_version
+  local platform_version
   package_version="$(compute_neat_package_version)"
+  platform_version="$(compute_neat_platform_version)"
 
   # Best-effort cross-toolchain version string for the compatibility block.
   local toolchain_version=""
@@ -1954,6 +1971,7 @@ generate_package_buildinfo_json() {
     --output "${output_path}" \
     --package-name "${NEAT_PACKAGE_NAME}" \
     --package-version "${package_version}" \
+    --platform-version "${platform_version}" \
     --vulcan-env "${NEAT_VULCAN_ENV}" \
     --internals-ref "${NEAT_INTERNALS_RESOLVED_REF}" \
     --llima-ref "${NEAT_LLIMA_RESOLVED_REF}" \
@@ -2078,7 +2096,7 @@ PY
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
       echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind ninja
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja
       local py_abi
       local py_triplet
       local pyneat_ext_suffix

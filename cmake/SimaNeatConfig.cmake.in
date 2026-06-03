@@ -3,9 +3,9 @@
 include(CMakeFindDependencyMacro)
 set(SIMANEAT_WITH_LLIMA @SIMANEAT_CONFIG_WITH_LLIMA@)
 if (SIMANEAT_WITH_LLIMA)
-  find_dependency(SimaLMM CONFIG REQUIRED)
+  find_dependency(SimaLMM @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
 endif()
-find_dependency(NeatInternals CONFIG REQUIRED)
+find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
 
 # Exported targets
 include("${CMAKE_CURRENT_LIST_DIR}/SimaNeatTargets.cmake")
