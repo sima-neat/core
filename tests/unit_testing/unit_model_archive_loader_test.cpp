@@ -124,11 +124,6 @@ RUN_TEST(
                                     ModelArchiveErrorClass::UnsupportedExtension,
                                     std::string("unsupported archive extension ") + ext);
       }
-    }));
-
-RUN_TEST(
-    "unit_model_archive_destination_collision_test", ([] {
-      namespace fs = std::filesystem;
 
       const fs::path collision =
           sima_test::model_archive_fixture_path("valid/destination_collision.tar.gz");
