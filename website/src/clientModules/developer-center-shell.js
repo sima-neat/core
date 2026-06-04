@@ -5,6 +5,22 @@ function assetUrl(base, file) {
   return `${normalized}${file}`;
 }
 
+async function assetIsServed(href, expectedTypePattern) {
+  // A dev server's history-API fallback (and some static hosts) answer a
+  // missing asset with the SPA's index.html at HTTP 200 instead of a 404.
+  // Injecting a <script> for such a URL would "load" successfully and then
+  // execute HTML as JS ("Unexpected token '<'"), bypassing onerror. Preflight
+  // the URL and confirm the response is the asset type we expect before use.
+  try {
+    const res = await fetch(href, {method: "GET", credentials: "same-origin"});
+    if (!res.ok) return false;
+    const type = res.headers.get("content-type") || "";
+    return expectedTypePattern.test(type);
+  } catch {
+    return false;
+  }
+}
+
 function loadStylesheet(href) {
   if (document.querySelector(`link[data-developer-center-shell-css="${href}"]`)) {
     return Promise.resolve();
@@ -62,8 +78,15 @@ async function mountShell() {
   const base = config.base || DEFAULT_SHELL_BASE;
 
   try {
+    const scriptUrl = assetUrl(base, "developer-center-shell.js");
+    if (!(await assetIsServed(scriptUrl, /(java|ecma)script/i))) {
+      // Shell not deployed here (standalone docs build / dev server). Fall back
+      // to the local software navbar without injecting an HTML-as-JS script.
+      return;
+    }
+
     await loadStylesheet(assetUrl(base, "developer-center-shell.css"));
-    await loadScript(assetUrl(base, "developer-center-shell.js"));
+    await loadScript(scriptUrl);
 
     if (!window.DeveloperCenterShell) {
       throw new Error("DeveloperCenterShell global was not registered.");
