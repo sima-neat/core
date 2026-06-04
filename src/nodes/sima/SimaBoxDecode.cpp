@@ -129,7 +129,9 @@ void maybe_refine_boxdecode_contract_from_ingress_sample_local(
     pipeline_internal::sima::BoxDecodeStaticContract* contract, const Sample& ingress_sample,
     BoxDecodeType decode_type, const std::optional<InputContract>& input_contract) {
   if (!contract ||
-      (decode_type != BoxDecodeType::YoloV8 && decode_type != BoxDecodeType::YoloV26) ||
+      !(decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26 ||
+        decode_type == BoxDecodeType::YoloV26Pose || decode_type == BoxDecodeType::YoloV26Seg ||
+        decode_type == BoxDecodeType::YoloV6 || decode_type == BoxDecodeType::YoloX) ||
       !boxdecode_contract_needs_sample_semantic_refinement_local(*contract)) {
     return;
   }
@@ -419,7 +421,9 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
 }
 
 void apply_yolov26_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
-  if (!compiled || compiled->payload.decode_type != BoxDecodeType::YoloV26) {
+  if (!compiled || (compiled->payload.decode_type != BoxDecodeType::YoloV26 &&
+                    compiled->payload.decode_type != BoxDecodeType::YoloV26Pose &&
+                    compiled->payload.decode_type != BoxDecodeType::YoloV26Seg)) {
     return;
   }
   // YOLO26 score heads are logits by contract. Make model-managed overrides
@@ -427,6 +431,24 @@ void apply_yolov26_compiled_payload_overrides(CompiledBoxDecodeContract* compile
   // grouped-head heuristics.
   compiled->payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
   compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+  if (compiled->payload.decode_type == BoxDecodeType::YoloV26Pose &&
+      compiled->payload.num_classes <= 0) {
+    compiled->payload.num_classes = 1;
+  }
+}
+
+void apply_raw_yolov6_yolox_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
+  if (!compiled || (compiled->payload.decode_type != BoxDecodeType::YoloV6 &&
+                    compiled->payload.decode_type != BoxDecodeType::YoloX)) {
+    return;
+  }
+  compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+  if (!compiled->payload.decode_type_option.has_value() ||
+      *compiled->payload.decode_type_option == BoxDecodeTypeOption::Auto) {
+    compiled->payload.decode_type_option = compiled->payload.decode_type == BoxDecodeType::YoloX
+                                               ? BoxDecodeTypeOption::Split3Interleaved
+                                               : BoxDecodeTypeOption::InterleavedByHeadLogit;
+  }
 }
 
 } // namespace
@@ -612,6 +634,7 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
     }
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
+  apply_raw_yolov6_yolox_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }
@@ -917,8 +940,10 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   }
   if (opt_->resize_mode_override.has_value()) {
     const char* mode = "letterbox";
-    if (*opt_->resize_mode_override == ResizeMode::Stretch) mode = "stretch";
-    if (*opt_->resize_mode_override == ResizeMode::Crop) mode = "crop";
+    if (*opt_->resize_mode_override == ResizeMode::Stretch)
+      mode = "stretch";
+    if (*opt_->resize_mode_override == ResizeMode::Crop)
+      mode = "crop";
     ss << " resize-mode=" << mode;
   }
   return ss.str();

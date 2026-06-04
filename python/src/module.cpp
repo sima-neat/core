@@ -2786,6 +2786,10 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV10", simaai::neat::BoxDecodeType::YoloV10)
       .value("YoloV10Seg", simaai::neat::BoxDecodeType::YoloV10Seg)
       .value("YoloV26", simaai::neat::BoxDecodeType::YoloV26)
+      .value("YoloV26Pose", simaai::neat::BoxDecodeType::YoloV26Pose)
+      .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
+      .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
+      .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
@@ -2798,9 +2802,11 @@ NB_MODULE(_pyneat_core, m) {
       .value("GroupedByRole", simaai::neat::BoxDecodeTypeOption::GroupedByRole)
       .value("Split3Interleaved", simaai::neat::BoxDecodeTypeOption::Split3Interleaved)
       .value("Split3Grouped", simaai::neat::BoxDecodeTypeOption::Split3Grouped)
-      .value("InterleavedByHeadProbability", simaai::neat::BoxDecodeTypeOption::InterleavedByHeadProbability)
+      .value("InterleavedByHeadProbability",
+             simaai::neat::BoxDecodeTypeOption::InterleavedByHeadProbability)
       .value("InterleavedByHeadLogit", simaai::neat::BoxDecodeTypeOption::InterleavedByHeadLogit)
-      .value("GroupedByRoleProbability", simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability)
+      .value("GroupedByRoleProbability",
+             simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability)
       .value("GroupedByRoleLogit", simaai::neat::BoxDecodeTypeOption::GroupedByRoleLogit);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")

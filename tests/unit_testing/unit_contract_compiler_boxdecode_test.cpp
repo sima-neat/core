@@ -169,6 +169,11 @@ RUN_TEST(
       const auto parsed_yolo26 = parse_box_decode_type_token("yolo26");
       require(parsed_yolo26.has_value() && *parsed_yolo26 == BoxDecodeType::YoloV26,
               "decode_type parser should round-trip yolo26");
+      require(box_decode_type_token_string(BoxDecodeType::YoloV26Pose) == "yolo26-pose",
+              "YoloV26Pose token string mismatch");
+      const auto parsed_yolo26_pose = parse_box_decode_type_token("yolov26-pose");
+      require(parsed_yolo26_pose.has_value() && *parsed_yolo26_pose == BoxDecodeType::YoloV26Pose,
+              "decode_type parser should round-trip yolov26-pose alias");
 
       BoxDecodeStaticContract yolo26_contract;
       yolo26_contract.decode_type = BoxDecodeType::YoloV8;
@@ -238,4 +243,85 @@ RUN_TEST(
               "YOLO26 compiled payload should preserve grouped-by-role-logit");
       require(compiled_yolo26.payload.score_activation == BoxDecodeScoreActivation::Sigmoid,
               "YOLO26 compiled payload should preserve sigmoid activation");
+
+      BoxDecodeStaticContract yolo26_pose_contract = yolo26_contract;
+      yolo26_pose_contract.tensors.clear();
+      yolo26_pose_contract.tensor_names.clear();
+      yolo26_pose_contract.num_classes = 0;
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolo26_pose_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+            {width, width, 16},
+            {width, width, 4},
+            "BF16",
+            "HWC",
+            "opaque_pose_bbox_" + std::to_string(i),
+            "opaque_pose_bbox_" + std::to_string(i),
+            "opaque_pose_bbox_" + std::to_string(i),
+            i,
+            i,
+            i,
+            0,
+            static_cast<std::uint64_t>(width * width * 16 * 2),
+        });
+        yolo26_pose_contract.tensor_names.push_back("opaque_pose_bbox_" + std::to_string(i));
+      }
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolo26_pose_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+            {width, width, 16},
+            {width, width, 1},
+            "BF16",
+            "HWC",
+            "opaque_pose_score_" + std::to_string(i),
+            "opaque_pose_score_" + std::to_string(i),
+            "opaque_pose_score_" + std::to_string(i),
+            i + 3,
+            i + 3,
+            i + 3,
+            0,
+            static_cast<std::uint64_t>(width * width * 16 * 2),
+        });
+        yolo26_pose_contract.tensor_names.push_back("opaque_pose_score_" + std::to_string(i));
+      }
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolo26_pose_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+            {width, width, 64},
+            {width, width, 51},
+            "BF16",
+            "HWC",
+            "opaque_pose_keypoint_" + std::to_string(i),
+            "opaque_pose_keypoint_" + std::to_string(i),
+            "opaque_pose_keypoint_" + std::to_string(i),
+            i + 6,
+            i + 6,
+            i + 6,
+            0,
+            static_cast<std::uint64_t>(width * width * 64 * 2),
+        });
+        yolo26_pose_contract.tensor_names.push_back("opaque_pose_keypoint_" + std::to_string(i));
+      }
+      yolo26_pose_contract.dq_scale.assign(9U, 1.0);
+      yolo26_pose_contract.dq_zp.assign(9U, 0);
+      const auto finalized_yolo26_pose = finalize_boxdecode_static_contract(
+          yolo26_pose_contract, BoxDecodeType::YoloV26Pose, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {"orig_width", "orig_height"});
+      require(finalized_yolo26_pose.decode_type == BoxDecodeType::YoloV26Pose,
+              "YOLO26-pose finalize should preserve the requested decode type");
+      require(finalized_yolo26_pose.num_classes == 1,
+              "YOLO26-pose finalize should default to one pose score class");
+      require(finalized_yolo26_pose.decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit,
+              "YOLO26-pose finalize should force grouped-by-role-logit");
+      require(finalized_yolo26_pose.score_activation == BoxDecodeScoreActivation::Sigmoid,
+              "YOLO26-pose finalize should force sigmoid score activation");
+      require(finalized_yolo26_pose.tensors[0].logical_name == "bbox_0" &&
+                  finalized_yolo26_pose.tensors[3].logical_name == "class_logit_0" &&
+                  finalized_yolo26_pose.tensors[6].logical_name == "keypoint_0",
+              "YOLO26-pose finalize should synthesize canonical bbox/score/keypoint names");
+      const auto compiled_yolo26_pose = build_boxdecode_compiled_contract(finalized_yolo26_pose);
+      require(compiled_yolo26_pose.payload.decode_type == BoxDecodeType::YoloV26Pose,
+              "YOLO26-pose compiled payload should preserve decode type");
+      require(compiled_yolo26_pose.payload.num_classes == 1,
+              "YOLO26-pose compiled payload should preserve one pose score class");
     }));

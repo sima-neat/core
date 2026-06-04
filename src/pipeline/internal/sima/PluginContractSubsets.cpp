@@ -496,9 +496,16 @@ detess_boundary_shape_view_from_stage(const MpkPluginIoContract& stage,
   if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
     const std::uint64_t packed_channels =
         static_cast<std::uint64_t>(view.transport_shape.empty() ? 0 : view.transport_shape.back());
-    if (packed_channels == 0U || (packed_channels % 16U) != 0U) {
+    const std::uint64_t elem_bytes = dtype_size_bytes(
+        !transport_tensor->dtype.empty() ? transport_tensor->dtype : stage.frame_type);
+    const bool byte_granule_aligned =
+        packed_channels > 0U && elem_bytes > 0U &&
+        packed_channels <= (std::numeric_limits<std::uint64_t>::max() / elem_bytes) &&
+        ((packed_channels * elem_bytes) % 16U) == 0U;
+    if (!byte_granule_aligned) {
       throw std::runtime_error(
-          "detess boundary contract expected c16-aligned packed channels for '" + stage.name + "'");
+          "detess boundary contract expected 16-byte aligned packed channel storage for '" +
+          stage.name + "'");
     }
   }
   return view;

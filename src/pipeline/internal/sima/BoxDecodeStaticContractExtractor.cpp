@@ -243,6 +243,75 @@ bool tensor_name_explicitly_declares_score_semantics_local(
          tensor_name_looks_class_logit_local(tensor.source_segment_name);
 }
 
+bool decode_type_is_yolov8_family_local(BoxDecodeType decode_type) {
+  return decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV8Seg ||
+         decode_type == BoxDecodeType::YoloV8Pose;
+}
+
+bool decode_type_is_yolov26_family_local(BoxDecodeType decode_type) {
+  return decode_type == BoxDecodeType::YoloV26 || decode_type == BoxDecodeType::YoloV26Pose ||
+         decode_type == BoxDecodeType::YoloV26Seg;
+}
+
+bool decode_type_is_raw_yolov6_yolox_family_local(BoxDecodeType decode_type) {
+  return decode_type == BoxDecodeType::YoloV6 || decode_type == BoxDecodeType::YoloX;
+}
+
+int logical_channel_depth_local(const BoxDecodeTensorStaticContract& tensor) {
+  if (tensor.slice_shape.size() >= 3U && tensor.slice_shape.back() > 0) {
+    return tensor.slice_shape.back();
+  }
+  if (tensor.input_shape.size() >= 3U && tensor.input_shape.back() > 0) {
+    return tensor.input_shape.back();
+  }
+  return 0;
+}
+
+bool tensor_name_looks_objectness_logit_local(const BoxDecodeTensorStaticContract& tensor) {
+  auto looks = [](std::string raw) {
+    raw = lower_copy_local(raw);
+    return raw.find("obj_logit") != std::string::npos ||
+           raw.find("objectness_logit") != std::string::npos ||
+           raw.find("object_logit") != std::string::npos;
+  };
+  return looks(tensor.logical_name) || looks(tensor.backend_name) ||
+         looks(tensor.source_segment_name);
+}
+
+int infer_raw_yolo_class_depth_local(const BoxDecodeStaticContract& contract) {
+  int best = 0;
+  for (const auto& tensor : contract.tensors) {
+    const int c = logical_channel_depth_local(tensor);
+    if (c <= 4) {
+      continue;
+    }
+    if (tensor_name_looks_objectness_logit_local(tensor)) {
+      continue;
+    }
+    best = std::max(best, c);
+  }
+  return best;
+}
+
+void apply_raw_yolov6_yolox_contract_overrides_local(BoxDecodeStaticContract* contract) {
+  if (!contract || !decode_type_is_raw_yolov6_yolox_family_local(contract->decode_type)) {
+    return;
+  }
+  // The raw-head surgeries deliberately cut before the final CPU-friendly
+  // nonlinear decode: class/objectness tensors are logits, not probabilities.
+  if (contract->score_activation == BoxDecodeScoreActivation::Unknown) {
+    contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+  }
+  if (contract->decode_type_option == BoxDecodeTypeOption::Auto) {
+    contract->decode_type_option = contract->decode_type == BoxDecodeType::YoloX
+                                       ? BoxDecodeTypeOption::Split3Interleaved
+                                       : BoxDecodeTypeOption::InterleavedByHeadLogit;
+  }
+  if (contract->num_classes <= 0) {
+    contract->num_classes = infer_raw_yolo_class_depth_local(*contract);
+  }
+}
+
 void maybe_infer_score_activation_from_boxdecode_contract_local(BoxDecodeStaticContract* contract) {
   if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown) {
     return;
@@ -285,8 +354,8 @@ bool quantized_tensor_looks_probability_domain_local(const BoxDecodeTensorStatic
 }
 
 void maybe_override_quantized_yolov8_score_activation_local(BoxDecodeStaticContract* contract) {
-  if (!contract || contract->decode_type != BoxDecodeType::YoloV8 || !contract->quant_needed ||
-      contract->score_activation != BoxDecodeScoreActivation::Unknown ||
+  if (!contract || !decode_type_is_yolov8_family_local(contract->decode_type) ||
+      !contract->quant_needed || contract->score_activation != BoxDecodeScoreActivation::Unknown ||
       contract->tensors.size() != contract->dq_scale.size() ||
       contract->tensors.size() != contract->dq_zp.size() || contract->tensors.empty()) {
     return;
@@ -320,6 +389,18 @@ void maybe_override_quantized_yolov8_score_activation_local(BoxDecodeStaticContr
   }
 }
 
+void maybe_default_float_yolo_score_activation_local(BoxDecodeStaticContract* contract) {
+  if (!contract || contract->score_activation != BoxDecodeScoreActivation::Unknown ||
+      contract->quant_needed) {
+    return;
+  }
+  if (decode_type_is_yolov8_family_local(contract->decode_type) ||
+      decode_type_is_yolov26_family_local(contract->decode_type) ||
+      decode_type_is_raw_yolov6_yolox_family_local(contract->decode_type)) {
+    contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
+  }
+}
+
 bool contract_looks_grouped_by_role_yolov8_local(const BoxDecodeStaticContract& contract) {
   if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return false;
@@ -346,8 +427,8 @@ bool contract_looks_grouped_by_role_yolov8_local(const BoxDecodeStaticContract& 
 
 void maybe_infer_yolov8_decode_type_option_local(BoxDecodeStaticContract* contract) {
   if (!contract ||
-      (contract->decode_type != BoxDecodeType::YoloV8 &&
-       contract->decode_type != BoxDecodeType::YoloV26) ||
+      (!decode_type_is_yolov8_family_local(contract->decode_type) &&
+       !decode_type_is_yolov26_family_local(contract->decode_type)) ||
       contract->decode_type_option != BoxDecodeTypeOption::Auto ||
       !contract_looks_grouped_by_role_yolov8_local(*contract)) {
     return;
@@ -707,14 +788,16 @@ std::optional<BoxDecodeScoreActivation> resolve_boxdecode_score_activation_from_
   if (saw_logit_tensor) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
-  if (decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26) {
+  if (decode_type_is_yolov8_family_local(decode_type) ||
+      decode_type_is_yolov26_family_local(decode_type)) {
     if (const auto inferred = maybe_infer_float_yolov8_score_activation_from_sample_values_local(
             tensors, input_contract);
         inferred.has_value()) {
       return inferred;
     }
   }
-  if (decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26) {
+  if (decode_type_is_yolov8_family_local(decode_type) ||
+      decode_type_is_yolov26_family_local(decode_type)) {
     return BoxDecodeScoreActivation::Sigmoid;
   }
   set_error(error_message,
@@ -1028,7 +1111,7 @@ void maybe_restore_boxdecode_semantic_names_from_lineage_local(
     }
     const std::string synthesized = synthesize_boxdecode_tensor_name_from_lineage_local(
         lineage_facts[i],
-        contract->quant_needed && contract->decode_type != BoxDecodeType::YoloV26);
+        contract->quant_needed && !decode_type_is_yolov26_family_local(contract->decode_type));
     if (synthesized.empty()) {
       continue;
     }
@@ -1044,7 +1127,7 @@ void maybe_restore_grouped_role_semantic_names_from_structure_local(
     BoxDecodeStaticContract* contract) {
   if (!contract ||
       (contract->decode_type != BoxDecodeType::YoloV8 &&
-       contract->decode_type != BoxDecodeType::YoloV26) ||
+       !decode_type_is_yolov26_family_local(contract->decode_type)) ||
       !contract_looks_grouped_by_role_yolov8_local(*contract) || contract->tensors.empty() ||
       (contract->tensors.size() % 2U) != 0U) {
     return;
@@ -1071,7 +1154,7 @@ void maybe_restore_grouped_role_semantic_names_from_structure_local(
     }
 
     const bool score_is_probability =
-        contract->quant_needed && contract->decode_type != BoxDecodeType::YoloV26;
+        contract->quant_needed && !decode_type_is_yolov26_family_local(contract->decode_type);
     const std::string score_name =
         std::string(score_is_probability ? "class_prob_" : "class_logit_") + std::to_string(i);
     contract->tensors[i + heads].logical_name = score_name;
@@ -1119,6 +1202,65 @@ void maybe_infer_boxdecode_seg_pose_variant_local(BoxDecodeStaticContract* contr
   const auto channel_depth = [](const BoxDecodeTensorStaticContract& t) {
     return t.input_shape.size() >= 3U ? t.input_shape[2] : 0;
   };
+  const auto logical_channel_depth = [](const BoxDecodeTensorStaticContract& t) {
+    return t.slice_shape.size() >= 3U ? t.slice_shape[2]
+                                      : (t.input_shape.size() >= 3U ? t.input_shape[2] : 0);
+  };
+  // YOLO26-pose: 3 tensors per head, grouped by role:
+  // [bbox_0..bbox_h-1, class_logit_0..class_logit_h-1, keypoint_0..keypoint_h-1].
+  // BBox logical depth is raw l/t/r/b (4), score depth is 1, keypoint depth is 17*3=51.
+  if ((n % 3U) == 0U && (n / 3U) >= 3U) {
+    const std::size_t heads = n / 3U;
+    bool looks_yolo26_pose = true;
+    for (std::size_t i = 0; i < heads; ++i) {
+      const auto& bbox = tensors[i];
+      const auto& score = tensors[i + heads];
+      const auto& keypoint = tensors[i + (2U * heads)];
+      if (bbox.input_shape.size() < 3U || score.input_shape.size() < 3U ||
+          keypoint.input_shape.size() < 3U || bbox.input_shape[0] != score.input_shape[0] ||
+          bbox.input_shape[1] != score.input_shape[1] ||
+          bbox.input_shape[0] != keypoint.input_shape[0] ||
+          bbox.input_shape[1] != keypoint.input_shape[1] || logical_channel_depth(bbox) != 4 ||
+          logical_channel_depth(score) != 1 || logical_channel_depth(keypoint) != 51) {
+        looks_yolo26_pose = false;
+        break;
+      }
+    }
+    if (looks_yolo26_pose) {
+      contract->decode_type = BoxDecodeType::YoloV26Pose;
+      return;
+    }
+  }
+  // YOLO26-seg: 3 tensors per head plus one trailing prototype:
+  // [bbox_0..bbox_h-1, class_logit_0..class_logit_h-1,
+  //  mask_coeff_0..mask_coeff_h-1, mask_proto].
+  // The MPK shape contract is authoritative: raw-ltrb bbox is a logical
+  // 4-channel slice, mask coefficients/prototype are logical 32-channel slices,
+  // and score/class heads carry the class depth.
+  if (((n - 1U) % 3U) == 0U && ((n - 1U) / 3U) >= 3U &&
+      logical_channel_depth(tensors.back()) == 32) {
+    const std::size_t heads = (n - 1U) / 3U;
+    bool looks_yolo26_seg = true;
+    for (std::size_t i = 0; i < heads; ++i) {
+      const auto& bbox = tensors[i];
+      const auto& score = tensors[i + heads];
+      const auto& mask_coeff = tensors[i + (2U * heads)];
+      if (bbox.input_shape.size() < 3U || score.input_shape.size() < 3U ||
+          mask_coeff.input_shape.size() < 3U || bbox.input_shape[0] != score.input_shape[0] ||
+          bbox.input_shape[1] != score.input_shape[1] ||
+          bbox.input_shape[0] != mask_coeff.input_shape[0] ||
+          bbox.input_shape[1] != mask_coeff.input_shape[1] ||
+          logical_channel_depth(bbox) != 4 || logical_channel_depth(score) <= 4 ||
+          logical_channel_depth(mask_coeff) != 32) {
+        looks_yolo26_seg = false;
+        break;
+      }
+    }
+    if (looks_yolo26_seg) {
+      contract->decode_type = BoxDecodeType::YoloV26Seg;
+      return;
+    }
+  }
   // DFL regression bbox heads are 64 channels (16 DFL bins x 4 sides); raw-ltrb YOLO_V26 is 4.
   if (channel_depth(tensors.front()) != 64) {
     return;
@@ -1390,11 +1532,14 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
               "frame_shape logical channels");
     return std::nullopt;
   }
+  const bool byte_granule_aligned =
+      physical_c <= (std::numeric_limits<std::uint64_t>::max() / elem64) &&
+      ((physical_c * elem64) % 16U) == 0U;
   if (((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) &&
-      (physical_c % 16U) != 0U) {
+      !byte_granule_aligned) {
     set_error(error_message,
-              "boxdecode model-managed contract detess transport expected c16-aligned packed "
-              "channels because MPK align_c16/cblock is set");
+              "boxdecode model-managed contract detess transport expected 16-byte aligned packed "
+              "channel storage because MPK align_c16/cblock is set");
     return std::nullopt;
   }
   if (physical_c > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
@@ -1402,8 +1547,7 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
               "boxdecode model-managed contract detess transport channel count overflows int");
     return std::nullopt;
   }
-  return std::make_pair(std::array<int, 3>{h, w, static_cast<int>(physical_c)},
-                        declared_bytes);
+  return std::make_pair(std::array<int, 3>{h, w, static_cast<int>(physical_c)}, declared_bytes);
 }
 
 std::optional<int> parse_head_index_after_token_local(const std::string& raw_name,
@@ -2516,7 +2660,9 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   maybe_restore_grouped_role_semantic_names_from_structure_local(&out);
   maybe_infer_score_activation_from_boxdecode_contract_local(&out);
   maybe_override_quantized_yolov8_score_activation_local(&out);
+  maybe_default_float_yolo_score_activation_local(&out);
   maybe_infer_yolov8_decode_type_option_local(&out);
+  apply_raw_yolov6_yolox_contract_overrides_local(&out);
 
   return out;
 }
@@ -2630,7 +2776,9 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
 
   maybe_infer_score_activation_from_boxdecode_contract_local(&out);
   maybe_override_quantized_yolov8_score_activation_local(&out);
+  maybe_default_float_yolo_score_activation_local(&out);
   maybe_infer_yolov8_decode_type_option_local(&out);
+  apply_raw_yolov6_yolox_contract_overrides_local(&out);
 
   return out;
 }
@@ -2765,7 +2913,9 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
 
   maybe_infer_score_activation_from_boxdecode_contract_local(&out);
   maybe_override_quantized_yolov8_score_activation_local(&out);
+  maybe_default_float_yolo_score_activation_local(&out);
   maybe_infer_yolov8_decode_type_option_local(&out);
+  apply_raw_yolov6_yolox_contract_overrides_local(&out);
 
   return out;
 }
