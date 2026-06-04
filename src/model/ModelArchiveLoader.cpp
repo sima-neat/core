@@ -16,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -870,6 +871,25 @@ void validate_version_json(const json& j) {
   }
 }
 
+// Relative extraction destination for an archive entry, under the package root's
+// {etc,lib,share}/<filename> layout. Entries are flattened to basename, so distinct
+// source paths can collide here (detected in validate_archive / extract_destination_for).
+fs::path extract_destination_rel(const TarEntry& entry) {
+  const std::string ext = fs::path(entry.normalized_path).extension().string();
+  const fs::path name = fs::path(entry.normalized_path).filename();
+
+  if (entry.entry_class == EntryClass::Json) {
+    return fs::path("etc") / name;
+  }
+  if (ext == ".so") {
+    return fs::path("lib") / name;
+  }
+  if (ext == ".elf") {
+    return fs::path("share") / name;
+  }
+  return fs::path("etc") / name;
+}
+
 ValidatedArchive validate_archive(const std::string& archive_path,
                                   const ModelArchiveLoaderOptions& opt) {
   ValidatedArchive out;
@@ -912,6 +932,7 @@ ValidatedArchive validate_archive(const std::string& archive_path,
   }
 
   std::unordered_set<std::string> seen_paths;
+  std::unordered_map<std::string, std::string> seen_destinations;  // rel-dest -> source path
   std::size_t total_json_bytes = 0;
   std::size_t json_file_count = 0;
 
@@ -921,6 +942,25 @@ ValidatedArchive validate_archive(const std::string& archive_path,
     if (!seen_paths.insert(entry.normalized_path).second) {
       throw_archive(ModelArchiveErrorClass::InvalidArchive,
                     "invalid_archive: duplicate archive entry path: " + entry.normalized_path);
+    }
+
+    // Distinct source paths can flatten to the same extraction destination and silently
+    // overwrite each other. Detect that here, before any file is written. Default: warn
+    // loudly; hard-reject only when opt.reject_destination_collisions is set.
+    if (entry.type == '-' && entry.entry_class != EntryClass::Directory) {
+      const std::string dst_rel = extract_destination_rel(entry).string();
+      auto [it, inserted] = seen_destinations.emplace(dst_rel, entry.normalized_path);
+      if (!inserted) {
+        const std::string msg = "archive entries '" + it->second + "' and '" +
+                                entry.normalized_path + "' both extract to '" + dst_rel + "'";
+        if (opt.reject_destination_collisions) {
+          throw_archive(ModelArchiveErrorClass::InvalidArchive,
+                        "invalid_archive: destination collision: " + msg);
+        }
+        std::fprintf(stderr,
+                     "[neat] WARNING: %s; the later entry overwrites the earlier.\n",
+                     msg.c_str());
+      }
     }
 
     if (entry.type == '-' && entry.size_bytes > opt.max_entry_bytes) {
@@ -993,20 +1033,7 @@ ValidatedArchive validate_archive(const std::string& archive_path,
 }
 
 fs::path extract_destination_for(const fs::path& package_root, const TarEntry& entry) {
-  const std::string ext = fs::path(entry.normalized_path).extension().string();
-  const fs::path name = fs::path(entry.normalized_path).filename();
-
-  if (entry.entry_class == EntryClass::Json) {
-    return package_root / "etc" / name;
-  }
-  if (ext == ".so") {
-    return package_root / "lib" / name;
-  }
-  if (ext == ".elf") {
-    return package_root / "share" / name;
-  }
-
-  return package_root / "etc" / name;
+  return package_root / extract_destination_rel(entry);
 }
 
 } // namespace

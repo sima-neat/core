@@ -38,6 +38,8 @@
 #include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/ErrorUtil.h"
 
 #include <nlohmann/json.hpp>
 
@@ -64,6 +66,17 @@
 
 namespace simaai::neat {
 namespace {
+
+// Public Model setup/build/run/metadata failures surface as NeatError (see Model.h class doc).
+// Thin forwarder over the shared session-error primitive so every Model boundary throws a
+// structured NeatError (machine-triage error_code + repro_note) instead of a raw
+// std::invalid_argument / std::runtime_error. NeatError derives from std::runtime_error, so
+// existing runtime_error catchers keep working.
+[[noreturn]] void throw_model_error(std::string_view code, std::string message,
+                                    std::string_view hint = {}) {
+  simaai::neat::pipeline_internal::error_util::throw_session_error(code, message,
+                                                                  /*pipeline_string=*/{}, hint);
+}
 
 simaai::neat::GraphOptions
 route_options_from_model_route_options(const Model::RouteOptions& opt,
@@ -1748,14 +1761,16 @@ void require_explicit_image_input_info(const InputInfo& info, const char* where)
     if (!info.media_type.empty()) {
       oss << " (got " << info.media_type << ")";
     }
-    throw std::invalid_argument(oss.str());
+    throw_model_error(error_codes::kInputShape, oss.str(),
+                      "Provide a video/x-raw Sample, or run in tensor mode with raw tensor inputs.");
   }
   if (info.format.empty() || info.format_source != InputInfo::FormatSource::Explicit) {
-    throw std::invalid_argument(
+    throw_model_error(
+        error_codes::kInputShape,
         std::string(where ? where : "Model") +
-        ": image-mode Tensor input requires explicit image format metadata; pass a Tensor with "
-        "ImageSpec/image_format (for Python: Tensor.from_numpy(..., image_format=...)) or a "
-        "Sample with video/x-raw format metadata.");
+            ": image-mode Tensor input requires explicit image format metadata",
+        "Pass a Tensor with ImageSpec/image_format (Python: Tensor.from_numpy(..., "
+        "image_format=...)) or a Sample with video/x-raw format metadata.");
   }
 }
 
@@ -2042,7 +2057,9 @@ void require_exact_ingress_count(
     oss << ")";
   }
   oss << ", got " << actual;
-  throw std::invalid_argument(oss.str());
+  throw_model_error(
+      error_codes::kInputShape, oss.str(),
+      "Pass exactly the expected number of inputs matching the model's ingress tensors, in order.");
 }
 
 void require_single_ingress_api(
@@ -2118,7 +2135,9 @@ void validate_single_tensor_ingress_expectation(const internal::IngressTensorCon
   }
   oss << ". Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth;
-  throw std::invalid_argument(oss.str());
+  throw_model_error(
+      error_codes::kInputShape, oss.str(),
+      "Convert/resize the input to the expected media, format, and HxWxC before calling run/build.");
 }
 
 Tensor apply_ingress_tensor_identity(Tensor tensor,
@@ -5693,9 +5712,10 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
     oss << " source_stage=" << ingress->source_stage;
   }
   oss << ". " << "Received media=" << info.media_type << " format=" << info.format
-      << " shape=" << info.width << "x" << info.height << "x" << info.depth
-      << ". Hint: resize to expected spatial size and convert BGR->RGB before calling run/build.";
-  throw std::invalid_argument(oss.str());
+      << " shape=" << info.width << "x" << info.height << "x" << info.depth << ".";
+  throw_model_error(
+      error_codes::kInputShape, oss.str(),
+      "Resize to the expected spatial size and convert BGR->RGB before calling run/build.");
 }
 
 std::vector<std::shared_ptr<Node>>
@@ -6462,7 +6482,14 @@ std::unordered_map<std::string, std::string> Model::metadata() const {
   if (!in.is_open())
     return out;
   nlohmann::json j;
-  in >> j;
+  try {
+    in >> j;
+  } catch (const nlohmann::json::exception& e) {
+    throw_model_error(error_codes::kIoParse,
+                      std::string("Model::metadata: failed to parse metadata.json (") + path +
+                          "): " + e.what(),
+                      "Ensure metadata.json in the model archive is valid JSON.");
+  }
   if (!j.is_object())
     return out;
   for (auto it = j.begin(); it != j.end(); ++it) {

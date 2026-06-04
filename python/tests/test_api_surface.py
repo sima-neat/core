@@ -1040,8 +1040,12 @@ def test_model_build_requires_explicit_image_semantic_for_image_tensor():
   model = pyneat.Model(str(model_path), opt)
   tensor = pyneat.Tensor.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), copy=True)
 
-  with pytest.raises(ValueError, match="requires explicit image format"):
+  # Model input-contract violations now surface as pyneat.NeatError (was std::invalid_argument
+  # auto-translated to ValueError). The message is preserved as the NeatError repro_note, so the
+  # substring match still holds, and the structured error_code is populated.
+  with pytest.raises(pyneat.NeatError, match="requires explicit image format") as excinfo:
     model.build([tensor])
+  assert excinfo.value.error_code == "misconfig.input_shape"
 
 
 def test_tensor_from_numpy_byte_stream_marks_opaque_transport():

@@ -515,7 +515,16 @@ def _fixture_specs() -> List[FixtureSpec]:
         if e["name"] == "etc/pipeline_sequence.json":
             e["data"] = '{"pipelines":[{"sequence":[{"sequence_id":9223372036854775807,"name":"mla_0","pluginId":"processmla","configPath":"0_process_mla.json","processor":"MLA","kernel":"infer","input":"decoder"}]}]}'
 
+    # Two distinct entries that flatten to the same extraction destination
+    # (a/collide.json and b/collide.json both -> etc/collide.json). Otherwise a valid
+    # archive; the collision is warn-by-default, hard-rejected only when the loader's
+    # reject_destination_collisions option is set.
+    destination_collision = copy.deepcopy(valid)
+    destination_collision.append({"type": "file", "name": "a/collide.json", "data": "{}"})
+    destination_collision.append({"type": "file", "name": "b/collide.json", "data": "{}"})
+
     return [
+        FixtureSpec("valid/destination_collision.tar.gz", "two entries flatten to same extraction destination (warn by default)", destination_collision),
         FixtureSpec("valid/basic_valid.tar.gz", "baseline valid package (.tar.gz)", valid),
         FixtureSpec("valid/multi_stage_valid.tar.gz", "valid package with multi-stage inference", multi),
         FixtureSpec("invalid/missing_pipeline_sequence.tar.gz", "missing required pipeline_sequence.json", missing_pipeline),
