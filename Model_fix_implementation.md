@@ -9,6 +9,22 @@ This document is intentionally implementation-heavy. It is meant to be the check
 
 ---
 
+## Review revisions — 2026-06-04 (adversarial code-verified pass)
+
+An adversarial review verified every "current behavior / current bug" premise in this plan against the actual source. Net result: the plan is **execute-with-cuts** — roughly a quarter of it fixes real, code-confirmed bugs; the rest is scaffolding that was trimmed. Changes applied below:
+
+- **CUT Ch10 + Ch14 (BoxDecode adapter-only metadata test + fix).** Ch14 fixes a *provably-shadowed* branch (`Model.cpp:4229-4238` early-returns `nullopt` for `boxdecode_selected && graph_family != Preproc`, shadowing the `!rp.enabled` adapter branch), but reaching that branch requires `family == Disabled` (bare-tensor passthrough into BoxDecode) — and no real compiled model demonstrating that topology has been exhibited. Ch10's test is doubly dead: it asserts `preprocess_meta.has_value()` via `input_appsrc_options_list()` (`Model.cpp:6518-6541`), but `preprocess_meta` is only ever set in `build_pipeline_nodes` (`Model.cpp:5753`), so the assertion is false **before and after** the fix; and its `quanttess` fixture forces `family == QuantTess` (`InputPlanner.cpp:763-765`), hitting the `rp.enabled`-true branch, never the `!rp.enabled` branch Ch14 unshadows. **Both are deferred until a real failing model is exhibited.** See the marked sections.
+- **Scope honesty (Goal 3 / Risk 5).** This plan does NOT address the live BoxDecode **pose/seg decode** failures and never claimed to (pose unification is explicitly deferred, and "no magic inference in runtime plugins" is a non-goal). The Ch14 item is a metadata-template **reachability nit**, orthogonal to the decode garbage. The real live failures are a **separate, higher-priority workstream** (see the new "Out of scope" note in Chapter 1) and must NOT be considered closed by this plan.
+- **Ch13 (preproc materialization):** keep Implementation **A** only; Implementation **B** is cut as dead weight. The real defect is broader than a self-link — **every pre-region currently receives the same `upstream_name` (no region-to-region chaining)** (`build_preprocess_nodes_impl`, `Model.cpp:5491-5501`). Ch13 must add the missing `infer_upstream` recompute AND a **multi-region preproc regression test** before landing; it is the riskiest core change.
+- **PR4 (`NeatError`):** trim the maximalist "wrap every public boundary" framing to the **Model-only** scope actually implemented, and add a **prerequisite `std::invalid_argument` caller audit** (5+ throw sites incl. `Model.cpp:1751,1754,2045,2121`) before flipping public-boundary exception types.
+- **Ch15 (archive collision):** gate behind an archive-in-the-wild audit; land as a **loud warning first**, hard-reject only after the audit (Risk 4).
+- **CUT Ch27** (speculative `ModelOutputSemanticSpec` / `semantic_output_specs()` — self-deferred API surface, not a fix).
+- **Highest-value, lowest-risk, fully-verified deliverable = PR1 (docs/tutorials truth pass).** Land it first and standalone.
+
+Revised landing order is in Chapter 3.
+
+---
+
 ## Chapter 0 — User-facing style rule
 
 ### Decision
@@ -59,10 +75,10 @@ Do **not** introduce new public aliases in source just for docs.
    - Public Model input misuse should become structured `NeatError`s.
    - Python Model input misuse should become `pyneat.NeatError`.
 
-3. Fix verified or strongly suspected correctness bugs:
-   - Preprocess route materialization can self-link or fail to chain pre-regions.
-   - Adapter-only routes feeding BoxDecode can skip needed preprocess metadata.
-   - Model archive extraction can flatten different archive paths onto the same output path.
+3. Fix verified correctness bugs:
+   - Preprocess route materialization self-links and fails to chain pre-regions (every region gets the same upstream). **(verified — Ch13)**
+   - Model archive extraction can flatten different archive paths onto the same output path. **(verified — Ch15)**
+   - ~~Adapter-only routes feeding BoxDecode can skip needed preprocess metadata.~~ **(DEFERRED — Ch14: provably-shadowed but unproven-reachable; orthogonal to the live decode failures. Do not land until a real failing model is exhibited.)**
 
 4. Improve Python parity for stable `Model` APIs.
 
@@ -73,6 +89,17 @@ Do **not** introduce new public aliases in source just for docs.
 - Do not add a new `Full()` API; existing `Model::run`, `Model::build`, `Graph::add(model)`, and `model.graph(...)` are enough.
 - Do not add magic inference in runtime plugins where MPK contracts already contain the truth.
 - Do not change direct extracted-directory behavior beyond documentation/optional diagnostics unless explicitly approved.
+
+### Out of scope — the live BoxDecode pose/seg decode failures (separate workstream)
+
+This plan operates only in `core_graph_changes` and does **not** fix the live, validated decode failures (`yolov8n/yolo11n/yolo26n-pose` crash; bf16 under-detection). Those root causes live mostly in the gst plugins/kernel (`clean_internals`) and the BoxDecode static-contract extractor, and are tracked separately:
+
+- Missing `YoloV26Pose` enum + `yolo26-pose` kernel token (verified absent: `include/pipeline/BoxDecodeType.h` jumps `YoloV8Pose=8 → YoloV26=17`) → yolo26-pose is structurally unreachable.
+- `compute_pose()` hardcodes `int8` reads + computes `num_pose_points = channels/3` over **physical** (C16-padded) depth → BF16 broken and `21 > MAX_NUM_POSE_POINTS(17)` overflow (`clean_internals/.../genericboxdecode/src/boxdecode.cpp`). The surgical fix reads logical `slice_ch/3` and clamps.
+- `num_classes` is a **config-time gate** (kernel `score_tensor->channels % num_classes`); core never emits it and the plugin never returns 1 for pose.
+- Physical-vs-logical channel depth in `src/pipeline/internal/sima/BoxDecodeStaticContractExtractor.cpp`.
+
+**Do not consider that ticket closed by anything in this document.**
 
 ---
 
@@ -152,28 +179,27 @@ Python only exposes a subset.
 
 ## Chapter 3 — Patch/PR sequencing
 
-Recommended split:
+Recommended split (revised after the 2026-06-04 review — leaner order, only code-verified items):
 
-1. **PR 1 — Documentation truth and tutorial corrections**
-   - Low risk.
-   - No runtime behavior change.
+1. **PR 1 — Documentation truth and tutorial corrections** *(land first, standalone)*
+   - Low risk, no runtime behavior change, fully verified, highest user value. Ch4–8.
 
-2. **PR 2 — Regression tests**
-   - Add failing tests for suspected bugs before fixes.
-   - No logic fixes in this PR if possible.
+2. **PR 2 (slim) — Archive basename-collision fix + test**
+   - Real data-loss bug, contained blast radius. Ch11 test + Ch15 fix, **landed as a warning first** (hard-reject only after an archive-in-the-wild audit). Add Ch12 Model error-contract tests here as the regression net for PR4.
+   - (Original PR2's Ch9/Ch10 split: keep Ch9 preproc test with Ch13; **Ch10 is cut** — see Chapter 10.)
 
-3. **PR 3 — Surgical correctness fixes**
-   - Preproc upstream/chaining.
-   - BoxDecode adapter-only metadata.
-   - Archive extraction collision.
+3. **PR 3 — Model `NeatError` normalization** *(was PR4)*
+   - Model-only scope (not "every boundary"). **Prerequisite:** `std::invalid_argument` caller audit (`Model.cpp:1751,1754,2045,2121`, …). Document the `pyneat.Model`-vs-`Graph` `NeatError` split. Ch16–22.
 
-4. **PR 4 — Model `NeatError` normalization**
-   - Public Model C++ boundaries.
-   - Python Model input errors.
+4. **PR 4 — Preproc upstream/chaining fix** *(was Ch13, the riskiest core change — land only after its test exists)*
+   - Implementation A only. Must include the `infer_upstream` recompute **and** a multi-region preproc regression test (Ch9). Ch13.
 
 5. **PR 5 — Python parity bindings**
-   - Stable Model introspection APIs.
-   - Runner diagnostics/report APIs.
+   - Stable Model introspection APIs + runner diagnostics. Ch23–25. (Audit current bindings first — some may already exist.)
+
+**Cut entirely:** Ch10 (dead test), Ch14 (unproven-reachable dead code — defer until a real failing model is exhibited), Ch27 (speculative API), Chapter 0 namespace-style rule (bikeshed; fold into PR1 if anything).
+
+**Not in this plan (separate, higher-priority ticket):** the live BoxDecode pose/seg decode fix — see Chapter 1 "Out of scope".
 
 This order keeps review surface small and makes regressions easier to isolate.
 
@@ -613,6 +639,12 @@ This may fail before PR 3 if self-link is present. That is desired.
 
 ## Chapter 10 — Add BoxDecode adapter-only metadata regression test
 
+> **CUT (2026-06-04 review).** This test cannot exercise what it claims, in two independent ways:
+> 1. It asserts `inputs.front().preprocess_meta.has_value()` reached via `input_appsrc_options_list()` (`Model.cpp:6518-6541`), but `preprocess_meta` is **only** populated inside `build_pipeline_nodes` (`Model.cpp:5753`). The list API never sets it → the assertion is false **before and after** the Ch14 fix.
+> 2. The proposed `quanttess` fixture forces `enabled == true` / `family == QuantTess` (`InputPlanner.cpp:763-765`), so it hits the `rp.enabled`-true branch (`Model.cpp:4268`), never the `!rp.enabled` (`family == Disabled`) branch that Ch14 unshadows.
+>
+> A green version of this test would falsely certify the Ch14 path as guarded. **Do not implement.** If Ch14 is ever revived, write a test that drives `build_pipeline_nodes` with a real `family == Disabled + boxdecode_selected` model. The original draft below is retained for reference only.
+
 ### File
 
 Preferred:
@@ -834,6 +866,11 @@ expect_neat_error(
 
 ## Chapter 13 — Fix preproc upstream/chaining
 
+> **Review revisions (2026-06-04).** This is the **only core data-flow correctness bug** in the plan and the riskiest change.
+> - Use **Implementation A** only. **Implementation B is cut** (more complex, not selected — dead weight).
+> - The defect is **broader than a self-link**: `build_preprocess_nodes_impl` (`Model.cpp:5491-5501`) passes the **same** `upstream_name` to every region, so multi-region preproc has **no region-to-region chaining at all**. Implementation A as drafted only fixes the self-link — it must **also** add the per-region `infer_upstream` recompute so region N+1 chains off region N.
+> - **Do not land without a multi-region preproc regression test** (Ch9, Test 2 "multi pre-region chain") proving the chained upstreams. Until that test exists and passes, hold this chapter.
+
 ### File
 
 - `src/model/Model.cpp`
@@ -929,6 +966,8 @@ Do not change route planner decisions in this patch. This is only materializatio
 
 ## Chapter 14 — Fix BoxDecode adapter-only metadata
 
+> **CUT / DEFERRED (2026-06-04 review).** The early-return at `Model.cpp:4229-4238` (`boxdecode_selected && graph_family != Preproc → nullopt`) does provably shadow the `!rp.enabled` adapter branch — that part is a real code fact. **But the shadowed branch is only reachable when `family == Disabled`** (no quant/tess/resize — a bare-tensor passthrough into BoxDecode; `InputPlanner.cpp:798` default), and no real compiled model exhibiting that topology has been shown. This fixes possibly-dead code, its only test (Ch10) cannot reach it, and it is **orthogonal to the live BoxDecode pose/seg decode failures** (see Chapter 1 "Out of scope"). **Do not land** until someone exhibits a real archive that produces `family == Disabled + boxdecode_selected` and a failing observable. The original fix sketch below is retained for reference.
+
 ### File
 
 - `src/model/Model.cpp`
@@ -981,6 +1020,10 @@ if (!rp.enabled) {
 ---
 
 ## Chapter 15 — Fix archive extraction destination collisions
+
+> **Review revisions (2026-06-04).** Real data-loss bug (verified: `extract_destination_for()` keys on `filename()` only, so `a/config.json` and `b/config.json` overwrite). **But land in two steps to avoid rejecting archives users currently rely on (Risk 4):**
+> 1. First ship the collision detection as a **loud warning/diagnostic** (log both colliding source paths), not a hard rejection. Resolve the extracted-directory bypass inconsistency at the same time.
+> 2. Promote to a **hard rejection only after an archive-in-the-wild audit** confirms no shipped/vendor archive depends on basename flattening.
 
 ### File
 
@@ -1071,6 +1114,11 @@ if (entry.type == '-' && entry.entry_class != EntryClass::Directory) {
 ---
 
 # PR 4 — Model `NeatError` normalization
+
+> **Review revisions (2026-06-04).** The contract violation is real (header `Model.h:343-350` promises `NeatError`; impl throws raw `std::runtime_error`/`std::invalid_argument`; `ModelPack.cpp:1108-1110` erases `ModelArchiveError`). Keep this PR, with two corrections:
+> - **Scope is Model-only**, via the internal helper refactor (Ch18) — *not* "wrap every public boundary". Delete maximalist framing wherever it appears (esp. Ch21).
+> - **Prerequisite caller audit (blocking):** grep for callers catching the exact pre-existing types before flipping them. `NeatError` derives from `std::runtime_error` so `runtime_error` catchers keep working, but `std::invalid_argument` catchers will break — there are 5+ such throw sites (`Model.cpp:1751,1754,2045,2121`, plus `4216`). List and reconcile them in the PR body.
+> - Document the known `pyneat.Model`-vs-`Graph` `NeatError` inconsistency rather than silently widening scope to Graph.
 
 ---
 
@@ -1812,6 +1860,8 @@ Recommendation: code fix is small and robust, but do it after the higher-value f
 
 ## Chapter 27 — Model output semantic introspection
 
+> **CUT (2026-06-04 review).** Speculative new public API surface (`ModelOutputSemanticSpec`, `semantic_output_specs()`, Detection/Segmentation/Pose kinds) that the plan itself defers to "later". It does not fix a verified bug and inflates the document. Drop it from this plan; if the need is real, propose it as its own design RFC. Sketch retained below for reference only.
+
 ### Current issue
 
 `Model::output_specs()` for BoxDecode currently returns a generic UInt8/rank unknown style spec:
@@ -1994,11 +2044,13 @@ Mitigation:
 
 ### Risk 5 — Model metadata for adapter-only BoxDecode may be too broad
 
-Mitigation:
+> **Superseded by the 2026-06-04 review: Ch14 is CUT.** The risk is moot until Ch14 is revived with a real failing model. If revived, the mitigation below stands. Note this is orthogonal to the live BoxDecode pose/seg decode failures (Chapter 1 "Out of scope").
+
+Mitigation (only if Ch14 is revived):
 
 - Condition should be exactly `boxdecode_selected && !rp.enabled` for adapter-only route.
 - Keep enabled non-Preproc graph-family suppression.
-- Add targeted test.
+- Add a test that actually drives `build_pipeline_nodes` with a `family == Disabled + boxdecode_selected` model (the Ch10 draft does not — it is cut).
 
 ---
 
@@ -2019,19 +2071,24 @@ Docs:
 Tests:
 
 - [ ] Preproc self-upstream regression exists.
-- [ ] Adapter-only BoxDecode metadata regression exists.
+- [ ] **Multi-region preproc chaining regression exists** (proves region N+1 chains off region N — required before Ch13 lands).
 - [ ] Archive extraction collision regression exists.
 - [ ] Model public error contract regression exists.
 - [ ] Python API surface tests cover new bindings.
+- [ ] ~~Adapter-only BoxDecode metadata regression exists.~~ **(CUT — Ch10, dead test.)**
 
 Fixes:
 
-- [ ] Pre-regions chain through previous pre-region output.
+- [ ] Pre-regions chain through previous pre-region output (all regions, not just self-link).
 - [ ] MLA consumes final pre-stage, not external decoder when pre-stage exists.
-- [ ] Adapter-only BoxDecode metadata branch is reachable.
-- [ ] Archive flattened destination collisions are rejected.
-- [ ] Public Model setup/build/run failures map to `NeatError`.
+- [ ] Archive flattened destination collisions are **warned** (hard-rejected only after archive audit).
+- [ ] Public Model setup/build/run failures map to `NeatError` (after `std::invalid_argument` caller audit).
 - [ ] Python Model input misuse maps to `pyneat.NeatError`.
+- [ ] ~~Adapter-only BoxDecode metadata branch is reachable.~~ **(CUT/DEFERRED — Ch14, unproven reachability.)**
+
+Explicitly NOT in this plan's Definition of Done:
+
+- [ ] The live BoxDecode **pose/seg decode** fix (`YoloV26Pose` enum/token, `compute_pose` dtype/overflow, `num_classes` gate, physical-vs-logical channel depth) — **separate ticket** (Chapter 1 "Out of scope").
 
 Validation:
 

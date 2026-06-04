@@ -16,7 +16,7 @@ A compiled model is a deployable `.tar.gz` model archive containing an MPK infer
 
 **APIs introduced**
 - `pyneat.Model(model_path)` — load the compiled model.
-- `model.run(input, timeout_ms)` — synchronous inference; returns a `Sample` with the model's output tensor.
+- `model.run(input, timeout_ms)` — synchronous inference; returns a `TensorList` of output tensors (use `outputs[0]` for the first). (Passing a list of `Sample`s instead returns a `Sample`.)
   - `timeout_ms` is the max wall time (ms) to wait for output. `-1` (the default) blocks indefinitely; any `> 0` value throws on timeout so stalls surface loudly. Prefer a finite value (e.g. `2000`) in production code, `-1` only when you trust the runtime to always produce output.
 
 **When to use this**

@@ -64,8 +64,10 @@ using TensorSpec = TensorConstraint;
  *     code can ask the Model what shape/dtype/topology it expects and produces.
  *
  * @code
- *   sima::Model model("/models/yolov8.tar.gz");
- *   auto result = model.run(input_tensor);   // shortest path
+ *   namespace neat = simaai::neat;
+ *   neat::Model model("/models/yolov8.tar.gz");
+ *   neat::TensorList result =
+ *       model.run(neat::TensorList{input_tensor}, 2000);  // timeout_ms; shortest path
  * @endcode
  *
  * For applications that need more control (custom pre/post nodes, multiple cameras, RTSP
@@ -440,7 +442,8 @@ public:
    * one-shot inference.
    *
    * @code
-   *   sima::Model model("yolo.tar.gz");
+   *   namespace neat = simaai::neat;
+   *   neat::Model model("yolo.tar.gz");
    *   auto runner = model.build();
    *   while (have_input) {
    *     runner.push(next_frame);

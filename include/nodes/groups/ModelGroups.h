@@ -4,9 +4,10 @@
  * @brief Model-stage Graph fragments: preprocess, MLA inference, and postprocess helpers.
  *
  * Wraps the canonical Graph fragments a `Model` expands into when added to a
- * Graph — preprocess, MLA, postprocess, and the combined `Infer` fragment that chains
- * them together. The `_tar_gz` overloads build directly from a `.tar.gz` model archive; the
- * `_Model&` overloads accept an already-parsed `Model`.
+ * Graph — preprocess, MLA inference, and postprocess. The `Infer` fragment is the MLA
+ * inference stage only (not pre+infer+post); use `Graph::add(model)` or `model.graph()`
+ * for the full model route. The `_tar_gz` overloads build directly from a `.tar.gz` model
+ * archive; the `_Model&` overloads accept an already-parsed `Model`.
  *
  * @see Model
  */
