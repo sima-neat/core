@@ -91,6 +91,63 @@ def acquire_source(repo: str, branch: str, githash: str, staging: Path) -> None:
         run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging)
 
 
+def current_core_branch(repo_root: Path) -> str:
+    """Best-effort current branch of the core repo.
+
+    Mirrors build.sh's `current_core_branch`: prefer CI-provided refs, then fall
+    back to the local git checkout. Returns "" when it can't be determined.
+    """
+    for env_var in ("GITHUB_HEAD_REF", "GITHUB_REF_NAME"):
+        value = os.environ.get(env_var, "").strip()
+        if value:
+            return value
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        ).stdout.strip()
+        return "" if out == "HEAD" else out
+    except Exception:
+        return ""
+
+
+def remote_branch_exists(repo: str, branch: str) -> bool:
+    """True if `branch` exists on `repo`'s remote (via `git ls-remote --heads`)."""
+    if not branch:
+        return False
+    try:
+        out = subprocess.run(
+            ["git", "ls-remote", "--heads", repo, branch],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+        ).stdout.strip()
+        return bool(out)
+    except Exception:
+        return False
+
+
+def resolve_source_branch(source: Dict, repo_root: Path) -> Tuple[str, str]:
+    """Resolve which branch to pull for `source`; returns (branch, reason).
+
+    With `"branch_policy": "snap"`, match the current core branch so that
+    e.g. building core@develop pulls each source @develop. If that branch does
+    not exist on the source remote (or can't be determined), fall back to
+    `fallback_branch` (default "main"), then to the configured `branch`.
+    """
+    configured = source.get("branch", "main")
+    if str(source.get("branch_policy", "")).strip().lower() != "snap":
+        return configured, "configured"
+
+    repo = source["repo"]
+    fallback = source.get("fallback_branch", "main")
+    core_branch = current_core_branch(repo_root)
+    if core_branch and remote_branch_exists(repo, core_branch):
+        return core_branch, f"snap: matched core@{core_branch}"
+    if remote_branch_exists(repo, fallback):
+        reason = "snap: no branch" if not core_branch else f"snap: {core_branch} not on remote"
+        return fallback, f"{reason}, fell back to {fallback}"
+    return configured, f"snap: {fallback} missing, fell back to configured {configured}"
+
+
 def has_frontmatter(text: str) -> bool:
     return bool(FRONTMATTER_RE.match(text))
 
@@ -409,7 +466,7 @@ def maybe_write_landing_page(source: Dict, src_docs: Path, dst_section: Path, ti
 def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Path) -> Tuple[bool, str]:
     key = source["key"]
     repo = source["repo"]
-    branch = source.get("branch", "main")
+    branch, branch_reason = resolve_source_branch(source, repo_root)
     githash = source.get("githash", "") or ""
     docs_subpath = source.get("docs_subpath", "docs")
     mount = source.get("mount", key)
@@ -420,7 +477,7 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     restructure_api = bool(source.get("restructure_api", False))
 
     staging = build_dir / "autodoc" / key
-    LOG.info("[%s] clone/update %s @ %s", key, repo, githash or branch)
+    LOG.info("[%s] clone/update %s @ %s (%s)", key, repo, githash or branch, branch_reason)
     try:
         acquire_source(repo, branch, githash, staging)
     except subprocess.CalledProcessError as exc:
