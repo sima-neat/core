@@ -33,7 +33,7 @@ using pipeline_internal::upper_copy;
 
 bool strict_model_managed_boxdecode_available(const ModelPack& pack);
 bool boxdecode_route_available(const RouteCapability& capability);
-bool route_has_post_stage(const RouteCapability& capability);
+bool route_has_post_stage(const RouteCapability& capability, bool allow_boxdecode);
 
 bool route_debug_enabled() {
   if (pipeline_internal::env_bool("SIMA_ROUTE_DEBUG", false)) {
@@ -3149,8 +3149,15 @@ bool boxdecode_route_available(const RouteCapability& capability) {
   return capability.has_external_boxdecode || capability.has_strict_boxdecode_route;
 }
 
-bool route_has_post_stage(const RouteCapability& capability) {
-  return capability.has_external_post || capability.has_strict_boxdecode_route;
+bool non_boxdecode_post_route_available(const RouteCapability& capability) {
+  return capability.has_external_detess || capability.has_external_dequant ||
+         capability.has_external_post_cast ||
+         (capability.has_external_post && capability.post_kind != PostRouteStageKind::BoxDecode);
+}
+
+bool route_has_post_stage(const RouteCapability& capability, const bool allow_boxdecode) {
+  return non_boxdecode_post_route_available(capability) ||
+         (allow_boxdecode && boxdecode_route_available(capability));
 }
 
 bool boxdecode_fusion_supported(const RouteCapability& capability) {
@@ -3168,17 +3175,19 @@ bool boxdecode_fusion_supported(const RouteCapability& capability) {
 }
 
 PostRouteStageKind selected_post_kind_for_route(const RouteCapability& capability,
-                                                const bool prefer_boxdecode) {
-  if (!route_has_post_stage(capability)) {
+                                                const bool prefer_boxdecode,
+                                                const bool allow_boxdecode) {
+  if (!route_has_post_stage(capability, allow_boxdecode)) {
     return PostRouteStageKind::None;
   }
   if (prefer_boxdecode) {
-    if (!boxdecode_route_available(capability)) {
+    if (!allow_boxdecode || !boxdecode_route_available(capability)) {
       return PostRouteStageKind::None;
     }
     return PostRouteStageKind::BoxDecode;
   }
-  if (capability.has_external_boxdecode && capability.post_kind == PostRouteStageKind::BoxDecode) {
+  if (allow_boxdecode && capability.has_external_boxdecode &&
+      capability.post_kind == PostRouteStageKind::BoxDecode) {
     return PostRouteStageKind::BoxDecode;
   }
 
@@ -4125,10 +4134,11 @@ RouteSelection plan_route_selection(const Model::Options& options,
   }
 
   if (post_auto) {
-    effective.selected_post_kind = selected_post_kind_for_route(capability, false);
-    effective.include_postprocess_stage = route_has_post_stage(capability) &&
+    effective.selected_post_kind =
+        selected_post_kind_for_route(capability, false, /*allow_boxdecode=*/false);
+    effective.include_postprocess_stage = route_has_post_stage(capability, false) &&
                                           effective.selected_post_kind != PostRouteStageKind::None;
-    if (!route_has_post_stage(capability)) {
+    if (!route_has_post_stage(capability, false)) {
       effective.include_postprocess_stage = false;
       out.diagnostics.push_back("auto post-route: no external post stage found");
     } else if (effective.selected_post_kind == PostRouteStageKind::None) {
@@ -4153,13 +4163,14 @@ RouteSelection plan_route_selection(const Model::Options& options,
           "explicit post-route: requested boxdecode -> terminal post stage 'boxdecode' "
           "(capability-independent)");
     } else {
-      if (!route_has_post_stage(capability)) {
+      if (!route_has_post_stage(capability, false)) {
         out.ambiguous = true;
         out.ambiguity_reason =
             "route ambiguity: postprocess explicitly requested but no compatible post route exists";
         return out;
       }
-      effective.selected_post_kind = selected_post_kind_for_route(capability, false);
+      effective.selected_post_kind =
+          selected_post_kind_for_route(capability, false, /*allow_boxdecode=*/false);
       if (effective.selected_post_kind == PostRouteStageKind::None) {
         out.ambiguous = true;
         out.ambiguity_reason = "route ambiguity: explicit postprocess requested but no compatible "

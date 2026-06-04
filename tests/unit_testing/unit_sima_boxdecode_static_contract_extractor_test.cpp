@@ -411,16 +411,18 @@ RUN_TEST(
               "decoupled YOLO subset extraction should resolve a typed tensor order: " + error);
       require_subset_matches_static_contract(*extracted_decoupled_subset, *extracted_decoupled,
                                              "decoupled YOLO route");
-      require(extracted_decoupled->decode_type == simaai::neat::BoxDecodeType::YoloV8,
-              "decoupled YOLO route should normalize grouped multi-head tensors to yolov8");
+      require(extracted_decoupled->decode_type == simaai::neat::BoxDecodeType::Unspecified,
+              "decoupled YOLO route should not infer a BoxDecode family without an explicit "
+              "user/MPK decode_type");
       require(extracted_decoupled->tess_needed,
               "external/raw unpack route must preserve downstream detess lineage in the typed "
               "route facts");
       require(extracted_decoupled->tensors.size() == 6U,
               "decoupled route should keep all six logical inputs");
-      require(extracted_decoupled->tensors[0].logical_name == "bbox_0" &&
-                  extracted_decoupled->tensors[3].logical_name == "class_prob_0",
-              "grouped YOLO normalization should synthesize canonical head names");
+      require(extracted_decoupled->tensors[0].logical_name != "bbox_0" &&
+                  extracted_decoupled->tensors[3].logical_name != "class_prob_0",
+              "MPK extraction should not synthesize YOLO head names without an explicit "
+              "user/MPK decode_type");
       require(extracted_decoupled->tensors[0].source_output_slot == 0 &&
                   extracted_decoupled->tensors[1].source_output_slot == 1 &&
                   extracted_decoupled->tensors[2].source_output_slot == 2 &&
@@ -465,12 +467,13 @@ RUN_TEST(
       require_subset_matches_static_contract(*extracted_probability_quant_subset,
                                              *extracted_probability_quant,
                                              "probability-domain quantized route");
-      require(extracted_probability_quant->score_activation == BoxDecodeScoreActivation::Identity,
-              "core extractor should infer probability-domain score activation generically from "
-              "quant range semantics");
+      require(extracted_probability_quant->score_activation == BoxDecodeScoreActivation::Unknown,
+              "core extractor should not infer score activation before an explicit BoxDecode "
+              "family is selected");
       require(extracted_probability_quant->decode_type_option ==
-                  simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability,
-              "probability-domain quantized YOLO route should infer grouped-by-role-probability");
+                  simaai::neat::BoxDecodeTypeOption::Auto,
+              "core extractor should not infer grouped-by-role score domain before an explicit "
+              "BoxDecode family is selected");
 
       MpkContract packed_parent_mpk;
       MpkPluginIoContract packed_parent_mla;

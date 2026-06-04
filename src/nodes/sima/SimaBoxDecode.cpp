@@ -21,6 +21,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace simaai::neat {
@@ -71,6 +72,26 @@ using json = nlohmann::json;
 
 bool boxdecode_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_BOXDECODE_DEBUG", false);
+}
+
+void validate_requested_boxdecode_contract_type_local(BoxDecodeType contract_type,
+                                                      BoxDecodeType requested_type,
+                                                      std::string_view context) {
+  using pipeline_internal::sima::box_decode_type_matches_requested_contract;
+  using pipeline_internal::sima::box_decode_type_token_string;
+  if (box_decode_type_matches_requested_contract(contract_type, requested_type)) {
+    return;
+  }
+  const std::string contract_token = box_decode_type_token_string(contract_type);
+  const std::string requested_token = box_decode_type_token_string(requested_type);
+  std::ostringstream oss;
+  oss << context
+      << ": requested BoxDecode decode_type does not match the MPK-derived tensor contract "
+      << "(requested=" << (requested_token.empty() ? "unspecified" : requested_token)
+      << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
+      << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
+         "raw tensors and attach an explicit compatible postprocess stage.";
+  throw std::runtime_error(oss.str());
 }
 
 bool boxdecode_name_has_class_score_semantics_local(const std::string& raw_name) {
@@ -619,6 +640,8 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
         std::string(e.what()));
   }
   if (decode_type != BoxDecodeType::Unspecified) {
+    validate_requested_boxdecode_contract_type_local(compiled_contract.payload.decode_type,
+                                                     decode_type, "SimaBoxDecode(Model)");
     compiled_contract.payload.decode_type = decode_type;
   }
   if (decode_type_option != BoxDecodeTypeOption::Auto) {

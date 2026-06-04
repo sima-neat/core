@@ -144,6 +144,17 @@ bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption
   }
 }
 
+bool box_decode_type_matches_requested_contract(BoxDecodeType contract_type,
+                                                BoxDecodeType requested_type) {
+  if (!is_box_decode_type_specified(requested_type)) {
+    return true;
+  }
+  if (!is_box_decode_type_specified(contract_type)) {
+    return true;
+  }
+  return contract_type == requested_type;
+}
+
 std::string box_decode_type_token_string(BoxDecodeType type) {
   if (!is_box_decode_type_specified(type)) {
     return {};

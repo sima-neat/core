@@ -131,12 +131,12 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
                model, internal::ModelLineageStageRole::ManualPost,
                internal::RequestedPostRouteKind::BoxDecode, "SimaBoxDecode");
            auto probe_binding = std::make_shared<internal::ModelLineageBinding>(*base_binding);
-           probe_binding->base_options.decode_type = BoxDecodeType::YoloV8;
+           probe_binding->base_options.decode_type = BoxDecodeType::YoloV8Seg;
 
            bool changed = false;
            std::string err;
            auto effective = internal::build_effective_model_for_requested_post(
-               *base_binding, BoxDecodeType::YoloV8, &changed, &err);
+               *base_binding, BoxDecodeType::YoloV8Seg, &changed, &err);
            require(effective != nullptr, "retarget helper should produce an effective model");
            require(err.empty(), "retarget helper should not emit an error");
            require(changed, "retarget helper should report a changed model");
@@ -144,20 +144,10 @@ RUN_TEST("unit_model_route_retarget_helper_test", ([] {
                        internal::PostRouteStageKind::BoxDecode,
                    "retargeted model should resolve to boxdecode");
 
-           // The bundled strict_seed_mpk does not declare an explicit
-           // decode_type, so the retargeted model has no canonical
-           // model-managed boxdecode contract and the model-bound
-           // SimaBoxDecode constructor must fail. Validate the negative
-           // path; coverage of the positive retarget+boxdecode flow is
-           // gated on a fixture whose MPK declares decode_type.
-           bool boxdecode_unavailable = false;
-           try {
-             (void)internal::ModelAccess::build_boxdecode_stage_contract(*effective, false);
-           } catch (const std::exception&) {
-             boxdecode_unavailable = true;
-           }
-           require(boxdecode_unavailable,
-                   "MPK without decode_type should not expose a model-managed boxdecode contract");
+           const auto compiled =
+               internal::ModelAccess::build_boxdecode_stage_contract(*effective, false);
+           require(compiled.payload.decode_type == BoxDecodeType::YoloV8Seg,
+                   "explicit retarget should use the MPK-derived segmentation BoxDecode contract");
 
            std::vector<std::shared_ptr<Node>> nodes;
            nodes.push_back(std::make_shared<ManualPostProbeNode>(probe_binding));

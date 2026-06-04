@@ -1606,10 +1606,9 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
     if (vend > vpos) {
       const std::string nm = pipeline.substr(vpos, vend - vpos);
       // Keep neat compute/decode stages; drop transport/scaffolding elements.
-      const bool scaffolding =
-          nm.rfind("queue", 0) == 0 || nm.rfind("mysrc", 0) == 0 ||
-          nm.rfind("mysink", 0) == 0 || nm.rfind("appsrc", 0) == 0 ||
-          nm.rfind("appsink", 0) == 0 || nm.rfind("tap_", 0) == 0;
+      const bool scaffolding = nm.rfind("queue", 0) == 0 || nm.rfind("mysrc", 0) == 0 ||
+                               nm.rfind("mysink", 0) == 0 || nm.rfind("appsrc", 0) == 0 ||
+                               nm.rfind("appsink", 0) == 0 || nm.rfind("tap_", 0) == 0;
       if (!scaffolding)
         chain += (chain.empty() ? "" : " -> ") + nm;
     }
@@ -1644,10 +1643,13 @@ std::string summarize_pipeline_stage_chain(const std::string& pipeline) {
     note << "\n" << boundary;
   }
   if (is_timeout) {
-    note << "\nHint: a stage did not emit output within the preflight timeout and no element posted a "
-            "bus error, so 'node' is the first pipeline stage rather than a confirmed culprit -- inspect "
+    note << "\nHint: a stage did not emit output within the preflight timeout and no element "
+            "posted a "
+            "bus error, so 'node' is the first pipeline stage rather than a confirmed culprit -- "
+            "inspect "
             "every stage in stage_chain. This preflight stall is often intermittent (EV74 dispatch "
-            "warm-up); retry, raise the build/run timeout, or set Model::Options.verbose.planner=true "
+            "warm-up); retry, raise the build/run timeout, or set "
+            "Model::Options.verbose.planner=true "
             "for per-stage progress.";
   } else {
     note << "\nHint: inspect node configuration/caps and upstream bus diagnostics.";

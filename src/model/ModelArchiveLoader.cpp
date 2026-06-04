@@ -932,7 +932,7 @@ ValidatedArchive validate_archive(const std::string& archive_path,
   }
 
   std::unordered_set<std::string> seen_paths;
-  std::unordered_map<std::string, std::string> seen_destinations;  // rel-dest -> source path
+  std::unordered_map<std::string, std::string> seen_destinations; // rel-dest -> source path
   std::size_t total_json_bytes = 0;
   std::size_t json_file_count = 0;
 
@@ -957,8 +957,7 @@ ValidatedArchive validate_archive(const std::string& archive_path,
           throw_archive(ModelArchiveErrorClass::InvalidArchive,
                         "invalid_archive: destination collision: " + msg);
         }
-        std::fprintf(stderr,
-                     "[neat] WARNING: %s; the later entry overwrites the earlier.\n",
+        std::fprintf(stderr, "[neat] WARNING: %s; the later entry overwrites the earlier.\n",
                      msg.c_str());
       }
     }

@@ -41,6 +41,14 @@ bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption
 /// Stable string token for a `BoxDecodeType` (e.g., `"yolov5"`); empty for `Unspecified`.
 std::string box_decode_type_token_string(BoxDecodeType type);
 
+/// True when a user-requested decode type can safely consume a contract derived from MPK facts.
+///
+/// `Unspecified` means "use the contract as-is".  Concrete requests are intentionally exact
+/// matches: using a detection decoder on a segmentation/pose topology silently corrupts tensor
+/// interpretation, so callers should fail early with a diagnostic instead of overriding the MPK.
+bool box_decode_type_matches_requested_contract(BoxDecodeType contract_type,
+                                                BoxDecodeType requested_type);
+
 /// Stable string token for a `BoxDecodeTypeOption`.
 std::string box_decode_type_option_token_string(BoxDecodeTypeOption option);
 

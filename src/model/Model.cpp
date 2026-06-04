@@ -75,7 +75,27 @@ namespace {
 [[noreturn]] void throw_model_error(std::string_view code, std::string message,
                                     std::string_view hint = {}) {
   simaai::neat::pipeline_internal::error_util::throw_session_error(code, message,
-                                                                  /*pipeline_string=*/{}, hint);
+                                                                   /*pipeline_string=*/{}, hint);
+}
+
+void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
+                                                BoxDecodeType requested_type,
+                                                std::string_view context) {
+  using pipeline_internal::sima::box_decode_type_matches_requested_contract;
+  using pipeline_internal::sima::box_decode_type_token_string;
+  if (box_decode_type_matches_requested_contract(contract_type, requested_type)) {
+    return;
+  }
+  const std::string contract_token = box_decode_type_token_string(contract_type);
+  const std::string requested_token = box_decode_type_token_string(requested_type);
+  std::ostringstream oss;
+  oss << context
+      << ": requested BoxDecode decode_type does not match the MPK-derived tensor contract "
+      << "(requested=" << (requested_token.empty() ? "unspecified" : requested_token)
+      << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
+      << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
+         "raw tensors and attach an explicit compatible postprocess stage.";
+  throw std::runtime_error(oss.str());
 }
 
 simaai::neat::GraphOptions
@@ -716,7 +736,8 @@ try_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
     }
   }
   if (!saw_boxdecode_stage) {
-    throw std::runtime_error("Model-managed boxdecode stage requires a canonical compiled contract");
+    throw std::runtime_error(
+        "Model-managed boxdecode stage requires a canonical compiled contract");
   }
   return std::nullopt;
 }
@@ -728,8 +749,8 @@ struct BoxDecodeHwcLocal {
   int semantic_c = 0;
 };
 
-std::optional<BoxDecodeHwcLocal>
-boxdecode_hwc_from_input_shape_local(const pipeline_internal::sima::BoxDecodeTensorStaticContract& t) {
+std::optional<BoxDecodeHwcLocal> boxdecode_hwc_from_input_shape_local(
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& t) {
   if (t.input_shape.size() < 3U) {
     return std::nullopt;
   }
@@ -755,14 +776,13 @@ bool boxdecode_reg_cls_pair_matches_local(
     const pipeline_internal::sima::BoxDecodeTensorStaticContract& cls, int num_classes) {
   const auto r = boxdecode_hwc_from_input_shape_local(reg);
   const auto c = boxdecode_hwc_from_input_shape_local(cls);
-  return r.has_value() && c.has_value() && r->h == c->h && r->w == c->w &&
-         r->semantic_c >= 16 && (r->semantic_c % 4) == 0 && c->semantic_c == num_classes;
+  return r.has_value() && c.has_value() && r->h == c->h && r->w == c->w && r->semantic_c >= 16 &&
+         (r->semantic_c % 4) == 0 && c->semantic_c == num_classes;
 }
 
 bool boxdecode_looks_grouped_yolo_dfl_local(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
-  if (num_classes <= 0 || contract.tensors.size() < 2U ||
-      (contract.tensors.size() % 2U) != 0U) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return false;
   }
   const std::size_t heads = contract.tensors.size() / 2U;
@@ -777,8 +797,7 @@ bool boxdecode_looks_grouped_yolo_dfl_local(
 
 bool boxdecode_looks_interleaved_yolo_dfl_local(
     const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
-  if (num_classes <= 0 || contract.tensors.size() < 2U ||
-      (contract.tensors.size() % 2U) != 0U) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
     return false;
   }
   for (std::size_t i = 0; i < contract.tensors.size(); i += 2U) {
@@ -1761,16 +1780,16 @@ void require_explicit_image_input_info(const InputInfo& info, const char* where)
     if (!info.media_type.empty()) {
       oss << " (got " << info.media_type << ")";
     }
-    throw_model_error(error_codes::kInputShape, oss.str(),
-                      "Provide a video/x-raw Sample, or run in tensor mode with raw tensor inputs.");
+    throw_model_error(
+        error_codes::kInputShape, oss.str(),
+        "Provide a video/x-raw Sample, or run in tensor mode with raw tensor inputs.");
   }
   if (info.format.empty() || info.format_source != InputInfo::FormatSource::Explicit) {
-    throw_model_error(
-        error_codes::kInputShape,
-        std::string(where ? where : "Model") +
-            ": image-mode Tensor input requires explicit image format metadata",
-        "Pass a Tensor with ImageSpec/image_format (Python: Tensor.from_numpy(..., "
-        "image_format=...)) or a Sample with video/x-raw format metadata.");
+    throw_model_error(error_codes::kInputShape,
+                      std::string(where ? where : "Model") +
+                          ": image-mode Tensor input requires explicit image format metadata",
+                      "Pass a Tensor with ImageSpec/image_format (Python: Tensor.from_numpy(..., "
+                      "image_format=...)) or a Sample with video/x-raw format metadata.");
   }
 }
 
@@ -2135,9 +2154,9 @@ void validate_single_tensor_ingress_expectation(const internal::IngressTensorCon
   }
   oss << ". Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth;
-  throw_model_error(
-      error_codes::kInputShape, oss.str(),
-      "Convert/resize the input to the expected media, format, and HxWxC before calling run/build.");
+  throw_model_error(error_codes::kInputShape, oss.str(),
+                    "Convert/resize the input to the expected media, format, and HxWxC before "
+                    "calling run/build.");
 }
 
 Tensor apply_ingress_tensor_identity(Tensor tensor,
@@ -5711,7 +5730,8 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
   if (ingress != nullptr && !ingress->source_stage.empty()) {
     oss << " source_stage=" << ingress->source_stage;
   }
-  oss << ". " << "Received media=" << info.media_type << " format=" << info.format
+  oss << ". "
+      << "Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth << ".";
   throw_model_error(
       error_codes::kInputShape, oss.str(),
@@ -6045,8 +6065,9 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
   out["boxdecode_resize_mode"] =
-      opt.boxdecode_resize_mode ? nlohmann::ordered_json(model_options_enum_int(*opt.boxdecode_resize_mode))
-                                : nlohmann::ordered_json(nullptr);
+      opt.boxdecode_resize_mode
+          ? nlohmann::ordered_json(model_options_enum_int(*opt.boxdecode_resize_mode))
+          : nlohmann::ordered_json(nullptr);
   out["upstream_name"] = opt.upstream_name;
   out["name_suffix"] = opt.name_suffix;
   out["cleanup_extracted_model_data"] = opt.cleanup_extracted_model_data;
@@ -7256,14 +7277,16 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                                                       bool sync) {
   require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
+  const auto& opt = model.impl_->options;
   if (auto compiled = try_model_managed_boxdecode_contract(pack); compiled.has_value()) {
+    validate_requested_boxdecode_contract_type(compiled->payload.decode_type, opt.decode_type,
+                                               "Model-managed boxdecode stage");
     if (model.impl_->options.num_classes > 0) {
       compiled->payload.num_classes = model.impl_->options.num_classes;
     }
     return *compiled;
   }
 
-  const auto& opt = model.impl_->options;
   if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type) ||
       opt.decode_type == BoxDecodeType::Yolo) {
     throw std::runtime_error(
@@ -7274,11 +7297,10 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
 
   const auto& mpk = pack.mpk_contract();
   if (!mpk.has_value()) {
-    throw std::runtime_error(
-        "Model-managed boxdecode fallback requires a parsed MPK contract");
+    throw std::runtime_error("Model-managed boxdecode fallback requires a parsed MPK contract");
   }
-  auto route_flags = model_route_flags_for_boxdecode_stage(
-      model.impl_->preprocess_plan.session_route_plan);
+  auto route_flags =
+      model_route_flags_for_boxdecode_stage(model.impl_->preprocess_plan.session_route_plan);
   if (!route_flags.has_value()) {
     throw std::runtime_error(
         "Model-managed boxdecode fallback requires the resolved route to select BoxDecode");
@@ -7294,6 +7316,9 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
         "Model-managed boxdecode fallback failed to derive tensor contract from MPK: " +
         (contract_error.empty() ? std::string("missing MPK/upstream facts") : contract_error));
   }
+
+  validate_requested_boxdecode_contract_type(contract->decode_type, opt.decode_type,
+                                             "Model-managed boxdecode fallback");
 
   contract->decode_type = opt.decode_type;
   contract->num_classes = opt.num_classes;

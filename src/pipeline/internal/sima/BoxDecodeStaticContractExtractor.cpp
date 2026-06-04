@@ -1165,119 +1165,6 @@ void maybe_restore_grouped_role_semantic_names_from_structure_local(
   }
 }
 
-void maybe_normalize_legacy_yolo_decode_type_local(BoxDecodeStaticContract* contract) {
-  if (!contract) {
-    return;
-  }
-  if ((contract->decode_type == BoxDecodeType::Unspecified ||
-       contract->decode_type == BoxDecodeType::Yolo) &&
-      contract_looks_grouped_by_role_yolov8_local(*contract)) {
-    contract->decode_type = BoxDecodeType::YoloV8;
-  }
-}
-
-// Positionally infer a segmentation / pose decode type for grouped-by-role DFL YOLO models whose
-// MPK carries no explicit decode_type. Runs AFTER the legacy detect normalizer, so a pure-detect
-// contract has already been bumped to YoloV8 and is skipped here. The seg layout emitted by surgery
-// is [bbox_0..h-1, class_prob_0..h-1, mask_coeff_0..h-1, mask_proto]; the pose layout is
-// [bbox_0..h-1, class_prob_0..h-1, keypoint_0..h-1] with no trailing 32-channel prototype. We key
-// off (a) the DFL bbox depth (==64) to exclude raw-ltrb YOLO_V26, and (b) the trailing 32-channel
-// mask prototype to separate seg from pose. Family base is YoloV8{Seg,Pose}: the kernel maps the
-// whole grouped-DFL family (v8/v9/v10/v11/v12) to MODEL_TYPE::YOLO_V8, so this is decode-correct.
-// Additive and detect-safe: only mutates when decode_type is Unspecified/Yolo and a positive
-// seg/pose signature matches.
-void maybe_infer_boxdecode_seg_pose_variant_local(BoxDecodeStaticContract* contract) {
-  if (!contract) {
-    return;
-  }
-  if (contract->decode_type != BoxDecodeType::Unspecified &&
-      contract->decode_type != BoxDecodeType::Yolo) {
-    return;
-  }
-  const auto& tensors = contract->tensors;
-  const std::size_t n = tensors.size();
-  if (n < 7U) {
-    return;
-  }
-  const auto channel_depth = [](const BoxDecodeTensorStaticContract& t) {
-    return t.input_shape.size() >= 3U ? t.input_shape[2] : 0;
-  };
-  const auto logical_channel_depth = [](const BoxDecodeTensorStaticContract& t) {
-    return t.slice_shape.size() >= 3U ? t.slice_shape[2]
-                                      : (t.input_shape.size() >= 3U ? t.input_shape[2] : 0);
-  };
-  // YOLO26-pose: 3 tensors per head, grouped by role:
-  // [bbox_0..bbox_h-1, class_logit_0..class_logit_h-1, keypoint_0..keypoint_h-1].
-  // BBox logical depth is raw l/t/r/b (4), score depth is 1, keypoint depth is 17*3=51.
-  if ((n % 3U) == 0U && (n / 3U) >= 3U) {
-    const std::size_t heads = n / 3U;
-    bool looks_yolo26_pose = true;
-    for (std::size_t i = 0; i < heads; ++i) {
-      const auto& bbox = tensors[i];
-      const auto& score = tensors[i + heads];
-      const auto& keypoint = tensors[i + (2U * heads)];
-      if (bbox.input_shape.size() < 3U || score.input_shape.size() < 3U ||
-          keypoint.input_shape.size() < 3U || bbox.input_shape[0] != score.input_shape[0] ||
-          bbox.input_shape[1] != score.input_shape[1] ||
-          bbox.input_shape[0] != keypoint.input_shape[0] ||
-          bbox.input_shape[1] != keypoint.input_shape[1] || logical_channel_depth(bbox) != 4 ||
-          logical_channel_depth(score) != 1 || logical_channel_depth(keypoint) != 51) {
-        looks_yolo26_pose = false;
-        break;
-      }
-    }
-    if (looks_yolo26_pose) {
-      contract->decode_type = BoxDecodeType::YoloV26Pose;
-      return;
-    }
-  }
-  // YOLO26-seg: 3 tensors per head plus one trailing prototype:
-  // [bbox_0..bbox_h-1, class_logit_0..class_logit_h-1,
-  //  mask_coeff_0..mask_coeff_h-1, mask_proto].
-  // The MPK shape contract is authoritative: raw-ltrb bbox is a logical
-  // 4-channel slice, mask coefficients/prototype are logical 32-channel slices,
-  // and score/class heads carry the class depth.
-  if (((n - 1U) % 3U) == 0U && ((n - 1U) / 3U) >= 3U &&
-      logical_channel_depth(tensors.back()) == 32) {
-    const std::size_t heads = (n - 1U) / 3U;
-    bool looks_yolo26_seg = true;
-    for (std::size_t i = 0; i < heads; ++i) {
-      const auto& bbox = tensors[i];
-      const auto& score = tensors[i + heads];
-      const auto& mask_coeff = tensors[i + (2U * heads)];
-      if (bbox.input_shape.size() < 3U || score.input_shape.size() < 3U ||
-          mask_coeff.input_shape.size() < 3U || bbox.input_shape[0] != score.input_shape[0] ||
-          bbox.input_shape[1] != score.input_shape[1] ||
-          bbox.input_shape[0] != mask_coeff.input_shape[0] ||
-          bbox.input_shape[1] != mask_coeff.input_shape[1] ||
-          logical_channel_depth(bbox) != 4 || logical_channel_depth(score) <= 4 ||
-          logical_channel_depth(mask_coeff) != 32) {
-        looks_yolo26_seg = false;
-        break;
-      }
-    }
-    if (looks_yolo26_seg) {
-      contract->decode_type = BoxDecodeType::YoloV26Seg;
-      return;
-    }
-  }
-  // DFL regression bbox heads are 64 channels (16 DFL bins x 4 sides); raw-ltrb YOLO_V26 is 4.
-  if (channel_depth(tensors.front()) != 64) {
-    return;
-  }
-  // Segmentation: 3 tensors per head (bbox/cls/mask_coeff) + 1 trailing 32-channel mask prototype.
-  if (((n - 1U) % 3U) == 0U && ((n - 1U) / 3U) >= 2U && channel_depth(tensors.back()) == 32) {
-    contract->decode_type = BoxDecodeType::YoloV8Seg;
-    return;
-  }
-  // Pose: 3 tensors per head (bbox/cls/keypoint), no trailing 32-channel prototype. Require >=3
-  // heads so a 6-tensor (2-group) detect contract can never be misread as pose.
-  if ((n % 3U) == 0U && (n / 3U) >= 3U && channel_depth(tensors.back()) != 32) {
-    contract->decode_type = BoxDecodeType::YoloV8Pose;
-    return;
-  }
-}
-
 std::uint64_t output_key_local(std::size_t plugin_index, int output_index) {
   return (static_cast<std::uint64_t>(plugin_index) << 32U) |
          static_cast<std::uint32_t>(output_index + 1);
@@ -2655,8 +2542,6 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
   }
 
   maybe_restore_boxdecode_semantic_names_from_lineage_local(&out, lineage_facts);
-  maybe_normalize_legacy_yolo_decode_type_local(&out);
-  maybe_infer_boxdecode_seg_pose_variant_local(&out);
   maybe_restore_grouped_role_semantic_names_from_structure_local(&out);
   maybe_infer_score_activation_from_boxdecode_contract_local(&out);
   maybe_override_quantized_yolov8_score_activation_local(&out);

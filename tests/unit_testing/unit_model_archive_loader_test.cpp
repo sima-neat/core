@@ -127,9 +127,8 @@ RUN_TEST(
 
       const fs::path collision =
           sima_test::model_archive_fixture_path("valid/destination_collision.tar.gz");
-      require(fs::exists(collision),
-              "missing destination_collision fixture; run "
-              "tests/tools/make_model_archive_fixtures.py");
+      require(fs::exists(collision), "missing destination_collision fixture; run "
+                                     "tests/tools/make_model_archive_fixtures.py");
 
       // Default (warn-only): the colliding archive is accepted and extracts; the later
       // entry overwrites the earlier at the shared destination (etc/collide.json).

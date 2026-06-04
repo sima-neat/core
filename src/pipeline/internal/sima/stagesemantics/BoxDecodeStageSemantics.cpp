@@ -187,9 +187,8 @@ int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract) {
 }
 
 void apply_raw_yolov6_yolox_static_contract_overrides(BoxDecodeStaticContract* contract) {
-  if (!contract ||
-      (contract->decode_type != BoxDecodeType::YoloV6 &&
-       contract->decode_type != BoxDecodeType::YoloX)) {
+  if (!contract || (contract->decode_type != BoxDecodeType::YoloV6 &&
+                    contract->decode_type != BoxDecodeType::YoloX)) {
     return;
   }
   contract->score_activation = BoxDecodeScoreActivation::Sigmoid;
