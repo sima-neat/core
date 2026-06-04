@@ -424,6 +424,7 @@ jobs:
               --label-regex "e2e" \
               --label-exclude "perf" \
               -E "${SKIP_REGEX}" \
+              --timeout 240 \
               -j "${SIMA_CTEST_E2E_JOBS:-1}" \
               --output-on-failure \
               --no-tests=error
