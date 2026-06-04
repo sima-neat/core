@@ -112,23 +112,30 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
 
 # ------------------------------------------------------------------------------
-# Version from deps/manifest.json platform-version.
+# Version from deps/manifest.json package-version.
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
+set(SIMANEAT_PACKAGE_VERSION "")
 set(SIMANEAT_PLATFORM_VERSION "")
 execute_process(
-  COMMAND python3 -c "import json; print(json.load(open('deps/manifest.json', encoding='utf-8'))['platform-version'])"
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['package-version']); print(data['platform-version'])"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-  RESULT_VARIABLE PLATFORM_VERSION_RESULT
-  OUTPUT_VARIABLE SIMANEAT_PLATFORM_VERSION
+  RESULT_VARIABLE MANIFEST_VERSION_RESULT
+  OUTPUT_VARIABLE MANIFEST_VERSIONS
   ERROR_QUIET
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_PLATFORM_VERSION STREQUAL "")
-  message(FATAL_ERROR "Failed to read platform-version from deps/manifest.json")
+if (NOT MANIFEST_VERSION_RESULT EQUAL 0 OR MANIFEST_VERSIONS STREQUAL "")
+  message(FATAL_ERROR "Failed to read package-version and platform-version from deps/manifest.json")
+endif()
+string(REPLACE "\n" ";" MANIFEST_VERSION_LIST "${MANIFEST_VERSIONS}")
+list(GET MANIFEST_VERSION_LIST 0 SIMANEAT_PACKAGE_VERSION)
+list(GET MANIFEST_VERSION_LIST 1 SIMANEAT_PLATFORM_VERSION)
+if (SIMANEAT_PACKAGE_VERSION STREQUAL "" OR SIMANEAT_PLATFORM_VERSION STREQUAL "")
+  message(FATAL_ERROR "package-version and platform-version must be non-empty in deps/manifest.json")
 endif()
 
-set(SIMANEAT_VERSION "${SIMANEAT_PLATFORM_VERSION}")
+set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_VERSION}")
 execute_process(
   COMMAND git describe --tags --exact-match
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -180,7 +187,7 @@ else()
     set(GIT_HASH_RESULT 0)
   endif()
 
-  if (SIMANEAT_VERSION STREQUAL SIMANEAT_PLATFORM_VERSION
+  if (SIMANEAT_VERSION STREQUAL SIMANEAT_PACKAGE_VERSION
       AND GIT_BRANCH_RESULT EQUAL 0 AND GIT_HASH_RESULT EQUAL 0
       AND NOT GIT_BRANCH STREQUAL "" AND NOT GIT_HASH STREQUAL "")
     string(TOLOWER "${GIT_BRANCH}" GIT_BRANCH_VERSION)
@@ -189,7 +196,7 @@ else()
     if (GIT_BRANCH_VERSION STREQUAL "")
       set(GIT_BRANCH_VERSION "branch")
     endif()
-    set(SIMANEAT_VERSION "${SIMANEAT_PLATFORM_VERSION}+${GIT_BRANCH_VERSION}.${GIT_HASH}")
+    set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_VERSION}+${GIT_BRANCH_VERSION}.${GIT_HASH}")
   endif()
 endif()
 

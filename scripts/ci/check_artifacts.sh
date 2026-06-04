@@ -64,6 +64,11 @@ PY
     echo "ERROR: deps/manifest.json must define a non-empty platform-version." >&2
     fail=1
   fi
+  package_version="$(sed -n 's/.*"package-version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' deps/manifest.json | head -n1)"
+  if [[ -z "${package_version}" ]]; then
+    echo "ERROR: deps/manifest.json must define a non-empty package-version." >&2
+    fail=1
+  fi
 fi
 
 echo "[repo-hygiene] checking tracked binary artifacts in source paths..."
