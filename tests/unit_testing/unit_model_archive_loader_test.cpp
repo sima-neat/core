@@ -73,17 +73,12 @@ RUN_TEST(
               "ModelArchiveLoader::extract should be deterministic for same archive/root");
 
       const std::string low_space_root = sima_test::make_temp_dir("model_archive_loader_low_space");
-      std::error_code space_ec;
-      const auto space = fs::space(low_space_root, space_ec);
-      if (!space_ec && space.available < static_cast<std::uintmax_t>(
-                                             std::numeric_limits<std::uint64_t>::max() - 1024ULL)) {
-        ModelArchiveLoaderOptions low_space;
-        low_space.min_output_free_bytes = static_cast<std::uint64_t>(space.available) + 1024ULL;
-        require_model_archive_error(
-            [&]() { (void)ModelArchiveLoader::extract(valid.string(), low_space_root, low_space); },
-            ModelArchiveErrorClass::OutputStorageUnavailable,
-            "insufficient extraction space should fail with output_storage_unavailable");
-      }
+      ModelArchiveLoaderOptions low_space;
+      low_space.min_output_free_bytes = std::numeric_limits<std::uint64_t>::max() / 2ULL;
+      require_model_archive_error(
+          [&]() { (void)ModelArchiveLoader::extract(valid.string(), low_space_root, low_space); },
+          ModelArchiveErrorClass::OutputStorageUnavailable,
+          "insufficient extraction space should fail with output_storage_unavailable");
 
       require_model_archive_error(
           [&]() {
