@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import html
+import json
 import os
 import pathlib
 import re
@@ -519,7 +520,7 @@ def _wrap_two_lines(text: str, limit: int = 128) -> List[str]:
 
 
 def stepper_animation_svg(
-    title: str, subtitle: str, filename: str, steps: List, interactive: bool = False
+    title: str, subtitle: str, filename: str, steps: List, interactive: bool = False, anchors=None
 ) -> str:
     """A 'Run an App'-style stepper animation. The editor on the left shows each
     step's full code while its node is highlighted on the right and prior nodes
@@ -558,7 +559,7 @@ def stepper_animation_svg(
     def group_open(kind, idx, smil_values, smil_times):
         if interactive:
             init = "1" if idx == 0 else "0"
-            return [f'<g id="{kind}{idx}" opacity="{init}">']
+            return [f'<g id="{kind}{idx}" class="fanim" opacity="{init}">']
         return ['<g opacity="0">', anim(smil_values, smil_times)]
 
     css = (
@@ -574,6 +575,7 @@ def stepper_animation_svg(
         '.fnl{fill:#0B2E1B;font-weight:650;}'
         '.fcounter{fill:#9AA7B4;font-size:13px;font-weight:600;}'
         '.fhint{fill:#2A9C4F;font-size:15px;font-weight:700;}'
+        '.fanim{transition:opacity 0.55s ease;}'
     )
 
     p: List[str] = []
@@ -660,44 +662,53 @@ def stepper_animation_svg(
     p.append('</g>')
 
     if interactive:
-        p.append(f'<text id="counter" x="1224" y="184" text-anchor="end" class="fsans fcounter">1 / {n}</text>')
-        p.append('<text id="hint" x="912" y="430" text-anchor="middle" class="fsans fhint" opacity="0">Click to step through ▸</text>')
-        p.append(_STEPPER_SCRIPT.replace("__N__", str(n)))
+        # Popup revealed after the play-through, prompting the reader to click a step.
+        p.append('<g id="popup" class="fanim" opacity="0">')
+        p.append('<rect x="690" y="356" width="444" height="46" rx="23" fill="#0B2E1B" opacity="0.93"/>')
+        p.append(
+            '<text x="912" y="384" text-anchor="middle" class="fsans" fill="#EAF7EF" '
+            'font-size="16" font-weight="700">Click a step to jump to that section ↓</text>'
+        )
+        p.append('</g>')
+        p.append(
+            _STEPPER_SCRIPT.replace("__N__", str(n)).replace("__ANCHORS__", json.dumps(anchors or []))
+        )
 
     p.append('</svg>')
     return "\n".join(p)
 
 
-# Drives the interactive stepper: play each step once, freeze on the last, then
-# advance one section per click (cycling). Only runs when the SVG is embedded via
-# <object> (an <img>-embedded SVG never executes scripts).
+# Drives the interactive stepper: play each step once (assembling the flow),
+# then reveal the popup and make each step node clickable — a click scrolls the
+# parent tutorial page to that step's `#step-<name>` section. Only runs when the
+# SVG is embedded via <object> (an <img>-embedded SVG never executes scripts).
 _STEPPER_SCRIPT = """<script type="text/ecmascript"><![CDATA[
 (function(){
-  var n=__N__, i=0, auto=true, t=null;
+  var n=__N__, i=0, t=null, anchors=__ANCHORS__;
   function el(id){return document.getElementById(id);}
-  function paint(a,cum){
+  function paint(a){
     for(var k=0;k<n;k++){
-      var c=el("code"+k); if(c)c.setAttribute("opacity",k===a?"1":"0");
-      var r=el("ring"+k); if(r)r.setAttribute("opacity",k===a?"1":"0");
-      var d=el("node"+k); if(d)d.setAttribute("opacity",cum?(k<=a?"1":"0"):"1");
+      var c=el("code"+k); if(c)c.style.opacity=(k===a?"1":"0");
+      var r=el("ring"+k); if(r)r.style.opacity=(k===a?"1":"0");
+      var d=el("node"+k); if(d)d.style.opacity=(k<=a?"1":"0");
     }
-    var cnt=el("counter"); if(cnt)cnt.textContent=(a+1)+" / "+n;
   }
-  function tick(){
-    paint(i,true);
-    if(i>=n-1){ auto=false; var h=el("hint"); if(h)h.setAttribute("opacity","1"); return; }
-    i++; t=setTimeout(tick,2600);
+  function finish(){
+    for(var k=0;k<n;k++){ var d=el("node"+k); if(d)d.style.opacity="1"; var r=el("ring"+k); if(r)r.style.opacity="0"; }
+    var pop=el("popup"); if(pop)pop.style.opacity="1";
   }
-  paint(0,true);
+  function tick(){ paint(i); if(i>=n-1){ finish(); return; } i++; t=setTimeout(tick,2600); }
+  function go(a){
+    var name=anchors[a]; if(!name)return;
+    try{
+      var pdoc=window.parent.document, tgt=pdoc.getElementById("step-"+name);
+      if(tgt){ tgt.scrollIntoView({behavior:"smooth",block:"start"}); if(window.parent.history&&window.parent.history.replaceState){window.parent.history.replaceState(null,"","#step-"+name);} return; }
+    }catch(e){}
+    try{ window.parent.location.hash="step-"+name; }catch(e2){ try{ window.top.location.hash="step-"+name; }catch(e3){} }
+  }
+  for(var k=0;k<n;k++){ (function(idx){ var d=el("node"+idx); if(d&&d.addEventListener){ d.style.cursor="pointer"; d.addEventListener("click",function(){go(idx);}); } })(k); }
+  paint(0);
   t=setTimeout(tick,650);
-  var root=document.documentElement;
-  if(root&&root.addEventListener){
-    root.style.cursor="pointer";
-    root.addEventListener("click",function(){
-      if(auto){ auto=false; if(t){clearTimeout(t);} paint(i,false); var h=el("hint"); if(h)h.setAttribute("opacity","1"); }
-      else { i=(i+1)%n; paint(i,false); }
-    });
-  }
 })();
 ]]></script>"""
 
@@ -707,14 +718,16 @@ def flow_animation_svg(module: TutorialModule) -> str:
     steps = [s for s in module.walkthrough_steps if s.name and (s.py_snippet or s.cpp_snippet)]
     if len(steps) < 2:
         return ""
+    chosen = steps[:5]
     data = [
         (_flow_node_label(s.name), _flow_snippet_lines(s.py_snippet or s.cpp_snippet))
-        for s in steps[:5]
+        for s in chosen
     ]
+    anchors = [s.name for s in chosen]
     title = re.sub(r"\s+", " ", module.display_title).strip()
     subtitle = _first_sentence(module.concept or module.walkthrough_lead)
     return stepper_animation_svg(
-        title, subtitle, pathlib.Path(module.py_rel).name, data, interactive=True
+        title, subtitle, pathlib.Path(module.py_rel).name, data, interactive=True, anchors=anchors
     )
 
 
