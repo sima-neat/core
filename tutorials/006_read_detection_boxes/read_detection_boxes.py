@@ -32,6 +32,7 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--height", type=int, default=640)
   args = ap.parse_args(argv[1:])
 
+  # STEP configure-decode
   opt = pyneat.ModelOptions()
   opt.format = "RGB"
   opt.input_max_width = args.width
@@ -43,15 +44,21 @@ def main(argv: list[str]) -> int:
   opt.top_k = 100
   opt.original_width = args.width
   opt.original_height = args.height
+  # END STEP
 
   # CORE LOGIC
+  # STEP load-model
   model = pyneat.Model(str(args.model), opt)
+  # END STEP
 
+  # STEP run-decode
   rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
   sample = model.run([tensor], timeout_ms=2000)
+  # END STEP
   # END CORE LOGIC
 
+  # STEP read-boxes
   # Two paths for reading the output:
   #   - Runtimes that wire BoxDecode into model.run produce one BBOX uint8 tensor.
   #   - Runtimes that do not produce a Bundle of raw MLA feature maps instead.
@@ -63,6 +70,7 @@ def main(argv: list[str]) -> int:
   else:
     heads = len(sample.fields or [])
     print(f"raw_output_heads={heads}  # BoxDecode not wired by this runtime")
+  # END STEP
   return 0
 
 

@@ -42,16 +42,22 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   frame = load_image(args.image, size=224)
+
+  # CORE LOGIC
+  # STEP load-model
   model = pyneat.Model(str(args.model))
   route_opt = pyneat.ModelRouteOptions()
   route_opt.include_input = True
   route_opt.include_output = True
+  # END STEP
 
-  # CORE LOGIC
+  # STEP build-async
   graph = pyneat.Graph()
   graph.add(model.graph(route_opt))
   run = graph.build([frame], pyneat.RunMode.Async)
+  # END STEP
 
+  # STEP push-frames
   # Producer thread pushes frames; main thread pulls predictions.
   def producer() -> None:
     for _ in range(args.n):
@@ -60,7 +66,9 @@ def main(argv: list[str]) -> int:
 
   thread = threading.Thread(target=producer, name="frame_producer")
   thread.start()
+  # END STEP
 
+  # STEP pull-results
   pulled = 0
   while True:
     sample = run.pull(timeout_ms=2000)
@@ -71,6 +79,7 @@ def main(argv: list[str]) -> int:
     top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
     print(f"top1={top1}")
     pulled += 1
+  # END STEP
   # END CORE LOGIC
 
   thread.join()

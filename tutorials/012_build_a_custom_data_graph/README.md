@@ -10,44 +10,41 @@
 
 ## Concept
 
-Build the smallest useful public Neat `Graph` — one named `Input` wired to one named `Output` — then push a sample through and verify metadata survives traversal. This is the baseline before hybrid or multistream graph tutorials.
+Build the smallest useful public Neat `Graph` — one *named* `Input` wired to a *named* `Output` — then push a sample through it by name and verify the sample's metadata survives traversal.
 
-A public `Graph` is the application composition surface. You add Nodes with `graph.add(...)`, wire named public endpoints with `graph.connect("input_name", "output_name")`, build once with `graph.build()`, then use named runtime calls:
+## Walkthrough
 
-```python
-run.push("image", [sample])
-sample = run.pull("out")
-```
+Chapter 003 built an anonymous Input → Output graph and drove it with positional `run()` calls. Real orchestration — fan-out, fan-in, per-stream routing — needs to address endpoints *by name*, not by position. This chapter introduces that named-endpoint surface on the smallest possible graph, so you can see the naming and wiring mechanics in isolation before the multistream and embedded-model chapters build on them.
 
-The old low-level `pyneat.graph` module has been removed. Application code should use `pyneat.Graph` and reusable public Graph fragments.
+The public `Graph` is the application composition surface: you `add(...)` nodes, `connect(...)` named endpoints, `build()` once into a reusable `Run`, then `push("image", ...)` and `pull("out", ...)` by name. By the end you will have pushed one tensor `Sample` through a named graph and confirmed its `stream_id`, `frame_id`, and `pts_ns` came out unchanged — proof the runtime preserves metadata end to end.
 
-**APIs introduced**
-- `pyneat.Graph()` — the public graph container.
-- `pyneat.nodes.input("image")` — a named push endpoint.
-- `pyneat.nodes.output("out")` — a named pull endpoint.
-- `graph.add(node)` — add a Node or reusable Graph fragment.
-- `graph.connect("image", "out")` — wire public endpoint names.
-- `graph.build()` — materialize the Graph into a `Run`.
-- `run.push("image", [sample])` / `run.pull("out")` — named runtime I/O.
+### Compose the graph {#step-compose-graph}
 
-**When to use this**
-- Custom orchestration where linear model calls are not enough (fan-out, fan-in, per-stream routing).
-- Multistream scheduling (see chapter 014).
-- Embedding model execution as one stage of a larger flow (see chapter 013).
+Add two nodes. `Input("image")` declares a push endpoint named `image`; `Output("out")` declares a pull endpoint named `out`. The names are the contract — they are exactly the strings you will pass to `push(...)` and `pull(...)` later. Naming endpoints (rather than relying on add-order) is what makes larger graphs with multiple inputs or outputs unambiguous to drive.
 
-**Prerequisites**
-Chapter 003 (Graph basics).
+**C++:** Nodes come from `simaai::neat::nodes::Input("image")` and `nodes::Output("out")`.
 
-**References**
-- [Graph](/reference/programming-model/graph)
-- [Public Graph](/reference/programming-model/graph)
+**Python:** Nodes come from `pyneat.nodes.input("image")` and `pyneat.nodes.output("out")`.
 
-## Learning Process
-1. Build a minimal public Graph and push one deterministic tensor sample.
-2. Use named endpoints rather than node IDs.
-3. Pull graph output and validate stream/frame/timestamp metadata preservation.
+### Wire the endpoints {#step-connect-endpoints}
+
+`connect("image", "out")` declares the edge: frames pushed to `image` flow to `out`. With only two nodes this is the entire topology, but `connect(...)` is the same call you would use to build branches and merges in a larger graph. We then print `graph.describe()` to dump the composed topology — a quick sanity check that the graph is wired the way you intended before building.
+
+### Build and push a sample {#step-build-and-push}
+
+`build()` (with no priming sample needed here) materializes the description into a runnable `Run`. We then construct one deterministic tensor `Sample` — an 8×8×3 RGB image carrying a known `stream_id`, `frame_id`, and `pts_ns` — and `push(...)` it to the `image` endpoint by name. The sample's metadata is what we will check on the other side.
+
+**C++:** `push(...)` returns a bool; on failure we surface `run.last_error()`. The sample is built by `make_sample()`.
+
+**Python:** `push("image", [sample])` takes a list of samples. The sample is built by `make_rgb_sample()`.
+
+### Pull the output and verify metadata {#step-pull-and-verify}
+
+`pull("out", ...)` retrieves the result from the named output endpoint with a timeout, after which we `close()` the run. Because there is no transform between input and output, a correct pipeline returns the same logical sample — so reading back `stream_id`, `frame_id`, and `pts_ns` and seeing the values we pushed confirms the runtime preserved per-sample metadata through traversal. That guarantee is what lets downstream stages trust frame identity and timestamps.
 
 ## Run
+
+Run it and you should see the graph description followed by the round-tripped metadata. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**. This chapter needs no model archive.
 
 **Python:**
 ```bash
@@ -65,7 +62,14 @@ python3 share/sima-neat/tutorials/012_build_a_custom_data_graph/build_a_custom_d
 ./build/tutorials-standalone/tutorial_012_build_a_custom_data_graph
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+Expected output (preceded by the `graph.describe()` dump):
+
+```text
+stream=graph frame=42 pts_ns=123456789
+[OK] 012_build_a_custom_data_graph
+```
+
+(The Python build prints `stream_id=graph frame_id=42 pts_ns=123456789`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/012_build_a_custom_data_graph/build_a_custom_data_graph.cpp`

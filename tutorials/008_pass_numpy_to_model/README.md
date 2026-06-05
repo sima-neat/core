@@ -10,35 +10,41 @@
 
 ## Concept
 
-Move data between Neat tensors and the data structures Python users already have — NumPy arrays and PyTorch tensors — without rewriting your existing preprocessing or postprocessing stacks. Layout, dtype, and copy semantics handled in two calls.
+Move data between Neat tensors and the structures you already have — NumPy arrays, PyTorch tensors, or `cv::Mat` — controlling layout, dtype, and copy semantics so you can drop Neat into an existing inference stack.
 
-If you are integrating Neat into an existing Python inference stack, this is the interop surface you need. It prevents the common integration mistakes (wrong layout, silent dtype coercion, unexpected aliasing) before you build larger pipelines.
+## Walkthrough
 
-**APIs introduced**
-- `pyneat.Tensor.from_numpy(array, copy=..., image_format=...)` — wrap a NumPy array as a Neat tensor.
-- `tensor.to_numpy(copy=...)` — materialize a NumPy view (or copy) of a Neat tensor.
-- `pyneat.Tensor.from_torch(tensor, copy=..., image_format=...)` — same surface for PyTorch.
-- `tensor.to_torch(copy=...)` — round-trip back to PyTorch.
-- `pyneat.PixelFormat.RGB` (and siblings) — explicit image-layout tag that controls interpretation.
+If you are integrating Neat into an existing inference stack, this is the interop boundary you need: how host data becomes a Neat `Tensor`, and how a Neat `Tensor` becomes host data again. Getting it right up front prevents the classic integration bugs — wrong layout, silent dtype coercion, unexpected aliasing between the two worlds.
 
-**When to use this**
-- Existing preprocessing in NumPy: keep that path, then hand off tensors to Neat.
-- Existing model/postprocessing in PyTorch: convert in/out cleanly without rewriting your whole stack.
-- Interop debugging: use deterministic round-trip checks to confirm data integrity.
+This is also where the two languages diverge most. Python users come from NumPy/PyTorch; C++ users come from OpenCV. The conversion *concepts* are identical, but the API names and types differ, so the per-language prose below matters. By the end you will have converted host data into a Neat tensor, inspected its payload without copying, and produced an owned copy that is safe to outlive the source buffer.
 
-**Prerequisites**
-Chapter 001.
+### Wrap host data as a tensor {#step-to-tensor}
 
-**References**
-- [Tensor and Sample](/reference/programming-model/core_types)
-- [Node boundaries and I/O](/reference/programming-model/node#boundary-nodes)
+The first move turns data you already hold into a Neat `Tensor`. You tag the image layout explicitly (`RGB`) so the runtime interprets the bytes correctly rather than guessing. `copy=True` (or the CPU memory choice in C++) decides whether the tensor owns its bytes or aliases the source — explicit ownership is the safe default when the source buffer may change or be freed.
 
-## Learning Process
-1. Build deterministic tensor inputs in NumPy/PyTorch and C++ tensor storage.
-2. Convert across boundaries (NumPy/PyTorch <-> Neat tensor).
-3. Verify round-trip shape/bytes/checksum behavior.
+**C++:** `simaai::neat::from_cv_mat(mat, ImageSpec::PixelFormat::RGB, TensorMemory::CPU)` wraps a `cv::Mat` into a CPU-backed tensor.
+
+**Python:** `pyneat.Tensor.from_numpy(arr, copy=True, image_format=pyneat.PixelFormat.RGB)` wraps an HWC `uint8` NumPy array.
+
+### Inspect the payload {#step-map-and-inspect}
+
+Once the data is a tensor, you can read it back. This is the round-trip half of interop: confirm shape and bytes survived the conversion before feeding anything downstream.
+
+**C++:** `tensor.map_read()` returns a `Mapping` exposing a raw `data` pointer and `size_bytes`. It is a *view* into the tensor's storage — no copy — which is why the example can checksum the leading bytes directly.
+
+**Python:** `tensor.to_numpy(copy=True)` materializes a NumPy array from the tensor; the example prints its `.shape` to confirm the HWC layout round-tripped intact.
+
+### Own a copy {#step-own-a-copy}
+
+Finally, produce data that is fully detached from the original source buffer — safe to keep after the input is gone. This is the copy you hand to long-lived consumers.
+
+**C++:** `tensor.clone()` copies into fresh CPU-owned storage, independent of the `cv::Mat` it came from.
+
+**Python:** the same idea is shown through PyTorch: `pyneat.Tensor.from_torch(t, copy=True, ...)` and `tensor.to_torch(copy=True)` round-trip through an owned PyTorch tensor. (Skipped gracefully if `torch` is not installed.)
 
 ## Run
+
+Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**. This chapter needs no model archive.
 
 **Python:**
 ```bash
@@ -59,7 +65,44 @@ python3 share/sima-neat/tutorials/008_pass_numpy_to_model/pass_numpy_to_model.py
   --width 128 --height 96
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+Expected output (C++):
+
+```text
+tensor_rank=3
+tensor_bytes=36864
+head_checksum=4342
+clone_bytes=36864
+[OK] 008_pass_numpy_to_model
+```
+
+Expected output (Python, with `torch` installed):
+
+```text
+numpy_roundtrip_shape=(96, 128, 3)
+torch_roundtrip_shape=(96, 128, 3)
+```
+
+(Without `torch`, the Python build prints `torch_roundtrip_skipped=True` instead of the torch line.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+
+## In Practice
+
+The interop surface, summarized for quick reference once you move past the round-trip demo.
+
+### Conversion API
+
+- NumPy: `pyneat.Tensor.from_numpy(array, copy=..., image_format=...)` in; `tensor.to_numpy(copy=...)` out.
+- PyTorch: `pyneat.Tensor.from_torch(tensor, copy=..., image_format=...)` in; `tensor.to_torch(copy=...)` out.
+- OpenCV (C++): `simaai::neat::from_cv_mat(mat, pixel_format, memory)` in; `tensor.map_read()` for a zero-copy view; `tensor.clone()` for an owned copy.
+
+### Copy vs view
+
+- `copy=True` (Python) / `clone()` (C++) gives you data detached from the source — safe to keep after the source is freed or mutated.
+- `copy=False` / `map_read()` gives you a view that aliases the source. Cheaper, but only valid while the source stays alive and unchanged.
+
+### Layout and dtype
+
+- Always pass an explicit `image_format` / `PixelFormat` for image data so layout is interpreted, not guessed.
+- Neat does not silently coerce dtype — match the tensor dtype to the model's input contract before feeding it.
 
 ## Source Files
 - C++: `tutorials/008_pass_numpy_to_model/pass_numpy_to_model.cpp`

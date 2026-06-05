@@ -44,12 +44,16 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
 
     // CORE LOGIC
+    // STEP to-tensor
     // from_cv_mat converts a cv::Mat into a CPU-backed Neat Tensor.
     simaai::neat::Tensor tensor = simaai::neat::from_cv_mat(
         rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::CPU);
+    // END STEP
 
+    // STEP map-and-inspect
     // map_read yields a Mapping with a raw pointer and size in bytes.
     simaai::neat::Mapping mapped = tensor.map_read();
+    // END STEP
     // END CORE LOGIC
 
     std::uint64_t checksum = 0;
@@ -59,8 +63,10 @@ int main(int argc, char** argv) {
       checksum += bytes[i];
 
     // CORE LOGIC
+    // STEP own-a-copy
     // clone() copies into CPU-owned storage, detached from the cv::Mat buffer.
     simaai::neat::Tensor owned = tensor.clone();
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "tensor_rank=" << tensor.shape.size() << "\n";

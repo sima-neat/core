@@ -8,6 +8,8 @@ mdx:
 
 # Minimal
 
+![Minimal example: write the script, run it on the DevKit, and confirm the runtime responds](../../images/minimal-example-flow.svg)
+
 After installation, start here to confirm your Neat setup is wired correctly.
 
 This page keeps the first run intentionally small: create a tiny app, confirm the headers/imports resolve and it builds, and run it on the DevKit to confirm the runtime responds. Once this works, continue to [Run an App](./run_an_app) to run a real model inside a small Graph application.

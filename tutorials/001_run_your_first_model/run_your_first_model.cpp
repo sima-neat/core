@@ -83,10 +83,16 @@ int main(int argc, char** argv) {
 
     // CORE LOGIC
     // The three-line Neat story:
+    // STEP load-model
     simaai::neat::Model model(model_path, build_options(size));
+    // END STEP
+    // STEP prepare-input
     cv::Mat input = image.empty() ? cv::Mat(size, size, CV_8UC3, cv::Scalar(99, 99, 99))
                                   : load_rgb(image, size);
+    // END STEP
+    // STEP run-inference
     simaai::neat::TensorList sample = model.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/2000);
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "top1=" << top1_from_output(sample) << "\n";

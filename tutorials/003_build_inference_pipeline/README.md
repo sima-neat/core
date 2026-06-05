@@ -12,36 +12,45 @@
 
 Compose a `Graph` by hand — input node, output node, no model — and run one frame through it. See the pipeline primitives in isolation before a model is added to the picture.
 
-A `Graph` is where you define pipeline structure by adding nodes and reusable Graph fragments in order. It is not a one-off inference call; it is a reusable runtime graph definition that can be built once and executed many times.
+## Walkthrough
 
-`build(...)` turns that definition into a runnable `Run` handle — the transition from "graph description" to "executable runtime":
-- Resolves the added nodes/fragments into a concrete pipeline.
-- Validates input/output contracts for the selected input type.
-- Configures runtime behavior (sync vs async mode, output memory policy).
-- Returns a `Run` object for push/pull calls.
+Chapter 001 ran a model in three lines. That convenience hides a two-part lifecycle that every non-trivial Neat program uses directly: you first **describe** a pipeline as a `Graph`, then **build** that description into a runnable `Run`. This chapter makes that lifecycle visible by composing the smallest possible pipeline — one input node wired to one output node, no model in between — and pushing a single frame through it.
 
-**APIs introduced**
-- `pyneat.Graph()` — the composition entry point.
-- `pyneat.InputOptions()`, `pyneat.nodes.input(opts)`, `pyneat.nodes.output()` — the most basic node pair.
-- `graph.build(tensor, pyneat.RunMode.Sync)` — materialize the pipeline.
-- `run.run(tensor, timeout_ms)` — sync one-shot inference on the built pipeline.
+The payoff is conceptual: a `Graph` is a *reusable definition* you build once and execute many times, not a one-off call. By the end you will have created a graph, turned it into a runnable pipeline, and read back the rank of the output tensor — proving the frame made it through.
 
-**When to use this**
-Learning the `Graph` / `Run` lifecycle without a model in the loop, or building custom pipelines from primitives.
+### Describe the input {#step-configure-input}
 
-**Prerequisites**
-Chapter 001.
+Before wiring up nodes, declare what a frame looks like. `InputOptions` is that contract: pixel `format`, `width`/`height`, channel `depth`, and whether the runtime timestamps each buffer. The input node built from these options validates incoming frames against the shape the pipeline expects.
 
-**References**
-- [Graph](/reference/programming-model/graph)
-- [Graph](/reference/programming-model/graph)
+**C++:** C++ additionally sets `is_live = false` to mark this as a non-live (file/tensor) source.
 
-## Learning Process
-1. Create a minimal `Graph` with explicit input and output nodes.
-2. Build the Graph with a concrete sample input to materialize a runnable pipeline.
-3. Execute one deterministic sync run to verify output contract behavior.
+### Compose the graph {#step-compose-graph}
+
+Now build the structure. A fresh `Graph` is an empty composition surface, and `add()` appends nodes in order. We add exactly two — an input node (configured above) and a bare output node. That is the entire topology: frames enter at the input and leave at the output, with nothing in between. This is the seam where, in later chapters, a model or preprocessing stage slots in.
+
+**C++:** Nodes come from `simaai::neat::nodes::Input(...)` and `nodes::Output()`.
+
+**Python:** Nodes come from `pyneat.nodes.input(...)` and `pyneat.nodes.output()`.
+
+### Build the pipeline {#step-build-pipeline}
+
+`build()` is the transition from *description* to *executable*. It resolves the added nodes into a concrete pipeline, validates the input/output contracts against a real sample, selects the execution mode (`Sync` here, for deterministic one-at-a-time behavior), and returns a `Run` handle. We pass a representative frame so `build()` can lock in the negotiated tensor shapes.
+
+**C++:** The sample frame is a `cv::Mat`, and `run_opt.output_memory = Owned` asks the runtime to return owned output buffers.
+
+**Python:** We first materialize the frame as a `Tensor` from a NumPy array with `Tensor.from_numpy(...)`, then build with it.
+
+### Run a frame and read the result {#step-run-frame}
+
+With a `Run` in hand, `run()` pushes one frame and pulls one result synchronously. Because there's no model, the output mirrors the input contract — so reading the tensor's *rank* is enough to confirm a frame completed the round trip. In real pipelines this same `run()`/push/pull surface is how you drive inference.
+
+**C++:** `run()` returns a `TensorList`; read `sample.front().shape.size()`.
+
+**Python:** `run()` returns a `Sample`; read `len(sample.tensor.shape)`.
 
 ## Run
+
+Run it and you should see the rank of the output tensor printed to stdout. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**. This chapter needs no model archive.
 
 **Python:**
 ```bash
@@ -62,7 +71,14 @@ python3 share/sima-neat/tutorials/003_build_inference_pipeline/build_inference_p
   --width 320 --height 240
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+Expected output:
+
+```text
+tensor_rank=3
+[OK] 003_build_inference_pipeline
+```
+
+(The Python build prints `output_rank=...`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## In Practice
 
