@@ -40,7 +40,7 @@ sidebar_position: 1
 
 <div class="overview-section-label">What Neat Is</div>
 
-SiMa.ai Neat (**Neural Edge Acceleration Toolkit**) is an application-development framework for building and running AI applications on the SiMa.ai platform.
+SiMa.ai Neat is an application-development framework for building and running AI applications on the SiMa.ai platform.
 It provides developers a set of Python and C++ APIs to execute and test compiled model artifacts (`tar.gz models`), compose AI applications that leverage the SoC's hardware blocks, and manage runtime execution. 
 
 In the broader SiMa.ai software ecosystem, Neat sits at the application layer, building on the SiMa.ai runtime stack and using GStreamer-based execution underneath so developers can stay focused on application logic instead of manually stitching together lower-level runtime pieces.
