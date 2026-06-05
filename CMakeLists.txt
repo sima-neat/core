@@ -112,23 +112,29 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Sanitizers.cmake)
 simaneat_configure_sanitizers()
 
 # ------------------------------------------------------------------------------
-# Version from deps/manifest.json platform-version.
+# Versioning from deps/manifest.json:
+# - package-version controls package/artifact identity.
+# - platform-version controls ABI and CMake package compatibility.
 # Exact tags use the tag version; branch builds append branch/sha metadata.
 # ------------------------------------------------------------------------------
 set(SIMANEAT_PLATFORM_VERSION "")
+set(SIMANEAT_PACKAGE_BASE_VERSION "")
 execute_process(
-  COMMAND python3 -c "import json; print(json.load(open('deps/manifest.json', encoding='utf-8'))['platform-version'])"
+  COMMAND python3 -c "import json; data=json.load(open('deps/manifest.json', encoding='utf-8')); print(data['platform-version']); print(data['package-version'])"
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   RESULT_VARIABLE PLATFORM_VERSION_RESULT
-  OUTPUT_VARIABLE SIMANEAT_PLATFORM_VERSION
+  OUTPUT_VARIABLE SIMANEAT_MANIFEST_VERSIONS
   ERROR_QUIET
   OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_PLATFORM_VERSION STREQUAL "")
-  message(FATAL_ERROR "Failed to read platform-version from deps/manifest.json")
+if (NOT PLATFORM_VERSION_RESULT EQUAL 0 OR SIMANEAT_MANIFEST_VERSIONS STREQUAL "")
+  message(FATAL_ERROR "Failed to read package-version and platform-version from deps/manifest.json")
 endif()
+string(REPLACE "\n" ";" SIMANEAT_MANIFEST_VERSION_LIST "${SIMANEAT_MANIFEST_VERSIONS}")
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 0 SIMANEAT_PLATFORM_VERSION)
+list(GET SIMANEAT_MANIFEST_VERSION_LIST 1 SIMANEAT_PACKAGE_BASE_VERSION)
 
-set(SIMANEAT_VERSION "${SIMANEAT_PLATFORM_VERSION}")
+set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
 execute_process(
   COMMAND git describe --tags --exact-match
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
@@ -157,7 +163,7 @@ else()
     OUTPUT_STRIP_TRAILING_WHITESPACE
   )
   execute_process(
-    COMMAND git rev-parse --short HEAD
+    COMMAND git rev-parse --short=12 HEAD
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     RESULT_VARIABLE GIT_HASH_RESULT
     OUTPUT_VARIABLE GIT_HASH
@@ -176,22 +182,29 @@ else()
   endif()
 
   if ((NOT GIT_HASH_RESULT EQUAL 0 OR GIT_HASH STREQUAL "") AND NOT "$ENV{GITHUB_SHA}" STREQUAL "")
-    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 7 GIT_HASH)
+    string(SUBSTRING "$ENV{GITHUB_SHA}" 0 12 GIT_HASH)
     set(GIT_HASH_RESULT 0)
   endif()
 
-  if (SIMANEAT_VERSION STREQUAL SIMANEAT_PLATFORM_VERSION
+  if (SIMANEAT_VERSION STREQUAL SIMANEAT_PACKAGE_BASE_VERSION
       AND GIT_BRANCH_RESULT EQUAL 0 AND GIT_HASH_RESULT EQUAL 0
       AND NOT GIT_BRANCH STREQUAL "" AND NOT GIT_HASH STREQUAL "")
     string(TOLOWER "${GIT_BRANCH}" GIT_BRANCH_VERSION)
-    string(REGEX REPLACE "[^a-z0-9.]+" "." GIT_BRANCH_VERSION "${GIT_BRANCH_VERSION}")
-    string(REGEX REPLACE "^\\.+|\\.+$" "" GIT_BRANCH_VERSION "${GIT_BRANCH_VERSION}")
+    string(REGEX REPLACE "[^a-z0-9.+~-]+" "-" GIT_BRANCH_VERSION "${GIT_BRANCH_VERSION}")
+    string(REGEX REPLACE "^-+|-+$" "" GIT_BRANCH_VERSION "${GIT_BRANCH_VERSION}")
     if (GIT_BRANCH_VERSION STREQUAL "")
       set(GIT_BRANCH_VERSION "branch")
     endif()
-    set(SIMANEAT_VERSION "${SIMANEAT_PLATFORM_VERSION}+${GIT_BRANCH_VERSION}.${GIT_HASH}")
+    set(SIMANEAT_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}+${GIT_BRANCH_VERSION}.${GIT_HASH}")
   endif()
 endif()
+
+string(REPLACE "." ";" SIMANEAT_PACKAGE_BASE_VERSION_PARTS "${SIMANEAT_PACKAGE_BASE_VERSION}")
+list(GET SIMANEAT_PACKAGE_BASE_VERSION_PARTS 0 SIMANEAT_PACKAGE_BASE_VERSION_MAJOR)
+list(GET SIMANEAT_PACKAGE_BASE_VERSION_PARTS 1 SIMANEAT_PACKAGE_BASE_VERSION_MINOR)
+math(EXPR SIMANEAT_NEXT_PACKAGE_MINOR "${SIMANEAT_PACKAGE_BASE_VERSION_MINOR} + 1")
+set(SIMANEAT_DEP_PACKAGE_MIN_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION}")
+set(SIMANEAT_DEP_PACKAGE_MAX_VERSION "${SIMANEAT_PACKAGE_BASE_VERSION_MAJOR}.${SIMANEAT_NEXT_PACKAGE_MINOR}.0")
 
 # Debian package versions do not allow underscores. Keep branch-derived versions
 # installable by normalizing every non-Debian-version character to '-'.
@@ -280,13 +293,13 @@ endif()
 # ------------------------------------------------------------------------------
 find_package(PkgConfig REQUIRED)
 if (SIMANEAT_REQUIRE_LLIMA_ARTIFACTS)
-  find_package(SimaLMM CONFIG REQUIRED)
+  find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION} CONFIG REQUIRED)
 else()
   # Core-only builds must not fail when LLiMa is absent, but if the package is
   # present we should build the real GenAI implementation instead of silently
   # shipping unavailable stubs.  This keeps local developer/CI environments
   # coherent without making LLiMa a hard dependency for normal Graph/Core builds.
-  find_package(SimaLMM CONFIG QUIET)
+  find_package(SimaLMM ${SIMANEAT_PLATFORM_VERSION} CONFIG QUIET)
 endif()
 if (SimaLMM_FOUND)
   message(STATUS "Using exported SimaLMM package from ${SimaLMM_DIR}")
@@ -364,7 +377,7 @@ endif()
 
 set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE OFF)
 if (SIMANEAT_USE_EXPORTED_NEAT_INTERNALS)
-  find_package(NeatInternals CONFIG QUIET)
+  find_package(NeatInternals ${SIMANEAT_PLATFORM_VERSION} CONFIG QUIET)
   if (NeatInternals_FOUND)
     set(SIMANEAT_USING_NEAT_INTERNALS_PACKAGE ON)
     message(STATUS "Using exported NeatInternals package from ${NeatInternals_DIR}")
@@ -919,11 +932,17 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   endforeach()
 endif()
 
+# GStreamer/OpenCV headers are part of the public surface (e.g. pipeline/Graph.h),
+# but their absolute include paths are build-host specific (the SDK cross sysroot
+# under /opt/toolchain/... vs a DevKit's native /usr). Use them to build Neat
+# itself via $<BUILD_INTERFACE:...>, but do not bake them into the exported
+# target. SimaNeatConfig.cmake re-discovers them with pkg-config on the
+# consuming machine so the installed package is relocatable.
 if (GST_FOUND)
-  target_include_directories(sima_neat_common SYSTEM INTERFACE ${GST_INCLUDE_DIRS})
+  target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${GST_INCLUDE_DIRS}>")
 endif()
 if (OPENCV_FOUND)
-  target_include_directories(sima_neat_common SYSTEM INTERFACE ${OPENCV_INCLUDE_DIRS})
+  target_include_directories(sima_neat_common SYSTEM INTERFACE "$<BUILD_INTERFACE:${OPENCV_INCLUDE_DIRS}>")
 endif()
 
 target_compile_options(sima_neat_objects PRIVATE
@@ -1429,13 +1448,17 @@ set(SIMANEAT_CORE_DEBIAN_DEPENDS
   "libgstrtspserver-1.0-0"
   "libglib2.0-0"
   "libopencv-core406"
-  "neat-internals-dev"
-  "neat-gst-plugins"
+  "neat-internals-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+  "neat-internals-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+  "neat-gst-plugins (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+  "neat-gst-plugins (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
 )
 if (SimaLMM_FOUND)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS
-    "sima-lmm-core"
-    "sima-lmm-dev")
+    "sima-lmm-core (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+    "sima-lmm-core (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+    "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
+    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})")
 endif()
 if (SIMANEAT_ENABLE_OPENAI_SERVER)
   list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "libcpp-httplib0.11")

@@ -42,7 +42,7 @@ INSTALL_NEAT_INTERNALS=OFF
 INSTALL_NEAT_LLIMA=OFF
 STRICT_WARNINGS="${SIMANEAT_STRICT_WARNINGS:-OFF}"
 NEAT_DEPS_MANIFEST="${NEAT_DEPS_MANIFEST:-${NEAT_INTERNALS_MANIFEST:-deps/manifest.json}}"
-NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-staging}"
+NEAT_VULCAN_ENV="${NEAT_VULCAN_ENV:-production}"
 NEAT_VULCAN_BASE_URL="${NEAT_VULCAN_BASE_URL:-}"
 NEAT_INTERNALS_VULCAN_REPOSITORY="${NEAT_INTERNALS_VULCAN_REPOSITORY:-internals}"
 NEAT_LLIMA_VULCAN_REPOSITORY="${NEAT_LLIMA_VULCAN_REPOSITORY:-llima}"
@@ -286,7 +286,7 @@ Environment:
                  Override where the shadow workspace is created.
   NEAT_DEPS_MANIFEST=deps/manifest.json
                  Manifest used to resolve Vulcan dependency artifacts.
-  NEAT_VULCAN_ENV=staging
+  NEAT_VULCAN_ENV=production
                  Vulcan environment used for dependency artifact installs.
   SIMA_CLI_BIN=sima-cli
                  sima-cli executable used for Vulcan installs and metadata generation.
@@ -532,6 +532,9 @@ detect_elxr_host_python() {
   fi
 
   local candidate="${SIMANEAT_HOST_PYTHON:-${Python3_EXECUTABLE:-${PYTHON3_EXECUTABLE:-}}}"
+  if [[ -z "${candidate}" && -n "${SYSROOT:-}" && -x "${SYSROOT}/usr/bin/python3" ]]; then
+    candidate="${SYSROOT}/usr/bin/python3"
+  fi
   if [[ -z "${candidate}" ]]; then
     candidate="$(command -v python3 || true)"
   fi
@@ -542,9 +545,9 @@ detect_elxr_host_python() {
     exit 1
   fi
 
-  if [[ -n "${SYSROOT:-}" && "${candidate}" == "${SYSROOT}/"* ]]; then
-    echo "ERROR: host Python resolved inside SYSROOT and cannot drive cross-build configuration: ${candidate}" >&2
-    echo "Set SIMANEAT_HOST_PYTHON to an executable host Python, for example /usr/bin/python3." >&2
+  if ! "${candidate}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' >/dev/null 2>&1; then
+    echo "ERROR: selected Python cannot run in this SDK container: ${candidate}" >&2
+    echo "Set SIMANEAT_HOST_PYTHON to an executable Python matching the target sysroot." >&2
     exit 1
   fi
 
@@ -1817,6 +1820,12 @@ configure_cmake() {
     export PKG_CONFIG_SYSROOT_DIR="${PKG_CONFIG_SYSROOT_DIR:-${SYSROOT}}"
     export PKG_CONFIG_LIBDIR="${PKG_CONFIG_LIBDIR:-$(IFS=:; echo "${pkgconfig_dirs[*]}")}"
     export PKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
+    if [[ -d "${SYSROOT}/usr/include/c++/12" ]]; then
+      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/c++/12"
+    fi
+    if [[ -d "${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12" ]]; then
+      export CXXFLAGS="${CXXFLAGS:-} -isystem ${SYSROOT}/usr/include/aarch64-linux-gnu/c++/12"
+    fi
 
     cmake_args+=(
       -DCMAKE_SYSROOT="${SYSROOT}"
@@ -1829,6 +1838,8 @@ configure_cmake() {
       -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
       -DPython3_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
       -DPython_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
+      -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
+      -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE
       -DSIMANEAT_CTEST_FOR_DEVKIT=ON
     )
   fi
@@ -1926,10 +1937,27 @@ compute_neat_package_version() {
   "${REPO_ROOT}/tools/compute_version.sh"
 }
 
+compute_neat_platform_version() {
+  python3 - "${NEAT_DEPS_MANIFEST}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+version = str(data.get("platform-version", "")).strip()
+if not version:
+    raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
+print(version)
+PY
+}
+
 generate_package_buildinfo_json() {
   local output_path="${NEAT_PACKAGE_BUILDINFO_JSON}"
   local package_version
+  local platform_version
   package_version="$(compute_neat_package_version)"
+  platform_version="$(compute_neat_platform_version)"
 
   # Best-effort cross-toolchain version string for the compatibility block.
   local toolchain_version=""
@@ -1943,6 +1971,7 @@ generate_package_buildinfo_json() {
     --output "${output_path}" \
     --package-name "${NEAT_PACKAGE_NAME}" \
     --package-version "${package_version}" \
+    --platform-version "${platform_version}" \
     --vulcan-env "${NEAT_VULCAN_ENV}" \
     --internals-ref "${NEAT_INTERNALS_RESOLVED_REF}" \
     --llima-ref "${NEAT_LLIMA_RESOLVED_REF}" \
@@ -2067,11 +2096,11 @@ PY
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
       echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind ninja
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja
       local py_abi
       local py_triplet
       local pyneat_ext_suffix
-      py_abi="$("${wheel_python}" - <<'PY'
+      py_abi="$("${ELXR_HOST_PYTHON_EXECUTABLE}" - <<'PY'
 import sys
 print(f"{sys.version_info.major}{sys.version_info.minor}")
 PY
@@ -2081,6 +2110,9 @@ PY
       echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
       local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
       if [[ -n "${SYSROOT:-}" ]]; then
+        if [[ -d "${SYSROOT}/usr/include/python3.11" ]]; then
+          wheel_cmake_args+=" -DPython_INCLUDE_DIR=${SYSROOT}/usr/include/python3.11"
+        fi
         wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
@@ -2089,15 +2121,24 @@ PY
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY"
         wheel_cmake_args+=" -DCMAKE_PREFIX_PATH=${SYSROOT}/usr\\;${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake\\;${SYSROOT}/usr/lib/cmake"
         wheel_cmake_args+=" -DSimaLMM_DIR=${SYSROOT}/usr/lib/aarch64-linux-gnu/cmake/SimaLMM"
+        wheel_cmake_args+=" -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF"
+        wheel_cmake_args+=" -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE"
       fi
       # In eLxr cross-builds, PEP517 isolation may pull target-arch build tools
       # (notably ninja), which are not executable on the host container.
       # Build without isolation and force Makefiles to keep host tools executable.
+      local backend_pythonpath
+      backend_pythonpath="$("${wheel_python}" - <<'PY'
+import sysconfig
+print(sysconfig.get_paths()["purelib"])
+PY
+)"
       _PYTHON_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM}" \
+        PYTHONPATH="${backend_pythonpath}${PYTHONPATH:+:${PYTHONPATH}}" \
         CMAKE_ARGS="${wheel_cmake_args}" \
         CMAKE_GENERATOR="Unix Makefiles" \
         CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
-        "${wheel_python}" -m build --wheel --outdir dist --no-isolation
+        "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
     else
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
         "${wheel_python}" -m build --wheel --outdir dist

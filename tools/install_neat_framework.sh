@@ -582,6 +582,42 @@ apt_package_database_is_healthy() {
   return 1
 }
 
+remove_installed_local_deb_packages() {
+  if ! command -v dpkg-deb >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local -a packages=()
+  local -A seen=()
+  local deb package idx
+
+  # Remove in reverse install order so packages that depend on lower-level
+  # runtime packages are removed before their dependencies.
+  for ((idx = ${#DEBS[@]} - 1; idx >= 0; idx--)); do
+    deb="${DEBS[$idx]}"
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    [[ -n "${package}" ]] || continue
+    [[ -z "${seen[${package}]:-}" ]] || continue
+    seen["${package}"]=1
+    if dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null | grep -q '^i'; then
+      packages+=("${package}")
+    fi
+  done
+
+  if [[ "${#packages[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  log "Removing installed NEAT packages before retrying apt downgrade/repair:"
+  printf '  %s\n' "${packages[@]}"
+  if run_sudo apt-get remove -y "${packages[@]}"; then
+    return 0
+  fi
+
+  log "apt-get remove failed; falling back to forced dpkg removal before apt repair."
+  run_sudo dpkg --remove --force-depends "${packages[@]}"
+}
+
 maybe_relax_simaai_memory_dep() {
   local deb="$1"
   local out_array_name="$2"
@@ -760,7 +796,15 @@ install_debs_on_board() {
   if ! apt_package_database_is_healthy; then
     log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
   fi
-  if run_sudo apt-get install -y --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    repair_stale_global_dispatcher_lib
+    verify_board_runtime_services
+    return 0
+  fi
+
+  log "apt-get install failed; removing installed NEAT packages represented by the local DEB set and retrying apt."
+  remove_installed_local_deb_packages
+  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
     verify_board_runtime_services
     return 0

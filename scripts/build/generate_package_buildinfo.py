@@ -113,6 +113,7 @@ def read_sdk_release(path: Path) -> dict[str, str]:
 
 def build_compatibility(
     package_version: str,
+    platform_version: str,
     repo_root: Path,
     sdk_release_file: Path,
     toolchain: str,
@@ -121,8 +122,7 @@ def build_compatibility(
     Constants come from COMPAT_DEFAULTS; the rest is derived from real sources."""
     import copy
     compat = copy.deepcopy(COMPAT_DEFAULTS)
-    # platform sw version = the part before any build-metadata "+"
-    compat["target"]["platform_sw"] = package_version.split("+", 1)[0]
+    compat["target"]["platform_sw"] = platform_version.split("+", 1)[0]
     # pyneat floors from pyproject.toml
     compat["pyneat"].update(parse_pyproject_floors(repo_root))
     # SDK / eLxr from the container's sdk-release file
@@ -139,6 +139,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--package-name", required=True)
     parser.add_argument("--package-version", required=True)
+    parser.add_argument("--platform-version", required=True)
     parser.add_argument("--vulcan-env", default="dev")
     parser.add_argument("--internals-ref", default="")
     parser.add_argument("--llima-ref", default="")
@@ -199,7 +200,11 @@ def main() -> int:
         },
         "dependencies": {},
         "compatibility": build_compatibility(
-            args.package_version, repo_root, args.sdk_release_file, args.toolchain
+            args.package_version,
+            args.platform_version,
+            repo_root,
+            args.sdk_release_file,
+            args.toolchain,
         ),
     }
     if args.internals_ref:
