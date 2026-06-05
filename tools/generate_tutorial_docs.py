@@ -518,12 +518,18 @@ def _wrap_two_lines(text: str, limit: int = 128) -> List[str]:
     return [line1, line2]
 
 
-def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List) -> str:
-    """A looping 'Run an App'-style animation. The loop walks through each step:
-    during a step's window the editor on the left shows that step's full code
-    snippet (held long enough to read) while its node is highlighted on the
-    right, with prior nodes persisting so the flow assembles. `steps` is a list
-    of `(label, [code_line, ...])`. Returns "" for fewer than two steps."""
+def stepper_animation_svg(
+    title: str, subtitle: str, filename: str, steps: List, interactive: bool = False
+) -> str:
+    """A 'Run an App'-style stepper animation. The editor on the left shows each
+    step's full code while its node is highlighted on the right and prior nodes
+    persist so the flow assembles. `steps` is a list of `(label, [code_line,...])`.
+
+    `interactive=False` (default): loops forever via SMIL `<animate>` (works in an
+    `<img>`). `interactive=True`: plays the steps once via an embedded `<script>`,
+    freezes on the last, then advances one section per click — this requires the
+    SVG to be embedded via `<object>` (so its script runs and clicks register).
+    Returns "" for fewer than two steps."""
     steps = steps[:5]
     n = len(steps)
     if n < 2:
@@ -539,9 +545,8 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
     code_y0, code_lh = 248, 26
     sub_lines = _wrap_two_lines(subtitle)
 
-    # Animation uses SMIL <animate> on opacity rather than CSS @keyframes: SMIL
-    # reliably runs inside SVGs embedded via <img>, whereas CSS animations there
-    # are not (Chrome in particular renders them static).
+    # Looping path uses SMIL <animate> on opacity (runs in <img>; CSS animation
+    # does not). Interactive path is script-driven and embedded via <object>.
     def anim(values, times):
         ts = ";".join(f"{max(0.0, min(1.0, t)):.3f}" for t in times)
         return (
@@ -549,7 +554,13 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
             f'calcMode="linear" values="{values}" keyTimes="{ts}"/>'
         )
 
-    # Static styling only (static CSS applies in <img> SVG; animation does not).
+    # opacity + (SMIL animate | id) for a group, depending on mode.
+    def group_open(kind, idx, smil_values, smil_times):
+        if interactive:
+            init = "1" if idx == 0 else "0"
+            return [f'<g id="{kind}{idx}" opacity="{init}">']
+        return ['<g opacity="0">', anim(smil_values, smil_times)]
+
     css = (
         '.fsans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif;}'
         '.fmono{font-family:"SFMono-Regular","Menlo","Consolas",monospace;}'
@@ -561,6 +572,8 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
         '.fdim{fill:#7D8590;font-size:14px;font-weight:500;}'
         '.ftag{fill:#F8FBFF;font-weight:650;}'
         '.fnl{fill:#0B2E1B;font-weight:650;}'
+        '.fcounter{fill:#9AA7B4;font-size:13px;font-weight:600;}'
+        '.fhint{fill:#2A9C4F;font-size:15px;font-weight:700;}'
     )
 
     p: List[str] = []
@@ -582,7 +595,7 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
     for k, sl in enumerate(sub_lines):
         p.append(f'<text x="54" y="{96 + k * 20}" class="fsans fsub">{esc(sl)}</text>')
 
-    # editor: one code group per step, faded in only during that step's window
+    # editor: one code group per step
     p.append('<g filter="url(#fsh)">')
     p.append('<rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>')
     p.append('<rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>')
@@ -591,8 +604,7 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
     for i, (label, lines) in enumerate(steps):
         si = intro + i * win
         ei = 0.985 if i == n - 1 else si + win
-        p.append('<g opacity="0">')
-        p.append(anim("0;0;1;1;0;0", [0, si, si + 0.015, ei - 0.02, ei, 1]))
+        p.extend(group_open("code", i, "0;0;1;1;0;0", [0, si, si + 0.015, ei - 0.02, ei, 1]))
         p.append(f'<text x="76" y="212" class="fsans fcap">STEP {i + 1} · {esc(label)}</text>')
         for j, cl in enumerate(lines):
             by = code_y0 + j * code_lh
@@ -601,10 +613,13 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
         p.append('</g>')
     p.append('</g>')
 
-    # right: panel + nodes (assemble & persist), active node ringed during its window
+    # right: panel + nodes (assemble & persist), active node ringed
     p.append('<g filter="url(#fsh)">')
-    p.append('<g opacity="0">')
-    p.append(anim("0;0;1;1;0", [0, 0.04, 0.06, 0.98, 1]))
+    if interactive:
+        p.append('<g id="shell" opacity="1">')
+    else:
+        p.append('<g opacity="0">')
+        p.append(anim("0;0;1;1;0", [0, 0.04, 0.06, 0.98, 1]))
     p.append('<rect x="560" y="132" width="704" height="316" rx="30" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2"/>')
     p.append('<rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>')
     p.append('</g>')
@@ -617,8 +632,7 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
         last = i == n - 1
         fill = "#F8F6FF" if last else "#F3FBF7"
         stroke = "#B8B0DC" if last else "#9CD5B2"
-        p.append('<g opacity="0">')
-        p.append(anim("0;0;1;1;0", [0, si, si + 0.02, 0.98, 1]))
+        p.extend(group_open("node", i, "0;0;1;1;0", [0, si, si + 0.02, 0.98, 1]))
         if i > 0:
             p.append(
                 f'<line x1="{x - gap + 4:.0f}" y1="{cy:.0f}" x2="{x - 6:.0f}" y2="{cy:.0f}" '
@@ -637,16 +651,55 @@ def stepper_animation_svg(title: str, subtitle: str, filename: str, steps: List)
         else:
             p.append(f'<text x="{cxn:.0f}" y="{cy + fs / 3.0:.0f}" class="fsans fnl" font-size="{fs}" text-anchor="middle">{esc(label)}</text>')
         p.append('</g>')
-        p.append('<g opacity="0">')
-        p.append(anim("0;0;1;1;0;0", [0, si + 0.005, si + 0.025, ei - 0.02, ei, 1]))
+        p.extend(group_open("ring", i, "0;0;1;1;0;0", [0, si + 0.005, si + 0.025, ei - 0.02, ei, 1]))
         p.append(
             f'<rect x="{x - 4:.0f}" y="{node_y - 4}" width="{node_w + 8:.0f}" '
             f'height="{node_h + 8}" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>'
         )
         p.append('</g>')
     p.append('</g>')
+
+    if interactive:
+        p.append(f'<text id="counter" x="1224" y="184" text-anchor="end" class="fsans fcounter">1 / {n}</text>')
+        p.append('<text id="hint" x="912" y="430" text-anchor="middle" class="fsans fhint" opacity="0">Click to step through ▸</text>')
+        p.append(_STEPPER_SCRIPT.replace("__N__", str(n)))
+
     p.append('</svg>')
     return "\n".join(p)
+
+
+# Drives the interactive stepper: play each step once, freeze on the last, then
+# advance one section per click (cycling). Only runs when the SVG is embedded via
+# <object> (an <img>-embedded SVG never executes scripts).
+_STEPPER_SCRIPT = """<script type="text/ecmascript"><![CDATA[
+(function(){
+  var n=__N__, i=0, auto=true, t=null;
+  function el(id){return document.getElementById(id);}
+  function paint(a,cum){
+    for(var k=0;k<n;k++){
+      var c=el("code"+k); if(c)c.setAttribute("opacity",k===a?"1":"0");
+      var r=el("ring"+k); if(r)r.setAttribute("opacity",k===a?"1":"0");
+      var d=el("node"+k); if(d)d.setAttribute("opacity",cum?(k<=a?"1":"0"):"1");
+    }
+    var cnt=el("counter"); if(cnt)cnt.textContent=(a+1)+" / "+n;
+  }
+  function tick(){
+    paint(i,true);
+    if(i>=n-1){ auto=false; var h=el("hint"); if(h)h.setAttribute("opacity","1"); return; }
+    i++; t=setTimeout(tick,2600);
+  }
+  paint(0,true);
+  t=setTimeout(tick,650);
+  var root=document.documentElement;
+  if(root&&root.addEventListener){
+    root.style.cursor="pointer";
+    root.addEventListener("click",function(){
+      if(auto){ auto=false; if(t){clearTimeout(t);} paint(i,false); var h=el("hint"); if(h)h.setAttribute("opacity","1"); }
+      else { i=(i+1)%n; paint(i,false); }
+    });
+  }
+})();
+]]></script>"""
 
 
 def flow_animation_svg(module: TutorialModule) -> str:
@@ -660,7 +713,9 @@ def flow_animation_svg(module: TutorialModule) -> str:
     ]
     title = re.sub(r"\s+", " ", module.display_title).strip()
     subtitle = _first_sentence(module.concept or module.walkthrough_lead)
-    return stepper_animation_svg(title, subtitle, pathlib.Path(module.py_rel).name, data)
+    return stepper_animation_svg(
+        title, subtitle, pathlib.Path(module.py_rel).name, data, interactive=True
+    )
 
 
 def generate_flow_animations(out_dir: pathlib.Path, modules: List[TutorialModule]) -> None:
@@ -997,10 +1052,16 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
         "",
     ]
 
-    # Animated overview directly under the title.
+    # Animated overview directly under the title. Embedded via <object> (not
+    # <img>) so the SVG's script runs — it plays once, then steps on click.
+    # The <img> fallback covers no-JS / object-load failures.
     if flow_animation_svg(module):
-        alt = html.escape(f"{module.display_title} — animated overview", quote=True)
-        lines.append(f'<img src="{module.flow_image_url}" alt="{alt}" class="tutorial-flow" loading="lazy" />')
+        alt = html.escape(f"{module.display_title} — animated walkthrough overview", quote=True)
+        url = module.flow_image_url
+        lines.append(
+            f'<object type="image/svg+xml" data="{url}" class="tutorial-flow" aria-label="{alt}">'
+            f'<img src="{url}" alt="{alt}" loading="lazy" /></object>'
+        )
         lines.append("")
 
     lines.extend(

@@ -6,7 +6,7 @@
 <linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
 <filter id="fsh" x="-10%" y="-18%" width="120%" height="142%" filterUnits="objectBoundingBox"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/></filter>
 <marker id="farr" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#2A9C4F"/></marker>
-<style>.fsans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif;}.fmono{font-family:"SFMono-Regular","Menlo","Consolas",monospace;}.fttl{fill:#010F0E;font-size:27px;font-weight:700;}.fsub{fill:#35536F;font-size:15px;font-weight:500;}.fcode{fill:#E2ECF6;font-size:14px;font-weight:500;}.fln{fill:#586677;font-size:13px;font-weight:500;}.fcap{fill:#7FD0A6;font-size:14px;font-weight:700;letter-spacing:0.04em;}.fdim{fill:#7D8590;font-size:14px;font-weight:500;}.ftag{fill:#F8FBFF;font-weight:650;}.fnl{fill:#0B2E1B;font-weight:650;}</style>
+<style>.fsans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif;}.fmono{font-family:"SFMono-Regular","Menlo","Consolas",monospace;}.fttl{fill:#010F0E;font-size:27px;font-weight:700;}.fsub{fill:#35536F;font-size:15px;font-weight:500;}.fcode{fill:#E2ECF6;font-size:14px;font-weight:500;}.fln{fill:#586677;font-size:13px;font-weight:500;}.fcap{fill:#7FD0A6;font-size:14px;font-weight:700;letter-spacing:0.04em;}.fdim{fill:#7D8590;font-size:14px;font-weight:500;}.ftag{fill:#F8FBFF;font-weight:650;}.fnl{fill:#0B2E1B;font-weight:650;}.fcounter{fill:#9AA7B4;font-size:13px;font-weight:600;}.fhint{fill:#2A9C4F;font-size:15px;font-weight:700;}</style>
 </defs>
 <rect x="16" y="16" width="1288" height="488" rx="30" fill="url(#fbg)" stroke="#D8E7F1"/>
 <circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>
@@ -19,8 +19,7 @@
 <rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>
 <circle cx="88" cy="155" r="6" fill="#FF6B6B"/><circle cx="110" cy="155" r="6" fill="#F4C542"/><circle cx="132" cy="155" r="6" fill="#2A9C4F"/>
 <text x="166" y="160" class="fmono fdim">consume_rtsp_stream.py</text>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.060;0.075;0.340;0.360;1.000"/>
+<g id="code0" opacity="1">
 <text x="76" y="212" class="fsans fcap">STEP 1 · Configure rtsp</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve"># Configure RtspDecodedInputOptions: the UR…</text>
@@ -31,8 +30,7 @@
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">rtsp_opt.tcp = True</text>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.360;0.375;0.640;0.660;1.000"/>
+<g id="code1" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Compose graph</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve"># Build a Graph whose only stages are the R…</text>
@@ -45,8 +43,7 @@
 <text x="76" y="352" class="fmono fln">5</text>
 <text x="104" y="352" class="fmono fcode" xml:space="preserve">run = s.build(pyneat.RunOptions())</text>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.660;0.675;0.965;0.985;1.000"/>
+<g id="code2" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Pull frames</text>
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">for i in range(args.frames):</text>
@@ -61,42 +58,66 @@
 </g>
 </g>
 <g filter="url(#fsh)">
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.040;0.060;0.980;1.000"/>
+<g id="shell" opacity="1">
 <rect x="560" y="132" width="704" height="316" rx="30" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2"/>
 <rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.060;0.080;0.980;1.000"/>
+<g id="node0" opacity="1">
 <rect x="600" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
 <text x="692" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
 <text x="692" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Configure rtsp</text>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.065;0.085;0.340;0.360;1.000"/>
+<g id="ring0" opacity="1">
 <rect x="596" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.360;0.380;0.980;1.000"/>
+<g id="node1" opacity="0">
 <line x1="788" y1="293" x2="814" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
 <rect x="820" y="250" width="184" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
 <text x="912" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
 <text x="912" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Compose graph</text>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.365;0.385;0.640;0.660;1.000"/>
+<g id="ring1" opacity="0">
 <rect x="816" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0" keyTimes="0.000;0.660;0.680;0.980;1.000"/>
+<g id="node2" opacity="0">
 <line x1="1008" y1="293" x2="1034" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
 <rect x="1040" y="250" width="184" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
 <text x="1132" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
 <text x="1132" y="298" class="fsans fnl" font-size="15" text-anchor="middle">Pull frames</text>
 </g>
-<g opacity="0">
-<animate attributeName="opacity" dur="12s" repeatCount="indefinite" calcMode="linear" values="0;0;1;1;0;0" keyTimes="0.000;0.665;0.685;0.965;0.985;1.000"/>
+<g id="ring2" opacity="0">
 <rect x="1036" y="246" width="192" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
 </g>
 </g>
+<text id="counter" x="1224" y="184" text-anchor="end" class="fsans fcounter">1 / 3</text>
+<text id="hint" x="912" y="430" text-anchor="middle" class="fsans fhint" opacity="0">Click to step through ▸</text>
+<script type="text/ecmascript"><![CDATA[
+(function(){
+  var n=3, i=0, auto=true, t=null;
+  function el(id){return document.getElementById(id);}
+  function paint(a,cum){
+    for(var k=0;k<n;k++){
+      var c=el("code"+k); if(c)c.setAttribute("opacity",k===a?"1":"0");
+      var r=el("ring"+k); if(r)r.setAttribute("opacity",k===a?"1":"0");
+      var d=el("node"+k); if(d)d.setAttribute("opacity",cum?(k<=a?"1":"0"):"1");
+    }
+    var cnt=el("counter"); if(cnt)cnt.textContent=(a+1)+" / "+n;
+  }
+  function tick(){
+    paint(i,true);
+    if(i>=n-1){ auto=false; var h=el("hint"); if(h)h.setAttribute("opacity","1"); return; }
+    i++; t=setTimeout(tick,2600);
+  }
+  paint(0,true);
+  t=setTimeout(tick,650);
+  var root=document.documentElement;
+  if(root&&root.addEventListener){
+    root.style.cursor="pointer";
+    root.addEventListener("click",function(){
+      if(auto){ auto=false; if(t){clearTimeout(t);} paint(i,false); var h=el("hint"); if(h)h.setAttribute("opacity","1"); }
+      else { i=(i+1)%n; paint(i,false); }
+    });
+  }
+})();
+]]></script>
 </svg>
