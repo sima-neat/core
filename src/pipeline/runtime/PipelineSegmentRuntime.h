@@ -61,6 +61,49 @@ struct PipelineSegmentRuntime {
   // a segment; the compiled segment description stays in the graph compiler
   // plan and aggregate lifecycle/error/metrics stay in RunCore/GraphRun state.
   struct GraphTransport {
+    struct Telemetry {
+      std::atomic<std::uint64_t> push_thread_pop_calls{0};
+      std::atomic<std::uint64_t> push_thread_pop_miss{0};
+      std::atomic<std::uint64_t> push_thread_pop_wait_ns{0};
+      std::atomic<std::uint64_t> push_thread_pop_wait_max_ns{0};
+      std::atomic<std::uint64_t> push_thread_sanitize_calls{0};
+      std::atomic<std::uint64_t> push_thread_sanitize_ns{0};
+      std::atomic<std::uint64_t> push_thread_sanitize_max_ns{0};
+      std::atomic<std::uint64_t> push_thread_ensure_build_calls{0};
+      std::atomic<std::uint64_t> push_thread_ensure_build_ns{0};
+      std::atomic<std::uint64_t> push_thread_ensure_build_max_ns{0};
+      std::atomic<std::uint64_t> push_thread_push_samples_calls{0};
+      std::atomic<std::uint64_t> push_thread_push_samples_ns{0};
+      std::atomic<std::uint64_t> push_thread_push_samples_max_ns{0};
+
+      std::atomic<std::uint64_t> pull_thread_pull_calls{0};
+      std::atomic<std::uint64_t> pull_thread_pull_miss{0};
+      std::atomic<std::uint64_t> pull_thread_pull_ns{0};
+      std::atomic<std::uint64_t> pull_thread_pull_max_ns{0};
+      std::atomic<std::uint64_t> pull_thread_route_calls{0};
+      std::atomic<std::uint64_t> pull_thread_route_ns{0};
+      std::atomic<std::uint64_t> pull_thread_route_max_ns{0};
+
+      std::atomic<std::uint64_t> router_ensure_build_calls{0};
+      std::atomic<std::uint64_t> router_ensure_build_ns{0};
+      std::atomic<std::uint64_t> router_ensure_build_max_ns{0};
+      std::atomic<std::uint64_t> router_sanitize_calls{0};
+      std::atomic<std::uint64_t> router_sanitize_ns{0};
+      std::atomic<std::uint64_t> router_sanitize_max_ns{0};
+      std::atomic<std::uint64_t> router_input_push_calls{0};
+      std::atomic<std::uint64_t> router_input_push_ns{0};
+      std::atomic<std::uint64_t> router_input_push_max_ns{0};
+
+      std::atomic<std::uint64_t> ensure_build_calls{0};
+      std::atomic<std::uint64_t> ensure_build_wait_ns{0};
+      std::atomic<std::uint64_t> ensure_build_wait_max_ns{0};
+      std::atomic<std::uint64_t> ensure_build_canonicalize_ns{0};
+      std::atomic<std::uint64_t> ensure_build_segment_ns{0};
+      std::atomic<std::uint64_t> ensure_build_total_ns{0};
+      std::atomic<std::uint64_t> ensure_build_total_max_ns{0};
+      std::atomic<std::uint64_t> ensure_build_failures{0};
+    };
+
     std::atomic<bool> built{false};
     bool building = false;
     bool has_input = false;
@@ -97,6 +140,7 @@ struct PipelineSegmentRuntime {
 
     std::mutex mu;
     std::condition_variable cv;
+    Telemetry telemetry;
   };
 
   std::thread input_thread;

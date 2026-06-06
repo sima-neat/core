@@ -1889,8 +1889,8 @@ InputStream run_input_stream_internal_typed(const std::vector<std::shared_ptr<No
   }
 
   attach_boundary_probes(pipeline, br.diag);
-  attach_stage_timing_probes(pipeline, br.diag);
-  attach_element_timing_probes(pipeline, br.diag);
+  attach_stage_timing_probes(pipeline, br.diag, stream_opt.enable_timings);
+  attach_element_timing_probes(pipeline, br.diag, stream_opt.enable_timings);
   attach_element_flow_probes(pipeline, br.diag);
   session_build_attach_debug_detess_input_probes(pipeline);
   session_build_attach_debug_appsink_probes(pipeline);
@@ -2574,6 +2574,7 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOpti
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2604,6 +2605,7 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOpti
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
     start_opt.image_seed = std::make_shared<cv::Mat>(inputs.front());
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2624,6 +2626,7 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOpti
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
   start_opt.seed = std::move(seed);
   start_opt.tensor_input_opt_for_cv = tensor_src_opt;
   start_opt.guard = guard_;
@@ -2656,6 +2659,7 @@ Run Graph::build(const TensorList& inputs, RunMode mode, const RunOptions& opt) 
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2683,6 +2687,7 @@ Run Graph::build(const TensorList& inputs, RunMode mode, const RunOptions& opt) 
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
   start_opt.seed = std::move(seed);
   start_opt.tensor_input_opt_for_cv = tensor_src_opt;
   start_opt.guard = guard_;
@@ -2715,6 +2720,7 @@ Run Graph::build(const Sample& inputs, RunMode mode, const RunOptions& opt) {
     runtime::RunCoreStartOptions start_opt;
     start_opt.run_options = opt;
     start_opt.mode = mode;
+    start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
     start_opt.seed = std::move(seed);
     start_opt.guard = guard_;
     start_opt.input_route_processor = input_route_processor_;
@@ -2734,6 +2740,7 @@ Run Graph::build(const Sample& inputs, RunMode mode, const RunOptions& opt) {
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = mode;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
   start_opt.seed = std::move(seed);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;

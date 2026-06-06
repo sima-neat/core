@@ -59,6 +59,9 @@ RUN_TEST(
       const auto compiled = build_boxdecode_compiled_contract(contract);
       require(compiled.runtime_contract.logical_inputs.size() == 2U,
               "boxdecode contract should expose both logical inputs");
+      require(compiled.payload.num_classes == 80,
+              "boxdecode compiled contract should infer grouped YOLO class count from class-head "
+              "depth when user num_classes is unset");
       require(compiled.runtime_contract.input_bindings.size() == 2U,
               "boxdecode contract should expose both input bindings");
       require(compiled.runtime_contract.required_preprocess_meta_fields.size() == 2U,
@@ -84,6 +87,43 @@ RUN_TEST(
       const auto subset_compiled = build_boxdecode_compiled_contract_from_subset(subset);
       require(subset_compiled.payload.decode_type == BoxDecodeType::YoloV8,
               "subset-based compiled contract should preserve decode_type");
+
+      const auto finalized_user_classes =
+          finalize_boxdecode_static_contract(contract, BoxDecodeType::YoloV8, std::nullopt,
+                                             std::nullopt, BoxDecodeTypeOption::GroupedByRoleLogit,
+                                             0.25, 0.55, 100, 42, {"orig_width", "orig_height"});
+      require(finalized_user_classes.num_classes == 42,
+              "explicit user num_classes should override MPK-inferred class depth");
+      const auto compiled_user_classes = build_boxdecode_compiled_contract(finalized_user_classes);
+      require(compiled_user_classes.payload.num_classes == 42,
+              "compiled payload should preserve explicit user num_classes override");
+
+      BoxDecodeStaticContract packed_yolov5_contract;
+      packed_yolov5_contract.decode_type = BoxDecodeType::YoloV5;
+      packed_yolov5_contract.input_dtype = "INT8";
+      packed_yolov5_contract.tensors = {
+          BoxDecodeTensorStaticContract{{80, 80, 255},
+                                        {80, 80, 255},
+                                        "INT8",
+                                        "HWC",
+                                        "packed_head0",
+                                        "packed_head0",
+                                        "packed_head0",
+                                        0,
+                                        0,
+                                        0,
+                                        0,
+                                        80U * 80U * 255U},
+      };
+      packed_yolov5_contract.tensor_names = {"packed_head0"};
+      packed_yolov5_contract.physical_inputs = {
+          BoxDecodePhysicalInputStaticContract{"packed_head0", 0, 0, 80U * 80U * 255U},
+      };
+      const auto packed_yolov5_finalized = finalize_boxdecode_static_contract(
+          packed_yolov5_contract, BoxDecodeType::YoloV5, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::PackedPerHead, 0.25, 0.55, 100, 0, {});
+      require(packed_yolov5_finalized.num_classes == 80,
+              "packed YOLO class count should be inferred from depth=3*(classes+5)");
 
       BoxDecodeStaticContract packed_contract;
       packed_contract.decode_type = BoxDecodeType::YoloV8;
@@ -224,6 +264,12 @@ RUN_TEST(
       yolo26_contract.dq_scale.assign(6U, 0.125);
       yolo26_contract.dq_zp.assign(6U, 0);
 
+      const auto finalized_yolo26_inferred = finalize_boxdecode_static_contract(
+          yolo26_contract, BoxDecodeType::YoloV26, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {"orig_width", "orig_height"});
+      require(finalized_yolo26_inferred.num_classes == 80,
+              "YOLO26 detection should infer class count from grouped class-logit heads");
+
       const auto finalized_yolo26 = finalize_boxdecode_static_contract(
           yolo26_contract, BoxDecodeType::YoloV26, std::nullopt, std::nullopt,
           BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 80, {"orig_width", "orig_height"});
@@ -324,4 +370,138 @@ RUN_TEST(
               "YOLO26-pose compiled payload should preserve decode type");
       require(compiled_yolo26_pose.payload.num_classes == 1,
               "YOLO26-pose compiled payload should preserve one pose score class");
+
+      BoxDecodeStaticContract yolo26_seg_contract = yolo26_contract;
+      yolo26_seg_contract.tensors.clear();
+      yolo26_seg_contract.tensor_names.clear();
+      yolo26_seg_contract.num_classes = 0;
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolo26_seg_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+            {width, width, 16},
+            {width, width, 4},
+            "BF16",
+            "HWC",
+            "opaque_seg_bbox_" + std::to_string(i),
+            "opaque_seg_bbox_" + std::to_string(i),
+            "opaque_seg_bbox_" + std::to_string(i),
+            i,
+            i,
+            i,
+            0,
+            static_cast<std::uint64_t>(width * width * 16 * 2),
+        });
+        yolo26_seg_contract.tensor_names.push_back("opaque_seg_bbox_" + std::to_string(i));
+      }
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolo26_seg_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+            {width, width, 80},
+            {width, width, 80},
+            "BF16",
+            "HWC",
+            "opaque_seg_class_" + std::to_string(i),
+            "opaque_seg_class_" + std::to_string(i),
+            "opaque_seg_class_" + std::to_string(i),
+            i + 3,
+            i + 3,
+            i + 3,
+            0,
+            static_cast<std::uint64_t>(width * width * 80 * 2),
+        });
+        yolo26_seg_contract.tensor_names.push_back("opaque_seg_class_" + std::to_string(i));
+      }
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolo26_seg_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+            {width, width, 32},
+            {width, width, 32},
+            "BF16",
+            "HWC",
+            "opaque_seg_mask_" + std::to_string(i),
+            "opaque_seg_mask_" + std::to_string(i),
+            "opaque_seg_mask_" + std::to_string(i),
+            i + 6,
+            i + 6,
+            i + 6,
+            0,
+            static_cast<std::uint64_t>(width * width * 32 * 2),
+        });
+        yolo26_seg_contract.tensor_names.push_back("opaque_seg_mask_" + std::to_string(i));
+      }
+      yolo26_seg_contract.tensors.push_back(BoxDecodeTensorStaticContract{
+          {160, 160, 32},
+          {160, 160, 32},
+          "BF16",
+          "HWC",
+          "opaque_seg_proto",
+          "opaque_seg_proto",
+          "opaque_seg_proto",
+          9,
+          9,
+          9,
+          0,
+          static_cast<std::uint64_t>(160 * 160 * 32 * 2),
+      });
+      yolo26_seg_contract.tensor_names.push_back("opaque_seg_proto");
+      yolo26_seg_contract.dq_scale.assign(10U, 1.0);
+      yolo26_seg_contract.dq_zp.assign(10U, 0);
+      const auto finalized_yolo26_seg = finalize_boxdecode_static_contract(
+          yolo26_seg_contract, BoxDecodeType::YoloV26Seg, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {"orig_width", "orig_height"});
+      require(finalized_yolo26_seg.num_classes == 80,
+              "YOLO26-seg should infer class count from class heads and ignore mask/proto heads");
+
+      BoxDecodeStaticContract yolox_contract;
+      yolox_contract.decode_type = BoxDecodeType::YoloX;
+      yolox_contract.input_dtype = "BF16";
+      for (int i = 0; i < 3; ++i) {
+        const int width = i == 0 ? 80 : (i == 1 ? 40 : 20);
+        yolox_contract.tensors.push_back(
+            BoxDecodeTensorStaticContract{{width, width, 8},
+                                          {width, width, 4},
+                                          "BF16",
+                                          "HWC",
+                                          "yolox_bbox_" + std::to_string(i),
+                                          "yolox_bbox_" + std::to_string(i),
+                                          "yolox_bbox_" + std::to_string(i),
+                                          i * 3,
+                                          i * 3,
+                                          i * 3,
+                                          0,
+                                          static_cast<std::uint64_t>(width * width * 8 * 2)});
+        yolox_contract.tensors.push_back(
+            BoxDecodeTensorStaticContract{{width, width, 8},
+                                          {width, width, 1},
+                                          "BF16",
+                                          "HWC",
+                                          "yolox_obj_logit_" + std::to_string(i),
+                                          "yolox_obj_logit_" + std::to_string(i),
+                                          "yolox_obj_logit_" + std::to_string(i),
+                                          (i * 3) + 1,
+                                          (i * 3) + 1,
+                                          (i * 3) + 1,
+                                          0,
+                                          static_cast<std::uint64_t>(width * width * 8 * 2)});
+        yolox_contract.tensors.push_back(
+            BoxDecodeTensorStaticContract{{width, width, 80},
+                                          {width, width, 80},
+                                          "BF16",
+                                          "HWC",
+                                          "yolox_class_logit_" + std::to_string(i),
+                                          "yolox_class_logit_" + std::to_string(i),
+                                          "yolox_class_logit_" + std::to_string(i),
+                                          (i * 3) + 2,
+                                          (i * 3) + 2,
+                                          (i * 3) + 2,
+                                          0,
+                                          static_cast<std::uint64_t>(width * width * 80 * 2)});
+      }
+      yolox_contract.dq_scale.assign(9U, 1.0);
+      yolox_contract.dq_zp.assign(9U, 0);
+      const auto finalized_yolox = finalize_boxdecode_static_contract(
+          yolox_contract, BoxDecodeType::YoloX, std::nullopt, std::nullopt,
+          BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {});
+      require(finalized_yolox.num_classes == 80,
+              "YOLOX should infer class count from class heads while ignoring objectness");
     }));

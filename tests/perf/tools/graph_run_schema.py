@@ -47,6 +47,12 @@ def _number(value: Any, context: str) -> float:
     return float(value)
 
 
+def _integer(value: Any, context: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        _raise(context, "expected integer")
+    return value
+
+
 def _require(data: Mapping[str, Any], keys: tuple[str, ...], context: str) -> None:
     missing = [key for key in keys if key not in data]
     if missing:
@@ -165,6 +171,117 @@ def validate_model_info(value: Any, context: str) -> None:
         _string(data["name"], f"{context}.name")
 
 
+def validate_latency_summary(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    if "samples" in data:
+        _integer(data["samples"], f"{context}.samples")
+    for key in ("total_ms", "avg_ms", "min_ms", "max_ms"):
+        if key in data:
+            _number(data[key], f"{context}.{key}")
+
+
+def validate_power_summary(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    if "enabled" in data:
+        _bool(data["enabled"], f"{context}.enabled")
+    if "samples" in data:
+        _integer(data["samples"], f"{context}.samples")
+    for key in ("duration_seconds", "total_avg_watts", "total_min_watts", "total_max_watts", "energy_joules"):
+        if key in data:
+            _number(data[key], f"{context}.{key}")
+    if "rails" in data:
+        _array(data["rails"], f"{context}.rails")
+
+
+def validate_graph_metrics(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    _require(data, ("measurement_scope", "throughput_counting", "elapsed_seconds", "throughput_fps"), context)
+    _string(data["measurement_scope"], f"{context}.measurement_scope")
+    if "aggregation" in data:
+        _string(data["aggregation"], f"{context}.aggregation")
+    if "latency_semantics" in data:
+        _string(data["latency_semantics"], f"{context}.latency_semantics")
+    _string(data["throughput_counting"], f"{context}.throughput_counting")
+    _number(data["elapsed_seconds"], f"{context}.elapsed_seconds")
+    if "outputs_pulled" in data:
+        _integer(data["outputs_pulled"], f"{context}.outputs_pulled")
+    _number(data["throughput_fps"], f"{context}.throughput_fps")
+    if "counters" in data:
+        counters = _mapping(data["counters"], f"{context}.counters")
+        for key in (
+            "inputs_enqueued",
+            "inputs_dropped",
+            "inputs_pushed",
+            "outputs_ready",
+            "outputs_pulled",
+            "outputs_dropped",
+        ):
+            if key in counters:
+                _integer(counters[key], f"{context}.counters.{key}")
+    if "power" in data:
+        validate_power_summary(data["power"], f"{context}.power")
+
+
+def validate_element_metric(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    _require(data, ("name", "latency_ms"), context)
+    _string(data["name"], f"{context}.name")
+    validate_latency_summary(data["latency_ms"], f"{context}.latency_ms")
+
+
+def validate_node_metric(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    if "power" in data:
+        _raise(context, "node metrics must not contain power")
+    if data.get("node_id") is not None:
+        _string(data["node_id"], f"{context}.node_id")
+    if data.get("runtime_node") is not None:
+        _string(data["runtime_node"], f"{context}.runtime_node")
+    if data.get("runtime_node_id") is not None:
+        _integer(data["runtime_node_id"], f"{context}.runtime_node_id")
+    if "public_node_ids" in data:
+        for i, node_id in enumerate(_array(data["public_node_ids"], f"{context}.public_node_ids")):
+            _string(node_id, f"{context}.public_node_ids[{i}]")
+    if data.get("pipeline_segment_id") is not None:
+        _integer(data["pipeline_segment_id"], f"{context}.pipeline_segment_id")
+    if data.get("kind") is not None:
+        _string(data["kind"], f"{context}.kind")
+    if data.get("label") is not None:
+        _string(data["label"], f"{context}.label")
+    if "element_names" in data:
+        for i, name in enumerate(_array(data["element_names"], f"{context}.element_names")):
+            _string(name, f"{context}.element_names[{i}]")
+    if "latency_semantics" in data:
+        _string(data["latency_semantics"], f"{context}.latency_semantics")
+    if "aggregation" in data:
+        _string(data["aggregation"], f"{context}.aggregation")
+    if "latency_ms" in data:
+        validate_latency_summary(data["latency_ms"], f"{context}.latency_ms")
+    if "elements" in data:
+        for i, element in enumerate(_array(data["elements"], f"{context}.elements")):
+            validate_element_metric(element, f"{context}.elements[{i}]")
+
+
+def validate_plugin_metric(value: Any, context: str) -> None:
+    data = _mapping(value, context)
+    if "power" in data:
+        _raise(context, "plugin metrics must not contain power")
+    for key in ("backend", "phase", "kernel_name", "stage_name", "mapping_error"):
+        if key in data:
+            _string(data[key], f"{context}.{key}")
+    for key in ("pipeline_segment_id", "runtime_node_id"):
+        if data.get(key) is not None:
+            _integer(data[key], f"{context}.{key}")
+    if "public_node_ids" in data:
+        for i, node_id in enumerate(_array(data["public_node_ids"], f"{context}.public_node_ids")):
+            _string(node_id, f"{context}.public_node_ids[{i}]")
+    for key in ("physical_input_index", "output_slot", "calls"):
+        if key in data:
+            _integer(data[key], f"{context}.{key}")
+    if "latency_ms" in data:
+        validate_latency_summary(data["latency_ms"], f"{context}.latency_ms")
+
+
 def validate_graph_run(data: Mapping[str, Any]) -> None:
     _require(data, ("schema", "schema_version", "producer", "label", "metadata", "graph", "run"), "$")
     if data["schema"] != "sima.neat.graph_run":
@@ -229,6 +346,16 @@ def validate_graph_run(data: Mapping[str, Any]) -> None:
     if "output_names" in run:
         for i, name in enumerate(_array(run["output_names"], "$.run.output_names")):
             _string(name, f"$.run.output_names[{i}]")
+    if "graph_metrics" in run:
+        validate_graph_metrics(run["graph_metrics"], "$.run.graph_metrics")
+    if "node_metrics" in run:
+        for i, metric in enumerate(_array(run["node_metrics"], "$.run.node_metrics")):
+            validate_node_metric(metric, f"$.run.node_metrics[{i}]")
+    if "plugin_metrics_unattributed" in run:
+        for i, metric in enumerate(
+            _array(run["plugin_metrics_unattributed"], "$.run.plugin_metrics_unattributed")
+        ):
+            validate_plugin_metric(metric, f"$.run.plugin_metrics_unattributed[{i}]")
 
 
 def load_graph_run(path: str | Path) -> Mapping[str, Any]:

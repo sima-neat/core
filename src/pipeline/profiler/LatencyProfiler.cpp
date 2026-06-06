@@ -30,6 +30,8 @@ const char* backend_name(uint8_t backend) {
     return "BoxDecode";
   case SIMA_NEAT_PROFILER_BACKEND_MEMCPY:
     return "Memcpy";
+  case SIMA_NEAT_PROFILER_BACKEND_DISPATCHER:
+    return "Dispatcher";
   default:
     return "Unknown";
   }
@@ -59,15 +61,16 @@ const char* phase_name(uint8_t phase) {
 
 void compute_aggregates(std::vector<ProfilerKernelInvocation>& invocations,
                         std::vector<ProfilerKernelAggregate>* out) {
-  std::map<std::tuple<std::string, std::string, std::string, int32_t, int32_t>,
+  std::map<std::tuple<std::string, std::string, std::string, std::string, int32_t, int32_t>,
            ProfilerKernelAggregate>
       groups;
   for (const auto& inv : invocations) {
-    auto key = std::make_tuple(inv.backend, inv.kernel_name, inv.stage_name,
+    auto key = std::make_tuple(inv.backend, inv.phase, inv.kernel_name, inv.stage_name,
                                inv.physical_input_index, inv.output_slot);
     auto& agg = groups[key];
     if (agg.count == 0) {
       agg.backend = inv.backend;
+      agg.phase = inv.phase;
       agg.kernel_name = inv.kernel_name;
       agg.stage_name = inv.stage_name;
       agg.physical_input_index = inv.physical_input_index;
@@ -90,8 +93,12 @@ void compute_aggregates(std::vector<ProfilerKernelInvocation>& invocations,
             [](const ProfilerKernelAggregate& a, const ProfilerKernelAggregate& b) {
               if (a.backend != b.backend)
                 return a.backend < b.backend;
+              if (a.phase != b.phase)
+                return a.phase < b.phase;
               if (a.stage_name != b.stage_name)
                 return a.stage_name < b.stage_name;
+              if (a.kernel_name != b.kernel_name)
+                return a.kernel_name < b.kernel_name;
               if (a.physical_input_index != b.physical_input_index)
                 return a.physical_input_index < b.physical_input_index;
               return a.output_slot < b.output_slot;

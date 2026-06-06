@@ -774,10 +774,11 @@ static GstPadProbeReturn boundary_probe_cb(GstPad*, GstPadProbeInfo* info, gpoin
   return GST_PAD_PROBE_OK;
 }
 
-void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag) {
+void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
+                                bool enable_from_options) {
   if (!pipeline || !diag)
     return;
-  if (!env_bool("SIMA_GST_STAGE_TIMINGS", false))
+  if (!enable_from_options && !env_bool("SIMA_GST_STAGE_TIMINGS", false))
     return;
 
   GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
@@ -901,8 +902,9 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
   gst_iterator_free(it);
 }
 
-void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag) {
-  if (!env_bool("SIMA_GST_ELEMENT_TIMINGS", false))
+void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
+                                  bool enable_from_options) {
+  if (!enable_from_options && !env_bool("SIMA_GST_ELEMENT_TIMINGS", false))
     return;
   attach_element_probes(pipeline, diag, true, false);
 }

@@ -105,6 +105,21 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
           "export should include lowered runtime nodes");
   require(json.at("run").at("stats").at("outputs_pulled").get<std::uint64_t>() >= 1U,
           "export should include run output counters");
+  require(json.at("run").contains("graph_metrics"), "export should include graph metrics block");
+  require(json.at("run").at("graph_metrics").at("measurement_scope").get<std::string>() ==
+              "run_lifetime",
+          "graph metrics should declare run-lifetime scope");
+  require(json.at("run").at("graph_metrics").at("throughput_counting").get<std::string>() ==
+              "all_pulled_outputs",
+          "graph metrics should declare throughput counting semantics");
+  require(json.at("run").at("graph_metrics").at("outputs_pulled").get<std::uint64_t>() >= 1U,
+          "graph metrics should include output counter headline");
+  require(json.at("run").contains("node_metrics"), "export should include node metrics array");
+  require(json.at("run").at("node_metrics").is_array(), "node metrics should be an array");
+  require(json.at("run").contains("plugin_metrics_unattributed"),
+          "export should include unattributed plugin metrics array");
+  require(json.at("run").at("plugin_metrics_unattributed").is_array(),
+          "unattributed plugin metrics should be an array");
   require(!json.at("run").at("identity").at("uuid").get<std::string>().empty(),
           "export should include run identity uuid");
   require(!json.at("run").at("identity").at("hostname").get<std::string>().empty(),

@@ -24,6 +24,45 @@ std::string upper_copy(std::string value) {
   return value;
 }
 
+
+std::string native_visual_canonical_name_runtime(std::string name) {
+  name = lower_copy(std::move(name));
+  name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char c) {
+               return std::isspace(c) || c == '-' || c == ':';
+             }),
+             name.end());
+  if (name == "featurehistogram") {
+    return "feature_histogram";
+  }
+  if (name == "griderfast" || name == "grider_fast") {
+    return "grider_fast";
+  }
+  if (name == "trackdescriptor" || name == "track_descriptor") {
+    return "track_descriptor";
+  }
+  if (name == "trackklt" || name == "track_klt") {
+    return "track_klt";
+  }
+  return name;
+}
+
+int native_visual_graph_id_runtime(const std::string& name) {
+  const std::string token = native_visual_canonical_name_runtime(name);
+  if (token == "feature_histogram") return 235;
+  if (token == "grider_fast") return 236;
+  if (token == "track_descriptor") return 237;
+  if (token == "track_klt") return 238;
+  return -1;
+}
+
+bool is_native_visual_runtime_config(const CompiledProcessCvuRuntimeConfig& config) {
+  if (config.graph_id >= 235 && config.graph_id <= 238) {
+    return true;
+  }
+  return native_visual_graph_id_runtime(!config.graph_name.empty() ? config.graph_name
+                                                                  : config.graph_family) > 0;
+}
+
 bool graph_family_implies_tessellate_local(const std::string& family) {
   const std::string canonical = lower_copy(family);
   return canonical == "tessellate" || canonical == "quanttess" ||
@@ -413,6 +452,15 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
         "processcvu runtime config missing explicit published_output_names");
   }
 
+  const bool native_visual_graph = is_native_visual_runtime_config(config);
+  if (native_visual_graph) {
+    const int expected_id = native_visual_graph_id_runtime(
+        !config.graph_name.empty() ? config.graph_name : config.graph_family);
+    if (expected_id > 0 && config.graph_id > 0 && config.graph_id != expected_id) {
+      throw std::invalid_argument("processcvu native visual runtime config graph_id/name mismatch");
+    }
+  }
+
   require_non_empty_unique_names(physical_input_names, "physical_input_names");
   require_non_empty_unique_names(physical_output_names, "physical_output_names");
   require_non_empty_unique_names(config.published_output_names, "published_output_names");
@@ -466,7 +514,9 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
                                              !config.runtime_output_semantic_kind_list.empty() ||
                                              !resolved_runtime_output_logical_shapes.empty();
   if (!resolved_output_shapes.empty()) {
-    require_semantic_output_count("output_shapes", resolved_output_shapes.size());
+    if (!(native_visual_graph && resolved_output_shapes.size() == runtime_output_count)) {
+      require_semantic_output_count("output_shapes", resolved_output_shapes.size());
+    }
   }
   if (has_any_runtime_output_arrays) {
     if (!config.runtime_output_logical_index_list.empty()) {
@@ -508,13 +558,15 @@ void validate_runtime_output_config_strict(const CompiledProcessCvuRuntimeConfig
 
   require_non_empty_runtime_token(config.input_dtype, "input_dtype");
   require_non_empty_runtime_token(config.output_dtype, "output_dtype");
-  if (config.input_tensors.empty() || config.output_tensors.empty()) {
-    throw std::invalid_argument(
-        "processcvu runtime config requires explicit typed input_tensors/output_tensors");
-  }
-  if (config.input_tensors.size() != config.output_tensors.size()) {
-    throw std::invalid_argument(
-        "processcvu runtime config explicit input_tensors/output_tensors count mismatch");
+  if (!native_visual_graph) {
+    if (config.input_tensors.empty() || config.output_tensors.empty()) {
+      throw std::invalid_argument(
+          "processcvu runtime config requires explicit typed input_tensors/output_tensors");
+    }
+    if (config.input_tensors.size() != config.output_tensors.size()) {
+      throw std::invalid_argument(
+          "processcvu runtime config explicit input_tensors/output_tensors count mismatch");
+    }
   }
   if (has_any_runtime_output_arrays) {
     for (std::size_t i = 0; i < runtime_output_count; ++i) {
@@ -553,6 +605,21 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.primary_output_semantic_kind = config.primary_output_semantic_kind;
 
   payload.graph_id = config.graph_id;
+  payload.width = config.width;
+  payload.height = config.height;
+  payload.threshold = config.threshold;
+  payload.max_features = config.max_features;
+  payload.grid_x = config.grid_x;
+  payload.grid_y = config.grid_y;
+  payload.min_px_dist = config.min_px_dist;
+  payload.descriptor_words = config.descriptor_words;
+  payload.num_points = config.num_points;
+  payload.win_half = config.win_half;
+  payload.max_iters = config.max_iters;
+  payload.max_level = config.max_level;
+  payload.detect_new_features = config.detect_new_features;
+  payload.fast_threshold = config.fast_threshold;
+  payload.debug = config.debug;
   payload.scaled_width = config.scaled_width;
   payload.scaled_height = config.scaled_height;
   payload.input_stride = config.input_stride;
@@ -576,12 +643,17 @@ build_processcvu_payload_from_runtime_config_common(const CompiledProcessCvuRunt
   payload.q_zp_list.assign(config.q_zp_list.begin(), config.q_zp_list.end());
   payload.dq_scale_list = config.dq_scale_list;
   payload.dq_zp_list.assign(config.dq_zp_list.begin(), config.dq_zp_list.end());
-  std::string tensor_desc_error;
-  if (!processcvu_build_runtime_tensor_descs(config, &payload.input_tensors,
-                                             &payload.output_tensors, &tensor_desc_error)) {
-    throw std::invalid_argument(
-        std::string("processcvu runtime config could not build tensor descriptors") +
-        (tensor_desc_error.empty() ? std::string() : std::string(": ") + tensor_desc_error));
+  if (is_native_visual_runtime_config(config)) {
+    payload.input_tensors = config.input_tensors;
+    payload.output_tensors = config.output_tensors;
+  } else {
+    std::string tensor_desc_error;
+    if (!processcvu_build_runtime_tensor_descs(config, &payload.input_tensors,
+                                               &payload.output_tensors, &tensor_desc_error)) {
+      throw std::invalid_argument(
+          std::string("processcvu runtime config could not build tensor descriptors") +
+          (tensor_desc_error.empty() ? std::string() : std::string(": ") + tensor_desc_error));
+    }
   }
   payload.input_shapes = processcvu_resolved_input_shapes_runtime(config);
   payload.num_in_tensor = !payload.input_tensors.empty()
@@ -640,8 +712,17 @@ build_processcvu_facts_from_runtime_config_impl(const CompiledProcessCvuRuntimeC
                                 "for semantic multi-io over packed transport");
   }
   if (semantic_input_count > 1U || semantic_output_count > 1U) {
-    return build_multi_io_processcvu_facts_from_payload_internal(payload,
-                                                                 config.runtime_input_names);
+    auto facts = build_multi_io_processcvu_facts_from_payload_internal(payload,
+                                                                      config.runtime_input_names);
+    if (!config.published_output_names.empty()) {
+      facts.published_output_names = config.published_output_names;
+      // Let build_processcvu_compiled_contract_from_facts synthesize output_order from the
+      // selected published names.  build_multi_io_processcvu_facts_from_payload defaults to
+      // exposing every physical runtime output, which is not correct for native visual graphs
+      // such as track_klt when refill detection is disabled.
+      facts.output_order.clear();
+    }
+    return facts;
   }
   return build_single_io_processcvu_facts_from_payload_internal(payload);
 }

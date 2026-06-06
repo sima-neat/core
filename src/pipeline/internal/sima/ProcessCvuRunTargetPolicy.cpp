@@ -80,6 +80,7 @@ ProcessCvuStageRole processcvu_stage_role(const ProcessCvuStagePayload& payload,
   case ProcessCvuGraphFamily::Tess:
   case ProcessCvuGraphFamily::QuantTess:
   case ProcessCvuGraphFamily::CastTess:
+  case ProcessCvuGraphFamily::VisualFrontend:
     return ProcessCvuStageRole::Pre;
   case ProcessCvuGraphFamily::Detess:
   case ProcessCvuGraphFamily::Dequant:
@@ -169,6 +170,13 @@ processcvu_backend_capabilities(const ProcessCvuStagePayload& payload) {
   caps.reason = "generic_ev_default_policy";
 
   switch (payload.graph_family_enum) {
+  case ProcessCvuGraphFamily::VisualFrontend:
+    caps.supports_ev74 = true;
+    caps.supports_a65 = false;
+    caps.auto_run_target = "EV74";
+    caps.auto_exec_backend = ProcessCvuResolvedExecBackend::Evxx;
+    caps.reason = "native_visual_ev74_only";
+    break;
   case ProcessCvuGraphFamily::Cast:
     caps.supports_ev74 = true;
     caps.supports_a65 = true;

@@ -17,6 +17,8 @@
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "nodes/sima/Tess.h"
+#include "pipeline/GraphMetrics.h"
+#include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
@@ -84,6 +86,20 @@ json endpoint_to_json(const runtime::ExecutionGraphPlan& plan, const runtime::En
     j["segment"] = endpoint.segment;
   }
   return j;
+}
+
+json power_summary_json(const PowerSummary& summary) {
+  return json::parse(power_summary_to_json(summary, 0));
+}
+
+json latency_summary_json(const NodeLatencySummary& summary) {
+  return {
+      {"samples", summary.samples},
+      {"total_ms", summary.total_ms},
+      {"avg_ms", summary.avg_ms},
+      {"min_ms", summary.min_ms},
+      {"max_ms", summary.max_ms},
+  };
 }
 
 json output_spec_to_json(const OutputSpec& spec) {
@@ -607,6 +623,62 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
                         {"max", metrics.power.total_max_watts}};
     j["power"] = std::move(p);
   }
+
+  const GraphMetricsReport graph_report = build_graph_metrics_report_run_lifetime(
+      run, RuntimeMetricsOptions{.include_power = opt.include_power});
+  json graph_metrics;
+  graph_metrics["measurement_scope"] = graph_report.aggregation;
+  graph_metrics["aggregation"] = graph_report.aggregation;
+  graph_metrics["latency_semantics"] = graph_report.latency_semantics;
+  graph_metrics["throughput_counting"] = graph_report.throughput_counting;
+  graph_metrics["elapsed_seconds"] = graph_report.graph_metrics.elapsed_seconds;
+  graph_metrics["outputs_pulled"] = graph_report.graph_metrics.counters.outputs_pulled;
+  graph_metrics["throughput_fps"] = graph_report.graph_metrics.throughput_fps;
+  graph_metrics["counters"] = {
+      {"inputs_enqueued", graph_report.graph_metrics.counters.inputs_enqueued},
+      {"inputs_dropped", graph_report.graph_metrics.counters.inputs_dropped},
+      {"inputs_pushed", graph_report.graph_metrics.counters.inputs_pushed},
+      {"outputs_ready", graph_report.graph_metrics.counters.outputs_ready},
+      {"outputs_pulled", graph_report.graph_metrics.counters.outputs_pulled},
+      {"outputs_dropped", graph_report.graph_metrics.counters.outputs_dropped},
+  };
+  if (opt.include_power && graph_report.graph_metrics.power.enabled) {
+    graph_metrics["power"] = power_summary_json(graph_report.graph_metrics.power);
+  }
+  j["graph_metrics"] = std::move(graph_metrics);
+
+  json node_metrics = json::array();
+  for (const GraphNodeMetrics& node : graph_report.node_metrics) {
+    json n;
+    n["node_id"] = node.node_id.empty() ? json(nullptr) : json(node.node_id);
+    n["runtime_node"] = node.node_id.empty() ? json(nullptr) : json(node.node_id);
+    n["runtime_node_id"] =
+        node.runtime_node_id == graph::kInvalidNode
+            ? json(nullptr)
+            : json(static_cast<std::uint64_t>(node.runtime_node_id));
+    n["public_node_ids"] = node.public_node_ids;
+    n["pipeline_segment_id"] =
+        node.pipeline_segment_id == static_cast<std::size_t>(-1)
+            ? json(nullptr)
+            : json(node.pipeline_segment_id);
+    n["kind"] = node.kind.empty() ? json(nullptr) : json(node.kind);
+    n["label"] = node.label.empty() ? json(nullptr) : json(node.label);
+    n["element_names"] = node.element_names;
+    n["latency_semantics"] = graph_report.latency_semantics;
+    n["aggregation"] = graph_report.aggregation;
+    n["latency_ms"] = latency_summary_json(node.latency);
+    json elements = json::array();
+    for (const GraphElementMetrics& element : node.elements) {
+      elements.push_back({
+          {"name", element.name},
+          {"latency_ms", latency_summary_json(element.latency)},
+      });
+    }
+    n["elements"] = std::move(elements);
+    node_metrics.push_back(std::move(n));
+  }
+  j["node_metrics"] = std::move(node_metrics);
+  j["plugin_metrics_unattributed"] = json::array();
   return j;
 }
 

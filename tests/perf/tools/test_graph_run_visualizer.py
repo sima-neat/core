@@ -31,6 +31,9 @@ class GraphRunVisualizerTest(unittest.TestCase):
             self.assertIn("<svg", body)
             self.assertIn("image", body)
             self.assertIn("classes", body)
+            self.assertIn("Throughput", body)
+            self.assertIn("Node metrics", body)
+            self.assertIn("0.200 ms", body)
             self.assertNotIn("unpkg.com", body)
 
 

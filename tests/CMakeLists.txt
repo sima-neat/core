@@ -1442,6 +1442,49 @@ if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKL
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
 endif()
 
+if (NOT macro_mixed_multistream_multimodel_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_executable(
+    macro_mixed_multistream_multimodel_tput_test
+    e2e_pipelines/macro/macro_mixed_multistream_multimodel_tput_test.cpp
+    e2e_pipelines/e2e_utils.cpp
+  )
+  add_dependencies(macro_mixed_multistream_multimodel_tput_test prepare_test_fixtures)
+  target_link_libraries(macro_mixed_multistream_multimodel_tput_test PRIVATE sima_neat_internal)
+  target_include_directories(macro_mixed_multistream_multimodel_tput_test
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+  )
+  list(APPEND PIPELINESESSION_TEST_TARGETS macro_mixed_multistream_multimodel_tput_test)
+
+  add_test(
+    NAME macro_mixed_multistream_multimodel_tput_smoke
+    COMMAND macro_mixed_multistream_multimodel_tput_test
+      --streams 4
+      --rtsp-servers 2
+      --fps 15
+      --iters 20
+      --resnet-lanes 1
+      --yolo-lanes 1
+      --branch-mode fanout-both
+      --metadata-udp 1
+      --max-runtime-ms 120000
+      --stall-timeout-ms 30000
+      --json-out macro_mixed_multistream_multimodel_tput_smoke.json
+  )
+  simaneat_append_ctest_env(macro_mixed_multistream_multimodel_tput_smoke)
+  set_tests_properties(macro_mixed_multistream_multimodel_tput_smoke PROPERTIES
+    DISABLED TRUE
+    SKIP_RETURN_CODE 77
+  )
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke
+    APPEND PROPERTY LABELS "e2e;macro;perf;tput;stress;disabled")
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
+endif()
+
 # Give CTest's parallel scheduler better information. High-cost tests are
 # started first, which lets short tests run underneath long model/matrix tests
 # instead of waiting behind them in declaration order. This preserves coverage

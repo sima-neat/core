@@ -129,6 +129,7 @@ struct ProfilerMemcpySite {
  */
 struct ProfilerKernelAggregate {
   std::string backend;                    ///< Backend label ("MLA", "A65", ...).
+  std::string phase;                      ///< Profiler phase ("Run", "Load", "Exec", ...).
   std::string kernel_name;                ///< Kernel name within the backend.
   std::string stage_name;                 ///< Pipeline stage name.
   std::int32_t physical_input_index = -1; ///< Physical input index, -1 if N/A.

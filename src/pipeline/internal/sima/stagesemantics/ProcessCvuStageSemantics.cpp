@@ -2316,6 +2316,18 @@ std::string canonical_family_name(std::string graph_family) {
       graph_family == "detessellatecast") {
     return "detesscast";
   }
+  if (graph_family == "featurehistogram" || graph_family == "feature_histogram") {
+    return "feature_histogram";
+  }
+  if (graph_family == "griderfast" || graph_family == "grider_fast") {
+    return "grider_fast";
+  }
+  if (graph_family == "trackdescriptor" || graph_family == "track_descriptor") {
+    return "track_descriptor";
+  }
+  if (graph_family == "trackklt" || graph_family == "track_klt") {
+    return "track_klt";
+  }
   return graph_family;
 }
 
@@ -2350,6 +2362,10 @@ ProcessCvuGraphFamily family_enum_from_name(const std::string& graph_family) {
   }
   if (family == "detessdequant") {
     return ProcessCvuGraphFamily::DetessDequant;
+  }
+  if (family == "feature_histogram" || family == "grider_fast" ||
+      family == "track_descriptor" || family == "track_klt") {
+    return ProcessCvuGraphFamily::VisualFrontend;
   }
   return ProcessCvuGraphFamily::Unknown;
 }

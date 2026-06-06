@@ -577,6 +577,7 @@ StagePublicationRole classify_stage_for_publication(const sima::StageStaticSpec&
     case ProcessCvuGraphFamily::DetessCast:
     case ProcessCvuGraphFamily::DetessDequant:
     case ProcessCvuGraphFamily::Cast:
+    case ProcessCvuGraphFamily::VisualFrontend:
       return StagePublicationRole::MaterializedTransform;
     case ProcessCvuGraphFamily::Unknown:
       return StagePublicationRole::RealProducer;

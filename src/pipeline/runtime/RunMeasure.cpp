@@ -27,7 +27,14 @@ void append_plugin_latency_from_profiler(const ProfilerReport& profiler,
   for (const auto& k : profiler.kernel_aggregates) {
     MeasurePluginLatency p;
     p.name = k.backend + ":" + (k.stage_name.empty() ? k.kernel_name : k.stage_name);
+    p.backend = k.backend;
+    p.phase = k.phase;
+    p.kernel_name = k.kernel_name;
+    p.stage_name = k.stage_name;
+    p.physical_input_index = k.physical_input_index;
+    p.output_slot = k.output_slot;
     p.calls = k.count;
+    p.total_ms = k.total_ms;
     p.avg_ms = k.avg_ms();
     p.min_ms = k.min_ms;
     p.max_ms = k.max_ms;
@@ -251,16 +258,17 @@ std::string MeasureReport::to_text() const {
   }
 
   os << "\nPer-plugin / kernel latency during measured window (ms):\n";
-  os << std::left << std::setw(34) << "plugin/kernel" << std::right << std::setw(9) << "calls"
-     << std::setw(11) << "avg" << std::setw(11) << "min" << std::setw(11) << "max"
-     << "\n";
+  os << std::left << std::setw(28) << "plugin/kernel" << std::setw(10) << "phase" << std::right
+     << std::setw(9) << "calls" << std::setw(11) << "avg" << std::setw(11) << "min"
+     << std::setw(11) << "max" << std::setw(12) << "total" << "\n";
   if (plugin_latency.empty()) {
     os << "  no plugin/kernel timing samples were reported\n";
   } else {
     for (const auto& p : plugin_latency) {
-      os << std::left << std::setw(34) << p.name << std::right << std::setw(9) << p.calls
+      os << std::left << std::setw(28) << p.name << std::setw(10)
+         << (p.phase.empty() ? "-" : p.phase) << std::right << std::setw(9) << p.calls
          << std::setw(11) << p.avg_ms << std::setw(11) << p.min_ms << std::setw(11) << p.max_ms
-         << "\n";
+         << std::setw(12) << p.total_ms << "\n";
     }
   }
 

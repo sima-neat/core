@@ -1,6 +1,8 @@
 #include "EdgeRouter.h"
 
 #include <cstdint>
+#include <atomic>
+#include <chrono>
 #include <sstream>
 #include <utility>
 
@@ -27,6 +29,22 @@ const char* graph_backpressure_timeout_explanation() {
          "edge/pipeline queue filled before the timeout. Pull outputs concurrently, reduce the "
          "push rate, increase GraphRunOptions.edge_queue/push_timeout_ms, or remove/relax slow "
          "downstream stages.";
+}
+
+std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::steady_clock::now() - start)
+          .count());
+}
+
+void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t>& max_value,
+                    std::uint64_t ns) {
+  total.fetch_add(ns, std::memory_order_relaxed);
+  std::uint64_t cur = max_value.load(std::memory_order_relaxed);
+  while (cur < ns && !max_value.compare_exchange_weak(cur, ns, std::memory_order_relaxed,
+                                                      std::memory_order_relaxed)) {
+  }
 }
 
 } // namespace
@@ -104,23 +122,39 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       return false;
     }
 
+    auto& pipe = *runtime_->pipelines[target.index];
+    auto& telemetry = pipe.transport.telemetry;
     std::string build_err;
+    const auto ensure_start = std::chrono::steady_clock::now();
+    telemetry.router_ensure_build_calls.fetch_add(1, std::memory_order_relaxed);
     if (!callbacks.ensure_pipeline_built(target.index, sample, &build_err)) {
+      atomic_add_max(telemetry.router_ensure_build_ns, telemetry.router_ensure_build_max_ns,
+                     elapsed_ns_since(ensure_start));
       request_stop(callbacks, build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
       return false;
     }
+    atomic_add_max(telemetry.router_ensure_build_ns, telemetry.router_ensure_build_max_ns,
+                   elapsed_ns_since(ensure_start));
 
     if (dispatch_options.sanitize_pipeline_input_before_enqueue &&
         callbacks.sanitize_pipeline_input) {
+      const auto sanitize_start = std::chrono::steady_clock::now();
       callbacks.sanitize_pipeline_input(target.index, sample);
+      telemetry.router_sanitize_calls.fetch_add(1, std::memory_order_relaxed);
+      atomic_add_max(telemetry.router_sanitize_ns, telemetry.router_sanitize_max_ns,
+                     elapsed_ns_since(sanitize_start));
     }
 
-    auto& input_queue = runtime_->pipelines[target.index]->transport.input_queue;
+    auto& input_queue = pipe.transport.input_queue;
     if (!input_queue) {
       return true;
     }
 
+    const auto push_start = std::chrono::steady_clock::now();
+    telemetry.router_input_push_calls.fetch_add(1, std::memory_order_relaxed);
     if (!input_queue->push(std::move(sample), options.push_timeout_ms)) {
+      atomic_add_max(telemetry.router_input_push_ns, telemetry.router_input_push_max_ns,
+                     elapsed_ns_since(push_start));
       if (!stop_requested(callbacks)) {
         std::ostringstream msg;
         msg << "GraphRun: pipeline input backpressure timeout (seg="
@@ -132,6 +166,8 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       }
       return false;
     }
+    atomic_add_max(telemetry.router_input_push_ns, telemetry.router_input_push_max_ns,
+                   elapsed_ns_since(push_start));
     return true;
   }
 

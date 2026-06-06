@@ -451,7 +451,14 @@ struct MeasureLatencyStats {
  */
 struct MeasurePluginLatency {
   std::string name;
+  std::string backend;
+  std::string phase;
+  std::string kernel_name;
+  std::string stage_name;
+  std::int32_t physical_input_index = -1;
+  std::int32_t output_slot = -1;
   std::uint64_t calls = 0;
+  double total_ms = 0.0;
   double avg_ms = 0.0;
   double min_ms = 0.0;
   double max_ms = 0.0;

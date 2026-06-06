@@ -115,9 +115,11 @@ std::string LatencyProfiler::to_text(const ProfilerReport& r) {
 
   if (!r.kernel_aggregates.empty()) {
     o << "[kernel invocations]\n"
-      << "  backend  phys_in  out  count   avg_ms   min_ms   max_ms   total_ms  kernel  (stage)\n";
+      << "  backend  phase      phys_in  out  count   avg_ms   min_ms   max_ms   total_ms  kernel  "
+         "(stage)\n";
     for (const auto& a : r.kernel_aggregates) {
-      o << "  " << std::left << std::setw(8) << a.backend << " " << std::right << std::setw(7)
+      o << "  " << std::left << std::setw(8) << a.backend << " " << std::setw(10)
+        << (a.phase.empty() ? "-" : a.phase) << " " << std::right << std::setw(7)
         << a.physical_input_index << " " << std::setw(4) << a.output_slot << " " << std::setw(6)
         << a.count << "  " << std::setw(7) << fmt_ms(a.avg_ms()) << "  " << std::setw(7)
         << fmt_ms(a.min_ms) << "  " << std::setw(7) << fmt_ms(a.max_ms) << "  " << std::setw(8)

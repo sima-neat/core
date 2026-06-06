@@ -44,6 +44,21 @@ struct GraphRuntimeOptions {
   }
 };
 
+inline GraphRuntimeOptions graph_runtime_options_from_run_options(const RunOptions& opt,
+                                                                  const VerboseOptions& verbose =
+                                                                      {}) {
+  GraphRuntimeOptions out;
+  out.verbose = verbose;
+  out.pipeline = opt;
+  out.power_monitor = opt.power_monitor;
+  // Connected public Graph::build() uses RunOptions as the only customer-facing
+  // knob. Treat RunOptions::power_monitor as graph-level board telemetry and do
+  // not forward it to each materialized pipeline segment; otherwise a connected
+  // graph with N segments would start N+1 board monitors and double-count rails.
+  out.pipeline.power_monitor = PowerMonitorOptions{};
+  return out;
+}
+
 enum class PushSamplePolicy {
   // Public linear Run compatibility: image Samples may use the legacy cv::Mat ingress path
   // when the pipeline is a simple raw-image appsrc pipeline.
@@ -105,6 +120,7 @@ struct RunCore {
 
   RunStats stats() const;
   InputStreamStats input_stats() const;
+  RunDiagSnapshot diag_snapshot() const;
   std::string last_error() const;
   std::string diagnostics_summary() const;
 

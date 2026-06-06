@@ -58,6 +58,19 @@ struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
 struct StageRuntime {
   explicit StageRuntime(std::size_t capacity = 0) : mailbox(capacity) {}
 
+  struct Telemetry {
+    std::atomic<std::uint64_t> mailbox_pop_calls{0};
+    std::atomic<std::uint64_t> mailbox_pop_miss{0};
+    std::atomic<std::uint64_t> mailbox_pop_wait_ns{0};
+    std::atomic<std::uint64_t> mailbox_pop_wait_max_ns{0};
+    std::atomic<std::uint64_t> on_input_calls{0};
+    std::atomic<std::uint64_t> on_input_ns{0};
+    std::atomic<std::uint64_t> on_input_max_ns{0};
+    std::atomic<std::uint64_t> route_output_calls{0};
+    std::atomic<std::uint64_t> route_output_ns{0};
+    std::atomic<std::uint64_t> route_output_max_ns{0};
+  };
+
   simaai::neat::graph::NodeId node_id = simaai::neat::graph::kInvalidNode;
   RuntimeStageEmitter emitter;
   std::unique_ptr<simaai::neat::graph::StageExecutor> exec;
@@ -67,6 +80,7 @@ struct StageRuntime {
   std::vector<simaai::neat::graph::PortId> input_ports;
   std::vector<simaai::neat::graph::PortId> output_ports;
   simaai::neat::graph::StagePorts ports;
+  Telemetry telemetry;
 };
 
 struct StageGroup {

@@ -19,7 +19,59 @@ def _as_map(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
 
 
-def _label(node: Mapping[str, Any]) -> str:
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _fmt(value: Any, suffix: str = "", precision: int = 3) -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value):.{precision}f}{suffix}"
+    return "—"
+
+
+def _metric_lookup(payload: Mapping[str, Any]) -> tuple[dict[str, Mapping[str, Any]], dict[str, Mapping[str, Any]]]:
+    run = _as_map(payload.get("run"))
+    by_lowered: dict[str, Mapping[str, Any]] = {}
+    by_public: dict[str, Mapping[str, Any]] = {}
+    for metric in _as_list(run.get("node_metrics")):
+        if not isinstance(metric, Mapping):
+            continue
+        node_id = metric.get("node_id")
+        if isinstance(node_id, str) and node_id:
+            by_lowered[node_id] = metric
+        for public_id in _as_list(metric.get("public_node_ids")):
+            if isinstance(public_id, str) and public_id:
+                by_public[public_id] = metric
+    return by_lowered, by_public
+
+
+def _node_metric(node: Mapping[str, Any], lookup: tuple[dict[str, Mapping[str, Any]], dict[str, Mapping[str, Any]]]) -> Mapping[str, Any]:
+    by_lowered, by_public = lookup
+    node_id = str(node.get("id", ""))
+    if node_id in by_public:
+        return by_public[node_id]
+    if node_id in by_lowered:
+        return by_lowered[node_id]
+    runtime_node = node.get("runtime_node")
+    if isinstance(runtime_node, str) and runtime_node in by_lowered:
+        return by_lowered[runtime_node]
+    return {}
+
+
+def _metric_label(metric: Mapping[str, Any]) -> str:
+    latency = _as_map(metric.get("latency_ms"))
+    samples = latency.get("samples")
+    parts = []
+    if "avg_ms" in latency:
+        parts.append(f"avg {_fmt(latency.get('avg_ms'), ' ms')}")
+    if "total_ms" in latency:
+        parts.append(f"total {_fmt(latency.get('total_ms'), ' ms')}")
+    if isinstance(samples, int):
+        parts.append(f"n={samples}")
+    return " / ".join(parts)
+
+
+def _label(node: Mapping[str, Any], metric: Mapping[str, Any] | None = None) -> str:
     pieces = [str(node.get("id", "node"))]
     kind = str(node.get("kind", ""))
     label = str(node.get("label", ""))
@@ -32,6 +84,10 @@ def _label(node: Mapping[str, Any]) -> str:
         pieces.append(f"({endpoint})")
     if node.get("compiler_generated"):
         pieces.append("[generated]")
+    if metric:
+        metric_text = _metric_label(metric)
+        if metric_text:
+            pieces.append(metric_text)
     return "\n".join(pieces)
 
 
@@ -61,7 +117,11 @@ def _edge_endpoints(edge: Mapping[str, Any]) -> tuple[str, str, str]:
     return source, target, label
 
 
-def _render_svg(nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]]) -> str:
+def _render_svg(
+    nodes: list[Mapping[str, Any]],
+    edges: list[Mapping[str, Any]],
+    lookup: tuple[dict[str, Mapping[str, Any]], dict[str, Mapping[str, Any]]],
+) -> str:
     if not nodes:
         return '<p class="empty">No nodes in selected view.</p>'
 
@@ -112,9 +172,12 @@ def _render_svg(nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]]) 
         x, y = positions[node_id]
         generated = bool(node.get("compiler_generated"))
         cls = "node generated" if generated else "node"
+        metric = _node_metric(node, lookup)
+        if metric:
+            cls += " with-metrics"
         out.append(f'<g class="{cls}">')
         out.append(f'<rect x="{x}" y="{y}" width="{node_w}" height="{node_h}" rx="12" />')
-        lines = _label(node).split("\n")[:4]
+        lines = _label(node, metric).split("\n")[:4]
         for i, line in enumerate(lines):
             out.append(
                 f'<text x="{x + node_w / 2:.1f}" y="{y + 22 + i * 15}" text-anchor="middle">{html.escape(line)}</text>'
@@ -125,11 +188,71 @@ def _render_svg(nodes: list[Mapping[str, Any]], edges: list[Mapping[str, Any]]) 
     return "\n".join(out)
 
 
+def _render_metric_cards(payload: Mapping[str, Any]) -> str:
+    run = _as_map(payload.get("run"))
+    graph_metrics = _as_map(run.get("graph_metrics"))
+    power = _as_map(graph_metrics.get("power")) or _as_map(run.get("power"))
+    cards = [
+        ("Throughput", _fmt(graph_metrics.get("throughput_fps", run.get("throughput_fps")), " fps")),
+        ("Elapsed", _fmt(graph_metrics.get("elapsed_seconds", run.get("elapsed_seconds")), " s")),
+        ("Scope", str(graph_metrics.get("measurement_scope") or graph_metrics.get("aggregation") or "—")),
+        ("Counting", str(graph_metrics.get("throughput_counting") or "—")),
+    ]
+    if power:
+        cards.extend(
+            [
+                ("Avg watts", _fmt(power.get("total_avg_watts"), " W")),
+                ("Energy", _fmt(power.get("energy_joules"), " J")),
+            ]
+        )
+    body = "\n".join(
+        f'<div class="metric-card"><div class="metric-title">{html.escape(title)}</div>'
+        f'<div class="metric-value">{html.escape(value)}</div></div>'
+        for title, value in cards
+    )
+    return f'<section class="metric-cards">{body}</section>'
+
+
+def _render_node_metrics_table(payload: Mapping[str, Any]) -> str:
+    rows: list[str] = []
+    run = _as_map(payload.get("run"))
+    for metric in _as_list(run.get("node_metrics")):
+        if not isinstance(metric, Mapping):
+            continue
+        latency = _as_map(metric.get("latency_ms"))
+        public_ids = ", ".join(str(x) for x in _as_list(metric.get("public_node_ids")))
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(str(metric.get('node_id') or '—'))}</td>"
+            f"<td>{html.escape(public_ids or '—')}</td>"
+            f"<td>{html.escape(str(metric.get('pipeline_segment_id') if metric.get('pipeline_segment_id') is not None else '—'))}</td>"
+            f"<td>{html.escape(str(metric.get('kind') or '—'))}</td>"
+            f"<td>{html.escape(str(metric.get('label') or '—'))}</td>"
+            f"<td>{html.escape(_fmt(latency.get('avg_ms'), ' ms'))}</td>"
+            f"<td>{html.escape(_fmt(latency.get('total_ms'), ' ms'))}</td>"
+            f"<td>{html.escape(str(latency.get('samples', '—')))}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return '<section><h2>Node metrics</h2><p class="empty">No node metrics in this export.</p></section>'
+    return (
+        "<section><h2>Node metrics</h2><table><thead><tr>"
+        "<th>Lowered node</th><th>Public IDs</th><th>Segment</th><th>Kind</th><th>Label</th>"
+        "<th>Avg latency</th><th>Total latency</th><th>Samples</th>"
+        "</tr></thead><tbody>"
+        + "\n".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
 def render_html(payload: Mapping[str, Any], view: str) -> str:
     nodes, edges = _normalize_view(payload, view)
     title = str(payload.get("label") or _as_map(payload.get("graph")).get("mode") or "NEAT graph")
     escaped_json = html.escape(json.dumps(payload, indent=2, sort_keys=True))
-    svg = _render_svg(nodes, edges)
+    lookup = _metric_lookup(payload)
+    svg = _render_svg(nodes, edges, lookup)
+    metric_cards = _render_metric_cards(payload)
+    node_metric_table = _render_node_metrics_table(payload)
     return f"""<!doctype html>
 <html>
 <head>
@@ -142,17 +265,27 @@ main {{ padding: 20px 24px; }}
 svg {{ width: 100%; min-height: 320px; background: white; border: 1px solid #cbd5e1; border-radius: 12px; }}
 .node rect {{ fill: #2563eb; stroke: #1e40af; stroke-width: 1.5; }}
 .node.generated rect {{ fill: #7c3aed; stroke: #5b21b6; }}
+.node.with-metrics rect {{ stroke: #fbbf24; stroke-width: 3; }}
 .node text {{ fill: white; font-size: 12px; font-weight: 600; }}
 .edge {{ fill: none; stroke: #64748b; stroke-width: 2; }}
 .edge-label {{ fill: #334155; font-size: 11px; paint-order: stroke; stroke: white; stroke-width: 4px; }}
 pre {{ background: #0b1020; color: #dbeafe; border-radius: 12px; padding: 16px; overflow: auto; }}
 .empty {{ padding: 16px; background: white; border-radius: 12px; }}
+.metric-cards {{ display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }}
+.metric-card {{ background: white; border: 1px solid #cbd5e1; border-radius: 12px; padding: 12px 14px; min-width: 140px; }}
+.metric-title {{ color: #64748b; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }}
+.metric-value {{ color: #0f172a; font-weight: 700; font-size: 18px; margin-top: 4px; }}
+table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; margin: 12px 0 20px; }}
+th, td {{ border-bottom: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; font-size: 13px; }}
+th {{ background: #e2e8f0; color: #334155; }}
 </style>
 </head>
 <body>
 <header><h1>{html.escape(title)}</h1><div>schema={html.escape(str(payload.get('schema', '')))} version={html.escape(str(payload.get('schema_version', '')))} view={html.escape(view)}</div></header>
 <main>
+{metric_cards}
 <section>{svg}</section>
+{node_metric_table}
 <h2>Raw graph-run JSON</h2>
 <pre>{escaped_json}</pre>
 </main>

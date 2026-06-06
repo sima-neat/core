@@ -5,8 +5,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <initializer_list>
+#include <optional>
 #include <stdexcept>
 
 namespace simaai::neat::pipeline_internal::sima::stagesemantics {
@@ -169,6 +172,347 @@ bool tensor_name_looks_objectness_logit(std::string raw) {
          raw.find("object_logit") != std::string::npos;
 }
 
+std::string lower_string(std::string raw) {
+  for (char& ch : raw) {
+    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+  }
+  return raw;
+}
+
+bool contains_any_token(const std::string& raw, std::initializer_list<const char*> needles) {
+  const std::string name = lower_string(raw);
+  for (const char* needle : needles) {
+    if (needle && *needle && name.find(needle) != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool tensor_name_contains_any(const BoxDecodeTensorStaticContract& tensor,
+                              std::initializer_list<const char*> needles) {
+  return contains_any_token(tensor.logical_name, needles) ||
+         contains_any_token(tensor.backend_name, needles) ||
+         contains_any_token(tensor.source_segment_name, needles);
+}
+
+bool tensor_name_is_non_class_role(const BoxDecodeTensorStaticContract& tensor) {
+  return tensor_name_contains_any(tensor, {"bbox", "box", "reg", "extent", "xy", "ltrb", "keypoint",
+                                           "kpt", "mask", "proto", "prototype", "coef", "coeff"});
+}
+
+bool tensor_name_is_class_role(const BoxDecodeTensorStaticContract& tensor) {
+  if (tensor_name_looks_objectness_logit(tensor.logical_name) ||
+      tensor_name_looks_objectness_logit(tensor.backend_name) ||
+      tensor_name_looks_objectness_logit(tensor.source_segment_name) ||
+      tensor_name_is_non_class_role(tensor)) {
+    return false;
+  }
+  return tensor_name_contains_any(
+      tensor, {"class_logit", "class_logits", "class_prob", "class_probability", "class_score",
+               "cls_logit", "cls_logits", "cls_prob", "cls_probability", "cls_score"});
+}
+
+struct TensorHwc {
+  int h = 0;
+  int w = 0;
+  int c = 0;
+  int semantic_c = 0;
+};
+
+std::optional<TensorHwc> tensor_hwc(const BoxDecodeTensorStaticContract& tensor) {
+  if (tensor.input_shape.size() < 3U) {
+    return std::nullopt;
+  }
+  const auto rank = tensor.input_shape.size();
+  const int h = tensor.input_shape[rank - 3U];
+  const int w = tensor.input_shape[rank - 2U];
+  const int c = tensor.input_shape[rank - 1U];
+  if (h <= 0 || w <= 0 || c <= 0) {
+    return std::nullopt;
+  }
+  int semantic_c = c;
+  if (tensor.slice_shape.size() >= 3U) {
+    const int slice_c = tensor.slice_shape[tensor.slice_shape.size() - 1U];
+    if (slice_c > 0 && slice_c <= c) {
+      semantic_c = slice_c;
+    }
+  }
+  return TensorHwc{h, w, c, semantic_c};
+}
+
+bool same_hw(const TensorHwc& lhs, const TensorHwc& rhs) {
+  return lhs.h == rhs.h && lhs.w == rhs.w;
+}
+
+std::optional<int> consistent_positive_depth(std::optional<int> current, int candidate) {
+  if (candidate <= 0) {
+    return current;
+  }
+  if (!current.has_value()) {
+    return candidate;
+  }
+  if (*current == candidate) {
+    return current;
+  }
+  return std::nullopt;
+}
+
+int infer_named_class_depth(const BoxDecodeStaticContract& contract) {
+  std::optional<int> inferred;
+  bool saw_class_tensor = false;
+  for (const auto& tensor : contract.tensors) {
+    if (!tensor_name_is_class_role(tensor)) {
+      continue;
+    }
+    const int c = logical_channel_depth(tensor);
+    if (c <= 0) {
+      continue;
+    }
+    saw_class_tensor = true;
+    const auto next = consistent_positive_depth(inferred, c);
+    if (!next.has_value() && inferred.has_value()) {
+      // Semantic class heads in supported YOLO routes are repeated with the same class depth.
+      // If naming disagrees, do not guess from names; let the geometric family fallback try.
+      return 0;
+    }
+    inferred = next;
+  }
+  return saw_class_tensor && inferred.has_value() ? *inferred : 0;
+}
+
+int infer_grouped_dfl_class_depth(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
+    return 0;
+  }
+  const std::size_t heads = contract.tensors.size() / 2U;
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < heads; ++i) {
+    const auto reg = tensor_hwc(contract.tensors[i]);
+    const auto cls = tensor_hwc(contract.tensors[i + heads]);
+    if (!reg.has_value() || !cls.has_value() || !same_hw(*reg, *cls) || reg->semantic_c < 16 ||
+        (reg->semantic_c % 4) != 0 || cls->semantic_c <= 0) {
+      return 0;
+    }
+    const auto next = consistent_positive_depth(classes, cls->semantic_c);
+    if (!next.has_value() && classes.has_value()) {
+      return 0;
+    }
+    classes = next;
+  }
+  return classes.value_or(0);
+}
+
+int infer_yolov26_grouped_class_depth(const BoxDecodeStaticContract& contract) {
+  if (contract_looks_like_grouped_yolov26_pose(contract)) {
+    return 1;
+  }
+  if (contract_looks_like_grouped_yolov26(contract)) {
+    const std::size_t heads = contract.tensors.size() / 2U;
+    std::optional<int> classes;
+    for (std::size_t i = 0; i < heads; ++i) {
+      const auto cls = tensor_hwc(contract.tensors[i + heads]);
+      if (!cls.has_value()) {
+        return 0;
+      }
+      const auto next = consistent_positive_depth(classes, cls->semantic_c);
+      if (!next.has_value() && classes.has_value()) {
+        return 0;
+      }
+      classes = next;
+    }
+    return classes.value_or(0);
+  }
+  return 0;
+}
+
+int infer_yolov26_seg_grouped_class_depth(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() < 4U || ((contract.tensors.size() - 1U) % 3U) != 0U) {
+    return 0;
+  }
+  const std::size_t heads = (contract.tensors.size() - 1U) / 3U;
+  if (heads == 0U) {
+    return 0;
+  }
+  const auto proto = tensor_hwc(contract.tensors.back());
+  if (!proto.has_value() || proto->semantic_c != 32) {
+    return 0;
+  }
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < heads; ++i) {
+    const auto bbox = tensor_hwc(contract.tensors[i]);
+    const auto cls = tensor_hwc(contract.tensors[i + heads]);
+    const auto mask = tensor_hwc(contract.tensors[i + (2U * heads)]);
+    if (!bbox.has_value() || !cls.has_value() || !mask.has_value() || !same_hw(*bbox, *cls) ||
+        !same_hw(*bbox, *mask) || bbox->semantic_c != 4 || cls->semantic_c <= 0 ||
+        mask->semantic_c != 32) {
+      return 0;
+    }
+    const auto next = consistent_positive_depth(classes, cls->semantic_c);
+    if (!next.has_value() && classes.has_value()) {
+      return 0;
+    }
+    classes = next;
+  }
+  return classes.value_or(0);
+}
+
+int infer_yolov6_interleaved_class_depth(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
+    return 0;
+  }
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < contract.tensors.size(); i += 2U) {
+    const auto bbox = tensor_hwc(contract.tensors[i]);
+    const auto cls = tensor_hwc(contract.tensors[i + 1U]);
+    if (!bbox.has_value() || !cls.has_value() || !same_hw(*bbox, *cls) || bbox->semantic_c != 4 ||
+        cls->semantic_c <= 0) {
+      return 0;
+    }
+    const auto next = consistent_positive_depth(classes, cls->semantic_c);
+    if (!next.has_value() && classes.has_value()) {
+      return 0;
+    }
+    classes = next;
+  }
+  return classes.value_or(0);
+}
+
+int infer_yolox_interleaved_class_depth(const BoxDecodeStaticContract& contract) {
+  if (contract.tensors.size() < 3U || (contract.tensors.size() % 3U) != 0U) {
+    return 0;
+  }
+  std::optional<int> classes;
+  for (std::size_t i = 0; i < contract.tensors.size(); i += 3U) {
+    const auto bbox = tensor_hwc(contract.tensors[i]);
+    const auto obj = tensor_hwc(contract.tensors[i + 1U]);
+    const auto cls = tensor_hwc(contract.tensors[i + 2U]);
+    if (!bbox.has_value() || !obj.has_value() || !cls.has_value() || !same_hw(*bbox, *obj) ||
+        !same_hw(*bbox, *cls) || bbox->semantic_c != 4 || obj->semantic_c != 1 ||
+        cls->semantic_c <= 0) {
+      return 0;
+    }
+    const auto next = consistent_positive_depth(classes, cls->semantic_c);
+    if (!next.has_value() && classes.has_value()) {
+      return 0;
+    }
+    classes = next;
+  }
+  return classes.value_or(0);
+}
+
+int infer_packed_yolo_class_depth(const BoxDecodeStaticContract& contract) {
+  std::optional<int> classes;
+  for (const auto& tensor : contract.tensors) {
+    const int c = logical_channel_depth(tensor);
+    if (c <= 0 || (c % 3) != 0) {
+      return 0;
+    }
+    const int candidate = (c / 3) - 5;
+    if (candidate <= 0) {
+      return 0;
+    }
+    const auto next = consistent_positive_depth(classes, candidate);
+    if (!next.has_value() && classes.has_value()) {
+      return 0;
+    }
+    classes = next;
+  }
+  return classes.value_or(0);
+}
+
+bool decode_type_is_grouped_dfl_yolo(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV8 || type == BoxDecodeType::YoloV8Seg ||
+         type == BoxDecodeType::YoloV8Pose || type == BoxDecodeType::YoloV9 ||
+         type == BoxDecodeType::YoloV9Seg || type == BoxDecodeType::YoloV10 ||
+         type == BoxDecodeType::YoloV10Seg;
+}
+
+bool decode_type_is_pose_yolo(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV8Pose || type == BoxDecodeType::YoloV26Pose;
+}
+
+bool decode_type_is_packed_yolo(BoxDecodeType type) {
+  return type == BoxDecodeType::Yolo || type == BoxDecodeType::YoloV5 ||
+         type == BoxDecodeType::YoloV5Seg || type == BoxDecodeType::YoloV7 ||
+         type == BoxDecodeType::YoloV7Seg;
+}
+
+int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract);
+
+int infer_boxdecode_num_classes_from_contract(const BoxDecodeStaticContract& contract) {
+  if (const int named = infer_named_class_depth(contract); named > 0) {
+    return named;
+  }
+
+  switch (contract.decode_type) {
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV26Pose:
+  case BoxDecodeType::YoloV26Seg:
+    if (contract.decode_type == BoxDecodeType::YoloV26Seg) {
+      if (const int classes = infer_yolov26_seg_grouped_class_depth(contract); classes > 0) {
+        return classes;
+      }
+    }
+    if (const int classes = infer_yolov26_grouped_class_depth(contract); classes > 0) {
+      return classes;
+    }
+    break;
+  case BoxDecodeType::YoloV6:
+    if (const int classes = infer_yolov6_interleaved_class_depth(contract); classes > 0) {
+      return classes;
+    }
+    break;
+  case BoxDecodeType::YoloX:
+    if (const int classes = infer_yolox_interleaved_class_depth(contract); classes > 0) {
+      return classes;
+    }
+    break;
+  default:
+    if (decode_type_is_grouped_dfl_yolo(contract.decode_type)) {
+      if (const int classes = infer_grouped_dfl_class_depth(contract); classes > 0) {
+        return classes;
+      }
+    }
+    if (decode_type_is_packed_yolo(contract.decode_type)) {
+      if (const int classes = infer_packed_yolo_class_depth(contract); classes > 0) {
+        return classes;
+      }
+    }
+    break;
+  }
+
+  if (const int raw = infer_raw_yolo_class_depth(contract); raw > 0) {
+    return raw;
+  }
+
+  return contract.num_classes;
+}
+
+int resolve_boxdecode_num_classes(const BoxDecodeStaticContract& contract, int user_num_classes,
+                                  const char* context) {
+  if (decode_type_is_pose_yolo(contract.decode_type)) {
+    if (user_num_classes > 0 && user_num_classes != 1) {
+      throw std::invalid_argument(std::string(context ? context : "BoxDecode") +
+                                  " pose decode requires num_classes=1 when specified");
+    }
+    return 1;
+  }
+
+  const int inferred = infer_boxdecode_num_classes_from_contract(contract);
+  if (user_num_classes > 0) {
+    if (inferred > 0 && user_num_classes != inferred) {
+      std::fprintf(stderr,
+                   "[WARN] %s num_classes mismatch: user=%d inferred_from_mpk=%d decode_type=%s. "
+                   "Using user value.\n",
+                   context ? context : "BoxDecode", user_num_classes, inferred,
+                   box_decode_type_token(contract.decode_type));
+    }
+    return user_num_classes;
+  }
+  return inferred;
+}
+
 int infer_raw_yolo_class_depth(const BoxDecodeStaticContract& contract) {
   int best = 0;
   for (const auto& tensor : contract.tensors) {
@@ -198,7 +542,7 @@ void apply_raw_yolov6_yolox_static_contract_overrides(BoxDecodeStaticContract* c
                                        : BoxDecodeTypeOption::InterleavedByHeadLogit;
   }
   if (contract->num_classes <= 0) {
-    contract->num_classes = infer_raw_yolo_class_depth(*contract);
+    contract->num_classes = infer_boxdecode_num_classes_from_contract(*contract);
   }
 }
 
@@ -263,10 +607,10 @@ BoxDecodeStaticContract finalize_boxdecode_static_contract(
   finalized.detection_threshold = detection_threshold;
   finalized.nms_iou_threshold = nms_iou_threshold;
   finalized.topk = topk;
-  finalized.num_classes = num_classes > 0 ? num_classes : contract.num_classes;
   finalized.required_preprocess_meta_fields = required_preprocess_meta_fields;
   apply_yolov26_static_contract_overrides(&finalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&finalized);
+  finalized.num_classes = resolve_boxdecode_num_classes(finalized, num_classes, "BoxDecode");
   return finalized;
 }
 
@@ -311,6 +655,10 @@ build_boxdecode_compiled_contract(const BoxDecodeStaticContract& contract) {
   BoxDecodeStaticContract normalized = contract;
   apply_yolov26_static_contract_overrides(&normalized);
   apply_raw_yolov6_yolox_static_contract_overrides(&normalized);
+  if (normalized.num_classes <= 0) {
+    normalized.num_classes =
+        resolve_boxdecode_num_classes(normalized, /*user_num_classes=*/0, "BoxDecode");
+  }
   const auto subset =
       plugin_contracts::extract_boxdecode_contract_subset_from_static_contract(normalized);
   BoxDecodeCompiledContractOptions options;

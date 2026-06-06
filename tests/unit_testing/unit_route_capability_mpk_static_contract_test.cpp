@@ -57,7 +57,6 @@ RUN_TEST(
 
         Model::Options explicit_boxdecode;
         explicit_boxdecode.decode_type = BoxDecodeType::YoloV8;
-        explicit_boxdecode.num_classes = 80;
         Model explicit_model(raw_yolo_bf16.string(), explicit_boxdecode);
         require(ModelAccess::has_model_managed_stage(explicit_model, StageNodeKind::BoxDecode),
                 "explicit decode_type should select a model-managed BoxDecode stage");
@@ -67,5 +66,8 @@ RUN_TEST(
             ModelAccess::build_boxdecode_stage_contract(explicit_model, /*sync=*/false);
         require(compiled.payload.decode_type == BoxDecodeType::YoloV8,
                 "explicit BoxDecode should derive a YOLOv8 contract from MPK facts");
+        require(compiled.payload.num_classes == 80,
+                "explicit BoxDecode should derive YOLOv8 class count from MPK facts when "
+                "num_classes is unset");
       }
     }));

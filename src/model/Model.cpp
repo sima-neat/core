@@ -5118,13 +5118,13 @@ std::string stage_name_for_post_region(const internal::ModelPack& pack,
                                        const internal::RouteRegion& region,
                                        const std::size_t region_index) {
   if (region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast) {
-    return default_post_region_stage_name(region, region_index);
+    return pack.apply_name_suffix(default_post_region_stage_name(region, region_index));
   }
   if (const auto stage_kind = execution_stage_kind_from_post_region(region);
       stage_kind.has_value()) {
     for (const auto& stage : pack.execution_plan().post) {
       if (stage.kind == *stage_kind && !stage.stage_name.empty()) {
-        return stage.stage_name;
+        return pack.apply_name_suffix(stage.stage_name);
       }
     }
   }
@@ -7282,6 +7282,16 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
     validate_requested_boxdecode_contract_type(compiled->payload.decode_type, opt.decode_type,
                                                "Model-managed boxdecode stage");
     if (model.impl_->options.num_classes > 0) {
+      if (compiled->payload.num_classes > 0 &&
+          compiled->payload.num_classes != model.impl_->options.num_classes) {
+        std::fprintf(
+            stderr,
+            "[WARN] BoxDecode num_classes mismatch: user=%d inferred_from_mpk=%d "
+            "decode_type=%s. Using user value.\n",
+            model.impl_->options.num_classes, compiled->payload.num_classes,
+            pipeline_internal::sima::box_decode_type_token_string(compiled->payload.decode_type)
+                .c_str());
+      }
       compiled->payload.num_classes = model.impl_->options.num_classes;
     }
     return *compiled;
@@ -7321,7 +7331,6 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                              "Model-managed boxdecode fallback");
 
   contract->decode_type = opt.decode_type;
-  contract->num_classes = opt.num_classes;
   contract->topk = opt.top_k;
   contract->detection_threshold = opt.score_threshold;
   contract->nms_iou_threshold = opt.nms_iou_threshold;
@@ -7330,31 +7339,37 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
   contract->required_preprocess_meta_fields =
       model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields;
 
+  auto finalized = pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
+      *contract, opt.decode_type, std::nullopt, route_flags, opt.decode_type_option,
+      opt.score_threshold, opt.nms_iou_threshold, opt.top_k, opt.num_classes,
+      model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields);
+  const int effective_num_classes = finalized.num_classes;
+
   if (boxdecode_type_expects_grouped_yolo_dfl_local(opt.decode_type)) {
-    if (opt.num_classes <= 0) {
+    if (effective_num_classes <= 0) {
       throw std::runtime_error(
           "YOLO BoxDecode fallback requires Model::Options.num_classes for split raw DFL heads "
           "(for the Anti-UAV one-class model, set opts.num_classes = 1).");
     }
-    if (boxdecode_looks_interleaved_yolo_dfl_local(*contract, opt.num_classes)) {
+    if (boxdecode_looks_interleaved_yolo_dfl_local(*contract, effective_num_classes)) {
       throw std::runtime_error(
           "YOLO BoxDecode contract has interleaved raw DFL outputs. Expected grouped-by-role "
           "order [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5], but observed [" +
           boxdecode_tensor_order_summary_local(*contract) +
           "]. Fix the ONNX graph surgery/export output order and recompile the MPK.");
     }
-    if (!boxdecode_looks_grouped_yolo_dfl_local(*contract, opt.num_classes)) {
+    if (!boxdecode_looks_grouped_yolo_dfl_local(*contract, effective_num_classes)) {
       throw std::runtime_error(
           "YOLO BoxDecode fallback could not validate grouped-by-role raw DFL output order. "
           "Expected [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5] with class depth equal to "
           "Model::Options.num_classes; observed [" +
           boxdecode_tensor_order_summary_local(*contract) + "].");
     }
-    contract->decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
-    contract->score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+    finalized.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+    finalized.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
   }
 
-  return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(*contract);
+  return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized);
 }
 
 void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, const Model& model,

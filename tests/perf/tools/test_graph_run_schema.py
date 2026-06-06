@@ -124,6 +124,67 @@ def valid_payload() -> dict[str, object]:
             "input_names": ["image"],
             "output_names": ["classes"],
             "last_error": "",
+            "graph_metrics": {
+                "measurement_scope": "run_lifetime",
+                "aggregation": "run_lifetime",
+                "latency_semantics": "sum_element_residency",
+                "throughput_counting": "all_pulled_outputs",
+                "elapsed_seconds": 0.1,
+                "outputs_pulled": 1,
+                "throughput_fps": 10.0,
+                "counters": {
+                    "inputs_enqueued": 1,
+                    "inputs_dropped": 0,
+                    "inputs_pushed": 1,
+                    "outputs_ready": 1,
+                    "outputs_pulled": 1,
+                    "outputs_dropped": 0,
+                },
+                "power": {
+                    "enabled": True,
+                    "samples": 0,
+                    "duration_seconds": 0.0,
+                    "total_avg_watts": 0.0,
+                    "total_min_watts": 0.0,
+                    "total_max_watts": 0.0,
+                    "energy_joules": 0.0,
+                    "rails": [],
+                },
+            },
+            "node_metrics": [
+                {
+                    "node_id": "n0",
+                    "runtime_node": "n0",
+                    "runtime_node_id": 0,
+                    "public_node_ids": ["p0", "p1"],
+                    "pipeline_segment_id": 0,
+                    "kind": "Input",
+                    "label": "image",
+                    "element_names": ["n0_identity"],
+                    "latency_semantics": "sum_element_residency",
+                    "aggregation": "run_lifetime",
+                    "latency_ms": {
+                        "samples": 1,
+                        "total_ms": 0.2,
+                        "avg_ms": 0.2,
+                        "min_ms": 0.2,
+                        "max_ms": 0.2,
+                    },
+                    "elements": [
+                        {
+                            "name": "n0_identity",
+                            "latency_ms": {
+                                "samples": 1,
+                                "total_ms": 0.2,
+                                "avg_ms": 0.2,
+                                "min_ms": 0.2,
+                                "max_ms": 0.2,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "plugin_metrics_unattributed": [],
         },
     }
 
@@ -141,6 +202,18 @@ class GraphRunSchemaTest(unittest.TestCase):
     def test_bad_runtime_edge_id_fails(self) -> None:
         bad = valid_payload()
         bad["graph"]["public_view"]["edges"][0]["runtime_edges"] = ["not_edge"]  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_node_metrics_must_not_contain_power(self) -> None:
+        bad = valid_payload()
+        bad["run"]["node_metrics"][0]["power"] = {"enabled": True}  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_bad_graph_metric_counter_fails(self) -> None:
+        bad = valid_payload()
+        bad["run"]["graph_metrics"]["outputs_pulled"] = "one"  # type: ignore[index]
         with self.assertRaises(schema.SchemaError):
             schema.validate_graph_run(bad)
 

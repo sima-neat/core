@@ -55,7 +55,13 @@
         "input_names": {"type": "array", "items": {"type": "string"}},
         "output_names": {"type": "array", "items": {"type": "string"}},
         "last_error": {"type": "string"},
-        "power": {"type": "object"}
+        "power": {"type": "object"},
+        "graph_metrics": {"$ref": "#/$defs/graph_metrics"},
+        "node_metrics": {"type": "array", "items": {"$ref": "#/$defs/node_metric"}},
+        "plugin_metrics_unattributed": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/plugin_metric"}
+        }
       },
       "additionalProperties": true
     }
@@ -181,6 +187,104 @@
         "stage_role": {"type": "string"},
         "requested_post": {"type": "string"},
         "requester_kind": {"type": ["string", "null"]}
+      },
+      "additionalProperties": true
+    },
+    "latency_summary": {
+      "type": "object",
+      "properties": {
+        "samples": {"type": "integer", "minimum": 0},
+        "total_ms": {"type": "number"},
+        "avg_ms": {"type": "number"},
+        "min_ms": {"type": "number"},
+        "max_ms": {"type": "number"}
+      },
+      "additionalProperties": true
+    },
+    "counter_summary": {
+      "type": "object",
+      "properties": {
+        "inputs_enqueued": {"type": "integer", "minimum": 0},
+        "inputs_dropped": {"type": "integer", "minimum": 0},
+        "inputs_pushed": {"type": "integer", "minimum": 0},
+        "outputs_ready": {"type": "integer", "minimum": 0},
+        "outputs_pulled": {"type": "integer", "minimum": 0},
+        "outputs_dropped": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "power_summary": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "samples": {"type": "integer", "minimum": 0},
+        "duration_seconds": {"type": "number"},
+        "total_avg_watts": {"type": "number"},
+        "total_min_watts": {"type": "number"},
+        "total_max_watts": {"type": "number"},
+        "energy_joules": {"type": "number"},
+        "rails": {"type": "array", "items": {"type": "object"}}
+      },
+      "additionalProperties": true
+    },
+    "graph_metrics": {
+      "type": "object",
+      "required": ["measurement_scope", "throughput_counting", "elapsed_seconds", "throughput_fps"],
+      "properties": {
+        "measurement_scope": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "latency_semantics": {"type": "string"},
+        "throughput_counting": {"type": "string"},
+        "elapsed_seconds": {"type": "number"},
+        "outputs_pulled": {"type": "integer", "minimum": 0},
+        "throughput_fps": {"type": "number"},
+        "counters": {"$ref": "#/$defs/counter_summary"},
+        "power": {"$ref": "#/$defs/power_summary"}
+      },
+      "additionalProperties": true
+    },
+    "element_metric": {
+      "type": "object",
+      "required": ["name", "latency_ms"],
+      "properties": {
+        "name": {"type": "string"},
+        "latency_ms": {"$ref": "#/$defs/latency_summary"}
+      },
+      "additionalProperties": true
+    },
+    "node_metric": {
+      "type": "object",
+      "properties": {
+        "node_id": {"type": ["string", "null"]},
+        "runtime_node": {"type": ["string", "null"]},
+        "runtime_node_id": {"type": ["integer", "null"], "minimum": 0},
+        "public_node_ids": {"type": "array", "items": {"type": "string"}},
+        "pipeline_segment_id": {"type": ["integer", "null"], "minimum": 0},
+        "kind": {"type": ["string", "null"]},
+        "label": {"type": ["string", "null"]},
+        "element_names": {"type": "array", "items": {"type": "string"}},
+        "latency_semantics": {"type": "string"},
+        "aggregation": {"type": "string"},
+        "latency_ms": {"$ref": "#/$defs/latency_summary"},
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/element_metric"}}
+      },
+      "additionalProperties": true
+    },
+    "plugin_metric": {
+      "type": "object",
+      "properties": {
+        "backend": {"type": "string"},
+        "phase": {"type": "string"},
+        "kernel_name": {"type": "string"},
+        "stage_name": {"type": "string"},
+        "pipeline_segment_id": {"type": ["integer", "null"]},
+        "runtime_node_id": {"type": ["integer", "null"]},
+        "public_node_ids": {"type": "array", "items": {"type": "string"}},
+        "physical_input_index": {"type": "integer"},
+        "output_slot": {"type": "integer"},
+        "calls": {"type": "integer", "minimum": 0},
+        "latency_ms": {"$ref": "#/$defs/latency_summary"},
+        "mapping_error": {"type": "string"}
       },
       "additionalProperties": true
     }

@@ -95,6 +95,7 @@ MpkTensorDims dims_from_mpk_shape(std::vector<std::int64_t> shape) {
 }
 
 std::string processcvu_canonical_graph_name_local(std::string graph_name);
+bool processcvu_is_native_visual_graph_local(const std::string& graph_name, int graph_id = -1);
 GstCaps* processmla_make_transport_caps_from_tensor_local(const CapsTensorSpec& tensor,
                                                           const std::string& transport_format);
 bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family);
@@ -1559,11 +1560,31 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
       payload.resolved_exec_backend.empty() ? std::string("EVXX") : payload.resolved_exec_backend;
   cfg.run_target_resolution_reason = payload.run_target_resolution_reason;
   cfg.graph_id = payload.graph_id;
+  cfg.width = payload.width;
+  cfg.height = payload.height;
+  cfg.threshold = payload.threshold;
+  cfg.max_features = payload.max_features;
+  cfg.grid_x = payload.grid_x;
+  cfg.grid_y = payload.grid_y;
+  cfg.min_px_dist = payload.min_px_dist;
+  cfg.descriptor_words = payload.descriptor_words;
+  cfg.num_points = payload.num_points;
+  cfg.win_half = payload.win_half;
+  cfg.max_iters = payload.max_iters;
+  cfg.max_level = payload.max_level;
+  cfg.detect_new_features = payload.detect_new_features;
+  cfg.fast_threshold = payload.fast_threshold;
+  cfg.debug = payload.debug;
   cfg.default_input_name = payload.default_input_name;
   cfg.primary_output_name = payload.primary_output_name;
   cfg.single_output_handoff = payload.preproc_single_output_handoff;
   const std::string canonical_graph_family = processcvu_canonical_graph_name_local(
       !payload.graph_family.empty() ? payload.graph_family : payload.graph_name);
+  const std::string canonical_graph_name = processcvu_canonical_graph_name_local(
+      !payload.graph_name.empty() ? payload.graph_name : payload.graph_family);
+  const bool is_native_visual_graph =
+      processcvu_is_native_visual_graph_local(canonical_graph_name, payload.graph_id) ||
+      processcvu_is_native_visual_graph_local(canonical_graph_family, payload.graph_id);
   cfg.runtime_output_names = payload.default_output_names;
   if (canonical_graph_family == "preproc" && payload.preproc_single_output_handoff) {
     if (payload.primary_output_name.empty() ||
@@ -1657,6 +1678,12 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
     if (!processcvu_build_stage_tensor_descs_local(stage, &cfg, error_message)) {
       return false;
     }
+  } else if (is_native_visual_graph) {
+    cfg.input_tensors = payload.input_tensors;
+    cfg.output_tensors = payload.output_tensors;
+    cfg.num_in_tensor = payload.num_in_tensor > 0
+                            ? payload.num_in_tensor
+                            : static_cast<int32_t>(cfg.input_tensors.size());
   } else {
     if (payload.input_tensors.empty() || payload.output_tensors.empty()) {
       if (error_message) {
@@ -2320,7 +2347,32 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
   }
   std::transform(graph_name.begin(), graph_name.end(), graph_name.begin(),
                  [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (graph_name == "FEATUREHISTOGRAM" || graph_name == "FEATURE_HISTOGRAM" ||
+      graph_name == "featurehistogram" || graph_name == "feature_histogram") {
+    return "feature_histogram";
+  }
+  if (graph_name == "GRIDERFAST" || graph_name == "GRIDER_FAST" ||
+      graph_name == "griderfast" || graph_name == "grider_fast") {
+    return "grider_fast";
+  }
+  if (graph_name == "TRACKDESCRIPTOR" || graph_name == "TRACK_DESCRIPTOR" ||
+      graph_name == "trackdescriptor" || graph_name == "track_descriptor") {
+    return "track_descriptor";
+  }
+  if (graph_name == "TRACKKLT" || graph_name == "TRACK_KLT" ||
+      graph_name == "trackklt" || graph_name == "track_klt") {
+    return "track_klt";
+  }
   return graph_name;
+}
+
+bool processcvu_is_native_visual_graph_local(const std::string& graph_name, int graph_id) {
+  if (graph_id >= 235 && graph_id <= 238) {
+    return true;
+  }
+  const std::string canonical = processcvu_canonical_graph_name_local(graph_name);
+  return canonical == "feature_histogram" || canonical == "grider_fast" ||
+         canonical == "track_descriptor" || canonical == "track_klt";
 }
 
 bool processcvu_graph_family_uses_packed_input_transport_local(const std::string& graph_family) {
@@ -2591,8 +2643,17 @@ std::string processcvu_tensor_dtype_local(const MpkTensorContract& tensor,
 
 std::string processcvu_tensor_layout_token_local(const std::vector<std::int64_t>& shape,
                                                  const std::string& fallback = std::string()) {
-  (void)shape;
-  return tensorsemantics::normalize_layout_token(fallback);
+  const std::string normalized = tensorsemantics::normalize_layout_token(fallback);
+  if (!normalized.empty()) {
+    return normalized;
+  }
+  if (shape.size() == 2U) {
+    return "HW";
+  }
+  if (shape.size() == 3U || shape.size() == 4U) {
+    return "HWC";
+  }
+  return {};
 }
 
 std::string processcvu_tensor_layout_token_from_desc_local(const sima_ev_tensor_desc& desc) {
@@ -2810,6 +2871,11 @@ bool processcvu_build_graph_io_tensor_descs_local(const std::string& graph_name,
       canonical == "detessellate" || canonical == "detesscast" || canonical == "detessdequant";
   const bool output_is_tiled = canonical == "tessellate" || canonical == "casttess" ||
                                canonical == "quanttess" || canonical == "quantizetessellate";
+  const bool native_visual_graph = processcvu_is_native_visual_graph_local(canonical);
+  if (native_visual_graph && io.input_tensors.size() != io.output_tensors.size()) {
+    cfg->num_in_tensor = static_cast<int32_t>(io.input_tensors.size());
+    return true;
+  }
   if (io.input_tensors.empty() || io.output_tensors.empty()) {
     if (error_message) {
       *error_message = "processcvu graph IO missing tensors";
@@ -3228,6 +3294,21 @@ bool build_processcvu_prepared_stage_from_graph_io_local(const StageStaticSpec& 
       payload.resolved_exec_backend.empty() ? std::string("EVXX") : payload.resolved_exec_backend;
   request.run_target_resolution_reason = payload.run_target_resolution_reason;
   request.graph_id = payload.graph_id;
+  request.width = payload.width;
+  request.height = payload.height;
+  request.threshold = payload.threshold;
+  request.max_features = payload.max_features;
+  request.grid_x = payload.grid_x;
+  request.grid_y = payload.grid_y;
+  request.min_px_dist = payload.min_px_dist;
+  request.descriptor_words = payload.descriptor_words;
+  request.num_points = payload.num_points;
+  request.win_half = payload.win_half;
+  request.max_iters = payload.max_iters;
+  request.max_level = payload.max_level;
+  request.detect_new_features = payload.detect_new_features;
+  request.fast_threshold = payload.fast_threshold;
+  request.debug = payload.debug;
   request.batch_size = payload.batch_size;
   request.round_off = payload.round_off;
   request.byte_align = payload.byte_align;
@@ -5146,11 +5227,37 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
   if (error_message) {
     error_message->clear();
   }
+  (void)static_manifest_context;
 
   simaai::neat::PreparedRuntimeDescriptor context;
   context.session_id = transformed_manifest.session_id;
   context.model_id = transformed_manifest.model_id;
   context.stages.reserve(transformed_manifest.stages.size());
+  prepared_runtime_debug_log_local("build context manifest_stages=%zu session_id=%s model_id=%s",
+                                   transformed_manifest.stages.size(),
+                                   context.session_id.c_str(), context.model_id.c_str());
+
+  std::set<std::string> prepared_stage_keys;
+  auto add_prepared_stage = [&](simaai::gst::PreparedStageSpec&& prepared,
+                                const char* source) -> bool {
+    if (prepared.stage_key.empty()) {
+      if (error_message) {
+        *error_message = "prepared runtime stage has empty stage key";
+      }
+      return false;
+    }
+    if (!prepared_stage_keys.insert(prepared.stage_key).second) {
+      if (error_message) {
+        *error_message = "duplicate prepared runtime stage key: " + prepared.stage_key;
+      }
+      return false;
+    }
+    prepared_runtime_debug_log_local("prepared stage %s key=%s kind=%d",
+                                     source ? source : "unknown", prepared.stage_key.c_str(),
+                                     static_cast<int>(prepared.kind));
+    context.stages.push_back(std::move(prepared));
+    return true;
+  };
 
   const bool needs_graph_contract =
       std::any_of(transformed_manifest.stages.begin(), transformed_manifest.stages.end(),
@@ -5193,26 +5300,13 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
                                                   &transformed_manifest, stage_index)) {
         return std::nullopt;
       }
-      context.stages.push_back(std::move(prepared));
+      if (!add_prepared_stage(std::move(prepared), "graph-owned")) {
+        return std::nullopt;
+      }
       continue;
     }
 
     if (stage_is_cast_local(stage)) {
-      if (static_manifest_context) {
-        simaai::gst::PreparedStageSpec prepared;
-        const char* stage_id_or_name =
-            stage.logical_stage_id.empty() ? nullptr : stage.logical_stage_id.c_str();
-        const char* element_name_fallback =
-            stage.element_name.empty() ? nullptr : stage.element_name.c_str();
-        if (!simaai::neat::build_prepared_stage_from_manifest_context(
-                static_manifest_context, stage_id_or_name, element_name_fallback, &prepared,
-                error_message)) {
-          return std::nullopt;
-        }
-        context.stages.push_back(std::move(prepared));
-        continue;
-      }
-
       simaai::gst::CastPreparedStage cast_stage;
       if (!build_cast_prepared_stage_from_manifest_stage_local(stage, &cast_stage, error_message)) {
         return std::nullopt;
@@ -5221,26 +5315,13 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
       prepared.stage_key = cast_stage.stage_key;
       prepared.kind = simaai::gst::PreparedStageKind::Cast;
       prepared.cast = std::move(cast_stage);
-      context.stages.push_back(std::move(prepared));
+      if (!add_prepared_stage(std::move(prepared), "manifest-local")) {
+        return std::nullopt;
+      }
       continue;
     }
 
     if (stage_is_processcvu_local(stage)) {
-      if (static_manifest_context) {
-        simaai::gst::PreparedStageSpec prepared;
-        const char* stage_id_or_name =
-            stage.logical_stage_id.empty() ? nullptr : stage.logical_stage_id.c_str();
-        const char* element_name_fallback =
-            stage.element_name.empty() ? nullptr : stage.element_name.c_str();
-        if (!simaai::neat::build_prepared_stage_from_manifest_context(
-                static_manifest_context, stage_id_or_name, element_name_fallback, &prepared,
-                error_message)) {
-          return std::nullopt;
-        }
-        context.stages.push_back(std::move(prepared));
-        continue;
-      }
-
       simaai::gst::ProcessCvuPreparedStage processcvu_stage;
       if (!build_processcvu_prepared_stage_from_manifest_stage_local(
               stage, &processcvu_stage, error_message, &transformed_manifest, stage_index)) {
@@ -5250,7 +5331,9 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
       prepared.stage_key = processcvu_stage.stage_key;
       prepared.kind = simaai::gst::PreparedStageKind::ProcessCvu;
       prepared.processcvu = std::move(processcvu_stage);
-      context.stages.push_back(std::move(prepared));
+      if (!add_prepared_stage(std::move(prepared), "manifest-local")) {
+        return std::nullopt;
+      }
       continue;
     }
   }
