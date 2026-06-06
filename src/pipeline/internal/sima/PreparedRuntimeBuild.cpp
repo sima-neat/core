@@ -305,7 +305,9 @@ bool processcvu_stage_is_manifest_substitution_local(const StageStaticSpec& stag
                                              : stage.processcvu.graph_name);
   return canonical_family == "preproc" || canonical_family == "quantize" ||
          canonical_family == "quanttess" || canonical_family == "cast" ||
-         canonical_family == "casttess";
+         canonical_family == "casttess" || canonical_family == "feature_histogram" ||
+         canonical_family == "grider_fast" || canonical_family == "track_descriptor" ||
+         canonical_family == "track_klt";
 }
 
 bool stage_is_graph_owned_local(const StageStaticSpec& stage) {
