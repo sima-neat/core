@@ -260,6 +260,9 @@ def validate_node_metric(value: Any, context: str) -> None:
     if "elements" in data:
         for i, element in enumerate(_array(data["elements"], f"{context}.elements")):
             validate_element_metric(element, f"{context}.elements[{i}]")
+    if "plugins" in data:
+        for i, plugin in enumerate(_array(data["plugins"], f"{context}.plugins")):
+            validate_plugin_metric(plugin, f"{context}.plugins[{i}]")
 
 
 def validate_plugin_metric(value: Any, context: str) -> None:

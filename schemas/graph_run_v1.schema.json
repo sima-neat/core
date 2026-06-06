@@ -266,7 +266,8 @@
         "latency_semantics": {"type": "string"},
         "aggregation": {"type": "string"},
         "latency_ms": {"$ref": "#/$defs/latency_summary"},
-        "elements": {"type": "array", "items": {"$ref": "#/$defs/element_metric"}}
+        "elements": {"type": "array", "items": {"$ref": "#/$defs/element_metric"}},
+        "plugins": {"type": "array", "items": {"$ref": "#/$defs/plugin_metric"}}
       },
       "additionalProperties": true
     },

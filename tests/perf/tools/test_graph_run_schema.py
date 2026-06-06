@@ -182,6 +182,7 @@ def valid_payload() -> dict[str, object]:
                             },
                         }
                     ],
+                    "plugins": [],
                 }
             ],
             "plugin_metrics_unattributed": [],

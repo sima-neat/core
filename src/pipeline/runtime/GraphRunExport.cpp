@@ -34,6 +34,7 @@
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -698,6 +699,7 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
     n["latency_semantics"] = graph_report.latency_semantics;
     n["aggregation"] = graph_report.aggregation;
     n["latency_ms"] = latency_summary_json(node.latency);
+    n["plugins"] = json::array();
     json elements = json::array();
     for (const GraphElementMetrics& element : node.elements) {
       elements.push_back({
@@ -711,6 +713,41 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
   j["node_metrics"] = std::move(node_metrics);
   j["plugin_metrics_unattributed"] = json::array();
   return j;
+}
+
+std::optional<std::size_t> find_unique_plugin_node_metric(const json& node_metrics,
+                                                          const MeasurePluginLatency& plugin,
+                                                          std::string* mapping_error) {
+  if (plugin.stage_name.empty()) {
+    if (mapping_error) {
+      *mapping_error = "unattributed: profiler event has no stage_name";
+    }
+    return std::nullopt;
+  }
+
+  std::optional<std::size_t> match;
+  for (std::size_t i = 0; i < node_metrics.size(); ++i) {
+    const json& node = node_metrics.at(i);
+    if (!node.contains("element_names") || !node.at("element_names").is_array()) {
+      continue;
+    }
+    for (const auto& element : node.at("element_names")) {
+      if (element.is_string() && element.get<std::string>() == plugin.stage_name) {
+        if (match.has_value()) {
+          if (mapping_error) {
+            *mapping_error = "unattributed: profiler stage_name matched multiple node metrics";
+          }
+          return std::nullopt;
+        }
+        match = i;
+      }
+    }
+  }
+
+  if (!match.has_value() && mapping_error) {
+    *mapping_error = "unattributed: profiler stage_name did not match a graph element";
+  }
+  return match;
 }
 
 } // namespace
@@ -794,8 +831,24 @@ std::string run_to_json(const Run& run, const MeasureReport& report, const RunEx
 
     json plugins = json::array();
     for (const MeasurePluginLatency& p : report.plugin_latency) {
-      plugins.push_back(plugin_metric_to_json(
-          p, "unattributed: profiler events do not yet carry graph runtime node ids"));
+      std::string mapping_error;
+      const std::optional<std::size_t> node_index =
+          run_json.contains("node_metrics") && run_json.at("node_metrics").is_array()
+              ? find_unique_plugin_node_metric(run_json.at("node_metrics"), p, &mapping_error)
+              : std::nullopt;
+      if (node_index.has_value()) {
+        json plugin = plugin_metric_to_json(p);
+        json& node = run_json["node_metrics"].at(*node_index);
+        plugin["pipeline_segment_id"] = node.value("pipeline_segment_id", json(nullptr));
+        plugin["runtime_node_id"] = node.value("runtime_node_id", json(nullptr));
+        plugin["public_node_ids"] = node.value("public_node_ids", json::array());
+        if (!node.contains("plugins") || !node["plugins"].is_array()) {
+          node["plugins"] = json::array();
+        }
+        node["plugins"].push_back(std::move(plugin));
+      } else {
+        plugins.push_back(plugin_metric_to_json(p, mapping_error));
+      }
     }
     run_json["plugin_metrics_unattributed"] = std::move(plugins);
     run_json["measurement"] = {

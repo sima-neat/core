@@ -763,6 +763,17 @@ Concurrency policy:
 - Short-term: document/enforce one active `LatencyProfiler` at a time with a guard.
 - Robust: add run/graph ID fields to profiler events.
 
+Initial implementation status:
+
+- Added `phase` to `ProfilerKernelAggregate`.
+- Profiler aggregation now keys by `(backend, phase, kernel_name, stage_name,
+  physical_input_index, output_slot)` so load/build/run/post events are no longer folded together.
+- `MeasurePluginLatency` now preserves `backend`, `phase`, `kernel_name`, `stage_name`,
+  `physical_input_index`, `output_slot`, and `total_ms` in addition to the old display `name`,
+  calls, avg/min/max fields.
+- Measurement text output now includes phase and total latency.
+- The profiler is still process-global; robust run/graph attribution still belongs to Step 9.
+
 ### Step 7: Add measured-window diagnostic deltas
 
 Do not claim measured-window node latency until this exists.
@@ -912,6 +923,13 @@ Initial implementation status:
 - Existing compatibility fields (`run.throughput_fps`, compact `run.power`, `run.stats`) remain.
 - Plugin metrics are intentionally schema/export placeholders until profiler attribution work in
   Steps 6 and 9 is implemented.
+- Added overloads that accept a `MeasureReport`:
+  - `run_to_json(const Run&, const MeasureReport&, ...)`
+  - `save_run_json(const Run&, const MeasureReport&, ...)`
+- The measured overload marks `run.graph_metrics.measurement_scope = "measured_window"` and exports
+  structured measurement-window plugin rows under `plugin_metrics_unattributed` with the preserved
+  backend/phase/kernel/stage/slot/total fields. They remain unattributed until Step 9 adds reliable
+  node IDs.
 
 ### Step 11: Schema and validator
 
