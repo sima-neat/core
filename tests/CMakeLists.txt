@@ -878,6 +878,20 @@ target_include_directories(evo_tput_bench
 )
 list(APPEND PIPELINESESSION_TEST_TARGETS evo_tput_bench)
 
+add_executable(
+  visual_frontend_tput_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/visual_frontend_tput_test.cpp
+)
+add_dependencies(visual_frontend_tput_test prepare_test_fixtures)
+target_link_libraries(visual_frontend_tput_test PRIVATE sima_neat_internal)
+target_include_directories(visual_frontend_tput_test
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+list(APPEND PIPELINESESSION_TEST_TARGETS visual_frontend_tput_test)
+
 add_pipeline_test(
   graph_migration_phase1_graph_api_surface_test
   graph_migration/unified/graph_phase1_api_surface_test.cpp
