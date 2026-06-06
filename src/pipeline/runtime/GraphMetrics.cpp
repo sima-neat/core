@@ -59,8 +59,6 @@ struct NodeAccumulator {
   GraphNodeMetrics metrics;
   std::set<std::string> elements_seen;
   std::uint64_t total_us = 0;
-  std::uint64_t min_us_sum = 0;
-  std::uint64_t max_us_sum = 0;
   std::uint64_t max_samples = 0;
 };
 
@@ -70,8 +68,20 @@ void finalize_node_accumulator(NodeAccumulator& acc) {
   if (acc.max_samples > 0) {
     acc.metrics.latency.avg_ms =
         static_cast<double>(acc.total_us) / static_cast<double>(acc.max_samples) / 1000.0;
-    acc.metrics.latency.min_ms = static_cast<double>(acc.min_us_sum) / 1000.0;
-    acc.metrics.latency.max_ms = static_cast<double>(acc.max_us_sum) / 1000.0;
+    if (acc.metrics.elements.size() == 1U) {
+      acc.metrics.latency.min_ms = acc.metrics.elements.front().latency.min_ms;
+      acc.metrics.latency.max_ms = acc.metrics.elements.front().latency.max_ms;
+      acc.metrics.latency.min_max_available =
+          acc.metrics.elements.front().latency.min_max_available;
+    } else {
+      // Summing per-element min/max is not a valid node min/max when a node expands to
+      // multiple GStreamer elements. Keep total/avg exact and mark min/max unavailable.
+      acc.metrics.latency.min_ms = 0.0;
+      acc.metrics.latency.max_ms = 0.0;
+      acc.metrics.latency.min_max_available = false;
+    }
+  } else {
+    acc.metrics.latency.min_max_available = false;
   }
 }
 
@@ -114,12 +124,12 @@ void add_node_report_to_accumulator(
           static_cast<double>(timing.total_us) / static_cast<double>(timing.samples) / 1000.0;
       element_metric.latency.min_ms = static_cast<double>(timing.min_us) / 1000.0;
       element_metric.latency.max_ms = static_cast<double>(timing.max_us) / 1000.0;
+    } else {
+      element_metric.latency.min_max_available = false;
     }
     acc.metrics.elements.push_back(std::move(element_metric));
     acc.total_us += timing.total_us;
     if (timing.samples > 0) {
-      acc.min_us_sum += timing.min_us;
-      acc.max_us_sum += timing.max_us;
       acc.max_samples = std::max(acc.max_samples, timing.samples);
     }
   }

@@ -178,6 +178,8 @@ def validate_latency_summary(value: Any, context: str) -> None:
     for key in ("total_ms", "avg_ms", "min_ms", "max_ms"):
         if key in data:
             _number(data[key], f"{context}.{key}")
+    if "min_max_available" in data:
+        _bool(data["min_max_available"], f"{context}.min_max_available")
 
 
 def validate_power_summary(value: Any, context: str) -> None:
@@ -269,10 +271,14 @@ def validate_plugin_metric(value: Any, context: str) -> None:
     data = _mapping(value, context)
     if "power" in data:
         _raise(context, "plugin metrics must not contain power")
+    if "name" in data and data["name"] is not None:
+        _string(data["name"], f"{context}.name")
     for key in ("backend", "phase", "kernel_name", "stage_name", "mapping_error"):
         if key in data:
             _string(data[key], f"{context}.{key}")
-    for key in ("pipeline_segment_id", "runtime_node_id"):
+    if "gst_element_name" in data and data["gst_element_name"] is not None:
+        _string(data["gst_element_name"], f"{context}.gst_element_name")
+    for key in ("run_id_hash", "pipeline_segment_id", "runtime_node_id", "public_node_id"):
         if data.get(key) is not None:
             _integer(data[key], f"{context}.{key}")
     if "public_node_ids" in data:

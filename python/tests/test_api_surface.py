@@ -222,26 +222,60 @@ def test_run_export_api_surface():
   export_opt.label = "surface"
   export_opt.include_metrics = False
   export_opt.include_power = False
+  export_opt.include_node_metrics = True
+  export_opt.include_plugin_metrics = True
+  export_opt.include_empty_node_metrics = False
   export_opt.indent = 0
   export_opt.metadata = [("suite", "api")]
   assert export_opt.label == "surface"
   assert export_opt.metadata == [("suite", "api")]
+  assert export_opt.include_empty_node_metrics is False
 
   auto_opt = pyneat.RunAutoExportOptions()
   auto_opt.path = "/tmp/pyneat_graph_run_surface.json"
   auto_opt.label = "auto"
   auto_opt.include_metrics = True
   auto_opt.include_power = False
+  auto_opt.include_node_metrics = True
+  auto_opt.include_plugin_metrics = False
+  auto_opt.include_empty_node_metrics = True
   auto_opt.indent = 2
 
   run_opt = pyneat.RunOptions()
   run_opt.run_export = auto_opt
+  run_opt.enable_board_power()
+  assert run_opt.power_monitor.enabled is True
+  run_opt.disable_power_monitor()
+  assert run_opt.power_monitor.enabled is False
+  run_opt.power_monitor = pyneat.modalix_som_power_monitor_options(250)
+  assert run_opt.power_monitor.enabled is True
   assert run_opt.run_export.path.endswith("pyneat_graph_run_surface.json")
   assert run_opt.run_export.label == "auto"
+  assert run_opt.run_export.include_plugin_metrics is False
+
+  metrics_opt = pyneat.RuntimeMetricsOptions()
+  metrics_opt.include_power = False
+  assert metrics_opt.include_power is False
+  assert hasattr(pyneat, "build_graph_metrics_report_run_lifetime")
+
+  measure_report = pyneat.MeasureReport()
+  measure_report.elapsed_s = 1.0
+  measure_report.outputs_pulled = 2
+  measure_report.throughput_batches_per_s = 2.0
+  plugin = pyneat.MeasurePluginLatency()
+  plugin.backend = "A65"
+  plugin.phase = "Run"
+  plugin.kernel_name = "identity"
+  plugin.runtime_node_id = 0
+  plugin.calls = 1
+  measure_report.plugin_latency = [plugin]
+  assert measure_report.plugin_latency[0].runtime_node_id == 0
 
   run = pyneat.Run()
   with pytest.raises(Exception, match="Run has no runtime core"):
     pyneat.run_to_json(run, export_opt)
+  with pytest.raises(Exception, match="Run has no runtime core"):
+    pyneat.run_to_json(run, measure_report, export_opt)
 
 
 def test_public_graph_connect_no_runtime_port_overload():

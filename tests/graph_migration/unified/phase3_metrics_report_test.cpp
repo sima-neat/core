@@ -72,6 +72,16 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
             "graph-level power monitor should retain caller-provided custom rail config");
     require(power.rails.front().config.name == "unit-test-invalid-rail",
             "power summary should expose the configured custom rail");
+    simaai::neat::MeasureOptions measure_opt;
+    measure_opt.duration_ms = 1;
+    measure_opt.include_plugin_latency = false;
+    measure_opt.include_power = true;
+    simaai::neat::MeasureScope measure = power_run.start_measurement(measure_opt);
+    const simaai::neat::MeasureReport measured = measure.stop();
+    require(measured.power.enabled,
+            "measurement report should use a measurement-local graph power monitor");
+    require(measured.power.rails.size() == 1U,
+            "measurement-local power monitor should retain caller-provided custom rail config");
     power_run.close();
   }
 
@@ -141,6 +151,26 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
       saw_element_metric = saw_element_metric || !node.elements.empty();
     }
     require(saw_element_metric, "graph metrics should retain per-element latency summaries");
+
+    simaai::neat::MeasureOptions node_measure_opt;
+    node_measure_opt.duration_ms = 1;
+    node_measure_opt.include_plugin_latency = false;
+    node_measure_opt.include_power = false;
+    simaai::neat::MeasureScope node_measure = timing_run.start_measurement(node_measure_opt);
+    require(timing_run.push(simaai::neat::TensorList{seed}),
+            "timing Graph measured-window push failed");
+    auto measured_sample = timing_run.pull(5000);
+    require(measured_sample.has_value(), "timing Graph measured-window pull produced no sample");
+    const simaai::neat::MeasureReport measured_report = node_measure.stop();
+    require(!measured_report.node_metrics.empty(),
+            "measured report should include measured-window node latency deltas");
+    bool saw_measured_minmax_unavailable = false;
+    for (const auto& node : measured_report.node_metrics) {
+      saw_measured_minmax_unavailable =
+          saw_measured_minmax_unavailable || !node.latency.min_max_available;
+    }
+    require(saw_measured_minmax_unavailable,
+            "measured-window node deltas should mark cumulative min/max unavailable");
     timing_run.close();
   }
 });

@@ -221,6 +221,7 @@ def _render_node_metrics_table(payload: Mapping[str, Any]) -> str:
             continue
         latency = _as_map(metric.get("latency_ms"))
         public_ids = ", ".join(str(x) for x in _as_list(metric.get("public_node_ids")))
+        plugin_count = len([p for p in _as_list(metric.get("plugins")) if isinstance(p, Mapping)])
         rows.append(
             "<tr>"
             f"<td>{html.escape(str(metric.get('node_id') or '—'))}</td>"
@@ -231,6 +232,7 @@ def _render_node_metrics_table(payload: Mapping[str, Any]) -> str:
             f"<td>{html.escape(_fmt(latency.get('avg_ms'), ' ms'))}</td>"
             f"<td>{html.escape(_fmt(latency.get('total_ms'), ' ms'))}</td>"
             f"<td>{html.escape(str(latency.get('samples', '—')))}</td>"
+            f"<td>{plugin_count}</td>"
             "</tr>"
         )
     if not rows:
@@ -238,10 +240,85 @@ def _render_node_metrics_table(payload: Mapping[str, Any]) -> str:
     return (
         "<section><h2>Node metrics</h2><table><thead><tr>"
         "<th>Lowered node</th><th>Public IDs</th><th>Segment</th><th>Kind</th><th>Label</th>"
-        "<th>Avg latency</th><th>Total latency</th><th>Samples</th>"
+        "<th>Avg latency</th><th>Total latency</th><th>Samples</th><th>Plugins</th>"
         "</tr></thead><tbody>"
         + "\n".join(rows)
         + "</tbody></table></section>"
+    )
+
+
+def _plugin_display_name(plugin: Mapping[str, Any]) -> str:
+    name = plugin.get("name")
+    if isinstance(name, str) and name:
+        return name
+    backend = str(plugin.get("backend") or "plugin")
+    stage = str(plugin.get("stage_name") or plugin.get("gst_element_name") or plugin.get("kernel_name") or "unknown")
+    return f"{backend}:{stage}"
+
+
+def _plugin_table(rows: list[str], title: str, empty: str, warning: bool = False) -> str:
+    cls = ' class="warning"' if warning else ""
+    if not rows:
+        return f'<section{cls}><h2>{html.escape(title)}</h2><p class="empty">{html.escape(empty)}</p></section>'
+    return (
+        f"<section{cls}><h2>{html.escape(title)}</h2><table><thead><tr>"
+        "<th>Node</th><th>Backend</th><th>Phase</th><th>Kernel</th><th>Stage/element</th>"
+        "<th>Calls</th><th>Avg latency</th><th>Total latency</th><th>Mapping</th>"
+        "</tr></thead><tbody>"
+        + "\n".join(rows)
+        + "</tbody></table></section>"
+    )
+
+
+def _plugin_row(plugin: Mapping[str, Any], node_id: str, mapping: str = "") -> str:
+    latency = _as_map(plugin.get("latency_ms"))
+    stage = plugin.get("gst_element_name") or plugin.get("stage_name")
+    return (
+        "<tr>"
+        f"<td>{html.escape(node_id or '—')}</td>"
+        f"<td>{html.escape(str(plugin.get('backend') or '—'))}</td>"
+        f"<td>{html.escape(str(plugin.get('phase') or '—'))}</td>"
+        f"<td>{html.escape(str(plugin.get('kernel_name') or _plugin_display_name(plugin)))}</td>"
+        f"<td>{html.escape(str(stage or '—'))}</td>"
+        f"<td>{html.escape(str(plugin.get('calls', '—')))}</td>"
+        f"<td>{html.escape(_fmt(latency.get('avg_ms'), ' ms'))}</td>"
+        f"<td>{html.escape(_fmt(latency.get('total_ms'), ' ms'))}</td>"
+        f"<td>{html.escape(mapping or str(plugin.get('mapping_error') or 'attributed'))}</td>"
+        "</tr>"
+    )
+
+
+def _render_plugin_metrics(payload: Mapping[str, Any]) -> str:
+    run = _as_map(payload.get("run"))
+    attributed_rows: list[str] = []
+    for metric in _as_list(run.get("node_metrics")):
+        if not isinstance(metric, Mapping):
+            continue
+        node_id = str(metric.get("node_id") or metric.get("runtime_node") or "—")
+        public_ids = [str(x) for x in _as_list(metric.get("public_node_ids")) if isinstance(x, str)]
+        label = node_id if not public_ids else f"{node_id} ({', '.join(public_ids)})"
+        for plugin in _as_list(metric.get("plugins")):
+            if isinstance(plugin, Mapping):
+                attributed_rows.append(_plugin_row(plugin, label, "attributed"))
+
+    unattributed_rows: list[str] = []
+    for plugin in _as_list(run.get("plugin_metrics_unattributed")):
+        if isinstance(plugin, Mapping):
+            unattributed_rows.append(_plugin_row(plugin, "—"))
+
+    return (
+        _plugin_table(
+            attributed_rows,
+            "Attributed plugin metrics",
+            "No attributed plugin/kernel metrics in this export.",
+        )
+        + "\n"
+        + _plugin_table(
+            unattributed_rows,
+            "Unattributed plugin metrics",
+            "No unattributed plugin/kernel metrics.",
+            warning=bool(unattributed_rows),
+        )
     )
 
 
@@ -253,6 +330,7 @@ def render_html(payload: Mapping[str, Any], view: str) -> str:
     svg = _render_svg(nodes, edges, lookup)
     metric_cards = _render_metric_cards(payload)
     node_metric_table = _render_node_metrics_table(payload)
+    plugin_metric_tables = _render_plugin_metrics(payload)
     return f"""<!doctype html>
 <html>
 <head>
@@ -278,6 +356,8 @@ pre {{ background: #0b1020; color: #dbeafe; border-radius: 12px; padding: 16px; 
 table {{ width: 100%; border-collapse: collapse; background: white; border-radius: 12px; overflow: hidden; margin: 12px 0 20px; }}
 th, td {{ border-bottom: 1px solid #e2e8f0; padding: 8px 10px; text-align: left; font-size: 13px; }}
 th {{ background: #e2e8f0; color: #334155; }}
+.warning table, .warning .empty {{ border: 1px solid #f59e0b; }}
+.warning h2::after {{ content: " ⚠"; color: #d97706; }}
 </style>
 </head>
 <body>
@@ -286,6 +366,7 @@ th {{ background: #e2e8f0; color: #334155; }}
 {metric_cards}
 <section>{svg}</section>
 {node_metric_table}
+{plugin_metric_tables}
 <h2>Raw graph-run JSON</h2>
 <pre>{escaped_json}</pre>
 </main>

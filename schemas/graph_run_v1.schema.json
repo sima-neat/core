@@ -197,7 +197,8 @@
         "total_ms": {"type": "number"},
         "avg_ms": {"type": "number"},
         "min_ms": {"type": "number"},
-        "max_ms": {"type": "number"}
+        "max_ms": {"type": "number"},
+        "min_max_available": {"type": "boolean"}
       },
       "additionalProperties": true
     },
@@ -274,12 +275,16 @@
     "plugin_metric": {
       "type": "object",
       "properties": {
+        "name": {"type": ["string", "null"]},
         "backend": {"type": "string"},
         "phase": {"type": "string"},
         "kernel_name": {"type": "string"},
         "stage_name": {"type": "string"},
-        "pipeline_segment_id": {"type": ["integer", "null"]},
-        "runtime_node_id": {"type": ["integer", "null"]},
+        "gst_element_name": {"type": ["string", "null"]},
+        "run_id_hash": {"type": ["integer", "null"], "minimum": 0},
+        "pipeline_segment_id": {"type": ["integer", "null"], "minimum": 0},
+        "runtime_node_id": {"type": ["integer", "null"], "minimum": 0},
+        "public_node_id": {"type": ["integer", "null"], "minimum": 0},
         "public_node_ids": {"type": "array", "items": {"type": "string"}},
         "physical_input_index": {"type": "integer"},
         "output_slot": {"type": "integer"},

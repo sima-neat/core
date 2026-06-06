@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdlib>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -168,6 +169,39 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
               .at("total_ms")
               .get<double>() == 8.0,
           "measured export should preserve plugin total latency");
+  if (!json.at("run").at("node_metrics").empty() &&
+      !json.at("run").at("node_metrics").at(0).at("runtime_node_id").is_null()) {
+    MeasureReport direct_measured = measured;
+    MeasurePluginLatency direct_plugin;
+    direct_plugin.name = "A65:direct";
+    direct_plugin.backend = "A65";
+    direct_plugin.phase = "Run";
+    direct_plugin.kernel_name = "direct";
+    direct_plugin.runtime_node_id =
+        json.at("run").at("node_metrics").at(0).at("runtime_node_id").get<std::int32_t>();
+    if (!json.at("run").at("node_metrics").at(0).at("pipeline_segment_id").is_null()) {
+      direct_plugin.pipeline_segment_id =
+          json.at("run").at("node_metrics").at(0).at("pipeline_segment_id").get<std::int32_t>();
+    }
+    direct_plugin.calls = 1;
+    direct_plugin.total_ms = 1.0;
+    direct_plugin.avg_ms = 1.0;
+    direct_plugin.min_ms = 1.0;
+    direct_plugin.max_ms = 1.0;
+    direct_measured.plugin_latency.insert(direct_measured.plugin_latency.begin(), direct_plugin);
+    const nlohmann::json direct_json =
+        nlohmann::json::parse(run_to_json(run, direct_measured, opt, &err));
+    require(err.empty(), "direct-attributed measured export error: " + err);
+    bool saw_direct_nested_plugin = false;
+    for (const auto& node_metric : direct_json.at("run").at("node_metrics")) {
+      for (const auto& nested : node_metric.value("plugins", nlohmann::json::array())) {
+        saw_direct_nested_plugin =
+            saw_direct_nested_plugin || nested.value("name", "") == "A65:direct";
+      }
+    }
+    require(saw_direct_nested_plugin,
+            "measured export should nest plugin metrics with explicit runtime_node_id");
+  }
 
   const std::filesystem::path path = tmp_path("run_export.neat.graph_run.json");
   std::filesystem::remove(path);

@@ -23,6 +23,14 @@ struct NodeLatencySummary {
   double avg_ms = 0.0;
   double min_ms = 0.0;
   double max_ms = 0.0;
+  /**
+   * True when min_ms/max_ms are exact for this summary.
+   *
+   * Run-lifetime element counters have exact min/max. Measured-window deltas can
+   * subtract samples/total exactly, but cumulative min/max cannot be subtracted
+   * without window-local counters, so measured-window deltas set this false.
+   */
+  bool min_max_available = true;
 };
 
 struct GraphElementMetrics {

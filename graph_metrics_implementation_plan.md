@@ -296,8 +296,11 @@ Preferred new fields:
         "aggregation": "run_lifetime",
         "latency_ms": {
           "samples": 1000,
-          "total": 2300.0,
-          "avg": 2.3
+          "total_ms": 2300.0,
+          "avg_ms": 2.3,
+          "min_ms": 0.0,
+          "max_ms": 0.0,
+          "min_max_available": false
         },
         "elements": [
           {
@@ -305,10 +308,11 @@ Preferred new fields:
             "name": "n2_neatprocessmla",
             "latency_ms": {
               "samples": 1000,
-              "total": 1900.0,
-              "avg": 1.9,
-              "min": 1.6,
-              "max": 2.4
+              "total_ms": 1900.0,
+              "avg_ms": 1.9,
+              "min_ms": 1.6,
+              "max_ms": 2.4,
+              "min_max_available": true
             }
           }
         ],
@@ -324,10 +328,12 @@ Preferred new fields:
             "output_slot": 0,
             "calls": 1000,
             "latency_ms": {
-              "total": 1700.0,
-              "avg": 1.7,
-              "min": 1.4,
-              "max": 2.2
+              "samples": 1000,
+              "total_ms": 1700.0,
+              "avg_ms": 1.7,
+              "min_ms": 1.4,
+              "max_ms": 2.2,
+              "min_max_available": true
             }
           }
         ]
@@ -772,7 +778,10 @@ Initial implementation status:
   `physical_input_index`, `output_slot`, and `total_ms` in addition to the old display `name`,
   calls, avg/min/max fields.
 - Measurement text output now includes phase and total latency.
-- The profiler is still process-global; robust run/graph attribution still belongs to Step 9.
+- Added a short-term single-active-`LatencyProfiler` guard when profiler support is compiled in.
+  A second live profiler now throws instead of silently intermixing process-global events.
+- The profiler event stream is still process-global; robust run/graph attribution still belongs to
+  Step 9.
 
 ### Step 7: Add measured-window diagnostic deltas
 
@@ -809,6 +818,22 @@ Alternative:
 - Reset timing counters at measurement start. This is simpler but more invasive and unsafe if other readers expect lifetime counters.
 - Prefer before/after snapshots.
 
+Initial implementation status:
+
+- `MeasureScope` now captures a run-lifetime `GraphMetricsReport` baseline at
+  `Run::start_measurement()`.
+- `MeasureScope::stop()` captures the after snapshot and computes measured-window node deltas by
+  `(pipeline_segment_id, runtime_node_id)`.
+- Element timing `samples` and `total_ms` are subtracted. Measured-window `avg_ms` is recomputed
+  from the delta.
+- Measured-window node/element `min_ms` and `max_ms` are intentionally left at zero because
+  cumulative min/max counters cannot be subtracted correctly.
+- `NodeLatencySummary` now carries `min_max_available`; measured-window deltas set it to `false`
+  so JSON/Python consumers do not mistake zero min/max values for real measurements.
+- `MeasureReport` now carries `node_metrics`, and measured JSON exports replace the lifetime
+  `node_metrics` with these `aggregation = "measured_window"` rows when available.
+- The measured export labels node latency as `latency_semantics = "sum_element_residency_delta"`.
+
 ### Step 8: Measurement-local power monitor
 
 Problem:
@@ -834,12 +859,44 @@ At `MeasureScope::stop()`:
 - Stop measurement-local monitor and use its summary.
 - Fall back to `run.power_summary()` only when no measurement-local monitor exists.
 
+Initial implementation status:
+
+- `MeasureScope` now starts a measurement-local `PowerMonitor` when `MeasureOptions::include_power`
+  is true and the built run has power options enabled.
+- For connected graph runs, the monitor options come from `RunCore::graph_options.power_monitor`.
+  For linear runs, they come from `RunCore::opt.power_monitor`.
+- `MeasureScope::stop()` stops the local monitor and reports that window's `PowerSummary`.
+  It only falls back to the run-lifetime monitor summary when no local monitor was configured.
+- Scope destruction/move cleanup stops the local monitor so abandoned scopes do not leak sampler
+  threads.
+- DevKit coverage uses an intentionally invalid custom rail to validate option propagation and JSON
+  shape without trusting DVT wattage values.
+
 ### Step 9: Robust profiler ABI attribution
 
 Short-term best effort:
 
 - Map plugin `stage_name` to `(segment_id, element_name)` only when exact and unique.
 - Treat empty, duplicate, or ambiguous stage names as unattributed.
+
+Initial implementation status:
+
+- The measured `run_to_json(..., MeasureReport, ...)` overload now performs exact/unique
+  `MeasurePluginLatency::stage_name -> node_metrics[*].element_names[*]` matching.
+- Exact unique matches are nested under `node_metrics[*].plugins` and inherit that node's
+  `pipeline_segment_id`, `runtime_node_id`, and `public_node_ids`.
+- Empty, missing, duplicate, or unmatched stage names are emitted under
+  `plugin_metrics_unattributed` with a `mapping_error`.
+- `ProfilerKernelInvocation`, `ProfilerKernelAggregate`, `MeasurePluginLatency`, JSON export,
+  schema, validator, visualizer, and Python bindings now carry stable attribution fields:
+  `run_id_hash`, `pipeline_segment_id`, `runtime_node_id`, `public_node_id`,
+  `public_node_ids`, and `gst_element_name`.
+- The measured exporter now prefers explicit `runtime_node_id` / `public_node_id` /
+  `public_node_ids` matches before falling back to `(pipeline_segment_id, element)` and then
+  exact global element-name matching.
+- This is robust in the C++/JSON surface, but current profiler C events still do not populate the
+  new fields. The actual C profiler ABI/ring/emitters must be migrated together before these
+  fields appear in live profiler samples.
 
 Robust required ABI migration:
 
@@ -862,6 +919,14 @@ Synchronize header copies:
 - `deps/headers/neat/profiler/profiler_events.h`
 - `deps/headers/usr/include/neat/profiler/profiler_events.h`
 - any internals/core profiler header copy
+
+ABI caution:
+
+- Do not append fields to `SimaNeatProfilerEvent` in headers alone while the shipped
+  `libsimaaineatprofiler.so` is still built against the old struct size/layout.
+- The next ABI step should add an explicit event version/size and update the ring buffer library,
+  scoped timer helpers, and every emitter in one rebuild.
+- Until then, live profiler events retain best-effort stage/element-name attribution.
 
 ### Step 10: JSON export overloads
 
@@ -914,22 +979,24 @@ Also extend `RunAutoExportOptions` with node/plugin flags where applicable.
 Initial implementation status:
 
 - `run_to_json(...)` / `save_run_json(...)` now include `run.graph_metrics`,
-  `run.node_metrics`, and an empty `run.plugin_metrics_unattributed` array.
+  `run.node_metrics`, and (when plugin metrics are enabled) `run.plugin_metrics_unattributed`.
 - `run.graph_metrics` is graph-level only: measurement scope, throughput counting semantics,
   elapsed seconds, output counters, throughput FPS, counters, and optional canonical
   `PowerSummary` JSON.
 - `run.node_metrics` carries only latency attribution: lowered/public IDs, segment, kind/label,
   element names, node `latency_ms`, and per-element `latency_ms`.
 - Existing compatibility fields (`run.throughput_fps`, compact `run.power`, `run.stats`) remain.
-- Plugin metrics are intentionally schema/export placeholders until profiler attribution work in
-  Steps 6 and 9 is implemented.
 - Added overloads that accept a `MeasureReport`:
   - `run_to_json(const Run&, const MeasureReport&, ...)`
   - `save_run_json(const Run&, const MeasureReport&, ...)`
 - The measured overload marks `run.graph_metrics.measurement_scope = "measured_window"` and exports
-  structured measurement-window plugin rows under `plugin_metrics_unattributed` with the preserved
-  backend/phase/kernel/stage/slot/total fields. They remain unattributed until Step 9 adds reliable
-  node IDs.
+  structured measurement-window plugin rows with preserved backend/phase/kernel/stage/slot/total
+  fields and stable attribution fields when provided.
+- Measured plugin rows are nested under `node_metrics[*].plugins` when explicit IDs or exact
+  element-name matching identify one node; otherwise they remain in `plugin_metrics_unattributed`.
+- `RunExportOptions` and `RunAutoExportOptions` now expose `include_node_metrics`,
+  `include_plugin_metrics`, and `include_empty_node_metrics`, and auto-export propagates these
+  flags.
 
 ### Step 11: Schema and validator
 
@@ -1007,6 +1074,8 @@ Initial implementation status:
   counting semantics, and optional power.
 - Graph nodes with attributable metrics are highlighted and annotated with latency text.
 - Added a node-metrics detail table.
+- Added attributed and unattributed plugin/kernel latency tables, including warnings for
+  unattributed plugin rows and mapping reasons.
 - Extended the visualizer test to cover metric rendering while keeping the output self-contained.
 
 ### Step 13: Python bindings and docs alignment
@@ -1025,6 +1094,23 @@ Current gaps to fix:
 - Bind new `RunExportOptions` flags.
 
 Docs currently mention Python `enable_board_power()`/`run.metrics()` shape; if bindings lag, update docs or bindings so customer docs are true.
+
+Initial implementation status:
+
+- Python now binds power monitor profile/options/summary structs and helpers:
+  `enable_board_power()`, `enable_modalix_som_power()`, `enable_modalix_dvt_power()`,
+  `disable_power_monitor()`, `board_power_monitor_options()`, SOM/DVT helpers, and
+  `power_monitor_profile_name()`.
+- Python now binds runtime metrics structs/options plus `Run.metrics()`,
+  `Run.metrics_report()`, `Run.power_summary()`, `Run.measurement_summary()`, and
+  `build_graph_metrics_report_run_lifetime()`.
+- Python now binds `MeasureOptions`, `MeasureScope`, `MeasureReport`, plugin latency rows, and
+  measured JSON export overloads.
+- Python now binds `RunExportOptions` / `RunAutoExportOptions` node/plugin flags,
+  `RunReportOptions.include_power`, and `RunDiagSnapshot.element_pad_timings`.
+- Added diagnostics docs explaining the customer graph performance artifact, graph-level
+  throughput/power, node/plugin latency-only scope, measured-window min/max semantics, and DVT
+  power caveat.
 
 ---
 
@@ -1109,6 +1195,12 @@ Validation performed for the initial implementation:
 - Ran host-side schema/visualizer checks:
   - `python3 -m json.tool schemas/graph_run_v1.schema.json`
   - `python3 -m pytest tests/perf/tools/test_graph_run_schema.py tests/perf/tools/test_graph_run_visualizer.py`
+
+Latest implementation note:
+
+- The final C++/JSON/Python/visualizer additions after this plan update have intentionally not
+  been compiled or run yet because the current implementation request explicitly said not to
+  compile or run until implementation is complete.
 
 If `dk` appears unavailable, check `/usr/local/bin/dk` and source `/root/.devkit-sync.rc` before concluding it is missing.
 

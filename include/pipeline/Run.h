@@ -23,6 +23,7 @@
 #pragma once
 
 #include "nodes/io/Input.h"
+#include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/RuntimeMetrics.h"
 #include "pipeline/GraphOptions.h"
@@ -140,6 +141,9 @@ struct RunAutoExportOptions {
   std::string label; ///< Optional label; empty uses the exporter default.
   bool include_metrics = true;
   bool include_power = true;
+  bool include_node_metrics = true;       ///< Include node-level latency rows.
+  bool include_plugin_metrics = true;     ///< Include plugin/kernel latency rows when available.
+  bool include_empty_node_metrics = true; ///< Keep attributed node rows even before samples arrive.
   int indent = 2;
 };
 
@@ -457,6 +461,12 @@ struct MeasurePluginLatency {
   std::string stage_name;
   std::int32_t physical_input_index = -1;
   std::int32_t output_slot = -1;
+  std::uint64_t run_id_hash = 0;         ///< Stable run-id hash, 0 if profiler ABI omitted it.
+  std::int32_t pipeline_segment_id = -1; ///< Graph pipeline segment, -1 if unavailable.
+  std::int32_t runtime_node_id = -1;     ///< Lowered runtime node id, -1 if unavailable.
+  std::int32_t public_node_id = -1;      ///< Optional public graph node id, -1 if unavailable.
+  std::vector<std::string> public_node_ids; ///< Public graph node ids, e.g. "p2".
+  std::string gst_element_name;          ///< Owning GStreamer element name, if available.
   std::uint64_t calls = 0;
   double total_ms = 0.0;
   double avg_ms = 0.0;
@@ -479,6 +489,7 @@ struct MeasureReport {
   MeasureLatencyStats frame_gap;
   bool latency_samples_collected = false;
   std::vector<MeasurePluginLatency> plugin_latency;
+  std::vector<GraphNodeMetrics> node_metrics;
 
   std::uint64_t inputs_pushed = 0;
   std::uint64_t outputs_pulled = 0;

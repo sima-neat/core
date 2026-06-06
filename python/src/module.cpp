@@ -42,6 +42,7 @@
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/GraphMetrics.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/RunExport.h"
@@ -72,14 +73,29 @@ using simaai::neat::ByteStreamSpec;
 using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
+using simaai::neat::GraphElementMetrics;
+using simaai::neat::GraphMetricsReport;
+using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
 using simaai::neat::GraphReport;
 using simaai::neat::GraphRunAutoExportOptions;
 using simaai::neat::GraphRunExportOptions;
 using simaai::neat::ImageSpec;
 using simaai::neat::MapMode;
+using simaai::neat::MeasureLatencyStats;
+using simaai::neat::MeasureOptions;
+using simaai::neat::MeasurePluginLatency;
+using simaai::neat::MeasureReport;
+using simaai::neat::MeasureScope;
 using simaai::neat::NeatError;
+using simaai::neat::NodeLatencySummary;
 using simaai::neat::OutputMemory;
+using simaai::neat::PowerFieldSummary;
+using simaai::neat::PowerMonitorOptions;
+using simaai::neat::PowerMonitorProfile;
+using simaai::neat::PowerRailConfig;
+using simaai::neat::PowerRailSummary;
+using simaai::neat::PowerSummary;
 using simaai::neat::PullError;
 using simaai::neat::PullStatus;
 using simaai::neat::Run;
@@ -87,6 +103,7 @@ using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
 using simaai::neat::RunDiagSnapshot;
 using simaai::neat::RunElementFlowStats;
+using simaai::neat::RunElementPadTimingStats;
 using simaai::neat::RunElementTimingStats;
 using simaai::neat::RunExportOptions;
 using simaai::neat::RunMode;
@@ -95,6 +112,14 @@ using simaai::neat::RunPreset;
 using simaai::neat::RunReportOptions;
 using simaai::neat::RunStageStats;
 using simaai::neat::RunStats;
+using simaai::neat::RunMeasurementSummary;
+using simaai::neat::RuntimeCounters;
+using simaai::neat::RuntimeLatencyMetrics;
+using simaai::neat::RuntimeMetricGroup;
+using simaai::neat::RuntimeMetricValue;
+using simaai::neat::RuntimeMetrics;
+using simaai::neat::RuntimeMetricsFormat;
+using simaai::neat::RuntimeMetricsOptions;
 using simaai::neat::Sample;
 using simaai::neat::SampleKind;
 using simaai::neat::Tensor;
@@ -1211,6 +1236,17 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<RunMode>(m, "RunMode").value("Async", RunMode::Async).value("Sync", RunMode::Sync);
 
+  nb::enum_<RuntimeMetricsFormat>(m, "RuntimeMetricsFormat")
+      .value("Text", RuntimeMetricsFormat::Text)
+      .value("Json", RuntimeMetricsFormat::Json)
+      .value("CompactText", RuntimeMetricsFormat::CompactText);
+
+  nb::enum_<PowerMonitorProfile>(m, "PowerMonitorProfile")
+      .value("Auto", PowerMonitorProfile::Auto)
+      .value("ModalixSom", PowerMonitorProfile::ModalixSom)
+      .value("ModalixDvt", PowerMonitorProfile::ModalixDvt)
+      .value("Custom", PowerMonitorProfile::Custom);
+
   nb::enum_<simaai::neat::OverflowPolicy>(m, "OverflowPolicy")
       .value("Block", simaai::neat::OverflowPolicy::Block)
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
@@ -1864,12 +1900,58 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("copy_input", &RunAdvancedOptions::copy_input)
       .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes);
 
+  nb::class_<PowerRailConfig>(m, "PowerRailConfig")
+      .def(nb::init<>())
+      .def_rw("name", &PowerRailConfig::name)
+      .def_rw("i2c_bus", &PowerRailConfig::i2c_bus)
+      .def_rw("i2c_addr", &PowerRailConfig::i2c_addr)
+      .def_rw("page", &PowerRailConfig::page)
+      .def_rw("vout_exponent", &PowerRailConfig::vout_exponent)
+      .def_rw("iout_exponent", &PowerRailConfig::iout_exponent)
+      .def_rw("pout_exponent", &PowerRailConfig::pout_exponent);
+
+  nb::class_<PowerMonitorOptions>(m, "PowerMonitorOptions")
+      .def(nb::init<>())
+      .def_rw("enabled", &PowerMonitorOptions::enabled)
+      .def_rw("sample_interval_ms", &PowerMonitorOptions::sample_interval_ms)
+      .def_rw("profile", &PowerMonitorOptions::profile)
+      .def_rw("rails", &PowerMonitorOptions::rails);
+
+  nb::class_<PowerFieldSummary>(m, "PowerFieldSummary")
+      .def(nb::init<>())
+      .def_rw("samples", &PowerFieldSummary::samples)
+      .def_rw("errors", &PowerFieldSummary::errors)
+      .def_rw("avg", &PowerFieldSummary::avg)
+      .def_rw("min", &PowerFieldSummary::min)
+      .def_rw("max", &PowerFieldSummary::max);
+
+  nb::class_<PowerRailSummary>(m, "PowerRailSummary")
+      .def(nb::init<>())
+      .def_rw("config", &PowerRailSummary::config)
+      .def_rw("voltage_v", &PowerRailSummary::voltage_v)
+      .def_rw("current_a", &PowerRailSummary::current_a)
+      .def_rw("power_w", &PowerRailSummary::power_w);
+
+  nb::class_<PowerSummary>(m, "PowerSummary")
+      .def(nb::init<>())
+      .def_rw("enabled", &PowerSummary::enabled)
+      .def_rw("samples", &PowerSummary::samples)
+      .def_rw("duration_seconds", &PowerSummary::duration_seconds)
+      .def_rw("total_avg_watts", &PowerSummary::total_avg_watts)
+      .def_rw("total_min_watts", &PowerSummary::total_min_watts)
+      .def_rw("total_max_watts", &PowerSummary::total_max_watts)
+      .def_rw("energy_joules", &PowerSummary::energy_joules)
+      .def_rw("rails", &PowerSummary::rails);
+
   nb::class_<RunAutoExportOptions> run_auto_export_options(m, "RunAutoExportOptions");
   run_auto_export_options.def(nb::init<>())
       .def_rw("path", &RunAutoExportOptions::path)
       .def_rw("label", &RunAutoExportOptions::label)
       .def_rw("include_metrics", &RunAutoExportOptions::include_metrics)
       .def_rw("include_power", &RunAutoExportOptions::include_power)
+      .def_rw("include_node_metrics", &RunAutoExportOptions::include_node_metrics)
+      .def_rw("include_plugin_metrics", &RunAutoExportOptions::include_plugin_metrics)
+      .def_rw("include_empty_node_metrics", &RunAutoExportOptions::include_empty_node_metrics)
       .def_rw("indent", &RunAutoExportOptions::indent);
   m.attr("GraphRunAutoExportOptions") = run_auto_export_options;
 
@@ -1878,6 +1960,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("label", &RunExportOptions::label)
       .def_rw("include_metrics", &RunExportOptions::include_metrics)
       .def_rw("include_power", &RunExportOptions::include_power)
+      .def_rw("include_node_metrics", &RunExportOptions::include_node_metrics)
+      .def_rw("include_plugin_metrics", &RunExportOptions::include_plugin_metrics)
+      .def_rw("include_empty_node_metrics", &RunExportOptions::include_empty_node_metrics)
       .def_rw("indent", &RunExportOptions::indent)
       .def_rw("metadata", &RunExportOptions::metadata);
   m.attr("GraphRunExportOptions") = run_export_options;
@@ -1902,11 +1987,34 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("overflow_policy", &RunOptions::overflow_policy)
       .def_rw("output_memory", &RunOptions::output_memory)
       .def_rw("enable_metrics", &RunOptions::enable_metrics)
+      .def_rw("input_timeout_ms", &RunOptions::input_timeout_ms)
       .def_rw("startup_preflight", &RunOptions::startup_preflight)
       .def_rw("advanced", &RunOptions::advanced)
+      .def_rw("power_monitor", &RunOptions::power_monitor)
       .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
-      .def_rw("on_input_drop", &RunOptions::on_input_drop);
+      .def_rw("on_input_drop", &RunOptions::on_input_drop)
+      .def("enable_board_power", &RunOptions::enable_board_power,
+           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def("enable_modalix_som_power", &RunOptions::enable_modalix_som_power,
+           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def("enable_modalix_dvt_power", &RunOptions::enable_modalix_dvt_power,
+           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def("disable_power_monitor", &RunOptions::disable_power_monitor,
+           nb::rv_policy::reference_internal);
+
+  m.def(
+      "board_power_monitor_options",
+      [](int sample_interval_ms, PowerMonitorProfile profile) {
+        return simaai::neat::board_power_monitor_options(sample_interval_ms, profile);
+      },
+      "sample_interval_ms"_a = 100, "profile"_a = PowerMonitorProfile::Auto);
+  m.def("modalix_som_power_monitor_options", &simaai::neat::modalix_som_power_monitor_options,
+        "sample_interval_ms"_a = 100);
+  m.def("modalix_dvt_power_monitor_options", &simaai::neat::modalix_dvt_power_monitor_options,
+        "sample_interval_ms"_a = 100);
+  m.def("power_monitor_profile_name", &simaai::neat::power_monitor_profile_name,
+        "profile"_a);
 
   nb::class_<simaai::neat::InputStreamStats>(m, "InputStreamStats")
       .def(nb::init<>())
@@ -1938,6 +2046,162 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("min_latency_ms", &RunStats::min_latency_ms)
       .def_rw("max_latency_ms", &RunStats::max_latency_ms);
 
+  nb::class_<RuntimeMetricsOptions>(m, "RuntimeMetricsOptions")
+      .def(nb::init<>())
+      .def_rw("include_power", &RuntimeMetricsOptions::include_power)
+      .def_rw("include_diagnostics", &RuntimeMetricsOptions::include_diagnostics)
+      .def_rw("include_pipeline", &RuntimeMetricsOptions::include_pipeline)
+      .def_rw("include_percentiles", &RuntimeMetricsOptions::include_percentiles);
+
+  nb::class_<RuntimeLatencyMetrics>(m, "RuntimeLatencyMetrics")
+      .def(nb::init<>())
+      .def_rw("avg_ms", &RuntimeLatencyMetrics::avg_ms)
+      .def_rw("min_ms", &RuntimeLatencyMetrics::min_ms)
+      .def_rw("max_ms", &RuntimeLatencyMetrics::max_ms)
+      .def_rw("p50_ms", &RuntimeLatencyMetrics::p50_ms)
+      .def_rw("p95_ms", &RuntimeLatencyMetrics::p95_ms)
+      .def_rw("has_percentiles", &RuntimeLatencyMetrics::has_percentiles);
+
+  nb::class_<RuntimeCounters>(m, "RuntimeCounters")
+      .def(nb::init<>())
+      .def_rw("inputs_enqueued", &RuntimeCounters::inputs_enqueued)
+      .def_rw("inputs_dropped", &RuntimeCounters::inputs_dropped)
+      .def_rw("inputs_pushed", &RuntimeCounters::inputs_pushed)
+      .def_rw("outputs_ready", &RuntimeCounters::outputs_ready)
+      .def_rw("outputs_pulled", &RuntimeCounters::outputs_pulled)
+      .def_rw("outputs_dropped", &RuntimeCounters::outputs_dropped);
+
+  nb::class_<RuntimeMetricValue>(m, "RuntimeMetricValue")
+      .def(nb::init<>())
+      .def_rw("name", &RuntimeMetricValue::name)
+      .def_rw("value", &RuntimeMetricValue::value)
+      .def_rw("unit", &RuntimeMetricValue::unit);
+
+  nb::class_<RuntimeMetricGroup>(m, "RuntimeMetricGroup")
+      .def(nb::init<>())
+      .def_rw("name", &RuntimeMetricGroup::name)
+      .def_rw("values", &RuntimeMetricGroup::values);
+
+  nb::class_<RuntimeMetrics>(m, "RuntimeMetrics")
+      .def(nb::init<>())
+      .def_rw("source_kind", &RuntimeMetrics::source_kind)
+      .def_rw("source_name", &RuntimeMetrics::source_name)
+      .def_rw("elapsed_seconds", &RuntimeMetrics::elapsed_seconds)
+      .def_rw("throughput_fps", &RuntimeMetrics::throughput_fps)
+      .def_rw("latency", &RuntimeMetrics::latency)
+      .def_rw("counters", &RuntimeMetrics::counters)
+      .def_rw("power", &RuntimeMetrics::power)
+      .def_rw("metadata", &RuntimeMetrics::metadata)
+      .def_rw("groups", &RuntimeMetrics::groups);
+
+  nb::class_<RunMeasurementSummary>(m, "RunMeasurementSummary")
+      .def(nb::init<>())
+      .def_rw("stats", &RunMeasurementSummary::stats)
+      .def_rw("input_stats", &RunMeasurementSummary::input_stats)
+      .def_rw("elapsed_seconds", &RunMeasurementSummary::elapsed_seconds)
+      .def_rw("throughput_fps", &RunMeasurementSummary::throughput_fps)
+      .def_rw("power", &RunMeasurementSummary::power);
+
+  nb::class_<NodeLatencySummary>(m, "NodeLatencySummary")
+      .def(nb::init<>())
+      .def_rw("samples", &NodeLatencySummary::samples)
+      .def_rw("total_ms", &NodeLatencySummary::total_ms)
+      .def_rw("avg_ms", &NodeLatencySummary::avg_ms)
+      .def_rw("min_ms", &NodeLatencySummary::min_ms)
+      .def_rw("max_ms", &NodeLatencySummary::max_ms)
+      .def_rw("min_max_available", &NodeLatencySummary::min_max_available);
+
+  nb::class_<GraphElementMetrics>(m, "GraphElementMetrics")
+      .def(nb::init<>())
+      .def_rw("name", &GraphElementMetrics::name)
+      .def_rw("latency", &GraphElementMetrics::latency);
+
+  nb::class_<GraphNodeMetrics>(m, "GraphNodeMetrics")
+      .def(nb::init<>())
+      .def_rw("pipeline_segment_id", &GraphNodeMetrics::pipeline_segment_id)
+      .def_rw("runtime_node_id", &GraphNodeMetrics::runtime_node_id)
+      .def_rw("node_id", &GraphNodeMetrics::node_id)
+      .def_rw("public_node_ids", &GraphNodeMetrics::public_node_ids)
+      .def_rw("kind", &GraphNodeMetrics::kind)
+      .def_rw("label", &GraphNodeMetrics::label)
+      .def_rw("element_names", &GraphNodeMetrics::element_names)
+      .def_rw("elements", &GraphNodeMetrics::elements)
+      .def_rw("latency", &GraphNodeMetrics::latency);
+
+  nb::class_<GraphMetricsReport>(m, "GraphMetricsReport")
+      .def(nb::init<>())
+      .def_rw("graph_metrics", &GraphMetricsReport::graph_metrics)
+      .def_rw("aggregation", &GraphMetricsReport::aggregation)
+      .def_rw("latency_semantics", &GraphMetricsReport::latency_semantics)
+      .def_rw("throughput_counting", &GraphMetricsReport::throughput_counting)
+      .def_rw("node_metrics", &GraphMetricsReport::node_metrics);
+
+  nb::class_<MeasureOptions>(m, "MeasureOptions")
+      .def(nb::init<>())
+      .def_rw("duration_ms", &MeasureOptions::duration_ms)
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency)
+      .def_rw("include_power", &MeasureOptions::include_power)
+      .def_rw("title", &MeasureOptions::title)
+      .def_rw("model", &MeasureOptions::model)
+      .def_rw("input", &MeasureOptions::input)
+      .def_rw("placement", &MeasureOptions::placement)
+      .def_rw("logical_batch_size", &MeasureOptions::logical_batch_size);
+
+  nb::class_<MeasureLatencyStats>(m, "MeasureLatencyStats")
+      .def(nb::init<>())
+      .def_rw("count", &MeasureLatencyStats::count)
+      .def_rw("avg_ms", &MeasureLatencyStats::avg_ms)
+      .def_rw("p50_ms", &MeasureLatencyStats::p50_ms)
+      .def_rw("p90_ms", &MeasureLatencyStats::p90_ms)
+      .def_rw("p95_ms", &MeasureLatencyStats::p95_ms)
+      .def_rw("p99_ms", &MeasureLatencyStats::p99_ms)
+      .def_rw("max_ms", &MeasureLatencyStats::max_ms);
+
+  nb::class_<MeasurePluginLatency>(m, "MeasurePluginLatency")
+      .def(nb::init<>())
+      .def_rw("name", &MeasurePluginLatency::name)
+      .def_rw("backend", &MeasurePluginLatency::backend)
+      .def_rw("phase", &MeasurePluginLatency::phase)
+      .def_rw("kernel_name", &MeasurePluginLatency::kernel_name)
+      .def_rw("stage_name", &MeasurePluginLatency::stage_name)
+      .def_rw("physical_input_index", &MeasurePluginLatency::physical_input_index)
+      .def_rw("output_slot", &MeasurePluginLatency::output_slot)
+      .def_rw("run_id_hash", &MeasurePluginLatency::run_id_hash)
+      .def_rw("pipeline_segment_id", &MeasurePluginLatency::pipeline_segment_id)
+      .def_rw("runtime_node_id", &MeasurePluginLatency::runtime_node_id)
+      .def_rw("public_node_id", &MeasurePluginLatency::public_node_id)
+      .def_rw("public_node_ids", &MeasurePluginLatency::public_node_ids)
+      .def_rw("gst_element_name", &MeasurePluginLatency::gst_element_name)
+      .def_rw("calls", &MeasurePluginLatency::calls)
+      .def_rw("total_ms", &MeasurePluginLatency::total_ms)
+      .def_rw("avg_ms", &MeasurePluginLatency::avg_ms)
+      .def_rw("min_ms", &MeasurePluginLatency::min_ms)
+      .def_rw("max_ms", &MeasurePluginLatency::max_ms);
+
+  nb::class_<MeasureReport>(m, "MeasureReport")
+      .def(nb::init<>())
+      .def_rw("options", &MeasureReport::options)
+      .def_rw("warmup_iterations", &MeasureReport::warmup_iterations)
+      .def_rw("outputs", &MeasureReport::outputs)
+      .def_rw("elapsed_s", &MeasureReport::elapsed_s)
+      .def_rw("throughput_batches_per_s", &MeasureReport::throughput_batches_per_s)
+      .def_rw("throughput_inferences_per_s", &MeasureReport::throughput_inferences_per_s)
+      .def_rw("end_to_end", &MeasureReport::end_to_end)
+      .def_rw("frame_gap", &MeasureReport::frame_gap)
+      .def_rw("latency_samples_collected", &MeasureReport::latency_samples_collected)
+      .def_rw("plugin_latency", &MeasureReport::plugin_latency)
+      .def_rw("node_metrics", &MeasureReport::node_metrics)
+      .def_rw("inputs_pushed", &MeasureReport::inputs_pushed)
+      .def_rw("outputs_pulled", &MeasureReport::outputs_pulled)
+      .def_rw("inputs_dropped", &MeasureReport::inputs_dropped)
+      .def_rw("outputs_dropped", &MeasureReport::outputs_dropped)
+      .def_rw("final_run_stats", &MeasureReport::final_run_stats)
+      .def_rw("power", &MeasureReport::power)
+      .def("text", &MeasureReport::to_text)
+      .def("to_text", &MeasureReport::to_text);
+
   nb::class_<RunStageStats>(m, "RunStageStats")
       .def(nb::init<>())
       .def_rw("stage_name", &RunStageStats::stage_name)
@@ -1964,12 +2228,26 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("out_bytes", &RunElementFlowStats::out_bytes)
       .def_rw("caps_changes", &RunElementFlowStats::caps_changes);
 
+  nb::class_<RunElementPadTimingStats>(m, "RunElementPadTimingStats")
+      .def(nb::init<>())
+      .def_rw("element_name", &RunElementPadTimingStats::element_name)
+      .def_rw("pad_name", &RunElementPadTimingStats::pad_name)
+      .def_rw("is_sink", &RunElementPadTimingStats::is_sink)
+      .def_rw("samples", &RunElementPadTimingStats::samples)
+      .def_rw("inter_arrival_total_us", &RunElementPadTimingStats::inter_arrival_total_us)
+      .def_rw("inter_arrival_max_us", &RunElementPadTimingStats::inter_arrival_max_us)
+      .def_rw("queue_wait_samples", &RunElementPadTimingStats::queue_wait_samples)
+      .def_rw("queue_wait_total_us", &RunElementPadTimingStats::queue_wait_total_us)
+      .def_rw("queue_wait_max_us", &RunElementPadTimingStats::queue_wait_max_us)
+      .def_rw("bytes", &RunElementPadTimingStats::bytes);
+
   nb::class_<RunDiagSnapshot>(m, "RunDiagSnapshot")
       .def(nb::init<>())
       .def_rw("stages", &RunDiagSnapshot::stages)
       .def_rw("boundaries", &RunDiagSnapshot::boundaries)
       .def_rw("element_timings", &RunDiagSnapshot::element_timings)
-      .def_rw("element_flows", &RunDiagSnapshot::element_flows);
+      .def_rw("element_flows", &RunDiagSnapshot::element_flows)
+      .def_rw("element_pad_timings", &RunDiagSnapshot::element_pad_timings);
 
   nb::class_<RunReportOptions>(m, "RunReportOptions")
       .def(nb::init<>())
@@ -1984,7 +2262,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("include_num_buffers", &RunReportOptions::include_num_buffers)
       .def_rw("include_run_stats", &RunReportOptions::include_run_stats)
       .def_rw("include_input_stats", &RunReportOptions::include_input_stats)
+      .def_rw("include_power", &RunReportOptions::include_power)
       .def_rw("include_system_info", &RunReportOptions::include_system_info);
+
+  nb::class_<MeasureScope>(m, "MeasureScope")
+      .def("stop", &MeasureScope::stop)
+      .def("stopped", &MeasureScope::stopped);
 
   nb::class_<Run>(m, "Run")
       .def(nb::init<>())
@@ -2103,6 +2386,15 @@ NB_MODULE(_pyneat_core, m) {
       .def("stats", &Run::stats)
       .def("input_stats", &Run::input_stats)
       .def("diag_snapshot", &Run::diag_snapshot)
+      .def("power_summary", &Run::power_summary)
+      .def("measurement_summary", &Run::measurement_summary)
+      .def("metrics", &Run::metrics, "options"_a = RuntimeMetricsOptions{})
+      .def(
+          "metrics_report",
+          [](const Run& run, const RuntimeMetricsOptions& options,
+             RuntimeMetricsFormat format) { return run.metrics_report(options, format); },
+          "options"_a = RuntimeMetricsOptions{}, "format"_a = RuntimeMetricsFormat::Text)
+      .def("start_measurement", &Run::start_measurement, "options"_a = MeasureOptions{})
       .def("report", &Run::report, "options"_a = RunReportOptions{})
       .def("last_error", &Run::last_error)
       .def("diagnostics_summary", &Run::diagnostics_summary)
@@ -2118,6 +2410,17 @@ NB_MODULE(_pyneat_core, m) {
           },
           "options"_a = RunExportOptions{})
       .def(
+          "json",
+          [](const Run& run, const MeasureReport& report, const RunExportOptions& options) {
+            std::string err;
+            const std::string body = simaai::neat::run_to_json(run, report, options, &err);
+            if (body.empty()) {
+              throw std::runtime_error(err.empty() ? "run_to_json failed" : err);
+            }
+            return body;
+          },
+          "report"_a, "options"_a = RunExportOptions{})
+      .def(
           "save_json",
           [](const Run& run, const std::string& path, const RunExportOptions& options) {
             std::string err;
@@ -2126,6 +2429,16 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "path"_a, "options"_a = RunExportOptions{})
+      .def(
+          "save_json",
+          [](const Run& run, const MeasureReport& report, const std::string& path,
+             const RunExportOptions& options) {
+            std::string err;
+            if (!simaai::neat::save_run_json(run, report, path, options, &err)) {
+              throw std::runtime_error(err.empty() ? "save_run_json failed" : err);
+            }
+          },
+          "report"_a, "path"_a, "options"_a = RunExportOptions{})
       .def(
           "graph_run_json",
           [](const Run& run, const GraphRunExportOptions& options) {
@@ -2138,6 +2451,17 @@ NB_MODULE(_pyneat_core, m) {
           },
           "options"_a = GraphRunExportOptions{})
       .def(
+          "graph_run_json",
+          [](const Run& run, const MeasureReport& report, const GraphRunExportOptions& options) {
+            std::string err;
+            const std::string body = simaai::neat::graph_run_to_json(run, report, options, &err);
+            if (body.empty()) {
+              throw std::runtime_error(err.empty() ? "graph_run_to_json failed" : err);
+            }
+            return body;
+          },
+          "report"_a, "options"_a = GraphRunExportOptions{})
+      .def(
           "save_graph_run_json",
           [](const Run& run, const std::string& path, const GraphRunExportOptions& options) {
             std::string err;
@@ -2146,6 +2470,16 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "path"_a, "options"_a = GraphRunExportOptions{})
+      .def(
+          "save_graph_run_json",
+          [](const Run& run, const MeasureReport& report, const std::string& path,
+             const GraphRunExportOptions& options) {
+            std::string err;
+            if (!simaai::neat::save_graph_run_json(run, report, path, options, &err)) {
+              throw std::runtime_error(err.empty() ? "save_graph_run_json failed" : err);
+            }
+          },
+          "report"_a, "path"_a, "options"_a = GraphRunExportOptions{})
       .def("stop", &Run::stop)
       .def("close", &Run::close);
 
@@ -2161,6 +2495,22 @@ NB_MODULE(_pyneat_core, m) {
       },
       "run"_a, "options"_a = RunExportOptions{});
 
+  m.def("build_graph_metrics_report_run_lifetime",
+        &simaai::neat::build_graph_metrics_report_run_lifetime,
+        "run"_a, "options"_a = RuntimeMetricsOptions{});
+
+  m.def(
+      "run_to_json",
+      [](const Run& run, const MeasureReport& report, const RunExportOptions& options) {
+        std::string err;
+        const std::string body = simaai::neat::run_to_json(run, report, options, &err);
+        if (body.empty()) {
+          throw std::runtime_error(err.empty() ? "run_to_json failed" : err);
+        }
+        return body;
+      },
+      "run"_a, "report"_a, "options"_a = RunExportOptions{});
+
   m.def(
       "save_run_json",
       [](const Run& run, const std::string& path, const RunExportOptions& options) {
@@ -2170,6 +2520,17 @@ NB_MODULE(_pyneat_core, m) {
         }
       },
       "run"_a, "path"_a, "options"_a = RunExportOptions{});
+
+  m.def(
+      "save_run_json",
+      [](const Run& run, const MeasureReport& report, const std::string& path,
+         const RunExportOptions& options) {
+        std::string err;
+        if (!simaai::neat::save_run_json(run, report, path, options, &err)) {
+          throw std::runtime_error(err.empty() ? "save_run_json failed" : err);
+        }
+      },
+      "run"_a, "report"_a, "path"_a, "options"_a = RunExportOptions{});
 
   m.def(
       "graph_run_to_json",
@@ -2184,6 +2545,18 @@ NB_MODULE(_pyneat_core, m) {
       "run"_a, "options"_a = GraphRunExportOptions{});
 
   m.def(
+      "graph_run_to_json",
+      [](const Run& run, const MeasureReport& report, const GraphRunExportOptions& options) {
+        std::string err;
+        const std::string body = simaai::neat::graph_run_to_json(run, report, options, &err);
+        if (body.empty()) {
+          throw std::runtime_error(err.empty() ? "graph_run_to_json failed" : err);
+        }
+        return body;
+      },
+      "run"_a, "report"_a, "options"_a = GraphRunExportOptions{});
+
+  m.def(
       "save_graph_run_json",
       [](const Run& run, const std::string& path, const GraphRunExportOptions& options) {
         std::string err;
@@ -2192,6 +2565,17 @@ NB_MODULE(_pyneat_core, m) {
         }
       },
       "run"_a, "path"_a, "options"_a = GraphRunExportOptions{});
+
+  m.def(
+      "save_graph_run_json",
+      [](const Run& run, const MeasureReport& report, const std::string& path,
+         const GraphRunExportOptions& options) {
+        std::string err;
+        if (!simaai::neat::save_graph_run_json(run, report, path, options, &err)) {
+          throw std::runtime_error(err.empty() ? "save_graph_run_json failed" : err);
+        }
+      },
+      "run"_a, "report"_a, "path"_a, "options"_a = GraphRunExportOptions{});
 
   nb::class_<simaai::neat::RtspServerHandle>(m, "RtspServerHandle")
       .def(nb::init<>())

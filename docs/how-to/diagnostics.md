@@ -76,6 +76,36 @@ Recommended support bundle:
 - first 3-5 terminal bus errors (`GraphReport.bus`)
 - environment overrides used in run/validate
 
+## Customer graph performance artifact
+
+For throughput/latency/power reporting, prefer the graph-run JSON export:
+
+```cpp
+RunOptions opt;
+opt.enable_metrics = true;       // enables node/element latency probes
+opt.enable_board_power();        // graph-level power when supported by the board/SOM
+Run run = graph.build(opt);
+
+// run your normal push/pull loop, then:
+save_run_json(run, "run.graph_run.json");
+```
+
+The export keeps scopes explicit:
+
+- `run.graph_metrics.throughput_fps` and `run.graph_metrics.power` are graph-level headlines.
+- `run.node_metrics[]` contains node/plugin latency only; node/plugin power is intentionally absent.
+- `latency_semantics` and `aggregation` tell you whether values are run-lifetime or measured-window deltas.
+- `plugin_metrics_unattributed[]` preserves kernel/plugin rows that could not be mapped to exactly one node.
+
+For a measured window, use `Run::start_measurement()` and pass the returned `MeasureReport` to
+`run_to_json(run, report, ...)` / `save_run_json(run, report, ...)`. Measured-window node
+`min_ms`/`max_ms` are marked unavailable because cumulative min/max counters cannot be subtracted
+exactly without window-local counters.
+
+Power note: the current DVT board can validate option plumbing and JSON shape, but its wattage
+readings are not treated as numerically reliable. SOM hardware is the intended platform for
+power-number validation.
+
 ## Common failures → fixes
 
 | Symptom | Likely cause | Fix |

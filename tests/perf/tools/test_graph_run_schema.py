@@ -169,6 +169,7 @@ def valid_payload() -> dict[str, object]:
                         "avg_ms": 0.2,
                         "min_ms": 0.2,
                         "max_ms": 0.2,
+                        "min_max_available": True,
                     },
                     "elements": [
                         {
@@ -179,13 +180,65 @@ def valid_payload() -> dict[str, object]:
                                 "avg_ms": 0.2,
                                 "min_ms": 0.2,
                                 "max_ms": 0.2,
+                                "min_max_available": True,
                             },
                         }
                     ],
-                    "plugins": [],
+                    "plugins": [
+                        {
+                            "name": "A65:n0_identity",
+                            "backend": "A65",
+                            "phase": "Run",
+                            "kernel_name": "identity",
+                            "stage_name": "n0_identity",
+                            "gst_element_name": "n0_identity",
+                            "run_id_hash": None,
+                            "pipeline_segment_id": 0,
+                            "runtime_node_id": 0,
+                            "public_node_id": None,
+                            "public_node_ids": ["p0", "p1"],
+                            "physical_input_index": -1,
+                            "output_slot": -1,
+                            "calls": 1,
+                            "latency_ms": {
+                                "samples": 1,
+                                "total_ms": 0.1,
+                                "avg_ms": 0.1,
+                                "min_ms": 0.1,
+                                "max_ms": 0.1,
+                                "min_max_available": True,
+                            },
+                        }
+                    ],
                 }
             ],
-            "plugin_metrics_unattributed": [],
+            "plugin_metrics_unattributed": [
+                {
+                    "name": "MLA:unknown",
+                    "backend": "MLA",
+                    "phase": "Run",
+                    "kernel_name": "unknown",
+                    "stage_name": "unknown_stage",
+                    "gst_element_name": None,
+                    "run_id_hash": None,
+                    "pipeline_segment_id": None,
+                    "runtime_node_id": None,
+                    "public_node_id": None,
+                    "public_node_ids": [],
+                    "physical_input_index": 0,
+                    "output_slot": 0,
+                    "calls": 1,
+                    "latency_ms": {
+                        "samples": 1,
+                        "total_ms": 0.3,
+                        "avg_ms": 0.3,
+                        "min_ms": 0.3,
+                        "max_ms": 0.3,
+                        "min_max_available": True,
+                    },
+                    "mapping_error": "unattributed: unit test",
+                }
+            ],
         },
     }
 
@@ -209,6 +262,12 @@ class GraphRunSchemaTest(unittest.TestCase):
     def test_node_metrics_must_not_contain_power(self) -> None:
         bad = valid_payload()
         bad["run"]["node_metrics"][0]["power"] = {"enabled": True}  # type: ignore[index]
+        with self.assertRaises(schema.SchemaError):
+            schema.validate_graph_run(bad)
+
+    def test_plugin_metrics_must_not_contain_power(self) -> None:
+        bad = valid_payload()
+        bad["run"]["node_metrics"][0]["plugins"][0]["power"] = {"enabled": True}  # type: ignore[index]
         with self.assertRaises(schema.SchemaError):
             schema.validate_graph_run(bad)
 

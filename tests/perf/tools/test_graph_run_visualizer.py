@@ -33,6 +33,10 @@ class GraphRunVisualizerTest(unittest.TestCase):
             self.assertIn("classes", body)
             self.assertIn("Throughput", body)
             self.assertIn("Node metrics", body)
+            self.assertIn("Attributed plugin metrics", body)
+            self.assertIn("Unattributed plugin metrics", body)
+            self.assertIn("n0_identity", body)
+            self.assertIn("unknown_stage", body)
             self.assertIn("0.200 ms", body)
             self.assertNotIn("unpkg.com", body)
 
