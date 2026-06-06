@@ -40,9 +40,17 @@ using GraphRunExportOptions = RunExportOptions;
 std::string run_to_json(const Run& run, const RunExportOptions& opt = {},
                         std::string* err = nullptr);
 
+/// Serialize a built `Run` plus a measurement-window report to graph JSON.
+std::string run_to_json(const Run& run, const MeasureReport& report,
+                        const RunExportOptions& opt = {}, std::string* err = nullptr);
+
 /// Atomically write `run_to_json(run, opt)` to `path` using `path + ".tmp"` then rename.
 bool save_run_json(const Run& run, const std::string& path, const RunExportOptions& opt = {},
                    std::string* err = nullptr);
+
+/// Atomically write `run_to_json(run, report, opt)` to `path`.
+bool save_run_json(const Run& run, const MeasureReport& report, const std::string& path,
+                   const RunExportOptions& opt = {}, std::string* err = nullptr);
 
 /// Compatibility wrapper for existing graph-run JSON call sites.
 inline std::string graph_run_to_json(const Run& run, const GraphRunExportOptions& opt = {},
@@ -50,10 +58,24 @@ inline std::string graph_run_to_json(const Run& run, const GraphRunExportOptions
   return run_to_json(run, opt, err);
 }
 
+/// Compatibility wrapper for measured graph-run JSON call sites.
+inline std::string graph_run_to_json(const Run& run, const MeasureReport& report,
+                                     const GraphRunExportOptions& opt = {},
+                                     std::string* err = nullptr) {
+  return run_to_json(run, report, opt, err);
+}
+
 /// Compatibility wrapper for existing graph-run JSON call sites.
 inline bool save_graph_run_json(const Run& run, const std::string& path,
                                 const GraphRunExportOptions& opt = {}, std::string* err = nullptr) {
   return save_run_json(run, path, opt, err);
+}
+
+/// Compatibility wrapper for measured graph-run JSON call sites.
+inline bool save_graph_run_json(const Run& run, const MeasureReport& report,
+                                const std::string& path, const GraphRunExportOptions& opt = {},
+                                std::string* err = nullptr) {
+  return save_run_json(run, report, path, opt, err);
 }
 
 } // namespace simaai::neat

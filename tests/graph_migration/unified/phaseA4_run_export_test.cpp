@@ -125,6 +125,50 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
   require(!json.at("run").at("identity").at("hostname").get<std::string>().empty(),
           "export should include run identity hostname");
 
+  MeasureReport measured;
+  measured.elapsed_s = 2.0;
+  measured.outputs = 4;
+  measured.outputs_pulled = 4;
+  measured.inputs_pushed = 4;
+  measured.throughput_batches_per_s = 2.0;
+  measured.throughput_inferences_per_s = 2.0;
+  MeasurePluginLatency plugin;
+  plugin.name = "MLA:infer";
+  plugin.backend = "MLA";
+  plugin.phase = "Run";
+  plugin.kernel_name = "infer";
+  plugin.stage_name = "n1_neatprocessmla";
+  plugin.physical_input_index = 0;
+  plugin.output_slot = 1;
+  plugin.calls = 4;
+  plugin.total_ms = 8.0;
+  plugin.avg_ms = 2.0;
+  plugin.min_ms = 1.5;
+  plugin.max_ms = 2.5;
+  measured.plugin_latency.push_back(plugin);
+
+  const std::string measured_body = run_to_json(run, measured, opt, &err);
+  require(err.empty(), "measured run_to_json error: " + err);
+  const nlohmann::json measured_json = nlohmann::json::parse(measured_body);
+  require(measured_json.at("run")
+              .at("graph_metrics")
+              .at("measurement_scope")
+              .get<std::string>() == "measured_window",
+          "measured export should mark graph metrics as measured-window");
+  require(measured_json.at("run")
+              .at("plugin_metrics_unattributed")
+              .at(0)
+              .at("phase")
+              .get<std::string>() == "Run",
+          "measured export should preserve plugin phase");
+  require(measured_json.at("run")
+              .at("plugin_metrics_unattributed")
+              .at(0)
+              .at("latency_ms")
+              .at("total_ms")
+              .get<double>() == 8.0,
+          "measured export should preserve plugin total latency");
+
   const std::filesystem::path path = tmp_path("run_export.neat.graph_run.json");
   std::filesystem::remove(path);
   require(save_run_json(run, path.string(), opt, &err), "save_run_json failed: " + err);

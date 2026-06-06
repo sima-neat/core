@@ -102,6 +102,37 @@ json latency_summary_json(const NodeLatencySummary& summary) {
   };
 }
 
+json latency_summary_json(std::uint64_t samples, double total_ms, double avg_ms, double min_ms,
+                          double max_ms) {
+  return {
+      {"samples", samples},
+      {"total_ms", total_ms},
+      {"avg_ms", avg_ms},
+      {"min_ms", min_ms},
+      {"max_ms", max_ms},
+  };
+}
+
+json plugin_metric_to_json(const MeasurePluginLatency& p, const std::string& mapping_error = {}) {
+  json out;
+  out["name"] = p.name.empty() ? json(nullptr) : json(p.name);
+  out["backend"] = p.backend;
+  out["phase"] = p.phase;
+  out["kernel_name"] = p.kernel_name;
+  out["stage_name"] = p.stage_name;
+  out["pipeline_segment_id"] = nullptr;
+  out["runtime_node_id"] = nullptr;
+  out["public_node_ids"] = json::array();
+  out["physical_input_index"] = p.physical_input_index;
+  out["output_slot"] = p.output_slot;
+  out["calls"] = p.calls;
+  out["latency_ms"] = latency_summary_json(p.calls, p.total_ms, p.avg_ms, p.min_ms, p.max_ms);
+  if (!mapping_error.empty()) {
+    out["mapping_error"] = mapping_error;
+  }
+  return out;
+}
+
 json output_spec_to_json(const OutputSpec& spec) {
   json j;
   j["media_type"] = spec.media_type;
@@ -727,9 +758,122 @@ std::string run_to_json(const Run& run, const RunExportOptions& opt, std::string
   }
 }
 
+std::string run_to_json(const Run& run, const MeasureReport& report, const RunExportOptions& opt,
+                        std::string* err) {
+  std::string base_err;
+  const std::string base = run_to_json(run, opt, &base_err);
+  if (base.empty()) {
+    if (err) {
+      *err = base_err;
+    }
+    return {};
+  }
+
+  try {
+    json root = json::parse(base);
+    json& run_json = root["run"];
+    run_json["graph_metrics"] = {
+        {"measurement_scope", "measured_window"},
+        {"aggregation", "measured_window"},
+        {"latency_semantics", "sum_element_residency"},
+        {"throughput_counting", "all_pulled_outputs"},
+        {"elapsed_seconds", report.elapsed_s},
+        {"outputs_pulled", report.outputs_pulled},
+        {"throughput_fps", report.throughput_batches_per_s},
+        {"counters",
+         {{"inputs_enqueued", report.inputs_pushed},
+          {"inputs_dropped", report.inputs_dropped},
+          {"inputs_pushed", report.inputs_pushed},
+          {"outputs_ready", report.outputs_pulled},
+          {"outputs_pulled", report.outputs_pulled},
+          {"outputs_dropped", report.outputs_dropped}}},
+    };
+    if (opt.include_power && report.power.enabled) {
+      run_json["graph_metrics"]["power"] = power_summary_json(report.power);
+    }
+
+    json plugins = json::array();
+    for (const MeasurePluginLatency& p : report.plugin_latency) {
+      plugins.push_back(plugin_metric_to_json(
+          p, "unattributed: profiler events do not yet carry graph runtime node ids"));
+    }
+    run_json["plugin_metrics_unattributed"] = std::move(plugins);
+    run_json["measurement"] = {
+        {"warmup_iterations", report.warmup_iterations},
+        {"outputs", report.outputs},
+        {"throughput_batches_per_s", report.throughput_batches_per_s},
+        {"throughput_inferences_per_s", report.throughput_inferences_per_s},
+        {"end_to_end",
+         {{"count", report.end_to_end.count},
+          {"avg_ms", report.end_to_end.avg_ms},
+          {"p50_ms", report.end_to_end.p50_ms},
+          {"p90_ms", report.end_to_end.p90_ms},
+          {"p95_ms", report.end_to_end.p95_ms},
+          {"p99_ms", report.end_to_end.p99_ms},
+          {"max_ms", report.end_to_end.max_ms}}},
+        {"frame_gap",
+         {{"count", report.frame_gap.count},
+          {"avg_ms", report.frame_gap.avg_ms},
+          {"p50_ms", report.frame_gap.p50_ms},
+          {"p90_ms", report.frame_gap.p90_ms},
+          {"p95_ms", report.frame_gap.p95_ms},
+          {"p99_ms", report.frame_gap.p99_ms},
+          {"max_ms", report.frame_gap.max_ms}}},
+    };
+    return root.dump(opt.indent);
+  } catch (const std::exception& e) {
+    if (err) {
+      *err = std::string("run_to_json measured report failed: ") + e.what();
+    }
+    return {};
+  }
+}
+
 bool save_run_json(const Run& run, const std::string& path, const RunExportOptions& opt,
                    std::string* err) {
   const std::string body = run_to_json(run, opt, err);
+  if (body.empty()) {
+    return false;
+  }
+
+  const std::filesystem::path target(path);
+  const std::filesystem::path tmp = target.string() + ".tmp";
+  {
+    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+    if (!out) {
+      if (err) {
+        *err = "save_run_json: cannot open " + tmp.string();
+      }
+      return false;
+    }
+    out.write(body.data(), static_cast<std::streamsize>(body.size()));
+    if (!out) {
+      if (err) {
+        *err = "save_run_json: write failed for " + tmp.string();
+      }
+      return false;
+    }
+  }
+
+  std::error_code ec;
+  std::filesystem::rename(tmp, target, ec);
+  if (ec) {
+    std::filesystem::remove(target, ec);
+    ec.clear();
+    std::filesystem::rename(tmp, target, ec);
+  }
+  if (ec) {
+    if (err) {
+      *err = "save_run_json: rename failed: " + ec.message();
+    }
+    return false;
+  }
+  return true;
+}
+
+bool save_run_json(const Run& run, const MeasureReport& report, const std::string& path,
+                   const RunExportOptions& opt, std::string* err) {
+  const std::string body = run_to_json(run, report, opt, err);
   if (body.empty()) {
     return false;
   }
