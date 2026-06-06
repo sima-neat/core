@@ -1255,9 +1255,42 @@ DetessIngressTransportView validate_detess_ingress_transport_local(
     const MpkTensorContract& published_output, const std::string& expected_dtype,
     const std::vector<std::int64_t>& transport_shape, std::uint64_t transport_size_bytes,
     const std::string& context) {
+  auto detess_ingress_detail = [&](std::string reason) {
+    const std::string published_name =
+        !published_output.name.empty()
+            ? published_output.name
+            : (!published_output.segment_name.empty() ? published_output.segment_name
+                                                       : std::string());
+    std::ostringstream out;
+    out << reason << " for '" << context << "'"
+        << " published_name=\"" << published_name << "\""
+        << " published_segment=\"" << published_output.segment_name << "\""
+        << " published_dtype=\""
+        << preferred_tensor_dtype_local(published_output, expected_dtype) << "\""
+        << " expected_dtype=\"" << expected_dtype << "\""
+        << " published_mpk_shape="
+        << ints64_dbg_processcvu_local(published_output.mpk_shape)
+        << " published_logical_shape="
+        << ints64_dbg_processcvu_local(published_output.logical_shape)
+        << " transport_shape="
+        << ints64_dbg_processcvu_local(transport_shape)
+        << " published_size_bytes="
+        << preferred_mpk_tensor_size_bytes_local(
+               published_output,
+               preferred_tensor_dtype_local(published_output, expected_dtype))
+        << " transport_size_bytes=" << transport_size_bytes
+        << " published_size_raw=" << published_output.size_bytes
+        << " published_byte_offset=" << published_output.byte_offset
+        << " published_source_byte_offset="
+        << published_output.source_byte_offset
+        << " published_physical_index=" << published_output.physical_index
+        << " published_source_physical_index="
+        << published_output.source_physical_index;
+    return out.str();
+  };
   if (transport_shape.empty() || transport_size_bytes == 0U) {
-    throw std::runtime_error("processcvu MPK detess route requires packed transport bytes for '" +
-                             context + "'");
+    throw std::runtime_error(detess_ingress_detail(
+        "processcvu MPK detess route requires packed transport bytes"));
   }
 
   const std::string published_dtype =
@@ -1266,26 +1299,24 @@ DetessIngressTransportView validate_detess_ingress_transport_local(
       published_output.shape_semantics == MpkShapeSemantics::PackedExtent;
   if (!packed_extent_transport && !expected_dtype.empty() && !published_dtype.empty() &&
       expected_dtype != published_dtype) {
-    throw std::runtime_error(
-        "processcvu MPK detess route published MLA dtype disagrees with detess input for '" +
-        context + "'");
+    throw std::runtime_error(detess_ingress_detail(
+        "processcvu MPK detess route published MLA dtype disagrees with detess input"));
   }
 
   const std::vector<std::int64_t> published_transport_shape = !published_output.mpk_shape.empty()
                                                                   ? published_output.mpk_shape
                                                                   : published_output.logical_shape;
   if (!published_transport_shape.empty() && published_transport_shape != transport_shape) {
-    throw std::runtime_error("processcvu MPK detess route published MLA transport shape disagrees "
-                             "with detess input for '" +
-                             context + "'");
+    throw std::runtime_error(detess_ingress_detail(
+        "processcvu MPK detess route published MLA transport shape disagrees with detess input"));
   }
 
   const std::uint64_t published_size_bytes =
       preferred_mpk_tensor_size_bytes_local(published_output, published_dtype);
   if (published_size_bytes == 0U || published_size_bytes != transport_size_bytes) {
-    throw std::runtime_error("processcvu MPK detess route published MLA boundary view disagrees "
-                             "with detess input bytes for '" +
-                             context + "'");
+    throw std::runtime_error(detess_ingress_detail(
+        "processcvu MPK detess route published MLA boundary view disagrees with detess input "
+        "bytes"));
   }
 
   return {transport_shape, transport_size_bytes};

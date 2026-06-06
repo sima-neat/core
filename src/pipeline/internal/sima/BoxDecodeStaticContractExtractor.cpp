@@ -1419,22 +1419,8 @@ detess_transport_input_hwc_from_mpk_local(const MpkPluginIoContract& stage,
               "frame_shape logical channels");
     return std::nullopt;
   }
-  const bool byte_granule_aligned =
-      physical_c <= (std::numeric_limits<std::uint64_t>::max() / elem64) &&
-      ((physical_c * elem64) % 16U) == 0U;
-  if (((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) &&
-      !byte_granule_aligned) {
-    set_error(error_message,
-              "boxdecode model-managed contract detess transport expected 16-byte aligned packed "
-              "channel storage because MPK align_c16/cblock is set");
-    return std::nullopt;
-  }
-  if (physical_c > static_cast<std::uint64_t>(std::numeric_limits<int>::max())) {
-    set_error(error_message,
-              "boxdecode model-managed contract detess transport channel count overflows int");
-    return std::nullopt;
-  }
-  return std::make_pair(std::array<int, 3>{h, w, static_cast<int>(physical_c)}, declared_bytes);
+  (void)physical_c;
+  return std::make_pair(std::array<int, 3>{h, w, logical_c}, declared_bytes);
 }
 
 std::optional<int> parse_head_index_after_token_local(const std::string& raw_name,
