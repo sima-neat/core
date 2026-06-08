@@ -1,7 +1,7 @@
 ---
 title: Building applications with Graph
 description: How to compose Models, Nodes, named inputs/outputs, branches, combines, and Runs with the public Graph API.
-sidebar_position: 3
+sidebar_position: 1
 ---
 
 # Building applications with Graph
