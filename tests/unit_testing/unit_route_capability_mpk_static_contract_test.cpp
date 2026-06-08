@@ -3,11 +3,11 @@
 #include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/RoutePlanner.h"
+#include "asset_utils.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 
 #include <algorithm>
-#include <filesystem>
 
 RUN_TEST(
     "unit_route_capability_mpk_static_contract_test", ([] {
@@ -38,7 +38,7 @@ RUN_TEST(
 
       const auto raw_yolo_bf16 =
           sima_test::test_source_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz";
-      if (std::filesystem::exists(raw_yolo_bf16)) {
+      if (sima_test::is_strict_mpk_tar_gz(raw_yolo_bf16)) {
         ModelPack raw_pack(raw_yolo_bf16.string());
         const PreprocessCapabilities raw_capabilities = inspect_preprocess_capabilities(raw_pack);
         const PreprocessPlannerResult raw_preprocess_plan =
