@@ -6,74 +6,19 @@ sidebar_position: 5
 
 # Graph
 
-`Graph` is the main application assembly API in SiMa Neat.
+In SiMa Neat, the `Graph` [API](/reference/{lsa}/classes/simaai-neat-graph) is how you compose an application. A `Graph` describes a flow of connected nodes, from the inputs where data enters, through the processing nodes in the middle, to the outputs where results are produced. If you come from ML, think of a `Graph` like a small model graph.
 
-If you come from ML, think of a `Graph` like a small model graph or a function:
+- Frames, tensors, or samples enter through **inputs** and leave through **outputs**. Processing happens in the middle through **nodes** such as decode, resize, preprocess, inference, postprocess, branching, and custom logic.
 
-- it has **inputs**;
-- it has **outputs**;
-- it contains work in the middle, such as decode, resize, preprocess, inference, postprocess, and custom logic;
-- it can be reused inside a larger graph.
+![Graph inputs, processing steps, and outputs inside one Graph boundary](../../images/graph-input-output.svg)
 
-If you come from embedded, think of a `Graph` like a named data-flow wiring diagram:
+- Graphs can run standalone or be reused inside a larger graph.
 
-- frames or tensors enter through named doors;
-- each processing step runs in order or through explicit branches;
-- outputs leave through named doors;
-- Neat decides the efficient runtime wiring underneath.
+![A reusable Graph fragment inserted into a larger application Graph](../../images/graph-reusable-fragment.svg)
 
-Most users should not need to know about GStreamer, `appsrc`, `appsink`, queues, or internal runtime ports. Those are implementation details. The public API is:
+Neat is designed so you spend your time describing the application, not building the runtime plumbing by hand. The SDK provides pre-built [nodes](/reference/programming-model/node) and [node groups](/reference/programming-model/node#pre-built-node-groups) for common work such as input, decode, resize, preprocess, inference, postprocess, and output. These nodes automatically map to efficient, hardware-accelerated parts of the SoC where applicable. In a `Graph`, you declare which nodes to use, set their parameters, and connect them in the order your application needs.
 
-```cpp
-simaai::neat::Graph g;
-g.add(...);      // continue the same linear chain
-g.connect(...);  // add explicit graph topology
-
-auto run = g.build();
-```
-
-## The shortest mental model
-
-Use `add()` for the common single-path case:
-
-```cpp
-simaai::neat::Model model("resnet50.tar.gz");
-
-simaai::neat::Graph g("classifier");
-g.add(simaai::neat::nodes::Input("image"));
-g.add(model);
-g.add(simaai::neat::nodes::Output("classes"));
-
-auto run = g.build();
-run.push("image", simaai::neat::TensorList{image_tensor});
-auto classes = run.pull("classes");
-```
-
-For a graph with exactly one public input and one public output, the names are optional at runtime:
-
-```cpp
-run.push(simaai::neat::TensorList{image_tensor});
-auto classes = run.pull();
-```
-
-Use `connect()` when the graph is not just one chain:
-
-```cpp
-simaai::neat::Graph camera("camera");
-camera.add(simaai::neat::nodes::Input("image"));
-
-simaai::neat::Graph route("model_route");
-route.add(simaai::neat::nodes::Input("image"));
-route.add(model);
-route.add(simaai::neat::nodes::Output("classes"));
-
-simaai::neat::Graph app("app");
-app.connect(camera, route);
-
-auto run = app.build();
-run.push("image", simaai::neat::TensorList{image_tensor});
-auto classes = run.pull("classes");
-```
+Underneath, Neat builds the executable runtime graph on GStreamer. That implementation is abstracted away from the developer. Developers simply use the public `Graph` API instead of managing GStreamer elements, `appsrc`, `appsink`, queues, or internal runtime ports.
 
 ## Nodes, groups, and boundaries
 
@@ -89,41 +34,293 @@ For the detailed rules around pre-built groups and boundary nodes, see [Node →
 
 When you call `Graph::build()`, Neat lowers the public graph into one executable runtime graph, preserving the customer-facing names for diagnostics and named `Run` APIs.
 
-## `add()` vs `connect()`
+## Naming inputs and outputs
 
-Use `add()` when the next thing is simply after the previous thing:
-
-```cpp
-g.add(nodes::Input("image"));
-g.add(nodes::VideoConvert());
-g.add(model);
-g.add(nodes::Output("classes"));
-```
-
-This means:
-
-```text
-image -> VideoConvert -> model -> classes
-```
-
-Use `connect()` when you are wiring fragments explicitly:
+Names on `Input` and `Output` nodes define the public endpoints of a `Graph`:
 
 ```cpp
-app.connect(camera, route);
-app.connect(route, display);
+simaai::neat::Graph classifier("classifier");
+classifier.add(simaai::neat::nodes::Input("image"));
+classifier.add(model);
+classifier.add(simaai::neat::nodes::Output("classes"));
 ```
 
-This means:
+Here, `image` is the input endpoint and `classes` is the output endpoint. The Graph name, `classifier`, is only a label for diagnostics and visualization; it does not create an input or output.
+
+## Composing Graphs
+
+### The shortest mental model
+
+As a developer, creating an application is as easy as declaring a `Graph` and using `add()` or `connect()` to append the necessary nodes:
+
+* Use `add()` for the common single-path processing such as a simple single model inference.
+* Use `connect()` when the topology is not just "the next node after the previous node."
+
+```cpp
+simaai::neat::Graph g;
+g.add(...);      // continue the same linear chain
+g.connect(...);  // add explicit graph topology
+
+auto run = g.build();
+```
+
+### Build using `add()`
+Let's take an example where we read an image, run inference and output the detected classes from the model.
 
 ```text
-camera -> route -> display
+image -> model inference -> classes
 ```
 
-When a graph has branched and there is no longer one obvious "last node", `add()` fails with a diagnostic and asks you to use `connect()` instead. This is deliberate. It prevents Neat from guessing wrong.
+Here is what the code would look like:
 
-## Multiple inputs and multiple outputs
+```cpp
+simaai::neat::Model model("resnet50.tar.gz");  // instantiate a model Graph from a pre-compiled model
 
-For multi-input or multi-output graphs, use names.
+simaai::neat::Graph g("classifier");           // instantiate the Graph that will describe the app
+g.add(simaai::neat::nodes::Input("image"));    // adds an input Node named "image"
+g.add(model);                                  // adds the model Nodes connected to the Input
+g.add(simaai::neat::nodes::Output("classes")); // adds an output Node named "classes" connected to 'model'
+
+auto run = g.build();                          // build the Graph
+```
+
+:::note
+Use `add()` to append nodes in a simple linear sequence, following the previously added node.
+:::
+
+### Build using `connect()`
+
+Use `connect()` when the topology is not just "the next node after the previous node." `add()` places nodes or graph fragments into the graph. `connect()` overwrites the explicit edges you want between named endpoints, nodes, models, or reusable Graph fragments.
+
+#### Fan-out using `connect()`
+
+A fan-out sends one input to more than one output. First add the endpoints so they exist in the graph:
+
+```cpp
+simaai::neat::Graph fan_out_graph("fan_out_graph");
+fan_out_graph.add(simaai::neat::nodes::Input("image_input"));
+fan_out_graph.add(simaai::neat::nodes::Output("original_image"));
+fan_out_graph.add(simaai::neat::nodes::Output("model_image"));
+```
+
+Conceptually `fan_out_graph` would look like this:
+
+```text
+image_input --> original_image --> model_image
+```
+
+Then use `connect()` to replace the default linear wiring with the topology you want:
+
+```cpp
+fan_out_graph.connect("image_input", "original_image");
+fan_out_graph.connect("image_input", "model_image");
+```
+
+Conceptually `fan_out_graph` would now look like this:
+
+```text
+            /--> original_image
+image_input
+            \--> model_image
+```
+
+#### Using `Branch()`
+
+Because fan-out is common, Neat provides [`graphs::Branch()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a1feffc304100fd17cb99c5f5bff3c20c) as a helper. This creates the input, the outputs, and the `connect()` calls internally:
+
+```cpp
+auto fan_out_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"original_image", "model_image"});
+```
+
+`fan_out_graph` is still an ordinary `Graph` fragment. You can connect it into a larger application like any other `Graph`.
+
+:::note
+Branching can introduce backpressure. If one branch stops consuming data, it can slow or block the producer depending on the selected runtime policy. `Branch()` makes the fan-out explicit instead of hiding it behind accidental duplicate outputs.
+:::
+
+#### Fan-in using `connect()`
+
+A fan-in sends multiple inputs into one output. Unlike a simple fan-out, a fan-in must also declare how samples are matched. That policy lives on the output endpoint.
+
+First configure the output and add the endpoints so they exist in the graph:
+
+```cpp
+simaai::neat::OutputOptions render_options;
+render_options.combine_policy = simaai::neat::CombinePolicy::ByFrame;
+
+simaai::neat::Graph render_inputs_graph("render_inputs_graph");
+render_inputs_graph.add(simaai::neat::nodes::Input("image"));
+render_inputs_graph.add(simaai::neat::nodes::Input("bbox"));
+render_inputs_graph.add(simaai::neat::nodes::Output("render_inputs", render_options));
+```
+
+Conceptually `render_inputs_graph` would look like this:
+
+```text
+image -> bbox -> render_inputs
+```
+
+Then use `connect()` to replace the default linear wiring with the topology you want:
+
+```cpp
+render_inputs_graph.connect("image", "render_inputs");
+render_inputs_graph.connect("bbox", "render_inputs");
+```
+
+Conceptually `render_inputs_graph` would now look like this:
+
+```text
+image ----\
+           render_inputs
+bbox -----/
+```
+
+#### Using `Combine()`
+
+Because fan-in is common, Neat provides [`graphs::Combine()`](/reference/{lsa}/namespaces/simaai-neat-graphs#a6f1479674758179a4bbd72af1291ea47) as a helper. This creates the inputs, the output, the combine policy, and the `connect()` calls internally:
+
+```cpp
+auto render_inputs_graph = simaai::neat::graphs::Combine(
+    {"image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+```
+
+`render_inputs_graph` is still an ordinary `Graph` fragment. You can connect it into a larger application like any other `Graph`.
+
+:::note
+`CombinePolicy` tells Neat how to match incoming samples:
+
+- `ByFrame`: combine samples with the same `frame_id`.
+- `ByPts`: combine samples with the same presentation timestamp (`pts_ns`).
+- `None`: do not combine multiple producers; the graph fails and asks for an explicit policy.
+
+There is no hidden fallback. With `ByFrame`, missing frame IDs are an error. With `ByPts`, missing timestamps are an error. This prevents Neat from silently combining the wrong samples.
+:::
+
+### Complete inference and render example
+
+Now put the pieces together. The input image is split into two paths. One path goes through the model and produces bounding boxes. The other path keeps the original image available for a later render stage.
+
+```text
+           /--> model_image -> model -> bbox --\
+image_input                                     render_inputs
+           \----------------> original_image --/
+```
+
+At a high level, these are the steps we will follow:
+
+1. First declare the input fan-out `Graph` fragment
+2. Create the model inference `Graph` fragment that consumes `model_image` and produces `bbox`
+3. Combine the original image path and the `bbox` path into `render_inputs`
+4. Connect them all together into a final `Graph` called `app`
+
+#### Constructing the inference and render example
+
+1. First create the fan-out using `Branch()` as seen above:
+
+    ```cpp
+    auto image_input_graph = simaai::neat::graphs::Branch(
+        "image_input",
+        {"model_image", "original_image"});
+    ```
+
+    `image_input_graph` will then be constructed as:
+
+    ```text
+                /--> original_image
+    image_input
+                \--> model_image
+    ```
+
+2. Create the `model_inference_graph`:
+
+    ```cpp
+    simaai::neat::Graph model_inference_graph("model_inference_graph");
+    model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+    model_inference_graph.add(model);
+    model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+    ```
+
+    `model_inference_graph` will then be constructed as:
+
+    ```text
+    model_image --> model --> bbox
+    ```
+
+    :::note
+    This example assumes the selected model route emits decoded BBOX data. If the model emits raw inference tensors, add a model-specific `SimaBoxDecode` stage before `Output("bbox")`.
+    :::
+
+3. Then create the fan-in `render_graph`:
+
+    ```cpp
+    auto render_graph = simaai::neat::graphs::Combine(
+        {"original_image", "bbox"},
+        "render_inputs",
+        simaai::neat::CombinePolicy::ByFrame);
+    ```
+
+    `render_graph` will then be constructed as:
+
+    ```text
+    original_image ----\
+                        render_inputs
+    bbox --------------/
+    ```
+
+4. Finally, connect the fragments into a single `Graph` to construct the entire application:
+
+    ```cpp
+    simaai::neat::Graph app("app");
+    app.connect(image_input_graph, model_inference_graph);
+    app.connect(image_input_graph, render_graph);
+    app.connect(model_inference_graph, render_graph);
+    ```
+
+**The full example:**
+
+```cpp
+simaai::neat::Model model("resnet50.tar.gz");
+
+auto image_input_graph = simaai::neat::graphs::Branch(
+    "image_input",
+    {"model_image", "original_image"});
+
+simaai::neat::Graph model_inference_graph("model_inference_graph");
+model_inference_graph.add(simaai::neat::nodes::Input("model_image"));
+model_inference_graph.add(model);
+model_inference_graph.add(simaai::neat::nodes::Output("bbox"));
+
+auto render_graph = simaai::neat::graphs::Combine(
+    {"original_image", "bbox"},
+    "render_inputs",
+    simaai::neat::CombinePolicy::ByFrame);
+
+simaai::neat::Graph app("app");
+app.connect(image_input_graph, model_inference_graph);
+app.connect(image_input_graph, render_graph);
+app.connect(model_inference_graph, render_graph);
+
+auto run = app.build();
+
+auto image_sample =
+    simaai::neat::make_tensor_sample("image_input", image_tensor);
+image_sample.frame_id = 0;
+run.push("image_input", image_sample);
+
+auto inputs = run.pull("render_inputs");
+```
+
+The executable example stops at `render_inputs`, which contains the matching `original_image` and `bbox` values. A downstream render or output node can consume that combined result, then save the rendered image to a file, display it, or send it elsewhere.
+
+## Using named endpoints at runtime
+
+After a `Graph` is built, the same endpoint names are used to send data in and read results out.
+
+When a Graph has multiple public inputs or outputs, pass the endpoint name to `push()` or `pull()`:
 
 ```cpp
 run.push("image", simaai::neat::TensorList{image_tensor});
@@ -133,75 +330,14 @@ auto classes = run.pull("classes");
 auto preview = run.pull("preview");
 ```
 
-Plain `push(...)` and `pull()` are still available when there is exactly one public input or output. If there is more than one, Neat fails closed and lists the available names.
-
-### Branch: one input, multiple outputs
-
-A branch means one stream is intentionally split into named outputs, for example one copy to preview and one copy to a model route.
+For a Graph with exactly one public input or output, the name is optional at runtime:
 
 ```cpp
-auto branch = simaai::neat::graphs::Branch("image", {"preview", "model"});
+run.push(simaai::neat::TensorList{image_tensor});
+auto classes = run.pull();
 ```
 
-Conceptually:
-
-```text
-image -> preview
-      -> model
-```
-
-Branching can introduce backpressure: if one branch stops consuming data, it can slow or block the producer depending on the selected runtime policy. Neat's branch helper makes that behavior explicit instead of hiding it behind accidental duplicate outputs.
-
-### Combine: multiple inputs, one output
-
-A combine means several named inputs must be packaged into one named output.
-
-```cpp
-auto combine = simaai::neat::graphs::Combine(
-    {"left", "right"},
-    "pair",
-    simaai::neat::graphs::CombinePolicy::ByFrame);
-```
-
-Conceptually:
-
-```text
-left  ----\
-          -> pair
-right ----/
-```
-
-`CombinePolicy` tells Neat how to match items:
-
-- `ByFrame`: combine samples that have the same `frame_id`.
-- `ByPts`: combine samples that have the same presentation timestamp (`pts_ns`).
-- `None`: do not synchronize; only use when order alone is correct for your application.
-
-There is no hidden fallback. If you select `ByFrame`, missing frame IDs are an error. If you select `ByPts`, missing timestamps are an error. This makes bugs visible early instead of silently mixing the wrong frames.
-
-## What to name endpoints
-
-Use names that describe application meaning, not implementation details:
-
-Good:
-
-```cpp
-nodes::Input("image")
-nodes::Input("left_camera")
-nodes::Output("classes")
-nodes::Output("detections")
-nodes::Output("preview")
-```
-
-Avoid:
-
-```cpp
-nodes::Input("appsrc0")
-nodes::Output("sink1")
-nodes::Output("out")  // okay for tiny tests, not great in apps
-```
-
-If a fragment contains several unnamed outputs, Neat gives them deterministic suffixes such as `classes_0`, `classes_1`, and `classes_2`. Prefer explicit names in production code.
+If more than one input or output is available, an unnamed `push(...)` or `pull()` fails and lists the available endpoint names instead of guessing which one you intended.
 
 ## Practical examples
 
@@ -249,7 +385,31 @@ adapter.connect("raw", "image");
 
 When used inside another graph, this can compile down to a direct wire. Neat keeps the names for readability and diagnostics, but it does not create useless runtime work.
 
-## Rules of thumb
+## Best practices
+
+### Endpoint naming
+
+Choose endpoint names that describe their meaning in the application:
+
+```cpp
+nodes::Input("image")
+nodes::Input("left_camera")
+nodes::Output("classes")
+nodes::Output("detections")
+nodes::Output("preview")
+```
+
+Avoid names based on internal runtime details:
+
+```cpp
+nodes::Input("appsrc0")
+nodes::Output("sink1")
+nodes::Output("out")  // acceptable for small tests, but unclear in applications
+```
+
+If a fragment contains several unnamed outputs, Neat assigns deterministic suffixes such as `classes_0`, `classes_1`, and `classes_2`. Prefer explicit names in application code.
+
+### Rules of thumb
 
 - Use `Graph` for applications and reusable fragments.
 - Use `Model` directly in `Graph::add(model)` when you want the model's normal route.
@@ -257,7 +417,7 @@ When used inside another graph, this can compile down to a direct wire. Neat kee
 - Use `add()` for a straight chain.
 - Use `connect()` for topology.
 - Use named `run.push("name", ...)` and `run.pull("name")` for multi-input or multi-output apps.
-- Let Neat own the low-level runtime details.
+- Declare the [nodes](/reference/programming-model/node), [node groups](/reference/programming-model/node#pre-built-node-groups), parameters, and connections your application needs; let Neat handle the low-level runtime details.
 
 ## See also
 
