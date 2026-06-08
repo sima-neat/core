@@ -232,6 +232,7 @@ set(UNIT_TESTS
   unit_dequant_processcvu_contract_equivalence_test
   unit_dequant_node_fragment_test
   unit_detection_types_bbox_test
+  unit_detection_types_boxdecode_payloads_test
   unit_detessdequant_output_info_test
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
@@ -269,6 +270,7 @@ set(UNIT_TESTS
   unit_gst_init_guard_test
   unit_gst_video_meta_test
   unit_inputstream_dynamic_policy_matrix_test
+  unit_inputstream_batched_raw_video_spec_test
   unit_input_policy_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
@@ -364,6 +366,7 @@ set(UNIT_TESTS
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
   unit_nodes_test
+  unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test
 )
 
@@ -897,6 +900,90 @@ target_include_directories(visual_frontend_tput_test
 )
 list(APPEND PIPELINESESSION_TEST_TARGETS visual_frontend_tput_test)
 
+function(add_visual_frontend_tput_preset_test name)
+  set(options)
+  set(oneValueArgs)
+  set(multiValueArgs ENV LABELS)
+  cmake_parse_arguments(VFT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  add_test(NAME ${name} COMMAND visual_frontend_tput_test)
+  # Do not pin GST_PLUGIN_PATH here: this is the customer-style installed-runtime
+  # smoke path, so GStreamer should discover the installed processcvu plugin the
+  # same way an application does.  Keep only the library path needed by SDK/DevKit
+  # test execution and the normal no-update guard.
+  if (NOT "${SIMA_TEST_NEAT_LD_LIBRARY_PATH}" STREQUAL "")
+    set_property(TEST ${name} APPEND PROPERTY
+      ENVIRONMENT "LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
+  endif()
+  set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0")
+  foreach(_vft_env IN LISTS VFT_ENV)
+    set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "${_vft_env}")
+  endforeach()
+  set_property(TEST ${name} APPEND PROPERTY LABELS "e2e;visual_frontend;ev74")
+  if (VFT_LABELS)
+    set_property(TEST ${name} APPEND PROPERTY LABELS "${VFT_LABELS}")
+  endif()
+  set_tests_properties(${name} PROPERTIES
+    RESOURCE_LOCK "dispatcher"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 90
+  )
+endfunction()
+
+# Fast customer-style API coverage for EV74 visual frontend graphs 235-238.
+# These CTest presets intentionally execute the public Neat Graph/Node/Run API via
+# visual_frontend_tput_test rather than processcvu internals.  They keep the image
+# size small enough for normal DevKit iteration while covering batched logical
+# tensors, all four visual graph IDs, KLT detect-on/off public output contracts,
+# CPU golden/semantic checks, processcvu timing capture, and the pre-dispatch
+# illegal-input guard that prevents bad payloads from reaching EV74.
+add_visual_frontend_tput_preset_test(
+  visual_frontend_customer_api_fast_test
+  ENV
+    "SIMA_VISUAL_TPUT_WIDTH=320"
+    "SIMA_VISUAL_TPUT_HEIGHT=240"
+    "SIMA_VISUAL_TPUT_BATCH=2"
+    "SIMA_VISUAL_TPUT_MAX_FEATURES=64"
+    "SIMA_VISUAL_TPUT_NUM_POINTS=32"
+    "SIMA_VISUAL_TPUT_WARMUP=0"
+    "SIMA_VISUAL_TPUT_ITERS=2"
+    "SIMA_VISUAL_TPUT_KLT_DETECT=1"
+    "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
+  LABELS "customer_api;fast"
+)
+
+add_visual_frontend_tput_preset_test(
+  visual_frontend_customer_api_klt_no_detect_fast_test
+  ENV
+    "SIMA_VISUAL_TPUT_CASE=track_klt"
+    "SIMA_VISUAL_TPUT_WIDTH=320"
+    "SIMA_VISUAL_TPUT_HEIGHT=240"
+    "SIMA_VISUAL_TPUT_BATCH=2"
+    "SIMA_VISUAL_TPUT_MAX_FEATURES=64"
+    "SIMA_VISUAL_TPUT_NUM_POINTS=32"
+    "SIMA_VISUAL_TPUT_WARMUP=0"
+    "SIMA_VISUAL_TPUT_ITERS=2"
+    "SIMA_VISUAL_TPUT_KLT_DETECT=0"
+    "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
+  LABELS "customer_api;fast;klt"
+)
+
+add_visual_frontend_tput_preset_test(
+  visual_frontend_predispatch_guard_fast_test
+  ENV
+    "SIMA_VISUAL_TPUT_CASE=feature_histogram_batch_guard"
+    "SIMA_VISUAL_TPUT_WIDTH=160"
+    "SIMA_VISUAL_TPUT_HEIGHT=128"
+    "SIMA_VISUAL_TPUT_WARMUP=0"
+    "SIMA_VISUAL_TPUT_ITERS=1"
+    "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
+  LABELS "customer_api;fast;safety"
+)
+
 add_pipeline_test(
   graph_migration_phase1_graph_api_surface_test
   graph_migration/unified/graph_phase1_api_surface_test.cpp
@@ -1044,6 +1131,17 @@ add_pipeline_test(
 if (NOT graph_migration_phaseA4_run_export_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phaseA4_run_export_test
     APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;export")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA4_branched_report_demo
+  graph_migration/unified/phaseA4_branched_report_demo.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA4_branched_report_demo IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA4_branched_report_demo
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;export;demo")
 endif()
 
 add_pipeline_test(

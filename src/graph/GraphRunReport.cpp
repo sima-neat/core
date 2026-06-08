@@ -46,8 +46,7 @@ std::uint64_t load_u64(const std::atomic<std::uint64_t>& v) {
 }
 
 template <typename QueueStats>
-void append_queue_stats(RuntimeMetricGroup& group, const std::string& prefix,
-                        const QueueStats& q) {
+void append_queue_stats(RuntimeMetricGroup& group, const std::string& prefix, const QueueStats& q) {
   const std::uint64_t push_attempts = q.push_count + q.push_timeout_count + q.push_closed_count;
   const std::uint64_t pop_attempts = q.pop_count + q.pop_timeout_count + q.pop_closed_empty_count;
   group.values.push_back({prefix + "push_count", static_cast<double>(q.push_count), "count"});
@@ -62,12 +61,12 @@ void append_queue_stats(RuntimeMetricGroup& group, const std::string& prefix,
       {prefix + "pop_closed_empty_count", static_cast<double>(q.pop_closed_empty_count), "count"});
   group.values.push_back(
       {prefix + "avg_push_wait_us", avg_ns_to_us(q.push_wait_ns, push_attempts), "us"});
-  group.values.push_back(
-      {prefix + "max_push_wait_us", ns_to_us(q.max_push_wait_ns), "us"});
+  group.values.push_back({prefix + "max_push_wait_us", ns_to_us(q.max_push_wait_ns), "us"});
   group.values.push_back(
       {prefix + "avg_pop_wait_us", avg_ns_to_us(q.pop_wait_ns, pop_attempts), "us"});
   group.values.push_back({prefix + "max_pop_wait_us", ns_to_us(q.max_pop_wait_ns), "us"});
-  group.values.push_back({prefix + "high_watermark", static_cast<double>(q.high_watermark), "count"});
+  group.values.push_back(
+      {prefix + "high_watermark", static_cast<double>(q.high_watermark), "count"});
   group.values.push_back({prefix + "current_size", static_cast<double>(q.current_size), "count"});
   group.values.push_back({prefix + "capacity", static_cast<double>(q.capacity), "count"});
 }
@@ -94,7 +93,8 @@ void append_graph_runtime_groups(RuntimeMetrics& out,
          static_cast<double>(pipe.transport.identity_rewrite_count.load(std::memory_order_relaxed)),
          "count"},
         {"identity_map_miss_count",
-         static_cast<double>(pipe.transport.identity_map_miss_count.load(std::memory_order_relaxed)),
+         static_cast<double>(
+             pipe.transport.identity_map_miss_count.load(std::memory_order_relaxed)),
          "count"},
     };
     if (pipe.transport.input_queue) {
@@ -113,36 +113,34 @@ void append_graph_runtime_groups(RuntimeMetrics& out,
     const std::uint64_t router_input_push_calls = load_u64(t.router_input_push_calls);
     const std::uint64_t ensure_build_calls = load_u64(t.ensure_build_calls);
 
-    group.values.push_back(
-        {"push_thread_pop_calls", static_cast<double>(push_pop_calls), "count"});
+    group.values.push_back({"push_thread_pop_calls", static_cast<double>(push_pop_calls), "count"});
     group.values.push_back(
         {"push_thread_pop_miss", static_cast<double>(load_u64(t.push_thread_pop_miss)), "count"});
     group.values.push_back({"push_thread_avg_pop_wait_us",
                             avg_ns_to_us(load_u64(t.push_thread_pop_wait_ns), push_pop_attempts),
                             "us"});
-    group.values.push_back({"push_thread_max_pop_wait_us",
-                            ns_to_us(load_u64(t.push_thread_pop_wait_max_ns)), "us"});
+    group.values.push_back(
+        {"push_thread_max_pop_wait_us", ns_to_us(load_u64(t.push_thread_pop_wait_max_ns)), "us"});
     group.values.push_back({"push_thread_avg_sanitize_us",
                             avg_ns_to_us(load_u64(t.push_thread_sanitize_ns), sanitize_calls),
                             "us"});
-    group.values.push_back({"push_thread_max_sanitize_us",
-                            ns_to_us(load_u64(t.push_thread_sanitize_max_ns)), "us"});
+    group.values.push_back(
+        {"push_thread_max_sanitize_us", ns_to_us(load_u64(t.push_thread_sanitize_max_ns)), "us"});
     group.values.push_back({"push_thread_avg_ensure_build_us",
                             avg_ns_to_us(load_u64(t.push_thread_ensure_build_ns), ensure_calls),
                             "us"});
     group.values.push_back({"push_thread_max_ensure_build_us",
                             ns_to_us(load_u64(t.push_thread_ensure_build_max_ns)), "us"});
-    group.values.push_back({"push_thread_avg_push_samples_us",
-                            avg_ns_to_us(load_u64(t.push_thread_push_samples_ns),
-                                         push_samples_calls),
-                            "us"});
+    group.values.push_back(
+        {"push_thread_avg_push_samples_us",
+         avg_ns_to_us(load_u64(t.push_thread_push_samples_ns), push_samples_calls), "us"});
     group.values.push_back({"push_thread_max_push_samples_us",
                             ns_to_us(load_u64(t.push_thread_push_samples_max_ns)), "us"});
     group.values.push_back({"pull_thread_pull_calls", static_cast<double>(pull_calls), "count"});
     group.values.push_back(
         {"pull_thread_pull_miss", static_cast<double>(load_u64(t.pull_thread_pull_miss)), "count"});
-    group.values.push_back(
-        {"pull_thread_avg_pull_us", avg_ns_to_us(load_u64(t.pull_thread_pull_ns), pull_calls), "us"});
+    group.values.push_back({"pull_thread_avg_pull_us",
+                            avg_ns_to_us(load_u64(t.pull_thread_pull_ns), pull_calls), "us"});
     group.values.push_back(
         {"pull_thread_max_pull_us", ns_to_us(load_u64(t.pull_thread_pull_max_ns)), "us"});
     group.values.push_back({"pull_thread_avg_route_us",
@@ -150,34 +148,32 @@ void append_graph_runtime_groups(RuntimeMetrics& out,
     group.values.push_back(
         {"pull_thread_max_route_us", ns_to_us(load_u64(t.pull_thread_route_max_ns)), "us"});
     group.values.push_back({"router_avg_ensure_build_us",
-                            avg_ns_to_us(load_u64(t.router_ensure_build_ns),
-                                         router_ensure_calls),
+                            avg_ns_to_us(load_u64(t.router_ensure_build_ns), router_ensure_calls),
                             "us"});
-    group.values.push_back({"router_max_ensure_build_us",
-                            ns_to_us(load_u64(t.router_ensure_build_max_ns)), "us"});
+    group.values.push_back(
+        {"router_max_ensure_build_us", ns_to_us(load_u64(t.router_ensure_build_max_ns)), "us"});
     group.values.push_back({"router_avg_sanitize_us",
                             avg_ns_to_us(load_u64(t.router_sanitize_ns), router_sanitize_calls),
                             "us"});
-    group.values.push_back({"router_max_sanitize_us",
-                            ns_to_us(load_u64(t.router_sanitize_max_ns)), "us"});
+    group.values.push_back(
+        {"router_max_sanitize_us", ns_to_us(load_u64(t.router_sanitize_max_ns)), "us"});
     group.values.push_back({"router_avg_input_push_us",
-                            avg_ns_to_us(load_u64(t.router_input_push_ns),
-                                         router_input_push_calls),
+                            avg_ns_to_us(load_u64(t.router_input_push_ns), router_input_push_calls),
                             "us"});
-    group.values.push_back({"router_max_input_push_us",
-                            ns_to_us(load_u64(t.router_input_push_max_ns)), "us"});
-    group.values.push_back({"ensure_build_calls", static_cast<double>(ensure_build_calls), "count"});
+    group.values.push_back(
+        {"router_max_input_push_us", ns_to_us(load_u64(t.router_input_push_max_ns)), "us"});
+    group.values.push_back(
+        {"ensure_build_calls", static_cast<double>(ensure_build_calls), "count"});
     group.values.push_back(
         {"ensure_build_failures", static_cast<double>(load_u64(t.ensure_build_failures)), "count"});
     group.values.push_back({"ensure_build_avg_wait_us",
                             avg_ns_to_us(load_u64(t.ensure_build_wait_ns), ensure_build_calls),
                             "us"});
-    group.values.push_back({"ensure_build_max_wait_us",
-                            ns_to_us(load_u64(t.ensure_build_wait_max_ns)), "us"});
-    group.values.push_back({"ensure_build_avg_canonicalize_us",
-                            avg_ns_to_us(load_u64(t.ensure_build_canonicalize_ns),
-                                         ensure_build_calls),
-                            "us"});
+    group.values.push_back(
+        {"ensure_build_max_wait_us", ns_to_us(load_u64(t.ensure_build_wait_max_ns)), "us"});
+    group.values.push_back(
+        {"ensure_build_avg_canonicalize_us",
+         avg_ns_to_us(load_u64(t.ensure_build_canonicalize_ns), ensure_build_calls), "us"});
     group.values.push_back({"ensure_build_avg_segment_us",
                             avg_ns_to_us(load_u64(t.ensure_build_segment_ns), ensure_build_calls),
                             "us"});
@@ -192,7 +188,8 @@ void append_graph_runtime_groups(RuntimeMetrics& out,
       const InputStreamStats input = pipe.run_core->input_stats();
       group.values.push_back(
           {"run_inputs_enqueued", static_cast<double>(stats.inputs_enqueued), "count"});
-      group.values.push_back({"run_inputs_pushed", static_cast<double>(stats.inputs_pushed), "count"});
+      group.values.push_back(
+          {"run_inputs_pushed", static_cast<double>(stats.inputs_pushed), "count"});
       group.values.push_back(
           {"run_outputs_ready", static_cast<double>(stats.outputs_ready), "count"});
       group.values.push_back(
@@ -231,8 +228,8 @@ void append_graph_runtime_groups(RuntimeMetrics& out,
       }
       for (const auto& pad : diag.element_pad_timings) {
         RuntimeMetricGroup pad_group;
-        pad_group.name = "graph_pipeline:" + std::to_string(pipe.seg.id) + ":pad:" +
-                         pad.element_name + ":" + pad.pad_name;
+        pad_group.name = "graph_pipeline:" + std::to_string(pipe.seg.id) +
+                         ":pad:" + pad.element_name + ":" + pad.pad_name;
         pad_group.values = {
             {"is_sink", pad.is_sink ? 1.0 : 0.0, "bool"},
             {"samples", static_cast<double>(pad.samples), "count"},
@@ -263,22 +260,22 @@ void append_graph_runtime_groups(RuntimeMetrics& out,
       label = execution.node_labels[st.node_id];
     }
     RuntimeMetricGroup group;
-    group.name = label.empty() ? "graph_stage:" + std::to_string(st.node_id)
-                               : "graph_stage:" + label;
+    group.name =
+        label.empty() ? "graph_stage:" + std::to_string(st.node_id) : "graph_stage:" + label;
     group.values = {
         {"index", static_cast<double>(i), "index"},
         {"node_id", static_cast<double>(st.node_id), "id"},
         {"mailbox_pop_calls", static_cast<double>(pop_calls), "count"},
         {"mailbox_pop_miss", static_cast<double>(load_u64(t.mailbox_pop_miss)), "count"},
-        {"mailbox_avg_pop_wait_us",
-         avg_ns_to_us(load_u64(t.mailbox_pop_wait_ns), pop_attempts), "us"},
+        {"mailbox_avg_pop_wait_us", avg_ns_to_us(load_u64(t.mailbox_pop_wait_ns), pop_attempts),
+         "us"},
         {"mailbox_max_pop_wait_us", ns_to_us(load_u64(t.mailbox_pop_wait_max_ns)), "us"},
         {"avg_on_input_us", avg_ns_to_us(load_u64(t.on_input_ns), exec_calls), "us"},
         {"max_on_input_us", ns_to_us(load_u64(t.on_input_max_ns)), "us"},
         {"avg_route_output_us", avg_ns_to_us(load_u64(t.route_output_ns), route_calls), "us"},
         {"max_route_output_us", ns_to_us(load_u64(t.route_output_max_ns)), "us"},
     };
-    append_queue_stats(group, "mailbox_", st.mailbox.inbox.stats());
+    append_queue_stats(group, "mailbox_", st.inbox.stats());
     out.groups.push_back(std::move(group));
   }
 

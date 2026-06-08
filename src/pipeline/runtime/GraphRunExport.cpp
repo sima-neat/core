@@ -20,8 +20,10 @@
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/internal/Diagnostics.h"
+#include "pipeline/runtime/CustomerGraphView.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/ExecutionGraphRuntime.h"
+#include "pipeline/runtime/GraphMetricJson.h"
 #include "pipeline/runtime/PipelineSegmentRuntime.h"
 
 #include <nlohmann/json.hpp>
@@ -29,6 +31,7 @@
 #include <algorithm>
 #include <chrono>
 #include <atomic>
+#include <cctype>
 #include <cstdint>
 #include <ctime>
 #include <filesystem>
@@ -95,27 +98,46 @@ json power_summary_json(const PowerSummary& summary) {
   return json::parse(power_summary_to_json(summary, 0));
 }
 
+json disabled_power_json(const std::string& status, const std::string& note) {
+  json p = power_summary_json(PowerSummary{});
+  p["status"] = status;
+  p["note"] = note;
+  return p;
+}
+
 json latency_summary_json(const NodeLatencySummary& summary) {
   return {
-      {"samples", summary.samples},
-      {"total_ms", summary.total_ms},
-      {"avg_ms", summary.avg_ms},
-      {"min_ms", summary.min_ms},
-      {"max_ms", summary.max_ms},
-      {"min_max_available", summary.min_max_available},
+      {"samples", summary.samples}, {"total_ms", summary.total_ms},
+      {"avg_ms", summary.avg_ms},   {"min_ms", summary.min_ms},
+      {"max_ms", summary.max_ms},   {"min_max_available", summary.min_max_available},
   };
 }
 
 json latency_summary_json(std::uint64_t samples, double total_ms, double avg_ms, double min_ms,
                           double max_ms, bool min_max_available = true) {
   return {
-      {"samples", samples},
-      {"total_ms", total_ms},
-      {"avg_ms", avg_ms},
-      {"min_ms", min_ms},
-      {"max_ms", max_ms},
-      {"min_max_available", min_max_available},
+      {"samples", samples}, {"total_ms", total_ms}, {"avg_ms", avg_ms},
+      {"min_ms", min_ms},   {"max_ms", max_ms},     {"min_max_available", min_max_available},
   };
+}
+
+std::string plugin_timing_semantics(const MeasurePluginLatency& p) {
+  if (p.phase == "Exec" && p.kernel_name.find("processcvu_dispatcher") != std::string::npos) {
+    return "inclusive_processcvu_dispatcher_device_window";
+  }
+  if (p.phase == "Exec" && p.kernel_name.find("processmla_dispatcher") != std::string::npos) {
+    return "inclusive_processmla_dispatcher_device_window";
+  }
+  if (p.phase == "Run") {
+    return "backend_inner_event";
+  }
+  if (p.phase == "BuildIO") {
+    return "host_build_io";
+  }
+  if (p.phase == "PostFixup") {
+    return "host_post_fixup";
+  }
+  return "diagnostic_plugin_event";
 }
 
 json plugin_metric_to_json(const MeasurePluginLatency& p, const std::string& mapping_error = {}) {
@@ -140,14 +162,82 @@ json plugin_metric_to_json(const MeasurePluginLatency& p, const std::string& map
     }
   }
   out["public_node_ids"] = std::move(public_node_ids);
+  out["stream_id"] = p.stream_id.empty() ? json(nullptr) : json(p.stream_id);
+  out["plugin_instance_id"] =
+      p.plugin_instance_id.empty() ? json(nullptr) : json(p.plugin_instance_id);
+  out["source"] = p.source.empty() ? json(nullptr) : json(p.source);
+  out["attribution_source"] =
+      p.attribution_source.empty() ? json(nullptr) : json(p.attribution_source);
+  out["reliable"] = p.reliable;
   out["physical_input_index"] = p.physical_input_index;
   out["output_slot"] = p.output_slot;
   out["calls"] = p.calls;
   out["latency_ms"] =
       latency_summary_json(p.calls, p.total_ms, p.avg_ms, p.min_ms, p.max_ms, p.calls > 0);
-  if (!mapping_error.empty()) {
-    out["mapping_error"] = mapping_error;
+  out["timing_semantics"] = plugin_timing_semantics(p);
+  out["non_additive"] = true;
+  out["interpretation_note"] =
+      "Diagnostic plugin timing rows can be nested or overlap; do not sum totals.";
+  const std::string effective_mapping_error =
+      !mapping_error.empty() ? mapping_error : p.mapping_error;
+  if (!effective_mapping_error.empty()) {
+    out["mapping_error"] = effective_mapping_error;
+    if (p.attribution_source.empty()) {
+      out["attribution_source"] = "unattributed";
+    }
   }
+  return out;
+}
+
+json edge_metric_to_json(const MeasureEdgeLatency& e) {
+  json out;
+  const std::string lowered_id = runtime::canonical_lowered_edge_id(e.edge_id);
+  const bool lowered_mapped = !lowered_id.empty() && lowered_id.size() > 1U &&
+                              lowered_id[0] == 'e' &&
+                              std::all_of(lowered_id.begin() + 1, lowered_id.end(),
+                                          [](unsigned char c) { return std::isdigit(c) != 0; });
+  out["edge_id"] =
+      e.edge_id.empty() ? json(nullptr) : json(lowered_id.empty() ? e.edge_id : lowered_id);
+  out["lowered_edge_id"] = lowered_mapped ? json(lowered_id) : json(nullptr);
+  out["mapping_status"] = lowered_mapped ? "mapped" : "diagnostic_unmapped";
+  out["name"] = e.name.empty() ? json(nullptr) : json(e.name);
+  out["from_node"] = e.from_node_id.empty() ? json(nullptr) : json(e.from_node_id);
+  out["to_node"] = e.to_node_id.empty() ? json(nullptr) : json(e.to_node_id);
+  out["from_runtime_node_id"] =
+      e.from_runtime_node_id >= 0 ? json(e.from_runtime_node_id) : json(nullptr);
+  out["to_runtime_node_id"] =
+      e.to_runtime_node_id >= 0 ? json(e.to_runtime_node_id) : json(nullptr);
+  out["from_element_name"] =
+      e.from_element_name.empty() ? json(nullptr) : json(e.from_element_name);
+  out["to_element_name"] = e.to_element_name.empty() ? json(nullptr) : json(e.to_element_name);
+  out["from_plugin_instance_id"] =
+      e.from_plugin_instance_id.empty() ? json(nullptr) : json(e.from_plugin_instance_id);
+  out["to_plugin_instance_id"] =
+      e.to_plugin_instance_id.empty() ? json(nullptr) : json(e.to_plugin_instance_id);
+  out["stream_id"] = e.stream_id.empty() ? json(nullptr) : json(e.stream_id);
+  out["samples"] = e.samples;
+  out["latency_ms"] = {
+      {"samples", e.samples},
+      {"total_ms", e.total_ms},
+      {"avg_ms", e.avg_ms},
+      {"min_ms", e.min_ms},
+      {"max_ms", e.max_ms},
+      {"p50_ms", e.p50_ms},
+      {"p95_ms", e.p95_ms},
+      {"percentiles_available", e.source == "lttng"},
+      {"min_max_available", e.source == "lttng"},
+      {"max_semantics",
+       e.source == "diagnostics" ? "run_lifetime_high_water" : "measured_window_sample_max"},
+  };
+  out["source"] = e.source.empty() ? json(nullptr) : json(e.source);
+  out["timing_semantics"] = e.timing_semantics.empty() ? json(nullptr) : json(e.timing_semantics);
+  out["attribution_source"] =
+      e.attribution_source.empty() ? json(nullptr) : json(e.attribution_source);
+  out["mapping_error"] = e.mapping_error.empty() ? json(nullptr) : json(e.mapping_error);
+  out["non_additive"] = e.non_additive;
+  out["reliable"] = e.reliable;
+  out["interpretation_note"] =
+      "Edge/message latency is handoff, queue, or transport time; do not add to plugin latency.";
   return out;
 }
 
@@ -164,10 +254,8 @@ bool node_metric_has_samples(const GraphNodeMetrics& node) {
 }
 
 json node_metrics_to_json(const std::vector<GraphNodeMetrics>& nodes,
-                          const std::string& aggregation,
-                          const std::string& latency_semantics,
-                          bool include_empty_node_metrics,
-                          bool include_plugin_metrics) {
+                          const std::string& aggregation, const std::string& latency_semantics,
+                          bool include_empty_node_metrics, bool include_plugin_metrics) {
   json node_metrics = json::array();
   for (const GraphNodeMetrics& node : nodes) {
     if (!include_empty_node_metrics && !node_metric_has_samples(node)) {
@@ -176,15 +264,13 @@ json node_metrics_to_json(const std::vector<GraphNodeMetrics>& nodes,
     json n;
     n["node_id"] = node.node_id.empty() ? json(nullptr) : json(node.node_id);
     n["runtime_node"] = node.node_id.empty() ? json(nullptr) : json(node.node_id);
-    n["runtime_node_id"] =
-        node.runtime_node_id == graph::kInvalidNode
-            ? json(nullptr)
-            : json(static_cast<std::uint64_t>(node.runtime_node_id));
+    n["runtime_node_id"] = node.runtime_node_id == graph::kInvalidNode
+                               ? json(nullptr)
+                               : json(static_cast<std::uint64_t>(node.runtime_node_id));
     n["public_node_ids"] = node.public_node_ids;
-    n["pipeline_segment_id"] =
-        node.pipeline_segment_id == static_cast<std::size_t>(-1)
-            ? json(nullptr)
-            : json(node.pipeline_segment_id);
+    n["pipeline_segment_id"] = node.pipeline_segment_id == static_cast<std::size_t>(-1)
+                                   ? json(nullptr)
+                                   : json(node.pipeline_segment_id);
     n["kind"] = node.kind.empty() ? json(nullptr) : json(node.kind);
     n["label"] = node.label.empty() ? json(nullptr) : json(node.label);
     n["element_names"] = node.element_names;
@@ -205,6 +291,124 @@ json node_metrics_to_json(const std::vector<GraphNodeMetrics>& nodes,
     node_metrics.push_back(std::move(n));
   }
   return node_metrics;
+}
+
+bool json_has_nonempty_nodes(const json& value) {
+  return value.is_object() && value.contains("nodes") && value.at("nodes").is_array() &&
+         !value.at("nodes").empty();
+}
+
+bool graph_has_renderable_nodes(const json& graph) {
+  if (!graph.is_object()) {
+    return false;
+  }
+  return json_has_nonempty_nodes(graph) ||
+         json_has_nonempty_nodes(graph.value("public_view", json::object())) ||
+         json_has_nonempty_nodes(graph.value("lowered_view", json::object()));
+}
+
+std::string node_metric_runtime_id(const json& metric, std::size_t index) {
+  const json node_id = metric.value("node_id", json(nullptr));
+  if (node_id.is_string() && !node_id.get<std::string>().empty()) {
+    return node_id.get<std::string>();
+  }
+  const json runtime_node = metric.value("runtime_node", json(nullptr));
+  if (runtime_node.is_string() && !runtime_node.get<std::string>().empty()) {
+    return runtime_node.get<std::string>();
+  }
+  const json runtime_id = metric.value("runtime_node_id", json(nullptr));
+  if (runtime_id.is_number_unsigned()) {
+    return "n" + std::to_string(runtime_id.get<std::uint64_t>());
+  }
+  if (runtime_id.is_number_integer()) {
+    const auto id = runtime_id.get<std::int64_t>();
+    if (id >= 0) {
+      return "n" + std::to_string(id);
+    }
+  }
+  return "n" + std::to_string(index);
+}
+
+json fallback_lowered_view_from_node_metrics(const json& node_metrics) {
+  json view;
+  json nodes = json::array();
+  json edges = json::array();
+  if (!node_metrics.is_array()) {
+    view["nodes"] = std::move(nodes);
+    view["edges"] = std::move(edges);
+    view["pipeline_segments"] = json::array();
+    return view;
+  }
+
+  std::string previous;
+  std::size_t node_index = 0;
+  std::size_t edge_index = 0;
+  for (const json& metric : node_metrics) {
+    if (!metric.is_object()) {
+      continue;
+    }
+    const std::string id = node_metric_runtime_id(metric, node_index);
+    json n;
+    n["id"] = id;
+    n["stable_id"] = "metrics." + id;
+    n["backend"] = "metrics";
+    n["kind"] = metric.value("kind", json(nullptr)).is_null()
+                    ? std::string("Node")
+                    : metric.value("kind", std::string("Node"));
+    n["label"] = metric.value("label", json(nullptr)).is_null()
+                     ? json(nullptr)
+                     : metric.value("label", json(nullptr));
+    n["compiler_generated"] = false;
+    n["topology_source"] = "node_metrics_fallback";
+    if (!metric.value("pipeline_segment_id", json(nullptr)).is_null()) {
+      n["segment"] = metric.value("pipeline_segment_id", json(nullptr));
+    }
+    nodes.push_back(std::move(n));
+    if (!previous.empty()) {
+      json e;
+      e["id"] = "e" + std::to_string(edge_index++);
+      e["from"] = previous;
+      e["to"] = id;
+      e["from_port"] = nullptr;
+      e["to_port"] = nullptr;
+      e["kind"] = "metrics_fallback_linear";
+      e["spec_complete"] = false;
+      edges.push_back(std::move(e));
+    }
+    previous = id;
+    ++node_index;
+  }
+  view["nodes"] = std::move(nodes);
+  view["edges"] = std::move(edges);
+  view["pipeline_segments"] = json::array();
+  view["topology_source"] = "node_metrics_fallback";
+  return view;
+}
+
+void ensure_graph_topology_from_node_metrics(json& root) {
+  if (!root.contains("graph") || !root.at("graph").is_object() || !root.contains("run") ||
+      !root.at("run").is_object()) {
+    return;
+  }
+  json& graph = root["graph"];
+  if (graph_has_renderable_nodes(graph)) {
+    return;
+  }
+  const json node_metrics = root.at("run").value("node_metrics", json::array());
+  const json lowered = fallback_lowered_view_from_node_metrics(node_metrics);
+  if (!json_has_nonempty_nodes(lowered)) {
+    return;
+  }
+  graph["topology_source"] = "node_metrics_fallback";
+  graph["nodes"] = lowered.at("nodes");
+  graph["edges"] = lowered.at("edges");
+  graph["lowered_view"] = lowered;
+  graph["customer_view"] = runtime::fallback_customer_view_from_lowered(
+      graph["lowered_view"], "node_metrics_fallback",
+      {"Fallback topology reconstructed from node metrics; not source customer topology."});
+  if (!graph.contains("mode") || !graph.at("mode").is_string()) {
+    graph["mode"] = "linear";
+  }
 }
 
 json output_spec_to_json(const OutputSpec& spec) {
@@ -563,7 +767,10 @@ json public_view_to_json(const runtime::ExecutionGraphPlan& plan) {
 
 json graph_topology_to_json(const runtime::RunCore& core) {
   json graph;
-  if (!core.graph_execution_) {
+  const runtime::ExecutionGraphRuntime* execution_ptr = core.graph_execution_.get();
+  const runtime::ExecutionGraphPlan* export_plan =
+      execution_ptr ? &execution_ptr->plan : core.graph_export_plan_.get();
+  if (!export_plan) {
     graph["mode"] = "linear";
     graph["nodes"] = json::array();
     graph["edges"] = json::array();
@@ -572,14 +779,14 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     return graph;
   }
 
-  const runtime::ExecutionGraphRuntime& execution = core.graph_execution();
-  const runtime::ExecutionGraphPlan& plan = execution.plan;
+  const runtime::ExecutionGraphPlan& plan = *export_plan;
   graph["mode"] = plan.linear_compat ? "linear" : "connected";
   graph["public_graph_id"] = plan.public_graph_id;
   graph["public_graph_version"] = plan.public_graph_version;
   graph["named_inputs"] = named_endpoints_to_json(plan, plan.named_inputs);
   graph["named_outputs"] = named_endpoints_to_json(plan, plan.named_outputs);
   graph["public_view"] = public_view_to_json(plan);
+  graph["public_view"]["topology_source"] = "execution_plan_public_view";
 
   json nodes = json::array();
   for (const auto& segment : plan.pipeline_segments) {
@@ -639,6 +846,20 @@ json graph_topology_to_json(const runtime::RunCore& core) {
     e["spec"] = output_spec_to_json(edge.spec);
     edges.push_back(std::move(e));
   }
+  if (edges.empty() && plan.linear_compat && plan.pipeline_segments.size() == 1U) {
+    const auto& segment = plan.pipeline_segments.front();
+    for (std::size_t local = 1; local < segment.node_ids.size(); ++local) {
+      json e;
+      e["id"] = "e" + std::to_string(static_cast<std::size_t>(edges.size()));
+      e["from"] = node_ref(segment.node_ids[local - 1U]);
+      e["to"] = node_ref(segment.node_ids[local]);
+      e["from_port"] = nullptr;
+      e["to_port"] = nullptr;
+      e["kind"] = "segment_linear";
+      e["spec_complete"] = false;
+      edges.push_back(std::move(e));
+    }
+  }
   if (edges.empty() && plan.named_inputs.size() == 1U && plan.named_outputs.size() == 1U) {
     const auto& input = *plan.named_inputs.begin();
     const auto& output = *plan.named_outputs.begin();
@@ -655,27 +876,45 @@ json graph_topology_to_json(const runtime::RunCore& core) {
   graph["edges"] = std::move(edges);
 
   json segments = json::array();
-  for (std::size_t i = 0; i < execution.pipelines.size(); ++i) {
-    const auto& pipeline = execution.pipelines[i];
-    if (!pipeline) {
-      continue;
+  if (execution_ptr) {
+    for (std::size_t i = 0; i < execution_ptr->pipelines.size(); ++i) {
+      const auto& pipeline = execution_ptr->pipelines[i];
+      if (!pipeline) {
+        continue;
+      }
+      json s;
+      s["index"] = i;
+      s["id"] = pipeline->seg.id;
+      s["built"] = pipeline->transport.built.load();
+      s["has_input"] = pipeline->transport.has_input;
+      s["has_output"] = pipeline->transport.has_output;
+      s["last_pipeline"] = pipeline->last_pipeline;
+      segments.push_back(std::move(s));
     }
-    json s;
-    s["index"] = i;
-    s["id"] = pipeline->seg.id;
-    s["built"] = pipeline->transport.built.load();
-    s["has_input"] = pipeline->transport.has_input;
-    s["has_output"] = pipeline->transport.has_output;
-    s["last_pipeline"] = pipeline->last_pipeline;
-    segments.push_back(std::move(s));
+  } else {
+    for (std::size_t i = 0; i < plan.pipeline_segments.size(); ++i) {
+      const auto& segment = plan.pipeline_segments[i];
+      json s;
+      s["index"] = i;
+      s["id"] = segment.id;
+      s["built"] = i == 0U ? static_cast<bool>(core.pipeline.stream) : false;
+      s["has_input"] = segment.boundary.needs_input;
+      s["has_output"] = segment.boundary.needs_output;
+      s["last_pipeline"] = i == 0U ? core.pipeline.last_pipeline : std::string();
+      s["collapsed_runtime"] = true;
+      segments.push_back(std::move(s));
+    }
   }
   graph["pipeline_segments"] = std::move(segments);
 
   graph["lowered_view"] = {
+      {"topology_source", "execution_plan_lowered_view"},
       {"nodes", graph["nodes"]},
       {"edges", graph["edges"]},
       {"pipeline_segments", graph["pipeline_segments"]},
   };
+  graph["customer_view"] =
+      runtime::customer_view_to_json(plan, graph["public_view"], graph["lowered_view"]);
   return graph;
 }
 
@@ -727,6 +966,9 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
                         {"min", metrics.power.total_min_watts},
                         {"max", metrics.power.total_max_watts}};
     j["power"] = std::move(p);
+  } else if (opt.include_power) {
+    j["power"] = disabled_power_json("requested_no_samples",
+                                     "Power was requested, but no rail samples were collected.");
   }
 
   const GraphMetricsReport graph_report = build_graph_metrics_report_run_lifetime(
@@ -739,6 +981,7 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
   graph_metrics["elapsed_seconds"] = graph_report.graph_metrics.elapsed_seconds;
   graph_metrics["outputs_pulled"] = graph_report.graph_metrics.counters.outputs_pulled;
   graph_metrics["throughput_fps"] = graph_report.graph_metrics.throughput_fps;
+  graph_metrics["outputs_per_s"] = graph_report.graph_metrics.throughput_fps;
   graph_metrics["counters"] = {
       {"inputs_enqueued", graph_report.graph_metrics.counters.inputs_enqueued},
       {"inputs_dropped", graph_report.graph_metrics.counters.inputs_dropped},
@@ -749,14 +992,20 @@ json run_metrics_to_json(const Run& run, const runtime::RunCore& core,
   };
   if (opt.include_power && graph_report.graph_metrics.power.enabled) {
     graph_metrics["power"] = power_summary_json(graph_report.graph_metrics.power);
+    graph_metrics["power"]["scope"] = "board_rail_power_during_run_lifetime";
+  } else if (opt.include_power) {
+    graph_metrics["power"] = disabled_power_json(
+        "requested_no_samples", "Board rail power was requested, but no samples were collected.");
+  } else {
+    graph_metrics["power"] = disabled_power_json(
+        "disabled_by_options", "Board rail power telemetry was disabled for this run.");
   }
   j["graph_metrics"] = std::move(graph_metrics);
 
   if (opt.include_node_metrics) {
-    j["node_metrics"] =
-        node_metrics_to_json(graph_report.node_metrics, graph_report.aggregation,
-                             graph_report.latency_semantics, opt.include_empty_node_metrics,
-                             opt.include_plugin_metrics);
+    j["node_metrics"] = node_metrics_to_json(
+        graph_report.node_metrics, graph_report.aggregation, graph_report.latency_semantics,
+        opt.include_empty_node_metrics, opt.include_plugin_metrics);
   }
   if (opt.include_plugin_metrics) {
     j["plugin_metrics_unattributed"] = json::array();
@@ -787,8 +1036,8 @@ bool json_array_contains_string(const json& value, const std::string& needle) {
 }
 
 bool node_metric_segment_matches(const json& node, std::int32_t segment_id) {
-  return segment_id < 0 || json_nullable_int_equals(node.value("pipeline_segment_id", json(nullptr)),
-                                                    segment_id);
+  return segment_id < 0 ||
+         json_nullable_int_equals(node.value("pipeline_segment_id", json(nullptr)), segment_id);
 }
 
 bool node_metric_has_element(const json& node, const std::string& element_name) {
@@ -837,8 +1086,8 @@ std::optional<std::size_t> find_plugin_node_metric(const json& node_metrics,
       }
     }
     return unique_node_match_from_indices(
-        matches, "unattributed: profiler runtime_node_id matched multiple node metrics",
-        "unattributed: profiler runtime_node_id did not match a node metric", mapping_error);
+        matches, "unattributed: plugin metric runtime_node_id matched multiple node metrics",
+        "unattributed: plugin metric runtime_node_id did not match a node metric", mapping_error);
   }
 
   if (plugin.public_node_id >= 0) {
@@ -851,8 +1100,8 @@ std::optional<std::size_t> find_plugin_node_metric(const json& node_metrics,
       }
     }
     return unique_node_match_from_indices(
-        matches, "unattributed: profiler public_node_id matched multiple node metrics",
-        "unattributed: profiler public_node_id did not match a node metric", mapping_error);
+        matches, "unattributed: plugin metric public_node_id matched multiple node metrics",
+        "unattributed: plugin metric public_node_id did not match a node metric", mapping_error);
   }
 
   if (!plugin.public_node_ids.empty()) {
@@ -867,14 +1116,14 @@ std::optional<std::size_t> find_plugin_node_metric(const json& node_metrics,
       }
     }
     return unique_node_match_from_indices(
-        matches, "unattributed: profiler public_node_ids matched multiple node metrics",
-        "unattributed: profiler public_node_ids did not match a node metric", mapping_error);
+        matches, "unattributed: plugin metric public_node_ids matched multiple node metrics",
+        "unattributed: plugin metric public_node_ids did not match a node metric", mapping_error);
   }
 
   const std::string element_name = plugin_preferred_element_name(plugin);
   if (element_name.empty()) {
     if (mapping_error) {
-      *mapping_error = "unattributed: profiler event has no stage_name or gst_element_name";
+      *mapping_error = "unattributed: plugin metric event has no stage_name or gst_element_name";
     }
     return std::nullopt;
   }
@@ -889,8 +1138,9 @@ std::optional<std::size_t> find_plugin_node_metric(const json& node_metrics,
       }
     }
     return unique_node_match_from_indices(
-        matches, "unattributed: profiler element matched multiple node metrics in segment",
-        "unattributed: profiler element did not match a graph element in segment", mapping_error);
+        matches, "unattributed: plugin metric element matched multiple node metrics in segment",
+        "unattributed: plugin metric element did not match a graph element in segment",
+        mapping_error);
   }
 
   std::vector<std::size_t> matches;
@@ -900,8 +1150,8 @@ std::optional<std::size_t> find_plugin_node_metric(const json& node_metrics,
     }
   }
   return unique_node_match_from_indices(
-      matches, "unattributed: profiler element matched multiple node metrics",
-      "unattributed: profiler element did not match a graph element", mapping_error);
+      matches, "unattributed: plugin metric element matched multiple node metrics",
+      "unattributed: plugin metric element did not match a graph element", mapping_error);
 }
 
 json merge_public_node_ids(json plugin_ids, const json& node_ids) {
@@ -912,7 +1162,8 @@ json merge_public_node_ids(json plugin_ids, const json& node_ids) {
     return plugin_ids;
   }
   for (const json& node_id : node_ids) {
-    if (node_id.is_string() && !json_array_contains_string(plugin_ids, node_id.get<std::string>())) {
+    if (node_id.is_string() &&
+        !json_array_contains_string(plugin_ids, node_id.get<std::string>())) {
       plugin_ids.push_back(node_id);
     }
   }
@@ -926,9 +1177,8 @@ void inherit_plugin_node_identity(json& plugin, const json& node) {
   if (plugin.value("runtime_node_id", json(nullptr)).is_null()) {
     plugin["runtime_node_id"] = node.value("runtime_node_id", json(nullptr));
   }
-  plugin["public_node_ids"] =
-      merge_public_node_ids(plugin.value("public_node_ids", json::array()),
-                            node.value("public_node_ids", json::array()));
+  plugin["public_node_ids"] = merge_public_node_ids(plugin.value("public_node_ids", json::array()),
+                                                    node.value("public_node_ids", json::array()));
 }
 
 } // namespace
@@ -967,6 +1217,7 @@ std::string run_to_json(const Run& run, const RunExportOptions& opt, std::string
     root["metadata"] = std::move(metadata);
     root["graph"] = graph_topology_to_json(*core);
     root["run"] = opt.include_metrics ? run_metrics_to_json(run, *core, opt) : json::object();
+    ensure_graph_topology_from_node_metrics(root);
     return root.dump(opt.indent);
   } catch (const std::exception& e) {
     if (err) {
@@ -990,31 +1241,42 @@ std::string run_to_json(const Run& run, const MeasureReport& report, const RunEx
   try {
     json root = json::parse(base);
     json& run_json = root["run"];
-    run_json["graph_metrics"] = {
-        {"measurement_scope", "measured_window"},
-        {"aggregation", "measured_window"},
-        {"latency_semantics", "sum_element_residency_delta"},
-        {"throughput_counting", "all_pulled_outputs"},
-        {"elapsed_seconds", report.elapsed_s},
-        {"outputs_pulled", report.outputs_pulled},
-        {"throughput_fps", report.throughput_batches_per_s},
-        {"counters",
-         {{"inputs_enqueued", report.inputs_pushed},
-          {"inputs_dropped", report.inputs_dropped},
-          {"inputs_pushed", report.inputs_pushed},
-          {"outputs_ready", report.outputs_pulled},
-          {"outputs_pulled", report.outputs_pulled},
-          {"outputs_dropped", report.outputs_dropped}}},
+    json graph_metrics;
+    graph_metrics["measurement_scope"] = "measured_window";
+    graph_metrics["aggregation"] = "measured_window";
+    graph_metrics["latency_semantics"] = "sum_element_residency_delta";
+    graph_metrics["throughput_counting"] = "all_pulled_outputs";
+    graph_metrics["window"] =
+        runtime::window_json("measured_window", report.elapsed_s, report.options.duration_ms,
+                             report.options.warmup_ms, report.warmup_iterations);
+    const json throughput = runtime::throughput_json(report.outputs_pulled, report.elapsed_s,
+                                                     report.options.logical_batch_size);
+    graph_metrics["throughput"] = throughput;
+    graph_metrics["elapsed_seconds"] = report.elapsed_s;
+    graph_metrics["outputs_pulled"] = report.outputs_pulled;
+    graph_metrics["throughput_fps"] = throughput.value("outputs_per_s", 0.0);
+    graph_metrics["outputs_per_s"] = throughput.value("outputs_per_s", 0.0);
+    graph_metrics["throughput_batches_per_s"] = throughput.value("outputs_per_s", 0.0);
+    graph_metrics["counters"] = {
+        {"inputs_enqueued", report.inputs_enqueued}, {"inputs_dropped", report.inputs_dropped},
+        {"inputs_pushed", report.inputs_pushed},     {"outputs_ready", report.outputs_ready},
+        {"outputs_pulled", report.outputs_pulled},   {"outputs_dropped", report.outputs_dropped},
     };
-    if (opt.include_power && report.power.enabled) {
-      run_json["graph_metrics"]["power"] = power_summary_json(report.power);
-    }
+    graph_metrics["power"] =
+        runtime::power_status_json(report.power, opt.include_power && report.options.include_power,
+                                   report.power.enabled, "board_rail_power_during_measured_window");
+    run_json["graph_metrics"] = std::move(graph_metrics);
+    const std::shared_ptr<const runtime::RunCore> core_ptr = run_internal::core(run);
+    const bool graph_backed = core_ptr && core_ptr->graph_execution_;
+    run_json["graph_e2e_latency_ms"] = runtime::graph_e2e_json(
+        report.end_to_end, graph_backed,
+        graph_backed ? "unavailable_graph_e2e_not_instrumented" : "no_samples");
+    run_json["path_timing"] =
+        runtime::path_timing_to_json(report.path_timing, report.trace_loss_detected);
     if (opt.include_node_metrics && !report.node_metrics.empty()) {
-      run_json["node_metrics"] =
-          node_metrics_to_json(report.node_metrics, "measured_window",
-                               "sum_element_residency_delta",
-                               opt.include_empty_node_metrics,
-                               opt.include_plugin_metrics);
+      run_json["node_metrics"] = node_metrics_to_json(
+          report.node_metrics, "measured_window", "sum_element_residency_delta",
+          opt.include_empty_node_metrics, opt.include_plugin_metrics);
     } else if (!opt.include_node_metrics) {
       run_json.erase("node_metrics");
     }
@@ -1042,12 +1304,61 @@ std::string run_to_json(const Run& run, const MeasureReport& report, const RunEx
           plugins.push_back(plugin_metric_to_json(p, mapping_error));
         }
       }
+      for (const MeasurePluginLatency& p : report.plugin_latency_unattributed) {
+        plugins.push_back(plugin_metric_to_json(
+            p, p.mapping_error.empty() ? "unattributed: plugin metric was not mapped"
+                                       : p.mapping_error));
+      }
       run_json["plugin_metrics_unattributed"] = std::move(plugins);
     } else {
       run_json.erase("plugin_metrics_unattributed");
     }
+    run_json["metrics_sources"] = {
+        {"throughput", "run_measure_window"},
+        {"power", opt.include_power ? "board_power_monitor" : "disabled_by_options"},
+        {"node_latency", "graph_runtime_metrics"},
+        {"plugin_latency",
+         {{"status", report.plugin_latency_status.empty() ? "off" : report.plugin_latency_status},
+          {"source",
+           report.plugin_latency_source.empty() ? "none" : report.plugin_latency_source}}},
+        {"edge_message_latency",
+         {{"status", report.message_latency_status.empty() ? "off" : report.message_latency_status},
+          {"source",
+           report.message_latency_source.empty() ? "none" : report.message_latency_source}}},
+    };
+    run_json["plugin_latency"] = {
+        {"requested", report.options.include_plugin_latency},
+        {"status", report.plugin_latency_status.empty() ? "off" : report.plugin_latency_status},
+        {"source", report.plugin_latency_source.empty() ? "none" : report.plugin_latency_source},
+        {"trace_dir",
+         report.metrics_trace_dir.empty() ? json(nullptr) : json(report.metrics_trace_dir)},
+    };
+    run_json["edge_message_latency"] = {
+        {"requested",
+         report.options.include_edge_latency || report.options.include_message_latency},
+        {"status", report.message_latency_status.empty() ? "off" : report.message_latency_status},
+        {"source", report.message_latency_source.empty() ? "none" : report.message_latency_source},
+        {"timing_semantics", "handoff_queue_transport_non_additive"},
+    };
+    if (!report.warnings.empty()) {
+      run_json["warnings"] = report.warnings;
+      run_json["plugin_latency"]["warnings"] = report.warnings;
+      run_json["edge_message_latency"]["warnings"] = report.warnings;
+    }
+    json edge_metrics = json::array();
+    for (const MeasureEdgeLatency& e : report.edge_latency) {
+      edge_metrics.push_back(edge_metric_to_json(e));
+    }
+    run_json["edge_metrics"] = std::move(edge_metrics);
+    json edge_unattributed = json::array();
+    for (const MeasureEdgeLatency& e : report.edge_latency_unattributed) {
+      edge_unattributed.push_back(edge_metric_to_json(e));
+    }
+    run_json["edge_metrics_unattributed"] = std::move(edge_unattributed);
     run_json["measurement"] = {
         {"warmup_iterations", report.warmup_iterations},
+        {"warmup_method",
+         report.warmup_iterations > 0U ? "caller_graph_push_pull_iterations" : "none"},
         {"outputs", report.outputs},
         {"throughput_batches_per_s", report.throughput_batches_per_s},
         {"throughput_inferences_per_s", report.throughput_inferences_per_s},
@@ -1068,6 +1379,7 @@ std::string run_to_json(const Run& run, const MeasureReport& report, const RunEx
           {"p99_ms", report.frame_gap.p99_ms},
           {"max_ms", report.frame_gap.max_ms}}},
     };
+    ensure_graph_topology_from_node_metrics(root);
     return root.dump(opt.indent);
   } catch (const std::exception& e) {
     if (err) {

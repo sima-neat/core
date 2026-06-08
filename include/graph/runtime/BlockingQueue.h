@@ -16,6 +16,11 @@
 
 namespace simaai::neat::graph::runtime {
 
+enum class QueueTelemetryLevel : std::uint8_t {
+  CountersOnly,
+  Timing,
+};
+
 /**
  * @brief Thread-safe bounded blocking queue used by the runtime mailboxes.
  *
@@ -48,19 +53,33 @@ public:
     std::uint64_t pop_wait_ns = 0;
     std::uint64_t max_push_wait_ns = 0;
     std::uint64_t max_pop_wait_ns = 0;
+    std::uint64_t residence_count = 0;
+    std::uint64_t residence_ns = 0;
+    std::uint64_t max_residence_ns = 0;
     std::size_t high_watermark = 0;
     std::size_t current_size = 0;
     std::size_t capacity = 0;
     bool closed = false;
+    bool timing_enabled = false;
   };
 
   /// Construct a queue with the given capacity (0 = unbounded).
   explicit BlockingQueue(std::size_t capacity = 0) : capacity_(capacity) {}
 
+  void set_telemetry_level(QueueTelemetryLevel level) noexcept {
+    telemetry_level_.store(level, std::memory_order_release);
+  }
+
+  bool timing_enabled() const noexcept {
+    return telemetry_level_.load(std::memory_order_acquire) == QueueTelemetryLevel::Timing;
+  }
+
   /// Push `item` (copy). Blocks up to `timeout_ms` (or forever if -1). Returns false on
   /// close/timeout.
   bool push(const T& item, int timeout_ms = -1) {
-    const auto t0 = std::chrono::steady_clock::now();
+    const bool timing = timing_enabled();
+    const auto t0 =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock<std::mutex> lock(mu_);
     if (closed_) {
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
@@ -71,18 +90,19 @@ public:
         cv_not_full_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
       } else if (!cv_not_full_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                                         [&] { return closed_ || queue_.size() < capacity_; })) {
-        record_push_wait(t0);
+        record_push_wait(t0, timing);
         push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
       if (closed_ || (capacity_ > 0 && queue_.size() >= capacity_)) {
-        record_push_wait(t0);
+        record_push_wait(t0, timing);
         push_closed_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
     }
-    record_push_wait(t0);
-    queue_.push_back(item);
+    record_push_wait(t0, timing);
+    queue_.push_back(QueueEntry{item, timing ? std::chrono::steady_clock::now()
+                                             : std::chrono::steady_clock::time_point{}});
     push_count_.fetch_add(1, std::memory_order_relaxed);
     update_high_watermark_locked();
     cv_not_empty_.notify_one();
@@ -92,7 +112,9 @@ public:
   /// Push `item` (move). Blocks up to `timeout_ms` (or forever if -1). Returns false on
   /// close/timeout.
   bool push(T&& item, int timeout_ms = -1) {
-    const auto t0 = std::chrono::steady_clock::now();
+    const bool timing = timing_enabled();
+    const auto t0 =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock<std::mutex> lock(mu_);
     if (closed_) {
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
@@ -103,18 +125,19 @@ public:
         cv_not_full_.wait(lock, [&] { return closed_ || queue_.size() < capacity_; });
       } else if (!cv_not_full_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                                         [&] { return closed_ || queue_.size() < capacity_; })) {
-        record_push_wait(t0);
+        record_push_wait(t0, timing);
         push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
       if (closed_ || (capacity_ > 0 && queue_.size() >= capacity_)) {
-        record_push_wait(t0);
+        record_push_wait(t0, timing);
         push_closed_count_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
     }
-    record_push_wait(t0);
-    queue_.push_back(std::move(item));
+    record_push_wait(t0, timing);
+    queue_.push_back(QueueEntry{std::move(item), timing ? std::chrono::steady_clock::now()
+                                                        : std::chrono::steady_clock::time_point{}});
     push_count_.fetch_add(1, std::memory_order_relaxed);
     update_high_watermark_locked();
     cv_not_empty_.notify_one();
@@ -123,6 +146,7 @@ public:
 
   /// Non-blocking copy push; returns false if closed or full.
   bool try_push(const T& item) {
+    const bool timing = timing_enabled();
     std::lock_guard<std::mutex> lock(mu_);
     if (closed_) {
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
@@ -132,7 +156,8 @@ public:
       push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
       return false;
     }
-    queue_.push_back(item);
+    queue_.push_back(QueueEntry{item, timing ? std::chrono::steady_clock::now()
+                                             : std::chrono::steady_clock::time_point{}});
     push_count_.fetch_add(1, std::memory_order_relaxed);
     update_high_watermark_locked();
     cv_not_empty_.notify_one();
@@ -141,6 +166,7 @@ public:
 
   /// Non-blocking move push; returns false if closed or full.
   bool try_push(T&& item) {
+    const bool timing = timing_enabled();
     std::lock_guard<std::mutex> lock(mu_);
     if (closed_) {
       push_closed_count_.fetch_add(1, std::memory_order_relaxed);
@@ -150,7 +176,8 @@ public:
       push_timeout_count_.fetch_add(1, std::memory_order_relaxed);
       return false;
     }
-    queue_.push_back(std::move(item));
+    queue_.push_back(QueueEntry{std::move(item), timing ? std::chrono::steady_clock::now()
+                                                        : std::chrono::steady_clock::time_point{}});
     push_count_.fetch_add(1, std::memory_order_relaxed);
     update_high_watermark_locked();
     cv_not_empty_.notify_one();
@@ -160,7 +187,9 @@ public:
   /// Pop the next item into `out`. Blocks up to `timeout_ms` (or forever if -1). Returns false if
   /// closed and empty (or on timeout).
   bool pop(T& out, int timeout_ms = -1) {
-    const auto t0 = std::chrono::steady_clock::now();
+    const bool timing = timing_enabled();
+    const auto t0 =
+        timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     std::unique_lock<std::mutex> lock(mu_);
     if (timeout_ms < 0) {
       cv_not_empty_.wait(lock, [&] { return closed_ || !queue_.empty(); });
@@ -168,7 +197,7 @@ public:
       cv_not_empty_.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                              [&] { return closed_ || !queue_.empty(); });
     }
-    record_pop_wait(t0);
+    record_pop_wait(t0, timing);
     if (queue_.empty()) {
       if (closed_) {
         pop_closed_empty_count_.fetch_add(1, std::memory_order_relaxed);
@@ -177,8 +206,10 @@ public:
       }
       return false;
     }
-    out = std::move(queue_.front());
+    QueueEntry entry = std::move(queue_.front());
     queue_.pop_front();
+    record_residence(entry.enqueue_time, timing);
+    out = std::move(entry.value);
     pop_count_.fetch_add(1, std::memory_order_relaxed);
     cv_not_full_.notify_one();
     return true;
@@ -217,6 +248,9 @@ public:
     s.pop_wait_ns = pop_wait_ns_.load(std::memory_order_relaxed);
     s.max_push_wait_ns = max_push_wait_ns_.load(std::memory_order_relaxed);
     s.max_pop_wait_ns = max_pop_wait_ns_.load(std::memory_order_relaxed);
+    s.residence_count = residence_count_.load(std::memory_order_relaxed);
+    s.residence_ns = residence_ns_.load(std::memory_order_relaxed);
+    s.max_residence_ns = max_residence_ns_.load(std::memory_order_relaxed);
     s.high_watermark = high_watermark_.load(std::memory_order_relaxed);
     {
       std::lock_guard<std::mutex> lock(mu_);
@@ -224,43 +258,57 @@ public:
       s.capacity = capacity_;
       s.closed = closed_;
     }
+    s.timing_enabled = timing_enabled();
     return s;
   }
 
 private:
   static std::uint64_t duration_ns_since(std::chrono::steady_clock::time_point start) {
-    return static_cast<std::uint64_t>(
-        std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - start)
-            .count());
+    return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now() - start)
+                                          .count());
   }
 
   static void atomic_max(std::atomic<std::uint64_t>& dst, std::uint64_t value) {
     std::uint64_t cur = dst.load(std::memory_order_relaxed);
-    while (cur < value &&
-           !dst.compare_exchange_weak(cur, value, std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
+    while (cur < value && !dst.compare_exchange_weak(cur, value, std::memory_order_relaxed,
+                                                     std::memory_order_relaxed)) {
     }
   }
 
   static void atomic_max_size(std::atomic<std::size_t>& dst, std::size_t value) {
     std::size_t cur = dst.load(std::memory_order_relaxed);
-    while (cur < value &&
-           !dst.compare_exchange_weak(cur, value, std::memory_order_relaxed,
-                                      std::memory_order_relaxed)) {
+    while (cur < value && !dst.compare_exchange_weak(cur, value, std::memory_order_relaxed,
+                                                     std::memory_order_relaxed)) {
     }
   }
 
-  void record_push_wait(std::chrono::steady_clock::time_point start) const {
+  void record_push_wait(std::chrono::steady_clock::time_point start, bool enabled) const {
+    if (!enabled) {
+      return;
+    }
     const std::uint64_t ns = duration_ns_since(start);
     push_wait_ns_.fetch_add(ns, std::memory_order_relaxed);
     atomic_max(max_push_wait_ns_, ns);
   }
 
-  void record_pop_wait(std::chrono::steady_clock::time_point start) const {
+  void record_pop_wait(std::chrono::steady_clock::time_point start, bool enabled) const {
+    if (!enabled) {
+      return;
+    }
     const std::uint64_t ns = duration_ns_since(start);
     pop_wait_ns_.fetch_add(ns, std::memory_order_relaxed);
     atomic_max(max_pop_wait_ns_, ns);
+  }
+
+  void record_residence(std::chrono::steady_clock::time_point enqueue_time, bool enabled) const {
+    if (!enabled || enqueue_time.time_since_epoch().count() == 0) {
+      return;
+    }
+    const std::uint64_t ns = duration_ns_since(enqueue_time);
+    residence_count_.fetch_add(1, std::memory_order_relaxed);
+    residence_ns_.fetch_add(ns, std::memory_order_relaxed);
+    atomic_max(max_residence_ns_, ns);
   }
 
   void update_high_watermark_locked() const {
@@ -270,7 +318,12 @@ private:
   mutable std::mutex mu_;
   std::condition_variable cv_not_empty_;
   std::condition_variable cv_not_full_;
-  std::deque<T> queue_;
+  struct QueueEntry {
+    T value;
+    std::chrono::steady_clock::time_point enqueue_time;
+  };
+
+  std::deque<QueueEntry> queue_;
   std::size_t capacity_ = 0;
   bool closed_ = false;
   mutable std::atomic<std::uint64_t> push_count_{0};
@@ -283,7 +336,11 @@ private:
   mutable std::atomic<std::uint64_t> pop_wait_ns_{0};
   mutable std::atomic<std::uint64_t> max_push_wait_ns_{0};
   mutable std::atomic<std::uint64_t> max_pop_wait_ns_{0};
+  mutable std::atomic<std::uint64_t> residence_count_{0};
+  mutable std::atomic<std::uint64_t> residence_ns_{0};
+  mutable std::atomic<std::uint64_t> max_residence_ns_{0};
   mutable std::atomic<std::size_t> high_watermark_{0};
+  mutable std::atomic<QueueTelemetryLevel> telemetry_level_{QueueTelemetryLevel::CountersOnly};
 };
 
 } // namespace simaai::neat::graph::runtime

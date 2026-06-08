@@ -1260,37 +1260,32 @@ DetessIngressTransportView validate_detess_ingress_transport_local(
         !published_output.name.empty()
             ? published_output.name
             : (!published_output.segment_name.empty() ? published_output.segment_name
-                                                       : std::string());
+                                                      : std::string());
     std::ostringstream out;
     out << reason << " for '" << context << "'"
         << " published_name=\"" << published_name << "\""
         << " published_segment=\"" << published_output.segment_name << "\""
-        << " published_dtype=\""
-        << preferred_tensor_dtype_local(published_output, expected_dtype) << "\""
+        << " published_dtype=\"" << preferred_tensor_dtype_local(published_output, expected_dtype)
+        << "\""
         << " expected_dtype=\"" << expected_dtype << "\""
-        << " published_mpk_shape="
-        << ints64_dbg_processcvu_local(published_output.mpk_shape)
+        << " published_mpk_shape=" << ints64_dbg_processcvu_local(published_output.mpk_shape)
         << " published_logical_shape="
         << ints64_dbg_processcvu_local(published_output.logical_shape)
-        << " transport_shape="
-        << ints64_dbg_processcvu_local(transport_shape)
+        << " transport_shape=" << ints64_dbg_processcvu_local(transport_shape)
         << " published_size_bytes="
         << preferred_mpk_tensor_size_bytes_local(
-               published_output,
-               preferred_tensor_dtype_local(published_output, expected_dtype))
+               published_output, preferred_tensor_dtype_local(published_output, expected_dtype))
         << " transport_size_bytes=" << transport_size_bytes
         << " published_size_raw=" << published_output.size_bytes
         << " published_byte_offset=" << published_output.byte_offset
-        << " published_source_byte_offset="
-        << published_output.source_byte_offset
+        << " published_source_byte_offset=" << published_output.source_byte_offset
         << " published_physical_index=" << published_output.physical_index
-        << " published_source_physical_index="
-        << published_output.source_physical_index;
+        << " published_source_physical_index=" << published_output.source_physical_index;
     return out.str();
   };
   if (transport_shape.empty() || transport_size_bytes == 0U) {
-    throw std::runtime_error(detess_ingress_detail(
-        "processcvu MPK detess route requires packed transport bytes"));
+    throw std::runtime_error(
+        detess_ingress_detail("processcvu MPK detess route requires packed transport bytes"));
   }
 
   const std::string published_dtype =
@@ -2394,8 +2389,8 @@ ProcessCvuGraphFamily family_enum_from_name(const std::string& graph_family) {
   if (family == "detessdequant") {
     return ProcessCvuGraphFamily::DetessDequant;
   }
-  if (family == "feature_histogram" || family == "grider_fast" ||
-      family == "track_descriptor" || family == "track_klt") {
+  if (family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
+      family == "track_klt") {
     return ProcessCvuGraphFamily::VisualFrontend;
   }
   return ProcessCvuGraphFamily::Unknown;
@@ -4295,6 +4290,16 @@ ProcessCvuCanonicalFacts build_preproc_facts_from_payload(const ProcessCvuStageP
   return facts;
 }
 
+bool native_visual_payload_prefers_logical_input_shapes(const ProcessCvuStagePayload& payload) {
+  if (payload.graph_id >= 235 && payload.graph_id <= 238) {
+    return true;
+  }
+  const std::string family = canonical_family_name(
+      !payload.graph_family.empty() ? payload.graph_family : payload.graph_name);
+  return family == "feature_histogram" || family == "grider_fast" || family == "track_descriptor" ||
+         family == "track_klt";
+}
+
 ProcessCvuCanonicalFacts
 build_single_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& payload) {
   if (payload.default_input_name.empty()) {
@@ -4318,7 +4323,12 @@ build_single_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& payl
   facts.primary_output_name = payload.primary_output_name;
   facts.published_output_names = {payload.default_output_names.front()};
 
-  const auto input_tensor = synthesize_single_io_input_tensor(payload);
+  auto input_tensor = synthesize_single_io_input_tensor(payload);
+  if (native_visual_payload_prefers_logical_input_shapes(payload) &&
+      !payload.input_shapes.empty() && !payload.input_shapes.front().empty()) {
+    input_tensor.shape.assign(payload.input_shapes.front().begin(),
+                              payload.input_shapes.front().end());
+  }
   if (input_tensor.shape.empty()) {
     throw std::invalid_argument("single-io processcvu payload input shape missing");
   }
@@ -4405,6 +4415,8 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
        static_cast<std::size_t>(payload.num_in_tensor > 0 ? payload.num_in_tensor : 0),
        std::size_t{1}});
 
+  const bool prefer_logical_input_shapes =
+      native_visual_payload_prefers_logical_input_shapes(payload);
   for (std::size_t i = 0; i < input_count; ++i) {
     const std::string input_name = i < runtime_input_names.size() && !runtime_input_names[i].empty()
                                        ? runtime_input_names[i]
@@ -4414,7 +4426,10 @@ build_multi_io_processcvu_facts_from_payload(const ProcessCvuStagePayload& paylo
                                                            : "input_tensor_" + std::to_string(i));
     facts.physical_input_names.push_back(input_name);
     std::vector<std::int64_t> input_shape;
-    if (i < payload.input_tensors.size()) {
+    if (prefer_logical_input_shapes && i < payload.input_shapes.size() &&
+        !payload.input_shapes[i].empty()) {
+      input_shape.assign(payload.input_shapes[i].begin(), payload.input_shapes[i].end());
+    } else if (i < payload.input_tensors.size()) {
       const auto shape = shape_vec_from_tensor_desc_local(payload.input_tensors[i]);
       input_shape.assign(shape.begin(), shape.end());
     } else if (i < payload.input_shapes.size()) {

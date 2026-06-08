@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-MODULE_CLASS_RE = re.compile(r'nb::class_<[^>]+>\(m,\s*"(?P<name>[A-Za-z0-9_]+)"\)')
+MODULE_CLASS_RE = re.compile(r'nb::class_<[^>]+>\(\s*m,\s*"(?P<name>[A-Za-z0-9_]+)"')
 MODULE_DEF_RE = re.compile(r'm\.def_submodule\("(?P<name>[A-Za-z0-9_]+)"')
 SINCE_RE = re.compile(r"<since>\s*([^<]+?)\s*</since>", re.IGNORECASE)
 COMPAT_RE = re.compile(r"<compatible-with>\s*([^<]+?)\s*</compatible-with>", re.IGNORECASE)
@@ -202,7 +202,7 @@ def main() -> int:
         json.dumps(
             {
                 "label": "Python Reference",
-                "position": 99,
+                "position": 5,
                 "link": {"type": "doc", "id": "reference/pythonapi/index"},
             },
             indent=2,
@@ -276,7 +276,12 @@ def main() -> int:
         "## Core classes\n"
         f"{render_list(class_links)}\n\n"
         "## Submodules\n"
-        f"{render_list([f'pyneat.{name}' for name in submodules] + extra_modules)}\n",
+        f"{render_list([f'pyneat.{name}' for name in submodules] + extra_modules)}\n\n"
+        "## Stage helpers\n"
+        "- `pyneat.stages.preproc(...)`: run a model's resolved Preproc stage on "
+        "uint8 HW/HWC image batches, with optional `PreprocessRoi` lists. See "
+        "[Preproc Node](/reference/nodes/preproc) and "
+        "[Preproc ROI Lists](/how-to/preproc_roi).\n",
     )
 
     write_text(

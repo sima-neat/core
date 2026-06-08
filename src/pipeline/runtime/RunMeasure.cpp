@@ -1,11 +1,18 @@
 #include "pipeline/Run.h"
+#include "EdgeMetrics.h"
+#include "LttngMetricsCollector.h"
+#include "PathTimingBuilder.h"
 #include "RunInternal.h"
+#include "TraceAttribution.h"
+#include "gst/TraceIdentity.h"
 #include "pipeline/GraphMetrics.h"
-#include "pipeline/LatencyProfiler.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
+#include <cstdlib>
 #include <iomanip>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -20,38 +27,6 @@ namespace simaai::neat {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-void append_plugin_latency_from_profiler(const ProfilerReport& profiler,
-                                         std::vector<MeasurePluginLatency>* out) {
-  if (!out)
-    return;
-  out->clear();
-  out->reserve(profiler.kernel_aggregates.size());
-  for (const auto& k : profiler.kernel_aggregates) {
-    MeasurePluginLatency p;
-    p.name = k.backend + ":" + (k.stage_name.empty() ? k.kernel_name : k.stage_name);
-    p.backend = k.backend;
-    p.phase = k.phase;
-    p.kernel_name = k.kernel_name;
-    p.stage_name = k.stage_name;
-    p.physical_input_index = k.physical_input_index;
-    p.output_slot = k.output_slot;
-    p.run_id_hash = k.run_id_hash;
-    p.pipeline_segment_id = k.pipeline_segment_id;
-    p.runtime_node_id = k.runtime_node_id;
-    p.public_node_id = k.public_node_id;
-    if (k.public_node_id >= 0) {
-      p.public_node_ids.push_back("p" + std::to_string(k.public_node_id));
-    }
-    p.gst_element_name = k.gst_element_name;
-    p.calls = k.count;
-    p.total_ms = k.total_ms;
-    p.avg_ms = k.avg_ms();
-    p.min_ms = k.min_ms;
-    p.max_ms = k.max_ms;
-    out->push_back(std::move(p));
-  }
-}
 
 RunStats delta_counters(const RunStats& before, const RunStats& after) {
   RunStats out;
@@ -111,10 +86,78 @@ void validate_options(const MeasureOptions& opt) {
     throw std::runtime_error("MeasureOptions::timeout_ms must be > 0");
 }
 
+MetricsTraceSource apply_metrics_trace_env(MetricsTraceSource source) {
+  const char* env = std::getenv("SIMA_NEAT_METRICS_TRACE_SOURCE");
+  if (!env || !*env) {
+    return source;
+  }
+  std::string value(env);
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if (value == "off") {
+    return MetricsTraceSource::Off;
+  }
+  if (value == "lttng") {
+    return MetricsTraceSource::Lttng;
+  }
+  return MetricsTraceSource::Auto;
+}
+
+bool trace_source_requests_lttng(MetricsTraceSource source) {
+  return source == MetricsTraceSource::Auto || source == MetricsTraceSource::Lttng;
+}
+
+pipeline_internal::InternalMetricsTraceOptions make_lttng_options(const MeasureOptions& opt,
+                                                                  bool enable_message_events) {
+  pipeline_internal::InternalMetricsTraceOptions out;
+  out.trace_dir = opt.metrics_trace_dir;
+  out.retain_trace = opt.retain_metrics_trace;
+  out.enable_message_events = enable_message_events;
+  out.enable_pipeline_fallback = true;
+  if (const char* retain = std::getenv("SIMA_NEAT_METRICS_RETAIN_TRACE")) {
+    out.retain_trace = std::string(retain) == "1" || std::string(retain) == "true";
+  }
+  if (const char* dir = std::getenv("SIMA_NEAT_METRICS_TRACE_DIR")) {
+    if (*dir) {
+      out.trace_dir = dir;
+    }
+  }
+  if (const char* remote = std::getenv("SIMA_NEAT_LTTNG_ENABLE_REMOTE_CORE")) {
+    out.enable_remote_core_debug = std::string(remote) == "1" || std::string(remote) == "true";
+  }
+  return out;
+}
+
+pipeline_internal::TraceIdentityContext trace_identity_for_run(const Run& run) {
+  pipeline_internal::TraceIdentityContext ctx;
+  const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
+  if (core) {
+    ctx.run_id_hash = pipeline_internal::stable_trace_hash(core->run_id);
+    if (core->graph_execution_) {
+      const auto& plan = core->graph_execution().plan;
+      ctx.graph_id_hash = pipeline_internal::stable_trace_hash(
+          std::to_string(plan.public_graph_id) + ":" + std::to_string(plan.public_graph_version));
+    } else {
+      ctx.graph_id_hash = ctx.run_id_hash;
+    }
+  }
+  return ctx;
+}
+
 void print_latency_row(std::ostream& os, const char* name, const MeasureLatencyStats& s) {
   os << std::left << std::setw(28) << name << std::right << std::setw(9) << s.count << std::setw(11)
      << s.avg_ms << std::setw(11) << s.p50_ms << std::setw(11) << s.p90_ms << std::setw(11)
      << s.p95_ms << std::setw(11) << s.p99_ms << std::setw(11) << s.max_ms << "\n";
+}
+
+void print_path_row(std::ostream& os, const std::string& item, const std::string& stream,
+                    const std::string& semantics, const MeasurePathStat& stat) {
+  os << std::left << std::setw(26) << item.substr(0, 25) << std::setw(14)
+     << (stream.empty() ? "-" : stream).substr(0, 13) << std::setw(28)
+     << (semantics.empty() ? "-" : semantics).substr(0, 27) << std::right << std::setw(9)
+     << stat.samples << std::setw(11) << stat.avg_ms << std::setw(11) << stat.p50_ms
+     << std::setw(11) << stat.p95_ms << std::setw(11) << stat.max_ms << std::setw(10)
+     << (stat.reliable ? "yes" : "no") << "\n";
 }
 
 std::string join_strings(const std::vector<std::string>& values, const char* sep = ",") {
@@ -208,9 +251,8 @@ std::vector<GraphNodeMetrics> delta_node_metrics(const GraphMetricsReport& befor
         before_it == before_by_node.end() ? nullptr : &before_it->second;
 
     const NodeLatencySummary empty_latency;
-    delta.latency =
-        delta_latency_summary(before_node ? before_node->latency : empty_latency,
-                              after_node.latency);
+    delta.latency = delta_latency_summary(before_node ? before_node->latency : empty_latency,
+                                          after_node.latency);
 
     std::map<std::string, GraphElementMetrics> before_elements;
     if (before_node) {
@@ -231,8 +273,8 @@ std::vector<GraphNodeMetrics> delta_node_metrics(const GraphMetricsReport& befor
       delta.elements.push_back(std::move(element_delta));
     }
 
-    if (delta.latency.samples > 0 || delta.latency.total_ms > 0.0 ||
-        !delta.element_names.empty() || !delta.elements.empty()) {
+    if (delta.latency.samples > 0 || delta.latency.total_ms > 0.0 || !delta.element_names.empty() ||
+        !delta.elements.empty()) {
       out.push_back(std::move(delta));
     }
   }
@@ -245,18 +287,45 @@ struct MeasureScope::Impl {
   Run* run = nullptr;
   MeasureOptions options;
   RunStats before{};
+  RunDiagSnapshot before_diag{};
   GraphMetricsReport before_graph_metrics{};
+  std::vector<pipeline_internal::GraphQueueLatencySnapshot> before_graph_queue_metrics;
   Clock::time_point start{};
-  std::unique_ptr<LatencyProfiler> profiler;
+  std::unique_ptr<pipeline_internal::LttngMetricsCollector> lttng_metrics;
+  pipeline_internal::TraceIdentityContext trace_context{};
+  bool lttng_trace_identity_applied = false;
   std::unique_ptr<PowerMonitor> power_monitor;
+  std::vector<std::string> warnings;
+  std::string plugin_latency_status = "off";
+  std::string plugin_latency_source = "none";
+  std::string message_latency_status = "off";
+  std::string message_latency_source = "none";
   bool stopped = false;
   MeasureReport cached{};
 };
+
+void MeasureScope::disable_lttng_trace_identity_noexcept(Impl* impl) {
+  if (!impl || !impl->lttng_trace_identity_applied || !impl->run) {
+    return;
+  }
+  try {
+    const GraphMetricsReport graph_metrics = build_graph_metrics_report_run_lifetime(
+        *impl->run, RuntimeMetricsOptions{.include_power = false});
+    pipeline_internal::apply_lttng_trace_identity(*impl->run, graph_metrics.node_metrics,
+                                                  impl->trace_context.run_id_hash,
+                                                  impl->trace_context.graph_id_hash, false);
+  } catch (...) {
+  }
+  impl->lttng_trace_identity_applied = false;
+}
 
 MeasureScope::MeasureScope(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
 MeasureScope::MeasureScope(MeasureScope&&) noexcept = default;
 MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
   if (this != &other) {
+    if (impl_ && !impl_->stopped) {
+      MeasureScope::disable_lttng_trace_identity_noexcept(impl_.get());
+    }
     if (impl_ && !impl_->stopped && impl_->run && impl_->run->core_) {
       auto st = impl_->run->core_;
       std::lock_guard<std::mutex> lock(st->latency_mu);
@@ -264,6 +333,11 @@ MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
       st->measurement_output_timing_init = false;
       st->measurement_latencies_ms.clear();
       st->measurement_frame_gaps_ms.clear();
+      st->measurement_graph_entries.clear();
+      st->measurement_graph_pulls.clear();
+    }
+    if (impl_ && impl_->run) {
+      pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
     }
     if (impl_ && impl_->power_monitor) {
       impl_->power_monitor->stop();
@@ -273,6 +347,9 @@ MeasureScope& MeasureScope::operator=(MeasureScope&& other) noexcept {
   return *this;
 }
 MeasureScope::~MeasureScope() {
+  if (impl_ && !impl_->stopped) {
+    MeasureScope::disable_lttng_trace_identity_noexcept(impl_.get());
+  }
   if (impl_ && !impl_->stopped && impl_->run && impl_->run->core_) {
     auto st = impl_->run->core_;
     std::lock_guard<std::mutex> lock(st->latency_mu);
@@ -280,6 +357,11 @@ MeasureScope::~MeasureScope() {
     st->measurement_output_timing_init = false;
     st->measurement_latencies_ms.clear();
     st->measurement_frame_gaps_ms.clear();
+    st->measurement_graph_entries.clear();
+    st->measurement_graph_pulls.clear();
+  }
+  if (impl_ && !impl_->stopped && impl_->run) {
+    pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
   }
   if (impl_ && impl_->power_monitor) {
     impl_->power_monitor->stop();
@@ -315,25 +397,42 @@ MeasureReport MeasureScope::stop() {
       report.elapsed_s > 0.0 ? static_cast<double>(report.outputs) / report.elapsed_s : 0.0;
   report.throughput_inferences_per_s =
       report.throughput_batches_per_s * static_cast<double>(report.options.logical_batch_size);
+  report.plugin_latency_status = impl_->plugin_latency_status;
+  report.plugin_latency_source = impl_->plugin_latency_source;
+  report.message_latency_status = impl_->message_latency_status;
+  report.message_latency_source = impl_->message_latency_source;
+  report.warnings = impl_->warnings;
   std::vector<double> latency_samples;
   std::vector<double> frame_gap_samples;
+  std::vector<runtime::GraphSampleTimingEvent> graph_entry_events;
+  std::vector<runtime::GraphSampleTimingEvent> graph_pull_events;
   if (impl_->run->core_) {
     auto st = impl_->run->core_;
     std::lock_guard<std::mutex> lock(st->latency_mu);
     st->measurement_active = false;
     latency_samples = st->measurement_latencies_ms;
     frame_gap_samples = st->measurement_frame_gaps_ms;
+    graph_entry_events = st->measurement_graph_entries;
+    graph_pull_events = st->measurement_graph_pulls;
     st->measurement_latencies_ms.clear();
     st->measurement_frame_gaps_ms.clear();
+    st->measurement_graph_entries.clear();
+    st->measurement_graph_pulls.clear();
     st->measurement_output_timing_init = false;
+    report.graph_sample_timing_unkeyed =
+        st->graph_sample_timing_unkeyed.load(std::memory_order_relaxed);
+    report.graph_sample_timing_misses =
+        st->graph_sample_timing_misses.load(std::memory_order_relaxed);
   }
   report.end_to_end = summarize_samples(std::move(latency_samples));
   report.frame_gap = summarize_samples(std::move(frame_gap_samples));
   report.latency_samples_collected = report.end_to_end.count > 0 || report.frame_gap.count > 0;
-  const GraphMetricsReport after_graph_metrics =
-      build_graph_metrics_report_run_lifetime(*impl_->run,
-                                              RuntimeMetricsOptions{.include_power = false});
+  const GraphMetricsReport after_graph_metrics = build_graph_metrics_report_run_lifetime(
+      *impl_->run, RuntimeMetricsOptions{.include_power = false});
   report.node_metrics = delta_node_metrics(impl_->before_graph_metrics, after_graph_metrics);
+  const RunDiagSnapshot after_diag = impl_->run->diag_snapshot();
+  report.inputs_enqueued = measured.inputs_enqueued;
+  report.outputs_ready = measured.outputs_ready;
   if (impl_->options.include_power) {
     if (impl_->power_monitor) {
       impl_->power_monitor->stop();
@@ -343,10 +442,120 @@ MeasureReport MeasureScope::stop() {
       report.power = impl_->run->power_summary();
     }
   }
-  if (impl_->profiler) {
-    append_plugin_latency_from_profiler(impl_->profiler->finalize(), &report.plugin_latency);
-    impl_->profiler.reset();
+  if (impl_->lttng_metrics) {
+    std::string err;
+    if (!impl_->lttng_metrics->stop_and_destroy(&err)) {
+      report.warnings.push_back("LTTng metrics stop/destroy failed: " + err);
+      if (impl_->options.include_plugin_latency) {
+        report.plugin_latency_status = "failed";
+      }
+      if (impl_->options.include_message_latency) {
+        report.message_latency_status = "failed";
+      }
+    } else {
+      pipeline_internal::LttngParseResult parsed = impl_->lttng_metrics->parse(&err);
+      if (!parsed.parsed) {
+        report.warnings.push_back("LTTng metrics parse failed: " + err);
+        impl_->lttng_metrics->retain_trace_for_debug();
+        report.metrics_trace_dir = impl_->lttng_metrics->trace_dir();
+        if (impl_->options.include_plugin_latency) {
+          report.plugin_latency_status = "failed";
+        }
+        if (impl_->options.include_message_latency) {
+          report.message_latency_status = "failed";
+        }
+      } else {
+        report.plugin_latency = std::move(parsed.plugin_metrics);
+        report.plugin_latency_unattributed = std::move(parsed.plugin_metrics_unattributed);
+        report.edge_latency.insert(report.edge_latency.end(),
+                                   std::make_move_iterator(parsed.edge_metrics.begin()),
+                                   std::make_move_iterator(parsed.edge_metrics.end()));
+        report.edge_latency_unattributed.insert(
+            report.edge_latency_unattributed.end(),
+            std::make_move_iterator(parsed.edge_metrics_unattributed.begin()),
+            std::make_move_iterator(parsed.edge_metrics_unattributed.end()));
+        for (auto& warning : parsed.warnings) {
+          report.warnings.push_back(std::move(warning));
+        }
+        if (impl_->options.include_message_latency && impl_->run->core_ &&
+            impl_->run->core_->graph_execution_) {
+          report.path_timing =
+              runtime::build_path_timing(impl_->run->core_->graph_execution_->plan, parsed,
+                                         graph_entry_events, graph_pull_events);
+        }
+        if (parsed.trace_loss_detected) {
+          report.trace_loss_detected = true;
+          report.warnings.push_back(
+              "LTTng trace loss detected; plugin/edge latencies may be incomplete");
+        }
+        if (impl_->lttng_metrics->retained()) {
+          report.metrics_trace_dir = parsed.trace_dir;
+        }
+        if (impl_->options.include_plugin_latency && report.plugin_latency.empty() &&
+            report.plugin_latency_unattributed.empty()) {
+          report.plugin_latency_status = "unavailable";
+          report.warnings.push_back(
+              "LTTng plugin latency collected no plugin spans; no trace-capable plugin emitted "
+              "during the measured window or the active plugin build lacks metrics tracepoints");
+        }
+        if (impl_->options.include_message_latency && parsed.raw_edge_spans.empty() &&
+            parsed.raw_graph_events.empty()) {
+          report.message_latency_status = "unavailable";
+          report.warnings.push_back(
+              "LTTng message latency requested but no sima_neat_edge:message spans were collected");
+        } else if (impl_->options.include_message_latency && parsed.raw_edge_spans.empty()) {
+          report.warnings.push_back(
+              "LTTng message latency collected graph lifecycle events but no edge transport spans");
+        }
+      }
+    }
+    impl_->lttng_metrics->cleanup_noexcept();
+    impl_->lttng_metrics.reset();
   }
+  if (impl_->lttng_trace_identity_applied) {
+    pipeline_internal::apply_lttng_trace_identity(*impl_->run, after_graph_metrics.node_metrics,
+                                                  impl_->trace_context.run_id_hash,
+                                                  impl_->trace_context.graph_id_hash, false);
+    impl_->lttng_trace_identity_applied = false;
+  }
+
+  if (impl_->options.include_edge_latency) {
+    auto diag_edges =
+        pipeline_internal::build_edge_latency_from_diag_delta(impl_->before_diag, after_diag);
+    report.edge_latency.insert(report.edge_latency.end(),
+                               std::make_move_iterator(diag_edges.begin()),
+                               std::make_move_iterator(diag_edges.end()));
+    auto after_queue = pipeline_internal::snapshot_graph_queue_latencies(*impl_->run);
+    pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
+    auto queue_edges = pipeline_internal::build_graph_queue_latency_delta(
+        impl_->before_graph_queue_metrics, after_queue);
+    report.edge_latency.insert(report.edge_latency.end(),
+                               std::make_move_iterator(queue_edges.begin()),
+                               std::make_move_iterator(queue_edges.end()));
+    if (!report.edge_latency.empty() && report.message_latency_status == "off") {
+      report.message_latency_status = "collected";
+      report.message_latency_source = "diagnostics";
+    }
+  } else {
+    pipeline_internal::set_graph_queue_timing_enabled(*impl_->run, false);
+  }
+  if (!impl_->options.include_message_latency) {
+    report.path_timing.available = false;
+    report.path_timing.status = report.edge_latency.empty() ? "unavailable_message_trace_disabled"
+                                                            : "diagnostic_aggregate_only";
+    report.path_timing.source = report.edge_latency.empty() ? "none" : "diagnostics";
+    report.path_timing.warnings.push_back(
+        "Exact path timing requires MeasureOptions.include_message_latency=true.");
+  } else if (report.path_timing.status.empty()) {
+    report.path_timing.available = false;
+    report.path_timing.status = "unavailable_message_trace_disabled";
+    report.path_timing.source = "none";
+    report.path_timing.reason = "No exact message trace data was available for path timing.";
+  }
+  pipeline_internal::attribute_edge_latency_to_nodes(report.node_metrics, &report.edge_latency,
+                                                     &report.edge_latency_unattributed);
+  pipeline_internal::attribute_plugin_latency_to_nodes(report.node_metrics, &report.plugin_latency,
+                                                       &report.plugin_latency_unattributed);
 
   impl_->cached = report;
   impl_->stopped = true;
@@ -359,12 +568,72 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
   impl->run = this;
   impl->options = opt;
   impl->before = stats();
+  impl->before_diag = diag_snapshot();
   impl->before_graph_metrics =
       build_graph_metrics_report_run_lifetime(*this, RuntimeMetricsOptions{.include_power = false});
-  if (opt.include_plugin_latency) {
-    impl->profiler = std::make_unique<LatencyProfiler>();
-    impl->profiler->attach(*this);
-    impl->profiler->mark_warmup_done();
+  pipeline_internal::set_graph_queue_timing_enabled(*this, opt.include_edge_latency ||
+                                                               opt.include_message_latency);
+  impl->before_graph_queue_metrics = pipeline_internal::snapshot_graph_queue_latencies(*this);
+
+  MetricsTraceSource plugin_source = apply_metrics_trace_env(opt.plugin_latency_source);
+  MetricsTraceSource message_source = apply_metrics_trace_env(opt.message_latency_source);
+  if (!opt.include_plugin_latency || plugin_source == MetricsTraceSource::Off) {
+    impl->plugin_latency_status = "off";
+    impl->plugin_latency_source = "none";
+  }
+  if (!opt.include_message_latency || message_source == MetricsTraceSource::Off) {
+    impl->message_latency_status = "off";
+    impl->message_latency_source = "none";
+  }
+
+  const bool effective_plugin_lttng = opt.include_plugin_latency &&
+                                      plugin_source != MetricsTraceSource::Off &&
+                                      trace_source_requests_lttng(plugin_source);
+  const bool effective_message_lttng = opt.include_message_latency &&
+                                       message_source != MetricsTraceSource::Off &&
+                                       trace_source_requests_lttng(message_source);
+  const bool need_lttng = effective_plugin_lttng || effective_message_lttng;
+  if (need_lttng) {
+    auto lttng_opt = make_lttng_options(opt, effective_message_lttng);
+    impl->trace_context = trace_identity_for_run(*this);
+    pipeline_internal::apply_lttng_trace_identity(
+        *this, impl->before_graph_metrics.node_metrics, impl->trace_context.run_id_hash,
+        impl->trace_context.graph_id_hash, true, effective_message_lttng);
+    impl->lttng_trace_identity_applied = true;
+    impl->lttng_metrics = std::make_unique<pipeline_internal::LttngMetricsCollector>(
+        std::move(lttng_opt), impl->trace_context);
+    std::string err;
+    if (!impl->lttng_metrics->start(&err)) {
+      pipeline_internal::apply_lttng_trace_identity(*this, impl->before_graph_metrics.node_metrics,
+                                                    impl->trace_context.run_id_hash,
+                                                    impl->trace_context.graph_id_hash, false);
+      impl->lttng_trace_identity_applied = false;
+      const bool required =
+          plugin_source == MetricsTraceSource::Lttng || message_source == MetricsTraceSource::Lttng;
+      impl->lttng_metrics.reset();
+      if (required) {
+        pipeline_internal::set_graph_queue_timing_enabled(*this, false);
+        throw std::runtime_error("LTTng metrics start failed: " + err);
+      }
+      impl->warnings.push_back("LTTng metrics unavailable: " + err);
+      if (opt.include_plugin_latency && plugin_source != MetricsTraceSource::Off) {
+        impl->plugin_latency_status = "unavailable";
+        impl->plugin_latency_source = "none";
+      }
+      if (opt.include_message_latency && message_source != MetricsTraceSource::Off) {
+        impl->message_latency_status = "unavailable";
+        impl->message_latency_source = "none";
+      }
+    } else {
+      if (opt.include_plugin_latency && plugin_source != MetricsTraceSource::Off) {
+        impl->plugin_latency_status = "collected";
+        impl->plugin_latency_source = "lttng";
+      }
+      if (opt.include_message_latency && message_source != MetricsTraceSource::Off) {
+        impl->message_latency_status = "collected";
+        impl->message_latency_source = "lttng";
+      }
+    }
   }
   if (opt.include_power) {
     const PowerMonitorOptions power_opt = measurement_power_options_for_run(*this);
@@ -378,6 +647,9 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
     std::lock_guard<std::mutex> lock(core_->latency_mu);
     core_->measurement_latencies_ms.clear();
     core_->measurement_frame_gaps_ms.clear();
+    core_->measurement_graph_entries.clear();
+    core_->measurement_graph_pulls.clear();
+    core_->measurement_started_at = impl->start;
     core_->measurement_output_timing_init = false;
     core_->measurement_active = true;
   }
@@ -399,15 +671,20 @@ std::string MeasureReport::to_text() const {
     os << "Input                 : " << options.input << "\n";
   if (!options.placement.empty())
     os << "Placement             : " << options.placement << "\n";
-  os << "Measure mode          : observer\n"
-     << "Warmup window         : " << options.warmup_ms << " ms\n"
-     << "Warmup iterations     : " << warmup_iterations << "\n"
-     << "Measured outputs      : " << outputs << "\n"
+  os << "Measure mode          : graph-level measured window\n";
+  if (warmup_iterations > 0) {
+    os << "Warmup iterations     : " << warmup_iterations << " (excluded from all numbers below)\n";
+  }
+  if (options.warmup_ms > 0) {
+    os << "Warmup request        : " << options.warmup_ms
+       << " ms (caller-owned observer metadata)\n";
+  }
+  os << "Measured outputs      : " << outputs << "\n"
      << "Elapsed               : " << elapsed_s << " s\n"
      << "Throughput            : " << throughput_batches_per_s << " batches/s\n"
      << "Logical throughput    : " << throughput_inferences_per_s << " inferences/s\n";
 
-  os << "\nLatency distribution (ms):\n";
+  os << "\nGraph push->output latency; excludes app decode/draw/write (ms):\n";
   if (latency_samples_collected) {
     os << std::left << std::setw(28) << "metric" << std::right << std::setw(9) << "count"
        << std::setw(11) << "avg" << std::setw(11) << "p50" << std::setw(11) << "p90"
@@ -419,54 +696,154 @@ std::string MeasureReport::to_text() const {
     os << "  no app-visible latency samples were produced during this observer window\n";
   }
 
-  os << "\nPer-node latency during measured window (ms):\n";
+  os << "\nPer-node diagnostic latency during measured window (ms):\n";
   os << std::left << std::setw(18) << "node" << std::setw(30) << "label/kind" << std::right
      << std::setw(9) << "samples" << std::setw(11) << "avg" << std::setw(11) << "min"
-     << std::setw(11) << "max" << std::setw(12) << "total" << "\n";
+     << std::setw(11) << "max" << std::setw(12) << "total"
+     << "\n";
   if (node_metrics.empty()) {
     os << "  no node latency samples were reported\n";
   } else {
     for (const auto& node : node_metrics) {
-      os << std::left << std::setw(18) << node_display_name(node).substr(0, 17)
-         << std::setw(30) << node_label_or_kind(node).substr(0, 29) << std::right
-         << std::setw(9) << node.latency.samples << std::setw(11) << node.latency.avg_ms;
-      if (node.latency.min_max_available) {
-        os << std::setw(11) << node.latency.min_ms << std::setw(11) << node.latency.max_ms;
+      os << std::left << std::setw(18) << node_display_name(node).substr(0, 17) << std::setw(30)
+         << node_label_or_kind(node).substr(0, 29) << std::right << std::setw(9)
+         << node.latency.samples;
+      if (node.latency.samples == 0 && node.latency.total_ms == 0.0) {
+        os << std::setw(11) << "N/A" << std::setw(11) << "N/A" << std::setw(11) << "N/A"
+           << std::setw(12) << "N/A";
       } else {
-        os << std::setw(11) << "-" << std::setw(11) << "-";
+        os << std::setw(11) << node.latency.avg_ms;
+        if (node.latency.min_max_available) {
+          os << std::setw(11) << node.latency.min_ms << std::setw(11) << node.latency.max_ms;
+        } else {
+          os << std::setw(11) << "-" << std::setw(11) << "-";
+        }
+        os << std::setw(12) << node.latency.total_ms;
       }
-      os << std::setw(12) << node.latency.total_ms << "\n";
+      os << "\n";
     }
   }
 
   os << "\nPer-plugin / kernel latency during measured window (ms):\n"
-     << "  note: processcvu Exec/processcvu_dispatcher is a dispatcher/device window, not pure kernel math\n";
-  os << std::left << std::setw(28) << "plugin" << std::setw(10) << "phase"
-     << std::setw(24) << "kernel" << std::setw(10) << "node" << std::right
-     << std::setw(9) << "calls" << std::setw(11) << "avg" << std::setw(11) << "min"
-     << std::setw(11) << "max" << std::setw(12) << "total" << "\n";
+     << "  note: diagnostic rows may be nested/overlapped; do not sum plugin totals.\n"
+     << "  note: processcvu Exec/processcvu_dispatcher is a dispatcher/device window, not pure "
+        "kernel math.\n";
+  if (!plugin_latency_status.empty()) {
+    os << "  source/status: " << (plugin_latency_source.empty() ? "none" : plugin_latency_source)
+       << "/" << plugin_latency_status << "\n";
+  }
+  os << std::left << std::setw(28) << "plugin" << std::setw(10) << "phase" << std::setw(24)
+     << "kernel" << std::setw(10) << "node" << std::setw(14) << "stream" << std::right
+     << std::setw(9) << "calls" << std::setw(11) << "avg" << std::setw(11) << "min" << std::setw(11)
+     << "max" << std::setw(12) << "total"
+     << "\n";
   if (plugin_latency.empty()) {
     os << "  no plugin/kernel timing samples were reported\n";
   } else {
     for (const auto& p : plugin_latency) {
       os << std::left << std::setw(28) << p.name << std::setw(10)
-         << (p.phase.empty() ? "-" : p.phase)
-         << std::setw(24) << (p.kernel_name.empty() ? "-" : p.kernel_name).substr(0, 23)
-         << std::setw(10) << plugin_node_display_name(p)
-         << std::right
-         << std::setw(9) << p.calls << std::setw(11) << p.avg_ms << std::setw(11) << p.min_ms
-         << std::setw(11) << p.max_ms << std::setw(12) << p.total_ms << "\n";
+         << (p.phase.empty() ? "-" : p.phase) << std::setw(24)
+         << (p.kernel_name.empty() ? "-" : p.kernel_name).substr(0, 23) << std::setw(10)
+         << plugin_node_display_name(p) << std::setw(14)
+         << (p.stream_id.empty() ? "-" : p.stream_id).substr(0, 13) << std::right << std::setw(9)
+         << p.calls << std::setw(11) << p.avg_ms << std::setw(11) << p.min_ms << std::setw(11)
+         << p.max_ms << std::setw(12) << p.total_ms << "\n";
     }
+  }
+  if (!plugin_latency_unattributed.empty()) {
+    os << "  unattributed plugin rows: " << plugin_latency_unattributed.size()
+       << " (see JSON/HTML for mapping errors)\n";
+  }
+
+  os << "\nInter-plugin message / edge latency during measured window (ms):\n"
+     << "  note: handoff/queue/transport diagnostics; do not add to plugin or graph latency.\n";
+  os << std::left << std::setw(28) << "edge" << std::setw(18) << "semantics" << std::setw(14)
+     << "source" << std::right << std::setw(9) << "samples" << std::setw(11) << "avg"
+     << std::setw(11) << "p50" << std::setw(11) << "p95" << std::setw(11) << "max"
+     << "\n";
+  if (edge_latency.empty()) {
+    os << "  no edge/message timing samples were reported\n";
+  } else {
+    for (const auto& e : edge_latency) {
+      os << std::left << std::setw(28) << (e.name.empty() ? e.edge_id : e.name).substr(0, 27)
+         << std::setw(18) << (e.timing_semantics.empty() ? "-" : e.timing_semantics).substr(0, 17)
+         << std::setw(14) << (e.source.empty() ? "-" : e.source).substr(0, 13) << std::right
+         << std::setw(9) << e.samples << std::setw(11) << e.avg_ms << std::setw(11) << e.p50_ms
+         << std::setw(11) << e.p95_ms << std::setw(11) << e.max_ms << "\n";
+    }
+  }
+  if (!edge_latency_unattributed.empty()) {
+    os << "  unattributed edge/message rows: " << edge_latency_unattributed.size()
+       << " (see JSON/HTML for reason codes)\n";
+  }
+
+  os << "\nPer-sample path timing during measured window (ms):\n"
+     << "  source/status: " << (path_timing.source.empty() ? "none" : path_timing.source) << "/"
+     << (path_timing.status.empty() ? "off" : path_timing.status) << "\n";
+  if (!path_timing.reason.empty()) {
+    os << "  reason: " << path_timing.reason << "\n";
+  }
+  os << std::left << std::setw(26) << "item" << std::setw(14) << "stream" << std::setw(28)
+     << "semantics" << std::right << std::setw(9) << "samples" << std::setw(11) << "avg"
+     << std::setw(11) << "p50" << std::setw(11) << "p95" << std::setw(11) << "max" << std::setw(10)
+     << "reliable"
+     << "\n";
+  if (!path_timing.available) {
+    os << "  no path timing rows were reported\n";
+  } else {
+    for (const auto& row : path_timing.node_arrival) {
+      const std::string item =
+          !row.customer_node_id.empty()
+              ? row.customer_node_id
+              : (!row.lowered_node_id.empty() ? row.lowered_node_id
+                                              : std::to_string(row.runtime_node_id));
+      print_path_row(os, item, row.stream_id, row.semantics, row.latency);
+    }
+    for (const auto& row : path_timing.inter_plugin_gap) {
+      const std::string item =
+          !row.customer_edge_id.empty() ? row.customer_edge_id : row.lowered_edge_id;
+      print_path_row(os, item.empty() ? "-" : item, row.stream_id, row.semantics, row.latency);
+    }
+    for (const auto& row : path_timing.output_tail) {
+      const std::string item =
+          !row.output_endpoint.empty() ? row.output_endpoint : row.customer_output_node_id;
+      print_path_row(os, item.empty() ? "-" : item, row.stream_id, row.semantics, row.latency);
+    }
+  }
+  for (const std::string& warning : path_timing.warnings) {
+    os << "  path warning: " << warning << "\n";
   }
 
   os << "\nNEAT counters during measured window:\n"
+     << "  inputs_enqueued      : " << inputs_enqueued << "\n"
      << "  inputs_pushed        : " << inputs_pushed << "\n"
+     << "  outputs_ready        : " << outputs_ready << "\n"
      << "  outputs_pulled       : " << outputs_pulled << "\n"
      << "  inputs_dropped       : " << inputs_dropped << "\n"
-     << "  outputs_dropped      : " << outputs_dropped << "\n";
+     << "  outputs_dropped      : " << outputs_dropped << "\n"
+     << "  graph_timing_unkeyed : " << graph_sample_timing_unkeyed << "\n"
+     << "  graph_timing_misses  : " << graph_sample_timing_misses << "\n";
 
-  if (!power.rails.empty()) {
-    os << "\nPower telemetry:\n" << format_power_summary(power);
+  if (power.enabled && !power.rails.empty()) {
+    os << "\nPower telemetry:\n"
+       << "  note: graph-level board/SOM rail telemetry; DVT readings may be unavailable or "
+          "unreliable.\n"
+       << format_power_summary(power);
+  } else if (power.enabled) {
+    os << "\nPower telemetry:\n"
+       << "  requested, but no rail samples were collected during the measured window\n"
+       << "  note: DVT board power can be unavailable/unreliable; keep enabled for SOM "
+          "validation\n";
+  } else {
+    os << "\nPower telemetry:\n"
+       << "  disabled for this run; enable on Modalix SOMs for graph-level board rail average "
+          "power\n";
+  }
+  if (!warnings.empty()) {
+    os << "\nMetrics warnings:\n";
+    for (const std::string& warning : warnings) {
+      os << "  - " << warning << "\n";
+    }
   }
   return os.str();
 }

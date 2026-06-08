@@ -225,6 +225,37 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   }
 }
 
+/// @brief True iff @p type is a pose-estimation variant (carries keypoint heads).
+constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloV8Pose:
+  case BoxDecodeType::YoloV26Pose:
+    return true;
+  case BoxDecodeType::Yolo:
+  case BoxDecodeType::YoloV5:
+  case BoxDecodeType::YoloV5Seg:
+  case BoxDecodeType::YoloV7:
+  case BoxDecodeType::YoloV7Seg:
+  case BoxDecodeType::YoloV8:
+  case BoxDecodeType::YoloV8Seg:
+  case BoxDecodeType::YoloV9:
+  case BoxDecodeType::YoloV9Seg:
+  case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV10Seg:
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
+  case BoxDecodeType::Detr:
+  case BoxDecodeType::EffDet:
+  case BoxDecodeType::RcnnStage1:
+  case BoxDecodeType::Centernet:
+  case BoxDecodeType::Unspecified:
+  default:
+    return false;
+  }
+}
+
 /// @brief Human-readable summary of @p type's tensor contract, used in API/docs/error surfaces.
 constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   switch (type) {

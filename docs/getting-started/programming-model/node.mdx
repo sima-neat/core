@@ -74,6 +74,14 @@ graph.add(neat.groups.video_input(vopt))
 
 Use pre-built groups when the shape is standard and the interesting part of your app is not the internal media plumbing. If you need custom topology, build the equivalent `Graph` yourself from lower-level nodes.
 
+<a id="common-sima-nodes"></a>
+## Common SiMa nodes
+
+Some SiMa nodes are common enough that they have focused reference or how-to pages:
+
+- [`Preproc`](/reference/nodes/preproc): fused CVU image preprocessing for resize, color conversion, normalization, quantization, tessellation, and runtime ROI lists.
+- [`SimaBoxDecode`](/how-to/boxdecode_decode_types): detection postprocessing that decodes model heads into bounding boxes and uses upstream preprocess metadata for coordinate mapping.
+
 <a id="boundary-nodes"></a>
 ## Boundary nodes: `Input` and `Output`
 

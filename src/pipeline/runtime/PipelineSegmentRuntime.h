@@ -48,6 +48,11 @@ namespace runtime {
 
 struct RunCore;
 
+struct RuntimePipelineQueueMsg {
+  Sample sample;
+  std::size_t edge_index = static_cast<std::size_t>(-1);
+};
+
 // Runtime state for one compiled pipeline segment.
 //
 // Phase 3B keeps the existing public Run behavior intact while separating the
@@ -110,7 +115,8 @@ struct PipelineSegmentRuntime {
     bool has_output = false;
     std::vector<std::string> expected_buffer_names;
 
-    std::shared_ptr<simaai::neat::graph::runtime::BlockingQueue<Sample>> input_queue;
+    std::shared_ptr<simaai::neat::graph::runtime::BlockingQueue<RuntimePipelineQueueMsg>>
+        input_queue;
     std::thread push_thread;
     std::thread pull_thread;
     std::atomic<bool> push_done{false};

@@ -58,6 +58,60 @@ struct BoxDecodeResult {
 /// List form used by public stage APIs; even single-image decode results travel as a list.
 using BoxDecodeResultList = std::vector<BoxDecodeResult>;
 
+/// Canonical detection-format token for BoxDecode bounding-box payloads.
+inline constexpr char kDetectionFormatBbox[] = "BBOX";
+/// Canonical detection-format token for BoxDecode pose payloads.
+inline constexpr char kDetectionFormatBboxPose[] = "BBOX_POSE";
+/// Canonical detection-format token for BoxDecode instance-segmentation payloads.
+inline constexpr char kDetectionFormatBboxSegmentation[] = "BBOX_SEGMENTATION";
+
+/// Number of keypoints emitted by the BoxDecode pose wire format.
+inline constexpr int64_t kDecodedPoseKeypoints = 17;
+/// Number of values per keypoint: x, y, visibility.
+inline constexpr int64_t kDecodedPoseColumns = 3;
+/// Width of each BoxDecode instance mask.
+inline constexpr int64_t kDecodedMaskWidth = 160;
+/// Height of each BoxDecode instance mask.
+inline constexpr int64_t kDecodedMaskHeight = 160;
+
+/**
+ * @brief Decoded pose tensors for one BoxDecode output tensor.
+ *
+ * `boxes` is a dense CPU float32 tensor of shape `[N, 6]` with the same columns
+ * as `decode_bbox`. `keypoints` is a dense CPU float32 tensor of shape
+ * `[N, 17, 3]` with per-keypoint columns `(x, y, visibility)`.
+ */
+struct PoseDecodeTensors {
+  simaai::neat::Tensor boxes;
+  simaai::neat::Tensor keypoints;
+};
+
+/**
+ * @brief Decoded instance-segmentation tensors for one BoxDecode output tensor.
+ *
+ * `boxes` is a dense CPU float32 tensor of shape `[N, 6]` with the same columns
+ * as `decode_bbox`. `masks` is a dense CPU uint8 tensor of shape `[N, 160, 160]`.
+ */
+struct SegmentationDecodeTensors {
+  simaai::neat::Tensor boxes;
+  simaai::neat::Tensor masks;
+};
+
+using PoseDecodeTensorList = std::vector<PoseDecodeTensors>;
+using SegmentationDecodeTensorList = std::vector<SegmentationDecodeTensors>;
+
+/// True iff @p format names the plain BBOX detection wire format.
+bool detection_format_is_bbox(const std::string& format);
+
+/// True iff @p format names a BoxDecode pose wire format.
+bool detection_format_is_pose(const std::string& format);
+
+/// True iff @p format names a BoxDecode segmentation wire format.
+bool detection_format_is_segmentation(const std::string& format);
+
+/// True iff @p format is any BoxDecode format whose leading payload is BBOX records.
+bool detection_format_is_bbox_family(const std::string& format);
+
 /**
  * @brief Parse a packed BBOX byte payload into typed `Box` records.
  *
@@ -116,6 +170,41 @@ simaai::neat::Tensor boxes_to_tensor(const std::vector<Box>& boxes);
  */
 simaai::neat::TensorList decode_bbox(const simaai::neat::TensorList& bbox_tensors, int img_w = 0,
                                      int img_h = 0, int top_k = 0, bool strict = false);
+
+/**
+ * @brief Decode one BoxDecode pose payload into boxes and keypoints tensors.
+ *
+ * The source wire layout is the existing BoxDecode pose payload:
+ * `uint32 count + top_k × BBOX + top_k × PoseOut`. The returned boxes tensor has
+ * shape `[N, 6]`; the returned keypoints tensor has shape `[N, 17, 3]`.
+ */
+PoseDecodeTensors decode_pose_tensor(const simaai::neat::Tensor& tensor, int img_w = 0,
+                                     int img_h = 0, int top_k = 0, bool strict = false);
+
+/**
+ * @brief Decode a list of BoxDecode pose tensors, positional 1:1.
+ */
+PoseDecodeTensorList decode_pose(const simaai::neat::TensorList& pose_tensors, int img_w = 0,
+                                 int img_h = 0, int top_k = 0, bool strict = false);
+
+/**
+ * @brief Decode one BoxDecode segmentation payload into boxes and masks tensors.
+ *
+ * The source wire layout is the existing BoxDecode segmentation payload:
+ * `uint32 count + top_k × BBOX + top_k × 160 × 160 uint8 masks`. The returned
+ * boxes tensor has shape `[N, 6]`; the returned masks tensor has shape
+ * `[N, 160, 160]`.
+ */
+SegmentationDecodeTensors decode_segmentation_tensor(const simaai::neat::Tensor& tensor,
+                                                     int img_w = 0, int img_h = 0, int top_k = 0,
+                                                     bool strict = false);
+
+/**
+ * @brief Decode a list of BoxDecode segmentation tensors, positional 1:1.
+ */
+SegmentationDecodeTensorList
+decode_segmentation(const simaai::neat::TensorList& segmentation_tensors, int img_w = 0,
+                    int img_h = 0, int top_k = 0, bool strict = false);
 
 /**
  * @brief Tag a tensor as carrying a detection-decoder wire format.

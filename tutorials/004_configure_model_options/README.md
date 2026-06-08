@@ -13,18 +13,18 @@
 `ModelOptions` declares the runtime contract between your input data, the model pipeline stages, and output decoding. It is the first struct you reach for when moving past default behavior — one place to tune preprocessing, input bounds, and postprocessing together.
 
 This chapter focuses on the options most teams use first:
-- `format`, `media_type`: declare incoming data type (for example raw RGB/BGR image input).
-- `input_max_width`, `input_max_height`, `input_max_depth`: set dynamic input bounds for validation and runtime sizing.
-- `preproc.*`: control preprocessing behavior (normalization, channel stats, image-type and resize policy overrides).
+- `preprocess.kind`, `preprocess.color_convert.*`: declare incoming data type (for example raw RGB/BGR image input).
+- `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth`: set dynamic input bounds for validation and runtime sizing.
+- `preprocess.normalize.*`, `preprocess.resize.*`: control preprocessing behavior (normalization, channel stats, and resize policy overrides).
 - `decode_type`, `score_threshold`, `nms_iou_threshold`, `top_k`: control detection-style postprocessing and filtering.
-- `original_width`, `original_height`: provide original image geometry when postprocessing requires source-frame coordinates.
+- `boxdecode_original_width`, `boxdecode_original_height`: provide original image geometry when postprocessing requires source-frame coordinates and no preprocess metadata is available.
 - `name_suffix`, `upstream_name`: stabilize/clarify generated stage naming when composing bigger pipelines.
 
 **Use-case guidance**
-- Prototype classification quickly: set `format` + input max dimensions, keep postproc defaults minimal.
+- Prototype classification quickly: set `preprocess.kind` + input max dimensions, keep postproc defaults minimal.
 - Detection model bring-up (YOLO-style): set `decode_type` plus threshold/NMS/top-k options to shape final boxes.
 - Mixed input sizes in one app: set `input_max_*` high enough for expected ranges to avoid runtime contract failures.
-- Accuracy tuning after deployment: adjust `preproc.normalize`, `channel_mean`, `channel_stddev` to match model training assumptions.
+- Accuracy tuning after deployment: adjust `preprocess.normalize.enable`, `mean`, and `stddev` to match model training assumptions.
 - Multi-model or hybrid pipelines: use `name_suffix` / `upstream_name` to keep pipeline graph naming explicit and debuggable.
 
 **APIs introduced**

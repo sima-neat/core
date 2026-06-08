@@ -7,10 +7,10 @@
 #include "graph/StageExecutor.h"
 #include "graph/nodes/StageNode.h"
 #include "graph/runtime/BlockingQueue.h"
-#include "graph/runtime/StageMailbox.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/runtime/ExecutionGraphPlan.h"
 #include "pipeline/runtime/PipelineSegmentRuntime.h"
+#include "pipeline/runtime/TraceMessageEvents.h"
 
 #include <atomic>
 #include <cstddef>
@@ -30,6 +30,19 @@ using BlockingQueueSample = simaai::neat::graph::runtime::BlockingQueue<simaai::
 using StageKeyBy = simaai::neat::graph::nodes::StageKeyBy;
 using StageNodeOptions = simaai::neat::graph::nodes::StageNodeOptions;
 
+struct RuntimeStageQueueMsg {
+  simaai::neat::graph::PortId in_port = simaai::neat::graph::kInvalidPort;
+  Sample sample;
+  std::size_t edge_index = invalid_edge_index();
+};
+
+struct RuntimeSinkQueueMsg {
+  Sample sample;
+  std::size_t edge_index = invalid_edge_index();
+};
+
+using GraphSinkQueue = simaai::neat::graph::runtime::BlockingQueue<RuntimeSinkQueueMsg>;
+
 struct DownstreamTarget {
   enum class Kind {
     StageGroup,
@@ -40,6 +53,7 @@ struct DownstreamTarget {
   Kind kind = Kind::StageGroup;
   std::size_t index = 0; // stage group index, pipeline index, or sink node id
   simaai::neat::graph::PortId port = simaai::neat::graph::kInvalidPort;
+  std::size_t edge_index = invalid_edge_index();
 };
 
 struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
@@ -56,7 +70,7 @@ struct RuntimeStageEmitter final : simaai::neat::graph::StageEmitter {
 };
 
 struct StageRuntime {
-  explicit StageRuntime(std::size_t capacity = 0) : mailbox(capacity) {}
+  explicit StageRuntime(std::size_t capacity = 0) : inbox(capacity) {}
 
   struct Telemetry {
     std::atomic<std::uint64_t> mailbox_pop_calls{0};
@@ -74,7 +88,7 @@ struct StageRuntime {
   simaai::neat::graph::NodeId node_id = simaai::neat::graph::kInvalidNode;
   RuntimeStageEmitter emitter;
   std::unique_ptr<simaai::neat::graph::StageExecutor> exec;
-  simaai::neat::graph::runtime::StageMailbox mailbox;
+  simaai::neat::graph::runtime::BlockingQueue<RuntimeStageQueueMsg> inbox;
   std::thread worker;
   std::atomic<bool> worker_done{false};
   std::vector<simaai::neat::graph::PortId> input_ports;
@@ -120,7 +134,10 @@ struct ExecutionGraphRuntime {
   std::unordered_set<simaai::neat::graph::NodeId> direct_sink_nodes;
 
   std::unordered_map<std::uint64_t, std::vector<DownstreamTarget>> adjacency;
-  std::unordered_map<simaai::neat::graph::NodeId, std::shared_ptr<BlockingQueueSample>> sinks;
+  std::atomic<bool> message_trace_enabled{false};
+  std::atomic<std::uint64_t> trace_run_id_hash{0};
+  std::atomic<std::uint64_t> trace_graph_id_hash{0};
+  std::unordered_map<simaai::neat::graph::NodeId, std::shared_ptr<GraphSinkQueue>> sinks;
 };
 
 } // namespace simaai::neat::runtime

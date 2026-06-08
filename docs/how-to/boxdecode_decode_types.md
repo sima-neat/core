@@ -6,7 +6,7 @@ sidebar_position: 6
 
 # BoxDecode Decode Types
 
-`nodes::SimaBoxDecode` converts raw detection-head tensors into bounding boxes. It runs after model inference, applies the decode math for the selected model family, filters low-confidence boxes, runs NMS, and emits a `BBOX` tensor that can be parsed into typed detections.
+`nodes::SimaBoxDecode` converts raw detection-head tensors into detection results. It runs after model inference, applies the decode math for the selected model family, filters low-confidence boxes, runs NMS, and emits a tensor payload that starts with decoded boxes. Detection models can parse that payload as boxes; pose and segmentation models can also parse the keypoints or masks that follow the boxes.
 
 For normal model-pack usage, prefer the `Model`-aware constructor. The model archive supplies the tensor order, layout, quantization, class count, resize metadata, and score-domain hints needed by the decoder. Your application usually only chooses the decode family and filtering thresholds.
 
@@ -51,7 +51,15 @@ opt.top_k = 100;
 
 **Input:** raw detection tensors from the model. The expected tensor shapes depend on the model family. With an MPK/model archive, Neat reads those details from the packaged contract.
 
-**Output:** one `BBOX` tensor containing decoded detections. Parse it with `decode_bbox_tensor()` or use `stages::BoxDecodeResults()` when calling the standalone stage API. Detection-display graphs can feed the result to `SimaRender`.
+**Output:** one BoxDecode tensor containing decoded detections. Detection models use the standard `BBOX` payload. Pose and segmentation models keep the same leading boxes and append their task-specific payload:
+
+| Model task | C++ helper | Python helper | Decoded tensors |
+| --- | --- | --- | --- |
+| Detection | `decode_bbox(...)` | `pyneat.decode_bbox(...)` | `[N, 6]` float32 boxes: `x1, y1, x2, y2, score, class_id` |
+| Pose | `decode_pose(...)` | `pyneat.decode_pose(...)` | boxes `[N, 6]` and keypoints `[N, 17, 3]` float32: `x, y, visibility` |
+| Segmentation | `decode_segmentation(...)` | `pyneat.decode_segmentation(...)` | boxes `[N, 6]` float32 and masks `[N, 160, 160]` uint8 |
+
+Detection-display graphs can feed the result to `SimaRender`. Application code that only needs boxes can continue to use `decode_bbox(...)` on BoxDecode outputs.
 
 ## Decode type mapping
 
@@ -99,6 +107,22 @@ For model-pack flows this is handled by the packaged contract. For manually wire
 When configuring model options from Python, use the typed enum rather than a string when available:
 
 ```python
-opt = neat.ModelOptions()
-opt.decode_type = neat.BoxDecodeType.YoloV8
+opt = pyneat.ModelOptions()
+opt.decode_type = pyneat.BoxDecodeType.YoloV8
+```
+
+Parse outputs with the helper that matches the model task:
+
+```python
+outputs = model.run([image])
+
+boxes = pyneat.decode_bbox(outputs)[0].to_numpy()
+
+pose = pyneat.decode_pose(outputs)[0]
+pose_boxes = pose.boxes.to_numpy()
+keypoints = pose.keypoints.to_numpy()
+
+seg = pyneat.decode_segmentation(outputs)[0]
+seg_boxes = seg.boxes.to_numpy()
+masks = seg.masks.to_numpy()
 ```

@@ -4,63 +4,218 @@
   "title": "SiMa NEAT Graph Run",
   "description": "Snapshot of a built public Graph Run: public endpoint graph, lowered runtime graph, and runtime metrics.",
   "type": "object",
-  "required": ["schema", "schema_version", "producer", "label", "metadata", "graph", "run"],
+  "required": [
+    "schema",
+    "schema_version",
+    "producer",
+    "label",
+    "metadata",
+    "graph",
+    "run"
+  ],
   "properties": {
-    "schema": {"const": "sima.neat.graph_run"},
-    "schema_version": {"type": "integer", "minimum": 1},
+    "schema": {
+      "const": "sima.neat.graph_run"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
     "producer": {
       "type": "object",
-      "required": ["name"],
-      "properties": {"name": {"type": "string"}},
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
       "additionalProperties": true
     },
-    "label": {"type": "string"},
-    "metadata": {"type": "object", "additionalProperties": {"type": "string"}},
+    "label": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "graph": {
       "type": "object",
-      "required": ["mode", "nodes", "edges", "named_inputs", "named_outputs"],
+      "required": [
+        "mode",
+        "nodes",
+        "edges",
+        "named_inputs",
+        "named_outputs"
+      ],
       "properties": {
-        "mode": {"type": "string", "enum": ["linear", "connected"]},
-        "public_graph_id": {"type": "integer"},
-        "public_graph_version": {"type": "integer"},
-        "named_inputs": {"type": "array", "items": {"$ref": "#/$defs/named_endpoint"}},
-        "named_outputs": {"type": "array", "items": {"$ref": "#/$defs/named_endpoint"}},
-        "public_view": {"$ref": "#/$defs/public_view"},
-        "lowered_view": {"$ref": "#/$defs/lowered_view"},
-        "nodes": {"type": "array", "items": {"$ref": "#/$defs/lowered_node"}},
-        "edges": {"type": "array", "items": {"$ref": "#/$defs/lowered_edge"}},
-        "pipeline_segments": {"type": "array", "items": {"type": "object"}}
+        "mode": {
+          "type": "string",
+          "enum": [
+            "linear",
+            "connected"
+          ]
+        },
+        "public_graph_id": {
+          "type": "integer"
+        },
+        "public_graph_version": {
+          "type": "integer"
+        },
+        "named_inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/named_endpoint"
+          }
+        },
+        "named_outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/named_endpoint"
+          }
+        },
+        "public_view": {
+          "$ref": "#/$defs/public_view"
+        },
+        "lowered_view": {
+          "$ref": "#/$defs/lowered_view"
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lowered_node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lowered_edge"
+          }
+        },
+        "pipeline_segments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "customer_view": {
+          "$ref": "#/$defs/customer_view"
+        }
       },
       "additionalProperties": true
     },
     "run": {
       "type": "object",
       "properties": {
-        "stats": {"type": "object"},
+        "stats": {
+          "type": "object"
+        },
         "identity": {
           "type": "object",
-          "required": ["uuid", "created_at", "closed_at", "hostname", "pid", "argv"],
+          "required": [
+            "uuid",
+            "created_at",
+            "closed_at",
+            "hostname",
+            "pid",
+            "argv"
+          ],
           "properties": {
-            "uuid": {"type": "string"},
-            "created_at": {"type": ["string", "null"]},
-            "closed_at": {"type": ["string", "null"]},
-            "hostname": {"type": "string"},
-            "pid": {"type": "integer"},
-            "argv": {"type": "array", "items": {"type": "string"}}
+            "uuid": {
+              "type": "string"
+            },
+            "created_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "closed_at": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hostname": {
+              "type": "string"
+            },
+            "pid": {
+              "type": "integer"
+            },
+            "argv": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
           "additionalProperties": true
         },
-        "elapsed_seconds": {"type": "number"},
-        "throughput_fps": {"type": "number"},
-        "input_names": {"type": "array", "items": {"type": "string"}},
-        "output_names": {"type": "array", "items": {"type": "string"}},
-        "last_error": {"type": "string"},
-        "power": {"type": "object"},
-        "graph_metrics": {"$ref": "#/$defs/graph_metrics"},
-        "node_metrics": {"type": "array", "items": {"$ref": "#/$defs/node_metric"}},
+        "elapsed_seconds": {
+          "type": "number"
+        },
+        "throughput_fps": {
+          "type": "number"
+        },
+        "input_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "output_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "last_error": {
+          "type": "string"
+        },
+        "power": {
+          "type": "object"
+        },
+        "graph_metrics": {
+          "$ref": "#/$defs/graph_metrics"
+        },
+        "node_metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/node_metric"
+          }
+        },
+        "metrics_sources": {
+          "type": "object"
+        },
+        "plugin_latency": {
+          "type": "object"
+        },
+        "edge_message_latency": {
+          "type": "object"
+        },
+        "edge_metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge_metric"
+          }
+        },
+        "edge_metrics_unattributed": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/edge_metric"
+          }
+        },
         "plugin_metrics_unattributed": {
           "type": "array",
-          "items": {"$ref": "#/$defs/plugin_metric"}
+          "items": {
+            "$ref": "#/$defs/plugin_metric"
+          }
+        },
+        "path_timing": {
+          "$ref": "#/$defs/path_timing"
         }
       },
       "additionalProperties": true
@@ -70,227 +225,890 @@
   "$defs": {
     "named_endpoint": {
       "type": "object",
-      "required": ["name", "kind", "node", "port"],
+      "required": [
+        "name",
+        "kind",
+        "node",
+        "port"
+      ],
       "properties": {
-        "name": {"type": "string"},
-        "kind": {"type": "string"},
-        "node": {"type": "string"},
-        "port": {"type": ["string", "null"]},
-        "segment": {"type": "integer"}
+        "name": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "node": {
+          "type": "string"
+        },
+        "port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "segment": {
+          "type": "integer"
+        }
       },
       "additionalProperties": true
     },
     "public_view": {
       "type": "object",
-      "required": ["nodes", "edges"],
+      "required": [
+        "nodes",
+        "edges"
+      ],
       "properties": {
-        "nodes": {"type": "array", "items": {"$ref": "#/$defs/public_node"}},
-        "edges": {"type": "array", "items": {"$ref": "#/$defs/public_edge"}}
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/public_edge"
+          }
+        }
       },
       "additionalProperties": true
     },
     "public_node": {
       "type": "object",
-      "required": ["id", "index", "kind", "label", "input_endpoint", "output_endpoint", "runtime_node"],
+      "required": [
+        "id",
+        "index",
+        "kind",
+        "label",
+        "input_endpoint",
+        "output_endpoint",
+        "runtime_node"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^p[0-9]+$"},
-        "index": {"type": "integer"},
-        "kind": {"type": "string"},
-        "label": {"type": "string"},
-        "endpoint_name": {"type": ["string", "null"]},
-        "input_endpoint": {"type": "boolean"},
-        "output_endpoint": {"type": "boolean"},
-        "runtime_node": {"type": "string"}
-        ,
-        "source": {"$ref": "#/$defs/io_info"},
-        "sink": {"$ref": "#/$defs/io_info"},
-        "model": {"$ref": "#/$defs/model_info"}
+        "id": {
+          "type": "string",
+          "pattern": "^p[0-9]+$"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "endpoint_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_endpoint": {
+          "type": "boolean"
+        },
+        "output_endpoint": {
+          "type": "boolean"
+        },
+        "runtime_node": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/io_info"
+        },
+        "sink": {
+          "$ref": "#/$defs/io_info"
+        },
+        "model": {
+          "$ref": "#/$defs/model_info"
+        }
       },
       "additionalProperties": true
     },
     "public_edge": {
       "type": "object",
-      "required": ["id", "index", "from", "to", "kind", "runtime_from", "runtime_to", "runtime_edges"],
+      "required": [
+        "id",
+        "index",
+        "from",
+        "to",
+        "kind",
+        "runtime_from",
+        "runtime_to",
+        "runtime_edges"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^pe[0-9]+$"},
-        "index": {"type": "integer"},
-        "from": {"type": "string", "pattern": "^p[0-9]+$"},
-        "to": {"type": "string", "pattern": "^p[0-9]+$"},
-        "kind": {"type": "string"},
-        "from_endpoint": {"type": ["string", "null"]},
-        "to_endpoint": {"type": ["string", "null"]},
-        "runtime_from": {"type": "string"},
-        "runtime_to": {"type": "string"},
-        "runtime_edges": {"type": "array", "items": {"type": "string", "pattern": "^e[0-9]+$"}}
+        "id": {
+          "type": "string",
+          "pattern": "^pe[0-9]+$"
+        },
+        "index": {
+          "type": "integer"
+        },
+        "from": {
+          "type": "string",
+          "pattern": "^p[0-9]+$"
+        },
+        "to": {
+          "type": "string",
+          "pattern": "^p[0-9]+$"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "from_endpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_endpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime_from": {
+          "type": "string"
+        },
+        "runtime_to": {
+          "type": "string"
+        },
+        "runtime_edges": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^e[0-9]+$"
+          }
+        }
       },
       "additionalProperties": true
     },
     "lowered_view": {
       "type": "object",
-      "required": ["nodes", "edges", "pipeline_segments"],
+      "required": [
+        "nodes",
+        "edges",
+        "pipeline_segments"
+      ],
       "properties": {
-        "nodes": {"type": "array", "items": {"$ref": "#/$defs/lowered_node"}},
-        "edges": {"type": "array", "items": {"$ref": "#/$defs/lowered_edge"}},
-        "pipeline_segments": {"type": "array", "items": {"type": "object"}}
+        "nodes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lowered_node"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/lowered_edge"
+          }
+        },
+        "pipeline_segments": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       },
       "additionalProperties": true
     },
     "lowered_node": {
       "type": "object",
-      "required": ["id", "stable_id", "backend", "kind", "compiler_generated"],
+      "required": [
+        "id",
+        "stable_id",
+        "backend",
+        "kind",
+        "compiler_generated"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^n[0-9]+$"},
-        "stable_id": {"type": "string"},
-        "backend": {"type": "string"},
-        "kind": {"type": "string"},
-        "compiler_generated": {"type": "boolean"}
-        ,
-        "source": {"$ref": "#/$defs/io_info"},
-        "sink": {"$ref": "#/$defs/io_info"},
-        "model": {"$ref": "#/$defs/model_info"}
+        "id": {
+          "type": "string",
+          "pattern": "^n[0-9]+$"
+        },
+        "stable_id": {
+          "type": "string"
+        },
+        "backend": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "compiler_generated": {
+          "type": "boolean"
+        },
+        "source": {
+          "$ref": "#/$defs/io_info"
+        },
+        "sink": {
+          "$ref": "#/$defs/io_info"
+        },
+        "model": {
+          "$ref": "#/$defs/model_info"
+        }
       },
       "additionalProperties": true
     },
     "lowered_edge": {
       "type": "object",
-      "required": ["id", "from", "to", "from_port", "to_port"],
+      "required": [
+        "id",
+        "from",
+        "to",
+        "from_port",
+        "to_port"
+      ],
       "properties": {
-        "id": {"type": "string", "pattern": "^(e|pe)[0-9]+$"},
-        "kind": {"type": "string"},
-        "from": {"type": "string"},
-        "to": {"type": "string"},
-        "from_port": {"type": ["string", "null"]},
-        "to_port": {"type": ["string", "null"]},
-        "spec": {"type": "object"}
+        "id": {
+          "type": "string",
+          "pattern": "^(e|pe)[0-9]+$"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "from_port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_port": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spec": {
+          "type": "object"
+        }
       },
       "additionalProperties": true
     },
     "io_info": {
       "type": "object",
-      "required": ["kind", "uri"],
+      "required": [
+        "kind",
+        "uri"
+      ],
       "properties": {
-        "kind": {"type": "string"},
-        "uri": {"type": ["string", "null"]},
-        "endpoint": {"type": ["string", "null"]},
-        "path": {"type": "string"},
-        "details": {"type": "object"}
+        "kind": {
+          "type": "string"
+        },
+        "uri": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "endpoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "path": {
+          "type": "string"
+        },
+        "details": {
+          "type": "object"
+        }
       },
       "additionalProperties": true
     },
     "model_info": {
       "type": "object",
-      "required": ["id", "stage_role"],
+      "required": [
+        "id",
+        "stage_role"
+      ],
       "properties": {
-        "id": {"type": "string"},
-        "name": {"type": ["string", "null"]},
-        "source_path": {"type": ["string", "null"]},
-        "stage_role": {"type": "string"},
-        "requested_post": {"type": "string"},
-        "requester_kind": {"type": ["string", "null"]}
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_path": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stage_role": {
+          "type": "string"
+        },
+        "requested_post": {
+          "type": "string"
+        },
+        "requester_kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "additionalProperties": true
     },
     "latency_summary": {
       "type": "object",
       "properties": {
-        "samples": {"type": "integer", "minimum": 0},
-        "total_ms": {"type": "number"},
-        "avg_ms": {"type": "number"},
-        "min_ms": {"type": "number"},
-        "max_ms": {"type": "number"},
-        "min_max_available": {"type": "boolean"}
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_ms": {
+          "type": "number"
+        },
+        "avg_ms": {
+          "type": "number"
+        },
+        "min_ms": {
+          "type": "number"
+        },
+        "max_ms": {
+          "type": "number"
+        },
+        "min_max_available": {
+          "type": "boolean"
+        },
+        "percentiles_available": {
+          "type": "boolean"
+        },
+        "max_semantics": {
+          "type": "string"
+        }
       },
       "additionalProperties": true
     },
     "counter_summary": {
       "type": "object",
       "properties": {
-        "inputs_enqueued": {"type": "integer", "minimum": 0},
-        "inputs_dropped": {"type": "integer", "minimum": 0},
-        "inputs_pushed": {"type": "integer", "minimum": 0},
-        "outputs_ready": {"type": "integer", "minimum": 0},
-        "outputs_pulled": {"type": "integer", "minimum": 0},
-        "outputs_dropped": {"type": "integer", "minimum": 0}
+        "inputs_enqueued": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inputs_dropped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "inputs_pushed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputs_ready": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputs_pulled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "outputs_dropped": {
+          "type": "integer",
+          "minimum": 0
+        }
       },
       "additionalProperties": true
     },
     "power_summary": {
       "type": "object",
       "properties": {
-        "enabled": {"type": "boolean"},
-        "samples": {"type": "integer", "minimum": 0},
-        "duration_seconds": {"type": "number"},
-        "total_avg_watts": {"type": "number"},
-        "total_min_watts": {"type": "number"},
-        "total_max_watts": {"type": "number"},
-        "energy_joules": {"type": "number"},
-        "rails": {"type": "array", "items": {"type": "object"}}
+        "enabled": {
+          "type": "boolean"
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "duration_seconds": {
+          "type": "number"
+        },
+        "total_avg_watts": {
+          "type": "number"
+        },
+        "total_min_watts": {
+          "type": "number"
+        },
+        "total_max_watts": {
+          "type": "number"
+        },
+        "energy_joules": {
+          "type": "number"
+        },
+        "rails": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       },
       "additionalProperties": true
     },
     "graph_metrics": {
       "type": "object",
-      "required": ["measurement_scope", "throughput_counting", "elapsed_seconds", "throughput_fps"],
+      "required": [
+        "measurement_scope",
+        "throughput_counting",
+        "elapsed_seconds",
+        "throughput_fps"
+      ],
       "properties": {
-        "measurement_scope": {"type": "string"},
-        "aggregation": {"type": "string"},
-        "latency_semantics": {"type": "string"},
-        "throughput_counting": {"type": "string"},
-        "elapsed_seconds": {"type": "number"},
-        "outputs_pulled": {"type": "integer", "minimum": 0},
-        "throughput_fps": {"type": "number"},
-        "counters": {"$ref": "#/$defs/counter_summary"},
-        "power": {"$ref": "#/$defs/power_summary"}
+        "measurement_scope": {
+          "type": "string"
+        },
+        "aggregation": {
+          "type": "string"
+        },
+        "latency_semantics": {
+          "type": "string"
+        },
+        "throughput_counting": {
+          "type": "string"
+        },
+        "elapsed_seconds": {
+          "type": "number"
+        },
+        "outputs_pulled": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "throughput_fps": {
+          "type": "number"
+        },
+        "counters": {
+          "$ref": "#/$defs/counter_summary"
+        },
+        "power": {
+          "$ref": "#/$defs/power_summary"
+        }
       },
       "additionalProperties": true
     },
     "element_metric": {
       "type": "object",
-      "required": ["name", "latency_ms"],
+      "required": [
+        "name",
+        "latency_ms"
+      ],
       "properties": {
-        "name": {"type": "string"},
-        "latency_ms": {"$ref": "#/$defs/latency_summary"}
+        "name": {
+          "type": "string"
+        },
+        "latency_ms": {
+          "$ref": "#/$defs/latency_summary"
+        }
       },
       "additionalProperties": true
     },
     "node_metric": {
       "type": "object",
       "properties": {
-        "node_id": {"type": ["string", "null"]},
-        "runtime_node": {"type": ["string", "null"]},
-        "runtime_node_id": {"type": ["integer", "null"], "minimum": 0},
-        "public_node_ids": {"type": "array", "items": {"type": "string"}},
-        "pipeline_segment_id": {"type": ["integer", "null"], "minimum": 0},
-        "kind": {"type": ["string", "null"]},
-        "label": {"type": ["string", "null"]},
-        "element_names": {"type": "array", "items": {"type": "string"}},
-        "latency_semantics": {"type": "string"},
-        "aggregation": {"type": "string"},
-        "latency_ms": {"$ref": "#/$defs/latency_summary"},
-        "elements": {"type": "array", "items": {"$ref": "#/$defs/element_metric"}},
-        "plugins": {"type": "array", "items": {"$ref": "#/$defs/plugin_metric"}}
+        "node_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime_node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "runtime_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "public_node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "pipeline_segment_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "element_names": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "latency_semantics": {
+          "type": "string"
+        },
+        "aggregation": {
+          "type": "string"
+        },
+        "latency_ms": {
+          "$ref": "#/$defs/latency_summary"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element_metric"
+          }
+        },
+        "plugins": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/plugin_metric"
+          }
+        }
       },
       "additionalProperties": true
     },
     "plugin_metric": {
       "type": "object",
       "properties": {
-        "name": {"type": ["string", "null"]},
-        "backend": {"type": "string"},
-        "phase": {"type": "string"},
-        "kernel_name": {"type": "string"},
-        "stage_name": {"type": "string"},
-        "gst_element_name": {"type": ["string", "null"]},
-        "run_id_hash": {"type": ["integer", "null"], "minimum": 0},
-        "pipeline_segment_id": {"type": ["integer", "null"], "minimum": 0},
-        "runtime_node_id": {"type": ["integer", "null"], "minimum": 0},
-        "public_node_id": {"type": ["integer", "null"], "minimum": 0},
-        "public_node_ids": {"type": "array", "items": {"type": "string"}},
-        "physical_input_index": {"type": "integer"},
-        "output_slot": {"type": "integer"},
-        "calls": {"type": "integer", "minimum": 0},
-        "latency_ms": {"$ref": "#/$defs/latency_summary"},
-        "mapping_error": {"type": "string"}
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "backend": {
+          "type": "string"
+        },
+        "phase": {
+          "type": "string"
+        },
+        "kernel_name": {
+          "type": "string"
+        },
+        "stage_name": {
+          "type": "string"
+        },
+        "gst_element_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "run_id_hash": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "pipeline_segment_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "runtime_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "public_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "public_node_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "stream_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "plugin_instance_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attribution_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "reliable": {
+          "type": "boolean"
+        },
+        "physical_input_index": {
+          "type": "integer"
+        },
+        "output_slot": {
+          "type": "integer"
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_ms": {
+          "$ref": "#/$defs/latency_summary"
+        },
+        "mapping_error": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "edge_metric": {
+      "type": "object",
+      "properties": {
+        "edge_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from_node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_node": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from_runtime_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "to_runtime_node_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "from_element_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_element_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "from_plugin_instance_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "to_plugin_instance_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "stream_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "samples": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latency_ms": {
+          "type": "object"
+        },
+        "source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timing_semantics": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "attribution_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mapping_error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "non_additive": {
+          "type": "boolean"
+        },
+        "reliable": {
+          "type": "boolean"
+        },
+        "lowered_edge_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^e[0-9]+$"
+        },
+        "mapping_status": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "customer_view": {
+      "type": "object",
+      "required": [
+        "nodes",
+        "edges"
+      ],
+      "properties": {
+        "topology_source": {
+          "type": "string"
+        },
+        "mapping_status": {
+          "type": "string"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "path_timing": {
+      "type": "object",
+      "properties": {
+        "available": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "reason": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "aggregation": {
+          "type": "string"
+        },
+        "trace_loss_detected": {
+          "type": "boolean"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "identity": {
+          "type": "object"
+        },
+        "node_arrival": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "inter_plugin_gap": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "inter_plugin_gap_ms": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "output_tail": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       },
       "additionalProperties": true
     }

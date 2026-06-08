@@ -28,28 +28,29 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   opt = pyneat.ModelOptions()
-  opt.format = "RGB"
-  opt.input_max_width = args.size
-  opt.input_max_height = args.size
-  opt.input_max_depth = 3
-  opt.preproc.input_width = args.size
-  opt.preproc.input_height = args.size
-  opt.preproc.output_width = args.size
-  opt.preproc.output_height = args.size
-  opt.preproc.normalize = True
-  opt.preproc.channel_mean = [0.5, 0.5, 0.5]
-  opt.preproc.channel_stddev = [0.5, 0.5, 0.5]
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+  opt.preprocess.input_max_width = args.size
+  opt.preprocess.input_max_height = args.size
+  opt.preprocess.input_max_depth = 3
+  opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  opt.preprocess.resize.width = args.size
+  opt.preprocess.resize.height = args.size
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+  opt.preprocess.normalize.mean = [0.5, 0.5, 0.5]
+  opt.preprocess.normalize.stddev = [0.5, 0.5, 0.5]
 
   # CORE LOGIC
   model = pyneat.Model(str(args.model), opt)
-  preproc_group = model.preprocess()
-  print(f"preproc_group_size={preproc_group.size()}")
+  preproc_graph = model.preprocess()
+  print("preproc_graph=ready")
+  print(preproc_graph.describe())
   # END CORE LOGIC
 
   rgb = np.full((args.size, args.size, 3), 120, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
-  sample = model.run([tensor], timeout_ms=2000)
-  print(f"output_kind={sample.kind}")
+  outputs = model.run([tensor], timeout_ms=2000)
+  print(f"output_count={len(outputs)}")
   return 0
 
 

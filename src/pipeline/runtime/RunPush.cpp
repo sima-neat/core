@@ -202,8 +202,22 @@ runtime::EdgeRouterOptions graph_router_options_for_push(const runtime::RunCore&
   return options;
 }
 
+std::string default_input_name(const runtime::RunCore& core) {
+  if (!core.graph_execution_ || !core.graph_execution_->plan.default_input.has_value()) {
+    return "default";
+  }
+  const auto& def = *core.graph_execution_->plan.default_input;
+  for (const auto& [name, ep] : core.graph_execution_->plan.named_inputs) {
+    if (ep.node == def.node && ep.port == def.port && ep.kind == def.kind) {
+      return name;
+    }
+  }
+  return "default";
+}
+
 bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpoint& endpoint,
-                                    const Sample& msgs, bool block) {
+                                    std::string_view endpoint_name, const Sample& msgs,
+                                    bool block) {
   for (const auto& msg : msgs) {
     if (pipeline_internal::env_bool("SIMA_SAMPLE_TIMING_DEBUG", false)) {
       std::fprintf(stderr,
@@ -217,11 +231,16 @@ bool push_graph_samples_to_endpoint(runtime::RunCore& core, const runtime::Endpo
                    static_cast<long long>(msg.duration_ns), msg.stream_id.c_str(), block ? 1 : 0);
     }
     core.inputs_enqueued.fetch_add(1, std::memory_order_relaxed);
+    const auto entry_at = std::chrono::steady_clock::now();
+    runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphEntry,
+                                       core.graph_execution_.get(), runtime::invalid_edge_index(),
+                                       msg, endpoint_name);
     if (!core.graph_push(endpoint.node, endpoint.port,
                          endpoint.port != simaai::neat::graph::kInvalidPort, msg,
                          graph_router_options_for_push(core, block))) {
       return false;
     }
+    core.record_graph_sample_entry(endpoint_name, msg, entry_at);
     core.inputs_pushed.fetch_add(1, std::memory_order_relaxed);
   }
   return true;
@@ -620,7 +639,8 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
   }
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
     return push_graph_samples_to_endpoint(
-        *core_, endpoint, Sample{route->process_tensors(tensors, "Run::push(name)")}, true);
+        *core_, endpoint, input_name, Sample{route->process_tensors(tensors, "Run::push(name)")},
+        true);
   }
   const std::optional<InputOptions> input_opt = graph_ingress_input_for_endpoint(*core_, endpoint);
   if (!input_options_expect_tensor_media(input_opt) && tensors.size() != 1U) {
@@ -632,7 +652,8 @@ bool Run::push(std::string_view input_name, const std::vector<cv::Mat>& inputs) 
   Sample sample = input_opt.has_value()
                       ? pipeline_internal::sample_from_tensors_for_input(tensors, *input_opt)
                       : sample_from_tensors(tensors);
-  return push_graph_samples_to_endpoint(*core_, endpoint, Sample{std::move(sample)}, true);
+  return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
+                                        true);
 }
 
 bool Run::try_push(const std::vector<cv::Mat>& inputs) {
@@ -697,7 +718,8 @@ bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inpu
   }
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
     return push_graph_samples_to_endpoint(
-        *core_, endpoint, Sample{route->process_tensors(tensors, "Run::try_push(name)")}, false);
+        *core_, endpoint, input_name,
+        Sample{route->process_tensors(tensors, "Run::try_push(name)")}, false);
   }
   const std::optional<InputOptions> input_opt = graph_ingress_input_for_endpoint(*core_, endpoint);
   if (!input_options_expect_tensor_media(input_opt) && tensors.size() != 1U) {
@@ -709,7 +731,8 @@ bool Run::try_push(std::string_view input_name, const std::vector<cv::Mat>& inpu
   Sample sample = input_opt.has_value()
                       ? pipeline_internal::sample_from_tensors_for_input(tensors, *input_opt)
                       : sample_from_tensors(tensors);
-  return push_graph_samples_to_endpoint(*core_, endpoint, Sample{std::move(sample)}, false);
+  return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
+                                        false);
 }
 
 bool Run::push(const TensorList& inputs) {
@@ -757,8 +780,9 @@ bool Run::push(std::string_view input_name, const TensorList& inputs) {
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
-    return push_graph_samples_to_endpoint(
-        *core_, endpoint, Sample{route->process_tensors(inputs, "Run::push(name)")}, true);
+    return push_graph_samples_to_endpoint(*core_, endpoint, input_name,
+                                          Sample{route->process_tensors(inputs, "Run::push(name)")},
+                                          true);
   }
   const std::optional<InputOptions> input_opt = graph_ingress_input_for_endpoint(*core_, endpoint);
   if (!input_options_expect_tensor_media(input_opt) && inputs.size() != 1U) {
@@ -769,7 +793,8 @@ bool Run::push(std::string_view input_name, const TensorList& inputs) {
   Sample sample = input_opt.has_value()
                       ? pipeline_internal::sample_from_tensors_for_input(inputs, *input_opt)
                       : sample_from_tensors(inputs);
-  return push_graph_samples_to_endpoint(*core_, endpoint, Sample{std::move(sample)}, true);
+  return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
+                                        true);
 }
 
 bool Run::try_push(const TensorList& inputs) {
@@ -818,7 +843,8 @@ bool Run::try_push(std::string_view input_name, const TensorList& inputs) {
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
     return push_graph_samples_to_endpoint(
-        *core_, endpoint, Sample{route->process_tensors(inputs, "Run::try_push(name)")}, false);
+        *core_, endpoint, input_name, Sample{route->process_tensors(inputs, "Run::try_push(name)")},
+        false);
   }
   const std::optional<InputOptions> input_opt = graph_ingress_input_for_endpoint(*core_, endpoint);
   if (!input_options_expect_tensor_media(input_opt) && inputs.size() != 1U) {
@@ -830,7 +856,8 @@ bool Run::try_push(std::string_view input_name, const TensorList& inputs) {
   Sample sample = input_opt.has_value()
                       ? pipeline_internal::sample_from_tensors_for_input(inputs, *input_opt)
                       : sample_from_tensors(inputs);
-  return push_graph_samples_to_endpoint(*core_, endpoint, Sample{std::move(sample)}, false);
+  return push_graph_samples_to_endpoint(*core_, endpoint, input_name, Sample{std::move(sample)},
+                                        false);
 }
 
 bool Run::push_holder(const std::shared_ptr<void>& holder) {
@@ -862,7 +889,7 @@ bool runtime::RunCore::push_samples(const Sample& msgs, bool block) {
           "inputs: " +
               available_input_names(*this)));
     }
-    return push_graph_samples_to_endpoint(*this, *endpoint, msgs, block);
+    return push_graph_samples_to_endpoint(*this, *endpoint, default_input_name(*this), msgs, block);
   }
   if (pipeline.input_route_processor) {
     return push_message_to_core(
@@ -888,7 +915,7 @@ bool runtime::RunCore::push_named_samples(std::string_view input_name, const Sam
         decorate_with_error_code(error_codes::kRuntimePull, "Run::push(name): empty sample list"));
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*this, input_name);
-  return push_graph_samples_to_endpoint(*this, endpoint, msgs, block);
+  return push_graph_samples_to_endpoint(*this, endpoint, input_name, msgs, block);
 }
 
 bool Run::push(const Sample& msgs) {
@@ -927,8 +954,9 @@ bool Run::push(std::string_view input_name, const Sample& msgs) {
   }
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
-    return push_graph_samples_to_endpoint(
-        *core_, endpoint, Sample{route->process_samples(msgs, "Run::push(name)")}, true);
+    return push_graph_samples_to_endpoint(*core_, endpoint, input_name,
+                                          Sample{route->process_samples(msgs, "Run::push(name)")},
+                                          true);
   }
   return core_->push_named_samples(input_name, msgs, true);
 }
@@ -970,7 +998,8 @@ bool Run::try_push(std::string_view input_name, const Sample& msgs) {
   const runtime::Endpoint endpoint = named_input_endpoint_or_throw(*core_, input_name);
   if (auto route = graph_input_route_processor_for_endpoint(*core_, endpoint)) {
     return push_graph_samples_to_endpoint(
-        *core_, endpoint, Sample{route->process_samples(msgs, "Run::try_push(name)")}, false);
+        *core_, endpoint, input_name, Sample{route->process_samples(msgs, "Run::try_push(name)")},
+        false);
   }
   return core_->push_named_samples(input_name, msgs, false);
 }

@@ -1,0 +1,254 @@
+---
+title: Preproc Node
+description: Configure the CVU Preproc node for resize, color conversion, normalization, tessellation, and ROI-list preprocessing
+sidebar_position: 1
+---
+
+# Preproc Node
+
+`Preproc` is the fused CVU image-preprocessing node used before MLA inference. It can resize, preserve aspect ratio with letterbox padding, convert color, normalize, quantize, and tessellate the image into the tensor contract expected by the model.
+
+For most applications, configure preprocessing through `Model::Options::preprocess` and let the model route planner create the right `Preproc` node. Construct `nodes::Preproc(...)` directly only when you are building a custom graph fragment that already knows the full input and output contract.
+
+## Quick start
+
+C++:
+
+```cpp
+#include <neat.h>
+#include <opencv2/imgcodecs.hpp>
+
+using namespace simaai::neat;
+
+Model::Options opt;
+opt.preprocess.resize.enable = AutoFlag::On;
+opt.preprocess.resize.width = 640;
+opt.preprocess.resize.height = 640;
+opt.preprocess.resize.mode = ResizeMode::Letterbox;
+opt.preprocess.resize.pad_value = 114;
+opt.preprocess.resize.scaling_type = "BILINEAR";
+opt.preprocess.color_convert.input_format = PreprocessColorFormat::BGR;
+opt.preprocess.color_convert.output_format = PreprocessColorFormat::RGB;
+opt.preprocess.normalize.enable = AutoFlag::On;
+opt.preprocess.normalize.mean = {0.0f, 0.0f, 0.0f};
+opt.preprocess.normalize.stddev = {1.0f, 1.0f, 1.0f};
+
+Model model("/path/to/model.tar.gz", opt);
+
+cv::Mat image = cv::imread("/path/to/frame.jpg", cv::IMREAD_COLOR);
+TensorList tensors = stages::Preproc({image}, model);
+```
+
+Python:
+
+```python
+import cv2
+import pyneat
+
+opt = pyneat.ModelOptions()
+opt.preprocess.resize.enable = pyneat.AutoFlag.On
+opt.preprocess.resize.width = 640
+opt.preprocess.resize.height = 640
+opt.preprocess.resize.mode = pyneat.ResizeMode.Letterbox
+opt.preprocess.resize.pad_value = 114
+opt.preprocess.resize.scaling_type = "BILINEAR"
+opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.BGR
+opt.preprocess.color_convert.output_format = pyneat.PreprocessColorFormat.RGB
+opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+opt.preprocess.normalize.mean = [0.0, 0.0, 0.0]
+opt.preprocess.normalize.stddev = [1.0, 1.0, 1.0]
+
+model = pyneat.Model("/path/to/model.tar.gz", opt)
+
+image = cv2.imread("/path/to/frame.jpg", cv2.IMREAD_COLOR)
+tensors = pyneat.stages.preproc(
+    [image],
+    model,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+## Ways to use it
+
+| Use case | API | Guidance |
+| --- | --- | --- |
+| Full model route | `Model model(path, opt); graph.add(model);` | Recommended for production pipelines. The model archive and route planner resolve the exact Preproc graph family and tensor handoff. |
+| Standalone stage | `stages::Preproc(images, model)` | Useful for smoke tests, debugging preprocessing, or feeding MLA manually. |
+| ROI-list stage | `stages::Preproc(images, model, rois)` | Use when each output should be produced from a runtime window over one or more source images. |
+| Manual node | `nodes::Preproc(PreprocOptions{...})` | Advanced graph authoring only. Prefer model-managed construction when a model archive is available. |
+
+## API surface
+
+C++:
+
+```cpp
+namespace simaai::neat::nodes {
+std::shared_ptr<Node> Preproc(PreprocOptions opt = {});
+}
+
+namespace simaai::neat::stages {
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model);
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const Model& model,
+                   const std::vector<PreprocessRoi>& rois);
+}
+```
+
+Python:
+
+```python
+pyneat.nodes.preproc(options: pyneat.PreprocOptions | None = None)
+
+pyneat.stages.preproc(
+    images: list,
+    model: pyneat.Model,
+    *,
+    rois: list[pyneat.PreprocessRoi] | None = None,
+    image_format: pyneat.PixelFormat | None = None,
+    copy: bool = False,
+) -> list[pyneat.Tensor]
+```
+
+`stages::Preproc` uses the model's resolved preprocess plan. That keeps the standalone call consistent with the same `Preproc` node that the full graph would run.
+
+## Input and output contract
+
+| Contract item | Behavior |
+| --- | --- |
+| Input type | C++ accepts `cv::Mat` images, usually `CV_8UC3` for RGB/BGR or `CV_8UC1` for grayscale. Python accepts uint8 NumPy/Torch/`pyneat.Tensor` images in HW or HWC shape. |
+| Source batch | The non-ROI overload processes each image independently. The ROI-list overload accepts a batch of same-sized, same-type source images. |
+| Output order | The non-ROI overload returns outputs in image order. The ROI-list overload returns outputs in ROI order. |
+| Output dtype/layout | Determined by the model route: dense BF16/INT8/INT16 or tessellated MLA layout depending on the resolved preprocess graph family. |
+| Metadata | Output tensors carry `tensor.semantic.preprocess` metadata describing resize, letterbox, normalization, quantization, tessellation, and ROI geometry. |
+
+## Model preprocessing options
+
+These are the user-facing options to prefer in application code.
+
+### Resize and aspect ratio
+
+| Option | Meaning |
+| --- | --- |
+| `opt.preprocess.resize.enable` | `Auto`, `On`, or `Off`. `Auto` lets the planner infer whether resize is needed. |
+| `opt.preprocess.resize.width` / `height` | Target model-input size. `0` means infer from the model contract when possible. |
+| `opt.preprocess.resize.mode` | `ResizeMode::Stretch`, `ResizeMode::Letterbox`, or `ResizeMode::Crop`. |
+| `opt.preprocess.resize.pad_value` | Fill value for letterbox padding. `114` is the common YOLO default. |
+| `opt.preprocess.resize.scaling_type` | Interpolation token. Supported tokens include `BILINEAR`, `NEAREST_NEIGHBOUR`, `BICUBIC`, `INTERAREA`, and `NO_SCALING`. `NEAREST_NEIGHBOR` and `INTER_AREA` are accepted aliases. |
+
+`ResizeMode::Letterbox` preserves aspect ratio by scaling the image or ROI to fit the target and padding the remaining area. `ResizeMode::Stretch` scales width and height independently. `ResizeMode::Crop` center-crops after isotropic scaling.
+
+### Color, normalization, quantization, and tessellation
+
+| Option | Meaning |
+| --- | --- |
+| `opt.preprocess.color_convert.input_format` | Source format hint: `RGB`, `BGR`, `GRAY8`, `NV12`, `I420`, or `Auto`. |
+| `opt.preprocess.color_convert.output_format` | Model input color space, commonly `RGB`, `BGR`, or `GRAY8`. |
+| `opt.preprocess.normalize.enable` | Enable or disable mean/stddev normalization. |
+| `opt.preprocess.normalize.mean` | Per-channel mean. Match the model's training preprocessing. |
+| `opt.preprocess.normalize.stddev` | Per-channel divisor. Use the same normalized channel statistics used during model training, for example ImageNet-style values near `{0.229,0.224,0.225}`. |
+| `opt.preprocess.quantize.enable` | Planner/user control for quantized output when the model expects it. |
+| `opt.preprocess.quantize.zero_point` / `scale` | Explicit quantization parameters. Leave unset unless overriding model calibration. |
+| `opt.preprocess.tessellate.enable` | Planner/user control for MLA tile-layout output. When enabled, `Preproc` returns tessellated tensors. |
+| `opt.preprocess.tessellate.slice_shape` | Advanced tile geometry override. Leave empty unless the model contract requires an override. |
+
+## Runtime ROI lists
+
+ROI lists are a runtime input selection mechanism, not a static `PreprocOptions` field. Pass them to the standalone stage overload:
+
+C++:
+
+```cpp
+std::vector<cv::Mat> images = {image0, image1};
+std::vector<PreprocessRoi> rois = {
+    {0, 0, 0, 320, 240},      // ROI from images[0]
+    {1, 100, 50, 256, 256},   // ROI from images[1]
+    {0, -16, 32, 128, 128},   // partially outside images[0], padded by Preproc
+};
+
+TensorList roi_tensors = stages::Preproc(images, model, rois);
+```
+
+Python:
+
+```python
+images = [image0, image1]
+rois = [
+    pyneat.PreprocessRoi(0, 0, 0, 320, 240),
+    pyneat.PreprocessRoi(1, 100, 50, 256, 256),
+    pyneat.PreprocessRoi(0, -16, 32, 128, 128),
+]
+
+roi_tensors = pyneat.stages.preproc(
+    images,
+    model,
+    rois=rois,
+    image_format=pyneat.PixelFormat.BGR,
+)
+```
+
+Use `image_format=pyneat.PixelFormat.BGR` for `cv2.imread` images, `RGB` for RGB images, and `GRAY8` for HW grayscale images. Set `copy=True` only when the Python image buffer may be mutated or released before the stage returns.
+
+### `PreprocessRoi`
+
+| Field | Meaning |
+| --- | --- |
+| `batch_index` | Index of the source image in the `images` vector. |
+| `x`, `y` | ROI top-left coordinate in source-image pixels. Signed values are allowed so a ROI can start outside the frame. |
+| `width`, `height` | ROI size in pixels. Both must be positive. |
+
+### ROI-list semantics
+
+| Rule | Behavior |
+| --- | --- |
+| Output count/order | Returns one tensor per requested ROI, in the same order as the ROI vector. An empty ROI vector returns an empty `TensorList`. |
+| Multiple ROIs per image | Supported. Several entries may use the same `batch_index`. |
+| Batched source images | Supported when all source images have matching size, type, and channel count. |
+| Out-of-frame pixels | Supported for RGB/BGR/GRAY images; pixels outside the source bounds are padded with the configured pad value. |
+| Input formats | Runtime ROI-list source images support packed 8-bit RGB/BGR (`CV_8UC3`) and GRAY/GRAY8 (`CV_8UC1`). NV12/I420 ROI lists are intentionally not part of this stage API. |
+| Resize behavior | ROIs use the same resize mode, scaling type, aspect-ratio policy, normalization, dtype, and tessellation settings as full-frame Preproc. |
+| Metadata | Each output tensor gets scalar ROI metadata plus an affine mapping from model/preprocessed coordinates back to source-frame coordinates. |
+
+## Direct `PreprocOptions` fields
+
+Use these only for manual node construction. Model-managed construction populates most of them from the archive and the resolved preprocess plan.
+
+| Field group | Fields |
+| --- | --- |
+| Shapes | `input_shape`, `output_shape`, `slice_shape`, `scaled_width`, `scaled_height`, `batch_size` |
+| Transform controls | `normalize`, `aspect_ratio`, `tessellate`, `dynamic_input_dims`, `channel_mean`, `channel_stddev` |
+| Formats | `input_img_type`, `output_img_type`, `output_dtype`, `scaling_type`, `padding_type`, `pad_value` |
+| Quantization | `q_zp`, `q_scale` |
+| Runtime wiring | `graph_name`, `node_name`, `element_name`, `cpu`, `next_cpu`, `upstream_name`, `graph_input_name` |
+| Advanced buffer controls | `single_output_handoff`, `num_buffers`, `num_buffers_model`, `num_buffers_locked`, `model_managed_contract` |
+
+## Metadata and BoxDecode
+
+`Preproc` writes preprocessing metadata so downstream nodes can invert the image transform correctly. In particular, `SimaBoxDecode` uses this metadata to map detection boxes back to the original image or ROI coordinate space.
+
+Important metadata fields include:
+
+- `original_width` / `original_height`
+- `resized_width` / `resized_height`
+- `scaled_width` / `scaled_height`
+- `pad_left`, `pad_right`, `pad_top`, `pad_bottom`
+- `resize_mode`, `color_in`, `color_out`
+- `normalize`, `quantize`, `tessellate`
+- `affine_*` transform fields
+- `roi_list_enabled`, `rois`, `roi_affines`, and ROI count/capacity fields
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| Boxes are shifted or scaled | Verify `resize.mode`, letterbox `pad_value`, and that downstream decode reads `tensor.semantic.preprocess`. |
+| ROI outputs look identical | Check that `batch_index`, `x`, `y`, `width`, and `height` differ as expected and that the source images are distinct. |
+| ROI-list call throws before running | Ensure the image batch is non-empty, all images match size/type/channels, `batch_index` is valid, and ROI width/height are positive. |
+| Unexpected dtype/layout | Inspect `model.resolved_preprocess_plan()` and the output tensor semantics; quantization/tessellation follow the model route. |
+| Letterbox result has unexpected padding | Check `ResizeMode::Letterbox`, target size, ROI aspect ratio, and `pad_value`. |
+
+## See also
+
+- [Preproc ROI Lists](/how-to/preproc_roi)
+- [Preprocess Images Before Inference](/tutorials/005-preprocess-images)
+- [Data Formats](/reference/data_formats)
+- [Node programming model](/getting-started/programming-model/node)
+- [BoxDecode Decode Types](/how-to/boxdecode_decode_types)

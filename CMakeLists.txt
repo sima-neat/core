@@ -870,6 +870,13 @@ target_compile_definitions(sima_neat_objects PRIVATE
   SIMANEAT_GIT_SHA="${GIT_HASH}"
 )
 
+option(SIMANEAT_ENABLE_EDGE_LTTNG_TRACEPOINTS
+  "Emit framework-owned sima_neat_edge LTTng tracepoints from the graph runtime. Requires the SDK trace provider/library to export sima_neat_edge:message."
+  OFF)
+if (SIMANEAT_ENABLE_EDGE_LTTNG_TRACEPOINTS)
+  target_compile_definitions(sima_neat_objects PRIVATE SIMA_NEAT_ENABLE_EDGE_LTTNG_TRACEPOINTS=1)
+endif()
+
 set(SIMANEAT_REPO_NEAT_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/include")
 set(SIMANEAT_REPO_NEAT_GST_INCLUDE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../internals/gst_plugins/include")
 

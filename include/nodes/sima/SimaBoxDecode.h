@@ -44,12 +44,13 @@ namespace simaai::neat {
 struct BoxDecodeOptionsInternal;
 
 /**
- * @brief EV74 postprocess Node that converts detection-head tensors into object boxes.
+ * @brief EV74 postprocess Node that converts detection-head tensors into detection results.
  *
  * `SimaBoxDecode` is the postprocessing node used by object-detection graphs after MLA
  * inference. It reads the model output tensors, decodes them according to the selected
- * `BoxDecodeType`, applies confidence filtering and NMS, and emits a detection tensor that
- * can be parsed with `decode_bbox_tensor()` or rendered with `SimaRender`.
+ * `BoxDecodeType`, applies confidence filtering and NMS, and emits a detection tensor. Detection
+ * models parse it as boxes; pose and segmentation models can also parse the appended keypoints or
+ * masks.
  *
  * @details
  * **When to use it.**
@@ -69,10 +70,11 @@ struct BoxDecodeOptionsInternal;
  *
  * **Outputs.**
  *
- * The output is a `BBOX` detection tensor. Use `decode_bbox_tensor()` or
- * `stages::BoxDecodeResults()` to turn it into `Box` records containing class id, score,
- * and coordinates in the source-image space. Use `SimaRender` downstream when you want an
- * annotated video/image stream.
+ * The output starts with a `BBOX` detection payload. Use `decode_bbox_tensor()`,
+ * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
+ * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
+ * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks. Use `SimaRender` downstream
+ * when you want an annotated video/image stream.
  *
  * **Supported families.**
  *

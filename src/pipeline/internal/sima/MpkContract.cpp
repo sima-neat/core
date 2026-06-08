@@ -914,14 +914,14 @@ std::uint64_t expected_detess_packed_input_size_bytes_local(const MpkPluginIoCon
     return 0U;
   }
 
+  std::uint64_t channels = static_cast<std::uint64_t>(depth);
+  if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
+    channels = round_up_to_multiple_local(channels, 16U);
+  }
+
   const std::uint64_t elem_bytes = dtype_size_bytes_local(dtype);
   if (elem_bytes == 0U) {
     return 0U;
-  }
-  std::uint64_t channels = static_cast<std::uint64_t>(depth);
-  if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
-    const std::uint64_t channel_granule = std::max<std::uint64_t>(1U, 16U / elem_bytes);
-    channels = round_up_to_multiple_local(channels, channel_granule);
   }
   const std::uint64_t factors[] = {batch, static_cast<std::uint64_t>(height),
                                    static_cast<std::uint64_t>(width), channels, elem_bytes};
@@ -1001,8 +1001,7 @@ canonical_detess_transport_shape_local(const MpkPluginIoContract& stage,
   } else {
     packed_channels = static_cast<std::uint64_t>(logical_channels);
     if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
-      const std::uint64_t channel_granule = std::max<std::uint64_t>(1U, 16U / elem_bytes);
-      packed_channels = round_up_to_multiple_local(packed_channels, channel_granule);
+      packed_channels = round_up_to_multiple_local(packed_channels, 16U);
     }
   }
   if (packed_channels < static_cast<std::uint64_t>(logical_channels)) {
@@ -1010,14 +1009,10 @@ canonical_detess_transport_shape_local(const MpkPluginIoContract& stage,
         "detess transport shape packed channels are smaller than logical channels for '" +
         stage.name + "'");
   }
-  const bool byte_granule_aligned =
-      packed_channels <= (std::numeric_limits<std::uint64_t>::max() / elem_bytes) &&
-      ((packed_channels * elem_bytes) % 16U) == 0U;
   if (((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) &&
-      !byte_granule_aligned) {
-    throw std::runtime_error(
-        "detess transport shape expected 16-byte aligned packed channel storage for '" +
-        stage.name + "'");
+      (packed_channels % 16U) != 0U) {
+    throw std::runtime_error("detess transport shape expected c16-aligned packed channels for '" +
+                             stage.name + "'");
   }
 
   std::vector<std::int64_t> out;

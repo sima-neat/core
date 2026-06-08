@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -115,6 +116,11 @@ struct ElementTimingCounters {
   std::atomic<uint64_t> missed_out{0};
   std::mutex pending_mu;
   std::unordered_map<ElementTimingKey, int64_t, ElementTimingKeyHash, ElementTimingKeyEq> pending;
+  // Fallback for simple 1:1 transform elements that replace GstBuffer objects or drop
+  // GstSimaMeta between sink and src.  Enabled only for elements observed with exactly one
+  // sink pad and one src pad at probe attachment time, so FIFO order is a safe approximation.
+  std::deque<int64_t> pending_fifo;
+  bool fifo_match_enabled = false;
   size_t max_pending = 1024;
 
   ElementTimingStats snapshot() const {
@@ -160,6 +166,8 @@ struct ElementPadTimingStats {
   std::string element_name;
   std::string pad_name;
   bool is_sink = false;
+  std::string transport_from_element_name;
+  std::string transport_to_element_name;
   uint64_t samples = 0;
   uint64_t inter_arrival_total_us = 0;
   uint64_t inter_arrival_max_us = 0;
@@ -173,6 +181,8 @@ struct ElementPadTimingCounters {
   std::string element_name;
   std::string pad_name;
   bool is_sink = false;
+  std::string transport_from_element_name;
+  std::string transport_to_element_name;
   std::atomic<uint64_t> samples{0};
   std::atomic<uint64_t> inter_arrival_total_us{0};
   std::atomic<uint64_t> inter_arrival_max_us{0};
@@ -187,6 +197,8 @@ struct ElementPadTimingCounters {
     s.element_name = element_name;
     s.pad_name = pad_name;
     s.is_sink = is_sink;
+    s.transport_from_element_name = transport_from_element_name;
+    s.transport_to_element_name = transport_to_element_name;
     s.samples = samples.load(std::memory_order_relaxed);
     s.inter_arrival_total_us = inter_arrival_total_us.load(std::memory_order_relaxed);
     s.inter_arrival_max_us = inter_arrival_max_us.load(std::memory_order_relaxed);

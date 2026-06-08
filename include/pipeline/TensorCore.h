@@ -259,11 +259,12 @@ struct TessSpec {
 /**
  * @brief Detection-decoder metadata — tags tensors that carry packed detection output.
  *
- * Set on tensors produced by detection-decoder stages (`BoxDecode` today; segmentation /
- * keypoint decoders in the future). The `format` token identifies the wire layout the
+ * Set on tensors produced by detection-decoder stages (`BoxDecode` today). The `format` token
+ * identifies the wire layout the
  * consumer should parse — for example `"BBOX"` for the standard
  * `uint32 count + N × 24-byte RawBox` layout consumed by
- * `decode_bbox_tensor` / `pyneat.decode_bbox`.
+ * `decode_bbox_tensor` / `pyneat.decode_bbox`, or task-specific BoxDecode tokens for pose and
+ * segmentation payloads.
  *
  * Historically this information was overloaded onto `TessSpec::format`, but tessellation is
  * about MLA tile geometry, not about detection payload formats. `DetectionSpec` is the

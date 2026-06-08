@@ -196,13 +196,15 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
   simaai::neat::Tensor out_source = base;
   if (entry.memory_index >= 0 && base.storage &&
       base.storage->kind == simaai::neat::StorageKind::GstSample) {
-    out_source = materialize_output
-                     ? pipeline_internal::copy_tensor_from_sample_memory(base, entry.memory_index,
-                                                                         /*keep_holder=*/false)
-                     : pipeline_internal::tensor_view_from_sample_memory(base, entry.memory_index,
-                                                                         /*keep_holder=*/true);
-  } else if (materialize_output) {
-    out_source = base.clone();
+    // Build the segment/memory view first, then apply the authoritative output
+    // contract below.  Materialization must happen after shape/dtype/stride are
+    // overlaid so Tensor::clone() copies the logical segment span for this
+    // output.  Copying the raw GstMemory before applying the override is unsafe
+    // for packed SimaaiSegmentMemory outputs because multiple logical tensors
+    // share one GstMemory while each output's CPU-visible mapping is exposed via
+    // its named segment.
+    out_source = pipeline_internal::tensor_view_from_sample_memory(base, entry.memory_index,
+                                                                   /*keep_holder=*/true);
   }
   simaai::neat::Tensor out = std::move(out_source);
   out.shape = entry.shape;
@@ -228,6 +230,9 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
     } else {
       out.semantic.tess->format = entry.format;
     }
+  }
+  if (materialize_output) {
+    out = out.clone();
   }
   return out;
 }

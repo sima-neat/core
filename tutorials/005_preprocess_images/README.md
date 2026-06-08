@@ -12,22 +12,22 @@
 
 Configure the preprocessing stage — format, dimensions, and per-channel normalization — so raw image input becomes the exact tensor your model was trained on. Accurate preprocessing is usually the difference between a model that works and a model that looks broken.
 
-This chapter focuses on the preproc controls you use most in real deployments:
-- `format`: declares input image layout/color order (`RGB`/`BGR`/`GRAY`) expected at ingress.
-- `input_max_width`, `input_max_height`, `input_max_depth`: runtime bounds for accepted dynamic inputs.
-- `preproc.input_width`, `preproc.input_height`: expected source dimensions entering preproc.
-- `preproc.output_width`, `preproc.output_height`: tensor dimensions produced for inference.
-- `preproc.normalize`: enables value normalization before inference.
-- `preproc.channel_mean`, `preproc.channel_stddev`: per-channel normalization constants that should match model training assumptions.
+This chapter focuses on the preprocessing controls you use most in real deployments:
+- `preprocess.color_convert.input_format`: declares input image layout/color order (`RGB`/`BGR`/`GRAY8`) expected at ingress.
+- `preprocess.input_max_width`, `preprocess.input_max_height`, `preprocess.input_max_depth`: runtime bounds for accepted dynamic inputs.
+- `preprocess.resize.width`, `preprocess.resize.height`: tensor dimensions produced for inference.
+- `preprocess.resize.mode`: stretch, letterbox, or crop behavior.
+- `preprocess.normalize.enable`: enables value normalization before inference.
+- `preprocess.normalize.mean`, `preprocess.normalize.stddev`: per-channel normalization constants that should match model training assumptions.
 
 **Use-case guidance**
-- Model output is unstable or low-confidence after deployment: verify `format` and `channel_mean` / `channel_stddev` first.
-- Multiple cameras/sources with different resolutions: set `input_max_*` and explicit preproc in/out dimensions for predictable behavior.
-- Porting a model from another framework: mirror the training-time normalization recipe with `preproc.normalize` + channel stats.
+- Model output is unstable or low-confidence after deployment: verify `preprocess.color_convert.input_format` and normalization stats first.
+- Multiple cameras/sources with different resolutions: set `input_max_*` and explicit resize targets for predictable behavior.
+- Porting a model from another framework: mirror the training-time normalization recipe with `preprocess.normalize.*` channel stats.
 - Isolating preprocessing issues: run/inspect `model.preprocess()` path and confirm shape/dtype before debugging inference/postproc.
 
 **APIs introduced**
-- `pyneat.ModelOptions().preproc.*` — the preprocessing sub-struct with the fields listed above.
+- `pyneat.ModelOptions().preprocess.*` — the preprocessing sub-struct with the fields listed above.
 - `model.preprocess()` — returns the preprocessing Graph fragment so you can inspect it in isolation.
 
 **Prerequisites**
@@ -38,7 +38,7 @@ Chapter 001. Chapter 004 for the rest of `ModelOptions`.
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Learning Process
-1. Configure `Model::Options` / `ModelOptions` with explicit preproc dimensions, format, and normalization policy.
+1. Configure `Model::Options` / `ModelOptions` with explicit resize dimensions, format, and normalization policy.
 2. Build the model and inspect preprocessing-stage behavior (Graph-fragment composition and tensor contract cues).
 3. Execute a deterministic run path and verify resulting output/type signals.
 
