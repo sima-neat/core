@@ -1377,8 +1377,7 @@ struct GenAIServer::Impl {
       try {
         (void)model->run(make_warmup_request(*model));
       } catch (const std::exception& e) {
-        throw std::runtime_error("GenAIServer warmup failed for model '" + name +
-                                 "': " + e.what());
+        throw std::runtime_error("GenAIServer warmup failed for model '" + name + "': " + e.what());
       }
     }
 
