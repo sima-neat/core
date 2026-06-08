@@ -118,12 +118,28 @@ public:
    * @param model_width          Input width the model was trained for.
    * @param model_height         Input height the model was trained for.
    * @param decode_type_option   Decoder sub-variant selector (`Auto` to defer to the model).
+   * @param source_storage       Explicit source byte layout of the upstream head tensors. Required
+   *                             for hand-built graphs that decode without a model pack (the
+   * upstream contract does not carry packing flags, so it cannot be inferred); leave as
+   * `std::nullopt` when a model pack supplies it. Contract compilation fails fast if it is neither
+   * model-pack-supplied nor set.
+   * @param detess               Explicit override: do the upstream heads need detessellation before
+   *                             decode? `std::nullopt` keeps the standalone default (no detess) /
+   *                             model-pack value. Set for hand-built graphs whose upstream delivers
+   *                             tessellated heads.
+   * @param dequant              Explicit override: do the upstream heads need dequantization before
+   *                             decode? `std::nullopt` keeps the standalone default (derived from
+   * the input dtype) / model-pack value. When `true`, the upstream must carry quant
+   * scale/zero-point.
    */
   explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
                          double nms_iou_threshold = 0.0, int top_k = 0,
                          const std::string& element_name = "", int original_width = 0,
                          int original_height = 0, int model_width = 0, int model_height = 0,
-                         BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+                         BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
+                         std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
+                         std::optional<bool> detess = std::nullopt,
+                         std::optional<bool> dequant = std::nullopt);
   /**
    * @brief Construct from a bound `Model` — pulls geometry and routing flags from the model.
    *
@@ -238,12 +254,13 @@ private:
 
 namespace simaai::neat::nodes {
 /// Convenience factory for `SimaBoxDecode` from raw geometry — see the class constructor docs.
-std::shared_ptr<simaai::neat::Node>
-SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
-              double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = "",
-              int original_width = 0, int original_height = 0, int model_width = 0,
-              int model_height = 0,
-              BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
+    BoxDecodeType decode_type, double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
+    int top_k = 0, const std::string& element_name = "", int original_width = 0,
+    int original_height = 0, int model_width = 0, int model_height = 0,
+    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
+    std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
+    std::optional<bool> detess = std::nullopt, std::optional<bool> dequant = std::nullopt);
 /// Convenience factory for `SimaBoxDecode` from a bound `Model` — see the class constructor docs.
 std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,

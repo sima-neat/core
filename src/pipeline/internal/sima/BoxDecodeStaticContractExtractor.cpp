@@ -1338,9 +1338,10 @@ bool assign_unique_uint64_local(std::optional<std::uint64_t>* slot, std::uint64_
   return false;
 }
 
-bool assign_unique_source_storage_kind_local(
-    std::optional<BoxDecodeSourceStorageKind>* slot, BoxDecodeSourceStorageKind value,
-    std::string* error_message, const std::string& message) {
+bool assign_unique_source_storage_kind_local(std::optional<BoxDecodeSourceStorageKind>* slot,
+                                             BoxDecodeSourceStorageKind value,
+                                             std::string* error_message,
+                                             const std::string& message) {
   if (!slot) {
     return false;
   }
@@ -1391,9 +1392,9 @@ std::string tensor_dtype_token_local(const MpkTensorContract* tensor) {
 }
 
 bool dense_hwc_source_fact_from_mpk_tensor_local(const MpkTensorContract* tensor,
-                                                std::array<int, 3>* out_hwc,
-                                                std::uint64_t* out_size_bytes,
-                                                std::string* out_dtype) {
+                                                 std::array<int, 3>* out_hwc,
+                                                 std::uint64_t* out_size_bytes,
+                                                 std::string* out_dtype) {
   if (!tensor || !out_hwc) {
     return false;
   }
@@ -1420,9 +1421,8 @@ bool dense_hwc_source_fact_from_mpk_tensor_local(const MpkTensorContract* tensor
     if (!dims_from_mpk_shape_for_input_nhwc_local(shape, &h, &w, &c)) {
       return false;
     }
-    const auto expected =
-        static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) *
-        static_cast<std::uint64_t>(c) * static_cast<std::uint64_t>(elem_bytes);
+    const auto expected = static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) *
+                          static_cast<std::uint64_t>(c) * static_cast<std::uint64_t>(elem_bytes);
     if (tensor->size_bytes > 0U && static_cast<std::uint64_t>(tensor->size_bytes) != expected) {
       return false;
     }
@@ -2772,7 +2772,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
 
 std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_compiled_upstream(
     const simaai::neat::CompiledNodeContract& upstream_stage, BoxDecodeType decode_type,
-    std::string* error_message) {
+    const BoxDecodeStandaloneContractOverrides& overrides, std::string* error_message) {
   auto fail = [&](std::string message) -> std::optional<BoxDecodeStaticContract> {
     set_error(error_message, std::move(message));
     return std::nullopt;
@@ -2802,6 +2802,13 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
   }
   out.quant_needed = dtype_is_quantized_like_local(out.input_dtype);
   out.tess_needed = false;
+  // Hand-built graphs carry no model-pack packing facts: apply caller-supplied overrides.
+  if (overrides.tess_needed.has_value()) {
+    out.tess_needed = *overrides.tess_needed;
+  }
+  if (overrides.quant_needed.has_value()) {
+    out.quant_needed = *overrides.quant_needed;
+  }
 
   out.tensors.reserve(ordered.size());
   out.tensor_names.reserve(ordered.size());
@@ -2853,6 +2860,11 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
     entry.source_physical_index = logical.physical_index;
     entry.source_byte_offset = logical.byte_offset;
     entry.source_size_bytes = logical.size_bytes;
+    // No model pack here, so the byte layout is not inferable: take it from the caller override if
+    // supplied, otherwise leave Unknown and let subset extraction fail fast.
+    if (overrides.source_storage_kind.has_value()) {
+      entry.source_storage_kind = *overrides.source_storage_kind;
+    }
     out.tensors.push_back(entry);
     out.tensor_names.push_back(entry.logical_name);
 
@@ -2889,6 +2901,7 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_comp
 std::optional<BoxDecodeStaticContract>
 build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType decode_type,
                                             const std::optional<InputContract>& input_contract,
+                                            const BoxDecodeStandaloneContractOverrides& overrides,
                                             std::string* error_message) {
   auto fail = [&](std::string message) -> std::optional<BoxDecodeStaticContract> {
     set_error(error_message, std::move(message));
@@ -2928,6 +2941,13 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
       out.tess_needed = true;
       break;
     }
+  }
+  // Hand-built graphs carry no model-pack packing facts: apply caller-supplied overrides.
+  if (overrides.tess_needed.has_value()) {
+    out.tess_needed = *overrides.tess_needed;
+  }
+  if (overrides.quant_needed.has_value()) {
+    out.quant_needed = *overrides.quant_needed;
   }
 
   out.tensors.reserve(tensors.size());
@@ -2979,6 +2999,16 @@ build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType 
         tensor.route.physical_index >= 0 ? tensor.route.physical_index : static_cast<int>(i);
     entry.source_byte_offset = tensor.route.physical_byte_offset;
     entry.source_size_bytes = tensor_bytes;
+    // Unlike the compiled-upstream path, from_sample has the actual tensor layout. Source storage
+    // follows the (sample-derived or overridden) tess decision so it always agrees with
+    // tess_needed: tessellated heads are channel-block packed, dense heads are physically
+    // contiguous HWC. An explicit caller override still wins.
+    if (overrides.source_storage_kind.has_value()) {
+      entry.source_storage_kind = *overrides.source_storage_kind;
+    } else {
+      entry.source_storage_kind = out.tess_needed ? BoxDecodeSourceStorageKind::PackedCBlock
+                                                  : BoxDecodeSourceStorageKind::DenseHwcPhysical;
+    }
     out.tensors.push_back(entry);
     out.tensor_names.push_back(tensor_name);
 

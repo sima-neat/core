@@ -281,16 +281,19 @@ InputQueueAdmission admit_input_queue_locked(runtime::RunCore& core,
     return {false, max, "input_closed"};
   }
 
-  if (core.opt.overflow_policy == OverflowPolicy::Block) {
-    if (!block) {
-      if (run_internal::queue_full(segment.in_queue, max)) {
-        return {false, max, "queue_full_block"};
-      }
-    } else {
-      segment.in_cv.wait(lock, [&]() {
-        return core.stop_requested.load() || segment.input_closed ||
-               !run_internal::queue_full(segment.in_queue, max);
-      });
+  // A blocking caller must never silently drop. Internal inter-segment forwarding pushes with
+  // block=true; honoring that by waiting for room (regardless of the user-facing overflow policy)
+  // lets downstream slowness backpressure upstream instead of being mistaken for a fatal push
+  // failure. The drop / keep-latest policies apply only to non-blocking callers (the user-facing
+  // try_push at graph ingress, which pushes with block=false).
+  if (block) {
+    segment.in_cv.wait(lock, [&]() {
+      return core.stop_requested.load() || segment.input_closed ||
+             !run_internal::queue_full(segment.in_queue, max);
+    });
+  } else if (core.opt.overflow_policy == OverflowPolicy::Block) {
+    if (run_internal::queue_full(segment.in_queue, max)) {
+      return {false, max, "queue_full_block"};
     }
   } else if (core.opt.overflow_policy == OverflowPolicy::DropIncoming) {
     if (run_internal::queue_full(segment.in_queue, max)) {

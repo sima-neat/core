@@ -34,6 +34,17 @@ struct BoxDecodeOptionsInternal {
   bool transmit = false;
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
   BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+  // Explicit source byte layout of the upstream head tensors, for hand-built graphs that decode
+  // without a model pack (the upstream compiled contract does not carry packing flags, so this
+  // cannot be inferred). nullopt means "not specified": resolved from the model pack when present,
+  // otherwise contract compilation fails fast. Unused on the model-pack/compiled-contract paths.
+  std::optional<pipeline_internal::sima::BoxDecodeSourceStorageKind> source_storage_kind;
+  // Explicit overrides for the standalone (no-model-pack) box-decode contract: whether the upstream
+  // heads need detessellation / dequantization. nullopt keeps the inferred standalone default (or
+  // the model-pack value). Like source_storage_kind, unused on the model-pack/compiled-contract
+  // paths.
+  std::optional<bool> override_tess_needed;
+  std::optional<bool> override_quant_needed;
   int top_k = 0;
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
@@ -72,6 +83,18 @@ using json = nlohmann::json;
 
 bool boxdecode_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_BOXDECODE_DEBUG", false);
+}
+
+/// Map the public source-storage selector onto the internal contract enum.
+pipeline_internal::sima::BoxDecodeSourceStorageKind
+source_storage_kind_from_public(BoxDecodeSourceStorage storage) {
+  switch (storage) {
+  case BoxDecodeSourceStorage::PackedCBlock:
+    return pipeline_internal::sima::BoxDecodeSourceStorageKind::PackedCBlock;
+  case BoxDecodeSourceStorage::DenseHwc:
+  default:
+    return pipeline_internal::sima::BoxDecodeSourceStorageKind::DenseHwcPhysical;
+  }
 }
 
 void validate_requested_boxdecode_contract_type_local(BoxDecodeType contract_type,
@@ -159,7 +182,8 @@ void maybe_refine_boxdecode_contract_from_ingress_sample_local(
 
   std::string sample_error;
   auto sample_contract = pipeline_internal::sima::build_boxdecode_static_contract_from_sample(
-      ingress_sample, decode_type, input_contract, &sample_error);
+      ingress_sample, decode_type, input_contract,
+      pipeline_internal::sima::BoxDecodeStandaloneContractOverrides{}, &sample_error);
   if (!sample_contract.has_value()) {
     return;
   }
@@ -586,7 +610,9 @@ static BoxDecodeOptionsInternal options_from_contract(
 SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
                              double nms_iou_threshold, int top_k, const std::string& element_name,
                              int original_width, int original_height, int model_width,
-                             int model_height, BoxDecodeTypeOption decode_type_option) {
+                             int model_height, BoxDecodeTypeOption decode_type_option,
+                             std::optional<BoxDecodeSourceStorage> source_storage,
+                             std::optional<bool> detess, std::optional<bool> dequant) {
   validate_dimension_override_pair(original_width, original_height, "original dimensions",
                                    "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");
@@ -597,6 +623,11 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
     throw std::invalid_argument(
         "SimaBoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified.");
   }
+  if (source_storage.has_value()) {
+    opt->source_storage_kind = source_storage_kind_from_public(*source_storage);
+  }
+  opt->override_tess_needed = detess;
+  opt->override_quant_needed = dequant;
   opt_ = std::move(opt);
 }
 
@@ -779,10 +810,14 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
 
     std::optional<pipeline_internal::sima::BoxDecodeStaticContract> contract =
         opt_->model_static_contract;
+    // Hand-built (no-model-pack) decode paths cannot infer the source byte layout / detess /
+    // dequant facts the model pack would normally provide; forward any explicit caller overrides.
+    const pipeline_internal::sima::BoxDecodeStandaloneContractOverrides standalone_overrides{
+        opt_->source_storage_kind, opt_->override_tess_needed, opt_->override_quant_needed};
     if (!contract.has_value()) {
       if (input.immediate_upstream != nullptr) {
         contract = pipeline_internal::sima::build_boxdecode_static_contract_from_compiled_upstream(
-            *input.immediate_upstream, opt_->decode_type, err);
+            *input.immediate_upstream, opt_->decode_type, standalone_overrides, err);
         if (!contract.has_value()) {
           // Helper may return nullopt without populating *err. Provide a
           // contextual default so the diagnostic message conveys *which*
@@ -809,7 +844,8 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         return false;
       } else {
         contract = pipeline_internal::sima::build_boxdecode_static_contract_from_sample(
-            *input.ingress.ingress_sample, opt_->decode_type, input_contract_, err);
+            *input.ingress.ingress_sample, opt_->decode_type, input_contract_, standalone_overrides,
+            err);
         if (!contract.has_value()) {
           if (err && err->empty()) {
             *err = "SimaBoxDecode: failed to derive box-decode static contract from ingress "
@@ -1012,10 +1048,13 @@ namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
               int top_k, const std::string& element_name, int original_width, int original_height,
-              int model_width, int model_height, BoxDecodeTypeOption decode_type_option) {
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant) {
   return std::make_shared<simaai::neat::SimaBoxDecode>(
       decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
-      original_height, model_width, model_height, decode_type_option);
+      original_height, model_width, model_height, decode_type_option, source_storage, detess,
+      dequant);
 }
 
 std::shared_ptr<simaai::neat::Node>

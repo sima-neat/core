@@ -206,6 +206,7 @@ RUN_TEST(
           root / "src/nodes/sima/Quant.cpp",
           root / "src/nodes/sima/Tess.cpp",
           root / "src/nodes/sima/QuantTess.cpp",
+          root / "src/nodes/sima/VisualFrontend.cpp",
           root / "src/pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapter.cpp",
           root / "tests/unit_testing/unit_contract_compiler_processcvu_test.cpp",
           root / "tests/unit_testing/unit_dequant_processcvu_contract_equivalence_test.cpp",

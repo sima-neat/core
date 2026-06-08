@@ -1935,10 +1935,12 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
     }
     subset.slice_shapes.push_back(slice_shape_desc);
     if (contract.tensors[i].source_storage_kind == BoxDecodeSourceStorageKind::Unknown) {
-      throw std::invalid_argument("boxdecode static contract requires source storage kind");
+      throw std::invalid_argument(
+          "boxdecode source storage kind is unspecified: provide a model pack, or set "
+          "source_storage "
+          "explicitly on SimaBoxDecode (it cannot be inferred from a hand-built upstream)");
     }
-    subset.tensor_storage_kind.push_back(
-        static_cast<int>(contract.tensors[i].source_storage_kind));
+    subset.tensor_storage_kind.push_back(static_cast<int>(contract.tensors[i].source_storage_kind));
   }
   return subset;
 }

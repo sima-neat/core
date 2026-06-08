@@ -84,6 +84,35 @@ enum class BoxDecodeTypeOption : std::int32_t {
   GroupedByRoleLogit = 9,           ///< Grouped-by-role, class scores as logits.
 };
 
+/**
+ * @brief Source byte layout of the head tensors feeding a BoxDecode stage.
+ *
+ * For model-pack (`Model`-constructed) graphs this is resolved authoritatively from the
+ * model archive and must NOT be set by hand. For hand-built graphs that decode without a
+ * model pack (e.g. a `Cast`/detess stage stitched directly into `SimaBoxDecode`), the
+ * upstream contract does not carry the packing flags, so the value cannot be inferred and
+ * must be specified explicitly via the `SimaBoxDecode` constructor. When it is neither
+ * supplied by a model pack nor specified, contract compilation fails fast.
+ *
+ * @ingroup pipeline
+ */
+enum class BoxDecodeSourceStorage : std::int32_t {
+  DenseHwc = 0,     ///< Dense, physically contiguous HWC heads (e.g. a Cast/dequant output).
+  PackedCBlock = 1, ///< Channel-block packed / tessellated heads (e.g. a cblock detess output).
+};
+
+/// @brief Stable lower-case token for an explicit source-storage selection (diagnostics/docs).
+constexpr const char* box_decode_source_storage_token(BoxDecodeSourceStorage storage) {
+  switch (storage) {
+  case BoxDecodeSourceStorage::DenseHwc:
+    return "dense-hwc";
+  case BoxDecodeSourceStorage::PackedCBlock:
+    return "packed-cblock";
+  default:
+    return "dense-hwc";
+  }
+}
+
 /// @brief Stable lower-case token for a decode family (used in caps, manifests, logs).
 constexpr const char* box_decode_type_token(BoxDecodeType type) {
   switch (type) {
