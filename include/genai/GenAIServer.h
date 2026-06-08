@@ -1,6 +1,6 @@
 /**
  * @file
- * @brief Multi-model OpenAI-compatible HTTP server for NEAT GenAI models.
+ * @brief Multi-model HTTP server for NEAT GenAI models.
  */
 #pragma once
 
@@ -16,21 +16,21 @@ namespace simaai::neat::genai {
 
 class GenAIModel;
 
-struct OpenAIServerOptions {
+struct GenAIServerOptions {
   std::string host = "0.0.0.0";
   std::uint16_t port = 9998;
 };
 
-class OpenAIServer {
+class GenAIServer {
 public:
-  explicit OpenAIServer(OpenAIServerOptions options = {});
-  ~OpenAIServer();
+  explicit GenAIServer(GenAIServerOptions options = {});
+  ~GenAIServer();
 
-  OpenAIServer(OpenAIServer&&) noexcept;
-  OpenAIServer& operator=(OpenAIServer&&) noexcept;
+  GenAIServer(GenAIServer&&) noexcept;
+  GenAIServer& operator=(GenAIServer&&) noexcept;
 
-  OpenAIServer(const OpenAIServer&) = delete;
-  OpenAIServer& operator=(const OpenAIServer&) = delete;
+  GenAIServer(const GenAIServer&) = delete;
+  GenAIServer& operator=(const GenAIServer&) = delete;
 
   std::string add_model(std::filesystem::path model_dir);
   std::string add_model(std::filesystem::path model_dir, std::string served_name);
