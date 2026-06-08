@@ -1,26 +1,26 @@
 ---
 title: Run an App
 description: Run YOLOv8 inside a Graph application and read decoded bounding boxes, in Python or C++
-sidebar_position: 2
+sidebar_position: 3
 mdx:
   format: mdx
 ---
 
 # Run an App
 
+![Assembling your Graph](../../images/hello-neat-graph-add-animation.svg)
+
 ![YOLOv8 detections from Neat on the source image](../../images/first_inference_hook.png)
 
 *Detections written by the program below, drawn on the source image.*
 
-This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly, you compose the model into a [`Graph`](/reference/programming-model/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
+This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](./run_first_model)), you compose the model into a [`Graph`](/getting-started/development_workflow/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
 
 For this first app the shape is intentionally simple:
 
 - A named _input_ (`nodes.input("image")`) marks where data enters the app.
 - A _model_ (`graph.add(model)`) runs the model as one step in the pipeline.
 - A named _output_ (`nodes.output("detections")`) marks where your application reads the result.
-
-![Assembling your Graph](../../images/hello-neat-graph-add-animation.svg)
 
 The same API scales to much more complex applications later; here the goal is the core composition pattern.
 
@@ -29,6 +29,10 @@ Use the **Python / C++** tabs on any code block — your choice follows the site
 :::
 
 ## Set up the project
+
+:::tip Already did [Run a Model](./run_first_model)?
+You can skip this section — it uses the same `assets/` directory, model package, and sample image. Jump straight to [Walk through the code](#walk-through-the-code).
+:::
 
 1. **Create an assets directory** for the model and the input image:
     ```bash
@@ -282,7 +286,7 @@ Create the files in your project directory, then build and run.
 
 `app.py`:
 
-```python
+```python {18-24,34-35,38-41,44-46,48}
 #!/usr/bin/env python3
 import sys
 
@@ -359,7 +363,7 @@ if __name__ == "__main__":
 
 Create `CMakeLists.txt` and `main.cpp`:
 
-```cmake title="CMakeLists.txt"
+```cmake title="CMakeLists.txt" {18,23-27}
 cmake_minimum_required(VERSION 3.16)
 project(sima_neat_app LANGUAGES CXX)
 
@@ -389,7 +393,9 @@ target_link_libraries(sima_neat_app
 )
 ```
 
-```cpp title="main.cpp"
+The two highlighted lines are what link your app to Neat: `find_package(SimaNeat REQUIRED CONFIG)` finds the installed Neat package (via `SimaNeatConfig.cmake`), and `target_link_libraries(sima_neat_app PRIVATE SimaNeat::sima_neat ...)` links against it — the imported `SimaNeat::sima_neat` target propagates Neat's include directories and transitive dependencies automatically, so no manual include/library paths are needed. (`PkgConfig::OPENCV` is only required because this app uses OpenCV to load images.)
+
+```cpp title="main.cpp" {13-19,30-31,34-37,40-42,44-46}
 #include "neat.h"
 
 #include <opencv2/imgcodecs.hpp>
@@ -487,10 +493,10 @@ The APIs map directly to that shape:
 
 ## Next steps
 
-For deeper graph composition, continue with the [Graph programming model](/reference/programming-model/graph).
+For deeper graph composition, continue with the [Graph programming model](/getting-started/development_workflow/graph).
 
 From there, continue with broader SiMa Neat learning resources:
 
-- Learn the [core programming model](/reference/programming-model/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
+- Learn the [core programming model](/getting-started/development_workflow/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

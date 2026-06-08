@@ -74,7 +74,7 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
 
 1. `CMakeLists.txt` tells CMake how to build and link the app.
 
-   ```cmake title="CMakeLists.txt"
+   ```cmake title="CMakeLists.txt" {19,24-28}
    cmake_minimum_required(VERSION 3.16)
    project(sima_neat_hello LANGUAGES CXX)
 
@@ -104,6 +104,8 @@ When you run `dk hello_neat.py`, `dk` executes the script on the paired DevKit u
        PkgConfig::OPENCV
    )
    ```
+
+   The two highlighted lines are what pull Neat into your build: `find_package(SimaNeat REQUIRED CONFIG)` locates the installed Neat package, and `target_link_libraries(sima_neat_hello PRIVATE SimaNeat::sima_neat ...)` links your executable against it — the imported `SimaNeat::sima_neat` target also brings in Neat's headers and transitive dependencies, so you set no include or library paths by hand. (The OpenCV lines are only here because this example decodes an image.)
 
 2. `main.cpp` contains the tiny Neat program.
 

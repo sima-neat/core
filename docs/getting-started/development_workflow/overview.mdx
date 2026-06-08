@@ -1,0 +1,153 @@
+---
+title: Inference Workflow
+description: The end-to-end mental model for building and running inference
+sidebar_position: 1
+---
+
+# Inference Workflow
+
+If you are new to SiMa Neat, the shortest path to a prediction is two lines — load a model, then run it:
+
+1. Load a compiled model archive (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
+2. Call `model.run(input, timeout_ms)` to run inference synchronously and get a [`Sample`](/reference/{lsa}/structs/simaai-neat-sample) back.
+
+That is the entire workflow for a single model — **no graph required**. Reach for a [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) only when one model on its own is not enough: chaining multiple stages into a pipeline, decoupling producers and consumers with async `push` / `pull`, or controlling queueing. That is covered at the [end of this page](#compose-a-graph-when-you-need-more).
+
+## Run a model directly
+
+Load the model and call `run(...)`. It executes synchronously and returns a `Sample` whose `tensor` holds the output. No `Graph`, no `Run`, no `push` / `pull`.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+
+cv::Mat img = /* your frame (RGB/BGR as configured) */;
+simaai::neat::Sample out = model.run(img, /*timeout_ms=*/1000);
+
+// out.tensor holds the result; read its bytes with out.tensor->map_read().
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.Model("resnet_50_model.tar.gz")
+
+img = ...  # your frame as a Tensor
+sample = model.run(img, timeout_ms=1000)
+
+# sample.tensor holds the result.
+```
+
+</CodeTab>
+</CodeTabs>
+
+That is the whole path for single-model inference. For a complete, runnable version see [Run Your First Model](/tutorials/001-run-your-first-model).
+
+## Compose a Graph when you need more
+
+A [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) wraps one or more model stages (plus your own nodes) into a pipeline you build into a [`Run`](/reference/{lsa}/classes/simaai-neat-run). Reach for it when a single `model.run(...)` is not enough — when you need to:
+
+- chain multiple models or pre/post-processing stages into one pipeline,
+- decouple producers and consumers with asynchronous `push` / `pull`, or
+- control queueing, overflow, and metrics with [`RunOptions`](/reference/{lsa}/structs/simaai-neat-runoptions).
+
+### Synchronous Graph
+
+For request/response execution, build the graph in `Sync` mode and use `run(...)` / `push_and_pull(...)`.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+simaai::neat::Graph graph;
+graph.add(model.graph());
+
+cv::Mat img = /* your frame (RGB/BGR as configured) */;
+auto run = graph.build(img, simaai::neat::RunMode::Sync);
+auto out = run.push_and_pull(img, /*timeout_ms=*/1000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+# Pseudo Python sync example.
+model = neat.Model("resnet_50_model.tar.gz")
+
+graph = neat.Graph()
+graph.add(model.graph())
+
+img = ...  # your frame tensor
+
+run = graph.build(img, neat.RunMode.Sync)
+out = run.run(img, timeout_ms=1000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+### Asynchronous Graph
+
+Use async mode when you want to decouple producers and consumers, control queueing, or overlap IO and compute. Use `push(...)` / `pull(...)` with `RunOptions` to tune queueing and drop behavior.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("resnet_50_model.tar.gz");
+simaai::neat::Graph graph;
+graph.add(model.graph());
+
+cv::Mat img = /* your frame */;
+
+simaai::neat::RunOptions opt;
+opt.queue_depth = 8;
+opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
+opt.enable_metrics = true;
+
+auto run = graph.build(img, simaai::neat::RunMode::Async, opt);
+run.push(img);
+auto out = run.pull(/*timeout_ms=*/1000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+# Pseudo Python async example.
+model = neat.Model("resnet_50_model.tar.gz")
+
+graph = neat.Graph()
+graph.add(model.graph())
+
+img = ...  # your frame
+
+opt = neat.RunOptions()
+opt.queue_depth = 8
+opt.overflow_policy = neat.OverflowPolicy.Block
+
+run = graph.build(img, neat.RunMode.Async, opt)
+run.push(img)
+out = run.pull(timeout_ms=1000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Learn the concepts
+
+- [Model](/getting-started/development_workflow/model): model archive loading and model-driven graph fragments.
+- [Graph](/getting-started/development_workflow/graph): assembly, validation, and run/build entry point.
+- [Node](/getting-started/development_workflow/node): atomic stages, pre-built groups, and graph boundary nodes.
+- [Tensor and Sample](/getting-started/development_workflow/core_types): payload vs metadata envelope.
+
+## Tutorials
+
+- [Run Your First Model](/tutorials/001-run-your-first-model)
+- [Run Inference Asynchronously](/tutorials/002-run-inference-async)
+- [Build an Inference Pipeline](/tutorials/003-build-inference-pipeline)
+- [Embed a Model Inside a Graph](/tutorials/013-embed-model-inside-graph)

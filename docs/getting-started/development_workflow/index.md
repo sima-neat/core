@@ -15,8 +15,8 @@ A typical Neat development cycle looks like this:
 1. **Install** — get the `sima-neat` package (and optionally the `pyneat` Python bindings) on your host or device.
 2. **Try Hello Neat** — confirm the library is wired up by compiling a minimal example.
 3. **Pick a compiled model** — Neat consumes a model package (`.tar.gz`, often called an MPK). You can grab one from the Model Zoo or compile your own with the SiMa.ai toolchain.
-4. **Author a `Model` / `Session` / `Run`** — load the model, compose the session, and execute it synchronously or asynchronously.
-5. **Run and inspect** — feed inputs, pull outputs, and use `SessionReport` / `Run::report()` to verify behavior.
+4. **Author a `Model` / `Graph` / `Run`** — load the model, compose the graph, and execute it synchronously or asynchronously.
+5. **Run and inspect** — feed inputs, pull outputs, and use `GraphReport` / `Run::report()` to verify behavior.
 6. **Iterate with tutorials** — graduate from a single inference to pipelines, multi-input models, multi-stream graphs, and production-grade error handling.
 7. **Deploy** — link your application against the installed Neat library on the target device.
 
@@ -24,13 +24,13 @@ A typical Neat development cycle looks like this:
 
 The Programming Model breaks each of these down in depth. At a glance:
 
-- [Model](/reference/programming-model/model) — load a compiled model package and expose it as a runnable unit.
-- [Run](/reference/programming-model/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
-- [Node](/reference/programming-model/node) — the atomic building block of a graph.
-- [Graph](/reference/programming-model/graph) — hybrid DAG runtime for combining model stages and custom logic.
-- [Tensor and Sample](/reference/programming-model/core_types) — the payload and metadata envelope passed between stages.
+- [Model](/getting-started/development_workflow/model) — load a compiled model package and expose it as a runnable unit.
+- [Inference Workflow](/getting-started/development_workflow/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
+- [Node](/getting-started/development_workflow/node) — the atomic building block of a graph.
+- [Graph](/getting-started/development_workflow/graph) — hybrid DAG runtime for combining model stages and custom logic.
+- [Tensor and Sample](/getting-started/development_workflow/core_types) — the payload and metadata envelope passed between stages.
 
-If you only learn one page first, start with the [Inference Workflow overview](/reference/programming-model/overview) — it ties `Model`, `Graph`, and `Run` together end to end.
+If you only learn one page first, start with the [Inference Workflow overview](/getting-started/development_workflow/overview) — it ties `Model`, `Graph`, and `Run` together end to end.
 
 ## Where to go next
 
@@ -43,7 +43,7 @@ Step-by-step entry points for new users:
 
 Reference material for when you need depth:
 
-- [Programming Model](/reference/programming-model/overview) — concept-by-concept breakdown of `Model`, `Session`, `Run`, `Node`, `Pipeline`, `Graph`, and I/O.
+- [Programming Model](/getting-started/development_workflow/overview) — concept-by-concept breakdown of `Model`, `Run`, `Node`, `Pipeline`, `Graph`, and I/O.
 - [C++ Reference](/reference/cppapi) — full API surface for the installed headers.
 - [Python Reference](/reference/pythonapi) — `pyneat` bindings reference.
 

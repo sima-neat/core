@@ -818,12 +818,14 @@ div.doxyPage div.theme-code-block {
 }
 
 div.doxyPage div.theme-code-block pre code {
-  background-color: var(--ifm-code-background);
-  border: .1rem solid #0000001a;
-  border-radius: var(--ifm-code-border-radius);
+  /* Keep fenced code blocks (the CMake / build snippets) on their native dark
+     prism theme. Without this the inner <code> is painted with the light
+     --ifm-code-background, hiding the dark <pre> behind it. */
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
   font-family: var(--ifm-font-family-monospace);
   font-size: var(--ifm-code-font-size);
-  padding: 10px 16px;
   vertical-align: initial;
 }
 
