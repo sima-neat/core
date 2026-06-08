@@ -43,6 +43,7 @@ CORE_CHANNEL_ASSUMED=0
 PYNEAT_VERSION=""
 RUNTIME_VERSION=""
 GST_PLUGINS_VERSION=""
+LLIMA_VERSION=""
 INSIGHT_VERSION=""
 INSIGHT_CHANNEL=""
 INSIGHT_TAG=""
@@ -497,6 +498,13 @@ discover_sdk_components() {
       GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION#neat-gst-plugins_}"
       GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION%_*.deb}"
     fi
+
+    file="$(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-lmm-*-Linux-core.deb' | sort | tail -n1 || true)"
+    if [[ -n "${file}" ]]; then
+      LLIMA_VERSION="$(basename "${file}")"
+      LLIMA_VERSION="${LLIMA_VERSION#sima-lmm-}"
+      LLIMA_VERSION="${LLIMA_VERSION%-Linux-core.deb}"
+    fi
   fi
 }
 
@@ -512,6 +520,7 @@ discover_devkit_components() {
   CORE_VERSION="$(dpkg_version sima-neat)"
   RUNTIME_VERSION="$(dpkg_version neat-runtime)"
   GST_PLUGINS_VERSION="$(dpkg_version neat-gst-plugins)"
+  LLIMA_VERSION="$(dpkg_version sima-lmm-core)"
   if [[ -x "${HOME}/pyneat/bin/pip3" ]]; then
     PYNEAT_VERSION="$(version_from_pip_show "${HOME}/pyneat/bin/pip3" pyneat)"
   elif [[ -x "${HOME}/pyneat/bin/python" ]]; then
@@ -862,6 +871,7 @@ print_status_json() {
     NEAT_JSON_PYNEAT_VERSION="${PYNEAT_VERSION}" \
     NEAT_JSON_RUNTIME_VERSION="${RUNTIME_VERSION}" \
     NEAT_JSON_GST_PLUGINS_VERSION="${GST_PLUGINS_VERSION}" \
+    NEAT_JSON_LLIMA_VERSION="${LLIMA_VERSION}" \
     NEAT_JSON_INSIGHT_VERSION="${INSIGHT_VERSION}" \
     NEAT_JSON_INSIGHT_CHANNEL="${INSIGHT_CHANNEL}" \
     NEAT_JSON_INSIGHT_TAG="${INSIGHT_TAG}" \
@@ -1019,6 +1029,10 @@ payload = {
             "name": "neat-gst-plugins",
             "version": optional(env("NEAT_JSON_GST_PLUGINS_VERSION")),
         },
+        "llima": {
+            "name": "neat-llima",
+            "version": optional(env("NEAT_JSON_LLIMA_VERSION")),
+        },
         "insight": {
             "name": "neat-insight",
             "version": optional(env("NEAT_JSON_INSIGHT_VERSION")),
@@ -1111,6 +1125,7 @@ print_status() {
   print_component "PyNeat" "${PYNEAT_VERSION}" "" "$([[ -n "${PYNEAT_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-runtime" "${RUNTIME_VERSION}" "" "$([[ -n "${RUNTIME_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-gst-plugins" "${GST_PLUGINS_VERSION}" "" "$([[ -n "${GST_PLUGINS_VERSION}" ]] && echo installed || echo missing)"
+  print_component "neat-llima" "${LLIMA_VERSION}" "" "$([[ -n "${LLIMA_VERSION}" ]] && echo installed || echo missing)"
   print_component "neat-insight" "${INSIGHT_VERSION}" "${insight_detail}" "$([[ -n "${INSIGHT_VERSION}" ]] && echo "${insight_state}" || echo missing)"
 
   if [[ "${MODEL_SDK_AVAILABLE}" -eq 1 ]]; then

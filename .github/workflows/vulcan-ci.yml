@@ -1,6 +1,6 @@
 name: Vulcan CI
 
-run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'staging' }})
+run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'production' }})
 
 on:
   push:
@@ -44,7 +44,7 @@ jobs:
     name: Resolve Vulcan Config
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
     with:
-      vulcan_env: ${{ vars.VULCAN_ENV || 'staging' }}
+      vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
 
   code-hygiene:
     name: Code Hygiene
@@ -79,6 +79,11 @@ jobs:
           SIMANEAT_STRICT_WARNINGS: "ON"
         run: |
           ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
+
+  resolve-test-runner:
+    name: Resolve Test Runner
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
 
   build:
     name: Build Core on Vulcan
@@ -208,8 +213,11 @@ jobs:
     if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
     needs:
       - resolve-vulcan-config
+      - resolve-test-runner
       - publish-vulcan-artifacts
-    runs-on: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+    runs-on:
+      group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
+      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
     env:
       VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
       SIMA_CLI_CHECK_FOR_UPDATE: "0"
