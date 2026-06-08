@@ -1,7 +1,7 @@
 ---
 title: Build profiles & CMake options
 description: How the framework's CMake build is configured, what each option toggles, and which profile to pick.
-sidebar_position: 10
+sidebar_position: 11
 ---
 
 # Build profiles & CMake options

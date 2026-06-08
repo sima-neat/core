@@ -85,13 +85,16 @@ int main(int argc, char** argv) {
     // named inputs ("left", "right") and one named output ("combined"). ByFrame
     // means the runtime emits one bundle only after both inputs have delivered
     // samples with the same Sample::frame_id.
+    // STEP build-combine-graph
     simaai::neat::Graph graph = simaai::neat::graphs::Combine({"left", "right"}, "combined",
                                                               simaai::neat::CombinePolicy::ByFrame);
 
     std::cout << graph.describe() << "\n";
 
     simaai::neat::Run run = graph.build();
+    // END STEP
 
+    // STEP push-streams
     for (int frame = 0; frame < frames; ++frame) {
       for (int sid = 0; sid < streams; ++sid) {
         const int logical_frame = frame * streams + sid;
@@ -103,7 +106,9 @@ int main(int argc, char** argv) {
         }
       }
     }
+    // END STEP
 
+    // STEP pull-bundles
     const int expected = streams * frames;
     int received = 0;
     int first_fields = -1;
@@ -123,6 +128,7 @@ int main(int argc, char** argv) {
     }
 
     run.close();
+    // END STEP
     // END CORE LOGIC
 
     if (received != expected)

@@ -64,6 +64,7 @@ int main(int argc, char** argv) {
 
     // CORE LOGIC
     // RunOptions controls how the async runner buffers and drops frames.
+    // STEP configure-run-options
     simaai::neat::RunOptions opt;
     opt.queue_depth = queue_depth;
     opt.overflow_policy = parse_drop_policy(argc, argv);
@@ -71,7 +72,9 @@ int main(int argc, char** argv) {
     opt.enable_metrics = true;
 
     auto run = graph.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Async, opt);
+    // END STEP
 
+    // STEP push-workload
     // try_push never blocks; pair it with close_input + drain pull loop.
     for (int i = 0; i < iters; ++i)
       (void)run.try_push(std::vector<cv::Mat>{rgb});
@@ -80,9 +83,12 @@ int main(int argc, char** argv) {
     int pulled = 0;
     while (run.pull(/*timeout_ms=*/1000).has_value())
       ++pulled;
+    // END STEP
 
+    // STEP read-metrics
     const auto stats = run.stats();
     const auto input_stats = run.input_stats();
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "inputs_enqueued=" << stats.inputs_enqueued << "\n";

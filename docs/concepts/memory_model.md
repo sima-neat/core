@@ -1,7 +1,7 @@
 ---
 title: Memory model
 description: Zero-copy buffers, segments, the (buffer_id, paddr, vaddr) triple, and cache coherence.
-sidebar_position: 2
+sidebar_position: 4
 ---
 
 # Memory model

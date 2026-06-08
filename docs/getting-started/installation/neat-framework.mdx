@@ -85,6 +85,33 @@ If you prefer building from source, follow the [Build](/contribute/build) guide.
 
 For SDK environment setup and DevKit Sync onboarding, see [Neat SDK](/getting-started/installation/neat-elxr-sdk/).
 
+## Build the PyNeat Wheel for a Custom Environment
+
+The installer provisions the `~/pyneat` virtual environment for you, but you can also build the `pyneat` wheel yourself and install it into an environment of your own (a separate venv, conda, etc.).
+
+1. In a checkout of [`core`](https://github.com/sima-neat/core), build the Python bindings. The wheel is written to `dist/`:
+
+   ```bash
+   ./build.sh --python
+   ls dist/pyneat-*.whl
+   ```
+
+2. Transfer the wheel to the machine with your target environment (for example, copy it onto the DevKit):
+
+   ```bash
+   scp dist/pyneat-*.whl <user>@<devkit-host>:~/
+   ```
+
+3. Install it into your Python 3.11 environment on that machine:
+
+   ```bash
+   python3.11 -m venv ~/my-neat-env
+   source ~/my-neat-env/bin/activate
+   pip install ~/pyneat-*.whl
+   ```
+
+The wheel targets **CPython 3.11** on **`linux_aarch64`**, so build it for — and install it into — a matching environment. For other Python versions and full build options, see [Build](/contribute/build).
+
 ## Neat CLI
 
 The installed framework provides the `neat` environment command. Run it from either the Neat SDK or DevKit to see installed component versions, installed `sima-cli` playbooks, and whether newer artifacts are available.

@@ -101,16 +101,21 @@ int main(int argc, char** argv) {
     // CORE LOGIC
     // Build a Graph around the model and run it async: one producer thread pushes,
     // the main thread pulls outputs.
+    // STEP load-model
     simaai::neat::Model model(model_path, build_options(size));
     simaai::neat::Model::RouteOptions route_opt;
     route_opt.include_input = true;
     route_opt.include_output = true;
+    // END STEP
 
+    // STEP build-async
     simaai::neat::Graph graph;
     graph.add(model.graph(route_opt));
 
     auto run = graph.build(std::vector<cv::Mat>{frames.front()}, simaai::neat::RunMode::Async);
+    // END STEP
 
+    // STEP push-frames
     std::atomic<int> pushed{0};
     std::atomic<bool> producer_done{false};
     std::thread producer([&]() {
@@ -121,7 +126,9 @@ int main(int argc, char** argv) {
       run.close_input();
       producer_done.store(true);
     });
+    // END STEP
 
+    // STEP pull-results
     int pulled = 0;
     while (pulled < n) {
       auto out = run.pull(/*timeout_ms=*/2000);
@@ -134,6 +141,7 @@ int main(int argc, char** argv) {
       ++pulled;
     }
     producer.join();
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "pushed=" << pushed.load() << " pulled=" << pulled << "\n";

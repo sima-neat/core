@@ -45,17 +45,22 @@ int main(int argc, char** argv) {
     const int frames = parse_int_arg(argc, argv, "--frames", 5);
 
     // CORE LOGIC
-    // Configure RtspDecodedInputOptions, build a Graph whose only stages
-    // are the RTSP group and an Output node, and pull decoded frames.
+    // STEP configure-rtsp
+    // Configure RtspDecodedInputOptions: the URL and the RTSP transport.
     simaai::neat::nodes::groups::RtspDecodedInputOptions rtsp_opt;
     rtsp_opt.url = url;
     rtsp_opt.tcp = true;
+    // END STEP
 
+    // STEP compose-graph
+    // Build a Graph whose only stages are the RTSP group and an Output node.
     simaai::neat::Graph s;
     s.add(simaai::neat::nodes::groups::RtspDecodedInput(rtsp_opt));
     s.add(simaai::neat::nodes::Output());
     auto run = s.build(simaai::neat::RunOptions{});
+    // END STEP
 
+    // STEP pull-frames
     for (int i = 0; i < frames; ++i) {
       auto sample = run.pull(/*timeout_ms=*/5000);
       if (!sample.has_value() || simaai::neat::tensors_from_sample(*sample, true).empty()) {
@@ -70,6 +75,7 @@ int main(int argc, char** argv) {
       }
       std::cout << "]\n";
     }
+    // END STEP
     // END CORE LOGIC
 
     return 0;

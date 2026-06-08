@@ -26,24 +26,33 @@ def main(argv: list[str]) -> int:
   rgb = np.full((120, 160, 3), 101, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
+  # STEP configure-input
   inp = pyneat.InputOptions()
   inp.format = "RGB"
   inp.width = 160
   inp.height = 120
   inp.depth = 3
+  # END STEP
 
+  # STEP compose-graph
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input(inp))
   graph.add(pyneat.nodes.output())
 
   run = graph.build([tensor], pyneat.RunMode.Sync)
+  # END STEP
+
+  # STEP run-frame
   sample = run.run([tensor], timeout_ms=1000)
+  # END STEP
 
   # CORE LOGIC
+  # STEP inspect-sample
   print(f"sample_kind={sample.kind}")
   print(f"has_tensor={sample.tensor is not None}")
   print(f"num_fields={len(sample.fields)}")
   print(f"output_rank={len(sample.tensor.shape)}")
+  # END STEP
   # END CORE LOGIC
   return 0
 

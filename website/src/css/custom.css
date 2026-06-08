@@ -1519,3 +1519,20 @@ html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#constants 
   --api-section-tint: rgba(245, 158, 11, 0.14);
 }
 
+
+/* Per-tutorial animated overview (generated into static/img/tutorials/flow). */
+.tutorial-flow {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0.25rem 0 1.75rem;
+  border-radius: 18px;
+}
+
+/* Tutorial overviews are embedded via <object> so the SVG is interactive
+   (plays once, then click steps through sections). <object> has no intrinsic
+   size, so pin the diagram's aspect ratio and signal it is clickable. */
+object.tutorial-flow {
+  aspect-ratio: 1320 / 520;
+  cursor: pointer;
+}

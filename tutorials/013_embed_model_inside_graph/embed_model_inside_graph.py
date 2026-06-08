@@ -23,17 +23,23 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--model", type=Path, required=True)
   args = ap.parse_args(argv[1:])
 
+  # STEP load-model
   model = pyneat.Model(str(args.model))
+  # END STEP
 
   # CORE LOGIC
+  # STEP compose-graph
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input("image"))
   graph.add(model)
   graph.add(pyneat.nodes.output("result"))
   print(graph.describe())
+  # END STEP
   # END CORE LOGIC
 
+  # STEP inspect-model
   print("model fragment added to public Graph")
+  # END STEP
   return 0
 
 

@@ -35,15 +35,23 @@ def main(argv: list[str]) -> int:
   argparse.ArgumentParser(description=__doc__).parse_args(argv[1:])
 
   # CORE LOGIC
+  # STEP compose-graph
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input("image"))
   graph.add(pyneat.nodes.output("out"))
+  # END STEP
+  # STEP connect-endpoints
   graph.connect("image", "out")
+  # END STEP
 
+  # STEP build-and-push
   run = graph.build()
   run.push("image", [make_rgb_sample()])
+  # END STEP
+  # STEP pull-and-verify
   out = run.pull("out", 2000)
   run.close()
+  # END STEP
   # END CORE LOGIC
 
   print(f"stream_id={out.stream_id} frame_id={out.frame_id} pts_ns={out.pts_ns}")

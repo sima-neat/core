@@ -6,17 +6,6 @@ sidebar_position: 1
 
 # SiMa.ai Neat Overview
 
-<div class="overview-section-label">What Neat Is</div>
-
-SiMa.ai Neat is an application-development framework for building and running AI applications on the SiMa.ai platform.
-It provides developers a set of Python and C++ APIs to execute and test compiled model artifacts (`tar.gz models`), compose AI applications that leverage the SoC's hardware blocks, and manage runtime execution. 
-
-In the broader SiMa.ai software ecosystem, Neat sits at the application layer, building on the SiMa.ai runtime stack and using GStreamer-based execution underneath so developers can stay focused on application logic instead of manually stitching together lower-level runtime pieces.
-
-<div class="overview-section-label">How It Works</div>
-
-Neat gives you a direct mental model for that path. A compiled model archive (`.tar.gz`) becomes a `Model` component, application logic is assembled as a `Graph`, and that graph is built and executed as a `Run` object on the SoC. The same workflow is designed to work well with agentic development too, so teams can explore, build, and iterate faster.
-
 <LanguageContent lang="cpp">
 
 <div className="overview-workflow-image overview-workflow-image-light">
@@ -49,6 +38,17 @@ Neat gives you a direct mental model for that path. A compiled model archive (`.
 
 </LanguageContent>
 
+<div class="overview-section-label">What Neat Is</div>
+
+SiMa.ai Neat is an application-development framework for building and running AI applications on the SiMa.ai platform.
+It provides developers a set of Python and C++ APIs to execute and test compiled model artifacts (`tar.gz models`), compose AI applications that leverage the SoC's hardware blocks, and manage runtime execution. 
+
+In the broader SiMa.ai software ecosystem, Neat sits at the application layer, building on the SiMa.ai runtime stack and using GStreamer-based execution underneath so developers can stay focused on application logic instead of manually stitching together lower-level runtime pieces.
+
+<div class="overview-section-label">How It Works</div>
+
+Neat gives you a direct mental model for that path. A compiled model archive (`.tar.gz`) becomes a `Model` component, application logic is assembled as a `Graph`, and that graph is built and executed as a `Run` object on the SoC. The same workflow is designed to work well with agentic development too, so teams can explore, build, and iterate faster.
+
 The getting-started guides help you install and build Neat, the programming-model pages explain the main concepts in more detail, and the tutorials show how to apply them to real application patterns.
 
 <div class="overview-link-columns">
@@ -59,7 +59,7 @@ The getting-started guides help you install and build Neat, the programming-mode
       <li><a class="overview-link-card" href="/software/getting-started/installation/"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
       <li><a class="overview-link-card" href="/software/contribute/build/"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
       <li><a class="overview-link-card" href="/software/getting-started/minimal_example/minimal/"><strong>Hello Neat!</strong><span>Run your first Neat inference with YOLOv8 and decoded boxes.</span></a></li>
-      <li><a class="overview-link-card" href="/software/reference/programming-model/overview/"><strong>Programming Model</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
+      <li><a class="overview-link-card" href="/software/getting-started/development_workflow/overview/"><strong>Programming Model</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
     </ul>
   </section>
 

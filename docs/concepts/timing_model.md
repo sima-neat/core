@@ -1,7 +1,7 @@
 ---
 title: Async vs sync timing model
 description: How `Graph::run()` and `Run::push()/pull()` relate — when work happens, when results return.
-sidebar_position: 4
+sidebar_position: 2
 ---
 
 # Async vs sync timing model

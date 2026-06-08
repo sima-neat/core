@@ -98,7 +98,7 @@ If you want to recompile a chapter (to tweak it, or because the shipped binary d
 
 Copying a chapter's `.cpp` into your own codebase? Drop this minimal `CMakeLists.txt` alongside it — no extras folder required, only the base `sima-neat` package (which provides `libsima_neat.a`, `libsima_neat.so`, and `SimaNeatConfig.cmake`):
 
-```cmake
+```cmake title="CMakeLists.txt" {7,10}
 cmake_minimum_required(VERSION 3.16)
 project(my_chapter LANGUAGES CXX)
 
@@ -111,6 +111,11 @@ add_executable(my_chapter <chapter_name>.cpp)
 target_link_libraries(my_chapter PRIVATE SimaNeat::sima_neat)
 ```
 
+The two highlighted lines are all you need to add to bring Neat into your build:
+
+- **`find_package(SimaNeat REQUIRED CONFIG)`** — locates the installed Neat package (its `SimaNeatConfig.cmake`) and makes the imported target available. `REQUIRED` fails the configure step if Neat isn't found; `CONFIG` uses the package's own config file rather than a `Find` module.
+- **`target_link_libraries(my_chapter PRIVATE SimaNeat::sima_neat)`** — links your executable against Neat. The imported `SimaNeat::sima_neat` target also propagates Neat's include directories and transitive dependencies, so you don't set any include paths or library paths by hand.
+
 Build and run:
 
 ```bash
@@ -118,7 +123,7 @@ cmake -S . -B build && cmake --build build -j
 ./build/my_chapter --args
 ```
 
-`find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
+Together these auto-resolve headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
 For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see [Hello Neat](/getting-started/minimal_example).
 

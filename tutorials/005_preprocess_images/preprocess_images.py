@@ -27,6 +27,7 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--size", type=int, default=224)
   args = ap.parse_args(argv[1:])
 
+  # STEP configure-preproc
   opt = pyneat.ModelOptions()
   opt.format = "RGB"
   opt.input_max_width = args.size
@@ -39,11 +40,16 @@ def main(argv: list[str]) -> int:
   opt.preproc.normalize = True
   opt.preproc.channel_mean = [0.5, 0.5, 0.5]
   opt.preproc.channel_stddev = [0.5, 0.5, 0.5]
+  # END STEP
 
   # CORE LOGIC
+  # STEP load-model
   model = pyneat.Model(str(args.model), opt)
+  # END STEP
+  # STEP inspect-preproc
   preproc_group = model.preprocess()
   print(f"preproc_group_size={preproc_group.size()}")
+  # END STEP
   # END CORE LOGIC
 
   rgb = np.full((args.size, args.size, 3), 120, dtype=np.uint8)

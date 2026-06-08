@@ -10,35 +10,41 @@
 
 ## Concept
 
-Decode raw model output into usable bounding boxes using `SimaBoxDecode` — thresholding, NMS, and coordinate mapping built into one postprocessing stage. Read both decoded tensors and the raw byte format so you can handle any runtime shape.
+Decode raw model output into usable bounding boxes using `SimaBoxDecode` — thresholding, NMS, and coordinate mapping built into one postprocessing stage — then read the result as either parsed boxes or the raw packed byte buffer.
 
-`BoxDecode` is a highly optimized detection postprocessing path for vision workloads. It transforms inference tensors into final bounding-box results with thresholding and NMS in a single step.
+## Walkthrough
 
-Common box-decode controls in this tutorial:
-- `decode_type` (for example `yolov8`): selects model-family decode behavior.
-- `score_threshold`: drops low-confidence detections early.
-- `nms_iou_threshold`: controls overlap suppression aggressiveness.
-- `top_k`: limits final detection count for deterministic downstream cost.
-- `original_width`, `original_height`: maps decoded boxes to the source image coordinate space.
+A detector doesn't return boxes directly. Its raw output is a stack of feature maps that still needs thresholding, non-maximum suppression, and coordinate mapping before it means anything. `SimaBoxDecode` is the postprocessing stage that does all three in one optimized step, turning inference tensors into final detections in source-image pixels.
 
-**Use-case guidance**
-- Too many noisy boxes: increase `score_threshold` and/or reduce `top_k`.
-- Duplicate overlapping boxes: lower `nms_iou_threshold` to make suppression stricter.
-- Missed true positives: decrease `score_threshold` cautiously.
-- Boxes appear scaled/offset incorrectly: verify `original_width` and `original_height` match real source frames.
-- Porting between detector variants: ensure `decode_type` matches the model family expected by the model archive.
+This chapter configures that decode — picking the model family with `decode_type`, gating confidence with the score threshold, suppressing overlaps with the NMS IoU threshold, and capping output with `top_k` — then runs the model and reads how many detections came back. By the end you will have a configured detector pipeline and a detection count read from its output, plus (in the In Practice reference below) the full wire format so you can parse boxes yourself in any runtime.
 
-**APIs introduced**
-- `pyneat.ModelOptions()` with `.decode_type`, `.score_threshold`, `.nms_iou_threshold`, `.top_k`, `.original_width/height`.
-- `pyneat.Tensor.from_numpy(array, image_format=...)` — build the input tensor.
-- `sample.tensor` with `dtype=UInt8` — the packed `BBOX` byte buffer (wire format documented below).
+### Configure the decode {#step-configure-decode}
 
-**Prerequisites**
-Chapter 001. Chapter 004 for `ModelOptions` basics.
+These options set both the input contract and the postprocessing behavior. `decode_type` (`yolov8` here) selects the model-family decode path. The confidence threshold drops weak candidates before NMS; the NMS IoU threshold controls how aggressively overlapping boxes are merged; `top_k` caps the final count for deterministic downstream cost; and `original_width`/`original_height` map decoded coordinates back into source-image pixels. Tuning guidance for each of these is in In Practice below.
 
-**References**
-- [Model](/reference/programming-model/model)
-- [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
+**C++:** `decode_type` takes the `BoxDecodeType::YoloV8` enum. The threshold/NMS/`top_k` values are passed later through `stages::BoxDecodeOptions`, not on `Model::Options`.
+
+**Python:** `decode_type` is the string `"yolov8"`, and `score_threshold`, `nms_iou_threshold`, `top_k`, and `original_width`/`original_height` are set directly on `ModelOptions`. (`score_threshold` and the C++ `detection_threshold` name the same control — see the naming note in In Practice.)
+
+### Build the model {#step-load-model}
+
+Constructing the `Model` from the archive plus options binds the decode configuration to the model so the inference and postprocessing stages derived from it use the settings above.
+
+### Run preprocess, inference, and decode {#step-run-decode}
+
+This is where a frame flows through preprocess, the MLA inference, and the box decoder to produce the detection output.
+
+**C++:** The path is made explicit stage-by-stage: `stages::Preproc` produces the input tensor, `stages::Infer` runs the model, and a `stages::BoxDecodeOptions` (with `detection_threshold = 0.55`, `nms_iou_threshold = 0.5`, `top_k = 100`) configures the decode that runs next.
+
+**Python:** `model.run([tensor])` runs the whole configured path in one call and returns a `Sample` carrying the decoded output.
+
+### Read the boxes {#step-read-boxes}
+
+Finally, turn the decode output into something you can use.
+
+**C++:** `stages::BoxDecodeResults(...)` returns a `BoxDecodeResultList`; the front result's `boxes` vector is already parsed into `{x1, y1, x2, y2, score, class_id}` clamped to source pixels, so `decoded.boxes.size()` is the detection count.
+
+**Python:** The result is a single `BBOX` `uint8` tensor. The first four little-endian bytes are the detection count (`struct.unpack_from("<I", buf, 0)`); the full record layout is documented in In Practice. If a runtime doesn't wire BoxDecode into `model.run`, `sample.tensor` is `None` and the raw feature-map heads are reported instead.
 
 ## In Practice
 
@@ -261,12 +267,9 @@ opt = neat.ModelOptions()
 opt.decode_type = neat.BoxDecodeType.YoloV8
 ```
 
-## Learning Process
-1. Configure model/postproc options for a detector-style pipeline.
-2. Run deterministic preproc + inference + boxdecode flow.
-3. Inspect decoded output signals (box count, output kind/fields).
-
 ## Run
+
+Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
 
 **Python:**
 ```bash
@@ -287,7 +290,14 @@ python3 share/sima-neat/tutorials/006_read_detection_boxes/read_detection_boxes.
   --model /tmp/yolo_v8s.tar.gz --image /path/to/frame.jpg
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+Expected output (the box count depends on the frame; a synthetic frame yields zero):
+
+```text
+boxes=0
+[OK] 006_read_detection_boxes
+```
+
+(The Python build prints `detections=...`, or `raw_output_heads=...` if the runtime does not wire BoxDecode into `model.run`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/006_read_detection_boxes/read_detection_boxes.cpp`

@@ -37,22 +37,28 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
+  # STEP build-combine-graph
   graph = pyneat.graphs.combine(["left", "right"], "combined", pyneat.CombinePolicy.ByFrame)
   run = graph.build()
+  # END STEP
   # END CORE LOGIC
 
+  # STEP push-streams
   for frame in range(args.frames):
     for sid in range(args.streams):
       logical_frame = frame * args.streams + sid
       run.push("left", [make_rgb_sample(str(sid), logical_frame)])
       run.push("right", [make_rgb_sample(str(sid), logical_frame)])
+  # END STEP
 
+  # STEP pull-bundles
   expected = args.streams * args.frames
   received = 0
   for _ in range(expected):
     if run.pull("combined", 2000) is not None:
       received += 1
   run.close()
+  # END STEP
 
   print(f"expected={expected} received={received}")
   return 0

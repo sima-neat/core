@@ -31,26 +31,36 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--height", type=int, default=48)
   args = ap.parse_args(argv[1:])
 
+  # STEP configure-tensor-input
   inp = pyneat.InputOptions()
   inp.media_type = "application/vnd.simaai.tensor"
   inp.format = "FP32"
   inp.width = args.width
   inp.height = args.height
   inp.depth = 3
+  # END STEP
 
+  # STEP build-seed-run
   graph = pyneat.Graph()
   graph.add(pyneat.nodes.input(inp))
   graph.add(pyneat.nodes.output())
 
   seed = make_fp32_tensor(args.width, args.height, 0.0)
   run = graph.build([seed], pyneat.RunMode.Sync)
+  # END STEP
 
   # CORE LOGIC
-  run.push([
+  # STEP make-bundle
+  fields = [
       pyneat.make_tensor_sample("left", make_fp32_tensor(args.width, args.height, 1.0)),
       pyneat.make_tensor_sample("right", make_fp32_tensor(args.width, args.height, 2.0)),
-  ])
+  ]
+  # END STEP
+
+  # STEP push-and-read
+  run.push(fields)
   out = run.pull(timeout_ms=1000)
+  # END STEP
   # END CORE LOGIC
 
   print(f"bundle_fields={len(out.fields)}")
