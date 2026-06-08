@@ -59,14 +59,6 @@ endif()
 option(SIMANEAT_REQUIRE_LLIMA_ARTIFACTS
   "Require LLiMa runtime libraries/headers during configure"
   ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS_DEFAULT})
-
-set(SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT ${SIMANEAT_REQUIRE_LLIMA_ARTIFACTS})
-if (SIMANEAT_CPP_TIDY OR SIMANEAT_DOCS_ONLY_CONFIGURE)
-  set(SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT OFF)
-endif()
-option(SIMANEAT_ENABLE_OPENAI_SERVER
-  "Build OpenAI-compatible GenAI HTTP server support"
-  ${SIMANEAT_ENABLE_OPENAI_SERVER_DEFAULT})
 set(SIMANEAT_BUILDINFO_JSON "" CACHE FILEPATH
   "Optional package provenance JSON to install as share/sima-neat/buildinfo.json")
 
@@ -328,11 +320,7 @@ find_path(SIMANEAT_EIGEN_UNSUPPORTED_INCLUDE_DIR
     "${CMAKE_SYSROOT}/usr/include/eigen3"
     "${CMAKE_CURRENT_SOURCE_DIR}/../llima/third_party/eigen"
     "/usr/include/eigen3")
-if (SIMANEAT_ENABLE_OPENAI_SERVER AND NOT SimaLMM_FOUND)
-  message(STATUS "OpenAI server disabled because SimaLMM package was not found.")
-  set(SIMANEAT_ENABLE_OPENAI_SERVER OFF)
-endif()
-if (SIMANEAT_ENABLE_OPENAI_SERVER)
+if (SimaLMM_FOUND)
   pkg_check_modules(HTTPLIB REQUIRED cpp-httplib)
   find_library(SIMANEAT_HTTPLIB_LIBRARY
     NAMES cpp-httplib
@@ -806,13 +794,6 @@ if (SimaLMM_FOUND)
   list(REMOVE_ITEM SIMANEAT_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIUnavailableStubs.cpp")
 endif()
-if (SIMANEAT_ENABLE_OPENAI_SERVER)
-  list(REMOVE_ITEM SIMANEAT_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServerUnavailableStubs.cpp")
-else()
-  list(REMOVE_ITEM SIMANEAT_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp")
-endif()
 if (NOT SimaLMM_FOUND)
   # Keep lightweight public GenAI types buildable for API discovery, but do not compile
   # implementation TUs that require SimaLMM or call into LLiMa-backed model objects when the
@@ -824,7 +805,7 @@ if (NOT SimaLMM_FOUND)
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIModel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GraphFragments.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIInternal.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/OpenAIServer.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/GenAIServer.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/VisionLanguageModel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/nodes/SpeechTranscriberNode.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/genai/nodes/VisionLanguageNode.cpp")
@@ -955,7 +936,7 @@ endif()
 if (OPENCV_FOUND)
   target_compile_options(sima_neat_objects PRIVATE ${OPENCV_CFLAGS_OTHER})
 endif()
-if (SIMANEAT_ENABLE_OPENAI_SERVER)
+if (SimaLMM_FOUND)
   target_compile_options(sima_neat_objects PRIVATE ${HTTPLIB_CFLAGS_OTHER})
 endif()
 
@@ -975,7 +956,7 @@ if (SimaLMM_FOUND)
   )
 endif()
 
-if (SIMANEAT_ENABLE_OPENAI_SERVER)
+if (SimaLMM_FOUND)
   target_include_directories(sima_neat_objects SYSTEM PRIVATE ${HTTPLIB_INCLUDE_DIRS})
   target_link_libraries(sima_neat PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
   target_link_libraries(sima_neat_shared PRIVATE ${SIMANEAT_HTTPLIB_LIBRARY})
@@ -1459,10 +1440,8 @@ if (SimaLMM_FOUND)
     "sima-lmm-core (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
     "sima-lmm-core (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
     "sima-lmm-dev (>= ${SIMANEAT_DEP_PACKAGE_MIN_VERSION})"
-    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})")
-endif()
-if (SIMANEAT_ENABLE_OPENAI_SERVER)
-  list(APPEND SIMANEAT_CORE_DEBIAN_DEPENDS "libcpp-httplib0.11")
+    "sima-lmm-dev (<< ${SIMANEAT_DEP_PACKAGE_MAX_VERSION})"
+    "libcpp-httplib0.11")
 endif()
 string(JOIN ", " CPACK_DEBIAN_CORE_PACKAGE_DEPENDS ${SIMANEAT_CORE_DEBIAN_DEPENDS})
 set(CPACK_DEBIAN_EXTRAS_PACKAGE_DEPENDS
