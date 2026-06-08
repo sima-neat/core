@@ -281,7 +281,7 @@ def main() -> int:
         "- `pyneat.stages.preproc(...)`: run a model's resolved Preproc stage on "
         "uint8 HW/HWC image batches, with optional `PreprocessRoi` lists. See "
         "[Preproc Node](/reference/nodes/preproc) and "
-        "[Preproc ROI Lists](/how-to/preproc_roi).\n",
+        "[Preproc ROI Lists](/reference/preproc_roi).\n",
     )
 
     write_text(

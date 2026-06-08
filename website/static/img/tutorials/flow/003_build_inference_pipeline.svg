@@ -52,7 +52,7 @@
 <g id="code3" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 4 · Run frame</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">sample = run.run([tensor], timeout_ms=1000)</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">outputs = run.run([tensor], timeout_ms=1000)</text>
 </g>
 </g>
 <g filter="url(#fsh)">

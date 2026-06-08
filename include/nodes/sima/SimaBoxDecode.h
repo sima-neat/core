@@ -13,7 +13,7 @@
  *
  * @see pipeline/BoxDecodeType.h
  * @see pipeline/DetectionTypes.h
- * @see docs/how-to/boxdecode_decode_types.md
+ * @see docs/reference/boxdecode_decode_types.md
  */
 #pragma once
 

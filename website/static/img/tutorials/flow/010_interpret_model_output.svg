@@ -40,12 +40,12 @@
 <text x="76" y="300" class="fmono fln">3</text>
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">graph.add(pyneat.nodes.output())</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">run = graph.build([tensor], pyneat.RunMode.…</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">run = graph.build([input_sample], pyneat.Ru…</text>
 </g>
 <g id="code2" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 3 · Run frame</text>
 <text x="76" y="248" class="fmono fln">1</text>
-<text x="104" y="248" class="fmono fcode" xml:space="preserve">sample = run.run([tensor], timeout_ms=1000)</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">sample = run.run([input_sample], timeout_ms…</text>
 </g>
 <g id="code3" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 4 · Inspect sample</text>
