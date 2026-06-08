@@ -119,23 +119,6 @@ Session::Session(Session&& other) noexcept {
   built_version_ = other.built_version_;
 }
 
-Session& Session::operator=(Session&& other) noexcept {
-  if (this != &other) {
-    nodes_ = std::move(other.nodes_);
-    groups_ = std::move(other.groups_);
-    last_pipeline_ = std::move(other.last_pipeline_);
-    guard_ = std::move(other.guard_);
-    opt_ = other.opt_;
-    tensor_cb_ = std::move(other.tensor_cb_);
-    nodes_version_.store(other.nodes_version_.load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-    built_ = std::move(other.built_);
-    run_cache_ = std::move(other.run_cache_);
-    built_version_ = other.built_version_;
-  }
-  return *this;
-}
-
 Session& Session::add(std::shared_ptr<Node> node) {
   const std::size_t start = nodes_.size();
   nodes_.push_back(std::move(node));

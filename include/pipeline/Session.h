@@ -82,7 +82,6 @@ public:
   Session(const Session&) = delete;
   Session& operator=(const Session&) = delete;
   Session(Session&&) noexcept;
-  Session& operator=(Session&&) noexcept;
 
   // Core: add a node (factory functions return std::shared_ptr<Node>)
   Session& add(std::shared_ptr<Node> node);
