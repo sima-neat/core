@@ -2,7 +2,7 @@
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
 #include "genai/GraphFragments.h"
-#include "genai/OpenAIServer.h"
+#include "genai/GenAIServer.h"
 #include "genai/VisionLanguageModel.h"
 #include "asset_utils.h"
 #include "test_main.h"
@@ -39,8 +39,8 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            ImageList images;
            VisionLanguageOptions vision_language_options;
            SpeechTranscriberOptions speech_transcriber_options;
-           OpenAIServerOptions openai_options;
-           openai_options.port = 9998;
+           GenAIServerOptions genai_server_options;
+           genai_server_options.port = 9998;
            request.audio_file = std::filesystem::path{"audio.wav"};
            request.language = "en";
            request.tools = Json::array(
@@ -68,13 +68,13 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            static_assert(!std::is_copy_constructible_v<ASRModel>);
            static_assert(std::is_move_constructible_v<GenAIModel>);
            static_assert(!std::is_copy_constructible_v<GenAIModel>);
-           static_assert(std::is_move_constructible_v<OpenAIServer>);
-           static_assert(!std::is_copy_constructible_v<OpenAIServer>);
+           static_assert(std::is_move_constructible_v<GenAIServer>);
+           static_assert(!std::is_copy_constructible_v<GenAIServer>);
 
            auto vlm = static_cast<VisionLanguageModel*>(nullptr);
            auto asr = static_cast<ASRModel*>(nullptr);
            auto genai = static_cast<GenAIModel*>(nullptr);
-           auto openai_server = static_cast<OpenAIServer*>(nullptr);
+           auto genai_server = static_cast<GenAIServer*>(nullptr);
            auto genai_run = &GenAIModel::run;
            auto genai_stream = &GenAIModel::stream;
            bool vision_language_rejected_null = false;
@@ -106,11 +106,11 @@ RUN_TEST("unit_genai_header_compile_surface_test", ([] {
            (void)images;
            (void)vision_language_options;
            (void)speech_transcriber_options;
-           (void)openai_options;
+           (void)genai_server_options;
            (void)vlm;
            (void)asr;
            (void)genai;
-           (void)openai_server;
+           (void)genai_server;
            (void)genai_run;
            (void)genai_stream;
          }));

@@ -1,5 +1,6 @@
 #include "genai/ASRModel.h"
 #include "genai/GenAIModel.h"
+#include "genai/GenAIServer.h"
 #include "genai/GraphFragments.h"
 #include "genai/VisionLanguageModel.h"
 #include "genai/internal/SpeechTranscriberNodeFactory.h"
@@ -15,12 +16,13 @@ namespace {
   throw std::runtime_error(
       "NEAT GenAI/LLiMa support is not available in this build. Reconfigure with "
       "SIMANEAT_REQUIRE_LLIMA_ARTIFACTS=ON and a valid SimaLMM package to use GenAI models or "
-      "GenAI graph fragments.");
+      "GenAI graph fragments or the GenAI server.");
 }
 
 } // namespace
 
 struct GenAIModel::Impl {};
+struct GenAIServer::Impl {};
 
 GenAIModel::GenAIModel(std::filesystem::path) {
   throw_genai_unavailable();
@@ -47,6 +49,37 @@ GenerationResult GenAIModel::run(const GenerationRequest&) {
   throw_genai_unavailable();
 }
 GenerationStream GenAIModel::stream(const GenerationRequest&) {
+  throw_genai_unavailable();
+}
+
+GenAIServer::GenAIServer(GenAIServerOptions) {
+  throw_genai_unavailable();
+}
+GenAIServer::~GenAIServer() = default;
+GenAIServer::GenAIServer(GenAIServer&&) noexcept = default;
+GenAIServer& GenAIServer::operator=(GenAIServer&&) noexcept = default;
+std::string GenAIServer::add_model(std::filesystem::path) {
+  throw_genai_unavailable();
+}
+std::string GenAIServer::add_model(std::filesystem::path, std::string) {
+  throw_genai_unavailable();
+}
+void GenAIServer::add_model(std::string, std::shared_ptr<GenAIModel>) {
+  throw_genai_unavailable();
+}
+bool GenAIServer::remove_model(const std::string&) {
+  throw_genai_unavailable();
+}
+std::vector<std::string> GenAIServer::model_names() const {
+  throw_genai_unavailable();
+}
+void GenAIServer::serve() {
+  throw_genai_unavailable();
+}
+void GenAIServer::start() {
+  throw_genai_unavailable();
+}
+void GenAIServer::stop() {
   throw_genai_unavailable();
 }
 

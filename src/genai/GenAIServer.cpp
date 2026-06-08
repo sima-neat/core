@@ -1,4 +1,4 @@
-#include "genai/OpenAIServer.h"
+#include "genai/GenAIServer.h"
 
 #include "genai/GenAIInternal.h"
 #include "genai/GenAIModel.h"
@@ -573,8 +573,8 @@ struct TempFileGuard {
 
 } // namespace
 
-struct OpenAIServer::Impl {
-  explicit Impl(OpenAIServerOptions options_in) : options(std::move(options_in)) {
+struct GenAIServer::Impl {
+  explicit Impl(GenAIServerOptions options_in) : options(std::move(options_in)) {
     configure_routes();
   }
 
@@ -682,7 +682,7 @@ struct OpenAIServer::Impl {
 
   std::string add_model(std::filesystem::path model_dir, std::string served_name) {
     if (served_name.empty()) {
-      throw std::invalid_argument("OpenAIServer::add_model requires a non-empty served name");
+      throw std::invalid_argument("GenAIServer::add_model requires a non-empty served name");
     }
     const std::string registered_name = served_name;
     {
@@ -699,10 +699,10 @@ struct OpenAIServer::Impl {
 
   void add_model(std::string served_name, std::shared_ptr<GenAIModel> model) {
     if (served_name.empty()) {
-      throw std::invalid_argument("OpenAIServer::add_model requires a non-empty served name");
+      throw std::invalid_argument("GenAIServer::add_model requires a non-empty served name");
     }
     if (!model) {
-      throw std::invalid_argument("OpenAIServer::add_model requires a non-null model");
+      throw std::invalid_argument("GenAIServer::add_model requires a non-null model");
     }
     std::lock_guard<std::mutex> lock(registry_mutex);
     if (registry.contains(served_name)) {
@@ -1318,42 +1318,41 @@ struct OpenAIServer::Impl {
     res.set_header("Content-Type", "text/event-stream");
     res.set_header("Cache-Control", "no-cache");
     res.set_header("Connection", "keep-alive");
-    res.set_chunked_content_provider("text/event-stream", [this, model_name = std::move(model_name),
-                                                           model = std::move(model),
-                                                           audio_path = std::move(audio_path),
-                                                           language = std::move(language)](
-                                                              std::size_t,
-                                                              httplib::DataSink& sink) mutable {
-      TempFileGuard guard{audio_path};
-      try {
-        GenerationRequest request;
-        request.audio_file = audio_path;
-        request.language = language;
-        ActiveStreamRegistration active_stream{*this, model_name};
-        auto stream = model->stream(request);
-        active_stream.attach(stream);
-        for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
-          if (sample->is_final) {
-            const auto final_chunk =
-                audio_chunk("", true, choice_finish_reason(sample->finish_reason)) +
-                "data: [DONE]\n\n";
-            write_sink(sink, final_chunk);
-            sink.done();
-            return true;
+    res.set_chunked_content_provider(
+        "text/event-stream", [this, model_name = std::move(model_name), model = std::move(model),
+                              audio_path = std::move(audio_path), language = std::move(language)](
+                                 std::size_t, httplib::DataSink& sink) mutable {
+          TempFileGuard guard{audio_path};
+          try {
+            GenerationRequest request;
+            request.audio_file = audio_path;
+            request.language = language;
+            ActiveStreamRegistration active_stream{*this, model_name};
+            auto stream = model->stream(request);
+            active_stream.attach(stream);
+            for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              if (sample->is_final) {
+                const auto final_chunk =
+                    audio_chunk("", true, choice_finish_reason(sample->finish_reason)) +
+                    "data: [DONE]\n\n";
+                write_sink(sink, final_chunk);
+                sink.done();
+                return true;
+              }
+              const auto chunk = audio_chunk(sample->text, false);
+              write_sink(sink, chunk);
+            }
+            const auto done = audio_chunk("", true, "stop") + "data: [DONE]\n\n";
+            write_sink(sink, done);
+          } catch (const std::exception& e) {
+            const nlohmann::json error = {{"object", "audio.transcription.error"},
+                                          {"error", e.what()}};
+            const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
+            write_sink(sink, chunk);
           }
-          const auto chunk = audio_chunk(sample->text, false);
-          write_sink(sink, chunk);
-        }
-        const auto done = audio_chunk("", true, "stop") + "data: [DONE]\n\n";
-        write_sink(sink, done);
-      } catch (const std::exception& e) {
-        const nlohmann::json error = {{"object", "audio.transcription.error"}, {"error", e.what()}};
-        const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
-        write_sink(sink, chunk);
-      }
-      sink.done();
-      return true;
-    });
+          sink.done();
+          return true;
+        });
   }
 
   void warmup_models_once() {
@@ -1377,8 +1376,7 @@ struct OpenAIServer::Impl {
       try {
         (void)model->run(make_warmup_request(*model));
       } catch (const std::exception& e) {
-        throw std::runtime_error("OpenAIServer warmup failed for model '" + name +
-                                 "': " + e.what());
+        throw std::runtime_error("GenAIServer warmup failed for model '" + name + "': " + e.what());
       }
     }
 
@@ -1390,14 +1388,14 @@ struct OpenAIServer::Impl {
 
   void serve() {
     if (running.exchange(true)) {
-      throw std::runtime_error("OpenAIServer is already running");
+      throw std::runtime_error("GenAIServer is already running");
     }
     try {
       warmup_models_once();
       const bool ok = http.listen(options.host, options.port);
       running.store(false);
       if (!ok && !stopping.load()) {
-        throw std::runtime_error("OpenAIServer failed to listen on " + options.host + ":" +
+        throw std::runtime_error("GenAIServer failed to listen on " + options.host + ":" +
                                  std::to_string(options.port));
       }
     } catch (...) {
@@ -1408,7 +1406,7 @@ struct OpenAIServer::Impl {
 
   void start() {
     if (worker.joinable()) {
-      throw std::runtime_error("OpenAIServer is already started");
+      throw std::runtime_error("GenAIServer is already started");
     }
     stopping.store(false);
     warmup_models_once();
@@ -1424,7 +1422,7 @@ struct OpenAIServer::Impl {
     running.store(false);
   }
 
-  OpenAIServerOptions options;
+  GenAIServerOptions options;
   httplib::Server http;
   mutable std::mutex registry_mutex;
   std::map<std::string, Entry> registry;
@@ -1437,48 +1435,48 @@ struct OpenAIServer::Impl {
   std::atomic<bool> stopping = false;
 };
 
-OpenAIServer::OpenAIServer(OpenAIServerOptions options)
+GenAIServer::GenAIServer(GenAIServerOptions options)
     : impl_(std::make_unique<Impl>(std::move(options))) {}
 
-OpenAIServer::~OpenAIServer() {
+GenAIServer::~GenAIServer() {
   if (impl_) {
     impl_->stop();
   }
 }
 
-OpenAIServer::OpenAIServer(OpenAIServer&&) noexcept = default;
+GenAIServer::GenAIServer(GenAIServer&&) noexcept = default;
 
-OpenAIServer& OpenAIServer::operator=(OpenAIServer&&) noexcept = default;
+GenAIServer& GenAIServer::operator=(GenAIServer&&) noexcept = default;
 
-std::string OpenAIServer::add_model(std::filesystem::path model_dir) {
+std::string GenAIServer::add_model(std::filesystem::path model_dir) {
   return impl_->add_model(std::move(model_dir));
 }
 
-std::string OpenAIServer::add_model(std::filesystem::path model_dir, std::string served_name) {
+std::string GenAIServer::add_model(std::filesystem::path model_dir, std::string served_name) {
   return impl_->add_model(std::move(model_dir), std::move(served_name));
 }
 
-void OpenAIServer::add_model(std::string served_name, std::shared_ptr<GenAIModel> model) {
+void GenAIServer::add_model(std::string served_name, std::shared_ptr<GenAIModel> model) {
   impl_->add_model(std::move(served_name), std::move(model));
 }
 
-bool OpenAIServer::remove_model(const std::string& served_name) {
+bool GenAIServer::remove_model(const std::string& served_name) {
   return impl_->remove_model(served_name);
 }
 
-std::vector<std::string> OpenAIServer::model_names() const {
+std::vector<std::string> GenAIServer::model_names() const {
   return impl_->model_names();
 }
 
-void OpenAIServer::serve() {
+void GenAIServer::serve() {
   impl_->serve();
 }
 
-void OpenAIServer::start() {
+void GenAIServer::start() {
   impl_->start();
 }
 
-void OpenAIServer::stop() {
+void GenAIServer::stop() {
   impl_->stop();
 }
 
