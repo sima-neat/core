@@ -71,24 +71,55 @@ def run_git(args: List[str], cwd: Optional[Path] = None) -> None:
     )
 
 
+def is_git_checkout(path: Path) -> bool:
+    """Return True when `path` is an existing usable git working tree."""
+    if not path.is_dir():
+        return False
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(path),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def clone_source(repo: str, branch: str, githash: str, staging: Path) -> None:
+    """Clone `repo` into a fresh `staging` directory."""
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    if githash:
+        run_git(["clone", repo, str(staging)])
+        run_git(["checkout", githash], cwd=staging)
+    else:
+        run_git(["clone", "--branch", branch, "--depth", "1", repo, str(staging)])
+
+
 def acquire_source(repo: str, branch: str, githash: str, staging: Path) -> None:
     """Clone or update `repo` at `branch` (+ optional githash) into `staging`."""
-    if not staging.exists():
-        staging.parent.mkdir(parents=True, exist_ok=True)
-        if githash:
-            run_git(["clone", repo, str(staging)])
-            run_git(["checkout", githash], cwd=staging)
-        else:
-            run_git(["clone", "--branch", branch, "--depth", "1", repo, str(staging)])
+    if not is_git_checkout(staging):
+        if staging.exists():
+            LOG.info("removing stale autodoc staging directory: %s", staging)
+            shutil.rmtree(staging)
+        clone_source(repo, branch, githash, staging)
         return
 
-    if githash:
-        run_git(["fetch", "origin"], cwd=staging)
-        run_git(["checkout", githash], cwd=staging)
-        run_git(["reset", "--hard", githash], cwd=staging)
-    else:
-        run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging)
-        run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging)
+    try:
+        if githash:
+            run_git(["fetch", "origin"], cwd=staging)
+            run_git(["checkout", githash], cwd=staging)
+            run_git(["reset", "--hard", githash], cwd=staging)
+        else:
+            run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging)
+            run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging)
+    except subprocess.CalledProcessError:
+        LOG.info("refresh failed; recloning autodoc staging directory: %s", staging)
+        shutil.rmtree(staging)
+        clone_source(repo, branch, githash, staging)
 
 
 def current_core_branch(repo_root: Path) -> str:
@@ -587,7 +618,8 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip().splitlines()
         reason = stderr[-1] if stderr else f"exit {exc.returncode}"
-        return False, f"git failed: {reason}"
+        command = " ".join(str(part) for part in (exc.cmd or []))
+        return False, f"git failed ({command}): {reason}"
     except FileNotFoundError:
         return False, "git binary not found"
 
