@@ -48,6 +48,8 @@ set -euo pipefail
 #   when the board carries the SDK's git-suffixed compatible memory package.
 # - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
 #   dpkg fallback after apt-get has had a chance to resolve dependencies.
+# - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
+#   staged EV74 firmware and reset runtime state after board package replacement.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
@@ -59,6 +61,7 @@ NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
 NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
 NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
@@ -715,6 +718,61 @@ prepare_debs_for_board_install() {
   DEBS=("${prepared[@]}")
 }
 
+stop_board_runtime_before_install() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Stopping NEAT runtime services before package replacement."
+  local svc
+  for svc in \
+      simaai-pipeline-manager.service \
+      simaai-appcomplex.service \
+      rctd.service \
+      simaai-log.service; do
+    if systemctl cat "${svc}" >/dev/null 2>&1; then
+      run_sudo systemctl stop "${svc}" >/dev/null 2>&1 || true
+      run_sudo systemctl reset-failed "${svc}" >/dev/null 2>&1 || true
+    fi
+  done
+
+  if [[ -x /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex ]]; then
+    run_sudo /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex || true
+  else
+    run_sudo pkill -TERM -x mlashmcomplex >/dev/null 2>&1 || true
+    sleep 0.5
+    run_sudo pkill -KILL -x mlashmcomplex >/dev/null 2>&1 || true
+  fi
+
+  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
+}
+
+activate_board_runtime_after_install() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # These files are recreated by simaai-appcomplex.service.  Remove stale IPC
+  # before the post-install MLA init/reset path so clients cannot observe an
+  # old dispatcher lifetime after package replacement.
+  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
+  # Package configuration intentionally does not restart services.  Reload
+  # systemd here so the owned maintenance window starts services from the unit
+  # files that were just unpacked.
+  run_sudo systemctl daemon-reload || true
+
+  if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
+        -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
+    log "Activating staged EV74 firmware and resetting runtime state."
+    run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
+  else
+    log "EV74 firmware activation skipped; starting simaai-appcomplex.service directly."
+    if systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
+      run_sudo systemctl restart simaai-appcomplex.service || true
+    fi
+  fi
+}
+
 verify_board_runtime_services() {
   local service="simaai-appcomplex.service"
 
@@ -741,6 +799,8 @@ verify_board_runtime_services() {
   if ! systemctl is-active --quiet "${service}"; then
     echo "${service} is not active after NEAT package installation." >&2
     run_sudo systemctl --no-pager --full status "${service}" >&2 || true
+    run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
+    run_sudo bash -c 'for f in /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state; do [ -e "$f" ] && printf "%s: " "$f" && cat "$f"; done' >&2 || true
     exit 1
   fi
 
@@ -783,6 +843,7 @@ install_debs_on_board() {
   log "Detected Modalix board environment; installing DEBs with apt."
   printf '[install_neat_framework] DEB install set:\n'
   printf '  %s\n' "${DEBS[@]}"
+  stop_board_runtime_before_install
 
   # Prefer apt-get for normal installs so system dependencies can be resolved.
   # Some CI/self-hosted DevKit runners can be left in a transiently broken
@@ -798,6 +859,7 @@ install_debs_on_board() {
   fi
   if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
+    activate_board_runtime_after_install
     verify_board_runtime_services
     return 0
   fi
@@ -806,6 +868,7 @@ install_debs_on_board() {
   remove_installed_local_deb_packages
   if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
     repair_stale_global_dispatcher_lib
+    activate_board_runtime_after_install
     verify_board_runtime_services
     return 0
   fi
@@ -819,6 +882,7 @@ install_debs_on_board() {
 
   run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
   repair_stale_global_dispatcher_lib
+  activate_board_runtime_after_install
   verify_board_runtime_services
 }
 
