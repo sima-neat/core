@@ -65,6 +65,23 @@ python3 share/sima-neat/tutorials/004_configure_model_options/configure_model_op
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
+## In Practice
+
+### Verbosity presets
+
+Framework build/run messaging is controlled with `VerboseOptions` on `GraphOptions`, `Model::Options`, and `Model::RouteOptions`.
+
+Current development default: `VerboseOptions::debug_all()`. Call `production()` or `quiet()` explicitly when you want less output.
+
+| Preset | Intended use |
+| --- | --- |
+| `VerboseOptions::quiet()` | Suppress framework progress and detail output. |
+| `VerboseOptions::production()` | Show clean phase progress only. |
+| `VerboseOptions::debug_plugins()` | Keep production UX, but also surface plugin and GStreamer topics. |
+| `VerboseOptions::debug_all()` | Force the full verbose/detail sweep across all topics. |
+
+For runtime queue/throughput tuning, see [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues).
+
 ## Source Files
 - C++: `tutorials/004_configure_model_options/configure_model_options.cpp`
 - Python: `tutorials/004_configure_model_options/configure_model_options.py`

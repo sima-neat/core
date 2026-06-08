@@ -1,4 +1,10 @@
-# Diagnostics and debugging {#diagnostics}
+---
+title: Diagnostics and debugging
+description: Collect GraphReport diagnostics, runtime error codes, and graph metrics artifacts
+sidebar_position: 9
+---
+
+# Diagnostics and debugging
 
 ## GraphReport
 
@@ -116,4 +122,4 @@ power-number validation.
 | `tensor caps change not supported` | Tensor shape/dtype change at runtime | Keep tensor shape/dtype stable (no renegotiation) |
 
 For structured plugin errors and actionable hints, see
-[How To Debug Plugin Failures](plugin_failures.md).
+[Troubleshooting](/getting-started/troubleshooting).

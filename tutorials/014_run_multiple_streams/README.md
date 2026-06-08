@@ -38,8 +38,8 @@ Each pushed sample carries a `stream_id` and `frame_id`. `CombinePolicy.ByFrame`
 Chapter 012 (Graph basics). Chapter 009 (bundle samples) helps for join semantics.
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Graph](/getting-started/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Generate deterministic per-stream/per-frame samples with explicit tags.

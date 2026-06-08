@@ -29,8 +29,8 @@ Before you optimize throughput or add complex graph logic, you need a stable way
 Chapter 001.
 
 **References**
-- [Node boundaries and I/O](/getting-started/programming-model/node#boundary-nodes)
-- [Tensor and Sample](/getting-started/programming-model/core_types)
+- [Node boundaries and I/O](/reference/programming-model/node#boundary-nodes)
+- [Tensor and Sample](/reference/programming-model/core_types)
 
 ## Learning Process
 1. Build a deterministic sync Graph with explicit input/output nodes.

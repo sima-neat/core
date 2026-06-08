@@ -33,8 +33,8 @@ Not for:
 - An accessible RTSP URL.
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Graph](/getting-started/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
+- [Graph](/reference/programming-model/graph)
 
 ## Learning Process
 1. Configure `RtspDecodedInputOptions` with the stream URL.

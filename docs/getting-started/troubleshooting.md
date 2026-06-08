@@ -40,7 +40,7 @@ sima-cli modelzoo get yolo_v8s     # or resnet_50, etc.
 
 ### `find_package(SimaNeat CONFIG)` cannot find the package
 **Cause:** CMake can't locate `SimaNeatConfig.cmake` (installed under `lib/cmake/SimaNeat/`). On native DevKit installs it's on the default system prefix; in SDK cross-builds the sysroot isn't on `CMAKE_PREFIX_PATH`.
-**Fix:** export `SYSROOT` and let your `CMakeLists` add it to the prefix path (the [Hello Neat template](/getting-started/minimal_example) does this):
+**Fix:** export `SYSROOT` and let your `CMakeLists` add it to the prefix path (the [Hello Neat template](/getting-started/minimal_example/minimal) does this):
 ```cmake
 if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
   list(APPEND CMAKE_PREFIX_PATH "$ENV{SYSROOT}/usr/lib/aarch64-linux-gnu")
@@ -108,7 +108,7 @@ opt.preprocess.preset = neat.NormalizePreset.COCO_YOLO
 
 - **"Where's my `.engine` / `.blob` / `.dlc` / `.hef`?"** — Neat loads a `.tar.gz` model archive; that's the equivalent compiled artifact.
 - **"How do I pin work to a CUDA stream / OpenCL queue?"** — you don't; decouple producer/consumer with async `push`/`pull` and tune `RunOptions` instead.
-- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Runtime Tuning](/how-to/runtime_tuning).
+- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues).
 
 ## When you're stuck: diagnostics
 

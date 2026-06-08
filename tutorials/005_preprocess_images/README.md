@@ -34,7 +34,7 @@ This chapter focuses on the preprocessing controls you use most in real deployme
 Chapter 001. Chapter 004 for the rest of `ModelOptions`.
 
 **References**
-- [Model](/getting-started/programming-model/model)
+- [Model](/reference/programming-model/model)
 - [Model Options](/reference/{lsa}/structs/simaai-neat-model-options)
 
 ## Learning Process

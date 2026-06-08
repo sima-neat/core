@@ -194,4 +194,4 @@ These cover multiple images, multiple ROIs, out-of-frame padding, resize/letterb
 - [Preproc Node](/reference/nodes/preproc)
 - [Preprocess Images Before Inference](/tutorials/005-preprocess-images)
 - [Data Formats](/reference/data_formats)
-- [BoxDecode Decode Types](/how-to/boxdecode_decode_types)
+- [BoxDecode Decode Types](/reference/boxdecode_decode_types)

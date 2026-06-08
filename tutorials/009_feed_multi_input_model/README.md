@@ -28,8 +28,8 @@ Many real applications carry more than one input per inference event. Neat repre
 Chapters 001–003 (Model, Graph, Run basics). Chapter 008 (Tensor interop).
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Tensor and Sample](/getting-started/programming-model/core_types)
+- [Graph](/reference/programming-model/graph)
+- [Tensor and Sample](/reference/programming-model/core_types)
 
 ## Learning Process
 1. Define a tensor graph contract for deterministic multi-field routing.

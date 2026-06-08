@@ -1,12 +1,12 @@
 :root {
-  --ifm-color-primary: #5998dd;
-  --ifm-color-primary-dark: #4788d0;
-  --ifm-color-primary-darker: #3f7fc7;
-  --ifm-color-primary-darkest: #3269a8;
-  --ifm-color-primary-light: #6aa5e2;
-  --ifm-color-primary-lighter: #7cb1e7;
-  --ifm-color-primary-lightest: #9cc6ef;
-  --ifm-font-family-base: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --ifm-color-primary: #1f6feb;
+  --ifm-color-primary-dark: #1a5fd0;
+  --ifm-color-primary-darker: #1858c3;
+  --ifm-color-primary-darkest: #1246a0;
+  --ifm-color-primary-light: #3a7bf0;
+  --ifm-color-primary-lighter: #4a86f2;
+  --ifm-color-primary-lightest: #6b9af5;
+  --ifm-font-family-base: "Roboto", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --ifm-font-family-monospace: "IBM Plex Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --software-subnav-height: 3.25rem;
 }
@@ -266,7 +266,13 @@ p.doxyGeneratedBy {
 }
 
 #minimal-tab-cpp:checked ~ label[for="minimal-tab-cpp"],
-#minimal-tab-py:checked ~ label[for="minimal-tab-py"] {
+#minimal-tab-py:checked ~ label[for="minimal-tab-py"],
+#hello-step1-tab-cpp:checked ~ label[for="hello-step1-tab-cpp"],
+#hello-step1-tab-py:checked ~ label[for="hello-step1-tab-py"],
+#hello-step2-tab-cpp:checked ~ label[for="hello-step2-tab-cpp"],
+#hello-step2-tab-py:checked ~ label[for="hello-step2-tab-py"],
+#hello-step3-tab-cpp:checked ~ label[for="hello-step3-tab-cpp"],
+#hello-step3-tab-py:checked ~ label[for="hello-step3-tab-py"] {
   border-bottom-color: var(--ifm-color-primary);
 }
 
@@ -277,7 +283,13 @@ p.doxyGeneratedBy {
 }
 
 #minimal-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
-#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
+#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step1-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step1-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step2-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step2-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step3-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step3-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
   display: block;
 }
 
@@ -389,18 +401,18 @@ p.doxyGeneratedBy {
 }
 
 .tutorial-difficulty-beginner .tutorial-card-tag {
-  background: rgba(22, 163, 74, 0.13);
-  color: #126c3b;
+  background: #a4cc2d;
+  color: #1f2937;
 }
 
 .tutorial-difficulty-intermediate .tutorial-card-tag {
-  background: rgba(245, 158, 11, 0.15);
-  color: #92580a;
+  background: #2a9c4f;
+  color: #ffffff;
 }
 
 .tutorial-difficulty-advanced .tutorial-card-tag {
-  background: rgba(220, 38, 38, 0.14);
-  color: #8f1d1d;
+  background: #5998dd;
+  color: #ffffff;
 }
 
 html[data-theme="dark"] .tutorial-card {
@@ -433,18 +445,18 @@ html[data-theme="dark"] .tutorial-card-tag {
 }
 
 html[data-theme="dark"] .tutorial-difficulty-beginner .tutorial-card-tag {
-  background: rgba(34, 197, 94, 0.2);
-  color: #7affbb;
+  background: #a4cc2d;
+  color: #1f2937;
 }
 
 html[data-theme="dark"] .tutorial-difficulty-intermediate .tutorial-card-tag {
-  background: rgba(251, 191, 36, 0.2);
-  color: #ffd98c;
+  background: #2a9c4f;
+  color: #ffffff;
 }
 
 html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
-  background: rgba(248, 113, 113, 0.2);
-  color: #ffb7b7;
+  background: #5998dd;
+  color: #ffffff;
 }
 
 .overview-link-columns {
@@ -1431,4 +1443,78 @@ mark.docSearchHighlight {
   margin-right: calc(-1 * var(--ifm-pre-padding));
   padding-left: calc(var(--ifm-pre-padding) - 6px);
   padding-right: var(--ifm-pre-padding);
+}
+
+/* ----------------------------------------------------------------------------
+ * Model SDK / griffe API page section accents.
+ *
+ * autodoc promotes griffe's plain `Imports:` / `Classes:` / `Functions:` /
+ * `Constants:` labels into <h2> headings. Each gets a distinct left-border
+ * color and a unicode glyph so the section type is recognizable at a glance:
+ *
+ *   Imports   – blue   (incoming dependencies)
+ *   Classes   – purple (types / OOP)
+ *   Functions – green  (behavior / actions)
+ *   Constants – amber  (stable values)
+ *
+ * Scope: the [class*="docs-doc-id-model-sdk"] guard limits these rules to
+ * pages that live under /model-sdk/, so unrelated docs aren't restyled.
+ * --------------------------------------------------------------------------- */
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#imports,
+[class*="docs-doc-id-model-sdk"] .markdown h2#classes,
+[class*="docs-doc-id-model-sdk"] .markdown h2#functions,
+[class*="docs-doc-id-model-sdk"] .markdown h2#constants {
+  border-left: 4px solid var(--api-section-accent, #94a3b8);
+  padding: 0.15rem 0 0.15rem 0.65rem;
+  margin-top: 2rem;
+  background: var(--api-section-tint, transparent);
+  border-radius: 0 4px 4px 0;
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#imports::before,
+[class*="docs-doc-id-model-sdk"] .markdown h2#classes::before,
+[class*="docs-doc-id-model-sdk"] .markdown h2#functions::before,
+[class*="docs-doc-id-model-sdk"] .markdown h2#constants::before {
+  content: var(--api-section-glyph, "");
+  margin-right: 0.5rem;
+  opacity: 0.8;
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#imports {
+  --api-section-accent: #3b82f6;
+  --api-section-tint: rgba(59, 130, 246, 0.06);
+  --api-section-glyph: "📦";
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#classes {
+  --api-section-accent: #a855f7;
+  --api-section-tint: rgba(168, 85, 247, 0.06);
+  --api-section-glyph: "🏛";
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#functions {
+  --api-section-accent: #22c55e;
+  --api-section-tint: rgba(34, 197, 94, 0.06);
+  --api-section-glyph: "⚙";
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#constants {
+  --api-section-accent: #f59e0b;
+  --api-section-tint: rgba(245, 158, 11, 0.06);
+  --api-section-glyph: "🔢";
+}
+
+/* Slightly stronger tint for dark mode so the accent stays readable. */
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#imports {
+  --api-section-tint: rgba(59, 130, 246, 0.14);
+}
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#classes {
+  --api-section-tint: rgba(168, 85, 247, 0.14);
+}
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#functions {
+  --api-section-tint: rgba(34, 197, 94, 0.14);
+}
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#constants {
+  --api-section-tint: rgba(245, 158, 11, 0.14);
 }

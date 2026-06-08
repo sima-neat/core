@@ -9,3 +9,58 @@ find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
 
 # Exported targets
 include("${CMAKE_CURRENT_LIST_DIR}/SimaNeatTargets.cmake")
+
+# ---------------------------------------------------------------------------
+# Resolve GStreamer / OpenCV on the *consuming* machine.
+#
+# These are public dependencies of Neat (e.g. pipeline/Graph.h includes
+# GStreamer headers), but their absolute include/library paths are build-host
+# specific and are intentionally NOT baked into the exported target. Re-discover
+# them here with pkg-config so the same installed package works whether the
+# consumer is cross-compiling inside the Neat SDK (pkg-config resolves the
+# sysroot) or building natively on a DevKit (pkg-config resolves /usr).
+# ---------------------------------------------------------------------------
+get_property(_simaneat_ext_deps_done GLOBAL PROPERTY _SimaNeat_ext_deps_done)
+if (NOT _simaneat_ext_deps_done AND TARGET SimaNeat::sima_neat_common)
+  find_package(PkgConfig QUIET)
+  if (PkgConfig_FOUND)
+    pkg_check_modules(_SimaNeat_GST QUIET
+      gstreamer-1.0
+      gstreamer-app-1.0
+      gstreamer-video-1.0
+      gstreamer-sdp-1.0
+      gstreamer-rtsp-server-1.0
+      glib-2.0)
+    pkg_check_modules(_SimaNeat_OpenCV QUIET opencv4)
+
+    if (_SimaNeat_GST_INCLUDE_DIRS)
+      set_property(TARGET SimaNeat::sima_neat_common APPEND
+        PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${_SimaNeat_GST_INCLUDE_DIRS}")
+    endif()
+    if (_SimaNeat_GST_LIBRARY_DIRS)
+      set_property(TARGET SimaNeat::sima_neat_common APPEND
+        PROPERTY INTERFACE_LINK_DIRECTORIES "${_SimaNeat_GST_LIBRARY_DIRS}")
+    endif()
+    if (_SimaNeat_OpenCV_INCLUDE_DIRS)
+      set_property(TARGET SimaNeat::sima_neat_common APPEND
+        PROPERTY INTERFACE_INCLUDE_DIRECTORIES "${_SimaNeat_OpenCV_INCLUDE_DIRS}")
+    endif()
+    if (_SimaNeat_OpenCV_LIBRARY_DIRS)
+      set_property(TARGET SimaNeat::sima_neat_common APPEND
+        PROPERTY INTERFACE_LINK_DIRECTORIES "${_SimaNeat_OpenCV_LIBRARY_DIRS}")
+    endif()
+
+    if (NOT _SimaNeat_GST_FOUND)
+      message(WARNING
+        "SimaNeat: GStreamer development files were not found via pkg-config. "
+        "Install the gstreamer-1.0 dev packages (DevKit: native; Neat SDK: in "
+        "the sysroot) so the public Neat headers can be compiled.")
+    endif()
+  else()
+    message(WARNING
+      "SimaNeat: pkg-config was not found, so GStreamer/OpenCV include and "
+      "library directories could not be resolved. Install pkg-config (plus the "
+      "gstreamer/opencv dev packages) to build against SimaNeat.")
+  endif()
+  set_property(GLOBAL PROPERTY _SimaNeat_ext_deps_done TRUE)
+endif()

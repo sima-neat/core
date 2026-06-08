@@ -1,3 +1,9 @@
+---
+title: Send Video
+description: VideoSender H.264 RTP/UDP wire format
+sidebar_position: 5
+---
+
 # Send Video
 
 Use `VideoSender` when a Graph should send video to an external receiver. `VideoSender` returns a reusable `Graph` fragment, so add it with `Graph::add(...)`.

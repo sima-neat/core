@@ -31,8 +31,8 @@ Why this matters:
 Chapter 001 (Model). Chapter 002 or 003 (Graph basics).
 
 **References**
-- [Graph](/getting-started/programming-model/graph)
-- [Model](/getting-started/programming-model/model)
+- [Graph](/reference/programming-model/graph)
+- [Model](/reference/programming-model/model)
 
 ## Learning Process
 1. Build a minimal direct Graph and validate it can run end-to-end.

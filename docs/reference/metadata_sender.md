@@ -1,3 +1,9 @@
+---
+title: Send JSON Metadata
+description: MetadataSender UDP JSON wire contract
+sidebar_position: 4
+---
+
 # Send JSON Metadata
 
 Use `MetadataSender` when an external viewer, recorder, or service accepts UTF-8 JSON metadata over UDP. Insight is one receiver that understands this wire contract.
