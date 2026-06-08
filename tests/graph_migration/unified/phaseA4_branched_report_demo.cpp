@@ -33,7 +33,10 @@ fs::path output_json_path() {
   if (const char* raw = std::getenv("BRANCHED_GRAPH_METRICS_JSON"); raw && *raw) {
     return fs::path(raw);
   }
-  return fs::path("/workspace/tmp/metrics_outputs/branched/graph_metrics.json");
+
+  const char* tmp = std::getenv("TMPDIR");
+  const fs::path tmp_root = (tmp && *tmp) ? fs::path(tmp) : fs::path("/tmp");
+  return tmp_root / "sima-neat" / "metrics_outputs" / "branched" / "graph_metrics.json";
 }
 
 int frame_count() {
