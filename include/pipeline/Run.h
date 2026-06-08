@@ -566,9 +566,7 @@ public:
   Run(const Run&) = delete;            ///< Non-copyable.
   Run& operator=(const Run&) = delete; ///< Non-copyable.
 
-  Run(Run&&) noexcept;            ///< Move-constructible.
-  Run& operator=(Run&&) noexcept; ///< Move-assignable.
-  ~Run();                         ///< Cleanly tears down the pipeline.
+  ~Run(); ///< Cleanly tears down the pipeline.
 
   /// Returns `true` if the Run is alive (constructed by Graph::build, not yet stopped).
   explicit operator bool() const noexcept;

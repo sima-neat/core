@@ -169,16 +169,6 @@ std::shared_ptr<const runtime::RunCore> run_internal::core(const Run& run) {
   return run.core_;
 }
 
-Run::Run(Run&& other) noexcept : core_(std::move(other.core_)) {}
-
-Run& Run::operator=(Run&& other) noexcept {
-  if (this != &other) {
-    close();
-    core_ = std::move(other.core_);
-  }
-  return *this;
-}
-
 Run::~Run() {
   close();
 }
