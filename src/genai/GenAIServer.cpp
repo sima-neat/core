@@ -1318,42 +1318,41 @@ struct GenAIServer::Impl {
     res.set_header("Content-Type", "text/event-stream");
     res.set_header("Cache-Control", "no-cache");
     res.set_header("Connection", "keep-alive");
-    res.set_chunked_content_provider("text/event-stream", [this, model_name = std::move(model_name),
-                                                           model = std::move(model),
-                                                           audio_path = std::move(audio_path),
-                                                           language = std::move(language)](
-                                                              std::size_t,
-                                                              httplib::DataSink& sink) mutable {
-      TempFileGuard guard{audio_path};
-      try {
-        GenerationRequest request;
-        request.audio_file = audio_path;
-        request.language = language;
-        ActiveStreamRegistration active_stream{*this, model_name};
-        auto stream = model->stream(request);
-        active_stream.attach(stream);
-        for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
-          if (sample->is_final) {
-            const auto final_chunk =
-                audio_chunk("", true, choice_finish_reason(sample->finish_reason)) +
-                "data: [DONE]\n\n";
-            write_sink(sink, final_chunk);
-            sink.done();
-            return true;
+    res.set_chunked_content_provider(
+        "text/event-stream", [this, model_name = std::move(model_name), model = std::move(model),
+                              audio_path = std::move(audio_path), language = std::move(language)](
+                                 std::size_t, httplib::DataSink& sink) mutable {
+          TempFileGuard guard{audio_path};
+          try {
+            GenerationRequest request;
+            request.audio_file = audio_path;
+            request.language = language;
+            ActiveStreamRegistration active_stream{*this, model_name};
+            auto stream = model->stream(request);
+            active_stream.attach(stream);
+            for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              if (sample->is_final) {
+                const auto final_chunk =
+                    audio_chunk("", true, choice_finish_reason(sample->finish_reason)) +
+                    "data: [DONE]\n\n";
+                write_sink(sink, final_chunk);
+                sink.done();
+                return true;
+              }
+              const auto chunk = audio_chunk(sample->text, false);
+              write_sink(sink, chunk);
+            }
+            const auto done = audio_chunk("", true, "stop") + "data: [DONE]\n\n";
+            write_sink(sink, done);
+          } catch (const std::exception& e) {
+            const nlohmann::json error = {{"object", "audio.transcription.error"},
+                                          {"error", e.what()}};
+            const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
+            write_sink(sink, chunk);
           }
-          const auto chunk = audio_chunk(sample->text, false);
-          write_sink(sink, chunk);
-        }
-        const auto done = audio_chunk("", true, "stop") + "data: [DONE]\n\n";
-        write_sink(sink, done);
-      } catch (const std::exception& e) {
-        const nlohmann::json error = {{"object", "audio.transcription.error"}, {"error", e.what()}};
-        const std::string chunk = "data: " + error.dump() + "\n\ndata: [DONE]\n\n";
-        write_sink(sink, chunk);
-      }
-      sink.done();
-      return true;
-    });
+          sink.done();
+          return true;
+        });
   }
 
   void warmup_models_once() {
