@@ -175,8 +175,6 @@ public:
   ~Graph() noexcept;
   Graph(const Graph&) = delete;            ///< Non-copyable.
   Graph& operator=(const Graph&) = delete; ///< Non-copyable.
-  Graph(Graph&&) noexcept;                 ///< Move-constructible.
-  Graph& operator=(Graph&&) noexcept;      ///< Move-assignable.
 
   /// Set the Graph label used for diagnostics, save/load, and visualization.
   Graph& set_name(std::string name);

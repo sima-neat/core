@@ -385,54 +385,6 @@ void Graph::invalidate_built_() noexcept {
   run_cache_.reset();
 }
 
-Graph::Graph(Graph&& other) noexcept {
-  // `*this` is freshly default-constructed: built_ and run_cache_ are null, so
-  // adopting other's pointers cannot leak any resource of our own.
-  composition_ = std::move(other.composition_);
-  groups_ = std::move(other.groups_);
-  last_pipeline_ = std::move(other.last_pipeline_);
-  guard_ = std::move(other.guard_);
-  verbose_guard_ = std::move(other.verbose_guard_);
-  opt_ = other.opt_;
-  endpoint_name_ = std::move(other.endpoint_name_);
-  tensor_cb_ = std::move(other.tensor_cb_);
-  nodes_version_.store(other.nodes_version_.load(std::memory_order_relaxed),
-                       std::memory_order_relaxed);
-  built_ = std::move(other.built_);
-  run_cache_ = std::move(other.run_cache_);
-  built_version_ = other.built_version_;
-  input_route_processor_ = std::move(other.input_route_processor_);
-  graph_id_ = other.graph_id_;
-  other.graph_id_ = next_graph_id();
-}
-
-Graph& Graph::operator=(Graph&& other) noexcept {
-  if (this != &other) {
-    // `built_ = std::move(other.built_);` correctly tears down our previous
-    // pipeline (if any) via RAII inside BuiltState before adopting `other`'s
-    // pointer — std::unique_ptr's move-assignment destroys the held object
-    // first and the BuiltState destructor stops + unrefs the pipeline/sink.
-    // Same for `run_cache_`.
-    composition_ = std::move(other.composition_);
-    groups_ = std::move(other.groups_);
-    last_pipeline_ = std::move(other.last_pipeline_);
-    guard_ = std::move(other.guard_);
-    verbose_guard_ = std::move(other.verbose_guard_);
-    opt_ = other.opt_;
-    endpoint_name_ = std::move(other.endpoint_name_);
-    tensor_cb_ = std::move(other.tensor_cb_);
-    nodes_version_.store(other.nodes_version_.load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-    built_ = std::move(other.built_);
-    run_cache_ = std::move(other.run_cache_);
-    built_version_ = other.built_version_;
-    input_route_processor_ = std::move(other.input_route_processor_);
-    graph_id_ = other.graph_id_;
-    other.graph_id_ = next_graph_id();
-  }
-  return *this;
-}
-
 Graph& Graph::set_name(std::string name) {
   endpoint_name_ = trim_endpoint_name(name);
   mark_composition_changed();
