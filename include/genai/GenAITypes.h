@@ -30,7 +30,7 @@ using Json = nlohmann::ordered_json;
 
 class ASRModel;
 class GenAIModel;
-class OpenAIServer;
+class GenAIServer;
 class VisionLanguageModel;
 
 /**

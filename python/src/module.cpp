@@ -16,7 +16,7 @@
 #include "genai/GenAIModel.h"
 #include "genai/GenAITypes.h"
 #include "genai/GraphFragments.h"
-#include "genai/OpenAIServer.h"
+#include "genai/GenAIServer.h"
 #include "genai/VisionLanguageModel.h"
 #include "graphs/Fragments.h"
 #include "model/Model.h"
@@ -1760,30 +1760,30 @@ NB_MODULE(_pyneat_core, m) {
       .def("stream", &simaai::neat::genai::GenAIModel::stream, "request"_a,
            nb::call_guard<nb::gil_scoped_release>());
 
-  nb::class_<simaai::neat::genai::OpenAIServerOptions>(m, "OpenAIServerOptions")
+  nb::class_<simaai::neat::genai::GenAIServerOptions>(m, "GenAIServerOptions")
       .def(nb::init<>())
-      .def_rw("host", &simaai::neat::genai::OpenAIServerOptions::host)
-      .def_rw("port", &simaai::neat::genai::OpenAIServerOptions::port);
+      .def_rw("host", &simaai::neat::genai::GenAIServerOptions::host)
+      .def_rw("port", &simaai::neat::genai::GenAIServerOptions::port);
 
-  nb::class_<simaai::neat::genai::OpenAIServer>(m, "OpenAIServer")
-      .def(nb::init<simaai::neat::genai::OpenAIServerOptions>(),
-           "options"_a = simaai::neat::genai::OpenAIServerOptions{})
+  nb::class_<simaai::neat::genai::GenAIServer>(m, "GenAIServer")
+      .def(nb::init<simaai::neat::genai::GenAIServerOptions>(),
+           "options"_a = simaai::neat::genai::GenAIServerOptions{})
       .def(
           "add_model",
-          [](simaai::neat::genai::OpenAIServer& server, const std::filesystem::path& model_dir) {
+          [](simaai::neat::genai::GenAIServer& server, const std::filesystem::path& model_dir) {
             return server.add_model(model_dir);
           },
           "model_dir"_a)
       .def(
           "add_model",
-          [](simaai::neat::genai::OpenAIServer& server, const std::filesystem::path& model_dir,
+          [](simaai::neat::genai::GenAIServer& server, const std::filesystem::path& model_dir,
              const std::string& served_name) { return server.add_model(model_dir, served_name); },
           "model_dir"_a, "served_name"_a)
-      .def("remove_model", &simaai::neat::genai::OpenAIServer::remove_model, "served_name"_a)
-      .def("model_names", &simaai::neat::genai::OpenAIServer::model_names)
-      .def("start", &simaai::neat::genai::OpenAIServer::start,
+      .def("remove_model", &simaai::neat::genai::GenAIServer::remove_model, "served_name"_a)
+      .def("model_names", &simaai::neat::genai::GenAIServer::model_names)
+      .def("start", &simaai::neat::genai::GenAIServer::start,
            nb::call_guard<nb::gil_scoped_release>())
-      .def("stop", &simaai::neat::genai::OpenAIServer::stop,
+      .def("stop", &simaai::neat::genai::GenAIServer::stop,
            nb::call_guard<nb::gil_scoped_release>());
 
   nb::module_ genai_mod = m.def_submodule("genai", "Generative AI aliases and helpers");
@@ -1798,8 +1798,8 @@ NB_MODULE(_pyneat_core, m) {
   genai_mod.attr("VisionLanguageModel") = m.attr("VisionLanguageModel");
   genai_mod.attr("ASRModel") = m.attr("ASRModel");
   genai_mod.attr("GenAIModel") = m.attr("GenAIModel");
-  genai_mod.attr("OpenAIServerOptions") = m.attr("OpenAIServerOptions");
-  genai_mod.attr("OpenAIServer") = m.attr("OpenAIServer");
+  genai_mod.attr("GenAIServerOptions") = m.attr("GenAIServerOptions");
+  genai_mod.attr("GenAIServer") = m.attr("GenAIServer");
 
   nb::class_<simaai::neat::genai::VisionLanguageOptions>(genai_mod, "VisionLanguageOptions")
       .def(nb::init<>())
