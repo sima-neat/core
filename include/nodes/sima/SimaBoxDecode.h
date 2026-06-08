@@ -4,11 +4,16 @@
  * @brief `SimaBoxDecode` Node — postprocess box decode + NMS for object-detection models.
  *
  * Runs on the EV74. Consumes the raw detection-head tensor(s) emitted by the MLA, applies
- * detector-specific box decoding (anchor decode, sigmoid/softmax over class scores), and
- * returns surviving boxes after non-maximum suppression. Place at the tail of an
- * object-detection pipeline; the variant family is enumerated in `pipeline/BoxDecodeType.h`.
+ * detector-specific box decoding (grid/anchor or raw-distance decode, score activation,
+ * thresholding, top-K, and NMS), and returns surviving detections as BoxDecode payloads.
+ * Place at the tail of an object-detection pipeline, or use the model-managed Graph route
+ * that inserts it from the MPK postprocess contract. The decode family is enumerated in
+ * `pipeline/BoxDecodeType.h`; the structured output helpers live in
+ * `pipeline/DetectionTypes.h`.
  *
  * @see pipeline/BoxDecodeType.h
+ * @see pipeline/DetectionTypes.h
+ * @see docs/how-to/boxdecode_decode_types.md
  */
 #pragma once
 
@@ -39,14 +44,55 @@ namespace simaai::neat {
 struct BoxDecodeOptionsInternal;
 
 /**
- * @brief EV74 postprocess Node that decodes detection-head tensors into object boxes (with NMS).
+ * @brief EV74 postprocess Node that converts detection-head tensors into object boxes.
  *
- * Pick the constructor that matches what your application has on hand: the bare-parameter
- * form for raw inputs, or the `Model`-aware form when the model carries the geometry and
- * route flags. Decoder variants live in `BoxDecodeType` — pick the one matching your model
- * family (YOLOv5, SSD, RetinaNet, etc.).
+ * `SimaBoxDecode` is the postprocessing node used by object-detection graphs after MLA
+ * inference. It reads the model output tensors, decodes them according to the selected
+ * `BoxDecodeType`, applies confidence filtering and NMS, and emits a detection tensor that
+ * can be parsed with `decode_bbox_tensor()` or rendered with `SimaRender`.
+ *
+ * @details
+ * **When to use it.**
+ *
+ * - Use the `Model` constructor for normal model-pack and Graph applications. The model
+ *   archive supplies the tensor layout, quantization, class count, and resize information
+ *   needed by the decoder.
+ * - Use the raw-geometry constructor only when you are wiring detection-head tensors
+ *   yourself and can provide the original image size, model input size, and decode family.
+ *
+ * **Inputs.**
+ *
+ * The node expects the raw detection output tensors produced by the model. For MPK-backed
+ * models, Neat reads the packaged contract and preserves the model's tensor order, physical
+ * layout, slices, dtype, and score domain automatically. Application code normally only
+ * chooses the decode family (`BoxDecodeType`) and filtering thresholds.
+ *
+ * **Outputs.**
+ *
+ * The output is a `BBOX` detection tensor. Use `decode_bbox_tensor()` or
+ * `stages::BoxDecodeResults()` to turn it into `Box` records containing class id, score,
+ * and coordinates in the source-image space. Use `SimaRender` downstream when you want an
+ * annotated video/image stream.
+ *
+ * **Supported families.**
+ *
+ * Supported decode families include YOLO, YOLOv5/v7/v8/v9/v10 detection and segmentation
+ * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, DETR,
+ * EfficientDet, RCNN stage 1, and CenterNet. `BoxDecodeType::Unspecified` is only a
+ * sentinel and fails before runtime.
+ *
+ * **Score and layout notes.**
+ *
+ * Some models output probabilities; others output logits that must be activated before
+ * thresholding. Model packs carry this information when available. If you are manually
+ * wiring tensors, choose the decode type and decode option that match your exported head
+ * format. Do not infer correctness from tensor rank alone: sliced, padded, packed, and
+ * dense outputs can have the same logical shape while requiring different handling. The
+ * model-aware path handles these details for supported model packs.
  *
  * @see pipeline/BoxDecodeType.h
+ * @see pipeline/DetectionTypes.h
+ * @see SimaRender
  *
  * @ingroup nodes_sima
  */
