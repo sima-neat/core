@@ -992,6 +992,7 @@ private:
     std::vector<gdouble> processcvu_channel_mean;
     std::vector<gdouble> processcvu_channel_stddev;
     std::vector<sima_ev_shape_desc> boxdecode_slice_shapes;
+    std::vector<gint> boxdecode_tensor_storage_kind;
     SimaPluginStageSpec spec{};
   };
 
@@ -1748,6 +1749,17 @@ private:
           out.boxdecode_slice_shapes.empty() ? nullptr : out.boxdecode_slice_shapes.data();
       out.spec.payload.boxdecode.slice_shapes_len =
           static_cast<guint>(out.boxdecode_slice_shapes.size());
+
+      out.boxdecode_tensor_storage_kind.clear();
+      out.boxdecode_tensor_storage_kind.reserve(stage.boxdecode.tensor_storage_kind.size());
+      for (const int value : stage.boxdecode.tensor_storage_kind) {
+        out.boxdecode_tensor_storage_kind.push_back(static_cast<gint>(value));
+      }
+      out.spec.payload.boxdecode.tensor_storage_kind =
+          out.boxdecode_tensor_storage_kind.empty() ? nullptr
+                                                   : out.boxdecode_tensor_storage_kind.data();
+      out.spec.payload.boxdecode.tensor_storage_kind_len =
+          static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
       break;
     case StagePayloadKind::DetessDequant:
       out.spec.payload.detessdequant.reserved = stage.detessdequant.reserved;

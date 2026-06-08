@@ -1899,6 +1899,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   subset.logical_inputs.reserve(contract.tensors.size());
   subset.input_bindings.reserve(contract.tensors.size());
   subset.slice_shapes.reserve(contract.tensors.size());
+  subset.tensor_storage_kind.reserve(contract.tensors.size());
   subset.decode_type = contract.decode_type;
   subset.tess_needed = contract.tess_needed;
   subset.quant_needed = contract.quant_needed;
@@ -1933,6 +1934,11 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
       throw std::invalid_argument("boxdecode static contract requires positive slice_shape dims");
     }
     subset.slice_shapes.push_back(slice_shape_desc);
+    if (contract.tensors[i].source_storage_kind == BoxDecodeSourceStorageKind::Unknown) {
+      throw std::invalid_argument("boxdecode static contract requires source storage kind");
+    }
+    subset.tensor_storage_kind.push_back(
+        static_cast<int>(contract.tensors[i].source_storage_kind));
   }
   return subset;
 }
@@ -1964,9 +1970,11 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
   require_non_empty_value(subset.slice_shapes, "boxdecode", PluginContractFieldKey::SliceGeometry,
                           stage_name);
   if (subset.logical_inputs.size() != subset.input_bindings.size() ||
-      subset.logical_inputs.size() != subset.slice_shapes.size()) {
+      subset.logical_inputs.size() != subset.slice_shapes.size() ||
+      subset.logical_inputs.size() != subset.tensor_storage_kind.size()) {
     throw std::invalid_argument("plugin contract subset 'boxdecode' requires aligned logical "
-                                "inputs, bindings, and slice geometry for stage '" +
+                                "inputs, bindings, slice geometry, and tensor storage kinds for "
+                                "stage '" +
                                 stage_name + "'");
   }
   for (std::size_t i = 0; i < subset.logical_inputs.size(); ++i) {

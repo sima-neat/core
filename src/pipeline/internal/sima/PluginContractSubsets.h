@@ -202,6 +202,7 @@ struct BoxDecodeContractSubset {
   std::vector<LogicalInputStaticSpec> logical_inputs;
   std::vector<InputBindingStaticSpec> input_bindings;
   std::vector<sima_ev_shape_desc> slice_shapes;
+  std::vector<int> tensor_storage_kind;
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
   bool tess_needed = false;
   bool quant_needed = false;

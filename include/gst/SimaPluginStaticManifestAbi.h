@@ -347,6 +347,8 @@ typedef struct SimaPluginBoxDecodeStagePayload {
   gint quant_needed;
   gint model_owned_flags;
   gint quant_contract_required;
+  const gint* tensor_storage_kind;
+  guint tensor_storage_kind_len;
 } SimaPluginBoxDecodeStagePayload;
 
 typedef struct SimaPluginDetessDequantStagePayload {

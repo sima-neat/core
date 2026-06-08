@@ -402,7 +402,7 @@ jobs:
           echo "SIMA_CTEST_TAIL_ONLY=${SIMA_CTEST_TAIL_ONLY:-<unset>}"
           echo "SIMA_CTEST_E2E_JOBS=${SIMA_CTEST_E2E_JOBS:-<unset>}"
 
-          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
+          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
           SKIP_REGEX='^(unit_dispatcher_watchdog_test)$'
           if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
             echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"

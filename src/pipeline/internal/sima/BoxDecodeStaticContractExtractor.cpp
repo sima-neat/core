@@ -1013,6 +1013,7 @@ bool kernel_is_detess_like_local(const std::string& kernel_kind) {
     return false;
   }
   return token.find("detessellate") != std::string::npos || token == "detess" ||
+         token.find("detessellation") != std::string::npos ||
          token.find("detess_") != std::string::npos;
 }
 
@@ -1067,9 +1068,15 @@ enum class BoxDecodeTensorRoleLocal {
 struct BoxDecodeTensorLineageFactsLocal {
   BoxDecodeTensorRoleLocal role = BoxDecodeTensorRoleLocal::Unknown;
   std::optional<int> head_index;
+  std::optional<BoxDecodeSourceStorageKind> source_storage_kind;
+  std::optional<std::array<int, 3>> dense_source_hwc;
+  std::optional<std::array<int, 3>> logical_slice_hwc;
+  std::optional<std::array<int, 3>> packed_frame_hwc;
   std::optional<std::array<int, 3>> detess_slice;
   std::optional<std::array<int, 3>> detess_transport_input_hwc;
   std::optional<std::uint64_t> detess_transport_size_bytes;
+  std::optional<std::uint64_t> source_size_bytes;
+  std::optional<std::string> source_dtype;
   std::optional<double> dq_scale;
   std::optional<std::int64_t> dq_zp;
 };
@@ -1331,6 +1338,122 @@ bool assign_unique_uint64_local(std::optional<std::uint64_t>* slot, std::uint64_
   return false;
 }
 
+bool assign_unique_source_storage_kind_local(
+    std::optional<BoxDecodeSourceStorageKind>* slot, BoxDecodeSourceStorageKind value,
+    std::string* error_message, const std::string& message) {
+  if (!slot) {
+    return false;
+  }
+  if (!slot->has_value()) {
+    *slot = value;
+    return true;
+  }
+  if (*slot == value) {
+    return true;
+  }
+  set_error(error_message, message);
+  return false;
+}
+
+bool assign_unique_string_local(std::optional<std::string>* slot, const std::string& value,
+                                std::string* error_message, const std::string& message) {
+  if (!slot || value.empty()) {
+    return true;
+  }
+  if (!slot->has_value()) {
+    *slot = value;
+    return true;
+  }
+  if (*slot == value) {
+    return true;
+  }
+  set_error(error_message, message);
+  return false;
+}
+
+bool slice_begin_is_zero_or_empty_local(const MpkPluginIoContract& stage) {
+  return stage.slice_begin.empty() ||
+         std::all_of(stage.slice_begin.begin(), stage.slice_begin.end(),
+                     [](std::int64_t v) { return v == 0; });
+}
+
+std::string tensor_dtype_token_local(const MpkTensorContract* tensor) {
+  if (!tensor) {
+    return {};
+  }
+  if (!tensor->logical_dtype.empty()) {
+    return normalize_mpk_dtype_token_local(tensor->logical_dtype);
+  }
+  if (!tensor->dtype.empty()) {
+    return normalize_mpk_dtype_token_local(tensor->dtype);
+  }
+  return {};
+}
+
+bool dense_hwc_source_fact_from_mpk_tensor_local(const MpkTensorContract* tensor,
+                                                std::array<int, 3>* out_hwc,
+                                                std::uint64_t* out_size_bytes,
+                                                std::string* out_dtype) {
+  if (!tensor || !out_hwc) {
+    return false;
+  }
+
+  // Rank-2 packed extents such as [1, 102400] are transport spans, not HWC storage.
+  if (tensor->shape_semantics == MpkShapeSemantics::PackedExtent) {
+    return false;
+  }
+
+  const std::string dtype = tensor_dtype_token_local(tensor);
+  const int elem_bytes = dtype_size_bytes_local(dtype);
+  if (elem_bytes <= 0) {
+    return false;
+  }
+
+  auto try_shape = [&](const std::vector<std::int64_t>& shape, std::array<int, 3>* hwc,
+                       std::uint64_t* size_bytes) -> bool {
+    if (shape.size() < 3U || !hwc || !size_bytes) {
+      return false;
+    }
+    int h = 0;
+    int w = 0;
+    int c = 0;
+    if (!dims_from_mpk_shape_for_input_nhwc_local(shape, &h, &w, &c)) {
+      return false;
+    }
+    const auto expected =
+        static_cast<std::uint64_t>(h) * static_cast<std::uint64_t>(w) *
+        static_cast<std::uint64_t>(c) * static_cast<std::uint64_t>(elem_bytes);
+    if (tensor->size_bytes > 0U && static_cast<std::uint64_t>(tensor->size_bytes) != expected) {
+      return false;
+    }
+    *hwc = {h, w, c};
+    *size_bytes =
+        tensor->size_bytes > 0U ? static_cast<std::uint64_t>(tensor->size_bytes) : expected;
+    return true;
+  };
+
+  std::array<int, 3> hwc{};
+  std::uint64_t size_bytes = 0U;
+  // This helper describes the physical source storage. Prefer the MPK/transport
+  // shape and only fall back to logical_shape when that is the only byte-consistent
+  // HWC fact. Some slice MPKs carry a smaller logical_shape on the producer tensor;
+  // using it here would shrink the source byte span and make BoxDecode validate
+  // against the sliced view instead of the dense physical HWC buffer.
+  if (!try_shape(tensor->mpk_shape, &hwc, &size_bytes) &&
+      !try_shape(tensor->logical_shape, &hwc, &size_bytes)) {
+    return false;
+  }
+
+  *out_hwc = hwc;
+  if (out_size_bytes) {
+    *out_size_bytes = size_bytes;
+  }
+  if (out_dtype) {
+    *out_dtype = dtype;
+  }
+  return true;
+}
+
 std::string detess_transport_dtype_token_local(const MpkPluginIoContract& stage,
                                                const MpkTensorContract* input_tensor) {
   if (!stage.frame_type.empty()) {
@@ -1568,10 +1691,58 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
       }
     }
 
+    auto record_dense_hwc_source = [&](const MpkTensorContract* tensor) -> bool {
+      std::array<int, 3> hwc{};
+      std::uint64_t size_bytes = 0U;
+      std::string dtype;
+      if (!dense_hwc_source_fact_from_mpk_tensor_local(tensor, &hwc, &size_bytes, &dtype)) {
+        return true;
+      }
+
+      if (!assign_unique_source_storage_kind_local(
+              &facts.source_storage_kind, BoxDecodeSourceStorageKind::DenseHwcPhysical,
+              error_message, "boxdecode MPK branch has conflicting source storage facts")) {
+        return false;
+      }
+      if (!assign_unique_slice_local(&facts.dense_source_hwc, hwc, error_message,
+                                     "boxdecode MPK branch has conflicting dense HWC source "
+                                     "facts")) {
+        return false;
+      }
+      if (!assign_unique_uint64_local(&facts.source_size_bytes, size_bytes, error_message,
+                                      "boxdecode MPK branch has conflicting source byte-span "
+                                      "facts")) {
+        return false;
+      }
+      return assign_unique_string_local(&facts.source_dtype, dtype, error_message,
+                                        "boxdecode MPK branch has conflicting source dtype facts");
+    };
+
     if (stage_is_detess_like_local(stage)) {
+      if (!stage.has_cblock || !stage.cblock || !stage.has_align_c16 || !stage.align_c16) {
+        set_error(error_message,
+                  "boxdecode packed/cblock source requires MPK detess cblock/align_c16 facts");
+        return std::nullopt;
+      }
+      if (!assign_unique_source_storage_kind_local(
+              &facts.source_storage_kind, BoxDecodeSourceStorageKind::PackedCBlock, error_message,
+              "boxdecode MPK branch has conflicting source storage facts")) {
+        return std::nullopt;
+      }
+
       int h = 0;
       int w = 0;
       int c = 0;
+      if (!dims_from_mpk_shape_for_input_nhwc_local(stage.frame_shape, &h, &w, &c)) {
+        set_error(error_message,
+                  "boxdecode packed/cblock source requires MPK detess frame_shape facts");
+        return std::nullopt;
+      }
+      if (!assign_unique_slice_local(&facts.packed_frame_hwc, {h, w, c}, error_message,
+                                     "boxdecode MPK branch has conflicting packed frame facts")) {
+        return std::nullopt;
+      }
+
       if (!dims_from_mpk_tess_slice_shape_local(stage.slice_shape, &h, &w, &c)) {
         set_error(error_message,
                   "boxdecode tessellated route requires explicit detess slice facts for every "
@@ -1602,6 +1773,56 @@ std::optional<BoxDecodeTensorLineageFactsLocal> collect_boxdecode_tensor_lineage
                 "spans on one MPK branch")) {
           return std::nullopt;
         }
+      }
+      const std::string dtype = detess_transport_dtype_token_local(stage, input_tensor);
+      if (!assign_unique_string_local(&facts.source_dtype, dtype, error_message,
+                                      "boxdecode MPK branch has conflicting source dtype facts")) {
+        return std::nullopt;
+      }
+      if (input_tensor && input_tensor->size_bytes > 0U) {
+        if (!assign_unique_uint64_local(
+                &facts.source_size_bytes, static_cast<std::uint64_t>(input_tensor->size_bytes),
+                error_message,
+                "boxdecode MPK branch has conflicting packed source byte-span facts")) {
+          return std::nullopt;
+        }
+      }
+    }
+
+    const std::string stage_token = lower_copy_local(stage_identity_token_local(stage));
+    const bool unpack_stage = stage_token.find("unpack") != std::string::npos;
+    const bool slice_stage = stage_token.find("slice") != std::string::npos;
+    const bool value_only_stage =
+        !stage_is_detess_like_local(stage) &&
+        (stage_is_dequant_like_local(stage) || stage_token.find("cast") != std::string::npos);
+
+    if (unpack_stage) {
+      if (!record_dense_hwc_source(output_tensor)) {
+        return std::nullopt;
+      }
+    } else if (slice_stage) {
+      if (!slice_begin_is_zero_or_empty_local(stage)) {
+        set_error(error_message,
+                  "boxdecode dense slice source with non-zero slice_begin is unsupported");
+        return std::nullopt;
+      }
+      if (!record_dense_hwc_source(input_tensor)) {
+        return std::nullopt;
+      }
+      std::array<int, 3> slice_hwc{};
+      std::uint64_t ignored_size = 0U;
+      std::string ignored_dtype;
+      if (dense_hwc_source_fact_from_mpk_tensor_local(output_tensor, &slice_hwc, &ignored_size,
+                                                      &ignored_dtype)) {
+        if (!assign_unique_slice_local(&facts.logical_slice_hwc, slice_hwc, error_message,
+                                       "boxdecode MPK branch has conflicting logical slice "
+                                       "facts")) {
+          return std::nullopt;
+        }
+      }
+    } else if (value_only_stage && !facts.source_storage_kind.has_value()) {
+      if (!record_dense_hwc_source(input_tensor)) {
+        return std::nullopt;
       }
     }
 
@@ -2376,76 +2597,87 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_mpk(
     lineage_facts.push_back(*facts);
   }
 
-  if (out.tess_needed) {
-    for (std::size_t i = 0; i < out.tensors.size(); ++i) {
-      if (!lineage_facts[i].detess_slice.has_value()) {
-        return fail("boxdecode tessellated route requires upstream detess slice facts for every "
-                    "input tensor");
-      }
-      // detess_slice is {w, h, c}; slice_shape convention is {h, w, c}.
-      out.tensors[i].slice_shape = {static_cast<int>((*lineage_facts[i].detess_slice)[1]),
-                                    static_cast<int>((*lineage_facts[i].detess_slice)[0]),
-                                    static_cast<int>((*lineage_facts[i].detess_slice)[2])};
+  for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+    const auto& facts = lineage_facts[i];
+    auto& tensor = out.tensors[i];
+
+    if (out.tess_needed && !facts.detess_slice.has_value()) {
+      return fail("boxdecode tessellated route requires upstream detess slice facts for every "
+                  "input tensor");
     }
-    out.input_dtype = out.tensors.front().data_type;
 
-    // A model-managed tessellated BoxDecode binds to the physical MPK transport buffer, not to the
-    // semantic detess output view.  The MPK detess stage declares both sides of that contract:
-    //   * slice_shape is the logical decode view (for example 80x80x4 boxes).
-    //   * input tensor size/frame_shape/align_c16 describe the packed source view consumed by the
-    //     next plugin (for example 80x80x16 boxes).
-    // Use those explicit MPK facts instead of inferring padding heuristically so INT8/BF16 and
-    // direct/tess routes share the same source-of-truth.
-    const bool detess_transport_any =
-        std::any_of(lineage_facts.begin(), lineage_facts.end(), [](const auto& facts) {
-          return facts.detess_transport_input_hwc.has_value() ||
-                 facts.detess_transport_size_bytes.has_value();
-        });
-    const bool detess_transport_all =
-        !lineage_facts.empty() &&
-        std::all_of(lineage_facts.begin(), lineage_facts.end(), [](const auto& facts) {
-          return facts.detess_transport_input_hwc.has_value() &&
-                 facts.detess_transport_size_bytes.has_value();
-        });
-    if ((preserve_raw_packed_parent_source || explicit_unpack_boundary) && detess_transport_any) {
-      if (!detess_transport_all) {
-        return fail("boxdecode tessellated route requires MPK detess transport facts for every "
-                    "packed input tensor");
-      }
-      for (std::size_t i = 0; i < out.tensors.size(); ++i) {
-        auto& tensor = out.tensors[i];
-        const auto& physical_hwc = *lineage_facts[i].detess_transport_input_hwc;
-        tensor.input_shape = {physical_hwc[0], physical_hwc[1], physical_hwc[2]};
-        tensor.source_size_bytes = *lineage_facts[i].detess_transport_size_bytes;
-        if (i < out.physical_inputs.size()) {
-          out.physical_inputs[i].size_bytes = tensor.source_size_bytes;
-        }
+    if (!facts.source_storage_kind.has_value() ||
+        *facts.source_storage_kind == BoxDecodeSourceStorageKind::Unknown) {
+      return fail("boxdecode MPK contract could not resolve source storage kind");
+    }
+
+    tensor.source_storage_kind = *facts.source_storage_kind;
+
+    if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock) {
+      if (!facts.packed_frame_hwc.has_value() || !facts.detess_slice.has_value() ||
+          !facts.source_size_bytes.has_value() || !facts.source_dtype.has_value()) {
+        return fail("boxdecode packed/cblock source missing MPK detess source facts");
       }
 
-      const bool packed_single_mla_parent =
-          mla_stage->output_tensors.size() == 1U && out.tensors.size() > 1U;
-      if (packed_single_mla_parent) {
-        std::uint64_t source_byte_offset = 0;
-        for (std::size_t i = 0; i < out.tensors.size(); ++i) {
-          if (source_byte_offset >
-              static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
-            return fail("boxdecode packed tensor source byte offset overflows int64");
-          }
-          out.tensors[i].source_byte_offset = static_cast<std::int64_t>(source_byte_offset);
-          if (i < out.physical_inputs.size()) {
-            out.physical_inputs[i].byte_offset = out.tensors[i].source_byte_offset;
-          }
-          source_byte_offset += out.tensors[i].source_size_bytes;
-        }
-        const auto parent_size =
-            static_cast<std::uint64_t>(mla_stage->output_tensors.front().size_bytes);
-        if (parent_size > 0U && source_byte_offset != parent_size) {
-          return fail("boxdecode packed tensor byte spans do not sum to MPK MLA output size: "
-                      "sum=" +
-                      std::to_string(source_byte_offset) +
-                      " parent=" + std::to_string(parent_size));
-        }
+      const auto& hwc = *facts.packed_frame_hwc;
+      tensor.input_shape = {hwc[0], hwc[1], hwc[2]};
+      // detess_slice is {w, h, c}; slice_shape convention is {h, w, c}.
+      tensor.slice_shape = {(*facts.detess_slice)[1], (*facts.detess_slice)[0],
+                            (*facts.detess_slice)[2]};
+      tensor.data_type = *facts.source_dtype;
+      tensor.source_size_bytes = *facts.source_size_bytes;
+    } else if (tensor.source_storage_kind == BoxDecodeSourceStorageKind::DenseHwcPhysical) {
+      if (!facts.dense_source_hwc.has_value()) {
+        return fail("boxdecode dense HWC source missing MPK physical HWC facts");
       }
+
+      const auto& hwc = *facts.dense_source_hwc;
+      tensor.input_shape = {hwc[0], hwc[1], hwc[2]};
+      if (facts.logical_slice_hwc.has_value()) {
+        const auto& slice_hwc = *facts.logical_slice_hwc;
+        tensor.slice_shape = {slice_hwc[0], slice_hwc[1], slice_hwc[2]};
+      }
+      if (facts.source_dtype.has_value()) {
+        tensor.data_type = *facts.source_dtype;
+      }
+      if (facts.source_size_bytes.has_value()) {
+        tensor.source_size_bytes = *facts.source_size_bytes;
+      }
+    }
+
+    if (i < out.physical_inputs.size()) {
+      out.physical_inputs[i].size_bytes = tensor.source_size_bytes;
+    }
+  }
+  out.input_dtype = out.tensors.front().data_type;
+
+  const bool any_packed_source =
+      std::any_of(out.tensors.begin(), out.tensors.end(), [](const auto& tensor) {
+        return tensor.source_storage_kind == BoxDecodeSourceStorageKind::PackedCBlock;
+      });
+  const bool packed_single_mla_parent =
+      any_packed_source && mla_stage->output_tensors.size() == 1U && out.tensors.size() > 1U &&
+      std::all_of(out.tensors.begin(), out.tensors.end(),
+                  [](const auto& tensor) { return tensor.source_byte_offset == 0; });
+  if (packed_single_mla_parent) {
+    std::uint64_t source_byte_offset = 0U;
+    for (std::size_t i = 0; i < out.tensors.size(); ++i) {
+      if (source_byte_offset >
+          static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max())) {
+        return fail("boxdecode packed tensor source byte offset overflows int64");
+      }
+      out.tensors[i].source_byte_offset = static_cast<std::int64_t>(source_byte_offset);
+      if (i < out.physical_inputs.size()) {
+        out.physical_inputs[i].byte_offset = out.tensors[i].source_byte_offset;
+      }
+      source_byte_offset += out.tensors[i].source_size_bytes;
+    }
+
+    const auto parent_size =
+        static_cast<std::uint64_t>(mla_stage->output_tensors.front().size_bytes);
+    if (parent_size > 0U && source_byte_offset != parent_size) {
+      return fail("boxdecode packed tensor byte spans do not sum to MPK MLA output size: sum=" +
+                  std::to_string(source_byte_offset) + " parent=" + std::to_string(parent_size));
     }
   }
 

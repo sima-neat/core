@@ -11,6 +11,13 @@ RUN_TEST(
       using namespace simaai::neat::pipeline_internal::sima;
       using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
 
+      auto mark_storage = [](BoxDecodeStaticContract& contract,
+                             BoxDecodeSourceStorageKind storage_kind) {
+        for (auto& tensor : contract.tensors) {
+          tensor.source_storage_kind = storage_kind;
+        }
+      };
+
       BoxDecodeStaticContract contract;
       contract.decode_type = BoxDecodeType::YoloV8;
       contract.input_dtype = "INT8";
@@ -55,10 +62,15 @@ RUN_TEST(
       contract.detection_threshold = 0.25;
       contract.nms_iou_threshold = 0.55;
       contract.required_preprocess_meta_fields = {"orig_width", "orig_height"};
+      mark_storage(contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
 
       const auto compiled = build_boxdecode_compiled_contract(contract);
       require(compiled.runtime_contract.logical_inputs.size() == 2U,
               "boxdecode contract should expose both logical inputs");
+      require(compiled.payload.tensor_storage_kind.size() == 2U &&
+                  compiled.payload.tensor_storage_kind[0] ==
+                      static_cast<int>(BoxDecodeSourceStorageKind::DenseHwcPhysical),
+              "boxdecode payload should preserve dense-HWC storage kind");
       require(compiled.payload.num_classes == 80,
               "boxdecode compiled contract should infer grouped YOLO class count from class-head "
               "depth when user num_classes is unset");
@@ -119,6 +131,7 @@ RUN_TEST(
       packed_yolov5_contract.physical_inputs = {
           BoxDecodePhysicalInputStaticContract{"packed_head0", 0, 0, 80U * 80U * 255U},
       };
+      mark_storage(packed_yolov5_contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
       const auto packed_yolov5_finalized = finalize_boxdecode_static_contract(
           packed_yolov5_contract, BoxDecodeType::YoloV5, std::nullopt, std::nullopt,
           BoxDecodeTypeOption::PackedPerHead, 0.25, 0.55, 100, 0, {});
@@ -155,10 +168,15 @@ RUN_TEST(
       packed_contract.detection_threshold = 0.25;
       packed_contract.nms_iou_threshold = 0.55;
       packed_contract.required_preprocess_meta_fields = {"orig_width", "orig_height"};
+      mark_storage(packed_contract, BoxDecodeSourceStorageKind::PackedCBlock);
 
       const auto packed_compiled = build_boxdecode_compiled_contract(packed_contract);
       require(packed_compiled.runtime_contract.logical_inputs.size() == 1U,
               "packed boxdecode contract should expose one logical input");
+      require(packed_compiled.payload.tensor_storage_kind.size() == 1U &&
+                  packed_compiled.payload.tensor_storage_kind[0] ==
+                      static_cast<int>(BoxDecodeSourceStorageKind::PackedCBlock),
+              "packed boxdecode payload should preserve packed/cblock storage kind");
       require(packed_compiled.runtime_contract.logical_inputs.front().segment_name ==
                   "output_tensor",
               "packed boxdecode logical input should use the physical TensorBuffer parent segment");
@@ -263,6 +281,7 @@ RUN_TEST(
       }
       yolo26_contract.dq_scale.assign(6U, 0.125);
       yolo26_contract.dq_zp.assign(6U, 0);
+      mark_storage(yolo26_contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
 
       const auto finalized_yolo26_inferred = finalize_boxdecode_static_contract(
           yolo26_contract, BoxDecodeType::YoloV26, std::nullopt, std::nullopt,
@@ -350,6 +369,7 @@ RUN_TEST(
       }
       yolo26_pose_contract.dq_scale.assign(9U, 1.0);
       yolo26_pose_contract.dq_zp.assign(9U, 0);
+      mark_storage(yolo26_pose_contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
       const auto finalized_yolo26_pose = finalize_boxdecode_static_contract(
           yolo26_pose_contract, BoxDecodeType::YoloV26Pose, std::nullopt, std::nullopt,
           BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {"orig_width", "orig_height"});
@@ -446,6 +466,7 @@ RUN_TEST(
       yolo26_seg_contract.tensor_names.push_back("opaque_seg_proto");
       yolo26_seg_contract.dq_scale.assign(10U, 1.0);
       yolo26_seg_contract.dq_zp.assign(10U, 0);
+      mark_storage(yolo26_seg_contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
       const auto finalized_yolo26_seg = finalize_boxdecode_static_contract(
           yolo26_seg_contract, BoxDecodeType::YoloV26Seg, std::nullopt, std::nullopt,
           BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {"orig_width", "orig_height"});
@@ -499,6 +520,7 @@ RUN_TEST(
       }
       yolox_contract.dq_scale.assign(9U, 1.0);
       yolox_contract.dq_zp.assign(9U, 0);
+      mark_storage(yolox_contract, BoxDecodeSourceStorageKind::DenseHwcPhysical);
       const auto finalized_yolox = finalize_boxdecode_static_contract(
           yolox_contract, BoxDecodeType::YoloX, std::nullopt, std::nullopt,
           BoxDecodeTypeOption::Auto, 0.25, 0.55, 100, 0, {});

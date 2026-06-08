@@ -227,6 +227,7 @@ set(UNIT_TESTS
   unit_contract_render_manifest_equivalence_test
   unit_contracts_test
   unit_boxdecode_render_manifest_from_model_test
+  unit_boxdecode_yolo_layout_matrix_test
   unit_model_route_retarget_helper_test
   unit_dequant_processcvu_contract_equivalence_test
   unit_dequant_node_fragment_test
@@ -1329,6 +1330,16 @@ add_pipeline_test(
 
 if (NOT yolov8_variant_route_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST yolov8_variant_route_matrix_test APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
+add_pipeline_test(
+  boxdecode_yolo_layout_matrix_e2e_test
+  unit_testing/unit_boxdecode_yolo_layout_matrix_test.cpp
+)
+
+if (NOT boxdecode_yolo_layout_matrix_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST boxdecode_yolo_layout_matrix_e2e_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;boxdecode")
 endif()
 
 add_pipeline_test(

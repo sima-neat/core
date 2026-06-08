@@ -388,6 +388,7 @@ struct BoxDecodeStagePayload {
   int topk = 0;
   int num_classes = 0;
   std::vector<sima_ev_shape_desc> slice_shapes;
+  std::vector<int> tensor_storage_kind;
 };
 
 /// Placeholder payload for quant / dequant / tess / quanttess stages (carries only a reserved field

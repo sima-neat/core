@@ -33,6 +33,16 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 
+/// Physical storage layout the BoxDecode kernel must use to read one source tensor.
+///
+/// This is deliberately separate from slice/detess/cast/dequant operations.  Slice geometry
+/// describes the logical view to decode; this value describes how the source bytes are laid out.
+enum class BoxDecodeSourceStorageKind : int {
+  Unknown = -1,
+  PackedCBlock = 0,
+  DenseHwcPhysical = 1,
+};
+
 /**
  * @brief One input tensor seen by the box-decode stage.
  *
@@ -52,6 +62,8 @@ struct BoxDecodeTensorStaticContract {
   int source_physical_index = -1;       ///< Source plugin's physical-output index.
   std::int64_t source_byte_offset = 0;  ///< Byte offset within the source physical buffer.
   std::uint64_t source_size_bytes = 0;  ///< Size in bytes within the source physical buffer.
+  BoxDecodeSourceStorageKind source_storage_kind =
+      BoxDecodeSourceStorageKind::Unknown; ///< Source byte layout for kernel access.
 };
 
 /// Description of one physical input buffer feeding the box-decode stage.

@@ -642,6 +642,7 @@ CompiledBoxDecodeContract build_boxdecode_compiled_contract_from_subset(
   compiled.payload.topk = options.topk;
   compiled.payload.num_classes = options.num_classes > 0 ? options.num_classes : subset.num_classes;
   compiled.payload.slice_shapes = subset.slice_shapes;
+  compiled.payload.tensor_storage_kind = subset.tensor_storage_kind;
   compiled.runtime_contract.plugin_kind = "boxdecode";
   compiled.runtime_contract.logical_inputs = subset.logical_inputs;
   compiled.runtime_contract.input_bindings = subset.input_bindings;
