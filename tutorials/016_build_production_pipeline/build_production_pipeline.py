@@ -31,25 +31,33 @@ def main(argv: list[str]) -> int:
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
   # CORE LOGIC
+  # STEP configure-run-options
+  ropt = pyneat.RunOptions()
+  ropt.queue_depth = 8
+  ropt.overflow_policy = pyneat.OverflowPolicy.Block
+  ropt.output_memory = pyneat.OutputMemory.Owned
+  ropt.enable_metrics = True
+  # END STEP
+
+  # STEP configure-model
   mopt = pyneat.ModelOptions()
   mopt.input_max_width = int(tensor.shape[1])
   mopt.input_max_height = int(tensor.shape[0])
   mopt.input_max_depth = int(tensor.shape[2])
   mopt.name_suffix = "_prod"
   model = pyneat.Model(str(args.model), mopt)
+  # END STEP
 
+  # STEP build-runner
   sopt = pyneat.ModelRouteOptions()
   sopt.include_input = True
   sopt.include_output = True
   sopt.name_suffix = "_prod"
 
-  ropt = pyneat.RunOptions()
-  ropt.queue_depth = 8
-  ropt.overflow_policy = pyneat.OverflowPolicy.Block
-  ropt.output_memory = pyneat.OutputMemory.Owned
-  ropt.enable_metrics = True
-
   runner = model.build([tensor], sopt, ropt)
+  # END STEP
+
+  # STEP run-loop
   ok = 0
   for _ in range(args.iters):
     if not runner.push([tensor]):
@@ -57,6 +65,7 @@ def main(argv: list[str]) -> int:
     if runner.pull(timeout_ms=2000) is not None:
       ok += 1
   runner.close()
+  # END STEP
   # END CORE LOGIC
 
   print(f"iters={args.iters} ok={ok}")

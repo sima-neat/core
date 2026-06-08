@@ -1,7 +1,7 @@
 ---
 title: The dtype contract
 description: How tensors flow through preprocess, MLA inference, and postprocess — the FP32-in / INT8-or-BF16-MLA / FP32-out pipeline.
-sidebar_position: 1
+sidebar_position: 3
 ---
 
 # The dtype contract

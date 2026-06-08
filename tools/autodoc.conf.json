@@ -6,6 +6,7 @@
       "repo": "git@github.com:sima-neat/llima",
       "branch": "develop",
       "branch_policy": "snap",
+      "fallback_branch": "develop",
       "githash": "",
       "docs_subpath": "docs",
       "mount": "llima",
@@ -108,6 +109,25 @@
             ]
           }
         ]
+      }
+    },
+    {
+      "key": "sima-cli",
+      "title": "sima-cli",
+      "repo": "git@github.com:sima-neat/sima-cli",
+      "branch": "main",
+      "branch_policy": "snap",
+      "githash": "",
+      "docs_subpath": "docs/sima-cli",
+      "mount": "reference/sima-cli",
+      "sidebar_position": 6,
+      "files_order": [
+        "index"
+      ],
+      "group_commands": {
+        "prefix": "sima-cli-",
+        "root_stem": "sima-cli",
+        "root_page_stem": "cli"
       }
     }
   ]

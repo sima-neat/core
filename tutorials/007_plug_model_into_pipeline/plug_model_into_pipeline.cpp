@@ -56,6 +56,7 @@ int main(int argc, char** argv) {
       simaai::neat::Model model(model_path);
 
       // Pattern 2: ask model.graph() to include explicit public Input/Output boundaries.
+      // STEP model-graph
       simaai::neat::Model::RouteOptions runnable_opt;
       runnable_opt.include_input = true;
       runnable_opt.include_output = true;
@@ -63,19 +64,24 @@ int main(int argc, char** argv) {
       simaai::neat::Graph from_model;
       from_model.add(model.graph(runnable_opt));
       // END CORE LOGIC
+      // END STEP
       std::cout << "model_graph_backend=\n" << from_model.describe_backend() << "\n";
 
       // Pattern 3: attach the model under an upstream name with custom options.
+      // STEP route-options
       simaai::neat::Model::RouteOptions sopt;
       sopt.include_input = false;
       sopt.include_output = true;
       sopt.upstream_name = "camera0";
       sopt.name_suffix = "_camera0";
       sopt.buffer_name = "camera0";
+      // END STEP
 
       // CORE LOGIC
+      // STEP attached-graph
       simaai::neat::Graph attached;
       attached.add(model.graph(sopt));
+      // END STEP
       // END CORE LOGIC
       std::cout << "attached_graph_backend=\n" << attached.describe_backend() << "\n";
     }

@@ -48,6 +48,46 @@ graph.add(model.graph())
 </CodeTab>
 </CodeTabs>
 
+## Inspect specs and run directly
+
+Before composing a Graph you can introspect the model's tensor contracts with `input_spec()` / `output_spec()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::Model model("yolov8s_model.tar.gz");
+
+// Tensor contracts the model expects (input) and produces (output).
+const auto in  = model.input_spec();
+const auto out = model.output_spec();
+std::cout << "input  rank=" << in.rank  << " dims=" << in.shape.size()
+          << " dtypes=" << in.dtypes.size() << "\n";
+std::cout << "output rank=" << out.rank << " dims=" << out.shape.size() << "\n";
+std::cout << "metadata keys=" << model.metadata().size() << "\n";
+
+// Run one frame directly via Model::Runner (no Graph required).
+simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeout_ms=*/2000);
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = pyneat.Model("yolov8s_model.tar.gz")
+
+# Tensor contracts the model expects (input) and produces (output).
+print("input rank  =", model.input_spec().rank)
+print("output rank =", model.output_spec().rank)
+print("metadata keys =", len(model.metadata()))
+
+# Run one frame directly (no Graph required).
+outputs = model.run([frame], timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
 ## Failure handling
 
 Model-driven Graphs use the same diagnostics contract as raw `Graph`:
@@ -61,8 +101,8 @@ before inspecting detailed bus logs.
 
 ## See also
 
-- [Inference Workflow](/reference/programming-model/overview)
-- [Graph](/reference/programming-model/graph)
+- [Inference Workflow](/getting-started/development_workflow/overview)
+- [Graph](/getting-started/development_workflow/graph)
 
 ## Tutorials
 

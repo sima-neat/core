@@ -39,17 +39,22 @@ int main(int argc, char** argv) {
     if (bgr.empty())
       throw std::runtime_error("failed to load image: " + image);
 
+    // STEP configure-decode
     simaai::neat::Model::Options opt;
     opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
     opt.preprocess.input_max_width = bgr.cols;
     opt.preprocess.input_max_height = bgr.rows;
     opt.preprocess.input_max_depth = bgr.channels();
     opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+    // END STEP
 
+    // STEP load-model
     simaai::neat::Model model(model_path, opt);
+    // END STEP
 
     // CORE LOGIC
     // Stage-by-stage: each stages::* call runs one piece of the model pipeline.
+    // STEP run-decode
     simaai::neat::TensorList pre = simaai::neat::stages::Preproc(std::vector<cv::Mat>{bgr}, model);
     simaai::neat::Sample infer_samples = simaai::neat::stages::Infer(
         simaai::neat::Sample{simaai::neat::sample_from_tensors(pre)}, model);
@@ -64,7 +69,9 @@ int main(int argc, char** argv) {
     box.detection_threshold = 0.55;
     box.nms_iou_threshold = 0.5;
     box.top_k = 100;
+    // END STEP
 
+    // STEP read-boxes
     // BoxDecode parses the "BBOX" tensor into {x1, y1, x2, y2, score, class_id}
     // entries clamped to original_width x original_height source pixels.
     simaai::neat::BoxDecodeResultList decoded_results =
@@ -72,6 +79,7 @@ int main(int argc, char** argv) {
     if (decoded_results.empty())
       throw std::runtime_error("boxdecode result parser returned no results");
     const simaai::neat::BoxDecodeResult& decoded = decoded_results.front();
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "boxes=" << decoded.boxes.size() << "\n";

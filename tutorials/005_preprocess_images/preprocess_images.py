@@ -27,6 +27,7 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--size", type=int, default=224)
   args = ap.parse_args(argv[1:])
 
+  # STEP configure-preproc
   opt = pyneat.ModelOptions()
   opt.preprocess.kind = pyneat.InputKind.Image
   opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
@@ -39,12 +40,17 @@ def main(argv: list[str]) -> int:
   opt.preprocess.normalize.enable = pyneat.AutoFlag.On
   opt.preprocess.normalize.mean = [0.5, 0.5, 0.5]
   opt.preprocess.normalize.stddev = [0.5, 0.5, 0.5]
+  # END STEP
 
   # CORE LOGIC
+  # STEP load-model
   model = pyneat.Model(str(args.model), opt)
+  # END STEP
+  # STEP inspect-preproc
   preproc_graph = model.preprocess()
   print("preproc_graph=ready")
   print(preproc_graph.describe())
+  # END STEP
   # END CORE LOGIC
 
   rgb = np.full((args.size, args.size, 3), 120, dtype=np.uint8)

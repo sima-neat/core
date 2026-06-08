@@ -32,37 +32,47 @@ def main(argv: list[str]) -> int:
   ap.add_argument("--height", type=int, default=640)
   args = ap.parse_args(argv[1:])
 
+  # STEP configure-decode
   opt = pyneat.ModelOptions()
-  opt.format = "RGB"
-  opt.input_max_width = args.width
-  opt.input_max_height = args.height
-  opt.input_max_depth = 3
-  opt.decode_type = "yolov8"
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.color_convert.input_format = pyneat.PreprocessColorFormat.RGB
+  opt.preprocess.input_max_width = args.width
+  opt.preprocess.input_max_height = args.height
+  opt.preprocess.input_max_depth = 3
+  opt.decode_type = pyneat.BoxDecodeType.YoloV8
   opt.score_threshold = 0.55
   opt.nms_iou_threshold = 0.50
   opt.top_k = 100
-  opt.original_width = args.width
-  opt.original_height = args.height
+  opt.boxdecode_original_width = args.width
+  opt.boxdecode_original_height = args.height
+  # END STEP
 
   # CORE LOGIC
+  # STEP load-model
   model = pyneat.Model(str(args.model), opt)
+  # END STEP
 
+  # STEP run-decode
   rgb = np.full((args.height, args.width, 3), 80, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
-  sample = model.run([tensor], timeout_ms=2000)
+  outputs = model.run([tensor], timeout_ms=2000)
+  # END STEP
   # END CORE LOGIC
 
+  # STEP read-boxes
   # Two paths for reading the output:
   #   - Runtimes that wire BoxDecode into model.run produce one BBOX uint8 tensor.
-  #   - Runtimes that do not produce a Bundle of raw MLA feature maps instead.
+  #   - Runtimes that do not return the raw MLA feature-map tensors instead.
   # The shipped README explains the BBOX wire format (uint32 count + N 24-byte RawBox).
-  if sample.tensor is not None:
-    buf = bytes(sample.tensor.to_numpy(copy=False))
+  first = outputs[0] if outputs else None
+  detection = getattr(first.semantic, "detection", None) if first is not None else None
+  if first is not None and detection is not None and getattr(detection, "format", "") == "BBOX":
+    buf = bytes(first.to_numpy(copy=False))
     detections = struct.unpack_from("<I", buf, 0)[0] if len(buf) >= 4 else 0
     print(f"detections={detections}")
   else:
-    heads = len(sample.fields or [])
-    print(f"raw_output_heads={heads}  # BoxDecode not wired by this runtime")
+    print(f"raw_output_heads={len(outputs)}  # BoxDecode not wired by this runtime")
+  # END STEP
   return 0
 
 

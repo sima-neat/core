@@ -51,6 +51,56 @@ The framework's public surface is a small set of primary concepts. They form a c
 | 6 | **Graph** | Assembly stage that turns Nodes, Models, and reusable Graph fragments into a runnable pipeline. | [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`GraphOptions`](/reference/cppapi/structs/simaai-neat-graphoptions) |
 | 7 | **Run** | Live, running pipeline produced by `Graph::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
 
+## Building and linking against Neat (CMake)
+
+Application code consumes Neat as the installed `sima-neat` package — it provides `libsima_neat.{a,so}`, the public headers, and a CMake package config, `SimaNeatConfig.cmake`. A complete `CMakeLists.txt` for an app is just:
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(my_app LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(SimaNeat REQUIRED CONFIG)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+Two lines are all you add to link and target the Neat library:
+
+- **`find_package(SimaNeat REQUIRED CONFIG)`** — finds the installed Neat package by reading its package config file `SimaNeatConfig.cmake` (installed under `lib/cmake/SimaNeat/`). `CONFIG` selects config-file mode (use the package's own exported config rather than a `Find<Pkg>.cmake` module); `REQUIRED` aborts configuration with a clear error if Neat isn't found. On success it defines the imported target `SimaNeat::sima_neat`.
+- **`target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)`** — links your target against Neat. `SimaNeat::sima_neat` is an *imported target* that carries Neat's usage requirements, so linking it automatically adds Neat's public include directories, its C++20 requirement, and its transitive dependencies (GStreamer, etc.) to your target. You set no `-I`, `-L`, or `-l` flags by hand.
+
+In your sources, pull in the umbrella header:
+
+```cpp
+#include "neat.h"   // simaai::neat::Model, Graph, Run, Tensor, nodes, …
+```
+
+### Cross-compiling from the Neat SDK
+
+On a native DevKit install, `SimaNeatConfig.cmake` is on the default system prefix and `find_package` resolves with no extra setup. In an SDK cross-build, point CMake at the exported sysroot before `find_package` so it can locate the aarch64 package:
+
+```cmake
+if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
+  list(APPEND CMAKE_PREFIX_PATH
+    "$ENV{SYSROOT}/usr"
+    "$ENV{SYSROOT}/usr/lib/aarch64-linux-gnu")
+endif()
+```
+
+Then configure, build, and run:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/my_app
+```
+
+If `find_package(SimaNeat ...)` fails, see [Troubleshooting](/troubleshooting) (the `find_package(SimaNeat CONFIG)` entry) and the worked [Hello Neat](/getting-started/minimal_example/minimal) and [Run an App](/getting-started/minimal_example/run_an_app) examples.
+
 ## Where to read what
 
 | What you want | Where to look |

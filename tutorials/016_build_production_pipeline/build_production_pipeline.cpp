@@ -48,12 +48,15 @@ int main(int argc, char** argv) {
     // CORE LOGIC
     // Production defaults: bounded queue, blocking overflow, owned output memory,
     // metrics on. Model::build returns a Runner that owns the async pipeline.
+    // STEP configure-run-options
     simaai::neat::RunOptions run_opt;
     run_opt.queue_depth = 8;
     run_opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
     run_opt.enable_metrics = true;
+    // END STEP
 
+    // STEP configure-model
     simaai::neat::Model::Options model_opt;
     model_opt.preprocess.kind = simaai::neat::InputKind::Image;
     model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
@@ -68,7 +71,9 @@ int main(int argc, char** argv) {
     model_opt.name_suffix = "_prod";
 
     simaai::neat::Model model(model_path, model_opt);
+    // END STEP
 
+    // STEP build-runner
     simaai::neat::Model::RouteOptions sess_opt;
     sess_opt.include_input = true;
     sess_opt.include_output = true;
@@ -78,7 +83,9 @@ int main(int argc, char** argv) {
         simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
             rgb, simaai::neat::ImageSpec::PixelFormat::RGB, simaai::neat::TensorMemory::EV74)},
         sess_opt, run_opt);
+    // END STEP
 
+    // STEP run-loop
     int ok = 0;
     for (int i = 0; i < iters; ++i) {
       if (!runner.push(simaai::neat::TensorList{simaai::neat::Tensor::from_cv_mat(
@@ -89,6 +96,7 @@ int main(int argc, char** argv) {
         ++ok;
     }
     runner.close();
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "outputs=" << ok << "\n";

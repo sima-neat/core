@@ -28,23 +28,29 @@ def main(argv: list[str]) -> int:
   args = ap.parse_args(argv[1:])
 
   # CORE LOGIC
-  # Configure RtspDecodedInputOptions, build a Graph whose only stages are
-  # the RTSP group and an output node, and pull decoded frames.
+  # STEP configure-rtsp
+  # Configure RtspDecodedInputOptions: the URL and the RTSP transport.
   rtsp_opt = pyneat.RtspDecodedInputOptions()
   rtsp_opt.url = args.url
   rtsp_opt.tcp = True
+  # END STEP
 
+  # STEP compose-graph
+  # Build a Graph whose only stages are the RTSP group and an output node.
   s = pyneat.Graph()
   s.add(pyneat.groups.rtsp_decoded_input(rtsp_opt))
   s.add(pyneat.nodes.output())
   run = s.build(pyneat.RunOptions())
+  # END STEP
 
+  # STEP pull-frames
   for i in range(args.frames):
     sample = run.pull(timeout_ms=5000)
     if sample is None or sample.tensor is None:
       print(f"frame={i} rtsp_timeout")
       break
     print(f"frame={i} shape={list(sample.tensor.shape)}")
+  # END STEP
   # END CORE LOGIC
   return 0
 

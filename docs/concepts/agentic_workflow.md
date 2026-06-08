@@ -1,7 +1,7 @@
 ---
 title: Agentic workflow
 description: Why the framework's API surface is designed for AI agents that write Modalix code.
-sidebar_position: 9
+sidebar_position: 12
 ---
 
 # Agentic workflow

@@ -29,8 +29,12 @@ def main(argv: list[str]) -> int:
   # numpy round-trip: HWC uint8 RGB -> pyneat.Tensor -> numpy.
   arr = np.full((args.height, args.width, 3), 17, dtype=np.uint8)
   # CORE LOGIC
+  # STEP to-tensor
   tensor = pyneat.Tensor.from_numpy(arr, copy=True, image_format=pyneat.PixelFormat.RGB)
+  # END STEP
+  # STEP map-and-inspect
   arr_back = tensor.to_numpy(copy=True)
+  # END STEP
   # END CORE LOGIC
   print(f"numpy_roundtrip_shape={arr_back.shape}")
 
@@ -43,8 +47,10 @@ def main(argv: list[str]) -> int:
 
   th = torch.full((args.height, args.width, 3), 9, dtype=torch.uint8)
   # CORE LOGIC
+  # STEP own-a-copy
   tensor2 = pyneat.Tensor.from_torch(th, copy=True, image_format=pyneat.PixelFormat.RGB)
   th_back = tensor2.to_torch(copy=True)
+  # END STEP
   # END CORE LOGIC
   print(f"torch_roundtrip_shape={tuple(th_back.shape)}")
   return 0

@@ -17,11 +17,22 @@ function highlightInDocs() {
 
   const clearHighlights = (container) => {
     const marked = container.querySelectorAll("mark.docSearchHighlight");
+    // When there are no highlights to remove, leave the DOM completely
+    // untouched. Calling container.normalize() here unconditionally merges and
+    // drops text nodes that React owns across the whole article, which desyncs
+    // React's node references and makes later re-renders (e.g. the C++/Python
+    // language toggle) crash with removeChild/insertBefore "not a child" errors.
+    if (!marked.length) return;
+    const affectedParents = new Set();
     marked.forEach((m) => {
+      const parent = m.parentNode;
       const t = document.createTextNode(m.textContent || "");
       m.replaceWith(t);
+      if (parent) affectedParents.add(parent);
     });
-    container.normalize();
+    // Merge split text nodes only where we actually removed a <mark>, instead of
+    // normalizing the entire React-managed container.
+    affectedParents.forEach((parent) => parent.normalize());
   };
 
   const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

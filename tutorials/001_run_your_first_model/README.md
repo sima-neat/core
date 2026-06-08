@@ -10,30 +10,43 @@
 
 ## Concept
 
-Load a compiled ResNet-50 model archive, feed it an image, and read the top-1 class in three lines of Python. This is the shortest path from "I have a model archive" to "I have a prediction."
+Load a compiled ResNet-50 archive, feed it an image, and read the top-1 class — the shortest path from "I have a model archive" to "I have a prediction."
 
-A compiled model is a deployable `.tar.gz` model archive containing an MPK inference contract that Neat can load and execute on the target device. It contains the model artifacts and runtime metadata needed for inference — you provide input, call `run()`, and read outputs.
+## Walkthrough
 
-**APIs introduced**
-- `pyneat.Model(model_path)` — load the compiled model.
-- `model.run(input, timeout_ms)` — synchronous inference; returns a `TensorList` of output tensors (use `outputs[0]` for the first). (Passing a list of `Sample`s instead returns a `Sample`.)
-  - `timeout_ms` is the max wall time (ms) to wait for output. `-1` (the default) blocks indefinitely; any `> 0` value throws on timeout so stalls surface loudly. Prefer a finite value (e.g. `2000`) in production code, `-1` only when you trust the runtime to always produce output.
+This is the entry chapter. The goal is the smallest possible end-to-end inference: take a compiled model, hand it one image, and print the predicted class index. No graphs, no threads, no streaming — just the three calls that every Neat program is built on.
 
-**When to use this**
-Fastest way to verify an model archive loads and runs on hardware. For throughput, batching, or live streams, move on to chapter 002.
+A *compiled model* is a deployable `.tar.gz` archive containing an MPK inference contract: the model artifacts plus the runtime metadata Neat needs to execute it on the target device. You don't unpack it or wire up stages yourself — you point Neat at the archive, give it input, and read the output. By the end you will have run inference in three lines and printed a `top1=` class index.
 
-**Prerequisites**
-None — this is the entry chapter.
+### Load the model {#step-load-model}
 
-**References**
-- [Model](/reference/programming-model/model)
+The first line turns a path-on-disk into a live, runnable `Model`: construction loads the archive and prepares it for execution.
 
-## Learning Process
-1. Set up runtime inputs: parse CLI args, locate the compiled ResNet50 model archive, and prepare sample input data.
-2. Build the minimal model execution path for one model and one input stream.
-3. Run synchronous inference to keep behavior deterministic and easy to debug.
+**C++:** You pass `build_options(size)` as a second argument to declare the input contract this model expects — RGB color, `224×224`, and the ImageNet normalization ResNet-50 was trained with. Declaring it here tells the runtime how to turn a raw image into the tensor the model wants.
+
+**Python:** The preprocessing defaults are sensible, so `pyneat.Model(path)` takes just the archive path — no options object needed for this chapter.
+
+### Prepare the input {#step-prepare-input}
+
+Next we produce exactly one image to classify. If you pass `--image`, it is read, resized to `224×224`, and converted to RGB to match the input contract; otherwise we synthesize a solid gray frame so the full load → run → read path still runs end to end without needing an asset on hand.
+
+**C++:** The frame is a `cv::Mat`, produced by `load_rgb(...)` or as a gray placeholder.
+
+**Python:** The frame is a NumPy array built by `load_image(...)` (OpenCV under the hood).
+
+### Run inference and read the result {#step-run-inference}
+
+The third line does the actual work: `run()` takes the input and a `timeout_ms`, executes the model synchronously, and returns the output. `timeout_ms` is the maximum wall-clock time to wait — `2000` ms here means "fail loudly if the device hasn't produced output in two seconds" rather than hanging forever. (Passing `-1` blocks indefinitely; prefer a finite value in real code.) We then reduce the output to a single class index with `argmax` and print `top1=`.
+
+**C++:** `run()` returns a `TensorList`; read the first tensor's bytes via `map_read()`.
+
+**Python:** `run()` with tensor/image inputs returns a `TensorList`; `outputs[0].to_numpy()` hands you a NumPy array to `argmax` over.
+
+That's the whole story. Everything in later chapters — async, pipelines, custom graphs — is built on these same three moves: construct, feed, read.
 
 ## Run
+
+Run it and you should see the predicted class index printed to stdout. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
 
 **Python:**
 ```bash
@@ -54,7 +67,16 @@ python3 share/sima-neat/tutorials/001_run_your_first_model/run_your_first_model.
   --model /tmp/resnet_50.tar.gz
 ```
 
+Expected output (the exact index depends on the image):
+
+```text
+top1=285
+[OK] 001_run_your_first_model
+```
+
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+
+For throughput, batching, or live streams, continue to chapter 002. Reference: [Model](/getting-started/development_workflow/model).
 
 ## In Practice
 
@@ -94,19 +116,6 @@ Search order:
 Download (if `sima-cli` is available):
 ```bash
 sima-cli modelzoo get resnet_50
-```
-
-#### YOLOv8 (v8s)
-
-Search order:
-1. `SIMA_YOLO_TAR` (per-model override)
-2. `SIMA_MODEL_TAR` (shared fallback for model-archive tests/examples)
-3. `tmp/yolo_v8s.tar.gz`
-4. Common local names (moved into `tmp/` if found): `yolo_v8s.tar.gz`, `yolo-v8s.tar.gz`, `yolov8s.tar.gz`, `yolov8_s.tar.gz`
-
-Download (if `sima-cli` is available):
-```bash
-sima-cli modelzoo get yolo_v8s
 ```
 
 ### Sample images

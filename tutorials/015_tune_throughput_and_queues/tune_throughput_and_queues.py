@@ -49,6 +49,7 @@ def main(argv: list[str]) -> int:
   graph.add(pyneat.nodes.output())
 
   # CORE LOGIC
+  # STEP configure-run-options
   opt = pyneat.RunOptions()
   opt.queue_depth = args.queue
   opt.overflow_policy = getattr(pyneat.OverflowPolicy, DROP_MODES[args.drop])
@@ -56,6 +57,9 @@ def main(argv: list[str]) -> int:
   opt.enable_metrics = True
 
   run = graph.build([tensor], pyneat.RunMode.Async, opt)
+  # END STEP
+
+  # STEP push-workload
   for _ in range(args.iters):
     run.try_push(tensor)
   run.close_input()
@@ -63,9 +67,12 @@ def main(argv: list[str]) -> int:
   pulled = 0
   while run.pull(timeout_ms=1000) is not None:
     pulled += 1
+  # END STEP
 
+  # STEP read-metrics
   stats = run.stats()
   input_stats = run.input_stats()
+  # END STEP
   # END CORE LOGIC
   print(f"inputs_enqueued={stats.inputs_enqueued}")
   print(f"inputs_dropped={stats.inputs_dropped}")

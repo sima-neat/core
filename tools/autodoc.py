@@ -376,6 +376,110 @@ def write_category_json(dst_root: Path, label: str, position: int) -> None:
     )
 
 
+def set_frontmatter_field(text: str, field: str, value: str) -> str:
+    """Insert or replace a scalar field in existing YAML frontmatter (no-op if none)."""
+    match = FRONTMATTER_RE.match(text)
+    if not match:
+        return text
+    fm = match.group(0)
+    body = text[match.end():]
+    line = f"{field}: {value}"
+    if re.search(rf"^{re.escape(field)}:", fm, re.MULTILINE):
+        fm = re.sub(rf"^{re.escape(field)}:.*$", line, fm, flags=re.MULTILINE)
+    else:
+        idx = fm.rfind("---")
+        fm = fm[:idx] + line + "\n" + fm[idx:]
+    return fm + body
+
+
+def regroup_command_pages(dst_section: Path, config: Dict) -> None:
+    """Reorganize a flat CLI command reference into a subsection per top-level command.
+
+    Command pages follow the convention `<prefix><top>[-<sub>...].md` (e.g.
+    `sima-cli-modelzoo-get.md`). Each top-level command `<top>` becomes a folder
+    `<dst_section>/<top>/` whose category index is the parent command page
+    (`<prefix><top>.md` → `<top>/index.md`) and whose other members are that
+    command's subcommand pages. The bare program page (`<root_stem>.md`) is moved
+    to the section root. All sibling/cross-page `.md` links are then recomputed
+    against the new layout. The section's landing `index.md` is left in place.
+    """
+    prefix = config.get("prefix", "")
+    root_stem = config.get("root_stem", "")
+    position_base = int(config.get("position_base", 3))
+    # The bare program page must not be named after the section folder: Docusaurus
+    # treats a `<folder>.md` as the category index and it would collide with the
+    # landing `index.md` (duplicate route). Allow an override, else auto-disambiguate.
+    root_page_stem = config.get("root_page_stem") or root_stem
+    if root_page_stem == dst_section.name:
+        root_page_stem = f"{root_page_stem}-cli"
+
+    # 1. Discover command pages anywhere under the section (skip the landing index).
+    command_files: List[Tuple[Path, str]] = []
+    for path in dst_section.rglob("*.md"):
+        if path.name == "index.md" and path.parent == dst_section:
+            continue
+        stem = path.stem
+        if stem == root_stem or (prefix and stem.startswith(prefix)):
+            command_files.append((path, stem))
+
+    # 2. Compute each page's new location (relative to dst_section) + group membership.
+    stem_to_target: Dict[str, str] = {}
+    groups: Dict[str, List[str]] = {}
+    for _, stem in command_files:
+        if stem == root_stem:
+            stem_to_target[stem] = f"{root_page_stem}.md"
+            continue
+        rest = stem[len(prefix):]
+        top = rest.split("-", 1)[0]
+        groups.setdefault(top, [])
+        if rest == top:
+            stem_to_target[stem] = f"{top}/index.md"  # parent command → category index
+        else:
+            stem_to_target[stem] = f"{top}/{stem}.md"
+            groups[top].append(stem)
+
+    # 3. Move files into their new homes.
+    src_by_stem = {stem: path for path, stem in command_files}
+    for stem, target in stem_to_target.items():
+        src = src_by_stem[stem]
+        dst = dst_section / target
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.resolve() != dst.resolve():
+            shutil.move(str(src), str(dst))
+
+    # 4. Keep the bare program page near the top of the section.
+    root_page = dst_section / f"{root_page_stem}.md"
+    if root_page.is_file():
+        text = root_page.read_text(encoding="utf-8")
+        root_page.write_text(set_frontmatter_field(text, "sidebar_position", "2"), encoding="utf-8")
+
+    # 5. One subsection (category) per top-level command, ordered alphabetically.
+    for position, top in enumerate(sorted(groups), start=position_base):
+        write_category_json(dst_section / top, top, position)
+
+    # 6. Drop any now-empty source subfolders (e.g. the original flat `commands/`).
+    for child in list(dst_section.iterdir()):
+        if child.is_dir() and child.name not in groups and not any(child.rglob("*")):
+            shutil.rmtree(child)
+
+    # 7. Recompute every `.md` link against the new layout, keyed by basename stem.
+    def relink(text: str, page_dir: Path) -> str:
+        def repl(match: re.Match[str]) -> str:
+            target = match.group(2)
+            anchor = match.group(3) or ""
+            base = target.split("/")[-1]
+            if base not in stem_to_target:
+                return match.group(0)
+            rel = os.path.relpath(dst_section / stem_to_target[base], page_dir).replace(os.sep, "/")
+            if not rel.startswith((".", "/")):
+                rel = "./" + rel
+            return f"{match.group(1)}{rel}{anchor}{match.group(4)}"
+        return MD_LINK_RE.sub(repl, text)
+
+    for path in dst_section.rglob("*.md"):
+        path.write_text(relink(path.read_text(encoding="utf-8"), path.parent), encoding="utf-8")
+
+
 def parse_source_index(index_text: str) -> Dict[str, Dict[str, str]]:
     """Extract per-module summaries from a source's flat index.md.
 
@@ -507,6 +611,9 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
         write_category_json(dst_section, title, sidebar_position)
         write_group_categories(dst_section, landing)
         maybe_write_landing_page(source, src_docs, dst_section, title)
+        group_commands = source.get("group_commands")
+        if group_commands:
+            regroup_command_pages(dst_section, group_commands)
     except OSError as exc:
         return False, f"copy failed: {exc}"
 

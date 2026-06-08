@@ -30,24 +30,30 @@ int main(int argc, char** argv) {
       return 1;
     }
 
+    // STEP load-model
     simaai::neat::Model model(model_path);
+    // END STEP
 
     // CORE LOGIC
     // Model is now a Graph-compatible object. `graph.add(model)` appends the
     // model route fragment (preprocess/inference/postprocess as needed) without
     // exposing the internal low-level runtime graph.
+    // STEP compose-graph
     simaai::neat::Graph graph;
     graph.add(simaai::neat::nodes::Input("image"));
     graph.add(model);
     graph.add(simaai::neat::nodes::Output("result"));
 
     std::cout << graph.describe() << "\n";
+    // END STEP
     // END CORE LOGIC
 
+    // STEP inspect-model
     const auto info = model.info();
     std::cout << "model=" << (info.model_name.empty() ? "<unnamed>" : info.model_name)
               << " physical_outputs=" << info.output_topology.physical_outputs
               << " logical_outputs=" << info.output_topology.logical_outputs << "\n";
+    // END STEP
     std::cout << "[OK] 013_embed_model_inside_graph\n";
     return 0;
   } catch (const std::exception& e) {
