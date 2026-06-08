@@ -15,6 +15,7 @@
 #include "builder/OutputSpec.h"
 #include "pipeline/FormatSpec.h"
 #include "pipeline/PayloadType.h"
+#include "pipeline/TensorCore.h"
 
 #include <memory>
 #include <cstdint>
@@ -51,6 +52,14 @@ struct PreprocessMetaTemplate {
   bool normalize = false;  ///< True if preprocess applies normalization.
   bool quantize = false;   ///< True if preprocess applies quantization.
   bool tessellate = false; ///< True if preprocess applies tessellation.
+
+  bool roi_list_enabled = false;   ///< True when runtime ROI-list metadata is emitted.
+  std::vector<PreprocessRoi> rois; ///< Runtime ROI windows in output-slot order.
+  int roi_input_batch_size = 0;    ///< Number of source images available to ROI batch indices.
+  int roi_source_width = 0;        ///< Source image width for runtime ROI extraction.
+  int roi_source_height = 0;       ///< Source image height for runtime ROI extraction.
+  int roi_source_stride_bytes = 0; ///< Source row stride in bytes for runtime ROI extraction.
+  int roi_pad_value = 0;           ///< Pad value used for out-of-frame ROI pixels.
 };
 
 /**

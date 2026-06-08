@@ -272,6 +272,10 @@ set(UNIT_TESTS
   unit_input_policy_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
+  unit_preprocess_roi_meta_test
+  unit_preprocess_roi_api_test
+  unit_preprocess_roi_batch_pack_test
+  unit_preprocess_roi_split_test
   unit_preprocess_meta_template_dynamic_test
   unit_preproc_contract_rules_test
   unit_inputstream_stop_timeout_detach_test
@@ -1304,6 +1308,33 @@ add_pipeline_test(
 
 if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST sync_yolov8_test_detessdequant APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
+add_pipeline_test_long(
+  preproc_roi_batch_functional_test
+  e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT preproc_roi_batch_functional_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;long")
+  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+endif()
+
+add_pipeline_test(
+  preproc_roi_user_smoke_test
+  e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_DISPATCHER
+)
+
+if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  target_compile_definitions(preproc_roi_user_smoke_test
+    PRIVATE SIMA_ROI_USER_SMOKE_DEFAULT=1)
+  set_property(TEST preproc_roi_user_smoke_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;smoke")
+  set_tests_properties(preproc_roi_user_smoke_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 add_pipeline_test(
