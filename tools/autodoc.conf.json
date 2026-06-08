@@ -126,7 +126,8 @@
       ],
       "group_commands": {
         "prefix": "sima-cli-",
-        "root_stem": "sima-cli"
+        "root_stem": "sima-cli",
+        "root_page_stem": "cli"
       }
     }
   ]

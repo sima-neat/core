@@ -406,6 +406,12 @@ def regroup_command_pages(dst_section: Path, config: Dict) -> None:
     prefix = config.get("prefix", "")
     root_stem = config.get("root_stem", "")
     position_base = int(config.get("position_base", 3))
+    # The bare program page must not be named after the section folder: Docusaurus
+    # treats a `<folder>.md` as the category index and it would collide with the
+    # landing `index.md` (duplicate route). Allow an override, else auto-disambiguate.
+    root_page_stem = config.get("root_page_stem") or root_stem
+    if root_page_stem == dst_section.name:
+        root_page_stem = f"{root_page_stem}-cli"
 
     # 1. Discover command pages anywhere under the section (skip the landing index).
     command_files: List[Tuple[Path, str]] = []
@@ -421,7 +427,7 @@ def regroup_command_pages(dst_section: Path, config: Dict) -> None:
     groups: Dict[str, List[str]] = {}
     for _, stem in command_files:
         if stem == root_stem:
-            stem_to_target[stem] = f"{root_stem}.md"
+            stem_to_target[stem] = f"{root_page_stem}.md"
             continue
         rest = stem[len(prefix):]
         top = rest.split("-", 1)[0]
@@ -442,7 +448,7 @@ def regroup_command_pages(dst_section: Path, config: Dict) -> None:
             shutil.move(str(src), str(dst))
 
     # 4. Keep the bare program page near the top of the section.
-    root_page = dst_section / f"{root_stem}.md"
+    root_page = dst_section / f"{root_page_stem}.md"
     if root_page.is_file():
         text = root_page.read_text(encoding="utf-8")
         root_page.write_text(set_frontmatter_field(text, "sidebar_position", "2"), encoding="utf-8")

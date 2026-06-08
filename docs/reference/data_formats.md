@@ -94,6 +94,6 @@ supersedes the deprecated `Sample::format` field.
 
 ## See also
 
-- [NeatTensor Contract](/getting-started/development_workflow/core_types)
+- [Tensor and Sample](/getting-started/development_workflow/core_types)
 - [Tutorials](/tutorials)
 - [Architecture](/contribute/architecture)

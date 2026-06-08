@@ -14,7 +14,7 @@ mdx:
 
 *Detections written by the program below, drawn on the source image.*
 
-This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](./run_first_model)), you compose the model into a [`Graph`](/getting-started/development_workflow/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
+This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](/getting-started/minimal_example/run_first_model)), you compose the model into a [`Graph`](/getting-started/development_workflow/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
 
 For this first app the shape is intentionally simple:
 
@@ -30,7 +30,7 @@ Use the **Python / C++** tabs on any code block — your choice follows the site
 
 ## Set up the project
 
-:::tip Already did [Run a Model](./run_first_model)?
+:::tip Already did [Run a Model](/getting-started/minimal_example/run_first_model)?
 You can skip this section — it uses the same `assets/` directory, model package, and sample image. Jump straight to [Walk through the code](#walk-through-the-code).
 :::
 
