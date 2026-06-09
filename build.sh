@@ -2116,7 +2116,7 @@ PY
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
       echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja wheel
       local py_abi
       local py_triplet
       local pyneat_ext_suffix
@@ -2153,6 +2153,18 @@ PY
         CMAKE_GENERATOR="Unix Makefiles" \
         CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
         "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
+      mapfile -t built_wheels < <(find dist -maxdepth 1 -type f -name 'pyneat-*.whl' | sort)
+      if [[ "${#built_wheels[@]}" -ne 1 ]]; then
+        echo "ERROR: expected exactly one pyneat wheel, found ${#built_wheels[@]}." >&2
+        printf '  %s\n' "${built_wheels[@]}" >&2
+        exit 1
+      fi
+      "${ELXR_HOST_PYTHON_EXECUTABLE}" -m wheel tags \
+        --remove \
+        --python-tag "cp${py_abi}" \
+        --abi-tag "cp${py_abi}" \
+        --platform-tag "${ELXR_WHEEL_HOST_PLATFORM//-/_}" \
+        "${built_wheels[0]}"
     else
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
         "${wheel_python}" -m build --wheel --outdir dist
