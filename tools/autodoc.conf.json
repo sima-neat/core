@@ -2,7 +2,7 @@
   "sources": [
     {
       "key": "llima",
-      "title": "LLiMa",
+      "title": "GenAI with LLiMa",
       "repo": "git@github.com:sima-neat/llima",
       "branch": "develop",
       "branch_policy": "snap",
@@ -11,8 +11,9 @@
       "docs_subpath": "docs",
       "mount": "genai-llima",
       "sidebar_position": 4,
+      "category_link": "index",
       "files_order": [
-        "introduction",
+        "index",
         "setup",
         "runtime",
         "compilation_genai",
@@ -40,14 +41,14 @@
     },
     {
       "key": "model-sdk-api",
-      "title": "API Reference",
+      "title": "ModelSDK API",
       "repo": "git@github.com:sima-neat/model-sdk",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/generated",
       "mount": "reference/model-sdk-api",
-      "sidebar_position": 100,
+      "sidebar_position": 4,
       "files_order": [
         "index"
       ],
@@ -56,8 +57,8 @@
       ],
       "restructure_api": true,
       "landing_page": {
-        "title": "Model SDK API Reference",
-        "intro": "The Model SDK exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
+        "title": "ModelSDK API Reference",
+        "intro": "The ModelSDK exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
         "groups": [
           {
             "label": "Compilation",

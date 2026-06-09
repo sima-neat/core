@@ -143,7 +143,7 @@ const config = {
           path: canonicalDocsPath(process.env.DOCS_PATH || "../docs"),
           routeBasePath: "/",
           sidebarPath: require.resolve("./sidebars.js"),
-          exclude: ["doxygen/**", "_tmp_test.txt"],
+          exclude: ["doxygen/**", "reference/env_var_rationalization.md", "_tmp_test.txt"],
         },
         blog: false,
         theme: {

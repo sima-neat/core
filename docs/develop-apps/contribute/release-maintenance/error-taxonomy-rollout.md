@@ -1,0 +1,39 @@
+---
+title: Error Taxonomy Rollout
+description: Structured error-code migration and verification checklist
+sidebar_position: 2
+slug: /develop-apps/contribute/error-taxonomy-rollout
+---
+
+# Error Taxonomy Rollout
+
+This checklist tracks framework-only rollout of canonical error semantics.
+
+## Canonical codes
+
+- `misconfig.pipeline_shape`
+- `misconfig.caps`
+- `misconfig.input_shape`
+- `build.parse_launch`
+- `runtime.pull`
+- `io.parse`
+- `io.open`
+
+## Execution slices
+
+1. Taxonomy scaffolding
+2. Build/validate coding
+3. Runtime pull coding
+4. Graph IO parser/open coding
+5. Tests + docs
+
+## Verification checklist
+
+- `NeatError.report().error_code` is non-empty on terminal framework failures.
+- `PullError.code` is populated on runtime pull errors.
+- Graph wrapper errors include code + context + hint (no generic fallback text).
+- JSON parse failures include `offset=` and `near='...'`.
+- Negative tests assert code + stable message fragments per taxonomy class.
+- Diagnostics docs and architecture docs include triage flow: read `error_code`,
+  inspect `repro_note`, inspect bus diagnostics, then replay with
+  `repro_gst_launch`.

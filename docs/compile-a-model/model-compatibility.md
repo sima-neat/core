@@ -1,6 +1,6 @@
 ---
 title: Model compatibility
-sidebar_position: 5
+sidebar_position: 2
 ---
 
 # Model compatibility

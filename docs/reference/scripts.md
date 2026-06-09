@@ -1,7 +1,7 @@
 ---
 title: Tools and scripts inventory
 description: What lives in `core/scripts/` and `core/tools/`, and when to reach for each.
-sidebar_position: 11
+sidebar_position: 90
 ---
 
 # Tools and scripts inventory

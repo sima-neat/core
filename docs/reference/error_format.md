@@ -1,7 +1,7 @@
 ---
 title: Plugin Error Format
 description: Structured error fields from plugin failures
-sidebar_position: 3
+sidebar_position: 8
 ---
 
 # Plugin Error Format

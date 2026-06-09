@@ -466,6 +466,14 @@ html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
   margin: 1.2rem 0 0.4rem;
 }
 
+.overview-link-columns-single {
+  max-width: 720px;
+}
+
+.compile-workflow-columns {
+  grid-template-columns: 1fr;
+}
+
 .overview-section-label {
   display: inline-block;
   margin: 0.2rem 0 0.45rem;
@@ -571,6 +579,21 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   --overview-panel-accent-soft: rgba(42, 156, 79, 0.18);
 }
 
+.overview-link-panel-model {
+  --overview-panel-accent: #a4cc2d;
+  --overview-panel-accent-soft: rgba(164, 204, 45, 0.2);
+}
+
+.overview-link-panel-app {
+  --overview-panel-accent: #2a9c4f;
+  --overview-panel-accent-soft: rgba(42, 156, 79, 0.18);
+}
+
+.overview-link-panel-reference {
+  --overview-panel-accent: #d26728;
+  --overview-panel-accent-soft: rgba(210, 103, 40, 0.16);
+}
+
 .overview-link-panel h2 {
   margin: 0 0 0.45rem;
   font-size: 1.5rem;
@@ -602,6 +625,10 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   margin: 0;
   display: grid;
   gap: 0.75rem;
+}
+
+.compile-workflow-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .overview-link-card {
@@ -672,6 +699,12 @@ html[data-theme="dark"] .overview-link-card strong {
 
 html[data-theme="dark"] .overview-link-card span {
   color: #b9c7d8;
+}
+
+@media (max-width: 700px) {
+  .compile-workflow-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 .installation-paths-hero {
@@ -1446,7 +1479,7 @@ mark.docSearchHighlight {
 }
 
 /* ----------------------------------------------------------------------------
- * Model SDK / griffe API page section accents.
+ * ModelSDK / griffe API page section accents.
  *
  * autodoc promotes griffe's plain `Imports:` / `Classes:` / `Functions:` /
  * `Constants:` labels into <h2> headings. Each gets a distinct left-border

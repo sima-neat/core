@@ -1,6 +1,6 @@
 ---
 title: Validate accuracy and performance
-sidebar_position: 9
+sidebar_position: 6
 ---
 
 # Validate accuracy and performance

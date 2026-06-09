@@ -2,7 +2,7 @@
 
 The **Neat framework** is the C++/Python library and runtime that runs models on the SiMa Modalix chip. It loads compiled `.tar.gz` model archives, assembles them into deterministic GStreamer pipelines, and executes inference at frame rate on heterogeneous compute (A65 host CPU + EV74 vector cores + MLA accelerator + hardware codec).
 
-This site is the **reference documentation** for the framework's public API. For design rationale and worked examples, see the [Architecture deep dive](/contribute/architecture), which mirrors the architect-level documentation.
+This site is the **reference documentation** for the framework's public API. For design rationale and worked examples, see the [Architecture deep dive](/develop-apps/contribute/architecture), which mirrors the architect-level documentation.
 
 ## Neat has two parts
 
@@ -41,13 +41,13 @@ The framework's public surface is a small set of primary concepts. They form a c
 
 | # | Concept | Purpose | Reference |
 |---|---|---|---|
-| 1 | **Model archive** | Sealed `.tar.gz` file from the compiler — kernels, weights, configs, and the MPK contract. | [`Model`](/reference/cppapi/classes/simaai-neat-model), [MPK contract](/concepts/mpk_contract) |
+| 1 | **Model archive** | Sealed `.tar.gz` file from the compiler — kernels, weights, configs, and the MPK contract. | [`Model`](/reference/cppapi/classes/simaai-neat-model), [MPK contract](/develop-apps/advanced-concepts/mpk_contract) |
 | 2 | **Model** | Loaded form of a model archive; the simplified entry point. | [`Model`](/reference/cppapi/classes/simaai-neat-model) |
-| 3 | **Tensor** | Typed data unit that flows between stages. | [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Memory model](/concepts/memory_model), [dtype contract](/concepts/dtype_contract) |
-| 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [Node APIs](/reference/cppapi/groups/nodes), [GStreamer underneath](/concepts/gstreamer_layer) |
+| 3 | **Tensor** | Typed data unit that flows between stages. | [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Memory model](/develop-apps/advanced-concepts/memory_model), [dtype contract](/develop-apps/advanced-concepts/dtype_contract) |
+| 4 | **Nodes** | Smallest building blocks; each wraps one (or a few) GStreamer elements. | [Node APIs](/reference/cppapi/groups/nodes), [GStreamer underneath](/develop-apps/advanced-concepts/gstreamer_layer) |
 | 5 | **Reusable Graph fragments** | Pre-made `Graph` fragments capturing common patterns. | [Reusable Graph fragments](/reference/cppapi/groups/nodes-groups) |
 | 6 | **Graph** | Assembly stage that turns Nodes, Models, and reusable Graph fragments into a runnable pipeline. | [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`GraphOptions`](/reference/cppapi/structs/simaai-neat-graphoptions) |
-| 7 | **Run** | Live, running pipeline produced by `Graph::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
+| 7 | **Run** | Live, running pipeline produced by `Graph::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/develop-apps/advanced-concepts/timing_model), [Threading model](/develop-apps/advanced-concepts/threading) |
 
 ## Building and linking against Neat (CMake)
 
@@ -77,7 +77,7 @@ In your sources, pull in the umbrella header:
 #include "neat.h"   // simaai::neat::Model, Graph, Run, Tensor, nodes, …
 ```
 
-### Cross-compiling from the Neat SDK
+### Cross-compiling from Palette SDK
 
 On a native DevKit install, `SimaNeatConfig.cmake` is on the default system prefix and `find_package` resolves with no extra setup. In an SDK cross-build, point CMake at the exported sysroot before `find_package` so it can locate the aarch64 package:
 
@@ -97,28 +97,28 @@ cmake --build build -j
 ./build/my_app
 ```
 
-If `find_package(SimaNeat ...)` fails, see [Troubleshooting](/troubleshooting) (the `find_package(SimaNeat CONFIG)` entry) and the worked [Hello Neat](/getting-started/minimal_example/minimal) and [Run an App](/getting-started/minimal_example/run_an_app) examples.
+If `find_package(SimaNeat ...)` fails, see [Troubleshooting](/reference/troubleshooting) (the `find_package(SimaNeat CONFIG)` entry) and the worked [Hello Neat](/develop-apps/hello-neat/minimal) and [Run an App](/develop-apps/hello-neat/run_an_app) examples.
 
 ## Where to read what
 
 | What you want | Where to look |
 |---|---|
-| Conceptual overview, architecture, design rationale | [Architecture deep dive](/contribute/architecture) — the architect-level documentation, surfaced as navigable site pages |
+| Conceptual overview, architecture, design rationale | [Architecture deep dive](/develop-apps/contribute/architecture) — the architect-level documentation, surfaced as navigable site pages |
 | C++ public API — every class, method, field | [C++ API Reference](/reference/cppapi/) — generated from Doxygen comments |
 | Python public API — pyneat module surface | [Python API Reference](/reference/pythonapi/) — generated from nanobind bindings |
-| Conceptual deep-dives (dtype contract, memory model, error codes, etc.) | [dtype contract](/concepts/dtype_contract), [memory model](/concepts/memory_model), [graphs](/concepts/graphs), [timing model](/concepts/timing_model), [threading](/concepts/threading), [processor backends](/concepts/processor_backends), [GStreamer underneath](/concepts/gstreamer_layer), [CVU kernels](/concepts/cvu_kernels), [MPK contract](/concepts/mpk_contract), [error codes](/concepts/error_codes), [build options](/concepts/build_options), [agentic workflow](/concepts/agentic_workflow) |
-| Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/env_vars), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
-| Onboarding, build, first inference | [Installation](/getting-started/installation), [Build](/contribute/build), [Hello Neat](/getting-started/minimal_example/minimal) |
+| Advanced concepts and contracts | [graphs](/develop-apps/advanced-concepts/graphs), [timing model](/develop-apps/advanced-concepts/timing_model), [threading](/develop-apps/advanced-concepts/threading), [data formats](/develop-apps/advanced-concepts/data_formats), [dtype contract](/develop-apps/advanced-concepts/dtype_contract), [memory model](/develop-apps/advanced-concepts/memory_model), [MPK contract](/develop-apps/advanced-concepts/mpk_contract), [processor backends](/develop-apps/advanced-concepts/processor_backends), [GStreamer underneath](/develop-apps/advanced-concepts/gstreamer_layer), [CVU kernels](/develop-apps/advanced-concepts/cvu_kernels), [video sender](/develop-apps/advanced-concepts/video_sender), [metadata sender](/develop-apps/advanced-concepts/metadata_sender) |
+| Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/environment-variables), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
+| Onboarding, build, first inference | [Installation](/getting-started/installation), [Build](/develop-apps/contribute/build), [Hello Neat](/develop-apps/hello-neat/minimal) |
 | How to do specific things (debugging, runtime tuning, plugin failures) | [Tutorial 015: tune throughput & queues](/tutorials/015-tune-throughput-and-queues), [Tutorial 011: diagnose a pipeline](/tutorials/011-diagnose-a-pipeline) |
-| Coding standards, MPK contract, contribution policy | [Coding standard](/contribute/coding_standard), [MPK contract](/contribute/mpk_contract), [Architecture](/contribute/architecture) |
+| Coding standards, MPK contract, contribution policy | [Coding standard](/develop-apps/contribute/coding_standard), [MPK contract](/develop-apps/contribute/mpk_contract), [Architecture](/develop-apps/contribute/architecture) |
 
 ## Why the framework is built for agents
 
 A consequence of how the framework was designed: it's an exceptionally good substrate for AI code generation. Every framework error produces a structured `GraphReport` (machine-readable error code + reproducer command). Every public symbol has stable naming. Validation runs before any pipeline starts. Pipelines are serializable JSON. The public API is ABI-stable. Errors fail fast with actionable messages instead of silent fallbacks.
 
-These properties weren't picked for AI agents specifically — they came from "make the framework deterministic, debuggable, and never hang the process" (see [`docs/contribute/architecture.md`](/contribute/architecture)). But they happen to be exactly what an AI agent needs to write code that converges quickly. That's why the **agentic workflow** in the Neat environment delivers what it does — the framework is the substrate, the environment is the workshop.
+These properties weren't picked for AI agents specifically — they came from "make the framework deterministic, debuggable, and never hang the process" (see [`docs/develop-apps/contribute/architecture.md`](/develop-apps/contribute/architecture)). But they happen to be exactly what an AI agent needs to write code that converges quickly. That's why the **agentic workflow** in the Neat environment delivers what it does — the framework is the substrate, the environment is the workshop.
 
-The full story of why the framework is good for agents — fifteen specific design properties, each tied to architect-doc rationale — is in the [Architecture deep dive](/contribute/architecture).
+The full story of why the framework is good for agents — fifteen specific design properties, each tied to architect-doc rationale — is in the [Architecture deep dive](/develop-apps/contribute/architecture).
 
 ## Conventions in this reference
 
@@ -129,6 +129,6 @@ The full story of why the framework is good for agents — fifteen specific desi
   source-tree `include/graph/` runtime substrate is intentionally excluded from
   the public reference; application code should use `simaai::neat::Graph` / `Run`.
 - Every public header has a file-level `@file` / `@ingroup` / `@brief` block. Group definitions live in `docs/doxygen/groups.dox`.
-- Errors are returned as `NeatError` exceptions carrying a structured `GraphReport`. See the [Error code catalog](/concepts/error_codes) for the full taxonomy.
+- Errors are returned as `NeatError` exceptions carrying a structured `GraphReport`. See the [Error code catalog](/reference/error-codes/) for the full taxonomy.
 
-The rest of this site is the API itself. Start by browsing [classes](/reference/cppapi/classes), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Node APIs](/reference/cppapi/groups/nodes).
+The rest of this site is the API itself. Start with the [C++ API reference](/reference/cppapi/), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Node APIs](/reference/cppapi/groups/nodes).
