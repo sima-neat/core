@@ -3835,9 +3835,8 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
       .def(nb::init<>())
-      .def_rw("sync_latency_ms", &simaai::neat::BenchmarkReport::sync_latency_ms)
-      .def_rw("sync_fps", &simaai::neat::BenchmarkReport::sync_fps)
-      .def_rw("async_fps", &simaai::neat::BenchmarkReport::async_fps)
+      .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
+      .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
       .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
 

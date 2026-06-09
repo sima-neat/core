@@ -24,15 +24,13 @@ int main(int argc, char** argv) {
     require(!specs.empty(), "yolov8 benchmark: model.input_specs() returned no inputs");
 
     const simaai::neat::BenchmarkReport report = model.benchmark(10);
-    std::cout << "[e2e_benchmark] sync_latency_ms=" << report.sync_latency_ms << "\n";
-    std::cout << "[e2e_benchmark] sync_fps=" << report.sync_fps << "\n";
-    std::cout << "[e2e_benchmark] async_fps=" << report.async_fps << "\n";
+    std::cout << "[e2e_benchmark] latency_ms=" << report.latency_ms << "\n";
+    std::cout << "[e2e_benchmark] fps=" << report.fps << "\n";
     std::cout << "[e2e_benchmark] avg_power_watts=" << report.avg_power_watts << "\n";
     std::cout << "[e2e_benchmark] energy_joules=" << report.energy_joules << "\n";
 
-    require(report.sync_latency_ms > 0.0, "yolov8 benchmark: sync latency must be positive");
-    require(report.sync_fps > 0.0, "yolov8 benchmark: sync FPS must be positive");
-    require(report.async_fps > 0.0, "yolov8 benchmark: async FPS must be positive");
+    require(report.latency_ms > 0.0, "yolov8 benchmark: latency must be positive");
+    require(report.fps > 0.0, "yolov8 benchmark: FPS must be positive");
     require(report.avg_power_watts >= 0.0, "yolov8 benchmark: power must be non-negative");
     require(report.energy_joules >= 0.0, "yolov8 benchmark: energy must be non-negative");
 

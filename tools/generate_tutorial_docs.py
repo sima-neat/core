@@ -32,10 +32,10 @@ REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 # (TOC) position and the in-section ordering on the tutorials index page.
 # Modules whose number is not listed here fall to the end in numeric order.
 LEARNING_FLOW_ORDER = [
-    1, 2, 3, 4,        # Beginner foundations
-    8, 5, 10, 6,       # Core I/O and pre/postprocessing
-    7, 9, 11, 12, 17,  # Pipelines, diagnostics, custom graphs, live input
-    13, 14, 15, 16,    # Advanced: hybrid graphs, multi-stream, perf, production
+    1, 2, 3, 4, 5,          # Beginner foundations
+    9, 6, 11, 7,            # Core I/O and pre/postprocessing
+    8, 10, 12, 13, 18,      # Pipelines, diagnostics, custom graphs, live input
+    14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
 ]
 
 
@@ -1187,7 +1187,7 @@ def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List
         '    <ul class="overview-link-list">',
     ]
     difficulty_copy = {
-        "Beginner": "First model run, async inference, basic graphs, and model options.",
+        "Beginner": "First model run, async inference, model benchmarking, basic graphs, and model options.",
         "Intermediate": "Data exchange, preprocessing, outputs, streaming, diagnostics, and graph composition.",
         "Advanced": "Multi-stream graphs, throughput tuning, and production-style pipeline structure.",
     }

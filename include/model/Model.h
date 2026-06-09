@@ -54,9 +54,8 @@ using TensorSpec = TensorConstraint;
  * Power fields are populated when board power telemetry is available.
  */
 struct BenchmarkReport {
-  double sync_latency_ms = 0.0;
-  double sync_fps = 0.0;
-  double async_fps = 0.0;
+  double latency_ms = 0.0;
+  double fps = 0.0;
   double avg_power_watts = 0.0;
   double energy_joules = 0.0;
 };

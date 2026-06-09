@@ -7229,32 +7229,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
     return opt;
   };
 
-  {
-    Runner warmup = build(inputs, Model::RouteOptions{}, make_run_options(false));
-    for (int i = 0; i < kWarmupSamples; ++i) {
-      (void)warmup.run(inputs, kTimeoutMs);
-    }
-    warmup.close();
-  }
-
   BenchmarkReport report;
-  {
-    Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
-    MeasureScope measure = runner.start_measurement(
-        make_benchmark_measure_options(/*include_power=*/false, kTimeoutMs));
-    for (int i = 0; i < num_samples; ++i) {
-      (void)runner.run(inputs, kTimeoutMs);
-    }
-    const MeasureReport measured = measure.stop();
-    if (measured.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
-      runner.close();
-      throw std::runtime_error("Model::benchmark: sync measured output count mismatch");
-    }
-    report.sync_latency_ms = measured.end_to_end.avg_ms;
-    report.sync_fps = measured.throughput_batches_per_s;
-    runner.close();
-  }
-
   {
     Runner warmup = build(inputs, Model::RouteOptions{}, make_run_options(false));
     for (int i = 0; i < kWarmupSamples; ++i) {
@@ -7320,7 +7295,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
       runner.close();
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
-    report.async_fps = measured.throughput_batches_per_s;
+    report.latency_ms = measured.end_to_end.avg_ms;
+    report.fps = measured.throughput_batches_per_s;
     if (measured.power.enabled && measured.power.samples > 0) {
       power_available = true;
       report.avg_power_watts = measured.power.total_avg_watts;
@@ -7335,9 +7311,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
   std::cout << "NEAT Benchmark\n";
   std::cout << "Input: synthetic\n";
   std::cout << "Samples: " << num_samples << "\n";
-  std::cout << "Sync latency: " << report.sync_latency_ms << " ms\n";
-  std::cout << "Sync FPS:     " << report.sync_fps << "\n";
-  std::cout << "Async FPS:    " << report.async_fps << "\n";
+  std::cout << "Latency: " << report.latency_ms << " ms\n";
+  std::cout << "FPS:     " << report.fps << "\n";
   if (power_available) {
     std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
     std::cout << "Energy:       " << report.energy_joules << " J\n";

@@ -80,7 +80,7 @@ To integrate this chapter's C++ source into your own project with a custom `CMak
 
 ## In Practice
 
-This chapter uses the async push/pull surface. For the full build-vs-run and sync-vs-async model plus the complete `RunOptions` surface, see [Build an Inference Pipeline](/tutorials/003-build-inference-pipeline). For queue depth, overflow policy, and metrics under load, see [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues).
+This chapter uses the async push/pull surface. To measure the same model with deterministic synthetic inputs, continue to [Benchmark Your Model](/tutorials/003-benchmark-your-model). For the full build-vs-run and sync-vs-async model plus the complete `RunOptions` surface, see [Build an Inference Pipeline](/tutorials/004-build-inference-pipeline). For queue depth, overflow policy, and metrics under load, see [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
 
 ## Source Files
 - C++: `tutorials/002_run_inference_async/run_inference_async.cpp`
