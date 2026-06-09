@@ -125,6 +125,6 @@ cmake -S . -B build && cmake --build build -j
 
 Together these auto-resolve headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
-For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see [Hello Neat](/getting-started/minimal_example).
+For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see [Hello Neat](/develop-apps/hello-neat).
 
 <p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>
