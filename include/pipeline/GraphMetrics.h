@@ -58,7 +58,8 @@ struct GraphMetricsReport {
   std::vector<GraphNodeMetrics> node_metrics;
 };
 
-GraphMetricsReport build_graph_metrics_report_run_lifetime(
-    const Run& run, const RuntimeMetricsOptions& opt = RuntimeMetricsOptions{});
+GraphMetricsReport
+build_graph_metrics_report_run_lifetime(const Run& run,
+                                        const RuntimeMetricsOptions& opt = RuntimeMetricsOptions{});
 
 } // namespace simaai::neat

@@ -100,15 +100,15 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     require(mapping.size() == 3U,
             "synthetic materialized mapping should include injected input, real node, output");
     require(mapping[0].role ==
-                simaai::neat::runtime::MaterializedNodeAttribution::Role::InjectedInput &&
+                    simaai::neat::runtime::MaterializedNodeAttribution::Role::InjectedInput &&
                 mapping[0].runtime_node == simaai::neat::graph::kInvalidNode,
             "injected input must stay explicitly unattributed");
     require(mapping[1].role ==
-                simaai::neat::runtime::MaterializedNodeAttribution::Role::SegmentNode &&
+                    simaai::neat::runtime::MaterializedNodeAttribution::Role::SegmentNode &&
                 mapping[1].segment_node_index == 0U && mapping[1].runtime_node == 42,
             "real materialized node must retain its runtime-node attribution");
     require(mapping[2].role ==
-                simaai::neat::runtime::MaterializedNodeAttribution::Role::InjectedOutput &&
+                    simaai::neat::runtime::MaterializedNodeAttribution::Role::InjectedOutput &&
                 mapping[2].runtime_node == simaai::neat::graph::kInvalidNode,
             "injected output must stay explicitly unattributed");
   }
@@ -131,9 +131,8 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     timing_opt.output_memory = simaai::neat::OutputMemory::Owned;
     timing_opt.advanced.copy_input = true;
     simaai::neat::Tensor seed = graph_phase3_test::make_rgb_tensor(16, 16, 0x43);
-    simaai::neat::Run timing_run =
-        timing_graph.build(simaai::neat::TensorList{seed}, simaai::neat::RunMode::Async,
-                           timing_opt);
+    simaai::neat::Run timing_run = timing_graph.build(simaai::neat::TensorList{seed},
+                                                      simaai::neat::RunMode::Async, timing_opt);
     const simaai::neat::RunDiagSnapshot timing = timing_run.diag_snapshot();
     require(!timing.element_timings.empty(),
             "RunOptions::enable_metrics should attach element timing probes without "

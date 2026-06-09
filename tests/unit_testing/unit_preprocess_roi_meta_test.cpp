@@ -51,10 +51,10 @@ GstStructure* sima_meta_structure(GstBuffer* buffer) {
 
 std::vector<std::string> roi_list_required_fields() {
   return {
-      "preproc_roi_list_enable",        "preproc_roi_count",
-      "preproc_roi_batch_indices",      "preproc_roi_rects",
-      "preproc_roi_input_batch_size",   "preproc_roi_source_width",
-      "preproc_roi_source_height",      "preproc_roi_source_stride_bytes",
+      "preproc_roi_list_enable",      "preproc_roi_count",
+      "preproc_roi_batch_indices",    "preproc_roi_rects",
+      "preproc_roi_input_batch_size", "preproc_roi_source_width",
+      "preproc_roi_source_height",    "preproc_roi_source_stride_bytes",
       "preproc_roi_pad_value",
   };
 }
@@ -116,10 +116,8 @@ RUN_TEST("unit_preprocess_roi_meta_test", ([] {
                          parsed->roi_input_count == 3 && parsed->roi_dropped_invalid == 1 &&
                          parsed->roi_dropped_overflow == 0,
                      "ROI meta: parsed ROI counters mismatch");
-             require(parsed->roi_affines.size() == 2U &&
-                         parsed->roi_affines[0].m00 == 0.5 &&
-                         parsed->roi_affines[0].m02 == 10.0 &&
-                         parsed->roi_affines[1].m00 == 0.25 &&
+             require(parsed->roi_affines.size() == 2U && parsed->roi_affines[0].m00 == 0.5 &&
+                         parsed->roi_affines[0].m02 == 10.0 && parsed->roi_affines[1].m00 == 0.25 &&
                          parsed->roi_affines[1].m02 == -3.0,
                      "ROI meta: parsed ROI affines mismatch");
 
@@ -215,9 +213,9 @@ RUN_TEST("unit_preprocess_roi_meta_test", ([] {
                      "ROI meta: failed to seed legacy scalar buffer");
              GstStructure* s = sima_meta_structure(buffer);
              gst_structure_set(s, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_x",
-                               G_TYPE_INT, 5, "preproc_roi_y", G_TYPE_INT, 6,
-                               "preproc_roi_width", G_TYPE_INT, 7, "preproc_roi_height",
-                               G_TYPE_INT, 8, "preproc_roi_source_width", G_TYPE_INT, 1280,
+                               G_TYPE_INT, 5, "preproc_roi_y", G_TYPE_INT, 6, "preproc_roi_width",
+                               G_TYPE_INT, 7, "preproc_roi_height", G_TYPE_INT, 8,
+                               "preproc_roi_source_width", G_TYPE_INT, 1280,
                                "preproc_roi_source_height", G_TYPE_INT, 720, nullptr);
              const auto parsed = simaai::neat::read_simaai_preprocess_meta(buffer);
              require(parsed.has_value() && parsed->roi_list_enabled && parsed->rois.size() == 1U,

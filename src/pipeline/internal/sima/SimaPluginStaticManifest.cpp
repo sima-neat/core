@@ -1757,7 +1757,7 @@ private:
       }
       out.spec.payload.boxdecode.tensor_storage_kind =
           out.boxdecode_tensor_storage_kind.empty() ? nullptr
-                                                   : out.boxdecode_tensor_storage_kind.data();
+                                                    : out.boxdecode_tensor_storage_kind.data();
       out.spec.payload.boxdecode.tensor_storage_kind_len =
           static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
       break;
