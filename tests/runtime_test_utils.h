@@ -67,7 +67,7 @@ inline simaai::neat::Run make_async_rgb_run(const simaai::neat::Tensor& seed,
   run_opt.queue_depth = std::max(producer_queue_depth, consumer_queue_depth);
   run_opt.overflow_policy = OverflowPolicy::Block;
 
-  return graph.build(simaai::neat::TensorList{seed}, RunMode::Async, run_opt);
+  return graph.build(simaai::neat::TensorList{seed}, run_opt);
 }
 
 struct TryPushFillResult {

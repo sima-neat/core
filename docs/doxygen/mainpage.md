@@ -28,7 +28,7 @@ graph.add(neat::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"})
 graph.add(model.graph());
 graph.add(neat::Output{});
 
-auto run = graph.build(neat::RunMode::Async);
+auto run = graph.build();
 while (running) {
   auto sample = run.pull(/*timeout_ms=*/100);
   if (sample) handle_detection(*sample);

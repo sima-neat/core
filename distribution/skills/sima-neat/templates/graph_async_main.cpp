@@ -7,7 +7,7 @@ int main() {
 
   // TODO: construct a representative input tensor.
   // simaai::neat::Tensor input = ...;
-  // auto run = graph.build(input, simaai::neat::PipelineRunMode::Async);
+  // auto run = graph.build(input);
   //
   // if (!run.push(input)) { /* handle push failure */ }
   //

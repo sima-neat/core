@@ -20,7 +20,7 @@ int main() {
 
   // Build when you have a representative input tensor/sample.
   // simaai::neat::Tensor input = ...;
-  // auto run = s.build(input, simaai::neat::PipelineRunMode::Sync);
+  // auto run = s.run(input);
   // simaai::neat::Sample out = run.push_and_pull(input);
   return 0;
 }

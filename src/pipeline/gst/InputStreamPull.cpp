@@ -5,12 +5,6 @@
 #include "pipeline/TensorAdapters.h"
 #include "pipeline/internal/CapsBridge.h"
 
-#if defined(SIMA_HAS_NEAT_PROFILER)
-#include "profiler_scoped_timer.h"
-#else
-#define SIMA_PROF_MEMCPY(site_id, bytes_expr) (void)(bytes_expr)
-#endif
-
 #include <unordered_set>
 
 namespace simaai::neat {
@@ -923,7 +917,6 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
       const int y_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
       const int uv_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
       {
-        SIMA_PROF_MEMCPY(SIMA_NEAT_PROFILER_MEMCPY_NV12_Y, y_sz);
         for (int r = 0; r < h; ++r) {
           std::memcpy(dst + static_cast<size_t>(r) * static_cast<size_t>(w),
                       y + static_cast<size_t>(r) * static_cast<size_t>(y_stride),
@@ -933,7 +926,6 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
       uint8_t* dst_uv = dst + y_sz;
       const int uv_h = h / 2;
       {
-        SIMA_PROF_MEMCPY(SIMA_NEAT_PROFILER_MEMCPY_NV12_UV, uv_sz);
         for (int r = 0; r < uv_h; ++r) {
           std::memcpy(dst_uv + static_cast<size_t>(r) * static_cast<size_t>(w),
                       uv + static_cast<size_t>(r) * static_cast<size_t>(uv_stride),
@@ -965,7 +957,6 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
       const int u_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
       const int v_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2);
       {
-        SIMA_PROF_MEMCPY(SIMA_NEAT_PROFILER_MEMCPY_I420, y_sz + u_sz + v_sz);
         for (int r = 0; r < h; ++r) {
           std::memcpy(dst + static_cast<size_t>(r) * static_cast<size_t>(w),
                       y + static_cast<size_t>(r) * static_cast<size_t>(y_stride),
@@ -1007,7 +998,6 @@ static Sample output_from_sample_stream_inner(GstSample* sample, const char* whe
       const uint8_t* src = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0));
       const int src_stride = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
       {
-        SIMA_PROF_MEMCPY(SIMA_NEAT_PROFILER_MEMCPY_RGB, total);
         for (int r = 0; r < h; ++r) {
           std::memcpy(dst + static_cast<size_t>(r) * row_bytes,
                       src + static_cast<size_t>(r) * static_cast<size_t>(src_stride), row_bytes);

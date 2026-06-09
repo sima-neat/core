@@ -201,8 +201,8 @@ Reach for these before guessing.
 **Inspect the pipeline / run (Python and C++):**
 - `graph.validate()` → a `GraphReport` — validates wiring against built-in contracts before you build. Check its `error_code`.
 - `graph.describe()` → the resolved pipeline as text (node names + caps chain).
-- `run.stats()` → a `RunStats` (headline: `avg_latency_ms`).
-- `run.report()` → a formatted text report of the run.
+- `run.start_measurement()` / `MeasureReport` → counters, latency, input-stream telemetry, plugin/edge timing, and optional power.
+- `NeatError::report()` → structured failure details when a run throws.
 
 **Turn on framework debug output** with `SIMA_DEBUG_PROFILE` — a comma-separated list of components to trace. Use `all` for everything, or narrow it:
 ```bash

@@ -46,7 +46,7 @@ def main(argv: list[str]) -> int:
   graph.add(pyneat.nodes.output())
 
   seed = make_fp32_tensor(args.width, args.height, 0.0)
-  run = graph.build([seed], pyneat.RunMode.Sync)
+  run = graph.build([seed])
   # END STEP
 
   # CORE LOGIC

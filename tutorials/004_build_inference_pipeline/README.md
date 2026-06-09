@@ -34,7 +34,7 @@ Now build the structure. A fresh `Graph` is an empty composition surface, and `a
 
 ### Build the pipeline {#step-build-pipeline}
 
-`build()` is the transition from *description* to *executable*. It resolves the added nodes into a concrete pipeline, validates the input/output contracts against a real sample, selects the execution mode (`Sync` here, for deterministic one-at-a-time behavior), and returns a `Run` handle. We pass a representative frame so `build()` can lock in the negotiated tensor shapes.
+`build()` is the transition from *description* to *executable*. It resolves the added nodes into a concrete pipeline, validates the input/output contracts against a real sample, and creates a reusable `Run` handle. We pass a representative frame so `build()` can lock in the negotiated tensor shapes; the next step uses `Run::run(...)` for a deterministic one-at-a-time call.
 
 **C++:** The sample frame is a `cv::Mat`, and `run_opt.output_memory = Owned` asks the runtime to return owned output buffers.
 
@@ -91,8 +91,8 @@ How `build`/`run`, execution modes, the push/pull surface, and `RunOptions` fit 
 
 ### Sync vs async
 
-- **Sync mode** (`RunMode::Sync`) is optimized for correctness and simplicity. You typically use `push_and_pull(...)` or `Graph::run(...)`.
-- **Async mode** (`RunMode::Async`) separates producer and consumer threads. You call `push(...)` and `pull(...)` independently — see [Run Inference Asynchronously](/tutorials/002-run-inference-async).
+- Use `Graph::run(...)` for a simple one-shot call.
+- Use `Graph::build(...)` when you want a reusable runner and explicit `push(...)` / `pull(...)` control — see [Run Inference Asynchronously](/tutorials/002-run-inference-async).
 
 ### Push/pull API
 
@@ -111,7 +111,7 @@ Common knobs:
 - `output_memory`: output ownership policy (`Auto`, `ZeroCopy`, `Owned`).
 - `on_input_drop`: callback hook for dropped input events.
 
-For queue-depth, overflow, and metrics tuning under load, see [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
+For queue-depth, overflow, and measurement under load, see [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
 
 ### RunAdvancedOptions (expert API)
 
@@ -119,22 +119,28 @@ Advanced knobs are opt-in under `RunOptions::advanced`:
 - `advanced.max_input_bytes`: cap input buffer growth.
 - `advanced.copy_input`: force defensive input copies.
 
-Use `Run::metrics()` to inspect latency, derived throughput, input counters, and optional board PMIC power telemetry in one call. `Model::Runner` forwards the same `metrics()` / `metrics_report()` surface through its public runner adapter. For lower-level compatibility diagnostics, use `Run::stats()` and `Run::diag_snapshot()`.
+Use `Run::start_measurement()` to inspect latency, throughput, input counters, plugin/edge timing, and optional board PMIC power telemetry in one measured window.
 
-To include board power, enable it in code (no environment variable required):
+To include board power, enable it in code (no environment variable required) and read it from the measurement report:
 
 ```cpp
 simaai::neat::RunOptions run_opt;
 run_opt.enable_board_power(); // default 100 ms sampling, auto-detects built-in profile
-auto run = graph.build(inputs, simaai::neat::RunMode::Async, run_opt);
-auto metrics = run.metrics();
+auto run = graph.build(inputs, run_opt);
+auto scope = run.start_measurement();
+run.push(inputs);
+(void)run.pull_tensors(5000);
+auto report = scope.stop();
 ```
 
 ```python
 run_opt = neat.RunOptions()
 run_opt.enable_board_power()  # default 100 ms sampling, auto-detects built-in profile
-run = graph.build(tensor, neat.RunMode.Async, run_opt)
-metrics = run.metrics()
+run = graph.build(tensor, run_opt)
+scope = run.start_measurement()
+run.push(tensor)
+_ = run.pull_tensors(5000)
+report = scope.stop()
 ```
 
 `Model::build(run_opt)`, `Model::build(route_opt, run_opt)`, and `Graph::build(run_opt)` forward the same runtime options to the underlying `Run`, so one graph-level board power monitor is used instead of per-pipeline duplicate rail sampling. If you need to force a specific built-in profile, board-specific helpers remain available: `enable_modalix_som_power()`, `enable_modalix_dvt_power()`.

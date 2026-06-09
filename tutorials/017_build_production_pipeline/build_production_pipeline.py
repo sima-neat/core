@@ -36,7 +36,6 @@ def main(argv: list[str]) -> int:
   ropt.queue_depth = 8
   ropt.overflow_policy = pyneat.OverflowPolicy.Block
   ropt.output_memory = pyneat.OutputMemory.Owned
-  ropt.enable_metrics = True
   # END STEP
 
   # STEP configure-model

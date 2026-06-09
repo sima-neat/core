@@ -20,7 +20,7 @@ The shape is: configure run options, configure and load the model, build a runne
 
 ### Configure the run options {#step-configure-run-options}
 
-These are the production runtime defaults. `queue_depth = 8` gives a small bounded buffer; `overflow_policy = Block` makes the producer wait rather than silently drop frames (the safe choice when you care about loss); `output_memory = Owned` ensures returned tensors survive past the pull; and `enable_metrics = true` turns on the counters you would scrape in a real deployment. Setting these explicitly — instead of relying on defaults — is what makes behavior under load predictable.
+These are the production runtime defaults. `queue_depth = 8` gives a small bounded buffer; `overflow_policy = Block` makes the producer wait rather than silently drop frames (the safe choice when you care about loss); `output_memory = Owned` ensures returned tensors survive past the pull. Setting these explicitly — instead of relying on defaults — is what makes behavior under load predictable.
 
 ### Configure and load the model {#step-configure-model}
 

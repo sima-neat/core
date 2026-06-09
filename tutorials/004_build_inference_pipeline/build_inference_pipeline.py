@@ -46,7 +46,7 @@ def main(argv: list[str]) -> int:
   rgb = np.full((args.height, args.width, 3), 33, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
 
-  run = graph.build([tensor], pyneat.RunMode.Sync)
+  run = graph.build([tensor])
   # END STEP
   # STEP run-frame
   outputs = run.run([tensor], timeout_ms=1000)

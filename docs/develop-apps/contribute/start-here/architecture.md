@@ -437,7 +437,7 @@ Internally:
 * `try_push(...)` is non-blocking (returns false if the queue is full)
 
 This supports fully async pipelines (producer/consumer split) as well as
-sync flows (`RunMode::Sync` or `Graph::run(...)`).
+one-shot flows (`Graph::run(...)`).
 
 ### Parsing & launch
 
@@ -588,7 +588,7 @@ If enabled, the runtime can emit DOT graphs via `gst_debug_bin_to_dot_file_with_
 
 ### Debugging playbook (production)
 1. **Reproduce the pipeline**: `Graph::describe_backend()` or `last_pipeline()`.
-2. **Capture a report**: `Run::report()` or `NeatError::report()`.
+2. **Capture a report**: `MeasureReport::to_text()` or `NeatError::report()`.
 3. **Enable targeted probes**:
    - `SIMA_GST_BOUNDARY_PROBES=1` for stall localization
    - `SIMA_GST_ELEMENT_TIMINGS=1` for per-element timing

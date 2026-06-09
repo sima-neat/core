@@ -19,7 +19,7 @@ GenAI models, which is the fastest path when a suitable model already exists.
 
 ## Choose the right workflow
 
-For **GenAI** models, use <a href="/genai-llima/">LLiMa</a> to compile, test,
+For **GenAI** models, use <a href="/tools/model-sdk/">LLiMa</a> to compile, test,
 and benchmark the model for Modalix.
 
 For **vision and ONNX models**, use the normal compilation workflow in the

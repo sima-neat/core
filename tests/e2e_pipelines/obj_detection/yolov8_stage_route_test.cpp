@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "pipeline/Graph.h"
 #include "pipeline/StageRun.h"
 #include "pipeline/TessellatedTensor.h"
@@ -46,12 +49,13 @@ struct PreprocWireInfo {
 };
 
 template <typename Fn>
-auto run_with_report(simaai::neat::Run& runner, const std::string& label, Fn&& fn)
-    -> decltype(fn()) {
+auto run_with_report(simaai::neat::Run& runner, const std::string& label,
+                     Fn&& fn) -> decltype(fn()) {
   try {
     return fn();
   } catch (const std::exception& e) {
-    throw std::runtime_error(label + " failed: " + e.what() + "\n" + runner.report());
+    throw std::runtime_error(label + " failed: " + e.what() + "\nlast-error:\n" +
+                             runner.last_error());
   }
 }
 
@@ -271,7 +275,7 @@ void run_preproc_pipeline_once(const cv::Mat& img_bgr, const simaai::neat::Model
   p.add(simaai::neat::nodes::Output());
 
   step_log("preproc_pipeline: before p.run");
-  auto runner = p.build(simaai::neat::Sample{wire}, simaai::neat::RunMode::Sync);
+  auto runner = p.build_seeded_internal(simaai::neat::Sample{wire}, simaai::neat::RunMode::Sync);
   const simaai::neat::Sample out_samples = run_with_report(runner, "preproc_pipeline p.run", [&]() {
     return runner.run(simaai::neat::Sample{wire}, kStageTimeoutMs);
   });

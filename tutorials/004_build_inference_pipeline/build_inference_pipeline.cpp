@@ -62,7 +62,7 @@ int main(int argc, char** argv) {
     graph.add(simaai::neat::nodes::Output());
     // END STEP
     // STEP build-pipeline
-    auto run = graph.build(std::vector<cv::Mat>{input}, simaai::neat::RunMode::Sync, run_opt);
+    auto run = graph.build(std::vector<cv::Mat>{input}, run_opt);
     // END STEP
     // STEP run-frame
     simaai::neat::TensorList sample = run.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/1000);

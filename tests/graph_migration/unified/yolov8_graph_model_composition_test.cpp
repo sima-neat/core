@@ -96,8 +96,7 @@ simaai::neat::Sample run_graph_with_ingress(const PreparedIngress& ingress,
     simaai::neat::Graph g = build_graph();
     auto opt = graph_model_run_options();
     if (ingress.tensor) {
-      auto run = g.build(simaai::neat::TensorList{ingress.tensor_input},
-                         simaai::neat::RunMode::Async, opt);
+      auto run = g.build(simaai::neat::TensorList{ingress.tensor_input}, opt);
       require(static_cast<bool>(run), where + ": build(tensor) failed");
       require(run.push(simaai::neat::TensorList{ingress.tensor_input}),
               where + ": push(tensor) failed");
@@ -106,8 +105,7 @@ simaai::neat::Sample run_graph_with_ingress(const PreparedIngress& ingress,
       return out;
     }
 
-    auto run =
-        g.build(std::vector<cv::Mat>{ingress.image_input}, simaai::neat::RunMode::Async, opt);
+    auto run = g.build(std::vector<cv::Mat>{ingress.image_input}, opt);
     require(static_cast<bool>(run), where + ": build(image) failed");
     require(run.push(std::vector<cv::Mat>{ingress.image_input}), where + ": push(image) failed");
     auto out = require_one_graph_output(run.pull_samples(pull_timeout_ms), where);
@@ -165,7 +163,7 @@ simaai::neat::Sample run_graph_image_add_model_sample(const cv::Mat& img_bgr,
     g.add(simaai::neat::nodes::Input());
     g.add(model);
     g.add(simaai::neat::nodes::Output());
-    auto run = g.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Async, opt);
+    auto run = g.build(std::vector<cv::Mat>{img_bgr}, opt);
     require(static_cast<bool>(run), "image Graph::add(model): build failed");
     require(run.push(std::vector<cv::Mat>{img_bgr}), "image Graph::add(model): push failed");
     auto out = require_one_graph_output(run.pull_samples(timeout_ms), "image Graph::add(model)");
@@ -189,7 +187,7 @@ simaai::neat::Sample run_graph_explicit_stage_fragments_sample(const cv::Mat& im
     g.add(model.inference());
     g.add(model.postprocess());
     g.add(simaai::neat::nodes::Output());
-    auto run = g.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Async, opt);
+    auto run = g.build(std::vector<cv::Mat>{img_bgr}, opt);
     require(static_cast<bool>(run), "stage-fragment Graph: build failed");
     require(run.push(std::vector<cv::Mat>{img_bgr}), "stage-fragment Graph: push failed");
     auto out = require_one_graph_output(run.pull_samples(timeout_ms), "stage-fragment Graph");
@@ -216,8 +214,7 @@ simaai::neat::Sample run_graph_lifetime_sample(const cv::Mat& img_bgr, const fs:
 
   const auto opt = graph_model_run_options();
   if (ingress.tensor) {
-    auto run =
-        g.build(simaai::neat::TensorList{ingress.tensor_input}, simaai::neat::RunMode::Async, opt);
+    auto run = g.build(simaai::neat::TensorList{ingress.tensor_input}, opt);
     require(static_cast<bool>(run), "Graph::add(model) lifetime: build(tensor) failed");
     require(run.push(simaai::neat::TensorList{ingress.tensor_input}),
             "Graph::add(model) lifetime: push(tensor) failed");
@@ -227,7 +224,7 @@ simaai::neat::Sample run_graph_lifetime_sample(const cv::Mat& img_bgr, const fs:
     return out;
   }
 
-  auto run = g.build(std::vector<cv::Mat>{ingress.image_input}, simaai::neat::RunMode::Async, opt);
+  auto run = g.build(std::vector<cv::Mat>{ingress.image_input}, opt);
   require(static_cast<bool>(run), "Graph::add(model) lifetime: build(image) failed");
   require(run.push(std::vector<cv::Mat>{ingress.image_input}),
           "Graph::add(model) lifetime: push(image) failed");
@@ -249,8 +246,7 @@ void run_repeated_build_check(const cv::Mat& img_bgr, simaai::neat::Model& model
     const auto opt = graph_model_run_options();
     simaai::neat::Sample out;
     if (ingress.tensor) {
-      auto run = g.build(simaai::neat::TensorList{ingress.tensor_input},
-                         simaai::neat::RunMode::Async, opt);
+      auto run = g.build(simaai::neat::TensorList{ingress.tensor_input}, opt);
       require(static_cast<bool>(run),
               "Graph repeated build iteration " + std::to_string(i) + ": build(tensor) failed");
       require(run.push(simaai::neat::TensorList{ingress.tensor_input}),
@@ -259,8 +255,7 @@ void run_repeated_build_check(const cv::Mat& img_bgr, simaai::neat::Model& model
                                      "Graph repeated build iteration " + std::to_string(i));
       run.close();
     } else {
-      auto run =
-          g.build(std::vector<cv::Mat>{ingress.image_input}, simaai::neat::RunMode::Async, opt);
+      auto run = g.build(std::vector<cv::Mat>{ingress.image_input}, opt);
       require(static_cast<bool>(run),
               "Graph repeated build iteration " + std::to_string(i) + ": build(image) failed");
       require(run.push(std::vector<cv::Mat>{ingress.image_input}),

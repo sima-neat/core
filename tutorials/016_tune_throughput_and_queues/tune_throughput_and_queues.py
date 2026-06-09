@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tune queue_depth and overflow_policy on RunOptions, then read perf metrics.
+"""Tune queue_depth and overflow_policy on RunOptions, then read MeasureReport.
 
 Usage:
   python3 tune_throughput_and_queues.py [--iters 32] [--queue 4] [--drop {block,latest,incoming}]
@@ -54,12 +54,13 @@ def main(argv: list[str]) -> int:
   opt.queue_depth = args.queue
   opt.overflow_policy = getattr(pyneat.OverflowPolicy, DROP_MODES[args.drop])
   opt.output_memory = pyneat.OutputMemory.Owned
-  opt.enable_metrics = True
-
-  run = graph.build([tensor], pyneat.RunMode.Async, opt)
+  run = graph.build([tensor], opt)
   # END STEP
 
   # STEP push-workload
+  measure = pyneat.MeasureOptions()
+  measure.title = "tutorial 016 throughput"
+  scope = run.start_measurement(measure)
   for _ in range(args.iters):
     run.try_push(tensor)
   run.close_input()
@@ -67,19 +68,17 @@ def main(argv: list[str]) -> int:
   pulled = 0
   while run.pull(timeout_ms=1000) is not None:
     pulled += 1
-  # END STEP
-
-  # STEP read-metrics
-  stats = run.stats()
-  input_stats = run.input_stats()
+  measured = scope.stop()
   # END STEP
   # END CORE LOGIC
-  print(f"inputs_enqueued={stats.inputs_enqueued}")
-  print(f"inputs_dropped={stats.inputs_dropped}")
+  # STEP read-measurement
+  print(f"inputs_enqueued={measured.counters.inputs_enqueued}")
+  print(f"inputs_dropped={measured.counters.inputs_dropped}")
   print(f"outputs_pulled={pulled}")
-  print(f"avg_latency_ms={stats.avg_latency_ms}")
-  print(f"avg_push_us={input_stats.avg_push_us}")
-  print(f"renegotiations={input_stats.renegotiations}")
+  print(f"avg_latency_ms={measured.end_to_end.avg_ms}")
+  print(f"avg_push_us={measured.input.avg_push_us}")
+  print(f"renegotiations={measured.input.renegotiations}")
+  # END STEP
   return 0
 
 

@@ -44,6 +44,7 @@ HTML_OUTPUT            = html
 GENERATE_XML           = YES
 XML_OUTPUT             = xml
 GENERATE_LATEX         = NO
+VERBATIM_HEADERS       = NO
 
 # UI
 GENERATE_TREEVIEW      = YES

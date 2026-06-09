@@ -10,29 +10,29 @@
 
 ## Concept
 
-Tune the three `RunOptions` knobs that control async pipeline behavior under load — queue depth, overflow policy, and metrics — then read back what actually happened.
+Tune the async pipeline knobs that control behavior under load — queue depth and overflow policy — then measure what actually happened.
 
 ## Walkthrough
 
-Performance tuning only helps once your correctness baseline is stable; this chapter assumes it is, and turns to the knobs that decide how an async pipeline behaves when work arrives faster than it can be processed. You will set the queue depth, choose what happens when that queue fills, push a deterministic burst of frames non-blockingly, drain the results, and read the metrics that tell you whether you dropped anything and how long each frame took.
+Performance tuning only helps once your correctness baseline is stable; this chapter assumes it is, and turns to the knobs that decide how an async pipeline behaves when work arrives faster than it can be processed. You will set the queue depth, choose what happens when that queue fills, push a deterministic burst of frames non-blockingly, drain the results, and read the measurement report that tells you whether you dropped anything and how long each frame took.
 
 By the end you will have a working harness for measuring an async run under backpressure: enqueue counts, drop counts, outputs pulled, average latency, and push cost. The same loop is the basis for tuning a real pipeline against the heuristics in [In Practice](#in-practice).
 
 ### Configure the run options {#step-configure-run-options}
 
-`RunOptions` is where async behavior under load is decided. We set `queue_depth` (how many in-flight samples the runtime accepts), `overflow_policy` (what happens when that queue is full — `Block`, `KeepLatest`, or `DropIncoming`), `output_memory = Owned` (returned tensors own their data so they survive past the pull), and `enable_metrics = true` so the runtime collects the counters we read later. We then `build()` the graph in `Async` mode, which gives us a run with independent producer and consumer sides.
+`RunOptions` is where async behavior under load is decided. We set `queue_depth` (how many in-flight samples the runtime accepts), `overflow_policy` (what happens when that queue is full — `Block`, `KeepLatest`, or `DropIncoming`), `output_memory = Owned` (returned tensors own their data so they survive past the pull), We then `build()` the graph in `Async` mode, which gives us a run with independent producer and consumer sides.
 
-**C++:** The overflow policy is parsed from `--drop` into `simaai::neat::OverflowPolicy::{Block,KeepLatest,DropIncoming}`; `graph.build(input, RunMode::Async, opt)` returns the run handle.
+**C++:** The overflow policy is parsed from `--drop` into `simaai::neat::OverflowPolicy::{Block,KeepLatest,DropIncoming}`; `graph.build(input, opt)` returns the run handle.
 
-**Python:** The policy is resolved with `getattr(pyneat.OverflowPolicy, ...)`; `graph.build([tensor], pyneat.RunMode.Async, opt)` returns the run handle.
+**Python:** The policy is resolved with `getattr(pyneat.OverflowPolicy, ...)`; `graph.build([tensor], opt)` returns the run handle.
 
 ### Push the workload and drain {#step-push-workload}
 
 This is where the queue policy is exercised. We call `try_push(...)` in a tight loop — a non-blocking push that simply returns whether the sample was accepted, so a full queue under `DropIncoming`/`KeepLatest` shows up as rejected pushes rather than a stall. After the burst we call `close_input()` to signal no more inputs, then drain the consumer side with a `pull(...)` loop until it returns empty. Pairing `try_push` with `close_input` plus a drain loop is the canonical non-blocking async pattern.
 
-### Read the metrics {#step-read-metrics}
+### Read the measurement report {#step-read-measurement}
 
-With the run drained, we snapshot two counter views. `stats()` gives runtime-side numbers — inputs enqueued, inputs dropped, average latency. `input_stats()` gives push-side numbers — average push cost in microseconds and how many input renegotiations occurred. Printed together, these tell you whether your queue depth and overflow policy did what you intended: did frames drop, did latency climb, was the push path cheap.
+With the run drained, we stop the measurement scope. The report `counters` group gives runtime-side numbers — inputs enqueued, inputs dropped, outputs pulled — while `input` gives push-side numbers such as average push cost and input renegotiations. Together, these tell you whether your queue depth and overflow policy did what you intended: did frames drop, did latency climb, was the push path cheap.
 
 ## Run
 

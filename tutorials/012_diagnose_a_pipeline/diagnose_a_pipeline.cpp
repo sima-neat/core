@@ -1,4 +1,4 @@
-// Three diagnostic commands: Graph::validate, Run::stats, Run::report / diagnostics_summary.
+// Two diagnostic commands: Graph::validate and Run::start_measurement.
 //
 // Usage:
 //   tutorial_012_diagnose_a_pipeline
@@ -32,24 +32,25 @@ int main() {
     std::cout << "validate.error_code=" << report.error_code << "\n";
     // END STEP
 
-    // STEP run-with-metrics
-    // Run the Graph with metrics enabled so stats() has data.
+    // STEP run-with-measurement
+    // Build a reusable runner and measure the caller-owned workload.
     simaai::neat::RunOptions run_opt;
-    run_opt.enable_metrics = true;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-    auto run = graph.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync, run_opt);
+    auto run = graph.build(std::vector<cv::Mat>{rgb}, run_opt);
+    simaai::neat::MeasureOptions measure_opt;
+    measure_opt.title = "tutorial 011 diagnosis";
+    auto scope = run.start_measurement(measure_opt);
     simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
     if (out.empty())
       throw std::runtime_error("missing output tensor");
+    const simaai::neat::MeasureReport measured = scope.stop();
     // END STEP
 
     // STEP read-diagnostics
-    // Post-run diagnostics: counters, per-element report, and a summary string.
-    auto stats = run.stats();
-    std::cout << "stats.inputs_enqueued=" << stats.inputs_enqueued
-              << " outputs_pulled=" << stats.outputs_pulled << "\n";
-    std::cout << "report.size=" << run.report().size() << "\n";
-    std::cout << "diagnostics_summary=" << run.diagnostics_summary() << "\n";
+    // Post-run diagnostics come from the measurement report.
+    std::cout << "measure.inputs_enqueued=" << measured.counters.inputs_enqueued
+              << " outputs_pulled=" << measured.counters.outputs_pulled << "\n";
+    std::cout << "measure.text_size=" << measured.to_text().size() << "\n";
     // END STEP
     // END CORE LOGIC
 

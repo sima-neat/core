@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Graph, enable metrics on the Run, then read stats/report/diagnostics.
+"""Validate a Graph, measure a Run workload, then read the report.
 
 Usage:
   python3 diagnose_a_pipeline.py
@@ -43,21 +43,22 @@ def main(argv: list[str]) -> int:
   print(f"validate_error_code={report.error_code}")
   # END STEP
 
-  # STEP run-with-metrics
-  # Build + run with metrics enabled.
+  # STEP run-with-measurement
+  # Build a reusable runner and measure the caller-owned workload.
   ropt = pyneat.RunOptions()
-  ropt.enable_metrics = True
   ropt.output_memory = pyneat.OutputMemory.Owned
-  run = graph.build([tensor], pyneat.RunMode.Sync, ropt)
+  run = graph.build([tensor], ropt)
+  measure = pyneat.MeasureOptions()
+  measure.title = "tutorial 011 diagnosis"
+  scope = run.start_measurement(measure)
   run.run([tensor], timeout_ms=1000)
+  measured = scope.stop()
   # END STEP
 
   # STEP read-diagnostics
-  # Read diagnostics.
-  stats = run.stats()
-  print(f"inputs_enqueued={stats.inputs_enqueued} outputs_pulled={stats.outputs_pulled}")
-  print(f"report_size={len(run.report())}")
-  print(f"diagnostics_summary={run.diagnostics_summary()}")
+  # Read diagnostics from the measurement report.
+  print(f"inputs_enqueued={measured.counters.inputs_enqueued} outputs_pulled={measured.counters.outputs_pulled}")
+  print(f"measure_text_size={len(measured.to_text())}")
   # END STEP
   # END CORE LOGIC
   return 0

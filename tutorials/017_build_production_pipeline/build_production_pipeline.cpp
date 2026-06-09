@@ -46,14 +46,14 @@ int main(int argc, char** argv) {
       rgb = rgb.clone();
 
     // CORE LOGIC
-    // Production defaults: bounded queue, blocking overflow, owned output memory,
-    // metrics on. Model::build returns a Runner that owns the async pipeline.
+    // Production defaults: bounded queue, blocking overflow, owned output memory.
+    // Model::build returns a Runner that owns the async pipeline; measure the
+    // workload explicitly when you need performance data.
     // STEP configure-run-options
     simaai::neat::RunOptions run_opt;
     run_opt.queue_depth = 8;
     run_opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-    run_opt.enable_metrics = true;
     // END STEP
 
     // STEP configure-model

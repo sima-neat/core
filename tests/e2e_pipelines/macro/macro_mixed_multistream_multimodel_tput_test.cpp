@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "graph/Graph.h"
 #include "graph/GraphHelpers.h"
 #include "graph/GraphMetadata.h"
@@ -18,8 +21,7 @@
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
 #include "pipeline/Graph.h"
-#include "pipeline/LatencyProfiler.h"
-#include "pipeline/RuntimeMetrics.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include "asset_utils.h"
@@ -85,7 +87,6 @@ struct Args {
   std::string resnet_model;
   std::string yolo_model;
   std::string json_out;
-  std::string profile_trace_out;
 
   int streams = 16;
   int rtsp_servers = 8;
@@ -110,7 +111,6 @@ struct Args {
   int yolo_top_k = 100;
   int metadata_port_base = 9900;
   int h264_bitrate_kbps = 500;
-  int profiler_ring_capacity = 1048576;
 
   float yolo_score_threshold = 0.25f;
   float yolo_nms_iou = 0.50f;
@@ -129,7 +129,6 @@ struct Args {
   bool require_assets = false;
   bool allow_heavy = false;
   bool serial_pipeline_build = false;
-  bool latency_profiler = true;
   bool gst_element_timings = false;
   bool gst_flow_debug = false;
   bool gst_boundary_probes = false;
@@ -770,7 +769,6 @@ static Args parse_args(int argc, char** argv) {
   sima_test::get_arg(argc, argv, "--resnet-model", args.resnet_model);
   sima_test::get_arg(argc, argv, "--yolo-model", args.yolo_model);
   sima_test::get_arg(argc, argv, "--json-out", args.json_out);
-  sima_test::get_arg(argc, argv, "--profile-trace-out", args.profile_trace_out);
 
   sima_test::parse_int_arg(argc, argv, "--streams", args.streams);
   sima_test::parse_int_arg(argc, argv, "--rtsp-servers", args.rtsp_servers);
@@ -797,7 +795,6 @@ static Args parse_args(int argc, char** argv) {
   sima_test::parse_int_arg(argc, argv, "--metadata-port-base", args.metadata_port_base);
   args.h264_bitrate_cli =
       sima_test::parse_int_arg(argc, argv, "--h264-bitrate-kbps", args.h264_bitrate_kbps);
-  sima_test::parse_int_arg(argc, argv, "--profiler-ring-capacity", args.profiler_ring_capacity);
 
   sima_test::parse_float_arg(argc, argv, "--yolo-score-threshold", args.yolo_score_threshold);
   sima_test::parse_float_arg(argc, argv, "--yolo-nms-iou", args.yolo_nms_iou);
@@ -820,7 +817,6 @@ static Args parse_args(int argc, char** argv) {
   parse_bool_arg(argc, argv, "--require-assets", args.require_assets);
   args.serial_pipeline_build_cli =
       parse_bool_arg(argc, argv, "--serial-pipeline-build", args.serial_pipeline_build);
-  parse_bool_arg(argc, argv, "--latency-profiler", args.latency_profiler);
   args.gst_element_timings_cli =
       parse_bool_arg(argc, argv, "--gst-element-timings", args.gst_element_timings);
   args.gst_flow_debug_cli = parse_bool_arg(argc, argv, "--gst-flow-debug", args.gst_flow_debug);
@@ -862,8 +858,6 @@ static Args parse_args(int argc, char** argv) {
     throw std::runtime_error("--duration-ms must be >= 0");
   if (args.min_measured_ms < 0)
     throw std::runtime_error("--min-measured-ms must be >= 0");
-  if (args.profiler_ring_capacity < 0)
-    throw std::runtime_error("--profiler-ring-capacity must be >= 0");
   if (args.rtsp_servers <= 0)
     args.rtsp_servers = std::min(args.streams, 8);
   if (args.rtsp_servers > args.streams)
@@ -1043,63 +1037,18 @@ static std::vector<double> all_gaps(const Metrics& metrics) {
   return gaps;
 }
 
-static json latency_profiler_json(const simaai::neat::ProfilerReport& report) {
-  json kernels = json::array();
-  for (const auto& agg : report.kernel_aggregates) {
-    kernels.push_back({{"backend", agg.backend},
-                       {"phase", "aggregate"},
-                       {"kernel_name", agg.kernel_name},
-                       {"stage_name", agg.stage_name},
-                       {"physical_input_index", agg.physical_input_index},
-                       {"output_slot", agg.output_slot},
-                       {"count", agg.count},
-                       {"total_ms", agg.total_ms},
-                       {"avg_ms", agg.avg_ms()},
-                       {"min_ms", agg.min_ms},
-                       {"max_ms", agg.max_ms}});
+static json graph_run_stats_json(const GraphRunStats& stats) {
+  json nodes = json::array();
+  int64_t total = 0;
+  for (const auto& snap : stats.snapshot()) {
+    json streams = json::object();
+    for (const auto& [stream, count] : snap.counts) {
+      streams[stream] = count;
+    }
+    nodes.push_back({{"node_id", snap.node_id}, {"total", snap.total}, {"streams", streams}});
+    total += snap.total;
   }
-
-  json memcpy = json::array();
-  for (const auto& site : report.memcpy_sites) {
-    memcpy.push_back({{"site_name", site.site_name},
-                      {"calls", site.calls},
-                      {"total_bytes", site.total_bytes},
-                      {"total_ms", site.total_ms()},
-                      {"avg_ms", site.avg_ms()},
-                      {"max_ms", static_cast<double>(site.max_ns) / 1.0e6}});
-  }
-
-  std::map<std::string, std::vector<double>> by_backend_phase;
-  for (const auto& inv : report.kernel_invocations) {
-    by_backend_phase[inv.backend + ":" + inv.phase].push_back(inv.duration_ms());
-  }
-  json percentiles = json::array();
-  for (auto& [key, values] : by_backend_phase) {
-    percentiles.push_back(
-        {{"bucket", key},
-         {"count", values.size()},
-         {"p50_ms", percentile(values, 50.0)},
-         {"p95_ms", percentile(values, 95.0)},
-         {"p99_ms", percentile(values, 99.0)},
-         {"max_ms", values.empty() ? 0.0 : *std::max_element(values.begin(), values.end())}});
-  }
-
-  return {{"enabled", true},
-          {"profiler_emits", report.profiler_emits},
-          {"profiler_dropped", report.profiler_dropped},
-          {"kernel_invocation_count", report.kernel_invocations.size()},
-          {"kernel_aggregates", kernels},
-          {"kernel_latency_percentiles", percentiles},
-          {"memcpy_sites", memcpy}};
-}
-
-static json runtime_metrics_json(const simaai::neat::RuntimeMetrics& metrics) {
-  const std::string text = simaai::neat::runtime_metrics_to_json(metrics, 0);
-  try {
-    return json::parse(text);
-  } catch (const std::exception& e) {
-    return {{"parse_error", e.what()}, {"raw", text}};
-  }
+  return {{"enabled", true}, {"total_samples", total}, {"nodes", nodes}};
 }
 
 static json make_report(const Args& args, const Metrics& metrics, const Timings& timings,
@@ -1145,9 +1094,6 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
       {"output_memory", args.output_memory},
       {"metadata_udp", args.metadata_udp},
       {"h264_bitrate_kbps", args.h264_bitrate_kbps},
-      {"latency_profiler", args.latency_profiler},
-      {"profiler_ring_capacity", args.profiler_ring_capacity},
-      {"profile_trace_out", args.profile_trace_out},
       {"gst_element_timings", args.gst_element_timings},
       {"gst_flow_debug", args.gst_flow_debug},
       {"gst_boundary_probes", args.gst_boundary_probes},
@@ -1463,13 +1409,6 @@ int main(int argc, char** argv) {
     }
     if (!std::getenv("SIMA_DISPATCHER_AUTO_RECOVER")) {
       setenv("SIMA_DISPATCHER_AUTO_RECOVER", "1", 1);
-    }
-
-    std::unique_ptr<simaai::neat::LatencyProfiler> latency_profiler;
-    if (args.latency_profiler) {
-      simaai::neat::LatencyProfilerOptions profiler_opt;
-      profiler_opt.ring_capacity = static_cast<std::size_t>(args.profiler_ring_capacity);
-      latency_profiler = std::make_unique<simaai::neat::LatencyProfiler>(profiler_opt);
     }
 
     std::string image_path;
@@ -1807,10 +1746,6 @@ int main(int argc, char** argv) {
       warm_outputs += c;
     std::cout << "[warmup] target_per_stream_branch=" << args.warmup_per_stream
               << " outputs=" << warm_outputs << " ms=" << timings.warmup_ms << "\n";
-    if (latency_profiler) {
-      latency_profiler->mark_warmup_done();
-    }
-
     GraphRunStats measured_stats;
     std::unordered_map<std::string, Top1Result> first_top1;
     std::unordered_map<std::string, Top1Result> last_top1;
@@ -1876,29 +1811,7 @@ int main(int argc, char** argv) {
     timings.measured_ms = elapsed_ms(measured_t0, measured_t1);
 
     profile_json = json::object();
-    if (latency_profiler) {
-      simaai::neat::ProfilerReport profiler_report = latency_profiler->finalize();
-      profile_json["latency_profiler"] = latency_profiler_json(profiler_report);
-      if (!args.profile_trace_out.empty()) {
-        const std::string trace = simaai::neat::LatencyProfiler::to_chrome_trace(profiler_report);
-        try {
-          write_json_atomic(args.profile_trace_out, json::parse(trace));
-        } catch (const std::exception&) {
-          std::ofstream out(args.profile_trace_out, std::ios::binary | std::ios::trunc);
-          out << trace;
-        }
-        profile_json["trace_out"] = args.profile_trace_out;
-      }
-    } else {
-      profile_json["latency_profiler"] = {{"enabled", false}};
-    }
-    profile_json["graph_runtime"] =
-        runtime_metrics_json(run.metrics(simaai::neat::RuntimeMetricsOptions{
-            .include_power = false,
-            .include_diagnostics = true,
-            .include_pipeline = false,
-            .include_percentiles = false,
-        }));
+    profile_json["graph_runtime"] = graph_run_stats_json(measured_stats);
 
     if (args.metadata_udp) {
       for (const auto& rx : metadata_rx) {

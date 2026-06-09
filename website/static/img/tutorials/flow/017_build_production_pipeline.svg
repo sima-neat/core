@@ -29,8 +29,6 @@
 <text x="104" y="300" class="fmono fcode" xml:space="preserve">ropt.overflow_policy = pyneat.OverflowPolic…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">ropt.output_memory = pyneat.OutputMemory.Ow…</text>
-<text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">ropt.enable_metrics = True</text>
 </g>
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Configure model</text>

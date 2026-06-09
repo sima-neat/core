@@ -1,8 +1,12 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "graph_migration/common/phase3_graph_test_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "test_main.h"
 #include "test_utils.h"
+#include "pipeline/runtime/RunInternal.h"
 
 #include <atomic>
 #include <chrono>
@@ -96,7 +100,7 @@ RUN_TEST("graph_migration_phase3_lifecycle_backpressure_test", [] {
           break;
         }
       }
-      const auto stats_after_burst = run.input_stats();
+      const auto stats_after_burst = simaai::neat::run_internal::input_stats(run);
       saw_fail_closed_backpressure =
           saw_reject || stats_after_burst.dropped_frames > 0 || stats_after_burst.push_failures > 0;
       require(saw_fail_closed_backpressure,

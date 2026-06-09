@@ -1,7 +1,10 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #pragma once
 
 #include "pipeline/PowerTelemetry.h"
-#include "pipeline/RuntimeMetrics.h"
+#include "pipeline/Run.h"
 
 #include <algorithm>
 #include <chrono>
@@ -87,24 +90,8 @@ inline double rss_peak_kb() {
 
 inline void emit_metrics_json(const std::string& scenario_id, int iterations,
                               const PerfMetrics& metrics, const std::string& run_mode,
-                              const simaai::neat::PowerSummary* power = nullptr) {
-  simaai::neat::RuntimeMetrics runtime_metrics;
-  runtime_metrics.source_kind = "perf";
-  runtime_metrics.source_name = scenario_id;
-  runtime_metrics.throughput_fps = metrics.throughput;
-  runtime_metrics.latency.p50_ms = metrics.p50;
-  runtime_metrics.latency.p95_ms = metrics.p95;
-  runtime_metrics.latency.has_percentiles = true;
-  runtime_metrics.counters.inputs_dropped = metrics.input_drop_count;
-  runtime_metrics.counters.outputs_dropped = metrics.output_drop_count;
-  if (power) {
-    runtime_metrics.power = *power;
-  }
-  runtime_metrics.groups.push_back({"perf",
-                                    {{"iterations", static_cast<double>(iterations), "count"},
-                                     {"startup_ms", metrics.startup, "ms"},
-                                     {"rss_peak_kb", metrics.rss_peak_kb, "kb"}}});
-
+                              const simaai::neat::PowerSummary* power = nullptr,
+                              const simaai::neat::MeasureReport* report = nullptr) {
   std::cout << std::fixed << std::setprecision(6) << "{\n"
             << "  \"scenario_id\": \"" << scenario_id << "\",\n"
             << "  \"iterations\": " << iterations << ",\n"
@@ -115,9 +102,10 @@ inline void emit_metrics_json(const std::string& scenario_id, int iterations,
             << "  \"startup\": " << metrics.startup << ",\n"
             << "  \"rss_peak_kb\": " << metrics.rss_peak_kb << ",\n"
             << "  \"input_drop_count\": " << metrics.input_drop_count << ",\n"
-            << "  \"output_drop_count\": " << metrics.output_drop_count
-            << ",\n  \"runtime_metrics\": "
-            << simaai::neat::runtime_metrics_to_json(runtime_metrics, 2);
+            << "  \"output_drop_count\": " << metrics.output_drop_count;
+  if (report) {
+    std::cout << ",\n  \"measure_report\": " << report->to_json(2);
+  }
   if (power && power->enabled) {
     std::cout << ",\n  \"power\": " << simaai::neat::power_summary_to_json(*power, 2) << "\n";
   } else {

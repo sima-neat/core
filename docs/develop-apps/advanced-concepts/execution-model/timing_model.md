@@ -63,7 +63,9 @@ Use async mode for:
 
 `Run::push()` returns once the sample has been **enqueued** at the input boundary. It does not wait for the sample to traverse the pipeline. If the input queue is full, push blocks until space is available, governed by `RunOptions::push_timeout_ms` and the configured `OverflowPolicy`.
 
-`OverflowPolicy::Wait` (the default) blocks; `OverflowPolicy::Drop` returns false and drops the sample; `OverflowPolicy::Replace` evicts the oldest pending sample. Pick the right policy for your latency budget.
+`OverflowPolicy::Block` (the default) blocks; `OverflowPolicy::DropIncoming` drops the new
+sample; `OverflowPolicy::KeepLatest` evicts the oldest pending sample. Pick the right policy for
+your latency budget.
 
 ## Pull timing
 
@@ -77,13 +79,16 @@ The framework does not promise FIFO across multiple inputs streams unless you ex
 
 ## Telemetry — what was the actual latency?
 
-For both modes, the runtime can record per-sample latency via `LatencyProfiler` and per-stage timing in `RunStageStats`. After the run, `RunDiagSnapshot` exposes:
+Use `Run::start_measurement()` around the workload you own. The returned `MeasureReport` is the
+public timing surface and includes:
 
-- Per-element timing (where time was spent).
-- Per-pad flow stats (how many buffers crossed each pad).
-- Boundary flow stats (push/pull rates).
+- End-to-end push-to-output latency and throughput.
+- Per-node timing summaries when available.
+- Plugin/kernel and edge timing when requested in `MeasureOptions`.
+- Runtime counters and optional power telemetry.
 
-Useful when async mode shows unexpected back-pressure — the snapshot tells you which stage is the bottleneck.
+Useful when async mode shows unexpected back-pressure — the report tells you whether time is spent
+at graph boundaries, nodes, plugins, or queues.
 
 ## Related types
 
@@ -91,7 +96,8 @@ Useful when async mode shows unexpected back-pressure — the snapshot tells you
 - [`Graph::build()`](/reference/cppapi/classes/simaai-neat-graph) — async entry point (returns a `Run`).
 - [`Run::push()` / `pull()`](/reference/cppapi/classes/simaai-neat-run) — async drive methods.
 - [`OverflowPolicy`](/reference/cppapi/files/include-pipeline-graphoptions-h) — back-pressure behavior.
-- [`RunStats` / `RunDiagSnapshot`](/reference/cppapi/files/include-pipeline-run-h) — post-hoc telemetry.
+- [`MeasureOptions` / `MeasureReport`](/reference/cppapi/classes/simaai-neat-run) — measured
+  telemetry.
 
 ## Further reading
 

@@ -76,7 +76,7 @@ int main() {
       p.add(nodes::Output(OutputOptions::Latest()));
 
       RunOptions opt;
-      Run run = p.build(TensorList{input}, RunMode::Async, opt);
+      Run run = p.build(TensorList{input}, opt);
 
       TensorList outs = run.run(TensorList{input}, 1000);
       require(outs.size() == 1, "output missing simaai::neat::Tensor");
@@ -116,7 +116,7 @@ int main() {
       p.add(nodes::Output(OutputOptions::Latest()));
 
       RunOptions opt;
-      Run run = p.build(TensorList{input}, RunMode::Async, opt);
+      Run run = p.build(TensorList{input}, opt);
 
       TensorList outs = run.run(TensorList{input}, 1000);
       require(outs.size() == 1, "output missing simaai::neat::Tensor");

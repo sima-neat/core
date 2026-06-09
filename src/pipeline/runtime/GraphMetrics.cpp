@@ -3,10 +3,13 @@
 #include "pipeline/Run.h"
 #include "pipeline/internal/Diagnostics.h"
 #include "pipeline/runtime/RunCore.h"
+#include "RunInternal.h"
 
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <chrono>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -216,12 +219,43 @@ void attach_public_node_ids(
 } // namespace
 
 GraphMetricsReport build_graph_metrics_report_run_lifetime(const Run& run,
-                                                           const RuntimeMetricsOptions& opt) {
+                                                           const GraphMetricsOptions& opt) {
   GraphMetricsReport out;
-  RuntimeMetricsOptions graph_opt = opt;
-  out.graph_metrics = run.metrics(graph_opt);
-
   const std::shared_ptr<const runtime::RunCore> core = run_internal::core(run);
+  const RunStats stats = run_internal::stats(run);
+  out.graph_metrics.counters.inputs_enqueued = stats.inputs_enqueued;
+  out.graph_metrics.counters.inputs_dropped = stats.inputs_dropped;
+  out.graph_metrics.counters.inputs_pushed = stats.inputs_pushed;
+  out.graph_metrics.counters.outputs_ready = stats.outputs_ready;
+  out.graph_metrics.counters.outputs_pulled = stats.outputs_pulled;
+  out.graph_metrics.counters.outputs_dropped = stats.outputs_dropped;
+  if (opt.include_power) {
+    out.graph_metrics.power = run_internal::power_summary(run);
+  }
+  if (core) {
+    std::chrono::steady_clock::time_point start;
+    std::chrono::steady_clock::time_point end;
+    {
+      std::lock_guard<std::mutex> lock(core->latency_mu);
+      start = core->created_at;
+      if (core->pull_timing_init) {
+        end = core->last_pull_at;
+      } else if (core->output_timing_init) {
+        end = core->last_output_at;
+      } else {
+        end = std::chrono::steady_clock::now();
+      }
+    }
+    if (start != std::chrono::steady_clock::time_point{} && end > start) {
+      out.graph_metrics.elapsed_seconds = std::chrono::duration<double>(end - start).count();
+      if (out.graph_metrics.elapsed_seconds > 0.0) {
+        out.graph_metrics.throughput_fps =
+            static_cast<double>(out.graph_metrics.counters.outputs_pulled) /
+            out.graph_metrics.elapsed_seconds;
+      }
+    }
+  }
+
   std::map<std::pair<std::size_t, graph::NodeId>, NodeAccumulator> accumulators;
   if (core && core->graph_execution_) {
     collect_graph_node_metrics(core, accumulators);

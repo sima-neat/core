@@ -62,7 +62,8 @@ See [the dtype contract](/develop-apps/advanced-concepts/dtype_contract) for why
 
 ## Kernel naming convention
 
-Inside the framework, kernels are referenced by stable string names that show up in `RoutePlanner` decisions and `RunDiagSnapshot` reports:
+Inside the framework, kernels are referenced by stable string names that show up in `RoutePlanner`
+decisions and `MeasureReport` plugin/kernel timing rows:
 
 - `cvu/preproc/<variant>` — preprocess kernels.
 - `cvu/quant/<dtype>` — quant variants.

@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/ErrorCodes.h"
@@ -17,7 +20,9 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
              Graph missing_input;
              missing_input.add(nodes::Output(OutputOptions::Latest()));
              require_neat_error(
-                 [&]() { (void)missing_input.build(TensorList{seed}, RunMode::Sync); },
+                 [&]() {
+                   (void)missing_input.build_seeded_internal(TensorList{seed}, RunMode::Sync);
+                 },
                  error_codes::kPipelineShape, "misconfig.pipeline_shape", "Graph::build(input)");
            }
 
@@ -33,7 +38,9 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
              invalid_caps.add(nodes::Output(OutputOptions::Latest()));
 
              require_neat_error(
-                 [&]() { (void)invalid_caps.build(TensorList{seed}, RunMode::Sync); },
+                 [&]() {
+                   (void)invalid_caps.build_seeded_internal(TensorList{seed}, RunMode::Sync);
+                 },
                  error_codes::kCaps, "misconfig.caps", "invalid caps_override");
            }
 
@@ -59,7 +66,7 @@ RUN_TEST("unit_error_code_taxonomy_test", ([] {
              // misconfig.input_shape taxonomy rather than a specific fragment.
              bool threw = false;
              try {
-               (void)bad_tensor_graph.build(TensorList{bad}, RunMode::Sync);
+               (void)bad_tensor_graph.build_seeded_internal(TensorList{bad}, RunMode::Sync);
              } catch (const std::exception&) {
                threw = true;
              }

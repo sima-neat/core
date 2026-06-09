@@ -48,7 +48,7 @@ RUN_TEST("pull_timeout_regression_test", [] {
   run_opt.queue_depth = 8;
 
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x33);
-  Run run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
+  Run run = graph.build(TensorList{seed}, run_opt);
 
   const int timeout_ms = 120;
   {

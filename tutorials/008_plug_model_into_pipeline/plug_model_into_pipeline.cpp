@@ -86,8 +86,7 @@ int main(int argc, char** argv) {
       std::cout << "attached_graph_backend=\n" << attached.describe_backend() << "\n";
     }
 
-    auto run = direct.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
-    simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
+    simaai::neat::TensorList out = direct.run(std::vector<cv::Mat>{rgb});
 
     if (out.empty())
       throw std::runtime_error("direct Graph output missing tensor");

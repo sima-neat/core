@@ -55,7 +55,7 @@ Codes are grouped by the layer that raises them. The full set of constants lives
 
 | Code | When raised | What to do |
 |---|---|---|
-| `runtime.timeout` | A `pull()` / `push()` exceeded its timeout. | Check back-pressure with `RunDiagSnapshot::boundary_flow_stats`. |
+| `runtime.timeout` | A `pull()` / `push()` exceeded its timeout. | Check back-pressure with `Run::start_measurement()` / `MeasureReport`. |
 | `runtime.gst_error` | GStreamer posted a `GST_MESSAGE_ERROR`. | Read the wrapped debug string ([Plugin error format](/reference/error_format)). |
 | `runtime.eos` | Pipeline reached EOS before all expected outputs arrived. | Check the input source for premature EOS; verify there's enough input data. |
 

@@ -236,14 +236,6 @@ DetessCastOptions make_detesscast_options_from_typed_adapter(const Model& model,
                                                              const std::string& element_name,
                                                              bool sync);
 
-void warn_no_warmup_once() {
-  static std::once_flag flag;
-  std::call_once(flag, [] {
-    std::printf(
-        "[WARN] Model::Runner::warmup: warm=0; throughput stability may vary without warmup.\n");
-  });
-}
-
 void emit_model_planner_messages(const VerboseOptions& verbose,
                                  const std::vector<std::string>& warnings) {
   if (warnings.empty()) {
@@ -2717,7 +2709,7 @@ Sample run_ingress_branch(Graph& branch, Run& runner,
   branch_run_opt.overflow_policy = OverflowPolicy::Block;
   branch_run_opt.output_memory = OutputMemory::ZeroCopy;
   if (!runner) {
-    runner = branch.build(Sample{sample}, RunMode::Sync, branch_run_opt);
+    runner = branch.build_seeded_internal(Sample{sample}, RunMode::Sync, branch_run_opt);
   }
   Sample out = runner.run(Sample{std::move(sample)}, 10000);
   if (out.size() != 1U) {
@@ -6845,54 +6837,8 @@ Model::Runner::start_measurement(const simaai::neat::MeasureOptions& opt) {
   return run_.start_measurement(opt);
 }
 
-int Model::Runner::warmup(const simaai::neat::TensorList& inputs, int warm, int timeout_ms) {
-  if (warm < 0) {
-    warm = env_int("SIMA_ASYNC_WARMUP", 0);
-  }
-  if (warm <= 0) {
-    warn_no_warmup_once();
-    return 0;
-  }
-  for (int i = 0; i < warm; ++i) {
-    (void)run(inputs, timeout_ms);
-  }
-  return warm;
-}
-
 void Model::Runner::close() {
   run_.close();
-}
-
-simaai::neat::RunStats Model::Runner::stats() const {
-  return run_.stats();
-}
-
-simaai::neat::RunMeasurementSummary Model::Runner::measurement_summary() const {
-  return run_.measurement_summary();
-}
-
-simaai::neat::RuntimeMetrics
-Model::Runner::metrics(const simaai::neat::RuntimeMetricsOptions& opt) const {
-  simaai::neat::RuntimeMetrics out = run_.metrics(opt);
-  out.source_kind = "model";
-  return out;
-}
-
-std::string Model::Runner::metrics_report(const simaai::neat::RuntimeMetricsOptions& opt,
-                                          simaai::neat::RuntimeMetricsFormat format) const {
-  return simaai::neat::format_runtime_metrics(metrics(opt), format);
-}
-
-std::string Model::Runner::metrics_report(simaai::neat::RuntimeMetricsFormat format) const {
-  return metrics_report(simaai::neat::RuntimeMetricsOptions{}, format);
-}
-
-simaai::neat::RunDiagSnapshot Model::Runner::diag_snapshot() const {
-  return run_.diag_snapshot();
-}
-
-std::string Model::Runner::report(const simaai::neat::RunReportOptions& opt) const {
-  return run_.report(opt);
 }
 
 void Model::Runner::close_input() {
@@ -6940,7 +6886,7 @@ Model::Runner Model::build(const Model::RouteOptions& opt,
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  Run run = p.build(dummy_inputs, RunMode::Async, run_opt);
+  Run run = p.build(dummy_inputs, run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (tensor_mode) {
     const auto src_opts2 = input_appsrc_options_list(true);
@@ -6990,7 +6936,7 @@ Model::Runner Model::build(const simaai::neat::TensorList& inputs, const Model::
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  Run run = p.build(inputs, RunMode::Async, run_opt);
+  Run run = p.build(inputs, run_opt);
   const auto ingress_names = ingress_names_from_contracts(ingress_contracts);
   if (!tensor_mode) {
     return Runner(std::move(run), ingress_names);
@@ -7041,7 +6987,7 @@ Model::Runner Model::build(const simaai::neat::Sample& inputs, const Model::Rout
   if (use_input_route_processor) {
     internal::ModelAccess::configure_session_input_route(p, *this, build_opt);
   }
-  Run run = p.build(inputs, RunMode::Async, run_opt);
+  Run run = p.build(inputs, run_opt);
   return Runner(std::move(run), ingress_names);
 }
 
@@ -7092,7 +7038,7 @@ Model::Runner Model::build(const std::vector<cv::Mat>& inputs, const Model::Rout
                                     &info, false, false);
   Graph p(route_options_from_model_route_options(build_opt, &impl_->options));
   add_nodes_to_graph(p, std::move(nodes));
-  Run run = p.build(inputs, RunMode::Async, run_opt);
+  Run run = p.build(inputs, run_opt);
   return Runner(std::move(run));
 }
 #endif
@@ -7146,7 +7092,6 @@ BenchmarkReport Model::benchmark(int num_samples) {
 
   RunOptions run_options;
   run_options.startup_preflight = false;
-  run_options.enable_metrics = true;
   run_options.enable_board_power();
 
   BenchmarkReport report;
@@ -7206,7 +7151,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
     }
 
     const MeasureReport measured = measure.stop();
-    if (measured.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
+    if (measured.counters.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
       runner.close();
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
@@ -7300,6 +7245,14 @@ std::string ModelAccess::model_id(const Model& model) {
 
 std::string ModelAccess::source_path(const Model& model) {
   return model.impl_->source_path;
+}
+
+Run& ModelAccess::run(Model::Runner& runner) {
+  return runner.run_;
+}
+
+const Run& ModelAccess::run(const Model::Runner& runner) {
+  return runner.run_;
 }
 
 Model::Options ModelAccess::options(const Model& model) {

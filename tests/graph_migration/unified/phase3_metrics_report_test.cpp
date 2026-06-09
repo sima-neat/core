@@ -1,9 +1,12 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "graph_migration/common/phase3_graph_test_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/common/VideoConvert.h"
 #include "nodes/io/Input.h"
 #include "pipeline/GraphMetrics.h"
-#include "pipeline/runtime/RunCore.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -16,29 +19,31 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
   app.connect(input, output);
 
   simaai::neat::RunOptions opt;
-  opt.enable_metrics = true;
   opt.output_memory = simaai::neat::OutputMemory::Owned;
   simaai::neat::Run run = app.build(opt);
 
+  simaai::neat::MeasureOptions report_opt;
+  report_opt.duration_ms = 1;
+  report_opt.include_plugin_latency = false;
+  report_opt.include_edge_latency = false;
+  report_opt.include_power = false;
+  auto report_scope = run.start_measurement(report_opt);
   require(run.push(simaai::neat::Sample{graph_phase3_test::make_tensor_sample(7, "metrics")}),
           "metrics Graph push failed");
   auto out = run.pull(5000);
   require(out.has_value(), "metrics Graph pull produced no sample");
   graph_phase3_test::require_sample_tensor_output(*out, "metrics Graph output");
-
-  const simaai::neat::RuntimeMetrics metrics = run.metrics();
-  require(!metrics.source_kind.empty(), "Run::metrics source_kind should be populated");
-  require(metrics.counters.inputs_enqueued > 0 || metrics.counters.outputs_pulled > 0 ||
-              !metrics.groups.empty(),
-          "Run::metrics should include counters or metric groups after push/pull");
-
-  const std::string metrics_report = run.metrics_report();
-  require(!metrics_report.empty(), "Run::metrics_report should be non-empty");
-  const std::string report = run.report();
-  require(!report.empty(), "Run::report should be non-empty");
-  require(report.find("pipeline_state_") == std::string::npos,
+  const simaai::neat::MeasureReport report = report_scope.stop();
+  require(report.counters.inputs_enqueued > 0 || report.counters.outputs_pulled > 0 ||
+              report.input.push_count > 0,
+          "MeasureReport should include counters after push/pull");
+  const std::string report_text = report.to_text();
+  require(!report_text.empty(), "MeasureReport::to_text should be non-empty");
+  const std::string report_json = report.to_json();
+  require(!report_json.empty(), "MeasureReport::to_json should be non-empty");
+  require(report_text.find("pipeline_state_") == std::string::npos,
           "public report must not expose split pipeline_state_ internals");
-  require(report.find("graph_state_") == std::string::npos,
+  require(report_text.find("graph_state_") == std::string::npos,
           "public report must not expose split graph_state_ internals");
   run.stop();
 
@@ -51,7 +56,6 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     power_app.connect(power_input, power_output);
 
     simaai::neat::RunOptions power_opt;
-    power_opt.enable_metrics = true;
     power_opt.power_monitor.enabled = true;
     power_opt.power_monitor.profile = simaai::neat::PowerMonitorProfile::Custom;
     power_opt.power_monitor.sample_interval_ms = 10000;
@@ -66,7 +70,7 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     });
 
     simaai::neat::Run power_run = power_app.build(power_opt);
-    const simaai::neat::PowerSummary power = power_run.power_summary();
+    const simaai::neat::PowerSummary power = simaai::neat::run_internal::power_summary(power_run);
     require(power.enabled, "RunOptions::power_monitor should start one graph-level monitor");
     require(power.rails.size() == 1U,
             "graph-level power monitor should retain caller-provided custom rail config");
@@ -127,15 +131,14 @@ RUN_TEST("graph_migration_phase3_metrics_report_test", [] {
     timing_graph.add(simaai::neat::nodes::Output(simaai::neat::OutputOptions::EveryFrame(4)));
 
     simaai::neat::RunOptions timing_opt;
-    timing_opt.enable_metrics = true;
     timing_opt.output_memory = simaai::neat::OutputMemory::Owned;
     timing_opt.advanced.copy_input = true;
     simaai::neat::Tensor seed = graph_phase3_test::make_rgb_tensor(16, 16, 0x43);
-    simaai::neat::Run timing_run = timing_graph.build(simaai::neat::TensorList{seed},
-                                                      simaai::neat::RunMode::Async, timing_opt);
-    const simaai::neat::RunDiagSnapshot timing = timing_run.diag_snapshot();
+    simaai::neat::Run timing_run = timing_graph.build(simaai::neat::TensorList{seed}, timing_opt);
+    const simaai::neat::RunDiagSnapshot timing =
+        simaai::neat::run_internal::diag_snapshot(timing_run);
     require(!timing.element_timings.empty(),
-            "RunOptions::enable_metrics should attach element timing probes without "
+            "Run measurement should attach element timing probes without "
             "SIMA_GST_ELEMENT_TIMINGS");
     const simaai::neat::GraphMetricsReport graph_metrics =
         simaai::neat::build_graph_metrics_report_run_lifetime(timing_run);

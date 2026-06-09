@@ -42,11 +42,10 @@ def main(argv: list[str]) -> int:
   graph.add(pyneat.nodes.input(inp))
   graph.add(pyneat.nodes.output())
 
-  run = graph.build([input_sample], pyneat.RunMode.Sync)
   # END STEP
 
   # STEP run-frame
-  sample = run.run([input_sample], timeout_ms=1000)
+  sample = graph.run([input_sample])
   # END STEP
 
   # CORE LOGIC

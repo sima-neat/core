@@ -322,7 +322,6 @@ set(UNIT_TESTS
   unit_run_api_matrix_test
   unit_run_lifecycle_teardown_test
   unit_run_overflow_policy_parity_test
-  unit_runtime_metrics_test
   unit_samplespec_test
   unit_sample_bundle_holder_test
   unit_graph_api_surface_test

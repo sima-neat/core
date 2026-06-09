@@ -34,7 +34,7 @@ RUN_TEST("udp_output_loopback_integration_test", ([] {
              const Tensor seed = make_color_tensor(12, 8, ImageSpec::PixelFormat::RGB, 0x44);
              RunOptions run_opt;
              run_opt.queue_depth = 32;
-             run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
+             run = graph.build(TensorList{seed}, run_opt);
            } catch (const std::exception& e) {
              if (sima_test::likely_runtime_missing(e.what())) {
                throw std::runtime_error(

@@ -167,7 +167,7 @@ Seeded build gives NEAT the first input during build:
 neat::RunOptions opt;
 opt.startup_preflight = true;
 
-neat::Run run = app.build(neat::TensorList{first_image}, neat::RunMode::Async, opt);
+neat::Run run = app.build(neat::TensorList{first_image}, opt);
 ```
 
 Use this when the first input should seed shape/format adaptation before streaming starts. With

@@ -28,14 +28,13 @@ int main() {
     simaai::neat::Graph graph;
     graph.add(simaai::neat::nodes::Input(in));
     graph.add(simaai::neat::nodes::Output());
-    auto run = graph.build(std::vector<cv::Mat>{rgb}, simaai::neat::RunMode::Sync);
+    // Use Graph::run(...) for a one-shot synchronous frame.
     // END STEP
 
     // CORE LOGIC
     // STEP run-frame
-    // push_and_pull is the one-frame synchronous shortcut; Sample has .kind,
-    // .tensor (optional), .fields (named sub-tensors for bundles).
-    simaai::neat::TensorList out = run.run(std::vector<cv::Mat>{rgb}, /*timeout_ms=*/1000);
+    // Graph::run is the one-frame synchronous shortcut.
+    simaai::neat::TensorList out = graph.run(std::vector<cv::Mat>{rgb});
     // END STEP
 
     // STEP inspect-sample

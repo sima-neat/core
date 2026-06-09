@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include "pipeline/internal/InputStreamStats.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"

@@ -4,6 +4,7 @@
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "model/Model.h"
+#include "pipeline/runtime/RunInternal.h"
 
 #include "e2e_pipelines/e2e_utils.h"
 #include "e2e_pipelines/obj_detection/obj_detection_utils.h"
@@ -72,13 +73,16 @@ struct RunSummary {
   std::string diagnostics;
 };
 
-std::string maybe_collect_run_report(simaai::neat::Run& run, bool enabled) {
+std::string maybe_collect_run_report(simaai::neat::Run& run, bool enabled,
+                                     const simaai::neat::MeasureReport* report = nullptr) {
   if (!enabled) {
     return {};
   }
-  simaai::neat::RunReportOptions report_opt;
-  report_opt.include_system_info = true;
-  return run.report(report_opt);
+  if (report != nullptr) {
+    return report->to_text();
+  }
+  const std::string last = run.last_error();
+  return last.empty() ? std::string{} : ("last_error=" + last);
 }
 
 std::optional<simaai::neat::BoxDecodeType> parse_boxdecode_type_token(const char* raw) {
@@ -441,6 +445,12 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   int measured_count = 0;
   int timeout_count = 0;
 
+  simaai::neat::MeasureOptions measure_opt;
+  measure_opt.include_plugin_latency = false;
+  measure_opt.include_edge_latency = false;
+  measure_opt.include_power = false;
+  auto measure_scope = async.start_measurement(measure_opt);
+
   const int seed = std::min(inflight, cfg.iters);
   for (; pushed_count < seed; ++pushed_count) {
     const auto push_start = std::chrono::steady_clock::now();
@@ -537,6 +547,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   if (profile.enabled) {
     profile.drain_wait_ms = ns_to_ms(duration_ns(push_loop_end, end));
   }
+  const simaai::neat::MeasureReport measure_report = measure_scope.stop();
 
   const double elapsed_s = std::chrono::duration<double>(end - start).count();
 
@@ -602,7 +613,6 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     }
   }
   if (profile.enabled) {
-    const simaai::neat::RunStats run_stats = async.stats();
     const std::uint64_t push_calls = profile.push_call.count.load(std::memory_order_relaxed);
     const std::uint64_t pull_calls = profile.pull_call.count.load(std::memory_order_relaxed);
     const std::uint64_t extract_calls =
@@ -625,12 +635,12 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
     std::cout << "ASYNC_TPUT_PROFILE extract calls=" << extract_calls
               << " avg_ms=" << avg_ms(profile.extract_payload)
               << " max_ms=" << max_ms(profile.extract_payload) << "\n";
-    std::cout << "ASYNC_TPUT_PROFILE runstats avg_latency_ms=" << run_stats.avg_latency_ms
-              << " min_latency_ms=" << run_stats.min_latency_ms
-              << " max_latency_ms=" << run_stats.max_latency_ms
-              << " outputs_pulled=" << run_stats.outputs_pulled << "\n";
+    std::cout << "ASYNC_TPUT_PROFILE measured avg_latency_ms=" << measure_report.end_to_end.avg_ms
+              << " p50_latency_ms=" << measure_report.end_to_end.p50_ms
+              << " max_latency_ms=" << measure_report.end_to_end.max_ms
+              << " outputs_pulled=" << measure_report.counters.outputs_pulled << "\n";
     if (cfg.profile_emit_run_report) {
-      res.diagnostics = maybe_collect_run_report(async, true);
+      res.diagnostics = maybe_collect_run_report(async, true, &measure_report);
     }
   }
 

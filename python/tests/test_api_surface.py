@@ -244,6 +244,7 @@ def test_run_export_api_surface():
   run_opt = pyneat.RunOptions()
   run_opt.run_export = auto_opt
   run_opt.enable_board_power()
+  assert not hasattr(run_opt, "enable_metrics")
   assert run_opt.power_monitor.enabled is True
   run_opt.disable_power_monitor()
   assert run_opt.power_monitor.enabled is False
@@ -253,14 +254,16 @@ def test_run_export_api_surface():
   assert run_opt.run_export.label == "auto"
   assert run_opt.run_export.include_plugin_metrics is False
 
-  metrics_opt = pyneat.RuntimeMetricsOptions()
-  metrics_opt.include_power = False
-  assert metrics_opt.include_power is False
-  assert hasattr(pyneat, "build_graph_metrics_report_run_lifetime")
+  assert not hasattr(pyneat, "RuntimeMetricsOptions")
+  assert not hasattr(pyneat, "RuntimeMetrics")
+  assert not hasattr(pyneat, "GraphMetricsReport")
+  assert not hasattr(pyneat, "build_graph_metrics_report_run_lifetime")
 
   measure_report = pyneat.MeasureReport()
   measure_report.elapsed_s = 1.0
-  measure_report.outputs_pulled = 2
+  counters = pyneat.MeasureCounters()
+  counters.outputs_pulled = 2
+  measure_report.counters = counters
   measure_report.throughput_batches_per_s = 2.0
   plugin = pyneat.MeasurePluginLatency()
   plugin.backend = "A65"
@@ -270,6 +273,8 @@ def test_run_export_api_surface():
   plugin.calls = 1
   measure_report.plugin_latency = [plugin]
   assert measure_report.plugin_latency[0].runtime_node_id == 0
+  assert hasattr(measure_report, "to_json")
+  assert "sima.neat.measure_report" in measure_report.to_json(0)
 
   run = pyneat.Run()
   with pytest.raises(Exception, match="Run has no runtime core"):
@@ -1002,8 +1007,9 @@ def test_graph_run_accepts_numpy_without_type_error():
   )
 
 
-def test_inputstream_stats_extended_fields_present():
-  s = pyneat.InputStreamStats()
+def test_measure_input_stats_extended_fields_present():
+  assert not hasattr(pyneat, "RuntimeInputStreamMetrics")
+  s = pyneat.MeasureInputStats()
   assert hasattr(s, "alloc_grows")
   assert hasattr(s, "growth_blocked")
   assert hasattr(s, "renegotiation_blocked")
@@ -1204,3 +1210,50 @@ def test_low_level_runtime_graph_removed_from_python_surface():
   assert isinstance(fragment, pyneat.Graph)
   with pytest.raises(AttributeError, match="removed"):
     getattr(pyneat, "_graph")
+
+
+def test_graph_build_rejects_legacy_mode_argument():
+  graph = pyneat.Graph()
+  tensor = pyneat.Tensor.from_numpy(
+      np.zeros((8, 8, 3), dtype=np.uint8),
+      copy=True,
+      image_format=pyneat.PixelFormat.RGB,
+  )
+
+  with pytest.raises(TypeError):
+    graph.build([tensor], mode="Sync")
+  with pytest.raises(TypeError):
+    graph.build([tensor], "Sync", pyneat.RunOptions())
+
+
+def test_runner_legacy_measurement_methods_are_not_public():
+  run = pyneat.Run()
+  assert not hasattr(run, "stats")
+  assert not hasattr(run, "input_stats")
+  assert not hasattr(run, "measurement_summary")
+  assert not hasattr(run, "metrics_report")
+  assert not hasattr(run, "metrics")
+  assert not hasattr(run, "measure")
+  assert not hasattr(run, "report")
+  assert not hasattr(run, "diag_snapshot")
+  assert not hasattr(run, "power_summary")
+  assert not hasattr(run, "diagnostics_summary")
+  assert not hasattr(pyneat, "RunMode")
+  assert not hasattr(pyneat, "InputStreamStats")
+  assert not hasattr(pyneat, "RunStats")
+  assert not hasattr(pyneat, "RunDiagSnapshot")
+  assert not hasattr(pyneat, "RunReportOptions")
+
+
+def test_model_runner_measurement_surface_matches_run():
+  assert hasattr(pyneat.ModelRunner, "start_measurement")
+  assert hasattr(pyneat.ModelRunner, "close_input")
+  assert not hasattr(pyneat.ModelRunner, "metrics")
+  assert not hasattr(pyneat.ModelRunner, "measure")
+  assert not hasattr(pyneat.ModelRunner, "warmup")
+  assert not hasattr(pyneat.ModelRunner, "stats")
+  assert not hasattr(pyneat.ModelRunner, "input_stats")
+  assert not hasattr(pyneat.ModelRunner, "measurement_summary")
+  assert not hasattr(pyneat.ModelRunner, "metrics_report")
+  assert not hasattr(pyneat.ModelRunner, "diag_snapshot")
+  assert not hasattr(pyneat.ModelRunner, "report")

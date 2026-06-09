@@ -1,4 +1,9 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include <neat.h>
+#include "model/internal/ModelInternal.h"
+#include "pipeline/runtime/RunInternal.h"
 
 #include <algorithm>
 #include <chrono>
@@ -250,52 +255,46 @@ int main(int argc, char** argv) {
               << " p99_ms=" << percentile_ms(lat_ms, 99.0) << " max_ms=" << *max_it << "\n";
     std::cout << report.to_text() << std::flush;
 
-    const auto summary = runner.measurement_summary();
-    std::cout << "EVO_RUN_STATS"
-              << " avg_latency_ms=" << summary.stats.avg_latency_ms
-              << " min_latency_ms=" << summary.stats.min_latency_ms
-              << " max_latency_ms=" << summary.stats.max_latency_ms
-              << " avg_push_us=" << summary.input_stats.avg_push_us
-              << " avg_pull_wait_us=" << summary.input_stats.avg_pull_wait_us
-              << " avg_alloc_us=" << summary.input_stats.avg_alloc_us
-              << " avg_map_us=" << summary.input_stats.avg_map_us
-              << " avg_copy_us=" << summary.input_stats.avg_copy_us
-              << " push_count=" << summary.input_stats.push_count
-              << " pull_count=" << summary.input_stats.pull_count << "\n";
+    std::cout << "EVO_RUN_STATS" << " avg_latency_ms=" << report.end_to_end.avg_ms
+              << " p50_latency_ms=" << report.end_to_end.p50_ms
+              << " p95_latency_ms=" << report.end_to_end.p95_ms
+              << " avg_push_us=" << report.input.avg_push_us
+              << " avg_pull_wait_us=" << report.input.avg_pull_wait_us
+              << " avg_alloc_us=" << report.input.avg_alloc_us
+              << " avg_map_us=" << report.input.avg_map_us
+              << " avg_copy_us=" << report.input.avg_copy_us
+              << " push_count=" << report.input.push_count
+              << " pull_count=" << report.input.pull_count << "\n";
 
-    const auto diag = runner.diag_snapshot();
-    std::vector<neat::RunStageStats> stages = diag.stages;
+    std::vector<neat::GraphNodeMetrics> stages = report.node_metrics;
     std::sort(stages.begin(), stages.end(), [](const auto& a, const auto& b) {
-      return std::make_tuple(a.total_us, a.max_us, a.stage_name) >
-             std::make_tuple(b.total_us, b.max_us, b.stage_name);
+      return std::make_tuple(a.latency.total_ms, a.latency.max_ms, a.label, a.node_id) >
+             std::make_tuple(b.latency.total_ms, b.latency.max_ms, b.label, b.node_id);
     });
     const std::size_t stage_n = std::min<std::size_t>(stages.size(), 8U);
     for (std::size_t i = 0; i < stage_n; ++i) {
       const auto& s = stages[i];
-      const double avg_ms =
-          s.samples ? (static_cast<double>(s.total_us) / s.samples / 1000.0) : 0.0;
-      std::cout << "EVO_STAGE_TOP rank=" << (i + 1) << " name=" << s.stage_name
-                << " samples=" << s.samples
-                << " total_ms=" << (static_cast<double>(s.total_us) / 1000.0)
-                << " avg_ms=" << avg_ms << " max_ms=" << (static_cast<double>(s.max_us) / 1000.0)
-                << "\n";
+      const std::string name =
+          !s.label.empty() ? s.label : (!s.node_id.empty() ? s.node_id : s.kind);
+      std::cout << "EVO_STAGE_TOP rank=" << (i + 1) << " name=" << name
+                << " samples=" << s.latency.samples << " total_ms=" << s.latency.total_ms
+                << " avg_ms=" << s.latency.avg_ms << " max_ms=" << s.latency.max_ms << "\n";
     }
-    std::vector<neat::RunElementTimingStats> elements = diag.element_timings;
+    std::vector<neat::GraphElementMetrics> elements;
+    for (const auto& node : report.node_metrics) {
+      elements.insert(elements.end(), node.elements.begin(), node.elements.end());
+    }
     std::sort(elements.begin(), elements.end(), [](const auto& a, const auto& b) {
-      return std::make_tuple(a.total_us, a.max_us, a.element_name) >
-             std::make_tuple(b.total_us, b.max_us, b.element_name);
+      return std::make_tuple(a.latency.total_ms, a.latency.max_ms, a.name) >
+             std::make_tuple(b.latency.total_ms, b.latency.max_ms, b.name);
     });
     const std::size_t elem_n = std::min<std::size_t>(elements.size(), 12U);
     for (std::size_t i = 0; i < elem_n; ++i) {
       const auto& e = elements[i];
-      const double avg_ms =
-          e.samples ? (static_cast<double>(e.total_us) / e.samples / 1000.0) : 0.0;
-      std::cout << "EVO_ELEMENT_TOP rank=" << (i + 1) << " name=" << e.element_name
-                << " samples=" << e.samples
-                << " total_ms=" << (static_cast<double>(e.total_us) / 1000.0)
-                << " avg_ms=" << avg_ms << " min_ms=" << (static_cast<double>(e.min_us) / 1000.0)
-                << " max_ms=" << (static_cast<double>(e.max_us) / 1000.0)
-                << " missed_in=" << e.missed_in << " missed_out=" << e.missed_out << "\n";
+      std::cout << "EVO_ELEMENT_TOP rank=" << (i + 1) << " name=" << e.name
+                << " samples=" << e.latency.samples << " total_ms=" << e.latency.total_ms
+                << " avg_ms=" << e.latency.avg_ms << " min_ms=" << e.latency.min_ms
+                << " max_ms=" << e.latency.max_ms << "\n";
     }
     runner.close();
     return 0;

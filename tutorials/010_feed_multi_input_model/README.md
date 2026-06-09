@@ -28,7 +28,7 @@ This graph consumes raw tensors, not decoded images, so the input contract is de
 
 ### Build the graph and a seed run {#step-build-seed-run}
 
-We compose the same minimal `Input -> Output` topology from chapter 003 and `build()` it into a `Run`. `build()` needs a representative sample to lock in negotiated shapes, so we pass a single seed tensor (all zeros) of the same shape the real fields will use. The seed is only for shape negotiation — the real data comes next.
+We compose the same minimal `Input -> Output` topology from chapter 004 and `build()` it into a `Run`. `build()` needs a representative sample to lock in negotiated shapes, so we pass a single seed tensor (all zeros) of the same shape the real fields will use. The seed is only for shape negotiation — the real data comes next.
 
 ### Build the bundle {#step-make-bundle}
 

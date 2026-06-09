@@ -2,12 +2,6 @@
 #include "gst/SimaTensorSetMetaAbi.h"
 #include "pipeline/internal/SampleUtil.h"
 
-#if defined(SIMA_HAS_NEAT_PROFILER)
-#include "profiler_scoped_timer.h"
-#else
-#define SIMA_PROF_MEMCPY(site_id, bytes_expr) (void)(bytes_expr)
-#endif
-
 namespace simaai::neat {
 
 namespace {
@@ -1222,7 +1216,6 @@ bool InputStream::try_push(const cv::Mat& input) {
   const auto fill = [&](uint8_t* dst, size_t dst_bytes) -> size_t {
     const size_t copy_bytes = std::min(input_bytes, dst_bytes);
     if (copy_bytes > 0) {
-      SIMA_PROF_MEMCPY(SIMA_NEAT_PROFILER_MEMCPY_OUT, copy_bytes);
       std::memcpy(dst, contiguous.data, copy_bytes);
     }
     return copy_bytes;

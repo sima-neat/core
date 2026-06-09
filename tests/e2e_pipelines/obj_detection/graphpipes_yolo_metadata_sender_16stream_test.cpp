@@ -106,7 +106,7 @@ int run_case(const fs::path& root) {
   simaai::neat::Run run = pipeline.build(
       simaai::neat::Sample{simaai::neat::Sample::from_image(
           img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
-      simaai::neat::RunMode::Async, run_opt);
+      run_opt);
   guard.run = &run;
 
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();

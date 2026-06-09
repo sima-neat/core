@@ -73,7 +73,7 @@ int main(int argc, char** argv) {
     simaai::neat::Graph graph;
     graph.add(simaai::neat::nodes::Input(in));
     graph.add(simaai::neat::nodes::Output());
-    auto run = graph.build(simaai::neat::TensorList{seed}, simaai::neat::RunMode::Sync);
+    auto run = graph.build(simaai::neat::TensorList{seed});
     // END STEP
 
     // STEP make-bundle

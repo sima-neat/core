@@ -129,8 +129,8 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
   MeasureReport measured;
   measured.elapsed_s = 2.0;
   measured.outputs = 4;
-  measured.outputs_pulled = 4;
-  measured.inputs_pushed = 4;
+  measured.counters.outputs_pulled = 4;
+  measured.counters.inputs_pushed = 4;
   measured.throughput_batches_per_s = 2.0;
   measured.throughput_inferences_per_s = 2.0;
   MeasurePluginLatency plugin;
