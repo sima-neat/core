@@ -614,8 +614,8 @@ public:
   /**
    * @brief Run a small synthetic benchmark for simple model execution.
    *
-   * Generates deterministic dense input tensors from `input_specs()`, runs fixed warmup and
-   * measured sync/async loops, prints a compact summary, and returns headline metrics.
+   * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
+   * measures async push/pull throughput, prints a compact summary, and returns headline metrics.
    */
   BenchmarkReport benchmark(int num_samples = 100);
 

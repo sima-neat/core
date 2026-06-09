@@ -59,18 +59,16 @@ Before composing a Graph you can introspect the model's tensor contracts with `i
 simaai::neat::Model model("yolov8s_model.tar.gz");
 
 // Tensor contracts the model expects (input) and produces (output).
-const auto in  = model.input_specs().front();
-const auto out = model.output_specs().front();
-auto print_spec = [&](const char* label, const simaai::neat::TensorSpec& spec) {
-  std::cout << label << " shape=[";
-  for (std::size_t i = 0; i < spec.shape.size(); ++i) {
-    std::cout << (i ? "," : "") << spec.shape[i];
-  }
-  std::cout << "]\n";
-};
-print_spec("input ", in);
-print_spec("output", out);
-std::cout << "metadata keys=" << model.metadata().size() << "\n";
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
+
+for (std::size_t i = 0; i < inputs.size(); ++i) {
+  const auto& input_shape = inputs[i].shape;
+}
+for (std::size_t i = 0; i < outputs.size(); ++i) {
+  const auto& output_shape = outputs[i].shape;
+}
+const auto metadata = model.metadata();
 
 // Run one frame directly via Model::Runner (no Graph required).
 simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeout_ms=*/2000);
@@ -83,14 +81,17 @@ simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeo
 model = pyneat.Model("yolov8s_model.tar.gz")
 
 # Tensor contracts the model expects (input) and produces (output).
-in_spec = model.input_specs()[0]
-out_spec = model.output_specs()[0]
-print("input  shape =", list(in_spec.shape))
-print("output shape =", list(out_spec.shape))
-print("metadata keys =", len(model.metadata()))
+inputs = model.input_specs()
+outputs = model.output_specs()
+
+for input_spec in inputs:
+  input_shape = list(input_spec.shape)
+for output_spec in outputs:
+  output_shape = list(output_spec.shape)
+metadata = model.metadata()
 
 # Run one frame directly (no Graph required).
-outputs = model.run([frame], timeout_ms=2000)
+result = model.run([frame], timeout_ms=2000)
 ```
 
 </CodeTab>

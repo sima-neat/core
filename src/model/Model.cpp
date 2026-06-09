@@ -1915,30 +1915,6 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   return t;
 }
 
-TensorLayout synthetic_layout_from_spec(const TensorSpec& spec, const std::vector<int64_t>& shape) {
-  if (shape.size() == 2U) {
-    return TensorLayout::HW;
-  }
-  if (shape.size() == 3U && spec.image_format.has_value()) {
-    return TensorLayout::HWC;
-  }
-  return TensorLayout::Unknown;
-}
-
-std::vector<TensorAxisSemantic>
-synthetic_axis_semantics_from_spec(const TensorSpec& spec, const std::vector<int64_t>& shape) {
-  if (!spec.image_format.has_value()) {
-    return {};
-  }
-  if (shape.size() == 2U) {
-    return {TensorAxisSemantic::H, TensorAxisSemantic::W};
-  }
-  if (shape.size() == 3U) {
-    return {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
-  }
-  return {};
-}
-
 Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
   if (spec.shape.empty()) {
     throw std::runtime_error("Model::benchmark: input_specs() entry has empty shape");
@@ -1969,61 +1945,8 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
 
   if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
       spec.image_format == ImageSpec::PixelFormat::I420) {
-    if (dtype != TensorDType::UInt8 || shape.size() != 2U || shape[0] <= 0 || shape[1] <= 0 ||
-        (shape[0] % 2) != 0 || (shape[1] % 2) != 0) {
-      throw std::runtime_error("Model::benchmark: unsupported planar synthetic image spec");
-    }
-    const int64_t h = shape[0];
-    const int64_t w = shape[1];
-    const std::size_t y_size = static_cast<std::size_t>(w * h);
-    const std::size_t chroma_size = static_cast<std::size_t>(w * h / 4);
-    const std::size_t bytes = y_size + chroma_size * 2U;
-    auto storage = make_cpu_owned_storage(bytes);
-    auto map = storage->map(MapMode::Write);
-    if (!map.data && bytes != 0U) {
-      throw std::runtime_error("Model::benchmark: failed to map synthetic image storage");
-    }
-    auto* out = static_cast<std::uint8_t*>(map.data);
-    for (std::size_t i = 0; i < bytes; ++i) {
-      out[i] = static_cast<std::uint8_t>((i + input_index * 17U) & 0xffU);
-    }
-
-    Tensor tensor;
-    tensor.storage = std::move(storage);
-    tensor.dtype = dtype;
-    tensor.layout = TensorLayout::HW;
-    tensor.shape = shape;
-    tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
-    tensor.device = {DeviceType::CPU, 0};
-    tensor.read_only = true;
-    tensor.semantic.image = ImageSpec{*spec.image_format, ""};
-
-    Plane y;
-    y.role = PlaneRole::Y;
-    y.shape = {h, w};
-    y.strides_bytes = {w, 1};
-    y.byte_offset = 0;
-    if (spec.image_format == ImageSpec::PixelFormat::NV12) {
-      Plane uv;
-      uv.role = PlaneRole::UV;
-      uv.shape = {h / 2, w};
-      uv.strides_bytes = {w, 1};
-      uv.byte_offset = static_cast<int64_t>(y_size);
-      tensor.planes = {y, uv};
-    } else {
-      Plane u;
-      u.role = PlaneRole::U;
-      u.shape = {h / 2, w / 2};
-      u.strides_bytes = {w / 2, 1};
-      u.byte_offset = static_cast<int64_t>(y_size);
-      Plane v;
-      v.role = PlaneRole::V;
-      v.shape = {h / 2, w / 2};
-      v.strides_bytes = {w / 2, 1};
-      v.byte_offset = static_cast<int64_t>(y_size + chroma_size);
-      tensor.planes = {y, u, v};
-    }
-    return tensor.cvu();
+    throw std::runtime_error(
+        "Model::benchmark: planar image input specs are not supported by the synthetic benchmark");
   }
 
   std::uint64_t element_count = 1;
@@ -2056,14 +1979,19 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
   Tensor tensor;
   tensor.storage = std::move(storage);
   tensor.dtype = dtype;
-  tensor.layout = synthetic_layout_from_spec(spec, shape);
   tensor.shape = std::move(shape);
   tensor.strides_bytes = pipeline_internal::contiguous_strides_bytes(tensor.shape, elem);
-  tensor.axis_semantics = synthetic_axis_semantics_from_spec(spec, tensor.shape);
   tensor.device = {DeviceType::CPU, 0};
   tensor.read_only = true;
   if (spec.image_format.has_value()) {
     tensor.semantic.image = ImageSpec{*spec.image_format, ""};
+    if (tensor.shape.size() == 2U) {
+      tensor.layout = TensorLayout::HW;
+      tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
+    } else if (tensor.shape.size() == 3U) {
+      tensor.layout = TensorLayout::HWC;
+      tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
+    }
   }
   return tensor.cvu();
 }
@@ -2081,7 +2009,7 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   return inputs;
 }
 
-MeasureOptions make_benchmark_measure_options(bool include_power, int timeout_ms) {
+MeasureOptions make_benchmark_measure_options(int timeout_ms) {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
   opt.warmup_ms = 0;
@@ -2089,7 +2017,7 @@ MeasureOptions make_benchmark_measure_options(bool include_power, int timeout_ms
   opt.include_plugin_latency = false;
   opt.include_edge_latency = false;
   opt.include_message_latency = false;
-  opt.include_power = include_power;
+  opt.include_power = true;
   opt.title = "NEAT Benchmark";
   opt.input = "synthetic";
   return opt;
@@ -7216,39 +7144,26 @@ BenchmarkReport Model::benchmark(int num_samples) {
   constexpr int kTimeoutMs = 120000;
   const TensorList inputs = make_synthetic_benchmark_inputs(*this);
 
-  auto make_run_options = [](bool measured) {
-    RunOptions opt;
-    opt.queue_depth = 8;
-    opt.overflow_policy = OverflowPolicy::Block;
-    opt.output_memory = OutputMemory::Owned;
-    opt.startup_preflight = false;
-    if (measured) {
-      opt.enable_metrics = true;
-      opt.enable_board_power();
-    }
-    return opt;
-  };
+  RunOptions run_options;
+  run_options.startup_preflight = false;
+  run_options.enable_metrics = true;
+  run_options.enable_board_power();
 
   BenchmarkReport report;
-  {
-    Runner warmup = build(inputs, Model::RouteOptions{}, make_run_options(false));
-    for (int i = 0; i < kWarmupSamples; ++i) {
-      if (!warmup.push(inputs)) {
-        throw std::runtime_error("Model::benchmark: async warmup push failed");
-      }
-      Sample out = warmup.pull(kTimeoutMs);
-      if (out.empty()) {
-        throw std::runtime_error("Model::benchmark: async warmup pull timed out");
-      }
+  Runner runner = build(inputs, Model::RouteOptions{}, run_options);
+  for (int i = 0; i < kWarmupSamples; ++i) {
+    if (!runner.push(inputs)) {
+      throw std::runtime_error("Model::benchmark: async warmup push failed");
     }
-    warmup.close();
+    Sample out = runner.pull(kTimeoutMs);
+    if (out.empty()) {
+      throw std::runtime_error("Model::benchmark: async warmup pull timed out");
+    }
   }
 
   bool power_available = false;
   {
-    Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
-    MeasureScope measure = runner.start_measurement(
-        make_benchmark_measure_options(/*include_power=*/true, kTimeoutMs));
+    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(kTimeoutMs));
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
