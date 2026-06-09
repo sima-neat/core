@@ -16,6 +16,7 @@ exits 0 unless the manifest itself is malformed.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -59,8 +60,11 @@ SOURCE_INDEX_ENTRY_RE = re.compile(
 )
 
 
-def run_git(args: List[str], cwd: Optional[Path] = None) -> None:
+def run_git(args: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
     """Run git with stdout/stderr captured; raise CalledProcessError on failure."""
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
     subprocess.run(
         ["git", *args],
         cwd=str(cwd) if cwd else None,
@@ -68,27 +72,94 @@ def run_git(args: List[str], cwd: Optional[Path] = None) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=run_env,
     )
+
+
+def github_token() -> str:
+    """Best-effort token for GitHub HTTPS clones in CI."""
+    for env_var in ("AUTODOC_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(env_var, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def github_auth_env() -> Dict[str, str]:
+    """Return temporary git config env for GitHub token auth, without URL tokens."""
+    token = github_token()
+    if not token:
+        return {}
+
+    encoded = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {encoded}",
+    }
+
+
+def github_https_repo(repo: str) -> str:
+    """Rewrite GitHub SSH remotes to HTTPS when token auth is available."""
+    if not github_token():
+        return repo
+    match = re.match(r"^git@github\.com:(?P<path>[^\s]+?)(?:\.git)?$", repo)
+    if match:
+        return f"https://github.com/{match.group('path')}.git"
+    return repo
+
+
+def is_git_checkout(path: Path) -> bool:
+    """Return True when `path` is an existing usable git working tree."""
+    if not path.is_dir():
+        return False
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(path),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def clone_source(repo: str, branch: str, githash: str, staging: Path) -> None:
+    """Clone `repo` into a fresh `staging` directory."""
+    clone_repo = github_https_repo(repo)
+    auth_env = github_auth_env()
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    if githash:
+        run_git(["clone", clone_repo, str(staging)], env=auth_env)
+        run_git(["checkout", githash], cwd=staging, env=auth_env)
+    else:
+        run_git(["clone", "--branch", branch, "--depth", "1", clone_repo, str(staging)], env=auth_env)
 
 
 def acquire_source(repo: str, branch: str, githash: str, staging: Path) -> None:
     """Clone or update `repo` at `branch` (+ optional githash) into `staging`."""
-    if not staging.exists():
-        staging.parent.mkdir(parents=True, exist_ok=True)
-        if githash:
-            run_git(["clone", repo, str(staging)])
-            run_git(["checkout", githash], cwd=staging)
-        else:
-            run_git(["clone", "--branch", branch, "--depth", "1", repo, str(staging)])
+    if not is_git_checkout(staging):
+        if staging.exists():
+            LOG.info("removing stale autodoc staging directory: %s", staging)
+            shutil.rmtree(staging)
+        clone_source(repo, branch, githash, staging)
         return
 
-    if githash:
-        run_git(["fetch", "origin"], cwd=staging)
-        run_git(["checkout", githash], cwd=staging)
-        run_git(["reset", "--hard", githash], cwd=staging)
-    else:
-        run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging)
-        run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging)
+    try:
+        if githash:
+            run_git(["fetch", "origin"], cwd=staging, env=github_auth_env())
+            run_git(["checkout", githash], cwd=staging, env=github_auth_env())
+            run_git(["reset", "--hard", githash], cwd=staging, env=github_auth_env())
+        else:
+            run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging, env=github_auth_env())
+            run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging, env=github_auth_env())
+    except subprocess.CalledProcessError:
+        LOG.info("refresh failed; recloning autodoc staging directory: %s", staging)
+        shutil.rmtree(staging)
+        clone_source(repo, branch, githash, staging)
 
 
 def current_core_branch(repo_root: Path) -> str:
@@ -116,9 +187,11 @@ def remote_branch_exists(repo: str, branch: str) -> bool:
     if not branch:
         return False
     try:
+        remote = github_https_repo(repo)
         out = subprocess.run(
-            ["git", "ls-remote", "--heads", repo, branch],
+            ["git", "ls-remote", "--heads", remote, branch],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            env={**os.environ, **github_auth_env()},
         ).stdout.strip()
         return bool(out)
     except Exception:
@@ -587,7 +660,8 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip().splitlines()
         reason = stderr[-1] if stderr else f"exit {exc.returncode}"
-        return False, f"git failed: {reason}"
+        command = " ".join(str(part) for part in (exc.cmd or []))
+        return False, f"git failed ({command}): {reason}"
     except FileNotFoundError:
         return False, "git binary not found"
 

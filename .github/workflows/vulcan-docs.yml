@@ -82,6 +82,7 @@ jobs:
       DOCS_STRICT_LINKS: "1"
       DOCS_BASE_URL: /software/
       DOCS_DEVELOPER_CENTER_SHELL_BASE: /
+      AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
