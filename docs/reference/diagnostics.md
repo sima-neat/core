@@ -122,4 +122,4 @@ power-number validation.
 | `tensor caps change not supported` | Tensor shape/dtype change at runtime | Keep tensor shape/dtype stable (no renegotiation) |
 
 For structured plugin errors and actionable hints, see
-[Troubleshooting](/getting-started/troubleshooting).
+[Troubleshooting](/troubleshooting).
