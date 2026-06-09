@@ -24,7 +24,8 @@ struct EdgeRouterDispatchOptions {
 };
 
 struct EdgeRouterCallbacks {
-  std::function<bool(std::size_t, simaai::neat::graph::PortId, Sample&&)> dispatch_to_stage_group;
+  std::function<bool(std::size_t, simaai::neat::graph::PortId, Sample&&, std::size_t)>
+      dispatch_to_stage_group;
   std::function<bool(std::size_t, const Sample&, std::string*)> ensure_pipeline_built;
   std::function<void(std::size_t, Sample&)> sanitize_pipeline_input;
   std::function<void(simaai::neat::graph::NodeId, Sample&, std::size_t, std::size_t)>
@@ -40,7 +41,7 @@ public:
   const std::vector<DownstreamTarget>* targets(simaai::neat::graph::NodeId node,
                                                simaai::neat::graph::PortId port) const;
 
-  bool push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sample,
+  bool push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sample, std::size_t edge_index,
                     const EdgeRouterOptions& options, const EdgeRouterCallbacks& callbacks,
                     std::size_t sink_backpressure_context) const;
 

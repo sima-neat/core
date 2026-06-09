@@ -959,6 +959,13 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
       << "\"top_k\":" << opt.top_k << ","
       << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
       << "\"boxdecode_original_height\":" << opt.boxdecode_original_height << ","
+      << "\"boxdecode_resize_mode\":";
+  if (opt.boxdecode_resize_mode.has_value()) {
+    oss << enum_int(*opt.boxdecode_resize_mode);
+  } else {
+    oss << "null";
+  }
+  oss << ","
       << "\"upstream_name\":\"" << json_escape(opt.upstream_name) << "\","
       << "\"name_suffix\":\"" << json_escape(opt.name_suffix) << "\","
       << "\"cleanup_extracted_model_data\":"
@@ -1010,6 +1017,10 @@ Model::Options parse_model_options_json(const JsonValue::JsonObject& obj) {
       int_field(obj, "boxdecode_original_width", opt.boxdecode_original_width);
   opt.boxdecode_original_height =
       int_field(obj, "boxdecode_original_height", opt.boxdecode_original_height);
+  if (const JsonValue* v = object_field(obj, "boxdecode_resize_mode");
+      v && v->type == JsonValue::Type::Number) {
+    opt.boxdecode_resize_mode = static_cast<ResizeMode>(static_cast<int>(v->num));
+  }
   opt.upstream_name = string_field(obj, "upstream_name", opt.upstream_name);
   opt.name_suffix = string_field(obj, "name_suffix", opt.name_suffix);
   opt.cleanup_extracted_model_data =

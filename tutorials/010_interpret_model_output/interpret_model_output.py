@@ -25,6 +25,9 @@ def main(argv: list[str]) -> int:
 
   rgb = np.full((120, 160, 3), 101, dtype=np.uint8)
   tensor = pyneat.Tensor.from_numpy(rgb, copy=True, image_format=pyneat.PixelFormat.RGB)
+  input_sample = pyneat.Sample()
+  input_sample.kind = pyneat.SampleKind.Tensor
+  input_sample.tensor = tensor
 
   # STEP configure-input
   inp = pyneat.InputOptions()
@@ -39,11 +42,11 @@ def main(argv: list[str]) -> int:
   graph.add(pyneat.nodes.input(inp))
   graph.add(pyneat.nodes.output())
 
-  run = graph.build([tensor], pyneat.RunMode.Sync)
+  run = graph.build([input_sample], pyneat.RunMode.Sync)
   # END STEP
 
   # STEP run-frame
-  sample = run.run([tensor], timeout_ms=1000)
+  sample = run.run([input_sample], timeout_ms=1000)
   # END STEP
 
   # CORE LOGIC

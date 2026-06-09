@@ -24,13 +24,13 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">opt = pyneat.ModelOptions()</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">opt.format = &quot;RGB&quot;</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">opt.preprocess.kind = pyneat.InputKind.Image</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">opt.input_max_width = args.width</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">opt.preprocess.color_convert.input_format =…</text>
 <text x="76" y="326" class="fmono fln">4</text>
-<text x="104" y="326" class="fmono fcode" xml:space="preserve">opt.input_max_height = args.height</text>
+<text x="104" y="326" class="fmono fcode" xml:space="preserve">opt.preprocess.input_max_width = args.width</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">opt.input_max_depth = 3</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">opt.preprocess.input_max_height = args.heig…</text>
 </g>
 <g id="code1" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 2 · Load model</text>
@@ -44,7 +44,7 @@
 <text x="76" y="274" class="fmono fln">2</text>
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">tensor = pyneat.Tensor.from_numpy(rgb, copy…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">sample = model.run([tensor], timeout_ms=200…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">outputs = model.run([tensor], timeout_ms=20…</text>
 </g>
 <g id="code3" class="fanim" opacity="0">
 <text x="76" y="212" class="fsans fcap">STEP 4 · Read boxes</text>
@@ -53,11 +53,11 @@
 <text x="76" y="274" class="fmono fln">2</text>
 <text x="104" y="274" class="fmono fcode" xml:space="preserve">#   - Runtimes that wire BoxDecode into mod…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">#   - Runtimes that do not produce a Bundle…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">#   - Runtimes that do not return the raw M…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve"># The shipped README explains the BBOX wire…</text>
 <text x="76" y="352" class="fmono fln">5</text>
-<text x="104" y="352" class="fmono fcode" xml:space="preserve">if sample.tensor is not None:</text>
+<text x="104" y="352" class="fmono fcode" xml:space="preserve">first = outputs[0] if outputs else None</text>
 </g>
 </g>
 <g filter="url(#fsh)">

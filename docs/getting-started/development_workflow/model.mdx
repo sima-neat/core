@@ -82,7 +82,7 @@ print("output rank =", model.output_spec().rank)
 print("metadata keys =", len(model.metadata()))
 
 # Run one frame directly (no Graph required).
-sample = model.run([frame], timeout_ms=2000)
+outputs = model.run([frame], timeout_ms=2000)
 ```
 
 </CodeTab>

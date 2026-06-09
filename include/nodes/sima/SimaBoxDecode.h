@@ -4,11 +4,16 @@
  * @brief `SimaBoxDecode` Node — postprocess box decode + NMS for object-detection models.
  *
  * Runs on the EV74. Consumes the raw detection-head tensor(s) emitted by the MLA, applies
- * detector-specific box decoding (anchor decode, sigmoid/softmax over class scores), and
- * returns surviving boxes after non-maximum suppression. Place at the tail of an
- * object-detection pipeline; the variant family is enumerated in `pipeline/BoxDecodeType.h`.
+ * detector-specific box decoding (grid/anchor or raw-distance decode, score activation,
+ * thresholding, top-K, and NMS), and returns surviving detections as BoxDecode payloads.
+ * Place at the tail of an object-detection pipeline, or use the model-managed Graph route
+ * that inserts it from the MPK postprocess contract. The decode family is enumerated in
+ * `pipeline/BoxDecodeType.h`; the structured output helpers live in
+ * `pipeline/DetectionTypes.h`.
  *
  * @see pipeline/BoxDecodeType.h
+ * @see pipeline/DetectionTypes.h
+ * @see docs/reference/boxdecode_decode_types.md
  */
 #pragma once
 
@@ -39,14 +44,57 @@ namespace simaai::neat {
 struct BoxDecodeOptionsInternal;
 
 /**
- * @brief EV74 postprocess Node that decodes detection-head tensors into object boxes (with NMS).
+ * @brief EV74 postprocess Node that converts detection-head tensors into detection results.
  *
- * Pick the constructor that matches what your application has on hand: the bare-parameter
- * form for raw inputs, or the `Model`-aware form when the model carries the geometry and
- * route flags. Decoder variants live in `BoxDecodeType` — pick the one matching your model
- * family (YOLOv5, SSD, RetinaNet, etc.).
+ * `SimaBoxDecode` is the postprocessing node used by object-detection graphs after MLA
+ * inference. It reads the model output tensors, decodes them according to the selected
+ * `BoxDecodeType`, applies confidence filtering and NMS, and emits a detection tensor. Detection
+ * models parse it as boxes; pose and segmentation models can also parse the appended keypoints or
+ * masks.
+ *
+ * @details
+ * **When to use it.**
+ *
+ * - Use the `Model` constructor for normal model-pack and Graph applications. The model
+ *   archive supplies the tensor layout, quantization, class count, and resize information
+ *   needed by the decoder.
+ * - Use the raw-geometry constructor only when you are wiring detection-head tensors
+ *   yourself and can provide the original image size, model input size, and decode family.
+ *
+ * **Inputs.**
+ *
+ * The node expects the raw detection output tensors produced by the model. For MPK-backed
+ * models, Neat reads the packaged contract and preserves the model's tensor order, physical
+ * layout, slices, dtype, and score domain automatically. Application code normally only
+ * chooses the decode family (`BoxDecodeType`) and filtering thresholds.
+ *
+ * **Outputs.**
+ *
+ * The output starts with a `BBOX` detection payload. Use `decode_bbox_tensor()`,
+ * `decode_bbox()`, or `stages::BoxDecodeResults()` when you only need boxes. For task-specific
+ * payloads, use `decode_pose()` to get boxes plus `[N, 17, 3]` keypoints, or
+ * `decode_segmentation()` to get boxes plus `[N, 160, 160]` masks. Use `SimaRender` downstream
+ * when you want an annotated video/image stream.
+ *
+ * **Supported families.**
+ *
+ * Supported decode families include YOLO, YOLOv5/v7/v8/v9/v10 detection and segmentation
+ * variants, YOLOv8 pose, YOLO26 detection/pose/segmentation, YOLOv6, YOLOX, DETR,
+ * EfficientDet, RCNN stage 1, and CenterNet. `BoxDecodeType::Unspecified` is only a
+ * sentinel and fails before runtime.
+ *
+ * **Score and layout notes.**
+ *
+ * Some models output probabilities; others output logits that must be activated before
+ * thresholding. Model packs carry this information when available. If you are manually
+ * wiring tensors, choose the decode type and decode option that match your exported head
+ * format. Do not infer correctness from tensor rank alone: sliced, padded, packed, and
+ * dense outputs can have the same logical shape while requiring different handling. The
+ * model-aware path handles these details for supported model packs.
  *
  * @see pipeline/BoxDecodeType.h
+ * @see pipeline/DetectionTypes.h
+ * @see SimaRender
  *
  * @ingroup nodes_sima
  */
@@ -70,12 +118,28 @@ public:
    * @param model_width          Input width the model was trained for.
    * @param model_height         Input height the model was trained for.
    * @param decode_type_option   Decoder sub-variant selector (`Auto` to defer to the model).
+   * @param source_storage       Explicit source byte layout of the upstream head tensors. Required
+   *                             for hand-built graphs that decode without a model pack (the
+   * upstream contract does not carry packing flags, so it cannot be inferred); leave as
+   * `std::nullopt` when a model pack supplies it. Contract compilation fails fast if it is neither
+   * model-pack-supplied nor set.
+   * @param detess               Explicit override: do the upstream heads need detessellation before
+   *                             decode? `std::nullopt` keeps the standalone default (no detess) /
+   *                             model-pack value. Set for hand-built graphs whose upstream delivers
+   *                             tessellated heads.
+   * @param dequant              Explicit override: do the upstream heads need dequantization before
+   *                             decode? `std::nullopt` keeps the standalone default (derived from
+   * the input dtype) / model-pack value. When `true`, the upstream must carry quant
+   * scale/zero-point.
    */
   explicit SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
                          double nms_iou_threshold = 0.0, int top_k = 0,
                          const std::string& element_name = "", int original_width = 0,
                          int original_height = 0, int model_width = 0, int model_height = 0,
-                         BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+                         BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
+                         std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
+                         std::optional<bool> detess = std::nullopt,
+                         std::optional<bool> dequant = std::nullopt);
   /**
    * @brief Construct from a bound `Model` — pulls geometry and routing flags from the model.
    *
@@ -190,12 +254,13 @@ private:
 
 namespace simaai::neat::nodes {
 /// Convenience factory for `SimaBoxDecode` from raw geometry — see the class constructor docs.
-std::shared_ptr<simaai::neat::Node>
-SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold = 0.0,
-              double nms_iou_threshold = 0.0, int top_k = 0, const std::string& element_name = "",
-              int original_width = 0, int original_height = 0, int model_width = 0,
-              int model_height = 0,
-              BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto);
+std::shared_ptr<simaai::neat::Node> SimaBoxDecode(
+    BoxDecodeType decode_type, double detection_threshold = 0.0, double nms_iou_threshold = 0.0,
+    int top_k = 0, const std::string& element_name = "", int original_width = 0,
+    int original_height = 0, int model_width = 0, int model_height = 0,
+    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto,
+    std::optional<BoxDecodeSourceStorage> source_storage = std::nullopt,
+    std::optional<bool> detess = std::nullopt, std::optional<bool> dequant = std::nullopt);
 /// Convenience factory for `SimaBoxDecode` from a bound `Model` — see the class constructor docs.
 std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType decode_type,

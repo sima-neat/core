@@ -9,13 +9,13 @@ sidebar_position: 1
 If you are new to SiMa Neat, the shortest path to a prediction is two lines — load a model, then run it:
 
 1. Load a compiled model archive (`.tar.gz`) with [`Model`](/reference/{lsa}/classes/simaai-neat-model).
-2. Call `model.run(input, timeout_ms)` to run inference synchronously and get a [`Sample`](/reference/{lsa}/structs/simaai-neat-sample) back.
+2. Call `model.run(input, timeout_ms)` to run inference synchronously and get a `TensorList` back for tensor/image inputs.
 
 That is the entire workflow for a single model — **no graph required**. Reach for a [`Graph`](/reference/{lsa}/classes/simaai-neat-graph) only when one model on its own is not enough: chaining multiple stages into a pipeline, decoupling producers and consumers with async `push` / `pull`, or controlling queueing. That is covered at the [end of this page](#compose-a-graph-when-you-need-more).
 
 ## Run a model directly
 
-Load the model and call `run(...)`. It executes synchronously and returns a `Sample` whose `tensor` holds the output. No `Graph`, no `Run`, no `push` / `pull`.
+Load the model and call `run(...)`. It executes synchronously and returns a `TensorList` for tensor/image inputs. No `Graph`, no `Run`, no `push` / `pull`.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -24,9 +24,9 @@ Load the model and call `run(...)`. It executes synchronously and returns a `Sam
 simaai::neat::Model model("resnet_50_model.tar.gz");
 
 cv::Mat img = /* your frame (RGB/BGR as configured) */;
-simaai::neat::Sample out = model.run(img, /*timeout_ms=*/1000);
+simaai::neat::TensorList outputs = model.run(std::vector<cv::Mat>{img}, /*timeout_ms=*/1000);
 
-// out.tensor holds the result; read its bytes with out.tensor->map_read().
+// outputs[0] holds the first result; read its bytes with outputs[0].map_read().
 ```
 
 </CodeTab>
@@ -35,10 +35,10 @@ simaai::neat::Sample out = model.run(img, /*timeout_ms=*/1000);
 ```python
 model = neat.Model("resnet_50_model.tar.gz")
 
-img = ...  # your frame as a Tensor
-sample = model.run(img, timeout_ms=1000)
+img = ...  # your frame as a Tensor or NumPy array
+outputs = model.run([img], timeout_ms=1000)
 
-# sample.tensor holds the result.
+# outputs[0] holds the first result.
 ```
 
 </CodeTab>

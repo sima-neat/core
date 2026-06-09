@@ -334,6 +334,7 @@ struct ElementProbeAttachState {
   bool track_pad_timing = false;
   GQuark pad_timing_quark = 0;
   GQuark src_depart_quark = 0;
+  GQuark src_depart_element_quark = 0;
 };
 
 struct ElementPadTimingProbeCtx {
@@ -342,9 +343,15 @@ struct ElementPadTimingProbeCtx {
   std::string pad_name;
   bool is_sink = false;
   GQuark src_depart_quark = 0;
+  GQuark src_depart_element_quark = 0;
   // Lazily resolved on first probe fire to avoid mutex contention on the
   // hot path; once non-null, all probe fires increment it directly.
   std::atomic<simaai::neat::pipeline_internal::ElementPadTimingCounters*> counters{nullptr};
+};
+
+struct ElementPadDirectionCounts {
+  int sink = 0;
+  int src = 0;
 };
 
 static bool should_skip_stage_element(GstElement* elem) {
@@ -372,6 +379,23 @@ static bool should_skip_stage_element(GstElement* elem) {
   if (std::strcmp(fname, "appsink") == 0)
     return true;
   return false;
+}
+
+static bool should_attach_transport_pad_timing(GstElement* elem) {
+  if (!elem)
+    return false;
+  if (!should_skip_stage_element(elem))
+    return true;
+  GstElementFactory* factory = gst_element_get_factory(elem);
+  if (!factory)
+    return false;
+  const char* fname = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+  if (!fname)
+    return false;
+  // Endpoints should stamp/observe transport edges, but they should not become
+  // processing-node residency rows.  Keep queues/identities/boundaries skipped so they do not
+  // overwrite the upstream processing element's src-departure stamp.
+  return std::strcmp(fname, "appsrc") == 0 || std::strcmp(fname, "appsink") == 0;
 }
 
 static bool extract_sima_meta_key(GstBuffer* buf, pipeline_internal::ElementTimingKey& out) {
@@ -418,6 +442,18 @@ static void add_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
   counters->pending[key] = ts_us;
 }
 
+static void
+add_pending_fifo_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
+                        int64_t ts_us) {
+  if (!counters || !counters->fifo_match_enabled)
+    return;
+  std::lock_guard<std::mutex> lock(counters->pending_mu);
+  if (counters->pending_fifo.size() >= counters->max_pending) {
+    counters->pending_fifo.clear();
+  }
+  counters->pending_fifo.push_back(ts_us);
+}
+
 static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
                                const pipeline_internal::ElementTimingKey& key, int64_t& ts_us) {
   if (!counters)
@@ -429,6 +465,29 @@ static bool pop_pending_timing(simaai::neat::pipeline_internal::ElementTimingCou
   ts_us = it->second;
   counters->pending.erase(it);
   return true;
+}
+
+static bool
+pop_pending_fifo_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters,
+                        int64_t& ts_us) {
+  if (!counters || !counters->fifo_match_enabled)
+    return false;
+  std::lock_guard<std::mutex> lock(counters->pending_mu);
+  if (counters->pending_fifo.empty())
+    return false;
+  ts_us = counters->pending_fifo.front();
+  counters->pending_fifo.pop_front();
+  return true;
+}
+
+static void
+discard_pending_fifo_timing(simaai::neat::pipeline_internal::ElementTimingCounters* counters) {
+  if (!counters || !counters->fifo_match_enabled)
+    return;
+  std::lock_guard<std::mutex> lock(counters->pending_mu);
+  if (!counters->pending_fifo.empty()) {
+    counters->pending_fifo.pop_front();
+  }
 }
 
 static GstPadProbeReturn stage_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
@@ -498,6 +557,12 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
     pipeline_internal::ElementTimingKey key;
     if (extract_sima_meta_key(buf, key)) {
       add_pending_timing(ctx->counters, key, now);
+      // Also keep a bounded FIFO timestamp for simple 1:1 transforms that replace buffers or
+      // strip metadata before the src pad.  If the normal qdata/key path succeeds on src, the
+      // FIFO entry is discarded to stay aligned.
+      add_pending_fifo_timing(ctx->counters, now);
+    } else if (ctx->counters->fifo_match_enabled) {
+      add_pending_fifo_timing(ctx->counters, now);
     } else {
       ctx->counters->missed_in.fetch_add(1, std::memory_order_relaxed);
     }
@@ -511,14 +576,20 @@ static GstPadProbeReturn element_timing_probe_cb(GstPad*, GstPadProbeInfo* info,
   if (ts && *ts > 0 && now >= *ts) {
     start = *ts;
     used = true;
+    discard_pending_fifo_timing(ctx->counters);
   } else {
     pipeline_internal::ElementTimingKey key;
     if (extract_sima_meta_key(buf, key)) {
       if (pop_pending_timing(ctx->counters, key, start)) {
         used = true;
+        discard_pending_fifo_timing(ctx->counters);
+      } else if (pop_pending_fifo_timing(ctx->counters, start)) {
+        used = true;
       } else {
         ctx->counters->missed_out.fetch_add(1, std::memory_order_relaxed);
       }
+    } else if (pop_pending_fifo_timing(ctx->counters, start)) {
+      used = true;
     } else {
       ctx->counters->missed_out.fetch_add(1, std::memory_order_relaxed);
     }
@@ -606,6 +677,11 @@ static GstPadProbeReturn element_pad_timing_probe_cb(GstPad*, GstPadProbeInfo* i
       fresh->element_name = ctx->element_name;
       fresh->pad_name = ctx->pad_name;
       fresh->is_sink = ctx->is_sink;
+      if (ctx->is_sink) {
+        fresh->transport_to_element_name = ctx->element_name;
+      } else {
+        fresh->transport_from_element_name = ctx->element_name;
+      }
       counters = fresh.get();
       ctx->diag_ctx->element_pad_timings.push_back(std::move(fresh));
       ctx->counters.store(counters, std::memory_order_release);
@@ -634,6 +710,16 @@ static GstPadProbeReturn element_pad_timing_probe_cb(GstPad*, GstPadProbeInfo* i
     gint64* dep_ts = reinterpret_cast<gint64*>(
         gst_mini_object_get_qdata(GST_MINI_OBJECT(buf), ctx->src_depart_quark));
     if (dep_ts && *dep_ts > 0 && now >= *dep_ts) {
+      if (ctx->src_depart_element_quark) {
+        const gchar* dep_element = reinterpret_cast<const gchar*>(
+            gst_mini_object_get_qdata(GST_MINI_OBJECT(buf), ctx->src_depart_element_quark));
+        if (dep_element && *dep_element) {
+          std::lock_guard<std::mutex> lk(ctx->diag_ctx->element_pad_timings_mu);
+          if (counters->transport_from_element_name.empty()) {
+            counters->transport_from_element_name = dep_element;
+          }
+        }
+      }
       const uint64_t wait = static_cast<uint64_t>(now - *dep_ts);
       counters->queue_wait_total_us.fetch_add(wait, std::memory_order_relaxed);
       counters->queue_wait_samples.fetch_add(1, std::memory_order_relaxed);
@@ -653,6 +739,11 @@ static GstPadProbeReturn element_pad_timing_probe_cb(GstPad*, GstPadProbeInfo* i
                                 reinterpret_cast<GDestroyNotify>(g_free));
     }
     *dep_ts = now;
+    if (ctx->src_depart_element_quark) {
+      gst_mini_object_set_qdata(GST_MINI_OBJECT(buf), ctx->src_depart_element_quark,
+                                g_strdup(ctx->element_name.c_str()),
+                                reinterpret_cast<GDestroyNotify>(g_free));
+    }
   }
 
   return GST_PAD_PROBE_OK;
@@ -680,6 +771,7 @@ static void attach_element_probes_for_pad(GstPad* pad, ElementProbeAttachState* 
       ctx->pad_name = pad_name ? std::string(pad_name) : std::string("?");
       ctx->is_sink = is_sink;
       ctx->src_depart_quark = state->src_depart_quark;
+      ctx->src_depart_element_quark = state->src_depart_element_quark;
       gst_pad_add_probe(
           pad, GST_PAD_PROBE_TYPE_BUFFER, element_pad_timing_probe_cb, ctx,
           +[](gpointer p) { delete reinterpret_cast<ElementPadTimingProbeCtx*>(p); });
@@ -741,6 +833,32 @@ static void element_pad_added_cb(GstElement*, GstPad* pad, gpointer user_data) {
   attach_element_probes_for_pad(pad, state);
 }
 
+static ElementPadDirectionCounts count_element_pad_directions(GstElement* elem) {
+  ElementPadDirectionCounts counts;
+  if (!elem)
+    return counts;
+  GstIterator* it = gst_element_iterate_pads(elem);
+  if (!it)
+    return counts;
+
+  GValue item = G_VALUE_INIT;
+  while (gst_iterator_next(it, &item) == GST_ITERATOR_OK) {
+    GstPad* pad = GST_PAD(g_value_get_object(&item));
+    if (pad) {
+      const GstPadDirection dir = gst_pad_get_direction(pad);
+      if (dir == GST_PAD_SINK) {
+        ++counts.sink;
+      } else if (dir == GST_PAD_SRC) {
+        ++counts.src;
+      }
+    }
+    g_value_reset(&item);
+  }
+  g_value_unset(&item);
+  gst_iterator_free(it);
+  return counts;
+}
+
 static GstPadProbeReturn boundary_probe_cb(GstPad*, GstPadProbeInfo* info, gpointer user_data) {
   auto* ctx = reinterpret_cast<BoundaryProbeCtx*>(user_data);
   if (!ctx || !ctx->counters)
@@ -774,10 +892,11 @@ static GstPadProbeReturn boundary_probe_cb(GstPad*, GstPadProbeInfo* info, gpoin
   return GST_PAD_PROBE_OK;
 }
 
-void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag) {
+void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
+                                bool enable_from_options) {
   if (!pipeline || !diag)
     return;
-  if (!env_bool("SIMA_GST_STAGE_TIMINGS", false))
+  if (!enable_from_options && !env_bool("SIMA_GST_STAGE_TIMINGS", false))
     return;
 
   GstIterator* it = gst_bin_iterate_elements(GST_BIN(pipeline));
@@ -836,7 +955,9 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
       g_value_reset(&item);
       continue;
     }
-    if (should_skip_stage_element(elem)) {
+    const bool skip_stage = should_skip_stage_element(elem);
+    const bool attach_pad_transport = enable_timing && should_attach_transport_pad_timing(elem);
+    if (skip_stage && !attach_pad_transport) {
       g_value_reset(&item);
       continue;
     }
@@ -849,30 +970,32 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
 
     const char* name = GST_ELEMENT_NAME(elem);
     const std::string elem_name = name ? name : "unknown";
+    const ElementPadDirectionCounts pad_counts = count_element_pad_directions(elem);
 
-    if (enable_timing && !state->timing) {
+    if (enable_timing && !skip_stage && !state->timing) {
       auto counters = std::make_unique<pipeline_internal::ElementTimingCounters>();
       counters->element_name = elem_name;
+      counters->fifo_match_enabled = (pad_counts.sink == 1 && pad_counts.src == 1);
       const std::string quark_name = "sima.elem.ts." + elem_name;
       state->timing_quark = g_quark_from_string(quark_name.c_str());
       state->timing = counters.get();
       diag->element_timings.push_back(std::move(counters));
     }
 
-    if (enable_flow && !state->flow) {
+    if (enable_flow && !skip_stage && !state->flow) {
       auto counters = std::make_unique<pipeline_internal::ElementFlowCounters>();
       counters->element_name = elem_name;
       state->flow = counters.get();
       diag->element_flows.push_back(std::move(counters));
     }
 
-    if (enable_timing)
+    if (enable_timing && !skip_stage)
       state->track_timing = true;
-    if (enable_flow)
+    if (enable_flow && !skip_stage)
       state->track_flow = true;
     // Phase A: per-pad timing rides on the same enable-timing knob.  Counters
     // are added lazily on first probe fire (so dynamically-added pads work).
-    if (enable_timing) {
+    if (attach_pad_transport) {
       state->track_pad_timing = true;
       state->diag_ctx = diag.get();
       state->element_name = elem_name;
@@ -882,8 +1005,11 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
       // buffer and any sink-pad probe further downstream can read it.
       static GQuark src_depart_quark = g_quark_from_static_string("sima.elem.src_depart.us");
       state->src_depart_quark = src_depart_quark;
+      static GQuark src_depart_element_quark =
+          g_quark_from_static_string("sima.elem.src_depart.element");
+      state->src_depart_element_quark = src_depart_element_quark;
     }
-    if (!state->track_timing && !state->track_flow) {
+    if (!state->track_timing && !state->track_flow && !state->track_pad_timing) {
       g_value_reset(&item);
       continue;
     }
@@ -901,8 +1027,9 @@ static void attach_element_probes(GstElement* pipeline, const std::shared_ptr<Di
   gst_iterator_free(it);
 }
 
-void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag) {
-  if (!env_bool("SIMA_GST_ELEMENT_TIMINGS", false))
+void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
+                                  bool enable_from_options) {
+  if (!enable_from_options && !env_bool("SIMA_GST_ELEMENT_TIMINGS", false))
     return;
   attach_element_probes(pipeline, diag, true, false);
 }

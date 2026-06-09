@@ -10,6 +10,7 @@
 #include "pipeline/internal/TensorUtil.h"
 
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <string>
 #include <unordered_set>
@@ -196,13 +197,15 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
   simaai::neat::Tensor out_source = base;
   if (entry.memory_index >= 0 && base.storage &&
       base.storage->kind == simaai::neat::StorageKind::GstSample) {
-    out_source = materialize_output
-                     ? pipeline_internal::copy_tensor_from_sample_memory(base, entry.memory_index,
-                                                                         /*keep_holder=*/false)
-                     : pipeline_internal::tensor_view_from_sample_memory(base, entry.memory_index,
-                                                                         /*keep_holder=*/true);
-  } else if (materialize_output) {
-    out_source = base.clone();
+    // Build the segment/memory view first, then apply the authoritative output
+    // contract below.  Materialization must happen after shape/dtype/stride are
+    // overlaid so Tensor::clone() copies the logical segment span for this
+    // output.  Copying the raw GstMemory before applying the override is unsafe
+    // for packed SimaaiSegmentMemory outputs because multiple logical tensors
+    // share one GstMemory while each output's CPU-visible mapping is exposed via
+    // its named segment.
+    out_source = pipeline_internal::tensor_view_from_sample_memory(base, entry.memory_index,
+                                                                   /*keep_holder=*/true);
   }
   simaai::neat::Tensor out = std::move(out_source);
   out.shape = entry.shape;
@@ -227,6 +230,39 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
       out.semantic.tess = tess;
     } else {
       out.semantic.tess->format = entry.format;
+    }
+  }
+  if (materialize_output) {
+    // A plain clone() copies the whole backing segment only when byte_offset == 0 (it rebases
+    // nonzero-offset views into a fresh tight buffer with byte_offset reset to 0). That breaks
+    // public-contract parity with the zero-copy view for nonzero offsets: the view exposes the
+    // override byte_offset and the full segment readable span, while the rebased clone exposes
+    // offset 0 and only the tight tensor span. Materialize by copying the entire backing segment
+    // and keeping the logical view (byte_offset/shape/strides/route) so owned and zero-copy outputs
+    // are byte-for-byte interchangeable. byte_offset == 0 falls through to clone()'s existing
+    // full-segment behavior.
+    const std::int64_t logical_byte_offset = out.byte_offset;
+    bool materialized = false;
+    if (logical_byte_offset > 0) {
+      simaai::neat::Tensor segment_source = out;
+      segment_source.byte_offset = 0; // map from the start of the backing segment
+      const simaai::neat::Mapping src = segment_source.view_read();
+      const std::size_t segment_bytes = src.size_bytes;
+      if (src.data != nullptr && segment_bytes > static_cast<std::size_t>(logical_byte_offset)) {
+        auto storage = simaai::neat::make_cpu_owned_storage(segment_bytes);
+        const simaai::neat::Mapping dst =
+            storage ? storage->map(simaai::neat::MapMode::Write) : simaai::neat::Mapping{};
+        if (dst.data != nullptr && dst.size_bytes >= segment_bytes) {
+          std::memcpy(dst.data, src.data, segment_bytes);
+          out.storage = std::move(storage); // keep byte_offset/shape/strides/dtype/route/semantic
+          out.read_only = false;
+          out.device = {simaai::neat::DeviceType::CPU, 0};
+          materialized = true;
+        }
+      }
+    }
+    if (!materialized) {
+      out = out.clone();
     }
   }
   return out;

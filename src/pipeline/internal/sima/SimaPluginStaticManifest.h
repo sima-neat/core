@@ -207,6 +207,7 @@ enum class ProcessCvuGraphFamily : std::uint8_t {
   DetessCast = 8,
   DetessDequant = 9,
   Cast = 10,
+  VisualFrontend = 11,
 };
 
 /// Whether a process-CVU output is dense or packed on the wire.
@@ -278,6 +279,22 @@ struct ProcessCvuStagePayload {
   int round_off = 0;
   int byte_align = 0;
   int graph_id = 0;
+  // Native visual-frontend scalar fields for EV74 graphs 235-238.
+  int width = -1;
+  int height = -1;
+  int threshold = -1;
+  int max_features = -1;
+  int grid_x = -1;
+  int grid_y = -1;
+  int min_px_dist = -1;
+  int descriptor_words = -1;
+  int num_points = -1;
+  int win_half = -1;
+  int max_iters = -1;
+  int max_level = -1;
+  int detect_new_features = -1;
+  int fast_threshold = -1;
+  int debug = 0;
   std::uint32_t opt_flags = 0;
 
   int aspect_ratio = -1;
@@ -371,6 +388,7 @@ struct BoxDecodeStagePayload {
   int topk = 0;
   int num_classes = 0;
   std::vector<sima_ev_shape_desc> slice_shapes;
+  std::vector<int> tensor_storage_kind;
 };
 
 /// Placeholder payload for quant / dequant / tess / quanttess stages (carries only a reserved field

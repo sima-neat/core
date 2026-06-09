@@ -95,6 +95,18 @@ std::optional<BoxDecodeType> parse_box_decode_type_token(std::string_view token)
   if (lower == "yolo26" || lower == "yolov26") {
     return BoxDecodeType::YoloV26;
   }
+  if (lower == "yolo26-pose" || lower == "yolov26-pose") {
+    return BoxDecodeType::YoloV26Pose;
+  }
+  if (lower == "yolo26-seg" || lower == "yolov26-seg") {
+    return BoxDecodeType::YoloV26Seg;
+  }
+  if (lower == "yolov6" || lower == "yolo6") {
+    return BoxDecodeType::YoloV6;
+  }
+  if (lower == "yolox" || lower == "yolo-x") {
+    return BoxDecodeType::YoloX;
+  }
   if (lower == "detr") {
     return BoxDecodeType::Detr;
   }
@@ -130,6 +142,17 @@ bool is_box_decode_type_option_requires_uniform_score_domain(BoxDecodeTypeOption
   default:
     return false;
   }
+}
+
+bool box_decode_type_matches_requested_contract(BoxDecodeType contract_type,
+                                                BoxDecodeType requested_type) {
+  if (!is_box_decode_type_specified(requested_type)) {
+    return true;
+  }
+  if (!is_box_decode_type_specified(contract_type)) {
+    return true;
+  }
+  return contract_type == requested_type;
 }
 
 std::string box_decode_type_token_string(BoxDecodeType type) {

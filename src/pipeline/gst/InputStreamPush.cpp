@@ -457,13 +457,13 @@ void validate_holder_video_meta_or_throw(const InputStream::State& st, GstBuffer
   }
 }
 
-void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& spec,
-                                         const MessageMetaOverrides& meta,
-                                         const std::optional<int64_t>& input_seq_override,
-                                         const std::optional<int64_t>& orig_input_seq_override,
-                                         const SampleTimingOverrides& timing_override,
-                                         const InputOptions& src_opt, InputBufferPoolGuard& guard,
-                                         const char* where) {
+void apply_holder_spec_and_meta_or_throw(
+    GstBuffer** buffer, const SampleSpec& spec, const MessageMetaOverrides& meta,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const SampleTimingOverrides& timing_override, const InputOptions& src_opt,
+    InputBufferPoolGuard& guard, const char* where,
+    const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta = std::nullopt) {
   GstBuffer* const original = buffer ? *buffer : nullptr;
   const bool source_has_preproc_meta = has_simaai_preprocess_meta(original);
 
@@ -497,6 +497,12 @@ void apply_holder_spec_and_meta_or_throw(GstBuffer** buffer, const SampleSpec& s
   if (!write_sample_timing_to_gst_buffer(*buffer, timing_override)) {
     throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
                              ": failed to write sample timing metadata");
+  }
+  if (!has_simaai_preprocess_meta(*buffer) && tensor_preprocess_meta.has_value()) {
+    if (!write_simaai_preprocess_meta(*buffer, *tensor_preprocess_meta)) {
+      throw std::runtime_error(std::string(where ? where : "InputStream::apply_holder_spec") +
+                               ": failed to apply tensor preprocess metadata");
+    }
   }
   if (!has_simaai_preprocess_meta(*buffer) && spec.width > 0 && spec.height > 0) {
     (void)apply_simaai_preprocess_meta_template(*buffer, src_opt, spec.width, spec.height);
@@ -994,13 +1000,13 @@ struct CpuZeroCopyFastPathResult {
   std::string reason;
 };
 
-HolderFastPathResult
-try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
-                                 const simaai::neat::Tensor& input, const SampleSpec& spec,
-                                 CapsDecision decision, const MessageMetaOverrides& meta,
-                                 const std::optional<int64_t>& input_seq_override,
-                                 const std::optional<int64_t>& orig_input_seq_override,
-                                 const SampleTimingOverrides& timing_override) {
+HolderFastPathResult try_push_message_holder_fastpath(
+    InputStream::State& st, const Sample& msg, const simaai::neat::Tensor& input,
+    const SampleSpec& spec, CapsDecision decision, const MessageMetaOverrides& meta,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const SampleTimingOverrides& timing_override,
+    const std::optional<PreprocessRuntimeMeta>& tensor_preprocess_meta) {
   HolderFastPathResult out;
 
   if (holder_debug_enabled() && input.storage->holder) {
@@ -1038,7 +1044,8 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, timing_override, st.src_opt,
-                                          st.pool_guard, "InputStream::try_push_message(holder)");
+                                          st.pool_guard, "InputStream::try_push_message(holder)",
+                                          tensor_preprocess_meta);
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -1065,7 +1072,8 @@ try_push_message_holder_fastpath(InputStream::State& st, const Sample& msg,
     try {
       apply_holder_spec_and_meta_or_throw(&holder_buf, spec, meta, input_seq_override,
                                           orig_input_seq_override, timing_override, st.src_opt,
-                                          st.pool_guard, "InputStream::try_push_message(holder)");
+                                          st.pool_guard, "InputStream::try_push_message(holder)",
+                                          tensor_preprocess_meta);
     } catch (const std::exception& e) {
       out.holder_fail_reason = e.what();
       out.holder_failed = true;
@@ -1407,11 +1415,13 @@ bool InputStream::try_push_message(const Sample& msg) {
     throw std::invalid_argument(
         "InputStream::try_push_message: simaai::neat::Tensor missing storage");
   }
+  const std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = input.semantic.preprocess;
 
   HolderFastPathResult holder_result;
   if (allow_zero_copy_transport) {
-    holder_result = try_push_message_holder_fastpath(
-        *st, msg, input, spec, decision, meta, seq.input_seq, seq.orig_input_seq, timing_override);
+    holder_result = try_push_message_holder_fastpath(*st, msg, input, spec, decision, meta,
+                                                     seq.input_seq, seq.orig_input_seq,
+                                                     timing_override, tensor_preprocess_meta);
   }
   if (holder_result.handled.has_value()) {
     return *holder_result.handled;
@@ -1438,7 +1448,6 @@ bool InputStream::try_push_message(const Sample& msg) {
   }
   const TensorList* tensor_set_meta_tensors =
       sample_has_tensor_list(transport_msg) ? &transport_msg.tensors : nullptr;
-  const std::optional<PreprocessRuntimeMeta> tensor_preprocess_meta = input.semantic.preprocess;
   const std::function<void(GstBuffer**)> prepare =
       make_prepare_for_spec(spec, "InputStream::try_push_message", source_preproc_meta_buffer,
                             tensor_set_meta_tensors, tensor_preprocess_meta);

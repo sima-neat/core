@@ -24,15 +24,15 @@ The first block describes what a frame looks like and how to prepare it for the 
 
 **C++:** Fields live under `opt.preprocess.*`: `kind = InputKind::Image`, `color_convert.input_format = PreprocessColorFormat::BGR`, and `normalize.enable = AutoFlag::On` with `mean`/`stddev` as `std::array<float, 3>`.
 
-**Python:** Fields are flatter: `opt.format = "BGR"`, the `input_max_*` ints, and `opt.preproc.normalize = True` with `channel_mean`/`channel_stddev` lists.
+**Python:** Fields live under `opt.preprocess.*`: `kind = pyneat.InputKind.Image`, `color_convert.input_format = pyneat.PreprocessColorFormat.BGR`, and `normalize.enable = pyneat.AutoFlag.On` with `mean`/`stddev` lists.
 
 ### Declare postprocessing {#step-set-postproc}
 
-The second block shapes the detector's output. `decode_type` selects the YOLOv8 box-decode path, and `score_threshold`, `nms_iou_threshold`, and `top_k` filter the raw detections — dropping low-confidence boxes, merging overlapping ones, and capping how many survive. `original_width`/`height` give the decoder the source-frame geometry it needs to map normalized coordinates back to pixels, and `name_suffix` stabilizes the generated stage names so the pipeline graph stays readable when composed with others.
+The second block shapes the detector's output. `decode_type` selects the YOLOv8 box-decode path, and `score_threshold`, `nms_iou_threshold`, and `top_k` filter the raw detections — dropping low-confidence boxes, merging overlapping ones, and capping how many survive. `boxdecode_original_width`/`boxdecode_original_height` give the decoder the source-frame geometry it needs to map normalized coordinates back to pixels, and `name_suffix` stabilizes the generated stage names so the pipeline graph stays readable when composed with others.
 
 **C++:** `decode_type = BoxDecodeType::YoloV8`; the geometry fields are `boxdecode_original_width`/`boxdecode_original_height`.
 
-**Python:** `decode_type = "yolov8"`; the geometry fields are `original_width`/`original_height`.
+**Python:** `decode_type = pyneat.BoxDecodeType.YoloV8`; the geometry fields are `boxdecode_original_width`/`boxdecode_original_height`.
 
 ### Load and inspect the resolved contract {#step-load-and-inspect}
 
@@ -40,7 +40,7 @@ Constructing the `Model` with these options resolves the contract against the ar
 
 **C++:** The specs are `TensorConstraint` values; we print `rank`, `dtypes.size()`, and `shape.size()`.
 
-**Python:** We print `input_spec().rank` and `output_spec().rank` directly, plus `len(model.metadata())`.
+**Python:** We print `input_spec().shape` and `output_spec().shape` directly, plus `len(model.metadata())`.
 
 ### Run one frame {#step-run-inference}
 
@@ -48,7 +48,7 @@ Finally we synthesize one `640×640` BGR frame and run it through the configured
 
 **C++:** The frame is a `cv::Mat`; `run()` returns a `TensorList` whose `size()` we print as `outputs=`.
 
-**Python:** The frame is wrapped as a `Tensor` via `Tensor.from_numpy(...)`; `run()` returns a `Sample` whose `kind` we print.
+**Python:** The frame is wrapped as a `Tensor` via `Tensor.from_numpy(...)`; `run()` returns a `TensorList`, so we print its length.
 
 ## Run
 
@@ -73,7 +73,7 @@ python3 share/sima-neat/tutorials/004_configure_model_options/configure_model_op
   --model /tmp/yolo_v8s.tar.gz
 ```
 
-Expected output (rank, dtype, and key counts depend on the model archive; the C++ build prints the detailed spec lines and `outputs=`, the Python build prints the ranks and `output_kind=`):
+Expected output (rank, dtype, and key counts depend on the model archive; the C++ build prints the detailed spec lines and `outputs=`, the Python build prints shapes and `output_count=`):
 
 ```text
 input_spec: rank=4 dtypes=1 shape_dims=4

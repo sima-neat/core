@@ -31,6 +31,7 @@
 #include "nodes/sima/Preproc.h"
 #include "nodes/sima/QuantTess.h"
 #include "nodes/sima/SimaBoxDecode.h"
+#include "nodes/sima/VisualFrontend.h"
 #include "nodes/groups/GroupOutputSpec.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/ModelGroups.h"
@@ -42,12 +43,18 @@
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
+#include "pipeline/GraphMetrics.h"
 #include "pipeline/NeatError.h"
 #include "pipeline/GraphOptions.h"
 #include "pipeline/RunExport.h"
+#include "pipeline/StageRun.h"
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
+
+#if defined(SIMA_WITH_OPENCV)
+#include <opencv2/core.hpp>
+#endif
 
 #include <cstddef>
 #include <cstdint>
@@ -72,14 +79,29 @@ using simaai::neat::ByteStreamSpec;
 using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
+using simaai::neat::GraphElementMetrics;
+using simaai::neat::GraphMetricsReport;
+using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
 using simaai::neat::GraphReport;
 using simaai::neat::GraphRunAutoExportOptions;
 using simaai::neat::GraphRunExportOptions;
 using simaai::neat::ImageSpec;
 using simaai::neat::MapMode;
+using simaai::neat::MeasureLatencyStats;
+using simaai::neat::MeasureOptions;
+using simaai::neat::MeasurePluginLatency;
+using simaai::neat::MeasureReport;
+using simaai::neat::MeasureScope;
 using simaai::neat::NeatError;
+using simaai::neat::NodeLatencySummary;
 using simaai::neat::OutputMemory;
+using simaai::neat::PowerFieldSummary;
+using simaai::neat::PowerMonitorOptions;
+using simaai::neat::PowerMonitorProfile;
+using simaai::neat::PowerRailConfig;
+using simaai::neat::PowerRailSummary;
+using simaai::neat::PowerSummary;
 using simaai::neat::PullError;
 using simaai::neat::PullStatus;
 using simaai::neat::Run;
@@ -87,14 +109,23 @@ using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
 using simaai::neat::RunDiagSnapshot;
 using simaai::neat::RunElementFlowStats;
+using simaai::neat::RunElementPadTimingStats;
 using simaai::neat::RunElementTimingStats;
 using simaai::neat::RunExportOptions;
+using simaai::neat::RunMeasurementSummary;
 using simaai::neat::RunMode;
 using simaai::neat::RunOptions;
 using simaai::neat::RunPreset;
 using simaai::neat::RunReportOptions;
 using simaai::neat::RunStageStats;
 using simaai::neat::RunStats;
+using simaai::neat::RuntimeCounters;
+using simaai::neat::RuntimeLatencyMetrics;
+using simaai::neat::RuntimeMetricGroup;
+using simaai::neat::RuntimeMetrics;
+using simaai::neat::RuntimeMetricsFormat;
+using simaai::neat::RuntimeMetricsOptions;
+using simaai::neat::RuntimeMetricValue;
 using simaai::neat::Sample;
 using simaai::neat::SampleKind;
 using simaai::neat::Tensor;
@@ -974,6 +1005,146 @@ tensor_batch_from_python_input(const nb::object& input, bool copy,
   throw std::runtime_error("expected list/tuple of Tensor or DLPack-compatible inputs");
 }
 
+#if defined(SIMA_WITH_OPENCV)
+struct PythonPreprocImageBatch {
+  std::vector<Tensor> tensors;
+  std::vector<simaai::neat::Mapping> mappings;
+  std::vector<cv::Mat> mats;
+};
+
+int int_dim_or_throw(int64_t value, const char* name) {
+  if (value <= 0 || value > static_cast<int64_t>(std::numeric_limits<int>::max())) {
+    throw std::runtime_error(std::string("pyneat.stages.preproc: invalid ") + name + " dimension");
+  }
+  return static_cast<int>(value);
+}
+
+std::vector<int64_t> contiguous_uint8_image_strides(const std::vector<int64_t>& shape) {
+  if (shape.size() == 2) {
+    return {shape[1], 1};
+  }
+  if (shape.size() == 3) {
+    return {shape[1] * shape[2], shape[2], 1};
+  }
+  return {};
+}
+
+PythonPreprocImageBatch
+python_preproc_images_to_cv_mats(const nb::object& images,
+                                 const std::optional<ImageSpec::PixelFormat>& image_format,
+                                 bool copy) {
+  PythonPreprocImageBatch batch;
+  batch.tensors = tensor_batch_from_python_input(images, copy, std::nullopt, image_format,
+                                                 std::nullopt, TensorMemory::CPU);
+  if (batch.tensors.empty()) {
+    throw std::runtime_error("pyneat.stages.preproc: images must not be empty");
+  }
+
+  batch.mappings.reserve(batch.tensors.size());
+  batch.mats.reserve(batch.tensors.size());
+
+  for (Tensor& tensor : batch.tensors) {
+    tensor = tensor.to_cpu_if_needed();
+    if (!tensor.is_dense()) {
+      throw std::runtime_error(
+          "pyneat.stages.preproc: ROI/full-frame image inputs must be dense tensors");
+    }
+    if (tensor.dtype != TensorDType::UInt8) {
+      throw std::runtime_error("pyneat.stages.preproc: images must be uint8");
+    }
+    if (tensor.shape.size() != 2 && tensor.shape.size() != 3) {
+      throw std::runtime_error("pyneat.stages.preproc: each image must be rank-2 HW or rank-3 HWC");
+    }
+    if (tensor.layout == TensorLayout::CHW) {
+      throw std::runtime_error(
+          "pyneat.stages.preproc: CHW Tensor inputs are unsupported; pass HWC/HW images");
+    }
+
+    int height = int_dim_or_throw(tensor.shape[0], "height");
+    int width = int_dim_or_throw(tensor.shape[1], "width");
+    int channels = 1;
+    if (tensor.shape.size() == 3) {
+      channels = int_dim_or_throw(tensor.shape[2], "channel");
+      if (channels != 1 && channels != 3) {
+        throw std::runtime_error("pyneat.stages.preproc: rank-3 images must have 1 or 3 channels");
+      }
+    }
+
+    std::vector<int64_t> strides = tensor.strides_bytes;
+    if (strides.empty()) {
+      strides = contiguous_uint8_image_strides(tensor.shape);
+    }
+    if (strides.size() != tensor.shape.size()) {
+      throw std::runtime_error("pyneat.stages.preproc: image strides must match image rank");
+    }
+
+    const int64_t row_stride = strides[0];
+    const int64_t min_row_bytes = static_cast<int64_t>(width) * channels;
+    bool needs_contiguous = row_stride < min_row_bytes;
+    if (tensor.shape.size() == 2) {
+      needs_contiguous = needs_contiguous || strides[1] != 1;
+    } else {
+      needs_contiguous = needs_contiguous || strides[1] != channels || strides[2] != 1;
+    }
+    if (needs_contiguous || !tensor.is_contiguous()) {
+      tensor = tensor.contiguous();
+      strides = tensor.strides_bytes.empty() ? contiguous_uint8_image_strides(tensor.shape)
+                                             : tensor.strides_bytes;
+    }
+
+    const int64_t final_row_stride = strides[0];
+    if (final_row_stride < min_row_bytes || (tensor.shape.size() == 2 && strides[1] != 1) ||
+        (tensor.shape.size() == 3 && (strides[1] != channels || strides[2] != 1))) {
+      throw std::runtime_error(
+          "pyneat.stages.preproc: images must be packed HW or packed HWC after conversion");
+    }
+    simaai::neat::Mapping mapping = tensor.map_read();
+    if (!mapping.data) {
+      throw std::runtime_error("pyneat.stages.preproc: failed to map image tensor");
+    }
+    const int64_t required_bytes =
+        (static_cast<int64_t>(height) - 1) * final_row_stride + min_row_bytes;
+    if (required_bytes < 0 || mapping.size_bytes < static_cast<std::size_t>(required_bytes)) {
+      throw std::runtime_error("pyneat.stages.preproc: image mapping is smaller than image view");
+    }
+
+    auto* data = static_cast<std::uint8_t*>(mapping.data);
+    batch.mappings.push_back(std::move(mapping));
+    batch.mats.emplace_back(height, width, CV_8UC(channels), data,
+                            static_cast<std::size_t>(final_row_stride));
+  }
+
+  return batch;
+}
+#endif
+
+TensorList python_stage_preproc(const nb::object& images, const simaai::neat::Model& model,
+                                const std::optional<std::vector<simaai::neat::PreprocessRoi>>& rois,
+                                const std::optional<ImageSpec::PixelFormat>& image_format,
+                                bool copy) {
+#if defined(SIMA_WITH_OPENCV)
+  PythonPreprocImageBatch batch = python_preproc_images_to_cv_mats(images, image_format, copy);
+  TensorList out;
+  {
+    nb::gil_scoped_release release;
+    if (rois.has_value()) {
+      out = simaai::neat::stages::Preproc(batch.mats, model, *rois);
+    } else {
+      out = simaai::neat::stages::Preproc(batch.mats, model);
+    }
+  }
+  return out;
+#else
+  (void)images;
+  (void)model;
+  (void)rois;
+  (void)image_format;
+  (void)copy;
+  throw std::runtime_error(
+      "pyneat.stages.preproc requires a NEAT build with SIMA_WITH_OPENCV enabled");
+#endif
+}
+
 std::vector<Tensor> genai_image_tensors_from_python(const nb::object& input) {
   auto images = tensor_batch_from_python_input(
       input, true, TensorLayout::HWC, ImageSpec::PixelFormat::RGB, std::nullopt, TensorMemory::CPU);
@@ -1114,6 +1285,12 @@ void set_python_attr_or_throw(PyObject* obj, const char* key, const std::string&
   }
 }
 
+bool detection_decode_type_error_message(const std::string& msg) {
+  return msg.find("is not a ") != std::string::npos ||
+         msg.find("expected a BBOX-family") != std::string::npos ||
+         msg.find("format mismatch") != std::string::npos;
+}
+
 } // namespace
 
 NB_MODULE(_pyneat_core, m) {
@@ -1211,6 +1388,17 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::enum_<RunMode>(m, "RunMode").value("Async", RunMode::Async).value("Sync", RunMode::Sync);
 
+  nb::enum_<RuntimeMetricsFormat>(m, "RuntimeMetricsFormat")
+      .value("Text", RuntimeMetricsFormat::Text)
+      .value("Json", RuntimeMetricsFormat::Json)
+      .value("CompactText", RuntimeMetricsFormat::CompactText);
+
+  nb::enum_<PowerMonitorProfile>(m, "PowerMonitorProfile")
+      .value("Auto", PowerMonitorProfile::Auto)
+      .value("ModalixSom", PowerMonitorProfile::ModalixSom)
+      .value("ModalixDvt", PowerMonitorProfile::ModalixDvt)
+      .value("Custom", PowerMonitorProfile::Custom);
+
   nb::enum_<simaai::neat::OverflowPolicy>(m, "OverflowPolicy")
       .value("Block", simaai::neat::OverflowPolicy::Block)
       .value("KeepLatest", simaai::neat::OverflowPolicy::KeepLatest)
@@ -1238,6 +1426,12 @@ NB_MODULE(_pyneat_core, m) {
       .value("Tensor", simaai::neat::PayloadType::Tensor)
       .value("Encoded", simaai::neat::PayloadType::Encoded);
   m.attr("InputType") = m.attr("PayloadType");
+
+  nb::enum_<simaai::neat::InputMemoryPolicy>(m, "InputMemoryPolicy")
+      .value("Auto", simaai::neat::InputMemoryPolicy::Auto)
+      .value("Ev74", simaai::neat::InputMemoryPolicy::Ev74)
+      .value("Dms0", simaai::neat::InputMemoryPolicy::Dms0)
+      .value("SystemMemory", simaai::neat::InputMemoryPolicy::SystemMemory);
 
   nb::enum_<PullStatus>(m, "PullStatus")
       .value("Ok", PullStatus::Ok)
@@ -1332,6 +1526,80 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("format", &simaai::neat::DetectionSpec::format);
 
+  nb::class_<simaai::neat::PreprocessRoi>(
+      m, "PreprocessRoi",
+      "Runtime ROI window consumed by Preproc. batch_index selects the source image; "
+      "x/y/width/height are source-frame pixels.")
+      .def(nb::init<>())
+      .def(nb::init<int, int, int, int, int>(), "batch_index"_a = 0, "x"_a = 0, "y"_a = 0,
+           "width"_a = 0, "height"_a = 0)
+      .def_rw("batch_index", &simaai::neat::PreprocessRoi::batch_index)
+      .def_rw("x", &simaai::neat::PreprocessRoi::x)
+      .def_rw("y", &simaai::neat::PreprocessRoi::y)
+      .def_rw("width", &simaai::neat::PreprocessRoi::width)
+      .def_rw("height", &simaai::neat::PreprocessRoi::height);
+
+  nb::class_<simaai::neat::PreprocessAffine>(
+      m, "PreprocessAffine",
+      "Per-ROI 2x3 affine from model/preprocessed coordinates back to source-frame "
+      "coordinates.")
+      .def(nb::init<>())
+      .def_rw("m00", &simaai::neat::PreprocessAffine::m00)
+      .def_rw("m01", &simaai::neat::PreprocessAffine::m01)
+      .def_rw("m02", &simaai::neat::PreprocessAffine::m02)
+      .def_rw("m10", &simaai::neat::PreprocessAffine::m10)
+      .def_rw("m11", &simaai::neat::PreprocessAffine::m11)
+      .def_rw("m12", &simaai::neat::PreprocessAffine::m12);
+
+  nb::class_<simaai::neat::PreprocessRuntimeMeta>(
+      m, "PreprocessRuntimeMeta",
+      "Per-tensor preprocess metadata: resize/letterbox geometry, transform flags, "
+      "and ROI-list breadcrumbs.")
+      .def(nb::init<>())
+      .def_rw("original_width", &simaai::neat::PreprocessRuntimeMeta::original_width)
+      .def_rw("original_height", &simaai::neat::PreprocessRuntimeMeta::original_height)
+      .def_rw("resized_width", &simaai::neat::PreprocessRuntimeMeta::resized_width)
+      .def_rw("resized_height", &simaai::neat::PreprocessRuntimeMeta::resized_height)
+      .def_rw("scaled_width", &simaai::neat::PreprocessRuntimeMeta::scaled_width)
+      .def_rw("scaled_height", &simaai::neat::PreprocessRuntimeMeta::scaled_height)
+      .def_rw("pad_left", &simaai::neat::PreprocessRuntimeMeta::pad_left)
+      .def_rw("pad_right", &simaai::neat::PreprocessRuntimeMeta::pad_right)
+      .def_rw("pad_top", &simaai::neat::PreprocessRuntimeMeta::pad_top)
+      .def_rw("pad_bottom", &simaai::neat::PreprocessRuntimeMeta::pad_bottom)
+      .def_rw("resize_mode", &simaai::neat::PreprocessRuntimeMeta::resize_mode)
+      .def_rw("color_in", &simaai::neat::PreprocessRuntimeMeta::color_in)
+      .def_rw("color_out", &simaai::neat::PreprocessRuntimeMeta::color_out)
+      .def_rw("axis_perm", &simaai::neat::PreprocessRuntimeMeta::axis_perm)
+      .def_rw("normalize", &simaai::neat::PreprocessRuntimeMeta::normalize)
+      .def_rw("quantize", &simaai::neat::PreprocessRuntimeMeta::quantize)
+      .def_rw("tessellate", &simaai::neat::PreprocessRuntimeMeta::tessellate)
+      .def_rw("affine_m00", &simaai::neat::PreprocessRuntimeMeta::affine_m00)
+      .def_rw("affine_m01", &simaai::neat::PreprocessRuntimeMeta::affine_m01)
+      .def_rw("affine_m02", &simaai::neat::PreprocessRuntimeMeta::affine_m02)
+      .def_rw("affine_m10", &simaai::neat::PreprocessRuntimeMeta::affine_m10)
+      .def_rw("affine_m11", &simaai::neat::PreprocessRuntimeMeta::affine_m11)
+      .def_rw("affine_m12", &simaai::neat::PreprocessRuntimeMeta::affine_m12)
+      .def_rw("affine_scale_x", &simaai::neat::PreprocessRuntimeMeta::affine_scale_x)
+      .def_rw("affine_scale_y", &simaai::neat::PreprocessRuntimeMeta::affine_scale_y)
+      .def_rw("affine_offset_x", &simaai::neat::PreprocessRuntimeMeta::affine_offset_x)
+      .def_rw("affine_offset_y", &simaai::neat::PreprocessRuntimeMeta::affine_offset_y)
+      .def_rw("roi_list_enabled", &simaai::neat::PreprocessRuntimeMeta::roi_list_enabled)
+      .def_rw("rois", &simaai::neat::PreprocessRuntimeMeta::rois)
+      .def_rw("roi_input_batch_size", &simaai::neat::PreprocessRuntimeMeta::roi_input_batch_size)
+      .def_rw("roi_source_width", &simaai::neat::PreprocessRuntimeMeta::roi_source_width)
+      .def_rw("roi_source_height", &simaai::neat::PreprocessRuntimeMeta::roi_source_height)
+      .def_rw("roi_source_stride_bytes",
+              &simaai::neat::PreprocessRuntimeMeta::roi_source_stride_bytes)
+      .def_rw("roi_pad_value", &simaai::neat::PreprocessRuntimeMeta::roi_pad_value)
+      .def_rw("roi_capacity", &simaai::neat::PreprocessRuntimeMeta::roi_capacity)
+      .def_rw("roi_valid_count", &simaai::neat::PreprocessRuntimeMeta::roi_valid_count)
+      .def_rw("roi_input_count", &simaai::neat::PreprocessRuntimeMeta::roi_input_count)
+      .def_rw("roi_dropped_invalid", &simaai::neat::PreprocessRuntimeMeta::roi_dropped_invalid)
+      .def_rw("roi_dropped_overflow", &simaai::neat::PreprocessRuntimeMeta::roi_dropped_overflow)
+      .def_rw("roi_affines", &simaai::neat::PreprocessRuntimeMeta::roi_affines)
+      .def("has_axis_perm", &simaai::neat::PreprocessRuntimeMeta::has_axis_perm)
+      .def("has_roi_list", &simaai::neat::PreprocessRuntimeMeta::has_roi_list);
+
   nb::class_<simaai::neat::Semantic>(m, "Semantic")
       .def(nb::init<>())
       .def_rw("image", &simaai::neat::Semantic::image)
@@ -1342,7 +1610,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("tess", &simaai::neat::Semantic::tess)
       .def_rw("encoded", &simaai::neat::Semantic::encoded)
       .def_rw("quant", &simaai::neat::Semantic::quant)
-      .def_rw("detection", &simaai::neat::Semantic::detection);
+      .def_rw("detection", &simaai::neat::Semantic::detection)
+      .def_rw("preprocess", &simaai::neat::Semantic::preprocess);
 
   nb::class_<simaai::neat::Segment>(m, "Segment")
       .def(nb::init<>())
@@ -1561,6 +1830,7 @@ NB_MODULE(_pyneat_core, m) {
           // and other runtime failures stay RuntimeError.
           if (msg.find("is not a BBOX tensor") != std::string::npos ||
               msg.find("expected 'BBOX'") != std::string::npos ||
+              msg.find("expected a BBOX-family") != std::string::npos ||
               msg.find("format mismatch") != std::string::npos) {
             throw nb::type_error(e.what());
           }
@@ -1583,6 +1853,83 @@ NB_MODULE(_pyneat_core, m) {
       "  TypeError: an input tensor is not BBOX-format.\n"
       "  RuntimeError: strict=True and a payload is malformed.",
       "bbox_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
+      "strict"_a = false);
+
+  nb::class_<simaai::neat::PoseDecodeTensors>(m, "PoseDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("boxes", &simaai::neat::PoseDecodeTensors::boxes)
+      .def_rw("keypoints", &simaai::neat::PoseDecodeTensors::keypoints);
+
+  nb::class_<simaai::neat::SegmentationDecodeTensors>(m, "SegmentationDecodeTensors")
+      .def(nb::init<>())
+      .def_rw("boxes", &simaai::neat::SegmentationDecodeTensors::boxes)
+      .def_rw("masks", &simaai::neat::SegmentationDecodeTensors::masks);
+
+  m.def(
+      "decode_pose",
+      [](const TensorList& pose_tensors, std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k, bool strict) {
+        const int w = clamp_to ? clamp_to->first : 0;
+        const int h = clamp_to ? clamp_to->second : 0;
+        const int k = top_k.value_or(0);
+        try {
+          return simaai::neat::decode_pose(pose_tensors, w, h, k, strict);
+        } catch (const std::runtime_error& e) {
+          const std::string msg = e.what();
+          if (detection_decode_type_error_message(msg)) {
+            throw nb::type_error(e.what());
+          }
+          throw;
+        }
+      },
+      "Decode BoxDecode pose tensors into boxes and keypoints tensors, positional 1:1.\n\n"
+      "Each result has `boxes`, a float32 tensor of shape [N, 6], and `keypoints`,\n"
+      "a float32 tensor of shape [N, 17, 3] with columns (x, y, visibility).\n\n"
+      "Args:\n"
+      "  pose_tensors: list[Tensor] of BoxDecode pose-format tensors.\n"
+      "  clamp_to:     Optional (width, height) - clamp box coordinates to that rectangle.\n"
+      "  top_k:        Optional cap on detections per tensor.\n"
+      "  strict:       When True, raise on malformed buffers instead of best-effort.\n\n"
+      "Returns:\n"
+      "  list[PoseDecodeTensors] - one result per input tensor.\n\n"
+      "Raises:\n"
+      "  TypeError: an input tensor is not pose/BBOX-compatible.\n"
+      "  RuntimeError: strict=True and a payload is malformed.",
+      "pose_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
+      "strict"_a = false);
+
+  m.def(
+      "decode_segmentation",
+      [](const TensorList& segmentation_tensors, std::optional<std::pair<int, int>> clamp_to,
+         std::optional<int> top_k, bool strict) {
+        const int w = clamp_to ? clamp_to->first : 0;
+        const int h = clamp_to ? clamp_to->second : 0;
+        const int k = top_k.value_or(0);
+        try {
+          return simaai::neat::decode_segmentation(segmentation_tensors, w, h, k, strict);
+        } catch (const std::runtime_error& e) {
+          const std::string msg = e.what();
+          if (detection_decode_type_error_message(msg)) {
+            throw nb::type_error(e.what());
+          }
+          throw;
+        }
+      },
+      "Decode BoxDecode segmentation tensors into boxes and masks tensors, positional 1:1.\n\n"
+      "Each result has `boxes`, a float32 tensor of shape [N, 6], and `masks`,\n"
+      "a uint8 tensor of shape [N, 160, 160].\n\n"
+      "Args:\n"
+      "  segmentation_tensors: list[Tensor] of BoxDecode segmentation-format tensors.\n"
+      "  clamp_to:             Optional (width, height) - clamp box coordinates to that "
+      "rectangle.\n"
+      "  top_k:                Optional cap on detections per tensor.\n"
+      "  strict:               When True, raise on malformed buffers instead of best-effort.\n\n"
+      "Returns:\n"
+      "  list[SegmentationDecodeTensors] - one result per input tensor.\n\n"
+      "Raises:\n"
+      "  TypeError: an input tensor is not segmentation/BBOX-compatible.\n"
+      "  RuntimeError: strict=True and a payload is malformed.",
+      "segmentation_tensors"_a, nb::kw_only(), "clamp_to"_a = nb::none(), "top_k"_a = nb::none(),
       "strict"_a = false);
 
   nb::enum_<simaai::neat::genai::GenAITask>(m, "GenAITask")
@@ -1864,12 +2211,58 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("copy_input", &RunAdvancedOptions::copy_input)
       .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes);
 
+  nb::class_<PowerRailConfig>(m, "PowerRailConfig")
+      .def(nb::init<>())
+      .def_rw("name", &PowerRailConfig::name)
+      .def_rw("i2c_bus", &PowerRailConfig::i2c_bus)
+      .def_rw("i2c_addr", &PowerRailConfig::i2c_addr)
+      .def_rw("page", &PowerRailConfig::page)
+      .def_rw("vout_exponent", &PowerRailConfig::vout_exponent)
+      .def_rw("iout_exponent", &PowerRailConfig::iout_exponent)
+      .def_rw("pout_exponent", &PowerRailConfig::pout_exponent);
+
+  nb::class_<PowerMonitorOptions>(m, "PowerMonitorOptions")
+      .def(nb::init<>())
+      .def_rw("enabled", &PowerMonitorOptions::enabled)
+      .def_rw("sample_interval_ms", &PowerMonitorOptions::sample_interval_ms)
+      .def_rw("profile", &PowerMonitorOptions::profile)
+      .def_rw("rails", &PowerMonitorOptions::rails);
+
+  nb::class_<PowerFieldSummary>(m, "PowerFieldSummary")
+      .def(nb::init<>())
+      .def_rw("samples", &PowerFieldSummary::samples)
+      .def_rw("errors", &PowerFieldSummary::errors)
+      .def_rw("avg", &PowerFieldSummary::avg)
+      .def_rw("min", &PowerFieldSummary::min)
+      .def_rw("max", &PowerFieldSummary::max);
+
+  nb::class_<PowerRailSummary>(m, "PowerRailSummary")
+      .def(nb::init<>())
+      .def_rw("config", &PowerRailSummary::config)
+      .def_rw("voltage_v", &PowerRailSummary::voltage_v)
+      .def_rw("current_a", &PowerRailSummary::current_a)
+      .def_rw("power_w", &PowerRailSummary::power_w);
+
+  nb::class_<PowerSummary>(m, "PowerSummary")
+      .def(nb::init<>())
+      .def_rw("enabled", &PowerSummary::enabled)
+      .def_rw("samples", &PowerSummary::samples)
+      .def_rw("duration_seconds", &PowerSummary::duration_seconds)
+      .def_rw("total_avg_watts", &PowerSummary::total_avg_watts)
+      .def_rw("total_min_watts", &PowerSummary::total_min_watts)
+      .def_rw("total_max_watts", &PowerSummary::total_max_watts)
+      .def_rw("energy_joules", &PowerSummary::energy_joules)
+      .def_rw("rails", &PowerSummary::rails);
+
   nb::class_<RunAutoExportOptions> run_auto_export_options(m, "RunAutoExportOptions");
   run_auto_export_options.def(nb::init<>())
       .def_rw("path", &RunAutoExportOptions::path)
       .def_rw("label", &RunAutoExportOptions::label)
       .def_rw("include_metrics", &RunAutoExportOptions::include_metrics)
       .def_rw("include_power", &RunAutoExportOptions::include_power)
+      .def_rw("include_node_metrics", &RunAutoExportOptions::include_node_metrics)
+      .def_rw("include_plugin_metrics", &RunAutoExportOptions::include_plugin_metrics)
+      .def_rw("include_empty_node_metrics", &RunAutoExportOptions::include_empty_node_metrics)
       .def_rw("indent", &RunAutoExportOptions::indent);
   m.attr("GraphRunAutoExportOptions") = run_auto_export_options;
 
@@ -1878,6 +2271,9 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("label", &RunExportOptions::label)
       .def_rw("include_metrics", &RunExportOptions::include_metrics)
       .def_rw("include_power", &RunExportOptions::include_power)
+      .def_rw("include_node_metrics", &RunExportOptions::include_node_metrics)
+      .def_rw("include_plugin_metrics", &RunExportOptions::include_plugin_metrics)
+      .def_rw("include_empty_node_metrics", &RunExportOptions::include_empty_node_metrics)
       .def_rw("indent", &RunExportOptions::indent)
       .def_rw("metadata", &RunExportOptions::metadata);
   m.attr("GraphRunExportOptions") = run_export_options;
@@ -1902,11 +2298,33 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("overflow_policy", &RunOptions::overflow_policy)
       .def_rw("output_memory", &RunOptions::output_memory)
       .def_rw("enable_metrics", &RunOptions::enable_metrics)
+      .def_rw("input_timeout_ms", &RunOptions::input_timeout_ms)
       .def_rw("startup_preflight", &RunOptions::startup_preflight)
       .def_rw("advanced", &RunOptions::advanced)
+      .def_rw("power_monitor", &RunOptions::power_monitor)
       .def_rw("run_export", &RunOptions::run_export)
       .def_rw("graph_run_export", &RunOptions::graph_run_export)
-      .def_rw("on_input_drop", &RunOptions::on_input_drop);
+      .def_rw("on_input_drop", &RunOptions::on_input_drop)
+      .def("enable_board_power", &RunOptions::enable_board_power, "sample_interval_ms"_a = 100,
+           nb::rv_policy::reference_internal)
+      .def("enable_modalix_som_power", &RunOptions::enable_modalix_som_power,
+           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def("enable_modalix_dvt_power", &RunOptions::enable_modalix_dvt_power,
+           "sample_interval_ms"_a = 100, nb::rv_policy::reference_internal)
+      .def("disable_power_monitor", &RunOptions::disable_power_monitor,
+           nb::rv_policy::reference_internal);
+
+  m.def(
+      "board_power_monitor_options",
+      [](int sample_interval_ms, PowerMonitorProfile profile) {
+        return simaai::neat::board_power_monitor_options(sample_interval_ms, profile);
+      },
+      "sample_interval_ms"_a = 100, "profile"_a = PowerMonitorProfile::Auto);
+  m.def("modalix_som_power_monitor_options", &simaai::neat::modalix_som_power_monitor_options,
+        "sample_interval_ms"_a = 100);
+  m.def("modalix_dvt_power_monitor_options", &simaai::neat::modalix_dvt_power_monitor_options,
+        "sample_interval_ms"_a = 100);
+  m.def("power_monitor_profile_name", &simaai::neat::power_monitor_profile_name, "profile"_a);
 
   nb::class_<simaai::neat::InputStreamStats>(m, "InputStreamStats")
       .def(nb::init<>())
@@ -1938,6 +2356,162 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("min_latency_ms", &RunStats::min_latency_ms)
       .def_rw("max_latency_ms", &RunStats::max_latency_ms);
 
+  nb::class_<RuntimeMetricsOptions>(m, "RuntimeMetricsOptions")
+      .def(nb::init<>())
+      .def_rw("include_power", &RuntimeMetricsOptions::include_power)
+      .def_rw("include_diagnostics", &RuntimeMetricsOptions::include_diagnostics)
+      .def_rw("include_pipeline", &RuntimeMetricsOptions::include_pipeline)
+      .def_rw("include_percentiles", &RuntimeMetricsOptions::include_percentiles);
+
+  nb::class_<RuntimeLatencyMetrics>(m, "RuntimeLatencyMetrics")
+      .def(nb::init<>())
+      .def_rw("avg_ms", &RuntimeLatencyMetrics::avg_ms)
+      .def_rw("min_ms", &RuntimeLatencyMetrics::min_ms)
+      .def_rw("max_ms", &RuntimeLatencyMetrics::max_ms)
+      .def_rw("p50_ms", &RuntimeLatencyMetrics::p50_ms)
+      .def_rw("p95_ms", &RuntimeLatencyMetrics::p95_ms)
+      .def_rw("has_percentiles", &RuntimeLatencyMetrics::has_percentiles);
+
+  nb::class_<RuntimeCounters>(m, "RuntimeCounters")
+      .def(nb::init<>())
+      .def_rw("inputs_enqueued", &RuntimeCounters::inputs_enqueued)
+      .def_rw("inputs_dropped", &RuntimeCounters::inputs_dropped)
+      .def_rw("inputs_pushed", &RuntimeCounters::inputs_pushed)
+      .def_rw("outputs_ready", &RuntimeCounters::outputs_ready)
+      .def_rw("outputs_pulled", &RuntimeCounters::outputs_pulled)
+      .def_rw("outputs_dropped", &RuntimeCounters::outputs_dropped);
+
+  nb::class_<RuntimeMetricValue>(m, "RuntimeMetricValue")
+      .def(nb::init<>())
+      .def_rw("name", &RuntimeMetricValue::name)
+      .def_rw("value", &RuntimeMetricValue::value)
+      .def_rw("unit", &RuntimeMetricValue::unit);
+
+  nb::class_<RuntimeMetricGroup>(m, "RuntimeMetricGroup")
+      .def(nb::init<>())
+      .def_rw("name", &RuntimeMetricGroup::name)
+      .def_rw("values", &RuntimeMetricGroup::values);
+
+  nb::class_<RuntimeMetrics>(m, "RuntimeMetrics")
+      .def(nb::init<>())
+      .def_rw("source_kind", &RuntimeMetrics::source_kind)
+      .def_rw("source_name", &RuntimeMetrics::source_name)
+      .def_rw("elapsed_seconds", &RuntimeMetrics::elapsed_seconds)
+      .def_rw("throughput_fps", &RuntimeMetrics::throughput_fps)
+      .def_rw("latency", &RuntimeMetrics::latency)
+      .def_rw("counters", &RuntimeMetrics::counters)
+      .def_rw("power", &RuntimeMetrics::power)
+      .def_rw("metadata", &RuntimeMetrics::metadata)
+      .def_rw("groups", &RuntimeMetrics::groups);
+
+  nb::class_<RunMeasurementSummary>(m, "RunMeasurementSummary")
+      .def(nb::init<>())
+      .def_rw("stats", &RunMeasurementSummary::stats)
+      .def_rw("input_stats", &RunMeasurementSummary::input_stats)
+      .def_rw("elapsed_seconds", &RunMeasurementSummary::elapsed_seconds)
+      .def_rw("throughput_fps", &RunMeasurementSummary::throughput_fps)
+      .def_rw("power", &RunMeasurementSummary::power);
+
+  nb::class_<NodeLatencySummary>(m, "NodeLatencySummary")
+      .def(nb::init<>())
+      .def_rw("samples", &NodeLatencySummary::samples)
+      .def_rw("total_ms", &NodeLatencySummary::total_ms)
+      .def_rw("avg_ms", &NodeLatencySummary::avg_ms)
+      .def_rw("min_ms", &NodeLatencySummary::min_ms)
+      .def_rw("max_ms", &NodeLatencySummary::max_ms)
+      .def_rw("min_max_available", &NodeLatencySummary::min_max_available);
+
+  nb::class_<GraphElementMetrics>(m, "GraphElementMetrics")
+      .def(nb::init<>())
+      .def_rw("name", &GraphElementMetrics::name)
+      .def_rw("latency", &GraphElementMetrics::latency);
+
+  nb::class_<GraphNodeMetrics>(m, "GraphNodeMetrics")
+      .def(nb::init<>())
+      .def_rw("pipeline_segment_id", &GraphNodeMetrics::pipeline_segment_id)
+      .def_rw("runtime_node_id", &GraphNodeMetrics::runtime_node_id)
+      .def_rw("node_id", &GraphNodeMetrics::node_id)
+      .def_rw("public_node_ids", &GraphNodeMetrics::public_node_ids)
+      .def_rw("kind", &GraphNodeMetrics::kind)
+      .def_rw("label", &GraphNodeMetrics::label)
+      .def_rw("element_names", &GraphNodeMetrics::element_names)
+      .def_rw("elements", &GraphNodeMetrics::elements)
+      .def_rw("latency", &GraphNodeMetrics::latency);
+
+  nb::class_<GraphMetricsReport>(m, "GraphMetricsReport")
+      .def(nb::init<>())
+      .def_rw("graph_metrics", &GraphMetricsReport::graph_metrics)
+      .def_rw("aggregation", &GraphMetricsReport::aggregation)
+      .def_rw("latency_semantics", &GraphMetricsReport::latency_semantics)
+      .def_rw("throughput_counting", &GraphMetricsReport::throughput_counting)
+      .def_rw("node_metrics", &GraphMetricsReport::node_metrics);
+
+  nb::class_<MeasureOptions>(m, "MeasureOptions")
+      .def(nb::init<>())
+      .def_rw("duration_ms", &MeasureOptions::duration_ms)
+      .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
+      .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
+      .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency)
+      .def_rw("include_power", &MeasureOptions::include_power)
+      .def_rw("title", &MeasureOptions::title)
+      .def_rw("model", &MeasureOptions::model)
+      .def_rw("input", &MeasureOptions::input)
+      .def_rw("placement", &MeasureOptions::placement)
+      .def_rw("logical_batch_size", &MeasureOptions::logical_batch_size);
+
+  nb::class_<MeasureLatencyStats>(m, "MeasureLatencyStats")
+      .def(nb::init<>())
+      .def_rw("count", &MeasureLatencyStats::count)
+      .def_rw("avg_ms", &MeasureLatencyStats::avg_ms)
+      .def_rw("p50_ms", &MeasureLatencyStats::p50_ms)
+      .def_rw("p90_ms", &MeasureLatencyStats::p90_ms)
+      .def_rw("p95_ms", &MeasureLatencyStats::p95_ms)
+      .def_rw("p99_ms", &MeasureLatencyStats::p99_ms)
+      .def_rw("max_ms", &MeasureLatencyStats::max_ms);
+
+  nb::class_<MeasurePluginLatency>(m, "MeasurePluginLatency")
+      .def(nb::init<>())
+      .def_rw("name", &MeasurePluginLatency::name)
+      .def_rw("backend", &MeasurePluginLatency::backend)
+      .def_rw("phase", &MeasurePluginLatency::phase)
+      .def_rw("kernel_name", &MeasurePluginLatency::kernel_name)
+      .def_rw("stage_name", &MeasurePluginLatency::stage_name)
+      .def_rw("physical_input_index", &MeasurePluginLatency::physical_input_index)
+      .def_rw("output_slot", &MeasurePluginLatency::output_slot)
+      .def_rw("run_id_hash", &MeasurePluginLatency::run_id_hash)
+      .def_rw("pipeline_segment_id", &MeasurePluginLatency::pipeline_segment_id)
+      .def_rw("runtime_node_id", &MeasurePluginLatency::runtime_node_id)
+      .def_rw("public_node_id", &MeasurePluginLatency::public_node_id)
+      .def_rw("public_node_ids", &MeasurePluginLatency::public_node_ids)
+      .def_rw("gst_element_name", &MeasurePluginLatency::gst_element_name)
+      .def_rw("calls", &MeasurePluginLatency::calls)
+      .def_rw("total_ms", &MeasurePluginLatency::total_ms)
+      .def_rw("avg_ms", &MeasurePluginLatency::avg_ms)
+      .def_rw("min_ms", &MeasurePluginLatency::min_ms)
+      .def_rw("max_ms", &MeasurePluginLatency::max_ms);
+
+  nb::class_<MeasureReport>(m, "MeasureReport")
+      .def(nb::init<>())
+      .def_rw("options", &MeasureReport::options)
+      .def_rw("warmup_iterations", &MeasureReport::warmup_iterations)
+      .def_rw("outputs", &MeasureReport::outputs)
+      .def_rw("elapsed_s", &MeasureReport::elapsed_s)
+      .def_rw("throughput_batches_per_s", &MeasureReport::throughput_batches_per_s)
+      .def_rw("throughput_inferences_per_s", &MeasureReport::throughput_inferences_per_s)
+      .def_rw("end_to_end", &MeasureReport::end_to_end)
+      .def_rw("frame_gap", &MeasureReport::frame_gap)
+      .def_rw("latency_samples_collected", &MeasureReport::latency_samples_collected)
+      .def_rw("plugin_latency", &MeasureReport::plugin_latency)
+      .def_rw("node_metrics", &MeasureReport::node_metrics)
+      .def_rw("inputs_pushed", &MeasureReport::inputs_pushed)
+      .def_rw("outputs_pulled", &MeasureReport::outputs_pulled)
+      .def_rw("inputs_dropped", &MeasureReport::inputs_dropped)
+      .def_rw("outputs_dropped", &MeasureReport::outputs_dropped)
+      .def_rw("final_run_stats", &MeasureReport::final_run_stats)
+      .def_rw("power", &MeasureReport::power)
+      .def("text", &MeasureReport::to_text)
+      .def("to_text", &MeasureReport::to_text);
+
   nb::class_<RunStageStats>(m, "RunStageStats")
       .def(nb::init<>())
       .def_rw("stage_name", &RunStageStats::stage_name)
@@ -1964,12 +2538,26 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("out_bytes", &RunElementFlowStats::out_bytes)
       .def_rw("caps_changes", &RunElementFlowStats::caps_changes);
 
+  nb::class_<RunElementPadTimingStats>(m, "RunElementPadTimingStats")
+      .def(nb::init<>())
+      .def_rw("element_name", &RunElementPadTimingStats::element_name)
+      .def_rw("pad_name", &RunElementPadTimingStats::pad_name)
+      .def_rw("is_sink", &RunElementPadTimingStats::is_sink)
+      .def_rw("samples", &RunElementPadTimingStats::samples)
+      .def_rw("inter_arrival_total_us", &RunElementPadTimingStats::inter_arrival_total_us)
+      .def_rw("inter_arrival_max_us", &RunElementPadTimingStats::inter_arrival_max_us)
+      .def_rw("queue_wait_samples", &RunElementPadTimingStats::queue_wait_samples)
+      .def_rw("queue_wait_total_us", &RunElementPadTimingStats::queue_wait_total_us)
+      .def_rw("queue_wait_max_us", &RunElementPadTimingStats::queue_wait_max_us)
+      .def_rw("bytes", &RunElementPadTimingStats::bytes);
+
   nb::class_<RunDiagSnapshot>(m, "RunDiagSnapshot")
       .def(nb::init<>())
       .def_rw("stages", &RunDiagSnapshot::stages)
       .def_rw("boundaries", &RunDiagSnapshot::boundaries)
       .def_rw("element_timings", &RunDiagSnapshot::element_timings)
-      .def_rw("element_flows", &RunDiagSnapshot::element_flows);
+      .def_rw("element_flows", &RunDiagSnapshot::element_flows)
+      .def_rw("element_pad_timings", &RunDiagSnapshot::element_pad_timings);
 
   nb::class_<RunReportOptions>(m, "RunReportOptions")
       .def(nb::init<>())
@@ -1984,7 +2572,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("include_num_buffers", &RunReportOptions::include_num_buffers)
       .def_rw("include_run_stats", &RunReportOptions::include_run_stats)
       .def_rw("include_input_stats", &RunReportOptions::include_input_stats)
+      .def_rw("include_power", &RunReportOptions::include_power)
       .def_rw("include_system_info", &RunReportOptions::include_system_info);
+
+  nb::class_<MeasureScope>(m, "MeasureScope")
+      .def("stop", &MeasureScope::stop)
+      .def("stopped", &MeasureScope::stopped);
 
   nb::class_<Run>(m, "Run")
       .def(nb::init<>())
@@ -2075,13 +2668,6 @@ NB_MODULE(_pyneat_core, m) {
           "name"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def("pull_samples", static_cast<Sample (Run::*)(int)>(&Run::pull_samples),
            "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (Run::*)(const simaai::neat::TensorList&, int)>(
-               &Run::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (Run::*)(const simaai::neat::Sample&, int)>(&Run::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](Run& run, nb::object input, int timeout_ms, bool copy,
@@ -2110,6 +2696,16 @@ NB_MODULE(_pyneat_core, m) {
       .def("stats", &Run::stats)
       .def("input_stats", &Run::input_stats)
       .def("diag_snapshot", &Run::diag_snapshot)
+      .def("power_summary", &Run::power_summary)
+      .def("measurement_summary", &Run::measurement_summary)
+      .def("metrics", &Run::metrics, "options"_a = RuntimeMetricsOptions{})
+      .def(
+          "metrics_report",
+          [](const Run& run, const RuntimeMetricsOptions& options, RuntimeMetricsFormat format) {
+            return run.metrics_report(options, format);
+          },
+          "options"_a = RuntimeMetricsOptions{}, "format"_a = RuntimeMetricsFormat::Text)
+      .def("start_measurement", &Run::start_measurement, "options"_a = MeasureOptions{})
       .def("report", &Run::report, "options"_a = RunReportOptions{})
       .def("last_error", &Run::last_error)
       .def("diagnostics_summary", &Run::diagnostics_summary)
@@ -2125,6 +2721,17 @@ NB_MODULE(_pyneat_core, m) {
           },
           "options"_a = RunExportOptions{})
       .def(
+          "json",
+          [](const Run& run, const MeasureReport& report, const RunExportOptions& options) {
+            std::string err;
+            const std::string body = simaai::neat::run_to_json(run, report, options, &err);
+            if (body.empty()) {
+              throw std::runtime_error(err.empty() ? "run_to_json failed" : err);
+            }
+            return body;
+          },
+          "report"_a, "options"_a = RunExportOptions{})
+      .def(
           "save_json",
           [](const Run& run, const std::string& path, const RunExportOptions& options) {
             std::string err;
@@ -2133,6 +2740,16 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "path"_a, "options"_a = RunExportOptions{})
+      .def(
+          "save_json",
+          [](const Run& run, const MeasureReport& report, const std::string& path,
+             const RunExportOptions& options) {
+            std::string err;
+            if (!simaai::neat::save_run_json(run, report, path, options, &err)) {
+              throw std::runtime_error(err.empty() ? "save_run_json failed" : err);
+            }
+          },
+          "report"_a, "path"_a, "options"_a = RunExportOptions{})
       .def(
           "graph_run_json",
           [](const Run& run, const GraphRunExportOptions& options) {
@@ -2145,6 +2762,17 @@ NB_MODULE(_pyneat_core, m) {
           },
           "options"_a = GraphRunExportOptions{})
       .def(
+          "graph_run_json",
+          [](const Run& run, const MeasureReport& report, const GraphRunExportOptions& options) {
+            std::string err;
+            const std::string body = simaai::neat::graph_run_to_json(run, report, options, &err);
+            if (body.empty()) {
+              throw std::runtime_error(err.empty() ? "graph_run_to_json failed" : err);
+            }
+            return body;
+          },
+          "report"_a, "options"_a = GraphRunExportOptions{})
+      .def(
           "save_graph_run_json",
           [](const Run& run, const std::string& path, const GraphRunExportOptions& options) {
             std::string err;
@@ -2153,6 +2781,16 @@ NB_MODULE(_pyneat_core, m) {
             }
           },
           "path"_a, "options"_a = GraphRunExportOptions{})
+      .def(
+          "save_graph_run_json",
+          [](const Run& run, const MeasureReport& report, const std::string& path,
+             const GraphRunExportOptions& options) {
+            std::string err;
+            if (!simaai::neat::save_graph_run_json(run, report, path, options, &err)) {
+              throw std::runtime_error(err.empty() ? "save_graph_run_json failed" : err);
+            }
+          },
+          "report"_a, "path"_a, "options"_a = GraphRunExportOptions{})
       .def("stop", &Run::stop)
       .def("close", &Run::close);
 
@@ -2168,6 +2806,22 @@ NB_MODULE(_pyneat_core, m) {
       },
       "run"_a, "options"_a = RunExportOptions{});
 
+  m.def("build_graph_metrics_report_run_lifetime",
+        &simaai::neat::build_graph_metrics_report_run_lifetime, "run"_a,
+        "options"_a = RuntimeMetricsOptions{});
+
+  m.def(
+      "run_to_json",
+      [](const Run& run, const MeasureReport& report, const RunExportOptions& options) {
+        std::string err;
+        const std::string body = simaai::neat::run_to_json(run, report, options, &err);
+        if (body.empty()) {
+          throw std::runtime_error(err.empty() ? "run_to_json failed" : err);
+        }
+        return body;
+      },
+      "run"_a, "report"_a, "options"_a = RunExportOptions{});
+
   m.def(
       "save_run_json",
       [](const Run& run, const std::string& path, const RunExportOptions& options) {
@@ -2177,6 +2831,17 @@ NB_MODULE(_pyneat_core, m) {
         }
       },
       "run"_a, "path"_a, "options"_a = RunExportOptions{});
+
+  m.def(
+      "save_run_json",
+      [](const Run& run, const MeasureReport& report, const std::string& path,
+         const RunExportOptions& options) {
+        std::string err;
+        if (!simaai::neat::save_run_json(run, report, path, options, &err)) {
+          throw std::runtime_error(err.empty() ? "save_run_json failed" : err);
+        }
+      },
+      "run"_a, "report"_a, "path"_a, "options"_a = RunExportOptions{});
 
   m.def(
       "graph_run_to_json",
@@ -2191,6 +2856,18 @@ NB_MODULE(_pyneat_core, m) {
       "run"_a, "options"_a = GraphRunExportOptions{});
 
   m.def(
+      "graph_run_to_json",
+      [](const Run& run, const MeasureReport& report, const GraphRunExportOptions& options) {
+        std::string err;
+        const std::string body = simaai::neat::graph_run_to_json(run, report, options, &err);
+        if (body.empty()) {
+          throw std::runtime_error(err.empty() ? "graph_run_to_json failed" : err);
+        }
+        return body;
+      },
+      "run"_a, "report"_a, "options"_a = GraphRunExportOptions{});
+
+  m.def(
       "save_graph_run_json",
       [](const Run& run, const std::string& path, const GraphRunExportOptions& options) {
         std::string err;
@@ -2199,6 +2876,17 @@ NB_MODULE(_pyneat_core, m) {
         }
       },
       "run"_a, "path"_a, "options"_a = GraphRunExportOptions{});
+
+  m.def(
+      "save_graph_run_json",
+      [](const Run& run, const MeasureReport& report, const std::string& path,
+         const GraphRunExportOptions& options) {
+        std::string err;
+        if (!simaai::neat::save_graph_run_json(run, report, path, options, &err)) {
+          throw std::runtime_error(err.empty() ? "save_graph_run_json failed" : err);
+        }
+      },
+      "run"_a, "report"_a, "path"_a, "options"_a = GraphRunExportOptions{});
 
   nb::class_<simaai::neat::RtspServerHandle>(m, "RtspServerHandle")
       .def(nb::init<>())
@@ -2312,24 +3000,33 @@ NB_MODULE(_pyneat_core, m) {
            "fragment"_a, "role"_a, nb::rv_policy::reference_internal)
       .def("run_source", static_cast<void (Graph::*)()>(&Graph::run),
            nb::call_guard<nb::gil_scoped_release>())
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (Graph::*)(const simaai::neat::TensorList&,
-                                                           const RunOptions&)>(&Graph::run),
-           "inputs"_a, "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (Graph::*)(const simaai::neat::Sample&,
-                                                       const RunOptions&)>(&Graph::run),
-           "inputs"_a, "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
-      .def("build_tensors",
-           static_cast<Run (Graph::*)(const simaai::neat::TensorList&, RunMode, const RunOptions&)>(
-               &Graph::build),
-           "inputs"_a, "mode"_a = RunMode::Async, "options"_a = RunOptions{},
+      .def("run", static_cast<void (Graph::*)()>(&Graph::run),
            nb::call_guard<nb::gil_scoped_release>())
-      .def("build_samples",
-           static_cast<Run (Graph::*)(const simaai::neat::Sample&, RunMode, const RunOptions&)>(
-               &Graph::build),
-           "inputs"_a, "mode"_a = RunMode::Async, "options"_a = RunOptions{},
-           nb::call_guard<nb::gil_scoped_release>())
+      .def(
+          "run",
+          [](Graph& self, nb::object input, const RunOptions& options, bool copy,
+             std::optional<TensorLayout> layout,
+             std::optional<ImageSpec::PixelFormat> image_format) -> nb::object {
+            reject_single_tensor_or_sample(input, "Graph.run");
+            if (python_sequence_all_samples(input)) {
+              auto samples = sample_batch_from_python_input(input);
+              simaai::neat::Sample out;
+              {
+                nb::gil_scoped_release release;
+                out = self.run(samples, options);
+              }
+              return nb::cast(std::move(out));
+            }
+            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
+            simaai::neat::TensorList out;
+            {
+              nb::gil_scoped_release release;
+              out = self.run(tensors, options);
+            }
+            return nb::cast(std::move(out));
+          },
+          "input"_a, "options"_a = RunOptions{}, "copy"_a = false, "layout"_a = nb::none(),
+          "image_format"_a = nb::none())
       .def("build_source", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def("build", static_cast<Run (Graph::*)(const RunOptions&)>(&Graph::build),
@@ -2414,6 +3111,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("use_simaai_pool", &simaai::neat::InputOptions::use_simaai_pool)
       .def_rw("pool_min_buffers", &simaai::neat::InputOptions::pool_min_buffers)
       .def_rw("pool_max_buffers", &simaai::neat::InputOptions::pool_max_buffers)
+      .def_rw("memory_policy", &simaai::neat::InputOptions::memory_policy)
       .def_rw("buffer_name", &simaai::neat::InputOptions::buffer_name);
 
   nb::enum_<simaai::neat::CombinePolicy>(m, "CombinePolicy")
@@ -2692,6 +3390,89 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("stream_format", &simaai::neat::H264ParseOptions::stream_format)
       .def_rw("enforce_caps", &simaai::neat::H264ParseOptions::enforce_caps);
 
+  nb::class_<simaai::neat::FeatureHistogramOptions>(m, "FeatureHistogramOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::FeatureHistogramOptions::width)
+      .def_rw("height", &simaai::neat::FeatureHistogramOptions::height)
+      .def_rw("batch_size", &simaai::neat::FeatureHistogramOptions::batch_size)
+      .def_rw("debug", &simaai::neat::FeatureHistogramOptions::debug)
+      .def_rw("num_buffers", &simaai::neat::FeatureHistogramOptions::num_buffers)
+      .def_rw("element_name", &simaai::neat::FeatureHistogramOptions::element_name)
+      .def_rw("input_name", &simaai::neat::FeatureHistogramOptions::input_name)
+      .def_rw("output_name", &simaai::neat::FeatureHistogramOptions::output_name)
+      .def("summary", &simaai::neat::FeatureHistogramOptions::summary)
+      .def("__repr__",
+           [](const simaai::neat::FeatureHistogramOptions& options) { return options.summary(); });
+
+  nb::class_<simaai::neat::GriderFastOptions>(m, "GriderFastOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::GriderFastOptions::width)
+      .def_rw("height", &simaai::neat::GriderFastOptions::height)
+      .def_rw("batch_size", &simaai::neat::GriderFastOptions::batch_size)
+      .def_rw("debug", &simaai::neat::GriderFastOptions::debug)
+      .def_rw("num_buffers", &simaai::neat::GriderFastOptions::num_buffers)
+      .def_rw("element_name", &simaai::neat::GriderFastOptions::element_name)
+      .def_rw("threshold", &simaai::neat::GriderFastOptions::threshold)
+      .def_rw("max_features", &simaai::neat::GriderFastOptions::max_features)
+      .def_rw("grid_x", &simaai::neat::GriderFastOptions::grid_x)
+      .def_rw("grid_y", &simaai::neat::GriderFastOptions::grid_y)
+      .def_rw("min_px_dist", &simaai::neat::GriderFastOptions::min_px_dist)
+      .def_rw("input_name", &simaai::neat::GriderFastOptions::input_name)
+      .def_rw("output_name", &simaai::neat::GriderFastOptions::output_name)
+      .def("summary", &simaai::neat::GriderFastOptions::summary)
+      .def("__repr__",
+           [](const simaai::neat::GriderFastOptions& options) { return options.summary(); });
+
+  nb::class_<simaai::neat::TrackDescriptorOptions>(m, "TrackDescriptorOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::TrackDescriptorOptions::width)
+      .def_rw("height", &simaai::neat::TrackDescriptorOptions::height)
+      .def_rw("batch_size", &simaai::neat::TrackDescriptorOptions::batch_size)
+      .def_rw("debug", &simaai::neat::TrackDescriptorOptions::debug)
+      .def_rw("num_buffers", &simaai::neat::TrackDescriptorOptions::num_buffers)
+      .def_rw("element_name", &simaai::neat::TrackDescriptorOptions::element_name)
+      .def_rw("threshold", &simaai::neat::TrackDescriptorOptions::threshold)
+      .def_rw("max_features", &simaai::neat::TrackDescriptorOptions::max_features)
+      .def_rw("grid_x", &simaai::neat::TrackDescriptorOptions::grid_x)
+      .def_rw("grid_y", &simaai::neat::TrackDescriptorOptions::grid_y)
+      .def_rw("min_px_dist", &simaai::neat::TrackDescriptorOptions::min_px_dist)
+      .def_rw("descriptor_words", &simaai::neat::TrackDescriptorOptions::descriptor_words)
+      .def_rw("input_name", &simaai::neat::TrackDescriptorOptions::input_name)
+      .def_rw("features_output_name", &simaai::neat::TrackDescriptorOptions::features_output_name)
+      .def_rw("descriptors_output_name",
+              &simaai::neat::TrackDescriptorOptions::descriptors_output_name)
+      .def("summary", &simaai::neat::TrackDescriptorOptions::summary)
+      .def("__repr__",
+           [](const simaai::neat::TrackDescriptorOptions& options) { return options.summary(); });
+
+  nb::class_<simaai::neat::TrackKLTOptions>(m, "TrackKLTOptions")
+      .def(nb::init<>())
+      .def_rw("width", &simaai::neat::TrackKLTOptions::width)
+      .def_rw("height", &simaai::neat::TrackKLTOptions::height)
+      .def_rw("batch_size", &simaai::neat::TrackKLTOptions::batch_size)
+      .def_rw("num_points", &simaai::neat::TrackKLTOptions::num_points)
+      .def_rw("win_half", &simaai::neat::TrackKLTOptions::win_half)
+      .def_rw("max_iters", &simaai::neat::TrackKLTOptions::max_iters)
+      .def_rw("max_level", &simaai::neat::TrackKLTOptions::max_level)
+      .def_rw("detect_new_features", &simaai::neat::TrackKLTOptions::detect_new_features)
+      .def_rw("fast_threshold", &simaai::neat::TrackKLTOptions::fast_threshold)
+      .def_rw("max_features", &simaai::neat::TrackKLTOptions::max_features)
+      .def_rw("grid_x", &simaai::neat::TrackKLTOptions::grid_x)
+      .def_rw("grid_y", &simaai::neat::TrackKLTOptions::grid_y)
+      .def_rw("min_px_dist", &simaai::neat::TrackKLTOptions::min_px_dist)
+      .def_rw("debug", &simaai::neat::TrackKLTOptions::debug)
+      .def_rw("num_buffers", &simaai::neat::TrackKLTOptions::num_buffers)
+      .def_rw("element_name", &simaai::neat::TrackKLTOptions::element_name)
+      .def_rw("prev_image_name", &simaai::neat::TrackKLTOptions::prev_image_name)
+      .def_rw("cur_image_name", &simaai::neat::TrackKLTOptions::cur_image_name)
+      .def_rw("input_points_name", &simaai::neat::TrackKLTOptions::input_points_name)
+      .def_rw("output_points_name", &simaai::neat::TrackKLTOptions::output_points_name)
+      .def_rw("output_status_name", &simaai::neat::TrackKLTOptions::output_status_name)
+      .def_rw("output_features_name", &simaai::neat::TrackKLTOptions::output_features_name)
+      .def("summary", &simaai::neat::TrackKLTOptions::summary)
+      .def("__repr__",
+           [](const simaai::neat::TrackKLTOptions& options) { return options.summary(); });
+
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def("queue", &simaai::neat::nodes::Queue);
   nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
@@ -2717,6 +3498,25 @@ NB_MODULE(_pyneat_core, m) {
                     std::string, simaai::neat::OutputOptions)>(&simaai::neat::nodes::Output),
                 "name"_a, "options"_a = simaai::neat::OutputOptions{});
   nodes_mod.def("video_convert", &simaai::neat::nodes::VideoConvert);
+  nodes_mod.def(
+      "feature_histogram",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::FeatureHistogramOptions)>(
+          &simaai::neat::nodes::FeatureHistogram),
+      "options"_a = simaai::neat::FeatureHistogramOptions{});
+  nodes_mod.def(
+      "grider_fast",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::GriderFastOptions)>(
+          &simaai::neat::nodes::GriderFast),
+      "options"_a = simaai::neat::GriderFastOptions{});
+  nodes_mod.def(
+      "track_descriptor",
+      static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::TrackDescriptorOptions)>(
+          &simaai::neat::nodes::TrackDescriptor),
+      "options"_a = simaai::neat::TrackDescriptorOptions{});
+  nodes_mod.def("track_klt",
+                static_cast<std::shared_ptr<simaai::neat::Node> (*)(simaai::neat::TrackKLTOptions)>(
+                    &simaai::neat::nodes::TrackKLT),
+                "options"_a = simaai::neat::TrackKLTOptions{});
 
   nb::module_ groups_mod = m.def_submodule("groups", "Reusable Graph fragment helpers");
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
@@ -2732,6 +3532,21 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("rtsp_decoded_output_spec",
                  &simaai::neat::nodes::groups::RtspDecodedInputOutputSpec, "options"_a);
+
+  nb::module_ stages_mod = m.def_submodule("stages", "Standalone model stage helpers");
+  stages_mod.def(
+      "preproc", &python_stage_preproc,
+      "Run the model's Preproc stage on one or more uint8 HWC/HW images.\n\n"
+      "Args:\n"
+      "  images:       list/tuple of NumPy/Torch/pyneat.Tensor image inputs.\n"
+      "  model:        pyneat.Model whose resolved preprocess route should run.\n"
+      "  rois:         Optional list[PreprocessRoi]. When set, output order follows ROI order.\n"
+      "  image_format: Optional PixelFormat hint. Use BGR for cv2.imread images, RGB for RGB.\n"
+      "  copy:         Copy Python image buffers before running Preproc.\n\n"
+      "Returns:\n"
+      "  list[Tensor] with dtype/layout selected by the model's preprocess route.",
+      "images"_a, "model"_a, nb::kw_only(), "rois"_a = std::nullopt,
+      "image_format"_a = std::nullopt, "copy"_a = false);
 
   nb::enum_<simaai::neat::AutoFlag>(m, "AutoFlag")
       .value("Auto", simaai::neat::AutoFlag::Auto)
@@ -2784,10 +3599,28 @@ NB_MODULE(_pyneat_core, m) {
       .value("YoloV10", simaai::neat::BoxDecodeType::YoloV10)
       .value("YoloV10Seg", simaai::neat::BoxDecodeType::YoloV10Seg)
       .value("YoloV26", simaai::neat::BoxDecodeType::YoloV26)
+      .value("YoloV26Pose", simaai::neat::BoxDecodeType::YoloV26Pose)
+      .value("YoloV26Seg", simaai::neat::BoxDecodeType::YoloV26Seg)
+      .value("YoloV6", simaai::neat::BoxDecodeType::YoloV6)
+      .value("YoloX", simaai::neat::BoxDecodeType::YoloX)
       .value("Detr", simaai::neat::BoxDecodeType::Detr)
       .value("EffDet", simaai::neat::BoxDecodeType::EffDet)
       .value("RcnnStage1", simaai::neat::BoxDecodeType::RcnnStage1)
       .value("Centernet", simaai::neat::BoxDecodeType::Centernet);
+
+  nb::enum_<simaai::neat::BoxDecodeTypeOption>(m, "BoxDecodeTypeOption")
+      .value("Auto", simaai::neat::BoxDecodeTypeOption::Auto)
+      .value("PackedPerHead", simaai::neat::BoxDecodeTypeOption::PackedPerHead)
+      .value("InterleavedByHead", simaai::neat::BoxDecodeTypeOption::InterleavedByHead)
+      .value("GroupedByRole", simaai::neat::BoxDecodeTypeOption::GroupedByRole)
+      .value("Split3Interleaved", simaai::neat::BoxDecodeTypeOption::Split3Interleaved)
+      .value("Split3Grouped", simaai::neat::BoxDecodeTypeOption::Split3Grouped)
+      .value("InterleavedByHeadProbability",
+             simaai::neat::BoxDecodeTypeOption::InterleavedByHeadProbability)
+      .value("InterleavedByHeadLogit", simaai::neat::BoxDecodeTypeOption::InterleavedByHeadLogit)
+      .value("GroupedByRoleProbability",
+             simaai::neat::BoxDecodeTypeOption::GroupedByRoleProbability)
+      .value("GroupedByRoleLogit", simaai::neat::BoxDecodeTypeOption::GroupedByRoleLogit);
 
   nb::enum_<simaai::neat::VerbosityLevel>(m, "VerbosityLevel")
       .value("Quiet", simaai::neat::VerbosityLevel::Quiet)
@@ -2903,11 +3736,14 @@ NB_MODULE(_pyneat_core, m) {
       .def(nb::init<>())
       .def_rw("preprocess", &simaai::neat::Model::Options::preprocess)
       .def_rw("decode_type", &simaai::neat::Model::Options::decode_type)
+      .def_rw("decode_type_option", &simaai::neat::Model::Options::decode_type_option)
       .def_rw("score_threshold", &simaai::neat::Model::Options::score_threshold)
       .def_rw("nms_iou_threshold", &simaai::neat::Model::Options::nms_iou_threshold)
       .def_rw("top_k", &simaai::neat::Model::Options::top_k)
+      .def_rw("num_classes", &simaai::neat::Model::Options::num_classes)
       .def_rw("boxdecode_original_width", &simaai::neat::Model::Options::boxdecode_original_width)
       .def_rw("boxdecode_original_height", &simaai::neat::Model::Options::boxdecode_original_height)
+      .def_rw("boxdecode_resize_mode", &simaai::neat::Model::Options::boxdecode_resize_mode)
       .def_rw("upstream_name", &simaai::neat::Model::Options::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::Options::name_suffix)
       .def_rw("cleanup_extracted_model_data",
@@ -2957,14 +3793,6 @@ NB_MODULE(_pyneat_core, m) {
           "input"_a, "copy"_a = false, "layout"_a = nb::none(), "image_format"_a = nb::none())
       .def("pull", &simaai::neat::Model::Runner::pull, "timeout_ms"_a = -1,
            nb::call_guard<nb::gil_scoped_release>())
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (simaai::neat::Model::Runner::*)(
-               const simaai::neat::TensorList&, int)>(&simaai::neat::Model::Runner::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (simaai::neat::Model::Runner::*)(
-               const simaai::neat::Sample&, int)>(&simaai::neat::Model::Runner::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](simaai::neat::Model::Runner& runner, nb::object input, int timeout_ms, bool copy,
@@ -3039,18 +3867,6 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<simaai::neat::Model::Runner (simaai::neat::Model::*)(
                const simaai::neat::Model::RouteOptions&)>(&simaai::neat::Model::build),
            "options"_a)
-      .def("build_tensors",
-           static_cast<simaai::neat::Model::Runner (simaai::neat::Model::*)(
-               const simaai::neat::TensorList&, const simaai::neat::Model::RouteOptions&,
-               const RunOptions&)>(&simaai::neat::Model::build),
-           "inputs"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
-           "run_options"_a = RunOptions{})
-      .def("build_samples",
-           static_cast<simaai::neat::Model::Runner (simaai::neat::Model::*)(
-               const simaai::neat::Sample&, const simaai::neat::Model::RouteOptions&,
-               const RunOptions&)>(&simaai::neat::Model::build),
-           "inputs"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
-           "run_options"_a = RunOptions{})
       .def(
           "build",
           [](simaai::neat::Model& model, nb::object input,
@@ -3065,14 +3881,6 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "route_options"_a = simaai::neat::Model::RouteOptions{},
           "run_options"_a = RunOptions{}, "copy"_a = false)
-      .def("run_tensors",
-           static_cast<simaai::neat::TensorList (simaai::neat::Model::*)(
-               const simaai::neat::TensorList&, int)>(&simaai::neat::Model::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
-      .def("run_samples",
-           static_cast<simaai::neat::Sample (simaai::neat::Model::*)(
-               const simaai::neat::Sample&, int)>(&simaai::neat::Model::run),
-           "inputs"_a, "timeout_ms"_a = -1, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "run",
           [](simaai::neat::Model& model, nb::object input, int timeout_ms,
@@ -3116,6 +3924,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("aspect_ratio", &simaai::neat::PreprocOptions::aspect_ratio)
       .def_rw("tessellate", &simaai::neat::PreprocOptions::tessellate)
       .def_rw("dynamic_input_dims", &simaai::neat::PreprocOptions::dynamic_input_dims)
+      .def_rw("single_output_handoff", &simaai::neat::PreprocOptions::single_output_handoff)
       .def_rw("input_offset", &simaai::neat::PreprocOptions::input_offset)
       .def_rw("input_stride", &simaai::neat::PreprocOptions::input_stride)
       .def_rw("output_stride", &simaai::neat::PreprocOptions::output_stride)
@@ -3128,6 +3937,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("output_dtype", &simaai::neat::PreprocOptions::output_dtype)
       .def_rw("scaling_type", &simaai::neat::PreprocOptions::scaling_type)
       .def_rw("padding_type", &simaai::neat::PreprocOptions::padding_type)
+      .def_rw("pad_value", &simaai::neat::PreprocOptions::pad_value)
       .def_rw("graph_name", &simaai::neat::PreprocOptions::graph_name)
       .def_rw("node_name", &simaai::neat::PreprocOptions::node_name)
       .def_rw("element_name", &simaai::neat::PreprocOptions::element_name)
@@ -3138,7 +3948,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("graph_input_name", &simaai::neat::PreprocOptions::graph_input_name)
       .def_rw("num_buffers", &simaai::neat::PreprocOptions::num_buffers)
       .def_rw("num_buffers_model", &simaai::neat::PreprocOptions::num_buffers_model)
-      .def_rw("num_buffers_locked", &simaai::neat::PreprocOptions::num_buffers_locked);
+      .def_rw("num_buffers_locked", &simaai::neat::PreprocOptions::num_buffers_locked)
+      .def_rw("model_managed_contract", &simaai::neat::PreprocOptions::model_managed_contract);
 
   nb::class_<simaai::neat::QuantTessOptions>(m, "QuantTessOptions")
       .def(nb::init<>())

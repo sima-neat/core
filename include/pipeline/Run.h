@@ -23,6 +23,7 @@
 #pragma once
 
 #include "nodes/io/Input.h"
+#include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
 #include "pipeline/RuntimeMetrics.h"
 #include "pipeline/GraphOptions.h"
@@ -43,7 +44,6 @@ class Mat;
 namespace simaai::neat {
 
 class InputStream;
-class LatencyProfiler;
 class Run;
 struct InputStreamOptions;
 namespace pipeline_internal {
@@ -140,6 +140,9 @@ struct RunAutoExportOptions {
   std::string label; ///< Optional label; empty uses the exporter default.
   bool include_metrics = true;
   bool include_power = true;
+  bool include_node_metrics = true;       ///< Include node-level latency rows.
+  bool include_plugin_metrics = true;     ///< Include plugin/kernel latency rows when available.
+  bool include_empty_node_metrics = true; ///< Keep attributed node rows even before samples arrive.
   int indent = 2;
 };
 
@@ -373,10 +376,12 @@ struct RunElementFlowStats {
  * @ingroup diagnostics
  */
 struct RunElementPadTimingStats {
-  std::string element_name;  ///< Deterministic element name owning this pad.
-  std::string pad_name;      ///< Pad name within the element.
-  bool is_sink = false;      ///< True for input (sink) pads; false for output (src) pads.
-  std::uint64_t samples = 0; ///< Number of buffers seen on this pad.
+  std::string element_name; ///< Deterministic element name owning this pad.
+  std::string pad_name;     ///< Pad name within the element.
+  bool is_sink = false;     ///< True for input (sink) pads; false for output (src) pads.
+  std::string transport_from_element_name; ///< Upstream element that stamped src departure.
+  std::string transport_to_element_name;   ///< Sink element that observed transport arrival.
+  std::uint64_t samples = 0;               ///< Number of buffers seen on this pad.
   std::uint64_t inter_arrival_total_us =
       0;                                  ///< Cumulative time between consecutive buffer arrivals.
   std::uint64_t inter_arrival_max_us = 0; ///< Maximum observed inter-arrival gap, in microseconds.
@@ -410,18 +415,42 @@ struct RunDiagSnapshot {
 };
 
 /**
+ * @brief Metrics trace backend selection for framework-owned measurements.
+ *
+ * `Auto` prefers the low-overhead LTTng collector.  If LTTng is unavailable the report marks
+ * the requested metric class as unavailable; it does not silently fall back to the deprecated
+ * process-global profiler.
+ */
+enum class MetricsTraceSource {
+  Auto,
+  Off,
+  Lttng,
+};
+
+/**
  * @brief Options for framework-owned runtime measurement.
  *
  * The defaults collect the measurements most applications need without asking examples to
- * reimplement timers, percentile math, profiler aggregation, or terminal formatting.
+ * reimplement timers, percentile math, plugin/edge aggregation, or terminal formatting.
  */
 struct MeasureOptions {
   int duration_ms = 10000; ///< Timed measurement window.
-  int warmup_ms = 1000;    ///< Warmup window excluded from latency/profiler results.
+  int warmup_ms = 1000;    ///< Warmup window excluded from latency/metrics results.
   int timeout_ms = 5000;   ///< Per-output pull timeout.
-  /// Capture per-plugin/kernel latency through the NEAT profiler.  This is precise, but can
-  /// be disabled for absolute maximum throughput sweeps.
+  /// Capture per-plugin/kernel execution latency through the LTTng metrics collector.
   bool include_plugin_latency = true;
+  /// Backend used for plugin execution latency.
+  MetricsTraceSource plugin_latency_source = MetricsTraceSource::Auto;
+  /// Include low-overhead inter-plugin/edge/queue diagnostics in the report.
+  bool include_edge_latency = true;
+  /// Enable exact per-message LTTng edge tracing.  Higher volume; off by default.
+  bool include_message_latency = false;
+  /// Backend used for exact per-message edge tracing.
+  MetricsTraceSource message_latency_source = MetricsTraceSource::Auto;
+  /// Keep the private LTTng CTF trace directory after parsing for support/debug.
+  bool retain_metrics_trace = false;
+  /// Optional parent/output directory for retained or temporary metrics traces.
+  std::string metrics_trace_dir;
   bool include_power = true; ///< Include power telemetry when enabled on the Run.
 
   /// Optional report metadata.  Model-owned wrappers/examples can fill these in so the
@@ -451,10 +480,126 @@ struct MeasureLatencyStats {
  */
 struct MeasurePluginLatency {
   std::string name;
+  std::string backend;
+  std::string phase;
+  std::string kernel_name;
+  std::string stage_name;
+  std::int32_t physical_input_index = -1;
+  std::int32_t output_slot = -1;
+  std::uint64_t run_id_hash = 0;            ///< Stable run-id hash, 0 if trace payload omitted it.
+  std::int32_t pipeline_segment_id = -1;    ///< Graph pipeline segment, -1 if unavailable.
+  std::int32_t runtime_node_id = -1;        ///< Lowered runtime node id, -1 if unavailable.
+  std::int32_t public_node_id = -1;         ///< Optional public graph node id, -1 if unavailable.
+  std::vector<std::string> public_node_ids; ///< Public graph node ids, e.g. "p2".
+  std::string gst_element_name;             ///< Owning GStreamer element name, if available.
+  std::string stream_id;                    ///< Stream identity when provided by LTTng.
+  std::string plugin_instance_id;           ///< Stable plugin instance id when provided by LTTng.
+  std::string source;                       ///< lttng or diagnostics.
+  std::string attribution_source;           ///< lttng_v2_identity, lttng_element_name, etc.
+  std::string mapping_error;                ///< Non-empty when the row could not be attributed.
+  bool reliable = true;                     ///< False when trace loss/unmatched pairs affect row.
   std::uint64_t calls = 0;
+  double total_ms = 0.0;
   double avg_ms = 0.0;
   double min_ms = 0.0;
   double max_ms = 0.0;
+};
+
+/**
+ * @brief Aggregated handoff/queue/transport timing between plugins or runtime nodes.
+ *
+ * Edge/message latency is diagnostic and non-additive.  It must not be summed into plugin
+ * execution latency or graph throughput/power.
+ */
+struct MeasureEdgeLatency {
+  std::string edge_id;
+  std::string name;
+  std::string from_node_id;
+  std::string to_node_id;
+  std::int32_t from_runtime_node_id = -1;
+  std::int32_t to_runtime_node_id = -1;
+  std::string from_element_name;
+  std::string to_element_name;
+  std::string from_plugin_instance_id;
+  std::string to_plugin_instance_id;
+  std::string stream_id;
+
+  std::uint64_t samples = 0;
+  double total_ms = 0.0;
+  double avg_ms = 0.0;
+  double min_ms = 0.0;
+  double max_ms = 0.0;
+  double p50_ms = 0.0;
+  double p95_ms = 0.0;
+
+  std::string source;             ///< diagnostics or lttng.
+  std::string timing_semantics;   ///< queue_residence, edge_transport, pad_wait, etc.
+  std::string attribution_source; ///< graph_edge_identity, element_link, unattributed.
+  std::string mapping_error;
+  bool non_additive = true;
+  bool reliable = true;
+};
+
+struct MeasurePathStat {
+  std::uint64_t samples = 0;
+  double avg_ms = 0.0;
+  double p50_ms = 0.0;
+  double p95_ms = 0.0;
+  double max_ms = 0.0;
+  bool reliable = true;
+};
+
+struct MeasurePathIdentity {
+  std::string primary_key;
+  std::string fallback_key;
+  std::vector<std::string> used_public_fields;
+  std::string sample_identity_source;
+};
+
+struct MeasurePathNodeArrival {
+  std::string customer_node_id;
+  std::string lowered_node_id;
+  std::int32_t runtime_node_id = -1;
+  std::string plugin_instance_id;
+  std::string stream_id;
+  std::string semantics = "graph_entry_to_first_node_observation";
+  MeasurePathStat latency;
+};
+
+struct MeasurePathInterPluginGap {
+  std::string customer_edge_id;
+  std::string lowered_edge_id;
+  std::string from_customer_node_id;
+  std::string to_customer_node_id;
+  std::int32_t from_runtime_node_id = -1;
+  std::int32_t to_runtime_node_id = -1;
+  std::string from_plugin_instance_id;
+  std::string to_plugin_instance_id;
+  std::string stream_id;
+  std::string semantics = "upstream_plugin_end_to_downstream_plugin_start";
+  MeasurePathStat latency;
+};
+
+struct MeasurePathOutputTail {
+  std::string output_endpoint;
+  std::string customer_output_node_id;
+  std::string lowered_edge_id;
+  std::string stream_id;
+  std::string semantics = "last_observed_work_to_public_pull";
+  MeasurePathStat latency;
+};
+
+struct MeasurePathTiming {
+  bool available = false;
+  std::string status;
+  std::string source;
+  std::string reason;
+  std::string aggregation = "measured_window";
+  std::vector<std::string> warnings;
+  MeasurePathIdentity identity;
+  std::vector<MeasurePathNodeArrival> node_arrival;
+  std::vector<MeasurePathInterPluginGap> inter_plugin_gap;
+  std::vector<MeasurePathOutputTail> output_tail;
 };
 
 /**
@@ -472,11 +617,28 @@ struct MeasureReport {
   MeasureLatencyStats frame_gap;
   bool latency_samples_collected = false;
   std::vector<MeasurePluginLatency> plugin_latency;
+  std::vector<MeasurePluginLatency> plugin_latency_unattributed;
+  std::vector<MeasureEdgeLatency> edge_latency;
+  std::vector<MeasureEdgeLatency> edge_latency_unattributed;
+  std::vector<GraphNodeMetrics> node_metrics;
+  MeasurePathTiming path_timing;
 
+  std::string plugin_latency_status;  ///< off, collected, unavailable, or failed.
+  std::string plugin_latency_source;  ///< lttng or none.
+  std::string message_latency_status; ///< off, collected, unavailable, or failed.
+  std::string message_latency_source; ///< diagnostics, lttng, or none.
+  std::string metrics_trace_dir;      ///< Retained CTF trace dir, otherwise empty.
+  std::vector<std::string> warnings;
+  bool trace_loss_detected = false;
+
+  std::uint64_t inputs_enqueued = 0;
   std::uint64_t inputs_pushed = 0;
+  std::uint64_t outputs_ready = 0;
   std::uint64_t outputs_pulled = 0;
   std::uint64_t inputs_dropped = 0;
   std::uint64_t outputs_dropped = 0;
+  std::uint64_t graph_sample_timing_unkeyed = 0;
+  std::uint64_t graph_sample_timing_misses = 0;
   RunStats final_run_stats{};
   PowerSummary power{};
 
@@ -489,7 +651,7 @@ struct MeasureReport {
  *
  * This does not own the inference loop and does not consume outputs. Start it before
  * normal application push/pull code, then call `stop()` to get throughput, app-visible
- * latency samples, counter deltas, profiler aggregation, and optional power telemetry.
+ * latency samples, counter deltas, plugin/edge aggregation, and optional power telemetry.
  */
 class MeasureScope {
 public:
@@ -507,6 +669,7 @@ private:
   friend class Run;
   struct Impl;
   explicit MeasureScope(std::unique_ptr<Impl> impl);
+  static void disable_lttng_trace_identity_noexcept(Impl* impl);
   std::unique_ptr<Impl> impl_;
 };
 

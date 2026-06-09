@@ -33,6 +33,16 @@
 
 namespace simaai::neat::pipeline_internal::sima {
 
+/// Physical storage layout the BoxDecode kernel must use to read one source tensor.
+///
+/// This is deliberately separate from slice/detess/cast/dequant operations.  Slice geometry
+/// describes the logical view to decode; this value describes how the source bytes are laid out.
+enum class BoxDecodeSourceStorageKind : int {
+  Unknown = -1,
+  PackedCBlock = 0,
+  DenseHwcPhysical = 1,
+};
+
 /**
  * @brief One input tensor seen by the box-decode stage.
  *
@@ -52,6 +62,8 @@ struct BoxDecodeTensorStaticContract {
   int source_physical_index = -1;       ///< Source plugin's physical-output index.
   std::int64_t source_byte_offset = 0;  ///< Byte offset within the source physical buffer.
   std::uint64_t source_size_bytes = 0;  ///< Size in bytes within the source physical buffer.
+  BoxDecodeSourceStorageKind source_storage_kind =
+      BoxDecodeSourceStorageKind::Unknown; ///< Source byte layout for kernel access.
 };
 
 /// Description of one physical input buffer feeding the box-decode stage.
@@ -161,16 +173,32 @@ std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_outp
     const OutputSpec& spec, BoxDecodeType decode_type,
     const std::optional<InputContract>& input_contract = {}, std::string* error_message = nullptr);
 
+/**
+ * @brief Caller-supplied overrides for the standalone (no-model-pack) box-decode builders.
+ *
+ * In a hand-built graph the upstream compiled contract does not carry the model-pack packing
+ * facts, so these values cannot be inferred. When set they are authoritative; when left empty the
+ * builder keeps its standalone default (and, for `source_storage_kind`, an unset value fails fast
+ * downstream because a kernel access layout cannot be assumed).
+ */
+struct BoxDecodeStandaloneContractOverrides {
+  std::optional<BoxDecodeSourceStorageKind>
+      source_storage_kind;          ///< Source byte layout (no default).
+  std::optional<bool> tess_needed;  ///< Force detessellation on/off (else standalone default).
+  std::optional<bool> quant_needed; ///< Force dequantization on/off (else dtype-derived default).
+};
+
 /// Build a box-decode static contract from a `Sample` (e.g., dry-run output).
-std::optional<BoxDecodeStaticContract>
-build_boxdecode_static_contract_from_sample(const Sample& sample, BoxDecodeType decode_type,
-                                            const std::optional<InputContract>& input_contract,
-                                            std::string* error_message = nullptr);
+std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_sample(
+    const Sample& sample, BoxDecodeType decode_type,
+    const std::optional<InputContract>& input_contract,
+    const BoxDecodeStandaloneContractOverrides& overrides = {},
+    std::string* error_message = nullptr);
 
 /// Build a box-decode static contract from a compiled upstream node contract.
-std::optional<BoxDecodeStaticContract>
-build_boxdecode_static_contract_from_compiled_upstream(const CompiledNodeContract& upstream_stage,
-                                                       BoxDecodeType decode_type,
-                                                       std::string* error_message = nullptr);
+std::optional<BoxDecodeStaticContract> build_boxdecode_static_contract_from_compiled_upstream(
+    const CompiledNodeContract& upstream_stage, BoxDecodeType decode_type,
+    const BoxDecodeStandaloneContractOverrides& overrides = {},
+    std::string* error_message = nullptr);
 
 } // namespace simaai::neat::pipeline_internal::sima

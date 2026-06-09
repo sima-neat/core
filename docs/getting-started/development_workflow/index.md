@@ -54,9 +54,9 @@ Neat owns the runtime: model loading, validation, pipeline construction, schedul
 If you only remember three lines of code from Neat, remember these:
 
 ```cpp
-simaai::neat::Model   model(mpk_path);
-simaai::neat::Sample  out  = model.run(input, /*timeout_ms=*/2000);
-simaai::neat::Mapping view = out.tensor->map_read();  // inspect the output bytes
+simaai::neat::Model      model(mpk_path);
+simaai::neat::TensorList outputs = model.run(input_tensors, /*timeout_ms=*/2000);
+simaai::neat::Mapping    view = outputs[0].map_read();  // inspect the output bytes
 ```
 
 Everything else in this documentation — pipelines, graphs, async queues, multi-stream — is a controlled expansion of that core three-line story.
