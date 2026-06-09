@@ -1,0 +1,272 @@
+---
+title: Graph
+description: Build a runnable application from Nodes, Models, and reusable Graph fragments
+sidebar_position: 5
+---
+
+# Graph
+
+`Graph` is the main application assembly API in SiMa Neat.
+
+If you come from ML, think of a `Graph` like a small model graph or a function:
+
+- it has **inputs**;
+- it has **outputs**;
+- it contains work in the middle, such as decode, resize, preprocess, inference, postprocess, and custom logic;
+- it can be reused inside a larger graph.
+
+If you come from embedded, think of a `Graph` like a named data-flow wiring diagram:
+
+- frames or tensors enter through named doors;
+- each processing step runs in order or through explicit branches;
+- outputs leave through named doors;
+- Neat decides the efficient runtime wiring underneath.
+
+Most users should not need to know about GStreamer, `appsrc`, `appsink`, queues, or internal runtime ports. Those are implementation details. The public API is:
+
+```cpp
+simaai::neat::Graph g;
+g.add(...);      // continue the same linear chain
+g.connect(...);  // add explicit graph topology
+
+auto run = g.build();
+```
+
+## The shortest mental model
+
+Use `add()` for the common single-path case:
+
+```cpp
+simaai::neat::Model model("resnet50.tar.gz");
+
+simaai::neat::Graph g("classifier");
+g.add(simaai::neat::nodes::Input("image"));
+g.add(model);
+g.add(simaai::neat::nodes::Output("classes"));
+
+auto run = g.build();
+run.push("image", simaai::neat::TensorList{image_tensor});
+auto classes = run.pull("classes");
+```
+
+For a graph with exactly one public input and one public output, the names are optional at runtime:
+
+```cpp
+run.push(simaai::neat::TensorList{image_tensor});
+auto classes = run.pull();
+```
+
+Use `connect()` when the graph is not just one chain:
+
+```cpp
+simaai::neat::Graph camera("camera");
+camera.add(simaai::neat::nodes::Input("image"));
+
+simaai::neat::Graph route("model_route");
+route.add(simaai::neat::nodes::Input("image"));
+route.add(model);
+route.add(simaai::neat::nodes::Output("classes"));
+
+simaai::neat::Graph app("app");
+app.connect(camera, route);
+
+auto run = app.build();
+run.push("image", simaai::neat::TensorList{image_tensor});
+auto classes = run.pull("classes");
+```
+
+## Nodes, groups, and boundaries
+
+A `Graph` is the assembly boundary; [`Node`](/develop-apps/development-workflow/node) is the building block.
+
+That includes:
+
+- atomic nodes such as decode, preprocess, postprocess, source, and sink stages;
+- pre-built node groups, which are reusable bundles of nodes;
+- boundary nodes such as `Input("image")` and `Output("classes")`.
+
+For the detailed rules around pre-built groups and boundary nodes, see [Node → Pre-built node groups](/develop-apps/development-workflow/node#pre-built-node-groups) and [Node → Boundary nodes](/develop-apps/development-workflow/node#boundary-nodes).
+
+When you call `Graph::build()`, Neat lowers the public graph into one executable runtime graph, preserving the customer-facing names for diagnostics and named `Run` APIs.
+
+## `add()` vs `connect()`
+
+Use `add()` when the next thing is simply after the previous thing:
+
+```cpp
+g.add(nodes::Input("image"));
+g.add(nodes::VideoConvert());
+g.add(model);
+g.add(nodes::Output("classes"));
+```
+
+This means:
+
+```text
+image -> VideoConvert -> model -> classes
+```
+
+Use `connect()` when you are wiring fragments explicitly:
+
+```cpp
+app.connect(camera, route);
+app.connect(route, display);
+```
+
+This means:
+
+```text
+camera -> route -> display
+```
+
+When a graph has branched and there is no longer one obvious "last node", `add()` fails with a diagnostic and asks you to use `connect()` instead. This is deliberate. It prevents Neat from guessing wrong.
+
+## Multiple inputs and multiple outputs
+
+For multi-input or multi-output graphs, use names.
+
+```cpp
+run.push("image", simaai::neat::TensorList{image_tensor});
+run.push("metadata", simaai::neat::TensorList{metadata_tensor});
+
+auto classes = run.pull("classes");
+auto preview = run.pull("preview");
+```
+
+Plain `push(...)` and `pull()` are still available when there is exactly one public input or output. If there is more than one, Neat fails closed and lists the available names.
+
+### Branch: one input, multiple outputs
+
+A branch means one stream is intentionally split into named outputs, for example one copy to preview and one copy to a model route.
+
+```cpp
+auto branch = simaai::neat::graphs::Branch("image", {"preview", "model"});
+```
+
+Conceptually:
+
+```text
+image -> preview
+      -> model
+```
+
+Branching can introduce backpressure: if one branch stops consuming data, it can slow or block the producer depending on the selected runtime policy. Neat's branch helper makes that behavior explicit instead of hiding it behind accidental duplicate outputs.
+
+### Combine: multiple inputs, one output
+
+A combine means several named inputs must be packaged into one named output.
+
+```cpp
+auto combine = simaai::neat::graphs::Combine(
+    {"left", "right"},
+    "pair",
+    simaai::neat::graphs::CombinePolicy::ByFrame);
+```
+
+Conceptually:
+
+```text
+left  ----\
+          -> pair
+right ----/
+```
+
+`CombinePolicy` tells Neat how to match items:
+
+- `ByFrame`: combine samples that have the same `frame_id`.
+- `ByPts`: combine samples that have the same presentation timestamp (`pts_ns`).
+- `None`: do not synchronize; only use when order alone is correct for your application.
+
+There is no hidden fallback. If you select `ByFrame`, missing frame IDs are an error. If you select `ByPts`, missing timestamps are an error. This makes bugs visible early instead of silently mixing the wrong frames.
+
+## What to name endpoints
+
+Use names that describe application meaning, not implementation details:
+
+Good:
+
+```cpp
+nodes::Input("image")
+nodes::Input("left_camera")
+nodes::Output("classes")
+nodes::Output("detections")
+nodes::Output("preview")
+```
+
+Avoid:
+
+```cpp
+nodes::Input("appsrc0")
+nodes::Output("sink1")
+nodes::Output("out")  // okay for tiny tests, not great in apps
+```
+
+If a fragment contains several unnamed outputs, Neat gives them deterministic suffixes such as `classes_0`, `classes_1`, and `classes_2`. Prefer explicit names in production code.
+
+## Practical examples
+
+### Reusable model route
+
+```cpp
+simaai::neat::Graph make_classifier(simaai::neat::Model& model) {
+  simaai::neat::Graph route("classifier");
+  route.add(simaai::neat::nodes::Input("image"));
+  route.add(model);
+  route.add(simaai::neat::nodes::Output("classes"));
+  return route;
+}
+```
+
+Use by itself:
+
+```cpp
+auto route = make_classifier(model);
+auto run = route.build();
+run.push("image", simaai::neat::TensorList{image});
+auto classes = run.pull("classes");
+```
+
+Use inside a larger app:
+
+```cpp
+simaai::neat::Graph app("app");
+app.connect(camera, route);
+app.connect(route, telemetry);
+```
+
+In the larger app, the route's boundary nodes are internal declarations. They do not become extra public push/pull endpoints unless they are still on the outside of the final graph.
+
+### Pass-through adapter
+
+Sometimes a fragment only renames a boundary:
+
+```cpp
+simaai::neat::Graph adapter("adapter");
+adapter.add(simaai::neat::nodes::Input("raw"));
+adapter.add(simaai::neat::nodes::Output("image"));
+adapter.connect("raw", "image");
+```
+
+When used inside another graph, this can compile down to a direct wire. Neat keeps the names for readability and diagnostics, but it does not create useless runtime work.
+
+## Rules of thumb
+
+- Use `Graph` for applications and reusable fragments.
+- Use `Model` directly in `Graph::add(model)` when you want the model's normal route.
+- Use named `Input` and `Output` nodes to declare the public contract of a fragment.
+- Use `add()` for a straight chain.
+- Use `connect()` for topology.
+- Use named `run.push("name", ...)` and `run.pull("name")` for multi-input or multi-output apps.
+- Let Neat own the low-level runtime details.
+
+## See also
+
+- [Node](/develop-apps/development-workflow/node)
+- [Model](/develop-apps/development-workflow/model)
+- [Public Graph and graph helpers](/develop-apps/advanced-concepts/graphs)
+
+## Tutorials
+
+- [Build a Custom Data Graph](/tutorials/012-build-a-custom-data-graph)
+- [Embed a Model Inside a Graph](/tutorials/013-embed-model-inside-graph)
+- [Run Multiple Streams in One Graph](/tutorials/014-run-multiple-streams)

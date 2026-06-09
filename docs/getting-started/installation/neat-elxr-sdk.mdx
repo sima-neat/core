@@ -1,25 +1,25 @@
 ---
-title: Neat SDK
-description: Set up the Neat SDK for fast, agent-ready Neat apps development
+title: Palette SDK
+description: Set up Palette SDK for fast, agent-ready Neat Framework app development
 sidebar_position: 2
 ---
 
-Use the Neat SDK if you want a fast, agent-ready environment for building Neat applications.
+Use Palette SDK if you want a fast, agent-ready environment for building Neat Framework applications.
 
-The Neat SDK is built on top of the [open source SiMa.ai eLxr SDK](https://github.com/SiMa-ai/swsoc-simaai-elxr-doc), with workflow-focused additions:
+Palette SDK is built on top of the [open source SiMa.ai eLxr SDK](https://github.com/SiMa-ai/swsoc-simaai-elxr-doc), with workflow-focused additions:
 
 - Supports both x86 and arm64 container images, including native use on Mac without Rosetta overhead.
-- Supports the DevKit Sync feature so humans and coding agents can cross-compile and run DevKit binaries from the SDK shell without switching context.
+- Supports the DevKit Sync feature so humans and coding agents can cross-compile and run DevKit binaries from the Palette SDK shell without switching context.
 - Integrates Insight, a Web based tool helping developers to setup video streams, view video metadata overlay, inspect workspace files and profile the Neat applications.
 - Ships with preinstalled Codex and Claude skills and preinstalled latest `main` branch source references for `core` and `apps`.
 
 This setup makes it possible to run end-to-end agentic workflows from a single prompt, including build-and-run loops against a paired DevKit.
 
-The Neat SDK source code is available on GitHub at [sima-neat/sdk](https://github.com/sima-neat/sdk).
+The Palette SDK source code is available on GitHub at [sima-neat/sdk](https://github.com/sima-neat/sdk).
 
 ## Supported platforms
 
-| Platform | Arch | Neat SDK | Model SDK Extension |
+| Platform | Arch | Palette SDK | ModelSDK extension |
 | --- | --- | --- | --- |
 | Ubuntu 22.04 and 24.04 (through Docker Engine) | x86_64 | ✅ | ✅ |
 | Windows 11 (through [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and Docker Engine) | x86_64 | ✅ | ✅ |
@@ -39,19 +39,19 @@ For DevKit Sync, you also need:
 - Your host machine and DevKit on the same network with NFS traffic allowed.
 - Your DevKit IP address.
 
-## Install the Neat SDK
+## Install Palette SDK
 
 ```bash
 sima-cli install ghcr:sima-neat/sdk
 ```
 
-## Set Up the SDK
+## Set Up Palette SDK
 
 After installation, run one of the setup flows below.
 
 ### Pair with a DevKit
 
-Use this flow when the DevKit is reachable from the SDK host over the same network:
+Use this flow when the DevKit is reachable from the Palette SDK host over the same network:
 
 ```bash
 sima-cli sdk setup --devkit {devkit-ip}
@@ -85,17 +85,17 @@ __SIMA_DEVKIT_BOOTSTRAP_STATUS=sourced_no_dk
 
 ### Set up without DevKit pairing
 
-Use this flow when the DevKit is not on the same network as the SDK host:
+Use this flow when the DevKit is not on the same network as the Palette SDK host:
 
 ```bash
 sima-cli sdk setup
 ```
 
-You can still build binaries in the SDK container, but you must manually transfer binaries to the DevKit for testing. You are also responsible for ensuring the DevKit runs the same version of the Neat core library as the SDK.
+You can still build binaries in the Palette SDK container, but you must manually transfer binaries to the DevKit for testing. You are also responsible for ensuring the DevKit runs the same version of the Neat Framework library as Palette SDK.
 
-### SDK CLI
+### Palette SDK CLI
 
-To access the SDK CLI:
+To access the Palette SDK CLI:
 
 ```bash
 sima-cli sdk neat
@@ -105,12 +105,12 @@ sima-cli sdk neat
 
 Neat Insight is a web app for setting up and inspecting vision ML application tests. It provides a workspace viewer, media library, RTSP source control, a low-latency WebRTC video viewer with metadata overlays, and system/runtime stats for debugging stream and application behavior.
 
-In the Neat SDK, Insight is served over HTTPS on port `9900`. Open one of the following URLs:
+In Palette SDK, Insight is served over HTTPS on port `9900`. Open one of the following URLs:
 
-- `https://localhost:9900` when browsing from the same machine where the SDK is running.
+- `https://localhost:9900` when browsing from the same machine where Palette SDK is running.
 - `https://<host-ip>:9900` when browsing from another machine on the network.
 
-The `neat` command also reports the actual Insight Web UI URL when the SDK exposes host-port mappings:
+The `neat` command also reports the actual Insight Web UI URL when Palette SDK exposes host-port mappings:
 
 ```bash
 neat
@@ -118,11 +118,11 @@ neat
 
 For more detail on the status output and JSON format, see [Neat CLI](/getting-started/installation/neat-framework/#neat-cli).
 
-## Model SDK Extension
+## ModelSDK Extension
 
-On x86_64 platforms, including Ubuntu and Windows through WSL, Neat SDK installation prompts you to optionally install the Model SDK Extension.
+On x86_64 platforms, including Ubuntu and Windows through WSL, Palette SDK installation prompts you to optionally install the ModelSDK extension.
 
-The Model SDK Extension adds tools for quantizing and compiling ONNX models so they can run on SiMa.ai's MLA (Machine Learning Accelerator). To install it, opt in when prompted during Neat SDK installation.
+The ModelSDK extension adds tools for quantizing and compiling ONNX models so they can run on SiMa.ai's MLA (Machine Learning Accelerator). To install it, opt in when prompted during Palette SDK installation.
 
 Example installation prompt:
 
@@ -130,10 +130,10 @@ Example installation prompt:
 Setting up build environment for modalix...
 Aliases loaded in this session.
 ✅ sima-cli installed for user 'sima' in 'ghcr.io-sima-neat-elxr-latest'.
-╭───────────────────────────────────────────────── Model SDK Extension ─────────────────────────────────────────────────╮
-│ This SDK supports the installable Model SDK Extension.                                                                │
+╭───────────────────────────────────────────────── ModelSDK Extension ─────────────────────────────────────────────────╮
+│ This SDK supports the installable ModelSDK Extension.                                                                │
 │                                                                                                                       │
-│ The Model SDK Extension lets you quantize and compile models so they can run on SiMa.ai hardware accelerated.            │
+│ The ModelSDK Extension lets you quantize and compile models so they can run on SiMa.ai hardware accelerated.            │
 │ It will be installed on your host under $HOME/sima-sdk-extensions and mounted into this container at /sdk-extensions. │
 │ Depending on network conditions, installation may take up to 15 minutes.                                              │
 │                                                                                                                       │
@@ -141,46 +141,46 @@ Aliases loaded in this session.
 │ If you decide to install it later, run this from within the SDK container shell:                                      │
 │ sima-cli install sdk-extensions/model                                                                                 │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
-Install the Model SDK Extension now? (Y/n): y
-ℹ️  Logging in to sima-cli before installing the Model SDK Extension...
+Install the ModelSDK Extension now? (Y/n): y
+ℹ️  Logging in to sima-cli before installing the ModelSDK Extension...
 ```
 
-After the extension is installed, activate it from inside the Neat SDK shell:
+After the ModelSDK extension is installed, activate the ModelSDK environment from inside the Palette SDK shell:
 
 ```bash
 activate-model-sdk
 ```
 
-To return to the default Neat SDK environment, run:
+To return to the default Palette SDK environment, run:
 
 ```bash
 deactivate-model-sdk
 ```
 
-The Model SDK Extension is available on x86_64 platforms for now. Arm64 support, including macOS, will be added later.
+The ModelSDK extension is available on x86_64 platforms for now. Arm64 support, including macOS, will be added later.
 
 ## File Sharing with DevKit Sync
 
 The DevKit Sync setup connects three environments:
 
 1. Host
-2. SDK Container
+2. Palette SDK container
 3. DevKit
 
 `sima-cli sdk setup --devkit {devkit-ip}` configures NFS so your host workspace is shared across all three:
 
 - Host local workspace folder is exported through host NFS.
-- That folder is mounted into the SDK container as `/workspace`.
+- That folder is mounted into the Palette SDK container as `/workspace`.
 - The same shared content appears on DevKit as `/workspace` through NFS.
-- The mounted folder name defaults to `/workspace` and can be changed during SDK setup.
+- The mounted folder name defaults to `/workspace` and can be changed during Palette SDK setup.
 
 ![Host-Container-DevKit workspace mapping](../../images/elxr-sdk-workspaces.svg)
 
-The diagram above shows how the same workspace is exposed across the host, SDK container, and DevKit through NFS-backed volume mapping.
+The diagram above shows how the same workspace is exposed across the host, Palette SDK container, and DevKit through NFS-backed volume mapping.
 
 This setup provides a seamless workflow for build artifacts:
 
-- artifacts produced in the SDK are immediately visible on the DevKit without an explicit deploy step
+- artifacts produced in Palette SDK are immediately visible on the DevKit without an explicit deploy step
 - agents can access interim files (logs, outputs, traces) generated while the app runs on DevKit
 - humans and agents can inspect the same files from one workspace context
 
@@ -188,9 +188,9 @@ With Insight, users can view the workspace from a web browser. Some SiMa.ai-spec
 
 ## Run on the DevKit with `dk`
 
-The SDK includes the `dk` helper (also known as `devkit-run`) to run ARM64 executables on the DevKit from within the SDK shell.
+Palette SDK includes the `dk` helper (also known as `devkit-run`) to run ARM64 executables on the DevKit from within the Palette SDK shell.
 
-When you invoke `dk`, the SDK offloads execution to the paired DevKit and handles path translation and normalization so file and path arguments passed from the SDK side resolve correctly on the DevKit side.
+When you invoke `dk`, Palette SDK offloads execution to the paired DevKit and handles path translation and normalization so file and path arguments passed from the Palette SDK side resolve correctly on the DevKit side.
 
 `dk` usage pattern:
 
@@ -201,23 +201,23 @@ dk <file> [args...]
 Examples:
 
 ```bash
-# Run an ARM64 executable built in the SDK workspace
+# Run an ARM64 executable built in the Palette SDK workspace
 dk build/sima_neat_hello
 
 # Run a Python entry point on the paired DevKit
 dk hello_neat.py
 ```
 
-For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKit PyNeat runtime environment. The SDK container remains useful as a unified workspace/orchestration environment, but Python-only workflows do not require the C++ cross-compilation toolchain.
+For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKit PyNeat runtime environment. The Palette SDK container remains useful as a unified workspace/orchestration environment, but Python-only workflows do not require the C++ cross-compilation toolchain.
 
 :::note Where `dk` Comes From
-`dk` (alias for `devkit-run`) is a shell function defined in `~/devkit-sync.rc` inside the SDK container. The SDK shell loads this through `~/.bashrc`, so it is available in interactive SDK sessions.
+`dk` (alias for `devkit-run`) is a shell function defined in `~/devkit-sync.rc` inside the Palette SDK container. The Palette SDK shell loads this through `~/.bashrc`, so it is available in interactive sessions.
 :::
 
 ## VS Code Workflow
 
 1. Connect VS Code to `ghcr.io-sima-neat-elxr-latest` with [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers). Install Dev Containers extension if needed.
-2. In the container terminal, run the following command once so the SDK can retrieve assets such as prebuilt models:
+2. In the container terminal, run the following command once so Palette SDK can retrieve assets such as prebuilt models:
 
 ```bash
 sima-cli login
@@ -229,29 +229,29 @@ sima-cli login
 You can then use a prompt such as:
 
 ```text
-Build a C++ app doing image classification with RESNET50 using SiMa.ai Neat Framework, run it on the devkit until you get the result.
+Build a C++ app doing image classification with RESNET50 using the SiMa.ai Neat Framework, run it on the DevKit until you get the result.
 ```
 
-## SDK upgrade
+## Palette SDK upgrade
 
-To upgrade Neat SDK to the latest version, rerun the following command from the host:
+To upgrade Palette SDK to the latest version, rerun the following command from the host:
 
 ```bash
 sima-cli install ghcr:sima-neat/sdk
 ```
 
-For a temporary or quicker framework/runtime update inside an existing SDK container, you can run the Neat CLI from the SDK shell:
+For a temporary or quicker framework/runtime update inside an existing Palette SDK container, you can run the Neat CLI from the Palette SDK shell:
 
 ```bash
 neat update
 ```
 
-This updates the installed Neat framework components in the current SDK environment, but it does not replace a full SDK image upgrade from the host when you need SDK-level changes.
+This updates the installed Neat Framework components in the current Palette SDK environment, but it does not replace a full Palette SDK image upgrade from the host when you need SDK-level changes.
 
-If you delete or recreate the SDK container later, run `neat update` again inside the new container. The SDK image may not include the latest Neat framework or `neat-insight` artifacts at the time you recreate it.
+If you delete or recreate the Palette SDK container later, run `neat update` again inside the new container. The Palette SDK image may not include the latest Neat Framework or `neat-insight` artifacts at the time you recreate it.
 
 For more detail on status checks, JSON output, and component updates, see [Neat CLI](/getting-started/installation/neat-framework/#neat-cli).
 
 ## Next step
 
-To install or update the framework/runtime itself (the same flow for DevKit and SDK), continue to [Neat Framework](/getting-started/installation/neat-framework/).
+To install or update the framework/runtime itself (the same flow for DevKit and Palette SDK), continue to [Neat Framework](/getting-started/installation/neat-framework/).

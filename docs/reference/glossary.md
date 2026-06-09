@@ -1,7 +1,7 @@
 ---
 title: Glossary
 description: Acronyms and terms used in the Neat framework documentation.
-sidebar_position: 10
+sidebar_position: 9
 ---
 
 # Glossary
@@ -67,6 +67,6 @@ Terms and acronyms that appear across the framework's docs and code.
 ## See also
 
 - [`Graph::describe()`](/reference/cppapi/classes/simaai-neat-graph) — emits the repro launch string.
-- [The dtype contract](/concepts/dtype_contract).
-- [Memory model](/concepts/memory_model).
-- [Processor backends](/concepts/processor_backends).
+- [The dtype contract](/develop-apps/advanced-concepts/dtype_contract).
+- [Memory model](/develop-apps/advanced-concepts/memory_model).
+- [Processor backends](/develop-apps/advanced-concepts/processor_backends).

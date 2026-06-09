@@ -7,8 +7,8 @@ Source of truth:
 - tutorials/00x_*/*.py
 
 Outputs:
-- docs/tutorials/tutorial_<folder>.mdx
-- docs/tutorials/index.md
+- docs/develop-apps/tutorials/<difficulty>/tutorial_<folder>.mdx
+- docs/develop-apps/tutorials/index.md
 """
 
 from __future__ import annotations
@@ -1127,7 +1127,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     return "\n".join(lines)
 
 
-def render_index(modules: List[TutorialModule], heading_body: str) -> str:
+def _group_tutorials(modules: List[TutorialModule]) -> Dict[str, List[TutorialModule]]:
     groups: Dict[str, List[TutorialModule]] = {
         "Beginner": [],
         "Intermediate": [],
@@ -1138,7 +1138,70 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         groups[key].append(module)
     for key in groups:
         groups[key] = sorted(groups[key], key=lambda m: _flow_key(m.number))
+    return groups
 
+
+def _render_tutorial_card_grid(modules: List[TutorialModule]) -> List[str]:
+    lines: List[str] = ['<div class="tutorial-grid">']
+    for module in modules:
+        title = html.escape(module.display_title)
+        summary = html.escape(_summary_text(module))
+        diff_class = module.difficulty.strip().lower()
+        duration = html.escape(module.estimated_read_time)
+        label_tags = "".join(
+            f'<span class="tutorial-card-tag">{html.escape(label)}</span>'
+            for label in module.labels
+        )
+        lines.extend(
+            [
+                f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
+                '    <div class="tutorial-card-image-wrap">',
+                f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
+                f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
+                f'      <span class="tutorial-card-duration">{duration}</span>',
+                "    </div>",
+                '    <div class="tutorial-card-body">',
+                f'      <p class="tutorial-card-summary">{summary}</p>',
+                f'      <div class="tutorial-card-tags">{label_tags}</div>',
+                "    </div>",
+                "  </div>",
+            ]
+        )
+    lines.extend(["</div>", ""])
+    return lines
+
+
+def _clean_heading_body(heading_body: str) -> str:
+    return heading_body.replace(
+        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
+        "",
+    ).strip()
+
+
+def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List[str]:
+    lines: List[str] = [
+        '<div class="overview-link-columns">',
+        '  <section class="overview-link-panel overview-link-panel-start">',
+        "    <h2>Choose a Tutorial Path</h2>",
+        "    <p>Use the cards in each section in order. Each tutorial includes concept-first guidance with matching C++ and Python implementation.</p>",
+        '    <ul class="overview-link-list">',
+    ]
+    difficulty_copy = {
+        "Beginner": "First model run, async inference, basic graphs, and model options.",
+        "Intermediate": "Data exchange, preprocessing, outputs, streaming, diagnostics, and graph composition.",
+        "Advanced": "Multi-stream graphs, throughput tuning, and production-style pipeline structure.",
+    }
+    for difficulty, slug, _ in DIFFICULTY_SUBDIRS:
+        count = len(groups[difficulty])
+        lines.append(
+            f'      <li><a class="overview-link-card" href="/tutorials/{slug}/"><strong>{difficulty}</strong><span>{difficulty_copy[difficulty]} {count} guided chapters.</span></a></li>'
+        )
+    lines.extend(["    </ul>", "  </section>", "</div>", ""])
+    return lines
+
+
+def render_index(modules: List[TutorialModule], heading_body: str) -> str:
+    groups = _group_tutorials(modules)
     lines: List[str] = [
         "---",
         "title: Tutorials",
@@ -1153,50 +1216,31 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         "",
         f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
     ]
-    if heading_body:
-        lines.extend(["", heading_body.strip(), ""])
-    else:
-        lines.extend(
-            [
-                "",
-                '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
-                "",
-            ]
-        )
 
-    for difficulty in ("Beginner", "Intermediate", "Advanced"):
-        section = groups[difficulty]
-        if not section:
-            continue
+    cleaned_heading_body = _clean_heading_body(heading_body)
+    if cleaned_heading_body:
+        lines.extend(["", cleaned_heading_body, ""])
+    lines.extend(_render_tutorial_path_block(groups))
+    return "\n".join(lines)
 
-        lines.extend([f"## {difficulty}", "", '<div class="tutorial-grid">'])
 
-        for module in section:
-            title = html.escape(module.display_title)
-            summary = html.escape(_summary_text(module))
-            diff_class = module.difficulty.strip().lower()
-            duration = html.escape(module.estimated_read_time)
-            label_tags = "".join(
-                f'<span class="tutorial-card-tag">{html.escape(label)}</span>'
-                for label in module.labels
-            )
-            lines.extend(
-                [
-                    f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
-                    '    <div class="tutorial-card-image-wrap">',
-                    f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
-                    f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
-                    f'      <span class="tutorial-card-duration">{duration}</span>',
-                    "    </div>",
-                    '    <div class="tutorial-card-body">',
-                    f'      <p class="tutorial-card-summary">{summary}</p>',
-                    f'      <div class="tutorial-card-tags">{label_tags}</div>',
-                    "    </div>",
-                    "  </div>",
-                ]
-            )
-
-        lines.extend(["</div>", ""])
+def render_difficulty_index(difficulty: str, slug: str, modules: List[TutorialModule]) -> str:
+    lines: List[str] = [
+        "---",
+        f"title: {difficulty}",
+        f"description: {difficulty} Neat tutorials",
+        "sidebar_position: 1",
+        f"slug: /tutorials/{slug}",
+        "---",
+        "",
+        "<!-- AUTO-GENERATED by tools/generate_tutorial_docs.py. -->",
+        "",
+        f"# {difficulty} Tutorials",
+        "",
+        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
+        "",
+    ]
+    lines.extend(_render_tutorial_card_grid(modules))
     return "\n".join(lines)
 
 
@@ -1239,7 +1283,7 @@ def main() -> int:
 
     root = pathlib.Path(args.repo_root).resolve()
     tutorials_dir = root / "tutorials"
-    docs_tutorials_dir = root / "docs" / "tutorials"
+    docs_tutorials_dir = root / "docs" / "develop-apps" / "tutorials"
 
     module_dirs = discover_modules(tutorials_dir)
     modules = [parse_module(d, root) for d in module_dirs]
@@ -1276,6 +1320,8 @@ def main() -> int:
             if stale not in expected_paths:
                 stale.unlink()
 
+    grouped_modules = _group_tutorials(modules)
+
     # Re-number sidebar_position per difficulty group so each subsection starts at 1.
     per_group_idx: Dict[str, int] = {slug: 0 for _, slug, _ in DIFFICULTY_SUBDIRS}
     for module in modules:
@@ -1284,6 +1330,13 @@ def main() -> int:
         out_path = docs_tutorials_dir / sub_slug / f"{module.doc_id}.mdx"
         out_path.write_text(
             render_tutorial_doc(module, sidebar_position=per_group_idx[sub_slug], repo_ref=repo_ref),
+            encoding="utf-8",
+        )
+
+    for label, slug, _ in DIFFICULTY_SUBDIRS:
+        out_path = docs_tutorials_dir / slug / "index.md"
+        out_path.write_text(
+            render_difficulty_index(label, slug, grouped_modules[label]),
             encoding="utf-8",
         )
 

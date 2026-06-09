@@ -1,12 +1,12 @@
 ---
 title: Neat Framework
-description: Install or update the SiMa.ai Neat Framework on DevKit or inside the Neat SDK
+description: Install or update the SiMa.ai Neat Framework on DevKit or inside Palette SDK
 sidebar_position: 3
 ---
 
-Use this page to install or update the SiMa.ai Neat Framework/runtime in either the Neat SDK or directly on a DevKit.
+Use this page to install or update the SiMa.ai Neat Framework/runtime in either Palette SDK or directly on a DevKit.
 
-The Neat Framework is installed independently from the Neat SDK. This lets you update the framework/runtime without updating the SDK container.
+The Neat Framework is installed independently from Palette SDK. This lets you update the framework/runtime without updating the Palette SDK container.
 
 ## Choose Where to Install
 
@@ -14,12 +14,12 @@ Install from the environment where you plan to build or run Neat applications:
 
 | Environment | Use this when |
 | --- | --- |
-| Neat SDK with DevKit Sync | You want the SDK build environment and paired DevKit runtime kept in sync automatically. |
-| Neat SDK without DevKit Sync | You only need to build in the SDK container and will transfer binaries to a DevKit manually. |
+| Palette SDK with DevKit Sync | You want the Palette SDK build environment and paired DevKit runtime kept in sync automatically. |
+| Palette SDK without DevKit Sync | You only need to build in the Palette SDK container and will transfer binaries to a DevKit manually. |
 | DevKit | You want to install or update the runtime directly on the device. |
 
 :::note DevKit Sync keeps the runtime aligned
-When you install from inside a Neat SDK container that has been paired with a DevKit through DevKit Sync, the installer also installs the Neat Framework on the paired DevKit. This keeps the SDK build environment and the DevKit runtime on the same Neat core library version.
+When you install from inside a Palette SDK container that has been paired with a DevKit through DevKit Sync, the installer also installs the Neat Framework on the paired DevKit. This keeps the Palette SDK build environment and the DevKit runtime on the same Neat Framework library version.
 :::
 
 ## Prerequisites
@@ -33,10 +33,10 @@ Before you begin:
 
 ## Prepare an Install Directory
 
-On the DevKit, install under `/media/nvme` to avoid filling the root file system. In the Neat SDK container, use a container-local path such as `$HOME/neat`.
+On the DevKit, install under `/media/nvme` to avoid filling the root file system. In the Palette SDK container, use a container-local path such as `$HOME/neat`.
 
 <CodeTabs>
-<CodeTab label="Neat SDK" lang="bash">
+<CodeTab label="Palette SDK" lang="bash">
 
 ```bash
 cd $HOME && mkdir -p neat && cd neat
@@ -79,11 +79,11 @@ On the DevKit, installation also provisions a PyNeat virtual environment at `~/p
 source ~/pyneat/bin/activate
 ```
 
-If you run the installer from inside a Neat SDK container paired with DevKit Sync, the PyNeat runtime installation targets the paired DevKit environment. Neat is installed into a virtual environment under `~/pyneat` on the DevKit.
+If you run the installer from inside a Palette SDK container paired with DevKit Sync, the PyNeat runtime installation targets the paired DevKit environment. Neat is installed into a virtual environment under `~/pyneat` on the DevKit.
 
-If you prefer building from source, follow the [Build](/contribute/build) guide.
+If you prefer building from source, follow the [Build](/develop-apps/contribute/build) guide.
 
-For SDK environment setup and DevKit Sync onboarding, see [Neat SDK](/getting-started/installation/neat-elxr-sdk/).
+For Palette SDK environment setup and DevKit Sync onboarding, see [Palette SDK](/getting-started/installation/neat-elxr-sdk/).
 
 ## Build the PyNeat Wheel for a Custom Environment
 
@@ -110,13 +110,13 @@ The installer provisions the `~/pyneat` virtual environment for you, but you can
    pip install ~/pyneat-*.whl
    ```
 
-The wheel targets **CPython 3.11** on **`linux_aarch64`**, so build it for — and install it into — a matching environment. For other Python versions and full build options, see [Build](/contribute/build).
+The wheel targets **CPython 3.11** on **`linux_aarch64`**, so build it for — and install it into — a matching environment. For other Python versions and full build options, see [Build](/develop-apps/contribute/build).
 
 ## Neat CLI
 
-The installed framework provides the `neat` environment command. Run it from either the Neat SDK or DevKit to see installed component versions, installed `sima-cli` playbooks, and whether newer artifacts are available.
+The installed framework provides the `neat` environment command. Run it from either Palette SDK or DevKit to see installed component versions, installed `sima-cli` playbooks, and whether newer artifacts are available.
 
-In the Neat SDK, the status output also includes the Insight exposed host ports from `$HOME/.insight-config/neat-port-map.json`.
+In Palette SDK, the status output also includes the Insight exposed host ports from `$HOME/.insight-config/neat-port-map.json`.
 
 ```bash
 neat
@@ -136,7 +136,7 @@ Components
   neat-runtime           0.0.1-main-e4b19553e07d
   neat-gst-plugins       0.0.1-main-e4b19553e07d
   neat-insight           0.0.0+main.74ae0b5 channel=main latest=74ae0b5 status=Running venv=/opt/neat-insight/venv
-  Model SDK Extension    2.0.0.neat+main-1ebbc39 run activate-model-sdk to activate
+  ModelSDK Extension    2.0.0.neat+main-1ebbc39 run activate-model-sdk to activate
 
 Exposed Ports
   Insight Web UI     https://10.0.0.22:9900
@@ -166,4 +166,4 @@ neat update
 
 ## Next step
 
-Continue with [Hello Neat!](/getting-started/minimal_example/minimal) to run your first Neat inference.
+Continue with [Hello Neat!](/develop-apps/hello-neat/minimal) to run your first Neat inference.
