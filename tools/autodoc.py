@@ -187,9 +187,11 @@ def remote_branch_exists(repo: str, branch: str) -> bool:
     if not branch:
         return False
     try:
+        remote = github_https_repo(repo)
         out = subprocess.run(
-            ["git", "ls-remote", "--heads", repo, branch],
+            ["git", "ls-remote", "--heads", remote, branch],
             check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            env={**os.environ, **github_auth_env()},
         ).stdout.strip()
         return bool(out)
     except Exception:
