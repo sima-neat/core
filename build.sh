@@ -534,11 +534,8 @@ detect_elxr_host_python() {
   fi
 
   local candidate="${SIMANEAT_HOST_PYTHON:-${Python3_EXECUTABLE:-${PYTHON3_EXECUTABLE:-}}}"
-  if [[ -z "${candidate}" && -n "${SYSROOT:-}" && -x "${SYSROOT}/usr/bin/python3" ]]; then
-    candidate="${SYSROOT}/usr/bin/python3"
-  fi
   if [[ -z "${candidate}" ]]; then
-    candidate="$(command -v python3 || true)"
+    candidate="$(command -v python3 || command -v python || true)"
   fi
 
   if [[ -z "${candidate}" || ! -x "${candidate}" ]]; then
@@ -549,7 +546,7 @@ detect_elxr_host_python() {
 
   if ! "${candidate}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' >/dev/null 2>&1; then
     echo "ERROR: selected Python cannot run in this SDK container: ${candidate}" >&2
-    echo "Set SIMANEAT_HOST_PYTHON to an executable Python matching the target sysroot." >&2
+    echo "Set SIMANEAT_HOST_PYTHON to a host-runnable Python interpreter." >&2
     exit 1
   fi
 
