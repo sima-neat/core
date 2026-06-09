@@ -120,4 +120,4 @@ cmake -S . -B build && cmake --build build -j
 ```
 
 For a fuller template with Palette SDK cross-build handling, see
-[Hello Neat](/develop-apps/hello-neat).
+[Hello Neat](/develop-apps/hello-neat/minimal).
