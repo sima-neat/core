@@ -4,7 +4,7 @@ include(FetchContent)
 
 # nanobind expects CMake's unified FindPython package/variables
 # (Python::Module + Python_INCLUDE_DIRS).
-if (CMAKE_CROSSCOMPILING AND DEFINED Python_INCLUDE_DIR)
+if (DEFINED Python_INCLUDE_DIR AND NOT Python_INCLUDE_DIR STREQUAL "")
   find_package(Python 3.8 REQUIRED COMPONENTS Interpreter)
   set(Python_INCLUDE_DIRS "${Python_INCLUDE_DIR}")
   if (NOT TARGET Python::Module)
