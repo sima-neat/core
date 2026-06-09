@@ -48,7 +48,6 @@
 #endif
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
@@ -1916,13 +1915,6 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   return t;
 }
 
-int64_t synthetic_dim_from_spec(const TensorSpec& spec, std::size_t axis) {
-  if (axis < spec.shape.size() && spec.shape[axis] > 0) {
-    return spec.shape[axis];
-  }
-  return -1;
-}
-
 TensorLayout synthetic_layout_from_spec(const TensorSpec& spec, const std::vector<int64_t>& shape) {
   if (shape.size() == 2U) {
     return TensorLayout::HW;
@@ -1966,8 +1958,7 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
 
   std::vector<int64_t> shape;
   shape.reserve(spec.shape.size());
-  for (std::size_t axis = 0; axis < spec.shape.size(); ++axis) {
-    const int64_t dim = synthetic_dim_from_spec(spec, axis);
+  for (const int64_t dim : spec.shape) {
     if (dim <= 0) {
       throw std::runtime_error(
           "Model::benchmark: input_specs() must provide concrete dimensions for synthetic model "
@@ -2032,7 +2023,7 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
       v.byte_offset = static_cast<int64_t>(y_size + chroma_size);
       tensor.planes = {y, u, v};
     }
-    return tensor;
+    return tensor.cvu();
   }
 
   std::uint64_t element_count = 1;
@@ -2074,7 +2065,7 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
   if (spec.image_format.has_value()) {
     tensor.semantic.image = ImageSpec{*spec.image_format, ""};
   }
-  return tensor;
+  return tensor.cvu();
 }
 
 TensorList make_synthetic_benchmark_inputs(const Model& model) {
@@ -5909,8 +5900,7 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
   if (ingress != nullptr && !ingress->source_stage.empty()) {
     oss << " source_stage=" << ingress->source_stage;
   }
-  oss << ". "
-      << "Received media=" << info.media_type << " format=" << info.format
+  oss << ". " << "Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth << ".";
   throw_model_error(
       error_codes::kInputShape, oss.str(),
@@ -7262,16 +7252,16 @@ BenchmarkReport Model::benchmark(int num_samples) {
   bool power_available = false;
   {
     Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
-    std::atomic<int> pulled{0};
+    int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
       try {
-        while (pulled.load(std::memory_order_relaxed) < num_samples) {
+        while (pulled < num_samples) {
           Sample out = runner.pull(kTimeoutMs);
           if (out.empty()) {
             throw std::runtime_error("Model::benchmark: async measured pull timed out");
           }
-          pulled.fetch_add(1, std::memory_order_relaxed);
+          ++pulled;
         }
       } catch (...) {
         pull_error = std::current_exception();
@@ -7298,7 +7288,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
       runner.close();
       std::rethrow_exception(pull_error);
     }
-    if (pulled.load(std::memory_order_relaxed) != num_samples) {
+    if (pulled != num_samples) {
       runner.close();
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }

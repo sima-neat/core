@@ -2970,8 +2970,7 @@ PreMlaTensorDigest summarize_pre_mla_tensor_local(const simaai::neat::Tensor& te
 std::string pre_mla_tensor_digest_string_local(const char* prefix, std::size_t index,
                                                const PreMlaTensorDigest& d) {
   std::ostringstream oss;
-  oss << prefix << "[" << index << "]"
-      << " dtype=" << d.dtype << " shape=" << d.shape
+  oss << prefix << "[" << index << "]" << " dtype=" << d.dtype << " shape=" << d.shape
       << " fmt=" << (d.fmt.empty() ? "<none>" : d.fmt) << " bytes=" << d.bytes
       << " hash=" << hex_u64_local(d.hash) << " byte_min=" << d.byte_min
       << " byte_max=" << d.byte_max << " byte_mean=" << d.byte_mean << " head=" << d.preview_hex;
