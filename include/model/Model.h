@@ -48,6 +48,20 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
+ * @brief Headline result returned by `Model::benchmark()`.
+ *
+ * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
+ * Power fields are populated when board power telemetry is available.
+ */
+struct BenchmarkReport {
+  double sync_latency_ms = 0.0;
+  double sync_fps = 0.0;
+  double async_fps = 0.0;
+  double avg_power_watts = 0.0;
+  double energy_joules = 0.0;
+};
+
+/**
  * @brief Loaded form of a compiled model archive; the simplified entry point to run inference on
  * Modalix.
  *
@@ -60,7 +74,7 @@ using TensorSpec = TensorConstraint;
  *     "here are detections."
  *   - **`build(...)`** that returns a long-lived `Runner` for streaming use cases (push many
  *     inputs over time, pull results asynchronously).
- *   - **Introspection** (`input_spec()`, `output_spec()`, `info()`, `metadata()`) so application
+ *   - **Introspection** (`input_specs()`, `output_specs()`, `info()`, `metadata()`) so application
  *     code can ask the Model what shape/dtype/topology it expects and produces.
  *
  * @code
@@ -387,12 +401,8 @@ public:
   simaai::neat::Graph graph(RouteOptions opt) const;
 
   // ── Introspection ────────────────────────────────────────────────────────────────────────
-  /// Single-input convenience accessor for `input_specs().front()`.
-  TensorSpec input_spec() const;
   /// Returns the expected input tensor specs (one per ingress port for multi-input models).
   std::vector<TensorSpec> input_specs() const;
-  /// Single-output convenience accessor for `output_specs().front()`.
-  TensorSpec output_spec() const;
   /// Returns the produced output tensor specs (multiple for multi-head models).
   std::vector<TensorSpec> output_specs() const;
   /**
@@ -601,6 +611,14 @@ public:
   /// One-shot inference with `cv::Mat` inputs (OpenCV convenience).
   simaai::neat::TensorList run(const std::vector<cv::Mat>& inputs, int timeout_ms = -1);
 #endif
+
+  /**
+   * @brief Run a small synthetic benchmark for simple model execution.
+   *
+   * Generates deterministic dense input tensors from `input_specs()`, runs fixed warmup and
+   * measured sync/async loops, prints a compact summary, and returns headline metrics.
+   */
+  BenchmarkReport benchmark(int num_samples = 100);
 
 private:
   friend struct internal::ModelAccess;

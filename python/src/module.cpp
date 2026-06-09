@@ -3833,6 +3833,14 @@ NB_MODULE(_pyneat_core, m) {
           "image_format"_a = nb::none())
       .def("close", &simaai::neat::Model::Runner::close);
 
+  nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
+      .def(nb::init<>())
+      .def_rw("sync_latency_ms", &simaai::neat::BenchmarkReport::sync_latency_ms)
+      .def_rw("sync_fps", &simaai::neat::BenchmarkReport::sync_fps)
+      .def_rw("async_fps", &simaai::neat::BenchmarkReport::async_fps)
+      .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
+      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
+
   nb::class_<simaai::neat::Model>(m, "Model")
       .def(nb::init<const std::string&>(), "model_path"_a)
       .def(nb::init<const std::string&, const simaai::neat::Model::Options&>(), "model_path"_a,
@@ -3850,8 +3858,8 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<simaai::neat::Graph (simaai::neat::Model::*)(
                simaai::neat::Model::RouteOptions) const>(&simaai::neat::Model::graph),
            "options"_a)
-      .def("input_spec", &simaai::neat::Model::input_spec)
-      .def("output_spec", &simaai::neat::Model::output_spec)
+      .def("input_specs", &simaai::neat::Model::input_specs)
+      .def("output_specs", &simaai::neat::Model::output_specs)
       .def("metadata", &simaai::neat::Model::metadata)
       .def("fragment", &simaai::neat::Model::fragment, "stage"_a)
       .def("backend_fragment", &simaai::neat::Model::backend_fragment, "stage"_a)
@@ -3903,7 +3911,9 @@ NB_MODULE(_pyneat_core, m) {
             }
             return nb::cast(std::move(out));
           },
-          "input"_a, "timeout_ms"_a = -1, "copy"_a = false);
+          "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
+      .def("benchmark", &simaai::neat::Model::benchmark, "num_samples"_a = 100,
+           nb::call_guard<nb::gil_scoped_release>());
 
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())

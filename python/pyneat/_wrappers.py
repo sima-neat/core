@@ -104,7 +104,8 @@ def install_wrappers(core) -> None:
 
   def _model_image_format_hint(model):
     try:
-      spec = model.input_spec()
+      specs = model.input_specs()
+      spec = specs[0] if specs else None
       return getattr(spec, "image_format", None)
     except Exception:
       return None

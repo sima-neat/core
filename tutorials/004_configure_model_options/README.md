@@ -36,11 +36,11 @@ The second block shapes the detector's output. `decode_type` selects the YOLOv8 
 
 ### Load and inspect the resolved contract {#step-load-and-inspect}
 
-Constructing the `Model` with these options resolves the contract against the archive. We then read it back: `input_spec()` and `output_spec()` report the negotiated tensor constraints, and `metadata()` exposes the key/value contract baked into the archive. Inspecting these after load confirms the runtime accepted your options and tells you the concrete shapes you will be working with.
+Constructing the `Model` with these options resolves the contract against the archive. We then read it back: `input_specs()` and `output_specs()` report the negotiated tensor constraints, and `metadata()` exposes the key/value contract baked into the archive. Inspecting these after load confirms the runtime accepted your options and tells you the concrete shapes you will be working with.
 
-**C++:** The specs are `TensorConstraint` values; we print `rank`, `dtypes.size()`, and `shape.size()`.
+**C++:** The specs are `TensorConstraint` values; we print the concrete shape.
 
-**Python:** We print `input_spec().shape` and `output_spec().shape` directly, plus `len(model.metadata())`.
+**Python:** We print the shapes from `input_specs()[0]` and `output_specs()[0]`, plus `len(model.metadata())`.
 
 ### Run one frame {#step-run-inference}
 
@@ -52,7 +52,7 @@ Finally we synthesize one `640×640` BGR frame and run it through the configured
 
 ## Run
 
-Run it and you should see the resolved spec ranks, metadata key count, and the output tally. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
+Run it and you should see the resolved spec shapes, metadata key count, and the output tally. Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**.
 
 **Python:**
 ```bash
@@ -73,11 +73,11 @@ python3 share/sima-neat/tutorials/004_configure_model_options/configure_model_op
   --model /tmp/yolo_v8s.tar.gz
 ```
 
-Expected output (rank, dtype, and key counts depend on the model archive; the C++ build prints the detailed spec lines and `outputs=`, the Python build prints shapes and `output_count=`):
+Expected output (shape and key counts depend on the model archive; the C++ build prints the detailed spec lines and `outputs=`, the Python build prints shapes and `output_count=`):
 
 ```text
-input_spec: rank=4 dtypes=1 shape_dims=4
-output_spec: rank=3 dtypes=1 shape_dims=3
+input_specs[0]: shape=[640,640,3]
+output_specs[0]: shape=[]
 metadata_keys=8
 outputs=1
 [OK] 004_configure_model_options

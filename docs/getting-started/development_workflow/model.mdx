@@ -14,7 +14,7 @@ Use `Model` when you want model-aware graph assembly without manually wiring eve
 
 - `graph()`: full model path as a reusable Graph fragment.
 - `preprocess()`, `inference()`, `postprocess()`: reusable node-stage fragments.
-- `input_spec()` and `output_spec()`: tensor contract introspection.
+- `input_specs()` and `output_specs()`: tensor contract introspection.
 - `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
 
 Reference:
@@ -50,7 +50,7 @@ graph.add(model.graph())
 
 ## Inspect specs and run directly
 
-Before composing a Graph you can introspect the model's tensor contracts with `input_spec()` / `output_spec()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required.
+Before composing a Graph you can introspect the model's tensor contracts with `input_specs()` / `output_specs()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -59,11 +59,17 @@ Before composing a Graph you can introspect the model's tensor contracts with `i
 simaai::neat::Model model("yolov8s_model.tar.gz");
 
 // Tensor contracts the model expects (input) and produces (output).
-const auto in  = model.input_spec();
-const auto out = model.output_spec();
-std::cout << "input  rank=" << in.rank  << " dims=" << in.shape.size()
-          << " dtypes=" << in.dtypes.size() << "\n";
-std::cout << "output rank=" << out.rank << " dims=" << out.shape.size() << "\n";
+const auto in  = model.input_specs().front();
+const auto out = model.output_specs().front();
+auto print_spec = [&](const char* label, const simaai::neat::TensorSpec& spec) {
+  std::cout << label << " shape=[";
+  for (std::size_t i = 0; i < spec.shape.size(); ++i) {
+    std::cout << (i ? "," : "") << spec.shape[i];
+  }
+  std::cout << "]\n";
+};
+print_spec("input ", in);
+print_spec("output", out);
 std::cout << "metadata keys=" << model.metadata().size() << "\n";
 
 // Run one frame directly via Model::Runner (no Graph required).
@@ -77,8 +83,10 @@ simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeo
 model = pyneat.Model("yolov8s_model.tar.gz")
 
 # Tensor contracts the model expects (input) and produces (output).
-print("input rank  =", model.input_spec().rank)
-print("output rank =", model.output_spec().rank)
+in_spec = model.input_specs()[0]
+out_spec = model.output_specs()[0]
+print("input  shape =", list(in_spec.shape))
+print("output shape =", list(out_spec.shape))
 print("metadata keys =", len(model.metadata()))
 
 # Run one frame directly (no Graph required).

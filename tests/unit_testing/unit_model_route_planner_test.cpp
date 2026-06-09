@@ -491,7 +491,7 @@ RUN_TEST(
         require(post_kind == "DetessDequant",
                 "strict MPK route should select DetessDequant postprocess stage");
 
-        const TensorSpec in_spec = model.input_spec();
+        const TensorSpec in_spec = model.input_specs().front();
         require(!in_spec.dtypes.empty() && in_spec.dtypes[0] == TensorDType::Float32,
                 "strict MPK route input spec should expose FP32 host ingress dtype");
       }
@@ -524,7 +524,7 @@ RUN_TEST(
         const std::string pre_kind = pre.front() ? pre.front()->kind() : "";
         require(pre_kind == "QuantTess", "strict MPK route should select QuantTess pre stage");
 
-        const TensorSpec out_spec = model.output_spec();
+        const TensorSpec out_spec = model.output_specs().front();
         require(!out_spec.dtypes.empty() && out_spec.dtypes[0] == TensorDType::Float32,
                 "strict MPK route output spec should expose Model boundary post dtype");
         std::ostringstream out_shape_msg;

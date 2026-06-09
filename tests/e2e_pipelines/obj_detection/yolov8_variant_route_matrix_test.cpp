@@ -1466,7 +1466,7 @@ simaai::neat::Tensor move_e2e_input_tensor_to_ev74_if_enabled(simaai::neat::Tens
 
 simaai::neat::Tensor build_canonical_preprocessed_input(const cv::Mat& img_bgr,
                                                         const simaai::neat::Model& model) {
-  const auto spec = model.input_spec();
+  const auto spec = model.input_specs().front();
   const simaai::neat::InputOptions ingress_opt = model.input_appsrc_options(true);
   require(upper_copy(simaai::neat::resolve_input_media_type(ingress_opt)) ==
               "APPLICATION/VND.SIMAAI.TENSOR",
@@ -2281,7 +2281,7 @@ simaai::neat::Sample run_model_sample(const cv::Mat& img_bgr, simaai::neat::Mode
                                       RouteKind route) {
   const int kRunTimeoutMs = default_model_run_timeout_ms();
   const int kRetryTimeoutMs = std::max(kRunTimeoutMs, kRunRetryTimeoutMs);
-  const auto spec = model.input_spec();
+  const auto spec = model.input_specs().front();
   const auto ingress_opt = model.input_appsrc_options(false);
   const bool tensor_ingress = upper_copy(simaai::neat::resolve_input_media_type(ingress_opt)) ==
                               "APPLICATION/VND.SIMAAI.TENSOR";
@@ -3410,7 +3410,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
       return out;
     }
 
-    const auto matrix_spec = matrix_model.input_spec();
+    const auto matrix_spec = matrix_model.input_specs().front();
     const cv::Mat matrix_seed = normalize_model_input(img_bgr, matrix_model, route);
     const AdapterIngressTensorInput matrix_ingress =
         build_adapter_tensor_ingress_input(matrix_seed, matrix_model, matrix_spec, route, pre_kind);
@@ -4320,7 +4320,7 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
       require_preprocess_meta_on_output_local(infer_sample, img_bgr.cols, img_bgr.rows,
                                               "framework_boxdecode_input");
       maybe_trace_sample_numeric_local("infer_sample_for_boxdecode", infer_sample);
-      const auto spec = model.input_spec();
+      const auto spec = model.input_specs().front();
       const auto [model_w_pref, model_h_pref] =
           preferred_input_hw(model, RouteKind::PreInferPost, spec);
       const int model_width = model_w_pref > 0 ? model_w_pref : img_bgr.cols;
@@ -4509,7 +4509,7 @@ ProbeResult probe_model(const fs::path& tar) {
   probe.mla_output_int8 = dtype_is_int8_like(probe.mla_output_dtype_raw);
   probe.terminal_output_kind = detect_terminal_output_kind(post_nodes, probe);
 
-  const auto input_spec = model.input_spec();
+  const auto input_spec = model.input_specs().front();
   bool only_uint8 = !input_spec.dtypes.empty();
   for (const auto dt : input_spec.dtypes) {
     if (dt != simaai::neat::TensorDType::UInt8) {
@@ -5054,7 +5054,7 @@ void validate_model_init_for_tar(const fs::path& tar) {
   const auto opt = default_model_options();
   simaai::neat::Model model(tar.string(), opt);
   (void)model.info();
-  (void)model.input_spec();
+  (void)model.input_specs();
   (void)model.preprocess();
   (void)model.inference();
   (void)model.postprocess();
@@ -5141,7 +5141,7 @@ int main(int argc, char** argv) {
                                       prepared_runner_profile, prepared_runner_dequant_flags,
                                       nullptr, &route_opt);
         (void)model.info();
-        (void)model.input_spec();
+        (void)model.input_specs();
         (void)model.inference();
         std::cout << "MODEL_INIT_OK model=" << tar.filename().string()
                   << " backend=" << processcvu_run_target << " placement="

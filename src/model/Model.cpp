@@ -48,19 +48,24 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
 #include <limits>
 #include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string_view>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 
@@ -1909,6 +1914,180 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   t.storage = make_cpu_owned_storage(bytes);
   t.strides_bytes = pipeline_internal::contiguous_strides_bytes(t.shape, 1);
   return t;
+}
+
+int64_t synthetic_dim_from_spec(const TensorSpec& spec, std::size_t axis) {
+  if (axis < spec.shape.size() && spec.shape[axis] > 0) {
+    return spec.shape[axis];
+  }
+  return -1;
+}
+
+TensorLayout synthetic_layout_from_spec(const TensorSpec& spec, const std::vector<int64_t>& shape) {
+  if (shape.size() == 2U) {
+    return TensorLayout::HW;
+  }
+  if (shape.size() == 3U && spec.image_format.has_value()) {
+    return TensorLayout::HWC;
+  }
+  return TensorLayout::Unknown;
+}
+
+std::vector<TensorAxisSemantic>
+synthetic_axis_semantics_from_spec(const TensorSpec& spec, const std::vector<int64_t>& shape) {
+  if (!spec.image_format.has_value()) {
+    return {};
+  }
+  if (shape.size() == 2U) {
+    return {TensorAxisSemantic::H, TensorAxisSemantic::W};
+  }
+  if (shape.size() == 3U) {
+    return {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
+  }
+  return {};
+}
+
+Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
+  if (spec.shape.empty()) {
+    throw std::runtime_error("Model::benchmark: input_specs() entry has empty shape");
+  }
+  if (spec.dtypes.empty()) {
+    throw std::runtime_error("Model::benchmark: input_specs() entry has no dtype");
+  }
+  if (!spec.required_segments.empty() || !spec.required_segment_names.empty()) {
+    throw std::runtime_error(
+        "Model::benchmark: segmented input specs are not supported by the synthetic benchmark");
+  }
+  const TensorDType dtype = spec.dtypes.front();
+  const std::size_t elem = pipeline_internal::dtype_bytes(dtype);
+  if (elem == 0U) {
+    throw std::runtime_error("Model::benchmark: unsupported input dtype");
+  }
+
+  std::vector<int64_t> shape;
+  shape.reserve(spec.shape.size());
+  for (std::size_t axis = 0; axis < spec.shape.size(); ++axis) {
+    const int64_t dim = synthetic_dim_from_spec(spec, axis);
+    if (dim <= 0) {
+      throw std::runtime_error(
+          "Model::benchmark: input_specs() must provide concrete dimensions for synthetic model "
+          "benchmark input");
+    }
+    shape.push_back(dim);
+  }
+
+  if (spec.image_format == ImageSpec::PixelFormat::NV12 ||
+      spec.image_format == ImageSpec::PixelFormat::I420) {
+    if (dtype != TensorDType::UInt8 || shape.size() != 2U || shape[0] <= 0 || shape[1] <= 0 ||
+        (shape[0] % 2) != 0 || (shape[1] % 2) != 0) {
+      throw std::runtime_error("Model::benchmark: unsupported planar synthetic image spec");
+    }
+    const int64_t h = shape[0];
+    const int64_t w = shape[1];
+    const std::size_t y_size = static_cast<std::size_t>(w * h);
+    const std::size_t chroma_size = static_cast<std::size_t>(w * h / 4);
+    const std::size_t bytes = y_size + chroma_size * 2U;
+    auto storage = make_cpu_owned_storage(bytes);
+    auto map = storage->map(MapMode::Write);
+    if (!map.data && bytes != 0U) {
+      throw std::runtime_error("Model::benchmark: failed to map synthetic image storage");
+    }
+    auto* out = static_cast<std::uint8_t*>(map.data);
+    for (std::size_t i = 0; i < bytes; ++i) {
+      out[i] = static_cast<std::uint8_t>((i + input_index * 17U) & 0xffU);
+    }
+
+    Tensor tensor;
+    tensor.storage = std::move(storage);
+    tensor.dtype = dtype;
+    tensor.layout = TensorLayout::HW;
+    tensor.shape = shape;
+    tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W};
+    tensor.device = {DeviceType::CPU, 0};
+    tensor.read_only = true;
+    tensor.semantic.image = ImageSpec{*spec.image_format, ""};
+
+    Plane y;
+    y.role = PlaneRole::Y;
+    y.shape = {h, w};
+    y.strides_bytes = {w, 1};
+    y.byte_offset = 0;
+    if (spec.image_format == ImageSpec::PixelFormat::NV12) {
+      Plane uv;
+      uv.role = PlaneRole::UV;
+      uv.shape = {h / 2, w};
+      uv.strides_bytes = {w, 1};
+      uv.byte_offset = static_cast<int64_t>(y_size);
+      tensor.planes = {y, uv};
+    } else {
+      Plane u;
+      u.role = PlaneRole::U;
+      u.shape = {h / 2, w / 2};
+      u.strides_bytes = {w / 2, 1};
+      u.byte_offset = static_cast<int64_t>(y_size);
+      Plane v;
+      v.role = PlaneRole::V;
+      v.shape = {h / 2, w / 2};
+      v.strides_bytes = {w / 2, 1};
+      v.byte_offset = static_cast<int64_t>(y_size + chroma_size);
+      tensor.planes = {y, u, v};
+    }
+    return tensor;
+  }
+
+  std::uint64_t element_count = 1;
+  for (const int64_t dim : shape) {
+    const auto udim = static_cast<std::uint64_t>(dim);
+    if (element_count > std::numeric_limits<std::uint64_t>::max() / udim) {
+      throw std::runtime_error("Model::benchmark: synthetic input shape is too large");
+    }
+    element_count *= udim;
+  }
+  if (element_count > std::numeric_limits<std::uint64_t>::max() / elem) {
+    throw std::runtime_error("Model::benchmark: synthetic input byte size is too large");
+  }
+  const auto bytes64 = element_count * static_cast<std::uint64_t>(elem);
+  if (bytes64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+    throw std::runtime_error("Model::benchmark: synthetic input byte size is too large");
+  }
+  const std::size_t bytes = static_cast<std::size_t>(bytes64);
+
+  auto storage = make_cpu_owned_storage(bytes);
+  auto map = storage->map(MapMode::Write);
+  if (!map.data && bytes != 0U) {
+    throw std::runtime_error("Model::benchmark: failed to map synthetic input storage");
+  }
+  auto* out = static_cast<std::uint8_t*>(map.data);
+  for (std::size_t i = 0; i < bytes; ++i) {
+    out[i] = static_cast<std::uint8_t>((i + input_index * 17U) & 0xffU);
+  }
+
+  Tensor tensor;
+  tensor.storage = std::move(storage);
+  tensor.dtype = dtype;
+  tensor.layout = synthetic_layout_from_spec(spec, shape);
+  tensor.shape = std::move(shape);
+  tensor.strides_bytes = pipeline_internal::contiguous_strides_bytes(tensor.shape, elem);
+  tensor.axis_semantics = synthetic_axis_semantics_from_spec(spec, tensor.shape);
+  tensor.device = {DeviceType::CPU, 0};
+  tensor.read_only = true;
+  if (spec.image_format.has_value()) {
+    tensor.semantic.image = ImageSpec{*spec.image_format, ""};
+  }
+  return tensor;
+}
+
+TensorList make_synthetic_benchmark_inputs(const Model& model) {
+  const std::vector<TensorSpec> specs = model.input_specs();
+  if (specs.empty()) {
+    throw std::runtime_error("Model::benchmark: input_specs() returned no inputs");
+  }
+  TensorList inputs;
+  inputs.reserve(specs.size());
+  for (std::size_t i = 0; i < specs.size(); ++i) {
+    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
+  }
+  return inputs;
 }
 
 simaai::neat::Sample make_bundle_from_tensors(const std::vector<Tensor>& inputs) {
@@ -6101,17 +6280,6 @@ Graph Model::graph(Model::RouteOptions opt) const {
   return internal::ModelAccess::build_graph_fragment(*this, std::move(opt));
 }
 
-TensorSpec Model::input_spec() const {
-  const auto ingress_contracts =
-      normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
-  require_single_ingress_api(ingress_contracts, "Model::input_spec");
-  const auto specs = input_specs();
-  if (!specs.empty()) {
-    return specs.front();
-  }
-  return TensorSpec{};
-}
-
 int Model::compiled_batch_size() const {
   const auto ingress_contracts =
       normalized_ingress_contracts(impl_->preprocess_plan.session_route_plan);
@@ -6205,14 +6373,6 @@ std::vector<TensorSpec> Model::input_specs() const {
   }
   specs.push_back(std::move(spec));
   return specs;
-}
-
-TensorSpec Model::output_spec() const {
-  const std::vector<TensorSpec> specs = output_specs();
-  if (!specs.empty()) {
-    return specs.front();
-  }
-  return TensorSpec{};
 }
 
 std::vector<TensorSpec> Model::output_specs() const {
@@ -7042,6 +7202,141 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
   return impl_->sync_runner.run(inputs, timeout_ms);
 }
 #endif
+
+BenchmarkReport Model::benchmark(int num_samples) {
+  if (num_samples <= 0) {
+    throw std::runtime_error("Model::benchmark: num_samples must be > 0");
+  }
+
+  constexpr int kWarmupSamples = 5;
+  constexpr int kTimeoutMs = 120000;
+  const TensorList inputs = make_synthetic_benchmark_inputs(*this);
+
+  auto make_run_options = [](bool measured) {
+    RunOptions opt;
+    opt.queue_depth = 8;
+    opt.overflow_policy = OverflowPolicy::Block;
+    opt.output_memory = OutputMemory::Owned;
+    opt.startup_preflight = false;
+    if (measured) {
+      opt.enable_metrics = true;
+      opt.enable_board_power();
+    }
+    return opt;
+  };
+
+  {
+    Runner warmup = build(inputs, Model::RouteOptions{}, make_run_options(false));
+    for (int i = 0; i < kWarmupSamples; ++i) {
+      (void)warmup.run(inputs, kTimeoutMs);
+    }
+    warmup.close();
+  }
+
+  BenchmarkReport report;
+  {
+    Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
+    for (int i = 0; i < num_samples; ++i) {
+      (void)runner.run(inputs, kTimeoutMs);
+    }
+    const RuntimeMetrics metrics = runner.metrics();
+    report.sync_latency_ms = metrics.latency.avg_ms;
+    report.sync_fps = metrics.throughput_fps;
+    runner.close();
+  }
+
+  {
+    Runner warmup = build(inputs, Model::RouteOptions{}, make_run_options(false));
+    for (int i = 0; i < kWarmupSamples; ++i) {
+      if (!warmup.push(inputs)) {
+        throw std::runtime_error("Model::benchmark: async warmup push failed");
+      }
+      Sample out = warmup.pull(kTimeoutMs);
+      if (out.empty()) {
+        throw std::runtime_error("Model::benchmark: async warmup pull timed out");
+      }
+    }
+    warmup.close();
+  }
+
+  bool power_available = false;
+  {
+    Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
+    std::atomic<int> pulled{0};
+    std::exception_ptr pull_error;
+    std::thread pull_thread([&] {
+      try {
+        while (pulled.load(std::memory_order_relaxed) < num_samples) {
+          Sample out = runner.pull(kTimeoutMs);
+          if (out.empty()) {
+            throw std::runtime_error("Model::benchmark: async measured pull timed out");
+          }
+          pulled.fetch_add(1, std::memory_order_relaxed);
+        }
+      } catch (...) {
+        pull_error = std::current_exception();
+      }
+    });
+
+    try {
+      for (int i = 0; i < num_samples; ++i) {
+        if (!runner.push(inputs)) {
+          throw std::runtime_error("Model::benchmark: async measured push failed");
+        }
+      }
+      runner.close_input();
+      pull_thread.join();
+    } catch (...) {
+      runner.close_input();
+      if (pull_thread.joinable()) {
+        pull_thread.join();
+      }
+      runner.close();
+      throw;
+    }
+    if (pull_error) {
+      runner.close();
+      std::rethrow_exception(pull_error);
+    }
+    if (pulled.load(std::memory_order_relaxed) != num_samples) {
+      runner.close();
+      throw std::runtime_error("Model::benchmark: async measured output count mismatch");
+    }
+
+    const RuntimeMetrics metrics = runner.metrics();
+    if (metrics.counters.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
+      runner.close();
+      throw std::runtime_error("Model::benchmark: runtime metrics output count mismatch");
+    }
+    report.async_fps = metrics.throughput_fps;
+    if (metrics.power.enabled && metrics.power.samples > 0) {
+      power_available = true;
+      report.avg_power_watts = metrics.power.total_avg_watts;
+      report.energy_joules = metrics.power.energy_joules;
+    }
+    runner.close();
+  }
+
+  const auto old_flags = std::cout.flags();
+  const auto old_precision = std::cout.precision();
+  std::cout << std::fixed << std::setprecision(2);
+  std::cout << "NEAT Benchmark\n";
+  std::cout << "Input: synthetic\n";
+  std::cout << "Samples: " << num_samples << "\n";
+  std::cout << "Sync latency: " << report.sync_latency_ms << " ms\n";
+  std::cout << "Sync FPS:     " << report.sync_fps << "\n";
+  std::cout << "Async FPS:    " << report.async_fps << "\n";
+  if (power_available) {
+    std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
+    std::cout << "Energy:       " << report.energy_joules << " J\n";
+  } else {
+    std::cout << "Power: unavailable\n";
+  }
+  std::cout.flags(old_flags);
+  std::cout.precision(old_precision);
+
+  return report;
+}
 
 namespace internal {
 Tensor remap_tensor_to_consumer_identity(Tensor tensor,

@@ -50,8 +50,10 @@ def main(argv: list[str]) -> int:
   # CORE LOGIC
   # STEP load-and-inspect
   model = pyneat.Model(str(args.model), opt)
-  print(f"input_shape={model.input_spec().shape}")
-  print(f"output_shape={model.output_spec().shape}")
+  input_spec = model.input_specs()[0]
+  output_spec = model.output_specs()[0]
+  print(f"input_shape={list(input_spec.shape)}")
+  print(f"output_shape={list(output_spec.shape)}")
   print(f"metadata_keys={len(model.metadata())}")
   # END STEP
   # END CORE LOGIC

@@ -25,8 +25,11 @@ bool get_arg(int argc, char** argv, const std::string& key, std::string& out) {
 }
 
 void print_spec(const char* label, const simaai::neat::TensorConstraint& spec) {
-  std::cout << label << ": rank=" << spec.rank << " dtypes=" << spec.dtypes.size()
-            << " shape_dims=" << spec.shape.size() << "\n";
+  std::cout << label << ": shape=[";
+  for (std::size_t i = 0; i < spec.shape.size(); ++i) {
+    std::cout << (i ? "," : "") << spec.shape[i];
+  }
+  std::cout << "]\n";
 }
 
 } // namespace
@@ -64,8 +67,8 @@ int main(int argc, char** argv) {
     // CORE LOGIC
     // STEP load-and-inspect
     simaai::neat::Model model(model_path, opt);
-    print_spec("input_spec", model.input_spec());
-    print_spec("output_spec", model.output_spec());
+    print_spec("input_specs[0]", model.input_specs().front());
+    print_spec("output_specs[0]", model.output_specs().front());
     std::cout << "metadata_keys=" << model.metadata().size() << "\n";
     // END STEP
     // END CORE LOGIC

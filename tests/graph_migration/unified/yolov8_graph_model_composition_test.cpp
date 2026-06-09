@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
 
         simaai::neat::Model model(tar.string(), canonical_model_options(BoxDecodeRunMode::NoModel));
         (void)model.info();
-        (void)model.input_spec();
+        (void)model.input_specs();
         (void)model.inference();
 
         const auto tensor_io_before = simaai::neat::pipeline_internal::snapshot_tensor_io_stats();

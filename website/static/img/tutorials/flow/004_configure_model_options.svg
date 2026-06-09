@@ -50,9 +50,9 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">model = pyneat.Model(str(args.model), opt)</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">print(f&quot;input_shape={model.input_spec().sha…</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">print(f&quot;input_shape={list(input_spec…</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">print(f&quot;output_shape={model.output_spec().s…</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">print(f&quot;output_shape={list(output_spec…</text>
 <text x="76" y="326" class="fmono fln">4</text>
 <text x="104" y="326" class="fmono fcode" xml:space="preserve">print(f&quot;metadata_keys={len(model.metadata()…</text>
 </g>

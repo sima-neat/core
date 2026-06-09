@@ -276,15 +276,17 @@ RUN_TEST(
       {
         const std::string tar = require_yolov9_tar();
         Model model(tar);
-        const TensorSpec spec = model.input_spec();
+        const std::vector<TensorSpec> specs = model.input_specs();
+        require(specs.size() == 1U, "Model::input_specs should expose one yolov9 input");
+        const TensorSpec& spec = specs.front();
 
-        require(spec.rank == 3, "Model::input_spec rank should be 3 for yolov9 tensor ingress");
+        require(spec.rank == 3, "Model::input_specs rank should be 3 for yolov9 tensor ingress");
         require(spec.shape == std::vector<int64_t>({640, 640, 3}),
-                "Model::input_spec should expose yolov9 Model boundary tensor ingress shape");
+                "Model::input_specs should expose yolov9 Model boundary tensor ingress shape");
         require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::Float32,
-                "Model::input_spec should expose yolov9 Model boundary ingress dtype");
+                "Model::input_specs should expose yolov9 Model boundary ingress dtype");
         require(!spec.image_format.has_value(),
-                "Tensor ingress Model::input_spec should not expose image_format");
+                "Tensor ingress Model::input_specs should not expose image_format");
       }
 
       {
@@ -298,9 +300,11 @@ RUN_TEST(
             continue;
           }
           Model model(bf16_model.string());
-          const TensorSpec spec = model.input_spec();
+          const std::vector<TensorSpec> specs = model.input_specs();
+          require(!specs.empty(), "BF16 model input_specs should not be empty");
+          const TensorSpec& spec = specs.front();
           require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::Float32,
-                  "BF16 cast ingress must expose Float32 Model boundary input_spec");
+                  "BF16 cast ingress must expose Float32 Model boundary input_specs");
           break;
         }
       }
@@ -333,7 +337,7 @@ RUN_TEST(
         bool threw = false;
         try {
           Model legacy_model(legacy.tar_path);
-          (void)legacy_model.input_spec();
+          (void)legacy_model.input_specs();
         } catch (const std::exception& e) {
           threw = true;
           require_contains(std::string(e.what()), "strict MPK contract required",
@@ -363,16 +367,6 @@ RUN_TEST(
                 "first multi-ingress appsrc option should preserve ingress tensor name");
         require(appsrc_opts[1].buffer_name == "image_uv",
                 "second multi-ingress appsrc option should preserve ingress tensor name");
-
-        bool singular_spec_threw = false;
-        try {
-          (void)model.input_spec();
-        } catch (const std::exception& e) {
-          singular_spec_threw = true;
-          require_contains(std::string(e.what()), "plural ingress API",
-                           "singular input_spec should fail clearly for multi-ingress models");
-        }
-        require(singular_spec_threw, "singular input_spec must reject multi-ingress models");
 
         bool singular_opt_threw = false;
         try {
