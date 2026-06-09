@@ -496,9 +496,16 @@ detess_boundary_shape_view_from_stage(const MpkPluginIoContract& stage,
   if ((stage.has_align_c16 && stage.align_c16) || (stage.has_cblock && stage.cblock)) {
     const std::uint64_t packed_channels =
         static_cast<std::uint64_t>(view.transport_shape.empty() ? 0 : view.transport_shape.back());
-    if (packed_channels == 0U || (packed_channels % 16U) != 0U) {
+    const std::uint64_t elem_bytes = dtype_size_bytes(
+        !transport_tensor->dtype.empty() ? transport_tensor->dtype : stage.frame_type);
+    const bool byte_granule_aligned =
+        packed_channels > 0U && elem_bytes > 0U &&
+        packed_channels <= (std::numeric_limits<std::uint64_t>::max() / elem_bytes) &&
+        ((packed_channels * elem_bytes) % 16U) == 0U;
+    if (!byte_granule_aligned) {
       throw std::runtime_error(
-          "detess boundary contract expected c16-aligned packed channels for '" + stage.name + "'");
+          "detess boundary contract expected 16-byte aligned packed channel storage for '" +
+          stage.name + "'");
     }
   }
   return view;
@@ -1892,6 +1899,7 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
   subset.logical_inputs.reserve(contract.tensors.size());
   subset.input_bindings.reserve(contract.tensors.size());
   subset.slice_shapes.reserve(contract.tensors.size());
+  subset.tensor_storage_kind.reserve(contract.tensors.size());
   subset.decode_type = contract.decode_type;
   subset.tess_needed = contract.tess_needed;
   subset.quant_needed = contract.quant_needed;
@@ -1926,6 +1934,13 @@ extract_boxdecode_contract_subset_from_static_contract(const BoxDecodeStaticCont
       throw std::invalid_argument("boxdecode static contract requires positive slice_shape dims");
     }
     subset.slice_shapes.push_back(slice_shape_desc);
+    if (contract.tensors[i].source_storage_kind == BoxDecodeSourceStorageKind::Unknown) {
+      throw std::invalid_argument(
+          "boxdecode source storage kind is unspecified: provide a model pack, or set "
+          "source_storage "
+          "explicitly on SimaBoxDecode (it cannot be inferred from a hand-built upstream)");
+    }
+    subset.tensor_storage_kind.push_back(static_cast<int>(contract.tensors[i].source_storage_kind));
   }
   return subset;
 }
@@ -1957,9 +1972,11 @@ void validate_boxdecode_contract_subset(const BoxDecodeContractSubset& subset,
   require_non_empty_value(subset.slice_shapes, "boxdecode", PluginContractFieldKey::SliceGeometry,
                           stage_name);
   if (subset.logical_inputs.size() != subset.input_bindings.size() ||
-      subset.logical_inputs.size() != subset.slice_shapes.size()) {
+      subset.logical_inputs.size() != subset.slice_shapes.size() ||
+      subset.logical_inputs.size() != subset.tensor_storage_kind.size()) {
     throw std::invalid_argument("plugin contract subset 'boxdecode' requires aligned logical "
-                                "inputs, bindings, and slice geometry for stage '" +
+                                "inputs, bindings, slice geometry, and tensor storage kinds for "
+                                "stage '" +
                                 stage_name + "'");
   }
   for (std::size_t i = 0; i < subset.logical_inputs.size(); ++i) {

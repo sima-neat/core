@@ -20,13 +20,15 @@ Modern AI inference on the edge has hard constraints: frame-rate throughput on s
 A typical Neat-framework application looks like this:
 
 ```cpp
-sima::Model model("/models/yolov8.tar.gz");
-sima::Graph graph;
-graph.add(sima::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"}));
-graph.add(model.graph());
-graph.add(sima::Output{});
+namespace neat = simaai::neat;
 
-auto run = graph.build(sima::RunMode::Async);
+neat::Model model("/models/yolov8.tar.gz");
+neat::Graph graph;
+graph.add(neat::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"}));
+graph.add(model.graph());
+graph.add(neat::Output{});
+
+auto run = graph.build(neat::RunMode::Async);
 while (running) {
   auto sample = run.pull(/*timeout_ms=*/100);
   if (sample) handle_detection(*sample);

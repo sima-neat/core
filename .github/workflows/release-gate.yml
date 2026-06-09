@@ -98,6 +98,7 @@ jobs:
       DOCS_STRICT_LINKS: "1"
       DOCS_URL: https://docs.sima-neat.com
       DOCS_BASE_URL: /
+      AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v5

@@ -992,6 +992,7 @@ private:
     std::vector<gdouble> processcvu_channel_mean;
     std::vector<gdouble> processcvu_channel_stddev;
     std::vector<sima_ev_shape_desc> boxdecode_slice_shapes;
+    std::vector<gint> boxdecode_tensor_storage_kind;
     SimaPluginStageSpec spec{};
   };
 
@@ -1068,6 +1069,8 @@ private:
       return SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_DETESSDEQUANT;
     case ProcessCvuGraphFamily::Cast:
       return SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_CAST;
+    case ProcessCvuGraphFamily::VisualFrontend:
+      return SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_VISUAL_FRONTEND;
     case ProcessCvuGraphFamily::Unknown:
     default:
       return SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_UNKNOWN;
@@ -1507,6 +1510,21 @@ private:
       out.spec.payload.processcvu.round_off = stage.processcvu.round_off;
       out.spec.payload.processcvu.byte_align = stage.processcvu.byte_align;
       out.spec.payload.processcvu.graph_id = stage.processcvu.graph_id;
+      out.spec.payload.processcvu.width = stage.processcvu.width;
+      out.spec.payload.processcvu.height = stage.processcvu.height;
+      out.spec.payload.processcvu.threshold = stage.processcvu.threshold;
+      out.spec.payload.processcvu.max_features = stage.processcvu.max_features;
+      out.spec.payload.processcvu.grid_x = stage.processcvu.grid_x;
+      out.spec.payload.processcvu.grid_y = stage.processcvu.grid_y;
+      out.spec.payload.processcvu.min_px_dist = stage.processcvu.min_px_dist;
+      out.spec.payload.processcvu.descriptor_words = stage.processcvu.descriptor_words;
+      out.spec.payload.processcvu.num_points = stage.processcvu.num_points;
+      out.spec.payload.processcvu.win_half = stage.processcvu.win_half;
+      out.spec.payload.processcvu.max_iters = stage.processcvu.max_iters;
+      out.spec.payload.processcvu.max_level = stage.processcvu.max_level;
+      out.spec.payload.processcvu.detect_new_features = stage.processcvu.detect_new_features;
+      out.spec.payload.processcvu.fast_threshold = stage.processcvu.fast_threshold;
+      out.spec.payload.processcvu.debug = stage.processcvu.debug;
       out.spec.payload.processcvu.opt_flags = stage.processcvu.opt_flags;
       out.spec.payload.processcvu.canonical_contract =
           stage.processcvu.canonical_contract ? TRUE : FALSE;
@@ -1731,6 +1749,17 @@ private:
           out.boxdecode_slice_shapes.empty() ? nullptr : out.boxdecode_slice_shapes.data();
       out.spec.payload.boxdecode.slice_shapes_len =
           static_cast<guint>(out.boxdecode_slice_shapes.size());
+
+      out.boxdecode_tensor_storage_kind.clear();
+      out.boxdecode_tensor_storage_kind.reserve(stage.boxdecode.tensor_storage_kind.size());
+      for (const int value : stage.boxdecode.tensor_storage_kind) {
+        out.boxdecode_tensor_storage_kind.push_back(static_cast<gint>(value));
+      }
+      out.spec.payload.boxdecode.tensor_storage_kind =
+          out.boxdecode_tensor_storage_kind.empty() ? nullptr
+                                                    : out.boxdecode_tensor_storage_kind.data();
+      out.spec.payload.boxdecode.tensor_storage_kind_len =
+          static_cast<guint>(out.boxdecode_tensor_storage_kind.size());
       break;
     case StagePayloadKind::DetessDequant:
       out.spec.payload.detessdequant.reserved = stage.detessdequant.reserved;

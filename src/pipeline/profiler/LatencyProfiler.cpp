@@ -4,8 +4,11 @@
 #include "pipeline/Graph.h"
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <sstream>
+#include <stdexcept>
+#include <tuple>
 #include <utility>
 
 #if defined(SIMA_HAS_NEAT_PROFILER)
@@ -18,6 +21,11 @@ namespace simaai::neat {
 namespace {
 
 #if defined(SIMA_HAS_NEAT_PROFILER)
+std::atomic_bool& active_latency_profiler() {
+  static std::atomic_bool active{false};
+  return active;
+}
+
 const char* backend_name(uint8_t backend) {
   switch (backend) {
   case SIMA_NEAT_PROFILER_BACKEND_MLA:
@@ -30,6 +38,8 @@ const char* backend_name(uint8_t backend) {
     return "BoxDecode";
   case SIMA_NEAT_PROFILER_BACKEND_MEMCPY:
     return "Memcpy";
+  case SIMA_NEAT_PROFILER_BACKEND_DISPATCHER:
+    return "Dispatcher";
   default:
     return "Unknown";
   }
@@ -59,19 +69,28 @@ const char* phase_name(uint8_t phase) {
 
 void compute_aggregates(std::vector<ProfilerKernelInvocation>& invocations,
                         std::vector<ProfilerKernelAggregate>* out) {
-  std::map<std::tuple<std::string, std::string, std::string, int32_t, int32_t>,
+  std::map<std::tuple<std::string, std::string, std::string, std::string, int32_t, int32_t,
+                      std::uint64_t, std::int32_t, std::int32_t, std::int32_t, std::string>,
            ProfilerKernelAggregate>
       groups;
   for (const auto& inv : invocations) {
-    auto key = std::make_tuple(inv.backend, inv.kernel_name, inv.stage_name,
-                               inv.physical_input_index, inv.output_slot);
+    auto key = std::make_tuple(inv.backend, inv.phase, inv.kernel_name, inv.stage_name,
+                               inv.physical_input_index, inv.output_slot, inv.run_id_hash,
+                               inv.pipeline_segment_id, inv.runtime_node_id, inv.public_node_id,
+                               inv.gst_element_name);
     auto& agg = groups[key];
     if (agg.count == 0) {
       agg.backend = inv.backend;
+      agg.phase = inv.phase;
       agg.kernel_name = inv.kernel_name;
       agg.stage_name = inv.stage_name;
       agg.physical_input_index = inv.physical_input_index;
       agg.output_slot = inv.output_slot;
+      agg.run_id_hash = inv.run_id_hash;
+      agg.pipeline_segment_id = inv.pipeline_segment_id;
+      agg.runtime_node_id = inv.runtime_node_id;
+      agg.public_node_id = inv.public_node_id;
+      agg.gst_element_name = inv.gst_element_name;
       agg.min_ms = inv.duration_ms();
       agg.max_ms = inv.duration_ms();
     } else {
@@ -90,11 +109,23 @@ void compute_aggregates(std::vector<ProfilerKernelInvocation>& invocations,
             [](const ProfilerKernelAggregate& a, const ProfilerKernelAggregate& b) {
               if (a.backend != b.backend)
                 return a.backend < b.backend;
+              if (a.phase != b.phase)
+                return a.phase < b.phase;
               if (a.stage_name != b.stage_name)
                 return a.stage_name < b.stage_name;
+              if (a.kernel_name != b.kernel_name)
+                return a.kernel_name < b.kernel_name;
               if (a.physical_input_index != b.physical_input_index)
                 return a.physical_input_index < b.physical_input_index;
-              return a.output_slot < b.output_slot;
+              if (a.output_slot != b.output_slot)
+                return a.output_slot < b.output_slot;
+              if (a.pipeline_segment_id != b.pipeline_segment_id)
+                return a.pipeline_segment_id < b.pipeline_segment_id;
+              if (a.runtime_node_id != b.runtime_node_id)
+                return a.runtime_node_id < b.runtime_node_id;
+              if (a.public_node_id != b.public_node_id)
+                return a.public_node_id < b.public_node_id;
+              return a.gst_element_name < b.gst_element_name;
             });
 }
 
@@ -102,6 +133,13 @@ void compute_aggregates(std::vector<ProfilerKernelInvocation>& invocations,
 
 LatencyProfiler::LatencyProfiler(Options o) : options_(o) {
 #if defined(SIMA_HAS_NEAT_PROFILER)
+  bool expected = false;
+  if (!active_latency_profiler().compare_exchange_strong(expected, true, std::memory_order_acq_rel,
+                                                         std::memory_order_acquire)) {
+    throw std::runtime_error(
+        "LatencyProfiler: another profiler is already active; profiler events are process-global");
+  }
+  owns_global_profiler_ = true;
   enabled_at_attach_ = sima_neat_profiler_enabled() != 0;
   if (options_.ring_capacity > 0U) {
     sima_neat_profiler_set_capacity(options_.ring_capacity);
@@ -118,6 +156,9 @@ LatencyProfiler::~LatencyProfiler() {
   // profiler attached for the lifetime of the process, leave it enabled.
   if (!enabled_at_attach_) {
     sima_neat_profiler_set_enabled(0);
+  }
+  if (owns_global_profiler_) {
+    active_latency_profiler().store(false, std::memory_order_release);
   }
 #endif
 }

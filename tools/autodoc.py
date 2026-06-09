@@ -16,6 +16,7 @@ exits 0 unless the manifest itself is malformed.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import os
@@ -59,8 +60,11 @@ SOURCE_INDEX_ENTRY_RE = re.compile(
 )
 
 
-def run_git(args: List[str], cwd: Optional[Path] = None) -> None:
+def run_git(args: List[str], cwd: Optional[Path] = None, env: Optional[Dict[str, str]] = None) -> None:
     """Run git with stdout/stderr captured; raise CalledProcessError on failure."""
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
     subprocess.run(
         ["git", *args],
         cwd=str(cwd) if cwd else None,
@@ -68,61 +72,94 @@ def run_git(args: List[str], cwd: Optional[Path] = None) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        env=run_env,
     )
 
 
-def ssh_to_https(repo: str) -> str:
-    """Convert a GitHub-style SSH URL (`git@host:org/name[.git]`) to its HTTPS
-    form (`https://host/org/name[.git]`). Non-SSH URLs are returned unchanged."""
-    match = re.match(r"^git@([^:]+):(.+)$", repo)
+def github_token() -> str:
+    """Best-effort token for GitHub HTTPS clones in CI."""
+    for env_var in ("AUTODOC_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(env_var, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def github_auth_env() -> Dict[str, str]:
+    """Return temporary git config env for GitHub token auth, without URL tokens."""
+    token = github_token()
+    if not token:
+        return {}
+
+    encoded = base64.b64encode(f"x-access-token:{token}".encode("utf-8")).decode("ascii")
+    return {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
+        "GIT_CONFIG_VALUE_0": f"AUTHORIZATION: basic {encoded}",
+    }
+
+
+def github_https_repo(repo: str) -> str:
+    """Rewrite GitHub SSH remotes to HTTPS when token auth is available."""
+    if not github_token():
+        return repo
+    match = re.match(r"^git@github\.com:(?P<path>[^\s]+?)(?:\.git)?$", repo)
     if match:
-        return f"https://{match.group(1)}/{match.group(2)}"
+        return f"https://github.com/{match.group('path')}.git"
     return repo
 
 
-def repo_candidates(repo: str) -> List[str]:
-    """Ordered list of remote URLs to try: the configured URL first, then an
-    HTTPS fallback for SSH URLs. This lets CI clone over HTTPS (with a token
-    credential helper) when SSH deploy keys are unavailable."""
-    candidates = [repo]
-    https = ssh_to_https(repo)
-    if https != repo:
-        candidates.append(https)
-    return candidates
+def is_git_checkout(path: Path) -> bool:
+    """Return True when `path` is an existing usable git working tree."""
+    if not path.is_dir():
+        return False
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(path),
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def clone_source(repo: str, branch: str, githash: str, staging: Path) -> None:
+    """Clone `repo` into a fresh `staging` directory."""
+    clone_repo = github_https_repo(repo)
+    auth_env = github_auth_env()
+    staging.parent.mkdir(parents=True, exist_ok=True)
+    if githash:
+        run_git(["clone", clone_repo, str(staging)], env=auth_env)
+        run_git(["checkout", githash], cwd=staging, env=auth_env)
+    else:
+        run_git(["clone", "--branch", branch, "--depth", "1", clone_repo, str(staging)], env=auth_env)
 
 
 def acquire_source(repo: str, branch: str, githash: str, staging: Path) -> None:
-    """Clone or update `repo` at `branch` (+ optional githash) into `staging`.
+    """Clone or update `repo` at `branch` (+ optional githash) into `staging`."""
+    if not is_git_checkout(staging):
+        if staging.exists():
+            LOG.info("removing stale autodoc staging directory: %s", staging)
+            shutil.rmtree(staging)
+        clone_source(repo, branch, githash, staging)
+        return
 
-    A fresh clone tries the configured URL first, then an HTTPS fallback for
-    GitHub SSH URLs (see `repo_candidates`). Updates reuse whichever remote the
-    existing clone was created with.
-    """
-    if not staging.exists():
-        staging.parent.mkdir(parents=True, exist_ok=True)
-        last_exc: Optional[subprocess.CalledProcessError] = None
-        for candidate in repo_candidates(repo):
-            try:
-                if githash:
-                    run_git(["clone", candidate, str(staging)])
-                    run_git(["checkout", githash], cwd=staging)
-                else:
-                    run_git(["clone", "--branch", branch, "--depth", "1", candidate, str(staging)])
-                return
-            except subprocess.CalledProcessError as exc:
-                last_exc = exc
-                # Drop any partial clone before trying the next candidate URL.
-                shutil.rmtree(staging, ignore_errors=True)
-        assert last_exc is not None
-        raise last_exc
-
-    if githash:
-        run_git(["fetch", "origin"], cwd=staging)
-        run_git(["checkout", githash], cwd=staging)
-        run_git(["reset", "--hard", githash], cwd=staging)
-    else:
-        run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging)
-        run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging)
+    try:
+        if githash:
+            run_git(["fetch", "origin"], cwd=staging, env=github_auth_env())
+            run_git(["checkout", githash], cwd=staging, env=github_auth_env())
+            run_git(["reset", "--hard", githash], cwd=staging, env=github_auth_env())
+        else:
+            run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging, env=github_auth_env())
+            run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging, env=github_auth_env())
+    except subprocess.CalledProcessError:
+        LOG.info("refresh failed; recloning autodoc staging directory: %s", staging)
+        shutil.rmtree(staging)
+        clone_source(repo, branch, githash, staging)
 
 
 def current_core_branch(repo_root: Path) -> str:
@@ -146,24 +183,19 @@ def current_core_branch(repo_root: Path) -> str:
 
 
 def remote_branch_exists(repo: str, branch: str) -> bool:
-    """True if `branch` exists on `repo`'s remote (via `git ls-remote --heads`).
-
-    Tries the configured URL first, then an HTTPS fallback for GitHub SSH URLs,
-    mirroring `acquire_source` so branch resolution doesn't fail before the
-    HTTPS-capable clone is even attempted.
-    """
+    """True if `branch` exists on `repo`'s remote (via `git ls-remote --heads`)."""
     if not branch:
         return False
-    for candidate in repo_candidates(repo):
-        try:
-            out = subprocess.run(
-                ["git", "ls-remote", "--heads", candidate, branch],
-                check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-            ).stdout.strip()
-            return bool(out)
-        except Exception:
-            continue
-    return False
+    try:
+        remote = github_https_repo(repo)
+        out = subprocess.run(
+            ["git", "ls-remote", "--heads", remote, branch],
+            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            env={**os.environ, **github_auth_env()},
+        ).stdout.strip()
+        return bool(out)
+    except Exception:
+        return False
 
 
 def resolve_source_branch(source: Dict, repo_root: Path) -> Tuple[str, str]:
@@ -410,18 +442,8 @@ def write_group_categories(dst_root: Path, landing: Optional[Dict]) -> None:
         )
 
 
-def write_category_json(
-    dst_root: Path,
-    label: str,
-    position: int,
-    link_doc_id: Optional[str] = None,
-) -> None:
+def write_category_json(dst_root: Path, label: str, position: int) -> None:
     payload = {"label": label, "position": position}
-    if link_doc_id:
-        payload["link"] = {
-            "type": "doc",
-            "id": link_doc_id,
-        }
     (dst_root / "_category_.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
@@ -638,7 +660,8 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip().splitlines()
         reason = stderr[-1] if stderr else f"exit {exc.returncode}"
-        return False, f"git failed: {reason}"
+        command = " ".join(str(part) for part in (exc.cmd or []))
+        return False, f"git failed ({command}): {reason}"
     except FileNotFoundError:
         return False, "git binary not found"
 
@@ -659,9 +682,7 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
             exclude_files,
             restructure_api,
         )
-        category_link = source.get("category_link")
-        link_doc_id = f"{mount}/{category_link}" if category_link else None
-        write_category_json(dst_section, title, sidebar_position, link_doc_id)
+        write_category_json(dst_section, title, sidebar_position)
         write_group_categories(dst_section, landing)
         maybe_write_landing_page(source, src_docs, dst_section, title)
         group_commands = source.get("group_commands")

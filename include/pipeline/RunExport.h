@@ -17,8 +17,9 @@ namespace simaai::neat {
  * @brief Options for exporting a built `Run` as graph JSON.
  *
  * The export is intentionally a snapshot: it does not stop or mutate the Run.
- * Call `run.close()` first if you want final throughput/latency/power numbers
- * after all outputs have drained.
+ * Export after the workload has drained but before `run.close()`; `close()` releases
+ * the underlying Run core. If you need to stop the live pipeline before exporting,
+ * call `run.stop()` instead so the Run handle remains exportable.
  */
 struct RunExportOptions {
   /// Human-readable graph/run label in the JSON. Empty means "run".
@@ -27,6 +28,12 @@ struct RunExportOptions {
   bool include_metrics = true;
   /// Include board power summary when enabled on the Run.
   bool include_power = true;
+  /// Include node-level latency metrics.
+  bool include_node_metrics = true;
+  /// Include per-plugin/kernel latency metrics when a MeasureReport is supplied.
+  bool include_plugin_metrics = true;
+  /// Include node metric rows that carry attribution metadata but no samples yet.
+  bool include_empty_node_metrics = true;
   /// Pretty-print indentation. 0 emits compact JSON.
   int indent = 2;
   /// Free-form string metadata copied to the top-level "metadata" object.
@@ -40,9 +47,17 @@ using GraphRunExportOptions = RunExportOptions;
 std::string run_to_json(const Run& run, const RunExportOptions& opt = {},
                         std::string* err = nullptr);
 
+/// Serialize a built `Run` plus a measurement-window report to graph JSON.
+std::string run_to_json(const Run& run, const MeasureReport& report,
+                        const RunExportOptions& opt = {}, std::string* err = nullptr);
+
 /// Atomically write `run_to_json(run, opt)` to `path` using `path + ".tmp"` then rename.
 bool save_run_json(const Run& run, const std::string& path, const RunExportOptions& opt = {},
                    std::string* err = nullptr);
+
+/// Atomically write `run_to_json(run, report, opt)` to `path`.
+bool save_run_json(const Run& run, const MeasureReport& report, const std::string& path,
+                   const RunExportOptions& opt = {}, std::string* err = nullptr);
 
 /// Compatibility wrapper for existing graph-run JSON call sites.
 inline std::string graph_run_to_json(const Run& run, const GraphRunExportOptions& opt = {},
@@ -50,10 +65,24 @@ inline std::string graph_run_to_json(const Run& run, const GraphRunExportOptions
   return run_to_json(run, opt, err);
 }
 
+/// Compatibility wrapper for measured graph-run JSON call sites.
+inline std::string graph_run_to_json(const Run& run, const MeasureReport& report,
+                                     const GraphRunExportOptions& opt = {},
+                                     std::string* err = nullptr) {
+  return run_to_json(run, report, opt, err);
+}
+
 /// Compatibility wrapper for existing graph-run JSON call sites.
 inline bool save_graph_run_json(const Run& run, const std::string& path,
                                 const GraphRunExportOptions& opt = {}, std::string* err = nullptr) {
   return save_run_json(run, path, opt, err);
+}
+
+/// Compatibility wrapper for measured graph-run JSON call sites.
+inline bool save_graph_run_json(const Run& run, const MeasureReport& report,
+                                const std::string& path, const GraphRunExportOptions& opt = {},
+                                std::string* err = nullptr) {
+  return save_run_json(run, report, path, opt, err);
 }
 
 } // namespace simaai::neat

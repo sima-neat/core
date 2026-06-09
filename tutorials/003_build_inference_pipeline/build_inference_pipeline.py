@@ -49,11 +49,11 @@ def main(argv: list[str]) -> int:
   run = graph.build([tensor], pyneat.RunMode.Sync)
   # END STEP
   # STEP run-frame
-  sample = run.run([tensor], timeout_ms=1000)
+  outputs = run.run([tensor], timeout_ms=1000)
   # END STEP
   # END CORE LOGIC
 
-  print(f"output_rank={len(sample.tensor.shape)}")
+  print(f"output_rank={len(outputs[0].shape)}")
   return 0
 
 

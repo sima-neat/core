@@ -185,26 +185,26 @@ RUN_TEST("unit_sima_boxdecode_node_fragment_test", ([] {
            model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
            model_opt.preprocess.color_convert.input_format =
                simaai::neat::PreprocessColorFormat::BGR;
-           model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
-           simaai::neat::Model model(tar_path, model_opt);
 
-           // The bundled strict_seed_mpk (yolo_v9c_seg) does not declare an
-           // explicit decode_type in any of its plugins, so the model is
-           // expected NOT to expose a model-managed boxdecode contract.
-           // build_boxdecode_stage_contract should fail for this fixture; the
-           // model-managed and inherited SimaBoxDecode constructors that
-           // require a canonical compiled contract are likewise unavailable.
-           // The standalone (explicit-geometry) constructor below remains the
-           // supported path for fixtures whose MPK lacks decode_type.
-           bool boxdecode_unavailable = false;
+           simaai::neat::Model default_model(tar_path, model_opt);
+           require(!simaai::neat::internal::ModelAccess::has_model_managed_stage(
+                       default_model, simaai::neat::internal::StageNodeKind::BoxDecode),
+                   "default Model route must not auto-select BoxDecode from inferred MPK "
+                   "topology");
+
+           simaai::neat::Model::Options mismatched_opt = model_opt;
+           mismatched_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+           simaai::neat::Model mismatched_model(tar_path, mismatched_opt);
+           bool boxdecode_mismatch_rejected = false;
            try {
-             (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(model,
-                                                                                       false);
+             (void)simaai::neat::internal::ModelAccess::build_boxdecode_stage_contract(
+                 mismatched_model, false);
            } catch (const std::exception&) {
-             boxdecode_unavailable = true;
+             boxdecode_mismatch_rejected = true;
            }
-           require(boxdecode_unavailable,
-                   "MPK without decode_type should not expose a model-managed boxdecode contract");
+           require(boxdecode_mismatch_rejected,
+                   "explicit BoxDecode must reject a detection decoder for a segmentation MPK "
+                   "contract");
 
            auto standalone_node =
                simaai::neat::nodes::SimaBoxDecode(simaai::neat::BoxDecodeType::YoloV8, 0.25, 0.45,

@@ -91,11 +91,11 @@ int main(int argc, char** argv) {
                                   : load_rgb(image, size);
     // END STEP
     // STEP run-inference
-    simaai::neat::TensorList sample = model.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/2000);
+    simaai::neat::TensorList outputs = model.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/2000);
     // END STEP
     // END CORE LOGIC
 
-    std::cout << "top1=" << top1_from_output(sample) << "\n";
+    std::cout << "top1=" << top1_from_output(outputs) << "\n";
     std::cout << "[OK] 001_run_your_first_model\n";
     return 0;
   } catch (const std::exception& e) {

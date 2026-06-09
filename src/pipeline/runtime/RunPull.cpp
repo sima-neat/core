@@ -318,6 +318,19 @@ std::optional<runtime::Endpoint> named_output_endpoint(const runtime::RunCore& c
   return it->second;
 }
 
+std::string default_output_name(const runtime::RunCore& core) {
+  if (!core.graph_execution_ || !core.graph_execution_->plan.default_output.has_value()) {
+    return "default";
+  }
+  const auto& def = *core.graph_execution_->plan.default_output;
+  for (const auto& [name, ep] : core.graph_execution_->plan.named_outputs) {
+    if (ep.node == def.node && ep.port == def.port && ep.kind == def.kind) {
+      return name;
+    }
+  }
+  return "default";
+}
+
 } // namespace
 
 PullStatus Run::pull(int timeout_ms, Sample& out, PullError* err) {
@@ -361,9 +374,14 @@ PullStatus runtime::RunCore::pull(int timeout_ms, Sample& out, PullError* err) {
     }
     auto sample = st->graph_pull(endpoint->node, timeout_ms);
     if (sample.has_value()) {
-      out = std::move(*sample);
-      st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+      Sample value = std::move(*sample);
       const auto now = std::chrono::steady_clock::now();
+      st->record_graph_sample_output(default_output_name(*st), value, now);
+      runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphOutputPull,
+                                         st->graph_execution_.get(), runtime::invalid_edge_index(),
+                                         value, default_output_name(*st));
+      out = std::move(value);
+      st->outputs_pulled.fetch_add(1, std::memory_order_relaxed);
       std::lock_guard<std::mutex> timing_lock(st->latency_mu);
       if (!st->pull_timing_init) {
         st->first_pull_at = now;
@@ -570,9 +588,14 @@ PullStatus runtime::RunCore::pull_named_output(std::string_view output_name, int
 
   auto sample = graph_pull(endpoint->node, timeout_ms);
   if (sample.has_value()) {
-    out = std::move(*sample);
-    outputs_pulled.fetch_add(1, std::memory_order_relaxed);
+    Sample value = std::move(*sample);
     const auto now = std::chrono::steady_clock::now();
+    record_graph_sample_output(output_name, value, now);
+    runtime::trace_graph_message_event(runtime::TraceGraphMessageEventType::GraphOutputPull,
+                                       graph_execution_.get(), runtime::invalid_edge_index(), value,
+                                       output_name);
+    out = std::move(value);
+    outputs_pulled.fetch_add(1, std::memory_order_relaxed);
     std::lock_guard<std::mutex> timing_lock(latency_mu);
     if (!pull_timing_init) {
       first_pull_at = now;

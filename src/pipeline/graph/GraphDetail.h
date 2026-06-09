@@ -321,10 +321,12 @@ bool should_insert_boundaries_for_mode(const char* mode_key, bool def_val);
 void attach_boundary_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag);
 
 /** Attach "stage timing" probes (internal perf metrics). */
-void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag);
+void attach_stage_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
+                                bool enable_from_options = false);
 
 /** Attach per-element timing probes (internal perf metrics). */
-void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag);
+void attach_element_timing_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag,
+                                  bool enable_from_options = false);
 
 /** Attach per-element flow probes (buffers/bytes, drops, etc.). */
 void attach_element_flow_probes(GstElement* pipeline, const std::shared_ptr<DiagCtx>& diag);

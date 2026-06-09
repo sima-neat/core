@@ -19,6 +19,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdlib>
+#include <cctype>
 #include <cstring>
 #include <filesystem>
 #include <iomanip>
@@ -56,8 +57,11 @@ struct AsyncTestConfig {
   bool profile_skip_extract = true;
   bool profile_skip_validate = false;
   int profile_push_slow_ms = 2;
+  int pull_timeout_ms = 1000;
+  int max_timeouts = 3;
   int input_width = 544;
   int input_height = 306;
+  simaai::neat::BoxDecodeType decode_type = simaai::neat::BoxDecodeType::YoloV8;
 };
 
 struct RunSummary {
@@ -75,6 +79,55 @@ std::string maybe_collect_run_report(simaai::neat::Run& run, bool enabled) {
   simaai::neat::RunReportOptions report_opt;
   report_opt.include_system_info = true;
   return run.report(report_opt);
+}
+
+std::optional<simaai::neat::BoxDecodeType> parse_boxdecode_type_token(const char* raw) {
+  if (raw == nullptr || *raw == '\0') {
+    return std::nullopt;
+  }
+  std::string token(raw);
+  std::transform(token.begin(), token.end(), token.begin(), [](unsigned char c) {
+    if (c == '_' || c == '.') {
+      return '-';
+    }
+    return static_cast<char>(std::tolower(c));
+  });
+  auto is = [&](const char* value) { return token == value; };
+  if (is("yolo") || is("yolo-generic"))
+    return simaai::neat::BoxDecodeType::Yolo;
+  if (is("yolov5") || is("yolo5") || is("yolo-v5"))
+    return simaai::neat::BoxDecodeType::YoloV5;
+  if (is("yolov5-seg") || is("yolo5-seg") || is("yolo-v5-seg"))
+    return simaai::neat::BoxDecodeType::YoloV5Seg;
+  if (is("yolov7") || is("yolo7") || is("yolo-v7"))
+    return simaai::neat::BoxDecodeType::YoloV7;
+  if (is("yolov7-seg") || is("yolo7-seg") || is("yolo-v7-seg"))
+    return simaai::neat::BoxDecodeType::YoloV7Seg;
+  if (is("yolov8") || is("yolo8") || is("yolo-v8"))
+    return simaai::neat::BoxDecodeType::YoloV8;
+  if (is("yolov8-seg") || is("yolo8-seg") || is("yolo-v8-seg"))
+    return simaai::neat::BoxDecodeType::YoloV8Seg;
+  if (is("yolov8-pose") || is("yolo8-pose") || is("yolo-v8-pose"))
+    return simaai::neat::BoxDecodeType::YoloV8Pose;
+  if (is("yolov9") || is("yolo9") || is("yolo-v9"))
+    return simaai::neat::BoxDecodeType::YoloV9;
+  if (is("yolov9-seg") || is("yolo9-seg") || is("yolo-v9-seg"))
+    return simaai::neat::BoxDecodeType::YoloV9Seg;
+  if (is("yolov10") || is("yolo10") || is("yolo-v10"))
+    return simaai::neat::BoxDecodeType::YoloV10;
+  if (is("yolov10-seg") || is("yolo10-seg") || is("yolo-v10-seg"))
+    return simaai::neat::BoxDecodeType::YoloV10Seg;
+  if (is("yolo26") || is("yolov26") || is("yolo-v26"))
+    return simaai::neat::BoxDecodeType::YoloV26;
+  if (is("yolo26-pose") || is("yolov26-pose") || is("yolo-v26-pose"))
+    return simaai::neat::BoxDecodeType::YoloV26Pose;
+  if (is("yolo26-seg") || is("yolov26-seg") || is("yolo-v26-seg"))
+    return simaai::neat::BoxDecodeType::YoloV26Seg;
+  if (is("yolov6") || is("yolo6") || is("yolo-v6"))
+    return simaai::neat::BoxDecodeType::YoloV6;
+  if (is("yolox") || is("yolo-x"))
+    return simaai::neat::BoxDecodeType::YoloX;
+  return std::nullopt;
 }
 
 double env_double(const char* name, double def) {
@@ -266,7 +319,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
   const int topk = std::max(1, cfg.topk);
   if (!cfg.skip_boxdecode) {
-    model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+    model_opt.decode_type = cfg.decode_type;
     model_opt.score_threshold = cfg.boxdecode_score_threshold;
     model_opt.nms_iou_threshold = 0.5f;
     model_opt.top_k = topk;
@@ -279,8 +332,8 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   p.add(simaai::neat::nodes::groups::Preprocess(model));
   p.add(simaai::neat::nodes::groups::Infer(model));
   if (!cfg.skip_boxdecode) {
-    p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
-                                             cfg.boxdecode_score_threshold, 0.5f, topk));
+    p.add(simaai::neat::nodes::SimaBoxDecode(model, cfg.decode_type, cfg.boxdecode_score_threshold,
+                                             0.5f, topk));
   }
 
   p.add(simaai::neat::nodes::Output());
@@ -297,8 +350,8 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
   step_log("async: after build");
 
   const int warm_timeout_ms = 60000;
-  const int pull_timeout_ms = 1000;
-  const int max_timeouts = 3;
+  const int pull_timeout_ms = std::max(1, cfg.pull_timeout_ms);
+  const int max_timeouts = std::max(1, cfg.max_timeouts);
   const bool do_extract = !cfg.skip_boxdecode && !cfg.profile_skip_extract;
   const bool do_validate = do_extract && !cfg.profile_skip_validate;
   AsyncProfileStats profile;
@@ -347,7 +400,7 @@ RunSummary run_yolov8_async_tput(const std::string& tar_gz, const cv::Mat& sourc
       res.diagnostics = maybe_collect_run_report(async, cfg.profile_emit_run_report);
       return res;
     }
-    if (!cfg.skip_boxdecode) {
+    if (do_validate) {
       std::vector<uint8_t> payload;
       std::string err;
       if (!objdet::extract_bbox_payload(*primer_out, i, payload, err)) {
@@ -620,8 +673,15 @@ int main(int argc, char** argv) {
         env_bool("SIMA_ASYNC_YOLOV8_PROFILE_SKIP_VALIDATE", cfg.profile_skip_validate);
     cfg.profile_push_slow_ms =
         std::max(1, env_int("SIMA_ASYNC_YOLOV8_PROFILE_PUSH_SLOW_MS", cfg.profile_push_slow_ms));
+    cfg.pull_timeout_ms =
+        std::max(1, env_int("SIMA_ASYNC_YOLOV8_PULL_TIMEOUT_MS", cfg.pull_timeout_ms));
+    cfg.max_timeouts = std::max(1, env_int("SIMA_ASYNC_YOLOV8_MAX_TIMEOUTS", cfg.max_timeouts));
     cfg.input_width = std::max(0, env_int("SIMA_ASYNC_YOLOV8_INPUT_W", cfg.input_width));
     cfg.input_height = std::max(0, env_int("SIMA_ASYNC_YOLOV8_INPUT_H", cfg.input_height));
+    if (const auto parsed =
+            parse_boxdecode_type_token(std::getenv("SIMA_ASYNC_YOLOV8_DECODE_TYPE"))) {
+      cfg.decode_type = *parsed;
+    }
     if (cfg.profile_skip_extract) {
       cfg.profile_skip_validate = true;
     }
@@ -638,6 +698,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "ASYNC_TPUT outputs=" << res.outputs << " avg_fps=" << res.avg_fps
+              << " decode_type=" << simaai::neat::box_decode_type_token(cfg.decode_type)
               << " ok=" << (res.ok ? "1" : "0") << " note=" << res.note << "\n";
     if (!res.diagnostics.empty()) {
       std::cout << "ASYNC_TPUT diagnostics\n" << res.diagnostics << "\n";

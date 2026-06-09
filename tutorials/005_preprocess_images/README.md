@@ -16,7 +16,7 @@ Configure the preprocessing stage — format, dimensions, and per-channel normal
 
 A compiled model expects its input in one precise shape and value range: a fixed color order, fixed dimensions, and the normalization recipe it was trained with. Preprocessing is the stage that takes a raw decoded image and turns it into exactly that tensor. Get it wrong and the model still runs — it just returns confident nonsense, which is why preprocessing is the first thing to verify when a deployed model "looks broken."
 
-This chapter configures the preprocessing controls you reach for most — color `format`, input/output dimensions, and per-channel `mean`/`stddev` normalization — and then runs *just* the preprocessing step in isolation so you can inspect what it produced before any inference happens. By the end you will have declared a full preproc contract, attached it to a model, and confirmed the preprocessed tensor's shape and type.
+This chapter configures the preprocessing controls you reach for most — color format, input/output dimensions, resize behavior, and per-channel `mean`/`stddev` normalization — and then inspects the model's preprocessing graph before running one deterministic tensor through the full model. By the end you will have declared a full preproc contract, attached it to a model, and confirmed the configured route is present.
 
 ### Configure the preprocessing contract {#step-configure-preproc}
 
@@ -24,7 +24,7 @@ These options declare the contract the preprocessing stage enforces. `format` (o
 
 **C++:** Fields live under `Model::Options::preprocess` — `color_convert.input_format` takes a `PreprocessColorFormat` enum, `normalize.enable` is an `AutoFlag`, and `normalize.mean` / `normalize.stddev` are `std::array<float, 3>`.
 
-**Python:** Fields live under `ModelOptions.preproc` — `format` is a string (`"RGB"`), `normalize` is a bool, and the constants are plain lists assigned to `channel_mean` / `channel_stddev`.
+**Python:** Fields live under `ModelOptions.preprocess` — `color_convert.input_format` takes a `PreprocessColorFormat` enum, `normalize.enable` is an `AutoFlag`, and the constants are lists assigned to `normalize.mean` / `normalize.stddev`.
 
 ### Build the model {#step-load-model}
 
@@ -32,11 +32,11 @@ Constructing the `Model` from the archive path plus the options binds your prepr
 
 ### Inspect preprocessing in isolation {#step-inspect-preproc}
 
-Rather than running the whole model, this chapter exercises only the preprocessing step so you can confirm it produces the tensor you expect before debugging anything downstream.
+This chapter inspects the preprocessing fragment before running the full model, so you can confirm the route exists before debugging anything downstream.
 
 **C++:** `stages::Preproc(frames, model)` runs the preprocessing step alone and returns the preprocessed `Tensor` directly — we read `pre.shape.size()` (rank) and `pre.dtype` to confirm the contract took effect.
 
-**Python:** `model.preprocess()` returns the preprocessing `Graph` fragment so you can inspect its composition (`preproc_group.size()`); a subsequent `model.run([tensor])` then exercises the full path and reports the output `kind`.
+**Python:** `model.preprocess()` returns the preprocessing `Graph` fragment, so we print `describe()` to inspect the configured route; a subsequent `model.run([tensor])` then exercises the full path and reports the output count.
 
 ## Run
 
@@ -69,7 +69,7 @@ preproc_dtype=1
 [OK] 005_preprocess_images
 ```
 
-(The Python build prints `preproc_group_size=...` and `output_kind=...`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+(The Python build prints `preproc_graph=ready`, the graph description, and `output_count=...`.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
 ## Source Files
 - C++: `tutorials/005_preprocess_images/preprocess_images.cpp`

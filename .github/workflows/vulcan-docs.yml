@@ -1,16 +1,15 @@
 name: Vulcan Docs
 
-run-name: vulcan-docs (${{ inputs.deploy_environment || vars.VULCAN_ENV || 'stg' }})
+run-name: vulcan-docs (${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }})
 
 on:
   push:
     branches:
       - develop
-      - main
   workflow_dispatch:
     inputs:
       deploy_environment:
-        description: "Optional Vulcan docs environment override: dev, stg/staging, or prod/production. Defaults to VULCAN_ENV."
+        description: "Optional Vulcan docs environment override: stg/staging or prod/production. Defaults to stg."
         required: false
         type: string
 
@@ -21,7 +20,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'stg' }}
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }}
   cancel-in-progress: false
 
 jobs:
@@ -37,30 +36,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            case "${GITHUB_REF}" in
+              refs/heads/develop)
+                deploy_environment="stg"
+                ;;
+              *)
+                echo "Unsupported docs push ref: ${GITHUB_REF}" >&2
+                exit 1
+                ;;
+            esac
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             deploy_environment="${{ inputs.deploy_environment }}"
             if [[ -z "${deploy_environment}" ]]; then
-              deploy_environment="${{ vars.VULCAN_ENV || 'stg' }}"
+              deploy_environment="stg"
             fi
           else
-            deploy_environment="${{ vars.VULCAN_ENV || 'stg' }}"
+            echo "Unsupported event: ${GITHUB_EVENT_NAME}" >&2
+            exit 1
           fi
 
           case "${deploy_environment}" in
-            dev)
-              ;;
             stg|staging)
               deploy_environment="stg"
               ;;
             prod|production)
               deploy_environment="prod"
-              if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-                if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${GITHUB_REF}" == "refs/heads/develop" ]]; then
-                  echo "Allowing temporary production docs deploy from refs/heads/develop via manual dispatch."
-                else
-                  echo "Production docs deploy is only allowed from refs/heads/main, with a temporary manual-dispatch exception for refs/heads/develop. Current ref: ${GITHUB_REF}" >&2
-                  exit 1
-                fi
+              if [[ "${GITHUB_REF}" != "refs/heads/main" && ! "${GITHUB_REF}" =~ ^refs/heads/v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+                echo "Production docs deploy is only allowed from refs/heads/main or vX.Y.Z release branches. Current ref: ${GITHUB_REF}" >&2
+                exit 1
               fi
               ;;
             *)
@@ -82,6 +86,7 @@ jobs:
       DOCS_STRICT_LINKS: "1"
       DOCS_BASE_URL: /software/
       DOCS_DEVELOPER_CENTER_SHELL_BASE: /
+      AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -104,11 +109,34 @@ jobs:
           test -d website/build
           test -f website/build/index.html
 
+      - name: Generate software search records
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test -d build/docs-expanded
+
+          mkdir -p build/algolia
+          python3 scripts/ci/sync_algolia_developer_center_index.py \
+            --docs-dir build/docs-expanded \
+            --site-base-url "${DOCS_URL}" \
+            --records-json build/algolia/software-records.json \
+            --summary-json build/algolia/software-summary.json \
+            --generate-only
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v6
         with:
           name: vulcan-sysdoc-software-site
           path: website/build/*
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Upload search records artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: vulcan-sysdoc-software-search-records
+          path: build/algolia/*.json
           if-no-files-found: error
           retention-days: 1
 
@@ -143,6 +171,7 @@ jobs:
     needs:
       - resolve-target
       - resolve-docs-vars
+      - build-sysdoc-software
       - publish-sysdoc-software
     runs-on: ubuntu-latest
     environment: ${{ needs.resolve-target.outputs.deploy_environment }}
@@ -156,6 +185,12 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
+
+      - name: Download software search records
+        uses: actions/download-artifact@v6
+        with:
+          name: vulcan-sysdoc-software-search-records
+          path: ${{ runner.temp }}/software-search-records
 
       - name: Configure AWS credentials for Vulcan config
         uses: aws-actions/configure-aws-credentials@v6
@@ -217,7 +252,7 @@ jobs:
             --output text)"
 
           python3 scripts/ci/sync_algolia_developer_center_index.py \
-            --docs-dir docs \
+            --input-records-json "${RUNNER_TEMP}/software-search-records/software-records.json" \
             --site-base-url "${SYSDOC_URL}" \
             --app-id "${ALGOLIA_APP_ID}" \
             --api-key "${write_api_key}" \

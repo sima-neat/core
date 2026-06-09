@@ -19,6 +19,12 @@ simaai::neat::runtime::GraphRuntimeOptions make_graph_runtime_options(const Grap
   out.verbose = opt.verbose;
   out.pipeline = opt.pipeline;
   out.power_monitor = opt.power_monitor;
+  if (out.power_monitor.enabled) {
+    // Graph-level board power is sampled once for the whole graph.  Do not
+    // also forward a board monitor into each segment when the legacy/internal
+    // GraphRunOptions API is configured with both knobs.
+    out.pipeline.power_monitor = PowerMonitorOptions{};
+  }
   return out;
 }
 

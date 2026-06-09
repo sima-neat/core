@@ -2,6 +2,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/Preproc.h"
+#include "nodes/sima/VisualFrontend.h"
 #include "pipeline/internal/contract/ContractCompiler.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
 #include "pipeline/internal/sima/TensorSemanticsUtil.h"
@@ -543,6 +544,62 @@ RUN_TEST(
     "unit_contract_compiler_processcvu_test", ([] {
       using namespace simaai::neat;
       using namespace simaai::neat::pipeline_internal::sima::stagesemantics;
+
+      {
+        GriderFastOptions fast_opt;
+        fast_opt.width = 640;
+        fast_opt.height = 480;
+        fast_opt.max_features = 256;
+        fast_opt.grid_x = 8;
+        fast_opt.grid_y = 6;
+        GriderFast fast_node(fast_opt);
+        ContractCompileInput cc_input;
+        cc_input.node_index = 4;
+        CompiledNodeContract compiled;
+        std::string err;
+        require(fast_node.compile_node_contract(cc_input, &compiled, &err),
+                (std::string("GriderFast node contract should compile: ") + err).c_str());
+        require(compiled.processcvu.has_value(),
+                "GriderFast node contract should carry a processcvu payload");
+        require(compiled.processcvu->payload.graph_id == 236,
+                "GriderFast payload should use graph ID 236");
+        require(compiled.processcvu->payload.graph_name == "grider_fast",
+                "GriderFast payload should use canonical graph name");
+        require(compiled.processcvu->payload.max_features == 256,
+                "GriderFast payload should preserve max_features");
+        require(compiled.processcvu->runtime_contract.physical_inputs.size() == 1U,
+                "GriderFast should expose one runtime input");
+        require(compiled.processcvu->runtime_contract.physical_outputs.size() == 1U,
+                "GriderFast should expose one runtime output");
+      }
+
+      {
+        TrackKLTOptions klt_opt;
+        klt_opt.width = 640;
+        klt_opt.height = 480;
+        klt_opt.num_points = 128;
+        klt_opt.max_features = 64;
+        klt_opt.detect_new_features = 0;
+        TrackKLT klt_node(klt_opt);
+        ContractCompileInput cc_input;
+        cc_input.node_index = 5;
+        CompiledNodeContract compiled;
+        std::string err;
+        require(klt_node.compile_node_contract(cc_input, &compiled, &err),
+                (std::string("TrackKLT node contract should compile: ") + err).c_str());
+        require(compiled.processcvu.has_value(),
+                "TrackKLT node contract should carry a processcvu payload");
+        require(compiled.processcvu->payload.graph_id == 238,
+                "TrackKLT payload should use graph ID 238");
+        require(compiled.processcvu->payload.default_output_names.size() == 3U,
+                "TrackKLT runtime should still allocate output_features for the EV ABI");
+        require(compiled.processcvu->exposed_view.exposed_output_order.size() == 2U,
+                "TrackKLT should publish only points/status when detect_new_features is disabled");
+        require(compiled.processcvu->runtime_contract.physical_inputs.size() == 3U,
+                "TrackKLT should preserve its three physical inputs");
+        require(compiled.processcvu->runtime_contract.physical_outputs.size() == 3U,
+                "TrackKLT should preserve its three physical runtime outputs");
+      }
 
       {
         namespace ts = simaai::neat::pipeline_internal::sima::tensorsemantics;

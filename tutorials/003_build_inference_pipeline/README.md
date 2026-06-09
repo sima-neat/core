@@ -46,7 +46,7 @@ With a `Run` in hand, `run()` pushes one frame and pulls one result synchronousl
 
 **C++:** `run()` returns a `TensorList`; read `sample.front().shape.size()`.
 
-**Python:** `run()` returns a `Sample`; read `len(sample.tensor.shape)`.
+**Python:** `run()` with tensor inputs returns a `TensorList`; read `len(outputs[0].shape)`.
 
 ## Run
 

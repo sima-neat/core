@@ -80,6 +80,45 @@ int backend_tid(const std::string& backend) {
   return 999;
 }
 
+std::string attribution_suffix(std::uint64_t run_id_hash, std::int32_t segment_id,
+                               std::int32_t runtime_node_id, std::int32_t public_node_id,
+                               const std::string& gst_element_name) {
+  std::ostringstream s;
+  bool any = false;
+  auto add_sep = [&] {
+    if (!any) {
+      s << " [";
+      any = true;
+    } else {
+      s << ", ";
+    }
+  };
+  if (run_id_hash != 0) {
+    add_sep();
+    s << "run_hash=" << run_id_hash;
+  }
+  if (segment_id >= 0) {
+    add_sep();
+    s << "seg=" << segment_id;
+  }
+  if (runtime_node_id >= 0) {
+    add_sep();
+    s << "node=n" << runtime_node_id;
+  }
+  if (public_node_id >= 0) {
+    add_sep();
+    s << "public=p" << public_node_id;
+  }
+  if (!gst_element_name.empty()) {
+    add_sep();
+    s << "element=" << gst_element_name;
+  }
+  if (any) {
+    s << "]";
+  }
+  return s.str();
+}
+
 } // namespace
 
 std::string LatencyProfiler::to_text(const ProfilerReport& r) {
@@ -115,9 +154,11 @@ std::string LatencyProfiler::to_text(const ProfilerReport& r) {
 
   if (!r.kernel_aggregates.empty()) {
     o << "[kernel invocations]\n"
-      << "  backend  phys_in  out  count   avg_ms   min_ms   max_ms   total_ms  kernel  (stage)\n";
+      << "  backend  phase      phys_in  out  count   avg_ms   min_ms   max_ms   total_ms  kernel  "
+         "(stage)\n";
     for (const auto& a : r.kernel_aggregates) {
-      o << "  " << std::left << std::setw(8) << a.backend << " " << std::right << std::setw(7)
+      o << "  " << std::left << std::setw(8) << a.backend << " " << std::setw(10)
+        << (a.phase.empty() ? "-" : a.phase) << " " << std::right << std::setw(7)
         << a.physical_input_index << " " << std::setw(4) << a.output_slot << " " << std::setw(6)
         << a.count << "  " << std::setw(7) << fmt_ms(a.avg_ms()) << "  " << std::setw(7)
         << fmt_ms(a.min_ms) << "  " << std::setw(7) << fmt_ms(a.max_ms) << "  " << std::setw(8)
@@ -125,6 +166,8 @@ std::string LatencyProfiler::to_text(const ProfilerReport& r) {
       if (!a.stage_name.empty() && a.stage_name != a.kernel_name) {
         o << "  (" << a.stage_name << ")";
       }
+      o << attribution_suffix(a.run_id_hash, a.pipeline_segment_id, a.runtime_node_id,
+                              a.public_node_id, a.gst_element_name);
       o << "\n";
     }
     o << "\n";
@@ -229,6 +272,11 @@ std::string LatencyProfiler::to_chrome_trace(const ProfilerReport& r) {
       << "\"stage\":\"" << json_escape(inv.stage_name) << "\","
       << "\"in_segment\":\"" << json_escape(inv.in_segment) << "\","
       << "\"out_segment\":\"" << json_escape(inv.out_segment) << "\","
+      << "\"run_id_hash\":" << inv.run_id_hash << ","
+      << "\"pipeline_segment_id\":" << inv.pipeline_segment_id << ","
+      << "\"runtime_node_id\":" << inv.runtime_node_id << ","
+      << "\"public_node_id\":" << inv.public_node_id << ","
+      << "\"gst_element_name\":\"" << json_escape(inv.gst_element_name) << "\","
       << "\"bytes\":" << inv.bytes << "}}";
   }
 

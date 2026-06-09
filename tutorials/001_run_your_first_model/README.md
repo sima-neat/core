@@ -40,7 +40,7 @@ The third line does the actual work: `run()` takes the input and a `timeout_ms`,
 
 **C++:** `run()` returns a `TensorList`; read the first tensor's bytes via `map_read()`.
 
-**Python:** `run()` returns a `Sample`; `sample.tensor.to_numpy()` hands you a NumPy array to `argmax` over.
+**Python:** `run()` with tensor/image inputs returns a `TensorList`; `outputs[0].to_numpy()` hands you a NumPy array to `argmax` over.
 
 That's the whole story. Everything in later chapters — async, pipelines, custom graphs — is built on these same three moves: construct, feed, read.
 

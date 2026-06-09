@@ -27,7 +27,7 @@ extern "C" {
  */
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_CONTEXT_TYPE "sima.model.manifest"
-#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)19)
+#define SIMA_PLUGIN_STATIC_MANIFEST_ABI_VERSION ((guint)20)
 
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_SESSION_ID "session_id"
 #define SIMA_PLUGIN_STATIC_MANIFEST_KEY_MODEL_ID "model_id"
@@ -210,7 +210,8 @@ typedef enum SimaPluginProcessCvuGraphFamily {
   SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_DEQUANT = 7,
   SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_DETESSCAST = 8,
   SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_DETESSDEQUANT = 9,
-  SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_CAST = 10
+  SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_CAST = 10,
+  SIMA_PLUGIN_PROCESSCVU_GRAPH_FAMILY_VISUAL_FRONTEND = 11
 } SimaPluginProcessCvuGraphFamily;
 
 typedef enum SimaPluginProcessCvuOutputTransportKind {
@@ -260,6 +261,22 @@ typedef struct SimaPluginProcessCvuStagePayload {
   gint round_off;
   gint byte_align;
   gint graph_id;
+  /* Native visual-frontend scalar fields for EV74 graphs 235-238. */
+  gint width;
+  gint height;
+  gint threshold;
+  gint max_features;
+  gint grid_x;
+  gint grid_y;
+  gint min_px_dist;
+  gint descriptor_words;
+  gint num_points;
+  gint win_half;
+  gint max_iters;
+  gint max_level;
+  gint detect_new_features;
+  gint fast_threshold;
+  gint debug;
   guint32 opt_flags;
   gboolean canonical_contract;
   gboolean preproc_single_output_handoff;
@@ -330,6 +347,8 @@ typedef struct SimaPluginBoxDecodeStagePayload {
   gint quant_needed;
   gint model_owned_flags;
   gint quant_contract_required;
+  const gint* tensor_storage_kind;
+  guint tensor_storage_kind_len;
 } SimaPluginBoxDecodeStagePayload;
 
 typedef struct SimaPluginDetessDequantStagePayload {
@@ -491,12 +510,16 @@ static inline void sima_plugin_static_manifest_handle_boxed_free(gpointer boxed)
 
 static inline GType sima_plugin_static_manifest_handle_get_type(void) {
   static const gchar* kTypeName = "SimaPluginStaticManifestHandle";
-  GType type = g_type_from_name(kTypeName);
-  if (type != 0) {
-    return type;
+  static gsize type_id = 0;
+  if (g_once_init_enter(&type_id)) {
+    GType type = g_type_from_name(kTypeName);
+    if (type == 0) {
+      type = g_boxed_type_register_static(kTypeName, sima_plugin_static_manifest_handle_boxed_copy,
+                                          sima_plugin_static_manifest_handle_boxed_free);
+    }
+    g_once_init_leave(&type_id, static_cast<gsize>(type));
   }
-  return g_boxed_type_register_static(kTypeName, sima_plugin_static_manifest_handle_boxed_copy,
-                                      sima_plugin_static_manifest_handle_boxed_free);
+  return static_cast<GType>(type_id);
 }
 
 static inline void sima_plugin_manifest_set_lookup_status(SimaPluginManifestLookupStatus* status,

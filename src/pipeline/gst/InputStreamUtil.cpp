@@ -200,6 +200,314 @@ bool gst_structure_get_int_vector_field_local(const GstStructure* s, const char*
   return true;
 }
 
+bool gst_structure_set_double_vector_field_local(GstStructure* s, const char* field,
+                                                 const std::vector<double>& values) {
+  if (!s || !field) {
+    return false;
+  }
+  GValue list = G_VALUE_INIT;
+  g_value_init(&list, GST_TYPE_LIST);
+  for (const double value : values) {
+    GValue item = G_VALUE_INIT;
+    g_value_init(&item, G_TYPE_DOUBLE);
+    g_value_set_double(&item, value);
+    gst_value_list_append_value(&list, &item);
+    g_value_unset(&item);
+  }
+  gst_structure_set_value(s, field, &list);
+  g_value_unset(&list);
+  return true;
+}
+
+bool gst_structure_get_double_vector_field_local(const GstStructure* s, const char* field,
+                                                 std::vector<double>* out) {
+  if (!s || !field || !out) {
+    return false;
+  }
+  const GValue* list = gst_structure_get_value(s, field);
+  if (!list || !GST_VALUE_HOLDS_LIST(list)) {
+    return false;
+  }
+  out->clear();
+  const guint size = gst_value_list_get_size(list);
+  out->reserve(size);
+  for (guint i = 0; i < size; ++i) {
+    const GValue* item = gst_value_list_get_value(list, i);
+    if (!item || !G_VALUE_HOLDS_DOUBLE(item)) {
+      return false;
+    }
+    out->push_back(g_value_get_double(item));
+  }
+  return true;
+}
+
+void gst_structure_remove_preprocess_roi_fields_local(GstStructure* s) {
+  if (!s) {
+    return;
+  }
+  static constexpr const char* kFields[] = {
+      "preproc_roi_list_enable",
+      "preproc_roi_count",
+      "preproc_roi_capacity",
+      "preproc_valid_batch_count",
+      "preproc_roi_batch_indices",
+      "preproc_roi_rects",
+      "preproc_roi_affines",
+      "preproc_roi_input_batch_size",
+      "preproc_roi_input_count",
+      "preproc_roi_source_width",
+      "preproc_roi_source_height",
+      "preproc_roi_source_stride_bytes",
+      "preproc_roi_pad_value",
+      "preproc_roi_dropped_invalid",
+      "preproc_roi_dropped_overflow",
+      "preproc_roi_enable",
+      "preproc_roi_batch_index",
+      "preproc_roi_x",
+      "preproc_roi_y",
+      "preproc_roi_width",
+      "preproc_roi_height",
+  };
+  for (const char* field : kFields) {
+    gst_structure_remove_field(s, field);
+  }
+}
+
+std::optional<std::string> validate_preprocess_roi_list_local(const PreprocessRuntimeMeta& meta) {
+  if (!meta.has_roi_list()) {
+    return std::nullopt;
+  }
+  if (meta.roi_input_batch_size < 0) {
+    return std::string("invalid preprocess ROI metadata field 'preproc_roi_input_batch_size'");
+  }
+  if (meta.roi_source_width < 0 || meta.roi_source_height < 0 || meta.roi_source_stride_bytes < 0) {
+    return std::string("invalid preprocess ROI metadata source geometry");
+  }
+  if (meta.roi_capacity < 0 || meta.roi_valid_count < 0 || meta.roi_input_count < 0 ||
+      meta.roi_dropped_invalid < 0 || meta.roi_dropped_overflow < 0) {
+    return std::string("invalid preprocess ROI metadata counters");
+  }
+  if (!meta.roi_affines.empty() && meta.roi_affines.size() != meta.rois.size()) {
+    return std::string("invalid preprocess ROI metadata field 'preproc_roi_affines'");
+  }
+  const int input_batch_size = meta.roi_input_batch_size > 0 ? meta.roi_input_batch_size
+                               : meta.original_width > 0     ? 1
+                                                             : 0;
+  for (const auto& roi : meta.rois) {
+    if (roi.batch_index < 0) {
+      return std::string("invalid preprocess ROI metadata field 'preproc_roi_batch_indices'");
+    }
+    if (input_batch_size > 0 && roi.batch_index >= input_batch_size) {
+      return std::string("invalid preprocess ROI metadata field 'preproc_roi_batch_indices'");
+    }
+    if (roi.width <= 0 || roi.height <= 0) {
+      return std::string("invalid preprocess ROI metadata field 'preproc_roi_rects'");
+    }
+  }
+  return std::nullopt;
+}
+
+bool write_preprocess_roi_list_fields_local(GstStructure* s, const PreprocessRuntimeMeta& meta) {
+  if (!s) {
+    return false;
+  }
+  const bool has_roi_list = meta.has_roi_list();
+  if (!has_roi_list) {
+    gst_structure_remove_preprocess_roi_fields_local(s);
+    return true;
+  }
+  if (validate_preprocess_roi_list_local(meta).has_value()) {
+    return false;
+  }
+
+  std::vector<int> batch_indices;
+  std::vector<int> rects;
+  std::vector<double> affines;
+  batch_indices.reserve(meta.rois.size());
+  rects.reserve(meta.rois.size() * 4U);
+  affines.reserve(meta.roi_affines.size() * 6U);
+  for (const auto& roi : meta.rois) {
+    batch_indices.push_back(roi.batch_index);
+    rects.push_back(roi.x);
+    rects.push_back(roi.y);
+    rects.push_back(roi.width);
+    rects.push_back(roi.height);
+  }
+  for (const auto& affine : meta.roi_affines) {
+    affines.push_back(affine.m00);
+    affines.push_back(affine.m01);
+    affines.push_back(affine.m02);
+    affines.push_back(affine.m10);
+    affines.push_back(affine.m11);
+    affines.push_back(affine.m12);
+  }
+
+  gst_structure_set(
+      s, "preproc_roi_list_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_count", G_TYPE_INT,
+      static_cast<int>(meta.rois.size()), "preproc_roi_capacity", G_TYPE_INT, meta.roi_capacity,
+      "preproc_valid_batch_count", G_TYPE_INT, meta.roi_valid_count, "preproc_roi_input_batch_size",
+      G_TYPE_INT, meta.roi_input_batch_size, "preproc_roi_input_count", G_TYPE_INT,
+      meta.roi_input_count, "preproc_roi_dropped_invalid", G_TYPE_INT, meta.roi_dropped_invalid,
+      "preproc_roi_dropped_overflow", G_TYPE_INT, meta.roi_dropped_overflow,
+      "preproc_roi_source_width", G_TYPE_INT, meta.roi_source_width, "preproc_roi_source_height",
+      G_TYPE_INT, meta.roi_source_height, "preproc_roi_source_stride_bytes", G_TYPE_INT,
+      meta.roi_source_stride_bytes, "preproc_roi_pad_value", G_TYPE_INT, meta.roi_pad_value,
+      nullptr);
+  if (!gst_structure_set_int_vector_field_local(s, "preproc_roi_batch_indices", batch_indices) ||
+      !gst_structure_set_int_vector_field_local(s, "preproc_roi_rects", rects)) {
+    return false;
+  }
+  if (!affines.empty()) {
+    if (!gst_structure_set_double_vector_field_local(s, "preproc_roi_affines", affines)) {
+      return false;
+    }
+  } else {
+    gst_structure_remove_field(s, "preproc_roi_affines");
+  }
+
+  if (meta.rois.size() == 1U) {
+    const auto& roi = meta.rois.front();
+    gst_structure_set(s, "preproc_roi_enable", G_TYPE_BOOLEAN, TRUE, "preproc_roi_batch_index",
+                      G_TYPE_INT, roi.batch_index, "preproc_roi_x", G_TYPE_INT, roi.x,
+                      "preproc_roi_y", G_TYPE_INT, roi.y, "preproc_roi_width", G_TYPE_INT,
+                      roi.width, "preproc_roi_height", G_TYPE_INT, roi.height, nullptr);
+  } else {
+    gst_structure_remove_field(s, "preproc_roi_enable");
+    gst_structure_remove_field(s, "preproc_roi_batch_index");
+    gst_structure_remove_field(s, "preproc_roi_x");
+    gst_structure_remove_field(s, "preproc_roi_y");
+    gst_structure_remove_field(s, "preproc_roi_width");
+    gst_structure_remove_field(s, "preproc_roi_height");
+  }
+  return true;
+}
+
+bool gst_structure_has_preprocess_roi_list_fields_local(const GstStructure* s) {
+  return s && (gst_structure_has_field(s, "preproc_roi_list_enable") ||
+               gst_structure_has_field(s, "preproc_roi_count") ||
+               gst_structure_has_field(s, "preproc_roi_batch_indices") ||
+               gst_structure_has_field(s, "preproc_roi_rects"));
+}
+
+bool gst_structure_read_preprocess_roi_list_fields_local(const GstStructure* s,
+                                                         PreprocessRuntimeMeta* meta) {
+  if (!s || !meta) {
+    return false;
+  }
+  gboolean enabled = FALSE;
+  const bool has_enable = gst_structure_get_boolean(s, "preproc_roi_list_enable", &enabled) == TRUE;
+  if (has_enable && enabled == FALSE) {
+    meta->roi_list_enabled = false;
+    meta->rois.clear();
+    return true;
+  }
+
+  int count = 0;
+  if (!gst_structure_get_int(s, "preproc_roi_count", &count) || count < 0) {
+    return false;
+  }
+  std::vector<int> batch_indices;
+  std::vector<int> rects;
+  if (!gst_structure_get_int_vector_field_local(s, "preproc_roi_batch_indices", &batch_indices) ||
+      !gst_structure_get_int_vector_field_local(s, "preproc_roi_rects", &rects)) {
+    return false;
+  }
+  if (batch_indices.size() != static_cast<size_t>(count) ||
+      rects.size() != static_cast<size_t>(count) * 4U) {
+    return false;
+  }
+
+  meta->roi_list_enabled = true;
+  meta->rois.clear();
+  meta->rois.reserve(static_cast<size_t>(count));
+  for (int i = 0; i < count; ++i) {
+    PreprocessRoi roi;
+    roi.batch_index = batch_indices[static_cast<size_t>(i)];
+    const size_t rect_off = static_cast<size_t>(i) * 4U;
+    roi.x = rects[rect_off + 0U];
+    roi.y = rects[rect_off + 1U];
+    roi.width = rects[rect_off + 2U];
+    roi.height = rects[rect_off + 3U];
+    meta->rois.push_back(roi);
+  }
+  (void)gst_structure_get_int(s, "preproc_roi_input_batch_size", &meta->roi_input_batch_size);
+  const bool has_capacity =
+      gst_structure_get_int(s, "preproc_roi_capacity", &meta->roi_capacity) == TRUE;
+  const bool has_valid_count =
+      gst_structure_get_int(s, "preproc_valid_batch_count", &meta->roi_valid_count) == TRUE;
+  const bool has_input_count =
+      gst_structure_get_int(s, "preproc_roi_input_count", &meta->roi_input_count) == TRUE;
+  (void)gst_structure_get_int(s, "preproc_roi_dropped_invalid", &meta->roi_dropped_invalid);
+  (void)gst_structure_get_int(s, "preproc_roi_dropped_overflow", &meta->roi_dropped_overflow);
+  (void)gst_structure_get_int(s, "preproc_roi_source_width", &meta->roi_source_width);
+  (void)gst_structure_get_int(s, "preproc_roi_source_height", &meta->roi_source_height);
+  (void)gst_structure_get_int(s, "preproc_roi_source_stride_bytes", &meta->roi_source_stride_bytes);
+  (void)gst_structure_get_int(s, "preproc_roi_pad_value", &meta->roi_pad_value);
+  meta->roi_affines.clear();
+  if (gst_structure_has_field(s, "preproc_roi_affines")) {
+    std::vector<double> affines;
+    if (!gst_structure_get_double_vector_field_local(s, "preproc_roi_affines", &affines) ||
+        affines.size() != meta->rois.size() * 6U) {
+      return false;
+    }
+    meta->roi_affines.reserve(meta->rois.size());
+    for (std::size_t i = 0; i < meta->rois.size(); ++i) {
+      const std::size_t off = i * 6U;
+      PreprocessAffine affine;
+      affine.m00 = affines[off + 0U];
+      affine.m01 = affines[off + 1U];
+      affine.m02 = affines[off + 2U];
+      affine.m10 = affines[off + 3U];
+      affine.m11 = affines[off + 4U];
+      affine.m12 = affines[off + 5U];
+      meta->roi_affines.push_back(affine);
+    }
+  }
+  if (!has_capacity) {
+    meta->roi_capacity = count;
+  }
+  if (!has_valid_count) {
+    meta->roi_valid_count = count;
+  }
+  if (!has_input_count) {
+    meta->roi_input_count = count;
+  }
+  return !validate_preprocess_roi_list_local(*meta).has_value();
+}
+
+bool gst_structure_read_legacy_preprocess_roi_fields_local(const GstStructure* s,
+                                                           PreprocessRuntimeMeta* meta) {
+  if (!s || !meta || !gst_structure_has_field(s, "preproc_roi_enable")) {
+    return true;
+  }
+  gboolean enabled = FALSE;
+  if (gst_structure_get_boolean(s, "preproc_roi_enable", &enabled) != TRUE || enabled == FALSE) {
+    return true;
+  }
+
+  PreprocessRoi roi;
+  if (!gst_structure_get_int(s, "preproc_roi_x", &roi.x) ||
+      !gst_structure_get_int(s, "preproc_roi_y", &roi.y) ||
+      !gst_structure_get_int(s, "preproc_roi_width", &roi.width) ||
+      !gst_structure_get_int(s, "preproc_roi_height", &roi.height)) {
+    return false;
+  }
+  (void)gst_structure_get_int(s, "preproc_roi_batch_index", &roi.batch_index);
+  meta->roi_list_enabled = true;
+  meta->rois = {roi};
+  meta->roi_capacity = 1;
+  meta->roi_valid_count = 1;
+  meta->roi_input_count = 1;
+  (void)gst_structure_get_int(s, "preproc_roi_source_width", &meta->roi_source_width);
+  (void)gst_structure_get_int(s, "preproc_roi_source_height", &meta->roi_source_height);
+  (void)gst_structure_get_int(s, "preproc_roi_source_stride_bytes", &meta->roi_source_stride_bytes);
+  (void)gst_structure_get_int(s, "preproc_roi_pad_value", &meta->roi_pad_value);
+  if (meta->roi_input_batch_size <= 0) {
+    meta->roi_input_batch_size = roi.batch_index + 1;
+  }
+  return !validate_preprocess_roi_list_local(*meta).has_value();
+}
+
 bool ensure_custom_meta_structure_mutable(GstBuffer* buffer, const char* meta_name,
                                           GstCustomMeta** meta_out, GstStructure** structure_out) {
   if (!buffer || !meta_name || !meta_out || !structure_out) {
@@ -1030,8 +1338,33 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
       throw std::invalid_argument(tag + ": simaai::neat::Tensor image format mismatch");
     }
 
-    int h = shape_dim(input.shape, 0);
-    int w = shape_dim(input.shape, 1);
+    int packed_batch = 1;
+    int packed_h_index = 0;
+    int packed_w_index = 1;
+    int packed_c_index = 2;
+    const bool packed_video_has_batch = input.shape.size() == 4U;
+    if (packed_video_has_batch && fmt != "NV12" && fmt != "I420") {
+      const bool has_nhwc_axis_semantics = input.axis_semantics.size() == 4U &&
+                                           input.axis_semantics[0] == TensorAxisSemantic::N &&
+                                           input.axis_semantics[1] == TensorAxisSemantic::H &&
+                                           input.axis_semantics[2] == TensorAxisSemantic::W &&
+                                           input.axis_semantics[3] == TensorAxisSemantic::C;
+      if (input.layout != TensorLayout::HWC && !has_nhwc_axis_semantics) {
+        throw std::invalid_argument(tag +
+                                    ": batched packed video must use HWC layout or N/H/W/C axis "
+                                    "semantics");
+      }
+      packed_batch = shape_dim(input.shape, 0);
+      packed_h_index = 1;
+      packed_w_index = 2;
+      packed_c_index = 3;
+      if (packed_batch <= 0) {
+        throw std::invalid_argument(tag + ": batched packed video has invalid batch dimension");
+      }
+    }
+
+    int h = shape_dim(input.shape, static_cast<size_t>(packed_h_index));
+    int w = shape_dim(input.shape, static_cast<size_t>(packed_w_index));
 
     if (fmt == "NV12" || fmt == "I420") {
       if (input.byte_offset != 0) {
@@ -1126,7 +1459,7 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
         throw std::invalid_argument(tag + ": video input missing width/height");
       }
       const int expected_depth = (fmt == "GRAY8") ? 1 : 3;
-      const int shape_d = shape_dim(input.shape, 2);
+      const int shape_d = shape_dim(input.shape, static_cast<size_t>(packed_c_index));
       if ((fmt == "RGB" || fmt == "BGR") && shape_d <= 0) {
         throw std::invalid_argument(tag + ": video depth is required for RGB/BGR");
       }
@@ -1143,8 +1476,9 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
       plane.height = h;
       const int64_t expected_stride =
           static_cast<int64_t>(w) * static_cast<int64_t>(expected_depth);
-      const int64_t stride =
-          !input.strides_bytes.empty() ? input.strides_bytes[0] : expected_stride;
+      const int64_t stride = !input.strides_bytes.empty()
+                                 ? input.strides_bytes[static_cast<size_t>(packed_h_index)]
+                                 : expected_stride;
       if (stride < expected_stride) {
         throw std::invalid_argument(tag + ": packed video stride too small");
       }
@@ -1152,13 +1486,31 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
           input.strides_bytes.back() != static_cast<int64_t>(dtype_bytes(input.dtype))) {
         throw std::invalid_argument(tag + ": packed video element stride mismatch");
       }
+      if (packed_video_has_batch) {
+        const int64_t expected_frame_stride = expected_stride * static_cast<int64_t>(h);
+        if (input.strides_bytes.empty()) {
+          // Empty strides denote compact row-major storage.
+        } else if (input.strides_bytes.size() != 4U ||
+                   input.strides_bytes[0] != expected_frame_stride ||
+                   input.strides_bytes[1] != expected_stride ||
+                   input.strides_bytes[2] != static_cast<int64_t>(expected_depth) ||
+                   input.strides_bytes[3] != static_cast<int64_t>(dtype_bytes(input.dtype))) {
+          throw std::invalid_argument(tag +
+                                      ": batched packed video must be tightly contiguous NHWC");
+        }
+      }
       plane.stride_bytes = stride;
       plane.offset_bytes = input.byte_offset;
-      const size_t bytes = static_cast<size_t>(stride) * static_cast<size_t>(h);
-      if (bytes == 0) {
+      const size_t frame_bytes = static_cast<size_t>(stride) * static_cast<size_t>(h);
+      if (packed_batch > 0 &&
+          frame_bytes > std::numeric_limits<size_t>::max() / static_cast<size_t>(packed_batch)) {
+        throw std::invalid_argument(tag + ": batched packed video byte size overflow");
+      }
+      const size_t bytes = frame_bytes * static_cast<size_t>(packed_batch);
+      if (frame_bytes == 0 || bytes == 0) {
         throw std::invalid_argument(tag + ": video input has invalid byte size");
       }
-      plane.size_bytes = bytes;
+      plane.size_bytes = frame_bytes;
       spec.planes.push_back(plane);
       spec.required_bytes_actual = bytes;
     }
@@ -1195,7 +1547,11 @@ SampleSpec derive_tensor_spec_or_throw(const simaai::neat::Tensor& input, const 
     std::vector<int64_t> normalized_shape = input.shape;
     const bool layout_is_explicit = input.layout != TensorLayout::Unknown;
     const size_t expected_rank = (input.layout == TensorLayout::HW) ? 2u : 3u;
-    if (layout_is_explicit && normalized_shape.size() == expected_rank + 1) {
+    const bool has_explicit_leading_batch_axis =
+        input.axis_semantics.size() == normalized_shape.size() && !input.axis_semantics.empty() &&
+        input.axis_semantics.front() == TensorAxisSemantic::N;
+    if (layout_is_explicit && normalized_shape.size() == expected_rank + 1 &&
+        !has_explicit_leading_batch_axis) {
       const int64_t batch = normalized_shape.front();
       if (batch <= 0) {
         throw std::invalid_argument(tag + ": invalid leading batch dimension");
@@ -2351,6 +2707,9 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
       perm_error.has_value()) {
     return false;
   }
+  if (const auto roi_error = validate_preprocess_roi_list_local(meta); roi_error.has_value()) {
+    return false;
+  }
   GstCustomMeta* custom = nullptr;
   GstStructure* s = nullptr;
   if (!ensure_custom_meta_structure_mutable(buffer, "GstSimaMeta", &custom, &s)) {
@@ -2376,6 +2735,9 @@ bool write_simaai_preprocess_meta(GstBuffer* buffer, const PreprocessRuntimeMeta
       meta.affine_offset_x, "preproc_affine_offset_y", G_TYPE_DOUBLE, meta.affine_offset_y,
       nullptr);
   if (!gst_structure_set_int_vector_field_local(s, "preproc_axis_perm", meta.axis_perm)) {
+    return false;
+  }
+  if (!write_preprocess_roi_list_fields_local(s, meta)) {
     return false;
   }
   return true;
@@ -2479,6 +2841,13 @@ std::optional<PreprocessRuntimeMeta> read_simaai_preprocess_meta(GstBuffer* buff
   gst_structure_get_double(s, "preproc_affine_scale_y", &meta.affine_scale_y);
   gst_structure_get_double(s, "preproc_affine_offset_x", &meta.affine_offset_x);
   gst_structure_get_double(s, "preproc_affine_offset_y", &meta.affine_offset_y);
+  if (gst_structure_has_preprocess_roi_list_fields_local(s)) {
+    if (!gst_structure_read_preprocess_roi_list_fields_local(s, &meta)) {
+      return std::nullopt;
+    }
+  } else if (!gst_structure_read_legacy_preprocess_roi_fields_local(s, &meta)) {
+    return std::nullopt;
+  }
   return meta;
 #else
   (void)buffer;
@@ -2568,7 +2937,18 @@ validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
     if (!gst_structure_get_int_vector_field_local(s, field, &values)) {
       return std::string("missing or invalid int-list preprocess metadata field '") + field + "'";
     }
-    return validate_axis_perm_vector_local(values, field);
+    if (std::string(field) == "preproc_axis_perm") {
+      return validate_axis_perm_vector_local(values, field);
+    }
+    return std::nullopt;
+  };
+  auto require_double_list = [&](const char* field) -> std::optional<std::string> {
+    std::vector<double> values;
+    if (!gst_structure_get_double_vector_field_local(s, field, &values)) {
+      return std::string("missing or invalid double-list preprocess metadata field '") + field +
+             "'";
+    }
+    return std::nullopt;
   };
 
   for (const auto& field : required_fields) {
@@ -2600,6 +2980,25 @@ validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
                field == "preproc_affine_scale_x" || field == "preproc_affine_scale_y" ||
                field == "preproc_affine_offset_x" || field == "preproc_affine_offset_y") {
       err = require_double(field.c_str());
+    } else if (field == "preproc_roi_list_enable" || field == "preproc_roi_enable") {
+      err = require_bool(field.c_str());
+    } else if (field == "preproc_roi_batch_indices" || field == "preproc_roi_rects") {
+      err = require_int_list(field.c_str());
+    } else if (field == "preproc_roi_affines") {
+      err = require_double_list(field.c_str());
+    } else if (field == "preproc_roi_count" || field == "preproc_roi_batch_index" ||
+               field == "preproc_roi_x" || field == "preproc_roi_y" ||
+               field == "preproc_roi_width" || field == "preproc_roi_height" ||
+               field == "preproc_roi_input_batch_size" || field == "preproc_roi_capacity" ||
+               field == "preproc_valid_batch_count" || field == "preproc_roi_input_count" ||
+               field == "preproc_roi_dropped_invalid" || field == "preproc_roi_dropped_overflow" ||
+               field == "preproc_roi_source_width" || field == "preproc_roi_source_height" ||
+               field == "preproc_roi_source_stride_bytes" || field == "preproc_roi_pad_value") {
+      const bool positive = field == "preproc_roi_width" || field == "preproc_roi_height" ||
+                            field == "preproc_roi_source_width" ||
+                            field == "preproc_roi_source_height" ||
+                            field == "preproc_roi_source_stride_bytes";
+      err = require_int(field.c_str(), positive);
     }
 
     if (err.has_value()) {
@@ -2623,12 +3022,13 @@ validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
 #endif
 }
 
-bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions& opt,
-                                           int input_width, int input_height) {
-  if (!buffer || !opt.preprocess_meta.has_value() || !opt.preprocess_meta->enabled)
-    return false;
+std::optional<PreprocessRuntimeMeta>
+make_simaai_preprocess_meta_from_template(const InputOptions& opt, int input_width,
+                                          int input_height) {
+  if (!opt.preprocess_meta.has_value() || !opt.preprocess_meta->enabled)
+    return std::nullopt;
   if (input_width <= 0 || input_height <= 0)
-    return false;
+    return std::nullopt;
 
   const PreprocessMetaTemplate& tmpl = *opt.preprocess_meta;
   PreprocessRuntimeMeta meta;
@@ -2640,6 +3040,20 @@ bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions
   meta.normalize = tmpl.normalize;
   meta.quantize = tmpl.quantize;
   meta.tessellate = tmpl.tessellate;
+  meta.roi_list_enabled = tmpl.roi_list_enabled;
+  meta.rois = tmpl.rois;
+  meta.roi_input_batch_size = tmpl.roi_input_batch_size;
+  meta.roi_source_width = tmpl.roi_source_width > 0 ? tmpl.roi_source_width : input_width;
+  meta.roi_source_height = tmpl.roi_source_height > 0 ? tmpl.roi_source_height : input_height;
+  const int input_depth = opt.depth > 0 ? opt.depth : 1;
+  meta.roi_source_stride_bytes =
+      tmpl.roi_source_stride_bytes > 0 ? tmpl.roi_source_stride_bytes : input_width * input_depth;
+  meta.roi_pad_value = tmpl.roi_pad_value;
+  if (meta.has_roi_list()) {
+    meta.roi_capacity = static_cast<int>(meta.rois.size());
+    meta.roi_valid_count = static_cast<int>(meta.rois.size());
+    meta.roi_input_count = static_cast<int>(meta.rois.size());
+  }
 
   const int target_w = (tmpl.target_width > 0) ? tmpl.target_width : input_width;
   const int target_h = (tmpl.target_height > 0) ? tmpl.target_height : input_height;
@@ -2723,7 +3137,17 @@ bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions
     meta.affine_offset_y = 0.0;
   }
 
-  return write_simaai_preprocess_meta(buffer, meta);
+  return meta;
+}
+
+bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions& opt,
+                                           int input_width, int input_height) {
+  if (!buffer)
+    return false;
+  const auto meta = make_simaai_preprocess_meta_from_template(opt, input_width, input_height);
+  if (!meta.has_value())
+    return false;
+  return write_simaai_preprocess_meta(buffer, *meta);
 }
 
 GstBuffer* attach_simaai_meta_inplace(GstBuffer* buffer, const InputOptions& opt,

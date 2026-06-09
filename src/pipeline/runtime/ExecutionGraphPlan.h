@@ -103,6 +103,19 @@ struct BoundaryPolicy {
   bool direct_graph_sink = false;
 };
 
+struct MaterializedNodeAttribution {
+  enum class Role {
+    SegmentNode,
+    InjectedInput,
+    InjectedOutput,
+  };
+
+  std::size_t materialized_index = 0;
+  std::size_t segment_node_index = static_cast<std::size_t>(-1);
+  graph::NodeId runtime_node = graph::kInvalidNode;
+  Role role = Role::SegmentNode;
+};
+
 struct PipelineSegmentPlan {
   std::size_t id = 0;
   std::vector<graph::NodeId> node_ids;
@@ -122,7 +135,55 @@ struct PipelineSegmentPlan {
   RunOptions run_options;
   InputStreamOptions stream_options;
   std::vector<Provenance> provenance;
+  std::vector<MaterializedNodeAttribution> materialized_node_attribution;
 };
+
+inline graph::NodeId attributed_runtime_node_for_segment_node(const PipelineSegmentPlan& segment,
+                                                              std::size_t segment_node_index) {
+  if (segment_node_index < segment.provenance.size() &&
+      segment.provenance[segment_node_index].runtime_node != graph::kInvalidNode) {
+    return segment.provenance[segment_node_index].runtime_node;
+  }
+  if (segment_node_index < segment.node_ids.size()) {
+    return segment.node_ids[segment_node_index];
+  }
+  if (segment.node_ids.size() == 1U) {
+    return segment.node_ids.front();
+  }
+  return graph::kInvalidNode;
+}
+
+inline std::vector<MaterializedNodeAttribution>
+make_materialized_node_attribution(const PipelineSegmentPlan& segment, bool injected_input,
+                                   bool injected_output) {
+  std::vector<MaterializedNodeAttribution> out;
+  out.reserve(segment.nodes.size() + (injected_input ? 1U : 0U) + (injected_output ? 1U : 0U));
+
+  if (injected_input) {
+    MaterializedNodeAttribution attr;
+    attr.materialized_index = out.size();
+    attr.role = MaterializedNodeAttribution::Role::InjectedInput;
+    out.push_back(attr);
+  }
+
+  for (std::size_t i = 0; i < segment.nodes.size(); ++i) {
+    MaterializedNodeAttribution attr;
+    attr.materialized_index = out.size();
+    attr.segment_node_index = i;
+    attr.runtime_node = attributed_runtime_node_for_segment_node(segment, i);
+    attr.role = MaterializedNodeAttribution::Role::SegmentNode;
+    out.push_back(attr);
+  }
+
+  if (injected_output) {
+    MaterializedNodeAttribution attr;
+    attr.materialized_index = out.size();
+    attr.role = MaterializedNodeAttribution::Role::InjectedOutput;
+    out.push_back(attr);
+  }
+
+  return out;
+}
 
 struct StageNodePlan {
   graph::NodeId node_id = graph::kInvalidNode;

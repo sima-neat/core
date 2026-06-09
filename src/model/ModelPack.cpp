@@ -1,6 +1,8 @@
 #include "model/internal/ModelPack.h"
 #include "pipeline/internal/sima/ProcessCvuFamily.h"
 #include "model/internal/ModelArchiveLoader.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/ErrorUtil.h"
 
 #include "builder/NodeContractConfigurable.h"
 #include "builder/CompiledChildStageProvider.h"
@@ -1106,7 +1108,17 @@ static std::string extract_and_organize(const std::string& tar_path,
     cache[cache_key] = target_dir.string();
     return target_dir.string();
   } catch (const simaai::neat::internal::ModelArchiveError& e) {
-    throw std::runtime_error(std::string("ModelPack: ") + e.what());
+    // Surface archive failures as a structured NeatError (not a flat std::runtime_error) so the
+    // public Model boundary carries a machine-triage error_code, per the Model.h error contract.
+    const ModelArchiveErrorClass cls = e.code();
+    const char* code = (cls == ModelArchiveErrorClass::SizeLimitExceeded ||
+                        cls == ModelArchiveErrorClass::OutputStorageUnavailable)
+                           ? error_codes::kIoOpen
+                           : error_codes::kIoParse;
+    simaai::neat::pipeline_internal::error_util::throw_session_error(
+        code, std::string("ModelPack: ") + model_archive_error_class_name(cls) + ": " + e.what(),
+        /*pipeline_string=*/{},
+        "Re-export the model archive and verify it contains a valid MPK contract.");
   }
 }
 

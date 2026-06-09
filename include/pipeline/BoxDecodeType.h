@@ -27,6 +27,10 @@ namespace simaai::neat {
  * - decoupled heads: repeated class-depth tensors, class depth > 4
  * - packed heads: depth = 3 * (num_classes + 5), consistent across heads
  * `YoloV26` uses decoupled 4-channel raw l/t/r/b bbox heads paired with class heads.
+ * `YoloV26Seg` uses the same raw l/t/r/b bbox heads, class-score heads,
+ * 32-channel mask-coefficient heads, and a trailing mask prototype.
+ * `YoloV26Pose` uses the same raw l/t/r/b bbox heads, 1-channel pose scores,
+ * and 51-channel keypoint heads.
  *
  * @ingroup pipeline
  */
@@ -34,23 +38,27 @@ enum class BoxDecodeType : std::int32_t {
   // Internal sentinel; runtime decode requires a concrete value.
   Unspecified = 0, ///< Sentinel: no decode family selected (fails fast at runtime).
   // YOLO-family (generic token).
-  Yolo = 1,        ///< Generic YOLO family token.
-  YoloV5 = 2,      ///< YOLOv5 detection.
-  YoloV5Seg = 3,   ///< YOLOv5 segmentation.
-  YoloV7 = 4,      ///< YOLOv7 detection.
-  YoloV7Seg = 5,   ///< YOLOv7 segmentation.
-  YoloV8 = 6,      ///< YOLOv8 detection.
-  YoloV8Seg = 7,   ///< YOLOv8 segmentation.
-  YoloV8Pose = 8,  ///< YOLOv8 pose-estimation heads.
-  YoloV9 = 9,      ///< YOLOv9 detection.
-  YoloV9Seg = 10,  ///< YOLOv9 segmentation.
-  YoloV10 = 11,    ///< YOLOv10 detection.
-  YoloV10Seg = 12, ///< YOLOv10 segmentation.
-  Detr = 13,       ///< DETR-style transformer detection.
-  EffDet = 14,     ///< EfficientDet detection.
-  RcnnStage1 = 15, ///< Region-proposal stage of two-stage R-CNN models.
-  Centernet = 16,  ///< CenterNet keypoint-style detection.
-  YoloV26 = 17,    ///< YOLO26 detection (raw l/t/r/b distance heads).
+  Yolo = 1,         ///< Generic YOLO family token.
+  YoloV5 = 2,       ///< YOLOv5 detection.
+  YoloV5Seg = 3,    ///< YOLOv5 segmentation.
+  YoloV7 = 4,       ///< YOLOv7 detection.
+  YoloV7Seg = 5,    ///< YOLOv7 segmentation.
+  YoloV8 = 6,       ///< YOLOv8 detection.
+  YoloV8Seg = 7,    ///< YOLOv8 segmentation.
+  YoloV8Pose = 8,   ///< YOLOv8 pose-estimation heads.
+  YoloV9 = 9,       ///< YOLOv9 detection.
+  YoloV9Seg = 10,   ///< YOLOv9 segmentation.
+  YoloV10 = 11,     ///< YOLOv10 detection.
+  YoloV10Seg = 12,  ///< YOLOv10 segmentation.
+  Detr = 13,        ///< DETR-style transformer detection.
+  EffDet = 14,      ///< EfficientDet detection.
+  RcnnStage1 = 15,  ///< Region-proposal stage of two-stage R-CNN models.
+  Centernet = 16,   ///< CenterNet keypoint-style detection.
+  YoloV26 = 17,     ///< YOLO26 detection (raw l/t/r/b distance heads).
+  YoloV26Pose = 18, ///< YOLO26 pose-estimation heads.
+  YoloV26Seg = 19,  ///< YOLO26 segmentation heads.
+  YoloV6 = 20,      ///< YOLOv6 raw l/t/r/b distance heads.
+  YoloX = 21,       ///< YOLOX raw xywh heads with separate objectness and class logits.
 };
 
 /**
@@ -75,6 +83,35 @@ enum class BoxDecodeTypeOption : std::int32_t {
   GroupedByRoleProbability = 8,     ///< Grouped-by-role, class scores as probabilities.
   GroupedByRoleLogit = 9,           ///< Grouped-by-role, class scores as logits.
 };
+
+/**
+ * @brief Source byte layout of the head tensors feeding a BoxDecode stage.
+ *
+ * For model-pack (`Model`-constructed) graphs this is resolved authoritatively from the
+ * model archive and must NOT be set by hand. For hand-built graphs that decode without a
+ * model pack (e.g. a `Cast`/detess stage stitched directly into `SimaBoxDecode`), the
+ * upstream contract does not carry the packing flags, so the value cannot be inferred and
+ * must be specified explicitly via the `SimaBoxDecode` constructor. When it is neither
+ * supplied by a model pack nor specified, contract compilation fails fast.
+ *
+ * @ingroup pipeline
+ */
+enum class BoxDecodeSourceStorage : std::int32_t {
+  DenseHwc = 0,     ///< Dense, physically contiguous HWC heads (e.g. a Cast/dequant output).
+  PackedCBlock = 1, ///< Channel-block packed / tessellated heads (e.g. a cblock detess output).
+};
+
+/// @brief Stable lower-case token for an explicit source-storage selection (diagnostics/docs).
+constexpr const char* box_decode_source_storage_token(BoxDecodeSourceStorage storage) {
+  switch (storage) {
+  case BoxDecodeSourceStorage::DenseHwc:
+    return "dense-hwc";
+  case BoxDecodeSourceStorage::PackedCBlock:
+    return "packed-cblock";
+  default:
+    return "dense-hwc";
+  }
+}
 
 /// @brief Stable lower-case token for a decode family (used in caps, manifests, logs).
 constexpr const char* box_decode_type_token(BoxDecodeType type) {
@@ -105,6 +142,14 @@ constexpr const char* box_decode_type_token(BoxDecodeType type) {
     return "yolov10-seg";
   case BoxDecodeType::YoloV26:
     return "yolo26";
+  case BoxDecodeType::YoloV26Pose:
+    return "yolo26-pose";
+  case BoxDecodeType::YoloV26Seg:
+    return "yolo26-seg";
+  case BoxDecodeType::YoloV6:
+    return "yolov6";
+  case BoxDecodeType::YoloX:
+    return "yolox";
   case BoxDecodeType::Detr:
     return "detr";
   case BoxDecodeType::EffDet:
@@ -163,6 +208,10 @@ constexpr bool box_decode_type_is_yolo_family(BoxDecodeType type) {
   case BoxDecodeType::YoloV10:
   case BoxDecodeType::YoloV10Seg:
   case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV26Pose:
+  case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
     return true;
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
@@ -182,6 +231,7 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV8Seg:
   case BoxDecodeType::YoloV9Seg:
   case BoxDecodeType::YoloV10Seg:
+  case BoxDecodeType::YoloV26Seg:
     return true;
   case BoxDecodeType::Yolo:
   case BoxDecodeType::YoloV5:
@@ -191,6 +241,40 @@ constexpr bool box_decode_type_is_segmentation(BoxDecodeType type) {
   case BoxDecodeType::YoloV9:
   case BoxDecodeType::YoloV10:
   case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV26Pose:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
+  case BoxDecodeType::Detr:
+  case BoxDecodeType::EffDet:
+  case BoxDecodeType::RcnnStage1:
+  case BoxDecodeType::Centernet:
+  case BoxDecodeType::Unspecified:
+  default:
+    return false;
+  }
+}
+
+/// @brief True iff @p type is a pose-estimation variant (carries keypoint heads).
+constexpr bool box_decode_type_is_pose(BoxDecodeType type) {
+  switch (type) {
+  case BoxDecodeType::YoloV8Pose:
+  case BoxDecodeType::YoloV26Pose:
+    return true;
+  case BoxDecodeType::Yolo:
+  case BoxDecodeType::YoloV5:
+  case BoxDecodeType::YoloV5Seg:
+  case BoxDecodeType::YoloV7:
+  case BoxDecodeType::YoloV7Seg:
+  case BoxDecodeType::YoloV8:
+  case BoxDecodeType::YoloV8Seg:
+  case BoxDecodeType::YoloV9:
+  case BoxDecodeType::YoloV9Seg:
+  case BoxDecodeType::YoloV10:
+  case BoxDecodeType::YoloV10Seg:
+  case BoxDecodeType::YoloV26:
+  case BoxDecodeType::YoloV26Seg:
+  case BoxDecodeType::YoloV6:
+  case BoxDecodeType::YoloX:
   case BoxDecodeType::Detr:
   case BoxDecodeType::EffDet:
   case BoxDecodeType::RcnnStage1:
@@ -216,6 +300,19 @@ constexpr const char* box_decode_type_contract_summary(BoxDecodeType type) {
   case BoxDecodeType::YoloV26:
     return "YOLO26 tensor contract: grouped raw l/t/r/b bbox heads (4 channels) paired "
            "with repeated class-score heads (>4 channels).";
+  case BoxDecodeType::YoloV26Pose:
+    return "YOLO26-pose contract: grouped raw l/t/r/b bbox heads (4 channels), "
+           "1-channel pose score heads, and 51-channel keypoint heads.";
+  case BoxDecodeType::YoloV26Seg:
+    return "YOLO26-seg contract: grouped raw l/t/r/b bbox heads (4 channels), "
+           "class-score heads, 32-channel mask-coefficient heads, and a trailing "
+           "32-channel mask prototype.";
+  case BoxDecodeType::YoloV6:
+    return "YOLOv6 raw-head contract: interleaved [bbox_ltrb_i, class_logit_i] "
+           "heads with 4-channel l/t/r/b distances and class-logit heads.";
+  case BoxDecodeType::YoloX:
+    return "YOLOX raw-head contract: interleaved [bbox_i, obj_logit_i, class_logit_i] "
+           "heads with raw xywh boxes, objectness logits, and class logits.";
   case BoxDecodeType::YoloV5Seg:
   case BoxDecodeType::YoloV7Seg:
   case BoxDecodeType::YoloV8Seg:

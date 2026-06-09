@@ -48,11 +48,11 @@ def main(argv: list[str]) -> int:
   image = load_image(args.image, size=224)
   # END STEP
   # STEP run-inference
-  sample = model.run([image], timeout_ms=2000)
+  outputs = model.run([image], timeout_ms=2000)
   # END STEP
   # END CORE LOGIC
 
-  top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
+  top1 = int(np.argmax(outputs[0].to_numpy().reshape(-1)))
   print(f"top1={top1}")
   return 0
 

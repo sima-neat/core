@@ -20,11 +20,11 @@ This chapter configures that decode — picking the model family with `decode_ty
 
 ### Configure the decode {#step-configure-decode}
 
-These options set both the input contract and the postprocessing behavior. `decode_type` (`yolov8` here) selects the model-family decode path. The confidence threshold drops weak candidates before NMS; the NMS IoU threshold controls how aggressively overlapping boxes are merged; `top_k` caps the final count for deterministic downstream cost; and `original_width`/`original_height` map decoded coordinates back into source-image pixels. Tuning guidance for each of these is in In Practice below.
+These options set both the input contract and the postprocessing behavior. `decode_type` (`YoloV8` here) selects the model-family decode path. The confidence threshold drops weak candidates before NMS; the NMS IoU threshold controls how aggressively overlapping boxes are merged; `top_k` caps the final count for deterministic downstream cost; and `boxdecode_original_width`/`boxdecode_original_height` map decoded coordinates back into source-image pixels. Tuning guidance for each of these is in In Practice below.
 
 **C++:** `decode_type` takes the `BoxDecodeType::YoloV8` enum. The threshold/NMS/`top_k` values are passed later through `stages::BoxDecodeOptions`, not on `Model::Options`.
 
-**Python:** `decode_type` is the string `"yolov8"`, and `score_threshold`, `nms_iou_threshold`, `top_k`, and `original_width`/`original_height` are set directly on `ModelOptions`. (`score_threshold` and the C++ `detection_threshold` name the same control — see the naming note in In Practice.)
+**Python:** `decode_type` takes the `pyneat.BoxDecodeType.YoloV8` enum, and `score_threshold`, `nms_iou_threshold`, `top_k`, and `boxdecode_original_width`/`boxdecode_original_height` are set directly on `ModelOptions`. (`score_threshold` and the C++ `detection_threshold` name the same control — see the naming note in In Practice.)
 
 ### Build the model {#step-load-model}
 
@@ -36,7 +36,7 @@ This is where a frame flows through preprocess, the MLA inference, and the box d
 
 **C++:** The path is made explicit stage-by-stage: `stages::Preproc` produces the input tensor, `stages::Infer` runs the model, and a `stages::BoxDecodeOptions` (with `detection_threshold = 0.55`, `nms_iou_threshold = 0.5`, `top_k = 100`) configures the decode that runs next.
 
-**Python:** `model.run([tensor])` runs the whole configured path in one call and returns a `Sample` carrying the decoded output.
+**Python:** `model.run([tensor])` runs the whole configured path in one call and returns a `TensorList`. When BoxDecode is wired into the model route, the first tensor is the packed `BBOX` output.
 
 ### Read the boxes {#step-read-boxes}
 
@@ -44,7 +44,7 @@ Finally, turn the decode output into something you can use.
 
 **C++:** `stages::BoxDecodeResults(...)` returns a `BoxDecodeResultList`; the front result's `boxes` vector is already parsed into `{x1, y1, x2, y2, score, class_id}` clamped to source pixels, so `decoded.boxes.size()` is the detection count.
 
-**Python:** The result is a single `BBOX` `uint8` tensor. The first four little-endian bytes are the detection count (`struct.unpack_from("<I", buf, 0)`); the full record layout is documented in In Practice. If a runtime doesn't wire BoxDecode into `model.run`, `sample.tensor` is `None` and the raw feature-map heads are reported instead.
+**Python:** The result is a single `BBOX` `uint8` tensor in `outputs[0]`. The first four little-endian bytes are the detection count (`struct.unpack_from("<I", buf, 0)`); the full record layout is documented in In Practice. If a runtime doesn't wire BoxDecode into `model.run`, the returned `TensorList` contains the raw feature-map heads instead.
 
 ## In Practice
 
@@ -53,19 +53,15 @@ packed byte buffer that the runtime parser interprets into floating-point
 detections. Understanding that two-level contract (wire buffer vs. parsed
 `Box` records) is the key to reading the output from either Python or C++.
 
-### Sample wrapper
+### BBOX tensor
 
-Regardless of language, the decode stage produces one `Sample` per input frame
-with:
+The decode stage produces one `BBOX` tensor per input frame with:
 
 | Field | Value |
 | --- | --- |
-| `kind` | `SampleKind.Tensor` (single-tensor sample, not a bundle) |
-| `payload_tag` / `format` | `"BBOX"` |
-| `media_type` | `"application/vnd.simaai.tensor"` |
-| `tensor.dtype` | `UInt8` |
-| `tensor.shape` | rank-1: `[N_bytes]`, where `N_bytes` is the model archive-packed buffer capacity (for example `[20160]` on the stock YOLOv8 pack) |
-| `fields` | empty (all payload lives in `tensor`) |
+| `semantic.detection.format` | `"BBOX"` |
+| `dtype` | `UInt8` |
+| `shape` | rank-1: `[N_bytes]`, where `N_bytes` is the model archive-packed buffer capacity (for example `[20160]` on the stock YOLOv8 pack) |
 
 The tensor shape is a **byte count**, not a detection count. The packed bytes
 hold both a small header and a contiguous array of fixed-size box records.
