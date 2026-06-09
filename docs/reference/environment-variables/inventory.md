@@ -299,7 +299,7 @@ Count: 61
 - `TSAN_OPTIONS`
 - `UBSAN_OPTIONS`
 
-## User-Facing `SIMA_*` Docs List (`docs/reference/env_vars.md`)
+## User-Facing `SIMA_*` Docs List (`docs/reference/environment-variables/index.md`)
 
 Count: 61
 

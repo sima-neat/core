@@ -202,7 +202,7 @@ def main() -> int:
         json.dumps(
             {
                 "label": "Python Reference",
-                "position": 99,
+                "position": 3,
                 "link": {"type": "doc", "id": "reference/pythonapi/index"},
             },
             indent=2,

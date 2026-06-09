@@ -1,7 +1,8 @@
 ---
 title: Environment Variables
 description: Runtime and builder environment variables
-sidebar_position: 1
+sidebar_position: 6
+slug: /reference/environment-variables
 ---
 
 # Environment variables
@@ -10,8 +11,7 @@ This page consolidates `SIMA_*` environment variables used by the runtime and
 builder. Many are debug/diagnostic toggles; most users can ignore them unless
 troubleshooting.
 
-For a full runtime inventory and consolidation classification, see
-`docs/reference/env_var_rationalization.md`.
+For the exhaustive detected list, see [Environment Variable Inventory](./inventory).
 
 > Note: Some knobs are internal/test-only and may change. They are included here
 > because they appear in code paths today.

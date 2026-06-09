@@ -410,8 +410,18 @@ def write_group_categories(dst_root: Path, landing: Optional[Dict]) -> None:
         )
 
 
-def write_category_json(dst_root: Path, label: str, position: int) -> None:
+def write_category_json(
+    dst_root: Path,
+    label: str,
+    position: int,
+    link_doc_id: Optional[str] = None,
+) -> None:
     payload = {"label": label, "position": position}
+    if link_doc_id:
+        payload["link"] = {
+            "type": "doc",
+            "id": link_doc_id,
+        }
     (dst_root / "_category_.json").write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
@@ -649,7 +659,9 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
             exclude_files,
             restructure_api,
         )
-        write_category_json(dst_section, title, sidebar_position)
+        category_link = source.get("category_link")
+        link_doc_id = f"{mount}/{category_link}" if category_link else None
+        write_category_json(dst_section, title, sidebar_position, link_doc_id)
         write_group_categories(dst_section, landing)
         maybe_write_landing_page(source, src_docs, dst_section, title)
         group_commands = source.get("group_commands")

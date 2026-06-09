@@ -1,9 +1,9 @@
 ---
-title: Model Compilation
-sidebar_position: 8
+title: Compilation
+sidebar_position: 5
 ---
 
-# Model Compilation
+# Compilation
 
 Run the compilation job that turns a quantized network into the MPK artifact consumed by the runtime.
 

@@ -2,6 +2,7 @@
 title: Send Video
 description: VideoSender H.264 RTP/UDP wire format
 sidebar_position: 5
+slug: /develop-apps/advanced-concepts/video_sender
 ---
 
 # Send Video

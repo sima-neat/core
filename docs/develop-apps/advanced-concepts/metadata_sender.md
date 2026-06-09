@@ -2,6 +2,7 @@
 title: Send JSON Metadata
 description: MetadataSender UDP JSON wire contract
 sidebar_position: 4
+slug: /develop-apps/advanced-concepts/metadata_sender
 ---
 
 # Send JSON Metadata

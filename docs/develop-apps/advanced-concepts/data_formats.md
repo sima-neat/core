@@ -2,6 +2,7 @@
 title: Data Formats
 description: Format tokens, layout, and tensor semantics
 sidebar_position: 2
+slug: /develop-apps/advanced-concepts/data_formats
 ---
 
 # Data formats & tensor semantics

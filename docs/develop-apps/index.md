@@ -76,8 +76,8 @@ The Hello Neat! pages help you run your first inference, the Development Workflo
     <h2>Explore</h2>
     <p>Once the basics are working, use the rest of the docs to deepen your understanding and move faster.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/software/tutorials/"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
-      <li><a class="overview-link-card" href="/software/tutorials/015-tune-throughput-and-queues/"><strong>Tuning &amp; Diagnostics</strong><span>Operational topics like throughput tuning and pipeline diagnostics, taught in context inside the tutorials.</span></a></li>
+      <li><a class="overview-link-card" href="/software/develop-apps/tutorials/"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
+      <li><a class="overview-link-card" href="/software/develop-apps/tutorials/015-tune-throughput-and-queues/"><strong>Tuning &amp; Diagnostics</strong><span>Operational topics like throughput tuning and pipeline diagnostics, taught in context inside the tutorials.</span></a></li>
       <li><a class="overview-link-card" href="/software/reference/cppapi/"><strong>Reference</strong><span>Browse the C++ API and supporting reference material.</span></a></li>
       <li><a class="overview-link-card" href="/software/develop-apps/contribute/architecture/"><strong>Contribute</strong><span>Understand the architecture, contributor expectations, and repo conventions.</span></a></li>
     </ul>

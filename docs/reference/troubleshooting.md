@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Symptom-first fixes for the errors new Neat users hit most
-sidebar_position: 102
+sidebar_position: 5
 ---
 
 # Troubleshooting
