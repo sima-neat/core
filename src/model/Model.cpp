@@ -7198,7 +7198,7 @@ BenchmarkReport Model::benchmark(int num_samples) {
     throw std::runtime_error("Model::benchmark: num_samples must be > 0");
   }
 
-  constexpr int kWarmupSamples = 5;
+  constexpr int kWarmupSamples = 50;
   constexpr int kTimeoutMs = 120000;
   const TensorList inputs = make_synthetic_benchmark_inputs(*this);
 
