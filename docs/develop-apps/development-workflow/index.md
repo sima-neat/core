@@ -22,28 +22,30 @@ A typical Neat development cycle looks like this:
 
 ## Core Concepts at a Glance
 
-The Programming Model breaks each of these down in depth. At a glance:
+The Development Workflow pages break each of these down in depth. At a glance:
 
-- [Model](/getting-started/development_workflow/model) — load a compiled model package and expose it as a runnable unit.
-- [Inference Workflow](/getting-started/development_workflow/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
-- [Node](/getting-started/development_workflow/node) — the atomic building block of a graph.
-- [Graph](/getting-started/development_workflow/graph) — hybrid DAG runtime for combining model stages and custom logic.
-- [Tensor and Sample](/getting-started/development_workflow/core_types) — the payload and metadata envelope passed between stages.
+- [Model](/develop-apps/development-workflow/model) — load a compiled model package and expose it as a runnable unit.
+- [GenAIModel](/develop-apps/development-workflow/genai-model) — the generative-model counterpart to `Model`.
+- [Tensor and Sample](/develop-apps/development-workflow/core_types) — the payload and metadata envelope passed between stages.
+- [Run / Inference](/develop-apps/development-workflow/overview) — execute synchronously (`run`) or asynchronously (`push` / `pull`).
+- [Graph](/develop-apps/development-workflow/graph) — hybrid DAG runtime for combining model stages and custom logic.
+- [Pipeline](/develop-apps/development-workflow/pipeline) — the runtime view of a built graph.
+- [Node](/develop-apps/development-workflow/node) — the atomic building block of a graph.
 
-If you only learn one page first, start with the [Inference Workflow overview](/getting-started/development_workflow/overview) — it ties `Model`, `Graph`, and `Run` together end to end.
+If you only learn one page first, start with the [Run / Inference overview](/develop-apps/development-workflow/overview) — it ties `Model`, `Graph`, and `Run` together end to end.
 
 ## Where to go next
 
 Step-by-step entry points for new users:
 
 - [Installation](/getting-started/installation) — pick the right setup path for your environment.
-- [Build](/contribute/build) — build Neat from source with `build.sh` (contributor workflow).
-- [Hello Neat!](/getting-started/minimal_example/minimal) — minimal CMake application that links against the installed library.
+- [Build](/develop-apps/contribute/build) — build Neat from source with `build.sh` (contributor workflow).
+- [Hello Neat!](/develop-apps/hello-neat/minimal) — minimal CMake application that links against the installed library.
 - [Tutorials](/tutorials) — guided chapters that scale from "first model" to "production pipeline".
 
 Reference material for when you need depth:
 
-- [Programming Model](/getting-started/development_workflow/overview) — concept-by-concept breakdown of `Model`, `Run`, `Node`, `Pipeline`, `Graph`, and I/O.
+- [Run / Inference](/develop-apps/development-workflow/overview) — concept-by-concept breakdown of `Model`, `Run`, `Node`, `Pipeline`, `Graph`, and I/O.
 - [C++ Reference](/reference/cppapi) — full API surface for the installed headers.
 - [Python Reference](/reference/pythonapi) — `pyneat` bindings reference.
 

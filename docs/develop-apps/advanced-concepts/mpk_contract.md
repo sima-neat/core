@@ -18,7 +18,7 @@ This page separates the two concerns:
   inference routing.
 
 For byte-level contract and security rules, see
-[MPK Contract (contributor reference)](/contribute/mpk_contract).
+[MPK Contract (contributor reference)](/develop-apps/contribute/mpk_contract).
 
 ## Why a single `.tar.gz` archive
 
@@ -79,6 +79,6 @@ codes.
 
 ## Further reading
 
-- [MPK Contract (contributor reference)](/contribute/mpk_contract) — byte-level rules and field semantics.
+- [MPK Contract (contributor reference)](/develop-apps/contribute/mpk_contract) — byte-level rules and field semantics.
 - "MPK contract" — §0.16, §15 of the design deep dive.
 - "Model archive security matrix" — §91 of the design deep dive.

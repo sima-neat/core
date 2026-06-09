@@ -71,16 +71,50 @@ def run_git(args: List[str], cwd: Optional[Path] = None) -> None:
     )
 
 
+def ssh_to_https(repo: str) -> str:
+    """Convert a GitHub-style SSH URL (`git@host:org/name[.git]`) to its HTTPS
+    form (`https://host/org/name[.git]`). Non-SSH URLs are returned unchanged."""
+    match = re.match(r"^git@([^:]+):(.+)$", repo)
+    if match:
+        return f"https://{match.group(1)}/{match.group(2)}"
+    return repo
+
+
+def repo_candidates(repo: str) -> List[str]:
+    """Ordered list of remote URLs to try: the configured URL first, then an
+    HTTPS fallback for SSH URLs. This lets CI clone over HTTPS (with a token
+    credential helper) when SSH deploy keys are unavailable."""
+    candidates = [repo]
+    https = ssh_to_https(repo)
+    if https != repo:
+        candidates.append(https)
+    return candidates
+
+
 def acquire_source(repo: str, branch: str, githash: str, staging: Path) -> None:
-    """Clone or update `repo` at `branch` (+ optional githash) into `staging`."""
+    """Clone or update `repo` at `branch` (+ optional githash) into `staging`.
+
+    A fresh clone tries the configured URL first, then an HTTPS fallback for
+    GitHub SSH URLs (see `repo_candidates`). Updates reuse whichever remote the
+    existing clone was created with.
+    """
     if not staging.exists():
         staging.parent.mkdir(parents=True, exist_ok=True)
-        if githash:
-            run_git(["clone", repo, str(staging)])
-            run_git(["checkout", githash], cwd=staging)
-        else:
-            run_git(["clone", "--branch", branch, "--depth", "1", repo, str(staging)])
-        return
+        last_exc: Optional[subprocess.CalledProcessError] = None
+        for candidate in repo_candidates(repo):
+            try:
+                if githash:
+                    run_git(["clone", candidate, str(staging)])
+                    run_git(["checkout", githash], cwd=staging)
+                else:
+                    run_git(["clone", "--branch", branch, "--depth", "1", candidate, str(staging)])
+                return
+            except subprocess.CalledProcessError as exc:
+                last_exc = exc
+                # Drop any partial clone before trying the next candidate URL.
+                shutil.rmtree(staging, ignore_errors=True)
+        assert last_exc is not None
+        raise last_exc
 
     if githash:
         run_git(["fetch", "origin"], cwd=staging)
@@ -112,17 +146,24 @@ def current_core_branch(repo_root: Path) -> str:
 
 
 def remote_branch_exists(repo: str, branch: str) -> bool:
-    """True if `branch` exists on `repo`'s remote (via `git ls-remote --heads`)."""
+    """True if `branch` exists on `repo`'s remote (via `git ls-remote --heads`).
+
+    Tries the configured URL first, then an HTTPS fallback for GitHub SSH URLs,
+    mirroring `acquire_source` so branch resolution doesn't fail before the
+    HTTPS-capable clone is even attempted.
+    """
     if not branch:
         return False
-    try:
-        out = subprocess.run(
-            ["git", "ls-remote", "--heads", repo, branch],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-        ).stdout.strip()
-        return bool(out)
-    except Exception:
-        return False
+    for candidate in repo_candidates(repo):
+        try:
+            out = subprocess.run(
+                ["git", "ls-remote", "--heads", candidate, branch],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+            ).stdout.strip()
+            return bool(out)
+        except Exception:
+            continue
+    return False
 
 
 def resolve_source_branch(source: Dict, repo_root: Path) -> Tuple[str, str]:

@@ -1,7 +1,7 @@
 ---
 title: Graph
 description: Build a runnable application from Nodes, Models, and reusable Graph fragments
-sidebar_position: 3
+sidebar_position: 5
 ---
 
 # Graph
@@ -77,7 +77,7 @@ auto classes = run.pull("classes");
 
 ## Nodes, groups, and boundaries
 
-A `Graph` is the assembly boundary; [`Node`](/getting-started/development_workflow/node) is the building block.
+A `Graph` is the assembly boundary; [`Node`](/develop-apps/development-workflow/node) is the building block.
 
 That includes:
 
@@ -85,7 +85,7 @@ That includes:
 - pre-built node groups, which are reusable bundles of nodes;
 - boundary nodes such as `Input("image")` and `Output("classes")`.
 
-For the detailed rules around pre-built groups and boundary nodes, see [Node → Pre-built node groups](/getting-started/development_workflow/node#pre-built-node-groups) and [Node → Boundary nodes](/getting-started/development_workflow/node#boundary-nodes).
+For the detailed rules around pre-built groups and boundary nodes, see [Node → Pre-built node groups](/develop-apps/development-workflow/node#pre-built-node-groups) and [Node → Boundary nodes](/develop-apps/development-workflow/node#boundary-nodes).
 
 When you call `Graph::build()`, Neat lowers the public graph into one executable runtime graph, preserving the customer-facing names for diagnostics and named `Run` APIs.
 
@@ -261,9 +261,9 @@ When used inside another graph, this can compile down to a direct wire. Neat kee
 
 ## See also
 
-- [Node](/getting-started/development_workflow/node)
-- [Model](/getting-started/development_workflow/model)
-- [Public Graph and graph helpers](/concepts/graphs)
+- [Node](/develop-apps/development-workflow/node)
+- [Model](/develop-apps/development-workflow/model)
+- [Public Graph and graph helpers](/develop-apps/advanced-concepts/graphs)
 
 ## Tutorials
 

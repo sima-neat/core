@@ -32,7 +32,7 @@ The Modalix MLA. The model's compiled weights and graph live here. Dispatched vi
 MLA work has two flavors:
 
 - **MLA inference** — the main model graph.
-- **MLA prep / fused ops** — pre/post kernels compiled into the MLA when the contract allows it (the "MLA tess" column of the [dtype contract](/concepts/dtype_contract)).
+- **MLA prep / fused ops** — pre/post kernels compiled into the MLA when the contract allows it (the "MLA tess" column of the [dtype contract](/develop-apps/advanced-concepts/dtype_contract)).
 
 ## MLASHM — MLA shared memory
 
@@ -56,13 +56,13 @@ When a Graph is built, the route planner walks each stage and asks:
 
 1. **Which processor can run this kernel?** — MLA inference goes to MLA; preprocess goes to EV74; I/O goes to A65.
 2. **What's the cheapest way to get there?** — minimize transfers (the planner inserts `ConversionKind::Transfer` only when unavoidable).
-3. **Can adjacent stages share segments?** — the [memory model](/concepts/memory_model) dictates what's possible; the planner uses it.
+3. **Can adjacent stages share segments?** — the [memory model](/develop-apps/advanced-concepts/memory_model) dictates what's possible; the planner uses it.
 
 The output is a `RouteGraph` where every stage carries a target processor and a segment policy. You can inspect this via `Graph::describe()`.
 
 ## Further reading
 
 - "Processor backends" — §21 and §22 of the design deep dive.
-- "CVU kernels and graphs catalog" — see [CVU kernels](/concepts/cvu_kernels).
-- "Memory model" — see [memory model](/concepts/memory_model).
+- "CVU kernels and graphs catalog" — see [CVU kernels](/develop-apps/advanced-concepts/cvu_kernels).
+- "Memory model" — see [memory model](/develop-apps/advanced-concepts/memory_model).
 - [`Graph::describe()`](/reference/cppapi/classes/simaai-neat-graph) — dump the route plan.

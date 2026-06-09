@@ -1,7 +1,7 @@
 ---
 title: Troubleshooting
 description: Symptom-first fixes for the errors new Neat users hit most
-sidebar_position: 7.7
+sidebar_position: 102
 ---
 
 # Troubleshooting
@@ -63,7 +63,7 @@ CMake can't locate `SimaNeatConfig.cmake` (installed under `lib/cmake/SimaNeat/`
 :::
 
 :::tip Fix
-Export `SYSROOT` and let your `CMakeLists` add it to the prefix path (the [Hello Neat template](/getting-started/minimal_example/minimal) does this):
+Export `SYSROOT` and let your `CMakeLists` add it to the prefix path (the [Hello Neat template](/develop-apps/hello-neat/minimal) does this):
 ```cmake
 if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
   list(APPEND CMAKE_PREFIX_PATH "$ENV{SYSROOT}/usr/lib/aarch64-linux-gnu")

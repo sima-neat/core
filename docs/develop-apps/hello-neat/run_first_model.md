@@ -6,12 +6,12 @@ sidebar_position: 2
 
 # Run a Model
 
-Use the same working directory from [Hello Neat!](/getting-started/minimal_example/minimal) to run a real model for object detection.
+Use the same working directory from [Hello Neat!](/develop-apps/hello-neat/minimal) to run a real model for object detection.
 This application loads a YOLOv8 model, reads a sample image, runs inference, decodes bounding boxes, and prints how many detections were found.
 
 This page introduces two Neat concepts:
 
-* [`Model`](/getting-started/development_workflow/model) loads the compiled model package and gives you the `run(...)` entry point.
+* [`Model`](/develop-apps/development-workflow/model) loads the compiled model package and gives you the `run(...)` entry point.
 * [`ModelOptions`](/tutorials/004-configure-model-options) tells Neat how to prepare the image and decode the detector output.
 
 You do not need to master the full API yet; for now, focus on how `Model` and `ModelOptions` work together to run a compiled model.
@@ -47,7 +47,7 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
 
 ## Walkthrough
 
-We build on the program from [Hello Neat!](/getting-started/minimal_example/minimal): keep the same `CMakeLists.txt` (it already links Neat and OpenCV) and replace the program body with the four steps below. Each step is a small piece of the final program — read them in order, then grab the [full program](#full-program) to paste and run. Pick a language tab on any block; your choice follows the site-wide selector.
+We build on the program from [Hello Neat!](/develop-apps/hello-neat/minimal): keep the same `CMakeLists.txt` (it already links Neat and OpenCV) and replace the program body with the four steps below. Each step is a small piece of the final program — read them in order, then grab the [full program](#full-program) to paste and run. Pick a language tab on any block; your choice follows the site-wide selector.
 
 ### 1. Load and resize the image {#step-load-image}
 
@@ -185,7 +185,7 @@ if sample.tensor is not None:
 
 ## Full program {#full-program}
 
-Keep the `CMakeLists.txt` from [Hello Neat!](/getting-started/minimal_example/minimal) (it already links the app with Neat and OpenCV), and replace the program body with the complete file below. The highlighted lines are the core three: create the `Model`, build the input, and call `run()`.
+Keep the `CMakeLists.txt` from [Hello Neat!](/develop-apps/hello-neat/minimal) (it already links the app with Neat and OpenCV), and replace the program body with the complete file below. The highlighted lines are the core three: create the `Model`, build the input, and call `run()`.
 
 <details>
 <summary>Show the complete program</summary>
@@ -386,7 +386,7 @@ For a deeper explanation of box decoding, thresholds, NMS, and detector output s
 
 Once YOLOv8 runs, continue with broader SiMa Neat learning resources:
 
-- Continue to **[Run an App](/getting-started/minimal_example/run_an_app)** to compose this same model into a `Graph` application — a named input → model → output pipeline you build once and drive with push/pull — instead of calling `Model.run(...)` directly.
-- Learn the [core programming model](/getting-started/development_workflow/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
+- Continue to **[Run an App](/develop-apps/hello-neat/run_an_app)** to compose this same model into a `Graph` application — a named input → model → output pipeline you build once and drive with push/pull — instead of calling `Model.run(...)` directly.
+- Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

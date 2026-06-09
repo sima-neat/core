@@ -29,7 +29,7 @@ A release is blocked unless all conditions below are true:
    - `.github/CODEOWNERS`
    - `.github/PULL_REQUEST_TEMPLATE.md`
    - `CONTRIBUTING.md`
-   - `docs/contribute/release-checklist.md`
+   - `docs/develop-apps/contribute/release-checklist.md`
 15. Release metadata is complete:
    - `project(SimaNeat VERSION x.y.z)` updated in `CMakeLists.txt`
    - `CHANGELOG.md` has `## [x.y.z]` entry

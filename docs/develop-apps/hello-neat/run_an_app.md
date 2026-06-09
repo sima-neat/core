@@ -14,7 +14,7 @@ mdx:
 
 *Detections written by the program below, drawn on the source image.*
 
-This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](/getting-started/minimal_example/run_first_model)), you compose the model into a [`Graph`](/getting-started/development_workflow/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
+This is the same YOLOv8 inference as a small **application**: instead of calling `Model.run(...)` directly (as in [Run a Model](/develop-apps/hello-neat/run_first_model)), you compose the model into a [`Graph`](/develop-apps/development-workflow/graph) — a named pipeline with an input, the model, and an output — then build it and push/pull. Same program in Python and C++; pick a language tab on each code block.
 
 For this first app the shape is intentionally simple:
 
@@ -30,7 +30,7 @@ Use the **Python / C++** tabs on any code block — your choice follows the site
 
 ## Set up the project
 
-:::tip Already did [Run a Model](/getting-started/minimal_example/run_first_model)?
+:::tip Already did [Run a Model](/develop-apps/hello-neat/run_first_model)?
 You can skip this section — it uses the same `assets/` directory, model package, and sample image. Jump straight to [Walk through the code](#walk-through-the-code).
 :::
 
@@ -493,10 +493,10 @@ The APIs map directly to that shape:
 
 ## Next steps
 
-For deeper graph composition, continue with the [Graph programming model](/getting-started/development_workflow/graph).
+For deeper graph composition, continue with the [Graph programming model](/develop-apps/development-workflow/graph).
 
 From there, continue with broader SiMa Neat learning resources:
 
-- Learn the [core programming model](/getting-started/development_workflow/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
+- Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
 - Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

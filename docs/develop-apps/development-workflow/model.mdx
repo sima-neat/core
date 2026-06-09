@@ -1,7 +1,7 @@
 ---
 title: Model
 description: Load compiled model archives and produce runnable model stages
-sidebar_position: 2
+sidebar_position: 1
 ---
 
 # Model
@@ -14,7 +14,7 @@ Use `Model` when you want model-aware graph assembly without manually wiring eve
 
 - `graph()`: full model path as a reusable Graph fragment.
 - `preprocess()`, `inference()`, `postprocess()`: reusable node-stage fragments.
-- `input_spec()` and `output_spec()`: tensor contract introspection.
+- `input_specs()` and `output_specs()`: full tensor-contract lists for multi-input / multi-output models (`input_spec()` / `output_spec()` are single-IO convenience accessors).
 - `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
 
 Reference:
@@ -50,7 +50,7 @@ graph.add(model.graph())
 
 ## Inspect specs and run directly
 
-Before composing a Graph you can introspect the model's tensor contracts with `input_spec()` / `output_spec()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required.
+Before composing a Graph you can introspect the model's tensor contracts with `input_spec()` / `output_spec()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required. For multi-input or multi-output models, use `input_specs()` / `output_specs()` to get the full list of contracts.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -101,8 +101,8 @@ before inspecting detailed bus logs.
 
 ## See also
 
-- [Inference Workflow](/getting-started/development_workflow/overview)
-- [Graph](/getting-started/development_workflow/graph)
+- [Run / Inference](/develop-apps/development-workflow/overview)
+- [Graph](/develop-apps/development-workflow/graph)
 
 ## Tutorials
 

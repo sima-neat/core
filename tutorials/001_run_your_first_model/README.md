@@ -76,7 +76,7 @@ top1=285
 
 To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
 
-For throughput, batching, or live streams, continue to chapter 002. Reference: [Model](/getting-started/development_workflow/model).
+For throughput, batching, or live streams, continue to chapter 002. Reference: [Model](/develop-apps/development-workflow/model).
 
 ## In Practice
 

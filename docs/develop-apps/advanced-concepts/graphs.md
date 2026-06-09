@@ -614,7 +614,7 @@ std::cout << app.describe_backend() << "\n";
 - `describe_backend()` prints lower-level backend details, useful when debugging generated pipeline
   strings or runtime routing.
 
-For the error-code taxonomy and triage workflow, see [Error codes](/concepts/error_codes).
+For the error-code taxonomy and triage workflow, see [Error codes](/develop-apps/advanced-concepts/error_codes).
 
 ## Save and load Graph composition
 
@@ -993,9 +993,9 @@ run.save_json("/tmp/app.graph_run.json")
 
 ## Further reading
 
-- [Model programming model](/getting-started/development_workflow/model)
-- [Node programming model: groups and boundaries](/getting-started/development_workflow/node#boundary-nodes)
-- [Tensor and Sample programming model](/getting-started/development_workflow/core_types)
+- [Model programming model](/develop-apps/development-workflow/model)
+- [Node programming model: groups and boundaries](/develop-apps/development-workflow/node#boundary-nodes)
+- [Tensor and Sample programming model](/develop-apps/development-workflow/core_types)
 - [Runtime tuning (Tutorial 015)](/tutorials/015-tune-throughput-and-queues)
 - [Diagnostics (Tutorial 011)](/tutorials/011-diagnose-a-pipeline)
-- [GStreamer layer](/concepts/gstreamer_layer)
+- [GStreamer layer](/develop-apps/advanced-concepts/gstreamer_layer)

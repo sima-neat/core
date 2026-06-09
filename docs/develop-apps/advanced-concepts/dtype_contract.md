@@ -59,5 +59,5 @@ What the dtype contract means in practice for application code:
 
 ## Further reading
 
-- "Tessellation, quant, and cast" — §17 of the design deep dive ([Architecture](/contribute/architecture#17-tessellation-quant-and-cast)).
+- "Tessellation, quant, and cast" — §17 of the design deep dive ([Architecture](/develop-apps/contribute/architecture#17-tessellation-quant-and-cast)).
 - "Input planner" — §82 of the design deep dive.

@@ -9,8 +9,8 @@
       "fallback_branch": "develop",
       "githash": "",
       "docs_subpath": "docs",
-      "mount": "llima",
-      "sidebar_position": 6,
+      "mount": "genai-llima",
+      "sidebar_position": 4,
       "files_order": [
         "introduction",
         "setup",
@@ -28,8 +28,8 @@
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/guides",
-      "mount": "compile-your-model",
-      "sidebar_position": 7,
+      "mount": "compile-a-model/guides",
+      "sidebar_position": 10,
       "files_order": [
         "index",
         "compile_your_first_model",
@@ -46,8 +46,8 @@
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/generated",
-      "mount": "compile-your-model/api-reference",
-      "sidebar_position": 7,
+      "mount": "reference/model-sdk-api",
+      "sidebar_position": 100,
       "files_order": [
         "index"
       ],
@@ -119,8 +119,8 @@
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/sima-cli",
-      "mount": "reference/sima-cli",
-      "sidebar_position": 6,
+      "mount": "tools/sima-cli",
+      "sidebar_position": 1,
       "files_order": [
         "index"
       ],

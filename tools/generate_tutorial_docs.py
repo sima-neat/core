@@ -7,8 +7,8 @@ Source of truth:
 - tutorials/00x_*/*.py
 
 Outputs:
-- docs/tutorials/tutorial_<folder>.mdx
-- docs/tutorials/index.md
+- docs/develop-apps/tutorials/<difficulty>/tutorial_<folder>.mdx
+- docs/develop-apps/tutorials/index.md
 """
 
 from __future__ import annotations
@@ -1239,7 +1239,7 @@ def main() -> int:
 
     root = pathlib.Path(args.repo_root).resolve()
     tutorials_dir = root / "tutorials"
-    docs_tutorials_dir = root / "docs" / "tutorials"
+    docs_tutorials_dir = root / "docs" / "develop-apps" / "tutorials"
 
     module_dirs = discover_modules(tutorials_dir)
     modules = [parse_module(d, root) for d in module_dirs]
