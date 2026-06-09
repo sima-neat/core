@@ -4,7 +4,7 @@ Running `sima-cli install neat` installs **two** things:
 
 1. **The Neat library** (the `sima-neat` package). Goes system-wide via `apt`. You never interact with it directly — your code links against it through CMake's `find_package(SimaNeat CONFIG)`.
 
-2. **The tutorials** (the **SiMa Neat extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
+2. **The tutorials** (the **SiMa.ai Neat extras** option, opt-in during install). Does **not** go into system paths. It extracts as a self-contained folder in your **current working directory**, looking like this:
 
    ```text
    sima-neat-0.0.0+<branch>-<sha>-Linux-extras/
@@ -19,7 +19,7 @@ Running `sima-cli install neat` installs **two** things:
 
 The folder name includes the Neat version, branch, and commit hash. For example, if you ran the installer from `~/neat/`, the folder ends up at `~/neat/sima-neat-0.0.0+<branch>-<sha>-Linux-extras/`.
 
-When prompted during install, select **SiMa Neat extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
+When prompted during install, select **SiMa.ai Neat extras** (press `Space` to toggle the checkbox) to receive this folder. If you skip it, only the library gets installed and the tutorials are not on disk.
 
 ## How to Run Tutorials
 
@@ -51,7 +51,7 @@ To use a different download root, add `--model-target-folder <path>`.
 
 ### Verify the install
 
-Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa Neat extras** is selected.
+Both lists should print the same set of chapter names. If either is empty, re-run `sima-cli install neat` and make sure **SiMa.ai Neat extras** is selected.
 
 ```bash
 ls lib/sima-neat/tutorials/ | grep '^tutorial_'
@@ -98,7 +98,7 @@ If you want to recompile a chapter (to tweak it, or because the shipped binary d
 
 Copying a chapter's `.cpp` into your own codebase? Drop this minimal `CMakeLists.txt` alongside it — no extras folder required, only the base `sima-neat` package (which provides `libsima_neat.a`, `libsima_neat.so`, and `SimaNeatConfig.cmake`):
 
-```cmake
+```cmake title="CMakeLists.txt" {7,10}
 cmake_minimum_required(VERSION 3.16)
 project(my_chapter LANGUAGES CXX)
 
@@ -111,6 +111,11 @@ add_executable(my_chapter <chapter_name>.cpp)
 target_link_libraries(my_chapter PRIVATE SimaNeat::sima_neat)
 ```
 
+The two highlighted lines are all you need to add to bring Neat into your build:
+
+- **`find_package(SimaNeat REQUIRED CONFIG)`** — locates the installed Neat package (its `SimaNeatConfig.cmake`) and makes the imported target available. `REQUIRED` fails the configure step if Neat isn't found; `CONFIG` uses the package's own config file rather than a `Find` module.
+- **`target_link_libraries(my_chapter PRIVATE SimaNeat::sima_neat)`** — links your executable against Neat. The imported `SimaNeat::sima_neat` target also propagates Neat's include directories and transitive dependencies, so you don't set any include paths or library paths by hand.
+
 Build and run:
 
 ```bash
@@ -118,7 +123,7 @@ cmake -S . -B build && cmake --build build -j
 ./build/my_chapter --args
 ```
 
-`find_package(SimaNeat REQUIRED CONFIG)` auto-resolves headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
+Together these auto-resolve headers, library, and dependencies from the installed Neat — no hardcoded paths, no extras folder required.
 
 For the full template with SYSROOT handling (cross-builds from inside the Neat SDK container), see [Hello Neat](/getting-started/minimal_example).
 

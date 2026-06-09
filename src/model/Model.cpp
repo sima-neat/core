@@ -35,8 +35,11 @@
 #include "pipeline/internal/sima/BoxDecodeStaticContractExtractor.h"
 #include "pipeline/internal/sima/BoxDecodeTypeUtils.h"
 #include "pipeline/internal/sima/MlaStaticContractExtractor.h"
+#include "pipeline/internal/sima/stagesemantics/BoxDecodeStageSemantics.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuStageSemantics.h"
 #include "pipeline/internal/TensorMath.h"
+#include "pipeline/ErrorCodes.h"
+#include "pipeline/internal/ErrorUtil.h"
 
 #include <nlohmann/json.hpp>
 
@@ -63,6 +66,37 @@
 
 namespace simaai::neat {
 namespace {
+
+// Public Model setup/build/run/metadata failures surface as NeatError (see Model.h class doc).
+// Thin forwarder over the shared session-error primitive so every Model boundary throws a
+// structured NeatError (machine-triage error_code + repro_note) instead of a raw
+// std::invalid_argument / std::runtime_error. NeatError derives from std::runtime_error, so
+// existing runtime_error catchers keep working.
+[[noreturn]] void throw_model_error(std::string_view code, std::string message,
+                                    std::string_view hint = {}) {
+  simaai::neat::pipeline_internal::error_util::throw_session_error(code, message,
+                                                                   /*pipeline_string=*/{}, hint);
+}
+
+void validate_requested_boxdecode_contract_type(BoxDecodeType contract_type,
+                                                BoxDecodeType requested_type,
+                                                std::string_view context) {
+  using pipeline_internal::sima::box_decode_type_matches_requested_contract;
+  using pipeline_internal::sima::box_decode_type_token_string;
+  if (box_decode_type_matches_requested_contract(contract_type, requested_type)) {
+    return;
+  }
+  const std::string contract_token = box_decode_type_token_string(contract_type);
+  const std::string requested_token = box_decode_type_token_string(requested_type);
+  std::ostringstream oss;
+  oss << context
+      << ": requested BoxDecode decode_type does not match the MPK-derived tensor contract "
+      << "(requested=" << (requested_token.empty() ? "unspecified" : requested_token)
+      << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
+      << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
+         "raw tensors and attach an explicit compatible postprocess stage.";
+  throw std::runtime_error(oss.str());
+}
 
 simaai::neat::GraphOptions
 route_options_from_model_route_options(const Model::RouteOptions& opt,
@@ -679,6 +713,125 @@ require_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
     return *fact.boxdecode_compiled;
   }
   throw std::runtime_error("Model-managed boxdecode stage requires a canonical compiled contract");
+}
+
+std::optional<CompiledBoxDecodeContract>
+try_model_managed_boxdecode_contract(const internal::ModelPack& pack) {
+  const auto post_plan = pack.execution_plan().post;
+  const auto post_facts = pack.stage_facts_for_model_stage(internal::ModelStage::Postprocess);
+  if (post_plan.size() != post_facts.size()) {
+    throw std::runtime_error(
+        "Model-managed post-process stage facts are out of sync with execution plan");
+  }
+
+  bool saw_boxdecode_stage = false;
+  for (std::size_t index = 0; index < post_plan.size(); ++index) {
+    if (post_plan[index].kind != internal::ExecutionStageKind::BoxDecode) {
+      continue;
+    }
+    saw_boxdecode_stage = true;
+    const auto& fact = post_facts[index];
+    if (fact.boxdecode_compiled.has_value()) {
+      return *fact.boxdecode_compiled;
+    }
+  }
+  if (!saw_boxdecode_stage) {
+    throw std::runtime_error(
+        "Model-managed boxdecode stage requires a canonical compiled contract");
+  }
+  return std::nullopt;
+}
+
+struct BoxDecodeHwcLocal {
+  int h = 0;
+  int w = 0;
+  int c = 0;
+  int semantic_c = 0;
+};
+
+std::optional<BoxDecodeHwcLocal> boxdecode_hwc_from_input_shape_local(
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& t) {
+  if (t.input_shape.size() < 3U) {
+    return std::nullopt;
+  }
+  const auto rank = t.input_shape.size();
+  const int h = t.input_shape[rank - 3U];
+  const int w = t.input_shape[rank - 2U];
+  const int c = t.input_shape[rank - 1U];
+  if (h <= 0 || w <= 0 || c <= 0) {
+    return std::nullopt;
+  }
+  int semantic_c = c;
+  if (t.slice_shape.size() >= 3U) {
+    const int slice_c = t.slice_shape[t.slice_shape.size() - 1U];
+    if (slice_c > 0 && slice_c < semantic_c) {
+      semantic_c = slice_c;
+    }
+  }
+  return BoxDecodeHwcLocal{h, w, c, semantic_c};
+}
+
+bool boxdecode_reg_cls_pair_matches_local(
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& reg,
+    const pipeline_internal::sima::BoxDecodeTensorStaticContract& cls, int num_classes) {
+  const auto r = boxdecode_hwc_from_input_shape_local(reg);
+  const auto c = boxdecode_hwc_from_input_shape_local(cls);
+  return r.has_value() && c.has_value() && r->h == c->h && r->w == c->w && r->semantic_c >= 16 &&
+         (r->semantic_c % 4) == 0 && c->semantic_c == num_classes;
+}
+
+bool boxdecode_looks_grouped_yolo_dfl_local(
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
+    return false;
+  }
+  const std::size_t heads = contract.tensors.size() / 2U;
+  for (std::size_t i = 0; i < heads; ++i) {
+    if (!boxdecode_reg_cls_pair_matches_local(contract.tensors[i], contract.tensors[i + heads],
+                                              num_classes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool boxdecode_looks_interleaved_yolo_dfl_local(
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract, int num_classes) {
+  if (num_classes <= 0 || contract.tensors.size() < 2U || (contract.tensors.size() % 2U) != 0U) {
+    return false;
+  }
+  for (std::size_t i = 0; i < contract.tensors.size(); i += 2U) {
+    if (!boxdecode_reg_cls_pair_matches_local(contract.tensors[i], contract.tensors[i + 1U],
+                                              num_classes)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string boxdecode_tensor_order_summary_local(
+    const pipeline_internal::sima::BoxDecodeStaticContract& contract) {
+  std::ostringstream oss;
+  for (std::size_t i = 0; i < contract.tensors.size(); ++i) {
+    const auto& t = contract.tensors[i];
+    const auto dims = boxdecode_hwc_from_input_shape_local(t);
+    if (i != 0U) {
+      oss << ", ";
+    }
+    oss << (!t.logical_name.empty() ? t.logical_name : std::string("<unnamed>"));
+    if (dims.has_value()) {
+      oss << "[" << dims->h << "x" << dims->w << "x" << dims->c << "]";
+      if (dims->semantic_c != dims->c) {
+        oss << "(semantic_c=" << dims->semantic_c << ")";
+      }
+    }
+  }
+  return oss.str();
+}
+
+bool boxdecode_type_expects_grouped_yolo_dfl_local(BoxDecodeType type) {
+  return type == BoxDecodeType::YoloV8 || type == BoxDecodeType::YoloV9 ||
+         type == BoxDecodeType::YoloV10;
 }
 
 // Legacy processcvu wrappers removed; post-process model-managed stages now use canonical
@@ -1627,14 +1780,16 @@ void require_explicit_image_input_info(const InputInfo& info, const char* where)
     if (!info.media_type.empty()) {
       oss << " (got " << info.media_type << ")";
     }
-    throw std::invalid_argument(oss.str());
+    throw_model_error(
+        error_codes::kInputShape, oss.str(),
+        "Provide a video/x-raw Sample, or run in tensor mode with raw tensor inputs.");
   }
   if (info.format.empty() || info.format_source != InputInfo::FormatSource::Explicit) {
-    throw std::invalid_argument(
-        std::string(where ? where : "Model") +
-        ": image-mode Tensor input requires explicit image format metadata; pass a Tensor with "
-        "ImageSpec/image_format (for Python: Tensor.from_numpy(..., image_format=...)) or a "
-        "Sample with video/x-raw format metadata.");
+    throw_model_error(error_codes::kInputShape,
+                      std::string(where ? where : "Model") +
+                          ": image-mode Tensor input requires explicit image format metadata",
+                      "Pass a Tensor with ImageSpec/image_format (Python: Tensor.from_numpy(..., "
+                      "image_format=...)) or a Sample with video/x-raw format metadata.");
   }
 }
 
@@ -1921,7 +2076,9 @@ void require_exact_ingress_count(
     oss << ")";
   }
   oss << ", got " << actual;
-  throw std::invalid_argument(oss.str());
+  throw_model_error(
+      error_codes::kInputShape, oss.str(),
+      "Pass exactly the expected number of inputs matching the model's ingress tensors, in order.");
 }
 
 void require_single_ingress_api(
@@ -1997,7 +2154,9 @@ void validate_single_tensor_ingress_expectation(const internal::IngressTensorCon
   }
   oss << ". Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth;
-  throw std::invalid_argument(oss.str());
+  throw_model_error(error_codes::kInputShape, oss.str(),
+                    "Convert/resize the input to the expected media, format, and HxWxC before "
+                    "calling run/build.");
 }
 
 Tensor apply_ingress_tensor_identity(Tensor tensor,
@@ -4447,6 +4606,58 @@ int resolve_preproc_input_depth(const internal::PreprocessPlannerResult& plan,
                                                            plan.modelpack_input_depth);
 }
 
+int resolve_preproc_output_width(const internal::PreprocessPlannerResult& plan,
+                                 int fallback_input_width) {
+  const auto& effective = plan.resolved_plan.effective;
+  if (effective.resize.width > 0) {
+    return effective.resize.width;
+  }
+  const auto& mla = plan.resolved_plan.mla_contract;
+  if (mla.width > 0) {
+    return mla.width;
+  }
+  if (mla.max_width > 0) {
+    return mla.max_width;
+  }
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
+  if (ingress != nullptr && ingress->width > 0) {
+    return ingress->width;
+  }
+  const auto* resolved_ingress =
+      maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
+  if (resolved_ingress != nullptr && resolved_ingress->width > 0) {
+    return resolved_ingress->width;
+  }
+  return fallback_input_width;
+}
+
+int resolve_preproc_output_height(const internal::PreprocessPlannerResult& plan,
+                                  int fallback_input_height) {
+  const auto& effective = plan.resolved_plan.effective;
+  if (effective.resize.height > 0) {
+    return effective.resize.height;
+  }
+  const auto& mla = plan.resolved_plan.mla_contract;
+  if (mla.height > 0) {
+    return mla.height;
+  }
+  if (mla.max_height > 0) {
+    return mla.max_height;
+  }
+  const auto* ingress =
+      maybe_single_ingress_contract(normalized_ingress_contracts(plan.session_route_plan));
+  if (ingress != nullptr && ingress->height > 0) {
+    return ingress->height;
+  }
+  const auto* resolved_ingress =
+      maybe_single_preprocess_ingress_contract(plan.resolved_plan.ingress_contracts);
+  if (resolved_ingress != nullptr && resolved_ingress->height > 0) {
+    return resolved_ingress->height;
+  }
+  return fallback_input_height;
+}
+
 void populate_model_managed_preproc_options(PreprocOptions* opt,
                                             const internal::PreprocessPlannerResult& plan,
                                             const InputInfo* input) {
@@ -4493,9 +4704,8 @@ void populate_model_managed_preproc_options(PreprocOptions* opt,
 
   opt->output_img_type = resolve_preproc_output_format(plan);
   {
-    std::vector<int> output_shape = {
-        (effective.resize.height > 0) ? effective.resize.height : opt->input_height(),
-        (effective.resize.width > 0) ? effective.resize.width : opt->input_width()};
+    std::vector<int> output_shape = {resolve_preproc_output_height(plan, opt->input_height()),
+                                     resolve_preproc_output_width(plan, opt->input_width())};
     const int output_depth = pipeline_internal::default_depth_for_image_format(
         opt->output_img_type, opt->input_channels());
     if (output_depth > 0) {
@@ -4908,13 +5118,13 @@ std::string stage_name_for_post_region(const internal::ModelPack& pack,
                                        const internal::RouteRegion& region,
                                        const std::size_t region_index) {
   if (region.op_kind == pipeline_internal::sima::RouteGraphKernelKind::Cast) {
-    return default_post_region_stage_name(region, region_index);
+    return pack.apply_name_suffix(default_post_region_stage_name(region, region_index));
   }
   if (const auto stage_kind = execution_stage_kind_from_post_region(region);
       stage_kind.has_value()) {
     for (const auto& stage : pack.execution_plan().post) {
       if (stage.kind == *stage_kind && !stage.stage_name.empty()) {
-        return stage.stage_name;
+        return pack.apply_name_suffix(stage.stage_name);
       }
     }
   }
@@ -5146,7 +5356,7 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
     float detection_threshold = opt.score_threshold;
     float nms_iou_threshold = opt.nms_iou_threshold;
     int top_k = opt.top_k;
-    BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+    BoxDecodeTypeOption decode_type_option = opt.decode_type_option;
     const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
     int model_width = 0;
     int model_height = 0;
@@ -5157,9 +5367,9 @@ std::shared_ptr<Node> build_postprocess_node_from_region(
       model_width = resolved.mla_contract.width;
       model_height = resolved.mla_contract.height;
     }
-    std::optional<ResizeMode> resize_mode_override;
+    std::optional<ResizeMode> resize_mode_override = opt.boxdecode_resize_mode;
     if (opt.boxdecode_original_width > 0 && opt.boxdecode_original_height > 0 && model_width > 0 &&
-        model_height > 0) {
+        model_height > 0 && !resize_mode_override.has_value()) {
       resize_mode_override = resolved.effective.resize.mode;
     }
     return simaai::neat::nodes::SimaBoxDecode(
@@ -5522,9 +5732,10 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
   }
   oss << ". "
       << "Received media=" << info.media_type << " format=" << info.format
-      << " shape=" << info.width << "x" << info.height << "x" << info.depth
-      << ". Hint: resize to expected spatial size and convert BGR->RGB before calling run/build.";
-  throw std::invalid_argument(oss.str());
+      << " shape=" << info.width << "x" << info.height << "x" << info.depth << ".";
+  throw_model_error(
+      error_codes::kInputShape, oss.str(),
+      "Resize to the expected spatial size and convert BGR->RGB before calling run/build.");
 }
 
 std::vector<std::shared_ptr<Node>>
@@ -5850,8 +6061,13 @@ std::string model_options_json_for_graph_provenance(const Model::Options& opt) {
   out["score_threshold"] = opt.score_threshold;
   out["nms_iou_threshold"] = opt.nms_iou_threshold;
   out["top_k"] = opt.top_k;
+  out["num_classes"] = opt.num_classes;
   out["boxdecode_original_width"] = opt.boxdecode_original_width;
   out["boxdecode_original_height"] = opt.boxdecode_original_height;
+  out["boxdecode_resize_mode"] =
+      opt.boxdecode_resize_mode
+          ? nlohmann::ordered_json(model_options_enum_int(*opt.boxdecode_resize_mode))
+          : nlohmann::ordered_json(nullptr);
   out["upstream_name"] = opt.upstream_name;
   out["name_suffix"] = opt.name_suffix;
   out["cleanup_extracted_model_data"] = opt.cleanup_extracted_model_data;
@@ -6287,7 +6503,14 @@ std::unordered_map<std::string, std::string> Model::metadata() const {
   if (!in.is_open())
     return out;
   nlohmann::json j;
-  in >> j;
+  try {
+    in >> j;
+  } catch (const nlohmann::json::exception& e) {
+    throw_model_error(error_codes::kIoParse,
+                      std::string("Model::metadata: failed to parse metadata.json (") + path +
+                          "): " + e.what(),
+                      "Ensure metadata.json in the model archive is valid JSON.");
+  }
   if (!j.is_object())
     return out;
   for (auto it = j.begin(); it != j.end(); ++it) {
@@ -6786,16 +7009,24 @@ simaai::neat::TensorList Model::run(const std::vector<Tensor>& inputs, int timeo
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty input list");
   }
-  Runner runner = build(inputs);
-  return runner.run(inputs, timeout_ms);
+  std::lock_guard<std::mutex> lock(impl_->sync_mu);
+  if (!impl_->sync_ready) {
+    impl_->sync_runner = build(inputs);
+    impl_->sync_ready = true;
+  }
+  return impl_->sync_runner.run(inputs, timeout_ms);
 }
 
 simaai::neat::Sample Model::run(const simaai::neat::Sample& inputs, int timeout_ms) {
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty sample list");
   }
-  Runner runner = build(inputs);
-  return runner.run(inputs, timeout_ms);
+  std::lock_guard<std::mutex> lock(impl_->sync_mu);
+  if (!impl_->sync_ready) {
+    impl_->sync_runner = build(inputs);
+    impl_->sync_ready = true;
+  }
+  return impl_->sync_runner.run(inputs, timeout_ms);
 }
 
 #if defined(SIMA_WITH_OPENCV)
@@ -6803,8 +7034,12 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
   if (inputs.empty()) {
     throw std::runtime_error("Model::run: empty image list");
   }
-  Runner runner = build(inputs);
-  return runner.run(inputs, timeout_ms);
+  std::lock_guard<std::mutex> lock(impl_->sync_mu);
+  if (!impl_->sync_ready) {
+    impl_->sync_runner = build(inputs);
+    impl_->sync_ready = true;
+  }
+  return impl_->sync_runner.run(inputs, timeout_ms);
 }
 #endif
 
@@ -7042,7 +7277,99 @@ CompiledBoxDecodeContract ModelAccess::build_boxdecode_stage_contract(const Mode
                                                                       bool sync) {
   require_model_managed_stage(model, StageNodeKind::BoxDecode, "SimaBoxDecode(Model)");
   const auto& pack = sync ? model.impl_->pack_for_sync() : model.impl_->pack;
-  return require_model_managed_boxdecode_contract(pack);
+  const auto& opt = model.impl_->options;
+  if (auto compiled = try_model_managed_boxdecode_contract(pack); compiled.has_value()) {
+    validate_requested_boxdecode_contract_type(compiled->payload.decode_type, opt.decode_type,
+                                               "Model-managed boxdecode stage");
+    if (model.impl_->options.num_classes > 0) {
+      if (compiled->payload.num_classes > 0 &&
+          compiled->payload.num_classes != model.impl_->options.num_classes) {
+        std::fprintf(
+            stderr,
+            "[WARN] BoxDecode num_classes mismatch: user=%d inferred_from_mpk=%d "
+            "decode_type=%s. Using user value.\n",
+            model.impl_->options.num_classes, compiled->payload.num_classes,
+            pipeline_internal::sima::box_decode_type_token_string(compiled->payload.decode_type)
+                .c_str());
+      }
+      compiled->payload.num_classes = model.impl_->options.num_classes;
+    }
+    return *compiled;
+  }
+
+  if (!pipeline_internal::sima::is_box_decode_type_specified(opt.decode_type) ||
+      opt.decode_type == BoxDecodeType::Yolo) {
+    throw std::runtime_error(
+        "Model-managed boxdecode stage requires a canonical compiled contract. The MPK did not "
+        "declare a concrete BoxDecode decode_type; set Model::Options.decode_type to a versioned "
+        "family such as BoxDecodeType::YoloV8.");
+  }
+
+  const auto& mpk = pack.mpk_contract();
+  if (!mpk.has_value()) {
+    throw std::runtime_error("Model-managed boxdecode fallback requires a parsed MPK contract");
+  }
+  auto route_flags =
+      model_route_flags_for_boxdecode_stage(model.impl_->preprocess_plan.session_route_plan);
+  if (!route_flags.has_value()) {
+    throw std::runtime_error(
+        "Model-managed boxdecode fallback requires the resolved route to select BoxDecode");
+  }
+  route_flags->boxdecode_selected = true;
+  route_flags->quant_contract_required = route_flags->quant_needed;
+
+  std::string contract_error;
+  auto contract = pipeline_internal::sima::build_boxdecode_static_contract_from_mpk(
+      *mpk, *route_flags, &contract_error);
+  if (!contract.has_value()) {
+    throw std::runtime_error(
+        "Model-managed boxdecode fallback failed to derive tensor contract from MPK: " +
+        (contract_error.empty() ? std::string("missing MPK/upstream facts") : contract_error));
+  }
+
+  validate_requested_boxdecode_contract_type(contract->decode_type, opt.decode_type,
+                                             "Model-managed boxdecode fallback");
+
+  contract->decode_type = opt.decode_type;
+  contract->topk = opt.top_k;
+  contract->detection_threshold = opt.score_threshold;
+  contract->nms_iou_threshold = opt.nms_iou_threshold;
+  contract->model_owned_flags = true;
+  contract->quant_contract_required = route_flags->quant_contract_required;
+  contract->required_preprocess_meta_fields =
+      model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields;
+
+  auto finalized = pipeline_internal::sima::stagesemantics::finalize_boxdecode_static_contract(
+      *contract, opt.decode_type, std::nullopt, route_flags, opt.decode_type_option,
+      opt.score_threshold, opt.nms_iou_threshold, opt.top_k, opt.num_classes,
+      model.impl_->preprocess_plan.resolved_plan.meta_contract.required_fields);
+  const int effective_num_classes = finalized.num_classes;
+
+  if (boxdecode_type_expects_grouped_yolo_dfl_local(opt.decode_type)) {
+    if (effective_num_classes <= 0) {
+      throw std::runtime_error(
+          "YOLO BoxDecode fallback requires Model::Options.num_classes for split raw DFL heads "
+          "(for the Anti-UAV one-class model, set opts.num_classes = 1).");
+    }
+    if (boxdecode_looks_interleaved_yolo_dfl_local(*contract, effective_num_classes)) {
+      throw std::runtime_error(
+          "YOLO BoxDecode contract has interleaved raw DFL outputs. Expected grouped-by-role "
+          "order [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5], but observed [" +
+          boxdecode_tensor_order_summary_local(*contract) +
+          "]. Fix the ONNX graph surgery/export output order and recompile the MPK.");
+    }
+    if (!boxdecode_looks_grouped_yolo_dfl_local(*contract, effective_num_classes)) {
+      throw std::runtime_error(
+          "YOLO BoxDecode fallback could not validate grouped-by-role raw DFL output order. "
+          "Expected [reg_p3, reg_p4, reg_p5, cls_p3, cls_p4, cls_p5] with class depth equal to "
+          "Model::Options.num_classes; observed [" +
+          boxdecode_tensor_order_summary_local(*contract) + "].");
+    }
+    finalized.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
+    finalized.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+  }
+
+  return pipeline_internal::sima::stagesemantics::build_boxdecode_compiled_contract(finalized);
 }
 
 void ModelAccess::configure_session_input_route(simaai::neat::Graph& session, const Model& model,

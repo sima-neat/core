@@ -1,4 +1,21 @@
+const fs = require("fs");
+const path = require("path");
 const {execSync} = require("child_process");
+
+function canonicalDocsPath(rawPath) {
+  // Docusaurus' MDX-loader rule matches files against `contentDirs` after
+  // webpack realpath-resolves them. When DOCS_PATH is an absolute path that
+  // traverses a symlink (common when build.sh is invoked from a symlinked
+  // checkout), the rule's include path keeps the symlink while loaded files
+  // arrive with their realpath, so the rule never matches and pages render
+  // without metadata. Canonicalize through realpath so both sides agree.
+  const resolved = path.resolve(__dirname, rawPath);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
 
 function gitValue(command) {
   try {
@@ -73,8 +90,8 @@ const buildCommitUrl = buildCommit ? `${githubRepoUrl}/commit/${buildCommit}` : 
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "SiMa Neat",
-  tagline: "SiMa Neat documentation",
+  title: "SiMa.ai Neat",
+  tagline: "SiMa.ai Neat documentation",
   url,
   baseUrl,
   onBrokenLinks: "throw",
@@ -89,6 +106,28 @@ const config = {
   projectName: project,
   headTags: [
     {
+      tagName: "link",
+      attributes: {
+        rel: "preconnect",
+        href: "https://fonts.googleapis.com",
+      },
+    },
+    {
+      tagName: "link",
+      attributes: {
+        rel: "preconnect",
+        href: "https://fonts.gstatic.com",
+        crossorigin: "anonymous",
+      },
+    },
+    {
+      tagName: "link",
+      attributes: {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap",
+      },
+    },
+    {
       tagName: "script",
       attributes: {},
       innerHTML: `window.__NEAT_DEVELOPER_CENTER_SHELL__ = ${JSON.stringify({
@@ -101,7 +140,7 @@ const config = {
       "classic",
       {
         docs: {
-          path: process.env.DOCS_PATH || "../docs",
+          path: canonicalDocsPath(process.env.DOCS_PATH || "../docs"),
           routeBasePath: "/",
           sidebarPath: require.resolve("./sidebars.js"),
           exclude: ["doxygen/**", "_tmp_test.txt"],
@@ -115,7 +154,13 @@ const config = {
   ],
   plugins: [],
   themeConfig: {
+    docs: {
+      sidebar: {
+        autoCollapseCategories: true,
+      },
+    },
     navbar: {
+      title: "SiMa.ai Neat",
       items: [
         { label: "Installation", to: "/getting-started/installation/", position: "left" },
         { label: "C++ API", to: "/reference/cppapi/", position: "left" },
@@ -161,6 +206,8 @@ const config = {
     require.resolve("./src/clientModules/global-theme.js"),
     require.resolve("./src/clientModules/language-preference.js"),
     require.resolve("./src/clientModules/search-highlight.js"),
+    require.resolve("./src/clientModules/collapse-sidebar-on-home.js"),
+    require.resolve("./src/clientModules/strip-category-ssr-href.js"),
   ],
 };
 

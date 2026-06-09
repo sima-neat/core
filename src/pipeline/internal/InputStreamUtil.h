@@ -234,6 +234,9 @@ std::optional<std::string>
 validate_simaai_preprocess_meta_required_fields(GstBuffer* buffer,
                                                 const std::vector<std::string>& required_fields,
                                                 PreprocessRuntimeMeta* out_meta = nullptr);
+std::optional<PreprocessRuntimeMeta>
+make_simaai_preprocess_meta_from_template(const InputOptions& opt, int input_width,
+                                          int input_height);
 bool apply_simaai_preprocess_meta_template(GstBuffer* buffer, const InputOptions& opt,
                                            int input_width, int input_height);
 

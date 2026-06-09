@@ -65,6 +65,24 @@ struct GraphProcessCvuStageRequest {
   std::string resolved_exec_backend = "EVXX";
   std::string run_target_resolution_reason;
   int graph_id = 0;
+  // Native visual-frontend scalar fields for EV74 graphs 235-238.
+  // Used by Neat graph/processcvu builders when the graph has a native
+  // config ABI instead of the generic tensor-pair ABI.
+  int width = -1;
+  int height = -1;
+  int threshold = -1;
+  int max_features = -1;
+  int grid_x = -1;
+  int grid_y = -1;
+  int min_px_dist = -1;
+  int descriptor_words = -1;
+  int num_points = -1;
+  int win_half = -1;
+  int max_iters = -1;
+  int max_level = -1;
+  int detect_new_features = -1;
+  int fast_threshold = -1;
+  int debug = 0;
   int batch_size = 0;
   int round_off = 0;
   int byte_align = 0;

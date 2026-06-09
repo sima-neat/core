@@ -227,10 +227,12 @@ set(UNIT_TESTS
   unit_contract_render_manifest_equivalence_test
   unit_contracts_test
   unit_boxdecode_render_manifest_from_model_test
+  unit_boxdecode_yolo_layout_matrix_test
   unit_model_route_retarget_helper_test
   unit_dequant_processcvu_contract_equivalence_test
   unit_dequant_node_fragment_test
   unit_detection_types_bbox_test
+  unit_detection_types_boxdecode_payloads_test
   unit_detessdequant_output_info_test
   unit_route_capability_mpk_static_contract_test
   unit_route_plan_detess_adapter_test
@@ -268,9 +270,14 @@ set(UNIT_TESTS
   unit_gst_init_guard_test
   unit_gst_video_meta_test
   unit_inputstream_dynamic_policy_matrix_test
+  unit_inputstream_batched_raw_video_spec_test
   unit_input_policy_test
   unit_input_planner_semantics_test
   unit_preprocess_meta_validation_test
+  unit_preprocess_roi_meta_test
+  unit_preprocess_roi_api_test
+  unit_preprocess_roi_batch_pack_test
+  unit_preprocess_roi_split_test
   unit_preprocess_meta_template_dynamic_test
   unit_preproc_contract_rules_test
   unit_inputstream_stop_timeout_detach_test
@@ -359,6 +366,7 @@ set(UNIT_TESTS
   unit_transport_shared_parent_input_test
   unit_transport_output_nodes_test
   unit_nodes_test
+  unit_visual_frontend_node_api_test
   unit_plugin_failure_messages_test
 )
 
@@ -878,6 +886,104 @@ target_include_directories(evo_tput_bench
 )
 list(APPEND PIPELINESESSION_TEST_TARGETS evo_tput_bench)
 
+add_executable(
+  visual_frontend_tput_test
+  ${CMAKE_CURRENT_SOURCE_DIR}/e2e_testing/visual_frontend_tput_test.cpp
+)
+add_dependencies(visual_frontend_tput_test prepare_test_fixtures)
+target_link_libraries(visual_frontend_tput_test PRIVATE sima_neat_internal)
+target_include_directories(visual_frontend_tput_test
+  PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+    ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+)
+list(APPEND PIPELINESESSION_TEST_TARGETS visual_frontend_tput_test)
+
+function(add_visual_frontend_tput_preset_test name)
+  set(options)
+  set(oneValueArgs)
+  set(multiValueArgs ENV LABELS)
+  cmake_parse_arguments(VFT "${options}" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
+
+  add_test(NAME ${name} COMMAND visual_frontend_tput_test)
+  # Do not pin GST_PLUGIN_PATH here: this is the customer-style installed-runtime
+  # smoke path, so GStreamer should discover the installed processcvu plugin the
+  # same way an application does.  Keep only the library path needed by SDK/DevKit
+  # test execution and the normal no-update guard.
+  if (NOT "${SIMA_TEST_NEAT_LD_LIBRARY_PATH}" STREQUAL "")
+    set_property(TEST ${name} APPEND PROPERTY
+      ENVIRONMENT "LD_LIBRARY_PATH=${SIMA_TEST_NEAT_LD_LIBRARY_PATH}")
+  endif()
+  set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "SIMA_CLI_CHECK_FOR_UPDATE=0")
+  foreach(_vft_env IN LISTS VFT_ENV)
+    set_property(TEST ${name} APPEND PROPERTY ENVIRONMENT "${_vft_env}")
+  endforeach()
+  set_property(TEST ${name} APPEND PROPERTY LABELS "e2e;visual_frontend;ev74")
+  if (VFT_LABELS)
+    set_property(TEST ${name} APPEND PROPERTY LABELS "${VFT_LABELS}")
+  endif()
+  set_tests_properties(${name} PROPERTIES
+    RESOURCE_LOCK "dispatcher"
+    SKIP_RETURN_CODE 77
+    TIMEOUT 90
+  )
+endfunction()
+
+# Fast customer-style API coverage for EV74 visual frontend graphs 235-238.
+# These CTest presets intentionally execute the public Neat Graph/Node/Run API via
+# visual_frontend_tput_test rather than processcvu internals.  They keep the image
+# size small enough for normal DevKit iteration while covering batched logical
+# tensors, all four visual graph IDs, KLT detect-on/off public output contracts,
+# CPU golden/semantic checks, processcvu timing capture, and the pre-dispatch
+# illegal-input guard that prevents bad payloads from reaching EV74.
+add_visual_frontend_tput_preset_test(
+  visual_frontend_customer_api_fast_test
+  ENV
+    "SIMA_VISUAL_TPUT_WIDTH=320"
+    "SIMA_VISUAL_TPUT_HEIGHT=240"
+    "SIMA_VISUAL_TPUT_BATCH=2"
+    "SIMA_VISUAL_TPUT_MAX_FEATURES=64"
+    "SIMA_VISUAL_TPUT_NUM_POINTS=32"
+    "SIMA_VISUAL_TPUT_WARMUP=0"
+    "SIMA_VISUAL_TPUT_ITERS=2"
+    "SIMA_VISUAL_TPUT_KLT_DETECT=1"
+    "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
+  LABELS "customer_api;fast"
+)
+
+add_visual_frontend_tput_preset_test(
+  visual_frontend_customer_api_klt_no_detect_fast_test
+  ENV
+    "SIMA_VISUAL_TPUT_CASE=track_klt"
+    "SIMA_VISUAL_TPUT_WIDTH=320"
+    "SIMA_VISUAL_TPUT_HEIGHT=240"
+    "SIMA_VISUAL_TPUT_BATCH=2"
+    "SIMA_VISUAL_TPUT_MAX_FEATURES=64"
+    "SIMA_VISUAL_TPUT_NUM_POINTS=32"
+    "SIMA_VISUAL_TPUT_WARMUP=0"
+    "SIMA_VISUAL_TPUT_ITERS=2"
+    "SIMA_VISUAL_TPUT_KLT_DETECT=0"
+    "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
+    "SIMA_VISUAL_TPUT_REQUIRE_DETERMINISTIC=1"
+    "SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING=1"
+  LABELS "customer_api;fast;klt"
+)
+
+add_visual_frontend_tput_preset_test(
+  visual_frontend_predispatch_guard_fast_test
+  ENV
+    "SIMA_VISUAL_TPUT_CASE=feature_histogram_batch_guard"
+    "SIMA_VISUAL_TPUT_WIDTH=160"
+    "SIMA_VISUAL_TPUT_HEIGHT=128"
+    "SIMA_VISUAL_TPUT_WARMUP=0"
+    "SIMA_VISUAL_TPUT_ITERS=1"
+    "SIMA_VISUAL_TPUT_CONTINUE_ON_FAIL=0"
+  LABELS "customer_api;fast;safety"
+)
+
 add_pipeline_test(
   graph_migration_phase1_graph_api_surface_test
   graph_migration/unified/graph_phase1_api_surface_test.cpp
@@ -1025,6 +1131,17 @@ add_pipeline_test(
 if (NOT graph_migration_phaseA4_run_export_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phaseA4_run_export_test
     APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;export")
+endif()
+
+add_pipeline_test(
+  graph_migration_phaseA4_branched_report_demo
+  graph_migration/unified/phaseA4_branched_report_demo.cpp
+  graph_migration/common/phase3_graph_test_utils.cpp
+)
+
+if (NOT graph_migration_phaseA4_branched_report_demo IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST graph_migration_phaseA4_branched_report_demo
+    APPEND PROPERTY LABELS "e2e;graph-migration;unified;phaseA4;export;demo")
 endif()
 
 add_pipeline_test(
@@ -1291,6 +1408,33 @@ if (NOT sync_yolov8_test_detessdequant IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST sync_yolov8_test_detessdequant APPEND PROPERTY LABELS "e2e;obj_detection")
 endif()
 
+add_pipeline_test_long(
+  preproc_roi_batch_functional_test
+  e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT preproc_roi_batch_functional_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;long")
+  set_property(TEST preproc_roi_batch_functional_test APPEND PROPERTY RESOURCE_LOCK "dispatcher")
+endif()
+
+add_pipeline_test(
+  preproc_roi_user_smoke_test
+  e2e_pipelines/obj_detection/preproc_roi_batch_functional_test.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+  LOCK_DISPATCHER
+)
+
+if (NOT preproc_roi_user_smoke_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  target_compile_definitions(preproc_roi_user_smoke_test
+    PRIVATE SIMA_ROI_USER_SMOKE_DEFAULT=1)
+  set_property(TEST preproc_roi_user_smoke_test APPEND PROPERTY
+    LABELS "e2e;obj_detection;preproc;roi;smoke")
+  set_tests_properties(preproc_roi_user_smoke_test PROPERTIES SKIP_RETURN_CODE 77)
+endif()
+
 add_pipeline_test(
   async_yolov11_pose_bf16_tput_test
   e2e_pipelines/obj_detection/async_yolov11_pose_bf16_tput_test.cpp
@@ -1315,6 +1459,16 @@ add_pipeline_test(
 
 if (NOT yolov8_variant_route_matrix_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST yolov8_variant_route_matrix_test APPEND PROPERTY LABELS "e2e;obj_detection")
+endif()
+
+add_pipeline_test(
+  boxdecode_yolo_layout_matrix_e2e_test
+  unit_testing/unit_boxdecode_yolo_layout_matrix_test.cpp
+)
+
+if (NOT boxdecode_yolo_layout_matrix_e2e_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST boxdecode_yolo_layout_matrix_e2e_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;boxdecode")
 endif()
 
 add_pipeline_test(
@@ -1440,6 +1594,49 @@ if (NOT hybrid_graph_rtsp_resnet50_tput_test IN_LIST PIPELINESESSION_TEST_BLACKL
     APPEND PROPERTY LABELS "e2e;img_classification;perf;tput")
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
   set_property(TEST hybrid_graph_rtsp_resnet50_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+endif()
+
+if (NOT macro_mixed_multistream_multimodel_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  add_executable(
+    macro_mixed_multistream_multimodel_tput_test
+    e2e_pipelines/macro/macro_mixed_multistream_multimodel_tput_test.cpp
+    e2e_pipelines/e2e_utils.cpp
+  )
+  add_dependencies(macro_mixed_multistream_multimodel_tput_test prepare_test_fixtures)
+  target_link_libraries(macro_mixed_multistream_multimodel_tput_test PRIVATE sima_neat_internal)
+  target_include_directories(macro_mixed_multistream_multimodel_tput_test
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines
+      ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
+  )
+  list(APPEND PIPELINESESSION_TEST_TARGETS macro_mixed_multistream_multimodel_tput_test)
+
+  add_test(
+    NAME macro_mixed_multistream_multimodel_tput_smoke
+    COMMAND macro_mixed_multistream_multimodel_tput_test
+      --streams 4
+      --rtsp-servers 2
+      --fps 15
+      --iters 20
+      --resnet-lanes 1
+      --yolo-lanes 1
+      --branch-mode fanout-both
+      --metadata-udp 1
+      --max-runtime-ms 120000
+      --stall-timeout-ms 30000
+      --json-out macro_mixed_multistream_multimodel_tput_smoke.json
+  )
+  simaneat_append_ctest_env(macro_mixed_multistream_multimodel_tput_smoke)
+  set_tests_properties(macro_mixed_multistream_multimodel_tput_smoke PROPERTIES
+    DISABLED TRUE
+    SKIP_RETURN_CODE 77
+  )
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke
+    APPEND PROPERTY LABELS "e2e;macro;perf;tput;stress;disabled")
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "perf-device")
+  set_property(TEST macro_mixed_multistream_multimodel_tput_smoke APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
 endif()
 
 # Give CTest's parallel scheduler better information. High-cost tests are

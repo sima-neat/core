@@ -1,12 +1,13 @@
 #include "model/Model.h"
 #include "model/internal/InputPlanner.h"
+#include "model/internal/ModelInternal.h"
 #include "model/internal/ModelPack.h"
 #include "model/internal/RoutePlanner.h"
+#include "asset_utils.h"
 #include "model_archive_fixture_utils.h"
 #include "test_main.h"
 
 #include <algorithm>
-#include <filesystem>
 
 RUN_TEST(
     "unit_route_capability_mpk_static_contract_test", ([] {
@@ -37,19 +38,36 @@ RUN_TEST(
 
       const auto raw_yolo_bf16 =
           sima_test::test_source_root() / "tmp" / "yolov8n_drive" / "yolov8n_A_W_BF16_mpk.tar.gz";
-      if (std::filesystem::exists(raw_yolo_bf16)) {
+      if (sima_test::is_strict_mpk_tar_gz(raw_yolo_bf16)) {
         ModelPack raw_pack(raw_yolo_bf16.string());
         const PreprocessCapabilities raw_capabilities = inspect_preprocess_capabilities(raw_pack);
         const PreprocessPlannerResult raw_preprocess_plan =
             plan_preprocess(Model::Options{}, raw_capabilities);
         const RouteCapability raw_capability =
             extract_route_capability(raw_pack, raw_preprocess_plan);
-        require(raw_capability.has_strict_boxdecode_route,
-                "raw YOLO BF16 route should surface strict MPK boxdecode availability");
+        require(!raw_capability.has_strict_boxdecode_route,
+                "default raw YOLO BF16 route must not infer strict BoxDecode availability "
+                "from MPK topology alone");
         require(std::find(raw_capability.evidence.begin(), raw_capability.evidence.end(),
-                          "strict_boxdecode_route=1") != raw_capability.evidence.end(),
-                "route capability should record strict boxdecode evidence");
-        require(raw_capability.adapter_capabilities.has_post_boxdecode,
-                "strict boxdecode route should advertise post boxdecode capability");
+                          "strict_boxdecode_route=0") != raw_capability.evidence.end(),
+                "default route capability should record that strict boxdecode was not selected");
+        require(!raw_capability.adapter_capabilities.has_post_boxdecode,
+                "raw YOLO BF16 route should advertise raw tensor post adapters, not BoxDecode, "
+                "unless the user requests a decode family");
+
+        Model::Options explicit_boxdecode;
+        explicit_boxdecode.decode_type = BoxDecodeType::YoloV8;
+        Model explicit_model(raw_yolo_bf16.string(), explicit_boxdecode);
+        require(ModelAccess::has_model_managed_stage(explicit_model, StageNodeKind::BoxDecode),
+                "explicit decode_type should select a model-managed BoxDecode stage");
+        require(ModelAccess::resolved_post_kind(explicit_model) == PostRouteStageKind::BoxDecode,
+                "explicit decode_type should resolve the post route to BoxDecode");
+        const auto compiled =
+            ModelAccess::build_boxdecode_stage_contract(explicit_model, /*sync=*/false);
+        require(compiled.payload.decode_type == BoxDecodeType::YoloV8,
+                "explicit BoxDecode should derive a YOLOv8 contract from MPK facts");
+        require(compiled.payload.num_classes == 80,
+                "explicit BoxDecode should derive YOLOv8 class count from MPK facts when "
+                "num_classes is unset");
       }
     }));

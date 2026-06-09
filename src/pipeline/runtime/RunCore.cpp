@@ -11,6 +11,9 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <iomanip>
@@ -35,6 +38,21 @@ InputOptions input_opts_from_spec(const OutputSpec& spec, bool complete);
 
 namespace simaai::neat::runtime {
 namespace {
+
+std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
+          .count());
+}
+
+void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t>& max_value,
+                    std::uint64_t ns) {
+  total.fetch_add(ns, std::memory_order_relaxed);
+  std::uint64_t cur = max_value.load(std::memory_order_relaxed);
+  while (cur < ns && !max_value.compare_exchange_weak(cur, ns, std::memory_order_relaxed,
+                                                      std::memory_order_relaxed)) {
+  }
+}
 
 std::string make_run_uuid() {
   std::array<unsigned char, 16> bytes{};
@@ -132,9 +150,15 @@ void restore_sample_identity_if_needed(Sample& sample, const SampleIdentity& id,
   }
 }
 
-std::vector<std::shared_ptr<simaai::neat::Node>>
-materialize_segment_nodes(const PipelineSegmentPlan& segment) {
-  std::vector<std::shared_ptr<simaai::neat::Node>> nodes = segment.nodes;
+struct MaterializedSegmentNodes {
+  std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
+  bool injected_input = false;
+  bool injected_output = false;
+};
+
+MaterializedSegmentNodes materialize_segment_nodes(const PipelineSegmentPlan& segment) {
+  MaterializedSegmentNodes out;
+  out.nodes = segment.nodes;
 
   if (!segment.boundary.source_like && segment.input_edges.empty() &&
       simaai::neat::graph::has_internal_source(segment.nodes) &&
@@ -153,14 +177,16 @@ materialize_segment_nodes(const PipelineSegmentPlan& segment) {
       opt_src =
           simaai::neat::graph::input_opts_from_spec(segment.input_spec, segment.input_complete);
     }
-    nodes.insert(nodes.begin(), simaai::neat::nodes::Input(opt_src));
+    out.nodes.insert(out.nodes.begin(), simaai::neat::nodes::Input(opt_src));
+    out.injected_input = true;
   }
 
   if (segment.boundary.needs_output && !simaai::neat::graph::has_output_appsink(segment.nodes)) {
-    nodes.push_back(simaai::neat::nodes::Output());
+    out.nodes.push_back(simaai::neat::nodes::Output());
+    out.injected_output = true;
   }
 
-  return nodes;
+  return out;
 }
 
 } // namespace
@@ -217,7 +243,7 @@ void RunCore::graph_signal_stop() {
           }
         }
       }
-      stage->mailbox.inbox.close();
+      stage->inbox.close();
     }
   }
   for (auto& sink : graph_execution_->sinks) {
@@ -247,6 +273,7 @@ void RunCore::graph_request_stop(const std::string& err) {
 
 bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sample, std::string* err,
                                           bool allow_startup_preflight) {
+  const auto ensure_start_ns = std::chrono::steady_clock::now();
   const auto total_start = pipeline_internal::build_timing_now();
   ExecutionGraphRuntime& execution = graph_execution();
   if (index >= execution.pipelines.size()) {
@@ -256,26 +283,55 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
   }
 
   auto& pipe = *execution.pipelines[index];
-  if (pipe.transport.built.load(std::memory_order_acquire))
+  auto& tel = pipe.transport.telemetry;
+  tel.ensure_build_calls.fetch_add(1, std::memory_order_relaxed);
+  auto record_total = [&tel, ensure_start_ns]() {
+    atomic_add_max(tel.ensure_build_total_ns, tel.ensure_build_total_max_ns,
+                   elapsed_ns_since(ensure_start_ns));
+  };
+  if (pipe.transport.built.load(std::memory_order_acquire)) {
+    record_total();
     return true;
+  }
   if (graph_stop_requested()) {
     if (err)
       *err = "GraphRun: stopped";
+    tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+    record_total();
     return false;
+  }
+  if (pipe.seg.boundary.direct_graph_source) {
+    {
+      std::lock_guard<std::mutex> lock(pipe.transport.mu);
+      pipe.transport.building = false;
+      pipe.transport.built.store(true, std::memory_order_release);
+    }
+    pipe.transport.cv.notify_all();
+    record_total();
+    return true;
   }
 
   {
     std::unique_lock<std::mutex> lock(pipe.transport.mu);
-    if (pipe.transport.built.load(std::memory_order_acquire))
+    if (pipe.transport.built.load(std::memory_order_acquire)) {
+      record_total();
       return true;
+    }
     if (pipe.transport.building) {
+      const auto wait_start = std::chrono::steady_clock::now();
       pipe.transport.cv.wait(lock, [&] {
         return pipe.transport.built.load(std::memory_order_acquire) || graph_stop_requested();
       });
-      if (pipe.transport.built.load(std::memory_order_acquire))
+      atomic_add_max(tel.ensure_build_wait_ns, tel.ensure_build_wait_max_ns,
+                     elapsed_ns_since(wait_start));
+      if (pipe.transport.built.load(std::memory_order_acquire)) {
+        record_total();
         return true;
+      }
       if (err)
         *err = "GraphRun: stopped";
+      tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+      record_total();
       return false;
     }
     pipe.transport.building = true;
@@ -285,6 +341,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
   Sample build_sample =
       simaai::neat::pipeline_internal::canonicalize_tensor_transport_sample(sample);
   const auto canonicalize_us = pipeline_internal::build_timing_us(canonicalize_start);
+  tel.ensure_build_canonicalize_ns.fetch_add(static_cast<std::uint64_t>(canonicalize_us) * 1000ULL,
+                                             std::memory_order_relaxed);
 
   try {
     if (graph_debug_enabled_for_core()) {
@@ -315,6 +373,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
     const auto segment_start = pipeline_internal::build_timing_now();
     auto run_core = RunCore::start_pipeline_segment(pipe.seg, std::move(start_opt));
     const auto segment_us = pipeline_internal::build_timing_us(segment_start);
+    tel.ensure_build_segment_ns.fetch_add(static_cast<std::uint64_t>(segment_us) * 1000ULL,
+                                          std::memory_order_relaxed);
     {
       std::lock_guard<std::mutex> lock(pipe.transport.mu);
       pipe.run_core = std::move(run_core);
@@ -332,6 +392,7 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
          {"total", pipeline_internal::build_timing_us(total_start)}},
         "seg=" + std::to_string(pipe.seg.id));
     pipe.transport.cv.notify_all();
+    record_total();
     return true;
   } catch (const std::exception& e) {
     {
@@ -339,6 +400,8 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
       pipe.transport.building = false;
     }
     pipe.transport.cv.notify_all();
+    tel.ensure_build_failures.fetch_add(1, std::memory_order_relaxed);
+    record_total();
     if (err)
       *err = e.what();
     return false;
@@ -347,6 +410,7 @@ bool RunCore::ensure_graph_pipeline_built(std::size_t index, const Sample& sampl
 
 bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
                                             simaai::neat::graph::PortId port, Sample&& sample,
+                                            std::size_t edge_index,
                                             const EdgeRouterOptions& options) {
   ExecutionGraphRuntime& execution = graph_execution();
   if (group_index >= execution.stage_groups.size())
@@ -378,8 +442,8 @@ bool RunCore::graph_dispatch_to_stage_group(std::size_t group_index,
   }
 
   auto& stage = *execution.stages[pick];
-  simaai::neat::graph::StageMsg next{.in_port = port, .sample = std::move(sample)};
-  const bool ok = stage.mailbox.inbox.push(std::move(next), options.push_timeout_ms);
+  RuntimeStageQueueMsg next{.in_port = port, .sample = std::move(sample), .edge_index = edge_index};
+  const bool ok = stage.inbox.push(std::move(next), options.push_timeout_ms);
   if (!ok && !graph_stop_requested()) {
     std::ostringstream msg;
     msg << "GraphRun: stage inbox backpressure timeout (node="
@@ -418,8 +482,9 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
       EdgeRouterCallbacks callbacks;
       callbacks.dispatch_to_stage_group = [this, &options](std::size_t group,
                                                            simaai::neat::graph::PortId target_port,
-                                                           Sample&& next) {
-        return graph_dispatch_to_stage_group(group, target_port, std::move(next), options);
+                                                           Sample&& next, std::size_t edge_index) {
+        return graph_dispatch_to_stage_group(group, target_port, std::move(next), edge_index,
+                                             options);
       };
       callbacks.ensure_pipeline_built = [this](std::size_t index, const Sample& seed,
                                                std::string* err) {
@@ -460,7 +525,8 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
     }
 
     Sample copy = sample;
-    const bool ok = pipe.transport.input_queue->push(std::move(copy), options.push_timeout_ms);
+    const bool ok = pipe.transport.input_queue->push(
+        RuntimePipelineQueueMsg{std::move(copy), invalid_edge_index()}, options.push_timeout_ms);
     if (!ok && !graph_stop_requested()) {
       std::ostringstream msg;
       msg << "GraphRun::push timed out waiting for pipeline input queue (seg="
@@ -486,7 +552,8 @@ bool RunCore::graph_push(simaai::neat::graph::NodeId node_id, simaai::neat::grap
       }
     }
     Sample copy = sample;
-    return graph_dispatch_to_stage_group(it_stage->second, in_port, std::move(copy), options);
+    return graph_dispatch_to_stage_group(it_stage->second, in_port, std::move(copy),
+                                         invalid_edge_index(), options);
   }
 
   std::fprintf(stderr, "[GRAPH] GraphRun::push failed: node %zu not found in any pipeline stage\n",
@@ -773,16 +840,22 @@ std::optional<Sample> RunCore::graph_pull(simaai::neat::graph::NodeId node_id, i
     return std::nullopt;
   }
 
-  Sample out;
+  RuntimeSinkQueueMsg queued;
   const int wait_ms = has_timeout ? timeout_ms : -1;
-  if (!it->second->pop(out, wait_ms)) {
+  if (!it->second->pop(queued, wait_ms)) {
     std::fprintf(stderr,
                  "[GRAPH] GraphRun::pull: queue pop returned empty for node %zu (timeout=%dms or "
                  "queue closed)\n",
                  static_cast<std::size_t>(node_id), wait_ms);
     return std::nullopt;
   }
-  return out;
+  if (graph_message_trace_enabled(&execution) && queued.edge_index != invalid_edge_index()) {
+    const TraceGraphMessageArgs args =
+        make_trace_graph_message_args(&execution, queued.edge_index, queued.sample);
+    trace_graph_message_event(TraceGraphMessageEventType::QueueOut, args);
+    trace_graph_message_event(TraceGraphMessageEventType::EdgeSinkRecv, args);
+  }
+  return std::move(queued.sample);
 }
 
 std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPlan& segment,
@@ -791,7 +864,8 @@ std::shared_ptr<RunCore> RunCore::start_pipeline_segment(const PipelineSegmentPl
   gst_init_once();
 
   const auto materialize_start = pipeline_internal::build_timing_now();
-  std::vector<std::shared_ptr<simaai::neat::Node>> nodes = materialize_segment_nodes(segment);
+  MaterializedSegmentNodes materialized = materialize_segment_nodes(segment);
+  std::vector<std::shared_ptr<simaai::neat::Node>> nodes = std::move(materialized.nodes);
   const auto materialize_us = pipeline_internal::build_timing_us(materialize_start);
   if (nodes.empty()) {
     throw std::runtime_error("RunCore::start_pipeline_segment: empty pipeline segment");

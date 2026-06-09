@@ -86,6 +86,15 @@ struct ProfilerKernelInvocation {
   std::string in_segment;                 ///< Input segment label.
   std::string out_segment;                ///< Output segment label.
 
+  // Stable graph attribution. These are populated only when the profiler ABI/runtime emitters
+  // provide them; older profiler events leave them unset and export falls back to exact
+  // stage-name matching with ambiguity checks.
+  std::uint64_t run_id_hash = 0;           ///< Stable run-id hash, 0 if unavailable.
+  std::int32_t pipeline_segment_id = -1;   ///< Graph pipeline segment, -1 if unavailable.
+  std::int32_t runtime_node_id = -1;       ///< Lowered runtime node id, -1 if unavailable.
+  std::int32_t public_node_id = -1;        ///< Optional public node id, -1 if unavailable.
+  std::string gst_element_name;            ///< GStreamer element name, if separate from stage.
+
   /// @brief Convenience: event duration in milliseconds.
   double duration_ms() const {
     return static_cast<double>(end_ns - start_ns) / 1.0e6;
@@ -129,10 +138,16 @@ struct ProfilerMemcpySite {
  */
 struct ProfilerKernelAggregate {
   std::string backend;                    ///< Backend label ("MLA", "A65", ...).
+  std::string phase;                      ///< Profiler phase ("Run", "Load", "Exec", ...).
   std::string kernel_name;                ///< Kernel name within the backend.
   std::string stage_name;                 ///< Pipeline stage name.
   std::int32_t physical_input_index = -1; ///< Physical input index, -1 if N/A.
   std::int32_t output_slot = -1;          ///< Output slot, -1 if N/A.
+  std::uint64_t run_id_hash = 0;           ///< Stable run-id hash, 0 if unavailable.
+  std::int32_t pipeline_segment_id = -1;   ///< Graph pipeline segment, -1 if unavailable.
+  std::int32_t runtime_node_id = -1;       ///< Lowered runtime node id, -1 if unavailable.
+  std::int32_t public_node_id = -1;        ///< Optional public node id, -1 if unavailable.
+  std::string gst_element_name;            ///< GStreamer element name, if available.
   std::uint64_t count = 0;                ///< Number of invocations in the bucket.
   double total_ms = 0.0;                  ///< Total time across invocations (ms).
   double min_ms = 0.0;                    ///< Minimum single-invocation time (ms).
@@ -270,6 +285,7 @@ private:
   Run* attached_run_ = nullptr;
   Graph* attached_graph_ = nullptr;
   bool enabled_at_attach_ = false;
+  bool owns_global_profiler_ = false;
 };
 
 } // namespace simaai::neat

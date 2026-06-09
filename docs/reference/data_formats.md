@@ -94,6 +94,6 @@ supersedes the deprecated `Sample::format` field.
 
 ## See also
 
-- [Tensor and Sample](/getting-started/programming-model/core_types)
+- [Tensor and Sample](/getting-started/development_workflow/core_types)
 - [Tutorials](/tutorials)
 - [Architecture](/contribute/architecture)

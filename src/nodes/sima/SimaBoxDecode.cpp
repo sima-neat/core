@@ -21,6 +21,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace simaai::neat {
@@ -33,6 +34,17 @@ struct BoxDecodeOptionsInternal {
   bool transmit = false;
   BoxDecodeType decode_type = BoxDecodeType::Unspecified;
   BoxDecodeTypeOption decode_type_option = BoxDecodeTypeOption::Auto;
+  // Explicit source byte layout of the upstream head tensors, for hand-built graphs that decode
+  // without a model pack (the upstream compiled contract does not carry packing flags, so this
+  // cannot be inferred). nullopt means "not specified": resolved from the model pack when present,
+  // otherwise contract compilation fails fast. Unused on the model-pack/compiled-contract paths.
+  std::optional<pipeline_internal::sima::BoxDecodeSourceStorageKind> source_storage_kind;
+  // Explicit overrides for the standalone (no-model-pack) box-decode contract: whether the upstream
+  // heads need detessellation / dequantization. nullopt keeps the inferred standalone default (or
+  // the model-pack value). Like source_storage_kind, unused on the model-pack/compiled-contract
+  // paths.
+  std::optional<bool> override_tess_needed;
+  std::optional<bool> override_quant_needed;
   int top_k = 0;
   double detection_threshold = 0.0;
   double nms_iou_threshold = 0.0;
@@ -58,7 +70,7 @@ struct BoxDecodeOptionsInternal {
   // buffer GstSimaaiPreprocessMeta won't carry `preproc_resize_mode`. When
   // present the contract drops `preproc_resize_mode` from
   // required_preprocess_meta_fields, and the backend fragment emits the
-  // resize-mode token so a future GST plugin property can consume it. nullopt
+  // resize-mode token for the GST plugin override. nullopt
   // means "no override; expect the value from upstream meta as before".
   std::optional<ResizeMode> resize_mode_override;
   std::string element_name;
@@ -71,6 +83,38 @@ using json = nlohmann::json;
 
 bool boxdecode_debug_enabled() {
   return pipeline_internal::env_bool("SIMA_BOXDECODE_DEBUG", false);
+}
+
+/// Map the public source-storage selector onto the internal contract enum.
+pipeline_internal::sima::BoxDecodeSourceStorageKind
+source_storage_kind_from_public(BoxDecodeSourceStorage storage) {
+  switch (storage) {
+  case BoxDecodeSourceStorage::PackedCBlock:
+    return pipeline_internal::sima::BoxDecodeSourceStorageKind::PackedCBlock;
+  case BoxDecodeSourceStorage::DenseHwc:
+  default:
+    return pipeline_internal::sima::BoxDecodeSourceStorageKind::DenseHwcPhysical;
+  }
+}
+
+void validate_requested_boxdecode_contract_type_local(BoxDecodeType contract_type,
+                                                      BoxDecodeType requested_type,
+                                                      std::string_view context) {
+  using pipeline_internal::sima::box_decode_type_matches_requested_contract;
+  using pipeline_internal::sima::box_decode_type_token_string;
+  if (box_decode_type_matches_requested_contract(contract_type, requested_type)) {
+    return;
+  }
+  const std::string contract_token = box_decode_type_token_string(contract_type);
+  const std::string requested_token = box_decode_type_token_string(requested_type);
+  std::ostringstream oss;
+  oss << context
+      << ": requested BoxDecode decode_type does not match the MPK-derived tensor contract "
+      << "(requested=" << (requested_token.empty() ? "unspecified" : requested_token)
+      << ", mpk_contract=" << (contract_token.empty() ? "unspecified" : contract_token)
+      << "). Use the matching BoxDecodeType for this model, or leave the default Model route as "
+         "raw tensors and attach an explicit compatible postprocess stage.";
+  throw std::runtime_error(oss.str());
 }
 
 bool boxdecode_name_has_class_score_semantics_local(const std::string& raw_name) {
@@ -102,7 +146,14 @@ bool boxdecode_contract_needs_sample_semantic_refinement_local(
                         boxdecode_name_looks_generic_local(tensor.backend_name) ||
                         boxdecode_name_looks_generic_local(tensor.source_segment_name);
   }
-  return !saw_explicit_semantics && saw_generic_names;
+  if (saw_explicit_semantics) {
+    return false;
+  }
+  if (saw_generic_names) {
+    return true;
+  }
+  return contract.score_activation == pipeline_internal::sima::BoxDecodeScoreActivation::Unknown ||
+         contract.decode_type_option == BoxDecodeTypeOption::Auto;
 }
 
 json shape_descs_to_json(const std::vector<sima_ev_shape_desc>& shapes) {
@@ -122,14 +173,17 @@ void maybe_refine_boxdecode_contract_from_ingress_sample_local(
     pipeline_internal::sima::BoxDecodeStaticContract* contract, const Sample& ingress_sample,
     BoxDecodeType decode_type, const std::optional<InputContract>& input_contract) {
   if (!contract ||
-      (decode_type != BoxDecodeType::YoloV8 && decode_type != BoxDecodeType::YoloV26) ||
+      !(decode_type == BoxDecodeType::YoloV8 || decode_type == BoxDecodeType::YoloV26 ||
+        decode_type == BoxDecodeType::YoloV26Pose || decode_type == BoxDecodeType::YoloV26Seg ||
+        decode_type == BoxDecodeType::YoloV6 || decode_type == BoxDecodeType::YoloX) ||
       !boxdecode_contract_needs_sample_semantic_refinement_local(*contract)) {
     return;
   }
 
   std::string sample_error;
   auto sample_contract = pipeline_internal::sima::build_boxdecode_static_contract_from_sample(
-      ingress_sample, decode_type, input_contract, &sample_error);
+      ingress_sample, decode_type, input_contract,
+      pipeline_internal::sima::BoxDecodeStandaloneContractOverrides{}, &sample_error);
   if (!sample_contract.has_value()) {
     return;
   }
@@ -412,7 +466,9 @@ filter_required_preprocess_meta_fields(const std::vector<std::string>& fields, i
 }
 
 void apply_yolov26_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
-  if (!compiled || compiled->payload.decode_type != BoxDecodeType::YoloV26) {
+  if (!compiled || (compiled->payload.decode_type != BoxDecodeType::YoloV26 &&
+                    compiled->payload.decode_type != BoxDecodeType::YoloV26Pose &&
+                    compiled->payload.decode_type != BoxDecodeType::YoloV26Seg)) {
     return;
   }
   // YOLO26 score heads are logits by contract. Make model-managed overrides
@@ -420,6 +476,24 @@ void apply_yolov26_compiled_payload_overrides(CompiledBoxDecodeContract* compile
   // grouped-head heuristics.
   compiled->payload.decode_type_option = BoxDecodeTypeOption::GroupedByRoleLogit;
   compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+  if (compiled->payload.decode_type == BoxDecodeType::YoloV26Pose &&
+      compiled->payload.num_classes <= 0) {
+    compiled->payload.num_classes = 1;
+  }
+}
+
+void apply_raw_yolov6_yolox_compiled_payload_overrides(CompiledBoxDecodeContract* compiled) {
+  if (!compiled || (compiled->payload.decode_type != BoxDecodeType::YoloV6 &&
+                    compiled->payload.decode_type != BoxDecodeType::YoloX)) {
+    return;
+  }
+  compiled->payload.score_activation = pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+  if (!compiled->payload.decode_type_option.has_value() ||
+      *compiled->payload.decode_type_option == BoxDecodeTypeOption::Auto) {
+    compiled->payload.decode_type_option = compiled->payload.decode_type == BoxDecodeType::YoloX
+                                               ? BoxDecodeTypeOption::Split3Interleaved
+                                               : BoxDecodeTypeOption::InterleavedByHeadLogit;
+  }
 }
 
 } // namespace
@@ -536,7 +610,9 @@ static BoxDecodeOptionsInternal options_from_contract(
 SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold,
                              double nms_iou_threshold, int top_k, const std::string& element_name,
                              int original_width, int original_height, int model_width,
-                             int model_height, BoxDecodeTypeOption decode_type_option) {
+                             int model_height, BoxDecodeTypeOption decode_type_option,
+                             std::optional<BoxDecodeSourceStorage> source_storage,
+                             std::optional<bool> detess, std::optional<bool> dequant) {
   validate_dimension_override_pair(original_width, original_height, "original dimensions",
                                    "SimaBoxDecode");
   validate_dimension_override_pair(model_width, model_height, "model dimensions", "SimaBoxDecode");
@@ -547,6 +623,11 @@ SimaBoxDecode::SimaBoxDecode(BoxDecodeType decode_type, double detection_thresho
     throw std::invalid_argument(
         "SimaBoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified.");
   }
+  if (source_storage.has_value()) {
+    opt->source_storage_kind = source_storage_kind_from_public(*source_storage);
+  }
+  opt->override_tess_needed = detess;
+  opt->override_quant_needed = dequant;
   opt_ = std::move(opt);
 }
 
@@ -590,12 +671,24 @@ SimaBoxDecode::SimaBoxDecode(const simaai::neat::Model& model, BoxDecodeType dec
         std::string(e.what()));
   }
   if (decode_type != BoxDecodeType::Unspecified) {
+    validate_requested_boxdecode_contract_type_local(compiled_contract.payload.decode_type,
+                                                     decode_type, "SimaBoxDecode(Model)");
     compiled_contract.payload.decode_type = decode_type;
   }
   if (decode_type_option != BoxDecodeTypeOption::Auto) {
     compiled_contract.payload.decode_type_option = decode_type_option;
+    if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleProbability ||
+        decode_type_option == BoxDecodeTypeOption::InterleavedByHeadProbability) {
+      compiled_contract.payload.score_activation =
+          pipeline_internal::sima::BoxDecodeScoreActivation::Identity;
+    } else if (decode_type_option == BoxDecodeTypeOption::GroupedByRoleLogit ||
+               decode_type_option == BoxDecodeTypeOption::InterleavedByHeadLogit) {
+      compiled_contract.payload.score_activation =
+          pipeline_internal::sima::BoxDecodeScoreActivation::Sigmoid;
+    }
   }
   apply_yolov26_compiled_payload_overrides(&compiled_contract);
+  apply_raw_yolov6_yolox_compiled_payload_overrides(&compiled_contract);
   if (detection_threshold > 0.0) {
     compiled_contract.payload.detection_threshold = detection_threshold;
   }
@@ -717,10 +810,14 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
 
     std::optional<pipeline_internal::sima::BoxDecodeStaticContract> contract =
         opt_->model_static_contract;
+    // Hand-built (no-model-pack) decode paths cannot infer the source byte layout / detess /
+    // dequant facts the model pack would normally provide; forward any explicit caller overrides.
+    const pipeline_internal::sima::BoxDecodeStandaloneContractOverrides standalone_overrides{
+        opt_->source_storage_kind, opt_->override_tess_needed, opt_->override_quant_needed};
     if (!contract.has_value()) {
       if (input.immediate_upstream != nullptr) {
         contract = pipeline_internal::sima::build_boxdecode_static_contract_from_compiled_upstream(
-            *input.immediate_upstream, opt_->decode_type, err);
+            *input.immediate_upstream, opt_->decode_type, standalone_overrides, err);
         if (!contract.has_value()) {
           // Helper may return nullopt without populating *err. Provide a
           // contextual default so the diagnostic message conveys *which*
@@ -747,7 +844,8 @@ bool SimaBoxDecode::compile_node_contract(const ContractCompileInput& input,
         return false;
       } else {
         contract = pipeline_internal::sima::build_boxdecode_static_contract_from_sample(
-            *input.ingress.ingress_sample, opt_->decode_type, input_contract_, err);
+            *input.ingress.ingress_sample, opt_->decode_type, input_contract_, standalone_overrides,
+            err);
         if (!contract.has_value()) {
           if (err && err->empty()) {
             *err = "SimaBoxDecode: failed to derive box-decode static contract from ingress "
@@ -899,18 +997,14 @@ std::string SimaBoxDecode::backend_fragment(int node_index) const {
   if (opt_->model_height > 0) {
     ss << " model-height=" << opt_->model_height;
   }
-  // NOTE: `opt_->resize_mode_override` is intentionally NOT emitted into the
-  // GST fragment here. The neatobjectdecode plugin (in the internals repo)
-  // does not yet register a `resize-mode` GObject property, so emitting
-  // `resize-mode=<token>` would make gst_parse_launch fail with
-  // "no property 'resize-mode' in element 'neatobjectdecode'". The override's
-  // current job is purely contract-side: it relaxes the per-buffer required-
-  // meta check (`preproc_resize_mode` is stripped from
-  // `required_preprocess_meta_fields`), letting buffers flow through without
-  // the upstream-emitted field. Runtime box rescaling on the plugin side
-  // falls back to geometry-derived math from original-width/model-width.
-  // When the plugin gains a property, emit the token here and add a fallback
-  // case to the plugin's extract_runtime_config / field_has_property_fallback.
+  if (opt_->resize_mode_override.has_value()) {
+    const char* mode = "letterbox";
+    if (*opt_->resize_mode_override == ResizeMode::Stretch)
+      mode = "stretch";
+    if (*opt_->resize_mode_override == ResizeMode::Crop)
+      mode = "crop";
+    ss << " resize-mode=" << mode;
+  }
   return ss.str();
 }
 
@@ -954,10 +1048,13 @@ namespace simaai::neat::nodes {
 std::shared_ptr<simaai::neat::Node>
 SimaBoxDecode(BoxDecodeType decode_type, double detection_threshold, double nms_iou_threshold,
               int top_k, const std::string& element_name, int original_width, int original_height,
-              int model_width, int model_height, BoxDecodeTypeOption decode_type_option) {
+              int model_width, int model_height, BoxDecodeTypeOption decode_type_option,
+              std::optional<BoxDecodeSourceStorage> source_storage, std::optional<bool> detess,
+              std::optional<bool> dequant) {
   return std::make_shared<simaai::neat::SimaBoxDecode>(
       decode_type, detection_threshold, nms_iou_threshold, top_k, element_name, original_width,
-      original_height, model_width, model_height, decode_type_option);
+      original_height, model_width, model_height, decode_type_option, source_storage, detess,
+      dequant);
 }
 
 std::shared_ptr<simaai::neat::Node>

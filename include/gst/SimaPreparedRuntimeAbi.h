@@ -15,7 +15,7 @@
 #include <vector>
 
 #define SIMA_PREPARED_RUNTIME_CONTEXT_TYPE "sima.model.prepared-runtime"
-#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)2)
+#define SIMA_PREPARED_RUNTIME_ABI_VERSION ((guint)3)
 
 #define SIMA_PREPARED_RUNTIME_KEY_SESSION_ID "session_id"
 #define SIMA_PREPARED_RUNTIME_KEY_MODEL_ID "model_id"
@@ -202,6 +202,24 @@ struct PreparedProcessCvuTypedConfig {
   std::string run_target_resolution_reason;
   int32_t graph_id = -1;
   std::string default_input_name;
+
+  // Native visual-frontend scalar fields for EV74 graphs 235-238.
+  // These graphs use graph-specific config structs, not the generic tensor-pair ABI.
+  int32_t width = -1;
+  int32_t height = -1;
+  int32_t threshold = -1;
+  int32_t max_features = -1;
+  int32_t grid_x = -1;
+  int32_t grid_y = -1;
+  int32_t min_px_dist = -1;
+  int32_t descriptor_words = -1;
+  int32_t num_points = -1;
+  int32_t win_half = -1;
+  int32_t max_iters = -1;
+  int32_t max_level = -1;
+  int32_t detect_new_features = -1;
+  int32_t fast_threshold = -1;
+  int32_t debug = 0;
 
   int32_t scaled_width = -1;
   int32_t scaled_height = -1;
@@ -520,12 +538,16 @@ static inline void sima_prepared_runtime_handle_boxed_free(gpointer boxed) {
 
 static inline GType sima_prepared_runtime_handle_get_type(void) {
   static const gchar* kTypeName = "SimaPreparedRuntimeHandle";
-  GType type = g_type_from_name(kTypeName);
-  if (type != 0) {
-    return type;
+  static gsize type_id = 0;
+  if (g_once_init_enter(&type_id)) {
+    GType type = g_type_from_name(kTypeName);
+    if (type == 0) {
+      type = g_boxed_type_register_static(kTypeName, sima_prepared_runtime_handle_boxed_copy,
+                                          sima_prepared_runtime_handle_boxed_free);
+    }
+    g_once_init_leave(&type_id, static_cast<gsize>(type));
   }
-  return g_boxed_type_register_static(kTypeName, sima_prepared_runtime_handle_boxed_copy,
-                                      sima_prepared_runtime_handle_boxed_free);
+  return static_cast<GType>(type_id);
 }
 
 static inline void sima_prepared_runtime_set_lookup_status(SimaPreparedRuntimeLookupStatus* status,

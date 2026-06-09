@@ -37,22 +37,28 @@ def main(argv: list[str]) -> int:
   graph.add(pyneat.nodes.output())
 
   # CORE LOGIC
-  # 1. Validate pipeline before building.
+  # STEP validate-graph
+  # Validate pipeline before building.
   report = graph.validate()
   print(f"validate_error_code={report.error_code}")
+  # END STEP
 
-  # 2. Build + run with metrics enabled.
+  # STEP run-with-metrics
+  # Build + run with metrics enabled.
   ropt = pyneat.RunOptions()
   ropt.enable_metrics = True
   ropt.output_memory = pyneat.OutputMemory.Owned
   run = graph.build([tensor], pyneat.RunMode.Sync, ropt)
   run.run([tensor], timeout_ms=1000)
+  # END STEP
 
-  # 3. Read diagnostics.
+  # STEP read-diagnostics
+  # Read diagnostics.
   stats = run.stats()
   print(f"inputs_enqueued={stats.inputs_enqueued} outputs_pulled={stats.outputs_pulled}")
   print(f"report_size={len(run.report())}")
   print(f"diagnostics_summary={run.diagnostics_summary()}")
+  # END STEP
   # END CORE LOGIC
   return 0
 

@@ -11,14 +11,14 @@ find_dependency(NeatInternals @SIMANEAT_PLATFORM_VERSION@ CONFIG REQUIRED)
 include("${CMAKE_CURRENT_LIST_DIR}/SimaNeatTargets.cmake")
 
 # ---------------------------------------------------------------------------
-# Resolve GStreamer / OpenCV on the consuming machine.
+# Resolve GStreamer / OpenCV on the *consuming* machine.
 #
 # These are public dependencies of Neat (e.g. pipeline/Graph.h includes
 # GStreamer headers), but their absolute include/library paths are build-host
-# specific and are intentionally not baked into the exported target. Re-discover
+# specific and are intentionally NOT baked into the exported target. Re-discover
 # them here with pkg-config so the same installed package works whether the
-# consumer is cross-compiling inside the Neat SDK or building natively on a
-# DevKit.
+# consumer is cross-compiling inside the Neat SDK (pkg-config resolves the
+# sysroot) or building natively on a DevKit (pkg-config resolves /usr).
 # ---------------------------------------------------------------------------
 get_property(_simaneat_ext_deps_done GLOBAL PROPERTY _SimaNeat_ext_deps_done)
 if (NOT _simaneat_ext_deps_done AND TARGET SimaNeat::sima_neat_common)
@@ -53,14 +53,14 @@ if (NOT _simaneat_ext_deps_done AND TARGET SimaNeat::sima_neat_common)
     if (NOT _SimaNeat_GST_FOUND)
       message(WARNING
         "SimaNeat: GStreamer development files were not found via pkg-config. "
-        "Install the gstreamer-1.0 dev packages so the public Neat headers can "
-        "be compiled.")
+        "Install the gstreamer-1.0 dev packages (DevKit: native; Neat SDK: in "
+        "the sysroot) so the public Neat headers can be compiled.")
     endif()
   else()
     message(WARNING
       "SimaNeat: pkg-config was not found, so GStreamer/OpenCV include and "
-      "library directories could not be resolved. Install pkg-config plus the "
-      "gstreamer/opencv dev packages to build against SimaNeat.")
+      "library directories could not be resolved. Install pkg-config (plus the "
+      "gstreamer/opencv dev packages) to build against SimaNeat.")
   endif()
   set_property(GLOBAL PROPERTY _SimaNeat_ext_deps_done TRUE)
 endif()

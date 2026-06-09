@@ -259,11 +259,12 @@ struct TessSpec {
 /**
  * @brief Detection-decoder metadata — tags tensors that carry packed detection output.
  *
- * Set on tensors produced by detection-decoder stages (`BoxDecode` today; segmentation /
- * keypoint decoders in the future). The `format` token identifies the wire layout the
+ * Set on tensors produced by detection-decoder stages (`BoxDecode` today). The `format` token
+ * identifies the wire layout the
  * consumer should parse — for example `"BBOX"` for the standard
  * `uint32 count + N × 24-byte RawBox` layout consumed by
- * `decode_bbox_tensor` / `pyneat.decode_bbox`.
+ * `decode_bbox_tensor` / `pyneat.decode_bbox`, or task-specific BoxDecode tokens for pose and
+ * segmentation payloads.
  *
  * Historically this information was overloaded onto `TessSpec::format`, but tessellation is
  * about MLA tile geometry, not about detection payload formats. `DetectionSpec` is the
@@ -274,6 +275,33 @@ struct TessSpec {
 struct DetectionSpec {
   /// Wire-format token (e.g., `"BBOX"`). Consumer dispatches on this string.
   std::string format;
+};
+
+/**
+ * @brief One runtime ROI window consumed by preprocessing.
+ *
+ * `batch_index` selects the source image inside the incoming image batch. `x`/`y`
+ * are signed so callers can request windows that partly fall outside the source
+ * image; preprocess pads those out-of-frame pixels.
+ *
+ * @ingroup tensors
+ */
+struct PreprocessRoi {
+  int batch_index = 0; ///< Source image index inside the incoming image batch.
+  int x = 0;           ///< ROI left coordinate in source-frame pixels.
+  int y = 0;           ///< ROI top coordinate in source-frame pixels.
+  int width = 0;       ///< ROI width in pixels; must be positive when active.
+  int height = 0;      ///< ROI height in pixels; must be positive when active.
+};
+
+/// Per-ROI 2×3 affine matrix from model/preprocessed coordinates to source-frame coordinates.
+struct PreprocessAffine {
+  double m00 = 1.0;
+  double m01 = 0.0;
+  double m02 = 0.0;
+  double m10 = 0.0;
+  double m11 = 1.0;
+  double m12 = 0.0;
 };
 
 /**
@@ -321,9 +349,29 @@ struct PreprocessRuntimeMeta {
   double affine_offset_x = 0.0; ///< Scalar X offset (typically pad_left) in model coordinates.
   double affine_offset_y = 0.0; ///< Scalar Y offset (typically pad_top) in model coordinates.
 
+  bool roi_list_enabled = false; ///< True when runtime ROI-list metadata is intentionally present.
+  std::vector<PreprocessRoi> rois; ///< Runtime ROI windows in output-slot order.
+  int roi_input_batch_size = 0;    ///< Number of source images available to `batch_index`.
+  int roi_source_width = 0;        ///< Width of each source image before ROI extraction.
+  int roi_source_height = 0;       ///< Height of each source image before ROI extraction.
+  int roi_source_stride_bytes = 0; ///< Source row stride in bytes, if known.
+  int roi_pad_value = 0;           ///< Pad value used for out-of-frame ROI pixels.
+  int roi_capacity = 0;            ///< Output-slot capacity reserved for this ROI-list dispatch.
+  int roi_valid_count = 0;         ///< Number of ROI output slots containing valid data.
+  int roi_input_count = 0;         ///< Number of ROIs requested before runtime filtering.
+  int roi_dropped_invalid = 0;     ///< ROIs dropped because their descriptor was invalid.
+  int roi_dropped_overflow = 0;    ///< ROIs dropped because they exceeded output capacity.
+  std::vector<PreprocessAffine>
+      roi_affines; ///< Per-valid-ROI affines in output-slot order, when available.
+
   /// True iff `axis_perm` is non-empty (a layout permutation was recorded).
   bool has_axis_perm() const noexcept {
     return !axis_perm.empty();
+  }
+
+  /// True iff runtime ROI-list metadata is intentionally present.
+  bool has_roi_list() const noexcept {
+    return roi_list_enabled || !rois.empty();
   }
 };
 

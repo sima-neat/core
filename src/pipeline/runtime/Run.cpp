@@ -153,6 +153,9 @@ Run::Run(std::shared_ptr<runtime::RunCore> core) : core_(std::move(core)) {
   opt.label = export_options.label;
   opt.include_metrics = export_options.include_metrics;
   opt.include_power = export_options.include_power;
+  opt.include_node_metrics = export_options.include_node_metrics;
+  opt.include_plugin_metrics = export_options.include_plugin_metrics;
+  opt.include_empty_node_metrics = export_options.include_empty_node_metrics;
   opt.indent = export_options.indent;
 
   std::string err;

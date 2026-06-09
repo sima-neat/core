@@ -112,6 +112,48 @@ def test_tutorial_model_metadata_matches_cmake_and_smoke_selection() -> None:
     )
 
 
+_STEP_ANCHOR_RE = re.compile(r"\{#step-([a-z0-9][a-z0-9_-]*)\}")
+_STEP_MARKER_RE = re.compile(r"^\s*(?://|#)\s*STEP\s+([a-z0-9][a-z0-9_-]*)\s*$", re.MULTILINE)
+_STEP_END_RE = re.compile(r"^\s*(?://|#)\s*END STEP(?:\s+[a-z0-9_-]+)?\s*$", re.MULTILINE)
+
+
+def _walkthrough_step_names(readme_text: str) -> list[str]:
+  """The {#step:<name>} anchors declared in a README's Walkthrough section."""
+  return _STEP_ANCHOR_RE.findall(readme_text)
+
+
+def test_walkthrough_segments_pair_across_languages() -> None:
+  """For every tutorial with a `## Walkthrough`, each `{#step:<name>}` prose
+  anchor must have a matching `STEP <name>` region in BOTH the .cpp and .py,
+  with balanced END markers and no duplicate names. Comment-only markers, so
+  this never affects whether the program runs."""
+  for d in sorted(TUTORIALS_ROOT.glob("[0-9][0-9][0-9]_*/")):
+    readme = d / "README.md"
+    if not readme.exists():
+      continue
+    readme_text = readme.read_text()
+    if not re.search(r"^##\s+Walkthrough\s*$", readme_text, re.MULTILINE):
+      continue
+
+    anchors = _walkthrough_step_names(readme_text)
+    assert anchors, f"{readme} has a Walkthrough but no {{#step:<name>}} anchors"
+
+    for src in (next(d.glob("*.cpp"), None), next(d.glob("*.py"), None)):
+      assert src is not None, f"{d.name}: missing a .cpp/.py source"
+      text = src.read_text()
+      starts = _STEP_MARKER_RE.findall(text)
+      assert len(starts) == len(set(starts)), (
+          f"{src}: duplicate STEP names {sorted(set(s for s in starts if starts.count(s) > 1))}"
+      )
+      assert len(starts) == len(_STEP_END_RE.findall(text)), (
+          f"{src}: unbalanced STEP / END STEP markers"
+      )
+      missing = [name for name in anchors if name not in set(starts)]
+      assert not missing, (
+          f"{src}: walkthrough steps {missing} have no matching STEP marker"
+      )
+
+
 def test_python_usage_comments_use_current_script_names() -> None:
   for _, py_path in _tutorial_py_files():
     match = re.search(r"^\s*python3\s+([^\s]+)", py_path.read_text(), re.MULTILINE)

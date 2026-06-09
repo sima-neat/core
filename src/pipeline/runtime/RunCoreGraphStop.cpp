@@ -78,7 +78,7 @@ void RunCore::stop_graph() {
 
   if (simaai::neat::graph::graph_output_rate_enabled() &&
       !graph_output_rate_reported.exchange(true)) {
-    simaai::neat::graph::graph_output_rate_summary(&execution.node_labels, &execution.sinks);
+    simaai::neat::graph::graph_output_rate_summary(&execution.node_labels, nullptr);
   }
   if (simaai::neat::graph::graph_sched_debug_enabled() && !graph_sched_reported.exchange(true)) {
     simaai::neat::graph::graph_sched_summary(&execution.node_labels);

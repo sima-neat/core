@@ -1,6 +1,8 @@
 #include "EdgeRouter.h"
 
 #include <cstdint>
+#include <atomic>
+#include <chrono>
 #include <sstream>
 #include <utility>
 
@@ -29,6 +31,21 @@ const char* graph_backpressure_timeout_explanation() {
          "downstream stages.";
 }
 
+std::uint64_t elapsed_ns_since(std::chrono::steady_clock::time_point start) {
+  return static_cast<std::uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start)
+          .count());
+}
+
+void atomic_add_max(std::atomic<std::uint64_t>& total, std::atomic<std::uint64_t>& max_value,
+                    std::uint64_t ns) {
+  total.fetch_add(ns, std::memory_order_relaxed);
+  std::uint64_t cur = max_value.load(std::memory_order_relaxed);
+  while (cur < ns && !max_value.compare_exchange_weak(cur, ns, std::memory_order_relaxed,
+                                                      std::memory_order_relaxed)) {
+  }
+}
+
 } // namespace
 
 const std::vector<DownstreamTarget>* EdgeRouter::targets(simaai::neat::graph::NodeId node,
@@ -42,7 +59,7 @@ const std::vector<DownstreamTarget>* EdgeRouter::targets(simaai::neat::graph::No
 }
 
 bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sample,
-                              const EdgeRouterOptions& options,
+                              std::size_t edge_index, const EdgeRouterOptions& options,
                               const EdgeRouterCallbacks& callbacks,
                               std::size_t sink_backpressure_context) const {
   if (!runtime_) {
@@ -60,7 +77,18 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
     callbacks.prepare_sink_sample(sink_node, sample, qsize, sink_backpressure_context);
   }
 
-  if (!sink_it->second->push(std::move(sample), options.push_timeout_ms)) {
+  const bool trace = graph_message_trace_enabled(runtime_) && edge_index != invalid_edge_index();
+  TraceGraphMessageArgs trace_args;
+  if (trace) {
+    trace_args = make_trace_graph_message_args(runtime_, edge_index, sample);
+    trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
+  }
+
+  if (!sink_it->second->push(RuntimeSinkQueueMsg{std::move(sample), edge_index},
+                             options.push_timeout_ms)) {
+    if (trace) {
+      trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
+    }
     if (!stop_requested(callbacks)) {
       std::ostringstream msg;
       msg << "GraphRun: sink backpressure timeout (node=" << static_cast<std::size_t>(sink_node)
@@ -70,6 +98,9 @@ bool EdgeRouter::push_to_sink(simaai::neat::graph::NodeId sink_node, Sample&& sa
       request_stop(callbacks, msg.str());
     }
     return false;
+  }
+  if (trace) {
+    trace_graph_message_event(TraceGraphMessageEventType::QueueIn, trace_args);
   }
   return true;
 }
@@ -88,7 +119,20 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       request_stop(callbacks, "EdgeRouter: missing stage dispatch callback");
       return false;
     }
-    return callbacks.dispatch_to_stage_group(target.index, target.port, std::move(sample));
+    const bool trace =
+        graph_message_trace_enabled(runtime_) && target.edge_index != invalid_edge_index();
+    TraceGraphMessageArgs trace_args;
+    if (trace) {
+      trace_args = make_trace_graph_message_args(runtime_, target.edge_index, sample);
+      trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
+    }
+    const bool ok = callbacks.dispatch_to_stage_group(target.index, target.port, std::move(sample),
+                                                      target.edge_index);
+    if (trace) {
+      trace_graph_message_event(
+          ok ? TraceGraphMessageEventType::QueueIn : TraceGraphMessageEventType::Drop, trace_args);
+    }
+    return ok;
   }
 
   if (target.kind == DownstreamTarget::Kind::PipelineInput) {
@@ -104,23 +148,50 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       return false;
     }
 
+    auto& pipe = *runtime_->pipelines[target.index];
+    auto& telemetry = pipe.transport.telemetry;
     std::string build_err;
+    const auto ensure_start = std::chrono::steady_clock::now();
+    telemetry.router_ensure_build_calls.fetch_add(1, std::memory_order_relaxed);
     if (!callbacks.ensure_pipeline_built(target.index, sample, &build_err)) {
+      atomic_add_max(telemetry.router_ensure_build_ns, telemetry.router_ensure_build_max_ns,
+                     elapsed_ns_since(ensure_start));
       request_stop(callbacks, build_err.empty() ? "GraphRun: pipeline build failed" : build_err);
       return false;
     }
+    atomic_add_max(telemetry.router_ensure_build_ns, telemetry.router_ensure_build_max_ns,
+                   elapsed_ns_since(ensure_start));
 
     if (dispatch_options.sanitize_pipeline_input_before_enqueue &&
         callbacks.sanitize_pipeline_input) {
+      const auto sanitize_start = std::chrono::steady_clock::now();
       callbacks.sanitize_pipeline_input(target.index, sample);
+      telemetry.router_sanitize_calls.fetch_add(1, std::memory_order_relaxed);
+      atomic_add_max(telemetry.router_sanitize_ns, telemetry.router_sanitize_max_ns,
+                     elapsed_ns_since(sanitize_start));
     }
 
-    auto& input_queue = runtime_->pipelines[target.index]->transport.input_queue;
+    auto& input_queue = pipe.transport.input_queue;
     if (!input_queue) {
       return true;
     }
 
-    if (!input_queue->push(std::move(sample), options.push_timeout_ms)) {
+    const auto push_start = std::chrono::steady_clock::now();
+    telemetry.router_input_push_calls.fetch_add(1, std::memory_order_relaxed);
+    const bool trace =
+        graph_message_trace_enabled(runtime_) && target.edge_index != invalid_edge_index();
+    TraceGraphMessageArgs trace_args;
+    if (trace) {
+      trace_args = make_trace_graph_message_args(runtime_, target.edge_index, sample);
+      trace_graph_message_event(TraceGraphMessageEventType::EdgeSrcPush, trace_args);
+    }
+    if (!input_queue->push(RuntimePipelineQueueMsg{std::move(sample), target.edge_index},
+                           options.push_timeout_ms)) {
+      if (trace) {
+        trace_graph_message_event(TraceGraphMessageEventType::Drop, trace_args);
+      }
+      atomic_add_max(telemetry.router_input_push_ns, telemetry.router_input_push_max_ns,
+                     elapsed_ns_since(push_start));
       if (!stop_requested(callbacks)) {
         std::ostringstream msg;
         msg << "GraphRun: pipeline input backpressure timeout (seg="
@@ -132,11 +203,16 @@ bool EdgeRouter::dispatch_to_target(const DownstreamTarget& target, Sample&& sam
       }
       return false;
     }
+    atomic_add_max(telemetry.router_input_push_ns, telemetry.router_input_push_max_ns,
+                   elapsed_ns_since(push_start));
+    if (trace) {
+      trace_graph_message_event(TraceGraphMessageEventType::QueueIn, trace_args);
+    }
     return true;
   }
 
   const auto sink_node = static_cast<simaai::neat::graph::NodeId>(target.index);
-  return push_to_sink(sink_node, std::move(sample), options, callbacks,
+  return push_to_sink(sink_node, std::move(sample), target.edge_index, options, callbacks,
                       dispatch_options.sink_backpressure_context.value_or(target.index));
 }
 

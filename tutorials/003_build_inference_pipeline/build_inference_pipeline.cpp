@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
     if (!input.isContinuous())
       input = input.clone();
 
+    // STEP configure-input
     simaai::neat::InputOptions in;
     in.format = "RGB";
     in.width = width;
@@ -48,17 +49,24 @@ int main(int argc, char** argv) {
     in.depth = 3;
     in.is_live = false;
     in.do_timestamp = true;
+    // END STEP
 
     simaai::neat::RunOptions run_opt;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
     // CORE LOGIC
     // Compose a Graph from Input and Output nodes, then build+run one frame.
+    // STEP compose-graph
     simaai::neat::Graph graph;
     graph.add(simaai::neat::nodes::Input(in));
     graph.add(simaai::neat::nodes::Output());
+    // END STEP
+    // STEP build-pipeline
     auto run = graph.build(std::vector<cv::Mat>{input}, simaai::neat::RunMode::Sync, run_opt);
+    // END STEP
+    // STEP run-frame
     simaai::neat::TensorList sample = run.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/1000);
+    // END STEP
     // END CORE LOGIC
 
     if (sample.empty())

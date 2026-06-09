@@ -1,7 +1,7 @@
 ---
 title: Async vs sync timing model
 description: How `Graph::run()` and `Run::push()/pull()` relate — when work happens, when results return.
-sidebar_position: 4
+sidebar_position: 2
 ---
 
 # Async vs sync timing model
@@ -72,7 +72,7 @@ Use async mode for:
 - `pull(0)` — non-blocking; returns `nullopt` if no sample is ready.
 - `pull_or_throw()` — like `pull()` but raises on timeout, for code paths that treat "no sample" as a failure.
 
-The framework does not promise FIFO across multiple inputs streams unless you explicitly ask for it via `RunPreset` or per-stream queues — see the multi-input how-to.
+The framework does not promise FIFO across multiple inputs streams unless you explicitly ask for it via `RunPreset` or per-stream queues — see [Tutorial 009: feed a multi-input model](/tutorials/009-feed-multi-input-model).
 
 ## Telemetry — what was the actual latency?
 

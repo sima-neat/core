@@ -60,8 +60,9 @@ RUN_TEST(
       std::vector<std::shared_ptr<Node>> nodes;
       nodes.push_back(simaai::neat::nodes::Cast(
           CastOptions{.direction = CastDirection::Fp32ToBf16, .element_name = "pre_box_cast"}));
-      nodes.push_back(simaai::neat::nodes::SimaBoxDecode(BoxDecodeType::YoloV8, 0.25, 0.45, 100,
-                                                         "manual_boxdecode", 1280, 720, 640, 640));
+      nodes.push_back(simaai::neat::nodes::SimaBoxDecode(
+          BoxDecodeType::YoloV8, 0.25, 0.45, 100, "manual_boxdecode", 1280, 720, 640, 640,
+          BoxDecodeTypeOption::Auto, BoxDecodeSourceStorage::DenseHwc));
 
       ContractCompileInput input;
       input.ingress.ingress_sample = ingress;
@@ -107,7 +108,8 @@ RUN_TEST(
 
       std::vector<std::shared_ptr<Node>> standalone_nodes;
       standalone_nodes.push_back(simaai::neat::nodes::SimaBoxDecode(
-          BoxDecodeType::YoloV8, 0.25, 0.45, 100, "fp32_boxdecode", 1280, 720, 640, 640));
+          BoxDecodeType::YoloV8, 0.25, 0.45, 100, "fp32_boxdecode", 1280, 720, 640, 640,
+          BoxDecodeTypeOption::Auto, BoxDecodeSourceStorage::DenseHwc));
 
       ContractCompileInput standalone_input;
       standalone_input.ingress.ingress_sample = ingress;
@@ -146,7 +148,8 @@ RUN_TEST(
 
       std::vector<std::shared_ptr<Node>> wrapped_nodes;
       wrapped_nodes.push_back(simaai::neat::nodes::SimaBoxDecode(
-          BoxDecodeType::YoloV8, 0.25, 0.45, 100, "wrapped_boxdecode", 1280, 720, 640, 640));
+          BoxDecodeType::YoloV8, 0.25, 0.45, 100, "wrapped_boxdecode", 1280, 720, 640, 640,
+          BoxDecodeTypeOption::Auto, BoxDecodeSourceStorage::DenseHwc));
 
       ContractCompileInput wrapped_input;
       wrapped_input.ingress.ingress_sample = wrapped_ingress;

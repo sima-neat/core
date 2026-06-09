@@ -1,7 +1,7 @@
 ---
 title: Building applications with Graph
 description: How to compose Models, Nodes, named inputs/outputs, branches, combines, and Runs with the public Graph API.
-sidebar_position: 3
+sidebar_position: 1
 ---
 
 # Building applications with Graph
@@ -993,9 +993,9 @@ run.save_json("/tmp/app.graph_run.json")
 
 ## Further reading
 
-- [Model programming model](/getting-started/programming-model/model)
-- [Node programming model: groups and boundaries](/getting-started/programming-model/node#boundary-nodes)
-- [Tensor and Sample programming model](/getting-started/programming-model/core_types)
-- [Runtime tuning](/how-to/runtime_tuning)
-- [Diagnostics](/how-to/diagnostics)
+- [Model programming model](/getting-started/development_workflow/model)
+- [Node programming model: groups and boundaries](/getting-started/development_workflow/node#boundary-nodes)
+- [Tensor and Sample programming model](/getting-started/development_workflow/core_types)
+- [Runtime tuning (Tutorial 015)](/tutorials/015-tune-throughput-and-queues)
+- [Diagnostics (Tutorial 011)](/tutorials/011-diagnose-a-pipeline)
 - [GStreamer layer](/concepts/gstreamer_layer)

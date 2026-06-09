@@ -56,29 +56,37 @@ int main(int argc, char** argv) {
     const int h = parse_int_arg(argc, argv, "--height", 48);
     const int c = 3;
 
+    // STEP configure-tensor-input
     simaai::neat::InputOptions in;
     in.payload_type = simaai::neat::PayloadType::Tensor;
     in.format = "FP32";
     in.width = w;
     in.height = h;
     in.depth = c;
+    // END STEP
 
     simaai::neat::Tensor seed = make_fp32_tensor(w, h, c, 0.0f);
 
     // CORE LOGIC
+    // STEP build-seed-run
     // Graph accepting fp32 tensors as input.
     simaai::neat::Graph graph;
     graph.add(simaai::neat::nodes::Input(in));
     graph.add(simaai::neat::nodes::Output());
     auto run = graph.build(simaai::neat::TensorList{seed}, simaai::neat::RunMode::Sync);
+    // END STEP
 
+    // STEP make-bundle
     // make_bundle_sample packs multiple named tensors into one Sample.
     simaai::neat::Sample bundle = simaai::neat::make_bundle_sample({
         simaai::neat::make_tensor_sample("left", make_fp32_tensor(w, h, c, 1.0f)),
         simaai::neat::make_tensor_sample("right", make_fp32_tensor(w, h, c, 2.0f)),
     });
+    // END STEP
 
+    // STEP push-and-read
     auto outs = run.run(simaai::neat::Sample{bundle}, /*timeout_ms=*/1000);
+    // END STEP
     // END CORE LOGIC
 
     if (outs.empty())

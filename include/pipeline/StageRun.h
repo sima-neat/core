@@ -58,6 +58,9 @@ struct BoxDecodeOptions {
 TensorList Tensors(const simaai::neat::Sample& sample);
 /// @brief Run only the preprocessing stage on raw cv::Mat inputs.
 TensorList Preproc(const std::vector<cv::Mat>& inputs, const simaai::neat::Model& model);
+/// @brief Run preprocessing for a list of ROI windows over a batch of raw cv::Mat inputs.
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const simaai::neat::Model& model,
+                   const std::vector<PreprocessRoi>& rois);
 /// @brief Run only the inference stage on already-preprocessed tensors.
 TensorList Infer(const TensorList& inputs, const simaai::neat::Model& model);
 /// @brief Run only the MLA leg on already-prepared tensors.

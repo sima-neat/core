@@ -9,6 +9,6 @@
 #include "genai/GenAIOptions.h"
 #include "genai/GenAITypes.h"
 #include "genai/GraphFragments.h"
-#include "genai/OpenAIServer.h"
+#include "genai/GenAIServer.h"
 #include "genai/VisionLanguageModel.h"
 #include "pipeline/TensorAudio.h"

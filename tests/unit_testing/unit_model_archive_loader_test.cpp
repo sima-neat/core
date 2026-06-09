@@ -119,4 +119,25 @@ RUN_TEST(
                                     ModelArchiveErrorClass::UnsupportedExtension,
                                     std::string("unsupported archive extension ") + ext);
       }
+
+      const fs::path collision =
+          sima_test::model_archive_fixture_path("valid/destination_collision.tar.gz");
+      require(fs::exists(collision), "missing destination_collision fixture; run "
+                                     "tests/tools/make_model_archive_fixtures.py");
+
+      // Default (warn-only): the colliding archive is accepted and extracts; the later
+      // entry overwrites the earlier at the shared destination (etc/collide.json).
+      const std::string warn_root = sima_test::make_temp_dir("model_archive_collision_warn");
+      const ModelArchiveExtractResult warned =
+          ModelArchiveLoader::extract(collision.string(), warn_root);
+      require(fs::exists(fs::path(warned.etc_dir) / "collide.json"),
+              "warn-mode collision extract should still materialize the shared destination");
+
+      // Opt-in hard reject: the same archive fails with invalid_archive before extraction.
+      ModelArchiveLoaderOptions strict;
+      strict.reject_destination_collisions = true;
+      require_model_archive_error(
+          [&]() { (void)ModelArchiveLoader::inspect(collision.string(), strict); },
+          ModelArchiveErrorClass::InvalidArchive,
+          "destination collision should fail with invalid_archive when reject flag is set");
     }));

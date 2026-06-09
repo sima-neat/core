@@ -2,6 +2,8 @@
 title: Compatibility
 description: What Neat runs on — host SDK, Modalix DevKit, pyneat, and the version-matched set
 sidebar_position: 1.5
+mdx:
+  format: mdx
 ---
 
 import info from '@site/src/data/buildinfo.json';
@@ -11,9 +13,6 @@ import info from '@site/src/data/buildinfo.json';
 Neat spans **two environments**: the **host SDK** (a container where you cross-compile)
 and the **Modalix DevKit** (aarch64, where the framework actually runs). Keep them
 separate — a requirement on one side rarely applies to the other.
-
-The version numbers on this page are rendered from the build's `buildinfo.json`,
-not hand-maintained. This page reflects **Neat&nbsp;{info.version}** (build&nbsp;`{info.build.git_short_sha}`).
 
 ## On-device — Modalix DevKit
 
@@ -84,11 +83,11 @@ on the device in `/usr/share/sima-neat/buildinfo.json`.
 
 | Situation | Why |
 |---|---|
-| **NumPy ≥ 2** with `pyneat` | pin is `{info.compatibility.pyneat.numpy}` |
+| **NumPy ≥ 2** with `pyneat` | pin is <code>{info.compatibility.pyneat.numpy}</code> |
 | **Mismatched runtime ↔ firmware hash** | not a matched set → `No channel available` |
 | **CPython other than 3.11** for the prebuilt wheel | wheel is `cp311` only (build from source for other 3.x ≥ 3.9) |
 | **Non-aarch64 target** | no x86 / ARMv7 pyneat or runtime exists |
-| **Host glibc < 2.34** on the DevKit | `neat-runtime` requires `libc6 ≥ {info.compatibility.target.glibc_min}` |
+| **Host glibc < 2.34** on the DevKit | `neat-runtime` requires <code>libc6 ≥ {info.compatibility.target.glibc_min}</code> |
 | **CUDA / GPU acceleration** | N/A — the host is build-only; inference runs on the Modalix MLA/EV74 |
 
 ## Verify your install
@@ -106,7 +105,7 @@ cat /usr/share/sima-neat/buildinfo.json
 
 If you hit `No channel available` or `undefined symbol …submitPrepared`, check that
 `neat-runtime` and `neat-ev74-firmware` report the **same hash** — that's the most
-common compatibility failure. See [Troubleshooting](/getting-started/troubleshooting).
+common compatibility failure. See [Troubleshooting](/troubleshooting).
 
 :::note Pending — needs an owner
 These belong on this page but require a product/release-eng decision and are not yet

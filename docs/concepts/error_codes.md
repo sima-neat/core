@@ -1,7 +1,7 @@
 ---
 title: Error code catalog
 description: The framework's `error_codes::*` constants — when each is raised, what to do about it.
-sidebar_position: 11
+sidebar_position: 10
 ---
 
 # Error code catalog

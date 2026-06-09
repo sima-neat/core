@@ -61,22 +61,30 @@ simaai::neat::Sample make_sample() {
 int main() {
   try {
     // CORE LOGIC
+    // STEP compose-graph
     // `Graph` is the public composition type. Input("image") declares the name
     // used by Run::push("image", ...). Output("out") declares the name used by
     // Run::pull("out", ...).
     simaai::neat::Graph graph;
     graph.add(simaai::neat::nodes::Input("image"));
     graph.add(simaai::neat::nodes::Output("out"));
+    // END STEP
+    // STEP connect-endpoints
     graph.connect("image", "out");
 
     std::cout << graph.describe() << "\n";
+    // END STEP
 
+    // STEP build-and-push
     simaai::neat::Run run = graph.build();
     if (!run.push("image", make_sample())) {
       throw std::runtime_error("push failed: " + run.last_error());
     }
+    // END STEP
+    // STEP pull-and-verify
     auto out = run.pull("out", /*timeout_ms=*/2000);
     run.close();
+    // END STEP
     // END CORE LOGIC
 
     if (!out.has_value())

@@ -167,11 +167,9 @@ RunMeasurementSummary Run::measurement_summary() const {
   return out;
 }
 
-RunDiagSnapshot Run::diag_snapshot() const {
+RunDiagSnapshot runtime::RunCore::diag_snapshot() const {
   RunDiagSnapshot out;
-  if (!core_)
-    return out;
-  const auto diag = core_->pipeline.stream.diag_ctx();
+  const auto diag = pipeline.stream.diag_ctx();
   if (!diag)
     return out;
 
@@ -240,6 +238,8 @@ RunDiagSnapshot Run::diag_snapshot() const {
       s.element_name = snap.element_name;
       s.pad_name = snap.pad_name;
       s.is_sink = snap.is_sink;
+      s.transport_from_element_name = snap.transport_from_element_name;
+      s.transport_to_element_name = snap.transport_to_element_name;
       s.samples = snap.samples;
       s.inter_arrival_total_us = snap.inter_arrival_total_us;
       s.inter_arrival_max_us = snap.inter_arrival_max_us;
@@ -252,6 +252,10 @@ RunDiagSnapshot Run::diag_snapshot() const {
   }
 
   return out;
+}
+
+RunDiagSnapshot Run::diag_snapshot() const {
+  return core_ ? core_->diag_snapshot() : RunDiagSnapshot{};
 }
 
 std::string Run::report(const RunReportOptions& opt) const {

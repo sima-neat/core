@@ -222,26 +222,60 @@ def test_run_export_api_surface():
   export_opt.label = "surface"
   export_opt.include_metrics = False
   export_opt.include_power = False
+  export_opt.include_node_metrics = True
+  export_opt.include_plugin_metrics = True
+  export_opt.include_empty_node_metrics = False
   export_opt.indent = 0
   export_opt.metadata = [("suite", "api")]
   assert export_opt.label == "surface"
   assert export_opt.metadata == [("suite", "api")]
+  assert export_opt.include_empty_node_metrics is False
 
   auto_opt = pyneat.RunAutoExportOptions()
   auto_opt.path = "/tmp/pyneat_graph_run_surface.json"
   auto_opt.label = "auto"
   auto_opt.include_metrics = True
   auto_opt.include_power = False
+  auto_opt.include_node_metrics = True
+  auto_opt.include_plugin_metrics = False
+  auto_opt.include_empty_node_metrics = True
   auto_opt.indent = 2
 
   run_opt = pyneat.RunOptions()
   run_opt.run_export = auto_opt
+  run_opt.enable_board_power()
+  assert run_opt.power_monitor.enabled is True
+  run_opt.disable_power_monitor()
+  assert run_opt.power_monitor.enabled is False
+  run_opt.power_monitor = pyneat.modalix_som_power_monitor_options(250)
+  assert run_opt.power_monitor.enabled is True
   assert run_opt.run_export.path.endswith("pyneat_graph_run_surface.json")
   assert run_opt.run_export.label == "auto"
+  assert run_opt.run_export.include_plugin_metrics is False
+
+  metrics_opt = pyneat.RuntimeMetricsOptions()
+  metrics_opt.include_power = False
+  assert metrics_opt.include_power is False
+  assert hasattr(pyneat, "build_graph_metrics_report_run_lifetime")
+
+  measure_report = pyneat.MeasureReport()
+  measure_report.elapsed_s = 1.0
+  measure_report.outputs_pulled = 2
+  measure_report.throughput_batches_per_s = 2.0
+  plugin = pyneat.MeasurePluginLatency()
+  plugin.backend = "A65"
+  plugin.phase = "Run"
+  plugin.kernel_name = "identity"
+  plugin.runtime_node_id = 0
+  plugin.calls = 1
+  measure_report.plugin_latency = [plugin]
+  assert measure_report.plugin_latency[0].runtime_node_id == 0
 
   run = pyneat.Run()
   with pytest.raises(Exception, match="Run has no runtime core"):
     pyneat.run_to_json(run, export_opt)
+  with pytest.raises(Exception, match="Run has no runtime core"):
+    pyneat.run_to_json(run, measure_report, export_opt)
 
 
 def test_public_graph_connect_no_runtime_port_overload():
@@ -283,11 +317,13 @@ def test_model_option_structs_are_mutable():
   opt.preprocess.input_max_height = 1080
   opt.boxdecode_original_width = 1280
   opt.boxdecode_original_height = 720
+  opt.boxdecode_resize_mode = pyneat.ResizeMode.Letterbox
 
   assert opt.preprocess.input_max_width == 1920
   assert opt.preprocess.input_max_height == 1080
   assert opt.boxdecode_original_width == 1280
   assert opt.boxdecode_original_height == 720
+  assert opt.boxdecode_resize_mode == pyneat.ResizeMode.Letterbox
 
 
 def test_input_stage_option_structs_expose_expected_fields():
@@ -926,9 +962,22 @@ def test_runtime_overload_methods_present():
   assert hasattr(pyneat.Run, "push")
   assert hasattr(pyneat.Run, "try_push")
   assert hasattr(pyneat.Run, "run")
+  assert hasattr(pyneat.Graph, "build")
+  assert hasattr(pyneat.Graph, "run")
   assert hasattr(pyneat.ModelRunner, "push")
   assert hasattr(pyneat.ModelRunner, "run")
+  assert hasattr(pyneat.Model, "build")
   assert hasattr(pyneat.Model, "run")
+
+
+def test_runtime_tensor_sample_aliases_are_not_public():
+  for cls in (pyneat.Run, pyneat.Graph, pyneat.ModelRunner, pyneat.Model):
+    assert not hasattr(cls, "run_tensors"), cls
+    assert not hasattr(cls, "run_samples"), cls
+
+  for cls in (pyneat.Graph, pyneat.Model):
+    assert not hasattr(cls, "build_tensors"), cls
+    assert not hasattr(cls, "build_samples"), cls
 
 
 def test_graph_build_accepts_numpy_without_type_error():
@@ -939,6 +988,17 @@ def test_graph_build_accepts_numpy_without_type_error():
   _assert_not_type_error(lambda: graph.build([arr], copy=True))
   _assert_not_type_error(
       lambda: graph.build([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
+  )
+
+
+def test_graph_run_accepts_numpy_without_type_error():
+  graph = pyneat.Graph()
+  arr = np.zeros((8, 8, 3), dtype=np.uint8)
+
+  _assert_not_type_error(lambda: graph.run([arr]))
+  _assert_not_type_error(lambda: graph.run([arr], copy=True))
+  _assert_not_type_error(
+      lambda: graph.run([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
   )
 
 
@@ -1014,8 +1074,12 @@ def test_model_build_requires_explicit_image_semantic_for_image_tensor():
   model = pyneat.Model(str(model_path), opt)
   tensor = pyneat.Tensor.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), copy=True)
 
-  with pytest.raises(ValueError, match="requires explicit image format"):
+  # Model input-contract violations now surface as pyneat.NeatError (was std::invalid_argument
+  # auto-translated to ValueError). The message is preserved as the NeatError repro_note, so the
+  # substring match still holds, and the structured error_code is populated.
+  with pytest.raises(pyneat.NeatError, match="requires explicit image format") as excinfo:
     model.build([tensor])
+  assert excinfo.value.error_code == "misconfig.input_shape"
 
 
 def test_tensor_from_numpy_byte_stream_marks_opaque_transport():

@@ -41,12 +41,18 @@ def main(argv: list[str]) -> int:
 
   # CORE LOGIC
   # The three-line Neat story:
+  # STEP load-model
   model = pyneat.Model(str(args.model))
+  # END STEP
+  # STEP prepare-input
   image = load_image(args.image, size=224)
-  sample = model.run([image], timeout_ms=2000)
+  # END STEP
+  # STEP run-inference
+  outputs = model.run([image], timeout_ms=2000)
+  # END STEP
   # END CORE LOGIC
 
-  top1 = int(np.argmax(sample.tensor.to_numpy().reshape(-1)))
+  top1 = int(np.argmax(outputs[0].to_numpy().reshape(-1)))
   print(f"top1={top1}")
   return 0
 

@@ -151,7 +151,8 @@ inline std::string layout_token_from_axis_semantics(const std::vector<TensorAxis
     return axes.size() == expected.size() &&
            std::equal(axes.begin(), axes.end(), expected.begin(), expected.end());
   };
-  if (is_exact({TensorAxisSemantic::H, TensorAxisSemantic::W})) {
+  if (is_exact({TensorAxisSemantic::H, TensorAxisSemantic::W}) ||
+      is_exact({TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W})) {
     return "HW";
   }
   if (is_exact({TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C}) ||

@@ -1,0 +1,226 @@
+---
+title: Tensor and Sample
+description: Data payload and metadata envelope used at runtime
+sidebar_position: 5
+---
+
+# Tensor and Sample
+
+The runtime data model has two primary types:
+
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor): typed numeric payload (shape, dtype, layout, storage, device).
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample): envelope around tensor payload with media/runtime metadata.
+
+## Tensor
+
+Use `Tensor` when you only need numeric data and shape/type semantics.
+
+Typical metadata in tensor:
+- shape / dtype / layout
+- storage and mapping behavior
+- a `semantic` field carrying typed per-domain sub-metas (image, detection, preprocess, etc.) — see [Typed semantic sub-metas](#typed-semantic-sub-metas) below
+
+Related references:
+- [`Tensor`](/reference/{lsa}/structs/simaai-neat-tensor)
+- [`TensorConstraint`](/reference/{lsa}/structs/simaai-neat-tensorconstraint)
+- [`TensorTypes.h`](/reference/{lsa}/files/include-pipeline-tensortypes-h)
+
+### Typed semantic sub-metas
+
+Every `Tensor` carries a `semantic` field — a discriminated union of per-domain
+sub-metas describing what the bytes mean. Each sub-meta is an `std::optional`
+(C++) / `Optional` (Python); only the ones relevant to the tensor are set.
+
+| Sub-meta                | Set when                                                              |
+|-------------------------|-----------------------------------------------------------------------|
+| `semantic.image`        | Pixel data (RGB / NV12 / etc.).                                       |
+| `semantic.audio`        | Audio samples.                                                        |
+| `semantic.tokens`       | NLP token stream.                                                     |
+| `semantic.text`         | UTF-8 text.                                                           |
+| `semantic.byte_stream`  | Opaque raw bytes.                                                     |
+| `semantic.encoded`      | Encoded video frame (H.264, etc.).                                    |
+| `semantic.quant`        | Quantized integer tensor (scale / zero-point).                        |
+| `semantic.tess`         | MLA tile-blocked layout.                                              |
+| `semantic.detection`    | Detection-decoder output (BBOX today; masks / keypoints later).       |
+| `semantic.preprocess`   | Inverse-transform breadcrumb left by the preprocess stage.            |
+
+Consumers query the optional that matters to them:
+
+<CodeTabs>
+<CodeTab label="Python" lang="python">
+
+```python
+if bbox.semantic.detection is not None:
+    assert bbox.semantic.detection.format == "BBOX"
+```
+
+</CodeTab>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+if (bbox.semantic.detection.has_value()) {
+    assert(bbox.semantic.detection->format == "BBOX");
+}
+```
+
+</CodeTab>
+</CodeTabs>
+
+#### Detection outputs (BBOX)
+
+When `Model.run` returns the output of a detection model — for example YOLOv8
+with `decode_type = BoxDecodeType.YoloV8` — the output is a packed BBOX tensor.
+Decode the whole run output with `decode_bbox`, a `TensorList → TensorList`
+transform (positional 1:1): each BBOX tensor becomes a `float32` tensor of shape
+`[num_detections, 6]` with columns `(x1, y1, x2, y2, score, class_id)`.
+`decode_bbox` recognizes a BBOX tensor by its `semantic.detection.format` tag
+when present, and otherwise by its canonical rank-1 `UInt8` wire shape; a tensor
+that is neither raises a typed error rather than being silently skipped.
+
+```python
+outputs = model.run([image_tensor])   # TensorList
+decoded = neat.decode_bbox(outputs)    # TensorList, same length
+boxes   = decoded[0].to_numpy()        # ndarray [num_detections, 6]
+```
+
+:::note A note on `tess.format`
+Historically the BBOX wire format was tagged via `semantic.tess.format`. That
+slot is for MLA tile geometry — BBOX is not tessellated — so the overload is
+deprecated. New code should read and write BBOX-format via `semantic.detection`.
+The legacy path still works for one release as a back-compat fallback inside
+`decode_bbox_tensor` / `read_detection_format`.
+:::
+
+### NumPy and PyTorch interop
+
+For Python developers familiar with NumPy and PyTorch, `Tensor` supports DLPack-based interop:
+
+- `Tensor.from_numpy(...)`
+- `Tensor.to_numpy(...)`
+- `Tensor.from_torch(...)`
+- `Tensor.to_torch(...)`
+- `Tensor.from_dlpack(...)`
+- `Tensor.__dlpack__()`
+
+This keeps interop paths explicit and enables zero-copy where backend data layout permits it.
+
+<CodeTabs>
+<CodeTab label="NumPy" lang="python">
+
+```python
+import numpy as np
+import pyneat as neat
+
+# HWC uint8 image-like tensor
+arr = np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
+
+t = neat.Tensor.from_numpy(arr, copy=False, image_format=neat.PixelFormat.RGB)
+arr_back = t.to_numpy(copy=False)
+
+# If you already have a model, NumPy can be passed directly.
+# out = model.run(arr, timeout_ms=2000)
+```
+
+</CodeTab>
+<CodeTab label="PyTorch" lang="python">
+
+```python
+import torch
+import pyneat as neat
+
+torch_tensor = torch.randint(0, 255, (224, 224, 3), dtype=torch.uint8)
+
+t = neat.Tensor.from_torch(torch_tensor, copy=False, image_format=neat.PixelFormat.RGB)
+torch_back = t.to_torch(copy=False)
+
+# If you already have a model, torch tensors can be passed directly.
+# out = model.run(torch_tensor, timeout_ms=2000)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Sample
+
+Use `Sample` when you need pipeline metadata in addition to tensor bytes.
+
+Typical sample fields:
+- `caps_string`, `media_type`, `payload_tag`
+- `pts_ns`, `dts_ns`, `duration_ns`
+- `stream_id`, `frame_id`, `port_name`
+- `fields` for bundle outputs
+
+Related references:
+- [`Sample`](/reference/{lsa}/structs/simaai-neat-sample)
+- [`GraphOptions.h`](/reference/{lsa}/files/include-pipeline-graphoptions-h)
+- [`PullError`](/reference/{lsa}/structs/simaai-neat-pullerror)
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/runtime.h"
+#include "neat/nodes.h"
+
+simaai::neat::Graph graph;
+graph.add(simaai::neat::nodes::Input({}));
+graph.add(simaai::neat::nodes::Output({}));
+
+auto run = graph.build(simaai::neat::Sample{}, simaai::neat::RunMode::Async);
+
+simaai::neat::Sample in;
+in.kind = simaai::neat::SampleKind::Tensor;
+in.stream_id = "cam-0";
+in.frame_id = 42;
+// in.tensor = ...;
+
+run.push(in);
+auto out = run.pull(1000);
+if (out) {
+  std::cout << "stream=" << out->stream_id
+            << " frame=" << out->frame_id
+            << " media_type=" << out->media_type << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+graph = neat.Graph()
+graph.add(neat.nodes.input(neat.InputOptions()))
+graph.add(neat.nodes.output(neat.OutputOptions()))
+
+run = graph.build(neat.Sample(), neat.RunMode.Async)
+
+sample = neat.Sample()
+sample.kind = neat.SampleKind.Tensor
+sample.stream_id = "cam-0"
+sample.frame_id = 42
+# sample.tensor = ...
+
+run.push(sample)
+out = run.pull(1000)
+if out is not None:
+  print(f"stream={out.stream_id} frame={out.frame_id} media_type={out.media_type}")
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Runtime handle
+
+Both types flow through [`Run`](/reference/{lsa}/classes/simaai-neat-run) (`push`, `pull`, `push_and_pull`, `run`).
+
+## See also
+
+- [Graph](/getting-started/development_workflow/graph)
+- [Node](/getting-started/development_workflow/node)
+
+## Tutorials
+
+- [Pass NumPy Arrays to the Model](/tutorials/008-pass-numpy-to-model)
+- [Feed Models That Take Multiple Inputs](/tutorials/009-feed-multi-input-model)
+- [Read and Interpret Model Output](/tutorials/010-interpret-model-output)

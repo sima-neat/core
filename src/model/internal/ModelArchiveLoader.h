@@ -74,6 +74,11 @@ struct ModelArchiveLoaderOptions {
   bool reject_invalid_utf8_paths = true;
   bool reject_unicode_path_confusables = true;
   bool check_output_free_space = true;
+  // Two distinct archive entries can flatten to the same extraction destination
+  // (e.g. a/config.json and b/config.json both -> etc/config.json); the later one
+  // silently overwrites the earlier. Default = warn (loud diagnostic). Set true to
+  // hard-reject — gated on an archive-in-the-wild audit before flipping the default.
+  bool reject_destination_collisions = false;
 };
 
 struct ModelArchiveExtractResult {

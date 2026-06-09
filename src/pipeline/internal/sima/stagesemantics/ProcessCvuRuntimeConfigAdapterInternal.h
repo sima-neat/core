@@ -15,6 +15,22 @@ struct CompiledProcessCvuRuntimeConfig {
   std::string graph_family;
   std::string graph_name;
   int graph_id = -1;
+  // Native visual-frontend scalar fields for EV74 graphs 235-238.
+  int width = -1;
+  int height = -1;
+  int threshold = -1;
+  int max_features = -1;
+  int grid_x = -1;
+  int grid_y = -1;
+  int min_px_dist = -1;
+  int descriptor_words = -1;
+  int num_points = -1;
+  int win_half = -1;
+  int max_iters = -1;
+  int max_level = -1;
+  int detect_new_features = -1;
+  int fast_threshold = -1;
+  int debug = 0;
 
   std::string default_input_name;
   std::vector<std::string> runtime_input_names;

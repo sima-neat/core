@@ -10,33 +10,45 @@
 
 ## Concept
 
-Bundle multiple tensors into one `Sample` and push it as a single inference event. This is the pattern you need when a model takes more than one input — stereo frames, image + metadata, sensor fusion.
+Bundle several named tensors into one `Sample` and push it as a single inference event — the pattern for models that take more than one input, such as stereo frames, image + metadata, or sensor fusion.
 
-Many real applications carry more than one input per inference event. Neat represents this as a **bundle sample**: a single `Sample` whose `fields` list holds multiple named tensor payloads, each addressable by port name.
+## Walkthrough
 
-**APIs introduced**
-- `pyneat.Sample()` + `sample.kind = pyneat.SampleKind.Bundle` — create the bundle envelope.
-- `sample.fields = [...]` — the list of named inner samples.
-- `pyneat.make_tensor_sample(port_name, tensor)` — build one named field.
+Many real applications carry more than one input per inference event. Neat represents this as a **bundle sample**: a single `Sample` whose `fields` list holds multiple named tensor payloads, each addressable by a `port_name`. The runtime keeps the named fields together as one logical event, so `left` and `right` (or image and metadata) stay aligned through the pipeline.
 
-**When to use this**
-- Stereo or paired inputs: bundle `left` and `right` together as one logical unit.
-- Sensor fusion pipelines: attach related tensors/fields in one sample envelope.
-- Debugging wiring issues: inspect `port_name` and field tensor presence on output.
+This chapter builds a tensor-in/tensor-out graph, bundles two named float tensors, pushes the bundle through, and reads the named fields back out. By the end you will have constructed a multi-field sample and confirmed both fields survived the round trip with their port names intact.
 
-**Prerequisites**
-Chapters 001–003 (Model, Graph, Run basics). Chapter 008 (Tensor interop).
+### Configure a tensor input {#step-configure-tensor-input}
 
-**References**
-- [Graph](/getting-started/programming-model/graph)
-- [Tensor and Sample](/getting-started/programming-model/core_types)
+This graph consumes raw tensors, not decoded images, so the input contract is declared as a tensor payload (`FP32`, with `width`/`height`/`depth`) rather than a pixel format. That tells the input node to accept tensor buffers directly.
 
-## Learning Process
-1. Define a tensor graph contract for deterministic multi-field routing.
-2. Build a seed run handle, then create a bundle sample with named tensor fields.
-3. Push/pull the bundle and inspect output field structure.
+**C++:** Set `in.payload_type = PayloadType::Tensor`.
+
+**Python:** Set `inp.media_type = "application/vnd.simaai.tensor"` — the MIME string is how Python selects the tensor payload contract.
+
+### Build the graph and a seed run {#step-build-seed-run}
+
+We compose the same minimal `Input -> Output` topology from chapter 003 and `build()` it into a `Run`. `build()` needs a representative sample to lock in negotiated shapes, so we pass a single seed tensor (all zeros) of the same shape the real fields will use. The seed is only for shape negotiation — the real data comes next.
+
+### Build the bundle {#step-make-bundle}
+
+Now assemble the multi-input event. Each input gets a name via `make_tensor_sample(port_name, tensor)`, and those named fields are what the model addresses by port. Here `left` is filled with `1.0` and `right` with `2.0` so you can tell them apart on the way out.
+
+**C++:** `make_bundle_sample({...})` wraps the named fields into one `Sample` whose `kind` is `Bundle`.
+
+**Python:** The list of named samples is passed directly to `push(...)`; pyneat builds the bundle envelope for you.
+
+### Push the bundle and read it back {#step-push-and-read}
+
+Finally, send the bundle through and inspect the result. The output is itself a bundle `Sample`, so we read `out.fields` rather than treating it as a single tensor — `out.fields.size()` should be `2`, and each field carries the `port_name` and a tensor payload.
+
+**C++:** `run.run(Sample{bundle}, timeout_ms)` returns one `Sample`. Because the logical result has multiple fields, that returned `Sample` is itself a `Bundle` — so we check `out.kind == SampleKind::Bundle` and iterate `out.fields`, not `front()` (which would mean "first field inside the bundle").
+
+**Python:** `run.push(fields)` then `run.pull(timeout_ms=...)` returns the output sample; iterate `out.fields` and read each `field.port_name` and `field.tensor`.
 
 ## Run
+
+Run the **Python** and **C++ (prebuilt)** commands from the **Neat install root** (the directory that contains `share/` and `lib/`); run the **build from source** commands from the **repo root**. This chapter needs no model archive.
 
 **Python:**
 ```bash
@@ -57,7 +69,30 @@ python3 share/sima-neat/tutorials/009_feed_multi_input_model/feed_multi_input_mo
   --width 64 --height 48
 ```
 
-To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+Expected output (C++):
+
+```text
+bundle_fields=2
+  field=left has_tensor=yes
+  field=right has_tensor=yes
+[OK] 009_feed_multi_input_model
+```
+
+(The Python build prints the same field count with `port=left has_tensor=True` lines.) To integrate this chapter's C++ source into your own project with a custom `CMakeLists.txt` (no extras folder required), see [How to Run Tutorials](/tutorials#compile-a-copy-yourself) on the landing page.
+
+## In Practice
+
+How to apply the bundle pattern beyond this two-field demo.
+
+### Naming and routing
+
+- `port_name` is the wiring contract: it is how a multi-input model addresses each field. Match the names to the model's declared input ports.
+- The output bundle preserves field structure, so you can match results back to the inputs by name rather than position.
+
+### Inspecting output bundles
+
+- Always branch on `kind` first: a multi-field result is `SampleKind.Bundle`, and reading it as a single tensor will not work.
+- Check tensor presence per field (`field.tensor is not None` / `field.tensor.has_value()`) before touching the payload — a field may carry metadata rather than a tensor.
 
 ## Source Files
 - C++: `tutorials/009_feed_multi_input_model/feed_multi_input_model.cpp`

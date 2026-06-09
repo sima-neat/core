@@ -20,13 +20,15 @@ Modern AI inference on the edge has hard constraints: frame-rate throughput on s
 A typical Neat-framework application looks like this:
 
 ```cpp
-sima::Model model("/models/yolov8.tar.gz");
-sima::Graph graph;
-graph.add(sima::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"}));
-graph.add(model.graph());
-graph.add(sima::Output{});
+namespace neat = simaai::neat;
 
-auto run = graph.build(sima::RunMode::Async);
+neat::Model model("/models/yolov8.tar.gz");
+neat::Graph graph;
+graph.add(neat::nodes::groups::RtspDecodedInput({.url = "rtsp://camera/stream"}));
+graph.add(model.graph());
+graph.add(neat::Output{});
+
+auto run = graph.build(neat::RunMode::Async);
 while (running) {
   auto sample = run.pull(/*timeout_ms=*/100);
   if (sample) handle_detection(*sample);
@@ -49,6 +51,56 @@ The framework's public surface is a small set of primary concepts. They form a c
 | 6 | **Graph** | Assembly stage that turns Nodes, Models, and reusable Graph fragments into a runnable pipeline. | [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`GraphOptions`](/reference/cppapi/structs/simaai-neat-graphoptions) |
 | 7 | **Run** | Live, running pipeline produced by `Graph::build()`. | [`Run`](/reference/cppapi/classes/simaai-neat-run), [Async vs sync timing](/concepts/timing_model), [Threading model](/concepts/threading) |
 
+## Building and linking against Neat (CMake)
+
+Application code consumes Neat as the installed `sima-neat` package — it provides `libsima_neat.{a,so}`, the public headers, and a CMake package config, `SimaNeatConfig.cmake`. A complete `CMakeLists.txt` for an app is just:
+
+```cmake
+cmake_minimum_required(VERSION 3.16)
+project(my_app LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+find_package(SimaNeat REQUIRED CONFIG)
+
+add_executable(my_app main.cpp)
+target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)
+```
+
+Two lines are all you add to link and target the Neat library:
+
+- **`find_package(SimaNeat REQUIRED CONFIG)`** — finds the installed Neat package by reading its package config file `SimaNeatConfig.cmake` (installed under `lib/cmake/SimaNeat/`). `CONFIG` selects config-file mode (use the package's own exported config rather than a `Find<Pkg>.cmake` module); `REQUIRED` aborts configuration with a clear error if Neat isn't found. On success it defines the imported target `SimaNeat::sima_neat`.
+- **`target_link_libraries(my_app PRIVATE SimaNeat::sima_neat)`** — links your target against Neat. `SimaNeat::sima_neat` is an *imported target* that carries Neat's usage requirements, so linking it automatically adds Neat's public include directories, its C++20 requirement, and its transitive dependencies (GStreamer, etc.) to your target. You set no `-I`, `-L`, or `-l` flags by hand.
+
+In your sources, pull in the umbrella header:
+
+```cpp
+#include "neat.h"   // simaai::neat::Model, Graph, Run, Tensor, nodes, …
+```
+
+### Cross-compiling from the Neat SDK
+
+On a native DevKit install, `SimaNeatConfig.cmake` is on the default system prefix and `find_package` resolves with no extra setup. In an SDK cross-build, point CMake at the exported sysroot before `find_package` so it can locate the aarch64 package:
+
+```cmake
+if(DEFINED ENV{SYSROOT} AND NOT "$ENV{SYSROOT}" STREQUAL "")
+  list(APPEND CMAKE_PREFIX_PATH
+    "$ENV{SYSROOT}/usr"
+    "$ENV{SYSROOT}/usr/lib/aarch64-linux-gnu")
+endif()
+```
+
+Then configure, build, and run:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/my_app
+```
+
+If `find_package(SimaNeat ...)` fails, see [Troubleshooting](/troubleshooting) (the `find_package(SimaNeat CONFIG)` entry) and the worked [Hello Neat](/getting-started/minimal_example/minimal) and [Run an App](/getting-started/minimal_example/run_an_app) examples.
+
 ## Where to read what
 
 | What you want | Where to look |
@@ -58,8 +110,8 @@ The framework's public surface is a small set of primary concepts. They form a c
 | Python public API — pyneat module surface | [Python API Reference](/reference/pythonapi/) — generated from nanobind bindings |
 | Conceptual deep-dives (dtype contract, memory model, error codes, etc.) | [dtype contract](/concepts/dtype_contract), [memory model](/concepts/memory_model), [graphs](/concepts/graphs), [timing model](/concepts/timing_model), [threading](/concepts/threading), [processor backends](/concepts/processor_backends), [GStreamer underneath](/concepts/gstreamer_layer), [CVU kernels](/concepts/cvu_kernels), [MPK contract](/concepts/mpk_contract), [error codes](/concepts/error_codes), [build options](/concepts/build_options), [agentic workflow](/concepts/agentic_workflow) |
 | Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/env_vars), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
-| Onboarding, build, first inference | [Installation](/getting-started/installation), [Build](/getting-started/build), [Hello Neat](/getting-started/minimal_example) |
-| How to do specific things (debugging, runtime tuning, plugin failures) | [How-to: runtime tuning](/how-to/runtime_tuning), [How-to: diagnostics](/how-to/diagnostics), [How-to: plugin failures](/how-to/plugin_failures) |
+| Onboarding, build, first inference | [Installation](/getting-started/installation), [Build](/contribute/build), [Hello Neat](/getting-started/minimal_example/minimal) |
+| How to do specific things (debugging, runtime tuning, plugin failures) | [Tutorial 015: tune throughput & queues](/tutorials/015-tune-throughput-and-queues), [Tutorial 011: diagnose a pipeline](/tutorials/011-diagnose-a-pipeline) |
 | Coding standards, MPK contract, contribution policy | [Coding standard](/contribute/coding_standard), [MPK contract](/contribute/mpk_contract), [Architecture](/contribute/architecture) |
 
 ## Why the framework is built for agents

@@ -1,7 +1,7 @@
 ---
 title: Build profiles & CMake options
 description: How the framework's CMake build is configured, what each option toggles, and which profile to pick.
-sidebar_position: 10
+sidebar_position: 11
 ---
 
 # Build profiles & CMake options
@@ -62,5 +62,5 @@ cmake -LA -B build      # include advanced
 ## Further reading
 
 - "Build profiles" — §32, §60 of the design deep dive.
-- [Build / install](/getting-started/build) — the user-facing build guide.
+- [Build / install](/contribute/build) — the user-facing build guide.
 - The top-level `CMakeLists.txt` is the source of truth for option names.

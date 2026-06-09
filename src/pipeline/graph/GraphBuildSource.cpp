@@ -138,8 +138,8 @@ PreparedSourcePipeline prepare_source_pipeline_from_nodes(
     enforce_names_contract(pipeline.get(), br);
   }
   attach_boundary_probes(pipeline.get(), br.diag);
-  attach_stage_timing_probes(pipeline.get(), br.diag);
-  attach_element_timing_probes(pipeline.get(), br.diag);
+  attach_stage_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
+  attach_element_timing_probes(pipeline.get(), br.diag, stream_opt.enable_timings);
   attach_element_flow_probes(pipeline.get(), br.diag);
   session_build_attach_debug_detess_input_probes(pipeline.get());
   session_build_attach_debug_appsink_probes(pipeline.get());
@@ -317,6 +317,7 @@ Run Graph::build(const RunOptions& opt) {
   runtime::RunCoreStartOptions start_opt;
   start_opt.run_options = opt;
   start_opt.mode = RunMode::Async;
+  start_opt.graph_options = runtime::graph_runtime_options_from_run_options(opt, opt_.verbose);
   start_opt.guard = guard_;
   start_opt.input_route_processor = input_route_processor_;
   start_opt.last_pipeline = &last_pipeline_;
