@@ -54,6 +54,16 @@ Neat ships the same workflow through two front ends, so you can pick the one tha
 
 Both target the same compiled model artifacts and the same DevKit runtime; the concepts and pages below apply to either.
 
+<div class="overview-section-label">Requirements</div>
+
+Before building applications, complete the Getting Started setup:
+
+- **Install and sync** — install the Neat Framework in your Palette SDK or Modalix environment, then pair and sync your DevKit if you are developing from a host workflow.
+- **Model artifact** — use a precompiled model from the Model Zoo or compile your own model into a Modalix-ready archive.
+- **Runtime target** — decide whether you want to iterate directly on Modalix with PyNeat or cross-compile a C++ application from Palette SDK.
+
+See [Installation](/getting-started/installation/), [Pair a DevKit](/getting-started/pair-a-devkit/), and [Compile a Model](/compile-a-model/) if any of those steps are not ready yet.
+
 <div class="overview-section-label">How It Works</div>
 
 Neat gives you a direct mental model for that path. A compiled model archive (`.tar.gz`) becomes a `Model` component, application logic is assembled as a `Graph`, and that graph is built and executed as a `Run` object on the SoC. The same workflow is designed to work well with agentic development too, so teams can explore, build, and iterate faster.
@@ -63,23 +73,21 @@ The Hello Neat! pages help you run your first inference, the Development Workflo
 <div class="overview-link-columns">
   <section class="overview-link-panel overview-link-panel-start">
     <h2>Start Here</h2>
-    <p>Use these first steps to get a model running with the core mental model in place.</p>
+    <p>Start from a working environment and build up the core Neat application workflow.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/software/getting-started/installation/"><strong>Installation</strong><span>Choose the right setup path for DevKit or Neat SDK development.</span></a></li>
-      <li><a class="overview-link-card" href="/software/develop-apps/contribute/build/"><strong>Build</strong><span>Build the framework, docs, and optional Python bindings from source.</span></a></li>
-      <li><a class="overview-link-card" href="/software/develop-apps/hello-neat/minimal/"><strong>Hello Neat!</strong><span>Run your first Neat inference with YOLOv8 and decoded boxes.</span></a></li>
-      <li><a class="overview-link-card" href="/software/develop-apps/development-workflow/overview/"><strong>Development Workflow</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/hello-neat/minimal/"><strong>Hello Neat!</strong><span>Run a minimal Neat application and verify the development loop.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/development-workflow/overview/"><strong>Development Workflow</strong><span>Learn the `Model`, `Graph`, and `Run` workflow in more detail.</span></a></li>
+      <li><a class="overview-link-card" href="/tutorials/"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
     </ul>
   </section>
 
   <section class="overview-link-panel overview-link-panel-explore">
-    <h2>Explore</h2>
-    <p>Once the basics are working, use the rest of the docs to deepen your understanding and move faster.</p>
+    <h2>Build More</h2>
+    <p>Use these sections when you are ready to build richer applications or inspect the API surface.</p>
     <ul class="overview-link-list">
-      <li><a class="overview-link-card" href="/software/tutorials/"><strong>Tutorials</strong><span>Follow guided examples that walk through real Neat application patterns.</span></a></li>
-      <li><a class="overview-link-card" href="/software/tutorials/015-tune-throughput-and-queues/"><strong>Tuning &amp; Diagnostics</strong><span>Operational topics like throughput tuning and pipeline diagnostics, taught in context inside the tutorials.</span></a></li>
-      <li><a class="overview-link-card" href="/software/reference/cppapi/"><strong>Reference</strong><span>Browse the C++ API and supporting reference material.</span></a></li>
-      <li><a class="overview-link-card" href="/software/develop-apps/contribute/architecture/"><strong>Contribute</strong><span>Understand the architecture, contributor expectations, and repo conventions.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/"><strong>Advanced Concepts</strong><span>Understand graphs, formats, memory, threading, and runtime behavior.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/"><strong>Reference</strong><span>Browse C++, Python, ModelSDK, troubleshooting, and supporting material.</span></a></li>
+      <li><a class="overview-link-card" href="/develop-apps/contribute/architecture/"><strong>Contribute</strong><span>Understand architecture, source builds, testing expectations, and repo conventions.</span></a></li>
     </ul>
   </section>
 </div>

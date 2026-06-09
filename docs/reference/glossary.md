@@ -1,7 +1,7 @@
 ---
 title: Glossary
 description: Acronyms and terms used in the Neat framework documentation.
-sidebar_position: 8
+sidebar_position: 9
 ---
 
 # Glossary

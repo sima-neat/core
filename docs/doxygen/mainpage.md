@@ -77,7 +77,7 @@ In your sources, pull in the umbrella header:
 #include "neat.h"   // simaai::neat::Model, Graph, Run, Tensor, nodes, …
 ```
 
-### Cross-compiling from the Neat SDK
+### Cross-compiling from Palette SDK
 
 On a native DevKit install, `SimaNeatConfig.cmake` is on the default system prefix and `find_package` resolves with no extra setup. In an SDK cross-build, point CMake at the exported sysroot before `find_package` so it can locate the aarch64 package:
 
@@ -106,7 +106,7 @@ If `find_package(SimaNeat ...)` fails, see [Troubleshooting](/reference/troubles
 | Conceptual overview, architecture, design rationale | [Architecture deep dive](/develop-apps/contribute/architecture) — the architect-level documentation, surfaced as navigable site pages |
 | C++ public API — every class, method, field | [C++ API Reference](/reference/cppapi/) — generated from Doxygen comments |
 | Python public API — pyneat module surface | [Python API Reference](/reference/pythonapi/) — generated from nanobind bindings |
-| Conceptual deep-dives (dtype contract, memory model, error codes, etc.) | [dtype contract](/develop-apps/advanced-concepts/dtype_contract), [memory model](/develop-apps/advanced-concepts/memory_model), [graphs](/develop-apps/advanced-concepts/graphs), [timing model](/develop-apps/advanced-concepts/timing_model), [threading](/develop-apps/advanced-concepts/threading), [processor backends](/develop-apps/advanced-concepts/processor_backends), [GStreamer underneath](/develop-apps/advanced-concepts/gstreamer_layer), [CVU kernels](/develop-apps/advanced-concepts/cvu_kernels), [MPK contract](/develop-apps/advanced-concepts/mpk_contract), [error codes](/develop-apps/advanced-concepts/error_codes), [build options](/develop-apps/advanced-concepts/build_options), [agentic workflow](/develop-apps/advanced-concepts/agentic_workflow) |
+| Advanced concepts and contracts | [graphs](/develop-apps/advanced-concepts/graphs), [timing model](/develop-apps/advanced-concepts/timing_model), [threading](/develop-apps/advanced-concepts/threading), [data formats](/develop-apps/advanced-concepts/data_formats), [dtype contract](/develop-apps/advanced-concepts/dtype_contract), [memory model](/develop-apps/advanced-concepts/memory_model), [MPK contract](/develop-apps/advanced-concepts/mpk_contract), [processor backends](/develop-apps/advanced-concepts/processor_backends), [GStreamer underneath](/develop-apps/advanced-concepts/gstreamer_layer), [CVU kernels](/develop-apps/advanced-concepts/cvu_kernels), [video sender](/develop-apps/advanced-concepts/video_sender), [metadata sender](/develop-apps/advanced-concepts/metadata_sender) |
 | Glossary, environment variables, scripts, error format | [Glossary](/reference/glossary), [env vars](/reference/environment-variables), [scripts inventory](/reference/scripts), [plugin error format](/reference/error_format) |
 | Onboarding, build, first inference | [Installation](/getting-started/installation), [Build](/develop-apps/contribute/build), [Hello Neat](/develop-apps/hello-neat/minimal) |
 | How to do specific things (debugging, runtime tuning, plugin failures) | [Tutorial 015: tune throughput & queues](/tutorials/015-tune-throughput-and-queues), [Tutorial 011: diagnose a pipeline](/tutorials/011-diagnose-a-pipeline) |
@@ -129,6 +129,6 @@ The full story of why the framework is good for agents — fifteen specific desi
   source-tree `include/graph/` runtime substrate is intentionally excluded from
   the public reference; application code should use `simaai::neat::Graph` / `Run`.
 - Every public header has a file-level `@file` / `@ingroup` / `@brief` block. Group definitions live in `docs/doxygen/groups.dox`.
-- Errors are returned as `NeatError` exceptions carrying a structured `GraphReport`. See the [Error code catalog](/develop-apps/advanced-concepts/error_codes) for the full taxonomy.
+- Errors are returned as `NeatError` exceptions carrying a structured `GraphReport`. See the [Error code catalog](/reference/error-codes/) for the full taxonomy.
 
 The rest of this site is the API itself. Start with the [C++ API reference](/reference/cppapi/), or jump to the headline types: [`Model`](/reference/cppapi/classes/simaai-neat-model), [`Graph`](/reference/cppapi/classes/simaai-neat-graph), [`Run`](/reference/cppapi/classes/simaai-neat-run), [`Tensor`](/reference/cppapi/structs/simaai-neat-tensor), [Node APIs](/reference/cppapi/groups/nodes).

@@ -26,6 +26,7 @@ details, diagnostics, environment knobs, or release information.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/troubleshooting/"><strong>Troubleshooting</strong><span>Find symptom-first fixes for common setup, runtime, and pipeline issues.</span></a></li>
       <li><a class="overview-link-card" href="/reference/environment-variables/"><strong>Environment Variables</strong><span>Review runtime and builder environment variables.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/error-codes/"><strong>Error Codes</strong><span>Map framework error constants to causes and next steps.</span></a></li>
       <li><a class="overview-link-card" href="/reference/error_format/"><strong>Plugin Error Format</strong><span>Understand structured error fields reported by GStreamer plugin failures.</span></a></li>
     </ul>
   </section>

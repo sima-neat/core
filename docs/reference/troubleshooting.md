@@ -234,6 +234,6 @@ read the message for specifics.
 | `runtime.pull` | A runtime-side error during `pull` — downstream EOS, bus error, or appsink failure. |
 | `infra.dispatcher_unavailable` | An MLA/EV74/A65 dispatcher couldn't be acquired — firmware not loaded, missing license, or hardware fault. No CPU fallback. |
 
-<!-- NOTE for maintainers: concepts/error_codes.md documents io.not_found / mpk.* / plan.* / caps.* families that are NOT in include/pipeline/ErrorCodes.h. That doc is out of sync with the code — reconcile separately. This table reflects the actual constants. -->
+<!-- NOTE for maintainers: reference/error-codes.md documents io.not_found / mpk.* / plan.* / caps.* families that are NOT in include/pipeline/ErrorCodes.h. That doc is out of sync with the code — reconcile separately. This table reflects the actual constants. -->
 
 These nine are the full set in [`ErrorCodes.h`](/reference/cppapi/files/include-pipeline-errorcodes-h).
