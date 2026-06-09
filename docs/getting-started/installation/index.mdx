@@ -4,7 +4,7 @@ description: Overview of where to install Neat and which workflow to choose
 sidebar_position: 1
 ---
 
-As an AI application developer using the SiMa.ai Neat framework, you have two options for setting up
+As an AI application developer using the SiMa.ai Neat Framework, you have two options for setting up
 your development environment. Both paths install the same framework and target the same DevKit
 runtime. The main decision is where you want to do your day-to-day development work.
 
@@ -14,7 +14,7 @@ runtime. The main decision is where you want to do your day-to-day development w
 - We recommend creating an account at **[developer.sima.ai](https://developer.sima.ai)**
     - This will give you access assets such as precompiled models for testing.
 - Install `sima-cli` using the [official guide](https://docs.sima.ai/pages/sima_cli/main.html) in both your DevKit and host environments.
-    - `sima-cli` is used to install the Neat framework and to set up the Neat SDK / DevKit workflow.
+    - `sima-cli` is used to install the Neat Framework and to set up the Palette SDK / DevKit workflow.
 
 Not sure your host or DevKit meets the requirements? See [Compatibility](/getting-started/compatibility) for the supported host OSes, Python/NumPy versions, and the on-device version-matched set.
 
@@ -53,20 +53,20 @@ Not sure your host or DevKit meets the requirements? See [Compatibility](/gettin
         <div className="installation-path-card-topline">For maximum developer efficiency (Recommended)</div>
     </div>
       <div className="installation-path-card-body">
-        <h3>Develop in Neat SDK, run on DevKit</h3>
+        <h3>Develop in Palette SDK, run on DevKit</h3>
         <p className="installation-path-card-copy">
-          Install the Neat Framework and develop in the Neat SDK, then test on a paired DevKit.
+          Install the Neat Framework and develop in Palette SDK, then test on a paired DevKit.
         </p>
       </div>
       <ul className="installation-path-highlights">
-        <li>Builds in the SDK are generally 5-10x faster.</li>
+        <li>Builds in Palette SDK are generally 5-10x faster.</li>
         <li>Develop on the host, then run on a paired DevKit.</li>
         <li>Better fit for larger C++ applications and agent assisted workflows.</li>
       </ul>
       <a className="installation-path-cta installation-path-cta-sdk" href="/getting-started/installation/neat-elxr-sdk/">
         <span className="installation-path-cta-copy">
-          <strong>Install Neat SDK</strong>
-          <span>Host-side SDK setup</span>
+          <strong>Install Palette SDK</strong>
+          <span>Host-side Palette SDK setup</span>
         </span>
         <span className="installation-path-cta-arrow" aria-hidden="true" />
       </a>
@@ -74,7 +74,7 @@ Not sure your host or DevKit meets the requirements? See [Compatibility](/gettin
   </div>
   <p className="installation-paths-footnote">
     If your app is primarily Python, working directly on the DevKit is often sufficient because the Python runtime (`pyneat`)
-    executes on the DevKit. Use the Neat SDK primarily when you need C++ cross-compilation, unified SDK/DevKit orchestration,
+    executes on the DevKit. Use Palette SDK primarily when you need C++ cross-compilation, unified Palette SDK/DevKit orchestration,
     or agent assisted workflows.
   </p>
 </section>

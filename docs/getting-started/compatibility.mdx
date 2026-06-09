@@ -1,7 +1,7 @@
 ---
-title: Compatibility
-description: What Neat runs on — host SDK, Modalix DevKit, pyneat, and the version-matched set
-sidebar_position: 1.5
+title: Compatibility & Requirements
+description: What the Neat Framework runs on — Palette SDK, Modalix DevKit, pyneat, and the version-matched set
+sidebar_position: 2
 mdx:
   format: mdx
 ---
@@ -10,16 +10,17 @@ import info from '@site/src/data/buildinfo.json';
 
 # Compatibility
 
-Neat spans **two environments**: the **host SDK** (a container where you cross-compile)
-and the **Modalix DevKit** (aarch64, where the framework actually runs). Keep them
-separate — a requirement on one side rarely applies to the other.
+The Neat Framework spans **two environments**: the **Palette SDK** on your host
+(a container where you cross-compile) and the **Modalix DevKit** (aarch64, where
+the framework actually runs). Keep them separate — a requirement on one side
+rarely applies to the other.
 
 ## On-device — Modalix DevKit
 
 <table>
 <thead><tr><th>Component</th><th>Requirement</th></tr></thead>
 <tbody>
-<tr><td>Board</td><td>{info.compatibility.target.board} (the "3.0" in the product name is not a version gate — any Modalix DevKit runs Neat)</td></tr>
+<tr><td>Board</td><td>{info.compatibility.target.board} (the "3.0" in the product name is not a version gate — any Modalix DevKit runs the Neat Framework)</td></tr>
 <tr><td>Architecture</td><td>{info.compatibility.target.arch}</td></tr>
 <tr><td>Platform software</td><td>{info.compatibility.target.platform_sw}</td></tr>
 <tr><td>glibc</td><td>≥ {info.compatibility.target.glibc_min}</td></tr>
@@ -29,15 +30,15 @@ separate — a requirement on one side rarely applies to the other.
 </tbody>
 </table>
 
-## Host development — Neat SDK (container)
+## Host development — Palette SDK (container)
 
-The SDK runs in **Docker** on the host and cross-compiles to the DevKit.
+Palette SDK runs in **Docker** on the host and cross-compiles to the DevKit.
 
 <table>
 <thead><tr><th>Component</th><th>Supported</th></tr></thead>
 <tbody>
 <tr><td>Host OS</td><td><ul>{info.compatibility.host_sdk.os.map(o => <li key={o}>{o}</li>)}</ul></td></tr>
-<tr><td>SDK version</td><td>{info.compatibility.host_sdk.sdk}</td></tr>
+<tr><td>Palette SDK version</td><td>{info.compatibility.host_sdk.sdk}</td></tr>
 <tr><td>eLxr version</td><td>{info.compatibility.host_sdk.elxr}</td></tr>
 <tr><td>Cross toolchain</td><td>{info.compatibility.host_sdk.toolchain}</td></tr>
 <tr><td>Sysroot</td><td><code>{info.compatibility.host_sdk.sysroot}</code></td></tr>
@@ -46,7 +47,7 @@ The SDK runs in **Docker** on the host and cross-compiles to the DevKit.
 
 ## pyneat (Python bindings — run on the DevKit)
 
-`pyneat` is built by the SDK and runs **on the DevKit**, not on the host.
+`pyneat` is built by Palette SDK and runs **on the DevKit**, not on the host.
 
 <table>
 <thead><tr><th>Property</th><th>Value</th></tr></thead>
@@ -58,7 +59,7 @@ The SDK runs in **Docker** on the host and cross-compiles to the DevKit.
 </tbody>
 </table>
 
-There is **no x86 / non-aarch64 pyneat** — it exists only for the DevKit. The host SDK
+There is **no x86 / non-aarch64 pyneat** — it exists only for the DevKit. Palette SDK
 cross-builds it and installs it on the paired DevKit (venv at `/media/nvme/pyneat`
 if there's writable NVMe, otherwise `$HOME/pyneat`, always reachable as `~/pyneat`).
 
@@ -93,7 +94,7 @@ on the device in `/usr/share/sima-neat/buildinfo.json`.
 ## Verify your install
 
 ```bash
-# SDK / eLxr version (host container)
+# Palette SDK / eLxr version (host container)
 cat /etc/sdk-release
 
 # Neat version + the internals coupling hash (on the DevKit)
@@ -105,7 +106,7 @@ cat /usr/share/sima-neat/buildinfo.json
 
 If you hit `No channel available` or `undefined symbol …submitPrepared`, check that
 `neat-runtime` and `neat-ev74-firmware` report the **same hash** — that's the most
-common compatibility failure. See [Troubleshooting](/troubleshooting).
+common compatibility failure. See [Troubleshooting](/reference/troubleshooting).
 
 :::note Pending — needs an owner
 These belong on this page but require a product/release-eng decision and are not yet

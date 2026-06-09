@@ -23,7 +23,7 @@ legacy_matches="$(git grep -nE '\<(PipelineSession|PipelineRun|NeatModel|NeatTen
   ':(exclude)docs/doxygen/**' \
   ':(exclude)docs/reference/cppapi/**' \
   ':(exclude)docs/how-to/migration_legacy_names.md' \
-  ':(exclude)docs/contribute/naming.md' || true)"
+  ':(exclude)docs/develop-apps/contribute/start-here/naming.md' || true)"
 
 legacy_matches="$(printf '%s\n' "${legacy_matches}" | grep -vE 'github\.com/.*/PipelineSession' || true)"
 
