@@ -1,16 +1,15 @@
 name: Vulcan Docs
 
-run-name: vulcan-docs (${{ inputs.deploy_environment || vars.VULCAN_ENV || 'stg' }})
+run-name: vulcan-docs (${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }})
 
 on:
   push:
     branches:
       - develop
-      - main
   workflow_dispatch:
     inputs:
       deploy_environment:
-        description: "Optional Vulcan docs environment override: dev, stg/staging, or prod/production. Defaults to VULCAN_ENV."
+        description: "Optional Vulcan docs environment override: stg/staging or prod/production. Defaults to stg."
         required: false
         type: string
 
@@ -21,7 +20,7 @@ permissions:
   packages: read
 
 concurrency:
-  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.deploy_environment || 'stg' }}
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.event_name == 'push' && 'stg' || inputs.deploy_environment || 'stg' }}
   cancel-in-progress: false
 
 jobs:
@@ -37,30 +36,35 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            case "${GITHUB_REF}" in
+              refs/heads/develop)
+                deploy_environment="stg"
+                ;;
+              *)
+                echo "Unsupported docs push ref: ${GITHUB_REF}" >&2
+                exit 1
+                ;;
+            esac
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             deploy_environment="${{ inputs.deploy_environment }}"
             if [[ -z "${deploy_environment}" ]]; then
-              deploy_environment="${{ vars.VULCAN_ENV || 'stg' }}"
+              deploy_environment="stg"
             fi
           else
-            deploy_environment="${{ vars.VULCAN_ENV || 'stg' }}"
+            echo "Unsupported event: ${GITHUB_EVENT_NAME}" >&2
+            exit 1
           fi
 
           case "${deploy_environment}" in
-            dev)
-              ;;
             stg|staging)
               deploy_environment="stg"
               ;;
             prod|production)
               deploy_environment="prod"
-              if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
-                if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${GITHUB_REF}" == "refs/heads/develop" ]]; then
-                  echo "Allowing temporary production docs deploy from refs/heads/develop via manual dispatch."
-                else
-                  echo "Production docs deploy is only allowed from refs/heads/main, with a temporary manual-dispatch exception for refs/heads/develop. Current ref: ${GITHUB_REF}" >&2
-                  exit 1
-                fi
+              if [[ "${GITHUB_REF}" != "refs/heads/main" && ! "${GITHUB_REF}" =~ ^refs/heads/v[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+                echo "Production docs deploy is only allowed from refs/heads/main or vX.Y.Z release branches. Current ref: ${GITHUB_REF}" >&2
+                exit 1
               fi
               ;;
             *)
