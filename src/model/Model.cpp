@@ -2081,6 +2081,20 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   return inputs;
 }
 
+MeasureOptions make_benchmark_measure_options(bool include_power, int timeout_ms) {
+  MeasureOptions opt;
+  opt.duration_ms = timeout_ms;
+  opt.warmup_ms = 0;
+  opt.timeout_ms = timeout_ms;
+  opt.include_plugin_latency = false;
+  opt.include_edge_latency = false;
+  opt.include_message_latency = false;
+  opt.include_power = include_power;
+  opt.title = "NEAT Benchmark";
+  opt.input = "synthetic";
+  return opt;
+}
+
 simaai::neat::Sample make_bundle_from_tensors(const std::vector<Tensor>& inputs) {
   return sample_from_tensors(inputs);
 }
@@ -7226,12 +7240,18 @@ BenchmarkReport Model::benchmark(int num_samples) {
   BenchmarkReport report;
   {
     Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
+    MeasureScope measure = runner.start_measurement(
+        make_benchmark_measure_options(/*include_power=*/false, kTimeoutMs));
     for (int i = 0; i < num_samples; ++i) {
       (void)runner.run(inputs, kTimeoutMs);
     }
-    const RuntimeMetrics metrics = runner.metrics();
-    report.sync_latency_ms = metrics.latency.avg_ms;
-    report.sync_fps = metrics.throughput_fps;
+    const MeasureReport measured = measure.stop();
+    if (measured.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
+      runner.close();
+      throw std::runtime_error("Model::benchmark: sync measured output count mismatch");
+    }
+    report.sync_latency_ms = measured.end_to_end.avg_ms;
+    report.sync_fps = measured.throughput_batches_per_s;
     runner.close();
   }
 
@@ -7252,6 +7272,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
   bool power_available = false;
   {
     Runner runner = build(inputs, Model::RouteOptions{}, make_run_options(true));
+    MeasureScope measure = runner.start_measurement(
+        make_benchmark_measure_options(/*include_power=*/true, kTimeoutMs));
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
@@ -7293,16 +7315,16 @@ BenchmarkReport Model::benchmark(int num_samples) {
       throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
 
-    const RuntimeMetrics metrics = runner.metrics();
-    if (metrics.counters.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
+    const MeasureReport measured = measure.stop();
+    if (measured.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
       runner.close();
-      throw std::runtime_error("Model::benchmark: runtime metrics output count mismatch");
+      throw std::runtime_error("Model::benchmark: async measured output count mismatch");
     }
-    report.async_fps = metrics.throughput_fps;
-    if (metrics.power.enabled && metrics.power.samples > 0) {
+    report.async_fps = measured.throughput_batches_per_s;
+    if (measured.power.enabled && measured.power.samples > 0) {
       power_available = true;
-      report.avg_power_watts = metrics.power.total_avg_watts;
-      report.energy_joules = metrics.power.energy_joules;
+      report.avg_power_watts = measured.power.total_avg_watts;
+      report.energy_joules = measured.power.energy_joules;
     }
     runner.close();
   }
