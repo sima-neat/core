@@ -7,4 +7,4 @@ sidebar_position: 3
 
 Release notes for SiMa.ai Neat.
 
-> **TODO(timothydo):** Populate or auto-pull Neat release notes.
+> **TODO(jimfan):** Populate or auto-pull Neat release notes.

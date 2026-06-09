@@ -7,4 +7,4 @@ sidebar_position: 1
 
 Release notes for the SiMa.ai SDK / elxr.
 
-> **TODO(timothydo):** Populate or auto-pull SDK/elxr release notes.
+> **TODO(jimfan):** Populate or auto-pull SDK/elxr release notes.
