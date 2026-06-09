@@ -81,7 +81,6 @@ std::string maybe_collect_run_report(simaai::neat::Run& run, bool enabled) {
   return run.report(report_opt);
 }
 
-
 std::optional<simaai::neat::BoxDecodeType> parse_boxdecode_type_token(const char* raw) {
   if (raw == nullptr || *raw == '\0') {
     return std::nullopt;
@@ -94,23 +93,40 @@ std::optional<simaai::neat::BoxDecodeType> parse_boxdecode_type_token(const char
     return static_cast<char>(std::tolower(c));
   });
   auto is = [&](const char* value) { return token == value; };
-  if (is("yolo") || is("yolo-generic")) return simaai::neat::BoxDecodeType::Yolo;
-  if (is("yolov5") || is("yolo5") || is("yolo-v5")) return simaai::neat::BoxDecodeType::YoloV5;
-  if (is("yolov5-seg") || is("yolo5-seg") || is("yolo-v5-seg")) return simaai::neat::BoxDecodeType::YoloV5Seg;
-  if (is("yolov7") || is("yolo7") || is("yolo-v7")) return simaai::neat::BoxDecodeType::YoloV7;
-  if (is("yolov7-seg") || is("yolo7-seg") || is("yolo-v7-seg")) return simaai::neat::BoxDecodeType::YoloV7Seg;
-  if (is("yolov8") || is("yolo8") || is("yolo-v8")) return simaai::neat::BoxDecodeType::YoloV8;
-  if (is("yolov8-seg") || is("yolo8-seg") || is("yolo-v8-seg")) return simaai::neat::BoxDecodeType::YoloV8Seg;
-  if (is("yolov8-pose") || is("yolo8-pose") || is("yolo-v8-pose")) return simaai::neat::BoxDecodeType::YoloV8Pose;
-  if (is("yolov9") || is("yolo9") || is("yolo-v9")) return simaai::neat::BoxDecodeType::YoloV9;
-  if (is("yolov9-seg") || is("yolo9-seg") || is("yolo-v9-seg")) return simaai::neat::BoxDecodeType::YoloV9Seg;
-  if (is("yolov10") || is("yolo10") || is("yolo-v10")) return simaai::neat::BoxDecodeType::YoloV10;
-  if (is("yolov10-seg") || is("yolo10-seg") || is("yolo-v10-seg")) return simaai::neat::BoxDecodeType::YoloV10Seg;
-  if (is("yolo26") || is("yolov26") || is("yolo-v26")) return simaai::neat::BoxDecodeType::YoloV26;
-  if (is("yolo26-pose") || is("yolov26-pose") || is("yolo-v26-pose")) return simaai::neat::BoxDecodeType::YoloV26Pose;
-  if (is("yolo26-seg") || is("yolov26-seg") || is("yolo-v26-seg")) return simaai::neat::BoxDecodeType::YoloV26Seg;
-  if (is("yolov6") || is("yolo6") || is("yolo-v6")) return simaai::neat::BoxDecodeType::YoloV6;
-  if (is("yolox") || is("yolo-x")) return simaai::neat::BoxDecodeType::YoloX;
+  if (is("yolo") || is("yolo-generic"))
+    return simaai::neat::BoxDecodeType::Yolo;
+  if (is("yolov5") || is("yolo5") || is("yolo-v5"))
+    return simaai::neat::BoxDecodeType::YoloV5;
+  if (is("yolov5-seg") || is("yolo5-seg") || is("yolo-v5-seg"))
+    return simaai::neat::BoxDecodeType::YoloV5Seg;
+  if (is("yolov7") || is("yolo7") || is("yolo-v7"))
+    return simaai::neat::BoxDecodeType::YoloV7;
+  if (is("yolov7-seg") || is("yolo7-seg") || is("yolo-v7-seg"))
+    return simaai::neat::BoxDecodeType::YoloV7Seg;
+  if (is("yolov8") || is("yolo8") || is("yolo-v8"))
+    return simaai::neat::BoxDecodeType::YoloV8;
+  if (is("yolov8-seg") || is("yolo8-seg") || is("yolo-v8-seg"))
+    return simaai::neat::BoxDecodeType::YoloV8Seg;
+  if (is("yolov8-pose") || is("yolo8-pose") || is("yolo-v8-pose"))
+    return simaai::neat::BoxDecodeType::YoloV8Pose;
+  if (is("yolov9") || is("yolo9") || is("yolo-v9"))
+    return simaai::neat::BoxDecodeType::YoloV9;
+  if (is("yolov9-seg") || is("yolo9-seg") || is("yolo-v9-seg"))
+    return simaai::neat::BoxDecodeType::YoloV9Seg;
+  if (is("yolov10") || is("yolo10") || is("yolo-v10"))
+    return simaai::neat::BoxDecodeType::YoloV10;
+  if (is("yolov10-seg") || is("yolo10-seg") || is("yolo-v10-seg"))
+    return simaai::neat::BoxDecodeType::YoloV10Seg;
+  if (is("yolo26") || is("yolov26") || is("yolo-v26"))
+    return simaai::neat::BoxDecodeType::YoloV26;
+  if (is("yolo26-pose") || is("yolov26-pose") || is("yolo-v26-pose"))
+    return simaai::neat::BoxDecodeType::YoloV26Pose;
+  if (is("yolo26-seg") || is("yolov26-seg") || is("yolo-v26-seg"))
+    return simaai::neat::BoxDecodeType::YoloV26Seg;
+  if (is("yolov6") || is("yolo6") || is("yolo-v6"))
+    return simaai::neat::BoxDecodeType::YoloV6;
+  if (is("yolox") || is("yolo-x"))
+    return simaai::neat::BoxDecodeType::YoloX;
   return std::nullopt;
 }
 
@@ -659,11 +675,11 @@ int main(int argc, char** argv) {
         std::max(1, env_int("SIMA_ASYNC_YOLOV8_PROFILE_PUSH_SLOW_MS", cfg.profile_push_slow_ms));
     cfg.pull_timeout_ms =
         std::max(1, env_int("SIMA_ASYNC_YOLOV8_PULL_TIMEOUT_MS", cfg.pull_timeout_ms));
-    cfg.max_timeouts =
-        std::max(1, env_int("SIMA_ASYNC_YOLOV8_MAX_TIMEOUTS", cfg.max_timeouts));
+    cfg.max_timeouts = std::max(1, env_int("SIMA_ASYNC_YOLOV8_MAX_TIMEOUTS", cfg.max_timeouts));
     cfg.input_width = std::max(0, env_int("SIMA_ASYNC_YOLOV8_INPUT_W", cfg.input_width));
     cfg.input_height = std::max(0, env_int("SIMA_ASYNC_YOLOV8_INPUT_H", cfg.input_height));
-    if (const auto parsed = parse_boxdecode_type_token(std::getenv("SIMA_ASYNC_YOLOV8_DECODE_TYPE"))) {
+    if (const auto parsed =
+            parse_boxdecode_type_token(std::getenv("SIMA_ASYNC_YOLOV8_DECODE_TYPE"))) {
       cfg.decode_type = *parsed;
     }
     if (cfg.profile_skip_extract) {

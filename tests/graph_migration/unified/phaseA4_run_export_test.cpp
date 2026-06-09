@@ -151,23 +151,21 @@ RUN_TEST("graph_migration_phaseA4_run_export_test", [] {
   const std::string measured_body = run_to_json(run, measured, opt, &err);
   require(err.empty(), "measured run_to_json error: " + err);
   const nlohmann::json measured_json = nlohmann::json::parse(measured_body);
-  require(measured_json.at("run")
-              .at("graph_metrics")
-              .at("measurement_scope")
-              .get<std::string>() == "measured_window",
+  require(measured_json.at("run").at("graph_metrics").at("measurement_scope").get<std::string>() ==
+              "measured_window",
           "measured export should mark graph metrics as measured-window");
   require(measured_json.at("run")
-              .at("plugin_metrics_unattributed")
-              .at(0)
-              .at("phase")
-              .get<std::string>() == "Run",
+                  .at("plugin_metrics_unattributed")
+                  .at(0)
+                  .at("phase")
+                  .get<std::string>() == "Run",
           "measured export should preserve plugin phase");
   require(measured_json.at("run")
-              .at("plugin_metrics_unattributed")
-              .at(0)
-              .at("latency_ms")
-              .at("total_ms")
-              .get<double>() == 8.0,
+                  .at("plugin_metrics_unattributed")
+                  .at(0)
+                  .at("latency_ms")
+                  .at("total_ms")
+                  .get<double>() == 8.0,
           "measured export should preserve plugin total latency");
   if (!json.at("run").at("node_metrics").empty() &&
       !json.at("run").at("node_metrics").at(0).at("runtime_node_id").is_null()) {

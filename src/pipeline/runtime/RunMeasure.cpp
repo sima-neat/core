@@ -688,8 +688,7 @@ std::string MeasureReport::to_text() const {
   if (latency_samples_collected) {
     os << std::left << std::setw(28) << "metric" << std::right << std::setw(9) << "count"
        << std::setw(11) << "avg" << std::setw(11) << "p50" << std::setw(11) << "p90"
-       << std::setw(11) << "p95" << std::setw(11) << "p99" << std::setw(11) << "max"
-       << "\n";
+       << std::setw(11) << "p95" << std::setw(11) << "p99" << std::setw(11) << "max" << "\n";
     print_latency_row(os, "end-to-end push->output", end_to_end);
     print_latency_row(os, "between output frames", frame_gap);
   } else {
@@ -699,8 +698,7 @@ std::string MeasureReport::to_text() const {
   os << "\nPer-node diagnostic latency during measured window (ms):\n";
   os << std::left << std::setw(18) << "node" << std::setw(30) << "label/kind" << std::right
      << std::setw(9) << "samples" << std::setw(11) << "avg" << std::setw(11) << "min"
-     << std::setw(11) << "max" << std::setw(12) << "total"
-     << "\n";
+     << std::setw(11) << "max" << std::setw(12) << "total" << "\n";
   if (node_metrics.empty()) {
     os << "  no node latency samples were reported\n";
   } else {
@@ -735,8 +733,7 @@ std::string MeasureReport::to_text() const {
   os << std::left << std::setw(28) << "plugin" << std::setw(10) << "phase" << std::setw(24)
      << "kernel" << std::setw(10) << "node" << std::setw(14) << "stream" << std::right
      << std::setw(9) << "calls" << std::setw(11) << "avg" << std::setw(11) << "min" << std::setw(11)
-     << "max" << std::setw(12) << "total"
-     << "\n";
+     << "max" << std::setw(12) << "total" << "\n";
   if (plugin_latency.empty()) {
     os << "  no plugin/kernel timing samples were reported\n";
   } else {
@@ -759,8 +756,7 @@ std::string MeasureReport::to_text() const {
      << "  note: handoff/queue/transport diagnostics; do not add to plugin or graph latency.\n";
   os << std::left << std::setw(28) << "edge" << std::setw(18) << "semantics" << std::setw(14)
      << "source" << std::right << std::setw(9) << "samples" << std::setw(11) << "avg"
-     << std::setw(11) << "p50" << std::setw(11) << "p95" << std::setw(11) << "max"
-     << "\n";
+     << std::setw(11) << "p50" << std::setw(11) << "p95" << std::setw(11) << "max" << "\n";
   if (edge_latency.empty()) {
     os << "  no edge/message timing samples were reported\n";
   } else {
@@ -786,8 +782,7 @@ std::string MeasureReport::to_text() const {
   os << std::left << std::setw(26) << "item" << std::setw(14) << "stream" << std::setw(28)
      << "semantics" << std::right << std::setw(9) << "samples" << std::setw(11) << "avg"
      << std::setw(11) << "p50" << std::setw(11) << "p95" << std::setw(11) << "max" << std::setw(10)
-     << "reliable"
-     << "\n";
+     << "reliable" << "\n";
   if (!path_timing.available) {
     os << "  no path timing rows were reported\n";
   } else {

@@ -234,16 +234,14 @@ private:
 };
 
 static std::string to_lower(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-    return static_cast<char>(std::tolower(c));
-  });
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   return s;
 }
 
 static std::string to_upper(std::string s) {
-  std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
-    return static_cast<char>(std::toupper(c));
-  });
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
   return s;
 }
 
@@ -450,9 +448,8 @@ static simaai::neat::OutputMemory parse_output_memory(const std::string& s) {
 
 static bool nodes_contain_kind(const std::vector<std::shared_ptr<simaai::neat::Node>>& nodes,
                                const std::string& kind) {
-  return std::any_of(nodes.begin(), nodes.end(), [&](const auto& n) {
-    return n && n->kind() == kind;
-  });
+  return std::any_of(nodes.begin(), nodes.end(),
+                     [&](const auto& n) { return n && n->kind() == kind; });
 }
 
 static std::string frame_id_string(const simaai::neat::Sample& sample) {
@@ -472,8 +469,8 @@ static bool has_sw_h264_encoder() {
 
 static void require_element_or_skip(const char* factory) {
   if (!simaai::neat::element_exists(factory)) {
-    skip_long_test_exception(std::string("missing NEAT/GStreamer element for macro mixed stress: ") +
-                             factory);
+    skip_long_test_exception(
+        std::string("missing NEAT/GStreamer element for macro mixed stress: ") + factory);
   }
 }
 
@@ -851,8 +848,9 @@ static Args parse_args(int argc, char** argv) {
     args.gst_boundary_probes = env_flag("SIMA_GST_BOUNDARY_PROBES", args.gst_boundary_probes);
 
   if (args.source != "rtsp") {
-    throw std::runtime_error("--source " + args.source +
-                             " is not implemented in macro_mixed_multistream_multimodel_tput_test v1");
+    throw std::runtime_error(
+        "--source " + args.source +
+        " is not implemented in macro_mixed_multistream_multimodel_tput_test v1");
   }
   if (args.streams < 1 || args.streams > 32)
     throw std::runtime_error("--streams must be in range 1..32");
@@ -1077,13 +1075,13 @@ static json latency_profiler_json(const simaai::neat::ProfilerReport& report) {
   }
   json percentiles = json::array();
   for (auto& [key, values] : by_backend_phase) {
-    percentiles.push_back({{"bucket", key},
-                           {"count", values.size()},
-                           {"p50_ms", percentile(values, 50.0)},
-                           {"p95_ms", percentile(values, 95.0)},
-                           {"p99_ms", percentile(values, 99.0)},
-                           {"max_ms", values.empty() ? 0.0
-                                                       : *std::max_element(values.begin(), values.end())}});
+    percentiles.push_back(
+        {{"bucket", key},
+         {"count", values.size()},
+         {"p50_ms", percentile(values, 50.0)},
+         {"p95_ms", percentile(values, 95.0)},
+         {"p99_ms", percentile(values, 99.0)},
+         {"max_ms", values.empty() ? 0.0 : *std::max_element(values.begin(), values.end())}});
   }
 
   return {{"enabled", true},
@@ -1109,9 +1107,12 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
                         int graph_nodes, int graph_edges, const std::string& status,
                         const std::string& failure_reason) {
   const double measured_s = timings.measured_ms / 1000.0;
-  const double aggregate_fps = measured_s > 0.0 ? static_cast<double>(metrics.total_outputs) / measured_s : 0.0;
-  const double resnet_fps = measured_s > 0.0 ? static_cast<double>(metrics.resnet_outputs) / measured_s : 0.0;
-  const double yolo_fps = measured_s > 0.0 ? static_cast<double>(metrics.yolo_outputs) / measured_s : 0.0;
+  const double aggregate_fps =
+      measured_s > 0.0 ? static_cast<double>(metrics.total_outputs) / measured_s : 0.0;
+  const double resnet_fps =
+      measured_s > 0.0 ? static_cast<double>(metrics.resnet_outputs) / measured_s : 0.0;
+  const double yolo_fps =
+      measured_s > 0.0 ? static_cast<double>(metrics.yolo_outputs) / measured_s : 0.0;
   const int64_t target_counted_outputs = std::min<int64_t>(metrics.total_outputs, expected_outputs);
   const int64_t excess_outputs =
       metrics.total_outputs > expected_outputs ? metrics.total_outputs - expected_outputs : 0;
@@ -1127,11 +1128,11 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
       {"source", args.source},
       {"streams", args.streams},
       {"rtsp_servers", args.rtsp_servers},
-	      {"fps", args.fps},
-	      {"iters_per_stream_per_branch", args.iters},
-	      {"duration_ms", args.duration_ms},
-	      {"min_measured_ms", args.min_measured_ms},
-	      {"branch_mode", args.branch_mode},
+      {"fps", args.fps},
+      {"iters_per_stream_per_branch", args.iters},
+      {"duration_ms", args.duration_ms},
+      {"min_measured_ms", args.min_measured_ms},
+      {"branch_mode", args.branch_mode},
       {"active_branches", active_branches_json(args)},
       {"resnet_lanes", args.resnet_lanes},
       {"yolo_lanes", args.yolo_lanes},
@@ -1142,17 +1143,17 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
       {"push_timeout_ms", args.push_timeout_ms},
       {"pull_timeout_ms", args.pull_timeout_ms},
       {"output_memory", args.output_memory},
-	      {"metadata_udp", args.metadata_udp},
-	      {"h264_bitrate_kbps", args.h264_bitrate_kbps},
-	      {"latency_profiler", args.latency_profiler},
-	      {"profiler_ring_capacity", args.profiler_ring_capacity},
-	      {"profile_trace_out", args.profile_trace_out},
-	      {"gst_element_timings", args.gst_element_timings},
-	      {"gst_flow_debug", args.gst_flow_debug},
-	      {"gst_boundary_probes", args.gst_boundary_probes},
-	      {"serial_pipeline_build", args.serial_pipeline_build_cli
-	                                      ? args.serial_pipeline_build
-	                                      : env_flag("SIMA_GRAPH_SERIAL_PIPELINE_BUILD", false)},
+      {"metadata_udp", args.metadata_udp},
+      {"h264_bitrate_kbps", args.h264_bitrate_kbps},
+      {"latency_profiler", args.latency_profiler},
+      {"profiler_ring_capacity", args.profiler_ring_capacity},
+      {"profile_trace_out", args.profile_trace_out},
+      {"gst_element_timings", args.gst_element_timings},
+      {"gst_flow_debug", args.gst_flow_debug},
+      {"gst_boundary_probes", args.gst_boundary_probes},
+      {"serial_pipeline_build", args.serial_pipeline_build_cli
+                                    ? args.serial_pipeline_build
+                                    : env_flag("SIMA_GRAPH_SERIAL_PIPELINE_BUILD", false)},
       {"processcvu_target", args.processcvu_target},
       {"models", {{"resnet", args.resnet_model}, {"yolo", args.yolo_model}}},
       {"graph", {{"nodes", graph_nodes}, {"edges", graph_edges}}},
@@ -1164,19 +1165,19 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
       {"SIMA_GRAPH_SERIAL_PIPELINE_BUILD", env_string("SIMA_GRAPH_SERIAL_PIPELINE_BUILD")},
       {"SIMA_H264ENC_BITRATE_KBPS", env_string("SIMA_H264ENC_BITRATE_KBPS")},
       {"SIMA_PROCESSCVU_RUN_TARGET", env_string("SIMA_PROCESSCVU_RUN_TARGET")},
-	      {"SIMA_PROCESSCVU_ASYNC_IN_FLIGHT", env_string("SIMA_PROCESSCVU_ASYNC_IN_FLIGHT")},
-	      {"SIMA_PROCESSMLA_SAFE_ASYNC", env_string("SIMA_PROCESSMLA_SAFE_ASYNC")},
-	      {"SIMA_PROCESSMLA_SAFE_ASYNC_DEPTH", env_string("SIMA_PROCESSMLA_SAFE_ASYNC_DEPTH")},
-	      {"SIMA_GST_ELEMENT_TIMINGS", env_string("SIMA_GST_ELEMENT_TIMINGS")},
-	      {"SIMA_GST_FLOW_DEBUG", env_string("SIMA_GST_FLOW_DEBUG")},
-	      {"SIMA_GST_BOUNDARY_PROBES", env_string("SIMA_GST_BOUNDARY_PROBES")},
-	      {"SIMA_DISPATCHER_PROFILE", env_string("SIMA_DISPATCHER_PROFILE")},
-	      {"SIMA_RUNTIME_PROFILE", env_string("SIMA_RUNTIME_PROFILE")},
-	  };
+      {"SIMA_PROCESSCVU_ASYNC_IN_FLIGHT", env_string("SIMA_PROCESSCVU_ASYNC_IN_FLIGHT")},
+      {"SIMA_PROCESSMLA_SAFE_ASYNC", env_string("SIMA_PROCESSMLA_SAFE_ASYNC")},
+      {"SIMA_PROCESSMLA_SAFE_ASYNC_DEPTH", env_string("SIMA_PROCESSMLA_SAFE_ASYNC_DEPTH")},
+      {"SIMA_GST_ELEMENT_TIMINGS", env_string("SIMA_GST_ELEMENT_TIMINGS")},
+      {"SIMA_GST_FLOW_DEBUG", env_string("SIMA_GST_FLOW_DEBUG")},
+      {"SIMA_GST_BOUNDARY_PROBES", env_string("SIMA_GST_BOUNDARY_PROBES")},
+      {"SIMA_DISPATCHER_PROFILE", env_string("SIMA_DISPATCHER_PROFILE")},
+      {"SIMA_RUNTIME_PROFILE", env_string("SIMA_RUNTIME_PROFILE")},
+  };
   j["timing"] = {{"build_ms", timings.build_ms},
-                  {"warmup_ms", timings.warmup_ms},
-                  {"measured_ms", timings.measured_ms},
-                  {"first_output_ms", timings.first_output_ms}};
+                 {"warmup_ms", timings.warmup_ms},
+                 {"measured_ms", timings.measured_ms},
+                 {"first_output_ms", timings.first_output_ms}};
   j["throughput"] = {
       {"offered_input_fps", static_cast<double>(args.streams * args.fps)},
       {"aggregate_output_fps", aggregate_fps},
@@ -1190,17 +1191,17 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
            : 0.0},
   };
   j["counts"] = {{"expected_outputs", expected_outputs},
-                  {"target_counted_outputs", target_counted_outputs},
-                  {"excess_outputs", excess_outputs},
-                  {"total_outputs", metrics.total_outputs},
-                  {"resnet_outputs", metrics.resnet_outputs},
-                  {"yolo_outputs", metrics.yolo_outputs},
-                  {"timeouts", metrics.timeouts},
-                  {"stalls", metrics.stalls},
-                  {"max_runtime_hit", metrics.max_runtime_hit},
-                  {"metadata_sent", metrics.metadata_sent},
-                  {"metadata_send_failed", metrics.metadata_send_failed},
-                  {"metadata_received", metrics.metadata_received}};
+                 {"target_counted_outputs", target_counted_outputs},
+                 {"excess_outputs", excess_outputs},
+                 {"total_outputs", metrics.total_outputs},
+                 {"resnet_outputs", metrics.resnet_outputs},
+                 {"yolo_outputs", metrics.yolo_outputs},
+                 {"timeouts", metrics.timeouts},
+                 {"stalls", metrics.stalls},
+                 {"max_runtime_hit", metrics.max_runtime_hit},
+                 {"metadata_sent", metrics.metadata_sent},
+                 {"metadata_send_failed", metrics.metadata_send_failed},
+                 {"metadata_received", metrics.metadata_received}};
 
   std::vector<double> total_counts = stream_counts_as_double(streams, metrics.by_stream_total);
   std::vector<double> resnet_counts =
@@ -1220,21 +1221,28 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
       starved_lanes.push_back(label);
   }
   j["fairness"] = {
-      {"stream_total_min", total_counts.empty() ? 0.0 : *std::min_element(total_counts.begin(), total_counts.end())},
-      {"stream_total_max", total_counts.empty() ? 0.0 : *std::max_element(total_counts.begin(), total_counts.end())},
+      {"stream_total_min",
+       total_counts.empty() ? 0.0 : *std::min_element(total_counts.begin(), total_counts.end())},
+      {"stream_total_max",
+       total_counts.empty() ? 0.0 : *std::max_element(total_counts.begin(), total_counts.end())},
       {"stream_total_avg", mean(total_counts)},
       {"stream_total_stddev", stddev(total_counts)},
-      {"resnet_min", resnet_counts.empty() ? 0.0 : *std::min_element(resnet_counts.begin(), resnet_counts.end())},
-      {"resnet_max", resnet_counts.empty() ? 0.0 : *std::max_element(resnet_counts.begin(), resnet_counts.end())},
-      {"yolo_min", yolo_counts.empty() ? 0.0 : *std::min_element(yolo_counts.begin(), yolo_counts.end())},
-      {"yolo_max", yolo_counts.empty() ? 0.0 : *std::max_element(yolo_counts.begin(), yolo_counts.end())},
+      {"resnet_min",
+       resnet_counts.empty() ? 0.0 : *std::min_element(resnet_counts.begin(), resnet_counts.end())},
+      {"resnet_max",
+       resnet_counts.empty() ? 0.0 : *std::max_element(resnet_counts.begin(), resnet_counts.end())},
+      {"yolo_min",
+       yolo_counts.empty() ? 0.0 : *std::min_element(yolo_counts.begin(), yolo_counts.end())},
+      {"yolo_max",
+       yolo_counts.empty() ? 0.0 : *std::max_element(yolo_counts.begin(), yolo_counts.end())},
       {"starved_streams", starved},
       {"starved_lanes", starved_lanes},
   };
 
   const std::vector<double> gaps = all_gaps(metrics);
   j["latency_proxy_ms"] = {
-      {"note", "RTSP v1 records output inter-arrival gaps and time-to-first-output, not true source-to-output latency."},
+      {"note", "RTSP v1 records output inter-arrival gaps and time-to-first-output, not true "
+               "source-to-output latency."},
       {"global_gap_p50", percentile(gaps, 50.0)},
       {"global_gap_p95", percentile(gaps, 95.0)},
       {"global_gap_p99", percentile(gaps, 99.0)},
@@ -1246,20 +1254,23 @@ static json make_report(const Args& args, const Metrics& metrics, const Timings&
     const auto resnet = counter_count(metrics.by_stream_resnet, stream.stream_id);
     const auto yolo = counter_count(metrics.by_stream_yolo, stream.stream_id);
     std::vector<double> gaps_for_stream;
-    if (const auto it = metrics.by_stream_total.find(stream.stream_id); it != metrics.by_stream_total.end())
+    if (const auto it = metrics.by_stream_total.find(stream.stream_id);
+        it != metrics.by_stream_total.end())
       gaps_for_stream = it->second.inter_output_gap_ms;
-    per_stream[stream.stream_id] = {{"total", total},
-                                    {"resnet", resnet},
-                                    {"yolo", yolo},
-                                    {"fps_total", measured_s > 0.0 ? static_cast<double>(total) / measured_s : 0.0},
-                                    {"gap_p95_ms", percentile(gaps_for_stream, 95.0)}};
+    per_stream[stream.stream_id] = {
+        {"total", total},
+        {"resnet", resnet},
+        {"yolo", yolo},
+        {"fps_total", measured_s > 0.0 ? static_cast<double>(total) / measured_s : 0.0},
+        {"gap_p95_ms", percentile(gaps_for_stream, 95.0)}};
   }
   j["per_stream"] = per_stream;
 
   json per_lane = json::object();
   for (const auto& [lane, counter] : metrics.by_lane) {
-    per_lane[lane] = {{"outputs", counter.count},
-                      {"fps", measured_s > 0.0 ? static_cast<double>(counter.count) / measured_s : 0.0}};
+    per_lane[lane] = {
+        {"outputs", counter.count},
+        {"fps", measured_s > 0.0 ? static_cast<double>(counter.count) / measured_s : 0.0}};
   }
   j["per_lane"] = per_lane;
   return j;
@@ -1292,9 +1303,10 @@ static void record_sample_metrics(Metrics& metrics, Timings& timings, const Outp
   }
 }
 
-static void send_yolo_metadata_if_enabled(const Args& args, Metrics& metrics, const OutputDef& def,
-                                          const simaai::neat::Sample& sample,
-                                          const std::vector<simaai::neat::MetadataSender>& senders) {
+static void
+send_yolo_metadata_if_enabled(const Args& args, Metrics& metrics, const OutputDef& def,
+                              const simaai::neat::Sample& sample,
+                              const std::vector<simaai::neat::MetadataSender>& senders) {
   if (!args.metadata_udp || def.branch != Branch::Yolo)
     return;
   if (def.lane < 0 || static_cast<std::size_t>(def.lane) >= senders.size()) {
@@ -1316,9 +1328,9 @@ static void send_yolo_metadata_if_enabled(const Args& args, Metrics& metrics, co
                           std::chrono::system_clock::now().time_since_epoch())
                           .count();
   std::string err;
-  if (senders[static_cast<std::size_t>(def.lane)].send_metadata(
-          "object-detection", data.dump(), static_cast<int64_t>(now_ms), frame_id_string(sample),
-          &err)) {
+  if (senders[static_cast<std::size_t>(def.lane)].send_metadata("object-detection", data.dump(),
+                                                                static_cast<int64_t>(now_ms),
+                                                                frame_id_string(sample), &err)) {
     ++metrics.metadata_sent;
   } else {
     ++metrics.metadata_send_failed;
@@ -1331,20 +1343,21 @@ static void send_yolo_metadata_if_enabled(const Args& args, Metrics& metrics, co
 static void print_summary(const Args& args, const Metrics& metrics, const Timings& timings,
                           const std::vector<StreamDef>& streams) {
   const double measured_s = timings.measured_ms / 1000.0;
-  const double aggregate_fps = measured_s > 0.0 ? static_cast<double>(metrics.total_outputs) / measured_s : 0.0;
+  const double aggregate_fps =
+      measured_s > 0.0 ? static_cast<double>(metrics.total_outputs) / measured_s : 0.0;
   std::cout << "[result] outputs_total=" << metrics.total_outputs
-            << " resnet_outputs=" << metrics.resnet_outputs << " yolo_outputs=" << metrics.yolo_outputs
-            << " aggregate_fps=" << aggregate_fps << "\n";
-  std::cout << "[branch_tput] branch=resnet outputs=" << metrics.resnet_outputs
-            << " fps=" << (measured_s > 0.0 ? static_cast<double>(metrics.resnet_outputs) / measured_s : 0.0)
+            << " resnet_outputs=" << metrics.resnet_outputs
+            << " yolo_outputs=" << metrics.yolo_outputs << " aggregate_fps=" << aggregate_fps
             << "\n";
-  std::cout << "[branch_tput] branch=yolo outputs=" << metrics.yolo_outputs
-            << " fps=" << (measured_s > 0.0 ? static_cast<double>(metrics.yolo_outputs) / measured_s : 0.0)
+  std::cout << "[branch_tput] branch=resnet outputs=" << metrics.resnet_outputs << " fps="
+            << (measured_s > 0.0 ? static_cast<double>(metrics.resnet_outputs) / measured_s : 0.0)
+            << "\n";
+  std::cout << "[branch_tput] branch=yolo outputs=" << metrics.yolo_outputs << " fps="
+            << (measured_s > 0.0 ? static_cast<double>(metrics.yolo_outputs) / measured_s : 0.0)
             << "\n";
   for (const auto& [lane, counter] : metrics.by_lane) {
-    std::cout << "[lane_tput] lane=" << lane << " outputs=" << counter.count
-              << " fps=" << (measured_s > 0.0 ? static_cast<double>(counter.count) / measured_s : 0.0)
-              << "\n";
+    std::cout << "[lane_tput] lane=" << lane << " outputs=" << counter.count << " fps="
+              << (measured_s > 0.0 ? static_cast<double>(counter.count) / measured_s : 0.0) << "\n";
   }
 
   int64_t min_total = std::numeric_limits<int64_t>::max();
@@ -1367,8 +1380,8 @@ static void print_summary(const Args& args, const Metrics& metrics, const Timing
   if (streams.empty())
     min_total = 0;
   std::cout << "[stream_tput_summary] streams=" << streams.size() << " min_total=" << min_total
-            << " max_total=" << max_total
-            << " avg_fps=" << (streams.empty() ? 0.0 : sum_fps / static_cast<double>(streams.size()))
+            << " max_total=" << max_total << " avg_fps="
+            << (streams.empty() ? 0.0 : sum_fps / static_cast<double>(streams.size()))
             << " starved=" << starved << "\n";
   std::cout << "[metadata] sent=" << metrics.metadata_sent
             << " send_failed=" << metrics.metadata_send_failed
@@ -1417,15 +1430,16 @@ int main(int argc, char** argv) {
     if (args.yolo_lanes > 0)
       require_element_or_skip("neatobjectdecode");
     if (!has_sw_h264_encoder()) {
-      skip_long_test_exception(
-          "missing software H264 encoder for RTSP source (need x264enc, openh264enc, or avenc_h264)");
+      skip_long_test_exception("missing software H264 encoder for RTSP source (need x264enc, "
+                               "openh264enc, or avenc_h264)");
     }
 
     if (args.rtsp_debug) {
       setenv("SIMA_GST_FLOW_DEBUG", "1", 1);
       setenv("SIMA_APPSINK_CAPS_DEBUG", "1", 1);
     }
-    if (args.gst_element_timings_cli || (args.gst_element_timings && !std::getenv("SIMA_GST_ELEMENT_TIMINGS"))) {
+    if (args.gst_element_timings_cli ||
+        (args.gst_element_timings && !std::getenv("SIMA_GST_ELEMENT_TIMINGS"))) {
       setenv("SIMA_GST_ELEMENT_TIMINGS", args.gst_element_timings ? "1" : "0", 1);
     }
     if (args.gst_flow_debug_cli || (args.gst_flow_debug && !std::getenv("SIMA_GST_FLOW_DEBUG"))) {
@@ -1529,8 +1543,7 @@ int main(int argc, char** argv) {
 
     std::cout << "[setup] streams=" << args.streams << " rtsp_servers=" << args.rtsp_servers
               << " fps=" << args.fps << " branch_mode=" << args.branch_mode
-              << " resnet_lanes=" << args.resnet_lanes << " yolo_lanes=" << args.yolo_lanes
-              << "\n";
+              << " resnet_lanes=" << args.resnet_lanes << " yolo_lanes=" << args.yolo_lanes << "\n";
     std::cout << "[model] resnet=" << (args.resnet_model.empty() ? "<inactive>" : args.resnet_model)
               << " yolo=" << (args.yolo_model.empty() ? "<inactive>" : args.yolo_model) << "\n";
 
@@ -1601,7 +1614,8 @@ int main(int argc, char** argv) {
       opt.name_suffix = suffix;
       auto nodes = simaai::neat::internal::ModelAccess::build_public_route_nodes(lane_model, opt);
       if (!nodes_contain_kind(nodes, "SimaBoxDecode")) {
-        throw std::runtime_error("YOLO route did not contain SimaBoxDecode even though decode_type=YoloV8");
+        throw std::runtime_error(
+            "YOLO route did not contain SimaBoxDecode even though decode_type=YoloV8");
       }
       return nodes;
     };
@@ -1639,23 +1653,24 @@ int main(int argc, char** argv) {
       auto sched = g.add(simaai::neat::graph::nodes::StreamSchedulerNode(
           sched_opt, "yolo_sched_" + std::to_string(lane)));
       auto route = build_yolo_lane_nodes(lane);
-      auto model_node = simaai::neat::graph::helpers::add_pipeline(
-          g, std::move(route), "yolo_" + std::to_string(lane));
+      auto model_node = simaai::neat::graph::helpers::add_pipeline(g, std::move(route),
+                                                                   "yolo_" + std::to_string(lane));
       simaai::neat::graph::helpers::chain(g, {sched, model_node});
       yolo_sched_nodes.push_back(sched);
       yolo_output_nodes.push_back(model_node);
     }
 
     for (const auto& stream : stream_defs) {
-      const auto& rtsp_ctx = rtsp_servers[static_cast<std::size_t>(stream.index % args.rtsp_servers)];
+      const auto& rtsp_ctx =
+          rtsp_servers[static_cast<std::size_t>(stream.index % args.rtsp_servers)];
       std::vector<std::shared_ptr<simaai::neat::Node>> cap_group{
           simaai::neat::nodes::RTSPInput(rtsp_ctx.handle.url(), /*latency_ms=*/200, /*tcp=*/true),
           simaai::neat::nodes::H264Depacketize(kPayloadType, /*config_interval=*/1, args.fps,
                                                kEncWidth, kEncHeight, /*enforce_caps=*/true),
       };
 
-      auto cap = simaai::neat::graph::helpers::add_pipeline(
-          g, std::move(cap_group), "cap_" + stream.stream_id);
+      auto cap = simaai::neat::graph::helpers::add_pipeline(g, std::move(cap_group),
+                                                            "cap_" + stream.stream_id);
       auto cap_log = g.add(simaai::neat::graph::nodes::Map(
           [](simaai::neat::Sample& sample) { log_edge("cap_out", sample); },
           "log_cap_" + stream.stream_id));
@@ -1761,7 +1776,8 @@ int main(int argc, char** argv) {
       if (elapsed_ms(warm_t0, Clock::now()) > static_cast<double>(warm_timeout_ms)) {
         throw std::runtime_error("Warmup timed out waiting for active stream/branch outputs");
       }
-      if (elapsed_ms(warm_last_progress, Clock::now()) > static_cast<double>(args.stall_timeout_ms)) {
+      if (elapsed_ms(warm_last_progress, Clock::now()) >
+          static_cast<double>(args.stall_timeout_ms)) {
         throw std::runtime_error("Warmup stalled waiting for active stream/branch outputs");
       }
       NodeId out_node = simaai::neat::graph::kInvalidNode;
@@ -1887,7 +1903,8 @@ int main(int argc, char** argv) {
     if (args.metadata_udp) {
       for (const auto& rx : metadata_rx) {
         std::vector<std::string> packets;
-        metrics.metadata_received += rx.drain(&packets, /*max_packets=*/10000, /*timeout_ms_each=*/2);
+        metrics.metadata_received +=
+            rx.drain(&packets, /*max_packets=*/10000, /*timeout_ms_each=*/2);
       }
     }
 
@@ -1896,10 +1913,12 @@ int main(int argc, char** argv) {
     if (!stop_reason.empty()) {
       if (metrics.stall_hit)
         std::cout << "[stall] no progress for ms=" << args.stall_timeout_ms
-                  << " outputs=" << metrics.total_outputs << " expected=" << expected_outputs << "\n";
+                  << " outputs=" << metrics.total_outputs << " expected=" << expected_outputs
+                  << "\n";
       if (metrics.max_runtime_hit)
         std::cout << "[max_runtime] reached ms=" << args.max_runtime_ms
-                  << " outputs=" << metrics.total_outputs << " expected=" << expected_outputs << "\n";
+                  << " outputs=" << metrics.total_outputs << " expected=" << expected_outputs
+                  << "\n";
       throw std::runtime_error(stop_reason);
     }
     if (metrics.saw_empty_stream_id)

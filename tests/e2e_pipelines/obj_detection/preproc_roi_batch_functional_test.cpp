@@ -24,13 +24,13 @@ namespace fs = std::filesystem;
 
 namespace {
 
-sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture_from_config(
-    const std::string& tag, const std::string& preproc_config_json) {
-  return sima_test::make_model_archive_fixture(
-      tag,
-      {
-          {"etc/preproc_roi_batch_functional_mpk.json",
-           R"json({
+sima_test::ModelArchiveFixture
+make_roi_batch_preproc_fixture_from_config(const std::string& tag,
+                                           const std::string& preproc_config_json) {
+  return sima_test::make_model_archive_fixture(tag,
+                                               {
+                                                   {"etc/preproc_roi_batch_functional_mpk.json",
+                                                    R"json({
   "name": "preproc_roi_batch_functional",
   "model_path": "preproc_roi_batch_functional.onnx",
   "model_sdk_version": "2.0.0",
@@ -103,8 +103,8 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture_from_config(
     }
   ]
 })json"},
-          {"etc/pipeline_sequence.json",
-           R"json({
+                                                   {"etc/pipeline_sequence.json",
+                                                    R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -128,9 +128,9 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture_from_config(
     ]
   }]
 })json"},
-          {"etc/0_preproc.json", preproc_config_json},
-          {"etc/0_process_mla.json",
-           R"json({
+                                                   {"etc/0_preproc.json", preproc_config_json},
+                                                   {"etc/0_process_mla.json",
+                                                    R"json({
   "node_name": "mla_0",
   "input_buffers": [{"name": "preproc_0"}],
   "input_format": ["EV81_BFLOAT16"],
@@ -142,14 +142,13 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture_from_config(
   "output_height": [1],
   "output_depth": [1]
 })json"},
-      },
-      true);
+                                               },
+                                               true);
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture() {
-  return make_roi_batch_preproc_fixture_from_config(
-      "preproc_roi_batch_functional",
-      R"json({
+  return make_roi_batch_preproc_fixture_from_config("preproc_roi_batch_functional",
+                                                    R"json({
   "node_name": "preproc_0",
   "graph_name": "preproc",
   "input_width": 64,
@@ -168,8 +167,9 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_fixture() {
 })json");
 }
 
-sima_test::ModelArchiveFixture make_roi_batch_preproc_resize_fixture(
-    const std::string& tag, const std::string& scaling_type, bool aspect_ratio) {
+sima_test::ModelArchiveFixture
+make_roi_batch_preproc_resize_fixture(const std::string& tag, const std::string& scaling_type,
+                                      bool aspect_ratio) {
   std::ostringstream config;
   config << R"json({
   "node_name": "preproc_0",
@@ -185,26 +185,29 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_resize_fixture(
   "channel_stddev": [1.0, 1.0, 1.0],
   "output_dtype": "BF16",
   "tessellate": false,
-  "aspect_ratio": )json" << (aspect_ratio ? "true" : "false") << R"json(,
-  "scaling_type": ")json" << scaling_type << R"json("
+  "aspect_ratio": )json"
+         << (aspect_ratio ? "true" : "false") << R"json(,
+  "scaling_type": ")json"
+         << scaling_type << R"json("
 })json";
   return make_roi_batch_preproc_fixture_from_config(tag, config.str());
 }
 
-sima_test::ModelArchiveFixture make_roi_batch_preproc_letterbox_fixture(
-    const std::string& scaling_type = "BILINEAR") {
-  return make_roi_batch_preproc_resize_fixture(
-      "preproc_roi_batch_letterbox_" + scaling_type, scaling_type,
-      /*aspect_ratio=*/true);
+sima_test::ModelArchiveFixture
+make_roi_batch_preproc_letterbox_fixture(const std::string& scaling_type = "BILINEAR") {
+  return make_roi_batch_preproc_resize_fixture("preproc_roi_batch_letterbox_" + scaling_type,
+                                               scaling_type,
+                                               /*aspect_ratio=*/true);
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
-    const std::string& tag, const std::string& adapter_name,
-    const std::string& adapter_kernel, const std::string& mla_input_dtype,
-    std::size_t adapter_output_bytes, const std::string& adapter_params_extra = "") {
+    const std::string& tag, const std::string& adapter_name, const std::string& adapter_kernel,
+    const std::string& mla_input_dtype, std::size_t adapter_output_bytes,
+    const std::string& adapter_params_extra = "") {
   std::ostringstream mpk;
   mpk << R"json({
-  "name": ")json" << tag << R"json(",
+  "name": ")json"
+      << tag << R"json(",
   "model_path": "preproc_roi_batch_functional.onnx",
   "model_sdk_version": "2.0.0",
   "sequence": 1,
@@ -246,19 +249,23 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
       "resources": {"executable": "kernel_name_tbd"}
     },
     {
-      "name": ")json" << adapter_name << R"json(",
+      "name": ")json"
+      << adapter_name << R"json(",
       "sequence": 2,
       "processor": "EV74",
       "config_params": {
         "desired_batch_size": 1,
         "actual_batch_size": 1,
-        "kernel": ")json" << adapter_kernel << R"json(",
+        "kernel": ")json"
+      << adapter_kernel << R"json(",
         "params": {
           "input_shapes": [[1, 48, 64, 3]],
           "output_shapes": [[1, 48, 64, 3]],
           "input_dtype": ["BF16"],
-          "output_dtype": ")json" << mla_input_dtype << R"json(",
-          "frame_type": ")json" << mla_input_dtype << R"json(",
+          "output_dtype": ")json"
+      << mla_input_dtype << R"json(",
+          "frame_type": ")json"
+      << mla_input_dtype << R"json(",
           "align_c16": true,
           "slice_shape": [16, 16, 3])json";
   if (!adapter_params_extra.empty()) {
@@ -269,11 +276,14 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
       },
       "input_nodes": [{"name": "preproc_0", "size": 18432}],
       "output_nodes": [{
-        "name": ")json" << adapter_name << R"json(",
+        "name": ")json"
+      << adapter_name << R"json(",
         "type": "buffer",
-        "size": )json" << adapter_output_bytes << R"json(,
+        "size": )json"
+      << adapter_output_bytes << R"json(,
         "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": ")json" << mla_input_dtype << R"json("
+        "logical_dtype": ")json"
+      << mla_input_dtype << R"json("
       }],
       "type": "sgpProcess",
       "resources": {"executable": "kernel_name_tbd"}
@@ -287,15 +297,19 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
         "actual_batch_size": 1,
         "number_of_quads_to_user": 1,
         "input_shapes": [[1, 48, 64, 3]],
-        "input_data_type": [")json" << mla_input_dtype << R"json("],
+        "input_data_type": [")json"
+      << mla_input_dtype << R"json("],
         "output_shapes": [[1, 1, 1, 1]],
         "data_type": ["BF16"]
       },
       "input_nodes": [{
-        "name": ")json" << adapter_name << R"json(",
-        "size": )json" << adapter_output_bytes << R"json(,
+        "name": ")json"
+      << adapter_name << R"json(",
+        "size": )json"
+      << adapter_output_bytes << R"json(,
         "logical_shape": [1, 48, 64, 3],
-        "logical_dtype": ")json" << mla_input_dtype << R"json("
+        "logical_dtype": ")json"
+      << mla_input_dtype << R"json("
       }],
       "output_nodes": [{
         "name": "mla_0",
@@ -325,11 +339,13 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
       },
       {
         "sequence_id": 2,
-        "name": ")json" << adapter_name << R"json(",
+        "name": ")json"
+           << adapter_name << R"json(",
         "pluginId": "processcvu",
         "configPath": "1_tess.json",
         "processor": "CVU",
-        "kernel": ")json" << adapter_kernel << R"json(",
+        "kernel": ")json"
+           << adapter_kernel << R"json(",
         "input": "preproc_0"
       },
       {
@@ -339,7 +355,8 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
         "configPath": "0_process_mla.json",
         "processor": "MLA",
         "kernel": "infer",
-        "input": ")json" << adapter_name << R"json("
+        "input": ")json"
+           << adapter_name << R"json("
       }
     ]
   }]
@@ -347,23 +364,27 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
 
   std::ostringstream adapter_config;
   adapter_config << R"json({
-  "node_name": ")json" << adapter_name << R"json(",
-  "graph_name": ")json" << adapter_kernel << R"json(",
+  "node_name": ")json"
+                 << adapter_name << R"json(",
+  "graph_name": ")json"
+                 << adapter_kernel << R"json(",
   "num_in_tensor": 1,
   "input_shapes": [[1, 48, 64, 3]],
   "slice_shape": [16, 16, 3],
   "input_dtype": "BF16",
-  "output_dtype": ")json" << mla_input_dtype << R"json("
+  "output_dtype": ")json"
+                 << mla_input_dtype << R"json("
 })json";
 
   std::ostringstream mla_config;
   mla_config << R"json({
   "node_name": "mla_0",
-  "input_buffers": [{"name": ")json" << adapter_name << R"json("}],
-  "input_format": [")json" << (mla_input_dtype == "INT8" ? "EV81_INT8" : "EV81_BFLOAT16")
-             << R"json("],
-  "data_type": [")json" << (mla_input_dtype == "INT8" ? "EV81_INT8" : "EV81_BFLOAT16")
-             << R"json("],
+  "input_buffers": [{"name": ")json"
+             << adapter_name << R"json("}],
+  "input_format": [")json"
+             << (mla_input_dtype == "INT8" ? "EV81_INT8" : "EV81_BFLOAT16") << R"json("],
+  "data_type": [")json"
+             << (mla_input_dtype == "INT8" ? "EV81_INT8" : "EV81_BFLOAT16") << R"json("],
   "input_width": [64],
   "input_height": [48],
   "input_depth": [3],
@@ -402,15 +423,14 @@ sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_route_fixture(
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_tess_bf16_fixture() {
-  return make_roi_batch_preproc_tess_route_fixture(
-      "preproc_roi_batch_tess_bf16_functional", "tessellate_1", "tessellate",
-      "BF16", 18432);
+  return make_roi_batch_preproc_tess_route_fixture("preproc_roi_batch_tess_bf16_functional",
+                                                   "tessellate_1", "tessellate", "BF16", 18432);
 }
 
 sima_test::ModelArchiveFixture make_roi_batch_preproc_quanttess_int8_fixture() {
-  return make_roi_batch_preproc_tess_route_fixture(
-      "preproc_roi_batch_quanttess_int8_functional", "quanttess_1", "quanttess",
-      "INT8", 9216, R"json(          "q_scale": 32.0,
+  return make_roi_batch_preproc_tess_route_fixture("preproc_roi_batch_quanttess_int8_functional",
+                                                   "quanttess_1", "quanttess", "INT8", 9216,
+                                                   R"json(          "q_scale": 32.0,
           "q_zp": -3)json");
 }
 
@@ -466,8 +486,8 @@ simaai::neat::Model::Options make_roi_batch_letterbox_model_options() {
   return model_opt;
 }
 
-simaai::neat::Model::Options make_roi_batch_resize_model_options(
-    const std::string& scaling_type, simaai::neat::ResizeMode mode) {
+simaai::neat::Model::Options make_roi_batch_resize_model_options(const std::string& scaling_type,
+                                                                 simaai::neat::ResizeMode mode) {
   simaai::neat::Model::Options model_opt = make_roi_batch_model_options();
   model_opt.preprocess.resize.mode = mode;
   model_opt.preprocess.resize.scaling_type = scaling_type;
@@ -483,8 +503,7 @@ struct ExpectedOutputTraits {
   simaai::neat::TensorDType dtype = simaai::neat::TensorDType::UInt8;
 };
 
-void require_output_traits(const simaai::neat::Tensor& tensor,
-                           const ExpectedOutputTraits& expected,
+void require_output_traits(const simaai::neat::Tensor& tensor, const ExpectedOutputTraits& expected,
                            const std::string& label) {
   if (!expected.enabled) {
     return;
@@ -534,8 +553,8 @@ TensorPayloadSnapshot snapshot_tensor_payload(const simaai::neat::Tensor& tensor
   return snap;
 }
 
-std::vector<TensorPayloadSnapshot> snapshot_tensor_payloads(
-    const simaai::neat::TensorList& tensors, const std::string& label) {
+std::vector<TensorPayloadSnapshot> snapshot_tensor_payloads(const simaai::neat::TensorList& tensors,
+                                                            const std::string& label) {
   std::vector<TensorPayloadSnapshot> out;
   out.reserve(tensors.size());
   for (std::size_t i = 0; i < tensors.size(); ++i) {
@@ -555,8 +574,7 @@ bool roi_diag_hashes_enabled() {
 }
 
 void require_same_tensor_payload(const simaai::neat::Tensor& actual,
-                                 const simaai::neat::Tensor& expected,
-                                 const std::string& label) {
+                                 const simaai::neat::Tensor& expected, const std::string& label) {
   require(actual.dtype == expected.dtype, label + ": dtype mismatch");
   require(actual.shape == expected.shape, label + ": shape mismatch");
   const std::vector<std::uint8_t> actual_bytes = tensor_payload(actual, label + " actual");
@@ -567,19 +585,17 @@ void require_same_tensor_payload(const simaai::neat::Tensor& actual,
     while (first < actual_bytes.size() && actual_bytes[first] == expected_bytes[first]) {
       ++first;
     }
-    throw std::runtime_error(label + ": payload bytes mismatch at offset " +
-                             std::to_string(first) + " actual=" +
-                             std::to_string(first < actual_bytes.size() ? actual_bytes[first] : 0) +
-                             " expected=" +
-                             std::to_string(first < expected_bytes.size() ? expected_bytes[first] : 0) +
-                             " actual_hash=" + std::to_string(payload_hash(actual_bytes)) +
-                             " expected_hash=" + std::to_string(payload_hash(expected_bytes)));
+    throw std::runtime_error(
+        label + ": payload bytes mismatch at offset " + std::to_string(first) +
+        " actual=" + std::to_string(first < actual_bytes.size() ? actual_bytes[first] : 0) +
+        " expected=" + std::to_string(first < expected_bytes.size() ? expected_bytes[first] : 0) +
+        " actual_hash=" + std::to_string(payload_hash(actual_bytes)) +
+        " expected_hash=" + std::to_string(payload_hash(expected_bytes)));
   }
 }
 
 void require_same_tensor_payload(const TensorPayloadSnapshot& actual,
-                                 const TensorPayloadSnapshot& expected,
-                                 const std::string& label,
+                                 const TensorPayloadSnapshot& expected, const std::string& label,
                                  const TensorPayloadSnapshot* pre_reference = nullptr) {
   require(actual.dtype == expected.dtype, label + ": dtype mismatch");
   require(actual.shape == expected.shape, label + ": shape mismatch");
@@ -589,13 +605,12 @@ void require_same_tensor_payload(const TensorPayloadSnapshot& actual,
     while (first < actual.bytes.size() && actual.bytes[first] == expected.bytes[first]) {
       ++first;
     }
-    std::string msg = label + ": payload bytes mismatch at offset " +
-                      std::to_string(first) + " actual=" +
-                      std::to_string(first < actual.bytes.size() ? actual.bytes[first] : 0) +
-                      " expected=" +
-                      std::to_string(first < expected.bytes.size() ? expected.bytes[first] : 0) +
-                      " actual_hash=" + std::to_string(payload_hash(actual.bytes)) +
-                      " expected_hash=" + std::to_string(payload_hash(expected.bytes));
+    std::string msg =
+        label + ": payload bytes mismatch at offset " + std::to_string(first) +
+        " actual=" + std::to_string(first < actual.bytes.size() ? actual.bytes[first] : 0) +
+        " expected=" + std::to_string(first < expected.bytes.size() ? expected.bytes[first] : 0) +
+        " actual_hash=" + std::to_string(payload_hash(actual.bytes)) +
+        " expected_hash=" + std::to_string(payload_hash(expected.bytes));
     if (pre_reference) {
       msg += " pre_ref_hash=" + std::to_string(payload_hash(pre_reference->bytes));
       msg += " actual_matches_pre=" +
@@ -608,8 +623,7 @@ void require_same_tensor_payload(const TensorPayloadSnapshot& actual,
 }
 
 void require_same_tensor_payload(const TensorPayloadSnapshot& actual,
-                                 const simaai::neat::Tensor& expected,
-                                 const std::string& label) {
+                                 const simaai::neat::Tensor& expected, const std::string& label) {
   require(actual.dtype == expected.dtype, label + ": dtype mismatch");
   require(actual.shape == expected.shape, label + ": shape mismatch");
   const std::vector<std::uint8_t> expected_bytes = tensor_payload(expected, label + " expected");
@@ -619,13 +633,12 @@ void require_same_tensor_payload(const TensorPayloadSnapshot& actual,
     while (first < actual.bytes.size() && actual.bytes[first] == expected_bytes[first]) {
       ++first;
     }
-    throw std::runtime_error(label + ": payload bytes mismatch at offset " +
-                             std::to_string(first) + " actual=" +
-                             std::to_string(first < actual.bytes.size() ? actual.bytes[first] : 0) +
-                             " expected=" +
-                             std::to_string(first < expected_bytes.size() ? expected_bytes[first] : 0) +
-                             " actual_hash=" + std::to_string(payload_hash(actual.bytes)) +
-                             " expected_hash=" + std::to_string(payload_hash(expected_bytes)));
+    throw std::runtime_error(
+        label + ": payload bytes mismatch at offset " + std::to_string(first) +
+        " actual=" + std::to_string(first < actual.bytes.size() ? actual.bytes[first] : 0) +
+        " expected=" + std::to_string(first < expected_bytes.size() ? expected_bytes[first] : 0) +
+        " actual_hash=" + std::to_string(payload_hash(actual.bytes)) +
+        " expected_hash=" + std::to_string(payload_hash(expected_bytes)));
   }
 }
 
@@ -649,9 +662,8 @@ void require_roi_meta(const simaai::neat::Tensor& tensor,
 }
 
 void require_center_letterbox_roi_geometry(const simaai::neat::Tensor& tensor,
-                                           const simaai::neat::PreprocessRoi& roi,
-                                           int target_w, int target_h,
-                                           const std::string& label) {
+                                           const simaai::neat::PreprocessRoi& roi, int target_w,
+                                           int target_h, const std::string& label) {
   require(tensor.semantic.preprocess.has_value(), label + ": missing preprocess metadata");
   const auto& meta = *tensor.semantic.preprocess;
   require(meta.resize_mode == "letterbox", label + ": resize mode should be letterbox");
@@ -659,8 +671,8 @@ void require_center_letterbox_roi_geometry(const simaai::neat::Tensor& tensor,
           label + ": invalid geometry test inputs");
   int expected_scaled_w = target_w;
   int expected_scaled_h = target_h;
-  const int64_t d = static_cast<int64_t>(roi.height) * target_w -
-                    static_cast<int64_t>(roi.width) * target_h;
+  const int64_t d =
+      static_cast<int64_t>(roi.height) * target_w - static_cast<int64_t>(roi.width) * target_h;
   const auto ceil_div = [](int64_t n, int64_t den) -> int {
     return static_cast<int>((n + den - 1) / den);
   };
@@ -673,10 +685,8 @@ void require_center_letterbox_roi_geometry(const simaai::neat::Tensor& tensor,
   }
   const int expected_pad_left = std::max(0, target_w - expected_scaled_w) / 2;
   const int expected_pad_top = std::max(0, target_h - expected_scaled_h) / 2;
-  require(meta.scaled_width == expected_scaled_w,
-          label + ": scaled width metadata mismatch");
-  require(meta.scaled_height == expected_scaled_h,
-          label + ": scaled height metadata mismatch");
+  require(meta.scaled_width == expected_scaled_w, label + ": scaled width metadata mismatch");
+  require(meta.scaled_height == expected_scaled_h, label + ": scaled height metadata mismatch");
   require(meta.pad_left == expected_pad_left, label + ": pad_left metadata mismatch");
   require(meta.pad_top == expected_pad_top, label + ": pad_top metadata mismatch");
 }
@@ -695,10 +705,11 @@ void require_pairwise_distinct_payloads(const std::vector<TensorPayloadSnapshot>
   }
 }
 
-simaai::neat::TensorList run_roi_batch_and_compare(
-    const std::vector<cv::Mat>& images, const simaai::neat::Model& model,
-    const std::vector<simaai::neat::PreprocessRoi>& rois, const std::string& label,
-    bool require_distinct = true, const ExpectedOutputTraits& expected = {}) {
+simaai::neat::TensorList
+run_roi_batch_and_compare(const std::vector<cv::Mat>& images, const simaai::neat::Model& model,
+                          const std::vector<simaai::neat::PreprocessRoi>& rois,
+                          const std::string& label, bool require_distinct = true,
+                          const ExpectedOutputTraits& expected = {}) {
   std::vector<TensorPayloadSnapshot> pre_reference_payloads;
   if (roi_diag_pre_reference_enabled()) {
     pre_reference_payloads.reserve(rois.size());
@@ -727,15 +738,12 @@ simaai::neat::TensorList run_roi_batch_and_compare(
 
     const simaai::neat::PreprocessRoi ref_roi = single_image_roi(rois[i]);
     const cv::Mat& ref_image = images[static_cast<std::size_t>(rois[i].batch_index)];
-    simaai::neat::TensorList reference =
-        simaai::neat::stages::Preproc(std::vector<cv::Mat>{ref_image}, model,
-                                      std::vector<simaai::neat::PreprocessRoi>{ref_roi});
+    simaai::neat::TensorList reference = simaai::neat::stages::Preproc(
+        std::vector<cv::Mat>{ref_image}, model, std::vector<simaai::neat::PreprocessRoi>{ref_roi});
     require(reference.size() == 1U,
             label + " reference " + std::to_string(i) + ": output count mismatch");
-    require_roi_meta(reference.front(), ref_roi, 1,
-                     label + " reference " + std::to_string(i));
-    require_output_traits(reference.front(), expected,
-                          label + " reference " + std::to_string(i));
+    require_roi_meta(reference.front(), ref_roi, 1, label + " reference " + std::to_string(i));
+    require_output_traits(reference.front(), expected, label + " reference " + std::to_string(i));
     TensorPayloadSnapshot post_reference =
         snapshot_tensor_payload(reference.front(), label + " reference " + std::to_string(i));
     const TensorPayloadSnapshot* pre_reference =
@@ -759,10 +767,11 @@ simaai::neat::TensorList run_roi_batch_and_compare(
   return batched;
 }
 
-void run_roi_batch_repeat_consistency(
-    const std::vector<cv::Mat>& images, const simaai::neat::Model& model,
-    const std::vector<simaai::neat::PreprocessRoi>& rois, const std::string& label,
-    int iterations, const ExpectedOutputTraits& expected = {}) {
+void run_roi_batch_repeat_consistency(const std::vector<cv::Mat>& images,
+                                      const simaai::neat::Model& model,
+                                      const std::vector<simaai::neat::PreprocessRoi>& rois,
+                                      const std::string& label, int iterations,
+                                      const ExpectedOutputTraits& expected = {}) {
   require(iterations > 1, label + ": repeat consistency requires at least two iterations");
   std::vector<TensorPayloadSnapshot> baseline;
   for (int iter = 0; iter < iterations; ++iter) {
@@ -770,8 +779,7 @@ void run_roi_batch_repeat_consistency(
     require(out.size() == rois.size(), label + ": output count mismatch");
     for (std::size_t i = 0; i < out.size(); ++i) {
       require_roi_meta(out[i], rois[i], static_cast<int>(images.size()),
-                       label + " iter " + std::to_string(iter) + " output " +
-                           std::to_string(i));
+                       label + " iter " + std::to_string(iter) + " output " + std::to_string(i));
       require_output_traits(out[i], expected,
                             label + " iter " + std::to_string(iter) + " output " +
                                 std::to_string(i));
@@ -780,9 +788,8 @@ void run_roi_batch_repeat_consistency(
         snapshot_tensor_payloads(out, label + " iter " + std::to_string(iter));
     if (roi_diag_hashes_enabled()) {
       for (std::size_t i = 0; i < payloads.size(); ++i) {
-        std::cerr << "[ROI_DIAG][HASH] " << label << " iter=" << iter
-                  << " roi=" << i << " hash=" << payload_hash(payloads[i].bytes)
-                  << "\n";
+        std::cerr << "[ROI_DIAG][HASH] " << label << " iter=" << iter << " roi=" << i
+                  << " hash=" << payload_hash(payloads[i].bytes) << "\n";
       }
     }
     if (iter == 0) {
@@ -792,8 +799,8 @@ void run_roi_batch_repeat_consistency(
     require(payloads.size() == baseline.size(), label + ": repeated output count changed");
     for (std::size_t i = 0; i < payloads.size(); ++i) {
       require_same_tensor_payload(payloads[i], baseline[i],
-                                  label + " repeat iter " + std::to_string(iter) +
-                                      " output " + std::to_string(i));
+                                  label + " repeat iter " + std::to_string(iter) + " output " +
+                                      std::to_string(i));
     }
   }
 }
@@ -810,16 +817,14 @@ void run_roi_batch_dynamic_sequence_compare(
 }
 
 void run_full_frame_roi_equals_preproc(const std::vector<cv::Mat>& images,
-                                       const simaai::neat::Model& model,
-                                       const std::string& label,
+                                       const simaai::neat::Model& model, const std::string& label,
                                        const ExpectedOutputTraits& expected = {}) {
   require(!images.empty(), label + ": expected at least one source image");
   const cv::Mat& image = images.front();
   const simaai::neat::PreprocessRoi roi{0, 0, 0, image.cols, image.rows};
   const std::vector<cv::Mat> single_image{image};
-  simaai::neat::TensorList roi_out =
-      simaai::neat::stages::Preproc(single_image, model,
-                                    std::vector<simaai::neat::PreprocessRoi>{roi});
+  simaai::neat::TensorList roi_out = simaai::neat::stages::Preproc(
+      single_image, model, std::vector<simaai::neat::PreprocessRoi>{roi});
   simaai::neat::TensorList direct_out = simaai::neat::stages::Preproc(single_image, model);
 
   require(roi_out.size() == 1U, label + ": full-frame ROI output count mismatch");
@@ -851,28 +856,24 @@ int main(int argc, char** argv) {
     images.push_back(make_test_image(64, 48, 3));
     images.push_back(make_test_image(64, 48, 29));
 
-    const ExpectedOutputTraits dense_bf16_traits{
-        .enabled = true,
-        .normalize = true,
-        .tessellate = false,
-        .quantize = false,
-        .dtype = simaai::neat::TensorDType::BFloat16};
-    const ExpectedOutputTraits tess_bf16_traits{
-        .enabled = true,
-        .normalize = true,
-        .tessellate = true,
-        .quantize = false,
-        .dtype = simaai::neat::TensorDType::BFloat16};
-    const ExpectedOutputTraits tess_int8_traits{
-        .enabled = true,
-        .normalize = true,
-        .tessellate = true,
-        .quantize = true,
-        .dtype = simaai::neat::TensorDType::Int8};
+    const ExpectedOutputTraits dense_bf16_traits{.enabled = true,
+                                                 .normalize = true,
+                                                 .tessellate = false,
+                                                 .quantize = false,
+                                                 .dtype = simaai::neat::TensorDType::BFloat16};
+    const ExpectedOutputTraits tess_bf16_traits{.enabled = true,
+                                                .normalize = true,
+                                                .tessellate = true,
+                                                .quantize = false,
+                                                .dtype = simaai::neat::TensorDType::BFloat16};
+    const ExpectedOutputTraits tess_int8_traits{.enabled = true,
+                                                .normalize = true,
+                                                .tessellate = true,
+                                                .quantize = true,
+                                                .dtype = simaai::neat::TensorDType::Int8};
 
     bool any_case_failed = false;
-    const bool smoke_mode =
-        SIMA_ROI_USER_SMOKE_DEFAULT || env_flag("SIMA_ROI_USER_SMOKE");
+    const bool smoke_mode = SIMA_ROI_USER_SMOKE_DEFAULT || env_flag("SIMA_ROI_USER_SMOKE");
     if (smoke_mode) {
       std::cerr << "[ROI_DIAG][MODE] user smoke\n";
     }
@@ -895,8 +896,7 @@ int main(int argc, char** argv) {
     };
     auto run_case = [&](const std::string& label,
                         const std::vector<simaai::neat::PreprocessRoi>& case_rois,
-                        bool require_distinct = true,
-                        const ExpectedOutputTraits& expected = {}) {
+                        bool require_distinct = true, const ExpectedOutputTraits& expected = {}) {
       run_checked(label, [&] {
         (void)run_roi_batch_and_compare(images, model, case_rois, label, require_distinct,
                                         expected);
@@ -904,21 +904,16 @@ int main(int argc, char** argv) {
     };
     auto run_repeat_case = [&](const std::string& label,
                                const std::vector<simaai::neat::PreprocessRoi>& case_rois,
-                               int iterations = 4,
-                               const ExpectedOutputTraits& expected = {}) {
+                               int iterations = 4, const ExpectedOutputTraits& expected = {}) {
       run_checked(label, [&] {
-        run_roi_batch_repeat_consistency(images, model, case_rois, label, iterations,
-                                         expected);
+        run_roi_batch_repeat_consistency(images, model, case_rois, label, iterations, expected);
       });
     };
-    auto run_full_frame_case = [&](const std::string& label,
-                                   const ExpectedOutputTraits& expected) {
-      run_checked(label, [&] {
-        run_full_frame_roi_equals_preproc(images, model, label, expected);
-      });
+    auto run_full_frame_case = [&](const std::string& label, const ExpectedOutputTraits& expected) {
+      run_checked(label,
+                  [&] { run_full_frame_roi_equals_preproc(images, model, label, expected); });
     };
-    auto run_letterbox_case = [&](
-                                  const std::string& label,
+    auto run_letterbox_case = [&](const std::string& label,
                                   const std::vector<simaai::neat::PreprocessRoi>& case_rois) {
       run_checked(label, [&] {
         const auto letterbox_fixture = make_roi_batch_preproc_letterbox_fixture();
@@ -934,22 +929,19 @@ int main(int argc, char** argv) {
         }
       });
     };
-    auto run_resize_type_case =
-        [&](const std::string& label, const std::string& scaling_type) {
-          run_checked(label, [&] {
-            const auto resize_fixture = make_roi_batch_preproc_resize_fixture(
-                "preproc_roi_batch_resize_" + scaling_type, scaling_type,
-                /*aspect_ratio=*/false);
-            simaai::neat::Model resize_model(
-                resize_fixture.tar_path,
-                make_roi_batch_resize_model_options(scaling_type,
-                                                    simaai::neat::ResizeMode::Stretch));
-            (void)run_roi_batch_and_compare(
-                images, resize_model,
-                {{0, 0, 0, 32, 24}, {1, 4, 3, 48, 36}, {0, -4, 8, 40, 32}},
-                label, /*require_distinct=*/true, dense_bf16_traits);
-          });
-        };
+    auto run_resize_type_case = [&](const std::string& label, const std::string& scaling_type) {
+      run_checked(label, [&] {
+        const auto resize_fixture = make_roi_batch_preproc_resize_fixture(
+            "preproc_roi_batch_resize_" + scaling_type, scaling_type,
+            /*aspect_ratio=*/false);
+        simaai::neat::Model resize_model(
+            resize_fixture.tar_path,
+            make_roi_batch_resize_model_options(scaling_type, simaai::neat::ResizeMode::Stretch));
+        (void)run_roi_batch_and_compare(images, resize_model,
+                                        {{0, 0, 0, 32, 24}, {1, 4, 3, 48, 36}, {0, -4, 8, 40, 32}},
+                                        label, /*require_distinct=*/true, dense_bf16_traits);
+      });
+    };
 
     if (!smoke_mode) {
       run_case("ROI isolate single ROI image0", {{0, 0, 0, 32, 24}});
@@ -976,8 +968,7 @@ int main(int argc, char** argv) {
         {0, 8, 8, 40, 32},
     };
 
-    run_case("ROI batch functional", rois, /*require_distinct=*/true,
-             dense_bf16_traits);
+    run_case("ROI batch functional", rois, /*require_distinct=*/true, dense_bf16_traits);
 
     const std::vector<simaai::neat::PreprocessRoi> padded_rois = {
         {0, -8, -6, 40, 32},
@@ -994,12 +985,12 @@ int main(int argc, char** argv) {
         rois,
     };
     if (smoke_mode) {
-      run_case("ROI batch dynamic shrink [smoke_dynamic]",
-               dynamic_sequences[1], /*require_distinct=*/false, dense_bf16_traits);
+      run_case("ROI batch dynamic shrink [smoke_dynamic]", dynamic_sequences[1],
+               /*require_distinct=*/false, dense_bf16_traits);
     } else {
       for (std::size_t i = 0; i < dynamic_sequences.size(); ++i) {
-        run_case("ROI batch dynamic sequence " + std::to_string(i),
-                 dynamic_sequences[i], dynamic_sequences[i].size() > 1U);
+        run_case("ROI batch dynamic sequence " + std::to_string(i), dynamic_sequences[i],
+                 dynamic_sequences[i].size() > 1U);
       }
       run_full_frame_case("ROI full-frame equals direct preproc dense BF16 [full_frame_dense]",
                           dense_bf16_traits);
@@ -1008,10 +999,8 @@ int main(int argc, char** argv) {
                        {{0, 0, 0, 48, 24}, {1, 8, 0, 32, 48}});
     run_resize_type_case("ROI batch resize NEAREST functional [resize_nearest]",
                          "NEAREST_NEIGHBOUR");
-    run_resize_type_case("ROI batch resize INTERAREA functional [resize_interarea]",
-                         "INTERAREA");
-    run_resize_type_case("ROI batch resize BICUBIC functional [resize_bicubic]",
-                         "BICUBIC");
+    run_resize_type_case("ROI batch resize INTERAREA functional [resize_interarea]", "INTERAREA");
+    run_resize_type_case("ROI batch resize BICUBIC functional [resize_bicubic]", "BICUBIC");
     run_resize_type_case("ROI batch resize NO_SCALING functional [resize_no_scaling]",
                          "NO_SCALING");
 
@@ -1045,15 +1034,15 @@ int main(int argc, char** argv) {
                                                expected);
       });
     };
-    auto run_model_full_frame_case =
-        [&](const std::string& label, const sima_test::ModelArchiveFixture& route_fixture,
-            const simaai::neat::Model::Options& route_options,
-            const ExpectedOutputTraits& expected) {
-          run_checked(label, [&] {
-            simaai::neat::Model route_model(route_fixture.tar_path, route_options);
-            run_full_frame_roi_equals_preproc(images, route_model, label, expected);
-          });
-        };
+    auto run_model_full_frame_case = [&](const std::string& label,
+                                         const sima_test::ModelArchiveFixture& route_fixture,
+                                         const simaai::neat::Model::Options& route_options,
+                                         const ExpectedOutputTraits& expected) {
+      run_checked(label, [&] {
+        simaai::neat::Model route_model(route_fixture.tar_path, route_options);
+        run_full_frame_roi_equals_preproc(images, route_model, label, expected);
+      });
+    };
 
     const auto normalized_route_options = make_roi_batch_normalized_preproc_model_options();
     const auto tess_bf16_fixture = make_roi_batch_preproc_tess_bf16_fixture();
@@ -1089,8 +1078,7 @@ int main(int argc, char** argv) {
     }
 
     std::cout << "[OK] "
-              << (smoke_mode ? "preproc_roi_user_smoke_test"
-                             : "preproc_roi_batch_functional_test")
+              << (smoke_mode ? "preproc_roi_user_smoke_test" : "preproc_roi_batch_functional_test")
               << " passed\n";
     return 0;
   } catch (const SkipTest& e) {

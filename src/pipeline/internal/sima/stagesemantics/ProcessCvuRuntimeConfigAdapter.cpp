@@ -24,13 +24,12 @@ std::string upper_copy(std::string value) {
   return value;
 }
 
-
 std::string native_visual_canonical_name_runtime(std::string name) {
   name = lower_copy(std::move(name));
-  name.erase(std::remove_if(name.begin(), name.end(), [](unsigned char c) {
-               return std::isspace(c) || c == '-' || c == ':';
-             }),
-             name.end());
+  name.erase(
+      std::remove_if(name.begin(), name.end(),
+                     [](unsigned char c) { return std::isspace(c) || c == '-' || c == ':'; }),
+      name.end());
   if (name == "featurehistogram") {
     return "feature_histogram";
   }
@@ -48,10 +47,14 @@ std::string native_visual_canonical_name_runtime(std::string name) {
 
 int native_visual_graph_id_runtime(const std::string& name) {
   const std::string token = native_visual_canonical_name_runtime(name);
-  if (token == "feature_histogram") return 235;
-  if (token == "grider_fast") return 236;
-  if (token == "track_descriptor") return 237;
-  if (token == "track_klt") return 238;
+  if (token == "feature_histogram")
+    return 235;
+  if (token == "grider_fast")
+    return 236;
+  if (token == "track_descriptor")
+    return 237;
+  if (token == "track_klt")
+    return 238;
   return -1;
 }
 
@@ -60,7 +63,7 @@ bool is_native_visual_runtime_config(const CompiledProcessCvuRuntimeConfig& conf
     return true;
   }
   return native_visual_graph_id_runtime(!config.graph_name.empty() ? config.graph_name
-                                                                  : config.graph_family) > 0;
+                                                                   : config.graph_family) > 0;
 }
 
 bool graph_family_implies_tessellate_local(const std::string& family) {
@@ -712,8 +715,8 @@ build_processcvu_facts_from_runtime_config_impl(const CompiledProcessCvuRuntimeC
                                 "for semantic multi-io over packed transport");
   }
   if (semantic_input_count > 1U || semantic_output_count > 1U) {
-    auto facts = build_multi_io_processcvu_facts_from_payload_internal(payload,
-                                                                      config.runtime_input_names);
+    auto facts =
+        build_multi_io_processcvu_facts_from_payload_internal(payload, config.runtime_input_names);
     if (!config.published_output_names.empty()) {
       facts.published_output_names = config.published_output_names;
       // Let build_processcvu_compiled_contract_from_facts synthesize output_order from the

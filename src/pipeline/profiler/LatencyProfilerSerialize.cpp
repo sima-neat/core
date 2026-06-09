@@ -258,26 +258,20 @@ std::string LatencyProfiler::to_chrome_trace(const ProfilerReport& r) {
     first = false;
     const std::uint64_t ts_us = inv.start_ns / 1000ULL;
     const std::uint64_t dur_us = (inv.end_ns - inv.start_ns) / 1000ULL;
-    o << "    {\"name\":\"" << json_escape(inv.kernel_name) << "\","
-      << "\"cat\":\"" << json_escape(inv.backend) << "\","
-      << "\"ph\":\"X\","
-      << "\"pid\":1,\"tid\":" << backend_tid(inv.backend) << ","
-      << "\"ts\":" << ts_us << ",\"dur\":" << dur_us << ","
-      << "\"args\":{"
-      << "\"frame_id\":" << inv.frame_id << ","
+    o << "    {\"name\":\"" << json_escape(inv.kernel_name) << "\"," << "\"cat\":\""
+      << json_escape(inv.backend) << "\"," << "\"ph\":\"X\","
+      << "\"pid\":1,\"tid\":" << backend_tid(inv.backend) << "," << "\"ts\":" << ts_us
+      << ",\"dur\":" << dur_us << "," << "\"args\":{" << "\"frame_id\":" << inv.frame_id << ","
       << "\"physical_input_index\":" << inv.physical_input_index << ","
-      << "\"output_slot\":" << inv.output_slot << ","
-      << "\"request_id\":" << inv.request_id << ","
-      << "\"phase\":\"" << json_escape(inv.phase) << "\","
-      << "\"stage\":\"" << json_escape(inv.stage_name) << "\","
-      << "\"in_segment\":\"" << json_escape(inv.in_segment) << "\","
-      << "\"out_segment\":\"" << json_escape(inv.out_segment) << "\","
+      << "\"output_slot\":" << inv.output_slot << "," << "\"request_id\":" << inv.request_id << ","
+      << "\"phase\":\"" << json_escape(inv.phase) << "\"," << "\"stage\":\""
+      << json_escape(inv.stage_name) << "\"," << "\"in_segment\":\"" << json_escape(inv.in_segment)
+      << "\"," << "\"out_segment\":\"" << json_escape(inv.out_segment) << "\","
       << "\"run_id_hash\":" << inv.run_id_hash << ","
       << "\"pipeline_segment_id\":" << inv.pipeline_segment_id << ","
       << "\"runtime_node_id\":" << inv.runtime_node_id << ","
-      << "\"public_node_id\":" << inv.public_node_id << ","
-      << "\"gst_element_name\":\"" << json_escape(inv.gst_element_name) << "\","
-      << "\"bytes\":" << inv.bytes << "}}";
+      << "\"public_node_id\":" << inv.public_node_id << "," << "\"gst_element_name\":\""
+      << json_escape(inv.gst_element_name) << "\"," << "\"bytes\":" << inv.bytes << "}}";
   }
 
   // Memcpy sites get one X per (site, total) so the visualizer shows them on
@@ -289,12 +283,9 @@ std::string LatencyProfiler::to_chrome_trace(const ProfilerReport& r) {
       o << ",\n";
     first = false;
     o << "    {\"name\":\"" << json_escape(m.site_name) << " (aggregate)\","
-      << "\"cat\":\"Memcpy\",\"ph\":\"X\","
-      << "\"pid\":1,\"tid\":" << backend_tid("Memcpy") << ","
-      << "\"ts\":0,\"dur\":" << (m.total_ns / 1000ULL) << ","
-      << "\"args\":{"
-      << "\"calls\":" << m.calls << ","
-      << "\"total_bytes\":" << m.total_bytes << ","
+      << "\"cat\":\"Memcpy\",\"ph\":\"X\"," << "\"pid\":1,\"tid\":" << backend_tid("Memcpy") << ","
+      << "\"ts\":0,\"dur\":" << (m.total_ns / 1000ULL) << "," << "\"args\":{"
+      << "\"calls\":" << m.calls << "," << "\"total_bytes\":" << m.total_bytes << ","
       << "\"max_ns\":" << m.max_ns << "}}";
   }
 

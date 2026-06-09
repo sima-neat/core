@@ -2257,8 +2257,8 @@ CompiledProcessCvuRuntimeConfig build_tessellate_runtime_config_from_subsets(
       msg << "; semantic_output_shape=" << join_i64_debug_local(semantic_output_shape)
           << " (rank=" << semantic_output_shape.size() << ")"
           << ", slice_shape=" << join_i64_debug_local(tess_subset.slice_shape)
-          << " (rank=" << tess_subset.slice_shape.size() << ")"
-          << ", frame_type=" << frame_type << ", cast_input_dtype=" << cast_input_dtype
+          << " (rank=" << tess_subset.slice_shape.size() << ")" << ", frame_type=" << frame_type
+          << ", cast_input_dtype=" << cast_input_dtype
           << ", cast_output_dtype=" << cast_output_dtype
           << ", packed_output_bytes=" << packed_output_bytes
           << ", batch_size=" << runtime.batch_size

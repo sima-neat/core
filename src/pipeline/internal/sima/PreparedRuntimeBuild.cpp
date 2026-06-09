@@ -1683,9 +1683,8 @@ bool build_processcvu_typed_config_from_manifest_stage_local(
   } else if (is_native_visual_graph) {
     cfg.input_tensors = payload.input_tensors;
     cfg.output_tensors = payload.output_tensors;
-    cfg.num_in_tensor = payload.num_in_tensor > 0
-                            ? payload.num_in_tensor
-                            : static_cast<int32_t>(cfg.input_tensors.size());
+    cfg.num_in_tensor = payload.num_in_tensor > 0 ? payload.num_in_tensor
+                                                  : static_cast<int32_t>(cfg.input_tensors.size());
   } else {
     if (payload.input_tensors.empty() || payload.output_tensors.empty()) {
       if (error_message) {
@@ -2353,16 +2352,16 @@ std::string processcvu_canonical_graph_name_local(std::string graph_name) {
       graph_name == "featurehistogram" || graph_name == "feature_histogram") {
     return "feature_histogram";
   }
-  if (graph_name == "GRIDERFAST" || graph_name == "GRIDER_FAST" ||
-      graph_name == "griderfast" || graph_name == "grider_fast") {
+  if (graph_name == "GRIDERFAST" || graph_name == "GRIDER_FAST" || graph_name == "griderfast" ||
+      graph_name == "grider_fast") {
     return "grider_fast";
   }
   if (graph_name == "TRACKDESCRIPTOR" || graph_name == "TRACK_DESCRIPTOR" ||
       graph_name == "trackdescriptor" || graph_name == "track_descriptor") {
     return "track_descriptor";
   }
-  if (graph_name == "TRACKKLT" || graph_name == "TRACK_KLT" ||
-      graph_name == "trackklt" || graph_name == "track_klt") {
+  if (graph_name == "TRACKKLT" || graph_name == "TRACK_KLT" || graph_name == "trackklt" ||
+      graph_name == "track_klt") {
     return "track_klt";
   }
   return graph_name;
@@ -5236,8 +5235,8 @@ build_prepared_runtime_context(const GstContext* static_manifest_context,
   context.model_id = transformed_manifest.model_id;
   context.stages.reserve(transformed_manifest.stages.size());
   prepared_runtime_debug_log_local("build context manifest_stages=%zu session_id=%s model_id=%s",
-                                   transformed_manifest.stages.size(),
-                                   context.session_id.c_str(), context.model_id.c_str());
+                                   transformed_manifest.stages.size(), context.session_id.c_str(),
+                                   context.model_id.c_str());
 
   std::set<std::string> prepared_stage_keys;
   auto add_prepared_stage = [&](simaai::gst::PreparedStageSpec&& prepared,

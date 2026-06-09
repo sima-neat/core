@@ -5730,8 +5730,7 @@ void validate_pre_adapter_ingress_expectation(const internal::PreprocessPlannerR
   if (ingress != nullptr && !ingress->source_stage.empty()) {
     oss << " source_stage=" << ingress->source_stage;
   }
-  oss << ". "
-      << "Received media=" << info.media_type << " format=" << info.format
+  oss << ". " << "Received media=" << info.media_type << " format=" << info.format
       << " shape=" << info.width << "x" << info.height << "x" << info.depth << ".";
   throw_model_error(
       error_codes::kInputShape, oss.str(),

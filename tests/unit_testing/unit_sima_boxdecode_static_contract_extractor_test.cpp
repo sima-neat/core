@@ -39,8 +39,8 @@ RUN_TEST(
                                         int height, int width, int channels,
                                         const std::string& dtype = "INT8",
                                         std::uint64_t source_size_bytes = 0U) {
-        const int elem_bytes = (dtype == "BF16" || dtype == "BFLOAT16" ||
-                                dtype == "bfloat16" || dtype == "EVXX_BFLOAT16")
+        const int elem_bytes = (dtype == "BF16" || dtype == "BFLOAT16" || dtype == "bfloat16" ||
+                                dtype == "EVXX_BFLOAT16")
                                    ? 2
                                    : 1;
         const auto fallback_source_size =
@@ -151,8 +151,7 @@ RUN_TEST(
                   context + ": binding should preserve physical size bytes");
           require(shape_desc_matches(subset.slice_shapes[i], tensor.slice_shape),
                   context + ": slice shape should preserve extracted geometry");
-          require(subset.tensor_storage_kind[i] ==
-                      static_cast<int>(tensor.source_storage_kind),
+          require(subset.tensor_storage_kind[i] == static_cast<int>(tensor.source_storage_kind),
                   context + ": source storage kind should preserve extracted MPK fact");
           if (contract.quant_needed) {
             require(logical.quant.has_value(),
@@ -756,8 +755,7 @@ RUN_TEST(
       });
 
       const auto extracted_direct_int8 =
-          build_boxdecode_static_contract_from_mpk(direct_int8_mpk, make_flags(true, true),
-                                                   &error);
+          build_boxdecode_static_contract_from_mpk(direct_int8_mpk, make_flags(true, true), &error);
       require(extracted_direct_int8.has_value(),
               "INT8 direct packed/cblock route should extract storage facts: " + error);
       require(extracted_direct_int8->tensors.size() == 1U,
@@ -828,8 +826,7 @@ RUN_TEST(
       bf16_detess.sequence = 3;
       bf16_detess.kernel = "detessellation_transform";
       bf16_detess.slice_shape = {16, 4, 4};
-      add_packed_detess_facts(bf16_detess, "bbox_head_packed_bf16", 80, 80, 4, "BF16",
-                              204800U);
+      add_packed_detess_facts(bf16_detess, "bbox_head_packed_bf16", 80, 80, 4, "BF16", 204800U);
       bf16_detess.output_tensors.push_back(MpkTensorContract{
           .tensor_index = 0,
           .name = "bbox_head_detess_bf16",
@@ -874,9 +871,8 @@ RUN_TEST(
           .tensor_name = "bbox_head_detess_bf16",
       });
 
-      const auto extracted_direct_bf16 =
-          build_boxdecode_static_contract_from_mpk(direct_bf16_mpk, make_flags(false, true),
-                                                   &error);
+      const auto extracted_direct_bf16 = build_boxdecode_static_contract_from_mpk(
+          direct_bf16_mpk, make_flags(false, true), &error);
       require(extracted_direct_bf16.has_value(),
               "BF16 direct packed/cblock route should extract storage facts: " + error);
       require(extracted_direct_bf16->tensors[0].source_storage_kind ==
@@ -966,9 +962,8 @@ RUN_TEST(
           .tensor_name = "score_head_dense",
       });
 
-      const auto extracted_dense_slice =
-          build_boxdecode_static_contract_from_mpk(dense_slice_mpk, make_flags(false, false),
-                                                   &error);
+      const auto extracted_dense_slice = build_boxdecode_static_contract_from_mpk(
+          dense_slice_mpk, make_flags(false, false), &error);
       require(extracted_dense_slice.has_value(),
               "dense HWC slice route should extract storage facts: " + error);
       require(extracted_dense_slice->tensors[0].source_storage_kind ==

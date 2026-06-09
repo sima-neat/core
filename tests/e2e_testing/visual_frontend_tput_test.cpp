@@ -403,7 +403,7 @@ std::vector<CpuFeature> cpu_fast_reference(const std::vector<std::uint8_t>& imag
 }
 
 const std::array<int, kBriefTests * 4>& brief_pattern() {
-  static const std::array<int, kBriefTests* 4> pattern = [] {
+  static const std::array<int, kBriefTests * 4> pattern = [] {
     std::array<int, kBriefTests * 4> out{};
     std::uint32_t state = 0x9E3779B9u;
     for (int i = 0; i < kBriefTests * 4; ++i) {

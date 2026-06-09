@@ -86,9 +86,8 @@ void finalize_node_accumulator(NodeAccumulator& acc) {
 }
 
 void add_node_report_to_accumulator(
-    std::map<std::pair<std::size_t, graph::NodeId>, NodeAccumulator>& nodes,
-    std::size_t segment_id, graph::NodeId runtime_node, const std::string& label,
-    const NodeReport& node_report,
+    std::map<std::pair<std::size_t, graph::NodeId>, NodeAccumulator>& nodes, std::size_t segment_id,
+    graph::NodeId runtime_node, const std::string& label, const NodeReport& node_report,
     const std::unordered_map<std::string, ElementTimingSnapshot>& element_timings) {
   if (runtime_node == graph::kInvalidNode) {
     return;
@@ -148,8 +147,9 @@ void collect_linear_node_metrics(
   const auto element_timings = snapshot_element_timings(diag);
   constexpr std::size_t kLinearSegment = 0;
   for (const NodeReport& node_report : diag->node_reports) {
-    const graph::NodeId runtime_node =
-        node_report.index >= 0 ? static_cast<graph::NodeId>(node_report.index) : graph::kInvalidNode;
+    const graph::NodeId runtime_node = node_report.index >= 0
+                                           ? static_cast<graph::NodeId>(node_report.index)
+                                           : graph::kInvalidNode;
     add_node_report_to_accumulator(nodes, kLinearSegment, runtime_node, node_report.user_label,
                                    node_report, element_timings);
   }
@@ -174,11 +174,11 @@ void collect_graph_node_metrics(
     const std::size_t segment_id = pipe->seg.id;
     const auto& mapping = pipe->seg.materialized_node_attribution;
     for (const NodeReport& node_report : diag->node_reports) {
-      if (node_report.index < 0 ||
-          static_cast<std::size_t>(node_report.index) >= mapping.size()) {
+      if (node_report.index < 0 || static_cast<std::size_t>(node_report.index) >= mapping.size()) {
         continue;
       }
-      const MaterializedNodeAttribution& attr = mapping[static_cast<std::size_t>(node_report.index)];
+      const MaterializedNodeAttribution& attr =
+          mapping[static_cast<std::size_t>(node_report.index)];
       if (attr.role != MaterializedNodeAttribution::Role::SegmentNode) {
         continue;
       }
@@ -192,9 +192,9 @@ void collect_graph_node_metrics(
   }
 }
 
-void attach_public_node_ids(const runtime::ExecutionGraphPlan& plan,
-                            std::map<std::pair<std::size_t, graph::NodeId>, NodeAccumulator>&
-                                accumulators) {
+void attach_public_node_ids(
+    const runtime::ExecutionGraphPlan& plan,
+    std::map<std::pair<std::size_t, graph::NodeId>, NodeAccumulator>& accumulators) {
   std::unordered_map<graph::NodeId, std::vector<std::string>> public_ids_by_runtime;
   for (const auto& node : plan.public_nodes) {
     if (node.runtime_node == graph::kInvalidNode) {
