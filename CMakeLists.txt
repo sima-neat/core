@@ -619,6 +619,7 @@ find_library(SIMANEAT_SIMAAIMEM_LIB
 find_path(SIMANEAT_SIMAAIMEM_INCLUDE_ROOT
   NAMES simaai/simaai_memory.h
   HINTS
+    ${SIMANEAT_LOCAL_DEP_HEADER_ROOT}
     /opt/toolchain/aarch64/modalix/usr/include
     /usr/include
     /usr/local/include
@@ -757,13 +758,47 @@ endif()
 set(SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT "${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}")
 simaneat_dependency_is_found(_simaneat_has_simaaimem_include_root
   SIMANEAT_SIMAAIMEM_INCLUDE_ROOT)
-if (SIMANEAT_CPP_TIDY AND _simaneat_has_simaaimem_include_root)
+if (SIMANEAT_CPP_TIDY)
   set(SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT
     "${CMAKE_BINARY_DIR}/tidy-include")
   file(MAKE_DIRECTORY "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}/simaai")
+  if (_simaneat_has_simaaimem_include_root)
+    set(_simaneat_tidy_simaaimem_header
+      "#pragma once\n#include \"${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h\"\n")
+  else()
+    set(_simaneat_tidy_simaaimem_header [=[
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef struct simaai_memory_t simaai_memory_t;
+
+#define SIMAAI_MEM_TARGET_GENERIC (0)
+#define SIMAAI_MEM_TARGET_OCM (1)
+#define SIMAAI_MEM_TARGET_DMS0 (2)
+#define SIMAAI_MEM_TARGET_DMS1 (3)
+#define SIMAAI_MEM_TARGET_DMS2 (4)
+#define SIMAAI_MEM_TARGET_DMS3 (5)
+#define SIMAAI_MEM_TARGET_EV74 (SIMAAI_MEM_TARGET_GENERIC)
+#define SIMAAI_MEM_TARGET_ALL (SIMAAI_MEM_TARGET_EV74)
+#define SIMAAI_MEM_TARGET_UNKNOWN (SIMAAI_MEM_TARGET_ALL)
+
+#define SIMAAI_MEM_FLAG_CACHED (1 << 0)
+#define SIMAAI_MEM_FLAG_RDONLY (1 << 1)
+#define SIMAAI_MEM_FLAG_DEFAULT (0x0)
+
+#ifdef __cplusplus
+}
+#endif
+]=])
+  endif()
   file(WRITE
     "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h"
-    "#pragma once\n#include \"${SIMANEAT_SIMAAIMEM_INCLUDE_ROOT}/simaai/simaai_memory.h\"\n")
+    "${_simaneat_tidy_simaaimem_header}")
   set(SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT
     "${SIMANEAT_TIDY_SIMAAIMEM_INCLUDE_ROOT}")
 endif()
@@ -918,6 +953,9 @@ if (NOT SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
         "${_simaneat_neat_include_dir}")
     endif()
   endforeach()
+elseif (SIMANEAT_CPP_TIDY AND SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT)
+  target_include_directories(sima_neat_objects PRIVATE
+    "${SIMANEAT_SIMAAIMEM_TARGET_INCLUDE_ROOT}")
 endif()
 
 # GStreamer/OpenCV headers are part of the public surface (e.g. pipeline/Graph.h),
