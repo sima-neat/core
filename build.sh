@@ -2159,7 +2159,7 @@ PY
         printf '  %s\n' "${built_wheels[@]}" >&2
         exit 1
       fi
-      "${ELXR_HOST_PYTHON_EXECUTABLE}" -m wheel tags \
+      "${wheel_python}" -m wheel tags \
         --remove \
         --python-tag "cp${py_abi}" \
         --abi-tag "cp${py_abi}" \
