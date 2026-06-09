@@ -67,6 +67,8 @@ ELXR_SDK_VERSION=""
 ELXR_VERSION=""
 ELXR_WHEEL_HOST_PLATFORM="${ELXR_WHEEL_HOST_PLATFORM:-}"
 ELXR_HOST_PYTHON_EXECUTABLE=""
+ELXR_TARGET_PYTHON_VERSION=""
+ELXR_TARGET_PYTHON_INCLUDE_DIR=""
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 NEAT_PACKAGE_NAME="${NEAT_PACKAGE_NAME:-sima-neat}"
 NEAT_PACKAGE_DESCRIPTION="${NEAT_PACKAGE_DESCRIPTION:-SiMa.ai Neural Edge Acceleration Toolkit}"
@@ -532,11 +534,8 @@ detect_elxr_host_python() {
   fi
 
   local candidate="${SIMANEAT_HOST_PYTHON:-${Python3_EXECUTABLE:-${PYTHON3_EXECUTABLE:-}}}"
-  if [[ -z "${candidate}" && -n "${SYSROOT:-}" && -x "${SYSROOT}/usr/bin/python3" ]]; then
-    candidate="${SYSROOT}/usr/bin/python3"
-  fi
   if [[ -z "${candidate}" ]]; then
-    candidate="$(command -v python3 || true)"
+    candidate="$(command -v python3 || command -v python || true)"
   fi
 
   if [[ -z "${candidate}" || ! -x "${candidate}" ]]; then
@@ -547,11 +546,30 @@ detect_elxr_host_python() {
 
   if ! "${candidate}" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' >/dev/null 2>&1; then
     echo "ERROR: selected Python cannot run in this SDK container: ${candidate}" >&2
-    echo "Set SIMANEAT_HOST_PYTHON to an executable Python matching the target sysroot." >&2
+    echo "Set SIMANEAT_HOST_PYTHON to a host-runnable Python interpreter." >&2
     exit 1
   fi
 
   ELXR_HOST_PYTHON_EXECUTABLE="${candidate}"
+}
+
+detect_elxr_target_python() {
+  if [[ "${ELXR_SDK}" != "ON" ]]; then
+    return 0
+  fi
+
+  local include_dir
+  for include_dir in "${SYSROOT:-}/usr/include"/python3.*; do
+    if [[ -f "${include_dir}/Python.h" ]]; then
+      ELXR_TARGET_PYTHON_INCLUDE_DIR="${include_dir}"
+      ELXR_TARGET_PYTHON_VERSION="${include_dir##*/python}"
+      return 0
+    fi
+  done
+
+  echo "ERROR: eLxr SDK cross-build requires target Python headers in the SDK sysroot." >&2
+  echo "Expected ${SYSROOT:-<unset>}/usr/include/python3.x/Python.h." >&2
+  exit 1
 }
 
 select_system_deps() {
@@ -1838,6 +1856,8 @@ configure_cmake() {
       -DPKG_CONFIG_EXECUTABLE="${pkg_config_executable}"
       -DPython3_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
       -DPython_EXECUTABLE="${ELXR_HOST_PYTHON_EXECUTABLE}"
+      -DPython_INCLUDE_DIR="${ELXR_TARGET_PYTHON_INCLUDE_DIR}"
+      -DPYNEAT_EXT_SUFFIX=".cpython-${ELXR_TARGET_PYTHON_VERSION/./}-$(elxr_ext_platform_triplet).so"
       -DSIMANEAT_REQUIRE_LLIMA_ARTIFACTS=OFF
       -DCMAKE_DISABLE_FIND_PACKAGE_SimaLMM=TRUE
       -DSIMANEAT_CTEST_FOR_DEVKIT=ON
@@ -2096,23 +2116,17 @@ PY
     if [[ "${ELXR_SDK}" == "ON" ]]; then
       echo "Using eLxr wheel target platform: ${ELXR_WHEEL_HOST_PLATFORM}"
       echo "Preparing non-isolated wheel backend environment for cross-build..."
-      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja
+      "${wheel_python}" -m pip install --upgrade pip build scikit-build-core nanobind==2.5.0 ninja wheel
       local py_abi
       local py_triplet
       local pyneat_ext_suffix
-      py_abi="$("${ELXR_HOST_PYTHON_EXECUTABLE}" - <<'PY'
-import sys
-print(f"{sys.version_info.major}{sys.version_info.minor}")
-PY
-)"
+      py_abi="${ELXR_TARGET_PYTHON_VERSION/./}"
       py_triplet="$(elxr_ext_platform_triplet)"
       pyneat_ext_suffix=".cpython-${py_abi}-${py_triplet}.so"
       echo "Using eLxr extension suffix override: ${pyneat_ext_suffix}"
       local wheel_cmake_args="-DPYNEAT_EXT_SUFFIX=${pyneat_ext_suffix} -DPython3_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE} -DPython_EXECUTABLE=${ELXR_HOST_PYTHON_EXECUTABLE}"
       if [[ -n "${SYSROOT:-}" ]]; then
-        if [[ -d "${SYSROOT}/usr/include/python3.11" ]]; then
-          wheel_cmake_args+=" -DPython_INCLUDE_DIR=${SYSROOT}/usr/include/python3.11"
-        fi
+        wheel_cmake_args+=" -DPython_INCLUDE_DIR=${ELXR_TARGET_PYTHON_INCLUDE_DIR}"
         wheel_cmake_args+=" -DCMAKE_SYSROOT=${SYSROOT}"
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH=${SYSROOT}"
         wheel_cmake_args+=" -DCMAKE_FIND_ROOT_PATH_MODE_PROGRAM=NEVER"
@@ -2139,6 +2153,18 @@ PY
         CMAKE_GENERATOR="Unix Makefiles" \
         CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
         "${ELXR_HOST_PYTHON_EXECUTABLE}" -m build --wheel --outdir dist --no-isolation
+      mapfile -t built_wheels < <(find dist -maxdepth 1 -type f -name 'pyneat-*.whl' | sort)
+      if [[ "${#built_wheels[@]}" -ne 1 ]]; then
+        echo "ERROR: expected exactly one pyneat wheel, found ${#built_wheels[@]}." >&2
+        printf '  %s\n' "${built_wheels[@]}" >&2
+        exit 1
+      fi
+      "${wheel_python}" -m wheel tags \
+        --remove \
+        --python-tag "cp${py_abi}" \
+        --abi-tag "cp${py_abi}" \
+        --platform-tag "${ELXR_WHEEL_HOST_PLATFORM//-/_}" \
+        "${built_wheels[0]}"
     else
       CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}" SIMANEAT_BUILD_PYTHON=ON \
         "${wheel_python}" -m build --wheel --outdir dist
@@ -2631,6 +2657,7 @@ main() {
   ensure_node20_for_docs
   activate_elxr_build_env_if_needed
   detect_elxr_host_python
+  detect_elxr_target_python
 
   if [[ "${INSTALL_DEPS_ONLY}" == "ON" ]]; then
     ensure_dependency_headers
