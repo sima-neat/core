@@ -1,10 +1,10 @@
 ---
-title: Model SDK
+title: ModelSDK
 sidebar_position: 3
 ---
 
-# Model SDK
+# ModelSDK
 
-The Model SDK (`afe` toolchain) imports, quantizes, simulates, and compiles models into the MPK format. See also [Compile a Model](/compile-a-model/).
+ModelSDK (`afe` toolchain) imports, quantizes, simulates, and compiles models into the MPK format. See also [Compile a Model](/compile-a-model/).
 
-> **TODO(timothydo):** Document the Model SDK; cross-link Compile a Model guides and the Model SDK API reference.
+> **TODO(timothydo):** Document ModelSDK; cross-link Compile a Model guides and the ModelSDK API reference.

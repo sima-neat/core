@@ -13,7 +13,7 @@ AI application on Modalix.
 
 SiMa.ai software for application development has three main parts:
 
-- **Palette SDK** — the SDK for cross-compilation, DevKit pairing, and building performant applications with the Neat Framework. Optionally, it provides the ModelSDK container for quantizing and compiling AI models, including LLiMa for compiling, testing, and benchmarking GenAI models.
+- **Palette SDK** — the SDK for cross-compilation, DevKit pairing, and building performant applications with the Neat Framework. Optionally, it provides the ModelSDK extension for quantizing and compiling AI models, including LLiMa for compiling, testing, and benchmarking GenAI models.
 - **Neat Framework** — the application development and runtime framework inside Palette SDK and on Modalix. Developers use it to build and run AI applications.
 - **Modalix DevKit** — the target hardware where compiled model artifacts and Neat Framework applications run.
 

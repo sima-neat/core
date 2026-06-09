@@ -5,7 +5,7 @@ sidebar_position: 1
 
 # Compile your first model
 
-Compile a first model with the ModelSDK container and produce an artifact that
+Compile a first model with the ModelSDK extension and produce an artifact that
 can be run by the Neat Framework on Modalix.
 
 > **TODO(timothydo):** Replace this stub with the generated ModelSDK guide when

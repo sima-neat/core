@@ -19,7 +19,7 @@ The Palette SDK source code is available on GitHub at [sima-neat/sdk](https://gi
 
 ## Supported platforms
 
-| Platform | Arch | Palette SDK | ModelSDK container |
+| Platform | Arch | Palette SDK | ModelSDK extension |
 | --- | --- | --- | --- |
 | Ubuntu 22.04 and 24.04 (through Docker Engine) | x86_64 | ✅ | ✅ |
 | Windows 11 (through [WSL](https://learn.microsoft.com/en-us/windows/wsl/install) and Docker Engine) | x86_64 | ✅ | ✅ |
@@ -118,11 +118,11 @@ neat
 
 For more detail on the status output and JSON format, see [Neat CLI](/getting-started/installation/neat-framework/#neat-cli).
 
-## ModelSDK Container
+## ModelSDK Extension
 
-On x86_64 platforms, including Ubuntu and Windows through WSL, Palette SDK installation prompts you to optionally install the ModelSDK container.
+On x86_64 platforms, including Ubuntu and Windows through WSL, Palette SDK installation prompts you to optionally install the ModelSDK extension.
 
-The ModelSDK container adds tools for quantizing and compiling ONNX models so they can run on SiMa.ai's MLA (Machine Learning Accelerator). To install it, opt in when prompted during Palette SDK installation.
+The ModelSDK extension adds tools for quantizing and compiling ONNX models so they can run on SiMa.ai's MLA (Machine Learning Accelerator). To install it, opt in when prompted during Palette SDK installation.
 
 Example installation prompt:
 
@@ -145,7 +145,7 @@ Install the ModelSDK Extension now? (Y/n): y
 ℹ️  Logging in to sima-cli before installing the ModelSDK Extension...
 ```
 
-After the container support is installed, activate the ModelSDK environment from inside the Palette SDK shell:
+After the ModelSDK extension is installed, activate the ModelSDK environment from inside the Palette SDK shell:
 
 ```bash
 activate-model-sdk
@@ -157,7 +157,7 @@ To return to the default Palette SDK environment, run:
 deactivate-model-sdk
 ```
 
-The ModelSDK container is available on x86_64 platforms for now. Arm64 support, including macOS, will be added later.
+The ModelSDK extension is available on x86_64 platforms for now. Arm64 support, including macOS, will be added later.
 
 ## File Sharing with DevKit Sync
 

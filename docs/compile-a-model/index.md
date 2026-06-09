@@ -22,16 +22,16 @@ GenAI models, which is the fastest path when a suitable model already exists.
 For **GenAI** models, use <a href="/genai-llima/">LLiMa</a> to compile, test,
 and benchmark the model for Modalix.
 
-For **vision and ONNX models**, use the normal compilation workflow in the Model
-SDK container to check compatibility, quantize, compile, and validate the model
-artifact before using it from the Neat Framework.
+For **vision and ONNX models**, use the normal compilation workflow in the
+ModelSDK extension to check compatibility, quantize, compile, and validate the
+model artifact before using it from the Neat Framework.
 
 <div class="overview-link-columns compile-workflow-columns">
   <section class="overview-link-panel overview-link-panel-model">
     <h2>Compilation workflow</h2>
     <p>Follow this path for vision and other ONNX-style models that need ModelSDK preparation.</p>
     <ul class="overview-link-list compile-workflow-list">
-      <li><a class="overview-link-card" href="/compile-a-model/compile-your-first-model/"><strong>Compile your first model</strong><span>Create a first compiled artifact with the ModelSDK container.</span></a></li>
+      <li><a class="overview-link-card" href="/compile-a-model/compile-your-first-model/"><strong>Compile your first model</strong><span>Create a first compiled artifact with the ModelSDK extension.</span></a></li>
       <li><a class="overview-link-card" href="/compile-a-model/model-compatibility/"><strong>Model compatibility</strong><span>Check whether the model can be prepared for Modalix.</span></a></li>
       <li><a class="overview-link-card" href="/compile-a-model/graph-surgery/"><strong>Graph Surgery</strong><span>Adjust model graphs when compatibility work is required.</span></a></li>
       <li><a class="overview-link-card" href="/compile-a-model/quantization/"><strong>Quantization</strong><span>Prepare numeric precision for efficient execution.</span></a></li>
