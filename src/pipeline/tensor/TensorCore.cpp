@@ -805,9 +805,9 @@ bool Tensor::validate(std::string* err) const {
     bool compatible = true;
     switch (layout) {
     case simaai::neat::TensorLayout::HW:
-      compatible = matches_exact({TensorAxisSemantic::H, TensorAxisSemantic::W}) ||
-                   matches_exact({TensorAxisSemantic::N, TensorAxisSemantic::H,
-                                  TensorAxisSemantic::W});
+      compatible =
+          matches_exact({TensorAxisSemantic::H, TensorAxisSemantic::W}) ||
+          matches_exact({TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W});
       break;
     case simaai::neat::TensorLayout::HWC:
       compatible =

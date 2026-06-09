@@ -89,11 +89,11 @@ struct ProfilerKernelInvocation {
   // Stable graph attribution. These are populated only when the profiler ABI/runtime emitters
   // provide them; older profiler events leave them unset and export falls back to exact
   // stage-name matching with ambiguity checks.
-  std::uint64_t run_id_hash = 0;           ///< Stable run-id hash, 0 if unavailable.
-  std::int32_t pipeline_segment_id = -1;   ///< Graph pipeline segment, -1 if unavailable.
-  std::int32_t runtime_node_id = -1;       ///< Lowered runtime node id, -1 if unavailable.
-  std::int32_t public_node_id = -1;        ///< Optional public node id, -1 if unavailable.
-  std::string gst_element_name;            ///< GStreamer element name, if separate from stage.
+  std::uint64_t run_id_hash = 0;         ///< Stable run-id hash, 0 if unavailable.
+  std::int32_t pipeline_segment_id = -1; ///< Graph pipeline segment, -1 if unavailable.
+  std::int32_t runtime_node_id = -1;     ///< Lowered runtime node id, -1 if unavailable.
+  std::int32_t public_node_id = -1;      ///< Optional public node id, -1 if unavailable.
+  std::string gst_element_name;          ///< GStreamer element name, if separate from stage.
 
   /// @brief Convenience: event duration in milliseconds.
   double duration_ms() const {
@@ -143,11 +143,11 @@ struct ProfilerKernelAggregate {
   std::string stage_name;                 ///< Pipeline stage name.
   std::int32_t physical_input_index = -1; ///< Physical input index, -1 if N/A.
   std::int32_t output_slot = -1;          ///< Output slot, -1 if N/A.
-  std::uint64_t run_id_hash = 0;           ///< Stable run-id hash, 0 if unavailable.
-  std::int32_t pipeline_segment_id = -1;   ///< Graph pipeline segment, -1 if unavailable.
-  std::int32_t runtime_node_id = -1;       ///< Lowered runtime node id, -1 if unavailable.
-  std::int32_t public_node_id = -1;        ///< Optional public node id, -1 if unavailable.
-  std::string gst_element_name;            ///< GStreamer element name, if available.
+  std::uint64_t run_id_hash = 0;          ///< Stable run-id hash, 0 if unavailable.
+  std::int32_t pipeline_segment_id = -1;  ///< Graph pipeline segment, -1 if unavailable.
+  std::int32_t runtime_node_id = -1;      ///< Lowered runtime node id, -1 if unavailable.
+  std::int32_t public_node_id = -1;       ///< Optional public node id, -1 if unavailable.
+  std::string gst_element_name;           ///< GStreamer element name, if available.
   std::uint64_t count = 0;                ///< Number of invocations in the bucket.
   double total_ms = 0.0;                  ///< Total time across invocations (ms).
   double min_ms = 0.0;                    ///< Minimum single-invocation time (ms).

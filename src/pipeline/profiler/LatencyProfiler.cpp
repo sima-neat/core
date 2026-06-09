@@ -134,8 +134,7 @@ void compute_aggregates(std::vector<ProfilerKernelInvocation>& invocations,
 LatencyProfiler::LatencyProfiler(Options o) : options_(o) {
 #if defined(SIMA_HAS_NEAT_PROFILER)
   bool expected = false;
-  if (!active_latency_profiler().compare_exchange_strong(expected, true,
-                                                         std::memory_order_acq_rel,
+  if (!active_latency_profiler().compare_exchange_strong(expected, true, std::memory_order_acq_rel,
                                                          std::memory_order_acquire)) {
     throw std::runtime_error(
         "LatencyProfiler: another profiler is already active; profiler events are process-global");

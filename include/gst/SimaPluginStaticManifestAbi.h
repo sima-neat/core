@@ -514,8 +514,7 @@ static inline GType sima_plugin_static_manifest_handle_get_type(void) {
   if (g_once_init_enter(&type_id)) {
     GType type = g_type_from_name(kTypeName);
     if (type == 0) {
-      type = g_boxed_type_register_static(kTypeName,
-                                          sima_plugin_static_manifest_handle_boxed_copy,
+      type = g_boxed_type_register_static(kTypeName, sima_plugin_static_manifest_handle_boxed_copy,
                                           sima_plugin_static_manifest_handle_boxed_free);
     }
     g_once_init_leave(&type_id, static_cast<gsize>(type));

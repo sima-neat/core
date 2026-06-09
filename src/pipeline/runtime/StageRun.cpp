@@ -1084,8 +1084,8 @@ int resolve_preproc_selected_memory_index(const Sample& sample, const PreprocOut
                 tensor.backend_name == info.primary_output_name);
       };
 
-  if (const auto* tensor_view = find_tensor(
-          [&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+  if (const auto* tensor_view =
+          find_tensor([&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
             return tensor.route_slot == info.primary_route_slot && output_name_matches(tensor);
           })) {
     return memory_index_for(*tensor_view);
@@ -1094,8 +1094,8 @@ int resolve_preproc_selected_memory_index(const Sample& sample, const PreprocOut
     return memory_index_for(*tensor_view);
   }
   if (info.primary_route_slot >= 0) {
-    if (const auto* tensor_view = find_tensor(
-            [&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+    if (const auto* tensor_view =
+            find_tensor([&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
               return tensor.route_slot == info.primary_route_slot;
             })) {
       return memory_index_for(*tensor_view);
@@ -1113,8 +1113,8 @@ int resolve_preproc_selected_memory_index(const Sample& sample, const PreprocOut
     if (i > 0) {
       detail << "; ";
     }
-    detail << "{slot=" << tensor.route_slot << ",logical='" << tensor.logical_name
-           << "',backend='" << tensor.backend_name << "',segment='" << tensor.segment_name
+    detail << "{slot=" << tensor.route_slot << ",logical='" << tensor.logical_name << "',backend='"
+           << tensor.backend_name << "',segment='" << tensor.segment_name
            << "',memory=" << tensor.memory_index << ",physical=" << tensor.physical_index << "}";
   }
   detail << "]";
@@ -1524,9 +1524,10 @@ preprocess_meta_from_tensor_or_holder(const simaai::neat::Tensor& tensor) {
   return meta;
 }
 
-PreprocessMetaTemplate make_stage_preprocess_meta_template(
-    const cv::Mat& input, const simaai::neat::Model& model, const PreprocOutputInfo& preproc_info,
-    InputOptions* src_opt, const std::vector<PreprocessRoi>* runtime_rois) {
+PreprocessMetaTemplate
+make_stage_preprocess_meta_template(const cv::Mat& input, const simaai::neat::Model& model,
+                                    const PreprocOutputInfo& preproc_info, InputOptions* src_opt,
+                                    const std::vector<PreprocessRoi>* runtime_rois) {
   const auto resolved_preproc = model.resolved_preprocess_plan();
   const auto contract_flags = simaai::neat::internal::ModelAccess::preprocess_contract_flags(model);
 
@@ -1536,10 +1537,10 @@ PreprocessMetaTemplate make_stage_preprocess_meta_template(
   meta.tessellate = contract_flags.tess_needed;
   meta.normalize = resolved_preproc.effective.normalize.enable == AutoFlag::On;
 
-  const auto in_fmt_spec = preprocess_color_format_to_format_spec(
-      resolved_preproc.effective.color_convert.input_format);
-  if (src_opt && resolved_preproc.effective.color_convert.input_format !=
-                     PreprocessColorFormat::Auto &&
+  const auto in_fmt_spec =
+      preprocess_color_format_to_format_spec(resolved_preproc.effective.color_convert.input_format);
+  if (src_opt &&
+      resolved_preproc.effective.color_convert.input_format != PreprocessColorFormat::Auto &&
       !in_fmt_spec.str().empty()) {
     src_opt->format = in_fmt_spec.str();
   }
@@ -1588,9 +1589,8 @@ PreprocessMetaTemplate make_stage_preprocess_meta_template(
     meta.roi_input_batch_size = 1;
     meta.roi_source_width = input.cols;
     meta.roi_source_height = input.rows;
-    meta.roi_source_stride_bytes = input.step[0] > 0
-                                       ? static_cast<int>(input.step[0])
-                                       : input.cols * std::max(1, input.channels());
+    meta.roi_source_stride_bytes = input.step[0] > 0 ? static_cast<int>(input.step[0])
+                                                     : input.cols * std::max(1, input.channels());
     meta.roi_pad_value = meta.pad_value;
   }
   return meta;
@@ -1632,8 +1632,8 @@ struct PreprocSourceBatchGeometry {
   std::size_t total_bytes = 0;
 };
 
-PreprocSourceBatchGeometry
-preproc_source_batch_geometry(const std::vector<cv::Mat>& inputs, const char* where) {
+PreprocSourceBatchGeometry preproc_source_batch_geometry(const std::vector<cv::Mat>& inputs,
+                                                         const char* where) {
   const std::string tag = where ? where : "Preproc ROI-list";
   if (inputs.empty()) {
     throw std::invalid_argument(tag + ": inputs must not be empty");
@@ -1657,11 +1657,9 @@ preproc_source_batch_geometry(const std::vector<cv::Mat>& inputs, const char* wh
   geom.height = first.rows;
   geom.channels = first.channels();
   geom.type = first.type();
-  geom.row_bytes =
-      static_cast<std::size_t>(geom.width) * static_cast<std::size_t>(geom.channels);
-  if (geom.height > 0 &&
-      geom.row_bytes >
-          std::numeric_limits<std::size_t>::max() / static_cast<std::size_t>(geom.height)) {
+  geom.row_bytes = static_cast<std::size_t>(geom.width) * static_cast<std::size_t>(geom.channels);
+  if (geom.height > 0 && geom.row_bytes > std::numeric_limits<std::size_t>::max() /
+                                              static_cast<std::size_t>(geom.height)) {
     throw std::invalid_argument(tag + ": ROI source batch byte size overflow");
   }
   geom.frame_bytes = geom.row_bytes * static_cast<std::size_t>(geom.height);
@@ -1688,17 +1686,16 @@ preproc_source_batch_geometry(const std::vector<cv::Mat>& inputs, const char* wh
   return geom;
 }
 
-PreprocSourceBatchGeometry validate_preproc_roi_list_request(
-    const std::vector<cv::Mat>& inputs, const std::vector<PreprocessRoi>& rois,
-    const char* where) {
+PreprocSourceBatchGeometry validate_preproc_roi_list_request(const std::vector<cv::Mat>& inputs,
+                                                             const std::vector<PreprocessRoi>& rois,
+                                                             const char* where) {
   const PreprocSourceBatchGeometry geom = preproc_source_batch_geometry(inputs, where);
   const std::string tag = where ? where : "Preproc ROI-list";
   if (rois.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
     throw std::invalid_argument(tag + ": too many ROIs");
   }
   for (const auto& roi : rois) {
-    if (roi.batch_index < 0 ||
-        static_cast<std::size_t>(roi.batch_index) >= inputs.size()) {
+    if (roi.batch_index < 0 || static_cast<std::size_t>(roi.batch_index) >= inputs.size()) {
       throw std::invalid_argument(tag + ": ROI batch_index is out of range");
     }
     if (roi.width <= 0 || roi.height <= 0) {
@@ -1709,8 +1706,7 @@ PreprocSourceBatchGeometry validate_preproc_roi_list_request(
 }
 
 std::string preproc_source_batch_format(const InputOptions& src_opt,
-                                        const PreprocSourceBatchGeometry& geom,
-                                        const char* where) {
+                                        const PreprocSourceBatchGeometry& geom, const char* where) {
   const std::string tag = where ? where : "Preproc ROI-list";
   std::string fmt = upper_copy(src_opt.format.str());
   if (fmt.empty()) {
@@ -1731,8 +1727,8 @@ std::string preproc_source_batch_format(const InputOptions& src_opt,
   return fmt;
 }
 
-simaai::neat::ImageSpec::PixelFormat image_pixel_format_from_preproc_format(
-    const std::string& fmt) {
+simaai::neat::ImageSpec::PixelFormat
+image_pixel_format_from_preproc_format(const std::string& fmt) {
   if (fmt == "RGB") {
     return simaai::neat::ImageSpec::PixelFormat::RGB;
   }
@@ -1772,10 +1768,9 @@ simaai::neat::Tensor make_cpu_packed_preproc_source_batch_tensor(
   tensor.layout = simaai::neat::TensorLayout::HWC;
   tensor.shape = {static_cast<int64_t>(inputs.size()), geom.height, geom.width, geom.channels};
   tensor.strides_bytes = {static_cast<int64_t>(geom.frame_bytes),
-                          static_cast<int64_t>(geom.row_bytes),
-                          static_cast<int64_t>(geom.channels), 1};
-  tensor.axis_semantics = {simaai::neat::TensorAxisSemantic::N,
-                           simaai::neat::TensorAxisSemantic::H,
+                          static_cast<int64_t>(geom.row_bytes), static_cast<int64_t>(geom.channels),
+                          1};
+  tensor.axis_semantics = {simaai::neat::TensorAxisSemantic::N, simaai::neat::TensorAxisSemantic::H,
                            simaai::neat::TensorAxisSemantic::W,
                            simaai::neat::TensorAxisSemantic::C};
   tensor.device = {simaai::neat::DeviceType::CPU, 0};
@@ -1787,12 +1782,12 @@ simaai::neat::Tensor make_cpu_packed_preproc_source_batch_tensor(
   return tensor;
 }
 
-simaai::neat::Tensor make_device_packed_preproc_source_batch_tensor(
-    const std::vector<cv::Mat>& inputs, const InputOptions& src_opt,
-    const PreprocessRuntimeMeta& runtime_meta) {
-  simaai::neat::Tensor cpu =
-      make_cpu_packed_preproc_source_batch_tensor(inputs, src_opt, runtime_meta,
-                                                  "Preproc ROI-list input");
+simaai::neat::Tensor
+make_device_packed_preproc_source_batch_tensor(const std::vector<cv::Mat>& inputs,
+                                               const InputOptions& src_opt,
+                                               const PreprocessRuntimeMeta& runtime_meta) {
+  simaai::neat::Tensor cpu = make_cpu_packed_preproc_source_batch_tensor(
+      inputs, src_opt, runtime_meta, "Preproc ROI-list input");
   const std::size_t device_bytes = cpu.dense_bytes_tight();
   if (device_bytes == 0U) {
     throw std::runtime_error("Preproc ROI-list: unable to determine ROI source batch byte size");
@@ -2378,16 +2373,16 @@ PreprocessAffine compute_roi_affine_and_geometry(PreprocessRuntimeMeta* meta,
   int pad_right = 0;
   int pad_top = 0;
   int pad_bottom = 0;
-  if (meta->resize_mode == "letterbox" && roi.width > 0 && roi.height > 0 &&
-      target_w > 0 && target_h > 0) {
+  if (meta->resize_mode == "letterbox" && roi.width > 0 && roi.height > 0 && target_w > 0 &&
+      target_h > 0) {
     const auto ceil_div_pos = [](int64_t n, int64_t d) -> int {
       if (n <= 0 || d <= 0) {
         return 0;
       }
       return static_cast<int>((n + d - 1) / d);
     };
-    const int64_t d = static_cast<int64_t>(roi.height) * target_w -
-                      static_cast<int64_t>(roi.width) * target_h;
+    const int64_t d =
+        static_cast<int64_t>(roi.height) * target_w - static_cast<int64_t>(roi.width) * target_h;
     if (d < 0) {
       scaled_w = target_w;
       scaled_h = ceil_div_pos(static_cast<int64_t>(roi.height) * target_w, roi.width);
@@ -2402,15 +2397,19 @@ PreprocessAffine compute_roi_affine_and_geometry(PreprocessRuntimeMeta* meta,
     pad_right = remain_w - pad_left;
     pad_bottom = remain_h - pad_top;
   } else {
-    if (scaled_w <= 0) scaled_w = meta->scaled_width;
-    if (scaled_h <= 0) scaled_h = meta->scaled_height;
+    if (scaled_w <= 0)
+      scaled_w = meta->scaled_width;
+    if (scaled_h <= 0)
+      scaled_h = meta->scaled_height;
     pad_left = meta->pad_left;
     pad_right = meta->pad_right;
     pad_top = meta->pad_top;
     pad_bottom = meta->pad_bottom;
   }
-  if (scaled_w <= 0) scaled_w = target_w;
-  if (scaled_h <= 0) scaled_h = target_h;
+  if (scaled_w <= 0)
+    scaled_w = target_w;
+  if (scaled_h <= 0)
+    scaled_h = target_h;
   meta->scaled_width = scaled_w;
   meta->scaled_height = scaled_h;
   meta->pad_left = pad_left;
@@ -2429,8 +2428,8 @@ PreprocessAffine compute_roi_affine_and_geometry(PreprocessRuntimeMeta* meta,
   return affine;
 }
 
-int64_t preproc_roi_slot_bytes(const simaai::neat::Tensor& tensor,
-                               const PreprocOutputInfo& info, int roi_capacity) {
+int64_t preproc_roi_slot_bytes(const simaai::neat::Tensor& tensor, const PreprocOutputInfo& info,
+                               int roi_capacity) {
   if (info.transport_kind == PreprocOutputTransportKind::Dense) {
     const int64_t dense_bytes = tensor_total_bytes(tensor);
     if (dense_bytes > 0) {
@@ -2536,15 +2535,16 @@ TensorList split_preproc_roi_output_for_stage(const simaai::neat::Tensor& batche
   return split_preproc_roi_output_impl(batched, meta, roi_capacity, info);
 }
 
-simaai::neat::Tensor make_cpu_packed_preproc_source_batch_for_stage(
-    const std::vector<cv::Mat>& inputs, const InputOptions& src_opt,
-    const PreprocessRuntimeMeta& runtime_meta) {
-  return make_cpu_packed_preproc_source_batch_tensor(
-      inputs, src_opt, runtime_meta, "Preproc ROI-list test pack");
+simaai::neat::Tensor
+make_cpu_packed_preproc_source_batch_for_stage(const std::vector<cv::Mat>& inputs,
+                                               const InputOptions& src_opt,
+                                               const PreprocessRuntimeMeta& runtime_meta) {
+  return make_cpu_packed_preproc_source_batch_tensor(inputs, src_opt, runtime_meta,
+                                                     "Preproc ROI-list test pack");
 }
 
-void validate_preproc_roi_list_request_for_stage(
-    const std::vector<cv::Mat>& inputs, const std::vector<PreprocessRoi>& rois) {
+void validate_preproc_roi_list_request_for_stage(const std::vector<cv::Mat>& inputs,
+                                                 const std::vector<PreprocessRoi>& rois) {
   (void)validate_preproc_roi_list_request(inputs, rois, "Preproc ROI-list test validate");
 }
 } // namespace internal
@@ -2571,8 +2571,7 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
       runtime_rois_ptr = &runtime_rois;
     }
     PreprocessMetaTemplate meta =
-        make_stage_preprocess_meta_template(input, model, preproc_info, &src_opt,
-                                            runtime_rois_ptr);
+        make_stage_preprocess_meta_template(input, model, preproc_info, &src_opt, runtime_rois_ptr);
     if (stage_debug_enabled()) {
       std::fprintf(stderr,
                    "[stage][preproc-meta] source=route_contract quant=%d tess=%d "
@@ -2706,12 +2705,10 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
   (void)preproc_source_batch_format(src_opt, source_geom, "Preproc ROI-list");
 
   InputOptions roi_meta_opt = src_opt;
-  roi_meta_opt.preprocess_meta =
-      make_stage_preprocess_meta_template(inputs.front(), model, preproc_info, &roi_meta_opt,
-                                          &rois);
-  std::optional<PreprocessRuntimeMeta> runtime_meta =
-      make_simaai_preprocess_meta_from_template(roi_meta_opt, source_geom.width,
-                                                source_geom.height);
+  roi_meta_opt.preprocess_meta = make_stage_preprocess_meta_template(
+      inputs.front(), model, preproc_info, &roi_meta_opt, &rois);
+  std::optional<PreprocessRuntimeMeta> runtime_meta = make_simaai_preprocess_meta_from_template(
+      roi_meta_opt, source_geom.width, source_geom.height);
   if (!runtime_meta.has_value()) {
     throw std::runtime_error("Preproc ROI-list: failed to build runtime ROI metadata");
   }
@@ -2727,8 +2724,8 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
     simaai::neat::Tensor image =
         make_device_packed_preproc_source_batch_tensor(inputs, src_opt, *runtime_meta);
 
-    Sample sample = pipeline_internal::sample_from_tensors_for_input(TensorList{std::move(image)},
-                                                                     src_opt);
+    Sample sample =
+        pipeline_internal::sample_from_tensors_for_input(TensorList{std::move(image)}, src_opt);
     sample.payload_type = PayloadType::Image;
     sample.media_type = "video/x-raw";
     sample.format = src_opt.format.str();
@@ -2779,8 +2776,7 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
     log_stage_tensor_holder_state("Preproc ROI-list: direct tensor", batched);
   }
 
-  std::optional<PreprocessRuntimeMeta> output_meta =
-      preprocess_meta_from_tensor_or_holder(batched);
+  std::optional<PreprocessRuntimeMeta> output_meta = preprocess_meta_from_tensor_or_holder(batched);
   if (!output_meta.has_value()) {
     output_meta = runtime_meta;
   }
