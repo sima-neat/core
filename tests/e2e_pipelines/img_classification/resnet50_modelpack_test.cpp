@@ -867,9 +867,8 @@ int main(int argc, char** argv) {
       bool rtsp_ok = false;
       for (int retry = 0; retry < session_retries && !rtsp_ok; ++retry) {
         const int port_base = base_port_env + retry;
-        const int chosen_port =
-            rtsp_find_free_port_range_with_rtp(port_base, 1, 1, max_tries, rtp_port_offset,
-                                               rtp_ports_per_server, rtp_port_stride);
+        const int chosen_port = rtsp_find_free_port_range_with_rtp(
+            port_base, 1, 1, max_tries, rtp_port_offset, rtp_ports_per_server, rtp_port_stride);
         if (chosen_port < 0) {
           last_rtsp_error = "Failed to find free RTSP port";
           break;
