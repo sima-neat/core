@@ -25,14 +25,6 @@ html[data-theme="dark"] {
     display: none;
   }
 
-  .software-subnav {
-    top: 0;
-  }
-
-  #__docusaurus {
-    padding-top: calc(var(--software-subnav-height) + 0.75rem);
-  }
-
   .theme-doc-sidebar-container {
     margin-top: 0 !important;
   }
@@ -42,10 +34,12 @@ html[data-theme="dark"] {
     padding-top: 0 !important;
   }
 
+  /* Pin the sticky sidebar just below the fixed subnav so its first item
+     (Getting Started) is never hidden under the bar. */
   .theme-doc-sidebar-container [class^="sidebarViewport"],
   .theme-doc-sidebar-container [class*=" sidebarViewport"] {
-    top: calc(var(--software-subnav-height) + 0.75rem) !important;
-    max-height: calc(100vh - var(--software-subnav-height) - 0.75rem) !important;
+    top: var(--software-subnav-height) !important;
+    max-height: calc(100vh - var(--software-subnav-height)) !important;
   }
 }
 
@@ -87,13 +81,20 @@ html.developer-center-shell-enabled .navbar__items--right:empty {
 
 .software-subnav {
   position: fixed;
-  top: var(--ifm-navbar-height);
+  top: 0;
   right: 0;
   left: 0;
   z-index: 850;
   height: var(--software-subnav-height);
   border-bottom: 1px solid var(--ifm-color-emphasis-200);
   background: var(--ifm-navbar-background-color);
+}
+
+/* The subnav is fixed at the very top, so push ALL page content (the doc
+   sidebar, the main column, and the TOC) down by its height — this is what
+   keeps the sidebar contents below the secondary bar. */
+.main-wrapper {
+  margin-top: var(--software-subnav-height);
 }
 
 .software-subnav__inner {
@@ -217,13 +218,6 @@ html.developer-center-shell-enabled .navbar__items--right:empty {
 
   .software-subnav .language-pref {
     font-size: 0.85rem;
-  }
-
-  /* Offset content for the fixed task bar (local-fallback case; the native
-     navbar already reserves its own space). The shell-enabled case is handled
-     by the developer-center-shell rule above. */
-  html:not(.developer-center-shell-enabled) .main-wrapper {
-    margin-top: var(--software-subnav-height);
   }
 }
 
@@ -1727,14 +1721,3 @@ object.tutorial-flow {
   }
 }
 
-/* Titled lead item of the doc sidebar (mirrors the hardware docs sidebar's
-   "SiMa.ai … Documentation" heading). */
-.menu .sidebar-section-title {
-  display: block;
-  padding: var(--ifm-menu-link-padding-vertical) var(--ifm-menu-link-padding-horizontal);
-  margin-bottom: 0.25rem;
-  font-weight: 700;
-  font-size: 0.95rem;
-  color: var(--ifm-font-color-base);
-  border-bottom: 1px solid var(--ifm-color-emphasis-200);
-}
