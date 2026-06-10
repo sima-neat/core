@@ -1696,3 +1696,15 @@ object.tutorial-flow {
     min-height: 2.5rem;
   }
 }
+
+/* Titled lead item of the doc sidebar (mirrors the hardware docs sidebar's
+   "SiMa.ai … Documentation" heading). */
+.menu .sidebar-section-title {
+  display: block;
+  padding: var(--ifm-menu-link-padding-vertical) var(--ifm-menu-link-padding-horizontal);
+  margin-bottom: 0.25rem;
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--ifm-font-color-base);
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+}
