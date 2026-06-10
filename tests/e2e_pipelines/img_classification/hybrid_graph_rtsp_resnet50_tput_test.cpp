@@ -739,7 +739,10 @@ int main(int argc, char** argv) {
     sima_test::parse_int_arg(argc, argv, "--warmup-timeout-ms", warmup_timeout_ms);
     if (rtsp_debug)
       std::cerr << "[graph] warmup start\n";
-    if (!run.warmup(outputs, warmup, warmup_timeout_ms)) {
+    for (int i = 0; i < warmup; ++i) {
+      auto sample = run.pull_any(outputs, warmup_timeout_ms);
+      if (sample.has_value())
+        continue;
       const std::string err = run.last_error();
       if (!err.empty()) {
         throw std::runtime_error(err);

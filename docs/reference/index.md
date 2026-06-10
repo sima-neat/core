@@ -16,7 +16,7 @@ details, diagnostics, environment knobs, or release information.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/cppapi/"><strong>C++ API</strong><span>Browse the generated Neat C++ API reference.</span></a></li>
       <li><a class="overview-link-card" href="/reference/pythonapi/"><strong>Python API</strong><span>Browse PyNeat bindings and Python-facing runtime APIs.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/model-sdk-api/"><strong>ModelSDK API</strong><span>Reference material for model compilation APIs and related tooling.</span></a></li>
+      <li><a class="overview-link-card" href="/tools/model-sdk/"><strong>ModelSDK</strong><span>Reference material for model compilation tooling.</span></a></li>
     </ul>
   </section>
 

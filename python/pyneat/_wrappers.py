@@ -104,7 +104,8 @@ def install_wrappers(core) -> None:
 
   def _model_image_format_hint(model):
     try:
-      spec = model.input_spec()
+      specs = model.input_specs()
+      spec = specs[0] if specs else None
       return getattr(spec, "image_format", None)
     except Exception:
       return None
@@ -235,14 +236,11 @@ def install_wrappers(core) -> None:
   def graph_build(
       self,
       input_value=None,
-      mode=None,
       options=None,
       copy: bool = False,
       layout=None,
       image_format=None,
   ):
-    if mode is None:
-      mode = core.RunMode.Async
     if options is None:
       options = core.RunOptions()
 
@@ -250,9 +248,9 @@ def install_wrappers(core) -> None:
       return self.build_source(options)
     _reject_single_tensor_or_sample(core, input_value, "Graph.build")
     if _sequence_all_samples(core, input_value):
-      return self.build_samples(list(input_value), mode, options)
+      return self.build_samples(list(input_value), options)
     return self.build_tensors(_tensor_list_from_sequence(
-        core, input_value, copy=copy, layout=layout, image_format=image_format), mode, options)
+        core, input_value, copy=copy, layout=layout, image_format=image_format), options)
 
   def graph_run(self, input_value=None, options=None):
     if input_value is None:

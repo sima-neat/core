@@ -29,7 +29,7 @@ RUN_TEST("gst_data_adapter_runtime_regression_test", ([] {
            // Tensor path through runtime adapter.
            Run tensor_run;
            try {
-             tensor_run = graph.build(TensorList{seed_tensor}, RunMode::Async, run_opt);
+             tensor_run = graph.build(TensorList{seed_tensor}, run_opt);
            } catch (const std::exception& e) {
              if (sima_test::likely_runtime_missing(e.what())) {
                throw std::runtime_error(
@@ -46,7 +46,7 @@ RUN_TEST("gst_data_adapter_runtime_regression_test", ([] {
 
            // Raw video (cv::Mat) path through runtime adapter.
            cv::Mat rgb(48, 64, CV_8UC3, cv::Scalar(70, 60, 50));
-           Run mat_run = graph.build(std::vector<cv::Mat>{rgb}, RunMode::Async, run_opt);
+           Run mat_run = graph.build(std::vector<cv::Mat>{rgb}, run_opt);
            require(mat_run.push(std::vector<cv::Mat>{rgb}),
                    "GstDataAdapter cv::Mat path push failed");
            auto mat_out = mat_run.pull_tensors(1000);
@@ -57,7 +57,7 @@ RUN_TEST("gst_data_adapter_runtime_regression_test", ([] {
            require(sima_test::throws_with(
                        [&]() {
                          cv::Mat empty;
-                         (void)graph.build(std::vector<cv::Mat>{empty}, RunMode::Async, run_opt);
+                         (void)graph.build(std::vector<cv::Mat>{empty}, run_opt);
                        },
                        "empty image input at index 0"),
                    "GstDataAdapter runtime empty-frame error text mismatch");

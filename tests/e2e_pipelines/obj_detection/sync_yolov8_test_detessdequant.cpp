@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 /**
  * @example sync_yolov8_test.cpp
  * Canonical production pipeline: input -> preprocess -> Infer -> postprocess.
@@ -374,7 +377,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = 1;
   step_log("sync: before build");
-  simaai::neat::Run runner = p.build(
+  simaai::neat::Run runner = p.build_seeded_internal(
       simaai::neat::Sample{simaai::neat::Sample::from_image(
           img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
       simaai::neat::RunMode::Sync, run_opt);
@@ -408,7 +411,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
       if (!last.empty()) {
         append_note(res.note, "runner_last_error=" + last);
       }
-      std::cerr << "[DBG] runner.report after run_error\n" << runner.report() << "\n";
+      std::cerr << "[DBG] runner.last_error after run_error\n" << runner.last_error() << "\n";
       break;
     }
 

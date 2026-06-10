@@ -54,7 +54,7 @@ def main(argv: list[str]) -> int:
   # STEP build-async
   graph = pyneat.Graph()
   graph.add(model.graph(route_opt))
-  run = graph.build([frame], pyneat.RunMode.Async)
+  run = graph.build([frame])
   # END STEP
 
   # STEP push-frames

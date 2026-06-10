@@ -156,7 +156,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Reference authoritative checklist
-        run: cat docs/develop-apps/contribute/release-checklist.md
+        run: cat docs/develop-apps/contribute/release-maintenance/release-checklist.md
 
       - name: Validate release policy files and metadata
         run: bash scripts/ci/check_release_policy.sh

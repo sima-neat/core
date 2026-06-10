@@ -42,8 +42,8 @@ PluginAttributionResult attribute_plugin_latency(const MeasurePluginLatency& plu
   if (plugin.runtime_node_id >= 0 && plugin.pipeline_segment_id >= 0) {
     std::vector<const GraphNodeMetrics*> matches;
     for (const GraphNodeMetrics& node : nodes) {
-      if (node.runtime_node_id != graph::kInvalidNode &&
-          node.runtime_node_id == static_cast<graph::NodeId>(plugin.runtime_node_id) &&
+      if (node.runtime_node_id != kInvalidRuntimeNodeId &&
+          node.runtime_node_id == static_cast<RuntimeNodeId>(plugin.runtime_node_id) &&
           plugin_segment_matches_node(plugin, node)) {
         matches.push_back(&node);
       }
@@ -110,7 +110,7 @@ void inherit_plugin_node_identity(MeasurePluginLatency* plugin, const GraphNodeM
   if (plugin->pipeline_segment_id < 0 && node.pipeline_segment_id != static_cast<std::size_t>(-1)) {
     plugin->pipeline_segment_id = static_cast<std::int32_t>(node.pipeline_segment_id);
   }
-  if (plugin->runtime_node_id < 0 && node.runtime_node_id != graph::kInvalidNode) {
+  if (plugin->runtime_node_id < 0 && node.runtime_node_id != kInvalidRuntimeNodeId) {
     plugin->runtime_node_id = static_cast<std::int32_t>(node.runtime_node_id);
   }
   for (const std::string& public_id : node.public_node_ids) {

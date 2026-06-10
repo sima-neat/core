@@ -569,8 +569,4 @@ std::string Run::last_error() const {
   return core_ ? core_->last_error() : std::string{};
 }
 
-std::string Run::diagnostics_summary() const {
-  return core_ ? core_->diagnostics_summary() : std::string{};
-}
-
 } // namespace simaai::neat

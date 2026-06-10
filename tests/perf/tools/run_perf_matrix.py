@@ -278,7 +278,7 @@ def run_scenario(
         power = schema.parse_optional_power_payload(
             payload_raw, context=f"payload:{spec.scenario_id}"
         )
-        runtime_metrics = schema.parse_optional_runtime_metrics_payload(
+        measure_report = schema.parse_optional_measure_report_payload(
             payload_raw, context=f"payload:{spec.scenario_id}"
         )
     except schema.SchemaError as exc:
@@ -295,8 +295,8 @@ def run_scenario(
     run_meta = {"phase": "compare", "executable": str(exe_path), "iterations": scenario_iters}
     if power is not None:
         run_meta["power"] = power
-    if runtime_metrics is not None:
-        run_meta["runtime_metrics"] = runtime_metrics
+    if measure_report is not None:
+        run_meta["measure_report"] = measure_report
 
     regressions = schema.compare_metrics(metrics, baseline)
     if regressions:

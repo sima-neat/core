@@ -35,8 +35,7 @@ int main() {
     simaai::neat::RunOptions run_opt;
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
-    auto run = p.build(std::vector<cv::Mat>{make_rgb_mat(w, h, cv::Scalar(10, 20, 30))},
-                       simaai::neat::RunMode::Async, run_opt);
+    auto run = p.build(std::vector<cv::Mat>{make_rgb_mat(w, h, cv::Scalar(10, 20, 30))}, run_opt);
 
     run.push(std::vector<cv::Mat>{make_rgb_mat(w, h, cv::Scalar(10, 20, 30))});
     run.pull(/*timeout_ms=*/1000);

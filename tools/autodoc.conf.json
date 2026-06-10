@@ -37,6 +37,20 @@
         "quantization",
         "compilation",
         "supported_operators"
+      ],
+      "link_rewrites": [
+        {
+          "from": "/llima/compilation_genai",
+          "to": "/genai-llima/compilation_genai"
+        },
+        {
+          "from": "./api-reference",
+          "to": "/reference/model-sdk-api/"
+        },
+        {
+          "from": "./api-reference/",
+          "to": "/reference/model-sdk-api/"
+        }
       ]
     },
     {

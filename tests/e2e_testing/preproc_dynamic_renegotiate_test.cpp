@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -6,6 +9,7 @@
 #include "e2e_pipelines/e2e_utils.h"
 #include "gst/GstHelpers.h"
 #include "test_utils.h"
+#include "pipeline/runtime/RunInternal.h"
 
 #include <nlohmann/json.hpp>
 #include <opencv2/opencv.hpp>
@@ -140,18 +144,6 @@ cv::Mat require_preproc_rgb(const simaai::neat::Sample& out, int expected_w, int
   cv::Mat rgb(expected_h, expected_w, CV_8UC3, map.data, step);
   return rgb.clone();
 }
-
-// bool wait_for_reneg(simaai::neat::Run& run,
-//                     std::uint64_t target,
-//                     int timeout_ms) {
-//   const auto deadline =
-//       std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-//   while (std::chrono::steady_clock::now() < deadline) {
-//     if (run.input_stats().renegotiations >= target) return true;
-//     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-//   }
-//   return run.input_stats().renegotiations >= target;
-// }
 
 struct ImageCase {
   std::string name;
@@ -305,7 +297,7 @@ int main() {
     run_opt.output_memory =
         simaai::neat::OutputMemory::Owned; // output is copied to CPU, doesn’t pin pool buffers
 
-    Run run = p.build(TensorList{make_rgb_tensor(images[0].rgb)}, RunMode::Async, run_opt);
+    Run run = p.build(TensorList{make_rgb_tensor(images[0].rgb)}, run_opt);
 
     auto output_matches_image = [&](const ImageCase& img, const Sample& out,
                                     const std::string& label, bool require_match) {
@@ -363,7 +355,7 @@ int main() {
     require(outs1.size() == 1, "preproc: expected one output sample");
     Sample out1 = std::move(outs1.front());
     check_image(images[0], out1);
-    require(run.input_stats().renegotiations == 0,
+    require(run_internal::input_stats(run).renegotiations == 0,
             "preproc: unexpected renegotiation on first frame");
 
     require(preproc->config_path().empty(),
@@ -401,7 +393,7 @@ int main() {
               "preproc: input_img_type changed on dims-only renegotiation");
     }
 
-    require(run.input_stats().renegotiations == expected_reneg,
+    require(run_internal::input_stats(run).renegotiations == expected_reneg,
             "preproc: unexpected renegotiation count");
 
     {
@@ -425,7 +417,7 @@ int main() {
           images[0].rgb, simaai::neat::ImageSpec::PixelFormat::BGR,
           simaai::neat::TensorMemory::EV74);
 
-      Run run2 = p2.build(TensorList{tensor_rgb}, RunMode::Async, fmt_run_opt);
+      Run run2 = p2.build(TensorList{tensor_rgb}, fmt_run_opt);
       (void)run2.run(TensorList{tensor_rgb}, 5000);
       require(fmt_preproc->config_path().empty(),
               "preproc: standalone format config_path should stay empty");

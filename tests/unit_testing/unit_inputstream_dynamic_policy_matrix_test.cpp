@@ -1,7 +1,11 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "model_archive_test_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -83,7 +87,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              // Keep byte-guard out of this case so oversize failure is from effective dims.
              run_opt.advanced.max_input_bytes = 1u << 20;
 
-             Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, RunMode::Async, run_opt);
+             Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, run_opt);
              (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
              (void)run.run(std::vector<cv::Mat>{make_bgr(48, 48)}, 1000);
              require(wait_for_reneg(run, 1, 1000),
@@ -117,10 +121,10 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              RunOptions run_opt = make_async_realtime_run_options();
              run_opt.advanced.max_input_bytes = 0;
 
-             Run run = graph.build(std::vector<cv::Mat>{make_bgr(64, 64)}, RunMode::Async, run_opt);
+             Run run = graph.build(std::vector<cv::Mat>{make_bgr(64, 64)}, run_opt);
              (void)run.run(std::vector<cv::Mat>{make_bgr(64, 64)}, 1000);
              (void)run.run(std::vector<cv::Mat>{make_bgr(256, 256)}, 1000);
-             require(run.input_stats().alloc_grows > 0,
+             require(run_internal::input_stats(run).alloc_grows > 0,
                      "elastic mode: expected allocation growth for larger in-bound frame");
 
              bool threw_guard = false;
@@ -152,7 +156,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              RunOptions run_opt = make_async_realtime_run_options();
              run_opt.advanced.max_input_bytes = 0;
 
-             Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, RunMode::Async, run_opt);
+             Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, run_opt);
              (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
 
              bool threw_caps_override = false;
@@ -196,7 +200,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              bool build_threw = false;
              std::string build_err;
              try {
-               (void)graph.build(std::vector<cv::Mat>{oversized}, RunMode::Async, run_opt);
+               (void)graph.build(std::vector<cv::Mat>{oversized}, run_opt);
              } catch (const std::exception& e) {
                build_threw = true;
                build_err = e.what();
@@ -205,7 +209,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              require(has_expected_oversize_error(build_err),
                      "parity: build(input) unexpected oversize validation message: " + build_err);
 
-             Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, RunMode::Async, run_opt);
+             Run run = graph.build(std::vector<cv::Mat>{make_bgr(16, 16)}, run_opt);
              (void)run.run(std::vector<cv::Mat>{make_bgr(16, 16)}, 1000);
 
              bool push_threw = false;
@@ -239,7 +243,7 @@ RUN_TEST("unit_inputstream_dynamic_policy_matrix_test", ([] {
              Tensor ambiguous = make_ambiguous_layout_tensor_chw(16, 16, 3);
 
              try {
-               (void)graph.build(TensorList{ambiguous}, RunMode::Async, run_opt);
+               (void)graph.build(TensorList{ambiguous}, run_opt);
              } catch (const std::exception& e) {
                require(false, std::string("generic tensor build should not fail: ") + e.what());
              }

@@ -281,7 +281,10 @@ int main(int argc, char** argv) {
       if (diagnose && err.report.has_value()) {
         msg += "\nreport_json=" + err.report->to_json();
       } else if (diagnose) {
-        msg += "\nreport=" + runner.report();
+        const std::string last = runner.last_error();
+        if (!last.empty()) {
+          msg += "\nlast_error=" + last;
+        }
       }
       throw std::runtime_error(msg);
     }

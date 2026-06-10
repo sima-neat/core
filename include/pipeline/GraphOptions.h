@@ -9,7 +9,7 @@
  *   - `GraphOptions` — per-Graph knobs (callback timeout, naming, processor preference).
  *   - `RtspServerOptions` / `ValidateOptions` / `OutputTensorOptions` — option packs for specific
  * calls.
- *   - `RunMode` — Async vs Sync timing mode.
+ *   - `RunMode` — internal Async vs Sync runtime timing mode.
  *   - `Sample` / `SampleKind` — the typed payload `pull()` returns; can be a Tensor, a
  *     TensorSet (multiple physical outputs), or a Bundle (recursive multi-logical-output).
  *   - `PullStatus` / `PullError` — structured pull results.
@@ -184,12 +184,12 @@ struct ValidateOptions {
 };
 
 /**
- * @brief Timing mode a `Run` operates in.
+ * @brief Internal timing mode a `Run` operates in.
  *
- * `Async` runs the pipeline continuously with internal worker threads; user code pushes and
- * pulls at its own pace. `Sync` runs one frame at a time on the calling thread. Choose based
- * on the input source: streaming sources → Async; one-shot/batch → Sync.
- * @see Run
+ * Public Graph users should not pass this into `Graph::build(...)`: use `Graph::build(...)` for
+ * reusable push/pull runners and `Graph::run(...)` for one-shot execution. The runtime still keeps
+ * this enum to select internal optimized paths.
+ * @see Graph::build, Graph::run
  * @ingroup pipeline
  */
 enum class RunMode {

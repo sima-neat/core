@@ -5,13 +5,13 @@
  * tensors.
  *
  * `TensorConstraint` (typedef'd as `TensorSpec` from `Model.h`) is the declarative description
- * of *what kind of tensor a function expects or produces*. Used by `Model::input_spec()` /
- * `Model::output_spec()` for introspection and by validation code to assert that a tensor
+ * of *what kind of tensor a function expects or produces*. Used by `Model::input_specs()` /
+ * `Model::output_specs()` for introspection and by validation code to assert that a tensor
  * meets the model's contract. Supports flexible matching: dtype lists, dynamic shape dims
  * (`-1` = any), device requirements, image-format hints, and segment requirements.
  *
  * @see Tensor (the value type) in TensorCore.h
- * @see Model::input_spec, Model::output_spec
+ * @see Model::input_specs, Model::output_specs
  */
 #pragma once
 
@@ -27,7 +27,7 @@ namespace simaai::neat {
  * @brief Declarative tensor contract — describes the shape/dtype/device/format a tensor must
  * satisfy.
  *
- * Used by `Model::input_spec()`/`output_spec()` to advertise what the model expects/produces,
+ * Used by `Model::input_specs()`/`output_specs()` to advertise what the model expects/produces,
  * and by validation code to verify a tensor meets the contract via `matches()`. Empty fields
  * mean "no constraint on this dimension." Use `-1` in `shape` for dynamic axes.
  *

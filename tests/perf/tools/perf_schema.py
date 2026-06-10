@@ -310,14 +310,14 @@ def parse_optional_power_payload(data: Mapping[str, Any], context: str = "scenar
     return _as_dict(data["power"], f"{context}.power")
 
 
-def parse_optional_runtime_metrics_payload(
+def parse_optional_measure_report_payload(
     data: Mapping[str, Any], context: str = "scenario_payload"
 ) -> dict[str, Any] | None:
-    """Return optional unified RuntimeMetrics metadata from a scenario payload."""
+    """Return optional MeasureReport metadata from a scenario payload."""
 
-    if "runtime_metrics" not in data:
+    if "measure_report" not in data:
         return None
-    return _as_dict(data["runtime_metrics"], f"{context}.runtime_metrics")
+    return _as_dict(data["measure_report"], f"{context}.measure_report")
 
 
 def parse_perf_result(data: Mapping[str, Any], context: str = "perf_result") -> PerfResult:

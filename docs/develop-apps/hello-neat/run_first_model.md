@@ -12,7 +12,7 @@ This application loads a YOLOv8 model, reads a sample image, runs inference, dec
 This page introduces two Neat concepts:
 
 * [`Model`](/develop-apps/development-workflow/model) loads the compiled model package and gives you the `run(...)` entry point.
-* [`ModelOptions`](/tutorials/004-configure-model-options) tells Neat how to prepare the image and decode the detector output.
+* [`ModelOptions`](/tutorials/005-configure-model-options) tells Neat how to prepare the image and decode the detector output.
 
 You do not need to master the full API yet; for now, focus on how `Model` and `ModelOptions` work together to run a compiled model.
 
@@ -155,7 +155,7 @@ sample = model.run(tensor, timeout_ms=2000)
 
 ### 4. Read the detection count {#step-read}
 
-Because `decode_type` was set, the output is already decoded boxes. The BBOX tensor begins with a `uint32` detection count, so we read its first four bytes. (The full wire format — per-box coordinates, scores, and classes — is covered in [Read Detection Boxes from Model Output](/tutorials/006-read-detection-boxes).)
+Because `decode_type` was set, the output is already decoded boxes. The BBOX tensor begins with a `uint32` detection count, so we read its first four bytes. (The full wire format — per-box coordinates, scores, and classes — is covered in [Read Detection Boxes from Model Output](/tutorials/007-read-detection-boxes).)
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -380,7 +380,7 @@ This example follows the same high-level path used by larger Neat applications:
 - Run inference through Neat runtime stages.
 - Decode raw detector output into bounding boxes.
 
-For a deeper explanation of box decoding, thresholds, NMS, and detector output structure, continue with [Read Detection Boxes from Model Output](/tutorials/006-read-detection-boxes).
+For a deeper explanation of box decoding, thresholds, NMS, and detector output structure, continue with [Read Detection Boxes from Model Output](/tutorials/007-read-detection-boxes).
 
 ## Next Steps
 

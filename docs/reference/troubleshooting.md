@@ -116,7 +116,7 @@ The lower the detection threshold, the more candidate boxes survive thresholding
 :::
 
 :::tip Fix
-Lower the threshold only as far as you need to catch weak detections, and cap the worst case with `top_k`. See [Read Detection Boxes](/tutorials/006-read-detection-boxes).
+Lower the threshold only as far as you need to catch weak detections, and cap the worst case with `top_k`. See [Read Detection Boxes](/tutorials/007-read-detection-boxes).
 :::
 
 ## Running inference
@@ -153,7 +153,7 @@ An RTSP pull timed out — the URL is wrong or the stream isn't delivering frame
 :::
 
 :::tip Fix
-Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/017-consume-rtsp-stream).
+Verify the RTSP URL is reachable and actively streaming; check transport (TCP vs UDP). See [Consume an RTSP Stream](/tutorials/018-consume-rtsp-stream).
 :::
 
 ## Tensors & Python interop
@@ -192,7 +192,7 @@ Pass one or the other, not both.
 
 - **"Where's my `.engine` / `.blob` / `.dlc` / `.hef`?"** — Neat loads a `.tar.gz` model archive; that's the equivalent compiled artifact.
 - **"How do I pin work to a CUDA stream / OpenCL queue?"** — you don't; decouple producer/consumer with async `push`/`pull` and tune `RunOptions` instead.
-- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Tune Throughput and Queue Depth](/tutorials/015-tune-throughput-and-queues).
+- **"Why is throughput below the headline TOPS?"** — usually host overhead, queue starvation, or drop policy rather than the accelerator. See [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
 
 ## When you're stuck: diagnostics
 
@@ -201,8 +201,8 @@ Reach for these before guessing.
 **Inspect the pipeline / run (Python and C++):**
 - `graph.validate()` → a `GraphReport` — validates wiring against built-in contracts before you build. Check its `error_code`.
 - `graph.describe()` → the resolved pipeline as text (node names + caps chain).
-- `run.stats()` → a `RunStats` (headline: `avg_latency_ms`).
-- `run.report()` → a formatted text report of the run.
+- `run.start_measurement()` / `MeasureReport` → counters, latency, input-stream telemetry, plugin/edge timing, and optional power.
+- `NeatError::report()` → structured failure details when a run throws.
 
 **Turn on framework debug output** with `SIMA_DEBUG_PROFILE` — a comma-separated list of components to trace. Use `all` for everything, or narrow it:
 ```bash

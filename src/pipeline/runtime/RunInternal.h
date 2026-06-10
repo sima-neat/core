@@ -6,6 +6,11 @@ namespace simaai::neat {
 
 namespace run_internal {
 
+RunStats stats(const Run& run);
+InputStreamStats input_stats(const Run& run);
+RunDiagSnapshot diag_snapshot(const Run& run);
+PowerSummary power_summary(const Run& run);
+
 template <typename T> inline bool queue_full(const std::deque<T>& q, int max) {
   return max > 0 && static_cast<int>(q.size()) >= max;
 }

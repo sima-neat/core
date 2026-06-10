@@ -1,8 +1,10 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "gst/GstHelpers.h"
 #include "test_utils.h"
 
 #include <neat.h>
-
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -403,7 +405,7 @@ std::vector<CpuFeature> cpu_fast_reference(const std::vector<std::uint8_t>& imag
 }
 
 const std::array<int, kBriefTests * 4>& brief_pattern() {
-  static const std::array<int, kBriefTests* 4> pattern = [] {
+  static const std::array<int, kBriefTests * 4> pattern = [] {
     std::array<int, kBriefTests * 4> out{};
     std::uint32_t state = 0x9E3779B9u;
     for (int i = 0; i < kBriefTests * 4; ++i) {
@@ -739,120 +741,63 @@ bool timing_name_matches(const std::string& candidate, const std::string& reques
          c.find("processcvu") != std::string::npos || c.find("visual") != std::string::npos;
 }
 
-ElementTimingLookup timing_lookup_from_stats(const simaai::neat::RunElementTimingStats& timing) {
+ElementTimingLookup timing_lookup_from_element(const simaai::neat::GraphElementMetrics& element) {
   ElementTimingLookup out;
-  out.samples = timing.samples;
-  out.element_name = timing.element_name;
-  if (timing.samples > 0U) {
-    out.avg_ms =
-        static_cast<double>(timing.total_us) / 1000.0 / static_cast<double>(timing.samples);
-    out.min_ms = static_cast<double>(timing.min_us) / 1000.0;
-    out.max_ms = static_cast<double>(timing.max_us) / 1000.0;
-  }
+  out.samples = element.latency.samples;
+  out.element_name = element.name;
+  out.avg_ms = element.latency.avg_ms;
+  out.min_ms = element.latency.min_ms;
+  out.max_ms = element.latency.max_ms;
   return out;
 }
 
-ElementTimingLookup lookup_element_timing_snapshot(const simaai::neat::RunDiagSnapshot& diag,
-                                                   const std::string& element_name) {
-  for (const auto& timing : diag.element_timings) {
-    if (timing.element_name == element_name) {
-      return timing_lookup_from_stats(timing);
+ElementTimingLookup lookup_element_timing_report(const simaai::neat::MeasureReport& report,
+                                                 const std::string& element_name) {
+  for (const auto& node : report.node_metrics) {
+    for (const auto& element : node.elements) {
+      if (element.name == element_name) {
+        return timing_lookup_from_element(element);
+      }
     }
   }
-  for (const auto& timing : diag.element_timings) {
-    if (timing.samples > 0U && timing_name_matches(timing.element_name, element_name)) {
-      return timing_lookup_from_stats(timing);
+  for (const auto& node : report.node_metrics) {
+    for (const auto& element : node.elements) {
+      if (element.latency.samples > 0U && timing_name_matches(element.name, element_name)) {
+        return timing_lookup_from_element(element);
+      }
     }
   }
-  for (const auto& timing : diag.element_timings) {
-    if (timing_name_matches(timing.element_name, element_name)) {
-      return timing_lookup_from_stats(timing);
+  for (const auto& node : report.node_metrics) {
+    for (const auto& element : node.elements) {
+      if (timing_name_matches(element.name, element_name)) {
+        return timing_lookup_from_element(element);
+      }
     }
   }
   return {};
 }
 
-ElementTimingLookup lookup_element_timing_delta(const simaai::neat::RunDiagSnapshot& before,
-                                                const simaai::neat::RunDiagSnapshot& after,
-                                                const std::string& element_name) {
-  const ElementTimingLookup after_match = lookup_element_timing_snapshot(after, element_name);
-  if (after_match.element_name.empty()) {
-    return {};
-  }
-
-  const auto find_before = [&]() -> const simaai::neat::RunElementTimingStats* {
-    for (const auto& timing : before.element_timings) {
-      if (timing.element_name == after_match.element_name) {
-        return &timing;
-      }
-    }
-    return nullptr;
-  };
-
-  const simaai::neat::RunElementTimingStats* b = find_before();
-  simaai::neat::RunElementTimingStats delta{};
-  delta.element_name = after_match.element_name;
-  const auto* a = [&]() -> const simaai::neat::RunElementTimingStats* {
-    for (const auto& timing : after.element_timings) {
-      if (timing.element_name == after_match.element_name) {
-        return &timing;
-      }
-    }
-    return nullptr;
-  }();
-  if (!a) {
-    return {};
-  }
-  delta.samples = b && a->samples >= b->samples ? a->samples - b->samples : a->samples;
-  delta.total_us = b && a->total_us >= b->total_us ? a->total_us - b->total_us : a->total_us;
-  // min/max cannot be exactly reconstructed from cumulative counters.  Preserve the post-run
-  // extrema for diagnostics, while avg_ms uses only measured-iteration deltas above.
-  delta.min_us = a->min_us;
-  delta.max_us = a->max_us;
-  delta.missed_in = b && a->missed_in >= b->missed_in ? a->missed_in - b->missed_in : a->missed_in;
-  delta.missed_out =
-      b && a->missed_out >= b->missed_out ? a->missed_out - b->missed_out : a->missed_out;
-  return timing_lookup_from_stats(delta);
-}
-
-void dump_timing_diag_if_requested(const simaai::neat::Run& run, const std::string& element_name,
+void dump_timing_diag_if_requested(const simaai::neat::MeasureReport& report,
+                                   const std::string& element_name,
                                    const ElementTimingLookup& lookup) {
   const bool dump = env_flag("SIMA_VISUAL_TPUT_DUMP_TIMINGS", false) || lookup.samples == 0U;
   if (!dump) {
     return;
   }
-  const simaai::neat::RunDiagSnapshot diag = run.diag_snapshot();
-  std::cout << " timing_diag requested=" << element_name
-            << " element_rows=" << diag.element_timings.size()
-            << " pad_rows=" << diag.element_pad_timings.size() << "\n";
-  for (const auto& timing : diag.element_timings) {
-    std::cout << "  element_timing name=" << timing.element_name << " samples=" << timing.samples
-              << " avg_ms="
-              << (timing.samples > 0U ? static_cast<double>(timing.total_us) / 1000.0 /
-                                            static_cast<double>(timing.samples)
-                                      : 0.0)
-              << " min_ms=" << static_cast<double>(timing.min_us) / 1000.0
-              << " max_ms=" << static_cast<double>(timing.max_us) / 1000.0
-              << " missed_in=" << timing.missed_in << " missed_out=" << timing.missed_out << "\n";
+  std::size_t element_rows = 0;
+  for (const auto& node : report.node_metrics) {
+    element_rows += node.elements.size();
   }
-  for (const auto& pad : diag.element_pad_timings) {
-    if (!timing_name_matches(pad.element_name, element_name) &&
-        lower_copy(pad.element_name).find("processcvu") == std::string::npos) {
-      continue;
+  std::cout << " timing_diag requested=" << element_name
+            << " node_rows=" << report.node_metrics.size() << " element_rows=" << element_rows
+            << " source=measure_report\n";
+  for (const auto& node : report.node_metrics) {
+    for (const auto& element : node.elements) {
+      std::cout << "  element_timing name=" << element.name << " node=" << node.label
+                << " samples=" << element.latency.samples << " avg_ms=" << element.latency.avg_ms
+                << " min_ms=" << element.latency.min_ms << " max_ms=" << element.latency.max_ms
+                << "\n";
     }
-    std::cout << "  pad_timing element=" << pad.element_name << " pad=" << pad.pad_name
-              << " dir=" << (pad.is_sink ? "sink" : "src") << " samples=" << pad.samples
-              << " bytes=" << pad.bytes << " inter_arrival_avg_ms="
-              << (pad.samples > 1U ? static_cast<double>(pad.inter_arrival_total_us) / 1000.0 /
-                                         static_cast<double>(pad.samples - 1U)
-                                   : 0.0)
-              << " queue_wait_samples=" << pad.queue_wait_samples << " queue_wait_avg_ms="
-              << (pad.queue_wait_samples > 0U
-                      ? static_cast<double>(pad.queue_wait_total_us) / 1000.0 /
-                            static_cast<double>(pad.queue_wait_samples)
-                      : 0.0)
-              << " from=" << pad.transport_from_element_name
-              << " to=" << pad.transport_to_element_name << "\n";
   }
 }
 
@@ -1641,13 +1586,12 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
 
   simaai::neat::RunOptions run_opt;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-  run_opt.enable_metrics = true;
   run_opt.queue_depth = queue_depth;
   run_opt.input_timeout_ms = timeout_ms;
   run_opt.startup_preflight = !c.expect_runtime_failure;
 
   auto build_start = Clock::now();
-  simaai::neat::Run run = graph.build(c.inputs, simaai::neat::RunMode::Async, run_opt);
+  simaai::neat::Run run = graph.build(c.inputs, run_opt);
   auto build_end = Clock::now();
   const double build_ms =
       std::chrono::duration<double, std::milli>(build_end - build_start).count();
@@ -1681,7 +1625,12 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
   bool have_signature = false;
   std::vector<std::uint8_t> reference_signature;
 
-  const simaai::neat::RunDiagSnapshot timing_before = run.diag_snapshot();
+  simaai::neat::MeasureOptions measure_opt;
+  measure_opt.title = c.name + " visual frontend throughput";
+  measure_opt.include_plugin_latency = false;
+  measure_opt.include_edge_latency = false;
+  measure_opt.include_power = false;
+  auto measure_scope = run.start_measurement(measure_opt);
 
   std::vector<double> samples_ms;
   samples_ms.reserve(static_cast<std::size_t>(iterations));
@@ -1704,18 +1653,15 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
     samples_ms.push_back(std::chrono::duration<double, std::milli>(end - start).count());
   }
 
-  const simaai::neat::RunDiagSnapshot timing_after = run.diag_snapshot();
+  const simaai::neat::MeasureReport measure_report = measure_scope.stop();
   const TimingSummary timing = summarize(samples_ms);
   const ElementTimingLookup plugin_timing =
-      lookup_element_timing_delta(timing_before, timing_after, c.graph_name);
-  dump_timing_diag_if_requested(run, c.graph_name, plugin_timing);
+      lookup_element_timing_report(measure_report, c.graph_name);
+  dump_timing_diag_if_requested(measure_report, c.graph_name, plugin_timing);
   if (env_flag("SIMA_VISUAL_TPUT_REQUIRE_PROCESSCVU_TIMING", true)) {
     require(plugin_timing.samples > 0U && plugin_timing.avg_ms > 0.0,
             c.name + ": processcvu element timing was not captured");
   }
-  const simaai::neat::RunStats stats = run.stats();
-  const simaai::neat::InputStreamStats input_stats = run.input_stats();
-
   std::cout << " result=PASS avg_ms=" << timing.avg_ms << " min_ms=" << timing.min_ms
             << " max_ms=" << timing.max_ms << " fps=" << timing.fps
             << " processcvu_avg_ms=" << plugin_timing.avg_ms << " processcvu_element="
@@ -1723,9 +1669,10 @@ bool run_case(const BenchCase& c, int warmup, int iterations, int timeout_ms, in
                                                    : plugin_timing.element_name)
             << " processcvu_samples=" << plugin_timing.samples
             << " deterministic=" << (require_deterministic ? "checked" : "disabled")
-            << " pushed=" << input_stats.push_count << " pulled=" << input_stats.pull_count
-            << " outputs_ready=" << stats.outputs_ready
-            << " outputs_pulled=" << stats.outputs_pulled << "\n";
+            << " pushed=" << measure_report.input.push_count
+            << " pulled=" << measure_report.input.pull_count
+            << " outputs_ready=" << measure_report.counters.outputs_ready
+            << " outputs_pulled=" << measure_report.counters.outputs_pulled << "\n";
   print_tensor_summary(last_outputs);
   run.close();
   return true;

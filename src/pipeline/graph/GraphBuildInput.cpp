@@ -478,7 +478,6 @@ RunOptions sync_run_defaults() {
   opt.queue_depth = 1;
   opt.overflow_policy = OverflowPolicy::Block;
   opt.output_memory = OutputMemory::Owned;
-  opt.enable_metrics = false;
   opt.advanced.copy_input = false;
   opt.advanced.max_input_bytes = 0;
   opt.advanced.sync_num_buffers_override = -1;
@@ -1065,7 +1064,7 @@ InputStreamOptions make_stream_options(const RunOptions& opt, RunMode mode) {
   stream_opt.copy_input = opt.advanced.copy_input;
   stream_opt.reuse_input_buffer = false;
   stream_opt.on_input_drop = opt.on_input_drop;
-  stream_opt.enable_timings = opt.enable_metrics;
+  stream_opt.enable_timings = true;
   stream_opt.timeout_ms = resolved_input_timeout_ms(opt);
   stream_opt.startup_preflight = opt.startup_preflight;
   stream_opt.worker_poll_ms = preset_default_worker_poll_ms(opt.preset);
@@ -1381,9 +1380,6 @@ RunOptions resolve_build_opt(RunMode mode, const RunOptions& opt) {
     }
     if (out.output_memory == defaults.output_memory) {
       out.output_memory = sync_defaults.output_memory;
-    }
-    if (out.enable_metrics == defaults.enable_metrics) {
-      out.enable_metrics = sync_defaults.enable_metrics;
     }
     if (out.advanced.copy_input == defaults.advanced.copy_input) {
       out.advanced.copy_input = sync_defaults.advanced.copy_input;
@@ -2236,7 +2232,7 @@ Sample run_sync_prefill_typed(Run& runner, const InputT& input, int timeout_ms, 
       oss << ": " << last_err;
     }
     session_build_throw_session_error_simple(error_codes::kRuntimePull, oss.str(),
-                                             "Inspect Run::report()/GraphReport bus diagnostics.");
+                                             "Inspect the attached GraphReport diagnostics.");
   }
 
   return out;
@@ -2277,8 +2273,7 @@ bool run_options_equal_for_cache_local(const RunOptions& a, const RunOptions& b)
   };
   return a.preset == b.preset && a.queue_depth == b.queue_depth &&
          a.overflow_policy == b.overflow_policy && a.output_memory == b.output_memory &&
-         a.enable_metrics == b.enable_metrics && a.input_timeout_ms == b.input_timeout_ms &&
-         a.startup_preflight == b.startup_preflight &&
+         a.input_timeout_ms == b.input_timeout_ms && a.startup_preflight == b.startup_preflight &&
          a.advanced.copy_input == b.advanced.copy_input &&
          a.advanced.max_input_bytes == b.advanced.max_input_bytes &&
          a.advanced.sync_num_buffers_override == b.advanced.sync_num_buffers_override &&
@@ -2548,7 +2543,20 @@ void session_build_apply_derived_input_contracts(std::vector<std::shared_ptr<Nod
   }
 }
 
-Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOptions& opt) {
+Run Graph::build(const std::vector<cv::Mat>& inputs, const RunOptions& opt) {
+  return build_seeded_internal(inputs, RunMode::Async, opt);
+}
+
+Run Graph::build(const TensorList& inputs, const RunOptions& opt) {
+  return build_seeded_internal(inputs, RunMode::Async, opt);
+}
+
+Run Graph::build(const Sample& inputs, const RunOptions& opt) {
+  return build_seeded_internal(inputs, RunMode::Async, opt);
+}
+
+Run Graph::build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mode,
+                                 const RunOptions& opt) {
   const pipeline_internal::ScopedBuildTiming timing(
       "Graph::build", "kind=cv::Mat inputs=" + std::to_string(inputs.size()));
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
@@ -2639,7 +2647,7 @@ Run Graph::build(const std::vector<cv::Mat>& inputs, RunMode mode, const RunOpti
   return Run(std::move(core));
 }
 
-Run Graph::build(const TensorList& inputs, RunMode mode, const RunOptions& opt) {
+Run Graph::build_seeded_internal(const TensorList& inputs, RunMode mode, const RunOptions& opt) {
   const pipeline_internal::ScopedBuildTiming timing(
       "Graph::build", "kind=TensorList inputs=" + std::to_string(inputs.size()));
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
@@ -2700,7 +2708,7 @@ Run Graph::build(const TensorList& inputs, RunMode mode, const RunOptions& opt) 
   return Run(std::move(core));
 }
 
-Run Graph::build(const Sample& inputs, RunMode mode, const RunOptions& opt) {
+Run Graph::build_seeded_internal(const Sample& inputs, RunMode mode, const RunOptions& opt) {
   const pipeline_internal::ScopedBuildTiming timing(
       "Graph::build", "kind=Sample inputs=" + std::to_string(inputs.size()));
   pipeline_internal::ux::ScopedVerboseContext verbose_ctx(opt_.verbose);
@@ -2763,11 +2771,11 @@ TensorList Graph::run(const std::vector<cv::Mat>& inputs, const RunOptions& opt)
     Sample out = run_sync_cached_input(
         nodes, nodes_version_, last_pipeline_, run_cache_, inputs.front(), opt, RunInputKind::Mat,
         [this, &input = inputs.front()](const RunOptions& run_opt) {
-          return build(std::vector<cv::Mat>{input}, RunMode::Sync, run_opt);
+          return build_seeded_internal(std::vector<cv::Mat>{input}, RunMode::Sync, run_opt);
         });
     return tensors_from_sample(std::move(out), false);
   }
-  Run runner = build(inputs, RunMode::Sync, opt);
+  Run runner = build_seeded_internal(inputs, RunMode::Sync, opt);
   return runner.run(inputs, resolved_input_timeout_ms(opt));
 }
 
@@ -2781,14 +2789,14 @@ TensorList Graph::run(const TensorList& inputs, const RunOptions& opt) {
   }
   if (inputs.size() == 1U) {
     const auto nodes = linear_nodes_snapshot("Graph::run(inputs)");
-    Sample out = run_sync_cached_input(nodes, nodes_version_, last_pipeline_, run_cache_,
-                                       inputs.front(), opt, RunInputKind::Tensor,
-                                       [this, &input = inputs.front()](const RunOptions& run_opt) {
-                                         return build(TensorList{input}, RunMode::Sync, run_opt);
-                                       });
+    Sample out = run_sync_cached_input(
+        nodes, nodes_version_, last_pipeline_, run_cache_, inputs.front(), opt,
+        RunInputKind::Tensor, [this, &input = inputs.front()](const RunOptions& run_opt) {
+          return build_seeded_internal(TensorList{input}, RunMode::Sync, run_opt);
+        });
     return tensors_from_sample(std::move(out), false);
   }
-  Run runner = build(inputs, RunMode::Sync, opt);
+  Run runner = build_seeded_internal(inputs, RunMode::Sync, opt);
   return runner.run(inputs, resolved_input_timeout_ms(opt));
 }
 
@@ -2802,14 +2810,14 @@ Sample Graph::run(const Sample& inputs, const RunOptions& opt) {
   }
   if (inputs.size() == 1U) {
     const auto nodes = linear_nodes_snapshot("Graph::run(inputs)");
-    Sample out = run_sync_cached_input(nodes, nodes_version_, last_pipeline_, run_cache_,
-                                       inputs.front(), opt, RunInputKind::Sample,
-                                       [this, &input = inputs.front()](const RunOptions& run_opt) {
-                                         return build(Sample{input}, RunMode::Sync, run_opt);
-                                       });
+    Sample out = run_sync_cached_input(
+        nodes, nodes_version_, last_pipeline_, run_cache_, inputs.front(), opt,
+        RunInputKind::Sample, [this, &input = inputs.front()](const RunOptions& run_opt) {
+          return build_seeded_internal(Sample{input}, RunMode::Sync, run_opt);
+        });
     return Sample{std::move(out)};
   }
-  Run runner = build(inputs, RunMode::Sync, opt);
+  Run runner = build_seeded_internal(inputs, RunMode::Sync, opt);
   return runner.run(inputs, resolved_input_timeout_ms(opt));
 }
 

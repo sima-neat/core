@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
     simaai::neat::Graph graph;
     graph.add(model.graph(route_opt));
 
-    auto run = graph.build(std::vector<cv::Mat>{frames.front()}, simaai::neat::RunMode::Async);
+    auto run = graph.build(std::vector<cv::Mat>{frames.front()});
     // END STEP
 
     // STEP push-frames

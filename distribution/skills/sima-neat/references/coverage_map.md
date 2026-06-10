@@ -7,44 +7,44 @@ This map links common tasks to concrete in-repo references. Tutorials live under
 
 - First model run (synchronous): `tutorials/001_run_your_first_model/`
 - Async push/pull: `tutorials/002_run_inference_async/`
-- Build a Graph by hand (no model): `tutorials/003_build_inference_pipeline/`
-- Plug a model into a Graph: `tutorials/007_plug_model_into_pipeline/`
+- Build a Graph by hand (no model): `tutorials/004_build_inference_pipeline/`
+- Plug a model into a Graph: `tutorials/008_plug_model_into_pipeline/`
 
 ## Model configuration
 
-- Model options (format, bounds, preproc, postproc): `tutorials/004_configure_model_options/`
-- Preprocessing (normalize, channel stats): `tutorials/005_preprocess_images/`
+- Model options (format, bounds, preproc, postproc): `tutorials/005_configure_model_options/`
+- Preprocessing (normalize, channel stats): `tutorials/006_preprocess_images/`
 
 ## Model workflows
 
 - Object detection (YOLOv8): `tutorials/012_detect_objects_with_yolov8/`
 - Image classification (ResNet-50): `tutorials/013_classify_images_with_resnet50/`
-- Decoding detection boxes (`SimaBoxDecode`): `tutorials/006_read_detection_boxes/`
+- Decoding detection boxes (`SimaBoxDecode`): `tutorials/007_read_detection_boxes/`
 
 ## Tensor and sample handling
 
-- NumPy/PyTorch interop: `tutorials/008_pass_numpy_to_model/`
-- Multi-input (bundle) samples: `tutorials/009_feed_multi_input_model/`
-- Reading `Sample` output: `tutorials/010_interpret_model_output/`
+- NumPy/PyTorch interop: `tutorials/009_pass_numpy_to_model/`
+- Multi-input (bundle) samples: `tutorials/010_feed_multi_input_model/`
+- Reading `Sample` output: `tutorials/011_interpret_model_output/`
 
 ## Live streaming input
 
-- Consume a live RTSP stream: `tutorials/017_consume_rtsp_stream/`
+- Consume a live RTSP stream: `tutorials/018_consume_rtsp_stream/`
 
 ## Graph APIs
 
-- Build a custom data graph: `tutorials/012_build_a_custom_data_graph/`
-- Embed a model inside a graph: `tutorials/013_embed_model_inside_graph/`
-- Run multiple streams in one graph: `tutorials/014_run_multiple_streams/`
+- Build a custom data graph: `tutorials/013_build_a_custom_data_graph/`
+- Embed a model inside a graph: `tutorials/014_embed_model_inside_graph/`
+- Run multiple streams in one graph: `tutorials/015_run_multiple_streams/`
 
 ## Performance and production
 
-- Tune throughput and queues: `tutorials/015_tune_throughput_and_queues/`
-- Production-ready pipeline skeleton: `tutorials/016_build_production_pipeline/`
+- Tune throughput and queues: `tutorials/016_tune_throughput_and_queues/`
+- Production-ready pipeline skeleton: `tutorials/017_build_production_pipeline/`
 
 ## Diagnostics
 
-- Diagnose and profile a pipeline: `tutorials/011_diagnose_a_pipeline/`
+- Diagnose and profile a pipeline: `tutorials/012_diagnose_a_pipeline/`
 
 ## Reference apps (not tutorials)
 

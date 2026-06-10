@@ -31,7 +31,7 @@ int main() {
   p.custom("fakesink name=encoded_sink sync=false");
 
   RunOptions run_opt;
-  Run run = p.build(Sample{sample}, RunMode::Async, run_opt);
+  Run run = p.build(Sample{sample}, run_opt);
 
   require(run.push(Sample{sample}), "encoded Sample push failed");
   Sample sample2 = make_encoded_sample(std::vector<uint8_t>(7, 0xCD), "video/x-h264");

@@ -35,8 +35,7 @@ RUN_TEST("graph_migration_phase3_yolov8_bgr_bf16_preproc_test", [] {
   g.add(model);
   g.add(simaai::neat::nodes::Output("detections"));
 
-  simaai::neat::Run run = g.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Async,
-                                  phase3_yolo_run_options());
+  simaai::neat::Run run = g.build(std::vector<cv::Mat>{img_bgr}, phase3_yolo_run_options());
   require(static_cast<bool>(run), "BGR input -> RGB BF16 Graph build failed");
   require(run.push("image", std::vector<cv::Mat>{img_bgr}),
           "BGR input -> RGB BF16 named push failed");

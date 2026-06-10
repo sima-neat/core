@@ -1,3 +1,7 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
+
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -92,14 +96,13 @@ void run_preproc_build_repro(simaai::neat::RunMode mode, bool tessellate) {
 
   RunOptions run_opt;
   run_opt.output_memory = OutputMemory::Owned;
-  run_opt.enable_metrics = true;
   run_opt.queue_depth = 1;
 
   const int timeout_ms = env_int("SIMA_INPUT_TIMEOUT_MS", 20000);
   std::cerr << "[REPRO] mode=" << ((mode == RunMode::Sync) ? "sync" : "async")
             << " tessellate=" << (tessellate ? 1 : 0) << "\n";
 
-  auto run = graph.build(TensorList{tensor_rgb}, mode, run_opt);
+  auto run = graph.build_seeded_internal(TensorList{tensor_rgb}, mode, run_opt);
   TensorList outs = run.run(TensorList{tensor_rgb}, timeout_ms);
   run.close();
 

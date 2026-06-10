@@ -322,7 +322,6 @@ set(UNIT_TESTS
   unit_run_api_matrix_test
   unit_run_lifecycle_teardown_test
   unit_run_overflow_policy_parity_test
-  unit_runtime_metrics_test
   unit_samplespec_test
   unit_sample_bundle_holder_test
   unit_graph_api_surface_test
@@ -1382,6 +1381,20 @@ add_pipeline_test(
 if (NOT async_yolov8_tput_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST async_yolov8_tput_test APPEND PROPERTY LABELS "e2e;obj_detection;perf;tput")
   set_property(TEST async_yolov8_tput_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
+endif()
+
+add_pipeline_test(
+  yolov8_model_benchmark_metrics_test
+  e2e_pipelines/obj_detection/yolov8_model_benchmark_metrics_test.cpp
+  e2e_pipelines/e2e_utils.cpp
+  e2e_pipelines/obj_detection/obj_detection_utils.cpp
+  ARGS ${CMAKE_SOURCE_DIR}
+)
+
+if (NOT yolov8_model_benchmark_metrics_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
+  set_property(TEST yolov8_model_benchmark_metrics_test
+    APPEND PROPERTY LABELS "e2e;obj_detection;benchmark;metrics")
+  set_property(TEST yolov8_model_benchmark_metrics_test APPEND PROPERTY RESOURCE_LOCK "perf-device")
 endif()
 
 add_pipeline_test(

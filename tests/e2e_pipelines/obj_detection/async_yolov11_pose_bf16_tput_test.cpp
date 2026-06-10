@@ -216,7 +216,18 @@ bool pull_with_timeout(simaai::neat::Run& async, int pull_timeout_ms, int max_ti
 }
 
 void do_warmup(simaai::neat::Run& async, const cv::Mat& input, int warm, int timeout_ms) {
-  (void)async.warmup(std::vector<cv::Mat>{input}, warm, timeout_ms);
+  for (int i = 0; i < warm; ++i) {
+    if (!async.push(std::vector<cv::Mat>{input})) {
+      throw std::runtime_error("Run::push returned false during image warmup");
+    }
+    simaai::neat::Sample out;
+    simaai::neat::PullError perr;
+    const simaai::neat::PullStatus status = async.pull(timeout_ms, out, &perr);
+    if (status != simaai::neat::PullStatus::Ok) {
+      throw std::runtime_error("image warmup pull failed: " +
+                               (perr.message.empty() ? std::string("unknown") : perr.message));
+    }
+  }
 }
 
 void do_warmup(simaai::neat::Run& async, const simaai::neat::Tensor& input, int warm,
@@ -265,7 +276,7 @@ RunSummary run_async_pipeline(const std::string& name, simaai::neat::Graph& grap
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
 
   step_log((name + ": before build").c_str());
-  auto async = graph.build(as_build_inputs(build_input), simaai::neat::RunMode::Async, run_opt);
+  auto async = graph.build(as_build_inputs(build_input), run_opt);
   step_log((name + ": after build").c_str());
 
   try {

@@ -98,7 +98,7 @@ int main() {
   run_opt.output_memory = OutputMemory::Owned;
 
   Tensor image = make_gray_batch(width, height, batch);
-  Run run = graph.build({image}, RunMode::Async, run_opt);
+  Run run = graph.build({image}, run_opt);
   TensorList outputs = run.run({image}, /*timeout_ms=*/30000);
   run.close();
 }

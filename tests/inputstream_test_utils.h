@@ -111,11 +111,11 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
   Run run = [&]() {
     using InputT = std::decay_t<decltype(first)>;
     if constexpr (std::is_same_v<InputT, cv::Mat>) {
-      return p.build(std::vector<cv::Mat>{first}, RunMode::Async, opt);
+      return p.build(std::vector<cv::Mat>{first}, opt);
     } else if constexpr (std::is_same_v<InputT, simaai::neat::Tensor>) {
-      return p.build(TensorList{first}, RunMode::Async, opt);
+      return p.build(TensorList{first}, opt);
     } else {
-      return p.build(Sample{first}, RunMode::Async, opt);
+      return p.build(Sample{first}, opt);
     }
   }();
 
@@ -132,7 +132,8 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
   } else {
     require(push_single(run, first), "push identical caps failed");
   }
-  require(run.input_stats().renegotiations == 0, "unexpected renegotiation on identical caps");
+  require(simaai::neat::run_internal::input_stats(run).renegotiations == 0,
+          "unexpected renegotiation on identical caps");
 
   if (spec.stability_frames > 1) {
     if (spec.check_output) {
@@ -141,7 +142,8 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
       require(push_single(run, second), "push new size failed");
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
-    require(run.input_stats().renegotiations == 0, "unexpected renegotiation before stability");
+    require(simaai::neat::run_internal::input_stats(run).renegotiations == 0,
+            "unexpected renegotiation before stability");
     if (spec.check_output) {
       (void)run_single(run, second);
     } else {
@@ -158,7 +160,8 @@ inline void run_inputstream_renegotiate_test(const InputstreamRenegotiateSpec& s
     (void)wait_for_reneg(run, 1, 500);
   }
 
-  require(run.input_stats().renegotiations == 1, "expected exactly one renegotiation");
+  require(simaai::neat::run_internal::input_stats(run).renegotiations == 1,
+          "expected exactly one renegotiation");
 }
 
 inline void run_inputstream_format_change_test(const InputstreamFormatChangeSpec& spec) {
@@ -185,7 +188,7 @@ inline void run_inputstream_format_change_test(const InputstreamFormatChangeSpec
   opt.advanced.max_input_bytes =
       spec.max_input_bytes > 0 ? spec.max_input_bytes : default_format_change_pool_bytes(spec);
 
-  Run run = p.build(TensorList{nv12}, RunMode::Async, opt);
+  Run run = p.build(TensorList{nv12}, opt);
 
   if (spec.expect_throw) {
     (void)run.run(TensorList{nv12}, spec.timeout_ms);
@@ -203,7 +206,7 @@ inline void run_inputstream_format_change_test(const InputstreamFormatChangeSpec
   require(run.push(TensorList{rgb}), "push RGB input failed");
   require(wait_for_reneg(run, 1, spec.reneg_timeout_ms),
           "format change renegotiation not observed");
-  require(run.input_stats().renegotiations == 1,
+  require(simaai::neat::run_internal::input_stats(run).renegotiations == 1,
           "expected single renegotiation after format change");
   require(run.last_error().empty(), "unexpected error on format change");
 }

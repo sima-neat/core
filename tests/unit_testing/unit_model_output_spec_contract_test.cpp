@@ -38,7 +38,6 @@ RUN_TEST(
         Model model(tar);
         const Model::ModelInfo info = model.info();
         const std::vector<TensorSpec> specs = model.output_specs();
-        const TensorSpec first = model.output_spec();
 
         require(info.output_topology.physical_outputs >= 1,
                 "yolov9 should expose at least one physical output");
@@ -63,10 +62,11 @@ RUN_TEST(
                                                         shape_to_string(spec.shape));
         }
 
+        const TensorSpec& first = specs.front();
         require(first.shape == expected_shapes.front(),
-                "Model::output_spec should remain alias of first output_specs entry");
+                "Model::output_specs first entry should expose first logical output shape");
         require(!first.dtypes.empty() && first.dtypes[0] == TensorDType::Float32,
-                "Model::output_spec first entry dtype mismatch");
+                "Model::output_specs first entry dtype mismatch");
       }
 
       {
@@ -77,13 +77,14 @@ RUN_TEST(
         opt.top_k = 100;
         const std::string tar = require_yolov9_tar();
         Model model(tar, opt);
-        const TensorSpec spec = model.output_spec();
         const std::vector<TensorSpec> specs = model.output_specs();
+        require(!specs.empty(), "Model::output_specs boxdecode should not be empty");
+        const TensorSpec& spec = specs.front();
 
         require(spec.rank == -1,
-                "Model::output_spec boxdecode Model boundary should return unknown rank");
+                "Model::output_specs boxdecode Model boundary should return unknown rank");
         require(!spec.dtypes.empty() && spec.dtypes[0] == TensorDType::UInt8,
-                "Model::output_spec boxdecode Model boundary should expose UInt8 dtype");
+                "Model::output_specs boxdecode Model boundary should expose UInt8 dtype");
         require(specs.size() == 1, "Model::output_specs boxdecode should expose one terminal spec");
         require(specs.front().rank == -1,
                 "Model::output_specs boxdecode terminal rank should be unknown");
@@ -144,7 +145,7 @@ RUN_TEST(
         bool threw = false;
         try {
           Model legacy_model(legacy.tar_path);
-          (void)legacy_model.output_spec();
+          (void)legacy_model.output_specs();
         } catch (const std::exception& e) {
           threw = true;
           require_contains(std::string(e.what()), "strict MPK contract required",

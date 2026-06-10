@@ -308,7 +308,6 @@ Result run_async_two_thread(simaai::neat::Model& model, const MnistDataset& mnis
                             int queue_depth, bool read_outputs, int consumer_work_us) {
   simaai::neat::RunOptions run_opt;
   run_opt.queue_depth = queue_depth;
-  run_opt.enable_metrics = true;
   auto runner = model.build(std::vector<cv::Mat>{mnist.images.front()},
                             simaai::neat::Model::RouteOptions{}, run_opt);
   Result r;

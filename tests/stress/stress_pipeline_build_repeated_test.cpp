@@ -65,7 +65,7 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
 
              Run run;
              try {
-               run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
+               run = graph.build(TensorList{seed}, run_opt);
              } catch (const std::exception& e) {
                if (sima_test::likely_runtime_missing(e.what())) {
                  skip_long_test_exception(

@@ -123,7 +123,7 @@
     <text x="1007" y="602" class="mono codeLineNo">4</text>
     <text x="1034" y="504" class="mono code">
       <tspan x="1034" y="504">run = graph.build(</tspan>
-      <tspan x="1034" y="532">  input_tensor, neat.RunMode.Sync)</tspan>
+      <tspan x="1034" y="532">  input_tensor)</tspan>
       <tspan x="1034" y="572">out = run.push_and_pull(</tspan>
       <tspan x="1034" y="600">  input_tensor)</tspan>
     </text>

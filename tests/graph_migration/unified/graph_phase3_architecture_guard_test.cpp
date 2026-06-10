@@ -202,6 +202,10 @@ RUN_TEST(
 
       const std::string public_run_text = strip_cpp_comments(read_text(public_run));
       require_present(public_run_text, "std::shared_ptr<runtime::RunCore> core_", public_run);
+      require_absent(public_run_text, "struct RunStats", public_run);
+      require_absent(public_run_text, "struct RunDiagSnapshot", public_run);
+      require_absent(public_run_text, "struct RunElementTimingStats", public_run);
+      require_absent(public_run_text, "struct InputStreamStats", public_run);
       require_absent(public_run_text, "pipeline_state_", public_run);
       require_absent(public_run_text, "graph_state_", public_run);
 

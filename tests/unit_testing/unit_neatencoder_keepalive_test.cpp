@@ -52,8 +52,7 @@ int main() {
     simaai::neat::RunOptions opt;
     opt.queue_depth = 1;
 
-    simaai::neat::Run run =
-        p.build(simaai::neat::TensorList{sample}, simaai::neat::RunMode::Async, opt);
+    simaai::neat::Run run = p.build(simaai::neat::TensorList{sample}, opt);
     require(run.running(), "Pipeline did not enter running state");
 
     int sleep_ms = 35000;
