@@ -65,6 +65,13 @@ html.developer-center-shell-enabled .navbar__items--right:empty {
   display: none;
 }
 
+/* When the Developer Center shell is mounted it renders the software section
+   sub-bar itself, so hide core's own subnav to avoid a duplicate bar. The subnav
+   remains visible in standalone/dev builds where the shell is absent. */
+html.developer-center-shell-enabled .software-subnav {
+  display: none;
+}
+
 /* Frosted, borderless navbar (ported from the Developer Center docs). The blur
    is applied to .navbar__inner rather than .navbar on purpose: backdrop-filter
    on .navbar would make it the containing block for the position:fixed mobile
