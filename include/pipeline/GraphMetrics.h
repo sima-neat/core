@@ -5,8 +5,7 @@
  */
 #pragma once
 
-#include "pipeline/RuntimeMetrics.h"
-#include "graph/GraphTypes.h"
+#include "pipeline/PowerTelemetry.h"
 
 #include <cstdint>
 #include <cstddef>
@@ -16,6 +15,9 @@
 namespace simaai::neat {
 
 class Run;
+
+using RuntimeNodeId = std::size_t;
+static constexpr RuntimeNodeId kInvalidRuntimeNodeId = static_cast<RuntimeNodeId>(-1);
 
 struct NodeLatencySummary {
   std::uint64_t samples = 0;
@@ -40,7 +42,7 @@ struct GraphElementMetrics {
 
 struct GraphNodeMetrics {
   std::size_t pipeline_segment_id = static_cast<std::size_t>(-1);
-  graph::NodeId runtime_node_id = graph::kInvalidNode;
+  RuntimeNodeId runtime_node_id = kInvalidRuntimeNodeId;
   std::string node_id;
   std::vector<std::string> public_node_ids;
   std::string kind;
@@ -50,16 +52,37 @@ struct GraphNodeMetrics {
   NodeLatencySummary latency;
 };
 
+#ifdef SIMA_NEAT_INTERNAL
+struct GraphMetricsCounters {
+  std::uint64_t inputs_enqueued = 0;
+  std::uint64_t inputs_dropped = 0;
+  std::uint64_t inputs_pushed = 0;
+  std::uint64_t outputs_ready = 0;
+  std::uint64_t outputs_pulled = 0;
+  std::uint64_t outputs_dropped = 0;
+};
+
+struct GraphMetricsSummary {
+  double elapsed_seconds = 0.0;
+  double throughput_fps = 0.0;
+  GraphMetricsCounters counters;
+  PowerSummary power;
+};
+
+struct GraphMetricsOptions {
+  bool include_power = true;
+};
+
 struct GraphMetricsReport {
-  RuntimeMetrics graph_metrics;
+  GraphMetricsSummary graph_metrics;
   std::string aggregation = "run_lifetime";
   std::string latency_semantics = "sum_element_residency";
   std::string throughput_counting = "all_pulled_outputs";
   std::vector<GraphNodeMetrics> node_metrics;
 };
 
-GraphMetricsReport
-build_graph_metrics_report_run_lifetime(const Run& run,
-                                        const RuntimeMetricsOptions& opt = RuntimeMetricsOptions{});
+GraphMetricsReport build_graph_metrics_report_run_lifetime(const Run& run,
+                                                           const GraphMetricsOptions& opt = {});
+#endif
 
 } // namespace simaai::neat

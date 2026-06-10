@@ -47,8 +47,8 @@ simaai::neat::Sample run_connected_image_route(const cv::Mat& img_bgr, simaai::n
   app.connect(input, route);
   app.connect(route, output);
 
-  simaai::neat::Run run = app.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Async,
-                                    phase3_connected_yolo_run_options());
+  simaai::neat::Run run =
+      app.build(std::vector<cv::Mat>{img_bgr}, phase3_connected_yolo_run_options());
   require(static_cast<bool>(run), "connected YOLO route build failed");
   const std::vector<std::string> input_names = run.input_names();
   const std::vector<std::string> output_names = run.output_names();

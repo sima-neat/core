@@ -166,7 +166,7 @@ simaai::neat::Graph graph;
 graph.add(simaai::neat::nodes::Input({}));
 graph.add(simaai::neat::nodes::Output({}));
 
-auto run = graph.build(simaai::neat::Sample{}, simaai::neat::RunMode::Async);
+auto run = graph.build(simaai::neat::Sample{});
 
 simaai::neat::Sample in;
 in.kind = simaai::neat::SampleKind::Tensor;
@@ -193,7 +193,7 @@ graph = neat.Graph()
 graph.add(neat.nodes.input(neat.InputOptions()))
 graph.add(neat.nodes.output(neat.OutputOptions()))
 
-run = graph.build(neat.Sample(), neat.RunMode.Async)
+run = graph.build(neat.Sample())
 
 sample = neat.Sample()
 sample.kind = neat.SampleKind.Tensor
@@ -221,6 +221,6 @@ Both types flow through [`Run`](/reference/{lsa}/classes/simaai-neat-run) (`push
 
 ## Tutorials
 
-- [Pass NumPy Arrays to the Model](/tutorials/008-pass-numpy-to-model)
-- [Feed Models That Take Multiple Inputs](/tutorials/009-feed-multi-input-model)
-- [Read and Interpret Model Output](/tutorials/010-interpret-model-output)
+- [Pass NumPy Arrays to the Model](/tutorials/009-pass-numpy-to-model)
+- [Feed Models That Take Multiple Inputs](/tutorials/010-feed-multi-input-model)
+- [Read and Interpret Model Output](/tutorials/011-interpret-model-output)

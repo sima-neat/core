@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
@@ -37,7 +40,7 @@ simaai::neat::Run make_async_rgb_run_with_copy_input(const simaai::neat::Tensor&
   run_opt.queue_depth = queue_depth;
   run_opt.overflow_policy = OverflowPolicy::Block;
   run_opt.advanced.copy_input = true;
-  return graph.build(TensorList{seed}, RunMode::Async, run_opt);
+  return graph.build(TensorList{seed}, run_opt);
 }
 
 } // namespace
@@ -277,7 +280,7 @@ RUN_TEST(
         graph.add(nodes::Input(src_opt));
         graph.add(nodes::Output(OutputOptions::EveryFrame(16)));
 
-        Run sync_run = graph.build(TensorList{seed}, RunMode::Sync);
+        Run sync_run = graph.build_seeded_internal(TensorList{seed}, RunMode::Sync);
         require(sima_test::throws_with([&]() { (void)sync_run.push(TensorList{seed}); },
                                        "not allowed in sync mode"),
                 run_api_case("sync_push_tensor_throws", "Run::push should throw in sync mode"));
@@ -317,7 +320,7 @@ RUN_TEST(
         run_opt.queue_depth = 8;
 
         cv::Mat rgb_seed(48, 64, CV_8UC3, cv::Scalar(20, 40, 60));
-        Run run = graph.build(std::vector<cv::Mat>{rgb_seed}, RunMode::Async, run_opt);
+        Run run = graph.build(std::vector<cv::Mat>{rgb_seed}, run_opt);
 
         bool threw = false;
         std::string msg;
@@ -356,7 +359,7 @@ RUN_TEST(
             sima_test::throws_with(
                 [&]() {
                   cv::Mat empty;
-                  (void)graph.build(std::vector<cv::Mat>{empty}, RunMode::Async, run_opt);
+                  (void)graph.build(std::vector<cv::Mat>{empty}, run_opt);
                 },
                 "empty image input at index 0"),
             run_api_case("empty_input_build", "Graph::build should reject empty cv::Mat input"));

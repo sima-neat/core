@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 /**
  * @example sync_yolov8_test.cpp
  * Canonical production pipeline: input -> preprocess -> Infer -> boxdecode.
@@ -98,7 +101,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
 
   step_log("sync: before build");
-  auto run = p.build(
+  auto run = p.build_seeded_internal(
       simaai::neat::Sample{simaai::neat::Sample::from_image(
           img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
       simaai::neat::RunMode::Sync);

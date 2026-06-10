@@ -14,7 +14,7 @@ Use `Model` when you want model-aware graph assembly without manually wiring eve
 
 - `graph()`: full model path as a reusable Graph fragment.
 - `preprocess()`, `inference()`, `postprocess()`: reusable node-stage fragments.
-- `input_specs()` and `output_specs()`: full tensor-contract lists for multi-input / multi-output models (`input_spec()` / `output_spec()` are single-IO convenience accessors).
+- `input_specs()` and `output_specs()`: full tensor-contract lists for multi-input / multi-output models.
 - `build(...)` / `run(...)`: direct convenience execution via `Model::Runner`.
 
 Reference:
@@ -50,7 +50,7 @@ graph.add(model.graph())
 
 ## Inspect specs and run directly
 
-Before composing a Graph you can introspect the model's tensor contracts with `input_spec()` / `output_spec()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required. For multi-input or multi-output models, use `input_specs()` / `output_specs()` to get the full list of contracts.
+Before composing a Graph you can introspect the model's tensor contracts with `input_specs()` / `output_specs()` (and `metadata()`), then run a frame straight through with `run(...)` — no Graph required.
 
 <CodeTabs>
 <CodeTab label="C++" lang="cpp">
@@ -59,12 +59,16 @@ Before composing a Graph you can introspect the model's tensor contracts with `i
 simaai::neat::Model model("yolov8s_model.tar.gz");
 
 // Tensor contracts the model expects (input) and produces (output).
-const auto in  = model.input_spec();
-const auto out = model.output_spec();
-std::cout << "input  rank=" << in.rank  << " dims=" << in.shape.size()
-          << " dtypes=" << in.dtypes.size() << "\n";
-std::cout << "output rank=" << out.rank << " dims=" << out.shape.size() << "\n";
-std::cout << "metadata keys=" << model.metadata().size() << "\n";
+const auto inputs = model.input_specs();
+const auto outputs = model.output_specs();
+
+for (std::size_t i = 0; i < inputs.size(); ++i) {
+  const auto& input_shape = inputs[i].shape;
+}
+for (std::size_t i = 0; i < outputs.size(); ++i) {
+  const auto& output_shape = outputs[i].shape;
+}
+const auto metadata = model.metadata();
 
 // Run one frame directly via Model::Runner (no Graph required).
 simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeout_ms=*/2000);
@@ -77,12 +81,17 @@ simaai::neat::TensorList result = model.run(std::vector<cv::Mat>{frame}, /*timeo
 model = pyneat.Model("yolov8s_model.tar.gz")
 
 # Tensor contracts the model expects (input) and produces (output).
-print("input rank  =", model.input_spec().rank)
-print("output rank =", model.output_spec().rank)
-print("metadata keys =", len(model.metadata()))
+inputs = model.input_specs()
+outputs = model.output_specs()
+
+for input_spec in inputs:
+  input_shape = list(input_spec.shape)
+for output_spec in outputs:
+  output_shape = list(output_spec.shape)
+metadata = model.metadata()
 
 # Run one frame directly (no Graph required).
-outputs = model.run([frame], timeout_ms=2000)
+result = model.run([frame], timeout_ms=2000)
 ```
 
 </CodeTab>
@@ -107,6 +116,7 @@ before inspecting detailed bus logs.
 ## Tutorials
 
 - [Run Your First Model](/tutorials/001-run-your-first-model)
-- [Configure Model Options](/tutorials/004-configure-model-options)
-- [Read Detection Boxes from Model Output](/tutorials/006-read-detection-boxes)
-- [Plug a Model Into Your Pipeline](/tutorials/007-plug-model-into-pipeline)
+- [Benchmark Your Model](/tutorials/003-benchmark-your-model)
+- [Configure Model Options](/tutorials/005-configure-model-options)
+- [Read Detection Boxes from Model Output](/tutorials/007-read-detection-boxes)
+- [Plug a Model Into Your Pipeline](/tutorials/008-plug-model-into-pipeline)

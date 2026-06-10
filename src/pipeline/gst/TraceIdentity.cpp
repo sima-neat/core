@@ -137,7 +137,7 @@ void apply_to_pipeline(GstElement* pipeline, const std::vector<const GraphNodeMe
       if (enable) {
         const guint segment_id = static_cast<guint>(
             std::min<std::size_t>(node->pipeline_segment_id, static_cast<std::size_t>(G_MAXUINT)));
-        const gint runtime_node_id = (node->runtime_node_id != graph::kInvalidNode &&
+        const gint runtime_node_id = (node->runtime_node_id != kInvalidRuntimeNodeId &&
                                       node->runtime_node_id <= static_cast<graph::NodeId>(G_MAXINT))
                                          ? static_cast<gint>(node->runtime_node_id)
                                          : -1;

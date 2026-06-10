@@ -21,7 +21,7 @@ The Neat framework's pipelines run on GStreamer. Almost all of what's visible to
 | Bus messages | `GraphReport::bus_messages` |
 | `appsrc` push API | `Run::push()` (only on Nodes with `InputRole::Push`) |
 | `appsink` pull API | `Run::pull()` |
-| Per-element timing | `RunDiagSnapshot::element_timing` |
+| Per-element timing | `MeasureReport` from `Run::start_measurement()` |
 
 The application never writes a launch string directly, never names elements directly, and never touches the GStreamer C API. Everything goes through Nodes.
 
@@ -49,7 +49,7 @@ The framework's element naming is deterministic — the same Node list with the 
 
 - The `repro_gst_launch` field actually reproducible.
 - Test snapshots stable across runs.
-- Element identification (e.g., for `RunDiagSnapshot` lookups) machine-friendly.
+- Element identification (e.g., for measurement attribution) machine-friendly.
 
 The convention is `n<node_index>_<role>`, where `role` is a short stable identifier the Node author picks. See the [Node API group](/reference/cppapi/groups/nodes) for the public Node wrappers that participate in this naming scheme.
 

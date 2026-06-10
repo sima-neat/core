@@ -13,6 +13,10 @@
  */
 #pragma once
 
+#ifndef SIMA_NEAT_INTERNAL
+#error "Internal header. Not part of the public API."
+#endif
+
 #include "graph/Graph.h"
 #include "pipeline/Run.h"
 
@@ -353,8 +357,6 @@ public:
   /// Pull from whichever of `outputs` produces a sample first. `out_node` reports the source.
   std::optional<Sample> pull_any(const std::vector<Output>& outputs, int timeout_ms = -1,
                                  GraphRunStats* stats = nullptr, NodeId* out_node = nullptr);
-  /// Drain `warmup_count` samples (one per stream) and discard them.
-  bool warmup(const std::vector<Output>& outputs, int warmup_count, int timeout_ms = -1);
   /// Loop `pull_any()` until target/stall/max-runtime, optionally invoking `on_sample` per pull.
   void pull_until(const std::vector<Output>& outputs, GraphRunStats& stats,
                   const GraphRunPullOptions& opt,
@@ -374,14 +376,6 @@ public:
   void emit_summary(const GraphRunStats& stats) const;
   /// Same as above, using the run's internal stats collector.
   void emit_summary() const;
-  /// Return unified runtime metrics for recorded graph stats.
-  RuntimeMetrics metrics(const RuntimeMetricsOptions& opt = {}) const;
-  /// Render graph metrics in the requested format.
-  std::string metrics_report(const RuntimeMetricsOptions& opt = {},
-                             RuntimeMetricsFormat format = RuntimeMetricsFormat::Text) const;
-  /// Convenience overload for selecting the output format with default options.
-  std::string metrics_report(RuntimeMetricsFormat format) const;
-
   /// Human-readable description of the runtime graph (for diagnostics).
   std::string describe() const;
 

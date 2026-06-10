@@ -31,6 +31,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #if defined(SIMA_WITH_OPENCV)
@@ -48,6 +49,19 @@ class Graph;
 using TensorSpec = TensorConstraint;
 
 /**
+ * @brief Headline result returned by `Model::benchmark()`.
+ *
+ * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
+ * Power fields are populated when board power telemetry is available.
+ */
+struct BenchmarkReport {
+  double latency_ms = 0.0;
+  double fps = 0.0;
+  double avg_power_watts = 0.0;
+  double energy_joules = 0.0;
+};
+
+/**
  * @brief Loaded form of a compiled model archive; the simplified entry point to run inference on
  * Modalix.
  *
@@ -60,7 +74,7 @@ using TensorSpec = TensorConstraint;
  *     "here are detections."
  *   - **`build(...)`** that returns a long-lived `Runner` for streaming use cases (push many
  *     inputs over time, pull results asynchronously).
- *   - **Introspection** (`input_spec()`, `output_spec()`, `info()`, `metadata()`) so application
+ *   - **Introspection** (`input_specs()`, `output_specs()`, `info()`, `metadata()`) so application
  *     code can ask the Model what shape/dtype/topology it expects and produces.
  *
  * @code
@@ -387,12 +401,8 @@ public:
   simaai::neat::Graph graph(RouteOptions opt) const;
 
   // ── Introspection ────────────────────────────────────────────────────────────────────────
-  /// Single-input convenience accessor for `input_specs().front()`.
-  TensorSpec input_spec() const;
   /// Returns the expected input tensor specs (one per ingress port for multi-input models).
   std::vector<TensorSpec> input_specs() const;
-  /// Single-output convenience accessor for `output_specs().front()`.
-  TensorSpec output_spec() const;
   /// Returns the produced output tensor specs (multiple for multi-head models).
   std::vector<TensorSpec> output_specs() const;
   /**
@@ -499,35 +509,13 @@ public:
 
     /// Start observing caller-owned push/pull code without consuming outputs.
     simaai::neat::MeasureScope start_measurement(const simaai::neat::MeasureOptions& opt = {});
-    /**
-     * @brief Warm up the pipeline by running `warm` inferences before measurement begins.
-     *
-     * Useful for stable performance numbers — the first few inferences pay one-time setup costs
-     * (kernel load, JIT compilation, cache fill). Pass `warm = -1` to use a sensible default.
-     */
-    int warmup(const simaai::neat::TensorList& inputs, int warm = -1, int timeout_ms = -1);
     /// Close input (sends EOS) and release the underlying Run.
     void close();
-    /// End-to-end push/pull/latency stats (forwards to underlying Run).
-    simaai::neat::RunStats stats() const;
-    /// Latency, throughput, input stats, and optional power telemetry (forwards to Run).
-    simaai::neat::RunMeasurementSummary measurement_summary() const;
-    /// Unified latency/throughput/power/counter metrics (forwards to underlying Run).
-    simaai::neat::RuntimeMetrics metrics(const simaai::neat::RuntimeMetricsOptions& opt = {}) const;
-    /// Render unified runtime metrics (forwards to underlying Run).
-    std::string metrics_report(
-        const simaai::neat::RuntimeMetricsOptions& opt = {},
-        simaai::neat::RuntimeMetricsFormat format = simaai::neat::RuntimeMetricsFormat::Text) const;
-    /// Convenience overload for selecting the output format with default options.
-    std::string metrics_report(simaai::neat::RuntimeMetricsFormat format) const;
-    /// Per-stage / per-element / per-pad diagnostic snapshot (forwards to underlying Run).
-    simaai::neat::RunDiagSnapshot diag_snapshot() const;
-    /// Human-readable formatted report of stats + diagnostics (forwards to underlying Run).
-    std::string report(const simaai::neat::RunReportOptions& opt = {}) const;
     /// Send EOS into the input queue without releasing the Run (lets pull drain in flight).
     void close_input();
 
   private:
+    friend struct internal::ModelAccess;
     simaai::neat::Run run_{};
     std::optional<simaai::neat::InputOptions> tensor_input_opt_for_cv_{};
     std::vector<std::string> ingress_names_;
@@ -601,6 +589,14 @@ public:
   /// One-shot inference with `cv::Mat` inputs (OpenCV convenience).
   simaai::neat::TensorList run(const std::vector<cv::Mat>& inputs, int timeout_ms = -1);
 #endif
+
+  /**
+   * @brief Run a small synthetic benchmark for simple model execution.
+   *
+   * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
+   * measures async push/pull throughput, prints a compact summary, and returns headline metrics.
+   */
+  BenchmarkReport benchmark(int num_samples = 100);
 
 private:
   friend struct internal::ModelAccess;

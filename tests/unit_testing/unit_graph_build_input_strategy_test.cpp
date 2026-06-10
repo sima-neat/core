@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
@@ -92,15 +95,17 @@ RUN_TEST(
       {
         Graph graph = make_rgb_graph();
 
-        Run run_mat = graph.build(std::vector<cv::Mat>{mat_seed}, RunMode::Sync, run_opt);
+        Run run_mat =
+            graph.build_seeded_internal(std::vector<cv::Mat>{mat_seed}, RunMode::Sync, run_opt);
         require_tensor_outputs(run_mat.run(std::vector<cv::Mat>{mat_seed}, 1000), "sync build mat");
         run_mat.stop();
 
-        Run run_tensor = graph.build(TensorList{tensor_seed}, RunMode::Sync, run_opt);
+        Run run_tensor =
+            graph.build_seeded_internal(TensorList{tensor_seed}, RunMode::Sync, run_opt);
         require_tensor_outputs(run_tensor.run(TensorList{tensor_seed}, 1000), "sync build tensor");
         run_tensor.stop();
 
-        Run run_sample = graph.build(Sample{sample_seed}, RunMode::Sync, run_opt);
+        Run run_sample = graph.build_seeded_internal(Sample{sample_seed}, RunMode::Sync, run_opt);
         require_tensor_sample_outputs(run_sample.run(Sample{sample_seed}, 1000),
                                       "sync build sample");
         run_sample.stop();
@@ -123,16 +128,16 @@ RUN_TEST(
       {
         Graph graph = make_rgb_graph();
 
-        Run run_mat = graph.build(std::vector<cv::Mat>{mat_seed}, RunMode::Async, run_opt);
+        Run run_mat = graph.build(std::vector<cv::Mat>{mat_seed}, run_opt);
         require_tensor_outputs(run_mat.run(std::vector<cv::Mat>{mat_seed}, 1000),
                                "async build mat");
         run_mat.stop();
 
-        Run run_tensor = graph.build(TensorList{tensor_seed}, RunMode::Async, run_opt);
+        Run run_tensor = graph.build(TensorList{tensor_seed}, run_opt);
         require_tensor_outputs(run_tensor.run(TensorList{tensor_seed}, 1000), "async build tensor");
         run_tensor.stop();
 
-        Run run_sample = graph.build(Sample{sample_seed}, RunMode::Async, run_opt);
+        Run run_sample = graph.build(Sample{sample_seed}, run_opt);
         require_tensor_sample_outputs(run_sample.run(Sample{sample_seed}, 1000),
                                       "async build sample");
         run_sample.stop();

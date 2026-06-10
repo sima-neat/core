@@ -67,8 +67,7 @@ simaai::neat::Graph graph;
 graph.add(model.graph());
 
 cv::Mat img = /* your frame (RGB/BGR as configured) */;
-auto run = graph.build(img, simaai::neat::RunMode::Sync);
-auto out = run.push_and_pull(img, /*timeout_ms=*/1000);
+auto out = graph.run(std::vector<cv::Mat>{img});
 ```
 
 </CodeTab>
@@ -83,8 +82,7 @@ graph.add(model.graph())
 
 img = ...  # your frame tensor
 
-run = graph.build(img, neat.RunMode.Sync)
-out = run.run(img, timeout_ms=1000)
+out = graph.run([img])
 ```
 
 </CodeTab>
@@ -107,9 +105,8 @@ cv::Mat img = /* your frame */;
 simaai::neat::RunOptions opt;
 opt.queue_depth = 8;
 opt.overflow_policy = simaai::neat::OverflowPolicy::Block;
-opt.enable_metrics = true;
 
-auto run = graph.build(img, simaai::neat::RunMode::Async, opt);
+auto run = graph.build(img, opt);
 run.push(img);
 auto out = run.pull(/*timeout_ms=*/1000);
 ```
@@ -130,7 +127,7 @@ opt = neat.RunOptions()
 opt.queue_depth = 8
 opt.overflow_policy = neat.OverflowPolicy.Block
 
-run = graph.build(img, neat.RunMode.Async, opt)
+run = graph.build(img, opt)
 run.push(img)
 out = run.pull(timeout_ms=1000)
 ```
@@ -149,5 +146,5 @@ out = run.pull(timeout_ms=1000)
 
 - [Run Your First Model](/tutorials/001-run-your-first-model)
 - [Run Inference Asynchronously](/tutorials/002-run-inference-async)
-- [Build an Inference Pipeline](/tutorials/003-build-inference-pipeline)
-- [Embed a Model Inside a Graph](/tutorials/013-embed-model-inside-graph)
+- [Build an Inference Pipeline](/tutorials/004-build-inference-pipeline)
+- [Embed a Model Inside a Graph](/tutorials/014-embed-model-inside-graph)

@@ -96,7 +96,7 @@ int main() {
     run_opt.output_memory = simaai::neat::OutputMemory::Owned;
     run_opt.advanced.copy_input = false;
 
-    auto run = p.build(std::vector<cv::Mat>{img}, simaai::neat::RunMode::Async, run_opt);
+    auto run = p.build(std::vector<cv::Mat>{img}, run_opt);
 
     for (int i = 0; i < iters; ++i) {
       require(run.push(std::vector<cv::Mat>{img}), "async push failed");

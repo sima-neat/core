@@ -42,7 +42,7 @@ that uses it.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/compile-a-model/"><strong>Compile a Model</strong><span>Choose the right path for precompiled models, ONNX vision models, or GenAI models.</span></a></li>
       <li><a class="overview-link-card" href="/tools/model-zoo/"><strong>Use a Precompiled Model</strong><span>Start quickly with a ready-to-run model artifact.</span></a></li>
-      <li><a class="overview-link-card" href="/genai-llima/"><strong>GenAI with LLiMa</strong><span>Compile, test and benchmark GenAI models on Modalix.</span></a></li>
+      <li><a class="overview-link-card" href="/tools/model-sdk/"><strong>GenAI with LLiMa</strong><span>Compile, test and benchmark GenAI models on Modalix.</span></a></li>
     </ul>
   </section>
 

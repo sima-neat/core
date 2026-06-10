@@ -35,7 +35,6 @@ static void maybe_dump_error(const std::string& label, const std::string& err) {
 using simaai::neat::Graph;
 using simaai::neat::NeatError;
 using simaai::neat::Run;
-using simaai::neat::RunMode;
 using simaai::neat::RunOptions;
 using simaai::neat::Sample;
 using simaai::neat::nodes::Custom;
@@ -666,7 +665,7 @@ static void test_neatdecoder_failure() {
   opt.queue_depth = 1;
 
   const std::string err = expect_pipeline_error("neatdecoder", [&] {
-    Run run = p.build(simaai::neat::Sample{sample}, RunMode::Async, opt);
+    Run run = p.build(simaai::neat::Sample{sample}, opt);
     (void)run;
   });
 
@@ -700,7 +699,7 @@ static void test_neatencoder_dynamic_caps() {
   RunOptions opt;
   opt.queue_depth = 1;
 
-  Run run = p.build(simaai::neat::TensorList{input}, RunMode::Async, opt);
+  Run run = p.build(simaai::neat::TensorList{input}, opt);
   (void)run;
 }
 

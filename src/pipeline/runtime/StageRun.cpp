@@ -2608,7 +2608,7 @@ simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Mod
       p.add(node);
     }
     p.add(output_node);
-    return p.build(std::vector<cv::Mat>{input}, RunMode::Sync, opt);
+    return p.build_seeded_internal(std::vector<cv::Mat>{input}, RunMode::Sync, opt);
   };
 
   // Runtime ROI is carried in the Input node's per-buffer metadata template today.
@@ -2755,7 +2755,7 @@ TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat
       p.add(node);
     }
     p.add(output_node);
-    return p.build(Sample{stage_input}, RunMode::Sync, opt);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, opt);
   });
 
   const int timeout_ms = default_timeout_ms();
@@ -2879,7 +2879,7 @@ simaai::neat::Sample InferSample(const simaai::neat::Sample& input,
       p.add(node);
     }
     p.add(output_node);
-    return p.build(Sample{stage_input}, RunMode::Sync, opt);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, opt);
   });
   stage_trace("StageRun::Infer: after get_or_build");
 
@@ -3026,7 +3026,7 @@ simaai::neat::Sample MLASample(const simaai::neat::Sample& input,
       p.add(node);
     }
     p.add(output_node);
-    return p.build(Sample{stage_input}, RunMode::Sync, opt);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, opt);
   });
   stage_trace("StageRun::MLA: after get_or_build");
 
@@ -3186,7 +3186,7 @@ Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model&
       p.add(node);
     }
     p.add(output_node);
-    return p.build(Sample{stage_input}, RunMode::Sync, run_opt);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, run_opt);
   });
 
   const int timeout_ms = default_timeout_ms();

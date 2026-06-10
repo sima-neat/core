@@ -167,7 +167,7 @@ Seeded build gives NEAT the first input during build:
 neat::RunOptions opt;
 opt.startup_preflight = true;
 
-neat::Run run = app.build(neat::TensorList{first_image}, neat::RunMode::Async, opt);
+neat::Run run = app.build(neat::TensorList{first_image}, opt);
 ```
 
 Use this when the first input should seed shape/format adaptation before streaming starts. With
@@ -997,6 +997,6 @@ run.save_json("/tmp/app.graph_run.json")
 - [Model programming model](/develop-apps/development-workflow/model)
 - [Node programming model: groups and boundaries](/develop-apps/development-workflow/node#boundary-nodes)
 - [Tensor and Sample programming model](/develop-apps/development-workflow/core_types)
-- [Runtime tuning (Tutorial 015)](/tutorials/015-tune-throughput-and-queues)
-- [Diagnostics (Tutorial 011)](/tutorials/011-diagnose-a-pipeline)
+- [Runtime tuning (Tutorial 016)](/tutorials/016-tune-throughput-and-queues)
+- [Diagnostics (Tutorial 012)](/tutorials/012-diagnose-a-pipeline)
 - [GStreamer layer](/develop-apps/advanced-concepts/gstreamer_layer)

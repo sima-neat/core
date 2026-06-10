@@ -18,6 +18,14 @@ struct has_graph_build_input_runoptions_only<T,
                                                  std::declval<const simaai::neat::RunOptions&>()))>>
     : std::true_type {};
 
+template <typename T, typename = void> struct has_graph_build_input_runmode : std::false_type {};
+
+template <typename T>
+struct has_graph_build_input_runmode<
+    T, std::void_t<decltype(std::declval<T&>().build(
+           std::declval<const simaai::neat::TensorList&>(), std::declval<simaai::neat::RunMode>(),
+           std::declval<const simaai::neat::RunOptions&>()))>> : std::true_type {};
+
 template <typename T, typename Input, typename = void>
 struct has_build_single_input : std::false_type {};
 
@@ -59,6 +67,78 @@ template <typename T, typename Input>
 struct has_graphrun_input_push_single_input<
     T, Input, std::void_t<decltype(std::declval<T&>().push(std::declval<const Input&>()))>>
     : std::true_type {};
+
+template <typename T, typename = void> struct has_enable_metrics_field : std::false_type {};
+
+template <typename T>
+struct has_enable_metrics_field<T, std::void_t<decltype(std::declval<T&>().enable_metrics)>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_stats_method : std::false_type {};
+
+template <typename T>
+struct has_stats_method<T, std::void_t<decltype(std::declval<const T&>().stats())>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_input_stats_method : std::false_type {};
+
+template <typename T>
+struct has_input_stats_method<T, std::void_t<decltype(std::declval<const T&>().input_stats())>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_measurement_summary_method : std::false_type {};
+
+template <typename T>
+struct has_measurement_summary_method<
+    T, std::void_t<decltype(std::declval<const T&>().measurement_summary())>> : std::true_type {};
+
+template <typename T, typename = void> struct has_metrics_report_method : std::false_type {};
+
+template <typename T>
+struct has_metrics_report_method<T,
+                                 std::void_t<decltype(std::declval<const T&>().metrics_report())>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_metrics_method : std::false_type {};
+
+template <typename T>
+struct has_metrics_method<T, std::void_t<decltype(std::declval<const T&>().metrics())>>
+    : std::true_type {};
+
+struct NoopMeasureFn {
+  void operator()() const {}
+};
+
+template <typename T, typename = void> struct has_measure_method : std::false_type {};
+
+template <typename T>
+struct has_measure_method<T, std::void_t<decltype(std::declval<T&>().measure(
+                                 std::declval<simaai::neat::MeasureOptions>(), NoopMeasureFn{}))>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_report_method : std::false_type {};
+
+template <typename T>
+struct has_report_method<T, std::void_t<decltype(std::declval<const T&>().report())>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_diag_snapshot_method : std::false_type {};
+
+template <typename T>
+struct has_diag_snapshot_method<T, std::void_t<decltype(std::declval<const T&>().diag_snapshot())>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_power_summary_method : std::false_type {};
+
+template <typename T>
+struct has_power_summary_method<T, std::void_t<decltype(std::declval<const T&>().power_summary())>>
+    : std::true_type {};
+
+template <typename T, typename = void> struct has_diagnostics_summary_method : std::false_type {};
+
+template <typename T>
+struct has_diagnostics_summary_method<
+    T, std::void_t<decltype(std::declval<const T&>().diagnostics_summary())>> : std::true_type {};
 
 template <typename T, typename = void> struct has_set_frame_callback : std::false_type {};
 
@@ -132,8 +212,42 @@ int main() {
                 "Run::run(Tensor) should not exist; use TensorList");
   static_assert(!has_run_single_input<simaai::neat::Model, Tensor>::value,
                 "Model::run(Tensor) should not exist; use TensorList");
-  static_assert(!has_graph_build_input_runoptions_only<Graph>::value,
-                "Graph::build(TensorList, RunOptions) shorthand should not exist");
+  static_assert(has_graph_build_input_runoptions_only<Graph>::value,
+                "Graph::build(TensorList, RunOptions) is the reusable runner shorthand");
+  static_assert(!has_graph_build_input_runmode<Graph>::value,
+                "Graph::build(TensorList, RunMode, RunOptions) should not be public");
+
+  static_assert(!has_enable_metrics_field<simaai::neat::RunOptions>::value,
+                "RunOptions::enable_metrics should not be public");
+
+  static_assert(!has_stats_method<Run>::value, "Run::stats() should not be public");
+  static_assert(!has_input_stats_method<Run>::value, "Run::input_stats() should not be public");
+  static_assert(!has_measurement_summary_method<Run>::value,
+                "Run::measurement_summary() should not be public");
+  static_assert(!has_metrics_report_method<Run>::value,
+                "Run::metrics_report() should not be public");
+  static_assert(!has_metrics_method<Run>::value, "Run::metrics() should not be public");
+  static_assert(!has_measure_method<Run>::value, "Run::measure() should not be public");
+  static_assert(!has_report_method<Run>::value, "Run::report() should not be public");
+  static_assert(!has_diag_snapshot_method<Run>::value, "Run::diag_snapshot() should not be public");
+  static_assert(!has_power_summary_method<Run>::value, "Run::power_summary() should not be public");
+  static_assert(!has_diagnostics_summary_method<Run>::value,
+                "Run::diagnostics_summary() should not be public");
+  static_assert(!has_stats_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::stats() should not be public");
+  static_assert(!has_measurement_summary_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::measurement_summary() should not be public");
+  static_assert(!has_metrics_report_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::metrics_report() should not be public");
+  static_assert(!has_metrics_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::metrics() should not be public");
+  static_assert(!has_measure_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::measure() should not be public");
+  static_assert(!has_report_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::report() should not be public");
+  static_assert(!has_diag_snapshot_method<simaai::neat::Model::Runner>::value,
+                "Model::Runner::diag_snapshot() should not be public");
+
   static_assert(!has_set_frame_callback<Graph>::value,
                 "Graph::set_frame_callback should not exist");
   static_assert(!has_add_group_method<Graph>::value,

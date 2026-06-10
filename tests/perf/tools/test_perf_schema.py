@@ -86,13 +86,13 @@ class PerfSchemaTest(unittest.TestCase):
             "input_drop_count": 0.0,
             "output_drop_count": 0.0,
             "power": {"samples": 2, "total_avg_watts": 3.5},
-            "runtime_metrics": {"source_kind": "perf", "throughput_fps": 12.0},
+            "measure_report": {"schema": "sima.neat.measure_report", "throughput_batches_per_s": 12.0},
         }
         metrics = schema.parse_metrics_payload(payload)
         self.assertEqual(metrics["throughput"], 12.0)
         self.assertEqual(schema.parse_optional_power_payload(payload)["total_avg_watts"], 3.5)
         self.assertEqual(
-            schema.parse_optional_runtime_metrics_payload(payload)["source_kind"], "perf"
+            schema.parse_optional_measure_report_payload(payload)["schema"], "sima.neat.measure_report"
         )
 
     def test_optional_power_payload_must_be_object(self) -> None:

@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "graph_migration/common/phase3_graph_test_utils.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -62,9 +65,9 @@ simaai::neat::TensorList run_lazy_connected_model(simaai::neat::Model& model,
           label + ": second lazy push failed");
   simaai::neat::TensorList second = run.pull_tensors("classes", 20000);
   graph_phase3_test::require_nonempty_tensor_output(second, label + ": second lazy output");
-  const std::string report = run.report();
-  require(report.find("incomplete input spec") == std::string::npos,
-          label + ": report should not retain incomplete-input-spec failure after lazy build");
+  const std::string last_error = run.last_error();
+  require(last_error.find("incomplete input spec") == std::string::npos,
+          label + ": last_error should not retain incomplete-input-spec failure after lazy build");
   run.close();
   return second;
 }

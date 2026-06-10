@@ -16,7 +16,7 @@ A typical Neat development cycle looks like this:
 2. **Try Hello Neat** — confirm the library is wired up by compiling a minimal example.
 3. **Pick a compiled model** — Neat consumes a model package (`.tar.gz`, often called an MPK). You can grab one from the Model Zoo or compile your own with the SiMa.ai toolchain.
 4. **Author a `Model` / `Graph` / `Run`** — load the model, compose the graph, and execute it synchronously or asynchronously.
-5. **Run and inspect** — feed inputs, pull outputs, and use `GraphReport` / `Run::report()` to verify behavior.
+5. **Run and inspect** — feed inputs, pull outputs, and use `GraphReport` / `MeasureReport` to verify behavior.
 6. **Iterate with tutorials** — graduate from a single inference to pipelines, multi-input models, multi-stream graphs, and production-grade error handling.
 7. **Deploy** — link your application against the installed Neat library on the target device.
 

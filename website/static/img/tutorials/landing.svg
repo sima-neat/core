@@ -42,9 +42,9 @@
 <text x="76" y="248" class="fmono fln">1</text>
 <text x="104" y="248" class="fmono fcode" xml:space="preserve">opt.queue_depth = 8</text>
 <text x="76" y="274" class="fmono fln">2</text>
-<text x="104" y="274" class="fmono fcode" xml:space="preserve">run = graph.build([f], Async, opt)</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">run = graph.build([f], opt)</text>
 <text x="76" y="300" class="fmono fln">3</text>
-<text x="104" y="300" class="fmono fcode" xml:space="preserve">metrics = run.stats()</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">report = run.start_measurement(...).stop()</text>
 </g>
 </g>
 <g filter="url(#fsh)">

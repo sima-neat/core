@@ -35,7 +35,7 @@ std::shared_ptr<simaai::neat::Run> build_integration_run() {
   run_opt.overflow_policy = OverflowPolicy::Block;
 
   const Tensor seed = make_color_tensor(12, 8, ImageSpec::PixelFormat::RGB, 0x22);
-  return std::make_shared<Run>(graph.build(TensorList{seed}, RunMode::Async, run_opt));
+  return std::make_shared<Run>(graph.build(TensorList{seed}, run_opt));
 }
 
 } // namespace

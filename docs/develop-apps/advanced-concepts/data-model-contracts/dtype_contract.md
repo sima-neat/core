@@ -39,7 +39,7 @@ The matching **detessellation** happens after the MLA stage if the MLA's compile
 Two upgrades the planner can apply on top of the four-case decision:
 
 - **Generic Preproc**: when the application supplies arbitrary user-defined transforms (`PreprocessOptions::transforms`), the planner upgrades the chosen graph family to a "generic" variant that fuses those transforms with the standard preprocess. The contract at the MLA boundary doesn't change; the upgrade only affects what runs *before* the boundary.
-- **BoxDecode**: a postprocess upgrade that fuses NMS / decode steps for detection models. Visible to the application as a `BoxDecodeType` and a `DetectionMeta` on the output sample. See [`BoxDecodeType.h`](/reference/cppapi/files/include-pipeline-boxdecodetype-h) and [Tutorial 006: read detection boxes](/tutorials/006-read-detection-boxes).
+- **BoxDecode**: a postprocess upgrade that fuses NMS / decode steps for detection models. Visible to the application as a `BoxDecodeType` and a `DetectionMeta` on the output sample. See [`BoxDecodeType.h`](/reference/cppapi/files/include-pipeline-boxdecodetype-h) and [Tutorial 007: read detection boxes](/tutorials/007-read-detection-boxes).
 
 Both upgrades preserve the FP32-in / FP32-out vocabulary at the application boundary; they only change which kernels run inside the framework.
 

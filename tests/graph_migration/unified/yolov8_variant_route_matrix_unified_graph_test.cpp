@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
                                       prepared_runner_profile, prepared_runner_dequant_flags,
                                       nullptr, &route_opt);
         (void)model.info();
-        (void)model.input_spec();
+        (void)model.input_specs();
         (void)model.inference();
         std::cout << "MODEL_INIT_OK model=" << tar.filename().string()
                   << " backend=" << processcvu_run_target << " placement="

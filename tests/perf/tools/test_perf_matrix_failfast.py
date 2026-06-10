@@ -107,7 +107,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
                 "  'input_drop_count': 0.0,\n"
                 "  'output_drop_count': 0.0,\n"
                 "  'power': {'samples': 2, 'total_avg_watts': 5.5},\n"
-                "  'runtime_metrics': {'source_kind': 'perf', 'throughput_fps': 100.0},\n"
+                "  'measure_report': {'schema': 'sima.neat.measure_report', 'throughput_batches_per_s': 100.0},\n"
                 "}))\n",
                 encoding="utf-8",
             )
@@ -151,7 +151,7 @@ class PerfMatrixFailfastTest(unittest.TestCase):
 
             self.assertEqual(result.status, schema.ResultStatus.PASS)
             self.assertEqual(result.run_meta["power"]["total_avg_watts"], 5.5)
-            self.assertEqual(result.run_meta["runtime_metrics"]["source_kind"], "perf")
+            self.assertEqual(result.run_meta["measure_report"]["schema"], "sima.neat.measure_report")
 
 
 if __name__ == "__main__":

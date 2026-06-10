@@ -32,10 +32,10 @@ REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 # (TOC) position and the in-section ordering on the tutorials index page.
 # Modules whose number is not listed here fall to the end in numeric order.
 LEARNING_FLOW_ORDER = [
-    1, 2, 3, 4,        # Beginner foundations
-    8, 5, 10, 6,       # Core I/O and pre/postprocessing
-    7, 9, 11, 12, 17,  # Pipelines, diagnostics, custom graphs, live input
-    13, 14, 15, 16,    # Advanced: hybrid graphs, multi-stream, perf, production
+    1, 2, 3, 4, 5,          # Beginner foundations
+    9, 6, 11, 7,            # Core I/O and pre/postprocessing
+    8, 10, 12, 13, 18,      # Pipelines, diagnostics, custom graphs, live input
+    14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
 ]
 
 
@@ -47,7 +47,9 @@ def _flow_key(number: int) -> tuple:
         return (1, number)
 
 
-def docs_static_url(path: str) -> str:
+def docs_static_url(path: str, *, relative_prefix: str | None = None) -> str:
+    if relative_prefix is not None:
+        return f"{relative_prefix.rstrip('/')}/{path.lstrip('/')}"
     base_url = os.environ.get("DOCS_BASE_URL", "/").strip() or "/"
     if not base_url.startswith("/"):
         base_url = f"/{base_url}"
@@ -130,11 +132,19 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        return docs_static_url(f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg")
+        # Used from /tutorials/. Keep this relative so generated docs work with
+        # both root deployments and subpath deployments such as /software/.
+        return docs_static_url(
+            f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg",
+            relative_prefix="../..",
+        )
 
     @property
     def flow_image_url(self) -> str:
-        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg")
+        # Used from /tutorials/<chapter>/. Keep this relative so generated docs
+        # work with both root deployments and subpath deployments such as
+        # /software/.
+        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg", relative_prefix="../..")
 
     @property
     def display_title(self) -> str:
@@ -752,7 +762,10 @@ def generate_landing_animation(out_dir: pathlib.Path) -> None:
     steps = [
         ("Run a model", ["model = pyneat.Model('model.tar.gz')", "sample = model.run([image])"]),
         ("Build a pipeline", ["graph = pyneat.Graph()", "graph.add(model)", "run = graph.build([frame])"]),
-        ("Tune & deploy", ["opt.queue_depth = 8", "run = graph.build([f], Async, opt)", "metrics = run.stats()"]),
+        (
+            "Tune & deploy",
+            ["opt.queue_depth = 8", "run = graph.build([f], opt)", "report = run.start_measurement(...).stop()"],
+        ),
     ]
     svg = stepper_animation_svg(
         "Tutorials",
@@ -1187,7 +1200,7 @@ def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List
         '    <ul class="overview-link-list">',
     ]
     difficulty_copy = {
-        "Beginner": "First model run, async inference, basic graphs, and model options.",
+        "Beginner": "First model run, async inference, model benchmarking, basic graphs, and model options.",
         "Intermediate": "Data exchange, preprocessing, outputs, streaming, diagnostics, and graph composition.",
         "Advanced": "Multi-stream graphs, throughput tuning, and production-style pipeline structure.",
     }
@@ -1214,7 +1227,7 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         "",
         "# Tutorials",
         "",
-        f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
+        f'<img src="{docs_static_url("img/tutorials/landing.svg", relative_prefix="..")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
     ]
 
     cleaned_heading_body = _clean_heading_body(heading_body)

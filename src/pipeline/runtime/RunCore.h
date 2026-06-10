@@ -3,6 +3,7 @@
 #error "Internal header. Not part of the public API."
 #endif
 
+#include "pipeline/internal/RunDiagnostics.h"
 #include "ExecutionGraphRuntime.h"
 #include "EdgeRouter.h"
 #include "PipelineSegmentRuntime.h"

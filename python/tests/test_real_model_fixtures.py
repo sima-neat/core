@@ -568,7 +568,7 @@ def test_tensor_input_model_uses_quanttess_frontend_contract():
   model_b = _tensor_input_model(_env_path("SIMA_YOLO_TAR"))
 
   for model in (model_a, model_b):
-    input_spec = model.input_spec()
+    input_spec = model.input_specs()[0]
     appsrc = model.input_appsrc_options(True)
     backend = model.backend_fragment(pyneat.ModelStage.Preprocess).lower()
 

@@ -24,7 +24,7 @@ Typical flow:
 
 1. Build a `Model` from a compiled `.tar.gz` model archive.
 2. Add model routes, reusable fragments, and optional custom nodes to a `Graph`.
-3. `build(...)` to get a `Run`, then `run()` or `push()/pull()` tensors/samples.
+3. Use `run(...)` for one-shot execution, or `build(...)` to get a reusable `Run` for `push()/pull()`.
 
 ```cpp
 #include <neat.h>
@@ -36,24 +36,25 @@ graph.add(simaai::neat::nodes::Input());
 graph.add(model);
 graph.add(simaai::neat::nodes::Output());
 
-auto run = graph.build(simaai::neat::TensorList{input_tensor}, simaai::neat::RunMode::Sync);
-auto out = run.run(simaai::neat::TensorList{input_tensor});
+auto out = graph.run(simaai::neat::TensorList{input_tensor});
 ```
 
-For unified runtime reporting, use:
+For unified runtime reporting, measure an explicit workload window:
 
 ```cpp
 simaai::neat::RunOptions run_opt;
 run_opt.enable_board_power();
 
-auto run = graph.build(simaai::neat::TensorList{input_tensor}, simaai::neat::RunMode::Async,
-                       run_opt);
-auto metrics = run.metrics();
+auto run = graph.build(simaai::neat::TensorList{input_tensor}, run_opt);
+auto scope = run.start_measurement();
+run.push(simaai::neat::TensorList{input_tensor});
+(void)run.pull_tensors(5000);
+auto report = scope.stop();
+std::cout << report.to_text();
 ```
 
-That single `metrics()` surface is the preferred way to gather latency, throughput,
-and optional board power. `Model::Runner` forwards to the same Run-backed metrics
-surface; app-level graph execution should use `Graph::build() -> Run`.
+`start_measurement()` / `MeasureReport` is the single public surface for latency,
+throughput, counters, plugin/edge timing, and optional board power.
 
 ## Build NEAT
 

@@ -70,8 +70,8 @@ if [[ "${BASE_PATH}" != "/" ]]; then
   BASE_PATH="/${BASE_PATH#/}"
   BASE_PATH="${BASE_PATH%/}/"
   SERVE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/sima-neat-docs-link-root.XXXXXX")"
-  mkdir -p "${SERVE_DIR}$(dirname "${BASE_PATH%/}")"
-  ln -s "${SITE_DIR}" "${SERVE_DIR}${BASE_PATH%/}"
+  mkdir -p "${SERVE_DIR}${BASE_PATH%/}"
+  cp -a "${SITE_DIR}/." "${SERVE_DIR}${BASE_PATH%/}/"
 else
   SERVE_DIR="${SITE_DIR}"
 fi
