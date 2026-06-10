@@ -632,7 +632,11 @@ html[data-theme="dark"] .overview-workflow-image-dark {
 }
 
 .overview-link-card {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  height: 7.25rem;
+  box-sizing: border-box;
   padding: 0.9rem 1rem;
   border-radius: 14px;
   border: 1px solid #cad6e5;
@@ -654,6 +658,7 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   display: block;
   margin-bottom: 0.24rem;
   color: #10243a;
+  line-height: 1.25;
 }
 
 .overview-link-card span {
