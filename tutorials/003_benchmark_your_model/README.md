@@ -84,7 +84,7 @@ To integrate this chapter's C++ source into your own project with a custom `CMak
 
 Use this benchmark when you want a quick answer for a compiled model archive: does it run, what is the measured async throughput, and what are the headline board power numbers on this target?
 
-For application performance, benchmark the real pipeline too. Synthetic model input is deliberately stable, so it does not represent camera jitter, codec cost, real preprocessing, host scheduling under load, or downstream application logic. For queue-depth and backpressure tuning with a hand-built async run, see [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
+For application performance, benchmark the real pipeline too. Synthetic model input is deliberately stable, so it does not represent camera jitter, codec cost, real preprocessing, host scheduling under load, or downstream application logic. For queue-depth and backpressure tuning with a hand-built async run, see [Tune Throughput and Queue Depth](/tutorials/tune-throughput-and-queues).
 
 `Model::benchmark()` requires concrete `input_specs()` dimensions. If an input shape is dynamic or non-concrete, the benchmark fails clearly instead of guessing a shape.
 

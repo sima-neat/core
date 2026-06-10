@@ -33,9 +33,12 @@ REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 # Modules whose number is not listed here fall to the end in numeric order.
 LEARNING_FLOW_ORDER = [
     1, 2, 3, 4, 5,          # Beginner foundations
+    19, 20,                 # Beginner GenAI patterns
+    21,                     # GenAI serving
     9, 6, 11, 7,            # Core I/O and pre/postprocessing
     8, 10, 12, 13, 18,      # Pipelines, diagnostics, custom graphs, live input
     14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
+    22,                     # Advanced GenAI composition
 ]
 
 
@@ -128,23 +131,15 @@ class TutorialModule:
 
     @property
     def doc_slug(self) -> str:
-        return f"/tutorials/{self.number:03d}-{self.slug.replace('_', '-')}"
+        return f"/tutorials/{self.slug.replace('_', '-')}"
 
     @property
     def image_url(self) -> str:
-        # Used from /tutorials/. Keep this relative so generated docs work with
-        # both root deployments and subpath deployments such as /software/.
-        return docs_static_url(
-            f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg",
-            relative_prefix="../..",
-        )
+        return docs_static_url(f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg")
 
     @property
     def flow_image_url(self) -> str:
-        # Used from /tutorials/<chapter>/. Keep this relative so generated docs
-        # work with both root deployments and subpath deployments such as
-        # /software/.
-        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg", relative_prefix="../..")
+        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg")
 
     @property
     def display_title(self) -> str:
@@ -818,8 +813,12 @@ def parse_module(module_dir: pathlib.Path, repo_root: pathlib.Path) -> TutorialM
     if not readme_path.exists():
         raise FileNotFoundError(f"Missing README: {readme_path}")
 
-    cpp = next(module_dir.glob("*.cpp"), None)
-    py = next(module_dir.glob("*.py"), None)
+    cpp = module_dir / f"{slug}.cpp"
+    if not cpp.exists():
+        cpp = next(module_dir.glob("*.cpp"), None)
+    py = module_dir / f"{slug}.py"
+    if not py.exists():
+        py = next(module_dir.glob("*.py"), None)
     if not cpp or not py:
         raise FileNotFoundError(f"Missing C++/Python source pair in: {module_dir}")
 
@@ -1227,7 +1226,7 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         "",
         "# Tutorials",
         "",
-        f'<img src="{docs_static_url("img/tutorials/landing.svg", relative_prefix="..")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
+        f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
     ]
 
     cleaned_heading_body = _clean_heading_body(heading_body)
