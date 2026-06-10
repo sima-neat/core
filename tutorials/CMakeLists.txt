@@ -189,6 +189,30 @@ set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
   SKIP_RETURN_CODE 77
 )
 
+add_tutorial(tutorial_019_run_an_llm
+  019_run_an_llm/run_an_llm.cpp
+  NO_TEST
+  LABELS genai
+)
+
+add_tutorial(tutorial_020_run_a_vlm
+  020_run_a_vlm/run_a_vlm.cpp
+  NO_TEST
+  LABELS genai image
+)
+
+add_tutorial(tutorial_021_serve_genai_models
+  021_serve_genai_models/serve_genai_models.cpp
+  NO_TEST
+  LABELS genai server
+)
+
+add_tutorial(tutorial_022_compose_genai_into_graph
+  022_compose_genai_into_graph/compose_genai_into_graph.cpp
+  NO_TEST
+  LABELS genai graph
+)
+
 install(
   TARGETS ${PIPELINESESSION_TUTORIAL_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tutorials
