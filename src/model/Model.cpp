@@ -5987,6 +5987,7 @@ simaai::neat::GraphOptions route_options_from_model_route_options(const Model::R
     sess_opt.processmla = model_opt->processmla;
     sess_opt.prepared_runner = model_opt->prepared_runner;
     sess_opt.async_queue_depth = model_opt->async_queue_depth;
+    sess_opt.advanced_execution = model_opt->advanced_execution;
   }
   if (!opt.processcvu.pre_run_target.empty() &&
       upper_copy(opt.processcvu.pre_run_target) != "AUTO") {
@@ -6023,6 +6024,9 @@ simaai::neat::GraphOptions route_options_from_model_route_options(const Model::R
   if (opt.async_queue_depth > 0) {
     sess_opt.async_queue_depth = opt.async_queue_depth;
   }
+  // Route-level advanced_execution overlays the model-level one (route wins); the Graph
+  // constructor folds the result into the legacy fields above (explicit values override).
+  sess_opt.advanced_execution.overlay(opt.advanced_execution);
   return sess_opt;
 }
 

@@ -292,6 +292,10 @@ public:
     /// Depth for internally inserted async queue2 elements. 0 keeps the
     /// framework default.
     int async_queue_depth = 0;
+
+    /// Preferred jargon-free execution surface (folded into the legacy fields above at Graph
+    /// build time). All-unset by default, so it is a no-op unless a field is set.
+    AdvancedExecutionOptions advanced_execution;
   };
 
   /**
@@ -347,6 +351,10 @@ public:
     /// Depth for internally inserted async queue2 elements. 0 inherits from
     /// Model::Options/framework default.
     int async_queue_depth = 0;
+
+    /// Preferred jargon-free execution surface; overlaid over Model::Options.advanced_execution
+    /// (route wins) and folded into the legacy fields at Graph build time. No-op when unset.
+    AdvancedExecutionOptions advanced_execution;
   };
 
   /**

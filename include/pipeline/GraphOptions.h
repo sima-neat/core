@@ -273,6 +273,50 @@ struct PreparedRunnerOptions {
 };
 
 /**
+ * @brief Intent-named, jargon-free execution controls (preferred over the raw legacy fields).
+ *
+ * Bundles the scattered `processcvu`/`processmla`/`prepared_runner`/`async_queue_depth` knobs
+ * behind one optional-valued object. Every field is `std::optional`: an unset field changes
+ * nothing (so the default is a complete no-op), and a set field is applied **unconditionally**
+ * by `GraphOptions::resolve_advanced_execution()` — an explicit `false` overrides a truthy
+ * legacy default (unlike the legacy truthy-OR merge). Targets use the resolver's native tokens
+ * (`"AUTO"`/`"A65"`/`"EV74"` and documented aliases). This is the only execution surface bound
+ * into Python (`pyneat`); the raw legacy fields below stay for C++/ABI/back-compat.
+ * @ingroup pipeline
+ */
+struct AdvancedExecutionOptions {
+  std::optional<std::string> preprocess_target;         ///< -> processcvu.pre_run_target.
+  std::optional<std::string> postprocess_target;        ///< -> processcvu.post_run_target.
+  std::optional<bool> preprocess_async;                 ///< -> processcvu.async.
+  std::optional<bool> inference_async;                  ///< -> processmla.async.
+  std::optional<int> inference_output_buffers;          ///< -> processmla.output_pool_buffers.
+  std::optional<bool> defer_output_cache_sync;          ///< -> processmla.defer_output_invalidate.
+  std::optional<PreparedRunnerOptions> prepared_runner; ///< -> prepared_runner (whole-object).
+  std::optional<int> internal_queue_depth;              ///< -> async_queue_depth.
+
+  /// Overlay every set (has_value) field from @p other onto this (other wins). Used to layer
+  /// a route-level object over a model-level one before resolution.
+  void overlay(const AdvancedExecutionOptions& other) {
+    if (other.preprocess_target)
+      preprocess_target = other.preprocess_target;
+    if (other.postprocess_target)
+      postprocess_target = other.postprocess_target;
+    if (other.preprocess_async)
+      preprocess_async = other.preprocess_async;
+    if (other.inference_async)
+      inference_async = other.inference_async;
+    if (other.inference_output_buffers)
+      inference_output_buffers = other.inference_output_buffers;
+    if (other.defer_output_cache_sync)
+      defer_output_cache_sync = other.defer_output_cache_sync;
+    if (other.prepared_runner)
+      prepared_runner = other.prepared_runner;
+    if (other.internal_queue_depth)
+      internal_queue_depth = other.internal_queue_depth;
+  }
+};
+
+/**
  * @brief Per-Graph construction options. Passed to `Graph(opt)`.
  *
  * Most fields default to sensible values. Set `element_name_prefix`/`element_name_suffix`
@@ -311,6 +355,42 @@ struct GraphOptions {
   /// default/diagnostic environment fallback; positive values are used as-is
   /// and are the preferred production control.
   int async_queue_depth = 0;
+
+  /// Preferred jargon-free execution surface. Folded into the legacy fields above by
+  /// `resolve_advanced_execution()` (called from the Graph constructor). Default is all-unset,
+  /// so it is a no-op unless the caller sets a field.
+  AdvancedExecutionOptions advanced_execution;
+
+  /// Apply any explicitly-set `advanced_execution` fields onto the legacy execution fields.
+  /// Unconditional assignment on `has_value()` — an explicit `false`/`0`/token overrides even a
+  /// truthy legacy default. No-op when nothing is set; idempotent. Call once before the options
+  /// are consumed (the Graph constructor does this) so serialized/effective config reflects intent.
+  void resolve_advanced_execution() {
+    if (advanced_execution.preprocess_target) {
+      processcvu.pre_run_target = *advanced_execution.preprocess_target;
+    }
+    if (advanced_execution.postprocess_target) {
+      processcvu.post_run_target = *advanced_execution.postprocess_target;
+    }
+    if (advanced_execution.preprocess_async) {
+      processcvu.async = *advanced_execution.preprocess_async;
+    }
+    if (advanced_execution.inference_async) {
+      processmla.async = *advanced_execution.inference_async;
+    }
+    if (advanced_execution.inference_output_buffers) {
+      processmla.output_pool_buffers = *advanced_execution.inference_output_buffers;
+    }
+    if (advanced_execution.defer_output_cache_sync) {
+      processmla.defer_output_invalidate = *advanced_execution.defer_output_cache_sync;
+    }
+    if (advanced_execution.prepared_runner) {
+      prepared_runner = *advanced_execution.prepared_runner;
+    }
+    if (advanced_execution.internal_queue_depth) {
+      async_queue_depth = *advanced_execution.internal_queue_depth;
+    }
+  }
 };
 
 /**
