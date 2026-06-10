@@ -35,7 +35,10 @@ html[data-theme="dark"] {
     max-height: calc(100vh - var(--ifm-navbar-height) - var(--software-subnav-height) - 0.75rem) !important;
   }
 
-  .theme-layout-navbar.navbar--fixed-top {
+  /* Hide the native navbar only when the runtime shell is mounted (it supplies
+     the styled primary bar). Standalone, the native navbar renders the Developer
+     Center primary bar as a fallback so the software route is never bar-less. */
+  html.developer-center-shell-enabled .theme-layout-navbar.navbar--fixed-top {
     display: none;
   }
 }

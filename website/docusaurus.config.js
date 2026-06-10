@@ -64,6 +64,10 @@ const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
 const siteRoot = url.replace(/\/+$/, "");
 const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "/";
+// Developer Center shell config (sections for the primary bar). Single source,
+// mirrored from the docs host; passing siteRoot makes the cross-section links
+// absolute (external) so core's strict onBrokenLinks stays meaningful.
+const developerCenterShell = require("./src/developerCenter/shell/config.cjs");
 const footerLinks = [
   { label: "SiMa.ai Neat Framework Documentation", to: "/" },
 ];
@@ -161,17 +165,21 @@ const config = {
     },
     navbar: {
       title: "SiMa.ai Neat",
-      items: [
-        { label: "Installation", to: "/getting-started/installation/", position: "left" },
-        { label: "C++ API", to: "/reference/cppapi/", position: "left" },
-        { label: "Python API", to: "/reference/pythonapi/", position: "left" },
-        {
-          type: "html",
-          position: "left",
-          value:
-            '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" data-language-pref-select aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
-        },
-      ],
+      // Developer Center primary bar. These are the site-wide sections the
+      // Vulcan/Developer Center shell renders across hardware/software/examples;
+      // inlining them here makes core render the unified primary bar natively
+      // (as the `docs` host does via docusaurusNavbarItems), so the software
+      // route integrates into the primary bar instead of being iframed. The
+      // runtime shell (loaded from `/`) styles/syncs these when present.
+      // Keep in sync with docs `src/developerCenter/shell/config.cjs`.
+      // Developer Center primary bar — same items the docs host renders, so the
+      // software route shows the unified primary bar natively (like hardware)
+      // instead of being iframed. siteRoot makes cross-section links absolute;
+      // target:_self keeps in-place navigation. Core's own links live in the
+      // software subnav. Keep in sync with docs src/developerCenter/shell.
+      items: developerCenterShell
+        .docusaurusNavbarItems(siteRoot)
+        .map((item) => ({ ...item, target: "_self" })),
     },
     colorMode: {
       disableSwitch: true,
