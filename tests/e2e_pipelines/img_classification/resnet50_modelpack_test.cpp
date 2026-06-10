@@ -619,8 +619,10 @@ static std::vector<float> run_rtsp_scores(const simaai::neat::Model& model, cons
   simaai::neat::RunOptions run_opt;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
   simaai::neat::Run runner = p.build(run_opt);
+  const int warmup_per_try_ms = std::max(1, env_int("SIMA_RTSP_WARMUP_TIMEOUT_MS", 1000));
+  const int warmup_tries = std::max(1, env_int("SIMA_RTSP_WARMUP_TRIES", 20));
   for (int i = 0; i < warmup_count; ++i) {
-    (void)pull_sample_with_retry(runner, "rtsp_warmup", 500, 6);
+    (void)pull_sample_with_retry(runner, "rtsp_warmup", warmup_per_try_ms, warmup_tries);
   }
   std::vector<float> last_scores;
   const int attempts = std::max(1, max_attempts);
@@ -856,37 +858,61 @@ int main(int argc, char** argv) {
       const int rtp_ports_per_server = std::max(2, env_int("SIMA_RTSP_RTP_PORT_COUNT", 8));
       const int rtp_port_stride =
           std::max(1, env_int("SIMA_RTSP_RTP_PORT_STRIDE", rtp_ports_per_server));
-      const int chosen_port = rtsp_find_free_port_range_with_rtp(
-          base_port_env, 1, 1, max_tries, rtp_port_offset, rtp_ports_per_server, rtp_port_stride);
-      if (chosen_port < 0) {
-        throw std::runtime_error("Failed to find free RTSP port");
-      }
-      if (chosen_port != base_port_env) {
-        std::cerr << "[rtsp] base port " << base_port_env << " busy; using " << chosen_port << "\n";
-      }
-      const int port_offset = chosen_port - base_port_env;
-      const int tries_left = std::max(1, max_tries - port_offset);
-      const int rtp_port_base = chosen_port + rtp_port_offset;
-      auto rtsp_ctx = start_rtsp_server_with_retry(
-          image_path, kRtspInputWidth, kRtspInputHeight, kRtspInputWidth, kRtspInputHeight,
-          kInferFps, chosen_port, rtp_port_base, rtp_ports_per_server, tries_left);
-      struct RtspGuard {
-        simaai::neat::RtspServerHandle* handle = nullptr;
-        ~RtspGuard() {
-          if (handle)
-            handle->stop();
-        }
-      } rtsp_guard{&rtsp_ctx.handle};
 
       const int warmup = std::max(0, env_int("SIMA_RTSP_WARMUP", 30));
       const int attempts = std::max(1, env_int("SIMA_RTSP_ATTEMPTS", 30));
-      auto rtsp_scores = run_rtsp_scores(model_nv12_rtsp, rtsp_ctx.handle.url(), kRtspInputWidth,
-                                         kRtspInputHeight, kInferFps,
-                                         /*print_pipeline=*/true,
-                                         /*warmup_count=*/warmup,
-                                         /*expected_id=*/expect,
-                                         /*min_prob=*/prob,
-                                         /*max_attempts=*/attempts);
+      const int session_retries = std::max(1, env_int("SIMA_RTSP_SESSION_RETRIES", 3));
+      std::vector<float> rtsp_scores;
+      std::string last_rtsp_error;
+      bool rtsp_ok = false;
+      for (int retry = 0; retry < session_retries && !rtsp_ok; ++retry) {
+        const int port_base = base_port_env + retry;
+        const int chosen_port =
+            rtsp_find_free_port_range_with_rtp(port_base, 1, 1, max_tries, rtp_port_offset,
+                                               rtp_ports_per_server, rtp_port_stride);
+        if (chosen_port < 0) {
+          last_rtsp_error = "Failed to find free RTSP port";
+          break;
+        }
+        if (chosen_port != base_port_env) {
+          std::cerr << "[rtsp] base port " << base_port_env << " busy; using " << chosen_port
+                    << "\n";
+        }
+        const int port_offset = chosen_port - port_base;
+        const int tries_left = std::max(1, max_tries - port_offset);
+        const int rtp_port_base = chosen_port + rtp_port_offset;
+        auto rtsp_ctx = start_rtsp_server_with_retry(
+            image_path, kRtspInputWidth, kRtspInputHeight, kRtspInputWidth, kRtspInputHeight,
+            kInferFps, chosen_port, rtp_port_base, rtp_ports_per_server, tries_left);
+        struct RtspGuard {
+          simaai::neat::RtspServerHandle* handle = nullptr;
+          ~RtspGuard() {
+            if (handle)
+              handle->stop();
+          }
+        } rtsp_guard{&rtsp_ctx.handle};
+
+        try {
+          rtsp_scores = run_rtsp_scores(model_nv12_rtsp, rtsp_ctx.handle.url(), kRtspInputWidth,
+                                        kRtspInputHeight, kInferFps,
+                                        /*print_pipeline=*/true,
+                                        /*warmup_count=*/warmup,
+                                        /*expected_id=*/expect,
+                                        /*min_prob=*/prob,
+                                        /*max_attempts=*/attempts);
+          rtsp_ok = true;
+        } catch (const std::exception& ex) {
+          last_rtsp_error = ex.what();
+          if (retry + 1 >= session_retries) {
+            break;
+          }
+          std::cerr << "[rtsp] session attempt " << (retry + 1) << "/" << session_retries
+                    << " failed: " << last_rtsp_error << "; retrying\n";
+        }
+      }
+      if (!rtsp_ok) {
+        throw std::runtime_error(last_rtsp_error.empty() ? "RTSP session failed" : last_rtsp_error);
+      }
       check_top1(rtsp_scores, expect, prob, "rtsp");
     }
     return 0;
