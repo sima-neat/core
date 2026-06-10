@@ -80,7 +80,6 @@ using simaai::neat::Device;
 using simaai::neat::DeviceType;
 using simaai::neat::Graph;
 using simaai::neat::GraphElementMetrics;
-using simaai::neat::GraphMetricsReport;
 using simaai::neat::GraphNodeMetrics;
 using simaai::neat::GraphOptions;
 using simaai::neat::GraphReport;
@@ -88,6 +87,8 @@ using simaai::neat::GraphRunAutoExportOptions;
 using simaai::neat::GraphRunExportOptions;
 using simaai::neat::ImageSpec;
 using simaai::neat::MapMode;
+using simaai::neat::MeasureCounters;
+using simaai::neat::MeasureInputStats;
 using simaai::neat::MeasureLatencyStats;
 using simaai::neat::MeasureOptions;
 using simaai::neat::MeasurePluginLatency;
@@ -107,25 +108,9 @@ using simaai::neat::PullStatus;
 using simaai::neat::Run;
 using simaai::neat::RunAdvancedOptions;
 using simaai::neat::RunAutoExportOptions;
-using simaai::neat::RunDiagSnapshot;
-using simaai::neat::RunElementFlowStats;
-using simaai::neat::RunElementPadTimingStats;
-using simaai::neat::RunElementTimingStats;
 using simaai::neat::RunExportOptions;
-using simaai::neat::RunMeasurementSummary;
-using simaai::neat::RunMode;
 using simaai::neat::RunOptions;
 using simaai::neat::RunPreset;
-using simaai::neat::RunReportOptions;
-using simaai::neat::RunStageStats;
-using simaai::neat::RunStats;
-using simaai::neat::RuntimeCounters;
-using simaai::neat::RuntimeLatencyMetrics;
-using simaai::neat::RuntimeMetricGroup;
-using simaai::neat::RuntimeMetrics;
-using simaai::neat::RuntimeMetricsFormat;
-using simaai::neat::RuntimeMetricsOptions;
-using simaai::neat::RuntimeMetricValue;
 using simaai::neat::Sample;
 using simaai::neat::SampleKind;
 using simaai::neat::Tensor;
@@ -1386,13 +1371,6 @@ NB_MODULE(_pyneat_core, m) {
       .value("Write", MapMode::Write)
       .value("ReadWrite", MapMode::ReadWrite);
 
-  nb::enum_<RunMode>(m, "RunMode").value("Async", RunMode::Async).value("Sync", RunMode::Sync);
-
-  nb::enum_<RuntimeMetricsFormat>(m, "RuntimeMetricsFormat")
-      .value("Text", RuntimeMetricsFormat::Text)
-      .value("Json", RuntimeMetricsFormat::Json)
-      .value("CompactText", RuntimeMetricsFormat::CompactText);
-
   nb::enum_<PowerMonitorProfile>(m, "PowerMonitorProfile")
       .value("Auto", PowerMonitorProfile::Auto)
       .value("ModalixSom", PowerMonitorProfile::ModalixSom)
@@ -2297,7 +2275,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("queue_depth", &RunOptions::queue_depth)
       .def_rw("overflow_policy", &RunOptions::overflow_policy)
       .def_rw("output_memory", &RunOptions::output_memory)
-      .def_rw("enable_metrics", &RunOptions::enable_metrics)
       .def_rw("input_timeout_ms", &RunOptions::input_timeout_ms)
       .def_rw("startup_preflight", &RunOptions::startup_preflight)
       .def_rw("advanced", &RunOptions::advanced)
@@ -2326,92 +2303,6 @@ NB_MODULE(_pyneat_core, m) {
         "sample_interval_ms"_a = 100);
   m.def("power_monitor_profile_name", &simaai::neat::power_monitor_profile_name, "profile"_a);
 
-  nb::class_<simaai::neat::InputStreamStats>(m, "InputStreamStats")
-      .def(nb::init<>())
-      .def_rw("push_count", &simaai::neat::InputStreamStats::push_count)
-      .def_rw("push_failures", &simaai::neat::InputStreamStats::push_failures)
-      .def_rw("pull_count", &simaai::neat::InputStreamStats::pull_count)
-      .def_rw("poll_count", &simaai::neat::InputStreamStats::poll_count)
-      .def_rw("dropped_frames", &simaai::neat::InputStreamStats::dropped_frames)
-      .def_rw("renegotiations", &simaai::neat::InputStreamStats::renegotiations)
-      .def_rw("alloc_grows", &simaai::neat::InputStreamStats::alloc_grows)
-      .def_rw("growth_blocked", &simaai::neat::InputStreamStats::growth_blocked)
-      .def_rw("renegotiation_blocked", &simaai::neat::InputStreamStats::renegotiation_blocked)
-      .def_rw("avg_alloc_us", &simaai::neat::InputStreamStats::avg_alloc_us)
-      .def_rw("avg_map_us", &simaai::neat::InputStreamStats::avg_map_us)
-      .def_rw("avg_copy_us", &simaai::neat::InputStreamStats::avg_copy_us)
-      .def_rw("avg_push_us", &simaai::neat::InputStreamStats::avg_push_us)
-      .def_rw("avg_pull_wait_us", &simaai::neat::InputStreamStats::avg_pull_wait_us)
-      .def_rw("avg_decode_us", &simaai::neat::InputStreamStats::avg_decode_us);
-
-  nb::class_<RunStats>(m, "RunStats")
-      .def(nb::init<>())
-      .def_rw("inputs_enqueued", &RunStats::inputs_enqueued)
-      .def_rw("inputs_dropped", &RunStats::inputs_dropped)
-      .def_rw("inputs_pushed", &RunStats::inputs_pushed)
-      .def_rw("outputs_ready", &RunStats::outputs_ready)
-      .def_rw("outputs_pulled", &RunStats::outputs_pulled)
-      .def_rw("outputs_dropped", &RunStats::outputs_dropped)
-      .def_rw("avg_latency_ms", &RunStats::avg_latency_ms)
-      .def_rw("min_latency_ms", &RunStats::min_latency_ms)
-      .def_rw("max_latency_ms", &RunStats::max_latency_ms);
-
-  nb::class_<RuntimeMetricsOptions>(m, "RuntimeMetricsOptions")
-      .def(nb::init<>())
-      .def_rw("include_power", &RuntimeMetricsOptions::include_power)
-      .def_rw("include_diagnostics", &RuntimeMetricsOptions::include_diagnostics)
-      .def_rw("include_pipeline", &RuntimeMetricsOptions::include_pipeline)
-      .def_rw("include_percentiles", &RuntimeMetricsOptions::include_percentiles);
-
-  nb::class_<RuntimeLatencyMetrics>(m, "RuntimeLatencyMetrics")
-      .def(nb::init<>())
-      .def_rw("avg_ms", &RuntimeLatencyMetrics::avg_ms)
-      .def_rw("min_ms", &RuntimeLatencyMetrics::min_ms)
-      .def_rw("max_ms", &RuntimeLatencyMetrics::max_ms)
-      .def_rw("p50_ms", &RuntimeLatencyMetrics::p50_ms)
-      .def_rw("p95_ms", &RuntimeLatencyMetrics::p95_ms)
-      .def_rw("has_percentiles", &RuntimeLatencyMetrics::has_percentiles);
-
-  nb::class_<RuntimeCounters>(m, "RuntimeCounters")
-      .def(nb::init<>())
-      .def_rw("inputs_enqueued", &RuntimeCounters::inputs_enqueued)
-      .def_rw("inputs_dropped", &RuntimeCounters::inputs_dropped)
-      .def_rw("inputs_pushed", &RuntimeCounters::inputs_pushed)
-      .def_rw("outputs_ready", &RuntimeCounters::outputs_ready)
-      .def_rw("outputs_pulled", &RuntimeCounters::outputs_pulled)
-      .def_rw("outputs_dropped", &RuntimeCounters::outputs_dropped);
-
-  nb::class_<RuntimeMetricValue>(m, "RuntimeMetricValue")
-      .def(nb::init<>())
-      .def_rw("name", &RuntimeMetricValue::name)
-      .def_rw("value", &RuntimeMetricValue::value)
-      .def_rw("unit", &RuntimeMetricValue::unit);
-
-  nb::class_<RuntimeMetricGroup>(m, "RuntimeMetricGroup")
-      .def(nb::init<>())
-      .def_rw("name", &RuntimeMetricGroup::name)
-      .def_rw("values", &RuntimeMetricGroup::values);
-
-  nb::class_<RuntimeMetrics>(m, "RuntimeMetrics")
-      .def(nb::init<>())
-      .def_rw("source_kind", &RuntimeMetrics::source_kind)
-      .def_rw("source_name", &RuntimeMetrics::source_name)
-      .def_rw("elapsed_seconds", &RuntimeMetrics::elapsed_seconds)
-      .def_rw("throughput_fps", &RuntimeMetrics::throughput_fps)
-      .def_rw("latency", &RuntimeMetrics::latency)
-      .def_rw("counters", &RuntimeMetrics::counters)
-      .def_rw("power", &RuntimeMetrics::power)
-      .def_rw("metadata", &RuntimeMetrics::metadata)
-      .def_rw("groups", &RuntimeMetrics::groups);
-
-  nb::class_<RunMeasurementSummary>(m, "RunMeasurementSummary")
-      .def(nb::init<>())
-      .def_rw("stats", &RunMeasurementSummary::stats)
-      .def_rw("input_stats", &RunMeasurementSummary::input_stats)
-      .def_rw("elapsed_seconds", &RunMeasurementSummary::elapsed_seconds)
-      .def_rw("throughput_fps", &RunMeasurementSummary::throughput_fps)
-      .def_rw("power", &RunMeasurementSummary::power);
-
   nb::class_<NodeLatencySummary>(m, "NodeLatencySummary")
       .def(nb::init<>())
       .def_rw("samples", &NodeLatencySummary::samples)
@@ -2437,14 +2328,6 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("element_names", &GraphNodeMetrics::element_names)
       .def_rw("elements", &GraphNodeMetrics::elements)
       .def_rw("latency", &GraphNodeMetrics::latency);
-
-  nb::class_<GraphMetricsReport>(m, "GraphMetricsReport")
-      .def(nb::init<>())
-      .def_rw("graph_metrics", &GraphMetricsReport::graph_metrics)
-      .def_rw("aggregation", &GraphMetricsReport::aggregation)
-      .def_rw("latency_semantics", &GraphMetricsReport::latency_semantics)
-      .def_rw("throughput_counting", &GraphMetricsReport::throughput_counting)
-      .def_rw("node_metrics", &GraphMetricsReport::node_metrics);
 
   nb::class_<MeasureOptions>(m, "MeasureOptions")
       .def(nb::init<>())
@@ -2490,6 +2373,33 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("min_ms", &MeasurePluginLatency::min_ms)
       .def_rw("max_ms", &MeasurePluginLatency::max_ms);
 
+  nb::class_<MeasureCounters>(m, "MeasureCounters")
+      .def(nb::init<>())
+      .def_rw("inputs_enqueued", &MeasureCounters::inputs_enqueued)
+      .def_rw("inputs_pushed", &MeasureCounters::inputs_pushed)
+      .def_rw("outputs_ready", &MeasureCounters::outputs_ready)
+      .def_rw("outputs_pulled", &MeasureCounters::outputs_pulled)
+      .def_rw("inputs_dropped", &MeasureCounters::inputs_dropped)
+      .def_rw("outputs_dropped", &MeasureCounters::outputs_dropped);
+
+  nb::class_<MeasureInputStats>(m, "MeasureInputStats")
+      .def(nb::init<>())
+      .def_rw("push_count", &MeasureInputStats::push_count)
+      .def_rw("push_failures", &MeasureInputStats::push_failures)
+      .def_rw("pull_count", &MeasureInputStats::pull_count)
+      .def_rw("poll_count", &MeasureInputStats::poll_count)
+      .def_rw("dropped_frames", &MeasureInputStats::dropped_frames)
+      .def_rw("renegotiations", &MeasureInputStats::renegotiations)
+      .def_rw("alloc_grows", &MeasureInputStats::alloc_grows)
+      .def_rw("growth_blocked", &MeasureInputStats::growth_blocked)
+      .def_rw("renegotiation_blocked", &MeasureInputStats::renegotiation_blocked)
+      .def_rw("avg_alloc_us", &MeasureInputStats::avg_alloc_us)
+      .def_rw("avg_map_us", &MeasureInputStats::avg_map_us)
+      .def_rw("avg_copy_us", &MeasureInputStats::avg_copy_us)
+      .def_rw("avg_push_us", &MeasureInputStats::avg_push_us)
+      .def_rw("avg_pull_wait_us", &MeasureInputStats::avg_pull_wait_us)
+      .def_rw("avg_decode_us", &MeasureInputStats::avg_decode_us);
+
   nb::class_<MeasureReport>(m, "MeasureReport")
       .def(nb::init<>())
       .def_rw("options", &MeasureReport::options)
@@ -2501,79 +2411,14 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("end_to_end", &MeasureReport::end_to_end)
       .def_rw("frame_gap", &MeasureReport::frame_gap)
       .def_rw("latency_samples_collected", &MeasureReport::latency_samples_collected)
+      .def_rw("counters", &MeasureReport::counters)
+      .def_rw("input", &MeasureReport::input)
       .def_rw("plugin_latency", &MeasureReport::plugin_latency)
       .def_rw("node_metrics", &MeasureReport::node_metrics)
-      .def_rw("inputs_pushed", &MeasureReport::inputs_pushed)
-      .def_rw("outputs_pulled", &MeasureReport::outputs_pulled)
-      .def_rw("inputs_dropped", &MeasureReport::inputs_dropped)
-      .def_rw("outputs_dropped", &MeasureReport::outputs_dropped)
-      .def_rw("final_run_stats", &MeasureReport::final_run_stats)
       .def_rw("power", &MeasureReport::power)
       .def("text", &MeasureReport::to_text)
-      .def("to_text", &MeasureReport::to_text);
-
-  nb::class_<RunStageStats>(m, "RunStageStats")
-      .def(nb::init<>())
-      .def_rw("stage_name", &RunStageStats::stage_name)
-      .def_rw("samples", &RunStageStats::samples)
-      .def_rw("total_us", &RunStageStats::total_us)
-      .def_rw("max_us", &RunStageStats::max_us);
-
-  nb::class_<RunElementTimingStats>(m, "RunElementTimingStats")
-      .def(nb::init<>())
-      .def_rw("element_name", &RunElementTimingStats::element_name)
-      .def_rw("samples", &RunElementTimingStats::samples)
-      .def_rw("total_us", &RunElementTimingStats::total_us)
-      .def_rw("max_us", &RunElementTimingStats::max_us)
-      .def_rw("min_us", &RunElementTimingStats::min_us)
-      .def_rw("missed_in", &RunElementTimingStats::missed_in)
-      .def_rw("missed_out", &RunElementTimingStats::missed_out);
-
-  nb::class_<RunElementFlowStats>(m, "RunElementFlowStats")
-      .def(nb::init<>())
-      .def_rw("element_name", &RunElementFlowStats::element_name)
-      .def_rw("in_buffers", &RunElementFlowStats::in_buffers)
-      .def_rw("out_buffers", &RunElementFlowStats::out_buffers)
-      .def_rw("in_bytes", &RunElementFlowStats::in_bytes)
-      .def_rw("out_bytes", &RunElementFlowStats::out_bytes)
-      .def_rw("caps_changes", &RunElementFlowStats::caps_changes);
-
-  nb::class_<RunElementPadTimingStats>(m, "RunElementPadTimingStats")
-      .def(nb::init<>())
-      .def_rw("element_name", &RunElementPadTimingStats::element_name)
-      .def_rw("pad_name", &RunElementPadTimingStats::pad_name)
-      .def_rw("is_sink", &RunElementPadTimingStats::is_sink)
-      .def_rw("samples", &RunElementPadTimingStats::samples)
-      .def_rw("inter_arrival_total_us", &RunElementPadTimingStats::inter_arrival_total_us)
-      .def_rw("inter_arrival_max_us", &RunElementPadTimingStats::inter_arrival_max_us)
-      .def_rw("queue_wait_samples", &RunElementPadTimingStats::queue_wait_samples)
-      .def_rw("queue_wait_total_us", &RunElementPadTimingStats::queue_wait_total_us)
-      .def_rw("queue_wait_max_us", &RunElementPadTimingStats::queue_wait_max_us)
-      .def_rw("bytes", &RunElementPadTimingStats::bytes);
-
-  nb::class_<RunDiagSnapshot>(m, "RunDiagSnapshot")
-      .def(nb::init<>())
-      .def_rw("stages", &RunDiagSnapshot::stages)
-      .def_rw("boundaries", &RunDiagSnapshot::boundaries)
-      .def_rw("element_timings", &RunDiagSnapshot::element_timings)
-      .def_rw("element_flows", &RunDiagSnapshot::element_flows)
-      .def_rw("element_pad_timings", &RunDiagSnapshot::element_pad_timings);
-
-  nb::class_<RunReportOptions>(m, "RunReportOptions")
-      .def(nb::init<>())
-      .def_rw("include_pipeline", &RunReportOptions::include_pipeline)
-      .def_rw("include_stage_timings", &RunReportOptions::include_stage_timings)
-      .def_rw("include_element_timings", &RunReportOptions::include_element_timings)
-      .def_rw("include_boundaries", &RunReportOptions::include_boundaries)
-      .def_rw("include_flow_stats", &RunReportOptions::include_flow_stats)
-      .def_rw("include_node_reports", &RunReportOptions::include_node_reports)
-      .def_rw("include_next_cpu", &RunReportOptions::include_next_cpu)
-      .def_rw("include_queue_depth", &RunReportOptions::include_queue_depth)
-      .def_rw("include_num_buffers", &RunReportOptions::include_num_buffers)
-      .def_rw("include_run_stats", &RunReportOptions::include_run_stats)
-      .def_rw("include_input_stats", &RunReportOptions::include_input_stats)
-      .def_rw("include_power", &RunReportOptions::include_power)
-      .def_rw("include_system_info", &RunReportOptions::include_system_info);
+      .def("to_text", &MeasureReport::to_text)
+      .def("to_json", &MeasureReport::to_json, "indent"_a = 2);
 
   nb::class_<MeasureScope>(m, "MeasureScope")
       .def("stop", &MeasureScope::stop)
@@ -2693,22 +2538,8 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("stats", &Run::stats)
-      .def("input_stats", &Run::input_stats)
-      .def("diag_snapshot", &Run::diag_snapshot)
-      .def("power_summary", &Run::power_summary)
-      .def("measurement_summary", &Run::measurement_summary)
-      .def("metrics", &Run::metrics, "options"_a = RuntimeMetricsOptions{})
-      .def(
-          "metrics_report",
-          [](const Run& run, const RuntimeMetricsOptions& options, RuntimeMetricsFormat format) {
-            return run.metrics_report(options, format);
-          },
-          "options"_a = RuntimeMetricsOptions{}, "format"_a = RuntimeMetricsFormat::Text)
       .def("start_measurement", &Run::start_measurement, "options"_a = MeasureOptions{})
-      .def("report", &Run::report, "options"_a = RunReportOptions{})
       .def("last_error", &Run::last_error)
-      .def("diagnostics_summary", &Run::diagnostics_summary)
       .def(
           "json",
           [](const Run& run, const RunExportOptions& options) {
@@ -2805,10 +2636,6 @@ NB_MODULE(_pyneat_core, m) {
         return body;
       },
       "run"_a, "options"_a = RunExportOptions{});
-
-  m.def("build_graph_metrics_report_run_lifetime",
-        &simaai::neat::build_graph_metrics_report_run_lifetime, "run"_a,
-        "options"_a = RuntimeMetricsOptions{});
 
   m.def(
       "run_to_json",
@@ -3033,21 +2860,21 @@ NB_MODULE(_pyneat_core, m) {
            "options"_a = RunOptions{}, nb::call_guard<nb::gil_scoped_release>())
       .def(
           "build",
-          [](Graph& self, nb::object input, RunMode mode, const RunOptions& options, bool copy,
+          [](Graph& self, nb::object input, const RunOptions& options, bool copy,
              std::optional<TensorLayout> layout,
              std::optional<ImageSpec::PixelFormat> image_format) {
             reject_single_tensor_or_sample(input, "Graph.build");
             if (python_sequence_all_samples(input)) {
               auto samples = sample_batch_from_python_input(input);
               nb::gil_scoped_release release;
-              return self.build(samples, mode, options);
+              return self.build(samples, options);
             }
             auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
             nb::gil_scoped_release release;
-            return self.build(tensors, mode, options);
+            return self.build(tensors, options);
           },
-          "input"_a, "mode"_a = RunMode::Async, "options"_a = RunOptions{}, "copy"_a = false,
-          "layout"_a = nb::none(), "image_format"_a = nb::none())
+          "input"_a, "options"_a = RunOptions{}, "copy"_a = false, "layout"_a = nb::none(),
+          "image_format"_a = nb::none())
       .def("run_rtsp", &Graph::run_rtsp, "options"_a, nb::call_guard<nb::gil_scoped_release>())
       .def("validate",
            static_cast<GraphReport (Graph::*)(const ValidateOptions&) const>(&Graph::validate),
@@ -3818,20 +3645,17 @@ NB_MODULE(_pyneat_core, m) {
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
           "image_format"_a = nb::none())
-      .def("warmup", &simaai::neat::Model::Runner::warmup, "inputs"_a, "warm"_a = -1,
-           "timeout_ms"_a = -1)
-      .def(
-          "warmup",
-          [](simaai::neat::Model::Runner& runner, nb::object input, int warm, int timeout_ms,
-             bool copy, std::optional<TensorLayout> layout,
-             std::optional<ImageSpec::PixelFormat> image_format) {
-            reject_single_tensor_or_sample(input, "ModelRunner.warmup");
-            auto tensors = tensor_batch_from_python_input(input, copy, layout, image_format);
-            return runner.warmup(tensors, warm, timeout_ms);
-          },
-          "input"_a, "warm"_a = -1, "timeout_ms"_a = -1, "copy"_a = false, "layout"_a = nb::none(),
-          "image_format"_a = nb::none())
+      .def("start_measurement", &simaai::neat::Model::Runner::start_measurement,
+           "options"_a = MeasureOptions{})
+      .def("close_input", &simaai::neat::Model::Runner::close_input)
       .def("close", &simaai::neat::Model::Runner::close);
+
+  nb::class_<simaai::neat::BenchmarkReport>(m, "BenchmarkReport")
+      .def(nb::init<>())
+      .def_rw("latency_ms", &simaai::neat::BenchmarkReport::latency_ms)
+      .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
+      .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
+      .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
 
   nb::class_<simaai::neat::Model>(m, "Model")
       .def(nb::init<const std::string&>(), "model_path"_a)
@@ -3850,8 +3674,8 @@ NB_MODULE(_pyneat_core, m) {
            static_cast<simaai::neat::Graph (simaai::neat::Model::*)(
                simaai::neat::Model::RouteOptions) const>(&simaai::neat::Model::graph),
            "options"_a)
-      .def("input_spec", &simaai::neat::Model::input_spec)
-      .def("output_spec", &simaai::neat::Model::output_spec)
+      .def("input_specs", &simaai::neat::Model::input_specs)
+      .def("output_specs", &simaai::neat::Model::output_specs)
       .def("metadata", &simaai::neat::Model::metadata)
       .def("fragment", &simaai::neat::Model::fragment, "stage"_a)
       .def("backend_fragment", &simaai::neat::Model::backend_fragment, "stage"_a)
@@ -3903,7 +3727,9 @@ NB_MODULE(_pyneat_core, m) {
             }
             return nb::cast(std::move(out));
           },
-          "input"_a, "timeout_ms"_a = -1, "copy"_a = false);
+          "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
+      .def("benchmark", &simaai::neat::Model::benchmark, "num_samples"_a = 100,
+           nb::call_guard<nb::gil_scoped_release>());
 
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())

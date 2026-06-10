@@ -92,7 +92,6 @@ void run_branched_report_demo() {
   app.connect(meta_branch, meta_archive);
 
   RunOptions run_opt;
-  run_opt.enable_metrics = true;
   Run run = app.build(run_opt);
 
   std::cout << "BRANCHED_DEMO_INPUTS=";

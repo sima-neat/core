@@ -2,17 +2,18 @@
   "sources": [
     {
       "key": "llima",
-      "title": "LLiMa",
+      "title": "GenAI with LLiMa",
       "repo": "git@github.com:sima-neat/llima",
       "branch": "develop",
       "branch_policy": "snap",
       "fallback_branch": "develop",
       "githash": "",
       "docs_subpath": "docs",
-      "mount": "llima",
-      "sidebar_position": 6,
+      "mount": "genai-llima",
+      "sidebar_position": 4,
+      "category_link": "index",
       "files_order": [
-        "introduction",
+        "index",
         "setup",
         "runtime",
         "compilation_genai",
@@ -28,26 +29,40 @@
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/guides",
-      "mount": "compile-your-model",
-      "sidebar_position": 7,
+      "mount": "compile-a-model/guides",
+      "sidebar_position": 10,
       "files_order": [
         "index",
         "compile_your_first_model",
         "quantization",
         "compilation",
         "supported_operators"
+      ],
+      "link_rewrites": [
+        {
+          "from": "/llima/compilation_genai",
+          "to": "/genai-llima/compilation_genai"
+        },
+        {
+          "from": "./api-reference",
+          "to": "/reference/model-sdk-api/"
+        },
+        {
+          "from": "./api-reference/",
+          "to": "/reference/model-sdk-api/"
+        }
       ]
     },
     {
       "key": "model-sdk-api",
-      "title": "API Reference",
+      "title": "ModelSDK API",
       "repo": "git@github.com:sima-neat/model-sdk",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/generated",
-      "mount": "compile-your-model/api-reference",
-      "sidebar_position": 7,
+      "mount": "reference/model-sdk-api",
+      "sidebar_position": 4,
       "files_order": [
         "index"
       ],
@@ -56,8 +71,8 @@
       ],
       "restructure_api": true,
       "landing_page": {
-        "title": "Model SDK API Reference",
-        "intro": "The Model SDK exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
+        "title": "ModelSDK API Reference",
+        "intro": "The ModelSDK exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
         "groups": [
           {
             "label": "Compilation",
@@ -119,8 +134,8 @@
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/sima-cli",
-      "mount": "reference/sima-cli",
-      "sidebar_position": 6,
+      "mount": "tools/sima-cli",
+      "sidebar_position": 1,
       "files_order": [
         "index"
       ],

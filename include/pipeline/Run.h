@@ -6,15 +6,15 @@
  * `Run` is what a `Graph` becomes when built. It owns the running GStreamer pipeline,
  * its internal threads (typically 5–15: one per element thread boundary, plus dispatcher
  * workers, plus a bus watcher), and its bounded queues. Application code interacts with a
- * Run by `push()`-ing inputs and `pull()`-ing outputs — or `run()` for a synchronous
- * shortcut. A Run can operate in Async mode (continuous pipeline, push/pull at user pace)
- * or Sync mode (one frame in, one result out, repeat).
+ * Run by `push()`-ing inputs and `pull()`-ing outputs — or `run()` for a push+pull
+ * convenience call on an existing runner. Use `Graph::run(...)` when you want one-shot
+ * graph execution without owning a long-lived runner.
  *
  * This header also defines:
  *   - `OverflowPolicy` — how `push()` behaves when the input queue is full.
  *   - `RunPreset` — preset bundles for common workloads (realtime, balanced, reliable).
- *   - `RunOptions` — runtime knobs (queue depth, overflow policy, output memory, metrics).
- *   - `RunStats` / `InputStreamStats` / `RunDiagSnapshot` — telemetry surfaces.
+ *   - `RunOptions` — runtime knobs (queue depth, overflow policy, output memory).
+ *   - `MeasureScope` / `MeasureReport` — the canonical measurement surface.
  *
  * @see Graph::build for how a Run is constructed
  * @see GraphOptions for build-time options (Run takes runtime options here)
@@ -25,7 +25,6 @@
 #include "nodes/io/Input.h"
 #include "pipeline/GraphMetrics.h"
 #include "pipeline/PowerTelemetry.h"
-#include "pipeline/RuntimeMetrics.h"
 #include "pipeline/GraphOptions.h"
 
 #include <cstdint>
@@ -79,14 +78,15 @@ enum class OverflowPolicy {
 /**
  * @brief Convenience preset bundles for `RunOptions`.
  *
- * Each preset adjusts queue depth, overflow policy, and metrics flags to a profile that's
- * known to work well for one workload class.
+ * Each preset adjusts queue depth, overflow policy, and output ownership to a profile that's
+ * known to work well for one workload class. Use `start_measurement()` when you want
+ * performance data for any preset.
  * @ingroup pipeline
  */
 enum class RunPreset {
-  Realtime, ///< Low-latency; small queues; KeepLatest overflow; metrics off.
-  Balanced, ///< Default; moderate queues; Block overflow; metrics off.
-  Reliable, ///< Lossless; deeper queues; Block overflow; metrics on.
+  Realtime, ///< Low-latency; small queues; KeepLatest overflow.
+  Balanced, ///< Default; moderate queues; Block overflow.
+  Reliable, ///< Lossless; deeper queues; Block overflow.
 };
 
 /**
@@ -163,8 +163,7 @@ struct RunOptions {
   OverflowPolicy overflow_policy =
       OverflowPolicy::Block; ///< What to do when the input queue is full.
   OutputMemory output_memory =
-      OutputMemory::Auto;      ///< Whether output tensors are zero-copy or owned.
-  bool enable_metrics = false; ///< Collect detailed per-stage metrics in the Run's stats vectors.
+      OutputMemory::Auto; ///< Whether output tensors are zero-copy or owned.
   /**
    * @brief Default pull timeout for `build()`/`run()` input-mode paths, in milliseconds.
    *
@@ -211,8 +210,10 @@ struct RunOptions {
    * @code
    * RunOptions opt;
    * opt.enable_board_power();
-   * auto run = graph.build(inputs, RunMode::Async, opt);
-   * auto metrics = run.metrics();
+   * auto run = graph.build(inputs, opt);
+   * auto scope = run.start_measurement();
+   * // push/pull workload
+   * auto report = scope.stop();
    * @endcode
    */
   RunOptions& enable_modalix_som_power(int sample_interval_ms = 100) {
@@ -266,160 +267,11 @@ struct InputDropInfo {
 };
 
 /**
- * @brief Per-Run input-side telemetry: counts, drops, and timing averages.
- *
- * Returned by `Run::input_stats()`. Useful for monitoring whether the application is
- * keeping up with the input source and where time is being spent on the push side.
- * @ingroup diagnostics
- */
-struct InputStreamStats {
-  std::uint64_t push_count = 0;     ///< Total successful `push()` calls.
-  std::uint64_t push_failures = 0;  ///< Pushes that failed (queue full, EOS, error).
-  std::uint64_t pull_count = 0;     ///< Total successful `pull()` calls (output side).
-  std::uint64_t poll_count = 0;     ///< Total `pull()` calls (including timeouts).
-  std::uint64_t dropped_frames = 0; ///< Frames dropped due to OverflowPolicy.
-  std::uint64_t renegotiations = 0; ///< Times caps were re-negotiated mid-stream.
-  std::uint64_t alloc_grows = 0;    ///< Times the buffer pool grew due to demand.
-  std::uint64_t growth_blocked = 0; ///< Pool-grow attempts that hit a configured cap.
-  std::uint64_t renegotiation_blocked =
-      0;                         ///< Renegotiation attempts that were rejected by downstream.
-  double avg_alloc_us = 0.0;     ///< Average buffer allocation time (microseconds).
-  double avg_map_us = 0.0;       ///< Average buffer map (lock for write) time.
-  double avg_copy_us = 0.0;      ///< Average input copy time (when `copy_input=true`).
-  double avg_push_us = 0.0;      ///< Average end-to-end `push()` call time.
-  double avg_pull_wait_us = 0.0; ///< Average time `pull()` waited for output.
-  double avg_decode_us = 0.0;    ///< Average decode time (input-side decoders, e.g., H.264).
-};
-
-/**
- * @brief Per-Run end-to-end statistics: counts and latency.
- *
- * Returned by `Run::stats()`. The headline metric is `avg_latency_ms` — wall-clock time
- * from `push()` to `pull()` for a frame.
- * @ingroup diagnostics
- */
-struct RunStats {
-  std::uint64_t inputs_enqueued = 0; ///< Inputs that were accepted into the input queue.
-  std::uint64_t inputs_dropped = 0;  ///< Inputs rejected by OverflowPolicy.
-  std::uint64_t inputs_pushed = 0;   ///< Inputs successfully pushed into the pipeline.
-  std::uint64_t outputs_ready =
-      0; ///< Outputs the pipeline produced (may exceed pulls if backlogged).
-  std::uint64_t outputs_pulled = 0; ///< Outputs the application pulled.
-  std::uint64_t outputs_dropped =
-      0; ///< Outputs dropped before the application could pull (output-side overflow).
-  double avg_latency_ms = 0.0; ///< Average push-to-pull latency.
-  double min_latency_ms = 0.0; ///< Minimum observed latency.
-  double max_latency_ms = 0.0; ///< Maximum observed latency.
-};
-
-/**
- * @brief One-call runtime measurement summary.
- *
- * Combines the existing latency counters, derived throughput, and optional SOM
- * PMIC power telemetry. `throughput_fps` is computed from pulled outputs over
- * the Run lifetime so applications can get latency, throughput, and power
- * without env-var driven perf harnesses.
- * @ingroup diagnostics
- */
-struct RunMeasurementSummary {
-  RunStats stats;               ///< End-to-end Run counters and latency.
-  InputStreamStats input_stats; ///< Input-side counters.
-  double elapsed_seconds = 0.0; ///< Measured wall-clock duration.
-  double throughput_fps = 0.0;  ///< Pulled outputs per elapsed second.
-  PowerSummary power;           ///< Optional power telemetry summary.
-};
-
-/**
- * @brief Per-stage timing telemetry — how long each stage takes per sample.
- * @ingroup diagnostics
- */
-struct RunStageStats {
-  std::string stage_name;     ///< Stage label (typically the Graph fragment or major Node name).
-  std::uint64_t samples = 0;  ///< Number of samples processed by this stage.
-  std::uint64_t total_us = 0; ///< Cumulative time spent in this stage (microseconds).
-  std::uint64_t max_us = 0;   ///< Maximum per-sample time observed.
-};
-
-/**
- * @brief Per-element timing — finer-grained than per-stage; one row per GStreamer element.
- * @ingroup diagnostics
- */
-struct RunElementTimingStats {
-  std::string element_name;  ///< Deterministic element name (e.g., `"n3_videoconvert"`).
-  std::uint64_t samples = 0; ///< Buffers processed.
-  std::uint64_t total_us =
-      0; ///< Cumulative residency (sink-arrival → src-emit; INCLUDES backpressure wait).
-  std::uint64_t max_us = 0;     ///< Maximum per-buffer residency.
-  std::uint64_t min_us = 0;     ///< Minimum per-buffer residency.
-  std::uint64_t missed_in = 0;  ///< Buffers expected on the input pad but never arrived.
-  std::uint64_t missed_out = 0; ///< Buffers expected on the output pad but never produced.
-};
-
-/**
- * @brief Per-element data-flow telemetry — buffer and byte counts, plus caps changes.
- * @ingroup diagnostics
- */
-struct RunElementFlowStats {
-  std::string element_name;       ///< Deterministic element name.
-  std::uint64_t in_buffers = 0;   ///< Buffers received on input pads.
-  std::uint64_t out_buffers = 0;  ///< Buffers produced on output pads.
-  std::uint64_t in_bytes = 0;     ///< Bytes received.
-  std::uint64_t out_bytes = 0;    ///< Bytes produced.
-  std::uint64_t caps_changes = 0; ///< Mid-stream caps renegotiations on this element.
-};
-
-/**
- * @brief Per-pad timing — finest-grained telemetry, one row per (element, pad).
- *
- * Tracks inter-arrival jitter and queue-wait time per pad. Most useful for diagnosing
- * specific bottlenecks (e.g., which pad is slow to receive, which is slow to drain).
- * @ingroup diagnostics
- */
-struct RunElementPadTimingStats {
-  std::string element_name; ///< Deterministic element name owning this pad.
-  std::string pad_name;     ///< Pad name within the element.
-  bool is_sink = false;     ///< True for input (sink) pads; false for output (src) pads.
-  std::string transport_from_element_name; ///< Upstream element that stamped src departure.
-  std::string transport_to_element_name;   ///< Sink element that observed transport arrival.
-  std::uint64_t samples = 0;               ///< Number of buffers seen on this pad.
-  std::uint64_t inter_arrival_total_us =
-      0;                                  ///< Cumulative time between consecutive buffer arrivals.
-  std::uint64_t inter_arrival_max_us = 0; ///< Maximum observed inter-arrival gap, in microseconds.
-  std::uint64_t queue_wait_samples =
-      0; ///< Samples that had to wait in a queue before being processed.
-  std::uint64_t queue_wait_total_us =
-      0;                               ///< Cumulative queue-wait time across `queue_wait_samples`.
-  std::uint64_t queue_wait_max_us = 0; ///< Maximum observed per-sample queue-wait time.
-  std::uint64_t bytes = 0;             ///< Cumulative byte count seen on this pad.
-};
-
-/**
- * @brief Aggregate diagnostic snapshot: stages, boundaries, per-element, per-pad.
- *
- * Returned by `Run::diag_snapshot()`. Holds vectors of the per-X telemetry structs so the
- * caller can iterate and render reports.
- * @ingroup diagnostics
- */
-struct RunDiagSnapshot {
-  std::vector<RunStageStats> stages;                  ///< Per-stage timing.
-  std::vector<BoundaryFlowStats> boundaries;          ///< Per-boundary (between Nodes) flow stats.
-  std::vector<RunElementTimingStats> element_timings; ///< Per-element timing.
-  std::vector<RunElementFlowStats> element_flows;     ///< Per-element flow.
-  /**
-   * @brief Per-pad timing rows (Phase-A diagnostics).
-   *
-   * Always appended after `element_flows` so older consumers reading the first four vectors
-   * keep working unchanged.
-   */
-  std::vector<RunElementPadTimingStats> element_pad_timings;
-};
-
-/**
  * @brief Metrics trace backend selection for framework-owned measurements.
  *
  * `Auto` prefers the low-overhead LTTng collector.  If LTTng is unavailable the report marks
- * the requested metric class as unavailable; it does not silently fall back to the deprecated
- * process-global profiler.
+ * the requested metric class as unavailable; it does not silently fall back to a second metrics
+ * backend.
  */
 enum class MetricsTraceSource {
   Auto,
@@ -603,6 +455,42 @@ struct MeasurePathTiming {
 };
 
 /**
+ * @brief Common input/output/drop counters captured during a measurement window.
+ *
+ * This is the public counter shape. Raw runtime counters remain implementation details.
+ */
+struct MeasureCounters {
+  std::uint64_t inputs_enqueued = 0;
+  std::uint64_t inputs_pushed = 0;
+  std::uint64_t outputs_ready = 0;
+  std::uint64_t outputs_pulled = 0;
+  std::uint64_t inputs_dropped = 0;
+  std::uint64_t outputs_dropped = 0;
+};
+
+/**
+ * @brief Input-boundary telemetry captured during a measurement window.
+ */
+struct MeasureInputStats {
+  std::uint64_t push_count = 0;
+  std::uint64_t push_failures = 0;
+  std::uint64_t pull_count = 0;
+  std::uint64_t poll_count = 0;
+  std::uint64_t dropped_frames = 0;
+  std::uint64_t renegotiations = 0;
+  std::uint64_t alloc_grows = 0;
+  std::uint64_t growth_blocked = 0;
+  std::uint64_t renegotiation_blocked = 0;
+
+  double avg_alloc_us = 0.0;
+  double avg_map_us = 0.0;
+  double avg_copy_us = 0.0;
+  double avg_push_us = 0.0;
+  double avg_pull_wait_us = 0.0;
+  double avg_decode_us = 0.0;
+};
+
+/**
  * @brief Framework-owned report returned by `MeasureScope::stop()`.
  */
 struct MeasureReport {
@@ -616,6 +504,8 @@ struct MeasureReport {
   MeasureLatencyStats end_to_end;
   MeasureLatencyStats frame_gap;
   bool latency_samples_collected = false;
+  MeasureCounters counters;
+  MeasureInputStats input;
   std::vector<MeasurePluginLatency> plugin_latency;
   std::vector<MeasurePluginLatency> plugin_latency_unattributed;
   std::vector<MeasureEdgeLatency> edge_latency;
@@ -631,19 +521,14 @@ struct MeasureReport {
   std::vector<std::string> warnings;
   bool trace_loss_detected = false;
 
-  std::uint64_t inputs_enqueued = 0;
-  std::uint64_t inputs_pushed = 0;
-  std::uint64_t outputs_ready = 0;
-  std::uint64_t outputs_pulled = 0;
-  std::uint64_t inputs_dropped = 0;
-  std::uint64_t outputs_dropped = 0;
   std::uint64_t graph_sample_timing_unkeyed = 0;
   std::uint64_t graph_sample_timing_misses = 0;
-  RunStats final_run_stats{};
   PowerSummary power{};
 
   /// Render a compact customer-facing terminal report.
   std::string to_text() const;
+  /// Render the same measured-window report as JSON.
+  std::string to_json(int indent = 2) const;
 };
 
 /**
@@ -671,29 +556,6 @@ private:
   explicit MeasureScope(std::unique_ptr<Impl> impl);
   static void disable_lttng_trace_identity_noexcept(Impl* impl);
   std::unique_ptr<Impl> impl_;
-};
-
-/**
- * @brief Toggles for what `Run::report()` includes in its formatted text output.
- *
- * Each field corresponds to one section of the human-readable report. Defaults produce a
- * useful general-purpose report; toggle off to focus on a specific subsystem.
- * @ingroup diagnostics
- */
-struct RunReportOptions {
-  bool include_pipeline = true;        ///< Include the rendered pipeline launch string.
-  bool include_stage_timings = true;   ///< Include the per-stage timing table.
-  bool include_element_timings = true; ///< Include the per-element timing table.
-  bool include_boundaries = true;      ///< Include per-boundary flow stats between Nodes.
-  bool include_flow_stats = true;      ///< Include per-element buffer/byte flow stats.
-  bool include_node_reports = false;   ///< Off by default — verbose.
-  bool include_next_cpu = false;       ///< Off by default — internal routing detail.
-  bool include_queue_depth = true;     ///< Include configured queue depth in the report header.
-  bool include_num_buffers = true;     ///< Include configured num-buffers in the report header.
-  bool include_run_stats = true;       ///< Include end-to-end RunStats.
-  bool include_input_stats = true;     ///< Include input-side stream stats.
-  bool include_power = true;           ///< Include power telemetry when the Run enabled it.
-  bool include_system_info = false;    ///< Off by default — system-wide info, not Run-specific.
 };
 
 /**
@@ -817,37 +679,8 @@ public:
 
   /// Start observing a caller-owned push/pull interval without consuming outputs.
   MeasureScope start_measurement(const MeasureOptions& opt = {});
-  /**
-   * @brief Run `warm` warm-up inferences before measurement begins.
-   *
-   * Useful for stable performance numbers — first inferences pay one-time setup costs
-   * (kernel load, JIT, cache fill). Pass `warm = -1` for a sensible default.
-   */
-  int warmup(const std::vector<cv::Mat>& inputs, int warm = -1, int timeout_ms = -1);
-
-  /// Returns end-to-end push/pull/latency stats.
-  RunStats stats() const;
-  /// Returns input-side telemetry (push counts, drops, timing).
-  InputStreamStats input_stats() const;
-  /// Returns the full diagnostic snapshot (per-stage, per-element, per-pad).
-  RunDiagSnapshot diag_snapshot() const;
-  /// Returns the optional SOM power telemetry summary for this Run.
-  PowerSummary power_summary() const;
-  /// Returns latency, throughput, input stats, and optional power telemetry in one call.
-  RunMeasurementSummary measurement_summary() const;
-  /// Returns the preferred unified runtime metrics surface.
-  RuntimeMetrics metrics(const RuntimeMetricsOptions& opt = {}) const;
-  /// Render unified runtime metrics in the requested format.
-  std::string metrics_report(const RuntimeMetricsOptions& opt = {},
-                             RuntimeMetricsFormat format = RuntimeMetricsFormat::Text) const;
-  /// Convenience overload for selecting the output format with default options.
-  std::string metrics_report(RuntimeMetricsFormat format) const;
-  /// Returns a human-readable formatted report combining stats and diagnostics.
-  std::string report(const RunReportOptions& opt = {}) const;
   /// Returns the most recent runtime error string (empty if no error occurred).
   std::string last_error() const;
-  /// Returns a short diagnostics summary suitable for logging or error reports.
-  std::string diagnostics_summary() const;
 
   /// Stop the pipeline immediately (transitions to NULL). After stop, the Run is no longer running.
   void stop();

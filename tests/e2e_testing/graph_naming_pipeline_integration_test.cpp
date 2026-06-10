@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Graph.h"
@@ -32,7 +35,7 @@ RUN_TEST("graph_naming_pipeline_integration_test", ([] {
 
            Run run;
            try {
-             run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
+             run = graph.build(TensorList{seed}, run_opt);
            } catch (const std::exception& e) {
              if (sima_test::likely_runtime_missing(e.what())) {
                throw std::runtime_error("Skipping naming integration due runtime limitations: " +
@@ -49,12 +52,6 @@ RUN_TEST("graph_naming_pipeline_integration_test", ([] {
                             "naming integration: transformed mysrc missing");
            require_contains(backend, "named_mysink_rt",
                             "naming integration: transformed mysink missing");
-
-           const std::string report = run.report();
-           require_contains(report, "named_mysrc_rt",
-                            "naming integration: report missing transformed mysrc");
-           require_contains(report, "named_mysink_rt",
-                            "naming integration: report missing transformed mysink");
 
            ValidateOptions vopt;
            vopt.parse_launch = true;

@@ -51,7 +51,7 @@ RUN_TEST("stress_run_async_pressure_test", [] {
   run_opt.overflow_policy = OverflowPolicy::Block;
 
   Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x22);
-  Run run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
+  Run run = graph.build(TensorList{seed}, run_opt);
 
   std::atomic<int> pushed{0};
   std::atomic<int> pulled{0};

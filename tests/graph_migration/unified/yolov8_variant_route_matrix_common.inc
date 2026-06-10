@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
 #include "model/Model.h"
@@ -1466,7 +1469,7 @@ simaai::neat::Tensor move_e2e_input_tensor_to_ev74_if_enabled(simaai::neat::Tens
 
 simaai::neat::Tensor build_canonical_preprocessed_input(const cv::Mat& img_bgr,
                                                         const simaai::neat::Model& model) {
-  const auto spec = model.input_spec();
+  const auto spec = model.input_specs().front();
   const simaai::neat::InputOptions ingress_opt = model.input_appsrc_options(true);
   require(upper_copy(simaai::neat::resolve_input_media_type(ingress_opt)) == "APPLICATION/VND.SIMAAI.TENSOR",
           "canonical e2e path requires tensor ingress");
@@ -1528,7 +1531,6 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
       }
     }
     if (std::getenv("SIMA_E2E_INPUTSTREAM_METRICS") != nullptr) {
-      async_run_opt.enable_metrics = true;
     }
     auto runner = model.build(input_tensorlist, sess_opt, async_run_opt);
     require(static_cast<bool>(runner), "canonical e2e: runner build failed");
@@ -1656,6 +1658,13 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
 
     // Phase 2: measured. Capture t0 only after warmup has fully drained, so
     // the timer covers exactly kMeasureFrames in steady state.
+    simaai::neat::MeasureOptions measure_opt;
+    measure_opt.title = "YOLOv8 variant route matrix";
+    measure_opt.include_plugin_latency = false;
+    measure_opt.include_edge_latency = false;
+    measure_opt.include_power = false;
+    auto measure_scope =
+        simaai::neat::internal::ModelAccess::run(runner).start_measurement(measure_opt);
     const auto loop_t0 = std::chrono::steady_clock::now();
     for (int frame_idx = kWarmupFrames; frame_idx < kTotalFrames; ++frame_idx) {
       const std::size_t slot_idx = static_cast<std::size_t>(frame_idx % kPoolSize);
@@ -1667,6 +1676,7 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
     }
     consumer.join();
     const auto loop_t1 = std::chrono::steady_clock::now();
+    const simaai::neat::MeasureReport measure_report = measure_scope.stop();
 
     const double mt_ms = std::chrono::duration<double, std::milli>(loop_t1 - loop_t0).count();
     const int measured_pulled = std::max(0, pulled.load() - kWarmupFrames);
@@ -1681,23 +1691,20 @@ simaai::neat::Sample run_canonical_model_sample(const cv::Mat& img_bgr, simaai::
       print_push_stats("warmup", warmup_push_stats);
       print_push_stats("measure", measure_push_stats);
     }
-    const auto stats = runner.stats();
     std::cout << "MT_FPS frames=" << kMeasureFrames << " warmup=" << kWarmupFrames
               << " pushed=" << pushed << " pulled=" << pulled.load()
               << " measured_pulled=" << measured_pulled << " push_pull_ms=" << mt_ms
-              << " fps=" << mt_fps << " stats_inputs_pushed=" << stats.inputs_pushed
-              << " stats_outputs_pulled=" << stats.outputs_pulled
-              << " avg_latency_ms=" << stats.avg_latency_ms
-              << " min_latency_ms=" << stats.min_latency_ms
-              << " max_latency_ms=" << stats.max_latency_ms
-              << " inputs_dropped=" << stats.inputs_dropped
-              << " outputs_dropped=" << stats.outputs_dropped << "\n";
+              << " fps=" << mt_fps
+              << " stats_inputs_pushed=" << measure_report.counters.inputs_pushed
+              << " stats_outputs_pulled=" << measure_report.counters.outputs_pulled
+              << " avg_latency_ms=" << measure_report.end_to_end.avg_ms
+              << " p50_latency_ms=" << measure_report.end_to_end.p50_ms
+              << " max_latency_ms=" << measure_report.end_to_end.max_ms
+              << " inputs_dropped=" << measure_report.counters.inputs_dropped
+              << " outputs_dropped=" << measure_report.counters.outputs_dropped << "\n";
 
     if (std::getenv("SIMA_E2E_REPORT") != nullptr) {
-      simaai::neat::RunReportOptions ropt;
-      // Default ropt already enables stage_timings, element_timings, boundaries,
-      // flow_stats, queue_depth, num_buffers, run_stats, input_stats.
-      std::cout << "REPORT_BEGIN\n" << runner.report(ropt) << "\nREPORT_END\n";
+      std::cout << "REPORT_BEGIN\n" << measure_report.to_text() << "\nREPORT_END\n";
     }
 
     std::string async_pull_error;
@@ -2279,7 +2286,7 @@ simaai::neat::Sample run_model_sample(const cv::Mat& img_bgr, simaai::neat::Mode
                                       RouteKind route) {
   const int kRunTimeoutMs = default_model_run_timeout_ms();
   const int kRetryTimeoutMs = std::max(kRunTimeoutMs, kRunRetryTimeoutMs);
-  const auto spec = model.input_spec();
+  const auto spec = model.input_specs().front();
   const auto ingress_opt = model.input_appsrc_options(false);
   const bool tensor_ingress = upper_copy(simaai::neat::resolve_input_media_type(ingress_opt)) == "APPLICATION/VND.SIMAAI.TENSOR";
 
@@ -3123,7 +3130,7 @@ simaai::neat::Sample run_preproc_probe_sample_local(const cv::Mat& img_bgr,
   simaai::neat::RunOptions run_opt;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
   run_opt.queue_depth = 1;
-  auto run = p.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Async, run_opt);
+  auto run = p.build(std::vector<cv::Mat>{img_bgr}, run_opt);
   require(run.push(std::vector<cv::Mat>{img_bgr}), "preproc_probe: push failed");
   simaai::neat::Sample outs = run.pull_samples(default_model_run_timeout_ms());
   require(outs.size() == 1U, "preproc_probe: expected exactly 1 output sample");
@@ -3406,7 +3413,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
       return out;
     }
 
-    const auto matrix_spec = matrix_model.input_spec();
+    const auto matrix_spec = matrix_model.input_specs().front();
     const cv::Mat matrix_seed = normalize_model_input(img_bgr, matrix_model, route);
     const AdapterIngressTensorInput matrix_ingress =
         build_adapter_tensor_ingress_input(matrix_seed, matrix_model, matrix_spec, route, pre_kind);
@@ -3416,7 +3423,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     matrix_graph.add(simaai::neat::nodes::Input(matrix_input_opt));
     matrix_graph.add(simaai::neat::nodes::groups::Preprocess(matrix_model));
     matrix_graph.add(simaai::neat::nodes::Output());
-    auto matrix_run = matrix_graph.build(simaai::neat::TensorList{matrix_ingress.tensor},
+    auto matrix_run = matrix_graph.build_seeded_internal(simaai::neat::TensorList{matrix_ingress.tensor},
                                            simaai::neat::RunMode::Sync);
     simaai::neat::Sample matrix_outputs =
         matrix_run.run(simaai::neat::Sample{simaai::neat::sample_from_tensors(
@@ -3436,7 +3443,7 @@ PreMlaParityResult run_pre_mla_parity_check_local(const ProbeResult& probe, Rout
     sync_graph.add(simaai::neat::nodes::Input());
     sync_graph.add(simaai::neat::nodes::groups::Preprocess(sync_model));
     sync_graph.add(simaai::neat::nodes::Output());
-    auto sync_run = sync_graph.build(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Sync);
+    auto sync_run = sync_graph.build_seeded_internal(std::vector<cv::Mat>{img_bgr}, simaai::neat::RunMode::Sync);
     simaai::neat::Sample sync_outputs =
         sync_run.run(simaai::neat::Sample{simaai::neat::make_image_sample(
                          img_bgr, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
@@ -4288,7 +4295,7 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
     attempt_opt.input_timeout_ms = pull_timeout_ms;
 
     auto runner =
-        post.build(simaai::neat::Sample{stage_input}, simaai::neat::RunMode::Async, attempt_opt);
+        post.build(simaai::neat::Sample{stage_input}, attempt_opt);
     require(static_cast<bool>(runner), "postrun_boxdecode: runner build failed");
     require(runner.push(simaai::neat::Sample{stage_input}),
             "postrun_boxdecode: runner push failed");
@@ -4297,13 +4304,12 @@ simaai::neat::Sample run_standalone_boxdecode_sample_local(const simaai::neat::S
       outs = runner.pull_samples(pull_timeout_ms);
     } catch (const std::exception& ex) {
       throw std::runtime_error("postrun_boxdecode attempt=" + std::to_string(attempt) +
-                               ": pull failed: " + ex.what() + "\nrun-report:\n" +
-                               runner.report());
+                               ": pull failed: " + ex.what() + "\nlast-error:\n" + runner.last_error());
     }
     require(outs.size() == 1U,
             "postrun_boxdecode attempt=" + std::to_string(attempt) +
                 ": expected exactly 1 sample, got " + std::to_string(outs.size()) +
-                "\nrun-report:\n" + runner.report());
+                "\nlast-error:\n" + runner.last_error());
     return outs.front();
   };
 
@@ -4341,7 +4347,7 @@ AccuracyResult run_framework_boxdecode_accuracy(const simaai::neat::Sample& infe
       require_preprocess_meta_on_output_local(infer_sample, img_bgr.cols, img_bgr.rows,
                                               "framework_boxdecode_input");
       maybe_trace_sample_numeric_local("infer_sample_for_boxdecode", infer_sample);
-      const auto spec = model.input_spec();
+      const auto spec = model.input_specs().front();
       const auto [model_w_pref, model_h_pref] =
           preferred_input_hw(model, RouteKind::PreInferPost, spec);
       const int model_width = model_w_pref > 0 ? model_w_pref : img_bgr.cols;
@@ -4529,7 +4535,7 @@ ProbeResult probe_model(const fs::path& tar) {
   probe.mla_output_int8 = dtype_is_int8_like(probe.mla_output_dtype_raw);
   probe.terminal_output_kind = detect_terminal_output_kind(post_nodes, probe);
 
-  const auto input_spec = model.input_spec();
+  const auto input_spec = model.input_specs().front();
   bool only_uint8 = !input_spec.dtypes.empty();
   for (const auto dt : input_spec.dtypes) {
     if (dt != simaai::neat::TensorDType::UInt8) {
@@ -5074,7 +5080,7 @@ void validate_model_init_for_tar(const fs::path& tar) {
   const auto opt = default_model_options();
   simaai::neat::Model model(tar.string(), opt);
   (void)model.info();
-  (void)model.input_spec();
+  (void)model.input_specs();
   (void)model.preprocess();
   (void)model.inference();
   (void)model.postprocess();

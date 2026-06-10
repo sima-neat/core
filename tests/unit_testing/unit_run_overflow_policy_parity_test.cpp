@@ -1,6 +1,10 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -46,7 +50,7 @@ simaai::neat::Run make_async_rgb_run_with_policy(const simaai::neat::Tensor& see
   run_opt.overflow_policy = overflow_policy;
   run_opt.advanced.copy_input = true;
 
-  return graph.build(TensorList{seed}, RunMode::Async, run_opt);
+  return graph.build(TensorList{seed}, run_opt);
 }
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
@@ -107,7 +111,7 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
     }
   }
 
-  result.inputs_dropped = run.stats().inputs_dropped;
+  result.inputs_dropped = run_internal::stats(run).inputs_dropped;
   run.stop();
   return result;
 }

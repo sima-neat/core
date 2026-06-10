@@ -726,32 +726,6 @@ std::optional<Sample> GraphRun::pull_any(const std::vector<Output>& outputs, int
   return pull_any_state(state_, outputs, timeout_ms, stats, out_node);
 }
 
-bool GraphRun::warmup(const std::vector<Output>& outputs, int warmup_count, int timeout_ms) {
-  if (!state_ || outputs.empty()) {
-    std::fprintf(stderr, "[GRAPH] GraphRun::warmup failed: %s\n",
-                 !state_ ? "run state is null" : "no output nodes configured");
-    return false;
-  }
-  if (warmup_count <= 0)
-    return true;
-  for (int i = 0; i < warmup_count; ++i) {
-    auto sample = pull_any(outputs, timeout_ms);
-    if (sample.has_value())
-      continue;
-    if (!last_error().empty()) {
-      std::fprintf(stderr, "[GRAPH] GraphRun::warmup: pull_any failed on iteration %d/%d: %s\n",
-                   i + 1, warmup_count, last_error().c_str());
-      return false;
-    }
-    std::fprintf(stderr,
-                 "[GRAPH] GraphRun::warmup: pull returned no value but error queue is empty "
-                 "(possible timeout or dropped frame, iteration %d/%d, timeout_ms=%d)\n",
-                 i + 1, warmup_count, timeout_ms);
-    return false;
-  }
-  return true;
-}
-
 GraphRun::StallGuard GraphRun::stall_guard(const std::vector<Output>& outputs,
                                            int per_stream_target, int stall_ms,
                                            std::vector<std::string> stream_ids) {

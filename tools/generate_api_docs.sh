@@ -64,7 +64,7 @@ rm -rf "${OUT_DIR}/pages"
 cat > "${OUT_DIR}/_category_.json" <<'EOF'
 {
   "label": "C++ Reference",
-  "position": 98
+  "position": 2
 }
 EOF
 

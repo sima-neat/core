@@ -7,8 +7,8 @@ Source of truth:
 - tutorials/00x_*/*.py
 
 Outputs:
-- docs/tutorials/tutorial_<folder>.mdx
-- docs/tutorials/index.md
+- docs/develop-apps/tutorials/<difficulty>/tutorial_<folder>.mdx
+- docs/develop-apps/tutorials/index.md
 """
 
 from __future__ import annotations
@@ -32,10 +32,10 @@ REPO_LINK_BASE = "https://github.com/sima-neat/core/blob"
 # (TOC) position and the in-section ordering on the tutorials index page.
 # Modules whose number is not listed here fall to the end in numeric order.
 LEARNING_FLOW_ORDER = [
-    1, 2, 3, 4,        # Beginner foundations
-    8, 5, 10, 6,       # Core I/O and pre/postprocessing
-    7, 9, 11, 12, 17,  # Pipelines, diagnostics, custom graphs, live input
-    13, 14, 15, 16,    # Advanced: hybrid graphs, multi-stream, perf, production
+    1, 2, 3, 4, 5,          # Beginner foundations
+    9, 6, 11, 7,            # Core I/O and pre/postprocessing
+    8, 10, 12, 13, 18,      # Pipelines, diagnostics, custom graphs, live input
+    14, 15, 16, 17,         # Advanced: hybrid graphs, multi-stream, perf, production
 ]
 
 
@@ -47,7 +47,9 @@ def _flow_key(number: int) -> tuple:
         return (1, number)
 
 
-def docs_static_url(path: str) -> str:
+def docs_static_url(path: str, *, relative_prefix: str | None = None) -> str:
+    if relative_prefix is not None:
+        return f"{relative_prefix.rstrip('/')}/{path.lstrip('/')}"
     base_url = os.environ.get("DOCS_BASE_URL", "/").strip() or "/"
     if not base_url.startswith("/"):
         base_url = f"/{base_url}"
@@ -130,11 +132,19 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        return docs_static_url(f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg")
+        # Used from /tutorials/. Keep this relative so generated docs work with
+        # both root deployments and subpath deployments such as /software/.
+        return docs_static_url(
+            f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg",
+            relative_prefix="../..",
+        )
 
     @property
     def flow_image_url(self) -> str:
-        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg")
+        # Used from /tutorials/<chapter>/. Keep this relative so generated docs
+        # work with both root deployments and subpath deployments such as
+        # /software/.
+        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg", relative_prefix="../..")
 
     @property
     def display_title(self) -> str:
@@ -752,7 +762,10 @@ def generate_landing_animation(out_dir: pathlib.Path) -> None:
     steps = [
         ("Run a model", ["model = pyneat.Model('model.tar.gz')", "sample = model.run([image])"]),
         ("Build a pipeline", ["graph = pyneat.Graph()", "graph.add(model)", "run = graph.build([frame])"]),
-        ("Tune & deploy", ["opt.queue_depth = 8", "run = graph.build([f], Async, opt)", "metrics = run.stats()"]),
+        (
+            "Tune & deploy",
+            ["opt.queue_depth = 8", "run = graph.build([f], opt)", "report = run.start_measurement(...).stop()"],
+        ),
     ]
     svg = stepper_animation_svg(
         "Tutorials",
@@ -1127,7 +1140,7 @@ def render_tutorial_doc(module: TutorialModule, sidebar_position: int, repo_ref:
     return "\n".join(lines)
 
 
-def render_index(modules: List[TutorialModule], heading_body: str) -> str:
+def _group_tutorials(modules: List[TutorialModule]) -> Dict[str, List[TutorialModule]]:
     groups: Dict[str, List[TutorialModule]] = {
         "Beginner": [],
         "Intermediate": [],
@@ -1138,7 +1151,70 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         groups[key].append(module)
     for key in groups:
         groups[key] = sorted(groups[key], key=lambda m: _flow_key(m.number))
+    return groups
 
+
+def _render_tutorial_card_grid(modules: List[TutorialModule]) -> List[str]:
+    lines: List[str] = ['<div class="tutorial-grid">']
+    for module in modules:
+        title = html.escape(module.display_title)
+        summary = html.escape(_summary_text(module))
+        diff_class = module.difficulty.strip().lower()
+        duration = html.escape(module.estimated_read_time)
+        label_tags = "".join(
+            f'<span class="tutorial-card-tag">{html.escape(label)}</span>'
+            for label in module.labels
+        )
+        lines.extend(
+            [
+                f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
+                '    <div class="tutorial-card-image-wrap">',
+                f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
+                f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
+                f'      <span class="tutorial-card-duration">{duration}</span>',
+                "    </div>",
+                '    <div class="tutorial-card-body">',
+                f'      <p class="tutorial-card-summary">{summary}</p>',
+                f'      <div class="tutorial-card-tags">{label_tags}</div>',
+                "    </div>",
+                "  </div>",
+            ]
+        )
+    lines.extend(["</div>", ""])
+    return lines
+
+
+def _clean_heading_body(heading_body: str) -> str:
+    return heading_body.replace(
+        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
+        "",
+    ).strip()
+
+
+def _render_tutorial_path_block(groups: Dict[str, List[TutorialModule]]) -> List[str]:
+    lines: List[str] = [
+        '<div class="overview-link-columns">',
+        '  <section class="overview-link-panel overview-link-panel-start">',
+        "    <h2>Choose a Tutorial Path</h2>",
+        "    <p>Use the cards in each section in order. Each tutorial includes concept-first guidance with matching C++ and Python implementation.</p>",
+        '    <ul class="overview-link-list">',
+    ]
+    difficulty_copy = {
+        "Beginner": "First model run, async inference, model benchmarking, basic graphs, and model options.",
+        "Intermediate": "Data exchange, preprocessing, outputs, streaming, diagnostics, and graph composition.",
+        "Advanced": "Multi-stream graphs, throughput tuning, and production-style pipeline structure.",
+    }
+    for difficulty, slug, _ in DIFFICULTY_SUBDIRS:
+        count = len(groups[difficulty])
+        lines.append(
+            f'      <li><a class="overview-link-card" href="/tutorials/{slug}/"><strong>{difficulty}</strong><span>{difficulty_copy[difficulty]} {count} guided chapters.</span></a></li>'
+        )
+    lines.extend(["    </ul>", "  </section>", "</div>", ""])
+    return lines
+
+
+def render_index(modules: List[TutorialModule], heading_body: str) -> str:
+    groups = _group_tutorials(modules)
     lines: List[str] = [
         "---",
         "title: Tutorials",
@@ -1151,52 +1227,33 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         "",
         "# Tutorials",
         "",
-        f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
+        f'<img src="{docs_static_url("img/tutorials/landing.svg", relative_prefix="..")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
     ]
-    if heading_body:
-        lines.extend(["", heading_body.strip(), ""])
-    else:
-        lines.extend(
-            [
-                "",
-                '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
-                "",
-            ]
-        )
 
-    for difficulty in ("Beginner", "Intermediate", "Advanced"):
-        section = groups[difficulty]
-        if not section:
-            continue
+    cleaned_heading_body = _clean_heading_body(heading_body)
+    if cleaned_heading_body:
+        lines.extend(["", cleaned_heading_body, ""])
+    lines.extend(_render_tutorial_path_block(groups))
+    return "\n".join(lines)
 
-        lines.extend([f"## {difficulty}", "", '<div class="tutorial-grid">'])
 
-        for module in section:
-            title = html.escape(module.display_title)
-            summary = html.escape(_summary_text(module))
-            diff_class = module.difficulty.strip().lower()
-            duration = html.escape(module.estimated_read_time)
-            label_tags = "".join(
-                f'<span class="tutorial-card-tag">{html.escape(label)}</span>'
-                for label in module.labels
-            )
-            lines.extend(
-                [
-                    f'  <div class="tutorial-card tutorial-difficulty-{diff_class}">',
-                    '    <div class="tutorial-card-image-wrap">',
-                    f'      <img class="tutorial-card-image" src="{module.image_url}" alt="{title} image" loading="lazy" />',
-                    f'      <a class="tutorial-card-image-title" href="{module.doc_slug}">{title}</a>',
-                    f'      <span class="tutorial-card-duration">{duration}</span>',
-                    "    </div>",
-                    '    <div class="tutorial-card-body">',
-                    f'      <p class="tutorial-card-summary">{summary}</p>',
-                    f'      <div class="tutorial-card-tags">{label_tags}</div>',
-                    "    </div>",
-                    "  </div>",
-                ]
-            )
-
-        lines.extend(["</div>", ""])
+def render_difficulty_index(difficulty: str, slug: str, modules: List[TutorialModule]) -> str:
+    lines: List[str] = [
+        "---",
+        f"title: {difficulty}",
+        f"description: {difficulty} Neat tutorials",
+        "sidebar_position: 1",
+        f"slug: /tutorials/{slug}",
+        "---",
+        "",
+        "<!-- AUTO-GENERATED by tools/generate_tutorial_docs.py. -->",
+        "",
+        f"# {difficulty} Tutorials",
+        "",
+        '<p class="tutorial-grid-intro">Use these tutorials in order. Each card links to a chapter with concept-first guidance and matching C++ and Python implementation.</p>',
+        "",
+    ]
+    lines.extend(_render_tutorial_card_grid(modules))
     return "\n".join(lines)
 
 
@@ -1239,7 +1296,7 @@ def main() -> int:
 
     root = pathlib.Path(args.repo_root).resolve()
     tutorials_dir = root / "tutorials"
-    docs_tutorials_dir = root / "docs" / "tutorials"
+    docs_tutorials_dir = root / "docs" / "develop-apps" / "tutorials"
 
     module_dirs = discover_modules(tutorials_dir)
     modules = [parse_module(d, root) for d in module_dirs]
@@ -1276,6 +1333,8 @@ def main() -> int:
             if stale not in expected_paths:
                 stale.unlink()
 
+    grouped_modules = _group_tutorials(modules)
+
     # Re-number sidebar_position per difficulty group so each subsection starts at 1.
     per_group_idx: Dict[str, int] = {slug: 0 for _, slug, _ in DIFFICULTY_SUBDIRS}
     for module in modules:
@@ -1284,6 +1343,13 @@ def main() -> int:
         out_path = docs_tutorials_dir / sub_slug / f"{module.doc_id}.mdx"
         out_path.write_text(
             render_tutorial_doc(module, sidebar_position=per_group_idx[sub_slug], repo_ref=repo_ref),
+            encoding="utf-8",
+        )
+
+    for label, slug, _ in DIFFICULTY_SUBDIRS:
+        out_path = docs_tutorials_dir / slug / "index.md"
+        out_path.write_text(
+            render_difficulty_index(label, slug, grouped_modules[label]),
             encoding="utf-8",
         )
 

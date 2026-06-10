@@ -371,11 +371,10 @@ static simaai::neat::Sample pull_sample_with_retry(simaai::neat::Run& runner,
     if (!last_err.empty()) {
       std::cerr << "[DBG] " << label << " last_error: " << last_err << "\n";
     }
-    std::cerr << runner.diagnostics_summary() << "\n";
-    simaai::neat::RunReportOptions opt;
-    opt.include_node_reports = true;
-    opt.include_next_cpu = true;
-    std::cerr << runner.report(opt) << "\n";
+    const std::string last_err_after = runner.last_error();
+    if (!last_err_after.empty()) {
+      std::cerr << "[DBG] " << label << " last_error_after: " << last_err_after << "\n";
+    }
   };
 
   simaai::neat::Sample out;
@@ -517,8 +516,7 @@ static simaai::neat::Tensor run_image_group_infer(const simaai::neat::Model& mod
 
   simaai::neat::RunOptions run_opt;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-  simaai::neat::Run runner =
-      p.build(simaai::neat::Sample{decoded}, simaai::neat::RunMode::Async, run_opt);
+  simaai::neat::Run runner = p.build(simaai::neat::Sample{decoded}, run_opt);
   const bool pushed = runner.push(simaai::neat::Sample{decoded});
   require(pushed, "jpeg_model: push decoded tensor failed");
   auto out = pull_sample_with_retry(runner, "jpeg_model", 1000, 20, true);

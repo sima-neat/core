@@ -5,7 +5,7 @@
 Use when you want one input to one output with straightforward control flow.
 
 - Build Graph with input + processing + output nodes.
-- Build `PipelineRun` with `PipelineRunMode::Sync`.
+- Use `Graph::run(...)` for one-shot execution.
 - Use `push_and_pull(...)`.
 
 ## 2) Async streaming pipeline
@@ -13,7 +13,7 @@ Use when you want one input to one output with straightforward control flow.
 Use for continuous throughput and decoupled producer/consumer.
 
 - Build Graph once.
-- Create `PipelineRun` with `PipelineRunMode::Async`.
+- Use `Graph::build(...)` for a reusable async runner.
 - `push(...)` in producer loop, `pull(...)` in consumer loop.
 - Close input with `close_input()` when done.
 

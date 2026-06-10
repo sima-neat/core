@@ -59,7 +59,7 @@ try {
 
 ## Debug knobs (environment)
 
-Key environment variables (see [Architecture](/contribute/architecture) for detail):
+Key environment variables (see [Architecture](/develop-apps/contribute/architecture) for detail):
 - `SIMA_GST_DOT_DIR`: write DOT graphs for failures
 - `SIMA_GST_BOUNDARY_PROBES`: boundary flow counters
 - `SIMA_GST_ELEMENT_TIMINGS`: per-element timings
@@ -71,7 +71,7 @@ Key environment variables (see [Architecture](/contribute/architecture) for deta
 1) Capture `GraphReport.error_code` and bucket the failure by taxonomy first.
 2) Capture `GraphReport.repro_note` for concrete context and built-in hint.
 3) Capture pipeline text: `Graph::describe_backend()` or `last_pipeline()`.
-4) Capture structured diagnostics: `Run::report()` or `NeatError::report()`.
+4) Capture structured diagnostics: `MeasureReport::to_text()` or `NeatError::report()`.
 5) Inspect `GraphReport.bus` for first terminal `ERROR` source + detail.
 6) If runtime stalls/timeouts, enable boundary/element probes to localize flow stop.
 
@@ -88,12 +88,12 @@ For throughput/latency/power reporting, prefer the graph-run JSON export:
 
 ```cpp
 RunOptions opt;
-opt.enable_metrics = true;       // enables node/element latency probes
 opt.enable_board_power();        // graph-level power when supported by the board/SOM
 Run run = graph.build(opt);
 
-// run your normal push/pull loop, then:
-save_run_json(run, "run.graph_run.json");
+// run your normal push/pull loop inside a measurement window, then:
+auto report = run.start_measurement().stop();
+std::cout << report.to_text();
 ```
 
 The export keeps scopes explicit:
@@ -122,4 +122,4 @@ power-number validation.
 | `tensor caps change not supported` | Tensor shape/dtype change at runtime | Keep tensor shape/dtype stable (no renegotiation) |
 
 For structured plugin errors and actionable hints, see
-[Troubleshooting](/troubleshooting).
+[Troubleshooting](/reference/troubleshooting).

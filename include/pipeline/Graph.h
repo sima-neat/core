@@ -269,18 +269,28 @@ public:
   /// One-shot synchronous push+pull from `Sample` inputs (carries per-buffer metadata).
   Sample run(const Sample& inputs, const RunOptions& opt = {});
   /**
-   * @brief Build a long-lived `Run` handle, seeding caps from `cv::Mat` inputs.
+   * @brief Build a long-lived async `Run` handle, seeding caps from `cv::Mat` inputs.
    * @param inputs One Mat per ingress port; used for build-time adaptation.
-   * @param mode   `Async` (default; pipeline runs continuously) or `Sync`.
    * @param opt    Runtime options (queue depth, overflow policy).
    * @throws NeatError on validation or build failure.
+   *
+   * `build(...)` always returns a reusable push/pull runner. Use `run(...)` for one-shot
+   * synchronous execution.
    */
-  Run build(const std::vector<cv::Mat>& inputs, RunMode mode = RunMode::Async,
-            const RunOptions& opt = {});
+  Run build(const std::vector<cv::Mat>& inputs, const RunOptions& opt = {});
   /// Build variant seeded with `Tensor` inputs.
-  Run build(const TensorList& inputs, RunMode mode = RunMode::Async, const RunOptions& opt = {});
+  Run build(const TensorList& inputs, const RunOptions& opt = {});
   /// Build variant seeded with full `Sample` inputs (with per-buffer metadata).
-  Run build(const Sample& inputs, RunMode mode = RunMode::Async, const RunOptions& opt = {});
+  Run build(const Sample& inputs, const RunOptions& opt = {});
+#ifdef SIMA_NEAT_INTERNAL
+  /// Internal seeded build entry point; may create sync-mode Runs for runtime-owned caches.
+  Run build_seeded_internal(const std::vector<cv::Mat>& inputs, RunMode mode,
+                            const RunOptions& opt = {});
+  /// Internal seeded build variant for tensors.
+  Run build_seeded_internal(const TensorList& inputs, RunMode mode, const RunOptions& opt = {});
+  /// Internal seeded build variant for Samples.
+  Run build_seeded_internal(const Sample& inputs, RunMode mode, const RunOptions& opt = {});
+#endif
   /**
    * @brief Validate the Graph against a real input sample without running the pipeline.
    *

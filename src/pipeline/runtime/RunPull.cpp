@@ -86,7 +86,7 @@ bool input_options_expect_tensor_media_local(const std::optional<InputOptions>& 
   const char* tag = where ? where : "Run";
   const std::string code = err.code.empty() ? std::string(error_codes::kRuntimePull) : err.code;
   const std::string hint =
-      "inspect Run::report()/GraphReport bus diagnostics for the first terminal error.";
+      "inspect the attached GraphReport diagnostics for the first terminal error.";
   if (status == PullStatus::Timeout) {
     throw std::runtime_error(decorate_with_error_code(
         code, with_hint(std::string(tag) + ": timeout waiting for output (status=Timeout)", hint)));
@@ -275,13 +275,6 @@ void dump_detess_output_pool(GstElement* pipeline, const std::string& elem_name)
     gst_caps_unref(caps);
   gst_object_unref(pad);
   gst_object_unref(elem);
-}
-
-void warn_no_warmup_once() {
-  static std::atomic<bool> warned{false};
-  if (warned.exchange(true))
-    return;
-  std::printf("[WARN] Run::warmup: warm=0; throughput stability may vary without warmup.\n");
 }
 
 std::string available_output_names(const runtime::RunCore& core) {
@@ -631,7 +624,7 @@ std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {
       if (rep.repro_note.empty()) {
         rep.repro_note = pipeline_internal::error_util::append_hint(
             "Run::pull: pull returned Error without report details",
-            "inspect Run::report()/GraphReport bus diagnostics for root cause.");
+            "inspect the attached GraphReport diagnostics for root cause.");
       }
       const std::string msg = err.message.empty()
                                   ? decorate_with_error_code(rep.error_code, rep.repro_note)
@@ -646,10 +639,10 @@ std::optional<Sample> runtime::RunCore::pull_optional(int timeout_ms) {
     const std::string msg =
         last_err.empty() ? pipeline_internal::error_util::append_hint(
                                "Run::pull: pull returned Error without detail",
-                               "inspect Run::report()/GraphReport bus diagnostics for root cause.")
+                               "inspect the attached GraphReport diagnostics for root cause.")
                          : pipeline_internal::error_util::append_hint(
                                "Run::pull: " + last_err,
-                               "inspect Run::report()/GraphReport bus diagnostics for root cause.");
+                               "inspect the attached GraphReport diagnostics for root cause.");
     throw std::runtime_error(decorate_with_error_code(error_codes::kRuntimePull, msg));
   }
   return std::nullopt;
@@ -924,20 +917,6 @@ Sample Run::run(const Sample& inputs, int timeout_ms) {
     }
   }
   return out;
-}
-
-int Run::warmup(const std::vector<cv::Mat>& inputs, int warm, int timeout_ms) {
-  if (warm < 0) {
-    warm = pipeline_internal::env_int("SIMA_ASYNC_WARMUP", 0);
-  }
-  if (warm <= 0) {
-    warn_no_warmup_once();
-    return 0;
-  }
-  for (int i = 0; i < warm; ++i) {
-    (void)run(inputs, timeout_ms);
-  }
-  return warm;
 }
 
 } // namespace simaai::neat

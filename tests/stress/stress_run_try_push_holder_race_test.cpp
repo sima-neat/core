@@ -49,7 +49,7 @@ RUN_TEST("stress_run_try_push_holder_race_test", ([] {
            run_opt.overflow_policy = OverflowPolicy::Block;
 
            Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x66);
-           Run run = graph.build(TensorList{seed}, RunMode::Async, run_opt);
+           Run run = graph.build(TensorList{seed}, run_opt);
 
            // Prime one holder from a regular push/pull path.
            TensorList prime = run.run(TensorList{seed}, 1000);

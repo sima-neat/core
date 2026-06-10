@@ -8,7 +8,7 @@ required_files=(
   ".github/CODEOWNERS"
   ".github/PULL_REQUEST_TEMPLATE.md"
   "CONTRIBUTING.md"
-  "docs/contribute/release-checklist.md"
+  "docs/develop-apps/contribute/release-maintenance/release-checklist.md"
   "scripts/ci/check_naming_and_conflicts.sh"
   "scripts/ci/check_clean_branch.sh"
   "scripts/ci/check_artifacts.sh"
@@ -53,8 +53,8 @@ for script in scripts/ci/*.sh; do
 done
 
 if [[ -f .github/workflows/release-gate.yml ]] &&
-   ! grep -q "docs/contribute/release-checklist.md" .github/workflows/release-gate.yml; then
-  echo "ERROR: release-gate workflow must reference docs/contribute/release-checklist.md" >&2
+   ! grep -q "docs/develop-apps/contribute/release-maintenance/release-checklist.md" .github/workflows/release-gate.yml; then
+  echo "ERROR: release-gate workflow must reference docs/develop-apps/contribute/release-maintenance/release-checklist.md" >&2
   fail=1
 fi
 
@@ -74,8 +74,8 @@ required_checks=(
 )
 
 for check_name in "${required_checks[@]}"; do
-  if ! grep -q "${check_name}" docs/contribute/release-checklist.md; then
-    echo "ERROR: docs/contribute/release-checklist.md must list required check: ${check_name}" >&2
+  if ! grep -q "${check_name}" docs/develop-apps/contribute/release-maintenance/release-checklist.md; then
+    echo "ERROR: docs/develop-apps/contribute/release-maintenance/release-checklist.md must list required check: ${check_name}" >&2
     fail=1
   fi
 done

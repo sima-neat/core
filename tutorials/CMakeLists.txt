@@ -79,90 +79,97 @@ add_tutorial(tutorial_002_run_inference_async
   LABELS mpk
 )
 
-add_tutorial(tutorial_003_build_inference_pipeline
-  003_build_inference_pipeline/build_inference_pipeline.cpp
+add_tutorial(tutorial_003_benchmark_your_model
+  003_benchmark_your_model/benchmark_your_model.cpp
+  MODEL resnet_50
+  ARGS --samples 10
+  LABELS mpk benchmark
+)
+
+add_tutorial(tutorial_004_build_inference_pipeline
+  004_build_inference_pipeline/build_inference_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_004_configure_model_options
-  004_configure_model_options/configure_model_options.cpp
+add_tutorial(tutorial_005_configure_model_options
+  005_configure_model_options/configure_model_options.cpp
   MODEL yolo_v8s
   LABELS mpk
 )
 
-add_tutorial(tutorial_005_preprocess_images
-  005_preprocess_images/preprocess_images.cpp
+add_tutorial(tutorial_006_preprocess_images
+  006_preprocess_images/preprocess_images.cpp
   MODEL resnet_50
   LABELS mpk
 )
 
-add_tutorial(tutorial_006_read_detection_boxes
-  006_read_detection_boxes/read_detection_boxes.cpp
+add_tutorial(tutorial_007_read_detection_boxes
+  007_read_detection_boxes/read_detection_boxes.cpp
   MODEL yolo_v8s
   ARGS --image "${CMAKE_CURRENT_SOURCE_DIR}/assets/fronalpstock_1330.jpg"
   LABELS mpk
 )
 
-add_tutorial(tutorial_007_plug_model_into_pipeline
-  007_plug_model_into_pipeline/plug_model_into_pipeline.cpp
+add_tutorial(tutorial_008_plug_model_into_pipeline
+  008_plug_model_into_pipeline/plug_model_into_pipeline.cpp
   MODEL yolo_v8s
   LABELS mpk
 )
 
-add_tutorial(tutorial_008_pass_numpy_to_model
-  008_pass_numpy_to_model/pass_numpy_to_model.cpp
+add_tutorial(tutorial_009_pass_numpy_to_model
+  009_pass_numpy_to_model/pass_numpy_to_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_009_feed_multi_input_model
-  009_feed_multi_input_model/feed_multi_input_model.cpp
+add_tutorial(tutorial_010_feed_multi_input_model
+  010_feed_multi_input_model/feed_multi_input_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_010_interpret_model_output
-  010_interpret_model_output/interpret_model_output.cpp
+add_tutorial(tutorial_011_interpret_model_output
+  011_interpret_model_output/interpret_model_output.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_011_diagnose_a_pipeline
-  011_diagnose_a_pipeline/diagnose_a_pipeline.cpp
+add_tutorial(tutorial_012_diagnose_a_pipeline
+  012_diagnose_a_pipeline/diagnose_a_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_012_build_a_custom_data_graph
-  012_build_a_custom_data_graph/build_a_custom_data_graph.cpp
+add_tutorial(tutorial_013_build_a_custom_data_graph
+  013_build_a_custom_data_graph/build_a_custom_data_graph.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_013_embed_model_inside_graph
-  013_embed_model_inside_graph/embed_model_inside_graph.cpp
+add_tutorial(tutorial_014_embed_model_inside_graph
+  014_embed_model_inside_graph/embed_model_inside_graph.cpp
   MODEL yolo_v8s
   LABELS mpk
 )
 
-add_tutorial(tutorial_014_run_multiple_streams
-  014_run_multiple_streams/run_multiple_streams.cpp
+add_tutorial(tutorial_015_run_multiple_streams
+  015_run_multiple_streams/run_multiple_streams.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_015_tune_throughput_and_queues
-  015_tune_throughput_and_queues/tune_throughput_and_queues.cpp
+add_tutorial(tutorial_016_tune_throughput_and_queues
+  016_tune_throughput_and_queues/tune_throughput_and_queues.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_016_build_production_pipeline
-  016_build_production_pipeline/build_production_pipeline.cpp
+add_tutorial(tutorial_017_build_production_pipeline
+  017_build_production_pipeline/build_production_pipeline.cpp
   MODEL resnet_50
   LABELS mpk
 )
 
-add_tutorial(tutorial_017_consume_rtsp_stream
-  017_consume_rtsp_stream/consume_rtsp_stream.cpp
+add_tutorial(tutorial_018_consume_rtsp_stream
+  018_consume_rtsp_stream/consume_rtsp_stream.cpp
   NO_TEST
   LABELS asset
 )
 add_test(
-  NAME tutorial_017_consume_rtsp_stream
+  NAME tutorial_018_consume_rtsp_stream
   COMMAND /bin/sh -c [=[
 url="${SIMANEAT_APPS_TEST_RTSP_URL:-}"
 if [ -z "${url}" ]; then
@@ -170,13 +177,13 @@ if [ -z "${url}" ]; then
   url="${urls%%[ ,;]*}"
 fi
 if [ -z "${url}" ]; then
-  echo "Skipping tutorial_017_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
+  echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
   exit 77
 fi
 exec "$1" --url "${url}" --frames 1
-]=] sh $<TARGET_FILE:tutorial_017_consume_rtsp_stream>
+]=] sh $<TARGET_FILE:tutorial_018_consume_rtsp_stream>
 )
-set_tests_properties(tutorial_017_consume_rtsp_stream PROPERTIES
+set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
   LABELS "tutorial;asset;rtsp"
   RESOURCE_LOCK "dispatcher"
   SKIP_RETURN_CODE 77

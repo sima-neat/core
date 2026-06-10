@@ -1,6 +1,7 @@
 #pragma once
 
 #include "pipeline/Run.h"
+#include "pipeline/internal/RunDiagnostics.h"
 
 #include <cstddef>
 #include <cstdint>

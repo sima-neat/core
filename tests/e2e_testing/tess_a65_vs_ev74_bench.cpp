@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "gst/GstHelpers.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -5,6 +8,7 @@
 #include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "pipeline/internal/sima/PluginContractSubsets.h"
+#include "pipeline/runtime/RunInternal.h"
 #include "pipeline/internal/sima/stagesemantics/ProcessCvuRuntimeConfigAdapterInternal.h"
 #include "test_utils.h"
 
@@ -615,16 +619,15 @@ Ev74RunSummary run_ev74_benchmark(const TessBenchCase& c, const BenchOptions& op
 
   RunOptions run_opt;
   run_opt.output_memory = OutputMemory::Owned;
-  run_opt.enable_metrics = true;
   run_opt.queue_depth = 1;
 
-  auto warm_run = graph.build(TensorList{input}, RunMode::Sync, run_opt);
+  auto warm_run = graph.build_seeded_internal(TensorList{input}, RunMode::Sync, run_opt);
   for (int i = 0; i < opt.warmup; ++i) {
     (void)warm_run.run(TensorList{input}, opt.timeout_ms);
   }
   warm_run.close();
 
-  auto run = graph.build(TensorList{input}, RunMode::Sync, run_opt);
+  auto run = graph.build_seeded_internal(TensorList{input}, RunMode::Sync, run_opt);
   std::vector<double> wall_ms;
   wall_ms.reserve(static_cast<std::size_t>(opt.iterations));
 
@@ -646,7 +649,7 @@ Ev74RunSummary run_ev74_benchmark(const TessBenchCase& c, const BenchOptions& op
     summary.full_hashes.push_back(fnv1a64(bytes.data(), bytes.size()));
   }
 
-  const auto snap = run.diag_snapshot();
+  const auto snap = run_internal::diag_snapshot(run);
   const auto timing = find_element_timing(snap, "bench_tess_" + c.name);
   run.close();
 

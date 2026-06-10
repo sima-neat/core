@@ -453,7 +453,6 @@ endfunction()
 set(SIMANEAT_EXPORTED_NEAT_RUNTIME_DIR_CANDIDATES "")
 if (SIMANEAT_USING_NEAT_INTERNALS_PACKAGE)
   foreach(_simaneat_internals_target IN ITEMS
-      NeatInternals::simaaineatprofiler
       NeatInternals::neatprocessmlaruntime
       NeatInternals::PreparedRuntimeBridge
       NeatInternals::neattensorbufferfast
@@ -502,7 +501,6 @@ set(SIMANEAT_REPO_NEAT_RUNTIME_DIR_CANDIDATES
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/prepared-runtime-bridge
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/processmla-runtime
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/metadata
-  ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/profiler
   ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/utils
 )
 set(SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE OFF)
@@ -1052,37 +1050,6 @@ if (SIMANEAT_NEEDS_PREPARED_RUNTIME_BRIDGE)
   endif()
 endif()
 
-# Per-kernel latency profiler event ring (libsimaaineatprofiler.so).  Provides
-# the cross-shared-library event ring that LatencyProfiler drains and that the
-# dispatcher / processcvu plugin emit into.  Optional: gracefully skipped when
-# the .so cannot be found (no profiler support, but builds keep working).
-set(SIMANEAT_NEAT_PROFILER_LIB
-  "${SIMANEAT_NEAT_PROFILER_LIB}"
-  CACHE FILEPATH
-  "Path to libsimaaineatprofiler.so (per-kernel latency profiler event ring)")
-if (NOT SIMANEAT_NEAT_PROFILER_LIB)
-  find_library(SIMANEAT_NEAT_PROFILER_LIB
-    NAMES simaaineatprofiler
-    HINTS
-      ${CMAKE_CURRENT_SOURCE_DIR}/../internals/build/core/profiler
-      ${SIMANEAT_INSTALLED_NEAT_RUNTIME_DIR_CANDIDATES}
-      /usr/lib/aarch64-linux-gnu
-      /lib/aarch64-linux-gnu
-      /usr/lib
-      /lib
-  )
-endif()
-if (SIMANEAT_NEAT_PROFILER_LIB)
-  target_link_libraries(sima_neat_common INTERFACE ${SIMANEAT_NEAT_PROFILER_LIB})
-  target_include_directories(sima_neat_common INTERFACE
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../internals/core/profiler>)
-  target_compile_definitions(sima_neat_common INTERFACE SIMA_HAS_NEAT_PROFILER=1)
-else()
-  message(STATUS
-    "libsimaaineatprofiler.so not found: per-kernel latency profiler "
-    "will be unavailable. Build internals/core/profiler first to enable.")
-endif()
-
 target_compile_definitions(sima_neat_common INTERFACE SIMA_HAS_SIMAAI_POOL=1)
 
 set(SIMANEAT_NEAT_ALLOCATOR_DIR "")
@@ -1269,7 +1236,7 @@ endif()
 # Internal-only helper target (tests/bench/tools)
 # ------------------------------------------------------------------------------
 add_library(sima_neat_internal INTERFACE)
-target_link_libraries(sima_neat_internal INTERFACE sima_neat)
+target_link_libraries(sima_neat_internal INTERFACE sima_neat_shared)
 target_include_directories(sima_neat_internal INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline

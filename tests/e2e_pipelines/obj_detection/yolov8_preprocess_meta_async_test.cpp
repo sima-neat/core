@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     auto run = graph.build(
         simaai::neat::Sample{simaai::neat::Sample::from_image(
             frame0, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
-        simaai::neat::RunMode::Async, run_opt);
+        run_opt);
     require(
         run.push(simaai::neat::Sample{simaai::neat::Sample::from_image(
             frame0, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)}),

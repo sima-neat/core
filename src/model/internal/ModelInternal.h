@@ -70,6 +70,8 @@ struct ModelAccess {
   static const class ModelPack& pack_for_sync(const Model& model);
   static std::string model_id(const Model& model);
   static std::string source_path(const Model& model);
+  static Run& run(Model::Runner& runner);
+  static const Run& run(const Model::Runner& runner);
   static Model::Options options(const Model& model);
   static Model clone_with_options(const Model& model, const Model::Options& opt);
   static PostRouteStageKind resolved_post_kind(const Model& model);

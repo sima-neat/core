@@ -113,8 +113,8 @@ RUN_TEST("stress_model_lifecycle_test", [] {
   try {
     for (int i = 0; i < iters; ++i) {
       simaai::neat::Model model(tar);
-      (void)model.input_spec();
-      (void)model.output_spec();
+      (void)model.input_specs();
+      (void)model.output_specs();
       (void)model.metadata();
       (void)model.graph();
       (void)model.fragment(simaai::neat::Model::Stage::Inference);

@@ -279,7 +279,7 @@ void Graph::run() {
       }
       if (rep.repro_note.empty()) {
         rep.repro_note = "Graph::run: runtime pull failed (status=Error)\n"
-                         "Hint: inspect Run::report()/GraphReport bus diagnostics.";
+                         "Hint: inspect the attached GraphReport diagnostics.";
       }
       const std::string msg =
           err.message.empty()
@@ -290,7 +290,7 @@ void Graph::run() {
     const std::string detail = err.message.empty() ? "Graph::run: pull failed" : err.message;
     GraphReport rep;
     rep.error_code = err.code.empty() ? error_codes::kRuntimePull : err.code;
-    rep.repro_note = detail + "\nHint: inspect Run::report()/GraphReport bus diagnostics.";
+    rep.repro_note = detail + "\nHint: inspect the attached GraphReport diagnostics.";
     const std::string msg = session_build_decorate_with_error_code(rep.error_code, rep.repro_note);
     throw NeatError(msg, std::move(rep));
   }

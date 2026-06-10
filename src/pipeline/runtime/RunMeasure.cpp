@@ -49,6 +49,48 @@ RunStats delta_counters(const RunStats& before, const RunStats& after) {
   return out;
 }
 
+MeasureInputStats delta_input_stats(const InputStreamStats& before, const InputStreamStats& after) {
+  const auto delta = [](std::uint64_t b, std::uint64_t a) -> std::uint64_t {
+    return a >= b ? a - b : 0;
+  };
+  const auto delta_avg = [](double before_avg, std::uint64_t before_count, double after_avg,
+                            std::uint64_t after_count, std::uint64_t delta_count) -> double {
+    if (delta_count == 0) {
+      return 0.0;
+    }
+    const double before_total = before_avg * static_cast<double>(before_count);
+    const double after_total = after_avg * static_cast<double>(after_count);
+    if (after_total < before_total) {
+      return after_avg;
+    }
+    return (after_total - before_total) / static_cast<double>(delta_count);
+  };
+
+  MeasureInputStats out;
+  out.push_count = delta(before.push_count, after.push_count);
+  out.push_failures = delta(before.push_failures, after.push_failures);
+  out.pull_count = delta(before.pull_count, after.pull_count);
+  out.poll_count = delta(before.poll_count, after.poll_count);
+  out.dropped_frames = delta(before.dropped_frames, after.dropped_frames);
+  out.renegotiations = delta(before.renegotiations, after.renegotiations);
+  out.alloc_grows = delta(before.alloc_grows, after.alloc_grows);
+  out.growth_blocked = delta(before.growth_blocked, after.growth_blocked);
+  out.renegotiation_blocked = delta(before.renegotiation_blocked, after.renegotiation_blocked);
+  out.avg_alloc_us = delta_avg(before.avg_alloc_us, before.push_count, after.avg_alloc_us,
+                               after.push_count, out.push_count);
+  out.avg_map_us = delta_avg(before.avg_map_us, before.push_count, after.avg_map_us,
+                             after.push_count, out.push_count);
+  out.avg_copy_us = delta_avg(before.avg_copy_us, before.push_count, after.avg_copy_us,
+                              after.push_count, out.push_count);
+  out.avg_push_us = delta_avg(before.avg_push_us, before.push_count, after.avg_push_us,
+                              after.push_count, out.push_count);
+  out.avg_pull_wait_us = delta_avg(before.avg_pull_wait_us, before.pull_count,
+                                   after.avg_pull_wait_us, after.pull_count, out.pull_count);
+  out.avg_decode_us = delta_avg(before.avg_decode_us, before.pull_count, after.avg_decode_us,
+                                after.pull_count, out.pull_count);
+  return out;
+}
+
 MeasureLatencyStats summarize_samples(std::vector<double> samples) {
   MeasureLatencyStats out;
   out.count = samples.size();
@@ -178,7 +220,7 @@ std::string node_display_name(const GraphNodeMetrics& node) {
   if (!node.node_id.empty()) {
     return node.node_id;
   }
-  if (node.runtime_node_id != graph::kInvalidNode) {
+  if (node.runtime_node_id != kInvalidRuntimeNodeId) {
     return "n" + std::to_string(node.runtime_node_id);
   }
   return "-";
@@ -235,7 +277,7 @@ NodeLatencySummary delta_latency_summary(const NodeLatencySummary& before,
 
 std::vector<GraphNodeMetrics> delta_node_metrics(const GraphMetricsReport& before,
                                                  const GraphMetricsReport& after) {
-  using NodeKey = std::pair<std::size_t, graph::NodeId>;
+  using NodeKey = std::pair<std::size_t, RuntimeNodeId>;
   std::map<NodeKey, GraphNodeMetrics> before_by_node;
   for (const GraphNodeMetrics& node : before.node_metrics) {
     before_by_node[{node.pipeline_segment_id, node.runtime_node_id}] = node;
@@ -287,6 +329,7 @@ struct MeasureScope::Impl {
   Run* run = nullptr;
   MeasureOptions options;
   RunStats before{};
+  InputStreamStats before_input{};
   RunDiagSnapshot before_diag{};
   GraphMetricsReport before_graph_metrics{};
   std::vector<pipeline_internal::GraphQueueLatencySnapshot> before_graph_queue_metrics;
@@ -310,7 +353,7 @@ void MeasureScope::disable_lttng_trace_identity_noexcept(Impl* impl) {
   }
   try {
     const GraphMetricsReport graph_metrics = build_graph_metrics_report_run_lifetime(
-        *impl->run, RuntimeMetricsOptions{.include_power = false});
+        *impl->run, GraphMetricsOptions{.include_power = false});
     pipeline_internal::apply_lttng_trace_identity(*impl->run, graph_metrics.node_metrics,
                                                   impl->trace_context.run_id_hash,
                                                   impl->trace_context.graph_id_hash, false);
@@ -379,18 +422,21 @@ MeasureReport MeasureScope::stop() {
     return impl_->cached;
 
   const auto end = Clock::now();
-  const RunStats after = impl_->run->stats();
+  const RunStats after = run_internal::stats(*impl_->run);
   const RunStats measured = delta_counters(impl_->before, after);
+  const InputStreamStats after_input = run_internal::input_stats(*impl_->run);
 
   MeasureReport report;
   report.options = impl_->options;
   if (report.options.logical_batch_size <= 0)
     report.options.logical_batch_size = 1;
-  report.final_run_stats = after;
-  report.inputs_pushed = measured.inputs_pushed;
-  report.outputs_pulled = measured.outputs_pulled;
-  report.inputs_dropped = measured.inputs_dropped;
-  report.outputs_dropped = measured.outputs_dropped;
+  report.counters.inputs_enqueued = measured.inputs_enqueued;
+  report.counters.inputs_pushed = measured.inputs_pushed;
+  report.counters.outputs_ready = measured.outputs_ready;
+  report.counters.outputs_pulled = measured.outputs_pulled;
+  report.counters.inputs_dropped = measured.inputs_dropped;
+  report.counters.outputs_dropped = measured.outputs_dropped;
+  report.input = delta_input_stats(impl_->before_input, after_input);
   report.outputs = static_cast<std::size_t>(measured.outputs_pulled);
   report.elapsed_s = std::chrono::duration<double>(end - impl_->start).count();
   report.throughput_batches_per_s =
@@ -428,18 +474,16 @@ MeasureReport MeasureScope::stop() {
   report.frame_gap = summarize_samples(std::move(frame_gap_samples));
   report.latency_samples_collected = report.end_to_end.count > 0 || report.frame_gap.count > 0;
   const GraphMetricsReport after_graph_metrics = build_graph_metrics_report_run_lifetime(
-      *impl_->run, RuntimeMetricsOptions{.include_power = false});
+      *impl_->run, GraphMetricsOptions{.include_power = false});
   report.node_metrics = delta_node_metrics(impl_->before_graph_metrics, after_graph_metrics);
-  const RunDiagSnapshot after_diag = impl_->run->diag_snapshot();
-  report.inputs_enqueued = measured.inputs_enqueued;
-  report.outputs_ready = measured.outputs_ready;
+  const RunDiagSnapshot after_diag = run_internal::diag_snapshot(*impl_->run);
   if (impl_->options.include_power) {
     if (impl_->power_monitor) {
       impl_->power_monitor->stop();
       report.power = impl_->power_monitor->summary();
       impl_->power_monitor.reset();
     } else {
-      report.power = impl_->run->power_summary();
+      report.power = run_internal::power_summary(*impl_->run);
     }
   }
   if (impl_->lttng_metrics) {
@@ -567,10 +611,11 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
   auto impl = std::unique_ptr<MeasureScope::Impl>(new MeasureScope::Impl());
   impl->run = this;
   impl->options = opt;
-  impl->before = stats();
-  impl->before_diag = diag_snapshot();
+  impl->before = run_internal::stats(*this);
+  impl->before_input = run_internal::input_stats(*this);
+  impl->before_diag = run_internal::diag_snapshot(*this);
   impl->before_graph_metrics =
-      build_graph_metrics_report_run_lifetime(*this, RuntimeMetricsOptions{.include_power = false});
+      build_graph_metrics_report_run_lifetime(*this, GraphMetricsOptions{.include_power = false});
   pipeline_internal::set_graph_queue_timing_enabled(*this, opt.include_edge_latency ||
                                                                opt.include_message_latency);
   impl->before_graph_queue_metrics = pipeline_internal::snapshot_graph_queue_latencies(*this);
@@ -810,14 +855,28 @@ std::string MeasureReport::to_text() const {
   }
 
   os << "\nNEAT counters during measured window:\n"
-     << "  inputs_enqueued      : " << inputs_enqueued << "\n"
-     << "  inputs_pushed        : " << inputs_pushed << "\n"
-     << "  outputs_ready        : " << outputs_ready << "\n"
-     << "  outputs_pulled       : " << outputs_pulled << "\n"
-     << "  inputs_dropped       : " << inputs_dropped << "\n"
-     << "  outputs_dropped      : " << outputs_dropped << "\n"
+     << "  inputs_enqueued      : " << counters.inputs_enqueued << "\n"
+     << "  inputs_pushed        : " << counters.inputs_pushed << "\n"
+     << "  outputs_ready        : " << counters.outputs_ready << "\n"
+     << "  outputs_pulled       : " << counters.outputs_pulled << "\n"
+     << "  inputs_dropped       : " << counters.inputs_dropped << "\n"
+     << "  outputs_dropped      : " << counters.outputs_dropped << "\n"
      << "  graph_timing_unkeyed : " << graph_sample_timing_unkeyed << "\n"
      << "  graph_timing_misses  : " << graph_sample_timing_misses << "\n";
+
+  os << "\nInput boundary during measured window:\n"
+     << "  push_count           : " << input.push_count << "\n"
+     << "  push_failures        : " << input.push_failures << "\n"
+     << "  pull_count           : " << input.pull_count << "\n"
+     << "  poll_count           : " << input.poll_count << "\n"
+     << "  dropped_frames       : " << input.dropped_frames << "\n"
+     << "  renegotiations       : " << input.renegotiations << "\n"
+     << "  avg_alloc_us         : " << input.avg_alloc_us << "\n"
+     << "  avg_map_us           : " << input.avg_map_us << "\n"
+     << "  avg_copy_us          : " << input.avg_copy_us << "\n"
+     << "  avg_push_us          : " << input.avg_push_us << "\n"
+     << "  avg_pull_wait_us     : " << input.avg_pull_wait_us << "\n"
+     << "  avg_decode_us        : " << input.avg_decode_us << "\n";
 
   if (power.enabled && !power.rails.empty()) {
     os << "\nPower telemetry:\n"

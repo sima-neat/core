@@ -1,3 +1,6 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "perf_metrics_common.h"
@@ -53,12 +56,17 @@ int main() {
     run_opt.queue_depth = std::max(32, iterations / 2);
     const Sample seed = make_sample(0);
     const auto startup_t0 = sima_perf::Clock::now();
-    Run run = graph.build(Sample{seed}, RunMode::Async, run_opt);
+    Run run = graph.build(Sample{seed}, run_opt);
     const auto startup_t1 = sima_perf::Clock::now();
 
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
                                                               sima_perf::Clock::now());
 
+    MeasureOptions measure_opt;
+    measure_opt.include_plugin_latency = false;
+    measure_opt.include_edge_latency = false;
+    measure_opt.include_power = false;
+    auto measure_scope = run.start_measurement(measure_opt);
     simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
     power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
@@ -92,8 +100,7 @@ int main() {
     }
     const auto run_t1 = sima_perf::Clock::now();
     power_monitor.stop();
-
-    const RunStats stats = run.stats();
+    const MeasureReport report = measure_scope.stop();
     run.stop();
 
     sima_perf::PerfMetrics metrics;
@@ -103,12 +110,12 @@ int main() {
     metrics.p95 = sima_perf::percentile(latencies_ms, 95.0);
     metrics.startup = sima_perf::elapsed_ms(startup_t0, startup_t1);
     metrics.rss_peak_kb = sima_perf::rss_peak_kb();
-    metrics.input_drop_count = stats.inputs_dropped;
-    metrics.output_drop_count = stats.outputs_dropped;
+    metrics.input_drop_count = report.counters.inputs_dropped;
+    metrics.output_drop_count = report.counters.outputs_dropped;
 
     const auto power_summary = power_monitor.summary();
     sima_perf::emit_metrics_json("runtime_session_async_rgb", iterations, metrics, "async",
-                                 &power_summary);
+                                 &power_summary, &report);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "perf_runtime_graph_async_rgb_test exception: " << e.what() << "\n";

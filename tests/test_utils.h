@@ -5,6 +5,7 @@
 #include "pipeline/NeatError.h"
 #ifdef SIMA_NEAT_INTERNAL
 #include "pipeline/internal/DispatcherRecovery.h"
+#include "pipeline/runtime/RunInternal.h"
 #endif
 
 #include <chrono>
@@ -116,20 +117,35 @@ inline void require_neat_error(const std::function<void()>& fn, const std::strin
 inline bool wait_for_reneg(simaai::neat::Run& run, std::uint64_t target, int timeout_ms) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   while (std::chrono::steady_clock::now() < deadline) {
-    if (run.input_stats().renegotiations >= target)
+#ifdef SIMA_NEAT_INTERNAL
+    if (simaai::neat::run_internal::input_stats(run).renegotiations >= target)
       return true;
+#else
+    (void)run;
+    (void)target;
+    return false;
+#endif
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  return run.input_stats().renegotiations >= target;
+#ifdef SIMA_NEAT_INTERNAL
+  return simaai::neat::run_internal::input_stats(run).renegotiations >= target;
+#else
+  return false;
+#endif
 }
 
 inline std::uint64_t caps_changes_for(const simaai::neat::Run& run,
                                       const std::string& element_name) {
-  const simaai::neat::RunDiagSnapshot snap = run.diag_snapshot();
+#ifdef SIMA_NEAT_INTERNAL
+  const simaai::neat::RunDiagSnapshot snap = simaai::neat::run_internal::diag_snapshot(run);
   for (const auto& flow : snap.element_flows) {
     if (flow.element_name == element_name)
       return flow.caps_changes;
   }
+#else
+  (void)run;
+  (void)element_name;
+#endif
   return 0;
 }
 
