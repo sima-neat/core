@@ -2001,7 +2001,9 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   return inputs;
 }
 
-MeasureOptions make_benchmark_measure_options(int timeout_ms) {
+MeasureOptions make_benchmark_measure_options(int timeout_ms, int logical_batch_size,
+                                              bool include_power,
+                                              std::string title = "NEAT Benchmark") {
   MeasureOptions opt;
   opt.duration_ms = timeout_ms;
   opt.warmup_ms = 0;
@@ -2009,10 +2011,26 @@ MeasureOptions make_benchmark_measure_options(int timeout_ms) {
   opt.include_plugin_latency = false;
   opt.include_edge_latency = false;
   opt.include_message_latency = false;
-  opt.include_power = true;
-  opt.title = "NEAT Benchmark";
+  opt.include_power = include_power;
+  opt.logical_batch_size = logical_batch_size > 0 ? logical_batch_size : 1;
+  opt.title = std::move(title);
   opt.input = "synthetic";
   return opt;
+}
+
+simaai::neat::Sample make_benchmark_sample(const TensorList& inputs, int64_t frame_id,
+                                           std::string stream_id) {
+  Sample sample = sample_from_tensors(inputs);
+  sample.frame_id = frame_id;
+  sample.stream_id = std::move(stream_id);
+  return sample;
+}
+
+void require_benchmark_output(const simaai::neat::Sample& out, const char* where) {
+  if (out.empty()) {
+    throw std::runtime_error(std::string("Model::benchmark: ") + where + " pull timed out");
+  }
+  (void)tensors_from_sample(out, true);
 }
 
 simaai::neat::Sample make_bundle_from_tensors(const std::vector<Tensor>& inputs) {
@@ -7093,35 +7111,78 @@ BenchmarkReport Model::benchmark(int num_samples) {
   constexpr int kWarmupSamples = 50;
   constexpr int kTimeoutMs = 120000;
   const TensorList inputs = make_synthetic_benchmark_inputs(*this);
+  const int logical_batch_size = compiled_batch_size();
 
-  RunOptions run_options;
-  run_options.startup_preflight = false;
-  run_options.enable_board_power();
+  RunOptions latency_run_options;
+  latency_run_options.startup_preflight = false;
 
   BenchmarkReport report;
-  Runner runner = build(inputs, Model::RouteOptions{}, run_options);
-  for (int i = 0; i < kWarmupSamples; ++i) {
-    if (!runner.push(inputs)) {
-      throw std::runtime_error("Model::benchmark: async warmup push failed");
+  {
+    Runner latency_runner = build(inputs, Model::RouteOptions{}, latency_run_options);
+    for (int i = 0; i < kWarmupSamples; ++i) {
+      if (!latency_runner.push(
+              make_benchmark_sample(inputs, 10'000 + i, "benchmark-latency-warmup"))) {
+        latency_runner.close();
+        throw std::runtime_error("Model::benchmark: latency warmup push failed");
+      }
+      Sample out = latency_runner.pull(kTimeoutMs);
+      require_benchmark_output(out, "latency warmup");
     }
-    Sample out = runner.pull(kTimeoutMs);
-    if (out.empty()) {
-      throw std::runtime_error("Model::benchmark: async warmup pull timed out");
+
+    MeasureScope measure = latency_runner.start_measurement(make_benchmark_measure_options(
+        kTimeoutMs, logical_batch_size, false, "NEAT Benchmark latency"));
+    for (int i = 0; i < num_samples; ++i) {
+      if (!latency_runner.push(make_benchmark_sample(inputs, i, "benchmark-latency"))) {
+        latency_runner.close();
+        throw std::runtime_error("Model::benchmark: latency measured push failed");
+      }
+      Sample out = latency_runner.pull(kTimeoutMs);
+      require_benchmark_output(out, "latency measured");
     }
+
+    const MeasureReport measured = measure.stop();
+    if (measured.counters.outputs_pulled != static_cast<std::uint64_t>(num_samples)) {
+      latency_runner.close();
+      throw std::runtime_error("Model::benchmark: latency measured output count mismatch");
+    }
+    if (measured.end_to_end.count != static_cast<std::size_t>(num_samples)) {
+      latency_runner.close();
+      std::ostringstream oss;
+      oss << "Model::benchmark: latency measurement collected " << measured.end_to_end.count
+          << " end-to-end samples for " << num_samples
+          << " outputs; cannot publish benchmark latency";
+      throw std::runtime_error(oss.str());
+    }
+    report.latency_ms = measured.end_to_end.avg_ms;
+    latency_runner.close();
   }
 
+  RunOptions throughput_run_options;
+  throughput_run_options.startup_preflight = false;
+  throughput_run_options.enable_board_power();
+
   bool power_available = false;
+  double batch_throughput = 0.0;
   {
-    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(kTimeoutMs));
+    Runner runner = build(inputs, Model::RouteOptions{}, throughput_run_options);
+    for (int i = 0; i < kWarmupSamples; ++i) {
+      if (!runner.push(make_benchmark_sample(inputs, 20'000 + i, "benchmark-throughput-warmup"))) {
+        runner.close();
+        throw std::runtime_error("Model::benchmark: throughput warmup push failed");
+      }
+      Sample out = runner.pull(kTimeoutMs);
+      require_benchmark_output(out, "throughput warmup");
+    }
+
+    MeasureScope measure = runner.start_measurement(make_benchmark_measure_options(
+        kTimeoutMs, logical_batch_size, true, "NEAT Benchmark throughput"));
     int pulled = 0;
     std::exception_ptr pull_error;
     std::thread pull_thread([&] {
       try {
         while (pulled < num_samples) {
           Sample out = runner.pull(kTimeoutMs);
-          if (out.empty()) {
-            throw std::runtime_error("Model::benchmark: async measured pull timed out");
-          }
+          require_benchmark_output(out, "throughput measured");
           ++pulled;
         }
       } catch (...) {
@@ -7131,8 +7192,8 @@ BenchmarkReport Model::benchmark(int num_samples) {
 
     try {
       for (int i = 0; i < num_samples; ++i) {
-        if (!runner.push(inputs)) {
-          throw std::runtime_error("Model::benchmark: async measured push failed");
+        if (!runner.push(make_benchmark_sample(inputs, i, "benchmark-throughput"))) {
+          throw std::runtime_error("Model::benchmark: throughput measured push failed");
         }
       }
       runner.close_input();
@@ -7155,12 +7216,19 @@ BenchmarkReport Model::benchmark(int num_samples) {
     }
 
     const MeasureReport measured = measure.stop();
-    if (measured.counters.outputs_pulled < static_cast<std::uint64_t>(num_samples)) {
+    if (measured.counters.outputs_pulled != static_cast<std::uint64_t>(num_samples)) {
       runner.close();
-      throw std::runtime_error("Model::benchmark: async measured output count mismatch");
+      throw std::runtime_error("Model::benchmark: throughput measured output count mismatch");
     }
-    report.latency_ms = measured.end_to_end.avg_ms;
-    report.fps = measured.throughput_batches_per_s;
+    if (measured.end_to_end.count != static_cast<std::size_t>(num_samples)) {
+      runner.close();
+      std::ostringstream oss;
+      oss << "Model::benchmark: throughput measurement collected " << measured.end_to_end.count
+          << " end-to-end samples for " << num_samples << " outputs; sample correlation is broken";
+      throw std::runtime_error(oss.str());
+    }
+    batch_throughput = measured.throughput_batches_per_s;
+    report.fps = measured.throughput_inferences_per_s;
     if (measured.power.enabled && measured.power.samples > 0) {
       power_available = true;
       report.avg_power_watts = measured.power.total_avg_watts;
@@ -7175,8 +7243,10 @@ BenchmarkReport Model::benchmark(int num_samples) {
   std::cout << "NEAT Benchmark\n";
   std::cout << "Input: synthetic\n";
   std::cout << "Samples: " << num_samples << "\n";
+  std::cout << "Compiled batch: " << logical_batch_size << "\n";
   std::cout << "Latency: " << report.latency_ms << " ms\n";
-  std::cout << "FPS:     " << report.fps << "\n";
+  std::cout << "FPS:     " << report.fps << " inferences/s\n";
+  std::cout << "Batch throughput: " << batch_throughput << " batches/s\n";
   if (power_available) {
     std::cout << "Power avg:    " << report.avg_power_watts << " W\n";
     std::cout << "Energy:       " << report.energy_joules << " J\n";

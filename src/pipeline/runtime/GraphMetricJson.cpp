@@ -88,8 +88,11 @@ json graph_e2e_json(const MeasureLatencyStats& stats, bool graph_backed,
   return {
       {"available", stats.count > 0},
       {"status", stats.count > 0 ? "collected" : std::string(empty_status)},
-      {"semantics",
-       graph_backed ? "public_graph_push_to_public_output_pull" : "linear_run_push_to_output_pull"},
+      {"semantics", graph_backed ? "queue_inclusive_public_graph_push_to_public_output_pull"
+                                 : "queue_inclusive_linear_run_push_to_output_pull"},
+      {"interpretation",
+       "Single-flight loops approximate per-input latency; async burst/queued windows include "
+       "queue wait and should be presented as queue residency, not standalone latency."},
       {"count", stats.count},
       {"avg_ms", stats.avg_ms},
       {"p50_ms", stats.p50_ms},

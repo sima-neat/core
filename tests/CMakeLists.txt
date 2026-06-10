@@ -292,6 +292,8 @@ set(UNIT_TESTS
   unit_tensorbuffer_runtime_contract_identity_overlay_test
   unit_tensorbuffer_strided_parent_view_materialize_test
   unit_asset_utils_readable_model_tar_test
+  unit_benchmark_measurement_contract_test
+  unit_measurement_consistency_test
   unit_model_infer_output_name_test
   unit_model_input_spec_contract_test
   unit_model_output_spec_contract_test
