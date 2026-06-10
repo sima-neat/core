@@ -2362,6 +2362,34 @@ require_sima_cli_packages_build() {
   fi
 }
 
+sima_cli_packages_build_supports_platform_compatibility() {
+  local help_text
+  help_text="$("${SIMA_CLI_BIN}" packages build --help 2>/dev/null || true)"
+  [[ "${help_text}" == *"--board-platform"* && "${help_text}" == *"--palette-platform"* ]]
+}
+
+read_package_compatibility_args() {
+  local manifest_path="${NEAT_DEPS_MANIFEST}"
+  local -n out_ref="$1"
+
+  mapfile -t out_ref < <(python3 - "${manifest_path}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+data = json.loads(manifest_path.read_text(encoding="utf-8"))
+platform_version = str(data.get("platform-version", "")).strip()
+if not platform_version:
+    raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
+
+board_platform = f"modalix@=={platform_version}"
+for arg in ("--board-platform", board_platform, "--palette-platform", platform_version):
+    print(arg)
+PY
+  )
+}
+
 collect_single_dist_artifact() {
   local pattern="$1"
   local label="$2"
@@ -2382,7 +2410,14 @@ collect_single_dist_artifact() {
 }
 
 generate_package_metadata_if_requested() {
-  if [[ "${SKIP_DIST}" == "ON" || "${BUILD_ALL}" != "ON" ]]; then
+  if [[ "${SKIP_DIST}" == "ON" ]]; then
+    echo
+    echo "Skipping package metadata generation (--no-dist)."
+    return 0
+  fi
+  if [[ "${BUILD_ALL}" != "ON" ]]; then
+    echo
+    echo "Skipping package metadata generation (requires --all)."
     return 0
   fi
   if [[ "${OS_NAME}" == "Darwin" ]]; then
@@ -2420,6 +2455,14 @@ generate_package_metadata_if_requested() {
   package_version="${package_version%-Linux-core.deb}"
   extras_basename="$(basename "${extras_tar}")"
 
+  local -a package_compatibility_args=()
+  if sima_cli_packages_build_supports_platform_compatibility; then
+    read_package_compatibility_args package_compatibility_args
+    echo "Using package compatibility: ${package_compatibility_args[*]}"
+  else
+    echo "sima-cli packages build does not support platform compatibility flags; metadata platforms will remain empty."
+  fi
+
   rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
 
   "${SIMA_CLI_BIN}" packages build dist \
@@ -2427,7 +2470,8 @@ generate_package_metadata_if_requested() {
     --version "${package_version}" \
     --description "${NEAT_PACKAGE_DESCRIPTION}" \
     --install-script "${NEAT_PACKAGE_INSTALL_SCRIPT}" \
-    --selectables "${NEAT_EXTRAS_SELECTABLE_NAME}:${extras_basename}"
+    --selectables "${NEAT_EXTRAS_SELECTABLE_NAME}:${extras_basename}" \
+    "${package_compatibility_args[@]}"
 
   "${SIMA_CLI_BIN}" packages build dist \
     --name "${NEAT_PACKAGE_NAME}" \
@@ -2435,14 +2479,16 @@ generate_package_metadata_if_requested() {
     --description "${NEAT_PACKAGE_DESCRIPTION}" \
     --install-script "${NEAT_PACKAGE_INSTALL_SCRIPT}" \
     --exclude "${extras_basename}" \
-    --variant minimal
+    --variant minimal \
+    "${package_compatibility_args[@]}"
 
   "${SIMA_CLI_BIN}" packages build dist \
     --name "${NEAT_PACKAGE_NAME}" \
     --version "${package_version}" \
     --description "${NEAT_PACKAGE_DESCRIPTION}" \
     --install-script "${NEAT_PACKAGE_INSTALL_SCRIPT}" \
-    --variant all
+    --variant all \
+    "${package_compatibility_args[@]}"
 
   echo "Built package metadata:"
   ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
