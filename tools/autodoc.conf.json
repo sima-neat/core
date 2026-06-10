@@ -38,8 +38,7 @@
         "graph-surgery",
         "quantization",
         "model-compilation",
-        "validate-accuracy-performance",
-        "supported-operators"
+        "validate-accuracy-performance"
       ],
       "link_rewrites": [
         {
