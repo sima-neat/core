@@ -7,8 +7,9 @@ sidebar_position: 1
 
 Palette Neat is the SiMa.ai software development toolkit for building AI
 applications on Modalix. It includes the development environment, runtime
-library, model tooling, and DevKit validation workflow. Together, these pieces
-help you prepare models, build applications, and verify them on hardware.
+library, model tooling, and DevKit validation workflow. Together, these
+components support the full development path: prepare a model, build an
+application, and validate the result on Modalix hardware.
 
 Use this overview to understand the main parts of Palette Neat and choose the
 right setup, model preparation, or application development path.
@@ -23,8 +24,6 @@ Palette Neat includes four software components and the Modalix DevKit:
 - **LLiMa** — the GenAI toolkit, included with the development and model tooling, for compiling, testing, and benchmarking GenAI models.
 - **Modalix DevKit** — the target hardware where compiled model artifacts and Neat Library applications run and are validated.
 
-Together, these components support the full development path: prepare a model,
-build an application, and validate the result on Modalix hardware.
 
 <div class="overview-section-label">Developer journey</div>
 
