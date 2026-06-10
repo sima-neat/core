@@ -1,119 +1,125 @@
 ---
-title: Compatibility & Requirements
-description: What the Neat Framework runs on — Palette SDK, Modalix DevKit, pyneat, and the version-matched set
+title: Compatibility
+description: Supported version combinations for the Neat Library, Neat Development Environment, DevKit software, and Model Compiler
 sidebar_position: 2
 mdx:
   format: mdx
 ---
 
-import info from '@site/src/data/buildinfo.json';
-
 # Compatibility
 
-The Neat Framework spans **two environments**: the **Palette SDK** on your host
-(a container where you cross-compile) and the **Modalix DevKit** (aarch64, where
-the framework actually runs). Keep them separate — a requirement on one side
-rarely applies to the other.
+Palette Neat has several versioned components. In most cases, compatibility comes down
+to two rules:
 
-## On-device — Modalix DevKit
+1. The **Neat Library** and **Neat Development Environment** must both be compatible
+   with the DevKit software version they run or build against.
+2. The **Model Compiler** must be compatible with the **Neat Development Environment**
+   or host environment where it is installed.
 
-<table>
-<thead><tr><th>Component</th><th>Requirement</th></tr></thead>
-<tbody>
-<tr><td>Board</td><td>{info.compatibility.target.board} (the "3.0" in the product name is not a version gate — any Modalix DevKit runs the Neat Framework)</td></tr>
-<tr><td>Architecture</td><td>{info.compatibility.target.arch}</td></tr>
-<tr><td>Platform software</td><td>{info.compatibility.target.platform_sw}</td></tr>
-<tr><td>glibc</td><td>≥ {info.compatibility.target.glibc_min}</td></tr>
-<tr><td>OpenCV</td><td>{info.compatibility.target.opencv}</td></tr>
-<tr><td>GStreamer</td><td>{info.compatibility.target.gstreamer}</td></tr>
-<tr><td>C++ standard</td><td>C++{info.compatibility.target.cxx_std}</td></tr>
-</tbody>
-</table>
+The Neat Development Environment includes a Neat Library version. You can install
+a newer compatible Neat Library without reinstalling the Neat Development
+Environment. For example, use Neat Library 0.2.x with the 2.1.2 Neat Development
+Environment.
 
-## Host development — Palette SDK (container)
+:::note
+The versions listed on this page are the supported version combinations.
+:::
 
-Palette SDK runs in **Docker** on the host and cross-compiles to the DevKit.
+## Neat Library
 
-<table>
-<thead><tr><th>Component</th><th>Supported</th></tr></thead>
-<tbody>
-<tr><td>Host OS</td><td><ul>{info.compatibility.host_sdk.os.map(o => <li key={o}>{o}</li>)}</ul></td></tr>
-<tr><td>Palette SDK version</td><td>{info.compatibility.host_sdk.sdk}</td></tr>
-<tr><td>eLxr version</td><td>{info.compatibility.host_sdk.elxr}</td></tr>
-<tr><td>Cross toolchain</td><td>{info.compatibility.host_sdk.toolchain}</td></tr>
-<tr><td>Sysroot</td><td><code>{info.compatibility.host_sdk.sysroot}</code></td></tr>
-</tbody>
-</table>
+Use this table to choose the Neat Library version to install or update in your
+Neat Development Environment and on your DevKit.
 
-## pyneat (Python bindings — run on the DevKit)
+| Neat Library | Compatible Neat Development Environment | Compatible DevKit software | Notes |
+| :--- | :--- | :--- | :--- |
+| **0.1.0** | **2.0.0** | **2.0.0** | Maintained for the 2.0 release family. |
+| **0.2.0** | **2.1.2** | **2.1.2** | Current development target. |
 
-`pyneat` is built by Palette SDK and runs **on the DevKit**, not on the host.
+The DevKit software version matters because the on-device runtime, firmware, and
+system packages are installed as a matched set. If you mix components across
+release families, unexpected behavior can occur even when your application
+builds.
 
-<table>
-<thead><tr><th>Property</th><th>Value</th></tr></thead>
-<tbody>
-<tr><td>Prebuilt wheel</td><td>{info.compatibility.pyneat.python_abi} · {info.compatibility.pyneat.platform}</td></tr>
-<tr><td>NumPy</td><td>{info.compatibility.pyneat.numpy}</td></tr>
-<tr><td>PyTorch</td><td>{info.compatibility.pyneat.torch} (DLPack interop)</td></tr>
-<tr><td>From source</td><td>Python ≥ {info.compatibility.pyneat.source_python_min}</td></tr>
-</tbody>
-</table>
-
-There is **no x86 / non-aarch64 pyneat** — it exists only for the DevKit. Palette SDK
-cross-builds it and installs it on the paired DevKit (venv at `/media/nvme/pyneat`
-if there's writable NVMe, otherwise `$HOME/pyneat`, always reachable as `~/pyneat`).
-
-## Tools
-
-Use the **latest `sima-cli`** — there is no pinned floor.
-
-## The version-matched set (firmware ↔ runtime)
-
-The on-device packages — `neat-runtime`, `neat-gst-plugins`, `neat-appcomplex`,
-`neat-ev74-firmware` — are built together from one internals commit and share that
-commit's **hash** in their version string (e.g. `2.0.0-<branch>-<hash>`). **Install
-the matched set (same hash) together.** `neat-internals-dev` is the umbrella that
-pulls the matched stack.
-
-A partial update — a new `neat-runtime` against an older `neat-ev74-firmware` — leaves
-the runtime asking the EV74 for a kernel the firmware doesn't have, which surfaces as
-`No channel available` at run time. The coupling key (the internals hash) is recorded
-on the device in `/usr/share/sima-neat/buildinfo.json`.
-
-## Known-incompatible / not supported
-
-| Situation | Why |
-|---|---|
-| **NumPy ≥ 2** with `pyneat` | pin is <code>{info.compatibility.pyneat.numpy}</code> |
-| **Mismatched runtime ↔ firmware hash** | not a matched set → `No channel available` |
-| **CPython other than 3.11** for the prebuilt wheel | wheel is `cp311` only (build from source for other 3.x ≥ 3.9) |
-| **Non-aarch64 target** | no x86 / ARMv7 pyneat or runtime exists |
-| **Host glibc < 2.34** on the DevKit | `neat-runtime` requires <code>libc6 ≥ {info.compatibility.target.glibc_min}</code> |
-| **CUDA / GPU acceleration** | N/A — the host is build-only; inference runs on the Modalix MLA/EV74 |
-
-## Verify your install
+Install the Neat Library from within a compatible Neat Development Environment
+or directly on the DevKit:
 
 ```bash
-# Palette SDK / eLxr version (host container)
-cat /etc/sdk-release
-
-# Neat version + the internals coupling hash (on the DevKit)
-cat /usr/share/sima-neat/buildinfo.json
-
-# pyneat version (on the DevKit)
-~/pyneat/bin/python3 -c "import pyneat; print(pyneat.__version__)"
+sima-cli neat install core@0.1.0
+sima-cli neat install core@0.2.0
 ```
 
-If you hit `No channel available` or `undefined symbol …submitPrepared`, check that
-`neat-runtime` and `neat-ev74-firmware` report the **same hash** — that's the most
-common compatibility failure. See [Troubleshooting](/reference/troubleshooting).
+## Neat Development Environment
 
-:::note Pending — needs an owner
-These belong on this page but require a product/release-eng decision and are not yet
-documented:
+Use this table to choose the Neat Development Environment version to run on your
+host machine.
 
-- **Support lifecycle / EOL** — how long each Neat release + its firmware is supported.
-- **Deprecation policy** — notice period and forward-looking requirement changes.
-- **Model-archive portability** — whether a compiled `.tar.gz` is tied to a runtime/format
-  version or board revision, and the compiler ↔ runtime compatibility rule.
-:::
+| Neat Development Environment | Compatible host environment | Compatible DevKit software |
+| :--- | :--- | :--- |
+| **2.0.0** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.0.0** |
+| **2.1.2** | Windows 11 through WSL, Ubuntu 22.04 or 24.04, latest macOS on Apple Silicon | **2.1.2** |
+
+Install a specific Neat Development Environment version with:
+
+```bash
+sima-cli install ghcr:sima-neat/sdk-v2.0.0
+sima-cli install ghcr:sima-neat/sdk-v2.1.2
+```
+
+## Model Compiler
+
+Use this table only when you need to compile or validate models yourself. If you
+use precompiled model packages, you usually do not need the Model Compiler.
+
+The Model Compiler can be installed in two ways:
+
+- inside a compatible Neat Development Environment
+- directly on a supported Ubuntu host machine or VM
+
+During `sima-cli sdk setup`, the setup flow prompts you to install the matching
+Model Compiler version when one is available for your environment.
+
+| Model Compiler | Compatible Neat Development Environment | Compatible host environment | Notes |
+| :--- | :--- | :--- | :--- |
+| **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | No Apple Silicon or aarch64/Linux support. |
+| **2.1.2** | **2.1.2** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat Development Environment. |
+
+For a standalone Model Compiler installation, run:
+
+```bash
+sima-cli install -v 2.0.0 tools/model-compiler
+sima-cli install -v 2.1.2 tools/model-compiler
+```
+
+## Verify Versions
+
+From inside the Neat Development Environment or on the DevKit, run:
+
+```bash
+neat
+```
+
+The output example below shows the active environment, SDK version, installed component
+versions, and whether updates are available:
+
+```text
+Neat Environment
+  Mode               Neat SDK
+  SDK Version        2.1.2_Palette_SDK_neat_develop_27498f5
+  Sysroot            /opt/toolchain/aarch64/modalix
+  Update check       online
+
+Components
+  Neat core              0.2.0 channel=develop env=prod latest=24d60ac594bb
+  PyNeat                 0.2.0
+  neat-runtime           0.2.0
+  neat-gst-plugins       0.2.0
+  neat-llima             0.2.0
+  neat-insight           0.0.0+main.e10ab17 channel=main latest=dd9e3e0 status=Running venv=/opt/neat-insight/venv
+  Model Compiler         not installed
+
+  Update available: yellow component versions indicate available updates.
+  Run: neat update.
+```
+
+Use this output to confirm that your Neat Library, DevKit software, and optional
+Model Compiler are from a supported version combination.
