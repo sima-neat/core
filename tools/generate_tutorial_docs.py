@@ -135,19 +135,11 @@ class TutorialModule:
 
     @property
     def image_url(self) -> str:
-        # Used from /tutorials/. Keep this relative so generated docs work with
-        # both root deployments and subpath deployments such as /software/.
-        return docs_static_url(
-            f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg",
-            relative_prefix="../..",
-        )
+        return docs_static_url(f"img/tutorials/cards/{self.difficulty.strip().lower()}.svg")
 
     @property
     def flow_image_url(self) -> str:
-        # Used from /tutorials/<chapter>/. Keep this relative so generated docs
-        # work with both root deployments and subpath deployments such as
-        # /software/.
-        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg", relative_prefix="../..")
+        return docs_static_url(f"img/tutorials/flow/{self.folder}.svg")
 
     @property
     def display_title(self) -> str:
@@ -1234,7 +1226,7 @@ def render_index(modules: List[TutorialModule], heading_body: str) -> str:
         "",
         "# Tutorials",
         "",
-        f'<img src="{docs_static_url("img/tutorials/landing.svg", relative_prefix="..")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
+        f'<img src="{docs_static_url("img/tutorials/landing.svg")}" alt="Neat tutorials — from your first model to a production pipeline" class="tutorial-flow" loading="lazy" />',
     ]
 
     cleaned_heading_body = _clean_heading_body(heading_body)
