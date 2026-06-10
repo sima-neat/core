@@ -16,8 +16,21 @@ html[data-theme="dark"] {
 }
 
 @media (min-width: 997px) {
+  /* The Developer Center host provides the primary bar, so core draws NO primary
+     navbar on desktop — only the software section subnav, pinned to the very top.
+     Hide the native navbar unconditionally (not gated on the shell): inside the
+     host iframe the shell never mounts, so a gated rule would leave the native
+     navbar showing and stack an extra bar. */
+  .theme-layout-navbar.navbar--fixed-top {
+    display: none;
+  }
+
+  .software-subnav {
+    top: 0;
+  }
+
   #__docusaurus {
-    padding-top: calc(var(--ifm-navbar-height) + var(--software-subnav-height) + 0.75rem);
+    padding-top: calc(var(--software-subnav-height) + 0.75rem);
   }
 
   .theme-doc-sidebar-container {
@@ -31,15 +44,8 @@ html[data-theme="dark"] {
 
   .theme-doc-sidebar-container [class^="sidebarViewport"],
   .theme-doc-sidebar-container [class*=" sidebarViewport"] {
-    top: calc(var(--ifm-navbar-height) + var(--software-subnav-height) + 0.75rem) !important;
-    max-height: calc(100vh - var(--ifm-navbar-height) - var(--software-subnav-height) - 0.75rem) !important;
-  }
-
-  /* Hide the native navbar only when the runtime shell is mounted (it supplies
-     the styled primary bar). Standalone, the native navbar renders the Developer
-     Center primary bar as a fallback so the software route is never bar-less. */
-  html.developer-center-shell-enabled .theme-layout-navbar.navbar--fixed-top {
-    display: none;
+    top: calc(var(--software-subnav-height) + 0.75rem) !important;
+    max-height: calc(100vh - var(--software-subnav-height) - 0.75rem) !important;
   }
 }
 
@@ -62,13 +68,6 @@ html.developer-center-shell-enabled .navbar__brand:empty,
 html.developer-center-shell-enabled [class^="navbarSearchContainer"],
 html.developer-center-shell-enabled [class*=" navbarSearchContainer"],
 html.developer-center-shell-enabled .navbar__items--right:empty {
-  display: none;
-}
-
-/* When the Developer Center shell is mounted it renders the software section
-   sub-bar itself, so hide core's own subnav to avoid a duplicate bar. The subnav
-   remains visible in standalone/dev builds where the shell is absent. */
-html.developer-center-shell-enabled .software-subnav {
   display: none;
 }
 
@@ -147,18 +146,49 @@ html.developer-center-shell-enabled .software-subnav {
   height: 1.18rem;
 }
 
+/* Mobile-only menu button in the subnav; opens the doc sidebar drawer. Hidden
+   on desktop, where the sidebar is always visible. */
+.software-subnav__menu {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 0 0.5rem;
+  margin-right: 0.25rem;
+  border: 0;
+  background: transparent;
+  color: var(--ifm-navbar-link-color);
+  cursor: pointer;
+}
+
 @media (max-width: 996px) {
-  /* Keep the task bar visible on mobile as a horizontally scrollable strip,
-     fixed just below the navbar. Its z-index drops below the navbar so the
-     hamburger drawer overlays it, and page content is offset by its height. */
+  /* Mobile: the subnav is the single top bar core renders. Collapse the native
+     navbar's bar to nothing — but keep the element so its sidebar drawer still
+     mounts — and open that drawer from the subnav menu button. */
+  .theme-layout-navbar.navbar--fixed-top {
+    min-height: 0;
+    height: 0;
+    padding: 0;
+    border: 0;
+    overflow: visible;
+  }
+
+  .navbar__inner {
+    display: none;
+  }
+
+  .navbar-sidebar {
+    top: 0;
+    height: 100vh;
+  }
+
   .software-subnav {
-    top: var(--ifm-navbar-height);
+    top: 0;
     z-index: 150;
   }
 
-  /* Free up navbar space on mobile by dropping the long title text. */
-  nav.theme-layout-navbar .navbar__title {
-    display: none;
+  .software-subnav__menu {
+    display: inline-flex;
   }
 
   .software-subnav__inner {

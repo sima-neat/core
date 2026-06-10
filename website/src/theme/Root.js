@@ -120,6 +120,25 @@ function SoftwareSubnav() {
   return (
     <nav className="software-subnav" aria-label="Software documentation">
       <div className="software-subnav__inner">
+        <button
+          type="button"
+          className="software-subnav__menu"
+          aria-label="Toggle the documentation menu"
+          title="Menu"
+          onClick={() => {
+            // The doc sidebar's mobile drawer is owned by Docusaurus' navbar.
+            // We hide that navbar's bar on mobile, so drive its (still-mounted)
+            // toggle from here to open/close the drawer.
+            const toggle = document.querySelector(".navbar__toggle");
+            if (toggle) {
+              toggle.click();
+            }
+          }}
+        >
+          <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="M3 6h18v2H3V6Zm0 5h18v2H3v-2Zm0 5h18v2H3v-2Z" />
+          </svg>
+        </button>
         <div className="software-subnav__links">
           {links.map((link) => (
             <a
