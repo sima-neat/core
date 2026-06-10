@@ -171,12 +171,6 @@ const config = {
           value:
             '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" data-language-pref-select aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
         },
-        {
-          href: githubOrgUrl,
-          label: "GitHub",
-          position: "left",
-          className: "software-subnav__github-mobile",
-        },
       ],
     },
     colorMode: {
