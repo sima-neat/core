@@ -10,7 +10,15 @@
  */
 #pragma once
 
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_include)
+#if __has_include(<simaai/gst/SimaTensorSetMetaAbi.h>)
+#include <simaai/gst/SimaTensorSetMetaAbi.h>
+#elif defined(__GNUC__) || defined(__clang__)
+#include_next <gst/SimaTensorSetMetaAbi.h>
+#else
+#error "SimaTensorSetMetaAbi.h must be provided by the installed internals SDK."
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
 #include_next <gst/SimaTensorSetMetaAbi.h>
 #else
 #error "SimaTensorSetMetaAbi.h must be provided by the installed internals SDK."

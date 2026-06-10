@@ -1236,7 +1236,7 @@ endif()
 # Internal-only helper target (tests/bench/tools)
 # ------------------------------------------------------------------------------
 add_library(sima_neat_internal INTERFACE)
-target_link_libraries(sima_neat_internal INTERFACE sima_neat)
+target_link_libraries(sima_neat_internal INTERFACE sima_neat_shared)
 target_include_directories(sima_neat_internal INTERFACE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
   ${CMAKE_CURRENT_SOURCE_DIR}/include/pipeline

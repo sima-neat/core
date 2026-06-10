@@ -1758,6 +1758,12 @@ target_include_directories(
     ${CMAKE_CURRENT_SOURCE_DIR}/e2e_pipelines/obj_detection
 )
 
+if (PIPELINESESSION_TEST_TARGETS)
+  set_target_properties(${PIPELINESESSION_TEST_TARGETS}
+    PROPERTIES
+      INSTALL_RPATH "$ORIGIN/../..;${CMAKE_INSTALL_RPATH}")
+endif()
+
 install(
   TARGETS ${PIPELINESESSION_TEST_TARGETS}
   RUNTIME DESTINATION lib/sima-neat/tests
