@@ -62,6 +62,20 @@ html.developer-center-shell-enabled .navbar__items--right:empty {
   display: none;
 }
 
+/* Frosted, borderless navbar (ported from the Developer Center docs). The blur
+   is applied to .navbar__inner rather than .navbar on purpose: backdrop-filter
+   on .navbar would make it the containing block for the position:fixed mobile
+   sidebar drawer, clamping the drawer to the navbar height and hiding the doc
+   navigation on mobile. */
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  box-shadow: none;
+}
+
+.navbar__inner {
+  backdrop-filter: blur(18px);
+}
+
 .software-subnav {
   position: fixed;
   top: var(--ifm-navbar-height);
@@ -130,6 +144,11 @@ html.developer-center-shell-enabled .navbar__items--right:empty {
   .software-subnav {
     top: var(--ifm-navbar-height);
     z-index: 150;
+  }
+
+  /* Free up navbar space on mobile by dropping the long title text. */
+  nav.theme-layout-navbar .navbar__title {
+    display: none;
   }
 
   .software-subnav__inner {
