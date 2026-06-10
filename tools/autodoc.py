@@ -7,6 +7,7 @@ configured docs subpath into <out_root>/<mount>/ with light transforms:
 
 - Inject YAML frontmatter (title, sidebar_position) if missing.
 - Rewrite sibling .md links to Docusaurus-style routes.
+- Rewrite configured imported-doc link targets to their mounted core routes.
 - Drop a generated _category_.json at the section root.
 
 Per-source clone or copy failures are logged and skipped; the script always
@@ -51,6 +52,8 @@ GRIFFE_LABEL_WITH_VALUE_RE = re.compile(
 GRIFFE_INLINE_DECORATORS_RE = re.compile(r"(?<!\*\*)Decorators:")
 # Match [label](target.md) and [label](target.md#anchor); skip absolute / external.
 MD_LINK_RE = re.compile(r"(\]\()(?!https?:|/|#)([^)\s]+?)\.md(#[^)\s]+)?(\))")
+MARKDOWN_TARGET_RE = re.compile(r"(?P<prefix>\]\()(?P<target>[^)\s]+)(?P<suffix>\))")
+HTML_HREF_TARGET_RE = re.compile(r"(?P<prefix>\bhref=[\"'])(?P<target>[^\"']+)(?P<suffix>[\"'])")
 # Match a per-module entry in a source flat index:
 #   - [`afe.apis.foo`](afe-apis-foo.md) (3 functions) - summary text
 SOURCE_INDEX_ENTRY_RE = re.compile(
@@ -339,6 +342,48 @@ def rewrite_md_links(
     return MD_LINK_RE.sub(repl, text)
 
 
+def normalize_link_rewrites(raw_rewrites: List[Dict[str, str]]) -> List[Tuple[str, str]]:
+    """Validate and normalize source-specific imported-doc link rewrites."""
+    rewrites: List[Tuple[str, str]] = []
+    for entry in raw_rewrites:
+        if not isinstance(entry, dict):
+            raise ValueError("link_rewrites entries must be objects with 'from' and 'to'")
+        source = str(entry.get("from", "")).strip()
+        target = str(entry.get("to", "")).strip()
+        if not source or not target:
+            raise ValueError("link_rewrites entries require non-empty 'from' and 'to'")
+        rewrites.append((source, target))
+    return rewrites
+
+
+def rewrite_configured_link_targets(text: str, link_rewrites: List[Tuple[str, str]]) -> str:
+    """Rewrite exact Markdown/HTML link targets using source-specific mapping.
+
+    Autodoc mounts docs from sibling repos under core's information architecture.
+    Some imported pages contain absolute or directory-style links that are valid
+    in the source repo but not after mounting. Keep those adjustments declarative
+    in the manifest and only rewrite link targets, not arbitrary prose/code text.
+    """
+    if not link_rewrites:
+        return text
+
+    def rewrite_target(target: str) -> str:
+        for source, replacement in link_rewrites:
+            if target == source:
+                return replacement
+            if target.startswith(f"{source}#"):
+                return f"{replacement}{target[len(source):]}"
+            if target.startswith(f"{source}?"):
+                return f"{replacement}{target[len(source):]}"
+        return target
+
+    def repl(match: re.Match[str]) -> str:
+        return f"{match.group('prefix')}{rewrite_target(match.group('target'))}{match.group('suffix')}"
+
+    text = MARKDOWN_TARGET_RE.sub(repl, text)
+    return HTML_HREF_TARGET_RE.sub(repl, text)
+
+
 def position_for(stem: str, files_order: List[str]) -> Optional[int]:
     if stem in files_order:
         # 1-based: explicit ordering wins.
@@ -356,6 +401,7 @@ def copy_section(
     group_index: Dict[str, Tuple[str, str, int, int]],
     exclude_files: Optional[List[str]] = None,
     restructure_api: bool = False,
+    link_rewrites: Optional[List[Tuple[str, str]]] = None,
 ) -> int:
     """Copy src_root into dst_root, transforming markdown.
 
@@ -366,6 +412,7 @@ def copy_section(
     Returns the number of files staged.
     """
     excluded = set(exclude_files or [])
+    link_rewrites = link_rewrites or []
     if dst_root.exists():
         shutil.rmtree(dst_root)
     dst_root.mkdir(parents=True, exist_ok=True)
@@ -410,6 +457,7 @@ def copy_section(
             if restructure_api:
                 text = restructure_api_page(text)
             text = rewrite_md_links(text, current_folder, stem_to_folder)
+            text = rewrite_configured_link_targets(text, link_rewrites)
             dst_path.write_text(text, encoding="utf-8")
         else:
             shutil.copy2(src_path, dst_path)
@@ -652,6 +700,7 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     files_order = source.get("files_order", []) or []
     exclude_files = source.get("exclude_files", []) or []
     restructure_api = bool(source.get("restructure_api", False))
+    link_rewrites = normalize_link_rewrites(source.get("link_rewrites", []) or [])
 
     staging = build_dir / "autodoc" / key
     LOG.info("[%s] clone/update %s @ %s (%s)", key, repo, githash or branch, branch_reason)
@@ -681,6 +730,7 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
             group_index,
             exclude_files,
             restructure_api,
+            link_rewrites,
         )
         write_category_json(dst_section, title, sidebar_position)
         write_group_categories(dst_section, landing)
