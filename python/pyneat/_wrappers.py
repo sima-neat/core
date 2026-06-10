@@ -189,13 +189,43 @@ def install_wrappers(core) -> None:
       return out.clone()
     return out
 
+  def tensor_from_list(
+      cls, data, shape=None, dtype=None, layout=None, image_format=None, memory=None
+  ):
+    # Plan slice S10: one friendly constructor from a Python sequence, routed through from_numpy
+    # (the single canonical path) instead of N typed from_vector overloads. copy=True because a
+    # Python list is a transient buffer with no stable lifetime to alias zero-copy.
+    import numpy as np
+
+    arr = np.asarray(data, dtype=dtype)
+    # Python int lists default to int64, which is not a supported device dtype; map to int32 so the
+    # natural from_list([1, 2, 3]) call works. (float lists default to float64, which is supported.)
+    if dtype is None and arr.dtype == np.int64:
+      arr = arr.astype(np.int32)
+    if shape is not None:
+      arr = arr.reshape(shape)
+    return cls.from_numpy(
+        arr, copy=True, layout=layout, image_format=image_format, memory=memory
+    )
+
+  def sample_from_encoded(
+      cls, data, caps_string, pts_ns=-1, dts_ns=-1, duration_ns=-1, port_name=""
+  ):
+    # Plan slice: friendly wrapper over make_encoded_sample (parity with from_numpy/from_list).
+    sample = core.make_encoded_sample(bytes(data), caps_string, pts_ns, dts_ns, duration_ns)
+    if port_name:
+      sample.port_name = port_name
+    return sample
+
   core.Tensor.from_dlpack = classmethod(tensor_from_dlpack)
   core.Tensor.from_numpy = classmethod(tensor_from_numpy)
+  core.Tensor.from_list = classmethod(tensor_from_list)
   core.Tensor.to_numpy = tensor_to_numpy
   core.Tensor.from_torch = classmethod(tensor_from_torch)
   core.Tensor.from_pytorch = classmethod(tensor_from_torch)
   core.Tensor.to_torch = tensor_to_torch
   core.Tensor.to_pytorch = tensor_to_torch
+  core.Sample.from_encoded = classmethod(sample_from_encoded)
 
   if not hasattr(core.Run, "push"):
     def run_push(self, value, copy: bool = False, layout=None, image_format=None):

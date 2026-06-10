@@ -9,6 +9,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/unordered_map.h>
 #include <nanobind/stl/vector.h>
+#include <nanobind/make_iterator.h>
 
 #include "builder/Node.h"
 #include "builder/OutputSpec.h"
@@ -40,6 +41,25 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/MetadataSender.h"
 #include "nodes/io/UdpOutput.h"
+#include "nodes/common/Caps.h"
+#include "nodes/common/FileInput.h"
+#include "nodes/common/ImageDecode.h"
+#include "nodes/common/JpegDecode.h"
+#include "nodes/common/VideoScale.h"
+#include "nodes/common/ImageFreeze.h"
+#include "nodes/common/VideoRate.h"
+#include "nodes/common/VideoTrackSelect.h"
+#include "nodes/io/StillImageInput.h"
+#include "nodes/sima/SimaRender.h"
+#include "nodes/sima/SimaArgMax.h"
+#include "nodes/sima/Cast.h"
+#include "nodes/sima/CastTess.h"
+#include "nodes/sima/Dequant.h"
+#include "nodes/sima/Detess.h"
+#include "nodes/sima/DetessCast.h"
+#include "nodes/rtp/H264CapsFixup.h"
+#include "nodes/sima/PCIeSrc.h"
+#include "nodes/sima/PCIeSink.h"
 #include "pipeline/Run.h"
 #include "pipeline/ErrorCodes.h"
 #include "pipeline/Graph.h"
@@ -51,6 +71,10 @@
 #include "pipeline/DetectionTypes.h"
 #include "pipeline/Tensor.h"
 #include "pipeline/TensorCore.h"
+#include "pipeline/FormatSpec.h"
+#include "pipeline/EncodedSampleUtil.h"
+#include "neat/version.h"
+#include "neat/runtime.h"
 
 #if defined(SIMA_WITH_OPENCV)
 #include <opencv2/core.hpp>
@@ -1609,6 +1633,22 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("strides_bytes", &simaai::neat::Plane::strides_bytes)
       .def_rw("byte_offset", &simaai::neat::Plane::byte_offset);
 
+  // Phase 1 (plan high-value slice S12): output-identity metadata — "which output is which" for
+  // multi-output models. Bound as a single nested object on Tensor.route so the (jargon-y) routing
+  // fields stay nested, not polluting the top-level surface. Full fields exposed for power users.
+  nb::class_<simaai::neat::TensorRouteMeta>(m, "TensorRouteMeta")
+      .def(nb::init<>())
+      .def_rw("stage_key", &simaai::neat::TensorRouteMeta::stage_key)
+      .def_rw("logical_index", &simaai::neat::TensorRouteMeta::logical_index)
+      .def_rw("backend_output_index", &simaai::neat::TensorRouteMeta::backend_output_index)
+      .def_rw("route_slot", &simaai::neat::TensorRouteMeta::route_slot)
+      .def_rw("physical_index", &simaai::neat::TensorRouteMeta::physical_index)
+      .def_rw("memory_index", &simaai::neat::TensorRouteMeta::memory_index)
+      .def_rw("physical_byte_offset", &simaai::neat::TensorRouteMeta::physical_byte_offset)
+      .def_rw("name", &simaai::neat::TensorRouteMeta::name)
+      .def_rw("backend_name", &simaai::neat::TensorRouteMeta::backend_name)
+      .def_rw("segment_name", &simaai::neat::TensorRouteMeta::segment_name);
+
   nb::class_<simaai::neat::Tensor>(m, "Tensor")
       .def(nb::init<>())
       .def_rw("dtype", &simaai::neat::Tensor::dtype)
@@ -1621,6 +1661,7 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("semantic", &simaai::neat::Tensor::semantic)
       .def_rw("planes", &simaai::neat::Tensor::planes)
       .def_rw("read_only", &simaai::neat::Tensor::read_only)
+      .def_rw("route", &simaai::neat::Tensor::route)
       .def_prop_ro("storage", [](const simaai::neat::Tensor& t) { return t.storage; })
       .def("is_dense", &simaai::neat::Tensor::is_dense)
       .def("is_composite", &simaai::neat::Tensor::is_composite)
@@ -1783,15 +1824,60 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("stream_label", &Sample::stream_label)
       .def_rw("port_name", &Sample::port_name)
       .def_rw("output_index", &Sample::output_index)
+      // Phase 1 (plan high-value slice S12): canonical output-identity route fields. output_index
+      // above is the deprecated alias for logical_output_index; expose the canonical names.
+      .def_rw("logical_output_index", &Sample::logical_output_index)
+      .def_rw("memory_index", &Sample::memory_index)
+      .def_rw("route_slot", &Sample::route_slot)
+      .def_rw("segment_name", &Sample::segment_name)
       .def_rw("input_seq", &Sample::input_seq)
       .def_rw("orig_input_seq", &Sample::orig_input_seq)
       .def_rw("pts_ns", &Sample::pts_ns)
       .def_rw("dts_ns", &Sample::dts_ns)
       .def_rw("duration_ns", &Sample::duration_ns)
+      // Phase 1 (plan slice S10): Pythonic sequence protocol over Bundle samples. The raw C++
+      // operator[] returns *this for any index on a non-Bundle sample (no bounds error), so
+      // __getitem__ is explicitly bounds-checked (and supports negative indices). front()/back()/
+      // reserve() are intentionally not exposed — use s[0]/s[-1].
+      .def("__len__", [](const Sample& s) { return s.size(); })
+      .def("__bool__", [](const Sample& s) { return !s.empty(); })
+      .def(
+          "__getitem__",
+          [](Sample& s, Py_ssize_t i) -> Sample& {
+            const auto n = static_cast<Py_ssize_t>(s.size());
+            if (i < 0) {
+              i += n;
+            }
+            if (i < 0 || i >= n) {
+              throw nb::index_error("Sample index out of range");
+            }
+            return s[static_cast<std::size_t>(i)];
+          },
+          "index"_a, nb::rv_policy::reference_internal)
+      .def(
+          "__iter__",
+          [](Sample& s) {
+            return nb::make_iterator(nb::type<Sample>(), "SampleIterator", s.begin(), s.end());
+          },
+          nb::keep_alive<0, 1>())
+      .def(
+          "append", [](Sample& s, Sample child) { s.push_back(std::move(child)); }, "sample"_a)
       .def("to_text", &sample_to_text_for_python);
 
   m.def("make_tensor_sample", &simaai::neat::make_tensor_sample, "port_name"_a, "tensor"_a);
   m.def("make_text_sample", &make_text_sample_for_python, "port_name"_a, "text"_a);
+  // Phase 6 (plan slice): encoded-media sample construction (parity with make_tensor_sample). The
+  // friendly Sample.from_encoded(...) wrapper is added in _wrappers.py. caps_to_codec is deferred.
+  m.def(
+      "make_encoded_sample",
+      [](nb::bytes data, const std::string& caps_string, int64_t pts_ns, int64_t dts_ns,
+         int64_t duration_ns) {
+        const auto* p = reinterpret_cast<const uint8_t*>(data.c_str());
+        std::vector<uint8_t> buf(p, p + data.size());
+        return simaai::neat::make_encoded_sample(std::move(buf), caps_string, pts_ns, dts_ns,
+                                                 duration_ns);
+      },
+      "data"_a, "caps_string"_a, "pts_ns"_a = -1, "dts_ns"_a = -1, "duration_ns"_a = -1);
 
   m.def(
       "decode_bbox",
@@ -2170,11 +2256,36 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("parse_launch", &ValidateOptions::parse_launch)
       .def_rw("enforce_names", &ValidateOptions::enforce_names);
 
+  // Phase 1 (plan slice S2/S3/S4): jargon-free execution surface. Bound as the ONLY execution
+  // surface on GraphOptions (which previously exposed no execution knobs) — net power gain, no raw
+  // legacy fields. Targets use the resolver's native tokens (AUTO/A65/EV74) per S3.
+  nb::class_<simaai::neat::PreparedRunnerOptions>(m, "PreparedRunnerOptions")
+      .def(nb::init<>())
+      .def_rw("mode", &simaai::neat::PreparedRunnerOptions::mode)
+      .def_rw("ring_depth", &simaai::neat::PreparedRunnerOptions::ring_depth)
+      .def_rw("profile", &simaai::neat::PreparedRunnerOptions::profile)
+      .def_rw("dequant_flags", &simaai::neat::PreparedRunnerOptions::dequant_flags);
+  nb::class_<simaai::neat::AdvancedExecutionOptions>(m, "AdvancedExecutionOptions")
+      .def(nb::init<>())
+      .def_rw("preprocess_target", &simaai::neat::AdvancedExecutionOptions::preprocess_target)
+      .def_rw("postprocess_target", &simaai::neat::AdvancedExecutionOptions::postprocess_target)
+      .def_rw("preprocess_async", &simaai::neat::AdvancedExecutionOptions::preprocess_async)
+      .def_rw("inference_async", &simaai::neat::AdvancedExecutionOptions::inference_async)
+      .def_rw("inference_output_buffers",
+              &simaai::neat::AdvancedExecutionOptions::inference_output_buffers)
+      .def_rw("defer_output_cache_sync",
+              &simaai::neat::AdvancedExecutionOptions::defer_output_cache_sync)
+      .def_rw("prepared_runner", &simaai::neat::AdvancedExecutionOptions::prepared_runner)
+      .def_rw("internal_queue_depth",
+              &simaai::neat::AdvancedExecutionOptions::internal_queue_depth);
+
   nb::class_<GraphOptions>(m, "GraphOptions")
       .def(nb::init<>())
       .def_rw("callback_timeout_ms", &GraphOptions::callback_timeout_ms)
       .def_rw("element_name_prefix", &GraphOptions::element_name_prefix)
-      .def_rw("element_name_suffix", &GraphOptions::element_name_suffix);
+      .def_rw("element_name_suffix", &GraphOptions::element_name_suffix)
+      .def_rw("verbose", &GraphOptions::verbose)
+      .def_rw("advanced_execution", &GraphOptions::advanced_execution);
 
   nb::class_<simaai::neat::OutputTensorOptions>(m, "OutputTensorOptions")
       .def(nb::init<>())
@@ -2187,7 +2298,9 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<RunAdvancedOptions>(m, "RunAdvancedOptions")
       .def(nb::init<>())
       .def_rw("copy_input", &RunAdvancedOptions::copy_input)
-      .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes);
+      .def_rw("max_input_bytes", &RunAdvancedOptions::max_input_bytes)
+      .def_rw("sync_num_buffers_override", &RunAdvancedOptions::sync_num_buffers_override)
+      .def_rw("prepare_output_cpu_visible", &RunAdvancedOptions::prepare_output_cpu_visible);
 
   nb::class_<PowerRailConfig>(m, "PowerRailConfig")
       .def(nb::init<>())
@@ -2335,6 +2448,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("warmup_ms", &MeasureOptions::warmup_ms)
       .def_rw("timeout_ms", &MeasureOptions::timeout_ms)
       .def_rw("include_plugin_latency", &MeasureOptions::include_plugin_latency)
+      .def_rw("plugin_latency_source", &MeasureOptions::plugin_latency_source)
+      .def_rw("include_edge_latency", &MeasureOptions::include_edge_latency)
+      .def_rw("include_message_latency", &MeasureOptions::include_message_latency)
+      .def_rw("message_latency_source", &MeasureOptions::message_latency_source)
+      .def_rw("retain_metrics_trace", &MeasureOptions::retain_metrics_trace)
+      .def_rw("metrics_trace_dir", &MeasureOptions::metrics_trace_dir)
       .def_rw("include_power", &MeasureOptions::include_power)
       .def_rw("title", &MeasureOptions::title)
       .def_rw("model", &MeasureOptions::model)
@@ -2367,6 +2486,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("public_node_id", &MeasurePluginLatency::public_node_id)
       .def_rw("public_node_ids", &MeasurePluginLatency::public_node_ids)
       .def_rw("gst_element_name", &MeasurePluginLatency::gst_element_name)
+      .def_rw("stream_id", &MeasurePluginLatency::stream_id)
+      .def_rw("plugin_instance_id", &MeasurePluginLatency::plugin_instance_id)
+      .def_rw("source", &MeasurePluginLatency::source)
+      .def_rw("attribution_source", &MeasurePluginLatency::attribution_source)
+      .def_rw("mapping_error", &MeasurePluginLatency::mapping_error)
+      .def_rw("reliable", &MeasurePluginLatency::reliable)
       .def_rw("calls", &MeasurePluginLatency::calls)
       .def_rw("total_ms", &MeasurePluginLatency::total_ms)
       .def_rw("avg_ms", &MeasurePluginLatency::avg_ms)
@@ -2411,9 +2536,23 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("end_to_end", &MeasureReport::end_to_end)
       .def_rw("frame_gap", &MeasureReport::frame_gap)
       .def_rw("latency_samples_collected", &MeasureReport::latency_samples_collected)
+      .def_rw("end_to_end_semantics", &MeasureReport::end_to_end_semantics)
+      .def_rw("end_to_end_interpretation", &MeasureReport::end_to_end_interpretation)
       .def_rw("counters", &MeasureReport::counters)
       .def_rw("input", &MeasureReport::input)
       .def_rw("plugin_latency", &MeasureReport::plugin_latency)
+      .def_rw("plugin_latency_unattributed", &MeasureReport::plugin_latency_unattributed)
+      .def_rw("edge_latency", &MeasureReport::edge_latency)
+      .def_rw("edge_latency_unattributed", &MeasureReport::edge_latency_unattributed)
+      .def_rw("plugin_latency_status", &MeasureReport::plugin_latency_status)
+      .def_rw("plugin_latency_source", &MeasureReport::plugin_latency_source)
+      .def_rw("message_latency_status", &MeasureReport::message_latency_status)
+      .def_rw("message_latency_source", &MeasureReport::message_latency_source)
+      .def_rw("metrics_trace_dir", &MeasureReport::metrics_trace_dir)
+      .def_rw("warnings", &MeasureReport::warnings)
+      .def_rw("trace_loss_detected", &MeasureReport::trace_loss_detected)
+      .def_rw("graph_sample_timing_unkeyed", &MeasureReport::graph_sample_timing_unkeyed)
+      .def_rw("graph_sample_timing_misses", &MeasureReport::graph_sample_timing_misses)
       .def_rw("node_metrics", &MeasureReport::node_metrics)
       .def_rw("power", &MeasureReport::power)
       .def("text", &MeasureReport::to_text)
@@ -2912,6 +3051,32 @@ NB_MODULE(_pyneat_core, m) {
       .value("Derived", simaai::neat::SpecCertainty::Derived)
       .value("Authoritative", simaai::neat::SpecCertainty::Authoritative);
 
+  // Phase 1 (plan slice): preprocess-metadata template attached to each input frame (resize/crop/
+  // letterbox geometry → needed for mapping detections back to original-image coordinates).
+  nb::class_<simaai::neat::PreprocessMetaTemplate>(m, "PreprocessMetaTemplate")
+      .def(nb::init<>())
+      .def_rw("enabled", &simaai::neat::PreprocessMetaTemplate::enabled)
+      .def_rw("target_width", &simaai::neat::PreprocessMetaTemplate::target_width)
+      .def_rw("target_height", &simaai::neat::PreprocessMetaTemplate::target_height)
+      .def_rw("scaled_width", &simaai::neat::PreprocessMetaTemplate::scaled_width)
+      .def_rw("scaled_height", &simaai::neat::PreprocessMetaTemplate::scaled_height)
+      .def_rw("resize_mode", &simaai::neat::PreprocessMetaTemplate::resize_mode)
+      .def_rw("pad_value", &simaai::neat::PreprocessMetaTemplate::pad_value)
+      .def_rw("color_in", &simaai::neat::PreprocessMetaTemplate::color_in)
+      .def_rw("color_out", &simaai::neat::PreprocessMetaTemplate::color_out)
+      .def_rw("axis_perm", &simaai::neat::PreprocessMetaTemplate::axis_perm)
+      .def_rw("normalize", &simaai::neat::PreprocessMetaTemplate::normalize)
+      .def_rw("quantize", &simaai::neat::PreprocessMetaTemplate::quantize)
+      .def_rw("tessellate", &simaai::neat::PreprocessMetaTemplate::tessellate)
+      .def_rw("roi_list_enabled", &simaai::neat::PreprocessMetaTemplate::roi_list_enabled)
+      .def_rw("rois", &simaai::neat::PreprocessMetaTemplate::rois)
+      .def_rw("roi_input_batch_size", &simaai::neat::PreprocessMetaTemplate::roi_input_batch_size)
+      .def_rw("roi_source_width", &simaai::neat::PreprocessMetaTemplate::roi_source_width)
+      .def_rw("roi_source_height", &simaai::neat::PreprocessMetaTemplate::roi_source_height)
+      .def_rw("roi_source_stride_bytes",
+              &simaai::neat::PreprocessMetaTemplate::roi_source_stride_bytes)
+      .def_rw("roi_pad_value", &simaai::neat::PreprocessMetaTemplate::roi_pad_value);
+
   nb::class_<simaai::neat::InputOptions>(m, "InputOptions")
       .def(nb::init<>())
       .def_rw("payload_type", &simaai::neat::InputOptions::payload_type)
@@ -2939,7 +3104,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("pool_min_buffers", &simaai::neat::InputOptions::pool_min_buffers)
       .def_rw("pool_max_buffers", &simaai::neat::InputOptions::pool_max_buffers)
       .def_rw("memory_policy", &simaai::neat::InputOptions::memory_policy)
-      .def_rw("buffer_name", &simaai::neat::InputOptions::buffer_name);
+      .def_rw("buffer_name", &simaai::neat::InputOptions::buffer_name)
+      .def_rw("preprocess_meta", &simaai::neat::InputOptions::preprocess_meta);
 
   nb::enum_<simaai::neat::CombinePolicy>(m, "CombinePolicy")
       .value("None_", simaai::neat::CombinePolicy::None)
@@ -3300,6 +3466,105 @@ NB_MODULE(_pyneat_core, m) {
       .def("__repr__",
            [](const simaai::neat::TrackKLTOptions& options) { return options.summary(); });
 
+  // Phase 4 (plan slice): SiMa render/argmax postprocess node options (advanced/expert nodes;
+  // factories live under nodes.* per settled S1 note, options top-level like other *Options).
+  nb::class_<simaai::neat::SimaRenderOptions>(m, "SimaRenderOptions")
+      .def(nb::init<>())
+      .def_rw("config_path", &simaai::neat::SimaRenderOptions::config_path)
+      .def_rw("sima_allocator_type", &simaai::neat::SimaRenderOptions::sima_allocator_type)
+      .def_rw("silent", &simaai::neat::SimaRenderOptions::silent)
+      .def_rw("emit_signals", &simaai::neat::SimaRenderOptions::emit_signals)
+      .def_rw("transmit", &simaai::neat::SimaRenderOptions::transmit);
+  nb::class_<simaai::neat::SimaArgMaxOptions>(m, "SimaArgMaxOptions")
+      .def(nb::init<>())
+      .def_rw("config_path", &simaai::neat::SimaArgMaxOptions::config_path)
+      .def_rw("sima_allocator_type", &simaai::neat::SimaArgMaxOptions::sima_allocator_type)
+      .def_rw("silent", &simaai::neat::SimaArgMaxOptions::silent)
+      .def_rw("emit_signals", &simaai::neat::SimaArgMaxOptions::emit_signals)
+      .def_rw("transmit", &simaai::neat::SimaArgMaxOptions::transmit);
+
+  // Phase 4 (plan slice): CVU dtype-bridge atoms (cast/cast_tess/dequant/detess/detess_cast).
+  // Advanced/expert nodes — the planner normally inserts them; the standalone forms exist for
+  // manual graphs. Only user-facing scalar/enum fields are bound; internal contract fields
+  // (compiled_contract / processcvu_compiled_contract / model_lineage / config_json) are
+  // intentionally omitted (planner-set, not user surface). from-Model constructors are deferred
+  // (they must register after Model); construct empty and set fields, or use the model-path groups.
+  nb::enum_<simaai::neat::CastDirection>(m, "CastDirection")
+      .value("Bf16ToFp32", simaai::neat::CastDirection::Bf16ToFp32)
+      .value("Fp32ToBf16", simaai::neat::CastDirection::Fp32ToBf16);
+  nb::class_<simaai::neat::CastOptions>(m, "CastOptions")
+      .def(nb::init<>())
+      .def_rw("direction", &simaai::neat::CastOptions::direction)
+      .def_rw("element_name", &simaai::neat::CastOptions::element_name)
+      .def_rw("silent", &simaai::neat::CastOptions::silent)
+      .def_rw("num_buffers", &simaai::neat::CastOptions::num_buffers);
+  auto cast_tess_opts_cls =
+      nb::class_<simaai::neat::CastTessOptions>(m, "CastTessOptions")
+          .def(nb::init<>())
+          .def_rw("config_path", &simaai::neat::CastTessOptions::config_path)
+          .def_rw("element_name", &simaai::neat::CastTessOptions::element_name)
+          .def_rw("num_buffers", &simaai::neat::CastTessOptions::num_buffers)
+          .def_rw("num_buffers_model", &simaai::neat::CastTessOptions::num_buffers_model)
+          .def_rw("num_buffers_locked", &simaai::neat::CastTessOptions::num_buffers_locked);
+  auto dequant_opts_cls =
+      nb::class_<simaai::neat::DequantOptions>(m, "DequantOptions")
+          .def(nb::init<>())
+          .def_rw("element_name", &simaai::neat::DequantOptions::element_name)
+          .def_rw("stage_id", &simaai::neat::DequantOptions::stage_id)
+          .def_rw("model_managed", &simaai::neat::DequantOptions::model_managed)
+          .def_rw("q_scale", &simaai::neat::DequantOptions::q_scale)
+          .def_rw("q_zp", &simaai::neat::DequantOptions::q_zp)
+          .def_rw("num_buffers", &simaai::neat::DequantOptions::num_buffers)
+          .def_rw("num_buffers_model", &simaai::neat::DequantOptions::num_buffers_model)
+          .def_rw("num_buffers_locked", &simaai::neat::DequantOptions::num_buffers_locked);
+  auto detess_opts_cls =
+      nb::class_<simaai::neat::DetessOptions>(m, "DetessOptions")
+          .def(nb::init<>())
+          .def_rw("config_path", &simaai::neat::DetessOptions::config_path)
+          .def_rw("config_dir", &simaai::neat::DetessOptions::config_dir)
+          .def_rw("keep_config", &simaai::neat::DetessOptions::keep_config)
+          .def_rw("no_json_path", &simaai::neat::DetessOptions::no_json_path)
+          .def_rw("upstream_name", &simaai::neat::DetessOptions::upstream_name)
+          .def_rw("element_name", &simaai::neat::DetessOptions::element_name)
+          .def_rw("num_buffers", &simaai::neat::DetessOptions::num_buffers)
+          .def_rw("num_buffers_model", &simaai::neat::DetessOptions::num_buffers_model)
+          .def_rw("num_buffers_locked", &simaai::neat::DetessOptions::num_buffers_locked);
+  auto detess_cast_opts_cls =
+      nb::class_<simaai::neat::DetessCastOptions>(m, "DetessCastOptions")
+          .def(nb::init<>())
+          .def_rw("config_path", &simaai::neat::DetessCastOptions::config_path)
+          .def_rw("upstream_name", &simaai::neat::DetessCastOptions::upstream_name)
+          .def_rw("element_name", &simaai::neat::DetessCastOptions::element_name)
+          .def_rw("num_buffers", &simaai::neat::DetessCastOptions::num_buffers)
+          .def_rw("num_buffers_model", &simaai::neat::DetessCastOptions::num_buffers_model)
+          .def_rw("num_buffers_locked", &simaai::neat::DetessCastOptions::num_buffers_locked);
+
+  // Phase 4 (plan slice): PCIe transport node options (host<->board zero-copy).
+  nb::class_<simaai::neat::PCIeSrcOptions>(m, "PCIeSrcOptions")
+      .def(nb::init<>())
+      .def_rw("buffer_size", &simaai::neat::PCIeSrcOptions::buffer_size)
+      .def_rw("format", &simaai::neat::PCIeSrcOptions::format)
+      .def_rw("width", &simaai::neat::PCIeSrcOptions::width)
+      .def_rw("height", &simaai::neat::PCIeSrcOptions::height)
+      .def_rw("fps_n", &simaai::neat::PCIeSrcOptions::fps_n)
+      .def_rw("fps_d", &simaai::neat::PCIeSrcOptions::fps_d);
+  nb::class_<simaai::neat::PCIeSinkOptions>(m, "PCIeSinkOptions")
+      .def(nb::init<>())
+      .def_rw("config_file", &simaai::neat::PCIeSinkOptions::config_file)
+      .def_rw("data_buf_name", &simaai::neat::PCIeSinkOptions::data_buf_name)
+      .def_rw("data_buffer_size", &simaai::neat::PCIeSinkOptions::data_buffer_size)
+      .def_rw("num_buffers", &simaai::neat::PCIeSinkOptions::num_buffers)
+      .def_rw("queue", &simaai::neat::PCIeSinkOptions::queue)
+      .def_rw("param_buf_name", &simaai::neat::PCIeSinkOptions::param_buf_name)
+      .def_rw("param_buffer_size", &simaai::neat::PCIeSinkOptions::param_buffer_size)
+      .def_rw("use_multi_buffers", &simaai::neat::PCIeSinkOptions::use_multi_buffers)
+      .def_rw("sync", &simaai::neat::PCIeSinkOptions::sync)
+      .def_rw("async_state", &simaai::neat::PCIeSinkOptions::async_state)
+      .def_rw("max_lateness_ns", &simaai::neat::PCIeSinkOptions::max_lateness_ns)
+      .def_rw("processing_deadline_ns", &simaai::neat::PCIeSinkOptions::processing_deadline_ns)
+      .def_rw("transmit_kpi", &simaai::neat::PCIeSinkOptions::transmit_kpi)
+      .def_rw("qos", &simaai::neat::PCIeSinkOptions::qos);
+
   nb::module_ nodes_mod = m.def_submodule("nodes", "Node factory helpers");
   nodes_mod.def("queue", &simaai::neat::nodes::Queue);
   nodes_mod.def("rtsp_input", &simaai::neat::nodes::RTSPInput, "url"_a, "latency_ms"_a = 200,
@@ -3345,6 +3610,65 @@ NB_MODULE(_pyneat_core, m) {
                     &simaai::neat::nodes::TrackKLT),
                 "options"_a = simaai::neat::TrackKLTOptions{});
 
+  // ── Phase 4 (plan slice): caps / custom / common-media node factories ────────────────────────
+  // S5: nodes.custom returns a connect()-able shared_ptr<Node> for non-linear topology — this is
+  // NOT redundant with the linear-only Graph.custom. S10: format_filter is the friendly name over
+  // CapsRaw with optional width/height/fps; caps_raw / caps_nv12_sys_mem are bound as raw parity
+  // (caps_i420 deferred per S8/S10). All return shared_ptr<Node> usable in connect()/add().
+  nodes_mod.def("custom", &simaai::neat::nodes::Custom, "fragment"_a,
+                "role"_a = simaai::neat::InputRole::None);
+  nodes_mod.def("caps_raw", &simaai::neat::nodes::CapsRaw, "format"_a, "width"_a = -1,
+                "height"_a = -1, "fps"_a = -1, "memory"_a = simaai::neat::CapsMemory::Any);
+  nodes_mod.def("format_filter", &simaai::neat::nodes::CapsRaw, "format"_a, "width"_a = -1,
+                "height"_a = -1, "fps"_a = -1, "memory"_a = simaai::neat::CapsMemory::Any);
+  nodes_mod.def("caps_nv12_sys_mem", &simaai::neat::nodes::CapsNV12SysMem, "width"_a, "height"_a,
+                "fps"_a);
+  nodes_mod.def("file_input", &simaai::neat::nodes::FileInput, "path"_a);
+  nodes_mod.def("image_decode", &simaai::neat::nodes::ImageDecode);
+  nodes_mod.def("jpeg_decode", &simaai::neat::nodes::JpegDecode);
+  nodes_mod.def("video_scale", &simaai::neat::nodes::VideoScale);
+  nodes_mod.def("video_rate", &simaai::neat::nodes::VideoRate);
+  nodes_mod.def("image_freeze", &simaai::neat::nodes::ImageFreeze, "num_buffers"_a = -1);
+  nodes_mod.def("video_track_select", &simaai::neat::nodes::VideoTrackSelect,
+                "video_pad_index"_a = 0);
+  // still_image_input: wrap the strong-typedef geometry args so the Python signature is plain ints.
+  nodes_mod.def(
+      "still_image_input",
+      [](std::string image_path, int content_width, int content_height, int encode_width,
+         int encode_height, int fps) {
+        return simaai::neat::nodes::StillImageInput(
+            std::move(image_path), simaai::neat::StillImageInput::ContentWidth{content_width},
+            simaai::neat::StillImageInput::ContentHeight{content_height},
+            simaai::neat::StillImageInput::EncodeWidth{encode_width},
+            simaai::neat::StillImageInput::EncodeHeight{encode_height},
+            simaai::neat::StillImageInput::FramesPerSecond{fps});
+      },
+      "image_path"_a, "content_width"_a, "content_height"_a, "encode_width"_a, "encode_height"_a,
+      "fps"_a = 30);
+  // SimaRender (S6): render bbox overlays onto a frame — the render stage UdpOutputGroupG needs, so
+  // binding it here keeps the overlay→UDP power reachable while that group stays deferred.
+  nodes_mod.def("sima_render", &simaai::neat::nodes::SimaRender,
+                "options"_a = simaai::neat::SimaRenderOptions{});
+  nodes_mod.def("sima_argmax", &simaai::neat::nodes::SimaArgMax,
+                "options"_a = simaai::neat::SimaArgMaxOptions{});
+  nodes_mod.def("cast", &simaai::neat::nodes::Cast, "options"_a = simaai::neat::CastOptions{});
+  nodes_mod.def("cast_tess", &simaai::neat::nodes::CastTess,
+                "options"_a = simaai::neat::CastTessOptions{});
+  nodes_mod.def("dequant", &simaai::neat::nodes::Dequant,
+                "options"_a = simaai::neat::DequantOptions{});
+  nodes_mod.def("detess", &simaai::neat::nodes::Detess,
+                "options"_a = simaai::neat::DetessOptions{});
+  nodes_mod.def("detess_cast", &simaai::neat::nodes::DetessCast,
+                "options"_a = simaai::neat::DetessCastOptions{});
+  // RTP/H264 + PCIe transport nodes.
+  nodes_mod.def("h264_caps_fixup", &simaai::neat::nodes::H264CapsFixup, "fallback_fps"_a = 30,
+                "fallback_width"_a = 1280, "fallback_height"_a = 720);
+  nodes_mod.def("h264_encode_sw", &simaai::neat::nodes::H264EncodeSW, "bitrate_kbps"_a = 4000);
+  nodes_mod.def("pcie_src", &simaai::neat::nodes::PCIeSrc,
+                "options"_a = simaai::neat::PCIeSrcOptions{});
+  nodes_mod.def("pcie_sink", &simaai::neat::nodes::PCIeSink,
+                "options"_a = simaai::neat::PCIeSinkOptions{});
+
   nb::module_ groups_mod = m.def_submodule("groups", "Reusable Graph fragment helpers");
   groups_mod.def("image_input", &simaai::neat::nodes::groups::ImageInputGroup, "options"_a);
   groups_mod.def("video_input", &simaai::neat::nodes::groups::VideoInputGroup, "options"_a);
@@ -3359,6 +3683,95 @@ NB_MODULE(_pyneat_core, m) {
                  "options"_a);
   groups_mod.def("rtsp_decoded_output_spec",
                  &simaai::neat::nodes::groups::RtspDecodedInputOutputSpec, "options"_a);
+
+  // ── Phase 6 (plan slice S7): object-detection decode helpers ─────────────────────────────────
+  // Typed boxes + raw-tensor/byte decoders live in pyneat.detections. The top-level
+  // decode_bbox/decode_pose/decode_segmentation are kept as-is — this is NOT a mirror of them; it
+  // adds the genuinely-new typed-Box surface (decode_bbox_tensor returns a structured
+  // BoxDecodeResult, distinct from the TensorList contract). boxes_to_tensor and the tensor-level
+  // pose/seg decoders are intentionally dropped.
+  nb::module_ detections_mod =
+      m.def_submodule("detections", "Object-detection decode helpers (typed boxes).");
+  nb::class_<simaai::neat::Box>(detections_mod, "Box")
+      .def(nb::init<>())
+      .def_rw("x1", &simaai::neat::Box::x1)
+      .def_rw("y1", &simaai::neat::Box::y1)
+      .def_rw("x2", &simaai::neat::Box::x2)
+      .def_rw("y2", &simaai::neat::Box::y2)
+      .def_rw("score", &simaai::neat::Box::score)
+      .def_rw("class_id", &simaai::neat::Box::class_id)
+      .def("__repr__", [](const simaai::neat::Box& b) {
+        return nb::str("Box(x1={}, y1={}, x2={}, y2={}, score={}, class_id={})")
+            .format(b.x1, b.y1, b.x2, b.y2, b.score, b.class_id);
+      });
+  nb::class_<simaai::neat::BoxDecodeResult>(detections_mod, "BoxDecodeResult")
+      .def(nb::init<>())
+      .def_ro("boxes", &simaai::neat::BoxDecodeResult::boxes)
+      .def_prop_ro("raw", [](const simaai::neat::BoxDecodeResult& r) {
+        return nb::bytes(reinterpret_cast<const char*>(r.raw.data()), r.raw.size());
+      });
+  detections_mod.def("decode_bbox_tensor", &simaai::neat::decode_bbox_tensor, "tensor"_a, "img_w"_a,
+                     "img_h"_a, "expected_topk"_a = 0, "strict"_a = false);
+  detections_mod.def(
+      "parse_bbox_bytes",
+      [](nb::bytes data, int img_w, int img_h, int expected_topk, bool strict) {
+        const auto* p = reinterpret_cast<const uint8_t*>(data.c_str());
+        std::vector<uint8_t> buf(p, p + data.size());
+        return simaai::neat::parse_bbox_bytes(buf, img_w, img_h, expected_topk, strict);
+      },
+      "data"_a, "img_w"_a, "img_h"_a, "expected_topk"_a = 0, "strict"_a = false);
+  detections_mod.def("read_detection_format", &simaai::neat::read_detection_format, "tensor"_a);
+  detections_mod.def("format_is_bbox", &simaai::neat::detection_format_is_bbox, "format"_a);
+  detections_mod.def("format_is_pose", &simaai::neat::detection_format_is_pose, "format"_a);
+  detections_mod.def("format_is_segmentation", &simaai::neat::detection_format_is_segmentation,
+                     "format"_a);
+  detections_mod.def("format_is_bbox_family", &simaai::neat::detection_format_is_bbox_family,
+                     "format"_a);
+
+  // ── Phase 6 (plan slice S9): board power telemetry → pyneat.power ─────────────────────────────
+  // New snapshot/rail structs + PowerMonitor lifecycle + the rail/profile free functions live here.
+  // Already-bound config/summary types and the *_power_monitor_options factories are REUSED via
+  // aliases (not rebound/relocated — relocation would break test_api_surface). format_power_summary
+  // / power_summary_to_json (formatting helpers) are deferred.
+  nb::module_ power_mod = m.def_submodule("power", "Board power telemetry (PMBus rail readings).");
+  nb::class_<simaai::neat::PowerFieldReading>(power_mod, "PowerFieldReading")
+      .def_ro("available", &simaai::neat::PowerFieldReading::available)
+      .def_ro("raw", &simaai::neat::PowerFieldReading::raw)
+      .def_ro("value", &simaai::neat::PowerFieldReading::value)
+      .def_ro("error", &simaai::neat::PowerFieldReading::error);
+  nb::class_<simaai::neat::PowerRailReading>(power_mod, "PowerRailReading")
+      .def_ro("config", &simaai::neat::PowerRailReading::config)
+      .def_ro("voltage_v", &simaai::neat::PowerRailReading::voltage_v)
+      .def_ro("current_a", &simaai::neat::PowerRailReading::current_a)
+      .def_ro("power_w", &simaai::neat::PowerRailReading::power_w);
+  nb::class_<simaai::neat::PowerSnapshot>(power_mod, "PowerSnapshot")
+      .def_ro("rails", &simaai::neat::PowerSnapshot::rails)
+      .def_ro("total_watts", &simaai::neat::PowerSnapshot::total_watts)
+      .def_ro("rails_with_power", &simaai::neat::PowerSnapshot::rails_with_power);
+  nb::class_<simaai::neat::PowerMonitor>(power_mod, "PowerMonitor")
+      .def(nb::init<simaai::neat::PowerMonitorOptions>(),
+           "options"_a = simaai::neat::PowerMonitorOptions{})
+      .def("start", &simaai::neat::PowerMonitor::start)
+      .def("stop", &simaai::neat::PowerMonitor::stop)
+      .def("sample_once", &simaai::neat::PowerMonitor::sample_once)
+      .def("summary", &simaai::neat::PowerMonitor::summary)
+      .def("running", &simaai::neat::PowerMonitor::running);
+  power_mod.def("read_power_snapshot", &simaai::neat::read_power_snapshot, "options"_a);
+  power_mod.def("default_modalix_som_power_rails", &simaai::neat::default_modalix_som_power_rails);
+  power_mod.def("default_modalix_dvt_power_rails", &simaai::neat::default_modalix_dvt_power_rails);
+  power_mod.def("detect_default_power_monitor_profile",
+                &simaai::neat::detect_default_power_monitor_profile);
+  power_mod.def("power_rails_for_profile", &simaai::neat::power_rails_for_profile, "profile"_a);
+  // Reuse already-bound config/summary types + option factories (S9: alias, don't relocate).
+  power_mod.attr("PowerMonitorProfile") = m.attr("PowerMonitorProfile");
+  power_mod.attr("PowerMonitorOptions") = m.attr("PowerMonitorOptions");
+  power_mod.attr("PowerRailConfig") = m.attr("PowerRailConfig");
+  power_mod.attr("PowerFieldSummary") = m.attr("PowerFieldSummary");
+  power_mod.attr("PowerRailSummary") = m.attr("PowerRailSummary");
+  power_mod.attr("PowerSummary") = m.attr("PowerSummary");
+  power_mod.attr("board_power_monitor_options") = m.attr("board_power_monitor_options");
+  power_mod.attr("modalix_som_power_monitor_options") = m.attr("modalix_som_power_monitor_options");
+  power_mod.attr("modalix_dvt_power_monitor_options") = m.attr("modalix_dvt_power_monitor_options");
 
   nb::module_ stages_mod = m.def_submodule("stages", "Standalone model stage helpers");
   stages_mod.def(
@@ -3578,7 +3991,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("verbose", &simaai::neat::Model::Options::verbose)
       .def_rw("inference_terminal", &simaai::neat::Model::Options::inference_terminal)
       .def_rw("processcvu", &simaai::neat::Model::Options::processcvu)
-      .def_rw("processmla", &simaai::neat::Model::Options::processmla);
+      .def_rw("processmla", &simaai::neat::Model::Options::processmla)
+      .def_rw("advanced_execution", &simaai::neat::Model::Options::advanced_execution);
 
   nb::class_<simaai::neat::Model::RouteOptions>(m, "ModelRouteOptions")
       .def(nb::init<>())
@@ -3587,7 +4001,8 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("expose_all_outputs", &simaai::neat::Model::RouteOptions::expose_all_outputs)
       .def_rw("upstream_name", &simaai::neat::Model::RouteOptions::upstream_name)
       .def_rw("name_suffix", &simaai::neat::Model::RouteOptions::name_suffix)
-      .def_rw("buffer_name", &simaai::neat::Model::RouteOptions::buffer_name);
+      .def_rw("buffer_name", &simaai::neat::Model::RouteOptions::buffer_name)
+      .def_rw("advanced_execution", &simaai::neat::Model::RouteOptions::advanced_execution);
 
   nb::enum_<simaai::neat::Model::Stage>(m, "ModelStage")
       .value("Preprocess", simaai::neat::Model::Stage::Preprocess)
@@ -3657,6 +4072,186 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
       .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
 
+  // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
+  // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the
+  // direct return of the primary Model methods (ModelInfo, PreprocessRequirements) live at top
+  // level; the deep resolved-plan contract tree lives under `pyneat.advanced`, reachable only via
+  // Model.resolved_preprocess_plan(). These are read-only result structs (def_ro), not user-built.
+  nb::module_ advanced_mod = m.def_submodule(
+      "advanced", "Advanced / power-user API surface (raw contracts, expert knobs).");
+
+  // ── Phase 6 (plan slice S8): user-facing format vocabulary ───────────────────────────────────
+  // pyneat.Format is the friendly enum (FormatTag alias retained). Only meaningful formats are
+  // exposed; the EVXX_*/MLA/BBOX/ARGMAX/DETESSDEQUANT caps-layer spellings are intentionally NOT
+  // bound as enum members (the string parser in python_to_format_spec still accepts them). Setters
+  // continue to accept plain strings — this is additive over that convention.
+  nb::enum_<simaai::neat::FormatTag>(m, "Format")
+      .value("Auto", simaai::neat::FormatTag::Auto)
+      .value("RGB", simaai::neat::FormatTag::RGB)
+      .value("BGR", simaai::neat::FormatTag::BGR)
+      .value("GRAY8", simaai::neat::FormatTag::GRAY8)
+      .value("NV12", simaai::neat::FormatTag::NV12)
+      .value("I420", simaai::neat::FormatTag::I420)
+      .value("YUYV", simaai::neat::FormatTag::YUYV)
+      .value("ENCODED", simaai::neat::FormatTag::ENCODED)
+      .value("H264", simaai::neat::FormatTag::H264)
+      .value("ByteStream", simaai::neat::FormatTag::ByteStream)
+      .value("FP32", simaai::neat::FormatTag::FP32)
+      .value("INT8", simaai::neat::FormatTag::INT8)
+      .value("UINT8", simaai::neat::FormatTag::UINT8)
+      .value("BF16", simaai::neat::FormatTag::BF16);
+  m.attr("FormatTag") = m.attr("Format");
+  // Format string<->tag converters are caps/jargon utilities → advanced tier (S8).
+  advanced_mod.def("format_tag_name", &simaai::neat::format_tag_name, "tag"_a);
+  advanced_mod.def("format_tag_to_string", &simaai::neat::format_tag_to_string, "tag"_a);
+  advanced_mod.def("format_tag_from_string", &simaai::neat::format_tag_from_string, "value"_a);
+  advanced_mod.def("is_raw_video_format", &simaai::neat::is_raw_video_format, "tag"_a);
+  advanced_mod.def("is_tensor_payload_format", &simaai::neat::is_tensor_payload_format, "tag"_a);
+
+  // ── Phase 2 (plan slice): metrics/diagnostics types in the advanced tier ─────────────────────
+  // MetricsTraceSource (used by MeasureOptions fields) + MeasureEdgeLatency (used by
+  // MeasureReport.edge_latency). MeasurePath* per-node structs remain deferred (S1).
+  nb::enum_<simaai::neat::MetricsTraceSource>(advanced_mod, "MetricsTraceSource")
+      .value("Auto", simaai::neat::MetricsTraceSource::Auto)
+      .value("Off", simaai::neat::MetricsTraceSource::Off)
+      .value("Lttng", simaai::neat::MetricsTraceSource::Lttng);
+  nb::class_<simaai::neat::MeasureEdgeLatency>(advanced_mod, "MeasureEdgeLatency")
+      .def_ro("edge_id", &simaai::neat::MeasureEdgeLatency::edge_id)
+      .def_ro("name", &simaai::neat::MeasureEdgeLatency::name)
+      .def_ro("from_node_id", &simaai::neat::MeasureEdgeLatency::from_node_id)
+      .def_ro("to_node_id", &simaai::neat::MeasureEdgeLatency::to_node_id)
+      .def_ro("from_runtime_node_id", &simaai::neat::MeasureEdgeLatency::from_runtime_node_id)
+      .def_ro("to_runtime_node_id", &simaai::neat::MeasureEdgeLatency::to_runtime_node_id)
+      .def_ro("from_element_name", &simaai::neat::MeasureEdgeLatency::from_element_name)
+      .def_ro("to_element_name", &simaai::neat::MeasureEdgeLatency::to_element_name)
+      .def_ro("from_plugin_instance_id", &simaai::neat::MeasureEdgeLatency::from_plugin_instance_id)
+      .def_ro("to_plugin_instance_id", &simaai::neat::MeasureEdgeLatency::to_plugin_instance_id)
+      .def_ro("stream_id", &simaai::neat::MeasureEdgeLatency::stream_id)
+      .def_ro("samples", &simaai::neat::MeasureEdgeLatency::samples)
+      .def_ro("total_ms", &simaai::neat::MeasureEdgeLatency::total_ms)
+      .def_ro("avg_ms", &simaai::neat::MeasureEdgeLatency::avg_ms)
+      .def_ro("min_ms", &simaai::neat::MeasureEdgeLatency::min_ms)
+      .def_ro("max_ms", &simaai::neat::MeasureEdgeLatency::max_ms)
+      .def_ro("p50_ms", &simaai::neat::MeasureEdgeLatency::p50_ms)
+      .def_ro("p95_ms", &simaai::neat::MeasureEdgeLatency::p95_ms)
+      .def_ro("source", &simaai::neat::MeasureEdgeLatency::source)
+      .def_ro("timing_semantics", &simaai::neat::MeasureEdgeLatency::timing_semantics)
+      .def_ro("attribution_source", &simaai::neat::MeasureEdgeLatency::attribution_source)
+      .def_ro("mapping_error", &simaai::neat::MeasureEdgeLatency::mapping_error)
+      .def_ro("non_additive", &simaai::neat::MeasureEdgeLatency::non_additive)
+      .def_ro("reliable", &simaai::neat::MeasureEdgeLatency::reliable);
+
+  // ── Phase 6 (plan slice): runtime warm-up + build/version info ───────────────────────────────
+  // prewarm_runtime kept (S-naming: no warm_up_runtime alias); prewarm_runtime_async dropped.
+  // build_info() preferred over version_info() — returns a dict of the three version strings.
+  m.def("prewarm_runtime", &simaai::neat::prewarm_runtime,
+        nb::call_guard<nb::gil_scoped_release>());
+  m.def("build_info", []() {
+    nb::dict info;
+    info["version"] = ::sima_neat_version();
+    info["platform_version"] = ::sima_neat_platform_version();
+    info["abi_version"] = ::sima_neat_abi_version();
+    return info;
+  });
+
+  using ModelInfoT = simaai::neat::Model::ModelInfo;
+  auto model_info_cls = nb::class_<ModelInfoT>(m, "ModelInfo");
+  nb::class_<ModelInfoT::RouteNeeds>(model_info_cls, "RouteNeeds")
+      .def_ro("pre_quantization", &ModelInfoT::RouteNeeds::pre_quantization)
+      .def_ro("pre_tessellation", &ModelInfoT::RouteNeeds::pre_tessellation)
+      .def_ro("pre_cast", &ModelInfoT::RouteNeeds::pre_cast)
+      .def_ro("post_detessellation", &ModelInfoT::RouteNeeds::post_detessellation)
+      .def_ro("post_dequantization", &ModelInfoT::RouteNeeds::post_dequantization)
+      .def_ro("post_cast", &ModelInfoT::RouteNeeds::post_cast);
+  nb::class_<ModelInfoT::RouteCapabilities>(model_info_cls, "RouteCapabilities")
+      .def_ro("has_pre_quantization", &ModelInfoT::RouteCapabilities::has_pre_quantization)
+      .def_ro("has_pre_tessellation", &ModelInfoT::RouteCapabilities::has_pre_tessellation)
+      .def_ro("has_pre_cast", &ModelInfoT::RouteCapabilities::has_pre_cast)
+      .def_ro("has_post_detessellation", &ModelInfoT::RouteCapabilities::has_post_detessellation)
+      .def_ro("has_post_dequantization", &ModelInfoT::RouteCapabilities::has_post_dequantization)
+      .def_ro("has_post_cast", &ModelInfoT::RouteCapabilities::has_post_cast)
+      .def_ro("has_post_boxdecode", &ModelInfoT::RouteCapabilities::has_post_boxdecode);
+  nb::class_<ModelInfoT::RouteSelection>(model_info_cls, "RouteSelection")
+      .def_ro("include_preprocess_stage", &ModelInfoT::RouteSelection::include_preprocess_stage)
+      .def_ro("include_postprocess_stage", &ModelInfoT::RouteSelection::include_postprocess_stage)
+      .def_ro("infer_only", &ModelInfoT::RouteSelection::infer_only)
+      .def_ro("preprocess_graph", &ModelInfoT::RouteSelection::preprocess_graph)
+      .def_ro("selected_post_kind", &ModelInfoT::RouteSelection::selected_post_kind);
+  nb::class_<ModelInfoT::OutputTopology>(model_info_cls, "OutputTopology")
+      .def_ro("physical_outputs", &ModelInfoT::OutputTopology::physical_outputs)
+      .def_ro("logical_outputs", &ModelInfoT::OutputTopology::logical_outputs)
+      .def_ro("packed_outputs", &ModelInfoT::OutputTopology::packed_outputs);
+  model_info_cls.def_ro("mpk_json_path", &ModelInfoT::mpk_json_path)
+      .def_ro("model_name", &ModelInfoT::model_name)
+      .def_ro("needs", &ModelInfoT::needs)
+      .def_ro("capabilities", &ModelInfoT::capabilities)
+      .def_ro("selection", &ModelInfoT::selection)
+      .def_ro("output_topology", &ModelInfoT::output_topology)
+      .def_ro("pre_kernels", &ModelInfoT::pre_kernels)
+      .def_ro("post_kernels", &ModelInfoT::post_kernels)
+      .def_ro("warnings", &ModelInfoT::warnings);
+
+  using PreprocReqT = simaai::neat::Model::PreprocessRequirements;
+  nb::class_<PreprocReqT>(m, "PreprocessRequirements")
+      .def_ro("has_preproc_stage", &PreprocReqT::has_preproc_stage)
+      .def_ro("quant_needed", &PreprocReqT::quant_needed)
+      .def_ro("tess_needed", &PreprocReqT::tess_needed)
+      .def_ro("input_media_type", &PreprocReqT::input_media_type)
+      .def_ro("input_format", &PreprocReqT::input_format)
+      .def_ro("output_format", &PreprocReqT::output_format)
+      .def_ro("output_dtype", &PreprocReqT::output_dtype)
+      .def_ro("axis_perm", &PreprocReqT::axis_perm)
+      .def_ro("output_shape", &PreprocReqT::output_shape)
+      .def_ro("slice_shape", &PreprocReqT::slice_shape)
+      .def_ro("q_scale", &PreprocReqT::q_scale)
+      .def_ro("q_zp", &PreprocReqT::q_zp);
+
+  // Advanced tier — resolved preprocess plan contract tree.
+  nb::enum_<simaai::neat::PreprocessGraphFamily>(advanced_mod, "PreprocessGraphFamily")
+      .value("Disabled", simaai::neat::PreprocessGraphFamily::Disabled)
+      .value("Preproc", simaai::neat::PreprocessGraphFamily::Preproc)
+      .value("Quant", simaai::neat::PreprocessGraphFamily::Quant)
+      .value("Tess", simaai::neat::PreprocessGraphFamily::Tess)
+      .value("QuantTess", simaai::neat::PreprocessGraphFamily::QuantTess);
+  nb::class_<simaai::neat::PreprocessExplicitKnobs>(advanced_mod, "PreprocessExplicitKnobs")
+      .def_ro("resize", &simaai::neat::PreprocessExplicitKnobs::resize)
+      .def_ro("color_convert", &simaai::neat::PreprocessExplicitKnobs::color_convert)
+      .def_ro("layout_convert", &simaai::neat::PreprocessExplicitKnobs::layout_convert)
+      .def_ro("normalize", &simaai::neat::PreprocessExplicitKnobs::normalize)
+      .def_ro("normalize_stats", &simaai::neat::PreprocessExplicitKnobs::normalize_stats)
+      .def_ro("quantize_enable", &simaai::neat::PreprocessExplicitKnobs::quantize_enable)
+      .def_ro("quantize_params", &simaai::neat::PreprocessExplicitKnobs::quantize_params)
+      .def_ro("tessellate_enable", &simaai::neat::PreprocessExplicitKnobs::tessellate_enable)
+      .def_ro("tessellate_geometry", &simaai::neat::PreprocessExplicitKnobs::tessellate_geometry);
+  nb::class_<simaai::neat::PreprocessContract>(advanced_mod, "PreprocessContract")
+      .def_ro("media_type", &simaai::neat::PreprocessContract::media_type)
+      .def_ro("format", &simaai::neat::PreprocessContract::format)
+      .def_ro("width", &simaai::neat::PreprocessContract::width)
+      .def_ro("height", &simaai::neat::PreprocessContract::height)
+      .def_ro("depth", &simaai::neat::PreprocessContract::depth)
+      .def_ro("max_width", &simaai::neat::PreprocessContract::max_width)
+      .def_ro("max_height", &simaai::neat::PreprocessContract::max_height)
+      .def_ro("max_depth", &simaai::neat::PreprocessContract::max_depth);
+  nb::class_<simaai::neat::PreprocessMetaContract>(advanced_mod, "PreprocessMetaContract")
+      .def_ro("meta_name", &simaai::neat::PreprocessMetaContract::meta_name)
+      .def_ro("required_fields", &simaai::neat::PreprocessMetaContract::required_fields);
+  nb::class_<simaai::neat::ResolvedPreprocessPlan>(advanced_mod, "ResolvedPreprocessPlan")
+      .def_ro("requested", &simaai::neat::ResolvedPreprocessPlan::requested)
+      .def_ro("effective", &simaai::neat::ResolvedPreprocessPlan::effective)
+      .def_ro("explicit_knobs", &simaai::neat::ResolvedPreprocessPlan::explicit_knobs)
+      .def_ro("resolved_kind", &simaai::neat::ResolvedPreprocessPlan::resolved_kind)
+      .def_ro("transforms_override", &simaai::neat::ResolvedPreprocessPlan::transforms_override)
+      .def_ro("enabled", &simaai::neat::ResolvedPreprocessPlan::enabled)
+      .def_ro("graph_family", &simaai::neat::ResolvedPreprocessPlan::graph_family)
+      .def_ro("graph_kernel", &simaai::neat::ResolvedPreprocessPlan::graph_kernel)
+      .def_ro("graph_config_path", &simaai::neat::ResolvedPreprocessPlan::graph_config_path)
+      .def_ro("ingress_contracts", &simaai::neat::ResolvedPreprocessPlan::ingress_contracts)
+      .def_ro("mla_contract", &simaai::neat::ResolvedPreprocessPlan::mla_contract)
+      .def_ro("meta_contract", &simaai::neat::ResolvedPreprocessPlan::meta_contract)
+      .def_ro("warnings", &simaai::neat::ResolvedPreprocessPlan::warnings)
+      .def("to_debug_string", &simaai::neat::ResolvedPreprocessPlan::to_debug_string)
+      .def("__repr__", &simaai::neat::ResolvedPreprocessPlan::to_debug_string);
+
   nb::class_<simaai::neat::Model>(m, "Model")
       .def(nb::init<const std::string&>(), "model_path"_a)
       .def(nb::init<const std::string&, const simaai::neat::Model::Options&>(), "model_path"_a,
@@ -3677,6 +4272,36 @@ NB_MODULE(_pyneat_core, m) {
       .def("input_specs", &simaai::neat::Model::input_specs)
       .def("output_specs", &simaai::neat::Model::output_specs)
       .def("metadata", &simaai::neat::Model::metadata)
+      .def("compiled_batch_size", &simaai::neat::Model::compiled_batch_size)
+      .def("info", &simaai::neat::Model::info)
+      // S11: text-only summary() (human-readable string) alongside structured info(). Composed from
+      // the diagnostic snapshot so Python users get a glanceable model report without formatting
+      // code.
+      .def("summary",
+           [](const simaai::neat::Model& model) {
+             const auto info = model.info();
+             std::string out =
+                 "Model: " + (info.model_name.empty() ? "<unnamed>" : info.model_name);
+             out += "\n  mpk: " + info.mpk_json_path;
+             out += "\n  preprocess: " + (info.selection.preprocess_graph.empty()
+                                              ? "none"
+                                              : info.selection.preprocess_graph);
+             out += "\n  postprocess: " + (info.selection.selected_post_kind.empty()
+                                               ? "none"
+                                               : info.selection.selected_post_kind);
+             out += "\n  outputs: " + std::to_string(info.output_topology.logical_outputs) +
+                    " logical / " + std::to_string(info.output_topology.physical_outputs) +
+                    " physical" + (info.output_topology.packed_outputs ? " (packed)" : "");
+             if (!info.warnings.empty()) {
+               out += "\n  warnings: " + std::to_string(info.warnings.size());
+             }
+             return out;
+           })
+      .def("preprocess_requirements", &simaai::neat::Model::preprocess_requirements)
+      .def("resolved_preprocess_plan", &simaai::neat::Model::resolved_preprocess_plan)
+      // Friendly alias (plan "Other final naming decisions"): preprocess_plan() ==
+      // resolved_preprocess_plan(); "resolved" is accurate but unnecessary for users.
+      .def("preprocess_plan", &simaai::neat::Model::resolved_preprocess_plan)
       .def("fragment", &simaai::neat::Model::fragment, "stage"_a)
       .def("backend_fragment", &simaai::neat::Model::backend_fragment, "stage"_a)
       .def("input_appsrc_options", &simaai::neat::Model::input_appsrc_options, "tensor_mode"_a)
@@ -3730,6 +4355,14 @@ NB_MODULE(_pyneat_core, m) {
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
       .def("benchmark", &simaai::neat::Model::benchmark, "num_samples"_a = 100,
            nb::call_guard<nb::gil_scoped_release>());
+
+  // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
+  // geometry / quant params / model-managed buffer counts so the standalone nodes are actually
+  // usable, e.g. detess_cast/dequant require model-managed params). Mirrors PreprocOptions(Model).
+  cast_tess_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
+  dequant_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
+  detess_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
+  detess_cast_opts_cls.def(nb::init<const simaai::neat::Model&>(), "model"_a);
 
   nb::class_<simaai::neat::PreprocOptions>(m, "PreprocOptions")
       .def(nb::init<>())

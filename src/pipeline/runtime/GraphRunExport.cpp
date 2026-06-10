@@ -1286,6 +1286,7 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
   graph_metrics["outputs_per_s"] = throughput.value("outputs_per_s", 0.0);
   graph_metrics["throughput_batches_per_s"] = throughput.value("outputs_per_s", 0.0);
   graph_metrics["throughput_inferences_per_s"] = throughput.value("logical_inferences_per_s", 0.0);
+  graph_metrics["end_to_end_timing_semantics"] = report.end_to_end_semantics;
   graph_metrics["counters"] = measure_counters_to_json(report.counters);
   graph_metrics["power"] =
       runtime::power_status_json(report.power, include_power && report.options.include_power,
@@ -1301,6 +1302,8 @@ json measure_report_to_json(const MeasureReport& report, bool include_node_metri
       {"throughput_batches_per_s", report.throughput_batches_per_s},
       {"throughput_inferences_per_s", report.throughput_inferences_per_s},
       {"latency_samples_collected", report.latency_samples_collected},
+      {"end_to_end_semantics", report.end_to_end_semantics},
+      {"end_to_end_interpretation", report.end_to_end_interpretation},
       {"end_to_end", measure_latency_stats_to_json(report.end_to_end)},
       {"frame_gap", measure_latency_stats_to_json(report.frame_gap)},
       {"counters", measure_counters_to_json(report.counters)},

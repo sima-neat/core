@@ -112,6 +112,7 @@ inline void emit_metrics_json(const std::string& scenario_id, int iterations,
     std::cout << "\n";
   }
   std::cout << "}\n";
+  std::cout.flush();
 }
 
 inline double elapsed_seconds(Clock::time_point start, Clock::time_point end) {

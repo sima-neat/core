@@ -52,7 +52,10 @@ using TensorSpec = TensorConstraint;
  * @brief Headline result returned by `Model::benchmark()`.
  *
  * The benchmark uses deterministic synthetic inputs generated from `Model::input_specs()`.
- * Power fields are populated when board power telemetry is available.
+ * `latency_ms` is measured with a warmed-up single-flight push/pull loop. `fps` means logical
+ * inferences per second from a separate async throughput run (for batched models this is
+ * batches/sec multiplied by the compiled batch size). Power fields are populated when board power
+ * telemetry is available during the throughput run.
  */
 struct BenchmarkReport {
   double latency_ms = 0.0;
@@ -292,6 +295,10 @@ public:
     /// Depth for internally inserted async queue2 elements. 0 keeps the
     /// framework default.
     int async_queue_depth = 0;
+
+    /// Preferred jargon-free execution surface (folded into the legacy fields above at Graph
+    /// build time). All-unset by default, so it is a no-op unless a field is set.
+    AdvancedExecutionOptions advanced_execution;
   };
 
   /**
@@ -347,6 +354,10 @@ public:
     /// Depth for internally inserted async queue2 elements. 0 inherits from
     /// Model::Options/framework default.
     int async_queue_depth = 0;
+
+    /// Preferred jargon-free execution surface; overlaid over Model::Options.advanced_execution
+    /// (route wins) and folded into the legacy fields at Graph build time. No-op when unset.
+    AdvancedExecutionOptions advanced_execution;
   };
 
   /**
@@ -594,7 +605,8 @@ public:
    * @brief Run a small synthetic benchmark for simple model execution.
    *
    * Generates deterministic synthetic input tensors from `input_specs()`, runs a fixed warmup,
-   * measures async push/pull throughput, prints a compact summary, and returns headline metrics.
+   * measures single-flight latency and async logical-inference throughput separately, prints a
+   * compact summary, and returns headline metrics.
    */
   BenchmarkReport benchmark(int num_samples = 100);
 

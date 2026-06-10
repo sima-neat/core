@@ -354,6 +354,9 @@ bool stop_trace_enabled() {
 
 Graph::Graph(const GraphOptions& opt)
     : composition_(std::make_unique<CompositionGraph>()), opt_(opt) {
+  // Fold the jargon-free advanced_execution surface into the legacy execution fields before
+  // anything consumes them. No-op when unset (default), so existing behavior is unchanged.
+  opt_.resolve_advanced_execution();
   graph_id_ = next_graph_id();
   verbose_guard_ = pipeline_internal::ux::acquire_runtime_verbosity(opt_.verbose);
   if (opt_.element_name_suffix.empty()) {

@@ -501,9 +501,16 @@ struct MeasureReport {
   double throughput_batches_per_s = 0.0;
   double throughput_inferences_per_s = 0.0;
 
+  /// Queue-inclusive graph-entry to public-pull timing. In a single-flight loop this approximates
+  /// user-visible latency; in async burst / queued workloads it includes queue wait and should be
+  /// presented as queue residency, not standalone model latency.
   MeasureLatencyStats end_to_end;
   MeasureLatencyStats frame_gap;
   bool latency_samples_collected = false;
+  std::string end_to_end_semantics = "queue_inclusive_graph_entry_to_public_pull";
+  std::string end_to_end_interpretation =
+      "Single-flight: approximates per-input latency. Async burst/queued: includes queue wait and "
+      "should be presented as queue residency, not standalone latency.";
   MeasureCounters counters;
   MeasureInputStats input;
   std::vector<MeasurePluginLatency> plugin_latency;
