@@ -100,7 +100,7 @@ Current development default: `VerboseOptions::debug_all()`. Call `production()` 
 | `VerboseOptions::debug_plugins()` | Keep production UX, but also surface plugin and GStreamer topics. |
 | `VerboseOptions::debug_all()` | Force the full verbose/detail sweep across all topics. |
 
-For runtime queue/throughput tuning, see [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
+For runtime queue/throughput tuning, see [Tune Throughput and Queue Depth](/tutorials/tune-throughput-and-queues).
 
 ## Source Files
 - C++: `tutorials/005_configure_model_options/configure_model_options.cpp`

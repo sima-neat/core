@@ -333,6 +333,8 @@ struct MeasureScope::Impl {
   RunDiagSnapshot before_diag{};
   GraphMetricsReport before_graph_metrics{};
   std::vector<pipeline_internal::GraphQueueLatencySnapshot> before_graph_queue_metrics;
+  std::uint64_t before_graph_sample_timing_unkeyed = 0;
+  std::uint64_t before_graph_sample_timing_misses = 0;
   Clock::time_point start{};
   std::unique_ptr<pipeline_internal::LttngMetricsCollector> lttng_metrics;
   pipeline_internal::TraceIdentityContext trace_context{};
@@ -465,10 +467,14 @@ MeasureReport MeasureScope::stop() {
     st->measurement_graph_entries.clear();
     st->measurement_graph_pulls.clear();
     st->measurement_output_timing_init = false;
-    report.graph_sample_timing_unkeyed =
-        st->graph_sample_timing_unkeyed.load(std::memory_order_relaxed);
-    report.graph_sample_timing_misses =
-        st->graph_sample_timing_misses.load(std::memory_order_relaxed);
+    const std::uint64_t unkeyed = st->graph_sample_timing_unkeyed.load(std::memory_order_relaxed);
+    const std::uint64_t misses = st->graph_sample_timing_misses.load(std::memory_order_relaxed);
+    report.graph_sample_timing_unkeyed = unkeyed >= impl_->before_graph_sample_timing_unkeyed
+                                             ? unkeyed - impl_->before_graph_sample_timing_unkeyed
+                                             : unkeyed;
+    report.graph_sample_timing_misses = misses >= impl_->before_graph_sample_timing_misses
+                                            ? misses - impl_->before_graph_sample_timing_misses
+                                            : misses;
   }
   report.end_to_end = summarize_samples(std::move(latency_samples));
   report.frame_gap = summarize_samples(std::move(frame_gap_samples));
@@ -616,6 +622,12 @@ MeasureScope Run::start_measurement(const MeasureOptions& opt) {
   impl->before_diag = run_internal::diag_snapshot(*this);
   impl->before_graph_metrics =
       build_graph_metrics_report_run_lifetime(*this, GraphMetricsOptions{.include_power = false});
+  if (core_) {
+    impl->before_graph_sample_timing_unkeyed =
+        core_->graph_sample_timing_unkeyed.load(std::memory_order_relaxed);
+    impl->before_graph_sample_timing_misses =
+        core_->graph_sample_timing_misses.load(std::memory_order_relaxed);
+  }
   pipeline_internal::set_graph_queue_timing_enabled(*this, opt.include_edge_latency ||
                                                                opt.include_message_latency);
   impl->before_graph_queue_metrics = pipeline_internal::snapshot_graph_queue_latencies(*this);
@@ -729,15 +741,18 @@ std::string MeasureReport::to_text() const {
      << "Throughput            : " << throughput_batches_per_s << " batches/s\n"
      << "Logical throughput    : " << throughput_inferences_per_s << " inferences/s\n";
 
-  os << "\nGraph push->output latency; excludes app decode/draw/write (ms):\n";
+  os << "\nGraph entry->public pull residency; excludes app decode/draw/write (ms):\n"
+     << "  semantics: " << end_to_end_semantics << "\n"
+     << "  note: single-flight ~= latency; async burst/queued windows include queue wait and must "
+        "not be presented as standalone model latency.\n";
   if (latency_samples_collected) {
     os << std::left << std::setw(28) << "metric" << std::right << std::setw(9) << "count"
        << std::setw(11) << "avg" << std::setw(11) << "p50" << std::setw(11) << "p90"
        << std::setw(11) << "p95" << std::setw(11) << "p99" << std::setw(11) << "max" << "\n";
-    print_latency_row(os, "end-to-end push->output", end_to_end);
+    print_latency_row(os, "queue-inclusive e2e", end_to_end);
     print_latency_row(os, "between output frames", frame_gap);
   } else {
-    os << "  no app-visible latency samples were produced during this observer window\n";
+    os << "  no graph-entry/public-pull timing samples were produced during this observer window\n";
   }
 
   os << "\nPer-node diagnostic latency during measured window (ms):\n";

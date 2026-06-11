@@ -185,6 +185,18 @@ nlohmann::json chat_message_response(const GenerationResult& result) {
   return message;
 }
 
+GenerationMetrics metrics_with_ttft_once(GenerationMetrics metrics, bool& ttft_sent) {
+  if (metrics.time_to_first_token_s <= 0.0) {
+    return metrics;
+  }
+  if (ttft_sent) {
+    metrics.time_to_first_token_s = 0.0;
+    return metrics;
+  }
+  ttft_sent = true;
+  return metrics;
+}
+
 std::string chat_chunk(const std::string& model_name, const std::string& text,
                        const std::optional<std::string>& finish_reason = std::nullopt,
                        const std::optional<GenerationMetrics>& metrics = std::nullopt) {
@@ -301,12 +313,24 @@ std::string completion_chunk(const std::string& model_name, const std::string& t
 }
 
 std::string audio_chunk(const std::string& text, bool finished,
-                        const std::optional<std::string>& finish_reason = std::nullopt) {
+                        const std::optional<std::string>& finish_reason = std::nullopt,
+                        const std::optional<GenerationMetrics>& metrics = std::nullopt) {
   nlohmann::json chunk;
   chunk["object"] = finished ? "audio.transcription.done" : "audio.transcription.chunk";
   chunk["text"] = text;
   if (finished) {
     chunk["finish_reason"] = finish_reason.value_or("stop");
+  }
+  if (metrics.has_value()) {
+    if (metrics->time_to_first_token_s > 0.0) {
+      chunk["ttft"] = metrics->time_to_first_token_s;
+    }
+    if (metrics->tokens_per_second > 0.0) {
+      chunk["tps"] = metrics->tokens_per_second;
+    }
+    if (metrics->generated_tokens > 0U) {
+      chunk["generated_tokens"] = metrics->generated_tokens;
+    }
   }
   return "data: " + chunk.dump() + "\n\n";
 }
@@ -1093,23 +1117,23 @@ struct GenAIServer::Impl {
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
+            bool ttft_sent = false;
             for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
                     chat_chunk(model_name, "", choice_finish_reason(sample->finish_reason),
-                               sample->metrics) +
+                               metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
               if (!sample->tool_calls.empty()) {
-                write_sink(sink,
-                           chat_tool_call_chunk(model_name, sample->tool_calls, sample->metrics));
+                write_sink(sink, chat_tool_call_chunk(model_name, sample->tool_calls, metrics));
                 continue;
               }
-              const auto chunk =
-                  chat_chunk(model_name, sample->text, std::nullopt, sample->metrics);
+              const auto chunk = chat_chunk(model_name, sample->text, std::nullopt, metrics);
               write_sink(sink, chunk);
             }
             const auto done = chat_chunk(model_name, "", "stop") + "data: [DONE]\n\n";
@@ -1330,16 +1354,18 @@ struct GenAIServer::Impl {
             ActiveStreamRegistration active_stream{*this, model_name};
             auto stream = model->stream(request);
             active_stream.attach(stream);
+            bool ttft_sent = false;
             for (auto sample = stream.next(); sample.has_value(); sample = stream.next()) {
+              const auto metrics = metrics_with_ttft_once(sample->metrics, ttft_sent);
               if (sample->is_final) {
                 const auto final_chunk =
-                    audio_chunk("", true, choice_finish_reason(sample->finish_reason)) +
+                    audio_chunk("", true, choice_finish_reason(sample->finish_reason), metrics) +
                     "data: [DONE]\n\n";
                 write_sink(sink, final_chunk);
                 sink.done();
                 return true;
               }
-              const auto chunk = audio_chunk(sample->text, false);
+              const auto chunk = audio_chunk(sample->text, false, std::nullopt, metrics);
               write_sink(sink, chunk);
             }
             const auto done = audio_chunk("", true, "stop") + "data: [DONE]\n\n";

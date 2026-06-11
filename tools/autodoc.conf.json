@@ -3,7 +3,7 @@
     {
       "key": "llima",
       "title": "GenAI with LLiMa",
-      "repo": "git@github.com:sima-neat/llima",
+      "repo": "https://github.com/sima-neat/llima.git",
       "branch": "develop",
       "branch_policy": "snap",
       "fallback_branch": "develop",
@@ -19,24 +19,32 @@
         "compilation_genai",
         "deployment",
         "mole"
+      ],
+      "link_rewrites": [
+        {
+          "from": "/getting-started/installation/neat-framework/",
+          "to": "/getting-started/installation/neat-library/"
+        }
       ]
     },
     {
       "key": "model-sdk-guides",
-      "title": "Compile Your Model",
-      "repo": "git@github.com:sima-neat/model-sdk",
+      "title": "Compile a Model",
+      "repo": "https://github.com/sima-neat/model-sdk.git",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/guides",
-      "mount": "compile-a-model/guides",
-      "sidebar_position": 10,
+      "mount": "compile-a-model",
+      "sidebar_position": 3,
       "files_order": [
         "index",
-        "compile_your_first_model",
+        "compile-your-first-model",
+        "model-compatibility",
+        "graph-surgery",
         "quantization",
-        "compilation",
-        "supported_operators"
+        "model-compilation",
+        "validate-accuracy-performance"
       ],
       "link_rewrites": [
         {
@@ -50,13 +58,17 @@
         {
           "from": "./api-reference/",
           "to": "/reference/model-sdk-api/"
+        },
+        {
+          "from": "/getting-started/installation/neat-framework/",
+          "to": "/getting-started/installation/neat-library/"
         }
       ]
     },
     {
       "key": "model-sdk-api",
-      "title": "ModelSDK API",
-      "repo": "git@github.com:sima-neat/model-sdk",
+      "title": "Model Compiler API",
+      "repo": "https://github.com/sima-neat/model-sdk.git",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
@@ -71,8 +83,8 @@
       ],
       "restructure_api": true,
       "landing_page": {
-        "title": "ModelSDK API Reference",
-        "intro": "The ModelSDK exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
+        "title": "Model Compiler API Reference",
+        "intro": "The Model Compiler exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
         "groups": [
           {
             "label": "Compilation",
@@ -129,7 +141,7 @@
     {
       "key": "sima-cli",
       "title": "sima-cli",
-      "repo": "git@github.com:sima-neat/sima-cli",
+      "repo": "https://github.com/sima-neat/sima-cli.git",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",

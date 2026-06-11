@@ -42,7 +42,7 @@ html[data-theme="dark"] {
 
 @media (max-width: 996px) {
   html.developer-center-shell-enabled #__docusaurus {
-    padding-top: var(--ifm-navbar-height);
+    padding-top: calc(var(--ifm-navbar-height) + var(--software-subnav-height));
   }
 }
 
@@ -60,6 +60,20 @@ html.developer-center-shell-enabled [class^="navbarSearchContainer"],
 html.developer-center-shell-enabled [class*=" navbarSearchContainer"],
 html.developer-center-shell-enabled .navbar__items--right:empty {
   display: none;
+}
+
+/* Frosted, borderless navbar (ported from the Developer Center docs). The blur
+   is applied to .navbar__inner rather than .navbar on purpose: backdrop-filter
+   on .navbar would make it the containing block for the position:fixed mobile
+   sidebar drawer, clamping the drawer to the navbar height and hiding the doc
+   navigation on mobile. */
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  box-shadow: none;
+}
+
+.navbar__inner {
+  backdrop-filter: blur(18px);
 }
 
 .software-subnav {
@@ -124,8 +138,52 @@ html.developer-center-shell-enabled .navbar__items--right:empty {
 }
 
 @media (max-width: 996px) {
+  /* Keep the task bar visible on mobile as a horizontally scrollable strip,
+     fixed just below the navbar. Its z-index drops below the navbar so the
+     hamburger drawer overlays it, and page content is offset by its height. */
   .software-subnav {
+    top: var(--ifm-navbar-height);
+    z-index: 150;
+  }
+
+  /* Free up navbar space on mobile by dropping the long title text. */
+  nav.theme-layout-navbar .navbar__title {
     display: none;
+  }
+
+  .software-subnav__inner {
+    justify-content: flex-start;
+    gap: 0.5rem;
+    padding: 0 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .software-subnav__inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .software-subnav__controls {
+    margin-left: 0;
+    gap: 0.5rem;
+  }
+
+  .software-subnav__link {
+    padding: 0 0.4rem;
+    font-size: 0.92rem;
+  }
+
+  .software-subnav .language-pref {
+    font-size: 0.85rem;
+  }
+
+  /* Offset content for the fixed task bar (local-fallback case; the native
+     navbar already reserves its own space). The shell-enabled case is handled
+     by the developer-center-shell rule above. */
+  html:not(.developer-center-shell-enabled) .main-wrapper {
+    margin-top: var(--software-subnav-height);
   }
 }
 
@@ -1484,7 +1542,7 @@ mark.docSearchHighlight {
 }
 
 /* ----------------------------------------------------------------------------
- * ModelSDK / griffe API page section accents.
+ * Model Compiler / griffe API page section accents.
  *
  * autodoc promotes griffe's plain `Imports:` / `Classes:` / `Functions:` /
  * `Constants:` labels into <h2> headings. Each gets a distinct left-border
@@ -1573,4 +1631,58 @@ html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#constants 
 object.tutorial-flow {
   aspect-ratio: 1320 / 520;
   cursor: pointer;
+}
+
+/* ===========================================================================
+   Mobile responsiveness pass (mirrors the NEAT/docs repo patterns)
+   =========================================================================== */
+@media (max-width: 768px) {
+  /* Wide tables scroll within their column instead of widening the page. */
+  .markdown table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Code blocks: horizontal scroll with touch momentum, never page-wide. */
+  .markdown pre,
+  .theme-code-block pre,
+  pre[class*="language-"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Tighten tab-panel and article padding so text isn't cramped at the edges. */
+  .tabs-container [role="tabpanel"] {
+    padding: 1.25rem 1rem 1.5rem !important;
+  }
+
+  /* Fluid headings so long titles don't overflow on narrow screens. */
+  .markdown h1,
+  article header h1 {
+    font-size: clamp(1.55rem, 6vw, 2rem);
+    overflow-wrap: anywhere;
+  }
+
+  .markdown h2 {
+    font-size: clamp(1.25rem, 5vw, 1.6rem);
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep the overview/installation/tutorial card grids single-column. */
+  .overview-link-columns,
+  .tutorial-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Touch devices: give nav links a comfortable tap target and don't rely on
+   hover-only affordances. */
+@media (hover: none) and (pointer: coarse) {
+  .software-subnav__link,
+  .navbar__link,
+  .menu__link {
+    min-height: 2.5rem;
+  }
 }

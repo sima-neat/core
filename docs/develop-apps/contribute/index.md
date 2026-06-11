@@ -7,13 +7,13 @@ slug: /develop-apps/contribute/
 
 # Contribute
 
-This section is for contributors changing the Neat Framework itself. It explains
+This section is for contributors changing the Neat Library itself. It explains
 how the repository is structured, how to build and test changes, and which
 contracts must stay stable for application developers.
 
 <div class="overview-section-label">Contributor Orientation</div>
 
-The **Neat Framework** is the C++/Python library and runtime in this repository.
+The **Neat Library** is the C++/Python library and runtime in this repository.
 It loads model archives, composes and validates pipelines, runs on Modalix
 hardware, and exposes the public application API. Palette SDK and DevKit Sync
 are the surrounding development workflow.

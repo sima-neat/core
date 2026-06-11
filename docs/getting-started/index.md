@@ -48,7 +48,7 @@ and then build the application that uses it.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/compile-a-model/"><strong>Compile a Model</strong><span>Compile pretrained ONNX vision models or GenAI models for Modalix.</span></a></li>
       <li><a class="overview-link-card" href="/tools/model-zoo/"><strong>Use a Precompiled Model</strong><span>Start quickly with a ready-to-run model artifact.</span></a></li>
-      <li><a class="overview-link-card" href="/tools/model-sdk/"><strong>GenAI with LLiMa</strong><span>Compile, test, and benchmark GenAI models on Modalix.</span></a></li>
+      <li><a class="overview-link-card" href="/tools/model-compiler/"><strong>GenAI with LLiMa</strong><span>Compile, test, and benchmark GenAI models on Modalix.</span></a></li>
     </ul>
   </section>
 

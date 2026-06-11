@@ -16,7 +16,7 @@ details, diagnostics, environment knobs, or release information.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/cppapi/"><strong>C++ API</strong><span>Browse the generated Neat C++ API reference.</span></a></li>
       <li><a class="overview-link-card" href="/reference/pythonapi/"><strong>Python API</strong><span>Browse PyNeat bindings and Python-facing runtime APIs.</span></a></li>
-      <li><a class="overview-link-card" href="/tools/model-sdk/"><strong>ModelSDK</strong><span>Reference material for model compilation tooling.</span></a></li>
+      <li><a class="overview-link-card" href="/tools/model-compiler/"><strong>Model Compiler</strong><span>Reference material for model compilation tooling.</span></a></li>
     </ul>
   </section>
 
@@ -37,7 +37,7 @@ details, diagnostics, environment knobs, or release information.
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/reference/glossary/"><strong>Glossary</strong><span>Look up terms and acronyms used across the docs.</span></a></li>
       <li><a class="overview-link-card" href="/reference/elxr-sdk-host-setup/ubuntu/"><strong>SDK Host Setup</strong><span>Host setup notes for Ubuntu, macOS, and Windows.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/release-notes/"><strong>Release Notes</strong><span>Review SDK, ModelSDK, and Neat changes by release.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/release-notes/"><strong>Release Notes</strong><span>Review SDK, Model Compiler, and Neat changes by release.</span></a></li>
     </ul>
   </section>
 </div>

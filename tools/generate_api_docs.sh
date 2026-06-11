@@ -43,7 +43,7 @@ fi
 
 (
   cd "${ROOT}/website"
-  "${cmd_parts[@]}" -C .
+  "${cmd_parts[@]}" -C . 2>&1 | sed '/^no listing$/d'
 )
 
 if [[ -d "${WEBSITE_API_DIR}" ]]; then

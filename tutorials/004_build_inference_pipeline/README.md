@@ -92,7 +92,7 @@ How `build`/`run`, execution modes, the push/pull surface, and `RunOptions` fit 
 ### Sync vs async
 
 - Use `Graph::run(...)` for a simple one-shot call.
-- Use `Graph::build(...)` when you want a reusable runner and explicit `push(...)` / `pull(...)` control — see [Run Inference Asynchronously](/tutorials/002-run-inference-async).
+- Use `Graph::build(...)` when you want a reusable runner and explicit `push(...)` / `pull(...)` control — see [Run Inference Asynchronously](/tutorials/run-inference-async).
 
 ### Push/pull API
 
@@ -111,7 +111,7 @@ Common knobs:
 - `output_memory`: output ownership policy (`Auto`, `ZeroCopy`, `Owned`).
 - `on_input_drop`: callback hook for dropped input events.
 
-For queue-depth, overflow, and measurement under load, see [Tune Throughput and Queue Depth](/tutorials/016-tune-throughput-and-queues).
+For queue-depth, overflow, and measurement under load, see [Tune Throughput and Queue Depth](/tutorials/tune-throughput-and-queues).
 
 ### RunAdvancedOptions (expert API)
 
