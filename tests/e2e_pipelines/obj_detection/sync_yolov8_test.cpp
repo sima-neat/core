@@ -93,6 +93,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
   p.add(simaai::neat::nodes::groups::Infer(model));
+  p.add(simaai::neat::nodes::groups::Infer(model));
   p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
                                            cfg.boxdecode_score_threshold, 0.5f, topk));
   p.add(simaai::neat::nodes::Output());

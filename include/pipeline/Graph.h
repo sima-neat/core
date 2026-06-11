@@ -336,8 +336,13 @@ public:
   Graph& add_output_tensor(const OutputTensorOptions& opt = {});
 
   // ── UX helpers ───────────────────────────────────────────────────────────────────────────
-  /// Returns a hierarchical, human-readable view of the Nodes added so far.
+  /**
+   * @brief Returns a hierarchical, human-readable view of the Nodes added so far.
+   *
+   * @return `stringfied` representation of the Graph
+   */
   std::string describe(const GraphPrinter::Options& opt = {}) const;
+
   /**
    * @brief Returns the GStreamer launch string the Graph would emit at `build()`.
    *
