@@ -298,14 +298,15 @@ std::string sample_to_text_for_python(const Sample& sample) {
   throw std::runtime_error("Sample.to_text: sample is not a text tensor");
 }
 
-simaai::neat::FormatSpec python_to_format_spec(nb::handle value) {
-  if (value.is_none()) {
-    return simaai::neat::FormatSpec{};
-  }
-  if (PyUnicode_Check(value.ptr())) {
-    return simaai::neat::FormatSpec(nb::cast<std::string>(value));
-  }
-  throw nb::type_error("format must be a string token such as 'RGB', 'NV12', or 'FP32'");
+// Format option fields are stored as C++ FormatSpec (a thin wrapper over FormatTag). In
+// Python they are surfaced as the `Format` enum directly: reads return the underlying
+// FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
+// callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
+  return [member](const C& self) { return (self.*member).tag; };
+}
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
+  return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
 std::vector<int64_t> contiguous_strides_bytes(const std::vector<int64_t>& shape,
@@ -2289,7 +2290,8 @@ NB_MODULE(_pyneat_core, m) {
 
   nb::class_<simaai::neat::OutputTensorOptions>(m, "OutputTensorOptions")
       .def(nb::init<>())
-      .def_rw("format", &simaai::neat::OutputTensorOptions::format)
+      .def_prop_rw("format", format_enum_getter(&simaai::neat::OutputTensorOptions::format),
+                   format_enum_setter(&simaai::neat::OutputTensorOptions::format))
       .def_rw("dtype", &simaai::neat::OutputTensorOptions::dtype)
       .def_rw("target_width", &simaai::neat::OutputTensorOptions::target_width)
       .def_rw("target_height", &simaai::neat::OutputTensorOptions::target_height)
@@ -3080,12 +3082,8 @@ NB_MODULE(_pyneat_core, m) {
   nb::class_<simaai::neat::InputOptions>(m, "InputOptions")
       .def(nb::init<>())
       .def_rw("payload_type", &simaai::neat::InputOptions::payload_type)
-      .def_prop_rw(
-          "format", [](const simaai::neat::InputOptions& options) { return options.format.str(); },
-          [](simaai::neat::InputOptions& options, nb::handle value) {
-            options.format = python_to_format_spec(value);
-          },
-          "value"_a.none())
+      .def_prop_rw("format", format_enum_getter(&simaai::neat::InputOptions::format),
+                   format_enum_setter(&simaai::neat::InputOptions::format))
       .def_rw("width", &simaai::neat::InputOptions::width)
       .def_rw("height", &simaai::neat::InputOptions::height)
       .def_rw("depth", &simaai::neat::InputOptions::depth)
@@ -3131,7 +3129,11 @@ NB_MODULE(_pyneat_core, m) {
       m, "ImageInputGroupOutputCaps")
       .def(nb::init<>())
       .def_rw("enable", &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::enable)
-      .def_rw("format", &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::format)
+      .def_prop_rw("format",
+                   format_enum_getter(
+                       &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::format),
+                   format_enum_setter(
+                       &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::format))
       .def_rw("width", &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::width)
       .def_rw("height", &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::height)
       .def_rw("fps", &simaai::neat::nodes::groups::ImageInputGroupOptions::OutputCaps::fps)
@@ -3185,7 +3187,11 @@ NB_MODULE(_pyneat_core, m) {
       m, "VideoInputGroupOutputCaps")
       .def(nb::init<>())
       .def_rw("enable", &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::enable)
-      .def_rw("format", &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::format)
+      .def_prop_rw("format",
+                   format_enum_getter(
+                       &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::format),
+                   format_enum_setter(
+                       &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::format))
       .def_rw("width", &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::width)
       .def_rw("height", &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::height)
       .def_rw("fps", &simaai::neat::nodes::groups::VideoInputGroupOptions::OutputCaps::fps)
@@ -3204,7 +3210,10 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::VideoInputGroupOptions::parse_enforce_au)
       .def_rw("sima_allocator_type",
               &simaai::neat::nodes::groups::VideoInputGroupOptions::sima_allocator_type)
-      .def_rw("out_format", &simaai::neat::nodes::groups::VideoInputGroupOptions::out_format)
+      .def_prop_rw(
+          "out_format",
+          format_enum_getter(&simaai::neat::nodes::groups::VideoInputGroupOptions::out_format),
+          format_enum_setter(&simaai::neat::nodes::groups::VideoInputGroupOptions::out_format))
       .def_rw("use_videoconvert",
               &simaai::neat::nodes::groups::VideoInputGroupOptions::use_videoconvert)
       .def_rw("use_videoscale",
@@ -3217,7 +3226,11 @@ NB_MODULE(_pyneat_core, m) {
       m, "RtspDecodedInputOutputCaps")
       .def(nb::init<>())
       .def_rw("enable", &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::enable)
-      .def_rw("format", &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::format)
+      .def_prop_rw("format",
+                   format_enum_getter(
+                       &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::format),
+                   format_enum_setter(
+                       &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::format))
       .def_rw("width", &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::width)
       .def_rw("height", &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::height)
       .def_rw("fps", &simaai::neat::nodes::groups::RtspDecodedInputOptions::OutputCaps::fps)
@@ -3246,7 +3259,10 @@ NB_MODULE(_pyneat_core, m) {
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::fallback_h264_height)
       .def_rw("sima_allocator_type",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::sima_allocator_type)
-      .def_rw("out_format", &simaai::neat::nodes::groups::RtspDecodedInputOptions::out_format)
+      .def_prop_rw(
+          "out_format",
+          format_enum_getter(&simaai::neat::nodes::groups::RtspDecodedInputOptions::out_format),
+          format_enum_setter(&simaai::neat::nodes::groups::RtspDecodedInputOptions::out_format))
       .def_rw("decoder_name", &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_name)
       .def_rw("decoder_raw_output",
               &simaai::neat::nodes::groups::RtspDecodedInputOptions::decoder_raw_output)
@@ -4083,8 +4099,8 @@ NB_MODULE(_pyneat_core, m) {
   // ── Phase 6 (plan slice S8): user-facing format vocabulary ───────────────────────────────────
   // pyneat.Format is the friendly enum (FormatTag alias retained). Only meaningful formats are
   // exposed; the EVXX_*/MLA/BBOX/ARGMAX/DETESSDEQUANT caps-layer spellings are intentionally NOT
-  // bound as enum members (the string parser in python_to_format_spec still accepts them). Setters
-  // continue to accept plain strings — this is additive over that convention.
+  // bound as enum members. Format option fields (FormatSpec in C++) are surfaced as this enum via
+  // format_enum_getter/format_enum_setter — assignment takes a pyneat.Format value, not a string.
   nb::enum_<simaai::neat::FormatTag>(m, "Format")
       .value("Auto", simaai::neat::FormatTag::Auto)
       .value("RGB", simaai::neat::FormatTag::RGB)
