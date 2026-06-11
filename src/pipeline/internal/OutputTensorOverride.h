@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstring>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -95,12 +96,20 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
 inline void apply_output_tensor_override_route(simaai::neat::Tensor& tensor,
                                                const OutputTensorOverrideEntry& entry,
                                                std::size_t fallback_index) {
+  const bool keep_resolved_segment_route = !entry.segment_name.empty() &&
+                                           tensor.route.segment_name == entry.segment_name &&
+                                           tensor.route.memory_index >= 0;
+  const int resolved_memory_index = tensor.route.memory_index;
+  const int resolved_physical_index = tensor.route.physical_index;
   tensor.route.logical_index = (entry.logical_output_index >= 0) ? entry.logical_output_index
                                                                  : static_cast<int>(fallback_index);
   tensor.route.route_slot = (entry.route_slot >= 0) ? entry.route_slot : tensor.route.route_slot;
-  tensor.route.memory_index = entry.memory_index;
+  tensor.route.memory_index =
+      keep_resolved_segment_route ? resolved_memory_index : entry.memory_index;
   tensor.route.physical_index =
-      (entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index;
+      keep_resolved_segment_route
+          ? resolved_physical_index
+          : ((entry.memory_index >= 0) ? entry.memory_index : tensor.route.physical_index);
   tensor.route.physical_byte_offset = entry.byte_offset;
   tensor.route.segment_name = !entry.segment_name.empty()
                                   ? entry.segment_name
@@ -195,17 +204,16 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
                                    const OutputTensorOverrideEntry& entry,
                                    bool materialize_output) {
   simaai::neat::Tensor out_source = base;
-  if (entry.memory_index >= 0 && base.storage &&
+  if ((entry.memory_index >= 0 || !entry.segment_name.empty()) && base.storage &&
       base.storage->kind == simaai::neat::StorageKind::GstSample) {
-    // Build the segment/memory view first, then apply the authoritative output
-    // contract below.  Materialization must happen after shape/dtype/stride are
-    // overlaid so Tensor::clone() copies the logical segment span for this
-    // output.  Copying the raw GstMemory before applying the override is unsafe
-    // for packed SimaaiSegmentMemory outputs because multiple logical tensors
-    // share one GstMemory while each output's CPU-visible mapping is exposed via
-    // its named segment.
-    out_source = pipeline_internal::tensor_view_from_sample_memory(base, entry.memory_index,
-                                                                   /*keep_holder=*/true);
+    // Build the authoritative output segment view first, then apply shape/dtype/stride below.
+    // For SimaaiSegmentMemory buffers the GstBuffer usually has one parent memory and multiple
+    // named runtime segments.  The public output contract's segment_name is more specific than
+    // memory_index (which may be a physical-output id, route id, or historical segment index), so
+    // resolve by name first and use memory_index only as a fallback for legacy multi-GstMemory
+    // buffers.
+    out_source = pipeline_internal::tensor_view_from_sample_segment(
+        base, entry.segment_name, entry.memory_index, /*keep_holder=*/true);
   }
   simaai::neat::Tensor out = std::move(out_source);
   out.shape = entry.shape;
@@ -233,35 +241,41 @@ apply_output_tensor_override_entry(const simaai::neat::Tensor& base,
     }
   }
   if (materialize_output) {
-    // A plain clone() copies the whole backing segment only when byte_offset == 0 (it rebases
-    // nonzero-offset views into a fresh tight buffer with byte_offset reset to 0). That breaks
-    // public-contract parity with the zero-copy view for nonzero offsets: the view exposes the
-    // override byte_offset and the full segment readable span, while the rebased clone exposes
-    // offset 0 and only the tight tensor span. Materialize by copying the entire backing segment
-    // and keeping the logical view (byte_offset/shape/strides/route) so owned and zero-copy outputs
-    // are byte-for-byte interchangeable. byte_offset == 0 falls through to clone()'s existing
-    // full-segment behavior.
-    const std::int64_t logical_byte_offset = out.byte_offset;
-    bool materialized = false;
-    if (logical_byte_offset > 0) {
-      simaai::neat::Tensor segment_source = out;
-      segment_source.byte_offset = 0; // map from the start of the backing segment
-      const simaai::neat::Mapping src = segment_source.view_read();
-      const std::size_t segment_bytes = src.size_bytes;
-      if (src.data != nullptr && segment_bytes > static_cast<std::size_t>(logical_byte_offset)) {
-        auto storage = simaai::neat::make_cpu_owned_storage(segment_bytes);
-        const simaai::neat::Mapping dst =
-            storage ? storage->map(simaai::neat::MapMode::Write) : simaai::neat::Mapping{};
-        if (dst.data != nullptr && dst.size_bytes >= segment_bytes) {
-          std::memcpy(dst.data, src.data, segment_bytes);
-          out.storage = std::move(storage); // keep byte_offset/shape/strides/dtype/route/semantic
-          out.read_only = false;
-          out.device = {simaai::neat::DeviceType::CPU, 0};
-          materialized = true;
-        }
+    if (out.storage && out.storage->kind == simaai::neat::StorageKind::GstSample) {
+      if (out.byte_offset < 0) {
+        throw std::runtime_error("output override materialize: negative logical byte offset");
       }
-    }
-    if (!materialized) {
+      const std::uint64_t required_u64 = output_override_entry_physical_span_bytes(entry);
+      if (required_u64 == 0U ||
+          required_u64 > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error("output override materialize: invalid logical output span");
+      }
+      const std::size_t required = static_cast<std::size_t>(required_u64);
+      const simaai::neat::Mapping src = out.view_read(); // includes entry.byte_offset
+      if (!src.data && required != 0U) {
+        throw std::runtime_error("output override materialize: failed to map output segment");
+      }
+      if (src.size_bytes < required) {
+        throw std::runtime_error("output override materialize: mapped output segment is smaller "
+                                 "than the logical output span");
+      }
+      auto storage = simaai::neat::make_cpu_owned_storage(required);
+      const simaai::neat::Mapping dst =
+          storage ? storage->map(simaai::neat::MapMode::Write) : simaai::neat::Mapping{};
+      if (!dst.data && required != 0U) {
+        throw std::runtime_error("output override materialize: failed to allocate output copy");
+      }
+      if (dst.size_bytes < required) {
+        throw std::runtime_error("output override materialize: output copy allocation too small");
+      }
+      if (required > 0U) {
+        std::memcpy(dst.data, src.data, required);
+      }
+      out.storage = std::move(storage);
+      out.byte_offset = 0;
+      out.read_only = false;
+      out.device = {simaai::neat::DeviceType::CPU, 0};
+    } else {
       out = out.clone();
     }
   }
@@ -362,11 +376,12 @@ inline Sample apply_output_tensor_override(const Sample& base, const OutputTenso
     const auto& entry = override.outputs[0];
     out.tensors.front() =
         apply_output_tensor_override_entry(canonical.tensors.front(), entry, materialize_output);
+    apply_output_tensor_override_route(out.tensors.front(), entry, 0U);
     if (entry.logical_output_index >= 0) {
       out.output_index = entry.logical_output_index;
       out.logical_output_index = entry.logical_output_index;
     }
-    out.memory_index = entry.memory_index;
+    out.memory_index = out.tensors.front().route.memory_index;
     out.route_slot = (entry.route_slot >= 0) ? entry.route_slot : out.route_slot;
     if (!entry.segment_name.empty()) {
       out.segment_name = entry.segment_name;

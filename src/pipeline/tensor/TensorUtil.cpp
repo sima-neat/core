@@ -537,6 +537,31 @@ MemorySelection select_sample_memory_index(GstBuffer* buffer, int memory_index) 
   return selection;
 }
 
+std::size_t find_runtime_segment_index(const std::vector<simaai::neat::Segment>& segments,
+                                       const std::string& segment_name) {
+  if (segment_name.empty()) {
+    return static_cast<std::size_t>(-1);
+  }
+  for (std::size_t i = 0; i < segments.size(); ++i) {
+    if (segments[i].name == segment_name) {
+      return i;
+    }
+  }
+  return static_cast<std::size_t>(-1);
+}
+
+std::size_t clamp_segment_span_to_live_handle(simaai_memory_t* segment_mem,
+                                              std::size_t metadata_size, const SimaMemApi& api) {
+  std::size_t span = metadata_size;
+  if (segment_mem && api.get_size) {
+    const std::size_t live_size = api.get_size(segment_mem);
+    if (live_size > 0U && (span == 0U || live_size < span)) {
+      span = live_size;
+    }
+  }
+  return span;
+}
+
 std::shared_ptr<void> make_sample_holder(GstSample* sample) {
   if (!sample)
     return {};
@@ -556,7 +581,8 @@ std::shared_ptr<void> make_sample_holder(GstSample* sample) {
 
 std::shared_ptr<simaai::neat::Storage>
 make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_memory_index,
-                               std::shared_ptr<void> shared_holder = {}) {
+                               std::shared_ptr<void> shared_holder = {},
+                               const std::string& route_segment_name = {}) {
   if (!sample)
     return {};
   GstBuffer* buffer = gst_sample_get_buffer(sample);
@@ -581,12 +607,17 @@ make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_
   storage->sima_mem_flags = mem_info.mem_flags;
   storage->sima_segments = extract_runtime_segments_from_buffer(buffer);
 
-  const bool use_segment_view =
-      gst_buffer_n_memory(buffer) == 1U && buffer_memory_uses_segment_allocator(mem) &&
-      route_memory_index >= 0 &&
-      static_cast<std::size_t>(route_memory_index) < storage->sima_segments.size();
+  std::size_t route_segment_index =
+      find_runtime_segment_index(storage->sima_segments, route_segment_name);
+  if (route_segment_index == static_cast<std::size_t>(-1) && route_memory_index >= 0 &&
+      static_cast<std::size_t>(route_memory_index) < storage->sima_segments.size()) {
+    route_segment_index = static_cast<std::size_t>(route_memory_index);
+  }
+  const bool use_segment_view = gst_buffer_n_memory(buffer) == 1U &&
+                                buffer_memory_uses_segment_allocator(mem) &&
+                                route_segment_index != static_cast<std::size_t>(-1);
   if (use_segment_view) {
-    const auto& segment = storage->sima_segments[static_cast<std::size_t>(route_memory_index)];
+    const auto& segment = storage->sima_segments[route_segment_index];
     SimaMemApi& api = sima_mem_api();
     auto* segment_mem = static_cast<simaai_memory_t*>(
         gst_simaai_memory_get_segment(mem, segment.name.empty() ? nullptr : segment.name.c_str()));
@@ -597,7 +628,8 @@ make_gst_sample_memory_storage(GstSample* sample, guint memory_index, int route_
       };
       auto map_state = std::make_shared<SegmentMapState>();
       auto holder = storage->holder;
-      const std::size_t segment_size = segment.size_bytes;
+      const std::size_t segment_size =
+          clamp_segment_span_to_live_handle(segment_mem, segment.size_bytes, api);
       storage->size_bytes = segment_size > 0U ? segment_size : storage->size_bytes;
       storage->map_fn = [holder, map_state, segment_mem, segment_size, invalidate = api.invalidate,
                          map = api.map, unmap = api.unmap](simaai::neat::MapMode mode) {
@@ -852,6 +884,16 @@ std::string resolve_tensor_runtime_segment_name(const simaai::neat::Tensor& tens
   if (!tensor.storage) {
     return tensor.route.segment_name;
   }
+  if (!tensor.route.segment_name.empty()) {
+    const auto it =
+        std::find_if(tensor.storage->sima_segments.begin(), tensor.storage->sima_segments.end(),
+                     [&](const simaai::neat::Segment& segment) {
+                       return segment.name == tensor.route.segment_name;
+                     });
+    if (it != tensor.storage->sima_segments.end()) {
+      return tensor.route.segment_name;
+    }
+  }
   if (tensor.route.memory_index >= 0 &&
       static_cast<std::size_t>(tensor.route.memory_index) < tensor.storage->sima_segments.size()) {
     const auto& segment =
@@ -981,6 +1023,7 @@ simaai::neat::Mapping map_tensor_view(const simaai::neat::Tensor& tensor,
           gst_simaai_memory_get_segment(root_memory, segment_name.c_str()));
       if (segment_mem) {
         std::size_t size = resolve_tensor_runtime_segment_size(tensor, segment_name);
+        size = clamp_segment_span_to_live_handle(segment_mem, size, api);
         const std::size_t required_bytes = dense_tensor_physical_span_bytes(tensor);
         std::size_t offset =
             (tensor.byte_offset > 0) ? static_cast<std::size_t>(tensor.byte_offset) : 0U;
@@ -1307,19 +1350,20 @@ simaai::neat::Tensor copy_tensor_from_sample_memory(const simaai::neat::Tensor& 
   return out;
 }
 
-simaai::neat::Tensor tensor_view_from_sample_memory(const simaai::neat::Tensor& ref,
-                                                    int memory_index, bool keep_holder) {
+simaai::neat::Tensor tensor_view_from_sample_segment(const simaai::neat::Tensor& ref,
+                                                     const std::string& segment_name,
+                                                     int fallback_memory_index, bool keep_holder) {
   GstSample* sample = sample_from_tensor(ref);
   if (!sample) {
-    throw std::runtime_error("tensor_view_from_sample_memory: missing sample holder");
+    throw std::runtime_error("tensor_view_from_sample_segment: missing sample holder");
   }
   GstBuffer* buffer = gst_sample_get_buffer(sample);
   if (!buffer) {
-    throw std::runtime_error("tensor_view_from_sample_memory: missing buffer");
+    throw std::runtime_error("tensor_view_from_sample_segment: missing buffer");
   }
   const guint n_mems = gst_buffer_n_memory(buffer);
   if (n_mems == 0) {
-    throw std::runtime_error("tensor_view_from_sample_memory: buffer has no memories");
+    throw std::runtime_error("tensor_view_from_sample_segment: buffer has no memories");
   }
 
   if (!keep_holder) {
@@ -1331,12 +1375,21 @@ simaai::neat::Tensor tensor_view_from_sample_memory(const simaai::neat::Tensor& 
       ref.storage->holder) {
     shared_holder = ref.storage->holder;
   }
-  const MemorySelection selection = select_sample_memory_index(buffer, memory_index);
+  int selected_memory_index = fallback_memory_index;
+  if (!segment_name.empty() && ref.storage && !ref.storage->sima_segments.empty()) {
+    const std::size_t cached_segment_index =
+        find_runtime_segment_index(ref.storage->sima_segments, segment_name);
+    if (cached_segment_index != static_cast<std::size_t>(-1) &&
+        cached_segment_index < static_cast<std::size_t>(n_mems)) {
+      selected_memory_index = static_cast<int>(cached_segment_index);
+    }
+  }
+  const MemorySelection selection = select_sample_memory_index(buffer, selected_memory_index);
   const guint index = selection.index;
-  auto storage =
-      make_gst_sample_memory_storage(sample, index, memory_index, std::move(shared_holder));
+  auto storage = make_gst_sample_memory_storage(sample, index, fallback_memory_index,
+                                                std::move(shared_holder), segment_name);
   if (!storage) {
-    throw std::runtime_error("tensor_view_from_sample_memory: missing buffer memory");
+    throw std::runtime_error("tensor_view_from_sample_segment: missing buffer memory");
   }
   if (ref.storage && !ref.storage->sima_segments.empty()) {
     storage->sima_segments = ref.storage->sima_segments;
@@ -1348,9 +1401,13 @@ simaai::neat::Tensor tensor_view_from_sample_memory(const simaai::neat::Tensor& 
   out.read_only = true;
   out.byte_offset = ref.byte_offset;
   std::size_t route_index = static_cast<std::size_t>(index);
-  if (memory_index >= 0 &&
-      static_cast<std::size_t>(memory_index) < out.storage->sima_segments.size()) {
-    route_index = static_cast<std::size_t>(memory_index);
+  const std::size_t named_route_index =
+      find_runtime_segment_index(out.storage->sima_segments, segment_name);
+  if (named_route_index != static_cast<std::size_t>(-1)) {
+    route_index = named_route_index;
+  } else if (fallback_memory_index >= 0 &&
+             static_cast<std::size_t>(fallback_memory_index) < out.storage->sima_segments.size()) {
+    route_index = static_cast<std::size_t>(fallback_memory_index);
   }
   out.route.memory_index = static_cast<int>(route_index);
   out.route.physical_index = static_cast<int>(route_index);
@@ -1365,6 +1422,11 @@ simaai::neat::Tensor tensor_view_from_sample_memory(const simaai::neat::Tensor& 
   ++g_tensor_view_count;
   record_tensor_holder_fast_path_hit();
   return out;
+}
+
+simaai::neat::Tensor tensor_view_from_sample_memory(const simaai::neat::Tensor& ref,
+                                                    int memory_index, bool keep_holder) {
+  return tensor_view_from_sample_segment(ref, std::string{}, memory_index, keep_holder);
 }
 
 std::shared_ptr<void> holder_from_tensor(const simaai::neat::Tensor& tensor) {
