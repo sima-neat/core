@@ -1,0 +1,132 @@
+.shellCommand {
+  position: relative;
+  margin: 1rem 0;
+}
+
+.pre {
+  margin: 0;
+  padding: 1rem 1rem 1rem 1.1rem;
+  border-radius: 10px;
+  background: #292d3e;
+  color: #bfc7d5;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.code {
+  display: block;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.875rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 0.35rem;
+}
+
+.prompt {
+  color: #8e97a8;
+  user-select: none;
+}
+
+.command {
+  display: block;
+  color: inherit;
+}
+
+.copyButton {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.55rem;
+  z-index: 1;
+  border: 1px solid rgba(191, 199, 213, 0.18);
+  border-radius: 6px;
+  background: rgba(41, 45, 62, 0.92);
+  color: #d7deeb;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--ifm-transition-fast) ease, background var(--ifm-transition-fast) ease;
+}
+
+.shellCommand:hover .copyButton,
+.shellCommand:focus-within .copyButton,
+.copyButton:hover {
+  opacity: 1;
+  pointer-events: auto;
+  background: rgba(55, 60, 82, 0.98);
+}
+
+.copyButtonIcons {
+  position: relative;
+  width: 1.125rem;
+  height: 1.125rem;
+}
+
+.copyButtonIcon,
+.copyButtonSuccessIcon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: inherit;
+  height: inherit;
+  fill: currentColor;
+  transform: translate(-50%, -50%);
+  transition: all var(--ifm-transition-fast) ease;
+}
+
+.copyButtonSuccessIcon {
+  transform: translate(-50%, -50%) scale(0.33);
+  opacity: 0;
+  color: #00d600;
+}
+
+.copyButtonCopied {
+  opacity: 1 !important;
+  pointer-events: auto;
+}
+
+.copyButtonCopied .copyButtonIcon {
+  transform: translate(-50%, -50%) scale(0.33);
+  opacity: 0;
+}
+
+.copyButtonCopied .copyButtonSuccessIcon {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  transition-delay: 0.075s;
+}
+
+@media (max-width: 640px) {
+  .pre {
+    padding-top: 2.3rem;
+  }
+
+  .copyButton {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .code {
+    display: block;
+    white-space: pre-wrap;
+  }
+
+  .line {
+    display: block;
+  }
+
+  .prompt {
+    display: inline;
+    margin-right: 0.35rem;
+  }
+}

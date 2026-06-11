@@ -50,10 +50,17 @@ To use DevKit Sync, you also need:
 
 Install the SDK version that matches your DevKit software and Neat Library version:
 
-```bash
+For Neat Development Environment 2.1.2:
+
+<ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk-v2.1.2
+</ShellCommand>
+
+For Neat Development Environment 2.0.0:
+
+<ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk-v2.0.0
-```
+</ShellCommand>
 
 You can also install `ghcr:sima-neat/sdk` to use the latest SDK image from the main branch of the open source repository.
 
@@ -65,9 +72,9 @@ After installation, run one of the setup flows below.
 
 Use this flow when the DevKit is on the same network as the SDK host:
 
-```bash
+<ShellCommand prompt="user-host-machine">
 sima-cli sdk setup --devkit {devkit-ip}
-```
+</ShellCommand>
 
 During setup:
 
@@ -99,9 +106,9 @@ __SIMA_DEVKIT_BOOTSTRAP_STATUS=sourced_no_dk
 
 Use this flow when the DevKit is not reachable from the SDK host:
 
-```bash
+<ShellCommand prompt="user-host-machine">
 sima-cli sdk setup
-```
+</ShellCommand>
 
 You can still build binaries in the SDK container, but you must transfer them to the DevKit manually for testing. Make sure the DevKit is running a compatible Neat Library version.
 
@@ -109,9 +116,9 @@ You can still build binaries in the SDK container, but you must transfer them to
 
 Open the SDK shell with:
 
-```bash
+<ShellCommand prompt="user-host-machine">
 sima-cli sdk neat
-```
+</ShellCommand>
 
 ## Insight
 
@@ -126,9 +133,9 @@ In the SDK, Insight is served over HTTPS on port `9900`. Open one of the followi
 
 The `neat` command also reports the actual Insight Web UI URL when the SDK exposes host-port mappings:
 
-```bash
+<ShellCommand prompt="sdk-container">
 neat
-```
+</ShellCommand>
 
 For more detail on the status output and JSON format, see [Neat CLI](/getting-started/installation/neat-library/#neat-cli).
 
@@ -154,24 +161,37 @@ Aliases loaded in this session.
 │ Depending on network conditions, installation may take up to 15 minutes.                                              │
 │                                                                                                                       │
 │                                                                                                                       │
-│ If you decide to install it later, run this from within the SDK container shell:                                      │
-│ sima-cli install sdk-extensions/model                                                                                 │
+│ If you decide to install it later, run the matching install command from your host machine.                          │
 ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 Install the Model Compiler now? (Y/n): y
 ℹ️  Logging in to sima-cli before installing the Model Compiler...
 ```
 
+Install the Model Compiler later with the command that matches your host architecture:
+
+For `amd64` hosts:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli install -v 2.1.2 tools/model-compiler/amd64
+</ShellCommand>
+
+For `arm64` hosts:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli install -v 2.1.2 tools/model-compiler/arm64
+</ShellCommand>
+
 After installation, activate the compiler environment from inside the SDK shell:
 
-```bash
-activate-model-sdk
-```
+<ShellCommand prompt="sdk-container">
+activate-model-compiler
+</ShellCommand>
 
 To return to the default SDK shell, run:
 
-```bash
-deactivate-model-sdk
-```
+<ShellCommand prompt="sdk-container">
+deactivate-model-compiler
+</ShellCommand>
 
 Model Compiler support is available on Ubuntu and Windows through WSL. On macOS, use Model Compiler 2.1.2 or above.
 
@@ -210,19 +230,23 @@ When you invoke `dk`, the SDK runs the command on the paired DevKit and translat
 
 `dk` usage pattern:
 
-```bash
+<ShellCommand prompt="sdk-container">
 dk <file> [args...]
-```
+</ShellCommand>
 
 Examples:
 
-```bash
-# Run an ARM64 executable built in the SDK workspace
-dk build/sima_neat_hello
+Run an ARM64 executable built in the SDK workspace:
 
-# Run a Python entry point on the paired DevKit
+<ShellCommand prompt="sdk-container">
+dk build/sima_neat_hello
+</ShellCommand>
+
+Run a Python entry point on the paired DevKit:
+
+<ShellCommand prompt="sdk-container">
 dk hello_neat.py
-```
+</ShellCommand>
 
 For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKit PyNeat runtime environment. The SDK remains useful as a unified workspace and orchestration environment, but Python-only workflows do not require the C++ cross-compilation toolchain.
 
@@ -235,9 +259,9 @@ For Python scripts, `dk` runs the script on the paired DevKit and uses the DevKi
 1. Connect VS Code to `ghcr.io-sima-neat-elxr-latest` with [Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers). Install the Dev Containers extension if needed.
 2. In the container terminal, run the following command once so the SDK can retrieve assets such as prebuilt models:
 
-```bash
+<ShellCommand prompt="sdk-container">
 sima-cli login
-```
+</ShellCommand>
 
 3. Install the [Codex Extension](https://marketplace.visualstudio.com/items?itemName=openai.chatgpt) or [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) in VS Code and sign in.
 4. Ask Codex or Claude what skills are available. When `Neat` appears, the environment is ready.
@@ -252,15 +276,15 @@ Build a C++ app doing image classification with RESNET50 using the SiMa.ai Neat 
 
 To upgrade the SDK to the latest version, rerun the following command from the host:
 
-```bash
+<ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk
-```
+</ShellCommand>
 
 To update the Neat Library inside an existing SDK container, run the Neat CLI from the container shell:
 
-```bash
+<ShellCommand prompt="sdk-container">
 neat update
-```
+</ShellCommand>
 
 This updates the installed Neat Library components in the current SDK. It does not replace a full container image upgrade when you need SDK-level changes.
 
