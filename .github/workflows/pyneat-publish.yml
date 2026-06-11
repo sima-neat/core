@@ -1,0 +1,205 @@
+name: Publish PyNeat
+
+on:
+  workflow_dispatch:
+    inputs:
+      vulcan_env:
+        description: "Vulcan environment containing the published core artifact"
+        type: choice
+        required: true
+        default: production
+        options:
+          - production
+          - staging
+          - dev
+      vulcan_ref:
+        description: "Vulcan core ref to promote, for example v0.1.0 or develop"
+        type: string
+        required: true
+      publish_target:
+        description: "Package index to publish to"
+        type: choice
+        required: true
+        default: testpypi
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+jobs:
+  fetch-vulcan-wheel:
+    name: Fetch PyNeat wheel from Vulcan
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate publish request
+        shell: bash
+        run: |
+          set -euo pipefail
+          vulcan_ref="${{ inputs.vulcan_ref }}"
+          if [[ -z "${vulcan_ref}" ]]; then
+            echo "vulcan_ref is required." >&2
+            exit 1
+          fi
+          if [[ "${{ inputs.publish_target }}" == "pypi" && ! "${vulcan_ref}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Official PyPI publishing requires a vX.Y.Z Vulcan ref." >&2
+            exit 1
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download PyNeat wheel from Vulcan manifest
+        shell: bash
+        env:
+          VULCAN_ENV: ${{ inputs.vulcan_env }}
+          VULCAN_REF: ${{ inputs.vulcan_ref }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          ENV_BASE_URLS = {
+              "dev": "https://artifacts.neat.paconsultings.com",
+              "staging": "https://artifacts.stg.neat.sima.ai",
+              "production": "https://artifacts.neat.sima.ai",
+          }
+
+          def join_url(base, *parts):
+              encoded_parts = [
+                  urllib.parse.quote(part.strip("/"), safe="/._-+~")
+                  for part in parts
+                  if part.strip("/")
+              ]
+              return "/".join([base.rstrip("/"), *encoded_parts])
+
+          def fetch_bytes(url):
+              request = urllib.request.Request(url, headers={"User-Agent": "pyneat-publish/1"})
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return response.read()
+
+          vulcan_env = os.environ["VULCAN_ENV"]
+          vulcan_ref = os.environ["VULCAN_REF"].strip()
+          base_url = ENV_BASE_URLS[vulcan_env]
+
+          # Match sima-cli's Vulcan ref key behavior. Branches with slashes are
+          # percent-encoded as a ref key, then encoded again as a URL path part.
+          ref_key = urllib.parse.quote(vulcan_ref, safe="")
+          latest_url = join_url(base_url, "core", ref_key, "latest.tag")
+          latest_tag = fetch_bytes(latest_url).decode("utf-8").strip()
+          if not latest_tag:
+              raise SystemExit(f"{latest_url} is empty")
+          if not re.fullmatch(r"[0-9a-fA-F]{7,40}", latest_tag):
+              raise SystemExit(f"latest.tag did not contain a git hash: {latest_tag!r}")
+
+          manifest_url = join_url(base_url, "core", ref_key, latest_tag, "neat-install-manifest.txt")
+          manifest_text = fetch_bytes(manifest_url).decode("utf-8")
+          wheels = [
+              line.strip()
+              for line in manifest_text.splitlines()
+              if line.strip()
+              and not line.lstrip().startswith("#")
+              and line.strip().startswith("pyneat-")
+              and line.strip().endswith(".whl")
+          ]
+          if len(wheels) != 1:
+              print(manifest_text, file=sys.stderr)
+              raise SystemExit(f"Expected exactly one pyneat wheel in {manifest_url}, found {len(wheels)}")
+
+          wheel_name = wheels[0]
+          wheel_url = join_url(base_url, "core", ref_key, latest_tag, wheel_name)
+          out_dir = Path("dist")
+          out_dir.mkdir(exist_ok=True)
+          out_path = out_dir / wheel_name
+          out_path.write_bytes(fetch_bytes(wheel_url))
+
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+              summary.write(
+                  "\\n".join(
+                      [
+                          "## PyNeat Vulcan Artifact",
+                          "",
+                          f"- Vulcan environment: `{vulcan_env}`",
+                          f"- Vulcan ref: `{vulcan_ref}`",
+                          f"- Resolved git hash: `{latest_tag}`",
+                          f"- Manifest: `{manifest_url}`",
+                          f"- Wheel: `{wheel_name}`",
+                          "",
+                      ]
+                  )
+              )
+          print(f"Downloaded {wheel_url} -> {out_path}")
+          PY
+          ls -lh dist
+
+      - name: Validate wheel artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip twine
+          python -m twine check dist/pyneat-*.whl
+
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pyneat-vulcan-wheel
+          path: dist/pyneat-*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-testpypi:
+    name: Publish Vulcan wheel to TestPyPI
+    needs: fetch-vulcan-wheel
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: testpypi
+    if: inputs.publish_target == 'testpypi'
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pyneat-vulcan-wheel
+          path: dist
+
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist
+          skip-existing: true
+
+  publish-pypi:
+    name: Publish Vulcan wheel to PyPI
+    needs: fetch-vulcan-wheel
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: pypi
+    # Official PyPI publishing is intentionally disabled until the PyPI trusted
+    # publisher and release approval flow are configured. Set repository variable
+    # ENABLE_PYPI_PUBLISH=true when the official publishing lane is ready.
+    if: inputs.publish_target == 'pypi' && vars.ENABLE_PYPI_PUBLISH == 'true'
+    steps:
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: pyneat-vulcan-wheel
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
