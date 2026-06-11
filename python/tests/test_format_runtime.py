@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import pyneat
 
 
@@ -10,10 +12,40 @@ def test_format_enum_members():
   for member in ("Auto", "RGB", "BGR", "GRAY8", "NV12", "I420", "YUYV", "ENCODED", "H264",
                  "ByteStream", "FP32", "INT8", "UINT8", "BF16"):
     assert hasattr(fmt, member), member
-  # S8: caps-layer / EV aliases are NOT exposed as enum members (the string parser still accepts them).
+  # S8: caps-layer / EV aliases are NOT exposed as enum members.
   for excluded in ("MLA", "BBOX", "ARGMAX", "DETESSDEQUANT", "EVXX_FLOAT32", "EVXX_INT8",
                    "EVXX_BFLOAT16"):
     assert not hasattr(fmt, excluded), excluded
+
+
+def test_format_fields_use_format_enum():
+  """FormatSpec option fields are surfaced as the pyneat.Format enum (issue #337).
+
+  Assignment takes a pyneat.Format value (not a string); reads return the enum.
+  """
+  rtsp = pyneat.RtspDecodedInputOptions()
+  rtsp.out_format = pyneat.Format.NV12
+  assert rtsp.out_format == pyneat.Format.NV12
+  rtsp.output_caps.format = pyneat.Format.RGB
+  assert rtsp.output_caps.format == pyneat.Format.RGB
+
+  video = pyneat.VideoInputGroupOptions()
+  video.out_format = pyneat.Format.I420
+  assert video.out_format == pyneat.Format.I420
+
+  inp = pyneat.InputOptions()
+  inp.format = pyneat.Format.BGR
+  assert inp.format == pyneat.Format.BGR
+
+  out = pyneat.OutputTensorOptions()
+  out.format = pyneat.Format.FP32
+  assert out.format == pyneat.Format.FP32
+
+  # Strings are rejected — callers use the typed enum, not a token.
+  with pytest.raises(TypeError):
+    rtsp.out_format = "NV12"
+  with pytest.raises(TypeError):
+    inp.format = "RGB"
 
 
 def test_format_tag_alias():
