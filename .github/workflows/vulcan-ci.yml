@@ -177,10 +177,23 @@ jobs:
           exit 1
         fi
 
-        for metadata_file in metadata.json metadata-minimal.json metadata-all.json; do
+        for metadata_file in metadata.json metadata-minimal.json metadata-all.json metadata-pyneat.json; do
           test -f "dist/${metadata_file}"
           python3 -m json.tool "dist/${metadata_file}" >/dev/null
         done
+        python3 - <<'PY'
+        import json
+        from pathlib import Path
+
+        metadata = json.loads(Path("dist/metadata-pyneat.json").read_text(encoding="utf-8"))
+        resources = metadata.get("resources", [])
+        if len(resources) != 1 or not resources[0].endswith(".whl"):
+            raise SystemExit(f"metadata-pyneat.json must contain exactly one wheel resource, got: {resources!r}")
+        if metadata.get("selectable-resources"):
+            raise SystemExit("metadata-pyneat.json must not contain selectable resources")
+        if "PyNeat wheel downloaded" not in metadata.get("installation", {}).get("post-message", ""):
+            raise SystemExit("metadata-pyneat.json is missing the PyNeat post-install message")
+        PY
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tests/CTestTestfile.cmake' >/dev/null
         tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
         test -f dist/install_neat_framework.sh
