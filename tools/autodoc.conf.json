@@ -23,20 +23,22 @@
     },
     {
       "key": "model-sdk-guides",
-      "title": "Compile Your Model",
+      "title": "Compile a Model",
       "repo": "git@github.com:sima-neat/model-sdk",
       "branch": "main",
       "branch_policy": "snap",
       "githash": "",
       "docs_subpath": "docs/guides",
-      "mount": "compile-a-model/guides",
-      "sidebar_position": 10,
+      "mount": "compile-a-model",
+      "sidebar_position": 3,
       "files_order": [
         "index",
-        "compile_your_first_model",
+        "compile-your-first-model",
+        "model-compatibility",
+        "graph-surgery",
         "quantization",
-        "compilation",
-        "supported_operators"
+        "model-compilation",
+        "validate-accuracy-performance"
       ],
       "link_rewrites": [
         {
