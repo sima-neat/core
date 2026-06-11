@@ -2463,7 +2463,7 @@ generate_package_metadata_if_requested() {
     echo "sima-cli packages build does not support platform compatibility flags; metadata platforms will remain empty."
   fi
 
-  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
+  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
 
   "${SIMA_CLI_BIN}" packages build dist \
     --name "${NEAT_PACKAGE_NAME}" \
@@ -2490,8 +2490,42 @@ generate_package_metadata_if_requested() {
     --variant all \
     "${package_compatibility_args[@]}"
 
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "PyNeat wheel for ${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script ":" \
+    --exclude ".deb" \
+    --exclude ".tar.gz" \
+    --exclude ".sh" \
+    --exclude ".txt" \
+    --exclude ".json" \
+    --download-compatible-files-only \
+    --variant pyneat \
+    "${package_compatibility_args[@]}"
+
+  WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+metadata_path = Path("dist/metadata-pyneat.json")
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+wheel_name = os.environ["WHEEL_BASENAME"]
+metadata.setdefault("installation", {})["post-message"] = (
+    "[bold]PyNeat wheel downloaded.[/bold]\n"
+    f"The PyNeat wheel has been downloaded to this directory: {wheel_name}\n"
+    "Install it into a Python 3.11 virtual environment with:\n"
+    f"  pip install ./{wheel_name}\n\n"
+    "PyNeat requires the matching Neat Library runtime packages on this system. "
+    "If they are not already installed, run:\n"
+    "  sima-cli neat install core\n"
+)
+metadata_path.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
+PY
+
   echo "Built package metadata:"
-  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
+  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
 }
 
 print_artifact_summary() {

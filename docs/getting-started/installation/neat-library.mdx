@@ -107,30 +107,46 @@ For SDK setup and DevKit Sync onboarding, see
 
 ## Install PyNeat in a Custom Virtual Environment
 
-The installer provisions the `~/pyneat` virtual environment for you. If you need
-a custom Python environment, install the PyNeat wheel into a separate venv,
-conda environment, or other Python 3.11 setup.
+The Neat Library install artifacts include a PyNeat wheel. The standard
+installer uses that wheel to provision `~/pyneat` for you. If you need a custom
+Python environment, install the downloaded wheel into a separate venv, conda
+environment, or other Python 3.11 setup.
 
-1. Create and activate your target Python 3.11 environment:
+Use this flow when the matching Neat Library runtime packages are already
+installed. The PyNeat-only target downloads the wheel, but it does not install
+or update the runtime `.deb` packages.
+
+1. Download the PyNeat wheel:
+
+   ```bash
+   sima-cli neat install core -t pyneat
+   ```
+
+   To download the wheel for a specific Neat Library release, include the
+   version:
+
+   ```bash
+   sima-cli neat install core@0.1.0 -t pyneat
+   sima-cli neat install core@0.2.0 -t pyneat
+   ```
+
+2. Create and activate your target Python 3.11 environment:
 
    ```bash
    python3.11 -m venv ~/my-neat-env
    source ~/my-neat-env/bin/activate
    ```
 
-2. Install the PyNeat version that matches your Neat Library version:
+3. Install the downloaded wheel:
 
    ```bash
-   pip install pyneat==0.1.0
+   pip install ./pyneat-*.whl
    ```
 
-You can run this command from a compatible Neat Development Environment or on
-the DevKit. `pip` retrieves the matching PyNeat wheel and installs it into the
-active environment.
-
 The published wheel targets **CPython 3.11** on **`linux_aarch64`**, so install
-it into a matching environment. For supported Neat Library and SDK combinations,
-see the [Compatibility Guide](/getting-started/compatibility/).
+it into a matching environment. For supported Neat Library, SDK, and DevKit
+software combinations, see the
+[Compatibility Guide](/getting-started/compatibility/).
 
 ## Neat CLI
 
