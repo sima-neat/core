@@ -43,10 +43,17 @@ builds.
 Install the Neat Library from within a compatible Neat Development Environment
 or directly on the DevKit:
 
-```bash
+For Neat Library 0.1.0:
+
+<ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core@0.1.0
+</ShellCommand>
+
+For Neat Library 0.2.0:
+
+<ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core@0.2.0
-```
+</ShellCommand>
 
 ## Neat Development Environment
 
@@ -60,10 +67,17 @@ host machine.
 
 Install a specific Neat Development Environment version with:
 
-```bash
+For Neat Development Environment 2.0.0:
+
+<ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk-v2.0.0
+</ShellCommand>
+
+For Neat Development Environment 2.1.2:
+
+<ShellCommand prompt="user-host-machine">
 sima-cli install ghcr:sima-neat/sdk-v2.1.2
-```
+</ShellCommand>
 
 ## Model Compiler
 
@@ -83,20 +97,34 @@ Model Compiler version when one is available for your environment.
 | **2.0.0** | **2.0.0** | Ubuntu 22.04 `x86_64` | No Apple Silicon or aarch64/Linux support. |
 | **2.1.2** | **2.1.2** | Ubuntu 24.04 `x86_64` / `aarch64` | Apple Silicon is supported by installing inside Neat Development Environment. |
 
-For a standalone Model Compiler installation, run:
+For a standalone Model Compiler installation, run the command that matches your
+host architecture:
 
-```bash
-sima-cli install -v 2.0.0 tools/model-compiler
-sima-cli install -v 2.1.2 tools/model-compiler
-```
+For Model Compiler 2.0.0 on `amd64` hosts:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli install -v 2.0.0 tools/model-compiler/amd64
+</ShellCommand>
+
+For Model Compiler 2.1.2 on `amd64` hosts:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli install -v 2.1.2 tools/model-compiler/amd64
+</ShellCommand>
+
+For Model Compiler 2.1.2 on `arm64` hosts:
+
+<ShellCommand prompt="user-host-machine">
+sima-cli install -v 2.1.2 tools/model-compiler/arm64
+</ShellCommand>
 
 ## Verify Versions
 
 From inside the Neat Development Environment or on the DevKit, run:
 
-```bash
+<ShellCommand prompt="sdk-or-devkit">
 neat
-```
+</ShellCommand>
 
 The output example below shows the active environment, SDK version, installed component
 versions, and whether updates are available:
