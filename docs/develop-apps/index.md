@@ -58,7 +58,7 @@ Both target the same compiled model artifacts and the same DevKit runtime; the c
 
 Before building applications, complete the Getting Started setup:
 
-- **Install and sync** — install the Neat Framework in your Palette SDK or Modalix environment, then pair and sync your DevKit if you are developing from a host workflow.
+- **Install and sync** — install the Neat Library in your Palette SDK or Modalix environment, then pair and sync your DevKit if you are developing from a host workflow.
 - **Model artifact** — use a precompiled model from the Model Zoo or compile your own model into a Modalix-ready archive.
 - **Runtime target** — decide whether you want to iterate directly on Modalix with PyNeat or cross-compile a C++ application from Palette SDK.
 
@@ -86,7 +86,7 @@ The Hello Neat! pages help you run your first inference, the Development Workflo
     <p>Use these sections when you are ready to build richer applications or inspect the API surface.</p>
     <ul class="overview-link-list">
       <li><a class="overview-link-card" href="/develop-apps/advanced-concepts/"><strong>Advanced Concepts</strong><span>Understand graphs, formats, memory, threading, and runtime behavior.</span></a></li>
-      <li><a class="overview-link-card" href="/reference/"><strong>Reference</strong><span>Browse C++, Python, ModelSDK, troubleshooting, and supporting material.</span></a></li>
+      <li><a class="overview-link-card" href="/reference/"><strong>Reference</strong><span>Browse C++, Python, Model Compiler, troubleshooting, and supporting material.</span></a></li>
       <li><a class="overview-link-card" href="/develop-apps/contribute/architecture/"><strong>Contribute</strong><span>Understand architecture, source builds, testing expectations, and repo conventions.</span></a></li>
     </ul>
   </section>
