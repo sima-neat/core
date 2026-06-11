@@ -158,9 +158,9 @@ const trackRouteDerivedEvents = () => {
     }
   }
 
-  if (pathname === "/getting-started/installation/neat-framework") {
+  if (pathname === "/getting-started/installation/neat-library") {
     trackEvent("install_page_view", {
-      platform: "neat-framework",
+      platform: "neat-library",
     });
   }
 };

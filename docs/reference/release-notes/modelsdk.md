@@ -1,10 +1,10 @@
 ---
-title: ModelSDK Release Notes
+title: Model Compiler Release Notes
 sidebar_position: 2
 ---
 
-# ModelSDK Release Notes
+# Model Compiler Release Notes
 
-Release notes for the ModelSDK.
+Release notes for the Model Compiler.
 
-> **TODO(timothydo):** Populate or auto-pull ModelSDK release notes.
+> **TODO(timothydo):** Populate or auto-pull Model Compiler release notes.

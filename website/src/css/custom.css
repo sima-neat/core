@@ -1542,7 +1542,7 @@ mark.docSearchHighlight {
 }
 
 /* ----------------------------------------------------------------------------
- * ModelSDK / griffe API page section accents.
+ * Model Compiler / griffe API page section accents.
  *
  * autodoc promotes griffe's plain `Imports:` / `Classes:` / `Functions:` /
  * `Constants:` labels into <h2> headings. Each gets a distinct left-border
