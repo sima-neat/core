@@ -55,10 +55,12 @@ NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
+NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
 NEAT_LLIMA_SNAP_POLICY=OFF
+NEAT_LLIMA_SNAP_TAG_POLICY=OFF
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -862,7 +864,21 @@ current_core_branch() {
   printf '\n'
 }
 
+current_core_tag() {
+  if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 &&
+     git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${REPO_ROOT}" describe --tags --exact-match HEAD 2>/dev/null || true
+    return 0
+  fi
+  printf '\n'
+}
+
 resolve_neat_internals_ref() {
+  NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
   if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
     return 1
@@ -873,13 +889,19 @@ resolve_neat_internals_ref() {
     return 1
   fi
 
-  local branch spec
+  local branch spec tag
   if [[ "${manifest_spec}" == "__SNAP__" ]]; then
     NEAT_INTERNALS_SNAP_POLICY=ON
-    branch="$(current_core_branch)"
-    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-      echo "Could not determine current branch for internals snap; using develop." >&2
-      branch="develop"
+    tag="$(current_core_tag)"
+    if [[ -n "${tag}" ]]; then
+      NEAT_INTERNALS_SNAP_TAG_POLICY=ON
+      branch="${tag}"
+    else
+      branch="$(current_core_branch)"
+      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        echo "Could not determine current branch for internals snap; using develop." >&2
+        branch="develop"
+      fi
     fi
   elif [[ "${manifest_spec}" == *":"* ]]; then
     branch="${manifest_spec%%:*}"
@@ -893,6 +915,7 @@ resolve_neat_internals_ref() {
 }
 
 resolve_neat_llima_ref() {
+  NEAT_LLIMA_SNAP_TAG_POLICY=OFF
   if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
     return 1
@@ -903,13 +926,19 @@ resolve_neat_llima_ref() {
     return 1
   fi
 
-  local branch spec
+  local branch spec tag
   if [[ "${manifest_spec}" == "__SNAP__" ]]; then
     NEAT_LLIMA_SNAP_POLICY=ON
-    branch="$(current_core_branch)"
-    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-      echo "Could not determine current branch for LLiMa snap; using develop." >&2
-      branch="develop"
+    tag="$(current_core_tag)"
+    if [[ -n "${tag}" ]]; then
+      NEAT_LLIMA_SNAP_TAG_POLICY=ON
+      branch="${tag}"
+    else
+      branch="$(current_core_branch)"
+      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        echo "Could not determine current branch for LLiMa snap; using develop." >&2
+        branch="develop"
+      fi
     fi
   elif [[ "${manifest_spec}" == *":"* ]]; then
     branch="${manifest_spec%%:*}"
@@ -1187,6 +1216,10 @@ fetch_neat_internals_vulcan_artifacts() {
 
   local resolve_output resolved_ref
   if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+    if [[ "${NEAT_INTERNALS_SNAP_TAG_POLICY}" == "ON" ]]; then
+      echo "ERROR: Failed to resolve exact tag-snap internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
+      exit 1
+    fi
     if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
@@ -1246,6 +1279,10 @@ fetch_neat_llima_vulcan_artifacts() {
 
   local resolve_output resolved_ref
   if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+    if [[ "${NEAT_LLIMA_SNAP_TAG_POLICY}" == "ON" ]]; then
+      echo "ERROR: Failed to resolve exact tag-snap LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
+      exit 1
+    fi
     if [[ "${NEAT_LLIMA_SNAP_POLICY}" != "ON" || "${llima_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
       exit 1
