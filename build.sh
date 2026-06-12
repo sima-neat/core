@@ -2379,7 +2379,7 @@ platform_version = str(data.get("platform-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
 
-board_platform = f"modalix@=={platform_version}"
+board_platform = f"modalix@{platform_version}"
 for arg in ("--board-platform", board_platform, "--palette-platform", platform_version):
     print(arg)
 PY
