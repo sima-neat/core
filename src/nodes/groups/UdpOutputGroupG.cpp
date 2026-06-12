@@ -12,13 +12,13 @@
 
 namespace simaai::neat::nodes::groups {
 
-simaai::neat::NodeGroup UdpOutputGroupG(const UdpOutputGroupGOptions& opt) {
+simaai::neat::Graph UdpOutputGroupG(const UdpOutputGroupGOptions& opt) {
   std::vector<std::shared_ptr<simaai::neat::Node>> nodes;
 
   std::string render_fragment = "simaai_sampledemux name=demux "
                                 "demux.bbox ! queue ! render.sink_0 "
                                 "demux.image ! queue ! render.sink_1 "
-                                "simaairender name=render config=\"" +
+                                "neatrender name=render config=\"" +
                                 opt.render_config + "\"";
   nodes.push_back(nodes::Custom(render_fragment));
 
@@ -33,7 +33,11 @@ simaai::neat::NodeGroup UdpOutputGroupG(const UdpOutputGroupGOptions& opt) {
   udp_opt.async = opt.udp_async;
   nodes.push_back(nodes::UdpOutput(udp_opt));
 
-  return simaai::neat::NodeGroup(std::move(nodes));
+  simaai::neat::Graph graph;
+  for (auto& node : nodes) {
+    graph.add(std::move(node));
+  }
+  return graph;
 }
 
 } // namespace simaai::neat::nodes::groups

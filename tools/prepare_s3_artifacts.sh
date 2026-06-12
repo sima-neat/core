@@ -4,47 +4,30 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage: tools/prepare_s3_artifacts.sh \
-  --core-deb <path> \
-  --extras-tar <path> \
-  --wheel <path> \
-  --internals-manifest <path> \
-  --output-dir <path> \
-  [--internals-base-url <url>]
+  --artifacts-dir <dist-dir> \
+  --output-dir <path>
+
+Legacy arguments such as --core-deb, --extras-tar, --wheel, and
+--internals-manifest are accepted for compatibility but ignored. The complete
+upload payload is built from --artifacts-dir.
 USAGE
 }
 
-CORE_DEB=""
-EXTRAS_TAR=""
-WHEEL_PATH=""
-INTERNALS_MANIFEST=""
+ARTIFACTS_DIR="dist"
 OUTPUT_DIR=""
-INTERNALS_BASE_URL="${NEAT_INTERNALS_BASE_URL:-https://artifacts.sima-neat.com/internals}"
-INSTALL_SCRIPT_PATH="tools/install_neat_framework.sh"
+INSTALL_SCRIPT_NAME="${NEAT_PACKAGE_INSTALL_SCRIPT:-install_neat_framework.sh}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --core-deb)
-      CORE_DEB="${2:-}"
-      shift 2
-      ;;
-    --extras-tar)
-      EXTRAS_TAR="${2:-}"
-      shift 2
-      ;;
-    --wheel)
-      WHEEL_PATH="${2:-}"
-      shift 2
-      ;;
-    --internals-manifest)
-      INTERNALS_MANIFEST="${2:-}"
+    --artifacts-dir)
+      ARTIFACTS_DIR="${2:-}"
       shift 2
       ;;
     --output-dir)
       OUTPUT_DIR="${2:-}"
       shift 2
       ;;
-    --internals-base-url)
-      INTERNALS_BASE_URL="${2:-}"
+    --core-deb|--extras-tar|--wheel|--internals-manifest|--internals-deb-dir|--llima-deb-dir|--internals-base-url|--llima-base-url)
       shift 2
       ;;
     -h|--help)
@@ -59,17 +42,55 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${CORE_DEB}" || -z "${EXTRAS_TAR}" || -z "${WHEEL_PATH}" || -z "${INTERNALS_MANIFEST}" || -z "${OUTPUT_DIR}" ]]; then
+if [[ -z "${ARTIFACTS_DIR}" || -z "${OUTPUT_DIR}" ]]; then
   echo "Missing required arguments." >&2
   usage
   exit 1
 fi
 
-[[ -f "${CORE_DEB}" ]] || { echo "Missing core deb: ${CORE_DEB}" >&2; exit 1; }
-[[ -f "${EXTRAS_TAR}" ]] || { echo "Missing extras tar: ${EXTRAS_TAR}" >&2; exit 1; }
-[[ -f "${WHEEL_PATH}" ]] || { echo "Missing wheel: ${WHEEL_PATH}" >&2; exit 1; }
-[[ -f "${INTERNALS_MANIFEST}" ]] || { echo "Missing internals manifest: ${INTERNALS_MANIFEST}" >&2; exit 1; }
+[[ -d "${ARTIFACTS_DIR}" ]] || { echo "Missing artifacts dir: ${ARTIFACTS_DIR}" >&2; exit 1; }
+
+CORE_DEBS=()
+while IFS= read -r file; do
+  CORE_DEBS+=("${file}")
+done < <(find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+
+EXTRAS_TARS=()
+while IFS= read -r file; do
+  EXTRAS_TARS+=("${file}")
+done < <(find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name '*extras.tar.gz' | sort)
+
+WHEELS=()
+while IFS= read -r file; do
+  WHEELS+=("${file}")
+done < <(find "${ARTIFACTS_DIR}" -maxdepth 1 -type f -name '*.whl' | sort)
+
+if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+  echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel in ${ARTIFACTS_DIR}." >&2
+  echo "core debs: ${#CORE_DEBS[@]}" >&2
+  printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+  echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+  printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+  echo "wheels: ${#WHEELS[@]}" >&2
+  printf '  %s\n' "${WHEELS[@]}" >&2 || true
+  exit 1
+fi
+
+INSTALL_SCRIPT_PATH="${ARTIFACTS_DIR}/${INSTALL_SCRIPT_NAME}"
 [[ -f "${INSTALL_SCRIPT_PATH}" ]] || { echo "Missing install script: ${INSTALL_SCRIPT_PATH}" >&2; exit 1; }
+
+for metadata_file in metadata.json metadata-minimal.json metadata-all.json; do
+  if [[ ! -f "${ARTIFACTS_DIR}/${metadata_file}" ]]; then
+    echo "Missing package metadata from build output: ${ARTIFACTS_DIR}/${metadata_file}" >&2
+    echo "Run ./build.sh --all or ./build.sh --fuzz with a sima-cli that supports packages build." >&2
+    exit 1
+  fi
+done
+
+if ! command -v dpkg-deb >/dev/null 2>&1; then
+  echo "dpkg-deb is required to validate core DEB contents." >&2
+  exit 1
+fi
 
 tmp_dir="$(mktemp -d /tmp/sima-neat-upload-XXXXXX)"
 cleanup() {
@@ -77,47 +98,20 @@ cleanup() {
 }
 trap cleanup EXIT
 
-extract_dir="${tmp_dir}/internals-extract"
-mkdir -p "${extract_dir}"
-rm -rf "${OUTPUT_DIR}"
-mkdir -p "${OUTPUT_DIR}"
-
-cp "${CORE_DEB}" "${OUTPUT_DIR}/"
-cp "${EXTRAS_TAR}" "${OUTPUT_DIR}/"
-cp "${WHEEL_PATH}" "${OUTPUT_DIR}/"
-cp "${INSTALL_SCRIPT_PATH}" "${OUTPUT_DIR}/"
-chmod +x "${OUTPUT_DIR}/$(basename "${INSTALL_SCRIPT_PATH}")"
-
-INTERNALS_TAG="$(python3 - <<'PY' "${INTERNALS_MANIFEST}"
-import json
-import sys
-from pathlib import Path
-manifest = Path(sys.argv[1])
-data = json.loads(manifest.read_text(encoding="utf-8"))
-tag = str(data.get("internals", "")).strip()
-if not tag:
-    raise SystemExit("internals missing in deps manifest")
-print(tag)
-PY
-)"
-
-INTERNALS_ARCHIVE="sima-neat-internals-${INTERNALS_TAG}.tar.gz"
-INTERNALS_ARCHIVE_PATH="${tmp_dir}/${INTERNALS_ARCHIVE}"
-curl -fsSL "${INTERNALS_BASE_URL}/${INTERNALS_ARCHIVE}" -o "${INTERNALS_ARCHIVE_PATH}"
-tar -xzf "${INTERNALS_ARCHIVE_PATH}" -C "${extract_dir}"
-
-mapfile -t INTERNALS_DEBS < <(find "${extract_dir}" -type f -name '*.deb' | sort)
-if [[ "${#INTERNALS_DEBS[@]}" -eq 0 ]]; then
-  echo "No deps .deb files found in ${INTERNALS_ARCHIVE}." >&2
-  exit 1
-fi
-for f in "${INTERNALS_DEBS[@]}"; do
-  cp "${f}" "${OUTPUT_DIR}/"
+core_extract_dir="${tmp_dir}/core-deb-extract"
+mkdir -p "${core_extract_dir}"
+dpkg-deb -x "${CORE_DEBS[0]}" "${core_extract_dir}"
+for required_cli in usr/bin/fix_devkit_runtime.sh usr/bin/neat; do
+  if [[ ! -x "${core_extract_dir}/${required_cli}" ]]; then
+    echo "Core DEB missing executable ${required_cli}." >&2
+    exit 1
+  fi
 done
 
-python3 tools/generate_sima_cli_metadata.py \
-  --artifacts-dir "${OUTPUT_DIR}" \
-  --output "${OUTPUT_DIR}/metadata.json"
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
+find "${ARTIFACTS_DIR}" -maxdepth 1 -type f \
+  -exec cp -f {} "${OUTPUT_DIR}/" \;
 
 echo "Prepared upload artifacts:"
 ls -lh "${OUTPUT_DIR}"

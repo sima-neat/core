@@ -1,4 +1,4 @@
-#include "builder/NodeGroup.h"
+#include "builder/Node.h"
 #include "builder/OutputSpec.h"
 #include "nodes/common/Caps.h"
 #include "nodes/io/Input.h"
@@ -8,12 +8,11 @@
 
 #include <iostream>
 #include <stdexcept>
-#include <cstdlib>
+#include <memory>
+#include <vector>
 
 int main() {
   try {
-    setenv("SIMA_DEBUG_OUTPUTSPEC_LOG", "1", 1);
-
     simaai::neat::OutputSpec nv12;
     nv12.media_type = "video/x-raw";
     nv12.format = "NV12";
@@ -23,8 +22,8 @@ int main() {
     require(nv12_bytes == 12, "NV12 byte size mismatch");
 
     simaai::neat::InputOptions appsrc_opt;
-    appsrc_opt.media_type = "video/x-raw";
-    appsrc_opt.format = "RGB";
+    appsrc_opt.payload_type = simaai::neat::PayloadType::Image;
+    appsrc_opt.format = simaai::neat::FormatTag::RGB;
     appsrc_opt.width = 10;
     appsrc_opt.height = 8;
     appsrc_opt.use_simaai_pool = false;
@@ -32,9 +31,9 @@ int main() {
     auto appsrc = simaai::neat::nodes::Input(appsrc_opt);
     auto caps =
         simaai::neat::nodes::CapsRaw("GRAY8", 10, 8, 30, simaai::neat::CapsMemory::SystemMemory);
-    simaai::neat::NodeGroup group({appsrc, caps});
+    std::vector<std::shared_ptr<simaai::neat::Node>> nodes{appsrc, caps};
 
-    simaai::neat::OutputSpec derived = simaai::neat::derive_output_spec(group);
+    simaai::neat::OutputSpec derived = simaai::neat::derive_output_spec(nodes);
     std::cerr << "[DBG] derived media=" << derived.media_type << " format=" << derived.format
               << " w=" << derived.width << " h=" << derived.height << " d=" << derived.depth
               << " layout=" << derived.layout << " dtype=" << derived.dtype
@@ -47,7 +46,7 @@ int main() {
 
     simaai::neat::nodes::groups::ImageInputGroupOptions img_opt;
     img_opt.output_caps.enable = true;
-    img_opt.output_caps.format = "NV12";
+    img_opt.output_caps.format = simaai::neat::FormatTag::NV12;
     img_opt.output_caps.width = 32;
     img_opt.output_caps.height = 16;
     img_opt.output_caps.fps = 15;

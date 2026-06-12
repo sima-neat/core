@@ -1,0 +1,161 @@
+{
+  "sources": [
+    {
+      "key": "llima",
+      "title": "GenAI with LLiMa",
+      "repo": "https://github.com/sima-neat/llima.git",
+      "branch": "develop",
+      "branch_policy": "snap",
+      "fallback_branch": "develop",
+      "githash": "",
+      "docs_subpath": "docs",
+      "mount": "genai-llima",
+      "sidebar_position": 4,
+      "category_link": "index",
+      "files_order": [
+        "index",
+        "setup",
+        "runtime",
+        "compilation_genai",
+        "deployment",
+        "mole"
+      ],
+      "link_rewrites": [
+        {
+          "from": "/getting-started/installation/neat-framework/",
+          "to": "/getting-started/installation/neat-library/"
+        }
+      ]
+    },
+    {
+      "key": "model-sdk-guides",
+      "title": "Compile a Model",
+      "repo": "https://github.com/sima-neat/model-sdk.git",
+      "branch": "main",
+      "branch_policy": "snap",
+      "githash": "",
+      "docs_subpath": "docs/guides",
+      "mount": "compile-a-model",
+      "sidebar_position": 3,
+      "files_order": [
+        "index",
+        "compile-your-first-model",
+        "model-compatibility",
+        "graph-surgery",
+        "quantization",
+        "model-compilation",
+        "validate-accuracy-performance"
+      ],
+      "link_rewrites": [
+        {
+          "from": "/llima/compilation_genai",
+          "to": "/genai-llima/compilation_genai"
+        },
+        {
+          "from": "./api-reference",
+          "to": "/reference/model-sdk-api/"
+        },
+        {
+          "from": "./api-reference/",
+          "to": "/reference/model-sdk-api/"
+        },
+        {
+          "from": "/getting-started/installation/neat-framework/",
+          "to": "/getting-started/installation/neat-library/"
+        }
+      ]
+    },
+    {
+      "key": "model-sdk-api",
+      "title": "Model Compiler API",
+      "repo": "https://github.com/sima-neat/model-sdk.git",
+      "branch": "main",
+      "branch_policy": "snap",
+      "githash": "",
+      "docs_subpath": "docs/generated",
+      "mount": "reference/model-sdk-api",
+      "sidebar_position": 4,
+      "files_order": [
+        "index"
+      ],
+      "exclude_files": [
+        "afe-apis"
+      ],
+      "restructure_api": true,
+      "landing_page": {
+        "title": "Model Compiler API Reference",
+        "intro": "The Model Compiler exposes the `afe` Python package, which the SiMa.ai Neat toolchain uses to import, quantize, simulate, and compile models into the MPK format consumed by the runtime. The pages below are auto-generated from the `afe.apis` source via [griffe](https://mkdocstrings.github.io/griffe/); each module page lists the classes, functions, and constants it exports along with their signatures.",
+        "groups": [
+          {
+            "label": "Compilation",
+            "intro": "Drive a compilation job end-to-end, from a calibrated network to MPK artifacts.",
+            "modules": [
+              "afe-apis-compilation_job",
+              "afe-apis-compilation_job_base",
+              "afe-apis-compile"
+            ]
+          },
+          {
+            "label": "Model Lifecycle",
+            "intro": "Load, save, execute, and quantize models in AFE's internal representation.",
+            "modules": [
+              "afe-apis-loaded_net",
+              "afe-apis-model"
+            ]
+          },
+          {
+            "label": "Versioned Public APIs",
+            "intro": "Stable and pre-release surfaces for importing, quantizing, executing, and simulating models. New integrations should target the release API and migrate forward; the pre-release API exposes experimental capabilities ahead of stabilization.",
+            "modules": [
+              "afe-apis-release_v1",
+              "afe-apis-prerelease_v1"
+            ]
+          },
+          {
+            "label": "Execution & Analysis",
+            "intro": "Simulate compiled models and analyze tensor statistics.",
+            "modules": [
+              "afe-apis-simulate",
+              "afe-apis-statistic"
+            ]
+          },
+          {
+            "label": "Transforms",
+            "intro": "Pre- and post-processing tensor transformations that can be attached to a model's inputs or outputs.",
+            "modules": [
+              "afe-apis-transform"
+            ]
+          },
+          {
+            "label": "Types & Error Handling",
+            "intro": "Shared type definitions, error-handling controls, and internal exception sanitization used across the AFE APIs.",
+            "modules": [
+              "afe-apis-defines",
+              "afe-apis-error_handling_variables",
+              "afe-apis-_sanitize_errors"
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "key": "sima-cli",
+      "title": "sima-cli",
+      "repo": "https://github.com/sima-neat/sima-cli.git",
+      "branch": "main",
+      "branch_policy": "snap",
+      "githash": "",
+      "docs_subpath": "docs/sima-cli",
+      "mount": "tools/sima-cli",
+      "sidebar_position": 1,
+      "files_order": [
+        "index"
+      ],
+      "group_commands": {
+        "prefix": "sima-cli-",
+        "root_stem": "sima-cli",
+        "root_page_stem": "cli"
+      }
+    }
+  ]
+}

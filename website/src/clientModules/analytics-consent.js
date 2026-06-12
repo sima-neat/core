@@ -5,8 +5,8 @@ const CONSENT_VERSION = 1;
 const ANALYTICS_EVENT = "neat:analytics-consent";
 const TRACK_EVENT = "neat:analytics-track";
 const INTERNAL_HOSTS = new Set([
-  "docs.sima-neat.com",
-  "docs-preview.sima-neat.com",
+  "developer.sima.ai",
+  "build.stg.neat.sima.ai",
   "localhost",
   "127.0.0.1",
 ]);
@@ -72,7 +72,6 @@ const docSectionFromPath = (pathname) => {
   if (pathname.startsWith("/reference/cppapi")) return "api-reference-cpp";
   if (pathname.startsWith("/reference/pythonapi")) return "api-reference-python";
   if (parts[0] === "getting-started") return "getting-started";
-  if (parts[0] === "how-to") return "how-to";
   if (parts[0] === "tutorials") return "tutorials";
   if (parts[0] === "reference") return "reference";
   if (parts[0] === "contribute") return "contribute";
@@ -82,7 +81,7 @@ const docSectionFromPath = (pathname) => {
 const getDocContext = () => {
   const pathname = window.location.pathname;
   const docId = pathname.replace(/^\/+|\/+$/g, "") || "index";
-  const title = document.title.replace(/\s*\|\s*SiMa Neat\s*$/i, "");
+  const title = document.title.replace(/\s*\|\s*SiMa\.ai Neat\s*$/i, "");
   return {
     doc_id: docId,
     doc_title: cleanString(title, 120),
@@ -159,9 +158,9 @@ const trackRouteDerivedEvents = () => {
     }
   }
 
-  if (pathname === "/getting-started/installation/neat-framework") {
+  if (pathname === "/getting-started/installation/neat-library") {
     trackEvent("install_page_view", {
-      platform: "neat-framework",
+      platform: "neat-library",
     });
   }
 };
@@ -298,7 +297,6 @@ const platformFromText = (value) => {
 
 const commandIdFromCode = (value) => {
   const code = String(value || "").toLowerCase();
-  if (code.includes("tools.sima-neat.com/install-neat.sh")) return "install_neat_framework";
   if (code.includes("sima-cli install ghcr:sima-neat/sdk")) return "install_elxr_sdk";
   if (code.includes("sima-cli install sdk")) return "install_sdk";
   if (code.includes("sima-cli install")) return "sima_cli_install";

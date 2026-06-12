@@ -4,7 +4,7 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "rtsp_port_utils.h"
 
 #include "cli_utils.h"
@@ -175,8 +175,8 @@ int main(int argc, char** argv) {
       const int enc_h = 256;
       const int fps = 30;
 
-      simaai::neat::SessionOptions sess_opt;
-      simaai::neat::Session s(sess_opt);
+      simaai::neat::GraphOptions sess_opt;
+      simaai::neat::Graph s(sess_opt);
       s.add(simaai::neat::nodes::StillImageInput(image_path, content_w, content_h, enc_w, enc_h,
                                                  fps));
       // Use software encoder to force frequent IDR (x264enc uses key-int-max=1).
@@ -221,8 +221,8 @@ int main(int argc, char** argv) {
       throw std::runtime_error("--server-only requires --local or no --rtsp.");
     }
 
-    simaai::neat::SessionOptions sess_opt;
-    simaai::neat::Session p(sess_opt);
+    simaai::neat::GraphOptions sess_opt;
+    simaai::neat::Graph p(sess_opt);
     simaai::neat::nodes::groups::RtspDecodedInputOptions ropt;
     ropt.url = url;
     ropt.latency_ms = 200;
@@ -281,17 +281,22 @@ int main(int argc, char** argv) {
       if (diagnose && err.report.has_value()) {
         msg += "\nreport_json=" + err.report->to_json();
       } else if (diagnose) {
-        msg += "\nreport=" + runner.report();
+        const std::string last = runner.last_error();
+        if (!last.empty()) {
+          msg += "\nlast_error=" + last;
+        }
       }
       throw std::runtime_error(msg);
     }
 
-    const simaai::neat::Tensor* neat = out.tensor.has_value() ? &out.tensor.value() : nullptr;
-    if (!neat) {
-      throw std::runtime_error("rtsp: expected simaai::neat::Tensor output but none was produced");
+    const auto tensors = simaai::neat::tensors_from_sample(out, true);
+    if (tensors.size() != 1U) {
+      throw std::runtime_error("rtsp: expected exactly one tensor output, got " +
+                               std::to_string(tensors.size()));
     }
+    const simaai::neat::Tensor& neat = tensors.front();
 
-    std::string actual_format = tensor_format(*neat);
+    std::string actual_format = tensor_format(neat);
     if (actual_format.empty()) {
       actual_format = upper_copy(out.payload_tag);
     }
@@ -308,14 +313,14 @@ int main(int argc, char** argv) {
                                expect_format + extra);
     }
 
-    const int64_t h = neat->shape.size() > 0 ? neat->shape[0] : 0;
-    const int64_t w = neat->shape.size() > 1 ? neat->shape[1] : 0;
+    const int64_t h = neat.shape.size() > 0 ? neat.shape[0] : 0;
+    const int64_t w = neat.shape.size() > 1 ? neat.shape[1] : 0;
     size_t total = 0;
-    for (const auto& p : neat->planes)
-      total += plane_bytes(p, neat->dtype);
-    const size_t bytes = neat->storage ? neat->storage->size_bytes : total;
+    for (const auto& p : neat.planes)
+      total += plane_bytes(p, neat.dtype);
+    const size_t bytes = neat.storage ? neat.storage->size_bytes : total;
     std::cout << "[rtsp] neat format=" << actual_format << " w=" << w << " h=" << h
-              << " planes=" << neat->planes.size() << " bytes=" << bytes;
+              << " planes=" << neat.planes.size() << " bytes=" << bytes;
     if (!out.payload_tag.empty()) {
       std::cout << " tag=" << out.payload_tag;
     }

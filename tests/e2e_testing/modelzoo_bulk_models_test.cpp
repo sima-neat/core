@@ -36,6 +36,7 @@ cv::Mat load_input_image_or_skip(const fs::path& root) {
   const std::vector<fs::path> candidates = {
       root / "tests" / "images" / "people.jpg",
       root / "test.jpg",
+      sima_test::test_image_fixture_path(),
       root / "tmp" / "coco_sample.jpg",
   };
 
@@ -102,6 +103,34 @@ bool sample_has_tensor(const simaai::neat::Sample& s, std::string& err) {
   return false;
 }
 
+bool tensor_list_has_tensor(const simaai::neat::TensorList& outs, std::string& err) {
+  if (outs.empty()) {
+    err = "tensor output empty";
+    return false;
+  }
+  for (const auto& t : outs) {
+    std::string tensor_err;
+    if (has_valid_tensor(t, tensor_err))
+      return true;
+  }
+  err = "tensor list missing valid tensor";
+  return false;
+}
+
+bool sample_list_has_tensor(const simaai::neat::Sample& outs, std::string& err) {
+  if (outs.empty()) {
+    err = "sample output empty";
+    return false;
+  }
+  for (const auto& s : outs) {
+    std::string sample_err;
+    if (sample_has_tensor(s, sample_err))
+      return true;
+  }
+  err = "sample list missing tensor";
+  return false;
+}
+
 void run_model_once(const std::string& model_name, const std::string& tar_gz,
                     const cv::Mat& img_bgr) {
   if (tar_gz.empty()) {
@@ -109,34 +138,32 @@ void run_model_once(const std::string& model_name, const std::string& tar_gz,
   }
 
   simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "BGR";
-  model_opt.input_max_width = img_bgr.cols;
-  model_opt.input_max_height = img_bgr.rows;
-  model_opt.input_max_depth = img_bgr.channels();
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
   simaai::neat::Model model(tar_gz, model_opt);
 
-  simaai::neat::Sample sync_out = model.run(img_bgr);
+  simaai::neat::TensorList sync_out = model.run(std::vector<cv::Mat>{img_bgr});
   std::string sync_err;
-  if (!sample_has_tensor(sync_out, sync_err)) {
+  if (!tensor_list_has_tensor(sync_out, sync_err)) {
     throw std::runtime_error("sync output invalid: " + sync_err);
   }
 
-  auto runner = model.build(img_bgr);
+  auto runner = model.build(std::vector<cv::Mat>{img_bgr});
   if (!runner) {
     throw std::runtime_error("async runner build failed");
   }
-  if (!runner.push(img_bgr)) {
+  if (!runner.push(std::vector<cv::Mat>{img_bgr})) {
     runner.close();
     throw std::runtime_error("async push failed");
   }
   auto async_out = runner.pull(10000);
-  if (!async_out.has_value()) {
+  if (async_out.empty()) {
     runner.close();
     throw std::runtime_error("async pull returned no output");
   }
   std::string async_err;
-  if (!sample_has_tensor(*async_out, async_err)) {
+  if (!sample_list_has_tensor(async_out, async_err)) {
     runner.close();
     throw std::runtime_error("async output invalid: " + async_err);
   }
@@ -342,8 +369,8 @@ int main(int argc, char** argv) {
       std::cout << "[MODEL] " << name << "\n";
       std::string tar_gz = sima_test::resolve_modelzoo_tar(name, root);
       if (tar_gz.empty()) {
-        std::cerr << "[FAIL] download failed for " << name << " (sima-cli modelzoo -v "
-                  << sima_test::modelzoo_version() << " get " << name << ")\n";
+        std::cerr << "[FAIL] download failed for " << name << " (sima-cli modelzoo get " << name
+                  << ")\n";
         failures += 1;
         ran += 1;
         continue;

@@ -17,7 +17,7 @@ struct has_pipeline_noarg<T, std::void_t<decltype(std::declval<T&>().pipeline())
 template <typename T, typename = void> struct has_pipeline_opts : std::false_type {};
 template <typename T>
 struct has_pipeline_opts<T, std::void_t<decltype(std::declval<T&>().pipeline(
-                                std::declval<const typename T::SessionOptions&>()))>>
+                                std::declval<const typename T::GraphOptions&>()))>>
     : std::true_type {};
 
 template <typename T, typename = void> struct has_build_tensor_runoptions_only : std::false_type {};
@@ -35,37 +35,47 @@ struct has_build_sample_runoptions_only<T, std::void_t<decltype(std::declval<T&>
     : std::true_type {};
 
 int main() {
+  using simaai::neat::Graph;
   using simaai::neat::Model;
-  using simaai::neat::NodeGroup;
+  using simaai::neat::Sample;
   using simaai::neat::Tensor;
+  using simaai::neat::TensorList;
 
   static_assert(std::is_same_v<decltype(std::declval<Model&>().build()), Model::Runner>);
   static_assert(
-      std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const Tensor&>())),
+      std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const TensorList&>())),
                      Model::Runner>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().build(
-                                   std::declval<const simaai::neat::Sample&>())),
-                               Model::Runner>);
-
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const Tensor&>())),
-                               simaai::neat::Sample>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(
-                                   std::declval<const std::vector<Tensor>&>())),
-                               simaai::neat::Sample>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(
-                                   std::declval<const simaai::neat::Sample&>())),
-                               simaai::neat::Sample>);
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().build(std::declval<const Sample&>())),
+                     Model::Runner>);
 #if defined(SIMA_WITH_OPENCV)
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const cv::Mat&>())),
-                               simaai::neat::Sample>);
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().build(
+                                   std::declval<const std::vector<cv::Mat>&>())),
+                               Model::Runner>);
 #endif
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().session()), NodeGroup>);
-  static_assert(std::is_same_v<decltype(std::declval<Model&>().session(
-                                   std::declval<const Model::SessionOptions&>())),
-                               NodeGroup>);
+
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const TensorList&>())),
+                     TensorList>);
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().run(std::declval<const Sample&>())), Sample>);
+#if defined(SIMA_WITH_OPENCV)
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().run(
+                                   std::declval<const std::vector<cv::Mat>&>())),
+                               TensorList>);
+#endif
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().preprocess()), Graph>);
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().inference()), Graph>);
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().postprocess()), Graph>);
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().graph()), Graph>);
+  static_assert(std::is_same_v<decltype(std::declval<Model&>().graph(
+                                   std::declval<const Model::RouteOptions&>())),
+                               Graph>);
+  static_assert(
+      std::is_same_v<decltype(std::declval<Model&>().fragment(Model::Stage::Full)), Graph>);
   static_assert(!has_pipeline_noarg<Model>::value, "Model::pipeline() should not exist anymore");
   static_assert(!has_pipeline_opts<Model>::value,
-                "Model::pipeline(SessionOptions) should not exist anymore");
+                "Model::pipeline(GraphOptions) should not exist anymore");
   static_assert(!has_build_tensor_runoptions_only<Model>::value,
                 "Model::build(Tensor, RunOptions) should not exist");
   static_assert(!has_build_sample_runoptions_only<Model>::value,

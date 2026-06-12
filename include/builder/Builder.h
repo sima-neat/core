@@ -1,7 +1,15 @@
 /**
  * @file
  * @ingroup builder
- * @brief Fluent builder for assembling linear NodeGroups.
+ * @brief Fluent builder for assembling linear node lists.
+ *
+ * `Builder` is the lightweight, STL-only API used by app code to chain Nodes into a
+ * linear pipeline before handing them off to a Graph. It implies Node indices from
+ * insertion order, which the Graph then uses to mint deterministic element names.
+ * For non-linear (multi-input/multi-output) topologies, use public `Graph` with named
+ * `Input`/`Output` endpoints and `connect()`.
+ *
+ * @see Graph
  */
 // include/builder/Builder.h
 #pragma once
@@ -13,104 +21,99 @@
 #include <vector>
 
 #include "builder/Node.h"
-#include "builder/NodeGroup.h"
 
 namespace simaai::neat {
 
 /**
- * @brief Fluent builder for assembling a linear NodeGroup (the common case).
+ * @brief Fluent builder for assembling a linear node list (the common case).
+ *
+ * Use `add()` / `then()` to append Nodes in order, then call `build()` (copy) or
+ * `release_nodes()` (move) to materialize a node list. The Builder itself stores nothing
+ * but `shared_ptr<Node>` and is safe to discard once the node list is produced.
  *
  * Notes:
  * - This module is STL-only (no GStreamer/OpenCV includes).
- * - Node indices are implied by order-of-insertion; Session uses that
+ * - Node indices are implied by order-of-insertion; Graph uses that
  *   ordering for deterministic element naming (n<idx>_...).
- * - For non-linear graphs, use builder/Graph directly (kept separate on purpose).
+ * - For non-linear topologies, use public `Graph` fragments and `connect()`.
+ *
+ * @ingroup builder
+ * @see Graph
  */
 class Builder final {
 public:
   using NodePtr = std::shared_ptr<Node>;
 
+  /// @brief Construct an empty builder.
   Builder() = default;
 
-  /// Construct from an existing group (copies node pointers).
-  explicit Builder(const NodeGroup& g) : nodes_(g.nodes()) {}
-
-  /// Construct from an existing vector of nodes (moves the vector).
+  /// @brief Construct from an existing vector of nodes (moves the vector).
   explicit Builder(std::vector<NodePtr> nodes) : nodes_(std::move(nodes)) {}
 
   // -------- Core ops --------
 
-  /// Append a node to the end of the chain.
+  /// @brief Append a node to the end of the chain.
   Builder& add(NodePtr node) {
     nodes_.push_back(std::move(node));
     return *this;
   }
 
-  /// Fluent alias for add().
+  /// @brief Fluent alias for `add()` — reads naturally as `b.add(a).then(b).then(c)`.
   Builder& then(NodePtr node) {
     return add(std::move(node));
   }
 
-  /// Append all nodes from a group (preserves order).
-  Builder& add(const NodeGroup& group) {
-    const auto& gnodes = group.nodes();
-    nodes_.insert(nodes_.end(), gnodes.begin(), gnodes.end());
-    return *this;
-  }
-
-  /// Append nodes from an initializer_list.
+  /// @brief Append nodes from an initializer_list.
   Builder& add(std::initializer_list<NodePtr> nodes) {
     nodes_.insert(nodes_.end(), nodes.begin(), nodes.end());
     return *this;
   }
 
-  /// Append nodes from an iterator range.
+  /// @brief Append nodes from an iterator range.
   template <class It> Builder& add(It begin, It end) {
     nodes_.insert(nodes_.end(), begin, end);
     return *this;
   }
 
-  /// Reserve capacity for N nodes.
+  /// @brief Reserve capacity for N nodes (avoids reallocation when chain length is known).
   Builder& reserve(std::size_t n) {
     nodes_.reserve(n);
     return *this;
   }
 
-  /// Clear the builder.
+  /// @brief Drop all accumulated nodes; the builder becomes empty.
   void clear() noexcept {
     nodes_.clear();
   }
 
   // -------- Introspection --------
 
+  /// @brief Number of nodes accumulated so far.
   std::size_t size() const noexcept {
     return nodes_.size();
   }
+  /// @brief True if no nodes have been added yet.
   bool empty() const noexcept {
     return nodes_.empty();
   }
 
+  /// @brief Read-only access to the underlying node list.
   const std::vector<NodePtr>& nodes() const noexcept {
     return nodes_;
   }
 
   // -------- Materialization --------
 
-  /// Return a copy of the assembled NodeGroup.
-  NodeGroup build() const {
-    return NodeGroup(nodes_);
+  /// @brief Return a copy of the assembled node list. Builder remains usable.
+  std::vector<NodePtr> build() const {
+    return nodes_;
   }
 
-  /// Move out the nodes and reset the builder.
+  /// @brief Move out the nodes and reset the builder.
   std::vector<NodePtr> release_nodes() {
     std::vector<NodePtr> out;
     out.swap(nodes_);
     return out;
-  }
-
-  /// Move out as NodeGroup and reset the builder.
-  NodeGroup release() {
-    return NodeGroup(release_nodes());
   }
 
 private:

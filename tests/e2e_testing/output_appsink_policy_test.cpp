@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include "test_utils.h"
 
@@ -11,27 +11,30 @@ using namespace simaai::neat::nodes;
 
 int main() {
   try {
-    // Default: latest frame, no clock sync.
+    // Explicit one-buffer policy: latest frame, no clock sync.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
-      p.add(Output());
+      simaai::neat::OutputOptions opt;
+      opt.max_buffers = 1;
+      p.add(Output(opt));
 
       const std::string gst = p.describe_backend();
       require_contains(gst, "appsink name=mysink", "default Output name mismatch");
       require_contains(gst, "emit-signals=false sync=false max-buffers=1 drop=false",
-                       "default Output settings mismatch");
+                       "explicit one-buffer Output settings mismatch");
     }
 
     // Latest/drop: only the most recent buffer should remain.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=5", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
       simaai::neat::OutputOptions opt;
+      opt.max_buffers = 1;
       opt.drop = true;
       p.add(Output(opt));
 
@@ -46,7 +49,7 @@ int main() {
 
     // Every-frame: keep all buffers (bounded).
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=5", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));
@@ -64,7 +67,7 @@ int main() {
 
     // add_output_tensor uses default Output() sink policy.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
 
       simaai::neat::OutputTensorOptions out;
@@ -73,13 +76,13 @@ int main() {
       p.add_output_tensor(out);
 
       const std::string gst = p.describe_backend();
-      require_contains(gst, "max-buffers=1", "add_output_tensor should use default sink options");
+      require_contains(gst, "max-buffers=4", "add_output_tensor should use default sink options");
       require_contains(gst, "drop=false", "add_output_tensor should keep default drop=false");
     }
 
     // Clocked: verify sync=true in the pipeline string.
     {
-      simaai::neat::Session p;
+      simaai::neat::Graph p;
       p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
       p.add(VideoConvert());
       p.add(CapsNV12SysMem(64, 64, 30));

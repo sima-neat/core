@@ -62,7 +62,6 @@ DEFAULT_EMPTY_METRICS: dict[str, float] = {
 }
 
 REQUIRED_SCENARIO_IDS = (
-    "mpk_parse_smoke",
     "runtime_session_sync_rgb",
     "runtime_session_async_rgb",
     "runtime_graph_fanout",
@@ -296,6 +295,29 @@ def parse_metrics_payload(data: Mapping[str, Any], context: str = "scenario_payl
     for key in METRIC_KEYS:
         metrics_obj[key] = data[key]
     return parse_metrics(metrics_obj, context=f"{context}.metrics")
+
+
+def parse_optional_power_payload(data: Mapping[str, Any], context: str = "scenario_payload") -> dict[str, Any] | None:
+    """Return optional power metadata from a direct scenario payload.
+
+    Power is observability metadata, not a baseline-gated metric. Keep the shape
+    intentionally light here: if present it must be a JSON object so result files
+    remain predictable, but detailed field evolution is allowed inside run_meta.
+    """
+
+    if "power" not in data:
+        return None
+    return _as_dict(data["power"], f"{context}.power")
+
+
+def parse_optional_measure_report_payload(
+    data: Mapping[str, Any], context: str = "scenario_payload"
+) -> dict[str, Any] | None:
+    """Return optional MeasureReport metadata from a scenario payload."""
+
+    if "measure_report" not in data:
+        return None
+    return _as_dict(data["measure_report"], f"{context}.measure_report")
 
 
 def parse_perf_result(data: Mapping[str, Any], context: str = "perf_result") -> PerfResult:

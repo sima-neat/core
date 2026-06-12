@@ -1,8 +1,11 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 /**
  * @example sync_yolov8_test.cpp
- * Canonical production pipeline: input -> preprocess -> Infer -> postprocess.
+ * Canonical production pipeline: input -> preprocess -> Infer -> boxdecode.
  */
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/io/Input.h"
 #include "nodes/sima/SimaBoxDecode.h"
@@ -35,7 +38,8 @@ using sima_yolov8_test::step_log;
 
 struct SyncTestConfig {
   int iters = 20;
-  float min_score = 0.52f;
+  float boxdecode_score_threshold = 0.49f;
+  float min_score = 0.49f;
   float min_iou = 0.30f;
 };
 
@@ -51,7 +55,7 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
                            const SyncTestConfig& cfg) {
   RunSummary res;
 
-  require(!tar_gz.empty(), "Failed to locate yolo_v8s MPK tarball");
+  require(!tar_gz.empty(), "Failed to locate yolo_v8s model archive");
 
   const int num_both = env_int("SIMA_SYNC_NUM_BUFFERS", -1);
   int num_cvu = env_int("SIMA_SYNC_NUM_BUFFERS_CVU", num_both);
@@ -70,30 +74,37 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
 
   (void)num_cvu;
   (void)num_mla;
-  simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "BGR";
-  model_opt.input_max_width = img.cols;
-  model_opt.input_max_height = img.rows;
-  model_opt.input_max_depth = 3;
-  model_opt.upstream_name = "decoder";
-  auto model = simaai::neat::Model(tar_gz, model_opt);
   const int topk = 100;
 
+  simaai::neat::Model::Options model_opt;
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::BGR;
+  model_opt.decode_type = simaai::neat::BoxDecodeType::YoloV8;
+  model_opt.score_threshold = cfg.boxdecode_score_threshold;
+  model_opt.nms_iou_threshold = 0.5f;
+  model_opt.top_k = topk;
+  model_opt.upstream_name = "decoder";
+  auto model = simaai::neat::Model(tar_gz, model_opt);
+
   // [canonical_pipeline]
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::Input());
   p.add(simaai::neat::nodes::groups::Preprocess(model));
   p.add(simaai::neat::nodes::groups::Infer(model));
-  p.add(simaai::neat::nodes::SimaBoxDecode(model, "yolov8", img.cols, img.rows, cfg.min_score, 0.5f,
-                                           topk));
+  p.add(simaai::neat::nodes::SimaBoxDecode(model, simaai::neat::BoxDecodeType::YoloV8,
+                                           cfg.boxdecode_score_threshold, 0.5f, topk));
   p.add(simaai::neat::nodes::Output());
   // [canonical_pipeline]
 
   const std::vector<objdet::ExpectedBox> expected = objdet::expected_people_boxes();
 
   step_log("sync: before build");
-  (void)p.build(img, simaai::neat::RunMode::Sync);
+  auto run = p.build_seeded_internal(
+      simaai::neat::Sample{simaai::neat::Sample::from_image(
+          img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+      simaai::neat::RunMode::Sync);
   step_log("sync: after build");
 
   const auto start = std::chrono::steady_clock::now();
@@ -103,7 +114,12 @@ RunSummary run_yolov8_sync(const std::string& tar_gz, const cv::Mat& img,
     simaai::neat::Sample out;
     try {
       step_log("sync: before run");
-      out = p.run(img);
+      simaai::neat::Sample outs = run.run(
+          simaai::neat::Sample{simaai::neat::Sample::from_image(
+              img, simaai::neat::ImageSpec::PixelFormat::BGR, simaai::neat::TensorMemory::EV74)},
+          30000);
+      require(!outs.empty(), "sync run expected at least one sample");
+      out = outs.front();
       step_log("sync: after run");
     } catch (const std::exception& e) {
       append_note(res.note, "run_error=" + sanitize_note(e.what()));

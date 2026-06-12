@@ -1,27 +1,37 @@
 #include "pipeline/StageRun.h"
 
-#include "builder/ConfigJsonOverride.h"
-#include "builder/ConfigJsonProvider.h"
+#include "builder/PreprocessMetaRequirement.h"
 #include "model/internal/ModelInternal.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
+#include "nodes/sima/Preproc.h"
 #include "nodes/sima/SimaBoxDecode.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/internal/PipelineBuild.h"
-#include "pipeline/internal/StageConfig.h"
+#include "pipeline/internal/contract/ContractApply.h"
+#include "pipeline/internal/contract/ContractCompiler.h"
+#include "pipeline/internal/InputStreamUtil.h"
+#include "pipeline/internal/EnvUtil.h"
+#include "pipeline/internal/RenderedMlaContractQuery.h"
+#include "pipeline/internal/SampleUtil.h"
+#include "pipeline/internal/sima/ContractRender.h"
+#include "pipeline/internal/TensorBufferEnvelope.h"
+#include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/TessellatedTensor.h"
-
-#include <nlohmann/json.hpp>
 
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
 #include <cstdio>
+#include <cstdint>
 #include <cstring>
 #include <functional>
+#include <initializer_list>
+#include <limits>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -31,11 +41,20 @@
 namespace simaai::neat::stages {
 using simaai::neat::pipeline_internal::upper_copy;
 namespace {
+Sample run_single_sample(Run& runner, const Sample& input, int timeout_ms, const char* where) {
+  Sample outputs = runner.run(Sample{input}, timeout_ms);
+  if (outputs.size() != 1) {
+    throw std::runtime_error(std::string(where ? where : "StageRun") +
+                             ": expected exactly 1 sample output");
+  }
+  return std::move(outputs.front());
+}
 
 enum class StageKind {
   Preproc,
   Infer,
   MLA,
+  Postprocess,
   BoxDecode,
 };
 
@@ -45,13 +64,17 @@ struct StageInputKey {
   int width = -1;
   int height = -1;
   int depth = -1;
+  TensorDType dtype = TensorDType::Int8;
+  TensorLayout layout = TensorLayout::Unknown;
+  std::vector<int64_t> shape;
 };
 
 bool stage_trace_enabled() {
-  const char* v = std::getenv("SIMA_DISPATCHER_TRACE");
-  if (!v || !*v)
-    return false;
-  return std::strcmp(v, "0") != 0 && std::strcmp(v, "false") != 0 && std::strcmp(v, "FALSE") != 0;
+  return pipeline_internal::env_bool("SIMA_DISPATCHER_TRACE", false);
+}
+
+bool stage_tensor_stats_enabled() {
+  return pipeline_internal::env_bool("SIMA_STAGE_TENSOR_STATS", false);
 }
 
 void stage_trace(const char* label) {
@@ -60,11 +83,67 @@ void stage_trace(const char* label) {
   std::fprintf(stderr, "[TRACE] %s\n", label);
 }
 
+void log_stage_tensor_stats(const char* label, const Sample& sample) {
+  if (!stage_tensor_stats_enabled() || !sample_has_tensor_list(sample)) {
+    return;
+  }
+  const TensorList& tensors =
+      sample_tensor_list(const_cast<Sample&>(sample), label ? label : "StageRun::tensor_stats");
+  for (std::size_t i = 0; i < tensors.size(); ++i) {
+    const Tensor& tensor = tensors[i];
+    std::vector<std::uint8_t> bytes;
+    try {
+      bytes = tensor.copy_payload_bytes();
+    } catch (const std::exception& e) {
+      std::fprintf(
+          stderr,
+          "[stage][tensor-stats] %s tensor=%zu logical=%d segment=%s bytes=<error> detail=%s\n",
+          label ? label : "StageRun", i, tensor.route.logical_index,
+          tensor.route.segment_name.empty() ? "<empty>" : tensor.route.segment_name.c_str(),
+          e.what());
+      continue;
+    }
+
+    std::size_t zero_count = 0U;
+    std::uint64_t hash = 1469598103934665603ULL;
+    for (const auto byte : bytes) {
+      if (byte == 0U) {
+        ++zero_count;
+      }
+      hash ^= static_cast<std::uint64_t>(byte);
+      hash *= 1099511628211ULL;
+    }
+    std::ostringstream samples;
+    samples << "[";
+    const std::size_t sample_count = std::min<std::size_t>(8U, bytes.size());
+    for (std::size_t bi = 0; bi < sample_count; ++bi) {
+      if (bi > 0U) {
+        samples << ",";
+      }
+      samples << static_cast<unsigned int>(bytes[bi]);
+    }
+    samples << "]";
+
+    const double zero_ratio =
+        bytes.empty() ? 1.0 : static_cast<double>(zero_count) / static_cast<double>(bytes.size());
+    std::fprintf(stderr,
+                 "[stage][tensor-stats] %s tensor=%zu logical=%d mem=%d segment=%s offset=%lld "
+                 "bytes=%zu zero_ratio=%.6f hash=0x%016llx samples=%s\n",
+                 label ? label : "StageRun", i, tensor.route.logical_index,
+                 tensor.route.memory_index,
+                 tensor.route.segment_name.empty() ? "<empty>" : tensor.route.segment_name.c_str(),
+                 static_cast<long long>(tensor.byte_offset), bytes.size(), zero_ratio,
+                 static_cast<unsigned long long>(hash), samples.str().c_str());
+  }
+}
+
 struct StageKey {
   StageKind kind = StageKind::Preproc;
   std::string model_id;
   StageInputKey input;
-  BoxDecodeOptions box_opt;
+  BoxDecodeOptions box_opt{BoxDecodeType::Unspecified};
+  int preproc_roi_capacity = 0;
+  int preproc_roi_source_batch_size = 0;
 };
 
 struct WireCaps {
@@ -81,14 +160,166 @@ struct WireInput {
   WireCaps caps;
 };
 
-std::string buffer_name_from_group(const NodeGroup& group);
+struct StagePreprocessMetaRequirement {
+  std::string stage_name;
+  std::string plugin_name;
+  std::vector<std::string> required_fields;
+  std::optional<bool> expect_resize;
+  std::optional<bool> expect_normalize;
+  std::optional<bool> expect_quantize;
+  std::optional<bool> expect_tessellate;
+};
+
 InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const WireCaps& wire);
+bool stage_debug_enabled();
+const char* dtype_name(TensorDType dtype);
+std::string shape_string(const std::vector<int64_t>& shape);
+int64_t tensor_total_bytes(const simaai::neat::Tensor& tensor);
+TensorDims contract_tensor_dims_projection_from_shape(std::vector<int64_t> shape,
+                                                      TensorLayout layout);
+namespace rendered_stage_query = simaai::neat::pipeline_internal::rendered_stage_query;
+
+PreprocOutputInfo stage_preproc_output_info(const std::vector<std::shared_ptr<Node>>& group) {
+  const PreprocOutputInfo info = rendered_stage_query::preproc_output_info_from_nodes(group);
+  if (info.primary_output_name.empty()) {
+    throw std::runtime_error("StageRun: missing preproc output contract in rendered manifest");
+  }
+  return info;
+}
+
+std::string stage_primary_input_buffer_name(const std::vector<std::shared_ptr<Node>>& group) {
+  const std::string buffer_name = rendered_stage_query::primary_input_buffer_name(group);
+  if (buffer_name.empty()) {
+    throw std::runtime_error("StageRun: missing primary input buffer name in rendered manifest");
+  }
+  return buffer_name;
+}
+
+std::vector<MlaOutputTensorInfo>
+stage_mla_output_tensors_info(const std::vector<std::shared_ptr<Node>>& group) {
+  return rendered_stage_query::mla_output_tensors_from_nodes(group);
+}
+
+MlaInputTensorInfo stage_mla_input_tensor_info(const std::vector<std::shared_ptr<Node>>& group) {
+  MlaInputTensorInfo info = rendered_stage_query::mla_input_tensor_info_from_nodes(group);
+  if (info.logical_shape.empty()) {
+    throw std::runtime_error("StageRun: missing MLA input contract in rendered manifest");
+  }
+  return info;
+}
+
+std::string stage_meta_error_message(const StagePreprocessMetaRequirement& req,
+                                     const std::string& detail) {
+  std::ostringstream oss;
+  oss << "StageRun: stage='" << req.stage_name << "' plugin='" << req.plugin_name
+      << "' preprocess metadata contract violation: " << detail << " (no fallback allowed)";
+  return oss.str();
+}
+
+std::optional<StagePreprocessMetaRequirement>
+collect_preprocess_meta_requirement(const std::vector<std::shared_ptr<Node>>& group,
+                                    const std::string& default_stage_name) {
+  StagePreprocessMetaRequirement out;
+  bool found = false;
+  for (const auto& node : group) {
+    if (!node)
+      continue;
+    const auto* provider = dynamic_cast<const PreprocessMetaRequirementProvider*>(node.get());
+    if (!provider)
+      continue;
+    const auto req = provider->preprocess_meta_requirement();
+    if (!req.has_value() || req->required_fields.empty())
+      continue;
+    if (!found) {
+      out.stage_name = req->stage_name.empty() ? default_stage_name : req->stage_name;
+      out.plugin_name = req->plugin_name.empty() ? node->kind() : req->plugin_name;
+      out.expect_resize = req->expect_resize;
+      out.expect_normalize = req->expect_normalize;
+      out.expect_quantize = req->expect_quantize;
+      out.expect_tessellate = req->expect_tessellate;
+      found = true;
+    } else {
+      if (!out.expect_resize.has_value() && req->expect_resize.has_value()) {
+        out.expect_resize = req->expect_resize;
+      }
+      if (!out.expect_normalize.has_value() && req->expect_normalize.has_value()) {
+        out.expect_normalize = req->expect_normalize;
+      }
+      if (!out.expect_quantize.has_value() && req->expect_quantize.has_value()) {
+        out.expect_quantize = req->expect_quantize;
+      }
+      if (!out.expect_tessellate.has_value() && req->expect_tessellate.has_value()) {
+        out.expect_tessellate = req->expect_tessellate;
+      }
+    }
+    for (const auto& field : req->required_fields) {
+      if (field.empty())
+        continue;
+      if (std::find(out.required_fields.begin(), out.required_fields.end(), field) ==
+          out.required_fields.end()) {
+        out.required_fields.push_back(field);
+      }
+    }
+  }
+  if (!found || out.required_fields.empty()) {
+    return std::nullopt;
+  }
+  return out;
+}
+
+PreprocessRuntimeMeta enforce_required_preprocess_meta(const simaai::neat::Tensor& input,
+                                                       const StagePreprocessMetaRequirement& req) {
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(input);
+  if (!holder) {
+    throw std::runtime_error(
+        stage_meta_error_message(req, "missing tensor holder for required preprocess metadata"));
+  }
+  GstBuffer* in_buf = pipeline_internal::buffer_from_tensor_holder(holder);
+  if (!in_buf) {
+    throw std::runtime_error(
+        stage_meta_error_message(req, "missing GstBuffer for required preprocess metadata"));
+  }
+  PreprocessRuntimeMeta meta{};
+  const auto validation_error =
+      validate_simaai_preprocess_meta_required_fields(in_buf, req.required_fields, &meta);
+  gst_buffer_unref(in_buf);
+  if (validation_error.has_value()) {
+    throw std::runtime_error(stage_meta_error_message(req, *validation_error));
+  }
+  auto fail_mismatch = [&](const char* field, const char* op) {
+    std::ostringstream oss;
+    oss << "invalid preprocess metadata field '" << field << "': expected op '" << op
+        << "' enabled=true but observed false";
+    throw std::runtime_error(stage_meta_error_message(req, oss.str()));
+  };
+  if (req.expect_resize.has_value() && *req.expect_resize) {
+    const bool resize_applied = !(meta.resize_mode.empty() || meta.resize_mode == "none");
+    if (!resize_applied) {
+      fail_mismatch("preproc_resize_mode", "resize");
+    }
+  }
+  if (req.expect_normalize.has_value() && *req.expect_normalize && !meta.normalize) {
+    fail_mismatch("preproc_normalize", "normalize");
+  }
+  if (req.expect_quantize.has_value() && *req.expect_quantize && !meta.quantize) {
+    fail_mismatch("preproc_quantize", "quantize");
+  }
+  if (req.expect_tessellate.has_value() && *req.expect_tessellate && !meta.tessellate) {
+    fail_mismatch("preproc_tessellate", "tessellate");
+  }
+  return meta;
+}
 
 bool stage_debug_enabled() {
+  return pipeline_internal::env_bool("SIMA_STAGE_DEBUG", false);
+}
+
+bool shadow_change_env_enabled() {
   static int enabled = -1;
-  if (enabled >= 0)
+  if (enabled >= 0) {
     return enabled != 0;
-  const char* v = std::getenv("SIMA_STAGE_DEBUG");
+  }
+  const char* v = std::getenv("SHADOW_CHANGE");
   if (!v || !*v) {
     enabled = 0;
     return false;
@@ -101,6 +332,152 @@ bool stage_debug_enabled() {
   }
   enabled = 0;
   return false;
+}
+
+GstBuffer* tensor_holder_buffer(const simaai::neat::Tensor& tensor) {
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(tensor);
+  if (!holder) {
+    return nullptr;
+  }
+  return pipeline_internal::buffer_from_tensor_holder(holder);
+}
+
+void propagate_preprocess_meta_to_tensor_if_missing(const GstBuffer* source_buf,
+                                                    const PreprocessRuntimeMeta* source_meta,
+                                                    simaai::neat::Tensor* tensor) {
+  if (!tensor) {
+    return;
+  }
+  std::optional<PreprocessRuntimeMeta> owned_meta;
+  if (!source_meta && source_buf) {
+    owned_meta = read_simaai_preprocess_meta(const_cast<GstBuffer*>(source_buf));
+    if (owned_meta.has_value()) {
+      source_meta = &owned_meta.value();
+    }
+  }
+  if (!source_meta) {
+    return;
+  }
+  if (!tensor->semantic.preprocess.has_value()) {
+    tensor->semantic.preprocess = *source_meta;
+  }
+  GstBuffer* dst_buf = tensor_holder_buffer(*tensor);
+  if (!dst_buf) {
+    return;
+  }
+  if (has_simaai_preprocess_meta(dst_buf)) {
+    gst_buffer_unref(dst_buf);
+    return;
+  }
+  if (source_buf && has_simaai_preprocess_meta(const_cast<GstBuffer*>(source_buf))) {
+    std::string copy_err;
+    if (!copy_simaai_preprocess_meta(dst_buf, const_cast<GstBuffer*>(source_buf), &copy_err) &&
+        stage_debug_enabled()) {
+      std::fprintf(stderr, "[stage][meta] failed to propagate preprocess meta: %s\n",
+                   copy_err.empty() ? "<unknown>" : copy_err.c_str());
+    }
+  } else if (!write_simaai_preprocess_meta(dst_buf, *source_meta) && stage_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[stage][meta] failed to write preprocess meta from tensor semantic state\n");
+  }
+  gst_buffer_unref(dst_buf);
+}
+
+namespace {
+
+void propagate_preprocess_meta_to_sample_tree_if_missing(const GstBuffer* source_buf,
+                                                         const PreprocessRuntimeMeta* source_meta,
+                                                         Sample* sample) {
+  if (!sample) {
+    return;
+  }
+  if (sample->kind == SampleKind::Tensor && sample->tensor.has_value()) {
+    propagate_preprocess_meta_to_tensor_if_missing(source_buf, source_meta,
+                                                   &sample->tensor.value());
+    return;
+  }
+  if (sample->kind == SampleKind::TensorSet) {
+    for (auto& tensor : sample->tensors) {
+      propagate_preprocess_meta_to_tensor_if_missing(source_buf, source_meta, &tensor);
+    }
+    return;
+  }
+  if (sample->kind == SampleKind::Bundle) {
+    for (auto& field : sample->fields) {
+      propagate_preprocess_meta_to_sample_tree_if_missing(source_buf, source_meta, &field);
+    }
+  }
+}
+
+} // namespace
+
+void propagate_preprocess_meta_to_sample_if_missing(const simaai::neat::Tensor& source,
+                                                    Sample* sample) {
+  if (!sample) {
+    return;
+  }
+  std::optional<PreprocessRuntimeMeta> source_meta_from_buffer;
+  const PreprocessRuntimeMeta* source_meta =
+      source.semantic.preprocess.has_value() ? &source.semantic.preprocess.value() : nullptr;
+  GstBuffer* source_buf = tensor_holder_buffer(source);
+  if (!source_buf && !source_meta) {
+    return;
+  }
+  if (source_buf && !source_meta) {
+    source_meta_from_buffer = read_simaai_preprocess_meta(source_buf);
+    if (source_meta_from_buffer.has_value()) {
+      source_meta = &source_meta_from_buffer.value();
+    }
+  }
+  if (!source_meta) {
+    if (source_buf) {
+      gst_buffer_unref(source_buf);
+    }
+    return;
+  }
+  if (source_buf && !has_simaai_preprocess_meta(source_buf) &&
+      !source.semantic.preprocess.has_value()) {
+    gst_buffer_unref(source_buf);
+    return;
+  }
+  propagate_preprocess_meta_to_sample_tree_if_missing(source_buf, source_meta, sample);
+  if (source_buf) {
+    gst_buffer_unref(source_buf);
+  }
+}
+
+bool sample_requires_message_path(const Sample& sample) {
+  if (sample.kind == SampleKind::Bundle) {
+    return true;
+  }
+  if (!sample_has_tensor_list(sample)) {
+    return sample.payload_type != PayloadType::Auto || !sample.media_type.empty() ||
+           !sample.format.empty() || !sample.payload_tag.empty() || !sample.caps_string.empty() ||
+           !sample.port_name.empty() || !sample.segment_name.empty() || sample.memory_index >= 0 ||
+           sample.route_slot >= 0 || sample.logical_output_index >= 0 || sample.frame_id >= 0 ||
+           sample.pts_ns >= 0 || sample.dts_ns >= 0 || sample.duration_ns >= 0;
+  }
+  if (sample.tensors.size() != 1U || !sample.fields.empty()) {
+    return true;
+  }
+  return !sample.caps_string.empty() || !sample.port_name.empty() || sample.frame_id >= 0 ||
+         !sample.stream_id.empty() || !sample.stream_label.empty() || sample.input_seq >= 0 ||
+         sample.orig_input_seq >= 0 || sample.pts_ns >= 0 || sample.dts_ns >= 0 ||
+         sample.duration_ns >= 0;
+}
+
+const char* sample_kind_name(SampleKind kind) {
+  switch (kind) {
+  case SampleKind::Tensor:
+    return "Tensor";
+  case SampleKind::TensorSet:
+    return "TensorSet";
+  case SampleKind::Bundle:
+    return "Bundle";
+  case SampleKind::Unknown:
+    return "Unknown";
+  }
+  return "Unknown";
 }
 
 const char* dtype_name(TensorDType dtype) {
@@ -125,6 +502,82 @@ const char* dtype_name(TensorDType dtype) {
   return "Unknown";
 }
 
+enum class DTypeFamily {
+  Unknown = 0,
+  Int8,
+  Int16,
+  Int32,
+  BFloat16,
+  Float32,
+  Float64,
+};
+
+const char* dtype_family_name(DTypeFamily family) {
+  switch (family) {
+  case DTypeFamily::Int8:
+    return "INT8";
+  case DTypeFamily::Int16:
+    return "INT16";
+  case DTypeFamily::Int32:
+    return "INT32";
+  case DTypeFamily::BFloat16:
+    return "BF16";
+  case DTypeFamily::Float32:
+    return "FP32";
+  case DTypeFamily::Float64:
+    return "FP64";
+  case DTypeFamily::Unknown:
+    break;
+  }
+  return "UNKNOWN";
+}
+
+DTypeFamily dtype_family_from_tensor_dtype(TensorDType dtype) {
+  switch (dtype) {
+  case TensorDType::UInt8:
+  case TensorDType::Int8:
+    return DTypeFamily::Int8;
+  case TensorDType::UInt16:
+  case TensorDType::Int16:
+    return DTypeFamily::Int16;
+  case TensorDType::Int32:
+    return DTypeFamily::Int32;
+  case TensorDType::BFloat16:
+    return DTypeFamily::BFloat16;
+  case TensorDType::Float32:
+    return DTypeFamily::Float32;
+  case TensorDType::Float64:
+    return DTypeFamily::Float64;
+  }
+  return DTypeFamily::Unknown;
+}
+
+DTypeFamily dtype_family_from_token(std::string token) {
+  token = upper_copy(std::move(token));
+  if (token.empty()) {
+    return DTypeFamily::Unknown;
+  }
+  if (token.find("BF16") != std::string::npos || token.find("BFLOAT16") != std::string::npos) {
+    return DTypeFamily::BFloat16;
+  }
+  if (token.find("INT8") != std::string::npos || token.find("UINT8") != std::string::npos) {
+    return DTypeFamily::Int8;
+  }
+  if (token.find("INT16") != std::string::npos || token.find("UINT16") != std::string::npos) {
+    return DTypeFamily::Int16;
+  }
+  if (token.find("INT32") != std::string::npos) {
+    return DTypeFamily::Int32;
+  }
+  if (token.find("FP64") != std::string::npos || token.find("FLOAT64") != std::string::npos) {
+    return DTypeFamily::Float64;
+  }
+  if (token.find("FP32") != std::string::npos || token.find("FLOAT32") != std::string::npos) {
+    return DTypeFamily::Float32;
+  }
+  return DTypeFamily::Unknown;
+}
+
 std::string shape_string(const std::vector<int64_t>& shape) {
   if (shape.empty())
     return "";
@@ -135,6 +588,115 @@ std::string shape_string(const std::vector<int64_t>& shape) {
     out += std::to_string(shape[i]);
   }
   return out;
+}
+
+void log_stage_tensor_holder_state(const char* label, const simaai::neat::Tensor& tensor) {
+  if (!stage_debug_enabled())
+    return;
+  const auto* storage = tensor.storage.get();
+  const void* holder_ptr = (storage && storage->holder) ? storage->holder.get() : nullptr;
+  std::fprintf(stderr,
+               "[stage][holder] %s storage=%p kind=%d holder=%p device=%d:%d read_only=%d "
+               "planes=%zu shape=%s\n",
+               label ? label : "tensor", static_cast<const void*>(storage),
+               storage ? static_cast<int>(storage->kind) : -1, holder_ptr,
+               static_cast<int>(tensor.device.type), tensor.device.id, tensor.read_only ? 1 : 0,
+               tensor.planes.size(), shape_string(tensor.shape).c_str());
+}
+
+void log_stage_holder_buffer_memories(const char* label, const simaai::neat::Tensor& tensor) {
+  if (!stage_debug_enabled()) {
+    return;
+  }
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(tensor);
+  if (!holder) {
+    std::fprintf(stderr, "[stage][holder] %s holder=<none>\n", label ? label : "tensor");
+    return;
+  }
+  GstBuffer* buf = pipeline_internal::buffer_from_tensor_holder(holder);
+  if (!buf) {
+    std::fprintf(stderr, "[stage][holder] %s holder present but buffer_from_tensor_holder failed\n",
+                 label ? label : "tensor");
+    return;
+  }
+
+  const guint n_mems = gst_buffer_n_memory(buf);
+  std::fprintf(stderr, "[stage][holder] %s holder_buffer=%p memories=%u\n",
+               label ? label : "tensor", static_cast<void*>(buf), static_cast<unsigned>(n_mems));
+  for (guint i = 0; i < n_mems; ++i) {
+    GstMemory* mem = gst_buffer_peek_memory(buf, i);
+    gsize offset = 0;
+    gsize maxsize = 0;
+    const gsize size = mem ? gst_memory_get_sizes(mem, &offset, &maxsize) : 0;
+    const char* allocator_name =
+        (mem && mem->allocator && mem->allocator->mem_type) ? mem->allocator->mem_type : "<null>";
+    std::fprintf(stderr, "[stage][holder]   mem[%u] allocator=%s size=%zu offset=%zu max=%zu\n",
+                 static_cast<unsigned>(i), allocator_name, static_cast<size_t>(size),
+                 static_cast<size_t>(offset), static_cast<size_t>(maxsize));
+  }
+  gst_buffer_unref(buf);
+}
+
+void log_stage_group_nodes(const char* stage_name,
+                           const std::vector<std::shared_ptr<Node>>& group) {
+  if (!stage_debug_enabled())
+    return;
+  std::fprintf(stderr, "[stage][group] %s nodes=%zu\n", stage_name ? stage_name : "unknown",
+               group.size());
+  size_t index = 0;
+  for (const auto& node : group) {
+    const std::string kind = node ? node->kind() : std::string("<null>");
+    std::fprintf(stderr, "[stage][group] %s[%zu]=%s\n", stage_name ? stage_name : "unknown", index,
+                 kind.c_str());
+    ++index;
+  }
+}
+
+bool tensor_is_gst_sample_backed(const simaai::neat::Tensor& tensor) {
+  return tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample &&
+         static_cast<bool>(tensor.storage->holder);
+}
+
+const simaai::neat::Tensor* find_gst_sample_backed_tensor_for_memory_view(const Sample& sample,
+                                                                          int memory_index) {
+  if (!sample_has_tensor_list(sample) || sample.tensors.empty()) {
+    return nullptr;
+  }
+
+  const simaai::neat::Tensor* first_backed = nullptr;
+  for (const auto& tensor : sample.tensors) {
+    if (!tensor.planes.empty() || !tensor_is_gst_sample_backed(tensor)) {
+      continue;
+    }
+    if (!first_backed) {
+      first_backed = &tensor;
+    }
+    if (memory_index >= 0 && (tensor.route.memory_index == memory_index ||
+                              tensor.route.physical_index == memory_index)) {
+      return &tensor;
+    }
+  }
+  return first_backed;
+}
+
+void log_stage_output_sample(const char* stage_name, const Sample& sample) {
+  if (!stage_debug_enabled())
+    return;
+  std::fprintf(stderr,
+               "[stage][sample] %s kind=%s payload_type=%d media=%s format=%s payload=%s caps=%s "
+               "owned=%d tensors=%zu fields=%zu output_index=%d logical_output_index=%d "
+               "memory_index=%d route_slot=%d segment=%s\n",
+               stage_name ? stage_name : "unknown", sample_kind_name(sample.kind),
+               static_cast<int>(sample.payload_type), sample.media_type.c_str(),
+               sample.format.c_str(), sample.payload_tag.c_str(), sample.caps_string.c_str(),
+               sample.owned ? 1 : 0, sample.tensors.size(), sample.fields.size(),
+               sample.output_index, sample.logical_output_index, sample.memory_index,
+               sample.route_slot,
+               sample.segment_name.empty() ? "<empty>" : sample.segment_name.c_str());
+  for (std::size_t i = 0; i < sample.tensors.size(); ++i) {
+    log_stage_tensor_holder_state(("sample.tensors[" + std::to_string(i) + "]").c_str(),
+                                  sample.tensors[i]);
+  }
 }
 
 int dtype_bytes(TensorDType dtype);
@@ -173,7 +735,28 @@ simaai::neat::ImageSpec::PixelFormat image_format_from_string(const std::string&
   return simaai::neat::ImageSpec::PixelFormat::UNKNOWN;
 }
 
+simaai::neat::FormatSpec preprocess_color_format_to_format_spec(PreprocessColorFormat fmt) {
+  switch (fmt) {
+  case PreprocessColorFormat::RGB:
+    return FormatSpec{FormatTag::RGB};
+  case PreprocessColorFormat::BGR:
+    return FormatSpec{FormatTag::BGR};
+  case PreprocessColorFormat::GRAY8:
+    return FormatSpec{FormatTag::GRAY8};
+  case PreprocessColorFormat::NV12:
+    return FormatSpec{FormatTag::NV12};
+  case PreprocessColorFormat::I420:
+    return FormatSpec{FormatTag::I420};
+  case PreprocessColorFormat::Auto:
+  default:
+    return FormatSpec{};
+  }
+}
+
 std::string format_from_tensor(const simaai::neat::Tensor& tensor) {
+  if (tensor.semantic.byte_stream.has_value()) {
+    return format_tag_to_string(FormatTag::ByteStream);
+  }
   if (tensor.semantic.tess.has_value()) {
     return upper_copy(tensor.semantic.tess->format);
   }
@@ -185,23 +768,40 @@ std::string format_from_tensor(const simaai::neat::Tensor& tensor) {
   return "";
 }
 
-simaai::neat::Tensor require_tessellated_int8(simaai::neat::Tensor tensor, const char* where) {
+simaai::neat::Tensor require_supported_tessellated_dtype(simaai::neat::Tensor tensor,
+                                                         const char* where) {
   const std::string prefix = (where && *where) ? (std::string(where) + ": ") : "";
   if (!tensor.storage) {
-    throw std::runtime_error(prefix + "tessellated int8: missing tensor storage");
+    throw std::runtime_error(prefix + "tessellated tensor: missing tensor storage");
   }
+
   const std::string fmt = format_from_tensor(tensor);
-  if (!is_tessellated_int8_format(fmt)) {
-    throw std::runtime_error(prefix + "tessellated int8: unexpected format: " + fmt);
+  const bool fmt_int8 = is_tessellated_int8_format(fmt);
+  const bool fmt_bf16 = is_tessellated_bf16_format(fmt);
+  const bool fmt_int16 = (!fmt.empty() && (fmt.find("INT16") != std::string::npos ||
+                                           fmt.find("EVXX_INT16") != std::string::npos));
+  const bool dtype_int8 = (tensor.dtype == TensorDType::Int8 || tensor.dtype == TensorDType::UInt8);
+  const bool dtype_bf16 = (tensor.dtype == TensorDType::BFloat16);
+  const bool dtype_int16 =
+      (tensor.dtype == TensorDType::Int16 || tensor.dtype == TensorDType::UInt16);
+
+  if (!(fmt_int8 || fmt_bf16 || fmt_int16 || dtype_int8 || dtype_bf16 || dtype_int16)) {
+    throw std::runtime_error(prefix + "tessellated tensor: unsupported dtype/format: dtype=" +
+                             std::string(dtype_name(tensor.dtype)) + " format=" + fmt);
   }
-  if (tensor.dtype == TensorDType::UInt8) {
+
+  if (fmt_int8 && tensor.dtype == TensorDType::UInt8) {
     tensor.dtype = TensorDType::Int8;
   }
-  if (!tensor.semantic.tess.has_value()) {
+  if (fmt_int16 && tensor.dtype == TensorDType::UInt16) {
+    tensor.dtype = TensorDType::Int16;
+  }
+
+  if (!fmt.empty() && !tensor.semantic.tess.has_value()) {
     simaai::neat::TessSpec tess;
     tess.format = fmt;
     tensor.semantic.tess = tess;
-  } else {
+  } else if (!fmt.empty()) {
     tensor.semantic.tess->format = fmt;
   }
   return tensor;
@@ -240,29 +840,100 @@ int64_t tensor_total_bytes(const simaai::neat::Tensor& tensor) {
   return tensor_dense_bytes_tight(tensor);
 }
 
-const nlohmann::json* config_json_from_group(const NodeGroup& group) {
-  for (const auto& node : group.nodes()) {
-    if (!node)
-      continue;
-    auto* provider = dynamic_cast<ConfigJsonProvider*>(node.get());
-    if (!provider)
-      continue;
-    const nlohmann::json* cfg = provider->config_json();
-    if (cfg)
-      return cfg;
+std::string tensor_primary_segment_name(const simaai::neat::Tensor& tensor) {
+  if (!tensor.route.segment_name.empty()) {
+    return tensor.route.segment_name;
   }
-  return nullptr;
+  if (tensor.storage && !tensor.storage->sima_segments.empty()) {
+    int memory_index = tensor.route.memory_index;
+    if (memory_index < 0) {
+      memory_index = tensor.route.physical_index;
+    }
+    std::size_t segment_index = 0U;
+    if (memory_index >= 0 &&
+        static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size()) {
+      segment_index = static_cast<std::size_t>(memory_index);
+    }
+    if (!tensor.storage->sima_segments[segment_index].name.empty()) {
+      return tensor.storage->sima_segments[segment_index].name;
+    }
+  }
+  return {};
 }
 
-void dump_config_json(const NodeGroup& group, const char* label) {
-  if (!stage_debug_enabled())
-    return;
-  const nlohmann::json* cfg = config_json_from_group(group);
-  if (!cfg) {
-    std::fprintf(stderr, "[DBG] StageRun %s config: <none>\n", label ? label : "");
+std::string sample_primary_segment_name(const Sample& sample) {
+  if (sample_has_tensor_list(sample) && !sample.tensors.empty()) {
+    const std::string tensor_name = tensor_primary_segment_name(sample.tensors.front());
+    if (!tensor_name.empty()) {
+      return tensor_name;
+    }
+  }
+  if (!sample.segment_name.empty()) {
+    return sample.segment_name;
+  }
+  if (sample.kind == SampleKind::Bundle && !sample.fields.empty()) {
+    return sample_primary_segment_name(sample.fields.front());
+  }
+  return {};
+}
+
+void apply_stage_source_segment_name(WireCaps* wire, const Sample& sample) {
+  if (!wire) {
     return;
   }
-  std::fprintf(stderr, "[DBG] StageRun %s config:\n%s\n", label ? label : "", cfg->dump(2).c_str());
+  const std::string segment_name = sample_primary_segment_name(sample);
+  if (!segment_name.empty()) {
+    wire->buffer_name = segment_name;
+  }
+}
+
+int64_t tensor_primary_segment_size(const simaai::neat::Tensor& tensor) {
+  if (!tensor.storage || tensor.storage->sima_segments.empty()) {
+    return 0;
+  }
+  if (!tensor.route.segment_name.empty()) {
+    for (const auto& segment : tensor.storage->sima_segments) {
+      if (segment.name == tensor.route.segment_name) {
+        return static_cast<int64_t>(segment.size_bytes);
+      }
+    }
+  }
+  int memory_index = tensor.route.memory_index;
+  if (memory_index < 0) {
+    memory_index = tensor.route.physical_index;
+  }
+  std::size_t segment_index = 0U;
+  if (memory_index >= 0 &&
+      static_cast<std::size_t>(memory_index) < tensor.storage->sima_segments.size()) {
+    segment_index = static_cast<std::size_t>(memory_index);
+  }
+  return static_cast<int64_t>(tensor.storage->sima_segments[segment_index].size_bytes);
+}
+
+int64_t tensor_sample_memory_size(const simaai::neat::Tensor& tensor, int memory_index) {
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(tensor);
+  if (!holder) {
+    return 0;
+  }
+  GstBuffer* buffer = pipeline_internal::buffer_from_tensor_holder(holder);
+  if (!buffer) {
+    return 0;
+  }
+  const guint n_mems = gst_buffer_n_memory(buffer);
+  if (n_mems == 0U) {
+    gst_buffer_unref(buffer);
+    return 0;
+  }
+  guint index = 0U;
+  if (memory_index >= 0 && static_cast<guint>(memory_index) < n_mems) {
+    index = static_cast<guint>(memory_index);
+  }
+  GstMemory* mem = gst_buffer_peek_memory(buffer, index);
+  gsize offset = 0;
+  gsize maxsize = 0;
+  const gsize size = mem ? gst_memory_get_sizes(mem, &offset, &maxsize) : 0;
+  gst_buffer_unref(buffer);
+  return static_cast<int64_t>(size);
 }
 
 TensorDims dims_from_tensor(const simaai::neat::Tensor& tensor) {
@@ -322,25 +993,45 @@ void apply_tensor_hw(simaai::neat::Tensor& tensor, const TensorDims& dims) {
   }
 }
 
-void apply_tensor_size(simaai::neat::Tensor& tensor, int64_t size_bytes) {
-  if (size_bytes <= 0)
-    return;
-  const int elem_size = dtype_bytes(tensor.dtype);
-  if (elem_size <= 0)
-    return;
-  const int64_t elems = size_bytes / elem_size;
-  if (elems <= 0)
-    return;
-  tensor.shape = {1, elems, 1};
-  tensor.strides_bytes = {static_cast<int64_t>(elems * elem_size), static_cast<int64_t>(elem_size),
-                          static_cast<int64_t>(elem_size)};
+std::optional<TensorDType> tensor_dtype_from_declared_format(const std::string& fmt) {
+  if (fmt.empty()) {
+    return std::nullopt;
+  }
+  const std::string up = upper_copy(fmt);
+  auto contains = [&](const char* token) {
+    return token && *token && up.find(token) != std::string::npos;
+  };
+
+  if (contains("BFLOAT16") || contains("BF16")) {
+    return TensorDType::BFloat16;
+  }
+  if (contains("UINT16")) {
+    return TensorDType::UInt16;
+  }
+  if (contains("INT16")) {
+    return TensorDType::Int16;
+  }
+  if (contains("UINT8")) {
+    return TensorDType::UInt8;
+  }
+  if (contains("INT8")) {
+    return TensorDType::Int8;
+  }
+  if (contains("FLOAT64") || contains("FP64")) {
+    return TensorDType::Float64;
+  }
+  if (contains("FLOAT32") || contains("FP32")) {
+    return TensorDType::Float32;
+  }
+  if (contains("INT32")) {
+    return TensorDType::Int32;
+  }
+  return std::nullopt;
 }
 
 void apply_tensor_dtype_from_format(simaai::neat::Tensor& tensor, const std::string& fmt) {
-  if (is_tessellated_int8_format(fmt)) {
-    tensor.dtype = TensorDType::Int8;
-  } else if (is_tessellated_bf16_format(fmt)) {
-    tensor.dtype = TensorDType::BFloat16;
+  if (const auto parsed = tensor_dtype_from_declared_format(fmt); parsed.has_value()) {
+    tensor.dtype = *parsed;
   }
   if (!fmt.empty()) {
     if (!tensor.semantic.tess.has_value()) {
@@ -355,124 +1046,352 @@ void apply_tensor_dtype_from_format(simaai::neat::Tensor& tensor, const std::str
 
 void apply_preproc_output_override(simaai::neat::Tensor& tensor, const PreprocOutputInfo& info) {
   // JSON config overrides caps. Preproc caps can remain RGB even when tessellated.
-  apply_tensor_dims(tensor, info.dims);
-  if (!info.tessellate || info.output_dtype.empty())
+  if (info.transport_kind == PreprocOutputTransportKind::Dense) {
+    apply_tensor_dims(tensor, info.logical_dims);
+    if (info.logical_layout != TensorLayout::Unknown) {
+      tensor.layout = info.logical_layout;
+    }
+  }
+  if (info.output_dtype.empty())
     return;
   const std::string fmt = upper_copy(info.output_dtype);
   apply_tensor_dtype_from_format(tensor, fmt);
 }
 
-int tessellated_memory_index(const PreprocOutputInfo& info) {
-  for (size_t i = 0; i < info.output_memory_order.size(); ++i) {
-    const std::string up = upper_copy(info.output_memory_order[i]);
-    if (up == "OUTPUT_TESSELLATED_IMAGE") {
-      return static_cast<int>(i);
+int resolve_preproc_selected_memory_index(const Sample& sample, const PreprocOutputInfo& info) {
+  if (!find_gst_sample_backed_tensor_for_memory_view(sample, -1)) {
+    return -1;
+  }
+  pipeline_internal::TensorBufferView view;
+  std::string view_err;
+  if (!pipeline_internal::tensor_buffer_view_from_sample(sample, &view, &view_err) ||
+      !view.buffer) {
+    throw std::runtime_error("Preproc: tensor buffer descriptor unavailable: " + view_err);
+  }
+  auto memory_index_for = [](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+    return tensor.memory_index >= 0 ? tensor.memory_index : tensor.physical_index;
+  };
+  const auto find_tensor =
+      [&](const auto& pred) -> const pipeline_internal::TensorBufferTensorDescriptor* {
+    const auto it = std::find_if(view.tensors.begin(), view.tensors.end(), pred);
+    return it == view.tensors.end() ? nullptr : &(*it);
+  };
+  const auto output_name_matches =
+      [&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+        return !info.primary_output_name.empty() &&
+               (tensor.logical_name == info.primary_output_name ||
+                tensor.segment_name == info.primary_output_name ||
+                tensor.backend_name == info.primary_output_name);
+      };
+
+  if (const auto* tensor_view =
+          find_tensor([&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+            return tensor.route_slot == info.primary_route_slot && output_name_matches(tensor);
+          })) {
+    return memory_index_for(*tensor_view);
+  }
+  if (const auto* tensor_view = find_tensor(output_name_matches)) {
+    return memory_index_for(*tensor_view);
+  }
+  if (info.primary_route_slot >= 0) {
+    if (const auto* tensor_view =
+            find_tensor([&](const pipeline_internal::TensorBufferTensorDescriptor& tensor) {
+              return tensor.route_slot == info.primary_route_slot;
+            })) {
+      return memory_index_for(*tensor_view);
     }
   }
-  return info.output_memory_order.empty() ? 0 : 0;
+  if (view.tensors.size() == 1U) {
+    return memory_index_for(view.tensors.front());
+  }
+
+  std::ostringstream detail;
+  detail << "Preproc: failed to resolve selected output '" << info.primary_output_name
+         << "' route_slot=" << info.primary_route_slot << " descriptors=[";
+  for (std::size_t i = 0; i < view.tensors.size(); ++i) {
+    const auto& tensor = view.tensors[i];
+    if (i > 0) {
+      detail << "; ";
+    }
+    detail << "{slot=" << tensor.route_slot << ",logical='" << tensor.logical_name << "',backend='"
+           << tensor.backend_name << "',segment='" << tensor.segment_name
+           << "',memory=" << tensor.memory_index << ",physical=" << tensor.physical_index << "}";
+  }
+  detail << "]";
+  throw std::runtime_error(detail.str());
+}
+
+TensorDims mla_output_dims_from_shape(const std::vector<int64_t>& shape) {
+  TensorDims dims;
+  if (shape.size() >= 3U) {
+    dims.height = static_cast<int>(shape[shape.size() - 3U]);
+    dims.width = static_cast<int>(shape[shape.size() - 2U]);
+    dims.depth = static_cast<int>(shape[shape.size() - 1U]);
+  } else if (shape.size() == 2U) {
+    dims.height = static_cast<int>(shape[0]);
+    dims.width = static_cast<int>(shape[1]);
+    dims.depth = 1;
+  } else if (shape.size() == 1U) {
+    dims.width = static_cast<int>(shape[0]);
+    dims.height = 1;
+    dims.depth = 1;
+  }
+  return dims;
+}
+
+MlaOutputInfo mla_output_info_from_contract_tensor(const MlaOutputTensorInfo& contract) {
+  MlaOutputInfo info;
+  info.data_type = contract.data_type;
+  info.logical_data_type = contract.data_type;
+  info.logical_shape = contract.shape;
+  info.output_format = contract.output_format;
+  info.layout = contract.layout;
+  info.size_bytes = contract.size_bytes;
+  info.dims = mla_output_dims_from_shape(contract.shape);
+  return info;
+}
+
+int64_t mla_logical_bytes_from_dims(const MlaOutputInfo& info) {
+  if (info.dims.width <= 0 || info.dims.height <= 0 || info.dims.depth <= 0) {
+    return 0;
+  }
+  const std::string dtype_token =
+      !info.logical_data_type.empty() ? info.logical_data_type : info.data_type;
+  const auto parsed = tensor_dtype_from_declared_format(upper_copy(dtype_token));
+  if (!parsed.has_value()) {
+    return 0;
+  }
+  const int elem = dtype_bytes(*parsed);
+  if (elem <= 0) {
+    return 0;
+  }
+  return static_cast<int64_t>(info.dims.width) * static_cast<int64_t>(info.dims.height) *
+         static_cast<int64_t>(info.dims.depth) * static_cast<int64_t>(elem);
+}
+
+bool mla_info_indicates_packed_envelope(const MlaOutputInfo& info) {
+  const int64_t logical_bytes = mla_logical_bytes_from_dims(info);
+  return logical_bytes > 0 && info.size_bytes > logical_bytes;
+}
+
+void enforce_pre_mla_input_bytes_guard(const simaai::neat::Tensor& selected_input,
+                                       const std::vector<std::shared_ptr<Node>>& infer_group,
+                                       const simaai::neat::Model& model, const char* stage_name) {
+  if (!shadow_change_env_enabled()) {
+    return;
+  }
+  const MlaInputTensorInfo mla_input = stage_mla_input_tensor_info(infer_group);
+  const int64_t contract_logical_bytes = mla_input.span_size_bytes;
+  const std::string contract_input_dtype = mla_input.logical_dtype;
+  if (contract_logical_bytes <= 0 || contract_input_dtype.empty()) {
+    throw std::runtime_error("StageRun: missing strict MLA input contract from rendered manifest");
+  }
+
+  // Byte-contract semantics:
+  // - handle_bytes: physical backing memory bytes (allocator segment / GstMemory holder).
+  // - runtime_logical_bytes: bytes implied by selected tensor shape/dtype at runtime.
+  // - contract_logical_bytes: strict MLA input bytes from MPK-derived contract.
+  int64_t handle_bytes = tensor_primary_segment_size(selected_input);
+  std::string selected_tensor = tensor_primary_segment_name(selected_input);
+  if (handle_bytes <= 0) {
+    handle_bytes = tensor_sample_memory_size(selected_input, 0);
+  }
+  const int64_t runtime_logical_bytes = tensor_total_bytes(selected_input);
+  if (selected_tensor.empty()) {
+    selected_tensor = "output_tensor";
+  }
+
+  const auto route_flags = simaai::neat::internal::ModelAccess::preprocess_contract_flags(model);
+  const std::string model_id = simaai::neat::internal::ModelAccess::model_id(model);
+  const DTypeFamily runtime_dtype = dtype_family_from_tensor_dtype(selected_input.dtype);
+  const DTypeFamily contract_dtype = dtype_family_from_token(contract_input_dtype);
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(selected_input);
+  GstBuffer* buffer = holder ? pipeline_internal::buffer_from_tensor_holder(holder) : nullptr;
+  const guint holder_memories = buffer ? gst_buffer_n_memory(buffer) : 0U;
+  if (buffer) {
+    gst_buffer_unref(buffer);
+  }
+
+  auto fail_guard = [&](const char* code, const char* detail) {
+    std::fprintf(stderr,
+                 "[stage][pre-mla-guard] code=%s stage=%s component=StageRun detail=%s "
+                 "model_id=%s selected_tensor=%s handle_bytes=%lld runtime_logical_bytes=%lld "
+                 "contract_logical_bytes=%lld runtime_dtype=%s contract_dtype=%s "
+                 "contract_input_dtype=%s holder_memories=%u quant_needed=%d tess_needed=%d\n",
+                 code ? code : "PRE_MLA_INPUT_GUARD_FAILED", stage_name ? stage_name : "Infer",
+                 detail ? detail : "byte_contract_failure", model_id.c_str(),
+                 selected_tensor.c_str(), static_cast<long long>(handle_bytes),
+                 static_cast<long long>(runtime_logical_bytes),
+                 static_cast<long long>(contract_logical_bytes), dtype_family_name(runtime_dtype),
+                 dtype_family_name(contract_dtype), contract_input_dtype.c_str(),
+                 static_cast<unsigned>(holder_memories), route_flags.quant_needed ? 1 : 0,
+                 route_flags.tess_needed ? 1 : 0);
+    std::ostringstream oss;
+    oss << "StageRun pre-MLA guard failed: code=" << (code ? code : "PRE_MLA_INPUT_GUARD_FAILED")
+        << " stage=" << (stage_name ? stage_name : "Infer") << " model_id=" << model_id
+        << " selected_tensor=" << selected_tensor << " handle_bytes=" << handle_bytes
+        << " runtime_logical_bytes=" << runtime_logical_bytes
+        << " contract_logical_bytes=" << contract_logical_bytes
+        << " runtime_dtype=" << dtype_family_name(runtime_dtype)
+        << " contract_dtype=" << dtype_family_name(contract_dtype)
+        << " contract_input_dtype=" << contract_input_dtype
+        << " holder_memories=" << holder_memories
+        << " detail=" << (detail ? detail : "byte_contract_failure")
+        << " quant_needed=" << (route_flags.quant_needed ? 1 : 0)
+        << " tess_needed=" << (route_flags.tess_needed ? 1 : 0);
+    throw std::runtime_error(oss.str());
+  };
+
+  if (handle_bytes <= 0) {
+    fail_guard("PRE_MLA_INPUT_HANDLE_UNKNOWN", "handle_bytes_unavailable");
+  }
+  if (runtime_logical_bytes <= 0) {
+    fail_guard("PRE_MLA_INPUT_RUNTIME_UNKNOWN", "runtime_logical_bytes_unavailable");
+  }
+  if (contract_dtype != DTypeFamily::Unknown && runtime_dtype != DTypeFamily::Unknown &&
+      runtime_dtype != contract_dtype) {
+    fail_guard("PRE_MLA_INPUT_DTYPE_MISMATCH", "runtime_dtype_ne_contract_input_dtype");
+  }
+  if (handle_bytes < runtime_logical_bytes) {
+    fail_guard("PRE_MLA_INPUT_HANDLE_TOO_SMALL", "handle_lt_runtime_logical");
+  }
+  if (runtime_logical_bytes != contract_logical_bytes) {
+    fail_guard("PRE_MLA_INPUT_CONTRACT_MISMATCH", "runtime_logical_ne_contract_logical");
+  }
+  if (stage_debug_enabled()) {
+    std::fprintf(stderr,
+                 "[stage][pre-mla-guard] code=PRE_MLA_INPUT_SIZE_OK stage=%s component=StageRun "
+                 "detail=byte_contract_match model_id=%s selected_tensor=%s handle_bytes=%lld "
+                 "runtime_logical_bytes=%lld contract_logical_bytes=%lld runtime_dtype=%s "
+                 "contract_dtype=%s contract_input_dtype=%s holder_memories=%u quant_needed=%d "
+                 "tess_needed=%d\n",
+                 stage_name ? stage_name : "Infer", model_id.c_str(), selected_tensor.c_str(),
+                 static_cast<long long>(handle_bytes),
+                 static_cast<long long>(runtime_logical_bytes),
+                 static_cast<long long>(contract_logical_bytes), dtype_family_name(runtime_dtype),
+                 dtype_family_name(contract_dtype), contract_input_dtype.c_str(),
+                 static_cast<unsigned>(holder_memories), route_flags.quant_needed ? 1 : 0,
+                 route_flags.tess_needed ? 1 : 0);
+  }
 }
 
 void apply_mla_output_override(simaai::neat::Tensor& tensor, const MlaOutputInfo& info) {
   // JSON config overrides caps. MLA caps can be "MLA" even though dtype is INT8/BF16.
-  apply_tensor_dims(tensor, info.dims);
-  if (!info.data_type.empty()) {
-    const std::string fmt = upper_copy(info.data_type);
+  const std::string dtype_for_tensor =
+      !info.logical_data_type.empty() ? info.logical_data_type : info.data_type;
+  if (!dtype_for_tensor.empty()) {
+    const std::string fmt = upper_copy(dtype_for_tensor);
     apply_tensor_dtype_from_format(tensor, fmt);
   }
-  if (info.dims.width <= 0 || info.dims.height <= 0 || info.dims.depth <= 0) {
-    apply_tensor_size(tensor, info.size_bytes);
-  }
-}
-
-bool set_input_buffer_name(nlohmann::json& j, const std::string& name) {
-  if (name.empty())
-    return false;
-  bool changed = false;
-  if (j.contains("input_buffers") && j["input_buffers"].is_array()) {
-    auto& arr = j["input_buffers"];
-    if (arr.size() > 1 && arr[0].is_object()) {
-      arr[0]["name"] = name;
-      changed = true;
+  if (!info.logical_shape.empty()) {
+    tensor.shape = info.logical_shape;
+    const int64_t elem = dtype_bytes(tensor.dtype);
+    if (elem > 0) {
+      tensor.strides_bytes =
+          simaai::neat::pipeline_internal::contiguous_strides_bytes(tensor.shape, elem);
     }
-  }
-  if (j.contains("buffers") && j["buffers"].is_object()) {
-    auto& buffers = j["buffers"];
-    if (buffers.contains("input") && buffers["input"].is_array()) {
-      auto& arr = buffers["input"];
-      if (arr.size() > 1 && arr[0].is_object()) {
-        arr[0]["name"] = name;
-        changed = true;
-      }
-    }
-  }
-  return changed;
-}
-
-void override_buffer_name(NodeGroup& group, const std::string& name, const char* tag) {
-  if (name.empty())
-    return;
-  const std::string tag_str = tag ? tag : "";
-  for (auto& node : group.nodes_mut()) {
-    if (!node)
-      continue;
-    auto* override = dynamic_cast<ConfigJsonOverride*>(node.get());
-    if (!override)
-      continue;
-    override->override_config_json([&](nlohmann::json& j) { (void)set_input_buffer_name(j, name); },
-                                   tag_str);
+  } else {
+    apply_tensor_dims(tensor, info.dims);
   }
 }
 
-std::string pick_caps_format(const nlohmann::json& caps) {
-  if (!caps.contains("sink_pads") || !caps["sink_pads"].is_array() || caps["sink_pads"].empty() ||
-      !caps["sink_pads"][0].is_object()) {
-    return "";
-  }
-  const auto& sink = caps["sink_pads"][0];
-  if (!sink.contains("params") || !sink["params"].is_array())
-    return "";
-  for (const auto& param : sink["params"]) {
-    if (!param.is_object())
-      continue;
-    if (!param.contains("name") || !param["name"].is_string())
-      continue;
-    if (param["name"].get<std::string>() != "format")
-      continue;
-    if (!param.contains("values") || !param["values"].is_string())
-      continue;
-    const std::string values = upper_copy(param["values"].get<std::string>());
-    if (values.find("BGR") != std::string::npos)
-      return "BGR";
-    if (values.find("RGB") != std::string::npos)
-      return "RGB";
-    if (!values.empty()) {
-      const size_t comma = values.find(',');
-      return values.substr(0, comma == std::string::npos ? values.size() : comma);
-    }
-  }
-  return "";
-}
-
-WireCaps build_wire_caps_from_json_or_tensor(const NodeGroup& group,
-                                             const simaai::neat::Tensor& input,
-                                             const TensorDims* dims_override,
-                                             const char* media_type, const char* default_format,
-                                             bool use_json_overrides) {
+WireCaps build_wire_caps_from_tensor(const std::vector<std::shared_ptr<Node>>& group,
+                                     const simaai::neat::Tensor& input,
+                                     const TensorDims* dims_override, const char* media_type,
+                                     const char* default_format) {
   WireCaps wire;
   wire.media_type = media_type ? media_type : "application/vnd.simaai.tensor";
   wire.format = default_format ? default_format : format_from_tensor(input);
   wire.dims = dims_override ? *dims_override : dims_from_tensor(input);
-  wire.buffer_name = buffer_name_from_group(group);
+  wire.buffer_name = stage_primary_input_buffer_name(group);
+  return wire;
+}
 
-  if (use_json_overrides) {
-    const nlohmann::json* cfg = config_json_from_group(group);
-    if (cfg && cfg->contains("caps") && (*cfg)["caps"].is_object()) {
-      const std::string fmt = pick_caps_format((*cfg)["caps"]);
-      if (!fmt.empty())
-        wire.format = fmt;
+std::string wire_caps_format_from_dtype_token(const std::string& dtype_token,
+                                              const std::string& fallback_format) {
+  const std::string fallback = !fallback_format.empty() ? fallback_format : std::string("INT8");
+  const FormatSpec fallback_spec{fallback};
+  if (fallback_spec.tag == FormatTag::ByteStream) {
+    return format_tag_to_string(FormatTag::ByteStream);
+  }
+  if (dtype_token.empty()) {
+    return fallback;
+  }
+  const std::string up = upper_copy(dtype_token);
+  if (up == "INT8") {
+    return "EVXX_INT8";
+  }
+  if (up == "BF16" || up == "BFLOAT16") {
+    return "EVXX_BFLOAT16";
+  }
+  if (up == "FP32" || up == "FLOAT32") {
+    return "FP32";
+  }
+  if (up == "FP64" || up == "FLOAT64") {
+    return "FP64";
+  }
+  if (up == "INT16" || up == "UINT16" || up == "INT32" || up == "UINT8") {
+    return up;
+  }
+  return up;
+}
+
+// Boundary/wire helper only. This projects legacy width/height/depth views from
+// contract shape + layout and must not be treated as semantic tensor truth.
+TensorDims contract_tensor_dims_projection_from_shape(std::vector<int64_t> shape,
+                                                      TensorLayout layout) {
+  if (shape.size() >= 4U && shape.front() == 1) {
+    shape.erase(shape.begin());
+  }
+  TensorDims dims;
+  if (shape.size() >= 3U && layout != TensorLayout::CHW && layout != TensorLayout::HWC) {
+    return dims;
+  }
+  const bool chw_like = layout == TensorLayout::CHW;
+  if (shape.size() >= 3U) {
+    const int64_t a = shape[shape.size() - 3U];
+    const int64_t b = shape[shape.size() - 2U];
+    const int64_t c = shape[shape.size() - 1U];
+    if (chw_like) {
+      dims.depth = static_cast<int>(a);
+      dims.height = static_cast<int>(b);
+      dims.width = static_cast<int>(c);
+    } else {
+      dims.height = static_cast<int>(a);
+      dims.width = static_cast<int>(b);
+      dims.depth = static_cast<int>(c);
     }
+  } else if (shape.size() == 2U) {
+    dims.height = static_cast<int>(shape[0]);
+    dims.width = static_cast<int>(shape[1]);
+    dims.depth = 1;
+  } else if (shape.size() == 1U) {
+    dims.width = static_cast<int>(shape[0]);
+    dims.height = 1;
+    dims.depth = 1;
+  }
+  return dims;
+}
+
+WireCaps
+build_mla_wire_caps_from_contract_or_tensor(const std::vector<std::shared_ptr<Node>>& group,
+                                            const simaai::neat::Tensor& input) {
+  const MlaInputTensorInfo mla_input = stage_mla_input_tensor_info(group);
+  if (mla_input.span_size_bytes <= 0 || mla_input.logical_dtype.empty()) {
+    throw std::runtime_error("StageRun: missing strict MLA wire contract in rendered manifest");
   }
 
+  WireCaps wire;
+  wire.media_type =
+      !mla_input.media_type.empty() ? mla_input.media_type : "application/vnd.simaai.tensor";
+  wire.format =
+      wire_caps_format_from_dtype_token(mla_input.logical_dtype, format_from_tensor(input));
+  wire.dims = mla_input.physical_shape.has_value()
+                  ? contract_tensor_dims_projection_from_shape(*mla_input.physical_shape,
+                                                               mla_input.logical_layout)
+                  : contract_tensor_dims_projection_from_shape(mla_input.logical_shape,
+                                                               mla_input.logical_layout);
+  wire.buffer_name = stage_primary_input_buffer_name(group);
   return wire;
 }
 
@@ -486,6 +1405,7 @@ WireInput build_wire_input_from_tensor(const simaai::neat::Tensor& input, const 
     if (wire.media_type == "video/x-raw") {
       out.tensor.dtype = TensorDType::UInt8;
       out.tensor.semantic.tess.reset();
+      out.tensor.semantic.byte_stream.reset();
       if (!out.tensor.semantic.image.has_value()) {
         simaai::neat::ImageSpec image;
         image.format = image_format_from_string(fmt);
@@ -494,7 +1414,12 @@ WireInput build_wire_input_from_tensor(const simaai::neat::Tensor& input, const 
         out.tensor.semantic.image->format = image_format_from_string(fmt);
       }
     } else {
-      if (!out.tensor.semantic.tess.has_value()) {
+      const FormatSpec fmt_spec{fmt};
+      if (fmt_spec.tag == FormatTag::ByteStream) {
+        out.tensor.semantic.tess.reset();
+        out.tensor.semantic.byte_stream = simaai::neat::ByteStreamSpec{};
+        out.tensor.layout = TensorLayout::Unknown;
+      } else if (!out.tensor.semantic.tess.has_value()) {
         simaai::neat::TessSpec tess;
         tess.format = fmt;
         out.tensor.semantic.tess = tess;
@@ -504,15 +1429,6 @@ WireInput build_wire_input_from_tensor(const simaai::neat::Tensor& input, const 
     }
   }
   apply_tensor_hw(out.tensor, wire.dims);
-  if (out.tensor.layout == TensorLayout::Unknown || out.tensor.layout == TensorLayout::Planar) {
-    const int64_t h = (out.tensor.shape.size() > 0) ? out.tensor.shape[0] : -1;
-    const int64_t w = (out.tensor.shape.size() > 1) ? out.tensor.shape[1] : -1;
-    const int64_t d = (out.tensor.shape.size() > 2) ? out.tensor.shape[2] : -1;
-    if (h > 0 && w > 0) {
-      out.tensor.layout =
-          (out.tensor.shape.size() >= 3 && d > 0) ? TensorLayout::HWC : TensorLayout::HW;
-    }
-  }
   out.appsrc = appsrc_for_tensor_wire(out.tensor, wire);
   if (!wire.caps_override.empty()) {
     out.appsrc.caps_override = wire.caps_override;
@@ -521,19 +1437,24 @@ WireInput build_wire_input_from_tensor(const simaai::neat::Tensor& input, const 
 }
 
 bool operator==(const StageInputKey& a, const StageInputKey& b) {
-  return a.media_type == b.media_type && a.format == b.format && a.width == b.width &&
-         a.height == b.height && a.depth == b.depth;
+  if (a.media_type != b.media_type || a.format != b.format) {
+    return false;
+  }
+  if (upper_copy(a.media_type) == "APPLICATION/VND.SIMAAI.TENSOR") {
+    return a.dtype == b.dtype && a.layout == b.layout && a.shape == b.shape;
+  }
+  return a.width == b.width && a.height == b.height && a.depth == b.depth;
 }
 
 bool operator==(const BoxDecodeOptions& a, const BoxDecodeOptions& b) {
-  return a.decode_type == b.decode_type && a.original_width == b.original_width &&
-         a.original_height == b.original_height && a.detection_threshold == b.detection_threshold &&
+  return a.decode_type == b.decode_type && a.detection_threshold == b.detection_threshold &&
          a.nms_iou_threshold == b.nms_iou_threshold && a.top_k == b.top_k;
 }
 
 bool operator==(const StageKey& a, const StageKey& b) {
   return a.kind == b.kind && a.model_id == b.model_id && a.input == b.input &&
-         a.box_opt == b.box_opt;
+         a.box_opt == b.box_opt && a.preproc_roi_capacity == b.preproc_roi_capacity &&
+         a.preproc_roi_source_batch_size == b.preproc_roi_source_batch_size;
 }
 
 size_t hash_combine(size_t seed, size_t v) {
@@ -546,15 +1467,23 @@ struct StageKeyHash {
     h = hash_combine(h, std::hash<std::string>()(k.model_id));
     h = hash_combine(h, std::hash<std::string>()(k.input.media_type));
     h = hash_combine(h, std::hash<std::string>()(k.input.format));
-    h = hash_combine(h, std::hash<int>()(k.input.width));
-    h = hash_combine(h, std::hash<int>()(k.input.height));
-    h = hash_combine(h, std::hash<int>()(k.input.depth));
-    h = hash_combine(h, std::hash<std::string>()(k.box_opt.decode_type));
-    h = hash_combine(h, std::hash<int>()(k.box_opt.original_width));
-    h = hash_combine(h, std::hash<int>()(k.box_opt.original_height));
+    if (upper_copy(k.input.media_type) == "APPLICATION/VND.SIMAAI.TENSOR") {
+      h = hash_combine(h, std::hash<int>()(static_cast<int>(k.input.dtype)));
+      h = hash_combine(h, std::hash<int>()(static_cast<int>(k.input.layout)));
+      for (const auto dim : k.input.shape) {
+        h = hash_combine(h, std::hash<int64_t>()(dim));
+      }
+    } else {
+      h = hash_combine(h, std::hash<int>()(k.input.width));
+      h = hash_combine(h, std::hash<int>()(k.input.height));
+      h = hash_combine(h, std::hash<int>()(k.input.depth));
+    }
+    h = hash_combine(h, std::hash<int>()(static_cast<int>(k.box_opt.decode_type)));
     h = hash_combine(h, std::hash<double>()(k.box_opt.detection_threshold));
     h = hash_combine(h, std::hash<double>()(k.box_opt.nms_iou_threshold));
     h = hash_combine(h, std::hash<int>()(k.box_opt.top_k));
+    h = hash_combine(h, std::hash<int>()(k.preproc_roi_capacity));
+    h = hash_combine(h, std::hash<int>()(k.preproc_roi_source_batch_size));
     return h;
   }
 };
@@ -562,46 +1491,9 @@ struct StageKeyHash {
 std::mutex g_cache_mu;
 std::unordered_map<StageKey, std::shared_ptr<Run>, StageKeyHash> g_cache;
 
-std::string buffer_name_from_json(const nlohmann::json& j) {
-  if (j.contains("input_buffers") && j["input_buffers"].is_array() && !j["input_buffers"].empty() &&
-      j["input_buffers"][0].is_object()) {
-    const auto& buf = j["input_buffers"][0];
-    if (buf.contains("name") && buf["name"].is_string()) {
-      return buf["name"].get<std::string>();
-    }
-  }
-
-  if (j.contains("buffers") && j["buffers"].is_object()) {
-    const auto& buffers = j["buffers"];
-    if (buffers.contains("input") && buffers["input"].is_array() && !buffers["input"].empty() &&
-        buffers["input"][0].is_object()) {
-      const auto& buf = buffers["input"][0];
-      if (buf.contains("name") && buf["name"].is_string()) {
-        return buf["name"].get<std::string>();
-      }
-    }
-  }
-
-  return "decoder";
-}
-
-std::string buffer_name_from_group(const NodeGroup& group) {
-  for (const auto& node : group.nodes()) {
-    if (!node)
-      continue;
-    auto* provider = dynamic_cast<ConfigJsonProvider*>(node.get());
-    if (!provider)
-      continue;
-    const nlohmann::json* cfg = provider->config_json();
-    if (cfg)
-      return buffer_name_from_json(*cfg);
-  }
-  return "decoder";
-}
-
-InputOptions appsrc_for_mat(const cv::Mat& input, const NodeGroup& group) {
+InputOptions appsrc_for_mat(const cv::Mat& input, const std::vector<std::shared_ptr<Node>>& group) {
   InputOptions opt;
-  opt.media_type = "video/x-raw";
+  opt.payload_type = PayloadType::Image;
   opt.width = input.cols;
   opt.height = input.rows;
   opt.depth = input.channels();
@@ -610,8 +1502,306 @@ InputOptions appsrc_for_mat(const cv::Mat& input, const NodeGroup& group) {
   } else {
     opt.format = "BGR";
   }
-  opt.buffer_name = buffer_name_from_group(group);
+  opt.buffer_name = stage_primary_input_buffer_name(group);
   return opt;
+}
+
+std::optional<PreprocessRuntimeMeta>
+preprocess_meta_from_tensor_or_holder(const simaai::neat::Tensor& tensor) {
+  if (tensor.semantic.preprocess.has_value()) {
+    return tensor.semantic.preprocess;
+  }
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(tensor);
+  if (!holder) {
+    return std::nullopt;
+  }
+  GstBuffer* buf = pipeline_internal::buffer_from_tensor_holder(holder);
+  if (!buf) {
+    return std::nullopt;
+  }
+  auto meta = read_simaai_preprocess_meta(buf);
+  gst_buffer_unref(buf);
+  return meta;
+}
+
+PreprocessMetaTemplate
+make_stage_preprocess_meta_template(const cv::Mat& input, const simaai::neat::Model& model,
+                                    const PreprocOutputInfo& preproc_info, InputOptions* src_opt,
+                                    const std::vector<PreprocessRoi>* runtime_rois) {
+  const auto resolved_preproc = model.resolved_preprocess_plan();
+  const auto contract_flags = simaai::neat::internal::ModelAccess::preprocess_contract_flags(model);
+
+  PreprocessMetaTemplate meta;
+  meta.enabled = true;
+  meta.quantize = contract_flags.quant_needed;
+  meta.tessellate = contract_flags.tess_needed;
+  meta.normalize = resolved_preproc.effective.normalize.enable == AutoFlag::On;
+
+  const auto in_fmt_spec =
+      preprocess_color_format_to_format_spec(resolved_preproc.effective.color_convert.input_format);
+  if (src_opt &&
+      resolved_preproc.effective.color_convert.input_format != PreprocessColorFormat::Auto &&
+      !in_fmt_spec.str().empty()) {
+    src_opt->format = in_fmt_spec.str();
+  }
+
+  if (resolved_preproc.effective.resize.enable == AutoFlag::On) {
+    meta.target_width = resolved_preproc.effective.resize.width;
+    meta.target_height = resolved_preproc.effective.resize.height;
+    meta.scaled_width = (resolved_preproc.effective.resize.width > 0)
+                            ? resolved_preproc.effective.resize.width
+                            : preproc_info.logical_dims.width;
+    meta.scaled_height = (resolved_preproc.effective.resize.height > 0)
+                             ? resolved_preproc.effective.resize.height
+                             : preproc_info.logical_dims.height;
+    switch (resolved_preproc.effective.resize.mode) {
+    case ResizeMode::Stretch:
+      meta.resize_mode = "stretch";
+      break;
+    case ResizeMode::Letterbox:
+      meta.resize_mode = "letterbox";
+      break;
+    case ResizeMode::Crop:
+      meta.resize_mode = "crop";
+      break;
+    }
+    meta.pad_value = resolved_preproc.effective.resize.pad_value;
+  } else {
+    meta.resize_mode = "none";
+  }
+
+  const auto out_fmt_spec = preprocess_color_format_to_format_spec(
+      resolved_preproc.effective.color_convert.output_format);
+  const std::string src_format = src_opt ? src_opt->format.str() : std::string{};
+  meta.color_in =
+      (resolved_preproc.effective.color_convert.input_format == PreprocessColorFormat::Auto)
+          ? src_format
+          : in_fmt_spec.str();
+  meta.color_out =
+      (resolved_preproc.effective.color_convert.output_format == PreprocessColorFormat::Auto)
+          ? std::string{}
+          : out_fmt_spec.str();
+  meta.axis_perm = resolved_preproc.effective.layout_convert.perm;
+
+  if (runtime_rois != nullptr) {
+    meta.roi_list_enabled = true;
+    meta.rois = *runtime_rois;
+    meta.roi_input_batch_size = 1;
+    meta.roi_source_width = input.cols;
+    meta.roi_source_height = input.rows;
+    meta.roi_source_stride_bytes = input.step[0] > 0 ? static_cast<int>(input.step[0])
+                                                     : input.cols * std::max(1, input.channels());
+    meta.roi_pad_value = meta.pad_value;
+  }
+  return meta;
+}
+
+std::vector<std::shared_ptr<Node>>
+clone_preproc_group_with_roi_capacity(const std::vector<std::shared_ptr<Node>>& group,
+                                      int roi_capacity) {
+  if (roi_capacity <= 0) {
+    throw std::invalid_argument("Preproc ROI-list: ROI capacity must be positive");
+  }
+  std::vector<std::shared_ptr<Node>> out;
+  out.reserve(group.size());
+  bool patched = false;
+  for (const auto& node : group) {
+    if (const auto* preproc = dynamic_cast<const simaai::neat::Preproc*>(node.get())) {
+      PreprocOptions opt = preproc->options();
+      opt.batch_size = roi_capacity;
+      out.push_back(simaai::neat::nodes::Preproc(std::move(opt)));
+      patched = true;
+    } else {
+      out.push_back(node);
+    }
+  }
+  if (!patched) {
+    throw std::runtime_error(
+        "Preproc ROI-list: model preproc route does not contain a Preproc stage");
+  }
+  return out;
+}
+
+struct PreprocSourceBatchGeometry {
+  int width = 0;
+  int height = 0;
+  int channels = 0;
+  int type = 0;
+  std::size_t row_bytes = 0;
+  std::size_t frame_bytes = 0;
+  std::size_t total_bytes = 0;
+};
+
+PreprocSourceBatchGeometry preproc_source_batch_geometry(const std::vector<cv::Mat>& inputs,
+                                                         const char* where) {
+  const std::string tag = where ? where : "Preproc ROI-list";
+  if (inputs.empty()) {
+    throw std::invalid_argument(tag + ": inputs must not be empty");
+  }
+  if (inputs.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument(tag + ": too many source images");
+  }
+  const cv::Mat& first = inputs.front();
+  if (first.empty()) {
+    throw std::invalid_argument(tag + ": input image is empty");
+  }
+  if (first.depth() != CV_8U || (first.channels() != 1 && first.channels() != 3)) {
+    throw std::invalid_argument(tag + ": ROI source batch supports CV_8UC1 or CV_8UC3 images");
+  }
+  if (first.cols <= 0 || first.rows <= 0) {
+    throw std::invalid_argument(tag + ": input image has invalid dimensions");
+  }
+
+  PreprocSourceBatchGeometry geom;
+  geom.width = first.cols;
+  geom.height = first.rows;
+  geom.channels = first.channels();
+  geom.type = first.type();
+  geom.row_bytes = static_cast<std::size_t>(geom.width) * static_cast<std::size_t>(geom.channels);
+  if (geom.height > 0 && geom.row_bytes > std::numeric_limits<std::size_t>::max() /
+                                              static_cast<std::size_t>(geom.height)) {
+    throw std::invalid_argument(tag + ": ROI source batch byte size overflow");
+  }
+  geom.frame_bytes = geom.row_bytes * static_cast<std::size_t>(geom.height);
+  if (geom.row_bytes == 0U || geom.frame_bytes == 0U ||
+      geom.row_bytes > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument(tag + ": input image byte geometry is invalid");
+  }
+  if (inputs.size() >
+      std::numeric_limits<std::size_t>::max() / std::max<std::size_t>(geom.frame_bytes, 1U)) {
+    throw std::invalid_argument(tag + ": ROI source batch byte size overflow");
+  }
+  geom.total_bytes = geom.frame_bytes * inputs.size();
+
+  for (std::size_t i = 1; i < inputs.size(); ++i) {
+    const cv::Mat& image = inputs[i];
+    if (image.empty()) {
+      throw std::invalid_argument(tag + ": input image is empty");
+    }
+    if (image.rows != geom.height || image.cols != geom.width || image.type() != geom.type) {
+      throw std::invalid_argument(
+          tag + ": ROI source batch images must have matching size, type, and channel count");
+    }
+  }
+  return geom;
+}
+
+PreprocSourceBatchGeometry validate_preproc_roi_list_request(const std::vector<cv::Mat>& inputs,
+                                                             const std::vector<PreprocessRoi>& rois,
+                                                             const char* where) {
+  const PreprocSourceBatchGeometry geom = preproc_source_batch_geometry(inputs, where);
+  const std::string tag = where ? where : "Preproc ROI-list";
+  if (rois.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+    throw std::invalid_argument(tag + ": too many ROIs");
+  }
+  for (const auto& roi : rois) {
+    if (roi.batch_index < 0 || static_cast<std::size_t>(roi.batch_index) >= inputs.size()) {
+      throw std::invalid_argument(tag + ": ROI batch_index is out of range");
+    }
+    if (roi.width <= 0 || roi.height <= 0) {
+      throw std::invalid_argument(tag + ": ROI width/height must be positive");
+    }
+  }
+  return geom;
+}
+
+std::string preproc_source_batch_format(const InputOptions& src_opt,
+                                        const PreprocSourceBatchGeometry& geom, const char* where) {
+  const std::string tag = where ? where : "Preproc ROI-list";
+  std::string fmt = upper_copy(src_opt.format.str());
+  if (fmt.empty()) {
+    fmt = (geom.channels == 1) ? "GRAY8" : "BGR";
+  }
+  if (fmt == "GRAY") {
+    fmt = "GRAY8";
+  }
+  if (geom.channels == 1) {
+    if (fmt != "GRAY8") {
+      throw std::invalid_argument(tag + ": GRAY8 input format requires CV_8UC1 images");
+    }
+    return fmt;
+  }
+  if (fmt != "BGR" && fmt != "RGB") {
+    throw std::invalid_argument(tag + ": RGB/BGR input format requires CV_8UC3 images");
+  }
+  return fmt;
+}
+
+simaai::neat::ImageSpec::PixelFormat
+image_pixel_format_from_preproc_format(const std::string& fmt) {
+  if (fmt == "RGB") {
+    return simaai::neat::ImageSpec::PixelFormat::RGB;
+  }
+  if (fmt == "GRAY8") {
+    return simaai::neat::ImageSpec::PixelFormat::GRAY8;
+  }
+  return simaai::neat::ImageSpec::PixelFormat::BGR;
+}
+
+simaai::neat::Tensor make_cpu_packed_preproc_source_batch_tensor(
+    const std::vector<cv::Mat>& inputs, const InputOptions& src_opt,
+    const PreprocessRuntimeMeta& runtime_meta, const char* where) {
+  const PreprocSourceBatchGeometry geom = preproc_source_batch_geometry(inputs, where);
+  const std::string fmt = preproc_source_batch_format(src_opt, geom, where);
+
+  auto storage = simaai::neat::make_cpu_owned_storage(geom.total_bytes);
+  {
+    simaai::neat::Mapping mapping = storage->map(simaai::neat::MapMode::Write);
+    if (!mapping.data || mapping.size_bytes < geom.total_bytes) {
+      throw std::runtime_error(std::string(where ? where : "Preproc ROI-list") +
+                               ": failed to map packed ROI source batch storage");
+    }
+    auto* dst = static_cast<std::uint8_t*>(mapping.data);
+    for (std::size_t n = 0; n < inputs.size(); ++n) {
+      const cv::Mat& image = inputs[n];
+      std::uint8_t* frame = dst + n * geom.frame_bytes;
+      for (int y = 0; y < geom.height; ++y) {
+        std::memcpy(frame + static_cast<std::size_t>(y) * geom.row_bytes, image.ptr(y),
+                    geom.row_bytes);
+      }
+    }
+  }
+
+  simaai::neat::Tensor tensor;
+  tensor.storage = storage;
+  tensor.dtype = simaai::neat::TensorDType::UInt8;
+  tensor.layout = simaai::neat::TensorLayout::HWC;
+  tensor.shape = {static_cast<int64_t>(inputs.size()), geom.height, geom.width, geom.channels};
+  tensor.strides_bytes = {static_cast<int64_t>(geom.frame_bytes),
+                          static_cast<int64_t>(geom.row_bytes), static_cast<int64_t>(geom.channels),
+                          1};
+  tensor.axis_semantics = {simaai::neat::TensorAxisSemantic::N, simaai::neat::TensorAxisSemantic::H,
+                           simaai::neat::TensorAxisSemantic::W,
+                           simaai::neat::TensorAxisSemantic::C};
+  tensor.device = {simaai::neat::DeviceType::CPU, 0};
+  tensor.byte_offset = 0;
+  tensor.read_only = true;
+  tensor.semantic.image =
+      simaai::neat::ImageSpec{image_pixel_format_from_preproc_format(fmt), std::string{}};
+  tensor.semantic.preprocess = runtime_meta;
+  return tensor;
+}
+
+simaai::neat::Tensor
+make_device_packed_preproc_source_batch_tensor(const std::vector<cv::Mat>& inputs,
+                                               const InputOptions& src_opt,
+                                               const PreprocessRuntimeMeta& runtime_meta) {
+  simaai::neat::Tensor cpu = make_cpu_packed_preproc_source_batch_tensor(
+      inputs, src_opt, runtime_meta, "Preproc ROI-list input");
+  const std::size_t device_bytes = cpu.dense_bytes_tight();
+  if (device_bytes == 0U) {
+    throw std::runtime_error("Preproc ROI-list: unable to determine ROI source batch byte size");
+  }
+  std::vector<Segment> segments{{"ifm0", device_bytes}};
+  simaai::neat::Tensor device = pipeline_internal::transfer_to_device(
+      cpu, simaai::neat::Device{simaai::neat::DeviceType::SIMA_CVU, 0}, &segments,
+      /*required_segment_names=*/nullptr);
+  device.semantic.preprocess = runtime_meta;
+  if (GstBuffer* buf = tensor_holder_buffer(device)) {
+    (void)write_simaai_preprocess_meta(buf, runtime_meta);
+    gst_buffer_unref(buf);
+  }
+  return device;
 }
 
 int tensor_depth_from_shape(const std::vector<int64_t>& shape) {
@@ -629,11 +1819,43 @@ int shape_dim(const std::vector<int64_t>& shape, size_t index) {
 // Wire caps are for plugin negotiation only; user-facing tensor metadata stays INT8/BF16.
 InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const WireCaps& wire) {
   InputOptions opt;
-  opt.media_type = wire.media_type.empty() ? "application/vnd.simaai.tensor" : wire.media_type;
+  opt.payload_type =
+      wire.media_type.empty() ? PayloadType::Tensor : input_type_from_media_type(wire.media_type);
   const std::string input_fmt = format_from_tensor(input);
   opt.format = wire.format.empty() ? input_fmt : wire.format;
   if (opt.format.empty()) {
-    throw std::runtime_error("StageRun: tensor input missing format");
+    switch (input.dtype) {
+    case TensorDType::BFloat16:
+      opt.format = "BF16";
+      break;
+    case TensorDType::Int16:
+      opt.format = "INT16";
+      break;
+    case TensorDType::UInt16:
+      opt.format = "UINT16";
+      break;
+    case TensorDType::Float32:
+      opt.format = "FP32";
+      break;
+    case TensorDType::Int32:
+      opt.format = "INT32";
+      break;
+    case TensorDType::Float64:
+      opt.format = "FP64";
+      break;
+    case TensorDType::UInt8:
+      opt.format = "UINT8";
+      break;
+    case TensorDType::Int8:
+    default:
+      opt.format = "INT8";
+      break;
+    }
+    if (stage_debug_enabled()) {
+      const std::string fmt = opt.format.str();
+      std::fprintf(stderr, "[stage] appsrc_for_tensor_wire: inferred format=%s from dtype=%s\n",
+                   fmt.c_str(), dtype_name(input.dtype));
+    }
   }
   const int shape_h = shape_dim(input.shape, 0);
   const int shape_w = shape_dim(input.shape, 1);
@@ -644,17 +1866,36 @@ InputOptions appsrc_for_tensor_wire(const simaai::neat::Tensor& input, const Wir
   if (opt.width <= 0 || opt.height <= 0) {
     throw std::runtime_error("StageRun: tensor input missing width/height");
   }
-  opt.buffer_name = wire.buffer_name.empty() ? "decoder" : wire.buffer_name;
+  const std::string source_segment_name = tensor_primary_segment_name(input);
+  if (!source_segment_name.empty()) {
+    opt.buffer_name = source_segment_name;
+  } else {
+    opt.buffer_name = wire.buffer_name.empty() ? "decoder" : wire.buffer_name;
+  }
+  const std::string wire_format = upper_copy(opt.format);
+  if (wire_format.rfind("EVXX_", 0) == 0 || wire_format.rfind("EV74_", 0) == 0) {
+    // Staged handoff for EVXX/EV74-packed tensors should preserve the EV-side ingress target.
+    // Falling back to the generic ModelFragment=>DMS0 heuristic breaks standalone MLA ingress.
+    opt.memory_policy = InputMemoryPolicy::Ev74;
+    opt.use_simaai_pool = true;
+  }
   return opt;
 }
 
-StageInputKey make_input_key(const InputOptions& opt) {
+StageInputKey make_input_key(const InputOptions& opt,
+                             const simaai::neat::Tensor* tensor = nullptr) {
   StageInputKey key;
-  key.media_type = opt.media_type;
+  key.media_type = resolve_input_media_type(opt);
   key.format = upper_copy(opt.format);
-  key.width = opt.width;
-  key.height = opt.height;
-  key.depth = opt.depth;
+  if (tensor && upper_copy(resolve_input_media_type(opt)) == "APPLICATION/VND.SIMAAI.TENSOR") {
+    key.dtype = tensor->dtype;
+    key.layout = tensor->layout;
+    key.shape = tensor->shape;
+  } else {
+    key.width = opt.width;
+    key.height = opt.height;
+    key.depth = opt.depth;
+  }
   return key;
 }
 
@@ -663,8 +1904,11 @@ RunOptions stage_run_defaults() {
   opt.preset = RunPreset::Reliable;
   opt.queue_depth = 1;
   opt.overflow_policy = OverflowPolicy::Block;
-  opt.output_memory = OutputMemory::Owned;
+  // Standalone stage chaining must preserve the original runtime tensor topology
+  // (packed parent vs split OFMs) across stage boundaries.
+  opt.output_memory = OutputMemory::ZeroCopy;
   opt.advanced.copy_input = false;
+  opt.advanced.sync_num_buffers_override = 1;
   return opt;
 }
 
@@ -676,13 +1920,421 @@ int default_timeout_ms() {
 }
 
 simaai::neat::Tensor take_tensor(const Sample& out, const char* where) {
-  if (out.kind != SampleKind::Tensor) {
+  return require_single_tensor(out, where);
+}
+
+Sample tensor_as_sample(const simaai::neat::Tensor& input) {
+  Sample out = sample_from_tensors(TensorList{input});
+  out.payload_type = PayloadType::Tensor;
+  out.media_type = "application/vnd.simaai.tensor";
+  out.format = format_from_tensor(input);
+  if (input.semantic.tess.has_value() && !input.semantic.tess->format.empty()) {
+    out.payload_tag = upper_copy(input.semantic.tess->format);
+  }
+  return out;
+}
+
+Sample make_stage_tensor_input_sample(const Sample& source, const simaai::neat::Tensor& tensor,
+                                      const WireCaps& wire) {
+  // Standalone stage chaining must preserve the exact tensor envelope produced by
+  // the previous stage. Repacking a single tensor into a detached CPU-owned sample
+  // breaks packed-parent MLA outputs and loses shared segment topology.
+  const bool preserving_source_envelope =
+      sample_has_tensor_list(source) && source.tensors.size() == 1U && source.fields.empty();
+  Sample out = preserving_source_envelope ? source : tensor_as_sample(tensor);
+  if (preserving_source_envelope) {
+    if (out.kind == SampleKind::Tensor && out.tensor.has_value()) {
+      *out.tensor = tensor;
+    }
+    if (!out.tensors.empty()) {
+      out.tensors.front() = tensor;
+    }
+  }
+  if (!wire.media_type.empty()) {
+    out.payload_type = payload_type_from_media_type(wire.media_type);
+    out.media_type = wire.media_type;
+  }
+  if (!wire.format.empty()) {
+    out.format = wire.format;
+    out.payload_tag = wire.format;
+  }
+  out.owned = source.owned;
+  out.frame_id = source.frame_id;
+  out.stream_id = source.stream_id;
+  out.input_seq = source.input_seq;
+  out.orig_input_seq = source.orig_input_seq;
+  out.pts_ns = source.pts_ns;
+  out.dts_ns = source.dts_ns;
+  out.duration_ns = source.duration_ns;
+  out.port_name.clear();
+  if (!preserving_source_envelope) {
+    out.caps_string.clear();
+    if (out.segment_name.empty()) {
+      out.segment_name = wire.buffer_name;
+    }
+    if (out.stream_label.empty()) {
+      out.stream_label = tensor.route.name;
+    }
+  }
+  return out;
+}
+
+Sample make_stage_multi_output_input_sample(const Sample& source, const WireCaps& wire) {
+  Sample out = source;
+  if (!wire.media_type.empty()) {
+    out.payload_type = payload_type_from_media_type(wire.media_type);
+    out.media_type = wire.media_type;
+  }
+  if (!wire.format.empty()) {
+    out.format = wire.format;
+    out.payload_tag = wire.format;
+  }
+  out.caps_string.clear();
+  return out;
+}
+
+bool sample_is_bbox_tensor(const Sample& sample) {
+  if (sample.kind != SampleKind::TensorSet || sample.tensors.size() != 1U) {
+    return false;
+  }
+  const Tensor& tensor = sample.tensors.front();
+  std::string fmt = sample.payload_tag;
+  if (fmt.empty()) {
+    fmt = sample.format;
+  }
+  if (fmt.empty()) {
+    fmt = read_detection_format(tensor);
+  }
+  return upper_copy(fmt) == "BBOX";
+}
+
+std::optional<BoxDecodeResult> try_decode_bbox_sample_recursive(const Sample& sample, int img_w,
+                                                                int img_h, int expected_topk) {
+  if (sample_is_bbox_tensor(sample)) {
+    BoxDecodeResult out;
+    out.raw =
+        require_single_tensor(sample, "try_decode_bbox_sample_recursive").copy_payload_bytes();
+    out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, expected_topk, true);
+    return out;
+  }
+  if (sample.kind == SampleKind::TensorSet) {
+    if (sample.tensors.size() <= 1U) {
+      return std::nullopt;
+    }
+    for (const auto& tensor : sample.tensors) {
+      Sample field = sample_from_tensors(TensorList{tensor});
+      field.payload_type = PayloadType::Tensor;
+      field.media_type = "application/vnd.simaai.tensor";
+      field.output_index = tensor.route.logical_index;
+      field.logical_output_index = tensor.route.logical_index;
+      field.memory_index = tensor.route.memory_index;
+      field.segment_name = tensor.route.segment_name;
+      field.stream_label = tensor.route.name;
+      if (auto decoded = try_decode_bbox_sample_recursive(field, img_w, img_h, expected_topk);
+          decoded.has_value()) {
+        return decoded;
+      }
+    }
+    return std::nullopt;
+  }
+  if (sample.kind == SampleKind::Bundle) {
+    for (const auto& field : sample.fields) {
+      if (auto decoded = try_decode_bbox_sample_recursive(field, img_w, img_h, expected_topk);
+          decoded.has_value()) {
+        return decoded;
+      }
+    }
+    return std::nullopt;
+  }
+  return std::nullopt;
+}
+
+std::optional<BoxDecodeResult> try_decode_bbox_payload_tensor_sample(const Sample& sample,
+                                                                     int img_w, int img_h,
+                                                                     int expected_topk) {
+  if (sample.kind != SampleKind::TensorSet || sample.tensors.size() != 1U) {
+    return std::nullopt;
+  }
+  const auto& tensor = sample.tensors.front();
+  if (tensor.dtype != TensorDType::UInt8 || tensor.shape.size() != 1U) {
+    return std::nullopt;
+  }
+  if (!sample.payload_tag.empty() || !sample.format.empty()) {
+    return std::nullopt;
+  }
+  if (tensor.semantic.image.has_value() || tensor.semantic.tess.has_value() ||
+      tensor.semantic.encoded.has_value()) {
+    return std::nullopt;
+  }
+  BoxDecodeResult out;
+  try {
+    out.raw = tensor.copy_payload_bytes();
+    out.boxes = parse_bbox_bytes(out.raw, img_w, img_h, expected_topk, true);
+    return out;
+  } catch (const std::exception&) {
+    return std::nullopt;
+  }
+}
+
+TensorList collect_tensors_from_sample(const Sample& sample, const char* where) {
+  try {
+    return tensors_from_sample(sample, true);
+  } catch (const std::exception& e) {
+    throw std::runtime_error(std::string(where) + ": " + e.what());
+  }
+}
+
+struct SelectedTensorSample {
+  const Sample* sample = nullptr;
+  int logical_output_index = -1;
+  int memory_index = -1;
+  int route_slot = -1;
+};
+
+struct SelectedTensorSampleMutable {
+  Sample* sample = nullptr;
+  int logical_output_index = -1;
+  int memory_index = -1;
+  int route_slot = -1;
+};
+
+int logical_output_index_for_sample(const Sample& sample) {
+  if (sample.logical_output_index >= 0) {
+    return sample.logical_output_index;
+  }
+  return sample.output_index;
+}
+
+int memory_index_for_sample(const Sample& sample, int logical_output_index) {
+  if (sample.memory_index >= 0) {
+    return sample.memory_index;
+  }
+  if (logical_output_index >= 0) {
+    return logical_output_index;
+  }
+  if (sample.output_index >= 0) {
+    return sample.output_index;
+  }
+  return 0;
+}
+
+bool sample_matches_identity_token(const Sample& sample, const std::string& token) {
+  if (token.empty()) {
+    return false;
+  }
+  return sample.segment_name == token || sample.stream_label == token;
+}
+
+int bundle_field_match_score(const Sample& bundle, const Sample& field) {
+  int score = 0;
+  const int bundle_logical_index = logical_output_index_for_sample(bundle);
+  const int field_logical_index = logical_output_index_for_sample(field);
+  if (bundle_logical_index >= 0 &&
+      (field_logical_index == bundle_logical_index || field.output_index == bundle_logical_index)) {
+    score += 1000;
+  }
+  if (bundle.route_slot >= 0 && field.route_slot == bundle.route_slot) {
+    score += 100;
+  }
+  if (!bundle.segment_name.empty() && sample_matches_identity_token(field, bundle.segment_name)) {
+    score += 50;
+  }
+  if (!bundle.stream_label.empty() && sample_matches_identity_token(field, bundle.stream_label)) {
+    score += 25;
+  }
+  if (field_logical_index == 0 || field.output_index == 0 || field.route_slot == 0) {
+    score += 1;
+  }
+  return score;
+}
+
+SelectedTensorSample select_tensor_sample(const Sample& out, const char* where) {
+  SelectedTensorSample selected;
+  if (!sample_has_tensor_list(out) && !sample_is_multi_output(out)) {
     throw std::runtime_error(std::string(where) + ": expected tensor output");
   }
-  if (out.tensor.has_value()) {
-    return out.tensor.value();
+  if (out.kind == SampleKind::TensorSet) {
+    if (out.tensors.empty()) {
+      throw std::runtime_error(std::string(where) + ": TensorSet has no tensors");
+    }
+    selected.sample = &out;
+    selected.logical_output_index = out.tensors.front().route.logical_index;
+    selected.memory_index = (out.tensors.front().route.memory_index >= 0)
+                                ? out.tensors.front().route.memory_index
+                                : out.memory_index;
+    selected.route_slot = out.route_slot;
+    return selected;
   }
-  throw std::runtime_error(std::string(where) + ": missing tensor output");
+  if (out.fields.empty()) {
+    throw std::runtime_error(std::string(where) + ": multi-output sample has no fields");
+  }
+
+  const Sample* first_tensor = nullptr;
+  const Sample* best_match = nullptr;
+  int best_score = -1;
+  std::size_t tensor_field_count = 0U;
+  for (const auto& field : out.fields) {
+    if (!sample_has_tensor_list(field)) {
+      continue;
+    }
+    ++tensor_field_count;
+    if (!first_tensor) {
+      first_tensor = &field;
+    }
+    const int score = bundle_field_match_score(out, field);
+    if (score > best_score) {
+      best_score = score;
+      best_match = &field;
+    }
+  }
+  if (best_match && best_score > 0) {
+    selected.sample = best_match;
+    selected.logical_output_index = logical_output_index_for_sample(*best_match);
+    selected.memory_index = memory_index_for_sample(*best_match, selected.logical_output_index);
+    selected.route_slot = best_match->route_slot;
+    return selected;
+  }
+  if (first_tensor) {
+    selected.sample = first_tensor;
+    selected.logical_output_index = logical_output_index_for_sample(*first_tensor);
+    selected.memory_index = memory_index_for_sample(*first_tensor, selected.logical_output_index);
+    selected.route_slot = first_tensor->route_slot;
+    if (stage_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[stage][bundle] %s: no explicit bundle field identity matched; "
+                   "tensor_fields=%zu fallback=first logical=%d route_slot=%d segment=%s\n",
+                   where ? where : "StageRun", tensor_field_count, selected.logical_output_index,
+                   selected.route_slot,
+                   first_tensor->segment_name.empty() ? "<empty>"
+                                                      : first_tensor->segment_name.c_str());
+    }
+    return selected;
+  }
+  throw std::runtime_error(std::string(where) + ": multi-output sample contains no tensor fields");
+}
+
+SelectedTensorSampleMutable select_tensor_sample_mutable(Sample& out, const char* where) {
+  SelectedTensorSampleMutable selected;
+  if (!sample_has_tensor_list(out) && !sample_is_multi_output(out)) {
+    throw std::runtime_error(std::string(where) + ": expected tensor output");
+  }
+  if (out.kind == SampleKind::TensorSet) {
+    if (out.tensors.empty()) {
+      throw std::runtime_error(std::string(where) + ": TensorSet has no tensors");
+    }
+    selected.sample = &out;
+    selected.logical_output_index = out.tensors.front().route.logical_index;
+    selected.memory_index = (out.tensors.front().route.memory_index >= 0)
+                                ? out.tensors.front().route.memory_index
+                                : out.memory_index;
+    selected.route_slot = out.route_slot;
+    return selected;
+  }
+  if (out.fields.empty()) {
+    throw std::runtime_error(std::string(where) + ": multi-output sample has no fields");
+  }
+
+  Sample* first_tensor = nullptr;
+  Sample* best_match = nullptr;
+  int best_score = -1;
+  std::size_t tensor_field_count = 0U;
+  for (auto& field : out.fields) {
+    if (!sample_has_tensor_list(field)) {
+      continue;
+    }
+    ++tensor_field_count;
+    if (!first_tensor) {
+      first_tensor = &field;
+    }
+    const int score = bundle_field_match_score(out, field);
+    if (score > best_score) {
+      best_score = score;
+      best_match = &field;
+    }
+  }
+  if (best_match && best_score > 0) {
+    selected.sample = best_match;
+    selected.logical_output_index = logical_output_index_for_sample(*best_match);
+    selected.memory_index = memory_index_for_sample(*best_match, selected.logical_output_index);
+    selected.route_slot = best_match->route_slot;
+    return selected;
+  }
+  if (first_tensor) {
+    selected.sample = first_tensor;
+    selected.logical_output_index = logical_output_index_for_sample(*first_tensor);
+    selected.memory_index = memory_index_for_sample(*first_tensor, selected.logical_output_index);
+    selected.route_slot = first_tensor->route_slot;
+    if (stage_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[stage][bundle] %s: no explicit bundle field identity matched; "
+                   "tensor_fields=%zu fallback=first logical=%d route_slot=%d segment=%s\n",
+                   where ? where : "StageRun", tensor_field_count, selected.logical_output_index,
+                   selected.route_slot,
+                   first_tensor->segment_name.empty() ? "<empty>"
+                                                      : first_tensor->segment_name.c_str());
+    }
+    return selected;
+  }
+  throw std::runtime_error(std::string(where) + ": multi-output sample contains no tensor fields");
+}
+
+simaai::neat::Tensor select_stage_output_tensor_view(const Sample& sample, int memory_index,
+                                                     const char* where, const char* source_label,
+                                                     const char* selected_label,
+                                                     const char* direct_label) {
+  if (const Tensor* sample_tensor =
+          find_gst_sample_backed_tensor_for_memory_view(sample, memory_index)) {
+    log_stage_tensor_holder_state(source_label, *sample_tensor);
+    simaai::neat::Tensor tensor =
+        pipeline_internal::tensor_view_from_sample_memory(*sample_tensor, memory_index);
+    log_stage_tensor_holder_state(selected_label, tensor);
+    return tensor;
+  }
+  if (sample_has_tensor_list(sample) && !sample.tensors.empty() &&
+      sample.tensors.front().planes.empty() && stage_debug_enabled()) {
+    std::fprintf(stderr, "[stage][holder] %s: skipping sample-memory copy (not GstSample-backed)\n",
+                 where ? where : "StageRun");
+  }
+  simaai::neat::Tensor tensor = take_tensor(sample, where);
+  log_stage_tensor_holder_state(direct_label, tensor);
+  return tensor;
+}
+
+Sample push_and_pull_tensor_preferring_holder(Run& runner, const simaai::neat::Tensor& input,
+                                              int timeout_ms, const char* stage_name) {
+  const bool gst_sample_backed =
+      input.storage && input.storage->kind == simaai::neat::StorageKind::GstSample;
+  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(input);
+  if (holder && gst_sample_backed) {
+    GstBuffer* probe = pipeline_internal::buffer_from_tensor_holder(holder);
+    if (probe) {
+      gst_buffer_unref(probe);
+      if (stage_debug_enabled()) {
+        std::fprintf(stderr,
+                     "[stage][holder] %s: using push_holder fast path to preserve GstSimaMeta\n",
+                     stage_name ? stage_name : "StageRun");
+      }
+      if (!runner.push_holder(holder)) {
+        throw std::runtime_error(std::string(stage_name ? stage_name : "StageRun") +
+                                 ": push_holder failed");
+      }
+      auto out = runner.pull(timeout_ms);
+      if (!out.has_value()) {
+        throw std::runtime_error(std::string(stage_name ? stage_name : "StageRun") +
+                                 ": timeout waiting for output after push_holder");
+      }
+      return std::move(*out);
+    }
+  }
+  if (holder && stage_debug_enabled() && !gst_sample_backed) {
+    std::fprintf(stderr,
+                 "[stage][holder] %s: skipping push_and_pull_holder fast path (storage kind=%d, "
+                 "using tensor "
+                 "payload path)\n",
+                 stage_name ? stage_name : "StageRun",
+                 input.storage ? static_cast<int>(input.storage->kind) : -1);
+  }
+  return sample_from_tensors(runner.run(TensorList{input}, timeout_ms));
 }
 
 std::shared_ptr<Run> get_or_build(const StageKey& key, const std::function<Run()>& builder) {
@@ -704,20 +2356,239 @@ std::shared_ptr<Run> get_or_build(const StageKey& key, const std::function<Run()
   return handle;
 }
 
+PreprocessAffine compute_roi_affine_and_geometry(PreprocessRuntimeMeta* meta,
+                                                 const PreprocessRoi& roi) {
+  PreprocessAffine affine;
+  if (!meta) {
+    affine.m02 = static_cast<double>(roi.x);
+    affine.m12 = static_cast<double>(roi.y);
+    return affine;
+  }
+
+  const int target_w = meta->resized_width > 0 ? meta->resized_width : meta->scaled_width;
+  const int target_h = meta->resized_height > 0 ? meta->resized_height : meta->scaled_height;
+  int scaled_w = target_w;
+  int scaled_h = target_h;
+  int pad_left = 0;
+  int pad_right = 0;
+  int pad_top = 0;
+  int pad_bottom = 0;
+  if (meta->resize_mode == "letterbox" && roi.width > 0 && roi.height > 0 && target_w > 0 &&
+      target_h > 0) {
+    const auto ceil_div_pos = [](int64_t n, int64_t d) -> int {
+      if (n <= 0 || d <= 0) {
+        return 0;
+      }
+      return static_cast<int>((n + d - 1) / d);
+    };
+    const int64_t d =
+        static_cast<int64_t>(roi.height) * target_w - static_cast<int64_t>(roi.width) * target_h;
+    if (d < 0) {
+      scaled_w = target_w;
+      scaled_h = ceil_div_pos(static_cast<int64_t>(roi.height) * target_w, roi.width);
+    } else {
+      scaled_w = ceil_div_pos(static_cast<int64_t>(roi.width) * target_h, roi.height);
+      scaled_h = target_h;
+    }
+    const int remain_w = std::max(0, target_w - scaled_w);
+    const int remain_h = std::max(0, target_h - scaled_h);
+    pad_left = remain_w / 2;
+    pad_top = remain_h / 2;
+    pad_right = remain_w - pad_left;
+    pad_bottom = remain_h - pad_top;
+  } else {
+    if (scaled_w <= 0)
+      scaled_w = meta->scaled_width;
+    if (scaled_h <= 0)
+      scaled_h = meta->scaled_height;
+    pad_left = meta->pad_left;
+    pad_right = meta->pad_right;
+    pad_top = meta->pad_top;
+    pad_bottom = meta->pad_bottom;
+  }
+  if (scaled_w <= 0)
+    scaled_w = target_w;
+  if (scaled_h <= 0)
+    scaled_h = target_h;
+  meta->scaled_width = scaled_w;
+  meta->scaled_height = scaled_h;
+  meta->pad_left = pad_left;
+  meta->pad_right = pad_right;
+  meta->pad_top = pad_top;
+  meta->pad_bottom = pad_bottom;
+
+  const double inv_x =
+      (roi.width > 0 && scaled_w > 0) ? static_cast<double>(roi.width) / scaled_w : 1.0;
+  const double inv_y =
+      (roi.height > 0 && scaled_h > 0) ? static_cast<double>(roi.height) / scaled_h : 1.0;
+  affine.m00 = inv_x;
+  affine.m02 = static_cast<double>(roi.x) - static_cast<double>(pad_left) * inv_x;
+  affine.m11 = inv_y;
+  affine.m12 = static_cast<double>(roi.y) - static_cast<double>(pad_top) * inv_y;
+  return affine;
+}
+
+int64_t preproc_roi_slot_bytes(const simaai::neat::Tensor& tensor, const PreprocOutputInfo& info,
+                               int roi_capacity) {
+  if (info.transport_kind == PreprocOutputTransportKind::Dense) {
+    const int64_t dense_bytes = tensor_total_bytes(tensor);
+    if (dense_bytes > 0) {
+      return dense_bytes;
+    }
+  }
+  if (roi_capacity <= 0) {
+    return 0;
+  }
+  int64_t backing_bytes = tensor_primary_segment_size(tensor);
+  if (backing_bytes <= 0) {
+    const int memory_index =
+        tensor.route.memory_index >= 0 ? tensor.route.memory_index : tensor.route.physical_index;
+    backing_bytes = tensor_sample_memory_size(tensor, memory_index >= 0 ? memory_index : 0);
+  }
+  if (backing_bytes <= 0 && tensor.storage) {
+    backing_bytes = static_cast<int64_t>(tensor.storage->size_bytes);
+  }
+  if (backing_bytes <= 0 || backing_bytes % roi_capacity != 0) {
+    return 0;
+  }
+  return backing_bytes / roi_capacity;
+}
+
+PreprocessRuntimeMeta scalar_preprocess_meta_for_roi(const PreprocessRuntimeMeta& list_meta,
+                                                     std::size_t index) {
+  PreprocessRuntimeMeta scalar = list_meta;
+  scalar.roi_list_enabled = true;
+  scalar.rois.clear();
+  scalar.roi_affines.clear();
+  scalar.roi_capacity = 1;
+  scalar.roi_valid_count = 1;
+  scalar.roi_input_count = 1;
+  scalar.roi_dropped_invalid = 0;
+  scalar.roi_dropped_overflow = 0;
+
+  if (index >= list_meta.rois.size()) {
+    return scalar;
+  }
+  const PreprocessRoi roi = list_meta.rois[index];
+  scalar.rois = {roi};
+
+  PreprocessAffine affine = compute_roi_affine_and_geometry(&scalar, roi);
+  if (index < list_meta.roi_affines.size()) {
+    affine = list_meta.roi_affines[index];
+  }
+  scalar.roi_affines = {affine};
+  scalar.affine_m00 = affine.m00;
+  scalar.affine_m01 = affine.m01;
+  scalar.affine_m02 = affine.m02;
+  scalar.affine_m10 = affine.m10;
+  scalar.affine_m11 = affine.m11;
+  scalar.affine_m12 = affine.m12;
+  scalar.affine_scale_x = affine.m00;
+  scalar.affine_scale_y = affine.m11;
+  scalar.affine_offset_x = affine.m02;
+  scalar.affine_offset_y = affine.m12;
+  return scalar;
+}
+
+TensorList split_preproc_roi_output_impl(const simaai::neat::Tensor& batched,
+                                         const PreprocessRuntimeMeta& meta, int roi_capacity,
+                                         const PreprocOutputInfo& info) {
+  TensorList out;
+  if (roi_capacity <= 0) {
+    throw std::invalid_argument("Preproc ROI-list: output ROI capacity must be positive");
+  }
+  int valid_count = meta.roi_valid_count;
+  if (valid_count <= 0 && !meta.rois.empty()) {
+    valid_count = static_cast<int>(meta.rois.size());
+  }
+  if (valid_count < 0) {
+    valid_count = 0;
+  }
+  valid_count = std::min(valid_count, roi_capacity);
+  if (meta.rois.size() < static_cast<std::size_t>(valid_count)) {
+    throw std::runtime_error("Preproc ROI-list: output metadata has fewer ROIs than valid slots");
+  }
+
+  const int64_t slot_bytes = preproc_roi_slot_bytes(batched, info, roi_capacity);
+  if (valid_count > 0 && slot_bytes <= 0) {
+    throw std::runtime_error("Preproc ROI-list: unable to determine output slot byte size");
+  }
+
+  out.reserve(static_cast<std::size_t>(valid_count));
+  for (int i = 0; i < valid_count; ++i) {
+    simaai::neat::Tensor view = batched;
+    const int64_t slot_offset = static_cast<int64_t>(i) * slot_bytes;
+    view.byte_offset += slot_offset;
+    view.route.physical_byte_offset += slot_offset;
+    view.semantic.preprocess = scalar_preprocess_meta_for_roi(meta, static_cast<std::size_t>(i));
+    out.push_back(std::move(view));
+  }
+  return out;
+}
+
 } // namespace
 
-simaai::neat::Tensor Preproc(const cv::Mat& input, const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_preprocess_group(model, true);
+namespace internal {
+TensorList split_preproc_roi_output_for_stage(const simaai::neat::Tensor& batched,
+                                              const PreprocessRuntimeMeta& meta, int roi_capacity,
+                                              const PreprocOutputInfo& info) {
+  return split_preproc_roi_output_impl(batched, meta, roi_capacity, info);
+}
 
-  const PreprocOutputInfo preproc_info = read_preproc_output_info(group);
+simaai::neat::Tensor
+make_cpu_packed_preproc_source_batch_for_stage(const std::vector<cv::Mat>& inputs,
+                                               const InputOptions& src_opt,
+                                               const PreprocessRuntimeMeta& runtime_meta) {
+  return make_cpu_packed_preproc_source_batch_tensor(inputs, src_opt, runtime_meta,
+                                                     "Preproc ROI-list test pack");
+}
+
+void validate_preproc_roi_list_request_for_stage(const std::vector<cv::Mat>& inputs,
+                                                 const std::vector<PreprocessRoi>& rois) {
+  (void)validate_preproc_roi_list_request(inputs, rois, "Preproc ROI-list test validate");
+}
+} // namespace internal
+
+TensorList Tensors(const simaai::neat::Sample& sample) {
+  return collect_tensors_from_sample(sample, "Tensors");
+}
+
+simaai::neat::Sample PreprocSample(const cv::Mat& input, const simaai::neat::Model& model,
+                                   const PreprocessRoi* runtime_roi = nullptr) {
+  auto group = simaai::neat::internal::ModelAccess::build_preprocess_nodes(model, true);
   InputOptions src_opt = appsrc_for_mat(input, group);
+  log_stage_group_nodes("Preproc", group);
+
+  const PreprocOutputInfo preproc_info = stage_preproc_output_info(group);
+  const auto resolved_preproc = model.resolved_preprocess_plan();
+  if (resolved_preproc.enabled) {
+    std::vector<PreprocessRoi> runtime_rois;
+    const std::vector<PreprocessRoi>* runtime_rois_ptr = nullptr;
+    if (runtime_roi != nullptr) {
+      PreprocessRoi local_roi = *runtime_roi;
+      local_roi.batch_index = 0;
+      runtime_rois = {local_roi};
+      runtime_rois_ptr = &runtime_rois;
+    }
+    PreprocessMetaTemplate meta =
+        make_stage_preprocess_meta_template(input, model, preproc_info, &src_opt, runtime_rois_ptr);
+    if (stage_debug_enabled()) {
+      std::fprintf(stderr,
+                   "[stage][preproc-meta] source=route_contract quant=%d tess=%d "
+                   "effective_quant=%d effective_tess=%d\n",
+                   meta.quantize ? 1 : 0, meta.tessellate ? 1 : 0,
+                   resolved_preproc.effective.quantize.enable == AutoFlag::On ? 1 : 0,
+                   resolved_preproc.effective.tessellate.enable == AutoFlag::On ? 1 : 0);
+    }
+    src_opt.preprocess_meta = meta;
+  }
 
   StageKey key;
   key.kind = StageKind::Preproc;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
   key.input = make_input_key(src_opt);
 
-  auto runner = get_or_build(key, [&]() {
+  auto build_runner = [&]() {
     RunOptions opt = stage_run_defaults();
     // Keep the GstSample alive so we can copy the tessellated memory.
     opt.output_memory = OutputMemory::ZeroCopy;
@@ -726,56 +2597,269 @@ simaai::neat::Tensor Preproc(const cv::Mat& input, const simaai::neat::Model& mo
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    pipeline_internal::PipelineBuildContext build_ctx(SessionOptions{});
-    build_ctx.apply_name_transform_to_configs(nodes);
-    build_ctx.wire_configs_by_order(nodes);
-
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(input, RunMode::Sync, opt);
+    return p.build_seeded_internal(std::vector<cv::Mat>{input}, RunMode::Sync, opt);
+  };
+
+  // Runtime ROI is carried in the Input node's per-buffer metadata template today.
+  // Do not reuse a cached full-frame runner with stale ROI coordinates.
+  auto runner = runtime_roi != nullptr ? std::make_shared<Run>(build_runner())
+                                       : get_or_build(key, build_runner);
+
+  const int timeout_ms = default_timeout_ms();
+  Sample out = sample_from_tensors(runner->run(std::vector<cv::Mat>{input}, timeout_ms));
+  log_stage_output_sample("Preproc: output sample", out);
+  simaai::neat::Tensor tensor;
+  const std::string selected_output_name = preproc_info.primary_output_name;
+  if (sample_has_tensor_list(out) && out.tensors.size() == 1U &&
+      tensor_is_gst_sample_backed(out.tensors.front())) {
+    const int mem_index = resolve_preproc_selected_memory_index(out, preproc_info);
+    if (stage_debug_enabled()) {
+      std::fprintf(stderr, "[stage][preproc-select] primary_output=%s selected_index=%d\n",
+                   selected_output_name.empty() ? "<empty>" : selected_output_name.c_str(),
+                   mem_index);
+    }
+    tensor = select_stage_output_tensor_view(
+        out, mem_index, "Preproc", "Preproc: source before tensor_view_from_sample_memory",
+        "Preproc: selected tensor view", "Preproc: direct tensor");
+  } else {
+    tensor = take_tensor(out, "Preproc");
+    log_stage_tensor_holder_state("Preproc: direct tensor", tensor);
+  }
+  const bool packed_tessellated_handoff =
+      preproc_info.transport_kind == PreprocOutputTransportKind::Packed;
+  apply_preproc_output_override(tensor, preproc_info);
+  if (!packed_tessellated_handoff) {
+  }
+  const std::string pre_fmt = upper_copy(format_from_tensor(tensor));
+  if (stage_debug_enabled()) {
+    const std::shared_ptr<void> out_holder = pipeline_internal::holder_from_tensor(tensor);
+    if (out_holder) {
+      GstBuffer* out_buf = pipeline_internal::buffer_from_tensor_holder(out_holder);
+      if (out_buf) {
+        const auto meta = read_simaai_preprocess_meta(out_buf);
+        if (meta.has_value()) {
+          std::fprintf(
+              stderr,
+              "[stage][holder] Preproc output meta original=%dx%d resized=%dx%d scaled=%dx%d\n",
+              meta->original_width, meta->original_height, meta->resized_width,
+              meta->resized_height, meta->scaled_width, meta->scaled_height);
+        } else {
+          std::fprintf(stderr, "[stage][holder] Preproc output meta missing\n");
+        }
+        gst_buffer_unref(out_buf);
+      }
+    }
+  }
+  tensor = require_supported_tessellated_dtype(std::move(tensor), "Preproc");
+
+  out = sample_from_tensors(TensorList{std::move(tensor)});
+  out.payload_type = PayloadType::Tensor;
+  out.media_type = "application/vnd.simaai.tensor";
+  out.format = format_from_tensor(out.tensors.front());
+  out.segment_name = selected_output_name;
+  out.stream_label = selected_output_name;
+  if (!out.tensors.front().semantic.tess.has_value() ||
+      out.tensors.front().semantic.tess->format.empty()) {
+    out.payload_tag = out.format;
+  } else {
+    out.payload_tag = upper_copy(out.tensors.front().semantic.tess->format);
+  }
+  log_stage_output_sample("Preproc: selected output sample", out);
+  return out;
+}
+
+TensorList PreprocRoiList(const std::vector<cv::Mat>& inputs, const simaai::neat::Model& model,
+                          const std::vector<PreprocessRoi>& rois) {
+  if (rois.empty()) {
+    return {};
+  }
+  const PreprocSourceBatchGeometry source_geom =
+      validate_preproc_roi_list_request(inputs, rois, "Preproc ROI-list");
+
+  auto base_group = simaai::neat::internal::ModelAccess::build_preprocess_nodes(model, true);
+  const int roi_capacity = static_cast<int>(rois.size());
+  auto group = clone_preproc_group_with_roi_capacity(base_group, roi_capacity);
+  InputOptions src_opt = appsrc_for_mat(inputs.front(), group);
+  log_stage_group_nodes("Preproc ROI-list", group);
+
+  const PreprocOutputInfo preproc_info = stage_preproc_output_info(group);
+  const auto resolved_preproc = model.resolved_preprocess_plan();
+  if (!resolved_preproc.enabled) {
+    throw std::runtime_error("Preproc ROI-list: model has no enabled preprocess plan");
+  }
+
+  PreprocessMetaTemplate base_meta =
+      make_stage_preprocess_meta_template(inputs.front(), model, preproc_info, &src_opt, nullptr);
+  src_opt.preprocess_meta = base_meta;
+  (void)preproc_source_batch_format(src_opt, source_geom, "Preproc ROI-list");
+
+  InputOptions roi_meta_opt = src_opt;
+  roi_meta_opt.preprocess_meta = make_stage_preprocess_meta_template(
+      inputs.front(), model, preproc_info, &roi_meta_opt, &rois);
+  std::optional<PreprocessRuntimeMeta> runtime_meta = make_simaai_preprocess_meta_from_template(
+      roi_meta_opt, source_geom.width, source_geom.height);
+  if (!runtime_meta.has_value()) {
+    throw std::runtime_error("Preproc ROI-list: failed to build runtime ROI metadata");
+  }
+  runtime_meta->roi_capacity = roi_capacity;
+  runtime_meta->roi_valid_count = roi_capacity;
+  runtime_meta->roi_input_count = roi_capacity;
+  runtime_meta->roi_input_batch_size = static_cast<int>(inputs.size());
+  runtime_meta->roi_source_width = source_geom.width;
+  runtime_meta->roi_source_height = source_geom.height;
+  runtime_meta->roi_source_stride_bytes = static_cast<int>(source_geom.row_bytes);
+
+  auto make_stage_input = [&]() {
+    simaai::neat::Tensor image =
+        make_device_packed_preproc_source_batch_tensor(inputs, src_opt, *runtime_meta);
+
+    Sample sample =
+        pipeline_internal::sample_from_tensors_for_input(TensorList{std::move(image)}, src_opt);
+    sample.payload_type = PayloadType::Image;
+    sample.media_type = "video/x-raw";
+    sample.format = src_opt.format.str();
+    sample.payload_tag = sample.format;
+    sample.segment_name = src_opt.buffer_name;
+    sample.stream_label = src_opt.buffer_name;
+    return sample;
+  };
+
+  Sample stage_input = make_stage_input();
+
+  StageKey key;
+  key.kind = StageKind::Preproc;
+  key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
+  key.input = make_input_key(src_opt);
+  key.preproc_roi_capacity = roi_capacity;
+  key.preproc_roi_source_batch_size = static_cast<int>(inputs.size());
+
+  auto runner = get_or_build(key, [&]() {
+    RunOptions opt = stage_run_defaults();
+    opt.output_memory = OutputMemory::ZeroCopy;
+    auto input_node = simaai::neat::nodes::Input(src_opt);
+    auto output_node = simaai::neat::nodes::Output();
+    Graph p;
+    p.add(input_node);
+    for (const auto& node : group) {
+      p.add(node);
+    }
+    p.add(output_node);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, opt);
   });
 
   const int timeout_ms = default_timeout_ms();
-  Sample out = runner->push_and_pull(input, timeout_ms);
-  simaai::neat::Tensor tensor;
-  // Preproc caps report RGB, but tessellated bytes live in a different GstBuffer memory.
-  if (preproc_info.tessellate && out.tensor.has_value()) {
-    const int mem_index = tessellated_memory_index(preproc_info);
-    tensor = pipeline_internal::copy_tensor_from_sample_memory(*out.tensor, mem_index);
+  Sample raw_out = run_single_sample(*runner, stage_input, timeout_ms, "Preproc ROI-list");
+  log_stage_output_sample("Preproc ROI-list: output sample", raw_out);
+
+  simaai::neat::Tensor batched;
+  const std::string selected_output_name = preproc_info.primary_output_name;
+  if (sample_has_tensor_list(raw_out) && raw_out.tensors.size() == 1U &&
+      tensor_is_gst_sample_backed(raw_out.tensors.front())) {
+    const int mem_index = resolve_preproc_selected_memory_index(raw_out, preproc_info);
+    batched = select_stage_output_tensor_view(
+        raw_out, mem_index, "Preproc ROI-list",
+        "Preproc ROI-list: source before tensor_view_from_sample_memory",
+        "Preproc ROI-list: selected tensor view", "Preproc ROI-list: direct tensor");
   } else {
-    tensor = take_tensor(out, "Preproc");
+    batched = take_tensor(raw_out, "Preproc ROI-list");
+    log_stage_tensor_holder_state("Preproc ROI-list: direct tensor", batched);
   }
-  apply_preproc_output_override(tensor, preproc_info);
-  const std::string pre_fmt = upper_copy(format_from_tensor(tensor));
-  if (tensor.dtype == TensorDType::BFloat16 || is_tessellated_bf16_format(pre_fmt)) {
-    throw std::runtime_error("Preproc: BF16 path is not supported yet");
+
+  std::optional<PreprocessRuntimeMeta> output_meta = preprocess_meta_from_tensor_or_holder(batched);
+  if (!output_meta.has_value()) {
+    output_meta = runtime_meta;
   }
-  return require_tessellated_int8(std::move(tensor), "Preproc");
+  if (output_meta->roi_capacity <= 0) {
+    output_meta->roi_capacity = roi_capacity;
+  }
+  if (output_meta->roi_input_count <= 0) {
+    output_meta->roi_input_count = roi_capacity;
+  }
+  if (output_meta->roi_valid_count <= 0 && !output_meta->rois.empty()) {
+    output_meta->roi_valid_count = static_cast<int>(output_meta->rois.size());
+  }
+
+  apply_preproc_output_override(batched, preproc_info);
+  batched = require_supported_tessellated_dtype(std::move(batched), "Preproc ROI-list");
+  batched.route.segment_name =
+      batched.route.segment_name.empty() ? selected_output_name : batched.route.segment_name;
+
+  TensorList split =
+      split_preproc_roi_output_impl(batched, *output_meta, roi_capacity, preproc_info);
+  if (stage_debug_enabled()) {
+    std::fprintf(stderr, "[stage][preproc-roi] split valid=%zu capacity=%d output=%s\n",
+                 split.size(), roi_capacity,
+                 selected_output_name.empty() ? "<empty>" : selected_output_name.c_str());
+  }
+  return split;
 }
 
-simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_infer_group(model, true);
-  const MlaOutputInfo infer_info = read_mla_output_info(group);
-  const WireCaps wire =
-      build_wire_caps_from_json_or_tensor(group, input, nullptr, "video/x-raw", "BGR", true);
-  const WireInput wire_input = build_wire_input_from_tensor(input, wire);
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const simaai::neat::Model& model) {
+  TensorList out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    TensorList tensors = tensors_from_sample(PreprocSample(input, model), true);
+    out.insert(out.end(), tensors.begin(), tensors.end());
+  }
+  return out;
+}
+
+TensorList Preproc(const std::vector<cv::Mat>& inputs, const simaai::neat::Model& model,
+                   const std::vector<PreprocessRoi>& rois) {
+  if (rois.empty()) {
+    return {};
+  }
+  if (inputs.empty()) {
+    throw std::invalid_argument("Preproc ROI-list: inputs must not be empty when ROIs are set");
+  }
+  return PreprocRoiList(inputs, model, rois);
+}
+
+simaai::neat::Sample InferSample(const simaai::neat::Sample& input,
+                                 const simaai::neat::Model& model) {
+  auto group = simaai::neat::internal::ModelAccess::build_infer_nodes(model, true);
+  log_stage_group_nodes("Infer", group);
+  const std::vector<MlaOutputTensorInfo> infer_outputs = stage_mla_output_tensors_info(group);
+  if (infer_outputs.empty()) {
+    throw std::runtime_error("Infer: MLA contract preflight failed: missing MLA output tensor "
+                             "contract from strict MPK metadata");
+  }
+  MlaOutputInfo infer_info = mla_output_info_from_contract_tensor(infer_outputs.front());
+  if (infer_info.data_type.empty() || infer_info.size_bytes <= 0) {
+    throw std::runtime_error(
+        "Infer: MLA contract preflight failed: missing physical output contract "
+        "(dtype/size_bytes) from strict MPK metadata");
+  }
+  const SelectedTensorSample selected_input = select_tensor_sample(input, "Infer input");
+  const simaai::neat::Tensor& selected_tensor =
+      require_single_tensor(*selected_input.sample, "Infer input");
+  enforce_pre_mla_input_bytes_guard(selected_tensor, group, model, "Infer");
+  const WireCaps wire = build_mla_wire_caps_from_contract_or_tensor(group, selected_tensor);
+  WireCaps stage_wire = wire;
+  apply_stage_source_segment_name(&stage_wire, *selected_input.sample);
+  const WireInput wire_input = build_wire_input_from_tensor(selected_tensor, stage_wire);
   const InputOptions src_opt = wire_input.appsrc;
+  const Sample stage_input =
+      make_stage_tensor_input_sample(*selected_input.sample, wire_input.tensor, stage_wire);
 
   StageKey key;
   key.kind = StageKind::Infer;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
-  key.input = make_input_key(src_opt);
+  key.input = make_input_key(src_opt, &wire_input.tensor);
 
   stage_trace("StageRun::Infer: before get_or_build");
   auto runner = get_or_build(key, [&]() {
-    override_buffer_name(group, src_opt.buffer_name, "infer");
     RunOptions opt = stage_run_defaults();
     // Preserve the GstBuffer so post-processing can reuse plugin metadata.
     opt.output_memory = OutputMemory::ZeroCopy;
@@ -784,46 +2868,94 @@ simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    pipeline_internal::PipelineBuildContext build_ctx(SessionOptions{});
-    build_ctx.apply_name_transform_to_configs(nodes);
-    build_ctx.wire_configs_by_order(nodes);
-
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(wire_input.tensor, RunMode::Sync, opt);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, opt);
   });
   stage_trace("StageRun::Infer: after get_or_build");
 
   const int timeout_ms = default_timeout_ms();
   stage_trace("StageRun::Infer: before push_and_pull");
-  Sample out = runner->push_and_pull(wire_input.tensor, timeout_ms);
+  Sample out = run_single_sample(*runner, stage_input, timeout_ms, "Infer");
+  propagate_preprocess_meta_to_sample_if_missing(selected_tensor, &out);
+  log_stage_output_sample("Infer: output sample", out);
+  log_stage_tensor_stats("Infer: output sample", out);
   stage_trace("StageRun::Infer: after push_and_pull");
+  return out;
+}
+
+simaai::neat::Sample InferSample(const simaai::neat::Tensor& input,
+                                 const simaai::neat::Model& model) {
+  return InferSample(tensor_as_sample(input), model);
+}
+
+Sample Infer(const Sample& inputs, const simaai::neat::Model& model) {
+  if (inputs.kind != SampleKind::Bundle) {
+    return InferSample(inputs, model);
+  }
+  Sample out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(InferSample(input, model));
+  }
+  return out;
+}
+
+TensorList InferOutputs(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
+  return collect_tensors_from_sample(InferSample(input, model), "InferOutputs");
+}
+
+TensorList InferOutputs(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
+  return InferOutputs(tensor_as_sample(input), model);
+}
+
+simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat::Model& model);
+
+TensorList Infer(const TensorList& inputs, const simaai::neat::Model& model) {
+  TensorList out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(Infer(input, model));
+  }
+  return out;
+}
+
+simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
+  auto group = simaai::neat::internal::ModelAccess::build_infer_nodes(model, true);
+  const std::vector<MlaOutputTensorInfo> infer_outputs = stage_mla_output_tensors_info(group);
+  if (infer_outputs.empty()) {
+    throw std::runtime_error("Infer: MLA contract preflight failed: missing MLA output tensor "
+                             "contract from strict MPK metadata");
+  }
+  MlaOutputInfo infer_info = mla_output_info_from_contract_tensor(infer_outputs.front());
+  if (infer_info.data_type.empty() || infer_info.size_bytes <= 0) {
+    throw std::runtime_error(
+        "Infer: MLA contract preflight failed: missing physical output contract "
+        "(dtype/size_bytes) from strict MPK metadata");
+  }
+  Sample out = InferSample(tensor_as_sample(input), model);
+  const SelectedTensorSample selected = select_tensor_sample(out, "Infer");
+  const Sample& selected_sample = *selected.sample;
+  const int logical_output_index =
+      (selected.logical_output_index >= 0) ? selected.logical_output_index : 0;
   simaai::neat::Tensor tensor;
-  if (out.tensor.has_value() && out.tensor->planes.empty()) {
-    tensor = pipeline_internal::copy_tensor_from_sample_memory(*out.tensor, 0);
-  } else {
-    tensor = take_tensor(out, "Infer");
+  if (static_cast<std::size_t>(logical_output_index) < infer_outputs.size()) {
+    infer_info = mla_output_info_from_contract_tensor(
+        infer_outputs[static_cast<std::size_t>(logical_output_index)]);
   }
-  apply_mla_output_override(tensor, infer_info);
-  if (tensor.layout == TensorLayout::Unknown || tensor.layout == TensorLayout::Planar) {
-    const int64_t h = (tensor.shape.size() > 0) ? tensor.shape[0] : -1;
-    const int64_t w = (tensor.shape.size() > 1) ? tensor.shape[1] : -1;
-    const int64_t d = (tensor.shape.size() > 2) ? tensor.shape[2] : -1;
-    if (h > 0 && w > 0) {
-      tensor.layout = (tensor.shape.size() >= 3 && d > 0) ? TensorLayout::HWC : TensorLayout::HW;
-    }
-  }
+  tensor = select_stage_output_tensor_view(selected_sample, selected.memory_index, "Infer",
+                                           "Infer: source before tensor_view_from_sample_memory",
+                                           "Infer: selected tensor view", "Infer: direct tensor");
   const std::string infer_fmt = upper_copy(format_from_tensor(tensor));
-  if (tensor.dtype == TensorDType::BFloat16 || is_tessellated_bf16_format(infer_fmt)) {
-    throw std::runtime_error("Infer: BF16 path is not supported yet");
-  }
   if (stage_debug_enabled()) {
     const int64_t actual_bytes = tensor_total_bytes(tensor);
     const size_t plane0 =
@@ -839,25 +2971,42 @@ simaai::neat::Tensor Infer(const simaai::neat::Tensor& input, const simaai::neat
                  shape_string(tensor.shape).c_str(), plane0, static_cast<long long>(actual_bytes),
                  static_cast<long long>(infer_info.size_bytes));
   }
-  return require_tessellated_int8(std::move(tensor), "Infer");
+  return require_supported_tessellated_dtype(std::move(tensor), "Infer");
 }
 
-simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
-  NodeGroup group = simaai::neat::internal::ModelAccess::build_infer_group(model, true);
-  const MlaOutputInfo mla_info = read_mla_output_info(group);
-  const WireCaps wire =
-      build_wire_caps_from_json_or_tensor(group, input, nullptr, "video/x-raw", "BGR", true);
-  const WireInput wire_input = build_wire_input_from_tensor(input, wire);
+simaai::neat::Sample MLASample(const simaai::neat::Sample& input,
+                               const simaai::neat::Model& model) {
+  auto group = simaai::neat::internal::ModelAccess::build_infer_nodes(model, true);
+  log_stage_group_nodes("MLA", group);
+  const std::vector<MlaOutputTensorInfo> mla_outputs = stage_mla_output_tensors_info(group);
+  if (mla_outputs.empty()) {
+    throw std::runtime_error("MLA: contract preflight failed: missing MLA output tensor contract "
+                             "from strict MPK metadata");
+  }
+  MlaOutputInfo mla_info = mla_output_info_from_contract_tensor(mla_outputs.front());
+  if (mla_info.data_type.empty() || mla_info.size_bytes <= 0) {
+    throw std::runtime_error("MLA: contract preflight failed: missing physical output contract "
+                             "(dtype/size_bytes) from strict MPK metadata");
+  }
+  const SelectedTensorSample selected_input = select_tensor_sample(input, "MLA input");
+  const simaai::neat::Tensor& selected_tensor =
+      require_single_tensor(*selected_input.sample, "MLA input");
+  enforce_pre_mla_input_bytes_guard(selected_tensor, group, model, "MLA");
+  const WireCaps wire = build_mla_wire_caps_from_contract_or_tensor(group, selected_tensor);
+  WireCaps stage_wire = wire;
+  apply_stage_source_segment_name(&stage_wire, *selected_input.sample);
+  const WireInput wire_input = build_wire_input_from_tensor(selected_tensor, stage_wire);
   const InputOptions src_opt = wire_input.appsrc;
+  const Sample stage_input =
+      make_stage_tensor_input_sample(*selected_input.sample, wire_input.tensor, stage_wire);
 
   StageKey key;
   key.kind = StageKind::MLA;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
-  key.input = make_input_key(src_opt);
+  key.input = make_input_key(src_opt, &wire_input.tensor);
 
   stage_trace("StageRun::MLA: before get_or_build");
   auto runner = get_or_build(key, [&]() {
-    override_buffer_name(group, src_opt.buffer_name, "mla");
     RunOptions opt = stage_run_defaults();
     // Preserve the GstBuffer so BoxDecode can reuse plugin metadata.
     opt.output_memory = OutputMemory::ZeroCopy;
@@ -866,46 +3015,77 @@ simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    pipeline_internal::PipelineBuildContext build_ctx(SessionOptions{});
-    build_ctx.apply_name_transform_to_configs(nodes);
-    build_ctx.wire_configs_by_order(nodes);
-
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(wire_input.tensor, RunMode::Sync, opt);
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, opt);
   });
   stage_trace("StageRun::MLA: after get_or_build");
 
   const int timeout_ms = default_timeout_ms();
   stage_trace("StageRun::MLA: before push_and_pull");
-  Sample out = runner->push_and_pull(wire_input.tensor, timeout_ms);
+  Sample out = run_single_sample(*runner, stage_input, timeout_ms, "MLA");
+  propagate_preprocess_meta_to_sample_if_missing(selected_tensor, &out);
+  log_stage_output_sample("MLA: output sample", out);
   stage_trace("StageRun::MLA: after push_and_pull");
+  return out;
+}
+
+simaai::neat::Sample MLASample(const simaai::neat::Tensor& input,
+                               const simaai::neat::Model& model) {
+  return MLASample(tensor_as_sample(input), model);
+}
+
+Sample MLA(const Sample& inputs, const simaai::neat::Model& model) {
+  if (inputs.kind != SampleKind::Bundle) {
+    return MLASample(inputs, model);
+  }
+  Sample out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(MLASample(input, model));
+  }
+  return out;
+}
+
+TensorList MLAOutputs(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
+  return collect_tensors_from_sample(MLASample(input, model), "MLAOutputs");
+}
+
+TensorList MLAOutputs(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
+  return MLAOutputs(tensor_as_sample(input), model);
+}
+
+TensorList MLA(const TensorList& inputs, const simaai::neat::Model& model) {
+  return MLAOutputs(sample_from_tensors(inputs), model);
+}
+
+simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
+  const std::vector<MlaOutputTensorInfo> mla_outputs = stage_mla_output_tensors_info(
+      simaai::neat::internal::ModelAccess::build_infer_nodes(model, true));
+  MlaOutputInfo mla_info = mla_output_info_from_contract_tensor(mla_outputs.front());
+  Sample out = MLASample(tensor_as_sample(input), model);
+  const SelectedTensorSample selected = select_tensor_sample(out, "MLA");
+  const Sample& selected_sample = *selected.sample;
+  const int logical_output_index =
+      (selected.logical_output_index >= 0) ? selected.logical_output_index : 0;
   simaai::neat::Tensor tensor;
-  if (out.tensor.has_value() && out.tensor->planes.empty()) {
-    tensor = pipeline_internal::copy_tensor_from_sample_memory(*out.tensor, 0);
-  } else {
-    tensor = take_tensor(out, "MLA");
+  if (static_cast<std::size_t>(logical_output_index) < mla_outputs.size()) {
+    mla_info = mla_output_info_from_contract_tensor(
+        mla_outputs[static_cast<std::size_t>(logical_output_index)]);
   }
-  apply_mla_output_override(tensor, mla_info);
-  if (tensor.layout == TensorLayout::Unknown || tensor.layout == TensorLayout::Planar) {
-    const int64_t h = (tensor.shape.size() > 0) ? tensor.shape[0] : -1;
-    const int64_t w = (tensor.shape.size() > 1) ? tensor.shape[1] : -1;
-    const int64_t d = (tensor.shape.size() > 2) ? tensor.shape[2] : -1;
-    if (h > 0 && w > 0) {
-      tensor.layout = (tensor.shape.size() >= 3 && d > 0) ? TensorLayout::HWC : TensorLayout::HW;
-    }
-  }
+  tensor = select_stage_output_tensor_view(selected_sample, selected.memory_index, "MLA",
+                                           "MLA: source before tensor_view_from_sample_memory",
+                                           "MLA: selected tensor view", "MLA: direct tensor");
   const std::string mla_fmt = upper_copy(format_from_tensor(tensor));
-  if (tensor.dtype == TensorDType::BFloat16 || is_tessellated_bf16_format(mla_fmt)) {
-    throw std::runtime_error("MLA: BF16 path is not supported yet");
-  }
   if (stage_debug_enabled()) {
     const int64_t actual_bytes = tensor_total_bytes(tensor);
     const size_t plane0 =
@@ -921,90 +3101,248 @@ simaai::neat::Tensor MLA(const simaai::neat::Tensor& input, const simaai::neat::
                  shape_string(tensor.shape).c_str(), plane0, static_cast<long long>(actual_bytes),
                  static_cast<long long>(mla_info.size_bytes));
   }
-  return require_tessellated_int8(std::move(tensor), "MLA");
+  return require_supported_tessellated_dtype(std::move(tensor), "MLA");
 }
 
-BoxDecodeResult BoxDecode(const simaai::neat::Tensor& input, const simaai::neat::Model& model,
-                          const BoxDecodeOptions& opt) {
-  if (opt.original_width <= 0 || opt.original_height <= 0) {
-    throw std::runtime_error("BoxDecode: original_width/height are required");
+Sample Postprocess(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
+  if (input.kind == SampleKind::Bundle) {
+    Sample out;
+    out.reserve(input.size());
+    for (const auto& field : input) {
+      out.push_back(Postprocess(field, model));
+    }
+    return out;
+  }
+  auto group = simaai::neat::internal::ModelAccess::build_public_postprocess_nodes(model);
+  if (group.empty()) {
+    return input;
+  }
+  log_stage_group_nodes("Postprocess", group);
+
+  Sample stage_input = input;
+  {
+    SelectedTensorSampleMutable selected_stage_input =
+        select_tensor_sample_mutable(stage_input, "Postprocess staged input");
+    if (!selected_stage_input.sample || !sample_has_tensor_list(*selected_stage_input.sample)) {
+      throw std::runtime_error("Postprocess: staged input missing selected tensor field");
+    }
+    const auto& tensors =
+        sample_tensor_list(*selected_stage_input.sample, "Postprocess staged input");
+    const auto& tensor = tensors.front();
+    if (selected_stage_input.sample->media_type.empty()) {
+      selected_stage_input.sample->media_type = "application/vnd.simaai.tensor";
+    }
+    if (selected_stage_input.sample->format.empty()) {
+      const std::string fmt = format_from_tensor(tensor);
+      if (!fmt.empty()) {
+        selected_stage_input.sample->format = fmt;
+      }
+    }
+    if (selected_stage_input.sample->payload_tag.empty() &&
+        !selected_stage_input.sample->format.empty()) {
+      selected_stage_input.sample->payload_tag = selected_stage_input.sample->format;
+    }
   }
 
-  auto node = simaai::neat::nodes::SimaBoxDecode(model, opt.decode_type, opt.original_width,
-                                                 opt.original_height, opt.detection_threshold,
-                                                 opt.nms_iou_threshold, opt.top_k);
-  NodeGroup group(std::vector<std::shared_ptr<Node>>{node});
-  const BoxDecodeInputInfo box_info = read_boxdecode_input_info(group);
-  const BoxDecodeExpectedInfo box_expected = read_boxdecode_expected_info(group);
-  WireCaps wire = build_wire_caps_from_json_or_tensor(
-      group, input, &box_info.dims, "application/vnd.simaai.tensor", "MLA", false);
-  wire.caps_override = build_boxdecode_caps_override(group);
-  if (!wire.caps_override.empty() && stage_debug_enabled()) {
-    std::fprintf(stderr, "[DBG] StageRun BoxDecode caps_override: %s\n",
-                 wire.caps_override.c_str());
+  const SelectedTensorSample selected_input =
+      select_tensor_sample(stage_input, "Postprocess input");
+  const TensorList& selected_input_tensors =
+      sample_tensor_list(const_cast<Sample&>(*selected_input.sample), "Postprocess input");
+  const simaai::neat::Tensor& selected_tensor = selected_input_tensors.front();
+  const WireCaps wire = build_wire_caps_from_tensor(group, selected_tensor, nullptr,
+                                                    "application/vnd.simaai.tensor", nullptr);
+  WireCaps stage_wire = wire;
+  if (!sample_is_multi_output(stage_input)) {
+    apply_stage_source_segment_name(&stage_wire, *selected_input.sample);
   }
-  const WireInput wire_input = build_wire_input_from_tensor(input, wire);
+  const WireInput wire_input = build_wire_input_from_tensor(selected_tensor, stage_wire);
   const InputOptions src_opt = wire_input.appsrc;
-
+  if (sample_is_multi_output(stage_input)) {
+    stage_input = make_stage_multi_output_input_sample(stage_input, stage_wire);
+  } else {
+    stage_input = make_stage_tensor_input_sample(stage_input, wire_input.tensor, stage_wire);
+  }
   StageKey key;
-  key.kind = StageKind::BoxDecode;
+  key.kind = StageKind::Postprocess;
   key.model_id = simaai::neat::internal::ModelAccess::model_id(model);
-  key.input = make_input_key(src_opt);
-  key.box_opt = opt;
+  key.input = make_input_key(src_opt, &wire_input.tensor);
 
   auto runner = get_or_build(key, [&]() {
-    override_buffer_name(group, src_opt.buffer_name, "boxdecode");
-    dump_config_json(group, "BoxDecode");
+    RunOptions run_opt = stage_run_defaults();
+    run_opt.output_memory = OutputMemory::ZeroCopy;
     auto input_node = simaai::neat::nodes::Input(src_opt);
     auto output_node = simaai::neat::nodes::Output();
     std::vector<std::shared_ptr<Node>> nodes;
     nodes.reserve(group.size() + 2);
     nodes.push_back(input_node);
-    for (const auto& node : group.nodes()) {
+    for (const auto& node : group) {
       nodes.push_back(node);
     }
     nodes.push_back(output_node);
 
-    pipeline_internal::PipelineBuildContext build_ctx(SessionOptions{});
-    build_ctx.apply_name_transform_to_configs(nodes);
-    build_ctx.wire_configs_by_order(nodes);
-
-    Session p;
+    Graph p;
     p.add(input_node);
-    p.add(group);
+    for (const auto& node : group) {
+      p.add(node);
+    }
     p.add(output_node);
-    return p.build(wire_input.tensor, RunMode::Sync, stage_run_defaults());
+    return p.build_seeded_internal(Sample{stage_input}, RunMode::Sync, run_opt);
   });
 
   const int timeout_ms = default_timeout_ms();
-  if (stage_debug_enabled()) {
-    const int64_t actual_bytes = tensor_total_bytes(wire_input.tensor);
-    const size_t plane0 = wire_input.tensor.planes.empty()
-                              ? 0
-                              : static_cast<size_t>(tensor_plane_bytes_tight(
-                                    wire_input.tensor.planes[0], wire_input.tensor.dtype));
-    std::fprintf(
-        stderr,
-        "[DBG] StageRun BoxDecode in: format=%s dtype=%s w=%d h=%d shape=%s plane0=%zu bytes=%lld "
-        "expected_bytes=%lld buffer_size=%lld wire=%s/%s %dx%dx%d\n",
-        format_from_tensor(wire_input.tensor).c_str(), dtype_name(wire_input.tensor.dtype),
-        (wire_input.tensor.shape.size() > 1) ? static_cast<int>(wire_input.tensor.shape[1]) : -1,
-        (wire_input.tensor.shape.size() > 0) ? static_cast<int>(wire_input.tensor.shape[0]) : -1,
-        shape_string(wire_input.tensor.shape).c_str(), plane0, static_cast<long long>(actual_bytes),
-        static_cast<long long>(box_expected.total_bytes),
-        static_cast<long long>(box_expected.buffer_size), wire.media_type.c_str(),
-        wire.format.c_str(), wire.dims.width, wire.dims.height, wire.dims.depth);
+  log_stage_tensor_stats("Postprocess: staged input", stage_input);
+  Sample out = run_single_sample(*runner, stage_input, timeout_ms, "Postprocess");
+  propagate_preprocess_meta_to_sample_if_missing(selected_tensor, &out);
+  tag_detection_format_in_sample(out);
+  log_stage_output_sample("Postprocess: output sample", out);
+  log_stage_tensor_stats("Postprocess: output sample", out);
+  return out;
+}
+
+Sample Postprocess(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
+  return Postprocess(tensor_as_sample(input), model);
+}
+
+TensorList PostprocessOutputs(const simaai::neat::Sample& input, const simaai::neat::Model& model) {
+  return collect_tensors_from_sample(Postprocess(input, model), "PostprocessOutputs");
+}
+
+TensorList PostprocessOutputs(const simaai::neat::Tensor& input, const simaai::neat::Model& model) {
+  return PostprocessOutputs(tensor_as_sample(input), model);
+}
+
+TensorList Postprocess(const TensorList& inputs, const simaai::neat::Model& model) {
+  return PostprocessOutputs(sample_from_tensors(inputs), model);
+}
+
+Sample BoxDecodeSample(const simaai::neat::Sample& input, const simaai::neat::Model& model,
+                       const BoxDecodeOptions& opt) {
+  if (opt.decode_type == BoxDecodeType::Unspecified) {
+    throw std::runtime_error(
+        "BoxDecode: decode_type is required and cannot be BoxDecodeType::Unspecified");
   }
+  const SelectedTensorSample selected_input = select_tensor_sample(input, "BoxDecode input");
+  const Sample& selected_input_sample = *selected_input.sample;
+  const TensorList& selected_input_tensors =
+      sample_tensor_list(const_cast<Sample&>(selected_input_sample), "BoxDecode input");
+  const simaai::neat::Tensor& selected_input_tensor = selected_input_tensors.front();
+  const auto resolved_preproc = model.resolved_preprocess_plan();
+  const bool require_explicit_original =
+      resolved_preproc.graph_family != PreprocessGraphFamily::Preproc;
+  std::optional<PreprocessRuntimeMeta> pre_meta;
+  pre_meta = preprocess_meta_from_tensor_or_holder(selected_input_tensor);
+  std::optional<bool> route_tess_needed = std::nullopt;
+  std::optional<bool> route_quant_needed = std::nullopt;
+  int original_width = 0;
+  int original_height = 0;
+  if (pre_meta.has_value()) {
+    route_tess_needed = pre_meta->tessellate;
+    route_quant_needed = pre_meta->quantize;
+    if (require_explicit_original) {
+      original_width = pre_meta->original_width;
+      original_height = pre_meta->original_height;
+    }
+  }
+
+  if (!simaai::neat::internal::ModelAccess::has_model_managed_stage(
+          model, simaai::neat::internal::StageNodeKind::BoxDecode)) {
+    try {
+      simaai::neat::internal::ModelAccess::require_model_managed_stage(
+          model, simaai::neat::internal::StageNodeKind::BoxDecode,
+          "stages::BoxDecode(..., model, ...)");
+    } catch (const std::exception& e) {
+      throw std::runtime_error(
+          std::string(e.what()) +
+          " When using stages::BoxDecode(..., model, ...), construct the Model with "
+          "Model::Options::decode_type set first (for example BoxDecodeType::YoloV8). "
+          "The BoxDecodeOptions argument to stages::BoxDecode configures that stage call, "
+          "but it does not retarget an already-constructed Model route.");
+    }
+  }
+
+  auto node = simaai::neat::nodes::SimaBoxDecode(
+      model, opt.decode_type, opt.detection_threshold, opt.nms_iou_threshold, opt.top_k, "",
+      route_tess_needed, route_quant_needed, original_width, original_height);
+  (void)node->backend_fragment(0);
+  std::vector<std::shared_ptr<Node>> group{node};
+  log_stage_group_nodes("BoxDecode", group);
+  if (const auto req = collect_preprocess_meta_requirement(group, "boxdecode")) {
+    const PreprocessRuntimeMeta meta =
+        enforce_required_preprocess_meta(selected_input_tensor, *req);
+    original_width = meta.original_width;
+    original_height = meta.original_height;
+  }
+  if (original_width <= 0 || original_height <= 0) {
+    throw std::runtime_error(
+        "BoxDecode: stage='boxdecode' plugin='neatboxdecode' preprocess metadata contract "
+        "violation: preproc_original_width/preproc_original_height must be > 0 "
+        "(no fallback allowed)");
+  }
+
+  auto box_model_opt = simaai::neat::internal::ModelAccess::options(model);
+  box_model_opt.decode_type = opt.decode_type;
+  if (opt.detection_threshold > 0.0) {
+    box_model_opt.score_threshold = static_cast<float>(opt.detection_threshold);
+  }
+  if (opt.nms_iou_threshold > 0.0) {
+    box_model_opt.nms_iou_threshold = static_cast<float>(opt.nms_iou_threshold);
+  }
+  if (opt.top_k > 0) {
+    box_model_opt.top_k = opt.top_k;
+  }
+  simaai::neat::Model box_model =
+      simaai::neat::internal::ModelAccess::clone_with_options(model, box_model_opt);
+  return Postprocess(input, box_model);
+}
+
+BoxDecodeResult DecodeBoxDecodeResultSample(const simaai::neat::Sample& input,
+                                            const simaai::neat::Model& model,
+                                            const BoxDecodeOptions& opt) {
+  const SelectedTensorSample selected_input = select_tensor_sample(input, "BoxDecode input");
+  const TensorList& selected_input_tensors =
+      sample_tensor_list(const_cast<Sample&>(*selected_input.sample), "BoxDecode input");
+  const simaai::neat::Tensor& selected_input_tensor = selected_input_tensors.front();
+  int original_width = 0;
+  int original_height = 0;
+  if (const auto pre_meta = preprocess_meta_from_tensor_or_holder(selected_input_tensor);
+      pre_meta.has_value()) {
+    original_width = pre_meta->original_width;
+    original_height = pre_meta->original_height;
+  }
+  Sample out = BoxDecodeSample(input, model, opt);
+  if (auto decoded =
+          try_decode_bbox_sample_recursive(out, original_width, original_height, opt.top_k);
+      decoded.has_value()) {
+    return *decoded;
+  }
+  const SelectedTensorSample selected_output = select_tensor_sample(out, "BoxDecode");
+  if (auto decoded = try_decode_bbox_payload_tensor_sample(*selected_output.sample, original_width,
+                                                           original_height, opt.top_k);
+      decoded.has_value()) {
+    return *decoded;
+  }
+  simaai::neat::Tensor tensor = take_tensor(*selected_output.sample, "BoxDecode");
+  return decode_bbox_tensor(tensor, original_width, original_height, opt.top_k, true);
+}
+
+Sample BoxDecode(const Sample& inputs, const simaai::neat::Model& model,
+                 const BoxDecodeOptions& opt) {
   Sample out;
-  const std::shared_ptr<void> holder = pipeline_internal::holder_from_tensor(input);
-  if (holder) {
-    // Preserve GstSimaMeta by reusing the original MLA buffer when possible.
-    out = runner->push_and_pull_holder(holder, timeout_ms);
-  } else {
-    out = runner->push_and_pull(wire_input.tensor, timeout_ms);
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(BoxDecodeSample(input, model, opt));
   }
-  simaai::neat::Tensor tensor = take_tensor(out, "BoxDecode");
-  return decode_bbox_tensor(tensor, opt.original_width, opt.original_height, opt.top_k, true);
+  return out;
+}
+
+BoxDecodeResultList BoxDecodeResults(const Sample& inputs, const simaai::neat::Model& model,
+                                     const BoxDecodeOptions& opt) {
+  BoxDecodeResultList out;
+  out.reserve(inputs.size());
+  for (const auto& input : inputs) {
+    out.push_back(DecodeBoxDecodeResultSample(input, model, opt));
+  }
+  return out;
 }
 
 } // namespace simaai::neat::stages

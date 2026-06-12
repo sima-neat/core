@@ -21,7 +21,7 @@ void warn_sync_override(const char* group_name) {
     std::fprintf(stderr,
                  "[sync] %s: run() enforces sync_mode=true; "
                  "async settings ignored. Use build()/push()/pull() for async.\n",
-                 group_name ? group_name : "NodeGroup");
+                 group_name ? group_name : "GraphFragment");
   }
 }
 

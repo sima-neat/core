@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 520" role="img" aria-labelledby="ftl ftd">
+<title id="ftl">Build a Custom Data Graph</title>
+<desc id="ftd">Build the smallest useful public Neat `Graph` — one *named* `Input` wired to a *named* `Output` — then push a sample through it by name and verify the sample&#x27;s metadata survives traversal.</desc>
+<defs>
+<linearGradient id="fbg" x1="80" y1="40" x2="1240" y2="500" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#F3F8F6"/></linearGradient>
+<linearGradient id="fgreen" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
+<filter id="fsh" x="-10%" y="-18%" width="120%" height="142%" filterUnits="objectBoundingBox"><feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/></filter>
+<marker id="farr" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto" markerUnits="strokeWidth"><path d="M0 0L7 3.5L0 7Z" fill="#2A9C4F"/></marker>
+<style>.fsans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif;}.fmono{font-family:"SFMono-Regular","Menlo","Consolas",monospace;}.fttl{fill:#010F0E;font-size:27px;font-weight:700;}.fsub{fill:#35536F;font-size:15px;font-weight:500;}.fcode{fill:#E2ECF6;font-size:14px;font-weight:500;}.fln{fill:#586677;font-size:13px;font-weight:500;}.fcap{fill:#7FD0A6;font-size:14px;font-weight:700;letter-spacing:0.04em;}.fdim{fill:#7D8590;font-size:14px;font-weight:500;}.ftag{fill:#F8FBFF;font-weight:650;}.fnl{fill:#0B2E1B;font-weight:650;}.fcounter{fill:#9AA7B4;font-size:13px;font-weight:600;}.fhint{fill:#2A9C4F;font-size:15px;font-weight:700;}.fanim{transition:opacity 0.55s ease;}</style>
+</defs>
+<rect x="16" y="16" width="1288" height="488" rx="30" fill="url(#fbg)" stroke="#D8E7F1"/>
+<circle cx="1188" cy="82" r="58" fill="#C0E8DB" opacity="0.5"/>
+<circle cx="112" cy="432" r="50" fill="#BFE0CF" opacity="0.45"/>
+<text x="54" y="68" class="fsans fttl">Build a Custom Data Graph</text>
+<text x="54" y="96" class="fsans fsub">Build the smallest useful public Neat `Graph` — one *named* `Input` wired to a *named* `Output` — then push a sample through it</text>
+<text x="54" y="116" class="fsans fsub">by name and verify the sample&#x27;s metadata survives traversal.</text>
+<g filter="url(#fsh)">
+<rect x="54" y="132" width="470" height="316" rx="26" fill="#1F232A"/>
+<rect x="54" y="132" width="470" height="46" rx="26" fill="#181C22"/>
+<circle cx="88" cy="155" r="6" fill="#FF6B6B"/><circle cx="110" cy="155" r="6" fill="#F4C542"/><circle cx="132" cy="155" r="6" fill="#2A9C4F"/>
+<text x="166" y="160" class="fmono fdim">build_a_custom_data_graph.py</text>
+<g id="code0" class="fanim" opacity="1">
+<text x="76" y="212" class="fsans fcap">STEP 1 · Compose graph</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">graph = pyneat.Graph()</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">graph.add(pyneat.nodes.input(&quot;image&quot;))</text>
+<text x="76" y="300" class="fmono fln">3</text>
+<text x="104" y="300" class="fmono fcode" xml:space="preserve">graph.add(pyneat.nodes.output(&quot;out&quot;))</text>
+</g>
+<g id="code1" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 2 · Connect endpoints</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">graph.connect(&quot;image&quot;, &quot;out&quot;)</text>
+</g>
+<g id="code2" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 3 · Build and push</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">run = graph.build()</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">run.push(&quot;image&quot;, [make_rgb_sample()])</text>
+</g>
+<g id="code3" class="fanim" opacity="0">
+<text x="76" y="212" class="fsans fcap">STEP 4 · Pull and verify</text>
+<text x="76" y="248" class="fmono fln">1</text>
+<text x="104" y="248" class="fmono fcode" xml:space="preserve">out = run.pull(&quot;out&quot;, 2000)</text>
+<text x="76" y="274" class="fmono fln">2</text>
+<text x="104" y="274" class="fmono fcode" xml:space="preserve">run.close()</text>
+</g>
+</g>
+<g filter="url(#fsh)">
+<g id="shell" opacity="1">
+<rect x="560" y="132" width="704" height="316" rx="30" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2"/>
+<rect x="592" y="158" width="160" height="38" rx="19" fill="url(#fgreen)"/><text x="672" y="183" class="fsans ftag" font-size="14" text-anchor="middle">Walkthrough</text>
+</g>
+<g id="node0" class="fanim" opacity="1">
+<rect x="600" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="664" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 1</text>
+<text x="664" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="664" dy="0">Compose</tspan><tspan x="664" dy="15">graph</tspan></text>
+</g>
+<g id="ring0" class="fanim" opacity="1">
+<rect x="596" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node1" class="fanim" opacity="0">
+<line x1="733" y1="293" x2="759" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="765" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="830" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 2</text>
+<text x="830" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="830" dy="0">Connect</tspan><tspan x="830" dy="15">endpoints</tspan></text>
+</g>
+<g id="ring1" class="fanim" opacity="0">
+<rect x="761" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node2" class="fanim" opacity="0">
+<line x1="898" y1="293" x2="924" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="930" y="250" width="129" height="86" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+<text x="994" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 3</text>
+<text x="994" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="994" dy="0">Build and</tspan><tspan x="994" dy="15">push</tspan></text>
+</g>
+<g id="ring2" class="fanim" opacity="0">
+<rect x="926" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+<g id="node3" class="fanim" opacity="0">
+<line x1="1063" y1="293" x2="1089" y2="293" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#farr)"/>
+<rect x="1095" y="250" width="129" height="86" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
+<text x="1160" y="272" class="fsans fdim" font-size="12" text-anchor="middle">Step 4</text>
+<text x="1160" y="299" class="fsans fnl" font-size="13" text-anchor="middle"><tspan x="1160" dy="0">Pull and</tspan><tspan x="1160" dy="15">verify</tspan></text>
+</g>
+<g id="ring3" class="fanim" opacity="0">
+<rect x="1091" y="246" width="137" height="94" rx="22" fill="none" stroke="#2A9C4F" stroke-width="3"/>
+</g>
+</g>
+<g id="popup" class="fanim" opacity="0">
+<rect x="690" y="356" width="444" height="46" rx="23" fill="#0B2E1B" opacity="0.93"/>
+<text x="912" y="384" text-anchor="middle" class="fsans" fill="#EAF7EF" font-size="16" font-weight="700">Click a step to jump to that section ↓</text>
+</g>
+<script type="text/ecmascript"><![CDATA[
+(function(){
+  var n=4, i=0, t=null, anchors=["compose-graph", "connect-endpoints", "build-and-push", "pull-and-verify"];
+  function el(id){return document.getElementById(id);}
+  function paint(a){
+    for(var k=0;k<n;k++){
+      var c=el("code"+k); if(c)c.style.opacity=(k===a?"1":"0");
+      var r=el("ring"+k); if(r)r.style.opacity=(k===a?"1":"0");
+      var d=el("node"+k); if(d)d.style.opacity=(k<=a?"1":"0");
+    }
+  }
+  function finish(){
+    for(var k=0;k<n;k++){ var d=el("node"+k); if(d)d.style.opacity="1"; var r=el("ring"+k); if(r)r.style.opacity="0"; }
+    var pop=el("popup"); if(pop)pop.style.opacity="1";
+  }
+  function tick(){ paint(i); if(i>=n-1){ finish(); return; } i++; t=setTimeout(tick,2600); }
+  function go(a){
+    var name=anchors[a]; if(!name)return;
+    try{
+      var pdoc=window.parent.document, tgt=pdoc.getElementById("step-"+name);
+      if(tgt){ tgt.scrollIntoView({behavior:"smooth",block:"start"}); if(window.parent.history&&window.parent.history.replaceState){window.parent.history.replaceState(null,"","#step-"+name);} return; }
+    }catch(e){}
+    try{ window.parent.location.hash="step-"+name; }catch(e2){ try{ window.top.location.hash="step-"+name; }catch(e3){} }
+  }
+  for(var k=0;k<n;k++){ (function(idx){ var d=el("node"+idx); if(d&&d.addEventListener){ d.style.cursor="pointer"; d.addEventListener("click",function(){go(idx);}); } })(k); }
+  paint(0);
+  t=setTimeout(tick,650);
+})();
+]]></script>
+</svg>

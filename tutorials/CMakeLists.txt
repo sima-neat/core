@@ -35,7 +35,7 @@ function(add_tutorial exe source)
   if (AT_MODEL)
     get_filename_component(model_base "${AT_MODEL}" NAME)
     list(APPEND test_args
-      --mpk "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}_mpk.tar.gz"
+      --model "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
     )
   endif()
 
@@ -45,7 +45,18 @@ function(add_tutorial exe source)
   endif()
 
   if (NOT AT_NO_TEST)
-    add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+    if (AT_MODEL)
+      add_test(NAME ${exe}
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
+          ${AT_MODEL}
+          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}/${model_base}.tar.gz"
+          "${SIMANEAT_TUTORIAL_MODEL_TARGET_FOLDER}"
+          $<TARGET_FILE:${exe}>
+          ${test_args}
+      )
+    else()
+      add_test(NAME ${exe} COMMAND ${exe} ${test_args})
+    endif()
     set_tests_properties(${exe} PROPERTIES
       LABELS "${label_list}"
       RESOURCE_LOCK "dispatcher"
@@ -68,90 +79,97 @@ add_tutorial(tutorial_002_run_inference_async
   LABELS mpk
 )
 
-add_tutorial(tutorial_003_build_inference_pipeline
-  003_build_inference_pipeline/build_inference_pipeline.cpp
+add_tutorial(tutorial_003_benchmark_your_model
+  003_benchmark_your_model/benchmark_your_model.cpp
+  MODEL resnet_50
+  ARGS --samples 10
+  LABELS mpk benchmark
+)
+
+add_tutorial(tutorial_004_build_inference_pipeline
+  004_build_inference_pipeline/build_inference_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_004_configure_model_options
-  004_configure_model_options/configure_model_options.cpp
+add_tutorial(tutorial_005_configure_model_options
+  005_configure_model_options/configure_model_options.cpp
   MODEL yolo_v8s
   LABELS mpk
 )
 
-add_tutorial(tutorial_005_preprocess_images
-  005_preprocess_images/preprocess_images.cpp
+add_tutorial(tutorial_006_preprocess_images
+  006_preprocess_images/preprocess_images.cpp
   MODEL resnet_50
   LABELS mpk
 )
 
-add_tutorial(tutorial_006_read_detection_boxes
-  006_read_detection_boxes/read_detection_boxes.cpp
+add_tutorial(tutorial_007_read_detection_boxes
+  007_read_detection_boxes/read_detection_boxes.cpp
   MODEL yolo_v8s
   ARGS --image "${CMAKE_CURRENT_SOURCE_DIR}/assets/fronalpstock_1330.jpg"
   LABELS mpk
 )
 
-add_tutorial(tutorial_007_plug_model_into_pipeline
-  007_plug_model_into_pipeline/plug_model_into_pipeline.cpp
+add_tutorial(tutorial_008_plug_model_into_pipeline
+  008_plug_model_into_pipeline/plug_model_into_pipeline.cpp
   MODEL yolo_v8s
   LABELS mpk
 )
 
-add_tutorial(tutorial_008_pass_numpy_to_model
-  008_pass_numpy_to_model/pass_numpy_to_model.cpp
+add_tutorial(tutorial_009_pass_numpy_to_model
+  009_pass_numpy_to_model/pass_numpy_to_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_009_feed_multi_input_model
-  009_feed_multi_input_model/feed_multi_input_model.cpp
+add_tutorial(tutorial_010_feed_multi_input_model
+  010_feed_multi_input_model/feed_multi_input_model.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_010_interpret_model_output
-  010_interpret_model_output/interpret_model_output.cpp
+add_tutorial(tutorial_011_interpret_model_output
+  011_interpret_model_output/interpret_model_output.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_011_diagnose_a_pipeline
-  011_diagnose_a_pipeline/diagnose_a_pipeline.cpp
+add_tutorial(tutorial_012_diagnose_a_pipeline
+  012_diagnose_a_pipeline/diagnose_a_pipeline.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_012_build_a_custom_data_graph
-  012_build_a_custom_data_graph/build_a_custom_data_graph.cpp
+add_tutorial(tutorial_013_build_a_custom_data_graph
+  013_build_a_custom_data_graph/build_a_custom_data_graph.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_013_embed_model_inside_graph
-  013_embed_model_inside_graph/embed_model_inside_graph.cpp
+add_tutorial(tutorial_014_embed_model_inside_graph
+  014_embed_model_inside_graph/embed_model_inside_graph.cpp
   MODEL yolo_v8s
   LABELS mpk
 )
 
-add_tutorial(tutorial_014_run_multiple_streams
-  014_run_multiple_streams/run_multiple_streams.cpp
+add_tutorial(tutorial_015_run_multiple_streams
+  015_run_multiple_streams/run_multiple_streams.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_015_tune_throughput_and_queues
-  015_tune_throughput_and_queues/tune_throughput_and_queues.cpp
+add_tutorial(tutorial_016_tune_throughput_and_queues
+  016_tune_throughput_and_queues/tune_throughput_and_queues.cpp
   LABELS fast
 )
 
-add_tutorial(tutorial_016_build_production_pipeline
-  016_build_production_pipeline/build_production_pipeline.cpp
+add_tutorial(tutorial_017_build_production_pipeline
+  017_build_production_pipeline/build_production_pipeline.cpp
   MODEL resnet_50
   LABELS mpk
 )
 
-add_tutorial(tutorial_017_consume_rtsp_stream
-  017_consume_rtsp_stream/consume_rtsp_stream.cpp
+add_tutorial(tutorial_018_consume_rtsp_stream
+  018_consume_rtsp_stream/consume_rtsp_stream.cpp
   NO_TEST
   LABELS asset
 )
 add_test(
-  NAME tutorial_017_consume_rtsp_stream
+  NAME tutorial_018_consume_rtsp_stream
   COMMAND /bin/sh -c [=[
 url="${SIMANEAT_APPS_TEST_RTSP_URL:-}"
 if [ -z "${url}" ]; then
@@ -159,16 +177,40 @@ if [ -z "${url}" ]; then
   url="${urls%%[ ,;]*}"
 fi
 if [ -z "${url}" ]; then
-  echo "Skipping tutorial_017_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
+  echo "Skipping tutorial_018_consume_rtsp_stream: set SIMANEAT_APPS_TEST_RTSP_URL or SIMANEAT_APPS_TEST_RTSP_URLS"
   exit 77
 fi
 exec "$1" --url "${url}" --frames 1
-]=] sh $<TARGET_FILE:tutorial_017_consume_rtsp_stream>
+]=] sh $<TARGET_FILE:tutorial_018_consume_rtsp_stream>
 )
-set_tests_properties(tutorial_017_consume_rtsp_stream PROPERTIES
+set_tests_properties(tutorial_018_consume_rtsp_stream PROPERTIES
   LABELS "tutorial;asset;rtsp"
   RESOURCE_LOCK "dispatcher"
   SKIP_RETURN_CODE 77
+)
+
+add_tutorial(tutorial_019_run_an_llm
+  019_run_an_llm/run_an_llm.cpp
+  NO_TEST
+  LABELS genai
+)
+
+add_tutorial(tutorial_020_run_a_vlm
+  020_run_a_vlm/run_a_vlm.cpp
+  NO_TEST
+  LABELS genai image
+)
+
+add_tutorial(tutorial_021_serve_genai_models
+  021_serve_genai_models/serve_genai_models.cpp
+  NO_TEST
+  LABELS genai server
+)
+
+add_tutorial(tutorial_022_compose_genai_into_graph
+  022_compose_genai_into_graph/compose_genai_into_graph.cpp
+  NO_TEST
+  LABELS genai graph
 )
 
 install(
@@ -192,7 +234,9 @@ install(
 )
 
 install(
-  FILES ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+  FILES
+    ${CMAKE_CURRENT_SOURCE_DIR}/build.sh
+    ${CMAKE_CURRENT_SOURCE_DIR}/run_with_modelzoo.sh
   DESTINATION share/sima-neat/tutorials
   COMPONENT extras
   PERMISSIONS

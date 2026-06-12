@@ -1,30 +1,29 @@
-import io
-import json
-import re
-import tarfile
+
+import importlib
 
 import numpy as np
 import pytest
 
+import model_fixture_helpers as model_fixtures
 import pyneat
 
 PREPROC_OPTION_FIELDS = (
-    "input_width",
-    "input_height",
-    "output_width",
-    "output_height",
+    "input_shape",
+    "output_shape",
+    "slice_shape",
+    "set_input_shape",
+    "set_output_shape",
+    "set_slice_shape",
+    "has_input_shape",
+    "has_output_shape",
+    "has_slice_shape",
     "scaled_width",
     "scaled_height",
-    "input_channels",
-    "output_channels",
     "batch_size",
     "normalize",
     "aspect_ratio",
     "tessellate",
     "dynamic_input_dims",
-    "tile_width",
-    "tile_height",
-    "tile_channels",
     "input_offset",
     "input_stride",
     "output_stride",
@@ -45,20 +44,13 @@ PREPROC_OPTION_FIELDS = (
     "debug",
     "upstream_name",
     "graph_input_name",
-    "output_memory_order",
     "num_buffers",
     "num_buffers_model",
     "num_buffers_locked",
-    "config_path",
-    "config_dir",
-    "keep_config",
-    "config_json",
 )
 
 QUANT_TESS_OPTION_FIELDS = (
     "config_path",
-    "config_dir",
-    "keep_config",
     "config_json",
     "element_name",
     "num_buffers",
@@ -68,8 +60,6 @@ QUANT_TESS_OPTION_FIELDS = (
 
 DETESS_DEQUANT_OPTION_FIELDS = (
     "config_path",
-    "config_dir",
-    "keep_config",
     "config_json",
     "upstream_name",
     "element_name",
@@ -102,63 +92,47 @@ UDP_H264_OUTPUT_GROUP_OPTION_FIELDS = (
     "udp_async",
 )
 
-OPTIVIEW_OBJECT_FIELDS = (
-    "x",
-    "y",
-    "w",
-    "h",
-    "score",
-    "class_id",
+VIDEO_SENDER_RTP_OPTION_FIELDS = (
+    "payload_type",
+    "config_interval",
 )
 
-OPTIVIEW_CHANNEL_OPTION_FIELDS = (
+VIDEO_SENDER_ENCODER_OPTION_FIELDS = (
+    "bitrate_kbps",
+    "profile",
+    "level",
+)
+
+VIDEO_SENDER_OPTION_FIELDS = (
     "host",
     "channel",
     "video_port_base",
-    "json_port_base",
+    "sync",
+    "async_",
+    "async",
+    "rtp",
+    "encoder",
+    "is_raw_input",
+    "is_encoded_input",
+    "width",
+    "height",
+    "fps",
+    "video_port",
 )
 
-UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS = (
-    "h264_caps",
-    "payload_type",
-    "config_interval",
-    "enable_timings",
+METADATA_SENDER_OPTION_FIELDS = (
     "host",
-    "video_port_base",
-    "udp_sync",
-    "udp_async",
+    "channel",
+    "metadata_port_base",
 )
 
-OPTIVIEW_OUTPUT_GROUP_OPTION_FIELDS = (
-    "udp",
-    "send_json",
-    "json_port_base",
-    "frame_w",
-    "frame_h",
-    "topk",
-    "parse_debug",
-    "json_delay_ms",
-    "video_delay_ms",
-    "labels",
-)
 
-OPTIVIEW_JSON_INPUT_FIELDS = (
-    "stream_idx",
-    "stream_id",
-    "frame_id",
-    "capture_ms",
-    "yolo_ms",
-    "output_frame_id",
-    "yolo_sample",
-    "decoded_sample",
-)
+def _strict_resnet50_model_path():
+  return model_fixtures.strict_model_tar_path("SIMA_RESNET50_TAR")
 
-OPTIVIEW_JSON_RESULT_FIELDS = (
-    "ok",
-    "nonempty",
-    "boxes",
-    "error",
-)
+
+def _strict_yolo_model_path():
+  return model_fixtures.strict_model_tar_path("SIMA_YOLO_TAR")
 
 
 def _assert_not_type_error(call):
@@ -168,207 +142,193 @@ def _assert_not_type_error(call):
     assert not isinstance(exc, TypeError), str(exc)
 
 
-def _write_tar_text(tar, name, text):
-  data = text.encode("utf-8")
-  info = tarfile.TarInfo(name=name)
-  info.size = len(data)
-  tar.addfile(info, io.BytesIO(data))
+def test_graph_only_public_surface():
+  assert hasattr(pyneat, "Graph")
+  assert hasattr(pyneat, "GraphOptions")
+  assert hasattr(pyneat, "GraphReport")
+  assert hasattr(pyneat, "NeatError")
+  assert hasattr(pyneat, "ModelRouteOptions")
+  assert hasattr(pyneat, "graphs")
+  assert hasattr(pyneat.graphs, "branch")
+  assert hasattr(pyneat.graphs, "combine")
+
+  for removed_name in (
+      "graph",
+      "_graph",
+      "Session",
+      "SessionError",
+      "SessionReport",
+      "SessionOptions",
+      "ModelSessionOptions",
+  ):
+    assert not hasattr(pyneat, removed_name)
+    with pytest.raises(AttributeError, match="removed|renamed"):
+      getattr(pyneat, removed_name)
+  with pytest.raises(ModuleNotFoundError):
+    importlib.import_module("pyneat._graph")
+
+  assert not hasattr(pyneat.Graph, "add_group")
 
 
-def _write_tar_bytes(tar, name, data):
-  info = tarfile.TarInfo(name=name)
-  info.size = len(data)
-  tar.addfile(info, io.BytesIO(data))
+def test_graph_pythonic_add_and_describe():
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.nodes.output())
 
-
-def _write_mpk_fixture(tmp_path, name, files):
-  tar_path = tmp_path / f"{name}.tar.gz"
-  with tarfile.open(tar_path, "w:gz") as tar:
-    for path, contents in files.items():
-      _write_tar_text(tar, path, contents)
-    _write_tar_bytes(tar, "share/placeholder.elf", bytes((0x7F, 0x45, 0x4C, 0x46, 0x02, 0x01, 0x01)))
-  return tar_path
-
-
-def _postprocess_fixture_path(tmp_path, name, *, include_boxdecode=False, include_detess=False):
-  sequence = [
-      {
-          "sequence_id": 1,
-          "name": "preproc_0",
-          "pluginId": "processcvu",
-          "configPath": "0_preproc.json",
-          "processor": "CVU",
-          "kernel": "preproc",
-          "input": "decoder",
-      },
-      {
-          "sequence_id": 2,
-          "name": "mla_0",
-          "pluginId": "processmla",
-          "configPath": "0_process_mla.json",
-          "processor": "MLA",
-          "kernel": "infer",
-          "input": "preproc_0",
-      },
-  ]
-  files = {
-      "etc/pipeline_sequence.json": json.dumps({"pipelines": [{"sequence": sequence}]}, indent=2),
-      "etc/0_preproc.json": json.dumps(
-          {
-              "node_name": "preproc_0",
-              "input_width": 1280,
-              "input_height": 720,
-              "input_img_type": "RGB",
-              "output_width": 640,
-              "output_height": 640,
-              "output_img_type": "RGB",
-          },
-          indent=2,
-      ),
-      "etc/0_process_mla.json": json.dumps(
-          {
-              "node_name": "mla_0",
-              "input_buffers": [{"name": "preproc_0"}],
-              "data_type": ["INT8"],
-              "output_width": [80],
-              "output_height": [80],
-              "output_depth": [6],
-          },
-          indent=2,
-      ),
-  }
-
-  if include_boxdecode:
-    sequence.append(
-        {
-            "sequence_id": 3,
-            "name": "boxdecode_0",
-            "pluginId": "processcvu",
-            "configPath": "0_boxdecode.json",
-            "processor": "CVU",
-            "kernel": "boxdecode",
-            "input": "mla_0",
-        }
-    )
-    files["etc/0_boxdecode.json"] = json.dumps(
-        {
-            "node_name": "boxdecode_0",
-            "input_buffers": [{"name": "mla_0"}],
-            "decode_type": "yolov8",
-            "original_width": 320,
-            "original_height": 240,
-            "detection_threshold": 0.15,
-            "nms_iou_threshold": 0.45,
-            "topk": 24,
-        },
-        indent=2,
-    )
-
-  if include_detess:
-    sequence.append(
-        {
-            "sequence_id": 3,
-            "name": "detessdequant_0",
-            "pluginId": "processcvu",
-            "configPath": "0_postproc.json",
-            "processor": "CVU",
-            "kernel": "detessdequant",
-            "input": "mla_0",
-        }
-    )
-    files["etc/0_postproc.json"] = json.dumps(
-        {
-            "node_name": "detessdequant_0",
-            "input_buffers": [{"name": "mla_0"}],
-            "memory": {"cpu": "CVU", "next_cpu": "CVU"},
-            "simaai__params": {"cpu": "CVU", "next_cpu": "CVU"},
-        },
-        indent=2,
-    )
-
-  return _write_mpk_fixture(tmp_path, name, files)
-
-
-def _preproc_fixture_path(tmp_path, name, *, normalize=True):
-  files = {
-      "etc/pipeline_sequence.json": json.dumps(
-          {
-              "pipelines": [
-                  {
-                      "sequence": [
-                          {
-                              "sequence_id": 1,
-                              "name": "preproc_0",
-                              "pluginId": "processcvu",
-                              "configPath": "0_preproc.json",
-                              "processor": "CVU",
-                              "kernel": "preproc",
-                              "input": "decoder",
-                          },
-                          {
-                              "sequence_id": 2,
-                              "name": "mla_0",
-                              "pluginId": "processmla",
-                              "configPath": "0_process_mla.json",
-                              "processor": "MLA",
-                              "kernel": "infer",
-                              "input": "preproc_0",
-                          },
-                      ]
-                  }
-              ]
-          },
-          indent=2,
-      ),
-      "etc/0_preproc.json": json.dumps(
-          {
-              "node_name": "preproc_0",
-              "input_width": 1280,
-              "input_height": 720,
-              "input_img_type": "RGB",
-              "output_width": 640,
-              "output_height": 640,
-              "output_img_type": "RGB",
-              "normalize": normalize,
-          },
-          indent=2,
-      ),
-      "etc/0_process_mla.json": json.dumps(
-          {
-              "node_name": "mla_0",
-              "input_buffers": [{"name": "preproc_0"}],
-              "data_type": ["INT8"],
-              "output_width": [80],
-              "output_height": [80],
-              "output_depth": [6],
-          },
-          indent=2,
-      ),
-  }
-  return _write_mpk_fixture(tmp_path, name, files)
-
-
-def test_session_pythonic_add_and_describe():
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.nodes.output())
-
-  text = session.describe_backend()
+  text = graph.describe_backend()
   assert isinstance(text, str)
   assert text
 
 
+def test_graph_pythonic_add_graph_and_connect_alias():
+  source = pyneat.Graph()
+  source.custom_with_role(
+      "videotestsrc num-buffers=1 is-live=false ! "
+      "video/x-raw,format=RGB,width=16,height=16,framerate=1/1",
+      pyneat.InputRole.Source,
+  )
+  sink = pyneat.Graph()
+  sink.add(pyneat.nodes.output())
+
+  spliced = pyneat.Graph()
+  assert spliced.add(source) is spliced
+  assert spliced.add(sink) is spliced
+  assert "videotestsrc" in spliced.describe_backend()
+
+  connected = pyneat.Graph()
+  assert connected.connect(source, sink) is connected
+
+
+def test_named_graph_endpoint_api_surface():
+  source = pyneat.Graph("image")
+  assert source.name == "image"
+  assert source.set_name("camera") is source
+  assert source.name == "camera"
+  source.add(pyneat.nodes.input("image"))
+
+  sink = pyneat.Graph("ignored")
+  sink.add(pyneat.nodes.output("classes"))
+
+  connected = pyneat.Graph()
+  assert connected.connect(source, sink) is connected
+
+  run = pyneat.Run()
+  assert run.input_names() == []
+  assert run.output_names() == []
+
+
+def test_run_export_api_surface():
+  export_opt = pyneat.RunExportOptions()
+  export_opt.label = "surface"
+  export_opt.include_metrics = False
+  export_opt.include_power = False
+  export_opt.include_node_metrics = True
+  export_opt.include_plugin_metrics = True
+  export_opt.include_empty_node_metrics = False
+  export_opt.indent = 0
+  export_opt.metadata = [("suite", "api")]
+  assert export_opt.label == "surface"
+  assert export_opt.metadata == [("suite", "api")]
+  assert export_opt.include_empty_node_metrics is False
+
+  auto_opt = pyneat.RunAutoExportOptions()
+  auto_opt.path = "/tmp/pyneat_graph_run_surface.json"
+  auto_opt.label = "auto"
+  auto_opt.include_metrics = True
+  auto_opt.include_power = False
+  auto_opt.include_node_metrics = True
+  auto_opt.include_plugin_metrics = False
+  auto_opt.include_empty_node_metrics = True
+  auto_opt.indent = 2
+
+  run_opt = pyneat.RunOptions()
+  run_opt.run_export = auto_opt
+  run_opt.enable_board_power()
+  assert not hasattr(run_opt, "enable_metrics")
+  assert run_opt.power_monitor.enabled is True
+  run_opt.disable_power_monitor()
+  assert run_opt.power_monitor.enabled is False
+  run_opt.power_monitor = pyneat.modalix_som_power_monitor_options(250)
+  assert run_opt.power_monitor.enabled is True
+  assert run_opt.run_export.path.endswith("pyneat_graph_run_surface.json")
+  assert run_opt.run_export.label == "auto"
+  assert run_opt.run_export.include_plugin_metrics is False
+
+  assert not hasattr(pyneat, "RuntimeMetricsOptions")
+  assert not hasattr(pyneat, "RuntimeMetrics")
+  assert not hasattr(pyneat, "GraphMetricsReport")
+  assert not hasattr(pyneat, "build_graph_metrics_report_run_lifetime")
+
+  measure_report = pyneat.MeasureReport()
+  measure_report.elapsed_s = 1.0
+  counters = pyneat.MeasureCounters()
+  counters.outputs_pulled = 2
+  measure_report.counters = counters
+  measure_report.throughput_batches_per_s = 2.0
+  plugin = pyneat.MeasurePluginLatency()
+  plugin.backend = "A65"
+  plugin.phase = "Run"
+  plugin.kernel_name = "identity"
+  plugin.runtime_node_id = 0
+  plugin.calls = 1
+  measure_report.plugin_latency = [plugin]
+  assert measure_report.plugin_latency[0].runtime_node_id == 0
+  assert hasattr(measure_report, "to_json")
+  assert "sima.neat.measure_report" in measure_report.to_json(0)
+
+  run = pyneat.Run()
+  with pytest.raises(Exception, match="Run has no runtime core"):
+    pyneat.run_to_json(run, export_opt)
+  with pytest.raises(Exception, match="Run has no runtime core"):
+    pyneat.run_to_json(run, measure_report, export_opt)
+
+
+def test_public_graph_connect_no_runtime_port_overload():
+  source = pyneat.Graph("image")
+  source.add(pyneat.nodes.input("image"))
+
+  sink = pyneat.Graph("classes")
+  sink.add(pyneat.nodes.output("classes"))
+
+  app = pyneat.Graph()
+  app.connect(source, sink)
+  assert "endpoint image -> classes" in app.describe()
+
+  with pytest.raises(TypeError):
+    app.connect(source, sink, "out", "in")
+  assert not hasattr(pyneat.Graph, "connect_port")
+
+
+def test_model_graph_fragment_and_direct_graph_add():
+  model = pyneat.Model(str(_strict_yolo_model_path()))
+
+  fragment = model.graph()
+  backend = fragment.describe_backend().lower()
+  assert "processmla" in backend
+  assert "appsrc" not in backend
+  assert "appsink" not in backend
+
+  graph = pyneat.Graph()
+  assert graph.add(model) is graph
+  direct_backend = graph.describe_backend().lower()
+  assert "processmla" in direct_backend
+  assert "appsrc" not in direct_backend
+  assert "appsink" not in direct_backend
+
+
 def test_model_option_structs_are_mutable():
   opt = pyneat.ModelOptions()
-  opt.media_type = "video/x-raw"
-  opt.format = "RGB"
-  opt.input_max_width = 1920
-  opt.input_max_height = 1080
+  opt.preprocess.input_max_width = 1920
+  opt.preprocess.input_max_height = 1080
+  opt.boxdecode_original_width = 1280
+  opt.boxdecode_original_height = 720
+  opt.boxdecode_resize_mode = pyneat.ResizeMode.Letterbox
 
-  assert opt.media_type == "video/x-raw"
-  assert opt.format == "RGB"
-  assert opt.input_max_width == 1920
-  assert opt.input_max_height == 1080
+  assert opt.preprocess.input_max_width == 1920
+  assert opt.preprocess.input_max_height == 1080
+  assert opt.boxdecode_original_width == 1280
+  assert opt.boxdecode_original_height == 720
+  assert opt.boxdecode_resize_mode == pyneat.ResizeMode.Letterbox
 
 
 def test_input_stage_option_structs_expose_expected_fields():
@@ -392,12 +352,10 @@ def test_output_stage_option_structs_expose_expected_fields():
   udp = pyneat.UdpOutputOptions()
   parse = pyneat.H264ParseOptions()
   group = pyneat.UdpH264OutputGroupOptions()
-  optiview_object = pyneat.OptiViewObject()
-  optiview_channel = pyneat.OptiViewChannelOptions()
-  udp_group = pyneat.UdpOutputNodeGroupOptions()
-  optiview_group = pyneat.OptiViewOutputNodeGroupOptions()
-  json_input = pyneat.OptiViewJsonInput()
-  json_result = pyneat.OptiViewJsonResult()
+  video_rtp = pyneat.VideoSenderRtpOptions()
+  video_encoder = pyneat.VideoSenderEncoderOptions()
+  video_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30)
+  metadata_sender = pyneat.MetadataSenderOptions()
 
   for field in UDP_OUTPUT_OPTION_FIELDS:
     assert hasattr(udp, field), field
@@ -409,36 +367,46 @@ def test_output_stage_option_structs_expose_expected_fields():
   for field in UDP_H264_OUTPUT_GROUP_OPTION_FIELDS:
     assert hasattr(group, field), field
 
-  for field in OPTIVIEW_OBJECT_FIELDS:
-    assert hasattr(optiview_object, field), field
+  for field in VIDEO_SENDER_RTP_OPTION_FIELDS:
+    assert hasattr(video_rtp, field), field
 
-  for field in OPTIVIEW_CHANNEL_OPTION_FIELDS:
-    assert hasattr(optiview_channel, field), field
+  for field in VIDEO_SENDER_ENCODER_OPTION_FIELDS:
+    assert hasattr(video_encoder, field), field
 
-  for field in UDP_OUTPUT_NODE_GROUP_OPTION_FIELDS:
-    assert hasattr(udp_group, field), field
+  for field in VIDEO_SENDER_OPTION_FIELDS:
+    assert hasattr(video_sender, field), field
 
-  for field in OPTIVIEW_OUTPUT_GROUP_OPTION_FIELDS:
-    assert hasattr(optiview_group, field), field
-
-  for field in OPTIVIEW_JSON_INPUT_FIELDS:
-    assert hasattr(json_input, field), field
-
-  for field in OPTIVIEW_JSON_RESULT_FIELDS:
-    assert hasattr(json_result, field), field
+  for field in METADATA_SENDER_OPTION_FIELDS:
+    assert hasattr(metadata_sender, field), field
 
   assert hasattr(pyneat, "H264ParseAlignment")
   assert hasattr(pyneat, "H264ParseStreamFormat")
-  assert hasattr(pyneat, "OptiViewJsonOutput")
-  assert hasattr(pyneat, "OptiViewOutputNodeGroup")
-  assert hasattr(pyneat, "OptiViewMakeJson")
+  assert hasattr(pyneat, "VideoSenderRtpOptions")
+  assert hasattr(pyneat, "VideoSenderEncoderOptions")
+  assert hasattr(pyneat, "VideoSenderOptions")
+  assert hasattr(pyneat, "MetadataSenderOptions")
+  assert hasattr(pyneat, "MetadataSender")
+  assert hasattr(pyneat.groups, "video_sender")
+
+  for removed_name in (
+      "OptiViewObject",
+      "OptiViewChannelOptions",
+      "UdpOutputGraphOptions",
+      "OptiViewOutputGraphOptions",
+      "OptiViewJsonInput",
+      "OptiViewJsonResult",
+      "OptiViewJsonOutput",
+      "OptiViewOutputGraph",
+      "OptiViewMakeJson",
+  ):
+    assert not hasattr(pyneat, removed_name)
 
 
 def test_input_stage_option_struct_constructors_accept_expected_args():
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
 
-  model = pyneat.Model(str(mpk_path))
+  model = pyneat.Model(str(model_path))
 
   _assert_not_type_error(lambda: pyneat.PreprocOptions())
   _assert_not_type_error(lambda: pyneat.PreprocOptions(model))
@@ -447,8 +415,8 @@ def test_input_stage_option_struct_constructors_accept_expected_args():
 
 
 def test_postprocess_stage_option_struct_constructors_accept_expected_args(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "detess_valid", include_detess=True)
-  model = pyneat.Model(str(mpk_path))
+  model_path = _strict_yolo_model_path()
+  model = pyneat.Model(str(model_path))
 
   _assert_not_type_error(lambda: pyneat.DetessDequantOptions())
   _assert_not_type_error(lambda: pyneat.DetessDequantOptions(model))
@@ -458,39 +426,32 @@ def test_output_stage_option_struct_constructors_accept_expected_args():
   _assert_not_type_error(lambda: pyneat.UdpOutputOptions())
   _assert_not_type_error(lambda: pyneat.H264ParseOptions())
   _assert_not_type_error(lambda: pyneat.UdpH264OutputGroupOptions())
-  _assert_not_type_error(lambda: pyneat.OptiViewObject())
-  _assert_not_type_error(lambda: pyneat.OptiViewChannelOptions())
-  _assert_not_type_error(lambda: pyneat.UdpOutputNodeGroupOptions())
-  _assert_not_type_error(lambda: pyneat.OptiViewOutputNodeGroupOptions())
-  _assert_not_type_error(lambda: pyneat.OptiViewJsonInput())
-  _assert_not_type_error(lambda: pyneat.OptiViewJsonResult())
-  _assert_not_type_error(lambda: pyneat.OptiViewJsonOutput(pyneat.OptiViewChannelOptions()))
-  _assert_not_type_error(lambda: pyneat.OptiViewOutputNodeGroup())
+  _assert_not_type_error(lambda: pyneat.VideoSenderRtpOptions())
+  _assert_not_type_error(lambda: pyneat.VideoSenderEncoderOptions())
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30))
+  _assert_not_type_error(lambda: pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded())
+  _assert_not_type_error(lambda: pyneat.MetadataSenderOptions())
+  _assert_not_type_error(lambda: pyneat.MetadataSender(pyneat.MetadataSenderOptions()))
 
 
 def test_input_stage_option_structs_are_mutable():
   pre = pyneat.PreprocOptions()
-  pre.input_width = 320
-  pre.input_height = 240
-  pre.output_memory_order = ["SystemMemory", "SimaAI"]
-  pre.keep_config = True
-  pre.config_json = {"graph_name": "preproc", "input_width": 320}
+  pre.input_shape = [240, 320, 3]
+  pre.output_shape = [640, 640, 3]
+  pre.slice_shape = [32, 128, 3]
 
   quant_tess = pyneat.QuantTessOptions()
   quant_tess.element_name = "qt"
-  quant_tess.keep_config = True
   quant_tess.config_json = {"node_name": "quanttess"}
 
-  assert pre.input_width == 320
-  assert pre.input_height == 240
-  assert pre.output_memory_order == ["SystemMemory", "SimaAI"]
-  assert pre.keep_config is True
-  assert pre.config_json["graph_name"] == "preproc"
-  pre.config_json = None
-  assert pre.config_json is None
+  assert pre.input_shape == [240, 320, 3]
+  assert pre.output_shape == [640, 640, 3]
+  assert pre.slice_shape == [32, 128, 3]
+  assert pre.has_input_shape() is True
+  assert pre.has_output_shape() is True
+  assert pre.has_slice_shape() is True
 
   assert quant_tess.element_name == "qt"
-  assert quant_tess.keep_config is True
   assert quant_tess.config_json["node_name"] == "quanttess"
   quant_tess.config_json = None
   assert quant_tess.config_json is None
@@ -499,8 +460,6 @@ def test_input_stage_option_structs_are_mutable():
 def test_postprocess_stage_option_structs_are_mutable():
   detess = pyneat.DetessDequantOptions()
   detess.config_path = "/tmp/detess.json"
-  detess.config_dir = "/tmp"
-  detess.keep_config = True
   detess.config_json = {"node_name": "detessdequant_0"}
   detess.upstream_name = "mla_0"
   detess.element_name = "detessdequant_0"
@@ -509,8 +468,6 @@ def test_postprocess_stage_option_structs_are_mutable():
   detess.num_buffers_locked = True
 
   assert detess.config_path == "/tmp/detess.json"
-  assert detess.config_dir == "/tmp"
-  assert detess.keep_config is True
   assert detess.config_json["node_name"] == "detessdequant_0"
   detess.config_json = None
   assert detess.config_json is None
@@ -543,60 +500,30 @@ def test_output_stage_option_structs_are_mutable():
   group.udp_sync = False
   group.udp_async = False
 
-  optiview_object = pyneat.OptiViewObject()
-  optiview_object.x = 10
-  optiview_object.y = 20
-  optiview_object.w = 30
-  optiview_object.h = 40
-  optiview_object.score = 0.9
-  optiview_object.class_id = 1
+  video_rtp = pyneat.VideoSenderRtpOptions()
+  video_rtp.payload_type = 98
+  video_rtp.config_interval = 3
 
-  optiview_channel = pyneat.OptiViewChannelOptions()
-  optiview_channel.host = "127.0.0.1"
-  optiview_channel.channel = 2
-  optiview_channel.video_port_base = 9000
-  optiview_channel.json_port_base = 9100
+  video_encoder = pyneat.VideoSenderEncoderOptions()
+  video_encoder.bitrate_kbps = 2500
+  video_encoder.profile = "main"
+  video_encoder.level = "4.1"
 
-  udp_group = pyneat.UdpOutputNodeGroupOptions()
-  udp_group.h264_caps = "video/x-h264"
-  udp_group.payload_type = 98
-  udp_group.config_interval = 3
-  udp_group.enable_timings = True
-  udp_group.host = "127.0.0.1"
-  udp_group.video_port_base = 9200
-  udp_group.udp_sync = False
-  udp_group.udp_async = False
+  video_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_raw(640, 480, 30)
+  video_sender.host = "127.0.0.1"
+  video_sender.channel = 2
+  video_sender.video_port_base = 9200
+  video_sender.sync = False
+  video_sender.async_ = False
+  video_sender.rtp = video_rtp
+  video_sender.encoder = video_encoder
 
-  optiview_group = pyneat.OptiViewOutputNodeGroupOptions()
-  optiview_group.udp = udp_group
-  optiview_group.send_json = True
-  optiview_group.json_port_base = 9300
-  optiview_group.frame_w = 640
-  optiview_group.frame_h = 480
-  optiview_group.topk = 8
-  optiview_group.parse_debug = False
-  optiview_group.json_delay_ms = 4
-  optiview_group.video_delay_ms = 5
-  optiview_group.labels = ["person", "car"]
+  encoded_sender = pyneat.VideoSenderOptions.h264_rtp_udp_from_encoded()
 
-  sample = pyneat.Sample()
-  sample.frame_id = 11
-
-  json_input = pyneat.OptiViewJsonInput()
-  json_input.stream_idx = 1
-  json_input.stream_id = "stream-1"
-  json_input.frame_id = 7
-  json_input.capture_ms = 111
-  json_input.yolo_ms = 222
-  json_input.output_frame_id = 8
-  json_input.yolo_sample = sample
-  json_input.decoded_sample = sample
-
-  json_result = pyneat.OptiViewJsonResult()
-  json_result.ok = True
-  json_result.nonempty = True
-  json_result.boxes = 2
-  json_result.error = "none"
+  metadata_sender = pyneat.MetadataSenderOptions()
+  metadata_sender.host = "127.0.0.1"
+  metadata_sender.channel = 2
+  metadata_sender.metadata_port_base = 9300
 
   assert udp.host == "10.0.0.5"
   assert udp.port == 5500
@@ -617,51 +544,36 @@ def test_output_stage_option_structs_are_mutable():
   assert group.udp_sync is False
   assert group.udp_async is False
 
-  assert optiview_object.x == 10
-  assert optiview_object.y == 20
-  assert optiview_object.w == 30
-  assert optiview_object.h == 40
-  assert optiview_object.score == pytest.approx(0.9)
-  assert optiview_object.class_id == 1
+  assert video_rtp.payload_type == 98
+  assert video_rtp.config_interval == 3
 
-  assert optiview_channel.host == "127.0.0.1"
-  assert optiview_channel.channel == 2
-  assert optiview_channel.video_port_base == 9000
-  assert optiview_channel.json_port_base == 9100
+  assert video_encoder.bitrate_kbps == 2500
+  assert video_encoder.profile == "main"
+  assert video_encoder.level == "4.1"
 
-  assert udp_group.h264_caps == "video/x-h264"
-  assert udp_group.payload_type == 98
-  assert udp_group.config_interval == 3
-  assert udp_group.enable_timings is True
-  assert udp_group.host == "127.0.0.1"
-  assert udp_group.video_port_base == 9200
-  assert udp_group.udp_sync is False
-  assert udp_group.udp_async is False
+  assert video_sender.is_raw_input() is True
+  assert video_sender.is_encoded_input() is False
+  assert video_sender.width == 640
+  assert video_sender.height == 480
+  assert video_sender.fps == 30
+  assert video_sender.host == "127.0.0.1"
+  assert video_sender.channel == 2
+  assert video_sender.video_port_base == 9200
+  assert video_sender.video_port == 9202
+  assert video_sender.sync is False
+  assert video_sender.async_ is False
+  assert getattr(video_sender, "async") is False
+  assert video_sender.rtp.payload_type == 98
+  assert video_sender.encoder.profile == "main"
 
-  assert optiview_group.udp.video_port_base == 9200
-  assert optiview_group.send_json is True
-  assert optiview_group.json_port_base == 9300
-  assert optiview_group.frame_w == 640
-  assert optiview_group.frame_h == 480
-  assert optiview_group.topk == 8
-  assert optiview_group.parse_debug is False
-  assert optiview_group.json_delay_ms == 4
-  assert optiview_group.video_delay_ms == 5
-  assert optiview_group.labels == ["person", "car"]
+  assert encoded_sender.is_raw_input() is False
+  assert encoded_sender.is_encoded_input() is True
+  assert isinstance(pyneat.groups.video_sender(video_sender), pyneat.Graph)
+  assert isinstance(pyneat.groups.video_sender(encoded_sender), pyneat.Graph)
 
-  assert json_input.stream_idx == 1
-  assert json_input.stream_id == "stream-1"
-  assert json_input.frame_id == 7
-  assert json_input.capture_ms == 111
-  assert json_input.yolo_ms == 222
-  assert json_input.output_frame_id == 8
-  assert json_input.yolo_sample is not None
-  assert json_input.decoded_sample is not None
-
-  assert json_result.ok is True
-  assert json_result.nonempty is True
-  assert json_result.boxes == 2
-  assert json_result.error == "none"
+  assert metadata_sender.host == "127.0.0.1"
+  assert metadata_sender.channel == 2
+  assert metadata_sender.metadata_port_base == 9300
 
 
 def test_input_stage_node_factories_present_and_accept_expected_args():
@@ -675,8 +587,8 @@ def test_input_stage_node_factories_present_and_accept_expected_args():
 
 
 def test_postprocess_stage_node_factories_present_and_accept_expected_args(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_valid", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+  model_path = _strict_yolo_model_path()
+  model = pyneat.Model(str(model_path))
 
   assert hasattr(pyneat.nodes, "detess_dequant")
   assert hasattr(pyneat.nodes, "sima_box_decode")
@@ -687,7 +599,7 @@ def test_postprocess_stage_node_factories_present_and_accept_expected_args(tmp_p
   _assert_not_type_error(
       lambda: pyneat.nodes.sima_box_decode(
           model,
-          decode_type="yolov8",
+          decode_type=pyneat.BoxDecodeType.YoloV8,
           original_width=640,
           original_height=640,
           detection_threshold=0.25,
@@ -721,7 +633,7 @@ def test_output_stage_node_and_group_factories_present_and_accept_expected_args(
       lambda: pyneat.groups.udp_h264_output_group(pyneat.UdpH264OutputGroupOptions())
   )
   assert isinstance(
-      pyneat.groups.udp_h264_output_group(pyneat.UdpH264OutputGroupOptions()), pyneat.NodeGroup
+      pyneat.groups.udp_h264_output_group(pyneat.UdpH264OutputGroupOptions()), pyneat.Graph
   )
 
 
@@ -770,156 +682,141 @@ def test_explicit_rtsp_decode_node_factories_present_and_accept_expected_args():
 
 
 def test_mla_group_helper_present_and_accepts_model():
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
 
-  model = pyneat.Model(str(mpk_path))
+  model = pyneat.Model(str(model_path))
 
   assert hasattr(pyneat.groups, "mla")
   _assert_not_type_error(lambda: pyneat.groups.mla(model))
-  assert isinstance(pyneat.groups.mla(model), pyneat.NodeGroup)
+  assert isinstance(model.preprocess(), pyneat.Graph)
+  assert isinstance(model.inference(), pyneat.Graph)
+  assert isinstance(model.postprocess(), pyneat.Graph)
+  assert isinstance(pyneat.groups.mla(model), pyneat.Graph)
 
 
-def test_session_describe_backend_includes_preproc_stage():
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.nodes.preproc())
-  session.add(pyneat.nodes.output())
+def _resnet_model_with_preproc(*, normalize: pyneat.AutoFlag = pyneat.AutoFlag.On):
+  opt = pyneat.ModelOptions()
+  # Force a real Preproc route through explicit planner intent.  When normalize
+  # is disabled, resize=On keeps the route in the Preproc family without relying
+  # on legacy per-stage JSON files.
+  opt.preprocess.normalize.enable = normalize
+  if normalize == pyneat.AutoFlag.Off:
+    opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  return pyneat.Model(str(_strict_resnet50_model_path()), opt)
 
-  text = session.describe_backend().lower()
+
+def _yolo_model_with_boxdecode():
+  opt = pyneat.ModelOptions()
+  opt.decode_type = pyneat.BoxDecodeType.YoloV8
+  return pyneat.Model(str(_strict_yolo_model_path()), opt)
+
+
+def test_graph_describe_backend_includes_preproc_stage():
+  model = _resnet_model_with_preproc()
+  pre = pyneat.PreprocOptions(model)
+
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add(pyneat.nodes.preproc(pre))
+  graph.add(pyneat.nodes.output())
+
+  text = graph.describe_backend().lower()
   assert "preproc" in text
+  assert pre.normalize is True
 
 
-def test_session_describe_backend_includes_quant_tess_stage():
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.nodes.quant_tess())
-  session.add(pyneat.nodes.output())
+def test_graph_describe_backend_includes_quant_tess_stage():
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.nodes.quant_tess())
+  graph.add(pyneat.nodes.output())
 
-  text = session.describe_backend().lower()
+  text = graph.describe_backend().lower()
   assert "quanttess" in text or "quant_tess" in text
 
 
-def test_session_describe_backend_includes_detess_dequant_stage(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "detess_backend", include_detess=True)
-  model = pyneat.Model(str(mpk_path))
+def test_graph_describe_backend_includes_detess_dequant_stage(tmp_path):
+  model_path = _strict_yolo_model_path()
+  model = pyneat.Model(str(model_path))
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.groups.mla(model))
+  graph.add(pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(model)))
+  graph.add(pyneat.nodes.output())
 
-  text = session.describe_backend().lower()
+  text = graph.describe_backend().lower()
   assert "detessdequant" in text
 
 
-def test_session_describe_backend_includes_sima_box_decode_stage(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_backend", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+def test_graph_describe_backend_includes_sima_box_decode_stage(tmp_path):
+  model = _yolo_model_with_boxdecode()
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.sima_box_decode(model))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.groups.mla(model))
+  graph.add(pyneat.nodes.sima_box_decode(model, decode_type=pyneat.BoxDecodeType.YoloV8))
+  graph.add(pyneat.nodes.output())
 
-  text = session.describe_backend().lower()
+  text = graph.describe_backend().lower()
   assert "boxdecode" in text
 
 
-def _boxdecode_backend_config_path(text: str) -> str:
-  for line in text.splitlines():
-    if "boxdecode" not in line.lower():
-      continue
-    match = re.search(r'config="([^"]+)"', line)
-    if match:
-      return match.group(1)
-  raise AssertionError("failed to locate boxdecode config path in backend description")
+def test_model_preproc_normalize_explicit_on_resolves_preproc_semantics(tmp_path):
+  model = _resnet_model_with_preproc(normalize=pyneat.AutoFlag.On)
+  pre = pyneat.PreprocOptions(model)
 
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add(pyneat.nodes.preproc(pre))
+  graph.add(pyneat.nodes.output())
 
-def _preproc_backend_config_path(text: str) -> str:
-  for line in text.splitlines():
-    if "preproc" not in line.lower():
-      continue
-    match = re.search(r'config="?([^" ]+)"?', line)
-    if match:
-      return match.group(1)
-  raise AssertionError("failed to locate preproc config path in backend description")
-
-
-def test_model_preproc_normalize_unset_preserves_model_pack_value(tmp_path):
-  mpk_path = _preproc_fixture_path(tmp_path, "preproc_normalize_default_true", normalize=True)
-  model = pyneat.Model(str(mpk_path))
-
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  session.add(model.preprocess())
-  session.add(pyneat.nodes.output())
-
-  backend = session.describe_backend()
-  cfg_path = _preproc_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert cfg["normalize"] is True
+  backend = graph.describe_backend().lower()
+  assert "preproc" in backend
+  assert pre.normalize is True
 
 
 def test_model_preproc_normalize_false_overrides_model_pack_value(tmp_path):
-  mpk_path = _preproc_fixture_path(tmp_path, "preproc_normalize_override_false", normalize=True)
-  opt = pyneat.ModelOptions()
-  opt.preproc.normalize = False
-  model = pyneat.Model(str(mpk_path), opt)
+  model = _resnet_model_with_preproc(normalize=pyneat.AutoFlag.Off)
+  pre = pyneat.PreprocOptions(model)
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input(model.input_appsrc_options(False)))
-  session.add(model.preprocess())
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input(model.input_appsrc_options(False)))
+  graph.add(pyneat.nodes.preproc(pre))
+  graph.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _preproc_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert cfg["normalize"] is False
+  backend = graph.describe_backend().lower()
+  assert "preproc" in backend
+  assert pre.normalize is False
 
 
 def test_sima_box_decode_without_runtime_dims_uses_model_pack_defaults(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_defaults", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+  model = _yolo_model_with_boxdecode()
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.groups.mla(model))
-  session.add(pyneat.nodes.sima_box_decode(model))
-  session.add(pyneat.nodes.output())
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.groups.mla(model))
+  graph.add(pyneat.nodes.sima_box_decode(model, decode_type=pyneat.BoxDecodeType.YoloV8))
+  graph.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _boxdecode_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert "detection-threshold=" not in backend.lower()
-  assert "nms-iou-threshold=" not in backend.lower()
-  assert "topk=" not in backend.lower()
-  assert cfg["original_width"] == 320
-  assert cfg["original_height"] == 240
-  assert cfg["detection_threshold"] == pytest.approx(0.15)
-  assert cfg["nms_iou_threshold"] == pytest.approx(0.45)
-  assert cfg["topk"] == 24
+  backend = graph.describe_backend().lower()
+  assert "boxdecode" in backend
+  assert "detection-threshold=" not in backend
+  assert "nms-iou-threshold=" not in backend
+  assert "topk=" not in backend
 
 
 def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
-  mpk_path = _postprocess_fixture_path(tmp_path, "boxdecode_override", include_boxdecode=True)
-  model = pyneat.Model(str(mpk_path))
+  model = _yolo_model_with_boxdecode()
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.groups.mla(model))
-  session.add(
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.groups.mla(model))
+  graph.add(
       pyneat.nodes.sima_box_decode(
           model,
-          decode_type="yolov8",
+          decode_type=pyneat.BoxDecodeType.YoloV8,
           original_width=640,
           original_height=360,
           detection_threshold=0.25,
@@ -927,26 +824,15 @@ def test_sima_box_decode_runtime_dims_override_backend_config(tmp_path):
           top_k=120,
       )
   )
-  session.add(pyneat.nodes.output())
+  graph.add(pyneat.nodes.output())
 
-  backend = session.describe_backend()
-  cfg_path = _boxdecode_backend_config_path(backend)
-  with open(cfg_path, "r", encoding="utf-8") as f:
-    cfg = json.load(f)
-
-  assert "detection-threshold=0.25" in backend.lower()
-  assert "nms-iou-threshold=0.55" in backend.lower()
-  assert "topk=120" in backend.lower()
-  assert cfg["original_width"] == 640
-  assert cfg["original_height"] == 360
-  # Runtime threshold/top-k overrides are emitted as backend properties, while
-  # the rewritten config keeps the packaged postprocess defaults.
-  assert cfg["detection_threshold"] == pytest.approx(0.15)
-  assert cfg["nms_iou_threshold"] == pytest.approx(0.45)
-  assert cfg["topk"] == 24
+  backend = graph.describe_backend().lower()
+  assert "boxdecode" in backend
+  assert "original-width=640" in backend
+  assert "original-height=360" in backend
 
 
-def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
+def test_graph_describe_backend_includes_explicit_h264_udp_output_chain():
   parse = pyneat.H264ParseOptions()
   parse.config_interval = 2
   parse.enforce_caps = True
@@ -959,18 +845,18 @@ def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
   udp.sync = True
   udp.async_ = False
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(
       pyneat.nodes.h264_encode_sima(
           1280, 720, 30, bitrate_kbps=2500, profile="main", level="4.1"
       )
   )
-  session.add(pyneat.nodes.h264_parse(parse))
-  session.add(pyneat.nodes.h264_packetize(payload_type=98, config_interval=2))
-  session.add(pyneat.nodes.udp_output(udp))
+  graph.add(pyneat.nodes.h264_parse(parse))
+  graph.add(pyneat.nodes.h264_packetize(payload_type=98, config_interval=2))
+  graph.add(pyneat.nodes.udp_output(udp))
 
-  text = session.describe_backend().lower()
+  text = graph.describe_backend().lower()
   assert "neatencoder" in text
   assert "h264parse" in text
   assert "alignment=(string)au" in text
@@ -982,7 +868,7 @@ def test_session_describe_backend_includes_explicit_h264_udp_output_chain():
   assert "port=5500" in text
 
 
-def test_session_describe_backend_includes_udp_h264_output_group():
+def test_graph_describe_backend_includes_udp_h264_output_group():
   opt = pyneat.UdpH264OutputGroupOptions()
   opt.h264_caps = 'video/x-h264,profile="high"'
   opt.payload_type = 97
@@ -992,11 +878,11 @@ def test_session_describe_backend_includes_udp_h264_output_group():
   opt.udp_sync = False
   opt.udp_async = False
 
-  session = pyneat.Session()
-  session.add(pyneat.nodes.input())
-  session.add(pyneat.groups.udp_h264_output_group(opt))
+  graph = pyneat.Graph()
+  graph.add(pyneat.nodes.input())
+  graph.add(pyneat.groups.udp_h264_output_group(opt))
 
-  text = session.describe_backend().lower()
+  text = graph.describe_backend().lower()
   assert "h264parse" in text
   assert "capsfilter" in text
   assert 'profile=\\"high\\"' in text
@@ -1006,24 +892,20 @@ def test_session_describe_backend_includes_udp_h264_output_group():
   assert "port=5600" in text
 
 
-def test_postprocess_stage_missing_model_config_reports_clear_error():
-  model = pyneat.Model(str(_basic_valid_mpk_path()))
-
-  with pytest.raises(RuntimeError, match="boxdecode"):
-    pyneat.nodes.sima_box_decode(model)
-
-  with pytest.raises(RuntimeError, match="DetessDequant: config not found"):
-    pyneat.DetessDequantOptions(model)
+def test_model_surface_fixtures_are_real_strict_model_tars():
+  for model_path in (_strict_resnet50_model_path(), _strict_yolo_model_path()):
+    assert model_path.name.endswith(".tar.gz")
+    assert model_fixtures.has_strict_mpk_json(model_path)
 
 
 def test_postprocess_stage_api_parity_guards_supported_call_surface(tmp_path):
-  detess_path = _postprocess_fixture_path(tmp_path, "detess_signature", include_detess=True)
-  box_path = _postprocess_fixture_path(tmp_path, "box_signature", include_boxdecode=True)
+  detess_path = _strict_yolo_model_path()
+  box_path = _strict_yolo_model_path()
   detess_model = pyneat.Model(str(detess_path))
   box_model = pyneat.Model(str(box_path))
 
   _assert_not_type_error(lambda: pyneat.nodes.detess_dequant(pyneat.DetessDequantOptions(detess_model)))
-  _assert_not_type_error(lambda: pyneat.nodes.sima_box_decode(box_model, "yolov8", 640, 640, 0.25, 0.55, 120))
+  _assert_not_type_error(lambda: pyneat.nodes.sima_box_decode(box_model, pyneat.BoxDecodeType.YoloV8, 640, 640, 0.25, 0.55, 120))
 
   with pytest.raises(TypeError):
     pyneat.nodes.detess_dequant(detess_model)
@@ -1076,49 +958,62 @@ def test_error_code_constants_present():
   assert isinstance(pyneat.ERROR_RUNTIME_PULL, str)
 
 
+def test_memory_and_image_type_aliases_present():
+  assert pyneat.Memory is pyneat.TensorMemory
+  assert pyneat.ImageType is pyneat.PixelFormat
+
+
 def test_runtime_overload_methods_present():
   assert hasattr(pyneat.Run, "push")
   assert hasattr(pyneat.Run, "try_push")
   assert hasattr(pyneat.Run, "run")
+  assert hasattr(pyneat.Graph, "build")
+  assert hasattr(pyneat.Graph, "run")
   assert hasattr(pyneat.ModelRunner, "push")
   assert hasattr(pyneat.ModelRunner, "run")
+  assert hasattr(pyneat.Model, "build")
   assert hasattr(pyneat.Model, "run")
 
 
-def test_session_build_accepts_numpy_without_type_error():
-  session = pyneat.Session()
+def test_runtime_tensor_sample_aliases_are_not_public():
+  for cls in (pyneat.Run, pyneat.Graph, pyneat.ModelRunner, pyneat.Model):
+    assert not hasattr(cls, "run_tensors"), cls
+    assert not hasattr(cls, "run_samples"), cls
+
+  for cls in (pyneat.Graph, pyneat.Model):
+    assert not hasattr(cls, "build_tensors"), cls
+    assert not hasattr(cls, "build_samples"), cls
+
+
+def test_graph_build_accepts_numpy_without_type_error():
+  graph = pyneat.Graph()
   arr = np.zeros((8, 8, 3), dtype=np.uint8)
 
-  _assert_not_type_error(lambda: session.build(arr))
-  _assert_not_type_error(lambda: session.build(arr, copy=True))
+  _assert_not_type_error(lambda: graph.build([arr]))
+  _assert_not_type_error(lambda: graph.build([arr], copy=True))
   _assert_not_type_error(
-      lambda: session.build(arr, layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
+      lambda: graph.build([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
   )
 
 
-def test_inputstream_stats_extended_fields_present():
-  s = pyneat.InputStreamStats()
+def test_graph_run_accepts_numpy_without_type_error():
+  graph = pyneat.Graph()
+  arr = np.zeros((8, 8, 3), dtype=np.uint8)
+
+  _assert_not_type_error(lambda: graph.run([arr]))
+  _assert_not_type_error(lambda: graph.run([arr], copy=True))
+  _assert_not_type_error(
+      lambda: graph.run([arr], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB)
+  )
+
+
+def test_measure_input_stats_extended_fields_present():
+  assert not hasattr(pyneat, "RuntimeInputStreamMetrics")
+  s = pyneat.MeasureInputStats()
   assert hasattr(s, "alloc_grows")
   assert hasattr(s, "growth_blocked")
   assert hasattr(s, "renegotiation_blocked")
 
-
-def test_session_build_ambiguous_3d_layout_requires_explicit_layout():
-  session = pyneat.Session()
-  opt = pyneat.InputOptions()
-  opt.media_type = "application/vnd.simaai.tensor"
-  opt.format = "FP32"
-  session.add(pyneat.nodes.input(opt))
-  session.add(pyneat.nodes.output())
-
-  arr = np.zeros((3, 8, 3), dtype=np.float32)
-
-  try:
-    session.build(arr)
-  except Exception as exc:
-    assert "layout" in str(exc).lower()
-  else:
-    raise AssertionError("expected ambiguous 3D layout to fail without explicit layout")
 
 
 def test_native_build_overload_marker_present():
@@ -1127,56 +1022,32 @@ def test_native_build_overload_marker_present():
   assert bool(getattr(core, "_HAS_NATIVE_BUILD_OBJECT_OVERLOADS", False))
 
 
-def _basic_valid_mpk_path():
-  from pathlib import Path
-
-  root = Path(__file__).resolve().parents[2]
-  fixture_root = root / "tests" / "assets" / "mpk" / "valid"
-  mpk = fixture_root / "basic_valid.mpk"
-  if mpk.exists():
-    return mpk
-  return fixture_root / "basic_valid.tar"
-
 
 def test_model_build_accepts_numpy_without_type_error():
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
 
-  model = pyneat.Model(str(mpk_path))
+  model = pyneat.Model(str(model_path))
   arr = np.zeros((8, 8, 3), dtype=np.uint8)
 
-  _assert_not_type_error(lambda: model.build(arr))
-  _assert_not_type_error(lambda: model.build(arr, copy=True))
+  _assert_not_type_error(lambda: model.build([arr]))
+  _assert_not_type_error(lambda: model.build([arr], copy=True))
 
 
-def test_model_build_ambiguous_3d_layout_reports_layout_error():
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
 
-  model = pyneat.Model(str(mpk_path))
-  arr = np.zeros((3, 8, 3), dtype=np.float32)
-
-  try:
-    model.build(arr)
-  except Exception as exc:
-    assert "layout" in str(exc).lower()
-  else:
-    raise AssertionError("expected ambiguous 3D layout to fail without explicit layout")
-
-
-def test_session_build_accepts_torch_without_type_error():
+def test_graph_build_accepts_torch_without_type_error():
   try:
     import torch
   except Exception:
     return
 
-  session = pyneat.Session()
+  graph = pyneat.Graph()
   # Use an intentionally invalid rank to keep this as API-overload coverage
   # only: this should fail fast in conversion/validation, but never with TypeError.
   tensor = torch.zeros((8, 8), dtype=torch.uint8)
   _assert_not_type_error(
-      lambda: session.build(
-          tensor, layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB
+      lambda: graph.build(
+          [tensor], layout=pyneat.TensorLayout.HWC, image_format=pyneat.PixelFormat.RGB
       )
   )
 
@@ -1187,14 +1058,67 @@ def test_model_build_accepts_torch_without_type_error():
   except Exception:
     return
 
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
 
-  model = pyneat.Model(str(mpk_path))
-  # Same fast-path API-overload validation strategy as Session test.
+  model = pyneat.Model(str(model_path))
+  # Same fast-path API-overload validation strategy as Graph test.
   tensor = torch.zeros((8, 8), dtype=torch.uint8)
 
-  _assert_not_type_error(lambda: model.build(tensor))
+  _assert_not_type_error(lambda: model.build([tensor]))
+
+
+def test_model_build_requires_explicit_image_semantic_for_image_tensor():
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
+
+  opt = pyneat.ModelOptions()
+  opt.preprocess.kind = pyneat.InputKind.Image
+  opt.preprocess.enable = pyneat.AutoFlag.On
+  opt.preprocess.resize.enable = pyneat.AutoFlag.On
+  opt.preprocess.normalize.enable = pyneat.AutoFlag.On
+  model = pyneat.Model(str(model_path), opt)
+  tensor = pyneat.Tensor.from_numpy(np.zeros((8, 8, 3), dtype=np.uint8), copy=True)
+
+  # Model input-contract violations now surface as pyneat.NeatError (was std::invalid_argument
+  # auto-translated to ValueError). The message is preserved as the NeatError repro_note, so the
+  # substring match still holds, and the structured error_code is populated.
+  with pytest.raises(pyneat.NeatError, match="requires explicit image format") as excinfo:
+    model.build([tensor])
+  assert excinfo.value.error_code == "misconfig.input_shape"
+
+
+def test_tensor_from_numpy_byte_stream_marks_opaque_transport():
+  spec = pyneat.ByteStreamSpec()
+  spec.format = pyneat.ByteFormat.Raw
+  spec.description = "opaque raw bytes"
+  assert spec.format == pyneat.ByteFormat.Raw
+  assert spec.description == "opaque raw bytes"
+
+  tensor = pyneat.Tensor.from_numpy(
+      np.arange(16, dtype=np.int8),
+      copy=True,
+      byte_format=pyneat.ByteFormat.Raw,
+      memory=pyneat.TensorMemory.CPU,
+  )
+
+  assert tensor.semantic.byte_stream is not None
+  assert tensor.semantic.byte_stream.format == pyneat.ByteFormat.Raw
+  assert tensor.layout == pyneat.TensorLayout.Unknown
+  ok, err = tensor.validate()
+  assert ok, err
+  assert "ByteStream" in tensor.debug_string()
+
+
+def test_byte_stream_is_incompatible_with_image_semantic():
+  with pytest.raises(RuntimeError, match="byte_format tensors cannot also specify image_format"):
+    pyneat.Tensor.from_numpy(
+        np.zeros((2, 2, 3), dtype=np.uint8),
+        copy=True,
+        image_format=pyneat.PixelFormat.RGB,
+        byte_format=pyneat.ByteFormat.Raw,
+        memory=pyneat.TensorMemory.CPU,
+    )
 
 
 def test_model_run_accepts_chw_torch_without_layout_or_image_format():
@@ -1203,49 +1127,50 @@ def test_model_run_accepts_chw_torch_without_layout_or_image_format():
   except Exception:
     return
 
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
 
-  model = pyneat.Model(str(mpk_path))
+  model = pyneat.Model(str(model_path))
   tensor = torch.zeros((3, 8, 8), dtype=torch.uint8)
-  _assert_not_type_error(lambda: model.run(tensor, timeout_ms=1))
+  _assert_not_type_error(lambda: model.run([tensor], timeout_ms=1))
 
 
 def test_model_run_build_reject_layout_and_image_format_kwargs():
-  mpk_path = _basic_valid_mpk_path()
-  assert mpk_path.exists(), f"missing fixture: {mpk_path}"
+  model_path = _strict_resnet50_model_path()
+  assert model_path.exists(), f"missing fixture: {model_path}"
 
-  model = pyneat.Model(str(mpk_path))
+  model = pyneat.Model(str(model_path))
   arr = np.zeros((8, 8, 3), dtype=np.uint8)
 
   try:
-    model.build(arr, layout=pyneat.TensorLayout.HWC)
+    model.build([arr], layout=pyneat.TensorLayout.HWC)
   except TypeError:
     pass
   else:
     raise AssertionError("expected model.build(..., layout=...) to fail with TypeError")
 
   try:
-    model.run(arr, image_format=pyneat.PixelFormat.RGB, timeout_ms=1)
+    model.run([arr], image_format=pyneat.PixelFormat.RGB, timeout_ms=1)
   except TypeError:
     pass
   else:
     raise AssertionError("expected model.run(..., image_format=...) to fail with TypeError")
 
 
-def test_session_video_push_uses_input_format_without_image_semantic():
-  session = pyneat.Session()
+def test_graph_video_push_uses_input_format_without_image_semantic():
+  graph = pyneat.Graph()
   opt = pyneat.InputOptions()
-  opt.media_type = "video/x-raw"
-  opt.format = "RGB"
+  opt.payload_type = pyneat.PayloadType.Image
+  opt.format = pyneat.Format.RGB
   opt.use_simaai_pool = False
-  session.add(pyneat.nodes.input(opt))
-  session.add(pyneat.nodes.output())
+  graph.add(pyneat.nodes.input(opt))
+  graph.add(pyneat.nodes.output())
 
   frame = np.zeros((16, 16, 3), dtype=np.uint8)
-  run = session.build(frame)
+  tensor = pyneat.Tensor.from_numpy(frame, copy=True, memory=pyneat.TensorMemory.CPU)
+  run = graph.build([tensor])
   try:
-    assert run.push(frame)
+    assert run.push([tensor])
     out = run.pull(1000)
     assert out is not None
   finally:
@@ -1253,19 +1178,17 @@ def test_session_video_push_uses_input_format_without_image_semantic():
     run.close()
 
 
-def test_session_error_in_python_exposes_structured_fields():
-  session = pyneat.Session()
-  opt = pyneat.InputOptions()
-  opt.media_type = "video/x-raw"
-  opt.format = "RGB"
-  opt.use_simaai_pool = False
-  session.add(pyneat.nodes.input(opt))
-  session.add(pyneat.nodes.output())
+def test_graph_error_in_python_exposes_structured_fields():
+  graph = pyneat.Graph()
+  tensor = pyneat.Tensor.from_numpy(
+      np.zeros((8, 8, 3), dtype=np.uint8),
+      copy=True,
+      memory=pyneat.TensorMemory.CPU,
+  )
 
-  bad = np.zeros((8, 8, 3), dtype=np.float32)
   try:
-    session.build(bad)
-  except pyneat.SessionError as exc:
+    graph.build([tensor])
+  except pyneat.NeatError as exc:
     text = str(exc)
     assert text
     assert text != "["
@@ -1276,46 +1199,61 @@ def test_session_error_in_python_exposes_structured_fields():
     assert exc.report_json
     assert "error_code" in exc.report_json
   else:
-    raise AssertionError("expected SessionError for invalid video tensor dtype")
+    raise AssertionError("expected NeatError for empty pipeline")
 
 
-def test_graph_pipeline_node_accepts_nodegroup_without_type_error():
-  group = pyneat.NodeGroup([pyneat.nodes.video_convert()])
-
-  _assert_not_type_error(lambda: pyneat.graph.nodes.pipeline_node(group, "group"))
-
-
-def test_graph_pipeline_node_preserves_existing_node_overload():
-  node = pyneat.graph.nodes.pipeline_node(pyneat.nodes.video_convert(), "convert")
-  graph = pyneat.graph.Graph()
-  graph.add(node)
-
-  text = pyneat.graph.to_text(graph)
-  assert "convert" in text
-  assert "in: in" in text
-  assert "out: out" in text
-
-
-def test_graph_pipeline_node_wraps_push_style_nodegroup_in_graph_text():
-  group = pyneat.NodeGroup([pyneat.nodes.video_convert()])
-  graph = pyneat.graph.Graph()
-  graph.add(pyneat.graph.nodes.pipeline_node(group, "push-group"))
-
-  text = pyneat.graph.to_text(graph)
-  assert "push-group" in text
-  assert "in: in" in text
-  assert "out: out" in text
-
-
-def test_graph_pipeline_node_wraps_source_like_nodegroup_without_input_port():
+def test_low_level_runtime_graph_removed_from_python_surface():
   opt = pyneat.RtspDecodedInputOptions()
   opt.url = "rtsp://example.com/live"
 
-  group = pyneat.groups.rtsp_decoded_input(opt)
-  graph = pyneat.graph.Graph()
-  graph.add(pyneat.graph.nodes.pipeline_node(group, "rtsp-source"))
+  fragment = pyneat.groups.rtsp_decoded_input(opt)
+  assert isinstance(fragment, pyneat.Graph)
+  with pytest.raises(AttributeError, match="removed"):
+    getattr(pyneat, "_graph")
 
-  text = pyneat.graph.to_text(graph)
-  assert "rtsp-source" in text
-  assert "in: <none>" in text
-  assert "out: out" in text
+
+def test_graph_build_rejects_legacy_mode_argument():
+  graph = pyneat.Graph()
+  tensor = pyneat.Tensor.from_numpy(
+      np.zeros((8, 8, 3), dtype=np.uint8),
+      copy=True,
+      image_format=pyneat.PixelFormat.RGB,
+  )
+
+  with pytest.raises(TypeError):
+    graph.build([tensor], mode="Sync")
+  with pytest.raises(TypeError):
+    graph.build([tensor], "Sync", pyneat.RunOptions())
+
+
+def test_runner_legacy_measurement_methods_are_not_public():
+  run = pyneat.Run()
+  assert not hasattr(run, "stats")
+  assert not hasattr(run, "input_stats")
+  assert not hasattr(run, "measurement_summary")
+  assert not hasattr(run, "metrics_report")
+  assert not hasattr(run, "metrics")
+  assert not hasattr(run, "measure")
+  assert not hasattr(run, "report")
+  assert not hasattr(run, "diag_snapshot")
+  assert not hasattr(run, "power_summary")
+  assert not hasattr(run, "diagnostics_summary")
+  assert not hasattr(pyneat, "RunMode")
+  assert not hasattr(pyneat, "InputStreamStats")
+  assert not hasattr(pyneat, "RunStats")
+  assert not hasattr(pyneat, "RunDiagSnapshot")
+  assert not hasattr(pyneat, "RunReportOptions")
+
+
+def test_model_runner_measurement_surface_matches_run():
+  assert hasattr(pyneat.ModelRunner, "start_measurement")
+  assert hasattr(pyneat.ModelRunner, "close_input")
+  assert not hasattr(pyneat.ModelRunner, "metrics")
+  assert not hasattr(pyneat.ModelRunner, "measure")
+  assert not hasattr(pyneat.ModelRunner, "warmup")
+  assert not hasattr(pyneat.ModelRunner, "stats")
+  assert not hasattr(pyneat.ModelRunner, "input_stats")
+  assert not hasattr(pyneat.ModelRunner, "measurement_summary")
+  assert not hasattr(pyneat.ModelRunner, "metrics_report")
+  assert not hasattr(pyneat.ModelRunner, "diag_snapshot")
+  assert not hasattr(pyneat.ModelRunner, "report")

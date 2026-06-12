@@ -1,0 +1,32 @@
+name: Model Archive Security
+
+on:
+  push:
+    branches:
+      - "release/**"
+    tags:
+      - "v*"
+  workflow_dispatch: {}
+
+jobs:
+  model-archive-security-gate:
+    name: model-archive-security-gate
+    if: ${{ github.event_name != 'pull_request' || !startsWith(github.head_ref, 'release/') }}
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install build dependencies
+        run: ./build.sh --install-deps-only
+
+      - name: Install clang toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Run model archive security gate
+        env:
+          CC: clang
+          CXX: clang++
+        run: bash scripts/ci/run_model_archive_security_gate.sh

@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 400" role="img" aria-labelledby="title desc">
+  <title id="title">Hello Neat Graph application flow</title>
+  <desc id="desc">A left-to-right flow showing a sample image entering a Graph app, passing through an input boundary, model configured by ModelOptions, and output boundary, then producing a detection summary.</desc>
+  <defs>
+    <linearGradient id="bg" x1="80" y1="40" x2="1240" y2="390" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8F6"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5998DD"/>
+      <stop offset="1" stop-color="#7EB4EC"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A9C4F"/>
+      <stop offset="1" stop-color="#C0E8DB"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7A6BB5"/>
+      <stop offset="1" stop-color="#D1CEE6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-18%" width="120%" height="142%" filterUnits="objectBoundingBox">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L8 4L0 8Z" fill="#2A9C4F"/>
+    </marker>
+    <marker id="arrowSmall" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#2A9C4F"/>
+    </marker>
+    <marker id="arrowPurple" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#7A6BB5"/>
+    </marker>
+    <style>
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .title { fill: #010F0E; font-size: 28px; font-weight: 700; }
+      .label { fill: #010F0E; font-size: 20px; font-weight: 650; }
+      .small { fill: #35536F; font-size: 15px; font-weight: 500; }
+      .tag { fill: #F8FBFF; font-size: 14px; font-weight: 650; letter-spacing: 0.02em; }
+      .code { fill: #35536F; font-size: 14px; font-weight: 650; }
+    </style>
+  </defs>
+
+  <rect x="16" y="16" width="1288" height="368" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
+  <circle cx="1154" cy="78" r="58" fill="#C0E8DB" opacity="0.6"/>
+  <circle cx="108" cy="322" r="46" fill="#D1CEE6" opacity="0.54"/>
+
+  <text x="54" y="70" class="sans title">Example Graph app flow</text>
+  <text x="54" y="98" class="sans small">A Graph names the app input, runs the model, and names the output you pull from.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="74" y="158" width="170" height="110" rx="24" fill="#FFFFFF" stroke="#D6E2EF"/>
+    <rect x="122" y="178" width="74" height="32" rx="16" fill="url(#blue)"/>
+    <text x="159" y="199" class="sans tag" text-anchor="middle">IMAGE</text>
+    <text x="159" y="234" class="sans label" text-anchor="middle">Sample</text>
+    <text x="159" y="256" class="sans small" text-anchor="middle">BGR Tensor</text>
+  </g>
+
+  <line x1="254" y1="213" x2="332" y2="213" stroke="#2A9C4F" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="346" y="128" width="704" height="220" rx="30" fill="#FFFFFF" stroke="#B8B0DC" stroke-width="2"/>
+    <rect x="374" y="150" width="128" height="36" rx="18" fill="url(#purple)"/>
+    <text x="438" y="174" class="sans tag" text-anchor="middle">Graph app</text>
+    <rect x="856" y="150" width="156" height="36" rx="18" fill="#F8F6FF" stroke="#B8B0DC"/>
+    <text x="934" y="174" class="sans code" text-anchor="middle">graph.build(...)</text>
+
+    <rect x="416" y="209" width="140" height="64" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+    <text x="486" y="237" class="sans label" font-size="18" text-anchor="middle">Input</text>
+    <text x="486" y="258" class="sans small" text-anchor="middle">"image"</text>
+
+    <line x1="576" y1="241" x2="622" y2="241" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#arrowSmall)"/>
+
+    <rect x="636" y="209" width="140" height="64" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+    <text x="706" y="237" class="sans label" font-size="18" text-anchor="middle">Model</text>
+    <text x="706" y="258" class="sans small" text-anchor="middle">YOLOv8 model</text>
+
+    <path d="M606 311H706V279" fill="none" stroke="#7A6BB5" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 6" marker-end="url(#arrowPurple)"/>
+    <rect x="434" y="290" width="172" height="42" rx="18" fill="#FFFFFF" stroke="#B8B0DC"/>
+    <rect x="452" y="299" width="136" height="24" rx="12" fill="url(#purple)"/>
+    <text x="520" y="316" class="sans tag" font-size="12" text-anchor="middle">ModelOptions</text>
+
+    <line x1="796" y1="241" x2="842" y2="241" stroke="#2A9C4F" stroke-width="3" stroke-linecap="round" marker-end="url(#arrowSmall)"/>
+
+    <rect x="856" y="209" width="140" height="64" rx="18" fill="#F3FBF7" stroke="#9CD5B2"/>
+    <text x="926" y="237" class="sans label" font-size="18" text-anchor="middle">Output</text>
+    <text x="926" y="258" class="sans small" text-anchor="middle">"detections"</text>
+  </g>
+
+  <line x1="1060" y1="213" x2="1098" y2="213" stroke="#2A9C4F" stroke-width="4" stroke-linecap="round" marker-end="url(#arrow)"/>
+
+  <g filter="url(#shadow)">
+    <rect x="1112" y="158" width="150" height="110" rx="24" fill="#FFFFFF" stroke="#A8D7C6"/>
+    <rect x="1154" y="178" width="66" height="32" rx="16" fill="url(#green)"/>
+    <text x="1187" y="199" class="sans tag" text-anchor="middle">OUT</text>
+    <text x="1187" y="234" class="sans label" text-anchor="middle">Summary</text>
+    <text x="1187" y="256" class="sans small" text-anchor="middle">detections=N</text>
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 
 #include "test_utils.h"
 
@@ -11,7 +11,7 @@ using namespace simaai::neat::nodes;
 
 int main() {
   try {
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.custom("videotestsrc num-buffers=1", simaai::neat::InputRole::Source);
     p.add(VideoConvert());
     p.add(CapsNV12SysMem(64, 64, 30));

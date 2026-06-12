@@ -1,12 +1,20 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #pragma once
+
+#include "pipeline/PowerTelemetry.h"
+#include "pipeline/Run.h"
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <sys/resource.h>
 #include <vector>
@@ -38,6 +46,27 @@ inline int env_int(const char* key, int fallback, int minimum = 1) {
   }
 }
 
+inline bool env_bool(const char* key, bool fallback = false) {
+  const char* value = std::getenv(key);
+  if (!value || !*value) {
+    return fallback;
+  }
+  std::string text(value);
+  std::transform(text.begin(), text.end(), text.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return text == "1" || text == "true" || text == "yes" || text == "on";
+}
+
+inline simaai::neat::PowerMonitorOptions power_options_from_env() {
+  simaai::neat::PowerMonitorOptions options;
+  options.enabled = env_bool("SIMA_PERF_POWER", false);
+  options.sample_interval_ms = env_int("SIMA_PERF_POWER_INTERVAL_MS", 100);
+  if (options.enabled) {
+    options = simaai::neat::board_power_monitor_options(options.sample_interval_ms);
+  }
+  return options;
+}
+
 inline double percentile(std::vector<double> values, double p) {
   if (values.empty()) {
     return 0.0;
@@ -51,7 +80,7 @@ inline double percentile(std::vector<double> values, double p) {
 }
 
 inline double rss_peak_kb() {
-  struct rusage usage{};
+  struct rusage usage {};
   if (::getrusage(RUSAGE_SELF, &usage) != 0) {
     return 0.0;
   }
@@ -60,7 +89,9 @@ inline double rss_peak_kb() {
 }
 
 inline void emit_metrics_json(const std::string& scenario_id, int iterations,
-                              const PerfMetrics& metrics, const std::string& run_mode) {
+                              const PerfMetrics& metrics, const std::string& run_mode,
+                              const simaai::neat::PowerSummary* power = nullptr,
+                              const simaai::neat::MeasureReport* report = nullptr) {
   std::cout << std::fixed << std::setprecision(6) << "{\n"
             << "  \"scenario_id\": \"" << scenario_id << "\",\n"
             << "  \"iterations\": " << iterations << ",\n"
@@ -71,8 +102,17 @@ inline void emit_metrics_json(const std::string& scenario_id, int iterations,
             << "  \"startup\": " << metrics.startup << ",\n"
             << "  \"rss_peak_kb\": " << metrics.rss_peak_kb << ",\n"
             << "  \"input_drop_count\": " << metrics.input_drop_count << ",\n"
-            << "  \"output_drop_count\": " << metrics.output_drop_count << "\n"
-            << "}\n";
+            << "  \"output_drop_count\": " << metrics.output_drop_count;
+  if (report) {
+    std::cout << ",\n  \"measure_report\": " << report->to_json(2);
+  }
+  if (power && power->enabled) {
+    std::cout << ",\n  \"power\": " << simaai::neat::power_summary_to_json(*power, 2) << "\n";
+  } else {
+    std::cout << "\n";
+  }
+  std::cout << "}\n";
+  std::cout.flush();
 }
 
 inline double elapsed_seconds(Clock::time_point start, Clock::time_point end) {

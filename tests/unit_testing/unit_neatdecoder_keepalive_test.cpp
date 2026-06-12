@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
@@ -37,8 +37,8 @@ int main() {
                              "alignment=(string)au,width=640,height=360,framerate=30/1";
 
     simaai::neat::InputOptions src_opt;
-    src_opt.media_type = "video/x-h264";
-    src_opt.format = "H264";
+    src_opt.payload_type = simaai::neat::PayloadType::Encoded;
+    src_opt.format = simaai::neat::FormatTag::H264;
     src_opt.caps_override = caps;
     src_opt.is_live = true;
     src_opt.do_timestamp = true;
@@ -46,7 +46,7 @@ int main() {
     src_opt.stream_type = 0;
     src_opt.use_simaai_pool = false;
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.add(simaai::neat::nodes::Input(src_opt));
     p.add(simaai::neat::nodes::H264ParseAu(/*config_interval=*/1));
     p.add(simaai::neat::nodes::H264Decode(/*sima_allocator_type=*/2, /*out_format=*/"NV12"));
@@ -58,7 +58,7 @@ int main() {
     simaai::neat::RunOptions opt;
     opt.queue_depth = 1;
 
-    simaai::neat::Run run = p.build(sample, simaai::neat::RunMode::Async, opt);
+    simaai::neat::Run run = p.build(simaai::neat::Sample{sample}, opt);
     require(run.running(), "Pipeline did not enter running state");
 
     int sleep_ms = 35000;

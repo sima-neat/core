@@ -1,4 +1,21 @@
+const fs = require("fs");
+const path = require("path");
 const {execSync} = require("child_process");
+
+function canonicalDocsPath(rawPath) {
+  // Docusaurus' MDX-loader rule matches files against `contentDirs` after
+  // webpack realpath-resolves them. When DOCS_PATH is an absolute path that
+  // traverses a symlink (common when build.sh is invoked from a symlinked
+  // checkout), the rule's include path keeps the symlink while loaded files
+  // arrive with their realpath, so the rule never matches and pages render
+  // without metadata. Canonicalize through realpath so both sides agree.
+  const resolved = path.resolve(__dirname, rawPath);
+  try {
+    return fs.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
 
 function gitValue(command) {
   try {
@@ -41,21 +58,14 @@ const org = process.env.DOCS_ORG || repoParts[0] || "sima-neat";
 const project = process.env.DOCS_PROJECT || repoParts[1] || "core";
 const githubRepoUrl =
   process.env.DOCS_REPO_URL || `https://github.com/${org}/${project}`;
+const githubOrgUrl = process.env.DOCS_GITHUB_ORG_URL || `https://github.com/${org}`;
 
 const url = process.env.DOCS_URL || `https://${org}.github.io`;
 const baseUrl = process.env.DOCS_BASE_URL || "/";
-const algoliaAppId = process.env.DOCS_ALGOLIA_APP_ID || "REPLACE_ME";
-const algoliaApiKey = process.env.DOCS_ALGOLIA_API_KEY || "REPLACE_ME";
-const algoliaIndexName = process.env.DOCS_ALGOLIA_INDEX_NAME || "REPLACE_ME";
-const docsGaMeasurementId = process.env.DOCS_GA_MEASUREMENT_ID || "";
-const docsAnalyticsConfig = {
-  measurementId: docsGaMeasurementId,
-};
+const siteRoot = url.replace(/\/+$/, "");
+const developerCenterShellBase = process.env.DOCS_DEVELOPER_CENTER_SHELL_BASE || "/";
 const footerLinks = [
   { label: "SiMa.ai Neat Framework Documentation", to: "/" },
-  {
-    html: '<button type="button" class="footer__link-item cookie-preferences-link" data-cookie-preferences>Cookie preferences</button>',
-  },
 ];
 
 const buildBranch = normalizeBranch(
@@ -80,8 +90,8 @@ const buildCommitUrl = buildCommit ? `${githubRepoUrl}/commit/${buildCommit}` : 
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "SiMa Neat",
-  tagline: "SiMa Neat documentation",
+  title: "SiMa.ai Neat",
+  tagline: "SiMa.ai Neat documentation",
   url,
   baseUrl,
   onBrokenLinks: "throw",
@@ -96,11 +106,33 @@ const config = {
   projectName: project,
   headTags: [
     {
+      tagName: "link",
+      attributes: {
+        rel: "preconnect",
+        href: "https://fonts.googleapis.com",
+      },
+    },
+    {
+      tagName: "link",
+      attributes: {
+        rel: "preconnect",
+        href: "https://fonts.gstatic.com",
+        crossorigin: "anonymous",
+      },
+    },
+    {
+      tagName: "link",
+      attributes: {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700;800&display=swap",
+      },
+    },
+    {
       tagName: "script",
       attributes: {},
-      innerHTML: `window.__NEAT_DOCS_ANALYTICS__ = ${JSON.stringify(
-        docsAnalyticsConfig,
-      )};`,
+      innerHTML: `window.__NEAT_DEVELOPER_CENTER_SHELL__ = ${JSON.stringify({
+        base: developerCenterShellBase,
+      })};`,
     },
   ],
   presets: [
@@ -108,10 +140,10 @@ const config = {
       "classic",
       {
         docs: {
-          path: process.env.DOCS_PATH || "../docs",
+          path: canonicalDocsPath(process.env.DOCS_PATH || "../docs"),
           routeBasePath: "/",
           sidebarPath: require.resolve("./sidebars.js"),
-          exclude: ["doxygen/**", "_tmp_test.txt"],
+          exclude: ["doxygen/**", "reference/env_var_rationalization.md", "_tmp_test.txt"],
         },
         blog: false,
         theme: {
@@ -122,43 +154,35 @@ const config = {
   ],
   plugins: [],
   themeConfig: {
+    docs: {
+      sidebar: {
+        autoCollapseCategories: true,
+      },
+    },
     navbar: {
-      title: "SiMa Neat",
+      title: "SiMa.ai Neat",
       items: [
-        { type: "doc", docId: "index", label: "Docs", position: "left" },
+        { label: "Installation", to: "/getting-started/installation/", position: "left" },
         { label: "C++ API", to: "/reference/cppapi/", position: "left" },
         { label: "Python API", to: "/reference/pythonapi/", position: "left" },
-        { type: "search", position: "right" },
         {
           type: "html",
-          position: "right",
+          position: "left",
           value:
-            '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
-        },
-        {
-          href: githubRepoUrl,
-          label: "GitHub",
-          position: "right",
+            '<div class="language-pref"><label for="language-pref-select">Language</label><select id="language-pref-select" data-language-pref-select aria-label="Preferred language"><option value="cpp">C++</option><option value="py">Python</option></select></div>',
         },
       ],
+    },
+    colorMode: {
+      disableSwitch: true,
     },
     footer: {
       style: "dark",
       links: footerLinks,
       copyright: `Copyright © ${new Date().getFullYear()} SiMa.ai`,
     },
-    algolia: {
-      appId: algoliaAppId,
-      apiKey: algoliaApiKey,
-      indexName: algoliaIndexName,
-    },
   },
   customFields: {
-    algoliaSearch: {
-      appId: algoliaAppId,
-      apiKey: algoliaApiKey,
-      indexName: algoliaIndexName,
-    },
     buildInfo: {
       showBanner: showBuildBanner,
       branch: buildBranch,
@@ -167,12 +191,17 @@ const config = {
       commitUrl: buildCommitUrl,
       builtAt: buildTime.replace("T", " ").replace(/\.\d{3}Z$/, " UTC"),
     },
-    analytics: docsAnalyticsConfig,
+    githubRepoUrl,
+    githubOrgUrl,
   },
   clientModules: [
-    require.resolve("./src/clientModules/analytics-consent.js"),
+    require.resolve("./src/clientModules/developer-center-shell.js"),
+    require.resolve("./src/clientModules/developer-center-nav.js"),
+    require.resolve("./src/clientModules/global-theme.js"),
     require.resolve("./src/clientModules/language-preference.js"),
     require.resolve("./src/clientModules/search-highlight.js"),
+    require.resolve("./src/clientModules/collapse-sidebar-on-home.js"),
+    require.resolve("./src/clientModules/strip-category-ssr-href.js"),
   ],
 };
 

@@ -50,7 +50,7 @@ RUN_TEST(
       Sample valid;
       valid.kind = SampleKind::Tensor;
       valid.tensor = rgb;
-      valid.media_type = "video/x-raw";
+      valid.payload_type = PayloadType::Image;
       valid.format = "RGB";
 
       field_err.clear();

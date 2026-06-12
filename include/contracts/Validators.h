@@ -2,6 +2,15 @@
  * @file
  * @ingroup contracts
  * @brief Built-in contract implementations and default registry.
+ *
+ * Provides the small set of header-only `Contract` factories that ship with
+ * the framework — non-empty pipeline, no-null nodes, sink-last-for-run,
+ * RTSP source presence — plus `DefaultRegistry()`, the recommended starting
+ * point for most callers. Library code can compose its own registry by
+ * cloning `DefaultRegistry()` and adding/removing contracts.
+ *
+ * @see Contract
+ * @see ContractRegistry
  */
 // include/contracts/Validators.h
 #pragma once
@@ -11,7 +20,6 @@
 #include <utility>
 
 #include "builder/Node.h"
-#include "builder/NodeGroup.h"
 #include "contracts/Contract.h"
 #include "contracts/ContractRegistry.h"
 #include "contracts/ValidationReport.h"
@@ -24,7 +32,12 @@ namespace validators {
 // -----------------------------
 
 /**
- * @brief Ensures NodeGroup is not empty.
+ * @brief Ensures the node list is not empty.
+ *
+ * Issues `EMPTY_PIPELINE` error when validated against an empty node list.
+ *
+ * @ingroup contracts
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> NonEmptyPipeline() {
   class C final : public Contract {
@@ -36,7 +49,7 @@ inline std::shared_ptr<Contract> NonEmptyPipeline() {
       return "Pipeline must contain at least one node.";
     }
 
-    void validate(const NodeGroup& nodes, const ValidationContext& ctx,
+    void validate(std::span<const std::shared_ptr<Node>> nodes, const ValidationContext& ctx,
                   ValidationReport& r) const override {
       (void)ctx;
       if (nodes.empty()) {
@@ -48,7 +61,12 @@ inline std::shared_ptr<Contract> NonEmptyPipeline() {
 }
 
 /**
- * @brief Ensures there are no null node pointers.
+ * @brief Ensures there are no null node pointers in the node list.
+ *
+ * Issues a `NULL_NODE` error per offending index.
+ *
+ * @ingroup contracts
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> NoNullNodes() {
   class C final : public Contract {
@@ -60,13 +78,12 @@ inline std::shared_ptr<Contract> NoNullNodes() {
       return "All nodes must be non-null shared_ptr.";
     }
 
-    void validate(const NodeGroup& nodes, const ValidationContext& ctx,
+    void validate(std::span<const std::shared_ptr<Node>> nodes, const ValidationContext& ctx,
                   ValidationReport& r) const override {
       (void)ctx;
-      const auto& v = nodes.nodes();
-      for (int i = 0; i < static_cast<int>(v.size()); ++i) {
-        if (!v[static_cast<std::size_t>(i)]) {
-          r.add_error(id(), "NULL_NODE", "Null node pointer in NodeGroup.", i);
+      for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
+        if (!nodes[static_cast<std::size_t>(i)]) {
+          r.add_error(id(), "NULL_NODE", "Null node pointer in pipeline node list.", i);
         }
       }
     }
@@ -75,9 +92,16 @@ inline std::shared_ptr<Contract> NoNullNodes() {
 }
 
 /**
- * @brief Ensures Output exists and is last when ctx.mode == Run.
+ * @brief Ensures the configured sink kind exists and is last when `ctx.mode == Run`.
  *
- * This is the builder-level version of the "sink last" contract described in the architecture.
+ * This is the builder-level version of the "sink last" contract described in
+ * the architecture. Issues `SINK_NOT_LAST` if the last Node isn't of the
+ * expected kind, and `MULTIPLE_SINKS` if a sink-kind Node is found earlier
+ * in the chain.
+ *
+ * @ingroup contracts
+ * @param sink_kind The Node kind expected as the terminal (default `"Output"`).
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> SinkLastForRun(std::string sink_kind = "Output") {
   class C final : public Contract {
@@ -90,16 +114,15 @@ inline std::shared_ptr<Contract> SinkLastForRun(std::string sink_kind = "Output"
       return "When running, the pipeline must end with the terminal appsink node.";
     }
 
-    void validate(const NodeGroup& nodes, const ValidationContext& ctx,
+    void validate(std::span<const std::shared_ptr<Node>> nodes, const ValidationContext& ctx,
                   ValidationReport& r) const override {
       if (ctx.mode != ValidationContext::Mode::Run)
         return;
-      const auto& v = nodes.nodes();
-      if (v.empty())
+      if (nodes.empty())
         return;
 
-      int last_idx = static_cast<int>(v.size()) - 1;
-      const auto& last = v.back();
+      int last_idx = static_cast<int>(nodes.size()) - 1;
+      const auto& last = nodes.back();
       const std::string last_kind = last ? last->kind() : "";
 
       // Require sink kind last.
@@ -110,7 +133,7 @@ inline std::shared_ptr<Contract> SinkLastForRun(std::string sink_kind = "Output"
 
       // Disallow additional sinks earlier (best-effort sanity).
       for (int i = 0; i < last_idx; ++i) {
-        const auto& n = v[static_cast<std::size_t>(i)];
+        const auto& n = nodes[static_cast<std::size_t>(i)];
         if (n && n->kind() == sink_kind_) {
           r.add_error(id(), "MULTIPLE_SINKS",
                       "Found " + sink_kind_ + " before the end of the pipeline.", i, n->kind(),
@@ -126,9 +149,15 @@ inline std::shared_ptr<Contract> SinkLastForRun(std::string sink_kind = "Output"
 }
 
 /**
- * @brief Ensures an RTSP source node exists when ctx.mode == Rtsp.
+ * @brief Ensures an RTSP source node exists when `ctx.mode == Rtsp`.
  *
- * Builder-level: we only check presence of StillImageInput (or another configured kind).
+ * Builder-level: we only check presence of `StillImageInput` (or another
+ * configured kind). Issues `RTSP_SOURCE_MISSING` if no Node of the expected
+ * kind is found in the node list.
+ *
+ * @ingroup contracts
+ * @param source_kind The Node kind expected to act as the RTSP source.
+ * @return Shared pointer to a fresh `Contract` instance.
  */
 inline std::shared_ptr<Contract> RtspRequiresSource(std::string source_kind = "StillImageInput") {
   class C final : public Contract {
@@ -141,15 +170,14 @@ inline std::shared_ptr<Contract> RtspRequiresSource(std::string source_kind = "S
       return "RTSP mode requires a server-side source node (e.g., StillImageInput).";
     }
 
-    void validate(const NodeGroup& nodes, const ValidationContext& ctx,
+    void validate(std::span<const std::shared_ptr<Node>> nodes, const ValidationContext& ctx,
                   ValidationReport& r) const override {
       if (ctx.mode != ValidationContext::Mode::Rtsp)
         return;
 
-      const auto& v = nodes.nodes();
       bool found = false;
-      for (int i = 0; i < static_cast<int>(v.size()); ++i) {
-        const auto& n = v[static_cast<std::size_t>(i)];
+      for (int i = 0; i < static_cast<int>(nodes.size()); ++i) {
+        const auto& n = nodes[static_cast<std::size_t>(i)];
         if (n && n->kind() == src_kind_) {
           found = true;
           break;
@@ -175,7 +203,12 @@ inline std::shared_ptr<Contract> RtspRequiresSource(std::string source_kind = "S
 /**
  * @brief Reasonable default set of builder-level contracts.
  *
- * Keep this purely structural (no GStreamer).
+ * Bundles `NonEmptyPipeline`, `NoNullNodes`, `SinkLastForRun`, and
+ * `RtspRequiresSource` into a fresh registry. Keep this purely structural
+ * (no GStreamer); domain-specific contracts should be added on top.
+ *
+ * @ingroup contracts
+ * @return New `ContractRegistry` populated with the default contracts.
  */
 inline ContractRegistry DefaultRegistry() {
   ContractRegistry reg;

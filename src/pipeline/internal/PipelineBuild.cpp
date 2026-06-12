@@ -49,7 +49,7 @@ std::vector<std::string> split_buffer_names(const std::string& raw) {
 
 } // namespace
 
-PipelineBuildContext::PipelineBuildContext(const SessionOptions& opt)
+PipelineBuildContext::PipelineBuildContext(const GraphOptions& opt)
     : name_transform_(make_name_transform(opt)) {}
 
 PipelineBuildContext::PipelineBuildContext(const NameTransform& transform)
@@ -62,31 +62,6 @@ std::string PipelineBuildContext::resolve_buffer_name(const std::string& raw) co
 std::vector<std::string>
 PipelineBuildContext::resolve_expected_buffer_names(const std::string& raw) const {
   return pipeline_internal::resolve_expected_buffer_names(raw, name_transform_);
-}
-
-void PipelineBuildContext::apply_name_transform_to_configs(
-    const std::vector<std::shared_ptr<Node>>& nodes) const {
-  // Legacy per-stage JSON rewrite path is intentionally disabled.
-  (void)nodes;
-}
-
-void PipelineBuildContext::wire_configs_by_order(
-    const std::vector<std::shared_ptr<Node>>& nodes) const {
-  // Legacy per-stage JSON wiring path is intentionally disabled.
-  (void)nodes;
-}
-
-void PipelineBuildContext::dump_mla_config_wiring(
-    const std::vector<std::shared_ptr<Node>>& nodes) const {
-  // Legacy JSON wiring diagnostics are intentionally disabled.
-  (void)nodes;
-}
-
-BuildWiringReport
-PipelineBuildContext::check_config_wiring(const std::vector<std::shared_ptr<Node>>& nodes) const {
-  // Legacy per-stage JSON consistency checks are intentionally disabled.
-  (void)nodes;
-  return {};
 }
 
 std::string resolve_buffer_name(const std::string& raw, const NameTransform& transform) {

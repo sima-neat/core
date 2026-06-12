@@ -1,7 +1,11 @@
+#ifndef SIMA_NEAT_INTERNAL
+#define SIMA_NEAT_INTERNAL 1
+#endif
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
-#include "pipeline/Session.h"
+#include "pipeline/runtime/RunInternal.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -30,23 +34,23 @@ simaai::neat::Run make_async_rgb_run_with_policy(const simaai::neat::Tensor& see
                                                  int queue_depth = 1) {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
-  session.add(nodes::Input(src_opt));
-  session.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Input(src_opt));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
 
   RunOptions run_opt;
   run_opt.queue_depth = queue_depth;
   run_opt.overflow_policy = overflow_policy;
   run_opt.advanced.copy_input = true;
 
-  return session.build(seed, RunMode::Async, run_opt);
+  return graph.build(TensorList{seed}, run_opt);
 }
 
 simaai::neat::Sample tensor_to_sample(const simaai::neat::Tensor& tensor) {
@@ -69,11 +73,11 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
 
   std::shared_ptr<void> holder;
   if (path == PushPath::Holder) {
-    const Sample first = run.push_and_pull(seed, 1000);
-    require(first.tensor.has_value(), "holder parity test: missing tensor output");
-    require(first.tensor->storage != nullptr, "holder parity test: missing tensor storage");
-    require(first.tensor->storage->holder != nullptr, "holder parity test: missing holder");
-    holder = first.tensor->storage->holder;
+    const TensorList first = run.run(TensorList{seed}, 1000);
+    require(first.size() == 1, "holder parity test: expected one tensor output");
+    require(first.front().storage != nullptr, "holder parity test: missing tensor storage");
+    require(first.front().storage->holder != nullptr, "holder parity test: missing holder");
+    holder = first.front().storage->holder;
   }
 
   PolicyProbeResult result;
@@ -83,13 +87,13 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
     bool ok = false;
     switch (path) {
     case PushPath::Mat:
-      ok = run.try_push(mat_seed);
+      ok = run.try_push(std::vector<cv::Mat>{mat_seed});
       break;
     case PushPath::Tensor:
-      ok = run.try_push(seed);
+      ok = run.try_push(TensorList{seed});
       break;
     case PushPath::Sample:
-      ok = run.try_push(sample_seed);
+      ok = run.try_push(Sample{sample_seed});
       break;
     case PushPath::Holder:
       ok = run.try_push_holder(holder);
@@ -107,7 +111,7 @@ PolicyProbeResult probe_policy(simaai::neat::OverflowPolicy policy, PushPath pat
     }
   }
 
-  result.inputs_dropped = run.stats().inputs_dropped;
+  result.inputs_dropped = run_internal::stats(run).inputs_dropped;
   run.stop();
   return result;
 }

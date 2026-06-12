@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 460" role="img" aria-labelledby="title desc">
+  <title id="title">Graph A reused inside Graph B</title>
+  <desc id="desc">Graph A is shown on top, then inserted into Graph B below between upstream and downstream graph stages.</desc>
+  <defs>
+    <linearGradient id="bg" x1="70" y1="35" x2="1250" y2="430" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8F6"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5998DD"/>
+      <stop offset="1" stop-color="#7EB4EC"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A9C4F"/>
+      <stop offset="1" stop-color="#C0E8DB"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7A6BB5"/>
+      <stop offset="1" stop-color="#D1CEE6"/>
+    </linearGradient>
+    <filter id="shadow" x="-8%" y="-14%" width="116%" height="138%" filterUnits="objectBoundingBox">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="7" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#AAB6C4"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="7" markerHeight="7" refX="5.5" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#8FD0A7"/>
+    </marker>
+    <style>
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .title { fill: #010F0E; font-size: 28px; font-weight: 700; }
+      .small { fill: #35536F; font-size: 15px; font-weight: 500; }
+      .tag { fill: #F8FBFF; font-size: 13px; font-weight: 700; }
+      .label { fill: #35536F; font-size: 16px; font-weight: 700; }
+      .step { fill: #6C7D8F; font-size: 13px; font-weight: 650; }
+      .caption { fill: #35536F; font-size: 15px; font-weight: 650; }
+      .arrow { fill: none; stroke: #AAB6C4; stroke-width: 2.4; stroke-linecap: butt; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect x="16" y="16" width="1288" height="428" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
+  <circle cx="1168" cy="64" r="52" fill="#C0E8DB" opacity="0.5"/>
+  <circle cx="118" cy="390" r="44" fill="#D1CEE6" opacity="0.44"/>
+
+  <text x="56" y="56" class="sans title">A Graph can be reused inside a larger Graph</text>
+  <text x="56" y="84" class="sans small">Build a small graph once, then compose it as a fragment in a bigger application.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="446" y="134" width="374" height="86" rx="28" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+    <rect x="478" y="119" width="92" height="30" rx="15" fill="url(#green)"/>
+    <text x="524" y="139" class="sans tag" text-anchor="middle">Graph A</text>
+
+    <rect x="408" y="160" width="76" height="34" rx="13" fill="#FFFFFF" stroke="#9BC2ED"/>
+    <rect x="422" y="168" width="48" height="18" rx="9" fill="url(#blue)"/>
+    <path class="arrow" d="M484 177H510"/>
+    <rect x="510" y="160" width="86" height="34" rx="13" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="553" y="182" class="sans step" text-anchor="middle">Node</text>
+    <path class="arrow" d="M596 177H668"/>
+    <rect x="668" y="160" width="86" height="34" rx="13" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="711" y="182" class="sans step" text-anchor="middle">Node</text>
+    <path class="arrow" d="M754 177H782"/>
+    <rect x="782" y="160" width="76" height="34" rx="13" fill="#FFFFFF" stroke="#9BC2ED"/>
+    <rect x="796" y="168" width="48" height="18" rx="9" fill="url(#blue)"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="170" y="270" width="980" height="108" rx="30" fill="#FFFFFF" stroke="#B8B0DC" stroke-width="2"/>
+    <rect x="202" y="254" width="92" height="32" rx="16" fill="url(#purple)"/>
+    <text x="248" y="275" class="sans tag" text-anchor="middle">Graph B</text>
+
+    <rect x="94" y="293" width="150" height="62" rx="20" fill="#FFFFFF" stroke="#9BC2ED" stroke-width="2"/>
+    <rect x="119" y="310" width="100" height="28" rx="14" fill="url(#blue)"/>
+    <text x="169" y="329" class="sans tag" text-anchor="middle">Inputs</text>
+    <path class="arrow" d="M244 324H286"/>
+
+    <rect x="286" y="300" width="150" height="48" rx="18" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="361" y="328" class="sans label" text-anchor="middle">upstream nodes</text>
+
+    <rect x="446" y="292" width="374" height="64" rx="22" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+    <rect x="510" y="307" width="86" height="34" rx="13" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="553" y="329" class="sans step" text-anchor="middle">Node</text>
+    <path class="arrow" d="M436 324H510"/>
+    <path class="arrow" d="M596 324H668"/>
+    <rect x="668" y="307" width="86" height="34" rx="13" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="711" y="329" class="sans step" text-anchor="middle">Node</text>
+    <path class="arrow" d="M754 324H856"/>
+
+    <rect x="856" y="300" width="172" height="48" rx="18" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="942" y="328" class="sans label" text-anchor="middle">downstream nodes</text>
+    <path class="arrow" d="M1028 324H1076"/>
+
+    <rect x="1076" y="293" width="150" height="62" rx="20" fill="#FFFFFF" stroke="#9BC2ED" stroke-width="2"/>
+    <rect x="1101" y="310" width="100" height="28" rx="14" fill="url(#blue)"/>
+    <text x="1151" y="329" class="sans tag" text-anchor="middle">Outputs</text>
+  </g>
+
+  <path d="M633 220V292" fill="none" stroke="#8FD0A7" stroke-width="2.8" stroke-linecap="round" marker-end="url(#arrowGreen)"/>
+</svg>

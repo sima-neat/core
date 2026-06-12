@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
@@ -52,10 +52,11 @@ void tensor_dims_from_shape(const simaai::neat::Tensor& tensor, int* w, int* h) 
 }
 
 void verify_cpu_and_video_meta(const simaai::neat::Sample& sample) {
-  if (sample.kind != simaai::neat::SampleKind::Tensor || !sample.tensor.has_value()) {
-    throw std::runtime_error("PassThroughStage: expected tensor sample");
+  const simaai::neat::TensorList tensors = simaai::neat::tensors_from_sample(sample, true);
+  if (tensors.size() != 1U) {
+    throw std::runtime_error("PassThroughStage: expected one tensor sample");
   }
-  const simaai::neat::Tensor& tensor = *sample.tensor;
+  const simaai::neat::Tensor& tensor = tensors.front();
   if (tensor.device.type != simaai::neat::DeviceType::CPU) {
     throw std::runtime_error("PassThroughStage: incoming tensor not on CPU");
   }
@@ -152,10 +153,8 @@ RUN_TEST("hybrid_graph_basic_test", [] {
 
   g.connect(pipe_in, stage);
   g.connect(stage, pipe_out);
-
-  simaai::neat::graph::GraphSession session(std::move(g));
   simaai::neat::graph::GraphRunOptions run_opt;
-  simaai::neat::graph::GraphRun run = session.build(run_opt);
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g), run_opt);
   struct RunStopGuard {
     simaai::neat::graph::GraphRun* run_ptr = nullptr;
     ~RunStopGuard() {
@@ -175,7 +174,7 @@ RUN_TEST("hybrid_graph_basic_test", [] {
   sample.frame_id = 42;
   sample.stream_id = "stream0";
 
-  require(run.push(pipe_in, sample), "GraphRun::push failed");
+  require(run.push(pipe_in, simaai::neat::Sample{sample}), "GraphRun::push failed");
 
   auto out = run.pull(pipe_out, 2000);
   if (!out.has_value()) {

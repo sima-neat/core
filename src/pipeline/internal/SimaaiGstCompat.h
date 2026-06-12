@@ -31,7 +31,7 @@ typedef GstMemoryFlags GstSimaaiMemoryFlags;
 #endif
 
 #ifndef MAX_ALLOCATION_SEGMENTS
-#define MAX_ALLOCATION_SEGMENTS 16
+#define MAX_ALLOCATION_SEGMENTS 64
 #endif
 
 typedef struct {

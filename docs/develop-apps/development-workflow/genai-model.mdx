@@ -1,0 +1,326 @@
+---
+title: GenAI Model
+description: Run LLM, VLM, and ASR models from Neat applications
+sidebar_position: 2
+---
+
+# GenAI Model
+
+Neat uses the GenAI APIs for LLM, VLM, and ASR models that were prepared with
+LLiMa. This is the generative-model counterpart to [`Model`](/develop-apps/development-workflow/model):
+load a model directory, create a request, then either wait for the full answer
+or stream tokens as they are produced.
+
+Use the GenAI APIs when your application asks a model to generate text,
+answer questions about images, call tools, or transcribe audio. Use the classic
+`Model` API for fixed-shape discriminative models such as classification,
+detection, segmentation, or embedding models.
+
+## Where GenAI fits
+
+The GenAI path has the same high-level shape as the rest of Neat:
+
+1. Prepare or download a model artifact for Modalix.
+2. Put the model on the target, commonly under `/media/nvme/llima/models/`.
+3. Load the model from your C++ or Python application.
+4. Send a `GenerationRequest`.
+5. Read a `GenerationResult` or consume a `GenerationStream`.
+
+LLiMa owns GenAI model preparation, command-line testing, and benchmarking. Neat
+owns the application-facing API and runtime integration once the model is used
+inside your app. For model preparation details, see [GenAI with LLiMa](/genai-llima/).
+
+## Choose the right handle
+
+For most applications, start with `GenAIModel`. It auto-detects the model task
+from the model directory and exposes capability checks:
+
+- `accepts_text()`
+- `accepts_image()`
+- `accepts_audio()`
+- `task()`
+- `model_id()`
+
+Use the task-specific handles when the application knows what it is loading and
+wants the narrower API:
+
+| Handle | Use for |
+|--------|---------|
+| `genai::GenAIModel` | Auto-detected LLM, VLM, or ASR model directories. |
+| `genai::VisionLanguageModel` | Text-only LLMs and image-capable VLMs. |
+| `genai::ASRModel` | Speech-to-text models. |
+| `genai::GenAIServer` | Serving one or more GenAI models through HTTP endpoints. |
+
+## Run a text request
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+#include "neat/genai.h"
+
+#include <iostream>
+
+int main() {
+  simaai::neat::genai::GenAIModel model(
+      "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4");
+
+  simaai::neat::genai::GenerationRequest request;
+  request.prompt = "Explain what an API gateway is in one sentence.";
+  request.max_new_tokens = 64;
+
+  auto result = model.run(request);
+  std::cout << result.text << "\n";
+}
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+import pyneat as neat
+
+model = neat.genai.GenAIModel(
+    "/media/nvme/llima/models/Qwen3-4B-Instruct-2507-GPTQ-a16w4"
+)
+
+request = neat.genai.GenerationRequest()
+request.prompt = "Explain what an API gateway is in one sentence."
+request.max_new_tokens = 64
+
+result = model.run(request)
+print(result.text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+`run()` is synchronous: it returns after generation finishes. It is the simplest
+shape for tests, scripts, and request/response application code.
+
+## Stream generated tokens
+
+Use `stream()` when the caller should see output as it is generated. Each item is
+a `TokenSample` containing the latest text fragment, current metrics, and final
+status when generation ends.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenerationRequest request;
+request.prompt = "Give me three practical tips for designing a small REST API.";
+request.max_new_tokens = 96;
+
+simaai::neat::genai::GenerationStream stream_handle = model.stream(request);
+for (const auto& token : stream_handle) {
+  std::cout << token.text << std::flush;
+}
+std::cout << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+request = neat.genai.GenerationRequest()
+request.prompt = "Give me three practical tips for designing a small REST API."
+request.max_new_tokens = 96
+
+stream_handle = model.stream(request)
+for token in stream_handle:
+    print(token.text, end="", flush=True)
+print()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Call `cancel()` on the stream if the user closes the request, changes prompts,
+or your application times out the generation.
+
+## Add images for VLMs
+
+VLMs accept text plus one or more images. Images are passed through
+`GenerationRequest.images` for a simple prompt, or through `ChatMessage.images`
+when you use chat history.
+
+Images passed as `Tensor` values should be `uint8` HWC RGB tensors. OpenCV
+`cv::Mat` inputs follow the Neat/OpenCV convention: three-channel matrices are
+treated as BGR and converted to RGB before they are stored in the request.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::VisionLanguageModel model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4");
+
+cv::Mat image = cv::imread("scene.jpg");
+
+simaai::neat::genai::GenerationRequest request;
+request.prompt = "What is visible in this image?";
+request.images = {image};
+request.max_new_tokens = 128;
+
+auto result = model.run(request);
+std::cout << result.text << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.VisionLanguageModel(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+)
+
+request = neat.genai.GenerationRequest()
+request.prompt = "What is visible in this image?"
+request.images = [image_tensor]
+request.max_new_tokens = 128
+
+print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+For repeated questions about the same image, `VisionLanguageModel.encode(...)`
+can cache image embeddings in the model. Then set `request.use_cached_images =
+true` or use a chat message with `use_cached_images = true`.
+
+## Transcribe audio
+
+ASR models use the same request/result shape, but the request must provide
+audio. Use `audio_file` for a file path or `audio` for an audio tensor.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::ASRModel model("/media/nvme/llima/models/whisper-model");
+
+simaai::neat::genai::GenerationRequest request;
+request.audio_file = "meeting.wav";
+request.language = "en";
+
+auto result = model.run(request);
+std::cout << result.text << "\n";
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.ASRModel("/media/nvme/llima/models/whisper-model")
+
+request = neat.genai.GenerationRequest()
+request.audio_file = "meeting.wav"
+request.language = "en"
+
+print(model.run(request).text)
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Compose GenAI into a Graph
+
+Direct `run()` / `stream()` calls are the shortest path for most GenAI
+applications. When GenAI is one stage in a larger Neat graph, use the public
+Graph fragments:
+
+- `genai::graphs::VisionLanguage(...)`
+- `genai::graphs::SpeechTranscriber(...)`
+
+These fragments expose GenAI stages through named graph endpoints so you can
+compose them with the same `Graph` and `Run` model used by the rest of Neat.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+auto model = std::make_shared<simaai::neat::genai::VisionLanguageModel>(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4");
+
+simaai::neat::genai::VisionLanguageOptions options;
+options.max_new_tokens = 128;
+options.streaming = true;
+
+simaai::neat::Graph fragment =
+    simaai::neat::genai::graphs::VisionLanguage(model, options, "vlm");
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+model = neat.genai.VisionLanguageModel(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4"
+)
+
+options = neat.genai.VisionLanguageOptions()
+options.max_new_tokens = 128
+options.streaming = True
+
+fragment = neat.genai.graphs.vision_language(model, options, "vlm")
+```
+
+</CodeTab>
+</CodeTabs>
+
+## Serve GenAI models
+
+Use `GenAIServer` when the application boundary should be an HTTP service rather
+than direct in-process calls. The server can host multiple model directories and
+binds to `0.0.0.0:9998` by default.
+
+<CodeTabs>
+<CodeTab label="C++" lang="cpp">
+
+```cpp
+simaai::neat::genai::GenAIServer server;
+server.add_model("/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+                 "qwen-vlm");
+server.serve();
+```
+
+</CodeTab>
+<CodeTab label="Python" lang="python">
+
+```python
+server = neat.genai.GenAIServer()
+server.add_model(
+    "/media/nvme/llima/models/Qwen3-VL-4B-Instruct-GPTQ-a16w4",
+    "qwen-vlm",
+)
+server.start()
+```
+
+</CodeTab>
+</CodeTabs>
+
+Use direct APIs for embedded application logic and tests. Use the server flow
+when a UI, service, or remote client should talk to the model over a network
+boundary.
+
+## Request rules
+
+`GenerationRequest` is intentionally explicit:
+
+- Use either `prompt` or `messages`, not both.
+- Use `system_prompt` only with `prompt`.
+- Attach images directly only with `prompt`; attach per-message images through
+  `ChatMessage.images`.
+- Use either direct images or cached images, not both.
+- ASR requests use audio fields, not text or image fields.
+
+These rules let Neat fail early with a clear request error instead of sending an
+ambiguous prompt to the runtime.
+
+## Next steps
+
+- Prepare and benchmark GenAI models with [GenAI with LLiMa](/genai-llima/).
+- Learn classic model execution with [Run / Inference](/develop-apps/development-workflow/overview).
+- Build larger application graphs with [Graph](/develop-apps/development-workflow/graph).

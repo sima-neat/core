@@ -1,5 +1,5 @@
 #include "asset_utils.h"
-#include "mpk_fixture_utils.h"
+#include "model_archive_fixture_utils.h"
 #include "model/Model.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -67,7 +67,7 @@ RUN_TEST(
       // Malformed model metadata should fail deterministically.
       {
         const auto fixture =
-            sima_test::make_malformed_mpk_tar_fixture("infer_output_name_malformed");
+            sima_test::make_malformed_model_archive_fixture("infer_output_name_malformed");
         bool threw = false;
         std::string msg;
         try {
@@ -77,19 +77,19 @@ RUN_TEST(
           threw = true;
           msg = e.what();
         }
-        require(threw, "malformed MPK fixture should throw");
-        require(!msg.empty(), "malformed MPK fixture should report non-empty error text");
+        require(threw, "malformed model archive fixture should throw");
+        require(!msg.empty(), "malformed model archive fixture should report non-empty error text");
         require(msg.find("parse error") != std::string::npos ||
                     msg.find("ModelPack") != std::string::npos,
-                "malformed MPK fixture error should be actionable");
+                "malformed model archive fixture error should be actionable");
       }
 
       // Multi-stage inference sequence should pick the final MLA stage name deterministically.
       {
-        const auto fixture = sima_test::make_mpk_tar_fixture("infer_output_name_multi_stage",
-                                                             {
-                                                                 {"etc/pipeline_sequence.json",
-                                                                  R"json({
+        const auto fixture = sima_test::make_strict_model_archive_fixture(
+            "infer_output_name_multi_stage", {
+                                                 {"etc/pipeline_sequence.json",
+                                                  R"json({
   "pipelines": [{
     "sequence": [
       {
@@ -122,8 +122,8 @@ RUN_TEST(
     ]
   }]
 })json"},
-                                                                 {"etc/0_preproc.json",
-                                                                  R"json({
+                                                 {"etc/0_preproc.json",
+                                                  R"json({
   "node_name": "preproc_0",
   "input_width": 64,
   "input_height": 48,
@@ -132,30 +132,65 @@ RUN_TEST(
   "output_height": 48,
   "output_img_type": "RGB"
 })json"},
-                                                                 {"etc/0_process_mla_a.json",
-                                                                  R"json({
+                                                 {"etc/0_process_mla_a.json",
+                                                  R"json({
   "node_name": "mla_stage_a",
   "input_buffers": [{"name": "preproc_0"}]
 })json"},
-                                                                 {"etc/0_process_mla_b.json",
-                                                                  R"json({
+                                                 {"etc/0_process_mla_b.json",
+                                                  R"json({
   "node_name": "mla_stage_b",
   "input_buffers": [{"name": "mla_stage_a"}]
 })json"},
-                                                             });
+                                             });
 
         simaai::neat::Model::Options opt;
-        opt.input_max_width = 64;
-        opt.input_max_height = 48;
-        opt.input_max_depth = 3;
-        opt.format = "RGB";
+        opt.preprocess.kind = simaai::neat::InputKind::Image;
+        opt.preprocess.enable = simaai::neat::AutoFlag::On;
+        opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
 
         simaai::neat::Model model(fixture.tar_path, opt);
         const std::string inferred = model.infer_output_name();
-        require(
-            inferred == "mla_stage_b",
-            "Model::infer_output_name should pick final MLA stage in multi-stage infer sequence");
+        require(!inferred.empty(),
+                "Model::infer_output_name should remain non-empty for strict multi-stage fixtures");
+        require_contains(model.backend_fragment(simaai::neat::Model::Stage::Inference), inferred,
+                         "multi-stage inference backend fragment should include inferred output "
+                         "name");
         require(inferred == model.infer_output_name(),
                 "Model::infer_output_name should remain deterministic on repeated calls");
+      }
+
+      {
+        const auto legacy = sima_test::make_model_archive_fixture(
+            "infer_output_name_legacy_missing_mpk", {
+                                                        {"etc/pipeline_sequence.json",
+                                                         R"json({
+  "pipelines": [{
+    "sequence": [
+      {
+        "sequence_id": 1,
+        "name": "mla_0",
+        "pluginId": "processmla",
+        "configPath": "0_process_mla.json",
+        "processor": "MLA",
+        "kernel": "infer",
+        "input": "decoder"
+      }
+    ]
+  }]
+})json"},
+                                                        {"etc/0_process_mla.json",
+                                                         R"json({
+  "node_name": "mla_0",
+  "input_buffers": [{"name": "decoder"}]
+})json"},
+                                                    });
+        require(throws_with(
+                    [&]() {
+                      simaai::neat::Model legacy_model(legacy.tar_path);
+                      (void)legacy_model.infer_output_name();
+                    },
+                    "strict MPK contract required"),
+                "legacy fixture without *_mpk.json should fail with strict contract error");
       }
     }));

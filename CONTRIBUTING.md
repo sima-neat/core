@@ -1,4 +1,4 @@
-# Contributing to SiMa Neat
+# Contributing to SiMa NEAT
 
 This repository follows a release-first workflow: `main` must stay releasable.
 
@@ -31,7 +31,7 @@ Bootstrap dependencies:
 
 - Public API must use canonical naming from `docs/contribute/naming.md`.
 - C++ namespace is `simaai::neat`.
-- Core runtime types are `Model`, `Session`, and `Run`.
+- Core runtime types are `Model`, `Graph`, and `Run`.
 - Keep source headers/implementation paths coherent (no internal headers in `include/`).
 - C++ target baseline is C++20.
 
@@ -58,8 +58,8 @@ Run the minimum tier required by your change:
 - Repo hygiene / release policy changes:
   - `bash scripts/ci/check_artifacts.sh`
   - `bash scripts/ci/check_release_policy.sh`
-- MPK/security changes:
-  - `bash scripts/ci/run_mpk_security_gate.sh`
+- Model-archive/security changes:
+  - `bash scripts/ci/run_model_archive_security_gate.sh`
 - Packaging/install changes:
   - `bash scripts/ci/run_install_smoke.sh`
 - Performance or long-run stability changes:
@@ -107,4 +107,4 @@ When changing public API in `include/*`:
 
 ## Release Hygiene
 
-Releases must follow `docs/release-checklist.md` and pass all required checks in `.github/workflows/release-gate.yml`, including MPK security, install smoke, perf regression, soak, and fuzz gates.
+Releases must follow `docs/contribute/release-checklist.md` and pass all required checks in `.github/workflows/release-gate.yml`, including model-archive security, install smoke, perf regression, soak, and fuzz gates.

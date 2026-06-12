@@ -4,48 +4,48 @@
 
 Use when you want one input to one output with straightforward control flow.
 
-- Build session with input + processing + output nodes.
-- Build `PipelineRun` with `PipelineRunMode::Sync`.
+- Build Graph with input + processing + output nodes.
+- Use `Graph::run(...)` for one-shot execution.
 - Use `push_and_pull(...)`.
 
 ## 2) Async streaming pipeline
 
 Use for continuous throughput and decoupled producer/consumer.
 
-- Build session once.
-- Create `PipelineRun` with `PipelineRunMode::Async`.
+- Build Graph once.
+- Use `Graph::build(...)` for a reusable async runner.
 - `push(...)` in producer loop, `pull(...)` in consumer loop.
 - Close input with `close_input()` when done.
 
 ## 3) Model pipeline via `Model`
 
-Use when model pack stage composition is required.
+Use when model archive stage composition is required.
 
 - Construct `simaai::neat::Model`.
-- Add `model.preprocess()`, `model.inference()`, `model.postprocess()` or `model.session()`.
-- Build/run through `Session` or `Model::Runner`.
+- Add `model.preprocess()`, `model.inference()`, `model.postprocess()` or `model.graph()`.
+- Build/run through `Graph` or `Model::Runner`.
 
 ## 4) Source pipeline (no pushed input)
 
 Use for RTSP/file source-driven flows.
 
-- Build `Session` with source node/group and terminal output.
-- Use `Session::build(const PipelineRunOptions&)`.
+- Build `Graph` with source node/group and terminal output.
+- Use `Graph::build(const PipelineRunOptions&)`.
 - Pull outputs from `PipelineRun`.
 
 ## 5) Validation-first flow
 
 Use for pipeline generation/contract checks before execution.
 
-- `Session::validate(...)`
+- `Graph::validate(...)`
 - Inspect `PipelineReport` for parse/caps/plugin failures.
 
 ## 6) RTSP serving flow
 
-Use when you need to expose a session output over RTSP.
+Use when you need to expose a Graph output over RTSP.
 
-- Build a source-driven session (image/video/rtsp input groups or equivalent).
-- Call `Session::run_rtsp(const RtspServerOptions&)`.
+- Build a source-driven Graph (image/video/rtsp input groups or equivalent).
+- Call `Graph::run_rtsp(const RtspServerOptions&)`.
 - Keep `RtspServerHandle` alive for serving lifetime.
 
 ## 7) Input caps and renegotiation control
@@ -64,14 +64,14 @@ Use when you need explicit model stages rather than a single opaque pipeline.
   - `model.preprocess()`
   - `model.inference()`
   - `model.postprocess()`
-- Or use `model.session()` for full default model pipeline.
+- Or use `model.graph()` for full default model pipeline.
 - For advanced wiring, combine model groups with explicit nodes (boxdecode, joins, sinks).
 
 ## 9) Hybrid graph flow (advanced)
 
 Use when you need DAG orchestration across pipeline and stage-style nodes.
 
-- Use `graph::Graph` + `graph::GraphSession`.
+- Use `graph::Graph` + `graph::build`.
 - Key nodes for multistream:
   - `StreamSchedulerNode`
   - `FanOutNode`

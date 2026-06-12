@@ -1,5 +1,7 @@
 #include "InputStreamInternal.h"
 
+#include "pipeline/internal/CpuVisibleSample.h"
+
 namespace simaai::neat {
 InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstElement* appsink,
                                 const SampleSpec& spec, const InputOptions& src_opt,
@@ -15,8 +17,7 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->shape_policy = opt.shape_policy;
   state->shape_limits = opt.shape_limits;
   state->byte_guard_origin = opt.byte_guard_origin;
-  state->allow_ingress_cvu_format_renegotiation =
-      opt.allow_ingress_cvu_format_renegotiation;
+  state->allow_ingress_cvu_format_renegotiation = opt.allow_ingress_cvu_format_renegotiation;
   state->allow_dynamic_growth =
       (state->dynamic_capability != InputStreamOptions::DynamicCapability::StaticOnly) &&
       (state->shape_policy != InputStreamOptions::ShapePolicy::LockedByCapsOverride);
@@ -30,6 +31,8 @@ InputStream InputStream::create(GstElement* pipeline, GstElement* appsrc, GstEle
   state->current_caps = gst_caps_ref(caps);
   if (spec.kind == SampleMediaKind::RawVideo) {
     gst_video_info_from_caps(&state->current_vinfo, caps);
+  } else if (spec.kind == SampleMediaKind::Tensor) {
+    state->current_tensor_spec = spec;
   }
   gst_caps_unref(caps);
   if (state->max_input_bytes_guard > 0 &&
@@ -127,7 +130,7 @@ std::string InputStream::diagnostics_summary() const {
   if (!elements.empty())
     oss << elements;
   if (inputstream_debug_enabled()) {
-    SessionReport rep = state_->diag->snapshot_basic();
+    GraphReport rep = state_->diag->snapshot_basic();
     if (!rep.bus.empty()) {
       oss << "Bus:\n";
       const size_t max_lines = std::min<size_t>(rep.bus.size(), 10);
@@ -306,13 +309,14 @@ void InputStream::start(std::function<void(Sample)> on_output) {
         std::chrono::steady_clock::time_point t_decode_start{};
         if (timings)
           t_decode_start = std::chrono::steady_clock::now();
-        Sample out = output_from_sample_stream(sample, "InputStream::start", st->opt.copy_output,
-                                               &st->opt.output_override);
-        apply_default_port_name(out, st->src_opt);
+        Sample out = decode_sample_from_inputstream_state(*st, sample, "InputStream::start");
+        if (st->opt.prepare_output_cpu_visible) {
+          (void)pipeline_internal::prepare_sample_for_cpu_read(out);
+        }
         if (pipeline_or_graph_debug_enabled()) {
           const char* kind = "Unknown";
-          if (out.kind == SampleKind::Tensor)
-            kind = "Tensor";
+          if (out.kind == SampleKind::TensorSet)
+            kind = "TensorSet";
           else if (out.kind == SampleKind::Bundle)
             kind = "Bundle";
           std::fprintf(
@@ -326,6 +330,22 @@ void InputStream::start(std::function<void(Sample)> on_output) {
           t_decode_end = std::chrono::steady_clock::now();
         const bool pool_dbg = inputstream_pool_debug_enabled();
         if (pool_dbg) {
+          if (out.kind == SampleKind::TensorSet && !out.tensors.empty()) {
+            std::size_t gst_tensors = 0;
+            for (const auto& tensor : out.tensors) {
+              if (tensor.storage && tensor.storage->kind == simaai::neat::StorageKind::GstSample) {
+                gst_tensors++;
+              }
+            }
+            const auto& first = out.tensors.front();
+            const bool has_holder = first.storage && static_cast<bool>(first.storage->holder);
+            std::fprintf(stderr,
+                         "[INPUTSTREAM] out tensors=%zu gstsample_tensors=%zu "
+                         "first_storage_kind=%d holder=%s\n",
+                         out.tensors.size(), gst_tensors,
+                         first.storage ? static_cast<int>(first.storage->kind) : -1,
+                         has_holder ? "true" : "false");
+          }
           GstBuffer* buf = gst_sample_get_buffer(sample);
           const guint before = buf ? GST_MINI_OBJECT_REFCOUNT_VALUE(buf) : 0u;
           if (buf) {

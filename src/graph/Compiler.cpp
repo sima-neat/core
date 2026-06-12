@@ -31,10 +31,12 @@ std::unordered_map<std::string, std::size_t> build_port_index(const std::vector<
   for (std::size_t i = 0; i < ports.size(); ++i) {
     const auto& name = ports[i].name;
     if (name.empty()) {
-      throw std::runtime_error("Compiler: empty port name");
+      throw std::runtime_error("Compiler: empty port name at index " + std::to_string(i) +
+                               " (port count=" + std::to_string(ports.size()) + ")");
     }
     if (out.find(name) != out.end()) {
-      throw std::runtime_error("Compiler: duplicate port name: " + name);
+      throw std::runtime_error("Compiler: duplicate port name: '" + name + "' at index " +
+                               std::to_string(i));
     }
     out.emplace(name, i);
   }
@@ -54,8 +56,8 @@ OutputSpec merge_specs(SpecMergeInputs inputs, const std::string& port_name) {
       return;
     }
     if (!src.empty() && dst != src) {
-      throw std::runtime_error("Compiler: input spec mismatch for port " + port_name + " (" +
-                               field + ")");
+      throw std::runtime_error("Compiler: input spec mismatch for port '" + port_name + "' (" +
+                               field + "): existing='" + dst + "' vs incoming='" + src + "'");
     }
   };
   auto merge_int = [&](int& dst, int src, const char* field) {
@@ -64,12 +66,25 @@ OutputSpec merge_specs(SpecMergeInputs inputs, const std::string& port_name) {
       return;
     }
     if (src > 0 && dst != src) {
-      throw std::runtime_error("Compiler: input spec mismatch for port " + port_name + " (" +
-                               field + ")");
+      throw std::runtime_error("Compiler: input spec mismatch for port '" + port_name + "' (" +
+                               field + "): existing=" + std::to_string(dst) +
+                               " vs incoming=" + std::to_string(src));
     }
   };
 
+  if (out.payload_type == PayloadType::Auto) {
+    out.payload_type = inputs.incoming.payload_type;
+  } else if (inputs.incoming.payload_type != PayloadType::Auto &&
+             out.payload_type != inputs.incoming.payload_type) {
+    throw std::runtime_error(
+        "Compiler: input spec mismatch for port '" + port_name +
+        "' (payload_type): existing=" + std::to_string(static_cast<int>(out.payload_type)) +
+        " vs incoming=" + std::to_string(static_cast<int>(inputs.incoming.payload_type)));
+  }
   merge_str(out.media_type, inputs.incoming.media_type, "media_type");
+  if (out.payload_type == PayloadType::Auto) {
+    out.payload_type = payload_type_from_media_type(out.media_type);
+  }
   merge_str(out.format, inputs.incoming.format, "format");
   merge_int(out.width, inputs.incoming.width, "width");
   merge_int(out.height, inputs.incoming.height, "height");
@@ -81,8 +96,9 @@ OutputSpec merge_specs(SpecMergeInputs inputs, const std::string& port_name) {
   if (out.byte_size == 0) {
     out.byte_size = inputs.incoming.byte_size;
   } else if (inputs.incoming.byte_size > 0 && out.byte_size != inputs.incoming.byte_size) {
-    throw std::runtime_error("Compiler: input spec mismatch for port " + port_name +
-                             " (byte_size)");
+    throw std::runtime_error("Compiler: input spec mismatch for port '" + port_name +
+                             "' (byte_size): existing=" + std::to_string(out.byte_size) +
+                             " vs incoming=" + std::to_string(inputs.incoming.byte_size));
   }
   if (static_cast<int>(inputs.incoming.certainty) > static_cast<int>(out.certainty)) {
     out.certainty = inputs.incoming.certainty;
@@ -92,26 +108,29 @@ OutputSpec merge_specs(SpecMergeInputs inputs, const std::string& port_name) {
   return out;
 }
 
-simaai::neat::NodeGroup merge_groups(const std::vector<const PipelineNode*>& nodes) {
+std::vector<std::shared_ptr<simaai::neat::Node>>
+merge_pipeline_nodes(const std::vector<const PipelineNode*>& nodes) {
   std::vector<std::shared_ptr<simaai::neat::Node>> out;
   for (const auto* pn : nodes) {
     if (!pn)
       continue;
-    const auto& gnodes = pn->group().nodes();
+    const auto& gnodes = pn->nodes();
     out.insert(out.end(), gnodes.begin(), gnodes.end());
   }
-  return simaai::neat::NodeGroup(std::move(out));
+  return out;
 }
 
 } // namespace
 
 bool Compiler::spec_complete_(const OutputSpec& spec) {
-  if (spec.media_type.empty())
+  const std::string media =
+      !spec.media_type.empty() ? spec.media_type : media_type_from_payload_type(spec.payload_type);
+  if (media.empty())
     return false;
-  if (spec.media_type == "video/x-raw") {
+  if (media == "video/x-raw") {
     return !spec.format.empty() && spec.width > 0 && spec.height > 0;
   }
-  if (spec.media_type == "application/vnd.simaai.tensor") {
+  if (media == "application/vnd.simaai.tensor") {
     return !spec.format.empty() && spec.width > 0 && spec.height > 0 && spec.depth > 0;
   }
   // For other media types, rely on media_type + format only.
@@ -119,8 +138,14 @@ bool Compiler::spec_complete_(const OutputSpec& spec) {
 }
 
 CompiledGraph Compiler::compile(const Graph& g) const {
+  return compile(g, CompilerOptions{});
+}
+
+CompiledGraph Compiler::compile(const Graph& g, const CompilerOptions& opt) const {
   if (!g.is_dag()) {
-    throw std::runtime_error("Compiler: graph must be a DAG");
+    throw std::runtime_error(
+        "Compiler: graph must be a DAG (node_count=" + std::to_string(g.node_count()) +
+        ", edge_count=" + std::to_string(g.edges().size()) + "); check for cycles in the graph");
   }
 
   const std::size_t n = g.node_count();
@@ -138,10 +163,14 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       continue;
 
     if (g.in_degree(id) > 1) {
-      throw std::runtime_error("Compiler: pipeline node has multiple inputs (add stage join)");
+      throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
+                               " has multiple inputs (in_degree=" +
+                               std::to_string(g.in_degree(id)) + "; add stage join)");
     }
     if (g.out_degree(id) > 1) {
-      throw std::runtime_error("Compiler: pipeline node has multiple outputs (add stage fan-out)");
+      throw std::runtime_error("Compiler: pipeline node " + std::to_string(id) +
+                               " has multiple outputs (out_degree=" +
+                               std::to_string(g.out_degree(id)) + "; add stage fan-out)");
     }
   }
 
@@ -159,7 +188,9 @@ CompiledGraph Compiler::compile(const Graph& g) const {
 
     const PipelineNode* pn = as_pipeline_node(node);
     if (!pn) {
-      throw std::runtime_error("Compiler: pipeline node cast failed");
+      throw std::runtime_error("Compiler: pipeline node cast failed for node " +
+                               std::to_string(id) + " (kind='" + node->kind() +
+                               "', backend=Pipeline but dynamic_cast to PipelineNode failed)");
     }
 
     const bool start_segment =
@@ -198,11 +229,13 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       const auto& nnode = g.node(nid);
       const PipelineNode* p = as_pipeline_node(nnode);
       if (!p) {
-        throw std::runtime_error("Compiler: pipeline node cast failed");
+        throw std::runtime_error("Compiler: pipeline node cast failed for node " +
+                                 std::to_string(nid) + " (kind='" +
+                                 (nnode ? nnode->kind() : "null") + "')");
       }
       pnodes.push_back(p);
     }
-    seg.group = merge_groups(pnodes);
+    seg.nodes = merge_pipeline_nodes(pnodes);
 
     seg.source_like = false;
     for (const auto* p : pnodes) {
@@ -222,7 +255,9 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       continue;
     const StageNode* sn = as_stage_node(node);
     if (!sn) {
-      throw std::runtime_error("Compiler: stage node cast failed");
+      throw std::runtime_error("Compiler: stage node cast failed for node " + std::to_string(id) +
+                               " (kind='" + node->kind() +
+                               "', backend=Stage but dynamic_cast to StageNode failed)");
     }
     out.stages.push_back(CompiledStageNode{.node_id = id,
                                            .node = std::const_pointer_cast<StageNode>(
@@ -299,12 +334,28 @@ CompiledGraph Compiler::compile(const Graph& g) const {
     std::vector<std::size_t> counts(in_ports.size(), 0);
     std::vector<bool> seen(in_ports.size(), false);
 
+    if (g.in_edges(id).empty() && in_ports.size() == 1U) {
+      auto root_it = opt.root_input_specs.find(id);
+      if (root_it != opt.root_input_specs.end()) {
+        inputs[0] = root_it->second;
+        seen[0] = true;
+      }
+    }
+
     for (const std::size_t eidx : g.in_edges(id)) {
       const Edge& e = g.edge(eidx);
       const std::string port_name = g.port_name(e.to_port);
       auto it = in_index.find(port_name);
       if (it == in_index.end()) {
-        throw std::runtime_error("Compiler: edge references unknown input port: " + port_name);
+        std::string available;
+        for (const auto& kv : in_index) {
+          if (!available.empty())
+            available += ", ";
+          available += "'" + kv.first + "'";
+        }
+        throw std::runtime_error("Compiler: edge references unknown input port: '" + port_name +
+                                 "' on node " + std::to_string(id) + " (available ports: [" +
+                                 available + "])");
       }
       const std::size_t idx = it->second;
       counts[idx]++;
@@ -319,8 +370,10 @@ CompiledGraph Compiler::compile(const Graph& g) const {
     for (std::size_t i = 0; i < in_ports.size(); ++i) {
       const int max_edges = in_ports[i].max_in_edges;
       if (max_edges > 0 && counts[i] > static_cast<std::size_t>(max_edges)) {
-        throw std::runtime_error("Compiler: input port '" + in_ports[i].name +
-                                 "' exceeds max_in_edges");
+        throw std::runtime_error("Compiler: input port '" + in_ports[i].name + "' on node " +
+                                 std::to_string(id) +
+                                 " exceeds max_in_edges (actual=" + std::to_string(counts[i]) +
+                                 ", max=" + std::to_string(max_edges) + ")");
       }
     }
 
@@ -333,9 +386,10 @@ CompiledGraph Compiler::compile(const Graph& g) const {
     if (node->backend() == Backend::Pipeline) {
       const PipelineNode* pn = as_pipeline_node(node);
       if (!pn)
-        throw std::runtime_error("Compiler: pipeline node cast failed");
+        throw std::runtime_error("Compiler: pipeline node cast failed for node " +
+                                 std::to_string(id) + " (kind='" + node->kind() + "')");
       OutputSpec in_spec = inputs.empty() ? OutputSpec{} : inputs[0];
-      OutputSpec out_spec = derive_output_spec(pn->group(), in_spec);
+      OutputSpec out_spec = derive_output_spec(pn->nodes(), in_spec);
       for (const PortId pid : out_port_ids) {
         node_outputs[id][pid] = out_spec;
       }
@@ -351,7 +405,9 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       auto it = node_outputs[id].find(e.from_port);
       if (it == node_outputs[id].end()) {
         const std::string pname = g.port_name(e.from_port);
-        throw std::runtime_error("Compiler: missing output spec for port: " + pname);
+        throw std::runtime_error("Compiler: missing output spec for port '" + pname + "' on node " +
+                                 std::to_string(id) + " (node kind='" +
+                                 (node ? node->kind() : "null") + "')");
       }
       out.edge_specs[eidx].spec = it->second;
       out.edge_specs[eidx].complete = spec_complete_(it->second);
@@ -364,6 +420,12 @@ CompiledGraph Compiler::compile(const Graph& g) const {
       const auto& es = out.edge_specs[seg.input_edges[0]];
       seg.input_spec = es.spec;
       seg.input_complete = es.complete;
+    } else if (!seg.node_ids.empty()) {
+      auto root_it = opt.root_input_specs.find(seg.node_ids.front());
+      if (root_it != opt.root_input_specs.end()) {
+        seg.input_spec = root_it->second;
+        seg.input_complete = spec_complete_(seg.input_spec);
+      }
     }
     if (!seg.output_edges.empty()) {
       const auto& es = out.edge_specs[seg.output_edges[0]];

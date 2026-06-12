@@ -12,9 +12,10 @@
 #include "nodes/sima/H264EncodeSima.h"
 #include "nodes/sima/H264Parse.h"
 #include "nodes/sima/H264Packetize.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "gst/GstHelpers.h"
 #include "model/Model.h"
+#include "model/internal/ModelInternal.h"
 #include "pipeline/internal/TensorUtil.h"
 
 #include "asset_utils.h"
@@ -67,6 +68,8 @@ static const char* sample_kind_name(simaai::neat::SampleKind kind) {
   switch (kind) {
   case simaai::neat::SampleKind::Tensor:
     return "tensor";
+  case simaai::neat::SampleKind::TensorSet:
+    return "tensor_set";
   case simaai::neat::SampleKind::Bundle:
     return "bundle";
   default:
@@ -89,6 +92,8 @@ static void log_edge(const char* tag, const simaai::neat::Sample& sample) {
   const char* dev = "-";
   if (sample.kind == simaai::neat::SampleKind::Tensor && sample.tensor.has_value()) {
     dev = device_type_name(sample.tensor.value());
+  } else if (simaai::neat::sample_has_tensor_list(sample) && !sample.tensors.empty()) {
+    dev = device_type_name(sample.tensors.front());
   }
   std::fprintf(stderr,
                "[EDGE] %s stream=%s frame=%lld input_seq=%lld orig_seq=%lld port=%s kind=%s dev=%s "
@@ -102,7 +107,7 @@ static void log_edge(const char* tag, const simaai::neat::Sample& sample) {
 }
 
 struct RtspServerContext {
-  simaai::neat::Session session;
+  simaai::neat::Graph graph;
   simaai::neat::RtspServerHandle handle;
 };
 
@@ -164,14 +169,14 @@ static RtspServerContext start_rtsp_server(const std::string& image_path, int co
                                            int content_h, int enc_w, int enc_h, int fps, int port,
                                            int rtp_port_base, int rtp_port_count) {
   RtspServerContext ctx;
-  ctx.session.add(
+  ctx.graph.add(
       simaai::neat::nodes::StillImageInput(image_path, content_w, content_h, enc_w, enc_h, fps));
   // Use software encoder to force frequent IDR (x264enc uses key-int-max=1).
-  ctx.session.add(simaai::neat::nodes::H264EncodeSW());
-  ctx.session.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
-  ctx.session.add(simaai::neat::nodes::H264Packetize(/*pt=*/kPayloadType, /*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264EncodeSW());
+  ctx.graph.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264Packetize(/*pt=*/kPayloadType, /*config_interval=*/1));
 
-  ctx.handle = ctx.session.run_rtsp({
+  ctx.handle = ctx.graph.run_rtsp({
       .mount = "image",
       .port = port,
       .rtp_port_base = rtp_port_base,
@@ -228,7 +233,7 @@ static bool probe_rtsp_encoded(const std::string& url, int fps, int w, int h, in
     std::cerr << "[rtsp] probe start url=" << url << " tries=" << tries
               << " timeout_ms=" << timeout_ms << "\n";
   }
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::RTSPInput(url, /*latency_ms=*/200, /*tcp=*/true));
   p.add(simaai::neat::nodes::H264Depacketize(kPayloadType,
                                              /*config_interval=*/1, fps, w, h,
@@ -423,14 +428,21 @@ static Top1Result argmax_from_tensor(const simaai::neat::Tensor& t,
 }
 
 static Top1Result argmax_from_sample(const simaai::neat::Sample& sample) {
-  if (sample.kind != simaai::neat::SampleKind::Tensor || !sample.tensor.has_value()) {
-    throw std::runtime_error("Expected tensor sample output");
+  if (simaai::neat::sample_has_tensor_list(sample) && sample.tensors.size() == 1U) {
+    const simaai::neat::Tensor& t = sample.tensors.front();
+    if (looks_like_top1_tensor(t)) {
+      return top1_from_tensor_payload(t);
+    }
+    return argmax_from_tensor(t, sample.stream_id.c_str());
   }
-  const simaai::neat::Tensor& t = sample.tensor.value();
-  if (looks_like_top1_tensor(t)) {
-    return top1_from_tensor_payload(t);
+  if (sample.kind == simaai::neat::SampleKind::Tensor && sample.tensor.has_value()) {
+    const simaai::neat::Tensor& t = sample.tensor.value();
+    if (looks_like_top1_tensor(t)) {
+      return top1_from_tensor_payload(t);
+    }
+    return argmax_from_tensor(t, sample.stream_id.c_str());
   }
-  return argmax_from_tensor(t, sample.stream_id.c_str());
+  throw std::runtime_error("Expected tensor sample output");
 }
 
 } // namespace
@@ -538,9 +550,9 @@ int main(int argc, char** argv) {
       model_tar = sima_test::resolve_resnet50_tar();
     }
     if (model_tar.empty()) {
-      skip_long_test_exception("ResNet50 model pack not found (set SIMA_RESNET50_TAR or run "
-                               "'sima-cli modelzoo -v " +
-                               sima_test::modelzoo_version() + " get resnet_50')");
+      skip_long_test_exception(
+          "ResNet50 model pack not found (set SIMA_MODEL_TAR or SIMA_RESNET50_TAR or run "
+          "'sima-cli modelzoo get resnet_50')");
     }
 
     auto rtsp_servers_vec = start_rtsp_servers_with_retry(
@@ -571,33 +583,33 @@ int main(int argc, char** argv) {
     if (rtsp_debug)
       std::cerr << "[model] loading simaai::neat::Model\n";
     simaai::neat::Model::Options model_cfg;
-    model_cfg.media_type = "video/x-raw";
-    model_cfg.format = "NV12";
-    model_cfg.input_max_width = kEncWidth;
-    model_cfg.input_max_height = kEncHeight;
-    model_cfg.input_max_depth = 0;
+    model_cfg.preprocess.kind = simaai::neat::InputKind::Image;
+    model_cfg.preprocess.enable = simaai::neat::AutoFlag::On;
+    model_cfg.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::NV12;
+    model_cfg.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
     simaai::neat::Model model(model_tar, model_cfg);
     if (rtsp_debug)
       std::cerr << "[model] simaai::neat::Model loaded\n";
 
-    simaai::neat::Model::SessionOptions model_opt;
-    model_opt.include_appsrc = false;
-    model_opt.include_appsink = false;
+    simaai::neat::Model::RouteOptions model_opt;
+    model_opt.include_input = false;
+    model_opt.include_output = false;
 
     // ---------------------------------------------------------------------
     // Build pipeline definitions first.
     // ---------------------------------------------------------------------
     struct StreamPipelineDef {
       std::string stream_id;
-      simaai::neat::NodeGroup cap;
+      std::vector<std::shared_ptr<simaai::neat::Node>> cap;
       std::shared_ptr<simaai::neat::Node> dec;
       simaai::neat::graph::StreamMetadataDefaults meta_defaults;
       int sched_idx = 0;
     };
 
-    std::vector<simaai::neat::NodeGroup> model_pipelines;
+    std::vector<std::vector<std::shared_ptr<simaai::neat::Node>>> model_pipelines;
     for (int i = 0; i < model_instances; ++i) {
-      model_pipelines.push_back(model.session(model_opt));
+      model_pipelines.push_back(
+          simaai::neat::internal::ModelAccess::build_public_route_nodes(model, model_opt));
     }
 
     std::vector<std::string> stream_ids;
@@ -609,7 +621,7 @@ int main(int argc, char** argv) {
 
       const auto& rtsp_ctx =
           rtsp_servers_vec[static_cast<std::size_t>(i % std::max(1, rtsp_servers))];
-      simaai::neat::NodeGroup cap_group({
+      std::vector<std::shared_ptr<simaai::neat::Node>> cap_group{
           simaai::neat::nodes::RTSPInput(rtsp_ctx.handle.url(),
                                          /*latency_ms=*/200,
                                          /*tcp=*/true),
@@ -619,7 +631,7 @@ int main(int argc, char** argv) {
                                                /*w=*/kEncWidth,
                                                /*h=*/kEncHeight,
                                                /*enforce_caps=*/true),
-      });
+      };
 
       StreamPipelineDef def;
       def.stream_id = sid;
@@ -666,8 +678,9 @@ int main(int argc, char** argv) {
       auto argmax_node = g.add(simaai::neat::graph::nodes::TensorMap(
           [](simaai::neat::Sample& sample, simaai::neat::Tensor& tensor) {
             const Top1Result top1 = argmax_from_tensor(tensor, sample.stream_id.c_str());
-            sample.tensor = make_top1_tensor(top1);
-            sample.kind = simaai::neat::SampleKind::Tensor;
+            sample.tensors = simaai::neat::TensorList{make_top1_tensor(top1)};
+            sample.tensor.reset();
+            sample.kind = simaai::neat::SampleKind::TensorSet;
           },
           "argmax_" + suffix));
 
@@ -726,7 +739,10 @@ int main(int argc, char** argv) {
     sima_test::parse_int_arg(argc, argv, "--warmup-timeout-ms", warmup_timeout_ms);
     if (rtsp_debug)
       std::cerr << "[graph] warmup start\n";
-    if (!run.warmup(outputs, warmup, warmup_timeout_ms)) {
+    for (int i = 0; i < warmup; ++i) {
+      auto sample = run.pull_any(outputs, warmup_timeout_ms);
+      if (sample.has_value())
+        continue;
       const std::string err = run.last_error();
       if (!err.empty()) {
         throw std::runtime_error(err);
@@ -736,8 +752,8 @@ int main(int argc, char** argv) {
     if (rtsp_debug)
       std::cerr << "[graph] warmup done\n";
 
-    auto session = run.collect(outputs);
-    auto& output_stats = session.stats();
+    auto graph = run.collect(outputs);
+    auto& output_stats = graph.stats();
 
     int seen = 0;
     std::vector<int> seen_by_model(outputs.size(), 0);
@@ -748,7 +764,7 @@ int main(int argc, char** argv) {
 
     const auto t0 = std::chrono::steady_clock::now();
 
-    session.per_stream_target(iterations)
+    graph.per_stream_target(iterations)
         .stall_after_ms(stall_timeout_ms)
         .timeout_ms(100)
         .max_runtime_ms(max_runtime_ms)
@@ -771,7 +787,7 @@ int main(int argc, char** argv) {
         });
 
     try {
-      session.run();
+      graph.run();
     } catch (const std::exception& e) {
       const std::string msg = e.what();
       if (msg.find("max runtime") != std::string::npos) {

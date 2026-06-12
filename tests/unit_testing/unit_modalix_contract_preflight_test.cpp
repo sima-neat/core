@@ -1,3 +1,4 @@
+#include "asset_utils.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
 #include "test_main.h"
@@ -15,24 +16,6 @@ namespace fs = std::filesystem;
 bool tool_available(const std::string& tool) {
   const std::string cmd = "command -v " + tool + " >/dev/null 2>&1";
   return std::system(cmd.c_str()) == 0;
-}
-
-fs::path find_repo_root() {
-  std::error_code ec;
-  fs::path path = fs::current_path(ec);
-  if (ec) {
-    return fs::current_path();
-  }
-  while (!path.empty()) {
-    if (fs::exists(path / "tests" / "assets" / "mpk" / "valid" / "basic_valid.mpk", ec) && !ec) {
-      return path;
-    }
-    const fs::path parent = path.parent_path();
-    if (parent == path)
-      break;
-    path = parent;
-  }
-  return fs::current_path();
 }
 
 } // namespace
@@ -81,14 +64,8 @@ RUN_TEST("unit_modalix_contract_preflight_test", ([] {
              return oss.str();
            }());
 
-           const fs::path repo_root = find_repo_root();
-           const fs::path mpk_fixture =
-               repo_root / "tests" / "assets" / "mpk" / "valid" / "basic_valid.mpk";
-           const fs::path decoder_fixture =
-               repo_root / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
+           const fs::path decoder_fixture = sima_test::test_decoder_fixture_path();
 
-           require(fs::exists(mpk_fixture),
-                   "Modalix preflight: missing MPK fixture basic_valid.mpk");
            require(fs::exists(decoder_fixture),
-                   "Modalix preflight: missing decoder dynamic_caps.h264 fixture");
+                   "Modalix preflight: missing decoder fixture " + decoder_fixture.string());
          }));

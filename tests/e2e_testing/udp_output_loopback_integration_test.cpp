@@ -1,6 +1,6 @@
 #include "nodes/io/Input.h"
 #include "nodes/io/UdpOutput.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "udp_test_utils.h"
 
@@ -12,29 +12,29 @@ RUN_TEST("udp_output_loopback_integration_test", ([] {
 
            sima_test::UdpReceiver rx;
 
-           Session session;
+           Graph graph;
            InputOptions src_opt;
-           src_opt.media_type = "video/x-raw";
-           src_opt.format = "RGB";
+           src_opt.payload_type = simaai::neat::PayloadType::Image;
+           src_opt.format = simaai::neat::FormatTag::RGB;
            src_opt.use_simaai_pool = false;
            src_opt.max_width = 32;
            src_opt.max_height = 24;
            src_opt.max_depth = 3;
-           session.add(nodes::Input(src_opt));
+           graph.add(nodes::Input(src_opt));
 
            UdpOutputOptions udp_opt;
            udp_opt.host = "127.0.0.1";
            udp_opt.port = rx.port();
            udp_opt.sync = false;
            udp_opt.async = false;
-           session.add(nodes::UdpOutput(udp_opt));
+           graph.add(nodes::UdpOutput(udp_opt));
 
            Run run;
            try {
              const Tensor seed = make_color_tensor(12, 8, ImageSpec::PixelFormat::RGB, 0x44);
              RunOptions run_opt;
              run_opt.queue_depth = 32;
-             run = session.build(seed, RunMode::Async, run_opt);
+             run = graph.build(TensorList{seed}, run_opt);
            } catch (const std::exception& e) {
              if (sima_test::likely_runtime_missing(e.what())) {
                throw std::runtime_error(
@@ -63,7 +63,7 @@ RUN_TEST("udp_output_loopback_integration_test", ([] {
                                           static_cast<uint8_t>(0x50 + i));
              s.frame_id = i;
              s.stream_id = "udp-loopback";
-             require(run.push(s), "udp loopback: push failed");
+             require(run.push(Sample{s}), "udp loopback: push failed");
            }
 
            std::string payload;

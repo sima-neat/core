@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "pipeline/TensorCore.h"
 #include "nodes/io/Input.h"
 #include "nodes/common/Output.h"
@@ -67,23 +67,23 @@ int main() {
     {
       simaai::neat::Tensor input = make_nv12_tensor(w, h);
 
-      Session p;
+      Graph p;
       InputOptions src_opt;
-      src_opt.media_type = "video/x-raw";
-      src_opt.format = "NV12";
+      src_opt.payload_type = simaai::neat::PayloadType::Image;
+      src_opt.format = simaai::neat::FormatTag::NV12;
       src_opt.use_simaai_pool = false;
       p.add(nodes::Input(src_opt));
       p.add(nodes::Output(OutputOptions::Latest()));
 
       RunOptions opt;
-      Run run = p.build(input, RunMode::Async, opt);
+      Run run = p.build(TensorList{input}, opt);
 
-      Sample out = run.push_and_pull(input, 1000);
-      require(out.tensor.has_value(), "output missing simaai::neat::Tensor");
-      require(out.tensor->storage != nullptr, "output storage missing");
-      require(out.tensor->storage->holder != nullptr, "output holder missing");
+      TensorList outs = run.run(TensorList{input}, 1000);
+      require(outs.size() == 1, "output missing simaai::neat::Tensor");
+      require(outs.front().storage != nullptr, "output storage missing");
+      require(outs.front().storage->holder != nullptr, "output holder missing");
 
-      auto* sample = static_cast<GstSample*>(out.tensor->storage->holder.get());
+      auto* sample = static_cast<GstSample*>(outs.front().storage->holder.get());
       require(sample != nullptr, "output holder is not a GstSample");
       GstBuffer* buf = gst_sample_get_buffer(sample);
       require(buf != nullptr, "output buffer missing");
@@ -107,23 +107,23 @@ int main() {
     {
       simaai::neat::Tensor input = make_i420_tensor(w, h);
 
-      Session p;
+      Graph p;
       InputOptions src_opt;
-      src_opt.media_type = "video/x-raw";
-      src_opt.format = "I420";
+      src_opt.payload_type = simaai::neat::PayloadType::Image;
+      src_opt.format = simaai::neat::FormatTag::I420;
       src_opt.use_simaai_pool = false;
       p.add(nodes::Input(src_opt));
       p.add(nodes::Output(OutputOptions::Latest()));
 
       RunOptions opt;
-      Run run = p.build(input, RunMode::Async, opt);
+      Run run = p.build(TensorList{input}, opt);
 
-      Sample out = run.push_and_pull(input, 1000);
-      require(out.tensor.has_value(), "output missing simaai::neat::Tensor");
-      require(out.tensor->storage != nullptr, "output storage missing");
-      require(out.tensor->storage->holder != nullptr, "output holder missing");
+      TensorList outs = run.run(TensorList{input}, 1000);
+      require(outs.size() == 1, "output missing simaai::neat::Tensor");
+      require(outs.front().storage != nullptr, "output storage missing");
+      require(outs.front().storage->holder != nullptr, "output holder missing");
 
-      auto* sample = static_cast<GstSample*>(out.tensor->storage->holder.get());
+      auto* sample = static_cast<GstSample*>(outs.front().storage->holder.get());
       require(sample != nullptr, "output holder is not a GstSample");
       GstBuffer* buf = gst_sample_get_buffer(sample);
       require(buf != nullptr, "output buffer missing");

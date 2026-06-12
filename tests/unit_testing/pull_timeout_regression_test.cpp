@@ -1,6 +1,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -33,22 +33,22 @@ void require_timeout_window(const char* op_name, int measured_ms, int timeout_ms
 RUN_TEST("pull_timeout_regression_test", [] {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions input_opt;
-  input_opt.media_type = "video/x-raw";
-  input_opt.format = "RGB";
+  input_opt.payload_type = simaai::neat::PayloadType::Image;
+  input_opt.format = simaai::neat::FormatTag::RGB;
   input_opt.use_simaai_pool = false;
   input_opt.max_width = 96;
   input_opt.max_height = 96;
   input_opt.max_depth = 3;
-  session.add(nodes::Input(input_opt));
-  session.add(nodes::Output(OutputOptions::Latest()));
+  graph.add(nodes::Input(input_opt));
+  graph.add(nodes::Output(OutputOptions::Latest()));
 
   RunOptions run_opt;
   run_opt.queue_depth = 8;
 
   const Tensor seed = make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, 0x33);
-  Run run = session.build(seed, RunMode::Async, run_opt);
+  Run run = graph.build(TensorList{seed}, run_opt);
 
   const int timeout_ms = 120;
   {
@@ -60,22 +60,21 @@ RUN_TEST("pull_timeout_regression_test", [] {
   }
   {
     const auto t0 = std::chrono::steady_clock::now();
-    auto out = run.pull_tensor(timeout_ms);
+    TensorList out = run.pull_tensors(timeout_ms);
     const auto t1 = std::chrono::steady_clock::now();
-    require(!out.has_value(), "pull_tensor() should timeout with no pending output");
-    require_timeout_window("pull_tensor()", elapsed_ms(t0, t1), timeout_ms);
+    require(out.empty(), "pull_tensors() should timeout with no pending output");
+    require_timeout_window("pull_tensors()", elapsed_ms(t0, t1), timeout_ms);
   }
 
   for (int i = 0; i < 5; ++i) {
     Tensor input =
         make_color_tensor(64, 48, ImageSpec::PixelFormat::RGB, static_cast<uint8_t>(0x40 + i));
     const auto t0 = std::chrono::steady_clock::now();
-    Sample out = run.push_and_pull(input, 1000);
+    TensorList outs = run.run(TensorList{input}, 1000);
     const auto t1 = std::chrono::steady_clock::now();
 
-    require(out.kind == SampleKind::Tensor, "push_and_pull() returned wrong kind");
-    require(out.tensor.has_value(), "push_and_pull() returned sample without tensor");
-    require(elapsed_ms(t0, t1) < 1000, "push_and_pull() exceeded timeout");
+    require(outs.size() == 1, "run(TensorList) returned wrong tensor count");
+    require(elapsed_ms(t0, t1) < 1000, "run(TensorList) exceeded timeout");
   }
 
   run.stop();

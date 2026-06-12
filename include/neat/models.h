@@ -1,14 +1,16 @@
 /**
  * @file
- * @brief Model imports for SiMa NEAT.
+ * @brief Umbrella include for SiMa NEAT's model layer.
+ *
+ * Pulls in everything needed to load and use a model: the Model class, the ModelGroups
+ * factory bundle, plus the detection-pipeline helpers (DetectionTypes, EncodedSampleUtil,
+ * StageRun, SimaBoxDecode) most model-driven applications also use.
+ *
+ * Include this instead of cherry-picking individual model headers.
  */
 #pragma once
 
 #include "model/Model.h"
-#include "mpk/MpKLoader.h"
-#include "mpk/MpKManifest.h"
-#include "mpk/MpKPipelineAdapter.h"
-#include "mpk/PipelineSequence.h"
 #include "nodes/groups/ModelGroups.h"
 #include "nodes/sima/SimaBoxDecode.h"
 #include "pipeline/DetectionTypes.h"

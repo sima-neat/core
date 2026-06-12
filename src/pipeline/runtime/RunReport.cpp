@@ -2,48 +2,55 @@
 #include "RunInternal.h"
 
 #include "pipeline/internal/Diagnostics.h"
-#include "pipeline/internal/GstDiagnosticsUtil.h"
 
 #include <mutex>
-#include <sstream>
-#include <string>
 #include <utility>
 
 namespace simaai::neat {
 
-RunStats Run::stats() const {
+RunStats runtime::RunCore::stats() const {
   RunStats out;
-  if (!state_)
-    return out;
-  auto st = state_;
-  out.inputs_enqueued = st->inputs_enqueued.load();
-  out.inputs_dropped = st->inputs_dropped.load();
-  out.inputs_pushed = st->inputs_pushed.load();
-  out.outputs_ready = st->outputs_ready.load();
-  out.outputs_pulled = st->outputs_pulled.load();
-  out.outputs_dropped = st->outputs_dropped.load();
+  out.inputs_enqueued = inputs_enqueued.load();
+  out.inputs_dropped = inputs_dropped.load();
+  out.inputs_pushed = inputs_pushed.load();
+  out.outputs_ready = outputs_ready.load();
+  out.outputs_pulled = outputs_pulled.load();
+  out.outputs_dropped = outputs_dropped.load();
   {
-    std::lock_guard<std::mutex> lock(st->latency_mu);
-    if (st->latency_count > 0) {
-      out.avg_latency_ms = st->latency_mean_ms;
-      out.min_latency_ms = st->latency_min_ms;
-      out.max_latency_ms = st->latency_max_ms;
+    std::lock_guard<std::mutex> lock(latency_mu);
+    if (latency_count > 0) {
+      out.avg_latency_ms = latency_mean_ms;
+      out.min_latency_ms = latency_min_ms;
+      out.max_latency_ms = latency_max_ms;
     }
   }
   return out;
 }
 
-InputStreamStats Run::input_stats() const {
-  if (!state_)
-    return {};
-  return state_->stream.stats();
+InputStreamStats runtime::RunCore::input_stats() const {
+  return pipeline.stream.stats();
 }
 
-RunDiagSnapshot Run::diag_snapshot() const {
+RunStats run_internal::stats(const Run& run) {
+  const auto st = run_internal::core(run);
+  return st ? st->stats() : RunStats{};
+}
+
+InputStreamStats run_internal::input_stats(const Run& run) {
+  const auto st = run_internal::core(run);
+  return st ? st->input_stats() : InputStreamStats{};
+}
+
+PowerSummary run_internal::power_summary(const Run& run) {
+  const auto st = run_internal::core(run);
+  if (!st || !st->power_monitor)
+    return {};
+  return st->power_monitor->summary();
+}
+
+RunDiagSnapshot runtime::RunCore::diag_snapshot() const {
   RunDiagSnapshot out;
-  if (!state_)
-    return out;
-  const auto diag = state_->stream.diag_ctx();
+  const auto diag = pipeline.stream.diag_ctx();
   if (!diag)
     return out;
 
@@ -98,130 +105,39 @@ RunDiagSnapshot Run::diag_snapshot() const {
     out.element_flows.push_back(std::move(s));
   }
 
+  // Phase A: per-pad timings.  Hold the diag mutex briefly because the pad
+  // timings vector is appended to lazily on first probe fire (so a buffer
+  // landing on a never-before-seen pad mid-stream must not race with us).
+  {
+    std::lock_guard<std::mutex> lk(diag->element_pad_timings_mu);
+    out.element_pad_timings.reserve(diag->element_pad_timings.size());
+    for (const auto& pad_t : diag->element_pad_timings) {
+      if (!pad_t)
+        continue;
+      const auto snap = pad_t->snapshot();
+      RunElementPadTimingStats s;
+      s.element_name = snap.element_name;
+      s.pad_name = snap.pad_name;
+      s.is_sink = snap.is_sink;
+      s.transport_from_element_name = snap.transport_from_element_name;
+      s.transport_to_element_name = snap.transport_to_element_name;
+      s.samples = snap.samples;
+      s.inter_arrival_total_us = snap.inter_arrival_total_us;
+      s.inter_arrival_max_us = snap.inter_arrival_max_us;
+      s.queue_wait_samples = snap.queue_wait_samples;
+      s.queue_wait_total_us = snap.queue_wait_total_us;
+      s.queue_wait_max_us = snap.queue_wait_max_us;
+      s.bytes = snap.bytes;
+      out.element_pad_timings.push_back(std::move(s));
+    }
+  }
+
   return out;
 }
 
-std::string Run::report(const RunReportOptions& opt) const {
-  if (!state_)
-    return {};
-  auto st = state_;
-  const auto diag = st->stream.diag_ctx();
-  std::ostringstream oss;
-  oss << "[REPORT] Run\n";
-
-  if (opt.include_pipeline && diag && !diag->pipeline_string.empty()) {
-    oss << "Pipeline:\n" << diag->pipeline_string << "\n";
-  }
-
-  if (diag) {
-    if (opt.include_boundaries) {
-      const std::string boundary = pipeline_internal::boundary_summary(diag);
-      if (!boundary.empty())
-        oss << boundary;
-    }
-    if (opt.include_stage_timings) {
-      const std::string stages = pipeline_internal::stage_timing_summary(diag);
-      if (!stages.empty())
-        oss << stages;
-    }
-    if (opt.include_element_timings) {
-      const std::string elements = pipeline_internal::element_timing_summary(diag);
-      if (!elements.empty())
-        oss << elements;
-    }
-    if (opt.include_flow_stats) {
-      const std::string flow = pipeline_internal::element_flow_summary(diag);
-      if (!flow.empty())
-        oss << flow;
-    }
-    if (opt.include_node_reports) {
-      std::ostringstream mf;
-      bool first = true;
-      for (const auto& nr : diag->node_reports) {
-        if (nr.kind != "ModelFragment" && nr.kind != "Preproc")
-          continue;
-        if (!first)
-          mf << "; ";
-        first = false;
-        mf << nr.user_label;
-        if (!nr.elements.empty()) {
-          mf << " [";
-          for (size_t i = 0; i < nr.elements.size(); ++i) {
-            if (i)
-              mf << ",";
-            mf << nr.elements[i];
-          }
-          mf << "]";
-        }
-      }
-      const std::string mf_str = mf.str();
-      if (!mf_str.empty()) {
-        oss << "Model fragments: " << mf_str << "\n";
-      }
-    }
-    if (opt.include_next_cpu && !diag->next_cpu_decisions.empty()) {
-      oss << "Next CPU decisions:\n";
-      for (const auto& d : diag->next_cpu_decisions) {
-        oss << "  - node=" << d.node_index << " kind=" << d.node_kind;
-        if (!d.node_label.empty())
-          oss << " label=" << d.node_label;
-        oss << " next_cpu=" << d.next_cpu << " applied=" << (d.applied ? "1" : "0") << "\n";
-      }
-    }
-    if (opt.include_queue_depth || opt.include_num_buffers) {
-      const std::string pipeline = diag->pipeline_string;
-      if (opt.include_queue_depth) {
-        const int queue2_depth =
-            diag->queue2_enabled ? diag->queue2_depth : run_internal::parse_queue2_depth(pipeline);
-        if (!diag->queue2_enabled) {
-          if (queue2_depth > 0) {
-            oss << "queue2 depth=" << queue2_depth << " (manual)\n";
-          } else {
-            oss << "queue2 disabled\n";
-          }
-        } else if (queue2_depth > 0) {
-          oss << "queue2 depth=" << queue2_depth << "\n";
-        }
-      }
-      if (opt.include_num_buffers) {
-        int num_cvu = run_internal::parse_num_buffers_for(pipeline, "neatprocesscvu");
-        int num_mla = run_internal::parse_num_buffers_for(pipeline, "neatprocessmla");
-        if (num_cvu > 0 || num_mla > 0) {
-          oss << "num_buffers_cvu=" << num_cvu << " num_buffers_mla=" << num_mla << "\n";
-        }
-      }
-    }
-  }
-
-  if (opt.include_run_stats) {
-    const RunStats run_stats = stats();
-    oss << "RunStats: inputs_enqueued=" << run_stats.inputs_enqueued
-        << " inputs_dropped=" << run_stats.inputs_dropped
-        << " inputs_pushed=" << run_stats.inputs_pushed
-        << " outputs_ready=" << run_stats.outputs_ready
-        << " outputs_pulled=" << run_stats.outputs_pulled
-        << " outputs_dropped=" << run_stats.outputs_dropped
-        << " avg_latency_ms=" << run_stats.avg_latency_ms
-        << " min_latency_ms=" << run_stats.min_latency_ms
-        << " max_latency_ms=" << run_stats.max_latency_ms << "\n";
-  }
-  if (opt.include_input_stats) {
-    const InputStreamStats is = input_stats();
-    oss << "InputStreamStats: push_count=" << is.push_count << " push_failures=" << is.push_failures
-        << " pull_count=" << is.pull_count << " poll_count=" << is.poll_count
-        << " dropped_frames=" << is.dropped_frames << " renegotiations=" << is.renegotiations
-        << " alloc_grows=" << is.alloc_grows << " growth_blocked=" << is.growth_blocked
-        << " renegotiation_blocked=" << is.renegotiation_blocked
-        << " avg_alloc_us=" << is.avg_alloc_us << " avg_map_us=" << is.avg_map_us
-        << " avg_copy_us=" << is.avg_copy_us << " avg_push_us=" << is.avg_push_us
-        << " avg_pull_wait_us=" << is.avg_pull_wait_us << " avg_decode_us=" << is.avg_decode_us
-        << "\n";
-  }
-  if (opt.include_system_info && !st->diag_sysinfo.empty()) {
-    oss << "System: " << st->diag_sysinfo << "\n";
-  }
-
-  return oss.str();
+RunDiagSnapshot run_internal::diag_snapshot(const Run& run) {
+  const auto st = run_internal::core(run);
+  return st ? st->diag_snapshot() : RunDiagSnapshot{};
 }
 
 } // namespace simaai::neat

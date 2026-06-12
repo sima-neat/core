@@ -4,7 +4,7 @@
 #include "pipeline/internal/TensorMath.h"
 
 #include "pipeline/ErrorCodes.h"
-#include "pipeline/SessionError.h"
+#include "pipeline/NeatError.h"
 
 #include <gst/app/gstappsink.h>
 #include <gst/gstdebugutils.h>
@@ -470,14 +470,15 @@ std::string element_timing_summary(const std::shared_ptr<DiagCtx>& diag) {
             });
 
   std::ostringstream ss;
-  ss << "ElementTiming:\n";
+  ss << "ElementTiming (residency = sink-arrival -> src-emit, INCLUDES backpressure wait):\n";
   for (const auto& s : snaps) {
     const double avg_ms = (s.samples == 0) ? 0.0 : (double)s.total_us / (double)s.samples / 1000.0;
     const double max_ms = (double)s.max_us / 1000.0;
     const double min_ms = (double)s.min_us / 1000.0;
     ss << "  - " << s.element_name << " samples=" << s.samples << " avg_ms=" << avg_ms
        << " min_ms=" << min_ms << " max_ms=" << max_ms << " missed_in=" << s.missed_in
-       << " missed_out=" << s.missed_out << "\n";
+       << " missed_out=" << s.missed_out;
+    ss << "\n";
   }
   return ss.str();
 }
@@ -568,7 +569,7 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
 
   maybe_dump_dot(pipeline, std::string(where) + "_error");
 
-  SessionReport rep = diag ? diag->snapshot_basic() : SessionReport{};
+  GraphReport rep = diag ? diag->snapshot_basic() : GraphReport{};
   rep.error_code = error_codes::kCaps;
   std::ostringstream note;
   note << "where=" << (where ? where : "GstDiagnosticsUtil::throw_if_bus_error")
@@ -578,8 +579,8 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   if (diag)
     rep.repro_note += "\n" + boundary_summary(diag);
   rep.repro_note += "\nHint: inspect offending caps and upstream/downstream element contract.";
-  throw SessionError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
-                     std::move(rep));
+  throw NeatError(pipeline_internal::error_util::decorate_error(rep.error_code, rep.repro_note),
+                  std::move(rep));
 }
 
 std::optional<GstSample*> try_pull_sample_sliced(GstElement* pipeline, GstElement* appsink,

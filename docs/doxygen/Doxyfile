@@ -1,19 +1,20 @@
-# Doxygen configuration for PipelineSession
+# Doxygen configuration for SiMa NEAT Graph
 
-PROJECT_NAME           = "PipelineSession"
+PROJECT_NAME           = "SiMa NEAT Graph"
 PROJECT_BRIEF          = "Typed, composable GStreamer pipelines in C++20"
 OUTPUT_DIRECTORY       = docs/doxygen/out
 
 # Inputs
-INPUT                  = include docs README.md
+INPUT                  = include README.md docs/doxygen
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.hpp *.cpp *.md *.dox
-EXAMPLE_PATH           = examples tests docs/doxygen
+EXAMPLE_PATH           = tests docs/doxygen
 USE_MDFILE_AS_MAINPAGE = docs/doxygen/mainpage.md
 MARKDOWN_SUPPORT       = YES
 
 # Excludes
 EXCLUDE_PATTERNS       = */include/sima/* \
+                          */include/graph/* \
                           */tests/assets/* \
                           */examples/media/* \
                           */build* \
@@ -21,15 +22,21 @@ EXCLUDE_PATTERNS       = */include/sima/* \
                           */docs/reference/api/* \
                           */docs/reference/cppapi/* \
                           */include/policy/* \
-                          */include/mpk/MpK*.* \
                           */include/nodes/groups/ImageToH264RtspGroup.h \
-                          */include/nodes/groups/MpKCompatGroup.h
 
 # Extraction / warnings
 EXTRACT_ALL            = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_IF_DOC_ERROR      = YES
 WARN_NO_PARAMDOC       = YES
+WARN_AS_ERROR          = FAIL_ON_WARNINGS
+
+# Treat the first sentence of `///` single-line comments and `/** */` blocks
+# without an explicit `@brief` as the brief description. Lets contributors use
+# either style — explicit `@brief` or natural-language one-liner — and have the
+# brief surface in IDE hover and the published API reference.
+JAVADOC_AUTOBRIEF      = YES
+QT_AUTOBRIEF           = YES
 
 # Output formats
 GENERATE_HTML          = NO
@@ -37,6 +44,7 @@ HTML_OUTPUT            = html
 GENERATE_XML           = YES
 XML_OUTPUT             = xml
 GENERATE_LATEX         = NO
+VERBATIM_HEADERS       = NO
 
 # UI
 GENERATE_TREEVIEW      = YES
@@ -47,4 +55,5 @@ STRIP_FROM_PATH        = .
 HAVE_DOT               = YES
 DOT_IMAGE_FORMAT       = svg
 INTERACTIVE_SVG        = YES
-CLASS_DIAGRAMS         = YES
+# CLASS_DIAGRAMS removed — obsolete in Doxygen 1.9+; class graphs are now controlled
+# by HAVE_DOT and the per-graph toggles (CLASS_GRAPH, COLLABORATION_GRAPH, etc.).

@@ -68,12 +68,12 @@ static std::vector<ScoredIndex> topk_with_softmax(const std::vector<float>& v, i
   return out;
 }
 
-static simaai::neat::Tensor require_tensor(const simaai::neat::Sample& out,
+static simaai::neat::Tensor require_tensor(const simaai::neat::TensorList& out,
                                            const std::string& label) {
-  if (out.kind != simaai::neat::SampleKind::Tensor || !out.tensor.has_value()) {
+  if (out.empty()) {
     throw std::runtime_error(label + ": expected tensor output");
   }
-  return *out.tensor;
+  return out.front();
 }
 
 static std::vector<float> tensor_to_floats(const simaai::neat::Tensor& t,
@@ -185,8 +185,8 @@ int main(int argc, char** argv) {
     tar_gz = sima_test::resolve_resnet50_tar();
     if (tar_gz.empty()) {
       std::cerr << "Failed to resolve resnet50 tar.gz. "
-                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo -v "
-                << sima_test::modelzoo_version() << " get resnet_50'.\n";
+                << "Set SIMA_MODEL_TAR (or SIMA_RESNET50_TAR) or run "
+                   "'sima-cli modelzoo get resnet_50'.\n";
       return 3;
     }
   }
@@ -201,33 +201,31 @@ int main(int argc, char** argv) {
 
     std::cerr << "[stage] model1 init\n";
     simaai::neat::Model::Options model1_opt;
-    model1_opt.media_type = "video/x-raw";
-    model1_opt.format = "RGB";
-    model1_opt.input_max_width = kInferWidth;
-    model1_opt.input_max_height = kInferHeight;
-    model1_opt.input_max_depth = 3;
-    model1_opt.preproc.normalize = true;
-    model1_opt.preproc.channel_mean = std::array<float, 3>{kMean[0], kMean[1], kMean[2]};
-    model1_opt.preproc.channel_stddev = std::array<float, 3>{kStd[0], kStd[1], kStd[2]};
+    model1_opt.preprocess.kind = simaai::neat::InputKind::Image;
+    model1_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+    model1_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+    model1_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    model1_opt.preprocess.normalize.mean = std::array<float, 3>{kMean[0], kMean[1], kMean[2]};
+    model1_opt.preprocess.normalize.stddev = std::array<float, 3>{kStd[0], kStd[1], kStd[2]};
+    model1_opt.preprocess.normalize.has_explicit_stats = true;
     simaai::neat::Model model1(tar_gz, model1_opt);
     std::cerr << "[stage] model1 run\n";
-    auto first_out = model1.run(rgb);
+    auto first_out = model1.run(std::vector<cv::Mat>{rgb});
     auto first_scores = scores_from_tensor(require_tensor(first_out, "first"), "first");
     check_top1(first_scores, expected_id, min_prob, "first");
 
     std::cerr << "[stage] model2 init (parallel)\n";
     simaai::neat::Model::Options model2_opt;
-    model2_opt.media_type = "video/x-raw";
-    model2_opt.format = "RGB";
-    model2_opt.input_max_width = kInferWidth;
-    model2_opt.input_max_height = kInferHeight;
-    model2_opt.input_max_depth = 3;
-    model2_opt.preproc.normalize = true;
-    model2_opt.preproc.channel_mean = std::array<float, 3>{kMean[0], kMean[1], kMean[2]};
-    model2_opt.preproc.channel_stddev = std::array<float, 3>{kStd[0], kStd[1], kStd[2]};
+    model2_opt.preprocess.kind = simaai::neat::InputKind::Image;
+    model2_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+    model2_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+    model2_opt.preprocess.normalize.enable = simaai::neat::AutoFlag::On;
+    model2_opt.preprocess.normalize.mean = std::array<float, 3>{kMean[0], kMean[1], kMean[2]};
+    model2_opt.preprocess.normalize.stddev = std::array<float, 3>{kStd[0], kStd[1], kStd[2]};
+    model2_opt.preprocess.normalize.has_explicit_stats = true;
     simaai::neat::Model model2(tar_gz, model2_opt);
     std::cerr << "[stage] model2 run\n";
-    auto second_out = model2.run(rgb);
+    auto second_out = model2.run(std::vector<cv::Mat>{rgb});
     auto second_scores = scores_from_tensor(require_tensor(second_out, "second"), "second");
     check_top1(second_scores, expected_id, min_prob, "second");
 

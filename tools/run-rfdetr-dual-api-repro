@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SRC_DIR="${REPO_ROOT}/tools/rfdetr_dual_api_repro"
+BUILD_DIR="${REPO_ROOT}/tmp/rfdetr_dual_api_repro/build"
+DEVKIT_WRAPPER="${REPO_ROOT}/../tmp/devkit_current_artifacts_exec.sh"
+PY_REMOTE="/mnt/nfs/sima-neat/core/tools/rfdetr_dual_api_repro/rfdetr_python_repro.py"
+CPP_LOCAL="${BUILD_DIR}/rfdetr_cpp_repro"
+CPP_REMOTE="/mnt/nfs/sima-neat/core/tmp/rfdetr_dual_api_repro/build/rfdetr_cpp_repro"
+MODEL_DEFAULT="/mnt/nfs/sima-neat/tmp/drive_model/rfdetr_576_simplified_transformer_after_gather_base_mpk.tar.gz"
+
+export RFDETR_MODEL_PATH="${RFDETR_MODEL_PATH:-${MODEL_DEFAULT}}"
+export RFDETR_PROCESSCVU_TARGET="${RFDETR_PROCESSCVU_TARGET:-A65}"
+export RFDETR_TIMEOUT_MS="${RFDETR_TIMEOUT_MS:-60000}"
+
+cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=/usr/bin/aarch64-linux-gnu-g++ \
+  -DCMAKE_SYSROOT=/opt/toolchain/aarch64/modalix \
+  -DSimaNeat_DIR="${REPO_ROOT}/build" \
+  -DCMAKE_PREFIX_PATH="${REPO_ROOT}/build;/opt/toolchain/aarch64/modalix/usr;/opt/toolchain/aarch64/modalix/usr/lib/aarch64-linux-gnu/cmake;/opt/toolchain/aarch64/modalix/usr/lib/cmake" \
+  >/dev/null
+cmake --build "${BUILD_DIR}" --parallel "$(nproc)" >/dev/null
+
+file "${CPP_LOCAL}"
+ssh sima@192.168.1.246 'mkdir -p /mnt/nfs/sima-neat/core/tools/rfdetr_dual_api_repro /mnt/nfs/sima-neat/core/tmp/rfdetr_dual_api_repro/build'
+scp "${SRC_DIR}/rfdetr_python_repro.py" sima@192.168.1.246:"${PY_REMOTE}" >/dev/null
+scp "${CPP_LOCAL}" sima@192.168.1.246:"${CPP_REMOTE}" >/dev/null
+
+status=0
+
+echo "== Python RF-DETR repro =="
+if ! dk "${DEVKIT_WRAPPER}" env \
+  "RFDETR_MODEL_PATH=${RFDETR_MODEL_PATH}" \
+  "RFDETR_PROCESSCVU_TARGET=${RFDETR_PROCESSCVU_TARGET}" \
+  "RFDETR_TIMEOUT_MS=${RFDETR_TIMEOUT_MS}" \
+  /home/sima/pyneat/bin/python -u "${PY_REMOTE}"; then
+  status=1
+fi
+
+echo "== C++ RF-DETR repro =="
+if ! dk "${DEVKIT_WRAPPER}" env \
+  "RFDETR_MODEL_PATH=${RFDETR_MODEL_PATH}" \
+  "RFDETR_PROCESSCVU_TARGET=${RFDETR_PROCESSCVU_TARGET}" \
+  "RFDETR_TIMEOUT_MS=${RFDETR_TIMEOUT_MS}" \
+  "${CPP_REMOTE}"; then
+  status=1
+fi
+
+exit "${status}"

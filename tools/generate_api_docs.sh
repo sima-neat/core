@@ -43,7 +43,7 @@ fi
 
 (
   cd "${ROOT}/website"
-  "${cmd_parts[@]}" -C .
+  "${cmd_parts[@]}" -C . 2>&1 | sed '/^no listing$/d'
 )
 
 if [[ -d "${WEBSITE_API_DIR}" ]]; then
@@ -64,7 +64,7 @@ rm -rf "${OUT_DIR}/pages"
 cat > "${OUT_DIR}/_category_.json" <<'EOF'
 {
   "label": "C++ Reference",
-  "position": 98
+  "position": 2
 }
 EOF
 

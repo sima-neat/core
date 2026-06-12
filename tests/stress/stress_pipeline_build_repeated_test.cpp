@@ -1,6 +1,6 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "runtime_test_utils.h"
 #include "test_main.h"
 #include "test_utils.h"
@@ -34,29 +34,29 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
 
            int completed = 0;
            for (int i = 0; i < cycles; ++i) {
-             SessionOptions sopt;
+             GraphOptions sopt;
              sopt.element_name_prefix = "rep_" + std::to_string(i) + "_";
              sopt.element_name_suffix = "_x";
 
-             Session session(sopt);
+             Graph graph(sopt);
              InputOptions src_opt;
-             src_opt.media_type = "video/x-raw";
-             src_opt.format = "RGB";
+             src_opt.payload_type = simaai::neat::PayloadType::Image;
+             src_opt.format = simaai::neat::FormatTag::RGB;
              src_opt.use_simaai_pool = false;
              src_opt.max_width = 96;
              src_opt.max_height = 96;
              src_opt.max_depth = 3;
-             session.add(nodes::Input(src_opt));
-             session.add(nodes::Output(OutputOptions::EveryFrame(32)));
+             graph.add(nodes::Input(src_opt));
+             graph.add(nodes::Output(OutputOptions::EveryFrame(32)));
 
-             const std::string plain_a = session.describe_backend(false);
-             const std::string plain_b = session.describe_backend(false);
+             const std::string plain_a = graph.describe_backend(false);
+             const std::string plain_b = graph.describe_backend(false);
              require(plain_a == plain_b,
                      "stress_pipeline_build_repeated: non-deterministic pipeline string");
              require_contains(plain_a, "rep_" + std::to_string(i) + "_mysrc_x",
                               "stress_pipeline_build_repeated: transformed source name missing");
 
-             const std::string bounded = session.describe_backend(true);
+             const std::string bounded = graph.describe_backend(true);
              require_contains(bounded, "identity name=rep_" + std::to_string(i) + "_sima_b0_x",
                               "stress_pipeline_build_repeated: boundary insertion missing");
 
@@ -65,7 +65,7 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
 
              Run run;
              try {
-               run = session.build(seed, RunMode::Async, run_opt);
+               run = graph.build(TensorList{seed}, run_opt);
              } catch (const std::exception& e) {
                if (sima_test::likely_runtime_missing(e.what())) {
                  skip_long_test_exception(
@@ -75,9 +75,9 @@ RUN_TEST("stress_pipeline_build_repeated_test", ([] {
                throw;
              }
 
-             Sample out = run.push_and_pull(seed, 1000);
-             require(out.tensor.has_value(),
-                     "stress_pipeline_build_repeated: push_and_pull output missing tensor");
+             TensorList outs = run.run(TensorList{seed}, 1000);
+             require(outs.size() == 1,
+                     "stress_pipeline_build_repeated: expected one output tensor");
              run.stop();
              ++completed;
            }

@@ -2,9 +2,10 @@
 
 #include "pipeline/TensorCore.h"
 #include "pipeline/Run.h"
-#include "pipeline/SessionError.h"
+#include "pipeline/NeatError.h"
 #ifdef SIMA_NEAT_INTERNAL
 #include "pipeline/internal/DispatcherRecovery.h"
+#include "pipeline/runtime/RunInternal.h"
 #endif
 
 #include <chrono>
@@ -90,46 +91,61 @@ inline void require_contains(const std::string& haystack, const std::string& nee
   }
 }
 
-inline void require_session_error(const std::function<void()>& fn, const std::string& expected_code,
-                                  const std::string& what_fragment = {},
-                                  const std::string& note_fragment = {}) {
+inline void require_neat_error(const std::function<void()>& fn, const std::string& expected_code,
+                               const std::string& what_fragment = {},
+                               const std::string& note_fragment = {}) {
   try {
     fn();
-    throw std::runtime_error("expected SessionError but no exception was thrown");
-  } catch (const simaai::neat::SessionError& e) {
+    throw std::runtime_error("expected NeatError but no exception was thrown");
+  } catch (const simaai::neat::NeatError& e) {
     require(e.report().error_code == expected_code,
-            "unexpected SessionError.report().error_code: expected=" + expected_code +
+            "unexpected NeatError.report().error_code: expected=" + expected_code +
                 " actual=" + e.report().error_code);
     if (!what_fragment.empty()) {
       require_contains(std::string(e.what()), what_fragment,
-                       "missing expected fragment in SessionError::what()");
+                       "missing expected fragment in NeatError::what()");
     }
     if (!note_fragment.empty()) {
       require_contains(e.report().repro_note, note_fragment,
-                       "missing expected fragment in SessionReport.repro_note");
+                       "missing expected fragment in GraphReport.repro_note");
     }
   } catch (const std::exception& e) {
-    throw std::runtime_error(std::string("expected SessionError, got std::exception: ") + e.what());
+    throw std::runtime_error(std::string("expected NeatError, got std::exception: ") + e.what());
   }
 }
 
 inline bool wait_for_reneg(simaai::neat::Run& run, std::uint64_t target, int timeout_ms) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   while (std::chrono::steady_clock::now() < deadline) {
-    if (run.input_stats().renegotiations >= target)
+#ifdef SIMA_NEAT_INTERNAL
+    if (simaai::neat::run_internal::input_stats(run).renegotiations >= target)
       return true;
+#else
+    (void)run;
+    (void)target;
+    return false;
+#endif
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
-  return run.input_stats().renegotiations >= target;
+#ifdef SIMA_NEAT_INTERNAL
+  return simaai::neat::run_internal::input_stats(run).renegotiations >= target;
+#else
+  return false;
+#endif
 }
 
 inline std::uint64_t caps_changes_for(const simaai::neat::Run& run,
                                       const std::string& element_name) {
-  const simaai::neat::RunDiagSnapshot snap = run.diag_snapshot();
+#ifdef SIMA_NEAT_INTERNAL
+  const simaai::neat::RunDiagSnapshot snap = simaai::neat::run_internal::diag_snapshot(run);
   for (const auto& flow : snap.element_flows) {
     if (flow.element_name == element_name)
       return flow.caps_changes;
   }
+#else
+  (void)run;
+  (void)element_name;
+#endif
   return 0;
 }
 

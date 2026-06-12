@@ -1,0 +1,8 @@
+{
+  "label": "Environment Variables",
+  "position": 6,
+  "link": {
+    "type": "doc",
+    "id": "reference/environment-variables/index"
+  }
+}

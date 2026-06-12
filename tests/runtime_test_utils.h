@@ -3,7 +3,7 @@
 #include "nodes/common/Output.h"
 #include "nodes/io/Input.h"
 #include "pipeline/Run.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_utils.h"
 
 #include <unistd.h>
@@ -52,22 +52,22 @@ inline simaai::neat::Run make_async_rgb_run(const simaai::neat::Tensor& seed,
                                             int consumer_queue_depth = 16) {
   using namespace simaai::neat;
 
-  Session session;
+  Graph graph;
   InputOptions src_opt;
-  src_opt.media_type = "video/x-raw";
-  src_opt.format = "RGB";
+  src_opt.payload_type = simaai::neat::PayloadType::Image;
+  src_opt.format = simaai::neat::FormatTag::RGB;
   src_opt.use_simaai_pool = false;
   src_opt.max_width = 96;
   src_opt.max_height = 96;
   src_opt.max_depth = 3;
-  session.add(nodes::Input(src_opt));
-  session.add(nodes::Output(OutputOptions::EveryFrame(128)));
+  graph.add(nodes::Input(src_opt));
+  graph.add(nodes::Output(OutputOptions::EveryFrame(128)));
 
   RunOptions run_opt;
   run_opt.queue_depth = std::max(producer_queue_depth, consumer_queue_depth);
   run_opt.overflow_policy = OverflowPolicy::Block;
 
-  return session.build(seed, RunMode::Async, run_opt);
+  return graph.build(simaai::neat::TensorList{seed}, run_opt);
 }
 
 struct TryPushFillResult {
@@ -82,7 +82,7 @@ inline TryPushFillResult fill_try_push_queue_non_blocking(simaai::neat::Run& run
   TryPushFillResult out;
   for (int i = 0; i < max_attempts; ++i) {
     const auto t0 = std::chrono::steady_clock::now();
-    const bool ok = run.try_push(sample);
+    const bool ok = run.try_push(simaai::neat::TensorList{sample});
     const auto t1 = std::chrono::steady_clock::now();
 
     ++out.attempts;

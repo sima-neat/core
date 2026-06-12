@@ -1,83 +1,15 @@
 #pragma once
 
-#include "internal/InputStream.h"
-#include "pipeline/Run.h"
-
-#include <opencv2/core/mat.hpp>
-
-#include <atomic>
-#include <algorithm>
-#include <cctype>
-#include <chrono>
-#include <condition_variable>
-#include <cstdio>
-#include <cstdlib>
-#include <deque>
-#include <mutex>
-#include <string>
-#include <thread>
-#include <utility>
+#include "RunCore.h"
 
 namespace simaai::neat {
 
-enum class InputKind {
-  Mat,
-  Tensor,
-  Holder,
-  Message,
-};
-
-struct InputItem {
-  InputKind kind = InputKind::Mat;
-  cv::Mat mat;
-  simaai::neat::Tensor tensor;
-  std::shared_ptr<void> holder;
-  Sample msg;
-};
-
-struct Run::State {
-  std::uint64_t latency_count = 0;
-  double latency_mean_ms = 0.0;
-  double latency_min_ms = 0.0;
-  double latency_max_ms = 0.0;
-  std::thread input_thread;
-  std::atomic<std::uint64_t> inputs_enqueued{0};
-  std::atomic<std::uint64_t> inputs_dropped{0};
-  std::atomic<std::uint64_t> inputs_pushed{0};
-  std::atomic<std::uint64_t> outputs_ready{0};
-  std::atomic<std::uint64_t> outputs_pulled{0};
-  std::atomic<std::uint64_t> outputs_dropped{0};
-  InputStream stream;
-  std::string error;
-  std::string diag_sysinfo;
-
-  std::mutex in_mu;
-  std::condition_variable in_cv;
-  std::mutex out_mu;
-  std::condition_variable out_cv;
-  std::mutex latency_mu;
-  mutable std::mutex error_mu;
-  RunOptions opt;
-  std::deque<InputItem> in_queue;
-  std::deque<Sample> out_queue;
-  std::deque<std::chrono::steady_clock::time_point> pending_times;
-  InputStreamOptions stream_opt;
-  std::atomic<int> handle_refs{0};
-  bool supports_push = false;
-  bool supports_pull = false;
-  bool zero_copy_fallback_enabled = false;
-  std::atomic<bool> copy_output_latched{true};
-  std::atomic<bool> zero_copy_warned{false};
-  bool input_closed = false;
-  bool latency_init = false;
-  std::atomic<bool> stop_requested{false};
-  std::atomic<bool> input_thread_done{false};
-  bool diag_enabled = false;
-  std::atomic<bool> diag_logged{false};
-  std::atomic<bool> pull_timeout_logged{false};
-};
-
 namespace run_internal {
+
+RunStats stats(const Run& run);
+InputStreamStats input_stats(const Run& run);
+RunDiagSnapshot diag_snapshot(const Run& run);
+PowerSummary power_summary(const Run& run);
 
 template <typename T> inline bool queue_full(const std::deque<T>& q, int max) {
   return max > 0 && static_cast<int>(q.size()) >= max;
@@ -139,7 +71,10 @@ inline int zero_copy_backpressure_cap() {
   env = std::getenv("SIMA_GRAPH_ZERO_COPY_MAX_INFLIGHT");
   if (env && *env)
     return std::max(0, std::atoi(env));
-  return 1;
+  // Tensor creators can now place input directly in device-visible GstSample
+  // storage.  Do not silently clone those tensors back to CPU under queue
+  // pressure; lifetime must be owned by the caller/ring instead.
+  return 0;
 }
 
 inline void force_copy_tensor_if_zero_copy(simaai::neat::Tensor& t) {
@@ -150,33 +85,34 @@ inline void force_copy_tensor_if_zero_copy(simaai::neat::Tensor& t) {
 }
 
 inline void force_copy_sample_if_zero_copy(Sample& sample) {
-  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
-    force_copy_tensor_if_zero_copy(*sample.tensor);
+  if (sample.kind == SampleKind::TensorSet) {
+    for (auto& tensor : sample.tensors) {
+      force_copy_tensor_if_zero_copy(tensor);
+    }
     sample.owned = true;
     return;
   }
-  if (sample.kind != SampleKind::Bundle)
+  if (!sample_is_multi_output(sample))
     return;
   for (auto& field : sample.fields) {
-    if (field.kind == SampleKind::Tensor && field.tensor.has_value()) {
-      force_copy_tensor_if_zero_copy(*field.tensor);
-      field.owned = true;
-    }
+    force_copy_sample_if_zero_copy(field);
   }
   sample.owned = true;
 }
 
 inline bool sample_has_zero_copy_tensor(const Sample& sample) {
-  if (sample.kind == SampleKind::Tensor && sample.tensor.has_value()) {
-    return tensor_is_zero_copy(*sample.tensor);
-  }
-  if (sample.kind != SampleKind::Bundle)
-    return false;
-  for (const auto& field : sample.fields) {
-    if (field.kind == SampleKind::Tensor && field.tensor.has_value()) {
-      if (tensor_is_zero_copy(*field.tensor))
+  if (sample.kind == SampleKind::TensorSet) {
+    for (const auto& tensor : sample.tensors) {
+      if (tensor_is_zero_copy(tensor))
         return true;
     }
+    return false;
+  }
+  if (!sample_is_multi_output(sample))
+    return false;
+  for (const auto& field : sample.fields) {
+    if (sample_has_zero_copy_tensor(field))
+      return true;
   }
   return false;
 }

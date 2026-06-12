@@ -1,7 +1,7 @@
 // src/pipeline/internal/InputStream.cpp
 #include "InputStream.h"
 
-#include "pipeline/SessionOptions.h"
+#include "pipeline/GraphOptions.h"
 #include "pipeline/EncodedSampleUtil.h"
 #include "InputStreamUtil.h"
 
@@ -36,6 +36,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 
 namespace simaai::neat {
@@ -52,8 +53,7 @@ struct InputStream::State {
   InputStreamOptions opt;
   InputStreamOptions::DynamicCapability dynamic_capability =
       InputStreamOptions::DynamicCapability::StaticOnly;
-  InputStreamOptions::ShapePolicy shape_policy =
-      InputStreamOptions::ShapePolicy::BoundedDynamic;
+  InputStreamOptions::ShapePolicy shape_policy = InputStreamOptions::ShapePolicy::BoundedDynamic;
   InputStreamOptions::ResolvedShapeLimits shape_limits{};
   InputStreamOptions::ByteGuardOrigin byte_guard_origin =
       InputStreamOptions::ByteGuardOrigin::Unset;
@@ -119,6 +119,9 @@ struct InputStream::State {
   std::atomic<std::int64_t> last_push_ns{0};
   std::atomic<std::int64_t> inflight{0};
   std::atomic<std::int64_t> next_input_seq{0};
+  std::mutex preprocess_meta_mu;
+  std::deque<std::int64_t> preprocess_meta_order;
+  std::unordered_map<std::int64_t, PreprocessRuntimeMeta> preprocess_meta_by_input_seq;
   std::atomic<bool> eos_sent{false};
   std::atomic<bool> teardown_started{false};
   std::mutex stop_mu;
@@ -264,6 +267,10 @@ bool drop_holder_after_push_enabled() {
   return inputstream_debug_flags().drop_holder_after_push;
 }
 
+bool inputstream_push_timing_enabled() {
+  return inputstream_debug_flags().push_timing;
+}
+
 bool eos_debug_enabled() {
   return inputstream_debug_flags().eos_debug;
 }
@@ -336,7 +343,7 @@ std::string format_push_failure_error(const InputStream::State& st, const char* 
       ret == GST_FLOW_EOS) {
     oss << ". Hint: stream is stopping or EOS has been reached.";
   } else {
-    oss << ". Hint: inspect SessionReport/Run report bus diagnostics for upstream GST errors.";
+    oss << ". Hint: inspect GraphReport/Run report bus diagnostics for upstream GST errors.";
   }
   return oss.str();
 }
@@ -400,9 +407,13 @@ void maybe_drop_holder_after_push(const simaai::neat::Tensor& tensor, const char
 }
 
 void apply_default_port_name(Sample& out, const InputOptions& opt) {
-  if (!out.port_name.empty())
+  const bool tensor_payload = sample_has_tensor_list(out);
+  if (tensor_payload)
+    return;
+  if (!out.stream_label.empty())
     return;
   if (!opt.buffer_name.empty()) {
+    out.stream_label = opt.buffer_name;
     out.port_name = opt.buffer_name;
   }
 }
@@ -612,12 +623,18 @@ bool handle_appsrc_push_fail(InputStream::State& st, const char* where, GstFlowR
     pipeline_internal::throw_if_bus_error(st.pipeline, st.diag, "InputStream::push_fail");
     pipeline_internal::drain_bus(st.pipeline, st.diag, "InputStream::push_fail");
   }
-  set_stream_error(st, format_push_failure_error(st, where, ret));
   log_push_failure(st, where, ret);
   if (ret == GST_FLOW_FLUSHING || ret == GST_FLOW_EOS) {
+    if (st.stop_requested.load(std::memory_order_relaxed) ||
+        st.teardown_started.load(std::memory_order_relaxed)) {
+      st.stop_requested.store(true);
+      return false;
+    }
+    set_stream_error(st, format_push_failure_error(st, where, ret));
     st.stop_requested.store(true);
     return false;
   }
+  set_stream_error(st, format_push_failure_error(st, where, ret));
   return true;
 }
 
@@ -646,7 +663,7 @@ struct BuiltBuffer {
 
 InputDropInfo drop_info_from_spec(const SampleSpec& spec, const char* reason) {
   InputDropInfo info;
-  info.kind = SampleKind::Tensor;
+  info.kind = SampleKind::TensorSet;
   info.media_type = spec.media_type;
   info.format = spec.format;
   info.width = spec.width;
@@ -741,18 +758,16 @@ bool flush_pending_buffer(InputStream::State& st, const char* where) {
   return true;
 }
 
-BuiltBuffer build_buffer_with_fill(InputStream::State& st, const char* where,
-                                   const std::function<size_t(uint8_t*, size_t)>& fill,
-                                   size_t required_bytes,
-                                   const std::optional<int64_t>& frame_id_override,
-                                   const std::optional<int64_t>& input_seq_override,
-                                   const std::optional<int64_t>& orig_input_seq_override,
-                                   const std::optional<std::string>& stream_id_override,
-                                   const std::optional<std::string>& buffer_name_override,
-                                   const std::optional<uint64_t>& timestamp_override,
-                                   const std::function<void(GstBuffer*)>& prepare,
-                                   bool record_timings, const char* op_tag,
-                                   bool release_reuse_buffer_on_fail) {
+BuiltBuffer build_buffer_with_fill(
+    InputStream::State& st, const char* where, const std::function<size_t(uint8_t*, size_t)>& fill,
+    size_t required_bytes, const std::optional<int64_t>& frame_id_override,
+    const std::optional<int64_t>& input_seq_override,
+    const std::optional<int64_t>& orig_input_seq_override,
+    const std::optional<std::string>& stream_id_override,
+    const std::optional<std::string>& buffer_name_override,
+    const SampleTimingOverrides& timing_override, const std::function<void(GstBuffer**)>& prepare,
+    bool record_timings, const char* op_tag, bool release_reuse_buffer_on_fail, int input_width,
+    int input_height) {
   const char* tag = (op_tag && *op_tag) ? op_tag : "build_buffer_with_fill";
   verify_buffer_name_override(st.src_opt, buffer_name_override, where);
   std::chrono::steady_clock::time_point t_alloc_start{};
@@ -820,7 +835,7 @@ BuiltBuffer build_buffer_with_fill(InputStream::State& st, const char* where,
 
   if (prepare) {
     try {
-      prepare(buf);
+      prepare(&buf);
     } catch (...) {
       if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
         release_input_buffer(buf, (std::string(tag) + ":prepare_fail").c_str());
@@ -829,15 +844,25 @@ BuiltBuffer build_buffer_with_fill(InputStream::State& st, const char* where,
     }
   }
 
-  if (!attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard, where, frame_id_override,
-                                  stream_id_override, buffer_name_override)) {
+  buf = attach_simaai_meta_inplace(buf, st.src_opt, st.pool_guard, where, frame_id_override,
+                                   stream_id_override, buffer_name_override);
+  if (!buf) {
     if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
       release_input_buffer(buf, (std::string(tag) + ":attach_meta_fail").c_str());
     }
     throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
   }
   update_simaai_meta_fields(buf, frame_id_override, input_seq_override, orig_input_seq_override,
-                            stream_id_override, buffer_name_override, timestamp_override);
+                            stream_id_override, buffer_name_override, timing_override.pts_ns);
+  if (!write_sample_timing_to_gst_buffer(buf, timing_override)) {
+    if (!st.opt.reuse_input_buffer || release_reuse_buffer_on_fail) {
+      release_input_buffer(buf, (std::string(tag) + ":sample_timing_fail").c_str());
+    }
+    throw std::runtime_error(std::string(where) + ": failed to write sample timing metadata");
+  }
+  if (!has_simaai_preprocess_meta(buf) && input_width > 0 && input_height > 0) {
+    (void)apply_simaai_preprocess_meta_template(buf, st.src_opt, input_width, input_height);
+  }
   if (inputstream_meta_debug_enabled()) {
     dump_sima_meta(buf, "copy_path_meta");
     dump_sima_meta_full(buf, "copy_path_meta_full");
@@ -874,9 +899,11 @@ void apply_tensor_size_or_throw(GstBuffer** buffer, const SampleSpec& spec, cons
 }
 
 bool tensor_spec_matches(const SampleSpec& a, const SampleSpec& b) {
-  return a.media_type == b.media_type && upper_copy(a.format) == upper_copy(b.format) &&
-         a.dtype == b.dtype && a.layout == b.layout && a.shape == b.shape && a.width == b.width &&
-         a.height == b.height && a.depth == b.depth;
+  if (a.media_type != b.media_type)
+    return false;
+  const std::string a_format = normalize_caps_format_for_media(a.media_type, a.format);
+  const std::string b_format = normalize_caps_format_for_media(b.media_type, b.format);
+  return upper_copy(a_format) == upper_copy(b_format) && a.dtype == b.dtype && a.shape == b.shape;
 }
 
 void ensure_alloc_for_bytes(InputStream::State& st, size_t bytes, const char* where) {
@@ -937,8 +964,9 @@ enum class CapsDecision {
 // Appsrc must carry GstSimaMeta; holder paths preserve it.
 void attach_required_meta(GstBuffer* buffer, const InputOptions& opt, InputBufferPoolGuard& guard,
                           const char* where) {
-  if (!attach_simaai_meta_inplace(buffer, opt, guard, where, std::nullopt, std::nullopt,
-                                  std::nullopt)) {
+  buffer = attach_simaai_meta_inplace(buffer, opt, guard, where, std::nullopt, std::nullopt,
+                                      std::nullopt);
+  if (!buffer) {
     release_input_buffer(buffer, "attach_required_meta");
     throw std::runtime_error(std::string(where) + ": failed to attach GstSimaMeta");
   }
@@ -952,8 +980,9 @@ bool InputStream::push_with_fill(const char* where,
                                  const std::optional<int64_t>& orig_input_seq_override,
                                  const std::optional<std::string>& stream_id_override,
                                  const std::optional<std::string>& buffer_name_override,
-                                 const std::optional<uint64_t>& timestamp_override,
-                                 const std::function<void(GstBuffer*)>& prepare) {
+                                 const SampleTimingOverrides& timing_override,
+                                 const std::function<void(GstBuffer**)>& prepare, int input_width,
+                                 int input_height) {
   auto st = state_;
   if (!st || !st->pipeline) {
     throw std::runtime_error(std::string(where) + ": stream is closed");
@@ -964,15 +993,19 @@ bool InputStream::push_with_fill(const char* where,
   const bool timings = st->timing_enabled;
   const bool push_timing = inputstream_debug_flags().push_timing;
 
+  const auto t_build_start =
+      push_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   BuiltBuffer built = build_buffer_with_fill(
       *st, where, fill, required_bytes, frame_id_override, input_seq_override,
-      orig_input_seq_override, stream_id_override, buffer_name_override, timestamp_override,
-      prepare, timings, "push_with_fill", true);
+      orig_input_seq_override, stream_id_override, buffer_name_override, timing_override, prepare,
+      timings || push_timing, "push_with_fill", true, input_width, input_height);
+  const auto t_build_end =
+      push_timing ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
   GstBuffer* buf = built.buffer;
   GstBuffer* push_src = buf;
 
   std::chrono::steady_clock::time_point t_push_start{};
-  if (timings)
+  if (timings || push_timing)
     t_push_start = std::chrono::steady_clock::now();
   GstBuffer* push_buf = push_src;
   if (st->opt.reuse_input_buffer && push_src == buf) {
@@ -997,8 +1030,15 @@ bool InputStream::push_with_fill(const char* where,
   if (push_timing) {
     const auto push_ns =
         std::chrono::duration_cast<std::chrono::nanoseconds>(t_push_end - t_push_start).count();
-    std::fprintf(stderr, "[DBG] %s push_ns=%lld bytes=%zu ret=%d\n",
-                 where ? where : "InputStream::push_with_fill", static_cast<long long>(push_ns),
+    const auto build_ns =
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t_build_end - t_build_start).count();
+    std::fprintf(stderr,
+                 "[INPUTSTREAM_PUSH_TIMING] %s build_ns=%lld alloc_ns=%llu map_ns=%llu "
+                 "copy_ns=%llu appsrc_push_ns=%lld bytes=%zu ret=%d\n",
+                 where ? where : "InputStream::push_with_fill", static_cast<long long>(build_ns),
+                 static_cast<unsigned long long>(built.alloc_ns),
+                 static_cast<unsigned long long>(built.map_ns),
+                 static_cast<unsigned long long>(built.copy_ns), static_cast<long long>(push_ns),
                  buf_bytes, static_cast<int>(ret));
   }
 

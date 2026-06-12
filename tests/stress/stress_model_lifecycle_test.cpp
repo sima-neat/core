@@ -1,5 +1,6 @@
 #include "asset_utils.h"
 #include "model/Model.h"
+#include "pipeline/Graph.h"
 #include "test_main.h"
 #include "test_utils.h"
 
@@ -29,6 +30,10 @@ std::string resolve_model_pack_for_stress() {
   const char* env_tar = std::getenv("SIMA_STRESS_MODEL_TAR");
   if (env_tar && *env_tar && std::filesystem::exists(env_tar)) {
     return std::string(env_tar);
+  }
+  const char* generic = std::getenv("SIMA_MODEL_TAR");
+  if (generic && *generic && std::filesystem::exists(generic)) {
+    return std::string(generic);
   }
 
   const std::filesystem::path root = std::filesystem::current_path();
@@ -98,7 +103,8 @@ RUN_TEST("stress_model_lifecycle_test", [] {
   const std::string tar = resolve_model_pack_for_stress();
   if (tar.empty()) {
     skip_long_test_exception(
-        "no local model pack found (set SIMA_STRESS_MODEL_TAR to run model stress)");
+        "no local model pack found (set SIMA_MODEL_TAR or SIMA_STRESS_MODEL_TAR to run model "
+        "stress)");
   }
 
   const int iters = clamp_iters(env_int("SIMA_STRESS_ITERS", 100));
@@ -107,15 +113,15 @@ RUN_TEST("stress_model_lifecycle_test", [] {
   try {
     for (int i = 0; i < iters; ++i) {
       simaai::neat::Model model(tar);
-      (void)model.input_spec();
-      (void)model.output_spec();
+      (void)model.input_specs();
+      (void)model.output_specs();
       (void)model.metadata();
-      (void)model.session();
+      (void)model.graph();
       (void)model.fragment(simaai::neat::Model::Stage::Inference);
 
       if (run_build) {
         simaai::neat::Tensor input = make_tensor_for_model(model);
-        auto runner = model.build(input);
+        auto runner = model.build(simaai::neat::TensorList{input});
         runner.close();
       }
     }

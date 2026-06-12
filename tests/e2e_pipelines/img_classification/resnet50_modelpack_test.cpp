@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "model/Model.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "nodes/groups/RtspDecodedInput.h"
@@ -35,18 +35,24 @@ namespace fs = std::filesystem;
 static simaai::neat::Model model_from_format(const std::string& tar_gz, int width, int height,
                                              const std::string& format,
                                              const std::string& upstream_name = "decoder") {
-  int depth = 0;
-  if (format == "GRAY")
-    depth = 1;
-  if (format == "RGB" || format == "BGR")
-    depth = 3;
+  auto color_format_from_string = [](const std::string& in) -> simaai::neat::PreprocessColorFormat {
+    if (in == "RGB")
+      return simaai::neat::PreprocessColorFormat::RGB;
+    if (in == "BGR")
+      return simaai::neat::PreprocessColorFormat::BGR;
+    if (in == "GRAY" || in == "GRAY8")
+      return simaai::neat::PreprocessColorFormat::GRAY8;
+    if (in == "NV12")
+      return simaai::neat::PreprocessColorFormat::NV12;
+    if (in == "I420")
+      return simaai::neat::PreprocessColorFormat::I420;
+    return simaai::neat::PreprocessColorFormat::Auto;
+  };
   simaai::neat::Model::Options opt;
-  opt.media_type = "video/x-raw";
-  opt.format = format;
-  opt.input_max_width = width;
-  opt.input_max_height = height;
-  opt.input_max_depth = depth;
-  opt.preproc.normalize = true;
+  opt.preprocess.kind = simaai::neat::InputKind::Image;
+  opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  opt.preprocess.color_convert.input_format = color_format_from_string(format);
+  opt.preprocess.preset = simaai::neat::NormalizePreset::ImageNet;
   opt.upstream_name = upstream_name;
   return simaai::neat::Model(tar_gz, opt);
 }
@@ -187,10 +193,19 @@ static cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
 
 static simaai::neat::Tensor require_tensor(const simaai::neat::Sample& out,
                                            const std::string& label) {
-  if (out.kind != simaai::neat::SampleKind::Tensor || !out.tensor.has_value()) {
+  auto tensors = simaai::neat::tensors_from_sample(out, /*require_nonempty=*/false);
+  if (tensors.empty()) {
     throw std::runtime_error(label + ": expected tensor output");
   }
-  return *out.tensor;
+  return tensors.front();
+}
+
+static simaai::neat::Tensor require_tensor(const simaai::neat::TensorList& outs,
+                                           const std::string& label) {
+  if (outs.empty()) {
+    throw std::runtime_error(label + ": expected tensor output");
+  }
+  return outs.front();
 }
 
 const char* device_type_name(simaai::neat::DeviceType type) {
@@ -356,11 +371,10 @@ static simaai::neat::Sample pull_sample_with_retry(simaai::neat::Run& runner,
     if (!last_err.empty()) {
       std::cerr << "[DBG] " << label << " last_error: " << last_err << "\n";
     }
-    std::cerr << runner.diagnostics_summary() << "\n";
-    simaai::neat::RunReportOptions opt;
-    opt.include_node_reports = true;
-    opt.include_next_cpu = true;
-    std::cerr << runner.report(opt) << "\n";
+    const std::string last_err_after = runner.last_error();
+    if (!last_err_after.empty()) {
+      std::cerr << "[DBG] " << label << " last_error_after: " << last_err_after << "\n";
+    }
   };
 
   simaai::neat::Sample out;
@@ -394,15 +408,18 @@ static simaai::neat::Sample pull_sample_with_retry(simaai::neat::Run& runner,
 }
 
 static simaai::neat::Tensor run_direct_infer(const simaai::neat::Model& model, const cv::Mat& rgb) {
-  simaai::neat::Session p;
-  p.add(model.session());
+  simaai::neat::Model::RouteOptions route_opt;
+  route_opt.include_input = true;
+  route_opt.include_output = true;
+  simaai::neat::Graph p;
+  p.add(model.graph(route_opt));
 
-  simaai::neat::Sample out;
+  simaai::neat::TensorList out;
   bool logged_sample = false;
   for (int i = 0; i < 20; ++i) {
-    out = p.run(rgb);
+    out = p.run(std::vector<cv::Mat>{rgb});
     if (!logged_sample) {
-      log_sample_caps(out, "direct");
+      log_tensor_sample(sample_from_tensors(out), "direct");
       logged_sample = true;
     }
   }
@@ -443,7 +460,7 @@ static simaai::neat::Sample run_image_decode_to_appsink(const std::string& image
   opt.use_videorate = true;
   opt.use_videoscale = true;
   opt.output_caps.enable = true;
-  opt.output_caps.format = "NV12";
+  opt.output_caps.format = simaai::neat::FormatTag::NV12;
   opt.output_caps.width = w;
   opt.output_caps.height = h;
   opt.output_caps.fps = fps;
@@ -457,7 +474,7 @@ static simaai::neat::Sample run_image_decode_to_appsink(const std::string& image
     std::cout << "[jpeg_decode] using SW encoder\n";
   }
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::groups::ImageInputGroup(opt));
   p.add(simaai::neat::nodes::Output());
 
@@ -466,7 +483,11 @@ static simaai::neat::Sample run_image_decode_to_appsink(const std::string& image
   }
 
   simaai::neat::RunOptions run_opt;
-  run_opt.output_memory = simaai::neat::OutputMemory::Owned;
+  // Keep the decoder output device-backed.  The follow-on model graph starts
+  // with a CVU preproc route, so copying the decoded NV12 frame into CPU-owned
+  // memory makes the subsequent push invalid unless the slow compatibility
+  // CPU->EV74 copy path is enabled.
+  run_opt.output_memory = simaai::neat::OutputMemory::ZeroCopy;
   simaai::neat::Run runner = p.build(run_opt);
   const int per_try_ms = env_int("SIMA_JPEG_PULL_TIMEOUT_MS", 1000);
   const int tries = env_int("SIMA_JPEG_PULL_TRIES", 30);
@@ -483,11 +504,11 @@ static simaai::neat::Tensor run_image_group_infer(const simaai::neat::Model& mod
   auto decoded_tensor = require_tensor(decoded, "jpeg_decode");
   std::cout << "[jpeg_decode] got tensor: " << decoded_tensor.debug_string() << "\n";
 
-  simaai::neat::Session p;
-  simaai::neat::Model::SessionOptions session_opt;
-  session_opt.include_appsrc = true;
-  session_opt.include_appsink = true;
-  p.add(model.session(session_opt));
+  simaai::neat::Graph p;
+  simaai::neat::Model::RouteOptions route_opt;
+  route_opt.include_input = true;
+  route_opt.include_output = true;
+  p.add(model.graph(route_opt));
 
   if (print_pipeline) {
     std::cout << "[jpeg_model] pipeline:\n" << p.describe_backend() << "\n";
@@ -495,8 +516,8 @@ static simaai::neat::Tensor run_image_group_infer(const simaai::neat::Model& mod
 
   simaai::neat::RunOptions run_opt;
   run_opt.output_memory = simaai::neat::OutputMemory::Owned;
-  simaai::neat::Run runner = p.build(decoded_tensor, simaai::neat::RunMode::Async, run_opt);
-  const bool pushed = runner.push(decoded_tensor);
+  simaai::neat::Run runner = p.build(simaai::neat::Sample{decoded}, run_opt);
+  const bool pushed = runner.push(simaai::neat::Sample{decoded});
   require(pushed, "jpeg_model: push decoded tensor failed");
   auto out = pull_sample_with_retry(runner, "jpeg_model", 1000, 20, true);
   log_sample_caps(out, "jpeg_model");
@@ -504,7 +525,7 @@ static simaai::neat::Tensor run_image_group_infer(const simaai::neat::Model& mod
 }
 
 struct RtspServerContext {
-  simaai::neat::Session session;
+  simaai::neat::Graph graph;
   simaai::neat::RtspServerHandle handle;
 };
 
@@ -522,13 +543,13 @@ static RtspServerContext start_rtsp_server(const std::string& image_path, int co
                                            int content_h, int enc_w, int enc_h, int fps, int port,
                                            int rtp_port_base, int rtp_port_count) {
   RtspServerContext ctx;
-  ctx.session.add(
+  ctx.graph.add(
       simaai::neat::nodes::StillImageInput(image_path, content_w, content_h, enc_w, enc_h, fps));
-  ctx.session.add(simaai::neat::nodes::H264EncodeSima(enc_w, enc_h, fps));
-  ctx.session.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
-  ctx.session.add(simaai::neat::nodes::H264Packetize(/*pt=*/96, /*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264EncodeSima(enc_w, enc_h, fps));
+  ctx.graph.add(simaai::neat::nodes::H264Parse(/*config_interval=*/1));
+  ctx.graph.add(simaai::neat::nodes::H264Packetize(/*pt=*/96, /*config_interval=*/1));
 
-  ctx.handle = ctx.session.run_rtsp({
+  ctx.handle = ctx.graph.run_rtsp({
       .mount = "image",
       .port = port,
       .rtp_port_base = rtp_port_base,
@@ -572,7 +593,7 @@ static std::vector<float> run_rtsp_scores(const simaai::neat::Model& model, cons
   opt.use_videoconvert = false;
   opt.use_videoscale = false;
   opt.output_caps.enable = true;
-  opt.output_caps.format = "NV12";
+  opt.output_caps.format = simaai::neat::FormatTag::NV12;
   opt.output_caps.width = w;
   opt.output_caps.height = h;
   opt.output_caps.fps = fps;
@@ -581,12 +602,12 @@ static std::vector<float> run_rtsp_scores(const simaai::neat::Model& model, cons
   opt.decoder_raw_output = true;
   opt.decoder_next_element = "CVU";
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::groups::RtspDecodedInput(opt));
-  simaai::neat::Model::SessionOptions session_opt;
-  session_opt.include_appsrc = false;
-  session_opt.include_appsink = false;
-  p.add(model.session(session_opt));
+  simaai::neat::Model::RouteOptions route_opt;
+  route_opt.include_input = false;
+  route_opt.include_output = false;
+  p.add(model.graph(route_opt));
   p.add(simaai::neat::nodes::Output());
 
   if (print_pipeline) {
@@ -715,8 +736,8 @@ int main(int argc, char** argv) {
     tar_gz = sima_test::resolve_resnet50_tar();
     if (tar_gz.empty()) {
       std::cerr << "Failed to resolve resnet50 tar.gz. "
-                << "Set SIMA_RESNET50_TAR or run 'sima-cli modelzoo -v "
-                << sima_test::modelzoo_version() << " get resnet_50'.\n";
+                << "Set SIMA_MODEL_TAR (or SIMA_RESNET50_TAR) or run "
+                   "'sima-cli modelzoo get resnet_50'.\n";
       return 3;
     }
   }
@@ -736,85 +757,75 @@ int main(int argc, char** argv) {
     // Terminal policy validation checks.
     {
       simaai::neat::Model::Options bad_opt;
-      bad_opt.media_type = "video/x-raw";
-      bad_opt.format = "RGB";
-      bad_opt.input_max_width = kInferWidth;
-      bad_opt.input_max_height = kInferHeight;
-      bad_opt.input_max_depth = 3;
+      bad_opt.preprocess.kind = simaai::neat::InputKind::Image;
+      bad_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+      bad_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
       bad_opt.inference_terminal.last_stage_name = "__definitely_missing_terminal_stage__";
       bool threw = false;
-      std::string err_msg;
       try {
         simaai::neat::Model bad_model(tar_gz, bad_opt);
-        (void)bad_model.session();
+        (void)bad_model.graph();
       } catch (const std::exception& ex) {
-        threw = true;
-        err_msg = ex.what();
+        const std::string msg = ex.what();
+        if (msg.find("terminal stage") != std::string::npos ||
+            msg.find("infer_stages=[") != std::string::npos) {
+          threw = true;
+        }
       }
       require(threw, "Expected unresolved terminal policy to throw explicit error");
-      if (err_msg.empty()) {
-        throw std::runtime_error(
-            "Expected unresolved terminal policy to include a non-empty error message");
-      }
-      if (err_msg.find("terminal") == std::string::npos &&
-          err_msg.find("infer_stages=[") == std::string::npos) {
-        std::cerr << "Terminal-policy validation threw a non-terminal-specific error: " << err_msg
-                  << "\n";
-      }
     }
     {
       // Precedence check: index wins over invalid name.
       simaai::neat::Model::Options idx_opt;
-      idx_opt.media_type = "video/x-raw";
-      idx_opt.format = "RGB";
-      idx_opt.input_max_width = kInferWidth;
-      idx_opt.input_max_height = kInferHeight;
-      idx_opt.input_max_depth = 3;
+      idx_opt.preprocess.kind = simaai::neat::InputKind::Image;
+      idx_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+      idx_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
       idx_opt.inference_terminal.last_stage_index = 0;
       idx_opt.inference_terminal.last_stage_name = "__ignored_when_index_is_set__";
       simaai::neat::Model idx_model(tar_gz, idx_opt);
-      simaai::neat::Session sess;
-      sess.add(idx_model.session());
+      simaai::neat::Graph sess;
+      sess.add(idx_model.graph());
       require(!sess.describe_backend().empty(),
-              "Terminal index precedence model.session() returned empty gst");
+              "Terminal index precedence model.graph() returned empty gst");
     }
     {
       simaai::neat::Model::Options mla_opt;
-      mla_opt.media_type = "video/x-raw";
-      mla_opt.format = "RGB";
-      mla_opt.input_max_width = kInferWidth;
-      mla_opt.input_max_height = kInferHeight;
-      mla_opt.input_max_depth = 3;
+      mla_opt.preprocess.kind = simaai::neat::InputKind::Image;
+      mla_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+      mla_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
       mla_opt.inference_terminal.mla_only = true;
       simaai::neat::Model mla_model(tar_gz, mla_opt);
-      simaai::neat::Session sess;
-      sess.add(mla_model.session());
+      simaai::neat::Graph sess;
+      sess.add(mla_model.graph());
       require(!sess.describe_backend().empty(),
-              "mla_only terminal policy produced empty session group");
+              "mla_only terminal policy produced empty model route group");
     }
 
     if (run_direct) {
       auto model_rgb = model_from_format(tar_gz, kInferWidth, kInferHeight, "RGB");
       {
-        simaai::neat::Session sess;
-        sess.add(model_rgb.session());
+        simaai::neat::Model::RouteOptions route_opt;
+        route_opt.include_input = true;
+        route_opt.include_output = true;
+        simaai::neat::Graph sess;
+        sess.add(model_rgb.graph(route_opt));
         auto full_gst = sess.describe_backend();
         require(full_gst.find("appsrc") != std::string::npos,
-                "model.session() should include appsrc by default");
+                "model.graph({include_input=true}) should include appsrc");
         require(full_gst.find("appsink") != std::string::npos,
-                "model.session() should include appsink by default");
+                "model.graph({include_output=true}) should include appsink");
       }
       {
-        simaai::neat::Model::SessionOptions session_opt;
-        session_opt.include_appsrc = false;
-        session_opt.include_appsink = false;
-        simaai::neat::Session sess;
-        sess.add(model_rgb.session(session_opt));
+        simaai::neat::Model::RouteOptions route_opt;
+        route_opt.include_input = false;
+        route_opt.include_output = false;
+        simaai::neat::Graph sess;
+        sess.add(model_rgb.graph(route_opt));
         auto core_gst = sess.describe_backend();
         require(core_gst.find("appsrc") == std::string::npos,
-                "model.session({false,false}) should omit appsrc");
+                "model.graph({false,false}) should omit appsrc");
         require(core_gst.find("appsink") == std::string::npos,
-                "model.session({false,false}) should omit appsink");
+                "model.graph({false,false}) should omit appsink");
       }
       cv::Mat rgb = load_rgb_resized(image_path, kInferWidth, kInferHeight);
       auto direct_t = run_direct_infer(model_rgb, rgb);

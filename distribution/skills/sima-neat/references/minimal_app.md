@@ -4,9 +4,9 @@
 #include <neat.h>
 
 int main() {
-  simaai::neat::Session session;
-  session.add(simaai::neat::nodes::InputAppSrc());
-  session.add(simaai::neat::nodes::OutputAppSink());
+  simaai::neat::Graph graph;
+  graph.add(simaai::neat::nodes::InputAppSrc());
+  graph.add(simaai::neat::nodes::OutputAppSink());
   return 0;
 }
 ```

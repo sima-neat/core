@@ -42,7 +42,6 @@ private:
 int main() {
   try {
     using simaai::neat::ContractRegistry;
-    using simaai::neat::NodeGroup;
     using simaai::neat::ValidationContext;
 
     ContractRegistry reg;
@@ -54,14 +53,14 @@ int main() {
     ctx.mode = ValidationContext::Mode::Validate;
     ctx.strict = true;
 
-    NodeGroup empty;
+    std::vector<std::shared_ptr<simaai::neat::Node>> empty;
     auto rep = reg.validate(empty, ctx);
     require(rep.has_errors(), "Empty pipeline should fail");
 
     auto sink = std::make_shared<FakeNode>("Output", "");
     auto other = std::make_shared<FakeNode>("Other", "");
 
-    NodeGroup run_ok({other, sink});
+    std::vector<std::shared_ptr<simaai::neat::Node>> run_ok{other, sink};
     ctx.mode = ValidationContext::Mode::Run;
     rep = reg.validate(run_ok, ctx);
     require(!rep.has_errors(), "Run mode should accept sink last");

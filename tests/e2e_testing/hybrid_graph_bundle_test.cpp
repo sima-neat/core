@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/PipelineNode.h"
 #include "graph/nodes/StageNode.h"
@@ -65,9 +65,7 @@ RUN_TEST("hybrid_graph_bundle_test", [] {
       simaai::neat::nodes::Output(), "sink"));
 
   g.connect(stage, sink);
-
-  simaai::neat::graph::GraphSession session(std::move(g));
-  simaai::neat::graph::GraphRun run = session.build();
+  simaai::neat::graph::GraphRun run = simaai::neat::graph::build(std::move(g));
 
   simaai::neat::Sample input;
   input.kind = simaai::neat::SampleKind::Tensor;
@@ -75,7 +73,7 @@ RUN_TEST("hybrid_graph_bundle_test", [] {
   input.frame_id = 7;
   input.stream_id = "bundle";
 
-  require(run.push(stage, input), "GraphRun::push failed");
+  require(run.push(stage, simaai::neat::Sample{input}), "GraphRun::push failed");
 
   auto out = run.pull(sink, 15000);
   require(out.has_value(), "GraphRun::pull timed out");

@@ -1,7 +1,7 @@
 #include "asset_utils.h"
 #include "gst/GstHelpers.h"
 #include "gst/GstInit.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "test_utils.h"
 
 #include <gst/app/gstappsink.h>
@@ -29,24 +29,6 @@ constexpr int kExpectedFrames = 60;
 int64_t now_ms() {
   using namespace std::chrono;
   return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
-}
-
-fs::path find_repo_root() {
-  std::error_code ec;
-  fs::path path = fs::current_path(ec);
-  if (ec) {
-    return fs::current_path();
-  }
-  while (!path.empty()) {
-    if (fs::exists(path / "tests" / "assets" / "decoder" / "dynamic_caps.h264", ec) && !ec) {
-      return path;
-    }
-    const fs::path parent = path.parent_path();
-    if (parent == path)
-      break;
-    path = parent;
-  }
-  return fs::current_path();
 }
 
 std::string find_named_element(const std::string& gst, const std::string& element) {
@@ -204,11 +186,9 @@ int main() {
           "Missing required GStreamer elements (filesrc/h264parse/appsink/neatdecoder)");
     }
 
-    const fs::path combined =
-        find_repo_root() / "tests" / "assets" / "decoder" / "dynamic_caps.h264";
-    require(fs::exists(combined),
-            "Missing decoder dynamic fixture tests/assets/decoder/dynamic_caps.h264. "
-            "Run tests/tools/make_decoder_dynamic_fixture.py");
+    const fs::path combined = sima_test::test_decoder_fixture_path();
+    require(fs::exists(combined), "Missing decoder dynamic fixture " + combined.string() +
+                                      ". Run tests/tools/make_decoder_dynamic_fixture.py");
 
     int64_t gst_frames = 0;
     std::set<std::pair<int, int>> caps_seen = probe_caps_with_gst(combined, gst_frames);
@@ -225,7 +205,7 @@ int main() {
       throw std::runtime_error(oss.str());
     }
 
-    simaai::neat::Session p;
+    simaai::neat::Graph p;
     p.add(simaai::neat::nodes::FileInput(combined.string()));
     simaai::neat::H264ParseOptions parse_opt;
     parse_opt.config_interval = 1;
@@ -273,10 +253,11 @@ int main() {
         throw std::runtime_error(msg);
       }
 
-      if (out.kind != simaai::neat::SampleKind::Tensor || !out.tensor.has_value()) {
-        throw std::runtime_error("non-tensor output");
+      const auto tensors = simaai::neat::tensors_from_sample(out, true);
+      if (tensors.size() != 1U) {
+        throw std::runtime_error("expected one tensor output");
       }
-      const simaai::neat::Tensor& t = *out.tensor;
+      const simaai::neat::Tensor& t = tensors.front();
       if (!t.is_nv12()) {
         throw std::runtime_error("expected NV12 tensor output");
       }

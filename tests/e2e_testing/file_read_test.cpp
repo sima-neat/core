@@ -1,4 +1,4 @@
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "gst/GstInit.h"
 #include "gst/GstHelpers.h"
 
@@ -156,7 +156,7 @@ static int run_image_once(const std::string& image_path, int out_w_in, int out_h
   const int fps = 30;
   const int bitrate_kbps = 400;
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   frt_dbg_log("pipeline created");
 
   // JPEG -> raw video frames
@@ -254,7 +254,7 @@ static int run_video_frames(const std::string& video_path, int nframes) {
   frt_dbg_log("run_video_frames: enter");
   std::atomic<bool> done{false};
   frt_start_watchdog(done, "run_video_frames");
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
 
   p.add(FileInput(video_path));
   p.add(VideoTrackSelect(0));

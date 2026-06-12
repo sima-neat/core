@@ -22,10 +22,12 @@
  */
 
 #include "pipeline/TensorCore.h"
+#include "pipeline/internal/EnvUtil.h"
 #include "pipeline/internal/TensorMath.h"
 #include "pipeline/internal/TensorTransfer.h"
 #include "pipeline/internal/TensorUtil.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
@@ -45,6 +47,10 @@ using simaai::neat::pipeline_internal::contiguous_strides_bytes;
 using simaai::neat::pipeline_internal::dtype_bytes;
 using simaai::neat::pipeline_internal::safe_add;
 using simaai::neat::pipeline_internal::safe_mul;
+
+namespace pipeline_internal {
+const char* storage_kind_name(StorageKind kind);
+}
 
 namespace {
 
@@ -100,31 +106,12 @@ constexpr std::string_view layout_name(simaai::neat::TensorLayout layout) noexce
     return "CHW";
   case simaai::neat::TensorLayout::HW:
     return "HW";
-  case simaai::neat::TensorLayout::Planar:
-    return "Planar";
   }
   return "Unknown";
 }
 
-constexpr const char* storage_kind_name(StorageKind kind) noexcept {
-  switch (kind) {
-  case StorageKind::CpuOwned:
-    return "CpuOwned";
-  case StorageKind::CpuExternal:
-    return "CpuExternal";
-  case StorageKind::GstSample:
-    return "GstSample";
-  case StorageKind::DeviceHandle:
-    return "DeviceHandle";
-  case StorageKind::Unknown:
-  default:
-    return "Unknown";
-  }
-}
-
 bool mapfail_debug_enabled() {
-  const char* v = std::getenv("SIMA_TENSOR_MAPFAIL_DEBUG");
-  return v && std::strcmp(v, "0") != 0;
+  return simaai::neat::pipeline_internal::env_bool("SIMA_TENSOR_MAPFAIL_DEBUG", false);
 }
 
 void log_mapfail_once(const char* label, const Tensor& t, const Mapping& mapping) {
@@ -135,7 +122,7 @@ void log_mapfail_once(const char* label, const Tensor& t, const Mapping& mapping
     return;
 
   const Storage* storage = t.storage.get();
-  const char* kind = storage ? storage_kind_name(storage->kind) : "None";
+  const char* kind = storage ? pipeline_internal::storage_kind_name(storage->kind) : "None";
   const Device dev = storage ? storage->device : Device{};
   std::fprintf(stderr,
                "[DBG] mapfail-pre label=%s storage=%s device=%s:%d size=%zu "
@@ -322,13 +309,19 @@ std::size_t plane_span_bytes_checked(const Plane& plane, std::size_t elem_bytes)
 
 std::shared_ptr<Storage> make_cpu_owned_storage(std::size_t size_bytes) {
   void* ptr = nullptr;
-  if (size_bytes > 0) {
+  // Keep zero-size tensors mappable. DLPack/NumPy consumers may legally receive
+  // tensors with a zero extent (for example an empty decoded-detections tensor
+  // shaped [0, 6]), but they still expect the exported storage pointer to be
+  // non-null. Preserve the logical storage size while allocating a one-byte
+  // sentinel for the backing holder.
+  const std::size_t alloc_bytes = size_bytes > 0 ? size_bytes : 1U;
+  if (alloc_bytes > 0) {
     // POSIX aligned allocation; fallback to malloc if needed.
-    if (posix_memalign(&ptr, 64, size_bytes) != 0) {
-      ptr = std::malloc(size_bytes);
+    if (posix_memalign(&ptr, 64, alloc_bytes) != 0) {
+      ptr = std::malloc(alloc_bytes);
     }
   }
-  if (size_bytes > 0 && !ptr)
+  if (alloc_bytes > 0 && !ptr)
     throw std::bad_alloc();
 
   auto buf = std::shared_ptr<uint8_t>(static_cast<uint8_t*>(ptr), [](uint8_t* p) { std::free(p); });
@@ -394,7 +387,33 @@ Tensor Tensor::clone() const {
       throw std::runtime_error("Tensor::clone: invalid/overflowing dense shape");
     }
 
-    auto storage_copy = make_cpu_owned_storage(bytes);
+    // Preserve the source's storage segment span (with any tile/alignment
+    // padding) so downstream packers that consume `storage->size_bytes`
+    // (e.g. tensor_runtime_segment_size →
+    // tensor_transport_span_bytes_for_materialization) still see the padded
+    // extent after clone. Without this, tessellated tensors lose their
+    // trailing tile padding here and packed-parent buffers get sized by
+    // natural shape × dtype only — fine for non-tessellated tensors,
+    // wrong for the multi-IO MLA bind contract (e.g. evo50_v2 ev74tess
+    // physical_inputs.size_bytes carries the padded sum).
+    std::size_t alloc_bytes = bytes;
+    if (storage) {
+      const int memory_index = (route.memory_index >= 0)
+                                   ? route.memory_index
+                                   : (route.physical_index >= 0 ? route.physical_index : 0);
+      if (memory_index >= 0 &&
+          static_cast<std::size_t>(memory_index) < storage->sima_segments.size()) {
+        const auto& segment = storage->sima_segments[static_cast<std::size_t>(memory_index)];
+        const std::size_t segment_span = segment.size_bytes;
+        if (segment_span > alloc_bytes && byte_offset == 0) {
+          alloc_bytes = segment_span;
+        }
+      } else if (byte_offset == 0 && storage->size_bytes > alloc_bytes) {
+        alloc_bytes = storage->size_bytes;
+      }
+    }
+
+    auto storage_copy = make_cpu_owned_storage(alloc_bytes);
 
     const Mapping src_map = map(MapMode::Read); // includes byte_offset
     if (!src_map.data && bytes != 0) {
@@ -402,7 +421,7 @@ Tensor Tensor::clone() const {
     }
 
     const Mapping dst_map = storage_copy->map(MapMode::Write);
-    if (!dst_map.data && bytes != 0) {
+    if (!dst_map.data && alloc_bytes != 0) {
       throw std::runtime_error("Tensor::clone: failed to map destination");
     }
 
@@ -436,6 +455,7 @@ Tensor Tensor::clone() const {
     out.device = {DeviceType::CPU, 0};
     out.semantic = semantic;
     out.read_only = false;
+    out.route = route;
     return out;
   }
 
@@ -559,6 +579,7 @@ Tensor Tensor::clone() const {
   out.semantic = semantic;
   out.planes = std::move(out_planes);
   out.read_only = false;
+  out.route = route;
   return out;
 }
 
@@ -631,11 +652,22 @@ Tensor Tensor::to_cpu_if_needed() const {
   return cpu();
 }
 
-Mapping Tensor::view(MapMode mode) const {
+Mapping Tensor::map(MapMode mode) const {
   if (read_only && mode != MapMode::Read) {
-    throw std::runtime_error("Tensor::view: tensor is read-only");
+    throw std::runtime_error("Tensor::map: tensor is read-only");
   }
-  return simaai::neat::pipeline_internal::map_tensor_view(*this, mode);
+  Mapping out = simaai::neat::pipeline_internal::map_tensor_view(*this, mode);
+#if defined(NEAT_VALIDATE_ON_MAP)
+  std::string err;
+  if (!validate(&err)) {
+    throw std::runtime_error("Tensor::map: " + err);
+  }
+#endif
+  return out;
+}
+
+Mapping Tensor::view(MapMode mode) const {
+  return map(mode);
 }
 
 //==============================================================================
@@ -760,6 +792,44 @@ bool Tensor::validate(std::string* err) const {
     return fail("composite tensor must have byte_offset == 0");
   }
 
+  if (!axis_semantics_match_shape()) {
+    return fail("axis_semantics size must match tensor rank");
+  }
+
+  if (!axis_semantics.empty() && layout != simaai::neat::TensorLayout::Unknown) {
+    const auto matches_exact = [&](std::initializer_list<TensorAxisSemantic> expected) {
+      return axis_semantics.size() == expected.size() &&
+             std::equal(axis_semantics.begin(), axis_semantics.end(), expected.begin(),
+                        expected.end());
+    };
+    bool compatible = true;
+    switch (layout) {
+    case simaai::neat::TensorLayout::HW:
+      compatible =
+          matches_exact({TensorAxisSemantic::H, TensorAxisSemantic::W}) ||
+          matches_exact({TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W});
+      break;
+    case simaai::neat::TensorLayout::HWC:
+      compatible =
+          matches_exact({TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C}) ||
+          matches_exact({TensorAxisSemantic::N, TensorAxisSemantic::H, TensorAxisSemantic::W,
+                         TensorAxisSemantic::C});
+      break;
+    case simaai::neat::TensorLayout::CHW:
+      compatible =
+          matches_exact({TensorAxisSemantic::C, TensorAxisSemantic::H, TensorAxisSemantic::W}) ||
+          matches_exact({TensorAxisSemantic::N, TensorAxisSemantic::C, TensorAxisSemantic::H,
+                         TensorAxisSemantic::W});
+      break;
+    case simaai::neat::TensorLayout::Unknown:
+      compatible = true;
+      break;
+    }
+    if (!compatible) {
+      return fail("tensor layout conflicts with explicit axis_semantics");
+    }
+  }
+
   const std::size_t elem = dtype_bytes(dtype);
   const std::size_t storage_bytes = storage ? storage->size_bytes : 0;
 
@@ -817,8 +887,9 @@ bool Tensor::validate(std::string* err) const {
 
   // Encoded semantic constraints.
   if (semantic.encoded.has_value()) {
-    if (semantic.image.has_value() || semantic.tess.has_value()) {
-      return fail("encoded tensor cannot also be image/tess");
+    if (semantic.image.has_value() || semantic.tess.has_value() ||
+        semantic.byte_stream.has_value()) {
+      return fail("encoded tensor cannot also be image/tess/byte_stream");
     }
     if (dtype != simaai::neat::TensorDType::UInt8) {
       return fail("encoded tensor must use UInt8 dtype");
@@ -834,6 +905,57 @@ bool Tensor::validate(std::string* err) const {
     }
     if (layout != simaai::neat::TensorLayout::Unknown) {
       return fail("encoded tensor layout must be Unknown");
+    }
+  }
+
+  // Text semantic constraints.
+  if (semantic.text.has_value()) {
+    if (semantic.image.has_value() || semantic.audio.has_value() || semantic.tokens.has_value() ||
+        semantic.encoded.has_value() || semantic.byte_stream.has_value() ||
+        semantic.tess.has_value() || semantic.quant.has_value() ||
+        semantic.preprocess.has_value()) {
+      return fail("text tensor cannot also be "
+                  "image/audio/tokens/encoded/byte_stream/tess/quant/preprocess");
+    }
+    if (semantic.text->encoding != "utf-8") {
+      return fail("text tensor encoding must be utf-8");
+    }
+    if (dtype != simaai::neat::TensorDType::UInt8) {
+      return fail("text tensor must use UInt8 dtype");
+    }
+    if (!is_dense()) {
+      return fail("text tensor must be dense");
+    }
+    if (!planes.empty()) {
+      return fail("text tensor must not have planes");
+    }
+    if (shape.size() != 1 || shape[0] < 0) {
+      return fail("text tensor must have shape [num_bytes]");
+    }
+    if (layout != simaai::neat::TensorLayout::Unknown) {
+      return fail("text tensor layout must be Unknown");
+    }
+  }
+
+  // Byte-stream semantic constraints.
+  if (semantic.byte_stream.has_value()) {
+    if (semantic.image.has_value() || semantic.encoded.has_value() || semantic.tess.has_value()) {
+      return fail("byte_stream tensor cannot also be image/encoded/tess");
+    }
+    if (dtype != simaai::neat::TensorDType::UInt8 && dtype != simaai::neat::TensorDType::Int8) {
+      return fail("byte_stream tensor must use UInt8 or Int8 dtype");
+    }
+    if (!is_dense()) {
+      return fail("byte_stream tensor must be dense");
+    }
+    if (!planes.empty()) {
+      return fail("byte_stream tensor must not have planes");
+    }
+    if (shape.size() != 1 || shape[0] <= 0) {
+      return fail("byte_stream tensor must have shape [num_bytes]");
+    }
+    if (layout != simaai::neat::TensorLayout::Unknown) {
+      return fail("byte_stream tensor layout must be Unknown");
     }
   }
 
@@ -867,8 +989,164 @@ std::string Tensor::debug_string() const {
 
   out += " byte_offset=" + std::to_string(byte_offset);
   out += " planes=" + std::to_string(planes.size());
+  if (semantic.text.has_value()) {
+    out += " semantic=Text";
+  }
+  if (semantic.byte_stream.has_value()) {
+    out += " semantic=ByteStream";
+  }
   out += "}";
   return out;
+}
+
+Tensor Tensor::from_text(std::string_view text) {
+  auto storage = make_cpu_owned_storage(text.size());
+  if (!text.empty()) {
+    Mapping dst = storage->map(MapMode::Write);
+    if (!dst.data) {
+      throw std::runtime_error("Tensor::from_text: CPU destination map failed");
+    }
+    std::memcpy(dst.data, text.data(), text.size());
+  }
+
+  Tensor out;
+  out.storage = std::move(storage);
+  out.dtype = TensorDType::UInt8;
+  out.layout = TensorLayout::Unknown;
+  out.shape = {static_cast<int64_t>(text.size())};
+  out.strides_bytes = {1};
+  out.byte_offset = 0;
+  out.device = {DeviceType::CPU, 0};
+  out.semantic.text = TextSpec{};
+  out.read_only = false;
+  return out;
+}
+
+std::string Tensor::to_text() const {
+  if (!semantic.text.has_value()) {
+    throw std::runtime_error("Tensor::to_text: tensor is not marked as text");
+  }
+  if (dtype != TensorDType::UInt8) {
+    throw std::runtime_error("Tensor::to_text: text tensor must use UInt8 dtype");
+  }
+  if (semantic.text->encoding != "utf-8") {
+    throw std::runtime_error("Tensor::to_text: text tensor encoding must be utf-8");
+  }
+  if (!is_dense()) {
+    throw std::runtime_error("Tensor::to_text: text tensor must be dense");
+  }
+  if (shape.size() != 1 || shape[0] < 0) {
+    throw std::runtime_error("Tensor::to_text: text tensor must have shape [num_bytes]");
+  }
+  if (layout != TensorLayout::Unknown) {
+    throw std::runtime_error("Tensor::to_text: text tensor layout must be Unknown");
+  }
+
+  const auto bytes = static_cast<std::size_t>(shape[0]);
+  if (bytes == 0U) {
+    return {};
+  }
+
+  std::vector<uint8_t> payload(bytes);
+  if (!copy_dense_bytes_tight_to(payload.data(), payload.size())) {
+    throw std::runtime_error("Tensor::to_text: copy failed");
+  }
+  return std::string(reinterpret_cast<const char*>(payload.data()), payload.size());
+}
+
+namespace {
+
+Tensor make_dense_tensor_from_bytes(const void* data, std::size_t bytes, TensorDType dtype,
+                                    std::vector<int64_t> shape, TensorMemory memory) {
+  const std::size_t elem = dtype_bytes(dtype);
+  const std::size_t expected = dense_size_bytes_checked(shape, elem);
+  if (expected == 0 || expected != bytes) {
+    throw std::invalid_argument("Tensor::from_vector: data size does not match shape/dtype");
+  }
+  if (!data && bytes != 0U) {
+    throw std::invalid_argument("Tensor::from_vector: missing data");
+  }
+
+  Tensor tmp;
+  tmp.dtype = dtype;
+  tmp.layout = TensorLayout::Unknown;
+  tmp.shape = std::move(shape);
+  tmp.strides_bytes = contiguous_strides_bytes(tmp.shape, elem);
+  tmp.byte_offset = 0;
+  tmp.read_only = true;
+
+  if (memory == TensorMemory::Auto) {
+    memory = TensorMemory::EV74;
+  }
+
+  if (memory == TensorMemory::CPU || memory == TensorMemory::A65) {
+    auto storage = make_cpu_owned_storage(bytes);
+    Mapping dst = storage->map(MapMode::Write);
+    if (!dst.data && bytes != 0U) {
+      throw std::runtime_error("Tensor::from_vector: CPU destination map failed");
+    }
+    if (bytes != 0U) {
+      std::memcpy(dst.data, data, bytes);
+    }
+    tmp.storage = std::move(storage);
+    tmp.device = {DeviceType::CPU, 0};
+    tmp.read_only = false;
+    return tmp;
+  }
+
+  auto holder = std::shared_ptr<void>(const_cast<void*>(data), [](void*) {});
+  tmp.storage = make_cpu_external_storage(const_cast<void*>(data), bytes, std::move(holder),
+                                          /*read_only=*/true);
+  tmp.device = {DeviceType::CPU, 0};
+
+  std::vector<Segment> segments{{"ifm0", bytes}};
+  if (memory == TensorMemory::EV74) {
+    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_CVU, 0}, &segments,
+                                                 /*required_segment_names=*/nullptr);
+  }
+  if (memory == TensorMemory::MLA) {
+    return pipeline_internal::transfer_to_device(tmp, Device{DeviceType::SIMA_MLA, 0}, &segments,
+                                                 /*required_segment_names=*/nullptr);
+  }
+  throw std::invalid_argument("Tensor::from_vector: unsupported TensorMemory placement");
+}
+
+} // namespace
+
+Tensor Tensor::from_vector(const std::vector<float>& data, std::vector<int64_t> shape,
+                           TensorMemory memory) {
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(float),
+                                      TensorDType::Float32, std::move(shape), memory);
+}
+
+Tensor Tensor::from_vector(const std::vector<uint8_t>& data, std::vector<int64_t> shape,
+                           TensorMemory memory) {
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(uint8_t),
+                                      TensorDType::UInt8, std::move(shape), memory);
+}
+
+Tensor Tensor::from_vector(const std::vector<int8_t>& data, std::vector<int64_t> shape,
+                           TensorMemory memory) {
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(int8_t), TensorDType::Int8,
+                                      std::move(shape), memory);
+}
+
+Tensor Tensor::from_vector(const std::vector<uint16_t>& data, std::vector<int64_t> shape,
+                           TensorMemory memory) {
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(uint16_t),
+                                      TensorDType::UInt16, std::move(shape), memory);
+}
+
+Tensor Tensor::from_vector(const std::vector<int16_t>& data, std::vector<int64_t> shape,
+                           TensorMemory memory) {
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(int16_t),
+                                      TensorDType::Int16, std::move(shape), memory);
+}
+
+Tensor Tensor::from_vector(const std::vector<int32_t>& data, std::vector<int64_t> shape,
+                           TensorMemory memory) {
+  return make_dense_tensor_from_bytes(data.data(), data.size() * sizeof(int32_t),
+                                      TensorDType::Int32, std::move(shape), memory);
 }
 
 } // namespace simaai::neat

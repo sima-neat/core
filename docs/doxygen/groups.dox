@@ -1,11 +1,11 @@
 /**
  * @defgroup pipeline Pipeline runtime
- * @brief Session, PipelineRun, options, reports, errors.
+ * @brief Graph, PipelineRun, options, reports, errors.
  */
 
 /**
- * @defgroup builder Builder and graph
- * @brief Node interfaces and STL-only graph/builder utilities.
+ * @defgroup builder Builder internals
+ * @brief Node interfaces and builder utilities used by the public Graph compiler.
  */
 
 /**
@@ -26,9 +26,9 @@
  */
 
 /**
- * @defgroup nodes_groups Node groups
+ * @defgroup nodes_groups Graph fragments
  * @ingroup nodes
- * @brief Higher-level recipes composed of multiple nodes.
+ * @brief Higher-level reusable Graph fragments composed of multiple nodes.
  */
 
 /**
@@ -44,8 +44,8 @@
  */
 
 /**
- * @defgroup mpk MPK integration
- * @brief Model pack loading and stage fragments.
+ * @defgroup model_archive Model archive internals
+ * @brief Internal `.tar.gz` model archive loading and validation.
  */
 
 /**
@@ -66,4 +66,41 @@
 /**
  * @defgroup diagnostics Diagnostics
  * @brief PipelineReport, debug probes, and observability helpers.
+ */
+
+/**
+ * @defgroup model Model
+ * @brief Loaded model archives, preprocess plans, and the simplified inference entry point.
+ */
+
+/**
+ * @defgroup graph Runtime graph internals
+ * @brief Actor-style runtime DAG, named-port stages, and compiler/runtime substrate used by public Graph.
+ */
+
+/**
+ * @defgroup graph_nodes Runtime graph nodes
+ * @ingroup graph
+ * @brief Stage, fan-out, join, scheduler, and adapter nodes for runtime graphs.
+ */
+
+/**
+ * @defgroup graph_runtime Runtime graph internals
+ * @ingroup graph
+ * @brief Queue and mailbox primitives used by runtime graph execution.
+ */
+
+/**
+ * @defgroup policy Policy
+ * @brief Decoder/encoder/RTSP/memory policy decision helpers used by the builder.
+ */
+
+/**
+ * @defgroup internal_sima Framework internals (SiMa reach-through)
+ * @brief Reach-through layer between core/ and the SiMa SoC pipeline internals.
+ *
+ * NOT public API. Documented for framework engineers — these headers appear in
+ * `core/src/pipeline/internal/sima/` and are deliberately excluded from the
+ * published Docusaurus site. Their `@brief` blocks are still useful in IDE hover
+ * popups (clangd reads them directly).
  */

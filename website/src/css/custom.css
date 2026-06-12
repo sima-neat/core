@@ -6,30 +6,206 @@
   --ifm-color-primary-light: #3a7bf0;
   --ifm-color-primary-lighter: #4a86f2;
   --ifm-color-primary-lightest: #6b9af5;
-  --ifm-font-family-base: "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --ifm-font-family-base: "Roboto", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
   --ifm-font-family-monospace: "IBM Plex Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --software-subnav-height: 3.25rem;
 }
 
 html[data-theme="dark"] {
-  --ifm-color-primary: #6ea8fe;
+  --ifm-color-primary: #8fc0f0;
+}
+
+@media (min-width: 997px) {
+  #__docusaurus {
+    padding-top: calc(var(--ifm-navbar-height) + var(--software-subnav-height) + 0.75rem);
+  }
+
+  .theme-doc-sidebar-container {
+    margin-top: 0 !important;
+  }
+
+  .theme-doc-sidebar-container [class^="sidebar_"],
+  .theme-doc-sidebar-container [class*=" sidebar_"] {
+    padding-top: 0 !important;
+  }
+
+  .theme-doc-sidebar-container [class^="sidebarViewport"],
+  .theme-doc-sidebar-container [class*=" sidebarViewport"] {
+    top: calc(var(--ifm-navbar-height) + var(--software-subnav-height) + 0.75rem) !important;
+    max-height: calc(100vh - var(--ifm-navbar-height) - var(--software-subnav-height) - 0.75rem) !important;
+  }
+
+  .theme-layout-navbar.navbar--fixed-top {
+    display: none;
+  }
+}
+
+@media (max-width: 996px) {
+  html.developer-center-shell-enabled #__docusaurus {
+    padding-top: calc(var(--ifm-navbar-height) + var(--software-subnav-height));
+  }
+}
+
+html.developer-center-shell-enabled .navbar--fixed-top {
+  top: var(--ifm-navbar-height);
+}
+
+html.developer-center-shell-enabled .navbar-sidebar {
+  top: calc(var(--ifm-navbar-height) * 2);
+  height: calc(100vh - (var(--ifm-navbar-height) * 2));
+}
+
+html.developer-center-shell-enabled .navbar__brand:empty,
+html.developer-center-shell-enabled [class^="navbarSearchContainer"],
+html.developer-center-shell-enabled [class*=" navbarSearchContainer"],
+html.developer-center-shell-enabled .navbar__items--right:empty {
+  display: none;
+}
+
+/* Frosted, borderless navbar (ported from the Developer Center docs). The blur
+   is applied to .navbar__inner rather than .navbar on purpose: backdrop-filter
+   on .navbar would make it the containing block for the position:fixed mobile
+   sidebar drawer, clamping the drawer to the navbar height and hiding the doc
+   navigation on mobile. */
+.navbar {
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  box-shadow: none;
+}
+
+.navbar__inner {
+  backdrop-filter: blur(18px);
+}
+
+.software-subnav {
+  position: fixed;
+  top: var(--ifm-navbar-height);
+  right: 0;
+  left: 0;
+  z-index: 850;
+  height: var(--software-subnav-height);
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-navbar-background-color);
+}
+
+.software-subnav__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 100%;
+  padding: 0 var(--ifm-navbar-padding-horizontal);
+}
+
+.software-subnav__links,
+.software-subnav__controls {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.software-subnav__controls {
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.software-subnav__link {
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 0 var(--ifm-navbar-item-padding-horizontal);
+  color: var(--ifm-navbar-link-color);
+  font-weight: var(--ifm-font-weight-bold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.software-subnav__link:hover,
+.software-subnav__link--active {
+  color: var(--ifm-navbar-link-hover-color);
+  text-decoration: none;
+}
+
+.software-subnav__github {
+  width: 2.25rem;
+  justify-content: center;
+  padding-right: 0.45rem;
+  padding-left: 0.45rem;
+}
+
+.software-subnav__github svg {
+  width: 1.18rem;
+  height: 1.18rem;
+}
+
+@media (max-width: 996px) {
+  /* Keep the task bar visible on mobile as a horizontally scrollable strip,
+     fixed just below the navbar. Its z-index drops below the navbar so the
+     hamburger drawer overlays it, and page content is offset by its height. */
+  .software-subnav {
+    top: var(--ifm-navbar-height);
+    z-index: 150;
+  }
+
+  /* Free up navbar space on mobile by dropping the long title text. */
+  nav.theme-layout-navbar .navbar__title {
+    display: none;
+  }
+
+  .software-subnav__inner {
+    justify-content: flex-start;
+    gap: 0.5rem;
+    padding: 0 0.75rem;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .software-subnav__inner::-webkit-scrollbar {
+    display: none;
+  }
+
+  .software-subnav__controls {
+    margin-left: 0;
+    gap: 0.5rem;
+  }
+
+  .software-subnav__link {
+    padding: 0 0.4rem;
+    font-size: 0.92rem;
+  }
+
+  .software-subnav .language-pref {
+    font-size: 0.85rem;
+  }
+
+  /* Offset content for the fixed task bar (local-fallback case; the native
+     navbar already reserves its own space). The shell-enabled case is handled
+     by the developer-center-shell rule above. */
+  html:not(.developer-center-shell-enabled) .main-wrapper {
+    margin-top: var(--software-subnav-height);
+  }
 }
 
 .build-info-banner {
-  position: relative;
-  z-index: 190;
+  position: fixed;
+  z-index: 900;
+  right: 1rem;
+  bottom: max(1rem, env(safe-area-inset-bottom));
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
   width: fit-content;
-  max-width: min(940px, calc(100% - 2rem));
-  margin: 0 auto 0.45rem;
+  max-width: min(940px, calc(100vw - 2rem));
+  margin: 0;
   padding: 0.68rem 1.75rem 0.72rem;
   color: #f8fbff;
   gap: 0.62rem;
   font-size: 0.78rem;
   line-height: 1.35;
   letter-spacing: 0;
+  animation: build-info-banner-enter 180ms ease-out;
 }
 
 .build-info-banner__shape {
@@ -77,6 +253,10 @@ html[data-theme="dark"] {
 
 @media (max-width: 640px) {
   .build-info-banner {
+    right: 0.5rem;
+    left: 0.5rem;
+    bottom: max(0.5rem, env(safe-area-inset-bottom));
+    width: auto;
     max-width: calc(100% - 1rem);
     padding: 0.58rem 1.1rem 0.64rem;
     gap: 0.42rem 0.58rem;
@@ -84,166 +264,19 @@ html[data-theme="dark"] {
   }
 }
 
+@keyframes build-info-banner-enter {
+  from {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @import "./custom-doxygen2docusaurus.css";
-
-.cookie-preferences-link {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--ifm-footer-link-color);
-  cursor: pointer;
-  font: inherit;
-  padding: 0;
-  text-align: left;
-}
-
-.cookie-preferences-link:hover,
-.cookie-preferences-link:focus {
-  color: var(--ifm-footer-link-hover-color);
-  text-decoration: underline;
-}
-
-.cookie-consent {
-  position: fixed;
-  z-index: 2147483000;
-  left: max(1rem, env(safe-area-inset-left));
-  right: max(1rem, env(safe-area-inset-right));
-  bottom: max(1rem, env(safe-area-inset-bottom));
-  width: min(640px, calc(100vw - 2rem));
-  max-height: calc(100vh - 2rem);
-  overflow: auto;
-  margin: 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 1.1rem;
-  padding: 1.1rem;
-  border: 1px solid rgba(31, 111, 235, 0.22);
-  border-radius: 16px;
-  background:
-    linear-gradient(135deg, rgba(31, 111, 235, 0.08), rgba(40, 167, 126, 0.08)),
-    var(--ifm-background-surface-color);
-  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.2);
-}
-
-.cookie-consent--panel {
-  width: min(640px, calc(100vw - 2rem));
-}
-
-.cookie-consent__eyebrow {
-  margin: 0 0 0.2rem;
-  color: var(--ifm-color-primary);
-  font-size: 0.74rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.cookie-consent__title {
-  margin: 0;
-  font-size: 1.1rem;
-  line-height: 1.25;
-}
-
-.cookie-consent__text,
-.cookie-consent__note {
-  margin: 0.35rem 0 0;
-  color: var(--ifm-color-emphasis-700);
-  font-size: 0.9rem;
-  line-height: 1.45;
-}
-
-.cookie-consent__note {
-  font-size: 0.78rem;
-}
-
-.cookie-consent__link {
-  display: inline-block;
-  margin-top: 0.45rem;
-  font-size: 0.86rem;
-  font-weight: 700;
-}
-
-.cookie-consent__details {
-  margin-top: 0.85rem;
-  padding-top: 0.75rem;
-  border-top: 1px solid var(--ifm-color-emphasis-300);
-}
-
-.cookie-consent__details h3 {
-  margin: 0.45rem 0 0.15rem;
-  font-size: 0.84rem;
-}
-
-.cookie-consent__details p {
-  margin: 0;
-  color: var(--ifm-color-emphasis-700);
-  font-size: 0.8rem;
-  line-height: 1.45;
-}
-
-.cookie-consent__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  justify-content: stretch;
-  margin-top: auto;
-  padding-top: 0.2rem;
-}
-
-.cookie-consent__actions .button {
-  flex: 1 1 220px;
-  white-space: nowrap;
-}
-
-.cookie-consent__toggle {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 0.85rem;
-  padding: 0.75rem 0.85rem;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.65);
-}
-
-.cookie-consent__toggle strong,
-.cookie-consent__toggle small {
-  display: block;
-}
-
-.cookie-consent__toggle small {
-  margin-top: 0.15rem;
-  color: var(--ifm-color-emphasis-700);
-}
-
-.cookie-consent__toggle input {
-  width: 1.15rem;
-  height: 1.15rem;
-  accent-color: var(--ifm-color-primary);
-}
-
-html[data-theme="dark"] .cookie-consent {
-  border-color: rgba(110, 168, 254, 0.28);
-  background:
-    linear-gradient(135deg, rgba(110, 168, 254, 0.12), rgba(40, 167, 126, 0.1)),
-    var(--ifm-background-surface-color);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
-}
-
-html[data-theme="dark"] .cookie-consent__toggle {
-  background: rgba(255, 255, 255, 0.04);
-}
-
-@media (max-width: 760px) {
-  .cookie-consent {
-    width: auto;
-  }
-
-  .cookie-consent__actions .button {
-    flex-basis: 100%;
-  }
-}
 
 /* Hide doxygen2docusaurus generation banner in API reference pages. */
 p.doxyGeneratedBy {
@@ -291,7 +324,13 @@ p.doxyGeneratedBy {
 }
 
 #minimal-tab-cpp:checked ~ label[for="minimal-tab-cpp"],
-#minimal-tab-py:checked ~ label[for="minimal-tab-py"] {
+#minimal-tab-py:checked ~ label[for="minimal-tab-py"],
+#hello-step1-tab-cpp:checked ~ label[for="hello-step1-tab-cpp"],
+#hello-step1-tab-py:checked ~ label[for="hello-step1-tab-py"],
+#hello-step2-tab-cpp:checked ~ label[for="hello-step2-tab-cpp"],
+#hello-step2-tab-py:checked ~ label[for="hello-step2-tab-py"],
+#hello-step3-tab-cpp:checked ~ label[for="hello-step3-tab-cpp"],
+#hello-step3-tab-py:checked ~ label[for="hello-step3-tab-py"] {
   border-bottom-color: var(--ifm-color-primary);
 }
 
@@ -302,7 +341,13 @@ p.doxyGeneratedBy {
 }
 
 #minimal-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
-#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
+#minimal-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step1-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step1-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step2-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step2-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2),
+#hello-step3-tab-cpp:checked ~ .minimal-tab-panel:nth-of-type(1),
+#hello-step3-tab-py:checked ~ .minimal-tab-panel:nth-of-type(2) {
   display: block;
 }
 
@@ -359,6 +404,7 @@ p.doxyGeneratedBy {
   line-height: 1.22;
   letter-spacing: 0.01em;
   text-shadow: 0 2px 8px rgba(8, 18, 36, 0.55);
+  text-decoration: none !important;
 }
 
 .tutorial-card-duration {
@@ -413,18 +459,18 @@ p.doxyGeneratedBy {
 }
 
 .tutorial-difficulty-beginner .tutorial-card-tag {
-  background: rgba(22, 163, 74, 0.13);
-  color: #126c3b;
+  background: #a4cc2d;
+  color: #1f2937;
 }
 
 .tutorial-difficulty-intermediate .tutorial-card-tag {
-  background: rgba(245, 158, 11, 0.15);
-  color: #92580a;
+  background: #2a9c4f;
+  color: #ffffff;
 }
 
 .tutorial-difficulty-advanced .tutorial-card-tag {
-  background: rgba(220, 38, 38, 0.14);
-  color: #8f1d1d;
+  background: #5998dd;
+  color: #ffffff;
 }
 
 html[data-theme="dark"] .tutorial-card {
@@ -457,18 +503,18 @@ html[data-theme="dark"] .tutorial-card-tag {
 }
 
 html[data-theme="dark"] .tutorial-difficulty-beginner .tutorial-card-tag {
-  background: rgba(34, 197, 94, 0.2);
-  color: #7affbb;
+  background: #a4cc2d;
+  color: #1f2937;
 }
 
 html[data-theme="dark"] .tutorial-difficulty-intermediate .tutorial-card-tag {
-  background: rgba(251, 191, 36, 0.2);
-  color: #ffd98c;
+  background: #2a9c4f;
+  color: #ffffff;
 }
 
 html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
-  background: rgba(248, 113, 113, 0.2);
-  color: #ffb7b7;
+  background: #5998dd;
+  color: #ffffff;
 }
 
 .overview-link-columns {
@@ -476,6 +522,14 @@ html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 1rem;
   margin: 1.2rem 0 0.4rem;
+}
+
+.overview-link-columns-single {
+  max-width: 720px;
+}
+
+.compile-workflow-columns {
+  grid-template-columns: 1fr;
 }
 
 .overview-section-label {
@@ -583,6 +637,21 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   --overview-panel-accent-soft: rgba(42, 156, 79, 0.18);
 }
 
+.overview-link-panel-model {
+  --overview-panel-accent: #a4cc2d;
+  --overview-panel-accent-soft: rgba(164, 204, 45, 0.2);
+}
+
+.overview-link-panel-app {
+  --overview-panel-accent: #2a9c4f;
+  --overview-panel-accent-soft: rgba(42, 156, 79, 0.18);
+}
+
+.overview-link-panel-reference {
+  --overview-panel-accent: #d26728;
+  --overview-panel-accent-soft: rgba(210, 103, 40, 0.16);
+}
+
 .overview-link-panel h2 {
   margin: 0 0 0.45rem;
   font-size: 1.5rem;
@@ -616,8 +685,16 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   gap: 0.75rem;
 }
 
+.compile-workflow-list {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .overview-link-card {
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  height: 7.25rem;
+  box-sizing: border-box;
   padding: 0.9rem 1rem;
   border-radius: 14px;
   border: 1px solid #cad6e5;
@@ -639,6 +716,7 @@ html[data-theme="dark"] .overview-workflow-image-dark {
   display: block;
   margin-bottom: 0.24rem;
   color: #10243a;
+  line-height: 1.25;
 }
 
 .overview-link-card span {
@@ -684,6 +762,12 @@ html[data-theme="dark"] .overview-link-card strong {
 
 html[data-theme="dark"] .overview-link-card span {
   color: #b9c7d8;
+}
+
+@media (max-width: 700px) {
+  .compile-workflow-list {
+    grid-template-columns: 1fr;
+  }
 }
 
 .installation-paths-hero {
@@ -1449,10 +1533,156 @@ mark.docSearchHighlight {
 .theme-code-block-highlighted-line,
 .codeLineHighlight,
 .line--highlighted {
-  background: linear-gradient(90deg, rgba(31, 111, 235, 0.12) 0%, rgba(31, 111, 235, 0.03) 100%) !important;
-  border-left: 6px solid #1f6feb;
+  background: linear-gradient(90deg, rgba(89, 152, 221, 0.14) 0%, rgba(89, 152, 221, 0.04) 100%) !important;
+  border-left: 6px solid var(--ifm-color-primary);
   margin-left: calc(-1 * var(--ifm-pre-padding));
   margin-right: calc(-1 * var(--ifm-pre-padding));
   padding-left: calc(var(--ifm-pre-padding) - 6px);
   padding-right: var(--ifm-pre-padding);
+}
+
+/* ----------------------------------------------------------------------------
+ * Model Compiler / griffe API page section accents.
+ *
+ * autodoc promotes griffe's plain `Imports:` / `Classes:` / `Functions:` /
+ * `Constants:` labels into <h2> headings. Each gets a distinct left-border
+ * color and a unicode glyph so the section type is recognizable at a glance:
+ *
+ *   Imports   – blue   (incoming dependencies)
+ *   Classes   – purple (types / OOP)
+ *   Functions – green  (behavior / actions)
+ *   Constants – amber  (stable values)
+ *
+ * Scope: the [class*="docs-doc-id-model-sdk"] guard limits these rules to
+ * pages that live under /model-sdk/, so unrelated docs aren't restyled.
+ * --------------------------------------------------------------------------- */
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#imports,
+[class*="docs-doc-id-model-sdk"] .markdown h2#classes,
+[class*="docs-doc-id-model-sdk"] .markdown h2#functions,
+[class*="docs-doc-id-model-sdk"] .markdown h2#constants {
+  border-left: 4px solid var(--api-section-accent, #94a3b8);
+  padding: 0.15rem 0 0.15rem 0.65rem;
+  margin-top: 2rem;
+  background: var(--api-section-tint, transparent);
+  border-radius: 0 4px 4px 0;
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#imports::before,
+[class*="docs-doc-id-model-sdk"] .markdown h2#classes::before,
+[class*="docs-doc-id-model-sdk"] .markdown h2#functions::before,
+[class*="docs-doc-id-model-sdk"] .markdown h2#constants::before {
+  content: var(--api-section-glyph, "");
+  margin-right: 0.5rem;
+  opacity: 0.8;
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#imports {
+  --api-section-accent: #3b82f6;
+  --api-section-tint: rgba(59, 130, 246, 0.06);
+  --api-section-glyph: "📦";
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#classes {
+  --api-section-accent: #a855f7;
+  --api-section-tint: rgba(168, 85, 247, 0.06);
+  --api-section-glyph: "🏛";
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#functions {
+  --api-section-accent: #22c55e;
+  --api-section-tint: rgba(34, 197, 94, 0.06);
+  --api-section-glyph: "⚙";
+}
+
+[class*="docs-doc-id-model-sdk"] .markdown h2#constants {
+  --api-section-accent: #f59e0b;
+  --api-section-tint: rgba(245, 158, 11, 0.06);
+  --api-section-glyph: "🔢";
+}
+
+/* Slightly stronger tint for dark mode so the accent stays readable. */
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#imports {
+  --api-section-tint: rgba(59, 130, 246, 0.14);
+}
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#classes {
+  --api-section-tint: rgba(168, 85, 247, 0.14);
+}
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#functions {
+  --api-section-tint: rgba(34, 197, 94, 0.14);
+}
+html[data-theme="dark"] [class*="docs-doc-id-model-sdk"] .markdown h2#constants {
+  --api-section-tint: rgba(245, 158, 11, 0.14);
+}
+
+
+/* Per-tutorial animated overview (generated into static/img/tutorials/flow). */
+.tutorial-flow {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 0.25rem 0 1.75rem;
+  border-radius: 18px;
+}
+
+/* Tutorial overviews are embedded via <object> so the SVG is interactive
+   (plays once, then click steps through sections). <object> has no intrinsic
+   size, so pin the diagram's aspect ratio and signal it is clickable. */
+object.tutorial-flow {
+  aspect-ratio: 1320 / 520;
+  cursor: pointer;
+}
+
+/* ===========================================================================
+   Mobile responsiveness pass (mirrors the NEAT/docs repo patterns)
+   =========================================================================== */
+@media (max-width: 768px) {
+  /* Wide tables scroll within their column instead of widening the page. */
+  .markdown table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Code blocks: horizontal scroll with touch momentum, never page-wide. */
+  .markdown pre,
+  .theme-code-block pre,
+  pre[class*="language-"] {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Tighten tab-panel and article padding so text isn't cramped at the edges. */
+  .tabs-container [role="tabpanel"] {
+    padding: 1.25rem 1rem 1.5rem !important;
+  }
+
+  /* Fluid headings so long titles don't overflow on narrow screens. */
+  .markdown h1,
+  article header h1 {
+    font-size: clamp(1.55rem, 6vw, 2rem);
+    overflow-wrap: anywhere;
+  }
+
+  .markdown h2 {
+    font-size: clamp(1.25rem, 5vw, 1.6rem);
+    overflow-wrap: anywhere;
+  }
+
+  /* Keep the overview/installation/tutorial card grids single-column. */
+  .overview-link-columns,
+  .tutorial-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Touch devices: give nav links a comfortable tap target and don't rely on
+   hover-only affordances. */
+@media (hover: none) and (pointer: coarse) {
+  .software-subnav__link,
+  .navbar__link,
+  .menu__link {
+    min-height: 2.5rem;
+  }
 }

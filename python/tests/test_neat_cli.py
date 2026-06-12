@@ -62,8 +62,7 @@ def make_curl(bin_dir: Path, log_path: Path | None = None) -> None:
           https://core.test/main/abcdef0/metadata-minimal.json) printf '{{"version":"0.0.0+main-abcdef0"}}\\n' ;;
           https://core.test/develop/1234567/metadata-minimal.json) printf '{{"version":"0.0.0+develop-1234567"}}\\n' ;;
           https://insight.test/main/latest.tag) printf '7654321\\n' ;;
-          https://insight.test/main/7654321.json) printf '{{"short_sha":"7654321"}}\\n' ;;
-          https://apps.sima-neat.com/tools/install-neat-insight.py) printf 'import sys\\nprint("fallback insight installer", sys.argv[1:])\\n' ;;
+          https://insight.test/main/7654321/metadata.json) printf '{{"version":"0.0.0+main.7654321"}}\\n' ;;
           *) echo "unexpected curl url: $url" >&2; exit 22 ;;
         esac
         """,
@@ -861,5 +860,77 @@ def test_update_channel_and_tag_override_core_only(tmp_path: Path) -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert "https://core.test/develop/1234567/metadata-minimal.json" in calls.read_text(
+        encoding="utf-8"
+    )
+
+
+def test_vulcan_buildinfo_selects_core_update_environment(tmp_path: Path) -> None:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    curl_log = tmp_path / "curl.log"
+    calls = tmp_path / "calls.log"
+    write_exe(
+        bin_dir / "curl",
+        f"""\
+        #!/usr/bin/env bash
+        set -euo pipefail
+        url="${{@: -1}}"
+        echo "$url" >> "{curl_log}"
+        case "$url" in
+          https://artifacts.neat.paconsultings.com/core/feat%2Fx/latest.tag) printf 'abcdef123456\\n' ;;
+          https://artifacts.neat.paconsultings.com/core/feat%2Fx/abcdef123456/metadata-minimal.json) printf '{{"version":"2.0.0+feat.x.abcdef1"}}\\n' ;;
+          *) echo "unexpected curl url: $url" >&2; exit 22 ;;
+        esac
+        """,
+    )
+    write_exe(
+        bin_dir / "sima-cli",
+        f"""\
+        #!/usr/bin/env bash
+        echo "sima-cli $*" >> "{calls}"
+        """,
+    )
+    write_exe(
+        bin_dir / "dpkg-query",
+        """\
+        #!/usr/bin/env bash
+        [[ "${@: -1}" == "sima-neat" ]] && printf '2.0.0+feat.x.1111111'
+        """,
+    )
+
+    package_buildinfo = tmp_path / "package-buildinfo.json"
+    package_buildinfo.write_text(
+        json.dumps(
+            {
+                "format_version": 1,
+                "package": "sima-neat",
+                "version": "2.0.0+feat.x.1111111",
+                "source": "vulcan",
+                "vulcan": {
+                    "environment": "dev",
+                    "repository": "core",
+                    "ref": "feat/x",
+                    "ref_key": "feat%2Fx",
+                    "spec": "111111111111",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = base_env(tmp_path, bin_dir)
+    env.pop("NEAT_ARTIFACTS_BASE_URL")
+    buildinfo = tmp_path / "buildinfo"
+    buildinfo.write_text("MACHINE = modalix\n", encoding="utf-8")
+    env["NEAT_BUILDINFO_FILE"] = str(buildinfo)
+    env["NEAT_PACKAGE_BUILDINFO_FILE"] = str(package_buildinfo)
+
+    proc = run_neat(tmp_path, ["update", "--yes", "--core-only", "--color=never"], env)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "https://artifacts.neat.paconsultings.com/core/feat%2Fx/latest.tag" in curl_log.read_text(
+        encoding="utf-8"
+    )
+    assert "https://artifacts.neat.paconsultings.com/core/feat%2Fx/abcdef123456/metadata-minimal.json" in calls.read_text(
         encoding="utf-8"
     )

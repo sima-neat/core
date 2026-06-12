@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 DOCS_DIR="${DOCS_DIR:-docs}"
-SITE_BASE_URL="${SITE_BASE_URL:-https://docs.sima-neat.com}"
+SITE_BASE_URL="${SITE_BASE_URL:-https://developer.sima.ai}"
 BATCH_SIZE="${BATCH_SIZE:-500}"
 MAX_RECORD_BYTES="${MAX_RECORD_BYTES:-9500}"
 DRY_RUN="0"
@@ -20,7 +20,7 @@ Index docs markdown files into Algolia without crawler.
 
 Options:
   --docs-dir <path>      Docs root directory (default: docs)
-  --site-base-url <url>  Public docs base URL (default: https://docs.sima-neat.com)
+  --site-base-url <url>  Public docs base URL (default: https://developer.sima.ai)
   --batch-size <n>       Upload batch size (default: 500)
   --max-record-bytes <n> Max per-record payload size in bytes (default: 9500)
   --clear                Clear target index before upload
@@ -164,8 +164,8 @@ def doc_url(path: Path) -> str:
         stem = ""
 
     # Canonical tutorials route mapping:
-    # docs/tutorials/tutorial_v2_007_session_patterns.mdx
-    # -> /tutorials/v2/007-session-patterns
+    # docs/tutorials/tutorial_v2_007_graph_patterns.mdx
+    # -> /tutorials/v2/007-graph-patterns
     m = re.match(r"^tutorials/tutorial_v(\d+)_(\d+)_(.+)$", stem)
     if m:
         major, chapter, slug = m.groups()

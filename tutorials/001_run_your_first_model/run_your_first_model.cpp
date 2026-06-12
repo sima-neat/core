@@ -1,7 +1,7 @@
 // Run a ResNet-50 model on an image in three lines of Neat.
 //
 // Usage:
-//   tutorial_001_run_your_first_model --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg]
+//   tutorial_001_run_your_first_model --model /path/to/resnet_50.tar.gz [--image /path/to.jpg]
 
 #include "neat.h"
 
@@ -45,19 +45,19 @@ cv::Mat load_rgb(const fs::path& image_path, int size) {
 
 simaai::neat::Model::Options build_options(int size) {
   simaai::neat::Model::Options opt;
-  opt.format = "RGB";
-  opt.input_max_width = size;
-  opt.input_max_height = size;
-  opt.input_max_depth = 3;
-  opt.preproc.channel_mean = {0.485f, 0.456f, 0.406f};
-  opt.preproc.channel_stddev = {0.229f, 0.224f, 0.225f};
+  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+  opt.preprocess.input_max_width = size;
+  opt.preprocess.input_max_height = size;
+  opt.preprocess.input_max_depth = 3;
+  opt.preprocess.normalize.mean = {0.485f, 0.456f, 0.406f};
+  opt.preprocess.normalize.stddev = {0.229f, 0.224f, 0.225f};
   return opt;
 }
 
-int top1_from_output(const simaai::neat::Sample& out) {
-  if (!out.tensor.has_value())
+int top1_from_output(const simaai::neat::TensorList& out) {
+  if (out.empty())
     throw std::runtime_error("no tensor output");
-  const simaai::neat::Mapping m = out.tensor->map_read();
+  const simaai::neat::Mapping m = out.front().map_read();
   const size_t n = m.size_bytes / sizeof(float);
   const float* p = reinterpret_cast<const float*>(m.data);
   int best = 0;
@@ -72,9 +72,9 @@ int top1_from_output(const simaai::neat::Sample& out) {
 
 int main(int argc, char** argv) {
   try {
-    std::string mpk, image;
-    if (!get_arg(argc, argv, "--mpk", mpk)) {
-      std::cerr << "Usage: tutorial_001_run_your_first_model --mpk <path> [--image <path>]\n";
+    std::string model_path, image;
+    if (!get_arg(argc, argv, "--model", model_path)) {
+      std::cerr << "Usage: tutorial_001_run_your_first_model --model <path> [--image <path>]\n";
       return 1;
     }
     get_arg(argc, argv, "--image", image);
@@ -83,13 +83,19 @@ int main(int argc, char** argv) {
 
     // CORE LOGIC
     // The three-line Neat story:
-    simaai::neat::Model model(mpk, build_options(size));
+    // STEP load-model
+    simaai::neat::Model model(model_path, build_options(size));
+    // END STEP
+    // STEP prepare-input
     cv::Mat input = image.empty() ? cv::Mat(size, size, CV_8UC3, cv::Scalar(99, 99, 99))
                                   : load_rgb(image, size);
-    simaai::neat::Sample sample = model.run(input, /*timeout_ms=*/2000);
+    // END STEP
+    // STEP run-inference
+    simaai::neat::TensorList outputs = model.run(std::vector<cv::Mat>{input}, /*timeout_ms=*/2000);
+    // END STEP
     // END CORE LOGIC
 
-    std::cout << "top1=" << top1_from_output(sample) << "\n";
+    std::cout << "top1=" << top1_from_output(outputs) << "\n";
     std::cout << "[OK] 001_run_your_first_model\n";
     return 0;
   } catch (const std::exception& e) {

@@ -1,5 +1,5 @@
 #include "graph/Graph.h"
-#include "graph/GraphSession.h"
+#include "graph/GraphBuild.h"
 #include "graph/StageExecutor.h"
 #include "graph/nodes/FanOut.h"
 #include "graph/nodes/StageNode.h"
@@ -70,25 +70,25 @@ int main() {
     graph.connect(fan, sink_left, "left", "in");
     graph.connect(fan, sink_right, "right", "in");
 
-    GraphSession session(std::move(graph));
-
     GraphRunOptions run_opt;
     run_opt.edge_queue = 128;
     run_opt.pull_timeout_ms = 5000;
 
     const auto startup_t0 = sima_perf::Clock::now();
-    GraphRun run = session.build(run_opt);
+    GraphRun run = simaai::neat::graph::build(std::move(graph), run_opt);
     const auto startup_t1 = sima_perf::Clock::now();
 
     std::vector<sima_perf::Clock::time_point> push_timestamps(static_cast<std::size_t>(iterations),
                                                               sima_perf::Clock::now());
 
+    simaai::neat::PowerMonitor power_monitor(sima_perf::power_options_from_env());
+    power_monitor.start();
     const auto run_t0 = sima_perf::Clock::now();
     for (int i = 0; i < iterations; ++i) {
       push_timestamps[static_cast<std::size_t>(i)] = sima_perf::Clock::now();
       const simaai::neat::Sample input =
           make_sample(static_cast<int64_t>(i), static_cast<uint8_t>(0x30 + (i % 64)));
-      if (!run.push(fan, input)) {
+      if (!run.push(fan, simaai::neat::Sample{input})) {
         throw std::runtime_error("graph fanout push failed");
       }
     }
@@ -114,6 +114,7 @@ int main() {
       outputs += 2;
     }
     const auto run_t1 = sima_perf::Clock::now();
+    power_monitor.stop();
 
     run.stop();
 
@@ -125,7 +126,9 @@ int main() {
     metrics.startup = sima_perf::elapsed_ms(startup_t0, startup_t1);
     metrics.rss_peak_kb = sima_perf::rss_peak_kb();
 
-    sima_perf::emit_metrics_json("runtime_graph_fanout", iterations, metrics, "graph_fanout");
+    const auto power_summary = power_monitor.summary();
+    sima_perf::emit_metrics_json("runtime_graph_fanout", iterations, metrics, "graph_fanout",
+                                 &power_summary);
     return 0;
   } catch (const std::exception& e) {
     std::cerr << "perf_runtime_graph_fanout_test exception: " << e.what() << "\n";

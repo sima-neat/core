@@ -7,13 +7,13 @@
 int main() {
   try {
     const std::string err = "GST ERROR: Unable to connect to the server from dispatcher";
-    simaai::neat::SessionReport rep;
+    simaai::neat::GraphReport rep;
     if (simaai::neat::pipeline_internal::match_dispatcher_unavailable(err)) {
       rep.error_code = simaai::neat::pipeline_internal::kDispatcherUnavailableError;
     }
 
     bool called = false;
-    auto cb = [&](const simaai::neat::SessionReport&) { called = true; };
+    auto cb = [&](const simaai::neat::GraphReport&) { called = true; };
     if (simaai::neat::pipeline_internal::is_dispatcher_unavailable(rep)) {
       cb(rep);
     }

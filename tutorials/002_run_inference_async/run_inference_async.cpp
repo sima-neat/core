@@ -1,7 +1,8 @@
 // Async push/pull: producer thread pushes frames, main thread pulls outputs.
 //
 // Usage:
-//   tutorial_002_run_inference_async --mpk /path/to/resnet_50.tar.gz [--image /path/to.jpg] [--n 4]
+//   tutorial_002_run_inference_async --model /path/to/resnet_50.tar.gz [--image /path/to.jpg] [--n
+//   4]
 
 #include "neat.h"
 
@@ -56,19 +57,19 @@ cv::Mat load_rgb(const fs::path& image_path, int size) {
 
 simaai::neat::Model::Options build_options(int size) {
   simaai::neat::Model::Options opt;
-  opt.format = "RGB";
-  opt.input_max_width = size;
-  opt.input_max_height = size;
-  opt.input_max_depth = 3;
-  opt.preproc.channel_mean = {0.485f, 0.456f, 0.406f};
-  opt.preproc.channel_stddev = {0.229f, 0.224f, 0.225f};
+  opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::RGB;
+  opt.preprocess.input_max_width = size;
+  opt.preprocess.input_max_height = size;
+  opt.preprocess.input_max_depth = 3;
+  opt.preprocess.normalize.mean = {0.485f, 0.456f, 0.406f};
+  opt.preprocess.normalize.stddev = {0.229f, 0.224f, 0.225f};
   return opt;
 }
 
 int top1_from_output(const simaai::neat::Sample& out) {
-  if (!out.tensor.has_value())
+  if (simaai::neat::tensors_from_sample(out, true).empty())
     throw std::runtime_error("no tensor output");
-  const simaai::neat::Mapping m = out.tensor->map_read();
+  const simaai::neat::Mapping m = simaai::neat::tensors_from_sample(out, true).front().map_read();
   const size_t n = m.size_bytes / sizeof(float);
   const float* p = reinterpret_cast<const float*>(m.data);
   int best = 0;
@@ -83,10 +84,10 @@ int top1_from_output(const simaai::neat::Sample& out) {
 
 int main(int argc, char** argv) {
   try {
-    std::string mpk, image;
-    if (!get_arg(argc, argv, "--mpk", mpk)) {
+    std::string model_path, image;
+    if (!get_arg(argc, argv, "--model", model_path)) {
       std::cerr
-          << "Usage: tutorial_002_run_inference_async --mpk <path> [--image <path>] [--n <n>]\n";
+          << "Usage: tutorial_002_run_inference_async --model <path> [--image <path>] [--n <n>]\n";
       return 1;
     }
     get_arg(argc, argv, "--image", image);
@@ -98,26 +99,36 @@ int main(int argc, char** argv) {
     std::vector<cv::Mat> frames(n, frame);
 
     // CORE LOGIC
-    // Build a Session around the model and run it async: one producer thread pushes,
+    // Build a Graph around the model and run it async: one producer thread pushes,
     // the main thread pulls outputs.
-    simaai::neat::Model model(mpk, build_options(size));
+    // STEP load-model
+    simaai::neat::Model model(model_path, build_options(size));
+    simaai::neat::Model::RouteOptions route_opt;
+    route_opt.include_input = true;
+    route_opt.include_output = true;
+    // END STEP
 
-    simaai::neat::Session session;
-    session.add(model.session());
+    // STEP build-async
+    simaai::neat::Graph graph;
+    graph.add(model.graph(route_opt));
 
-    auto run = session.build(frames.front(), simaai::neat::RunMode::Async);
+    auto run = graph.build(std::vector<cv::Mat>{frames.front()});
+    // END STEP
 
+    // STEP push-frames
     std::atomic<int> pushed{0};
     std::atomic<bool> producer_done{false};
     std::thread producer([&]() {
       for (const cv::Mat& f : frames) {
-        run.push(f);
+        run.push(std::vector<cv::Mat>{f});
         pushed.fetch_add(1, std::memory_order_relaxed);
       }
       run.close_input();
       producer_done.store(true);
     });
+    // END STEP
 
+    // STEP pull-results
     int pulled = 0;
     while (pulled < n) {
       auto out = run.pull(/*timeout_ms=*/2000);
@@ -130,6 +141,7 @@ int main(int argc, char** argv) {
       ++pulled;
     }
     producer.join();
+    // END STEP
     // END CORE LOGIC
 
     std::cout << "pushed=" << pushed.load() << " pulled=" << pulled << "\n";

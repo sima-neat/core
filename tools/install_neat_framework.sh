@@ -24,7 +24,10 @@ set -euo pipefail
 # - Directory containing:
 #   - one .whl file
 #   - sima-neat-*-Linux-core.deb
-#   - neat-*.deb runtime dependencies
+#   - neat-*.deb / simaai-common*.deb runtime dependencies
+#   - appcomplex_*.deb legacy runtime dependency packages when present
+#   - sima-lmm-*-Linux-core.deb / sima-lmm-*-Linux-cli.deb / sima-lmm-*-Linux-dev.deb
+#   - neat-install-manifest.txt when installed from a packaged release
 #
 # Environment overrides:
 # - PYNEAT_VENV_DIR: Python virtualenv path
@@ -35,21 +38,42 @@ set -euo pipefail
 # - DEVKIT_DEPLOY_USER: DevKit SSH user (default: sima)
 # - DEVKIT_SYNC_REQUIRED: ON/OFF (default: ON) fail hard if paired DevKit sync fails
 # - NEAT_INSTALLER_SKIP_DEVKIT_SYNC: ON/OFF (default: OFF) skip SDK->DevKit sync
+# - NEAT_INSTALL_MANIFEST: install manifest filename (default: neat-install-manifest.txt)
 # - CODEX_HOME: optional Codex home override for skill install target
 # - CLAUDE_HOME: optional Claude home override for skill install target
 # - NEAT_INSTALLER_INSTALL_CODEX_SKILL: ON/OFF (default: ON)
 # - NEAT_INSTALLER_INSTALL_CLAUDE_SKILL: ON/OFF (default: ON)
+# - NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP: ON/OFF (default: ON) relax selected
+#   exact simaai-memory-lib dependencies to the matching minor-version family
+#   when the board carries the SDK's git-suffixed compatible memory package.
+# - NEAT_INSTALLER_ALLOW_DPKG_FALLBACK: ON/OFF (default: OFF) allow direct
+#   dpkg fallback after apt-get has had a chance to resolve dependencies.
+# - NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD: ON/OFF (default: ON) activate
+#   staged EV74 firmware and reset runtime state after board package replacement.
 
 SUDO_PASSWORD="${SUDO_PASSWORD:-${DEVKIT_PASSWORD:-}}"
 DEFAULT_SUDO_PASSWORD="${DEFAULT_SUDO_PASSWORD:-edgeai}"
 DEVKIT_DEPLOY_USER="${DEVKIT_DEPLOY_USER:-sima}"
 DEVKIT_SYNC_REQUIRED="${DEVKIT_SYNC_REQUIRED:-ON}"
 NEAT_INSTALLER_SKIP_DEVKIT_SYNC="${NEAT_INSTALLER_SKIP_DEVKIT_SYNC:-OFF}"
+NEAT_INSTALL_MANIFEST="${NEAT_INSTALL_MANIFEST:-neat-install-manifest.txt}"
 NEAT_INSTALLER_INSTALL_CODEX_SKILL="${NEAT_INSTALLER_INSTALL_CODEX_SKILL:-ON}"
 NEAT_INSTALLER_INSTALL_CLAUDE_SKILL="${NEAT_INSTALLER_INSTALL_CLAUDE_SKILL:-ON}"
+NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP="${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP:-ON}"
+NEAT_INSTALLER_ALLOW_DPKG_FALLBACK="${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK:-OFF}"
+NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD="${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD:-ON}"
 INSTALLER_SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")"
 GREEN=$'\033[0;32m'
 RESET=$'\033[0m'
+INSTALLER_TMP_DIRS=()
+
+cleanup_installer_tmp_dirs() {
+  local dir
+  for dir in "${INSTALLER_TMP_DIRS[@]}"; do
+    [[ -n "${dir}" && -d "${dir}" ]] && rm -rf "${dir}"
+  done
+}
+trap cleanup_installer_tmp_dirs EXIT
 
 usage() {
   cat <<'EOF'
@@ -161,7 +185,7 @@ activation_path_for_display() {
 run_sudo() {
   if sudo -n true >/dev/null 2>&1; then
     sudo "$@"
-    return 0
+    return $?
   fi
 
   local pw="${SUDO_PASSWORD}"
@@ -171,7 +195,7 @@ run_sudo() {
 
   if printf '%s\n' "${pw}" | sudo -S -v >/dev/null 2>&1; then
     printf '%s\n' "${pw}" | sudo -S "$@"
-    return 0
+    return $?
   fi
 
   if [[ -t 0 ]]; then
@@ -183,7 +207,7 @@ run_sudo() {
     fi
     printf '%s\n' "${pw}" | sudo -S -v >/dev/null
     printf '%s\n' "${pw}" | sudo -S "$@"
-    return 0
+    return $?
   fi
 
   echo "Unable to authenticate sudo. Set SUDO_PASSWORD or DEVKIT_PASSWORD." >&2
@@ -265,12 +289,188 @@ install_agent_skills_for_current_user() {
   fi
 }
 
+append_matching_files() {
+  local out_array_name="$1"
+  local search_dir="$2"
+  local pattern="$3"
+  local -n out_array="${out_array_name}"
+  local -a matches=()
+  local manifest_path="${search_dir}/${NEAT_INSTALL_MANIFEST}"
+
+  if [[ -f "${manifest_path}" ]]; then
+    local line basename file
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      line="${line%%#*}"
+      line="${line%$'\r'}"
+      [[ -n "${line}" ]] || continue
+      basename="$(basename "${line}")"
+      [[ "${basename}" == ${pattern} ]] || continue
+      file="${search_dir}/${basename}"
+      if [[ ! -f "${file}" ]]; then
+        echo "Install manifest references missing file: ${basename}" >&2
+        exit 1
+      fi
+      matches+=("${file}")
+    done < "${manifest_path}"
+  else
+    mapfile -t matches < <(find "${search_dir}" -maxdepth 1 -type f -name "${pattern}" | sort)
+  fi
+
+  out_array+=("${matches[@]}")
+}
+
+collect_wheel_files() {
+  local search_dir="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+  local manifest_path="${search_dir}/${NEAT_INSTALL_MANIFEST}"
+  out_array=()
+
+  if [[ -f "${manifest_path}" ]]; then
+    local line basename file
+    while IFS= read -r line || [[ -n "${line}" ]]; do
+      line="${line%%#*}"
+      line="${line%$'\r'}"
+      [[ -n "${line}" ]] || continue
+      basename="$(basename "${line}")"
+      [[ "${basename}" == *.whl ]] || continue
+      file="${search_dir}/${basename}"
+      if [[ ! -f "${file}" ]]; then
+        echo "Install manifest references missing file: ${basename}" >&2
+        exit 1
+      fi
+      out_array+=("${file}")
+    done < "${manifest_path}"
+  else
+    mapfile -t out_array < <(find "${search_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
+  fi
+}
+
+collect_debs_in_install_order() {
+  local search_dir="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+  out_array=()
+
+  # Install low-level runtime packages first, then LLiMa, then NEAT core.
+  append_matching_files "${out_array_name}" "${search_dir}" 'simaai-common*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-common_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-appcomplex_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'appcomplex_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-ev74-firmware_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-runtime_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-gst-plugins_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'neat-internals-dev_*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'sima-lmm-*.deb'
+  append_matching_files "${out_array_name}" "${search_dir}" 'sima-neat-*-Linux-core.deb'
+}
+
 sysroot_path() {
   printf '%s\n' "${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 }
 
 sysroot_neat_install_packages_dir() {
   printf '%s\n' "$(sysroot_path)/neat-install-packages"
+}
+
+has_sima_lmm_sysroot_deps() {
+  local sysroot="$1"
+  [[ -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" &&
+     -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" &&
+     -f "${sysroot}/usr/include/fmt/core.h" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" &&
+     -f "${sysroot}/usr/include/spdlog/spdlog.h" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" &&
+     -f "${sysroot}/usr/include/nlohmann/json.hpp" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" &&
+     -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" &&
+     -f "${sysroot}/usr/include/httplib.h" &&
+     -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]
+}
+
+ensure_sima_lmm_sysroot_deps() {
+  local sysroot="$1"
+
+  if ! compgen -G './sima-lmm-*.deb' >/dev/null 2>&1; then
+    return 0
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get is required to install SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local -a missing_packages=()
+  if [[ ! -f "${sysroot}/usr/include/eigen3/unsupported/Eigen/CXX11/Tensor" ||
+        ! -f "${sysroot}/usr/share/eigen3/cmake/Eigen3Config.cmake" ]]; then
+    missing_packages+=("libeigen3-dev")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/fmt/core.h" ]]; then
+    missing_packages+=("libfmt-dev:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libfmt.so.9.1.0" ]]; then
+    missing_packages+=("libfmt9:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/spdlog/spdlog.h" ]]; then
+    missing_packages+=("libspdlog-dev:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/libspdlog.so.1.10.0" ]]; then
+    missing_packages+=("libspdlog1.10:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/nlohmann/json.hpp" ]]; then
+    missing_packages+=("nlohmann-json3-dev")
+  fi
+  if [[ ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlicommon.pc" ||
+        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlidec.pc" ||
+        ! -f "${sysroot}/usr/lib/aarch64-linux-gnu/pkgconfig/libbrotlienc.pc" ]]; then
+    missing_packages+=("libbrotli-dev:arm64")
+  fi
+  if [[ ! -f "${sysroot}/usr/include/httplib.h" ]]; then
+    missing_packages+=("libcpp-httplib-dev:arm64")
+  fi
+  if [[ ! -e "${sysroot}/usr/lib/aarch64-linux-gnu/libcpp-httplib.so.0.11" ]]; then
+    missing_packages+=("libcpp-httplib0.11:arm64")
+  fi
+
+  if [[ "${#missing_packages[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  local tmp_dir
+  tmp_dir="$(mktemp -d /tmp/sima-lmm-sysroot-deps-XXXXXX)"
+
+  log "Installing SimaLMM SDK/sysroot dependencies:"
+  printf '  %s\n' "${missing_packages[@]}"
+  if ! (
+    cd "${tmp_dir}"
+    apt-get download "${missing_packages[@]}"
+  ); then
+    rm -rf "${tmp_dir}"
+    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local -a downloaded_debs=()
+  mapfile -t downloaded_debs < <(find "${tmp_dir}" -maxdepth 1 -type f -name '*.deb' | sort)
+  if [[ "${#downloaded_debs[@]}" -lt 1 ]]; then
+    rm -rf "${tmp_dir}"
+    echo "Failed to download SimaLMM SDK/sysroot dependencies." >&2
+    exit 1
+  fi
+
+  local dep_deb
+  for dep_deb in "${downloaded_debs[@]}"; do
+    log "Extracting $(basename "${dep_deb}") into ${sysroot}"
+    if ! dpkg-deb -x "${dep_deb}" "${sysroot}" 2>/dev/null; then
+      run_sudo dpkg-deb -x "${dep_deb}" "${sysroot}"
+    fi
+  done
+  rm -rf "${tmp_dir}"
+
+  if ! has_sima_lmm_sysroot_deps "${sysroot}"; then
+    echo "SimaLMM SDK/sysroot dependencies are still incomplete after install." >&2
+    exit 1
+  fi
 }
 
 ensure_sdk_neat_cli_symlink() {
@@ -301,7 +501,13 @@ cache_install_artifacts_in_sysroot() {
   run_sudo rm -f \
     "${cache_dir}"/sima-neat-*-Linux-core.deb \
     "${cache_dir}"/neat-*.deb \
+    "${cache_dir}"/simaai-common*.deb \
+    "${cache_dir}"/neat-common_*.deb \
+    "${cache_dir}"/neat-appcomplex_*.deb \
+    "${cache_dir}"/appcomplex_*.deb \
+    "${cache_dir}"/sima-lmm-*.deb \
     "${cache_dir}"/*.whl \
+    "${cache_dir}/${NEAT_INSTALL_MANIFEST}" \
     "${cache_dir}"/install_neat_framework.sh
 
   local file
@@ -310,11 +516,14 @@ cache_install_artifacts_in_sysroot() {
   done
 
   local -a wheel_files=()
-  mapfile -t wheel_files < <(find . -maxdepth 1 -type f -name '*.whl' | sort)
+  collect_wheel_files "." wheel_files
   for file in "${wheel_files[@]}"; do
     run_sudo cp -f "${file}" "${cache_dir}/"
   done
 
+  if [[ -f "./${NEAT_INSTALL_MANIFEST}" ]]; then
+    run_sudo cp -f "./${NEAT_INSTALL_MANIFEST}" "${cache_dir}/"
+  fi
   run_sudo cp -f "${INSTALLER_SCRIPT_PATH}" "${cache_dir}/install_neat_framework.sh"
   run_sudo chmod 0755 "${cache_dir}/install_neat_framework.sh"
 }
@@ -334,9 +543,10 @@ collect_cached_devkit_deploy_files() {
 
   local -a cached_core_debs=()
   mapfile -t cached_core_debs < <(find "${cache_dir}" -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
-  mapfile -t CACHED_DEBS < <(find "${cache_dir}" -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
-  mapfile -t CACHED_WHEELS < <(find "${cache_dir}" -maxdepth 1 -type f -name '*.whl' | sort)
+  collect_debs_in_install_order "${cache_dir}" CACHED_DEBS
+  collect_wheel_files "${cache_dir}" CACHED_WHEELS
   local cached_installer="${cache_dir}/install_neat_framework.sh"
+  local cached_manifest="${cache_dir}/${NEAT_INSTALL_MANIFEST}"
 
   if [[ "${#cached_core_debs[@]}" -lt 1 ]]; then
     echo "No cached sima-neat core DEB found for paired DevKit sync in: ${cache_dir}" >&2
@@ -355,12 +565,336 @@ collect_cached_devkit_deploy_files() {
     exit 1
   fi
 
-  CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}" "${cached_installer}")
+  CACHED_DEPLOY_FILES=("${CACHED_DEBS[@]}" "${CACHED_WHEELS[@]}")
+  if [[ -f "${cached_manifest}" ]]; then
+    CACHED_DEPLOY_FILES+=("${cached_manifest}")
+  fi
+  CACHED_DEPLOY_FILES+=("${cached_installer}")
+}
+
+apt_package_database_is_healthy() {
+  local apt_check_log
+  apt_check_log="$(mktemp /tmp/sima-neat-apt-check-XXXXXX)"
+
+  if run_sudo apt-get check >"${apt_check_log}" 2>&1; then
+    rm -f "${apt_check_log}"
+    return 0
+  fi
+
+  rm -f "${apt_check_log}"
+  return 1
+}
+
+remove_installed_local_deb_packages() {
+  if ! command -v dpkg-deb >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local -a packages=()
+  local -A seen=()
+  local deb package idx
+
+  # Remove in reverse install order so packages that depend on lower-level
+  # runtime packages are removed before their dependencies.
+  for ((idx = ${#DEBS[@]} - 1; idx >= 0; idx--)); do
+    deb="${DEBS[$idx]}"
+    package="$(dpkg-deb -f "${deb}" Package 2>/dev/null || true)"
+    [[ -n "${package}" ]] || continue
+    [[ -z "${seen[${package}]:-}" ]] || continue
+    seen["${package}"]=1
+    if dpkg-query -W -f='${db:Status-Abbrev}' "${package}" 2>/dev/null | grep -q '^i'; then
+      packages+=("${package}")
+    fi
+  done
+
+  if [[ "${#packages[@]}" -eq 0 ]]; then
+    return 0
+  fi
+
+  log "Removing installed NEAT packages before retrying apt downgrade/repair:"
+  printf '  %s\n' "${packages[@]}"
+  if run_sudo apt-get remove -y "${packages[@]}"; then
+    return 0
+  fi
+
+  log "apt-get remove failed; falling back to forced dpkg removal before apt repair."
+  run_sudo dpkg --remove --force-depends "${packages[@]}"
+}
+
+maybe_relax_simaai_memory_dep() {
+  local deb="$1"
+  local out_array_name="$2"
+  local -n out_array="${out_array_name}"
+
+  if [[ "${NEAT_INSTALLER_RELAX_SIMAAI_MEMORY_DEP}" != "ON" ]]; then
+    out_array+=("${deb}")
+    return 0
+  fi
+  case "$(basename "${deb}")" in
+    sima-lmm-*-Linux-core.deb | neat-appcomplex_*.deb | appcomplex_*.deb) ;;
+    *)
+      out_array+=("${deb}")
+      return 0
+      ;;
+  esac
+  if ! command -v dpkg-deb >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+    out_array+=("${deb}")
+    return 0
+  fi
+
+  local installed_memory_version
+  installed_memory_version="$(dpkg-query -W -f='${Version}' simaai-memory-lib 2>/dev/null || true)"
+  if [[ -z "${installed_memory_version}" ]]; then
+    out_array+=("${deb}")
+    return 0
+  fi
+
+  local tmp_dir unpack_dir out_deb changed_marker
+  tmp_dir="$(mktemp -d /tmp/sima-neat-deb-normalize-XXXXXX)"
+  INSTALLER_TMP_DIRS+=("${tmp_dir}")
+  unpack_dir="${tmp_dir}/unpack"
+  out_deb="${tmp_dir}/$(basename "${deb}")"
+  changed_marker="${tmp_dir}/changed"
+
+  dpkg-deb -R "${deb}" "${unpack_dir}"
+  if python3 - "${unpack_dir}/DEBIAN/control" "${installed_memory_version}" "${changed_marker}" <<'PY'
+import re
+import sys
+from pathlib import Path
+
+control = Path(sys.argv[1])
+installed = sys.argv[2]
+changed_marker = Path(sys.argv[3])
+text = control.read_text()
+
+# Some SDK/DevKit images ship simaai-memory-lib as a git-suffixed build such as
+# 2.0.0~git..., while selected runtime DEBs can depend on the unsuffixed exact
+# version 2.0.0. Debian treats 2.0.0~git as lower than 2.0.0, so the exact
+# dependency makes otherwise compatible boards uninstallable. Only relax this
+# dependency when the installed version is the matching git-suffixed build, and
+# cap the relaxed range to the same minor-version family.
+def next_minor_bound(version: str):
+    match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)(?:[.+~-].*)?$", version)
+    if not match:
+        match = re.match(r"(?:(\d+):)?(\d+)\.(\d+)\.\d+(?:[.+~-].*)?$", version)
+    if not match:
+        return None
+    epoch, major, minor = match.groups()
+    prefix = f"{epoch}:" if epoch else ""
+    return f"{prefix}{major}.{int(minor) + 1}~"
+
+def repl(match: re.Match[str]) -> str:
+    required = match.group(1).strip()
+    if installed == required or installed.startswith(required + "~"):
+        upper = next_minor_bound(required)
+        if upper is None:
+            return match.group(0)
+        changed_marker.write_text("1")
+        return f"simaai-memory-lib (>= {required}~), simaai-memory-lib (<< {upper})"
+    return match.group(0)
+
+new_text = re.sub(r"simaai-memory-lib\s*\(=\s*([^)]+)\)", repl, text)
+if new_text != text:
+    control.write_text(new_text)
+PY
+  then
+    if [[ -f "${changed_marker}" ]]; then
+      log "Relaxed $(basename "${deb}") dependency on simaai-memory-lib for installed version ${installed_memory_version}"
+      dpkg-deb -b "${unpack_dir}" "${out_deb}" >/dev/null
+      out_array+=("${out_deb}")
+      return 0
+    fi
+  fi
+
+  out_array+=("${deb}")
+}
+
+prepare_debs_for_board_install() {
+  local -a prepared=()
+  local deb
+  for deb in "${DEBS[@]}"; do
+    maybe_relax_simaai_memory_dep "${deb}" prepared
+  done
+  DEBS=("${prepared[@]}")
+}
+
+stop_board_runtime_before_install() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Stopping NEAT runtime services before package replacement."
+  local svc
+  for svc in \
+      simaai-pipeline-manager.service \
+      simaai-appcomplex.service \
+      rctd.service \
+      simaai-log.service; do
+    if systemctl cat "${svc}" >/dev/null 2>&1; then
+      run_sudo systemctl stop "${svc}" >/dev/null 2>&1 || true
+      run_sudo systemctl reset-failed "${svc}" >/dev/null 2>&1 || true
+    fi
+  done
+
+  if [[ -x /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex ]]; then
+    run_sudo /usr/libexec/simaai-appcomplex/clean-stale-mlashmcomplex || true
+  else
+    run_sudo pkill -TERM -x mlashmcomplex >/dev/null 2>&1 || true
+    sleep 0.5
+    run_sudo pkill -KILL -x mlashmcomplex >/dev/null 2>&1 || true
+  fi
+
+  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
+}
+
+activate_board_runtime_after_install() {
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  # These files are recreated by simaai-appcomplex.service.  Remove stale IPC
+  # before the post-install MLA init/reset path so clients cannot observe an
+  # old dispatcher lifetime after package replacement.
+  run_sudo rm -f /tmp/mlactrl /dev/shm/mlashmdata
+  # Package configuration intentionally does not restart services.  Reload
+  # systemd here so the owned maintenance window starts services from the unit
+  # files that were just unpacked.
+  run_sudo systemctl daemon-reload || true
+
+  if [[ "${NEAT_INSTALLER_ACTIVATE_FIRMWARE_ON_BOARD}" == "ON" &&
+        -x /usr/libexec/sima-neat-firmware/install.sh ]]; then
+    log "Activating staged EV74 firmware and resetting runtime state."
+    run_sudo /usr/libexec/sima-neat-firmware/install.sh --activate
+  else
+    log "EV74 firmware activation skipped; starting simaai-appcomplex.service directly."
+    if systemctl cat simaai-appcomplex.service >/dev/null 2>&1; then
+      run_sudo systemctl restart simaai-appcomplex.service || true
+    fi
+  fi
+}
+
+verify_board_runtime_services() {
+  local service="simaai-appcomplex.service"
+
+  if ! command -v systemctl >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! systemctl list-unit-files "${service}" --no-legend 2>/dev/null | grep -q "^${service}[[:space:]]"; then
+    return 0
+  fi
+
+  # The Debian maintainer script is intentionally generated through debhelper,
+  # and deb-systemd-invoke treats service start failures as non-fatal so package
+  # transactions can still complete.  For this installer the runtime is not
+  # usable without the MLA shared-memory dispatcher, so make readiness explicit:
+  # try one start/restart if the unit is inactive, then fail with the unit status
+  # instead of leaving users with later "Connecting to server failed" errors.
+  if ! systemctl is-active --quiet "${service}"; then
+    log "${service} is not active after package install; attempting to start it once."
+    run_sudo systemctl start "${service}" || true
+    sleep 1
+  fi
+
+  if ! systemctl is-active --quiet "${service}"; then
+    echo "${service} is not active after NEAT package installation." >&2
+    run_sudo systemctl --no-pager --full status "${service}" >&2 || true
+    run_sudo journalctl -u "${service}" --no-pager -n 80 >&2 || true
+    run_sudo bash -c 'for f in /sys/class/remoteproc/remoteproc*/name /sys/class/remoteproc/remoteproc*/state; do [ -e "$f" ] && printf "%s: " "$f" && cat "$f"; done' >&2 || true
+    exit 1
+  fi
+
+  log "Verified ${service} is active."
+}
+
+repair_stale_global_dispatcher_lib() {
+  local global_lib="/usr/lib/aarch64-linux-gnu/libneatdispatchercore.so"
+  local runtime_lib="/usr/lib/aarch64-linux-gnu/neat/runtime/libneatdispatchercore.so"
+
+  if [[ ! -e "${runtime_lib}" ]]; then
+    log "Dispatcher lib repair skipped; runtime lib not found at ${runtime_lib}"
+    return 0
+  fi
+
+  if [[ -L "${global_lib}" && "$(readlink -f "${global_lib}")" == "${runtime_lib}" ]]; then
+    log "Dispatcher lib repair skipped; ${global_lib} already points at the packaged runtime lib."
+    return 0
+  fi
+
+  if [[ -e "${global_lib}" ]]; then
+    if dpkg-query -S "${global_lib}" >/dev/null 2>&1; then
+      log "Dispatcher lib repair skipped; ${global_lib} is package-owned."
+      return 0
+    fi
+
+    local backup="${global_lib}.bak-neat-installer-$(date -u +%Y%m%dT%H%M%SZ)"
+    log "Quarantining stale unowned dispatcher lib ${global_lib} -> ${backup}"
+    run_sudo mv -f "${global_lib}" "${backup}"
+  fi
+
+  if [[ ! -e "${global_lib}" ]]; then
+    log "Linking ${global_lib} to packaged runtime lib ${runtime_lib}"
+    run_sudo ln -s "${runtime_lib}" "${global_lib}"
+  fi
 }
 
 install_debs_on_board() {
+  prepare_debs_for_board_install
   log "Detected Modalix board environment; installing DEBs with apt."
-  run_sudo apt install -y --allow-downgrades "${DEBS[@]}"
+  printf '[install_neat_framework] DEB install set:\n'
+  printf '  %s\n' "${DEBS[@]}"
+  stop_board_runtime_before_install
+
+  # Prefer apt-get for normal installs so system dependencies can be resolved.
+  # Some CI/self-hosted DevKit runners can be left in a transiently broken
+  # exact-version state after a previous partial NEAT install, e.g.
+  # neat-gst-plugins(main) depending on neat-runtime(main) while
+  # neat-runtime(beta) is already unpacked.  Still try apt first even when
+  # `apt-get check` is already unhappy: passing the local DEB set gives apt the
+  # replacement packages it needs to repair the transaction and fetch normal
+  # Debian dependencies.  Direct dpkg is only a last resort because it cannot
+  # fetch missing dependencies and can leave CI boards half-configured.
+  if ! apt_package_database_is_healthy; then
+    log "apt package database has unresolved dependencies; attempting apt repair with the local NEAT DEB set."
+  fi
+  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    repair_stale_global_dispatcher_lib
+    activate_board_runtime_after_install
+    verify_board_runtime_services
+    return 0
+  fi
+
+  log "apt-get install failed; removing installed NEAT packages represented by the local DEB set and retrying apt."
+  remove_installed_local_deb_packages
+  if run_sudo apt-get install -y --fix-broken --allow-downgrades --reinstall -o Dpkg::Options::=--force-overwrite "${DEBS[@]}"; then
+    repair_stale_global_dispatcher_lib
+    activate_board_runtime_after_install
+    verify_board_runtime_services
+    return 0
+  fi
+
+  if [[ "${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}" != "ON" ]]; then
+    echo "apt-get install failed and NEAT_INSTALLER_ALLOW_DPKG_FALLBACK=${NEAT_INSTALLER_ALLOW_DPKG_FALLBACK}; refusing direct dpkg fallback." >&2
+    exit 1
+  else
+    log "apt-get install failed; retrying with direct dpkg install of the local NEAT DEB set."
+  fi
+
+  run_sudo dpkg -i --force-overwrite "${DEBS[@]}"
+  repair_stale_global_dispatcher_lib
+  activate_board_runtime_after_install
+  verify_board_runtime_services
+}
+
+remove_stale_global_sima_lmm_pip_install() {
+  if ! command -v pip3 >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if run_sudo pip3 show sima_lmm >/dev/null 2>&1; then
+    log "Removing stale global sima_lmm pip package before installing LLiMa DEBs."
+    run_sudo pip3 uninstall -y sima_lmm --break-system-packages
+  fi
 }
 
 install_debs_into_sysroot() {
@@ -376,6 +910,7 @@ install_debs_into_sysroot() {
   fi
 
   log "Detected eLxr SDK environment; installing DEBs into sysroot: ${sysroot}"
+  ensure_sima_lmm_sysroot_deps "${sysroot}"
   local deb
   for deb in "${DEBS[@]}"; do
     log "Extracting $(basename "${deb}") into ${sysroot}"
@@ -435,7 +970,7 @@ NEAT_INSTALLER_SKIP_DEVKIT_SYNC=ON bash \"./\${installer_name}\" --local"
 
 parse_args "$@"
 
-mapfile -t DEBS < <(find . -maxdepth 1 -type f \( -name 'sima-neat-*-Linux-core.deb' -o -name 'neat-*.deb' \) | sort)
+collect_debs_in_install_order "." DEBS
 if [[ "${#DEBS[@]}" -lt 1 ]]; then
   echo "No required DEB files found in current directory." >&2
   exit 1
@@ -451,6 +986,7 @@ if [[ "${ENV_MODE}" == "elxr-sdk" ]]; then
 else
   VENV_DIR="$(resolve_venv_dir)"
   ACTIVATE_PATH="$(activation_path_for_display "${VENV_DIR}")"
+  remove_stale_global_sima_lmm_pip_install
   log_green "Preparing Python virtual environment at ${VENV_DIR}"
   mkdir -p "$(dirname "${VENV_DIR}")"
   python3 -m venv --system-site-packages "${VENV_DIR}"
@@ -458,7 +994,9 @@ else
   print_green_banner "${VENV_DIR}" "${ACTIVATE_PATH}"
   "${VENV_DIR}/bin/python" -m pip install --upgrade pip
 
-  WHEEL_FILE="$(ls -1 ./*.whl 2>/dev/null | head -n1 || true)"
+  WHEEL_FILES=()
+  collect_wheel_files "." WHEEL_FILES
+  WHEEL_FILE="${WHEEL_FILES[0]:-}"
   if [[ -z "${WHEEL_FILE}" ]]; then
     echo "No wheel file found in current directory." >&2
     exit 1

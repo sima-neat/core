@@ -1,7 +1,7 @@
 #include "asset_utils.h"
 #include "gst/GstInit.h"
 #include "model/Model.h"
-#include "pipeline/Session.h"
+#include "pipeline/Graph.h"
 #include "nodes/common/Output.h"
 #include "nodes/groups/ImageInputGroup.h"
 #include "test_utils.h"
@@ -42,7 +42,11 @@ fs::path find_repo_root() {
 
 std::string pick_model_pack() {
   if (const char* env = std::getenv("SIMA_WATCHDOG_MODEL_PACK")) {
-    if (*env)
+    if (*env && fs::exists(env))
+      return env;
+  }
+  if (const char* env = std::getenv("SIMA_MODEL_TAR")) {
+    if (*env && fs::exists(env))
       return env;
   }
   if (file_exists("tmp/resnet_50_mpk.tar.gz"))
@@ -70,6 +74,9 @@ std::string pick_image_path() {
   }
   if (file_exists("test.jpg"))
     return "test.jpg";
+  const fs::path packaged_img = sima_test::test_image_fixture_path();
+  if (fs::exists(packaged_img))
+    return packaged_img.string();
   const fs::path root = find_repo_root();
   const fs::path root_img = root / "test.jpg";
   if (fs::exists(root_img))
@@ -106,11 +113,9 @@ cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
   }
 
   simaai::neat::Model::Options model_opt;
-  model_opt.media_type = "video/x-raw";
-  model_opt.format = "NV12";
-  model_opt.input_max_width = kInferWidth;
-  model_opt.input_max_height = kInferHeight;
-  model_opt.input_max_depth = 0;
+  model_opt.preprocess.kind = simaai::neat::InputKind::Image;
+  model_opt.preprocess.enable = simaai::neat::AutoFlag::On;
+  model_opt.preprocess.color_convert.input_format = simaai::neat::PreprocessColorFormat::NV12;
   simaai::neat::Model model(model_pack, model_opt);
 
   simaai::neat::nodes::groups::ImageInputGroupOptions src_opt;
@@ -120,7 +125,7 @@ cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
   src_opt.use_videorate = true;
   src_opt.use_videoscale = true;
   src_opt.output_caps.enable = true;
-  src_opt.output_caps.format = "NV12";
+  src_opt.output_caps.format = simaai::neat::FormatTag::NV12;
   src_opt.output_caps.width = kInferWidth;
   src_opt.output_caps.height = kInferHeight;
   src_opt.output_caps.fps = 30;
@@ -129,12 +134,12 @@ cv::Mat load_rgb_resized(const std::string& image_path, int w, int h) {
   src_opt.sima_decoder.decoder_name = "decoder";
   src_opt.sima_decoder.raw_output = true;
 
-  simaai::neat::Session p;
+  simaai::neat::Graph p;
   p.add(simaai::neat::nodes::groups::ImageInputGroup(src_opt));
-  simaai::neat::Model::SessionOptions session_opt;
-  session_opt.include_appsrc = false;
-  session_opt.include_appsink = false;
-  p.add(model.session(session_opt));
+  simaai::neat::Model::RouteOptions route_opt;
+  route_opt.include_input = false;
+  route_opt.include_output = false;
+  p.add(model.graph(route_opt));
   p.add(simaai::neat::nodes::Output());
 
   simaai::neat::RunOptions run_opt;

@@ -1,0 +1,625 @@
+name: Vulcan CI
+
+run-name: ${{ github.event.head_commit.message || github.event.pull_request.title || github.ref_name || 'Vulcan CI' }} (${{ vars.VULCAN_ENV || 'production' }})
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "*"
+  workflow_call:
+    inputs:
+      build_mode:
+        description: "Build mode: standard or fuzz"
+        required: false
+        default: "standard"
+        type: string
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Build mode: standard or fuzz"
+        required: false
+        default: "standard"
+        type: choice
+        options:
+          - standard
+          - fuzz
+
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+  packages: read
+
+concurrency:
+  group: ${{ github.repository }}-${{ github.workflow }}-${{ github.ref }}-${{ inputs.build_mode || 'standard' }}
+  cancel-in-progress: ${{ github.ref_type == 'branch' }}
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  resolve-vulcan-config:
+    name: Resolve Vulcan Config
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-config.yml@main
+    with:
+      vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
+
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Detect docs-only changeset
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docs_only=false
+          compare_base=""
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "Tag build; treating changeset as code-impacting."
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            if [[ "${GITHUB_REF_NAME}" == "develop" || "${GITHUB_REF_NAME}" == "main" ]]; then
+              before_sha="${{ github.event.before }}"
+              if [[ -n "${before_sha}" && ! "${before_sha}" =~ ^0+$ ]]; then
+                compare_base="${before_sha}"
+              fi
+            else
+              git fetch --no-tags origin develop
+              compare_base="$(git merge-base HEAD origin/develop)"
+            fi
+          fi
+
+          if [[ -n "${compare_base}" ]]; then
+            mapfile -t changed_files < <(git diff --name-only "${compare_base}" HEAD | sed '/^$/d')
+            printf 'Changed files (%s):\n' "${#changed_files[@]}"
+            printf '  %s\n' "${changed_files[@]}"
+            if [[ "${#changed_files[@]}" -gt 0 ]]; then
+              docs_only=true
+              for path in "${changed_files[@]}"; do
+                if [[ "${path}" != docs/* && "${path}" != website/* ]]; then
+                  docs_only=false
+                  break
+                fi
+              done
+            fi
+          else
+            echo "No reliable compare base found; treating changeset as code-impacting."
+          fi
+
+          echo "docs_only=${docs_only}" | tee -a "${GITHUB_OUTPUT}"
+
+  code-hygiene:
+    name: Code Hygiene
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Install sima-cli
+        run: |
+          ./scripts/ci/install_sima_cli_main.sh
+          echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
+
+      - name: Install code hygiene tools
+        run: |
+          ./scripts/ci/install_code_hygiene_deps.sh
+          ./build.sh --install-deps-only
+
+      - name: Verify host C++ headers for clang-tidy
+        run: |
+          echo '#include <memory>' | clang++ -std=c++20 -x c++ - -fsyntax-only
+          echo '#include <cstdint>' | clang++ -std=c++20 -x c++ - -fsyntax-only
+
+      - name: Run changed-code hygiene
+        env:
+          SIMANEAT_STRICT_WARNINGS: "ON"
+        run: |
+          ./scripts/ci/run_code_hygiene.sh --changed-only --format-verbose
+
+  resolve-test-runner:
+    name: Resolve Test Runner
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
+    uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
+
+  build:
+    name: Build Core on Vulcan
+    if: ${{ always() && !failure() && !cancelled() }}
+    needs:
+      - resolve-vulcan-config
+      - detect-changes
+      - code-hygiene
+    uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
+    with:
+      vulcan_env: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      sdk_cache: ${{ needs.resolve-vulcan-config.outputs.sdk_cache }}
+      capacity: ${{ needs.resolve-vulcan-config.outputs.capacity }}
+      fetch_depth: 0
+      checkout_submodules: recursive
+      ensure_sdk_container: true
+      sdk_setup_args: "-y -n --minimal --workspace /mnt/vulcan/workspace --no-model-sdk --no-insight"
+      artifact_name: neat-core-dist
+      artifact_path: dist/*
+      artifact_retention_days: 3
+      build_command: |
+        set -euo pipefail
+
+        if [[ -n "${GITHUB_WORKSPACE:-}" && -d "${GITHUB_WORKSPACE}" && "${GITHUB_WORKSPACE}" != "/" ]]; then
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          df -h
+        fi
+
+        core_build_mode="${{ inputs.build_mode || 'standard' }}"
+        neat_vulcan_env="${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"
+        echo "Resolved build mode: ${core_build_mode}"
+
+        if [[ "${core_build_mode}" == "fuzz" ]]; then
+          CORE_BUILD_ARGS="--fuzz --clean --no-doc"
+          ALLOW_FUZZ_IN_NEAT_SDK=ON
+        else
+          CORE_BUILD_ARGS="--all --clean --no-doc"
+          ALLOW_FUZZ_IN_NEAT_SDK=OFF
+        fi
+
+        sdk_container="$(docker ps --filter 'ancestor=ghcr.io/sima-neat/sdk:latest' --format '{{.Names}}' | head -n 1)"
+        if [[ -z "${sdk_container}" ]]; then
+          sdk_container="$(docker ps --filter 'name=sdk' --format '{{.Names}}' | head -n 1)"
+        fi
+        if [[ -z "${sdk_container}" ]]; then
+          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}'
+          echo "Could not find running SDK container." >&2
+          exit 1
+        fi
+
+        docker exec \
+          -e SIMA_CLI_CHECK_FOR_UPDATE=0 \
+          -e GITHUB_HEAD_REF="${{ github.head_ref }}" \
+          -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+          -e GITHUB_REF_TYPE="${{ github.ref_type }}" \
+          -e GITHUB_SHA="${{ github.sha }}" \
+          -e NEAT_PACKAGE_NAME="gh:sima-neat/core" \
+          -e NEAT_PACKAGE_DESCRIPTION="SiMa.ai Neural Edge Acceleration Toolkit" \
+          -e NEAT_VULCAN_ENV="${neat_vulcan_env}" \
+          -e SIMANEAT_ALLOW_FUZZ_IN_NEAT_SDK="${ALLOW_FUZZ_IN_NEAT_SDK}" \
+          -e CORE_BUILD_ARGS="${CORE_BUILD_ARGS}" \
+          "${sdk_container}" \
+          bash -lc '
+            set -euo pipefail
+            export SIMA_CLI_CHECK_FOR_UPDATE=0
+            /workspace/scripts/ci/install_sima_cli_main.sh
+            export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
+            sima-cli --version
+            sima-cli neat install --help >/dev/null
+            sima-cli packages build --help >/dev/null
+            cd /workspace
+            ./build.sh ${CORE_BUILD_ARGS}
+          '
+
+      post_build_command: |
+        set -euo pipefail
+
+        mapfile -t CORE_DEBS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-core.deb' | sort)
+        mapfile -t EXTRAS_TARS < <(find dist -maxdepth 1 -type f -name 'sima-neat-*-Linux-extras.tar.gz' | sort)
+        mapfile -t WHEELS < <(find dist -maxdepth 1 -type f -name '*.whl' | sort)
+
+        if [[ "${#CORE_DEBS[@]}" -ne 1 || "${#EXTRAS_TARS[@]}" -ne 1 || "${#WHEELS[@]}" -ne 1 ]]; then
+          echo "Expected exactly one NEAT core .deb, one extras tar.gz, and one wheel." >&2
+          echo "core debs: ${#CORE_DEBS[@]}" >&2
+          printf '  %s\n' "${CORE_DEBS[@]}" >&2 || true
+          echo "extras tars: ${#EXTRAS_TARS[@]}" >&2
+          printf '  %s\n' "${EXTRAS_TARS[@]}" >&2 || true
+          echo "wheels: ${#WHEELS[@]}" >&2
+          printf '  %s\n' "${WHEELS[@]}" >&2 || true
+          exit 1
+        fi
+
+        for metadata_file in metadata.json metadata-minimal.json metadata-all.json metadata-pyneat.json; do
+          test -f "dist/${metadata_file}"
+          python3 -m json.tool "dist/${metadata_file}" >/dev/null
+        done
+        python3 - <<'PY'
+        import json
+        from pathlib import Path
+
+        metadata = json.loads(Path("dist/metadata-pyneat.json").read_text(encoding="utf-8"))
+        resources = metadata.get("resources", [])
+        if len(resources) != 1 or not resources[0].endswith(".whl"):
+            raise SystemExit(f"metadata-pyneat.json must contain exactly one wheel resource, got: {resources!r}")
+        if metadata.get("selectable-resources"):
+            raise SystemExit("metadata-pyneat.json must not contain selectable resources")
+        if "PyNeat wheel downloaded" not in metadata.get("installation", {}).get("post-message", ""):
+            raise SystemExit("metadata-pyneat.json is missing the PyNeat post-install message")
+        PY
+        tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tests/CTestTestfile.cmake' >/dev/null
+        tar -tzf "${EXTRAS_TARS[0]}" './lib/sima-neat/tutorials/CTestTestfile.cmake' >/dev/null
+        test -f dist/install_neat_framework.sh
+        test -f dist/neat-install-manifest.txt
+        test -f build/resolved_manifest.json
+
+        sudo install -m 0644 build/resolved_manifest.json dist/resolved-deps-manifest.json
+        ls -lh dist
+
+  publish-vulcan-artifacts:
+    name: Publish to Vulcan
+    needs:
+      - resolve-vulcan-config
+      - build
+    uses: sima-neat/.github/.github/workflows/vulcan-publish-artifacts.yml@main
+    with:
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      cloudfront_distribution_id: ${{ needs.resolve-vulcan-config.outputs.artifact_cloudfront_distribution_id }}
+      artifact_folder: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 'core-fuzz' || '.' }}
+      artifact_pattern: neat-core-dist
+      artifact_glob: "*"
+      min_artifact_count: ${{ (inputs.build_mode || 'standard') == 'fuzz' && 9 || 10 }}
+
+  test-devkit:
+    name: Test Core on DevKit
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
+      - resolve-vulcan-config
+      - resolve-test-runner
+      - publish-vulcan-artifacts
+    runs-on:
+      group: ${{ needs.resolve-test-runner.outputs.modalix_runner_group }}
+      labels: [self-hosted, Linux, ARM64, modalix, "vulcan-${{ needs.resolve-vulcan-config.outputs.vulcan_env }}"]
+    env:
+      VULCAN_ENV: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      SIMA_CLI_CHECK_FOR_UPDATE: "0"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Clean test workspace
+        run: |
+          rm -rf _work
+          mkdir -p _work
+          rm -f ./*-Linux-core.deb ./*extras.tar.gz ./*.whl ./neat-*.deb ./simaai-common*.deb ./appcomplex_*.deb ./sima-lmm-*.deb ./metadata*.json ./install_neat_framework.sh ./neat-install-manifest.txt || true
+          find . -maxdepth 1 -type d -name 'sima-neat-*-Linux-extras' -exec rm -rf {} +
+
+      - name: Pre-install devkit storage cleanup
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/cleanup_devkit_storage.sh
+
+      - name: Install test runtime from Vulcan artifact
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          if ! command -v sima-cli >/dev/null 2>&1; then
+            echo "sima-cli not found on test runner." >&2
+            exit 1
+          fi
+          REF_NAME="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          SHORT_SHA="$(echo "${GITHUB_SHA}" | cut -c1-12)"
+          PACKAGE_SPEC="core@${REF_NAME}:${SHORT_SHA}"
+          echo "Installing ${PACKAGE_SPEC} from Vulcan env ${VULCAN_ENV}"
+          sima-cli install --neat --env "${VULCAN_ENV}" "${PACKAGE_SPEC}" -t all
+
+      - name: Locate installed extras content
+        run: |
+          find_extras_ctest_files() {
+            local root="$1"
+            find "${root}" -type f -name CTestTestfile.cmake -printf '%T@ %p\n' 2>/dev/null \
+              | awk '$2 ~ /(^|\/)tests\/CTestTestfile\.cmake$/ {print}' \
+              | sort -nr \
+              | awk '{print $2}'
+          }
+
+          mapfile -t CTEST_FILES < <(find_extras_ctest_files "${GITHUB_WORKSPACE}")
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "Unable to locate extracted extras CTest files under ${GITHUB_WORKSPACE}; re-extracting extras archive for tests."
+            mapfile -t EXTRAS_TARS < <(find "${GITHUB_WORKSPACE}" -maxdepth 2 -type f -name 'sima-neat-*-Linux-extras.tar.gz' -printf '%T@ %p\n' 2>/dev/null | sort -nr | awk '{print $2}')
+            if [[ "${#EXTRAS_TARS[@]}" -eq 0 ]]; then
+              echo "Unable to locate downloaded extras archive under ${GITHUB_WORKSPACE} after sima-cli install." >&2
+              echo "Workspace top-level contents:" >&2
+              find "${GITHUB_WORKSPACE}" -maxdepth 2 -mindepth 1 -printf '  %p\n' 2>/dev/null | sort >&2 || true
+              exit 1
+            fi
+            EXTRAS_REEXTRACT_DIR="${GITHUB_WORKSPACE}/_work/extras"
+            rm -rf "${EXTRAS_REEXTRACT_DIR}"
+            mkdir -p "${EXTRAS_REEXTRACT_DIR}"
+            tar -xzf "${EXTRAS_TARS[0]}" -C "${EXTRAS_REEXTRACT_DIR}"
+            mapfile -t CTEST_FILES < <(find_extras_ctest_files "${EXTRAS_REEXTRACT_DIR}")
+          fi
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "Unable to locate installed extras tests after sima-cli install and extras re-extract." >&2
+            echo "Candidate CTest files:" >&2
+            find "${GITHUB_WORKSPACE}" -type f -name CTestTestfile.cmake -printf '  %p\n' 2>/dev/null | sort >&2 || true
+            exit 1
+          fi
+          TEST_DIR="$(dirname "${CTEST_FILES[0]}")"
+          if [[ "${TEST_DIR}" == */lib/sima-neat/tests ]]; then
+            EXTRAS_LIB_DIR="${TEST_DIR%/tests}"
+            EXTRAS_PREFIX="${EXTRAS_LIB_DIR%/lib/sima-neat}"
+          else
+            EXTRAS_LIB_DIR="$(dirname "${TEST_DIR}")"
+            EXTRAS_PREFIX="${EXTRAS_LIB_DIR}"
+          fi
+          echo "Using extras lib dir: ${EXTRAS_LIB_DIR}"
+          PYTEST_DIR="${EXTRAS_PREFIX}/share/sima-neat/python/tests"
+          if [[ ! -d "${PYTEST_DIR}" ]]; then
+            echo "Installed python tests not found at ${PYTEST_DIR}" >&2
+            exit 1
+          fi
+          echo "Using pytest dir: ${PYTEST_DIR}"
+          GST_REGISTRY_DIR="${RUNNER_TEMP:-/tmp}/sima-gst-registry-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          mkdir -p "${GST_REGISTRY_DIR}"
+          echo "Using shared GStreamer registry dir: ${GST_REGISTRY_DIR}"
+          mkdir -p _work
+          printf '%s\n' "${EXTRAS_LIB_DIR}" > _work/extras_lib_dir.txt
+          printf '%s\n' "${EXTRAS_PREFIX}" > _work/extras_prefix.txt
+          printf '%s\n' "${PYTEST_DIR}" > _work/pytest_dir.txt
+          printf '%s\n' "${GST_REGISTRY_DIR}" > _work/gst_registry_dir.txt
+
+      - name: Rebase CTest paths to runner workspace
+        run: |
+          EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
+          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
+          TESTS_ROOT="${EXTRAS_LIB_DIR}/tests"
+          TUTORIALS_ROOT="${EXTRAS_LIB_DIR}/tutorials"
+          TUTORIALS_SHARE_ROOT="${EXTRAS_PREFIX}/share/sima-neat/tutorials"
+          TEST_ASSETS_ROOT="${EXTRAS_PREFIX}/share/sima-neat/test-assets"
+          mapfile -t CTEST_FILES < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake | sort)
+          if [[ "${#CTEST_FILES[@]}" -eq 0 ]]; then
+            echo "No CTestTestfile.cmake files found under ${EXTRAS_LIB_DIR}." >&2
+            exit 1
+          fi
+          for f in "${CTEST_FILES[@]}"; do
+            sed -E -i \
+              -e "s|/[^\"[:space:]]*/build/tests/|${TESTS_ROOT}/|g" \
+              -e "s|/[^\"[:space:]]*/build/tutorials/|${TUTORIALS_ROOT}/|g" \
+              -e "s|/[^\"[:space:]]*/tutorials/assets/|${TUTORIALS_SHARE_ROOT}/assets/|g" \
+              -e "s|/[^\"[:space:]]*/test\\.jpg|${TEST_ASSETS_ROOT}/test.jpg|g" \
+              -e "s|/[^\"[:space:]]*/tutorials/run_with_modelzoo\\.sh|${TUTORIALS_SHARE_ROOT}/run_with_modelzoo.sh|g" \
+              -e "s|/[^\"[:space:]]*/tutorials/build\\.sh|${TUTORIALS_SHARE_ROOT}/build.sh|g" \
+              "${f}"
+          done
+          if rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >/dev/null; then
+            echo "Unresolved build-tree paths after CTest rebasing:" >&2
+            rg -n '/build/tests/|/build/tutorials/' "${CTEST_FILES[@]}" >&2 || true
+            echo "CTEST path rebasing incomplete; stale absolute paths remain." >&2
+            exit 1
+          fi
+
+      - name: Fix devkit runtime
+        env:
+          DEVKIT_PASSWORD: ${{ secrets.DEVKIT_PASSWORD }}
+        run: |
+          ./scripts/fix_devkit_runtime.sh
+
+      - name: Discover installed CTest directories
+        run: |
+          EXTRAS_LIB_DIR="$(cat _work/extras_lib_dir.txt)"
+          if [[ ! -d "${EXTRAS_LIB_DIR}" ]]; then
+            echo "${EXTRAS_LIB_DIR} not found after sima-cli installation." >&2
+            exit 1
+          fi
+          mapfile -t CTEST_DIRS < <(find "${EXTRAS_LIB_DIR}" -type f -name CTestTestfile.cmake -printf '%h\n' | sort -u)
+          if [[ "${#CTEST_DIRS[@]}" -eq 0 ]]; then
+            echo "No CTestTestfile.cmake found under ${EXTRAS_LIB_DIR}." >&2
+            exit 1
+          fi
+          printf '%s\n' "${CTEST_DIRS[@]}" | sed 's|^|Detected CTest dir: |'
+          printf '%s\n' "${CTEST_DIRS[@]}" > _work/ctest_dirs.txt
+
+      - name: Run Fast Non-E2E Tests (Parallel)
+        env:
+          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
+          SIMA_CTEST_TAIL_ONLY: "0"
+          SIMA_CTEST_FAST_JOBS: "4"
+        run: |
+          set -x
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+          echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          echo "SIMA_CTEST_TAIL_ONLY=${SIMA_CTEST_TAIL_ONLY:-<unset>}"
+
+          if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
+            echo "SIMA_CTEST_TAIL_ONLY=1; skipping broad non-e2e lane."
+            exit 0
+          fi
+
+          FAST_JOBS="${SIMA_CTEST_FAST_JOBS:-4}"
+          ctest --test-dir "${TEST_DIR}" \
+            --label-regex "strict" \
+            --label-exclude "perf|e2e" \
+            -E "^(unit_dispatcher_watchdog_test)$" \
+            -j "${FAST_JOBS}" \
+            --output-on-failure \
+            --no-tests=error
+
+      - name: Run E2E Tests
+        env:
+          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
+          SIMA_CTEST_TAIL_ONLY: "0"
+          SIMA_CTEST_E2E_JOBS: "1"
+        run: |
+          set -x
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+          echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          echo "SIMA_CTEST_TAIL_ONLY=${SIMA_CTEST_TAIL_ONLY:-<unset>}"
+          echo "SIMA_CTEST_E2E_JOBS=${SIMA_CTEST_E2E_JOBS:-<unset>}"
+
+          TAIL_REGEX='^(sync_yolov8_test|sync_yolov8_test_detessdequant|yolov8_variant_route_matrix_test|boxdecode_yolo_layout_matrix_e2e_test|preproc_yolov8_matrix_test|graphpipes_yolo_metadata_sender_16stream_test)$'
+          SKIP_REGEX='^(unit_dispatcher_watchdog_test)$'
+          if [[ "${SIMA_CTEST_TAIL_ONLY:-0}" == "1" ]]; then
+            echo "TEMPORARY one-shot: ctest -R '${TAIL_REGEX}'"
+            ctest --test-dir "${TEST_DIR}" \
+              -R "${TAIL_REGEX}" \
+              -E "${SKIP_REGEX}" \
+              --output-on-failure \
+              --no-tests=error
+          else
+            ctest --test-dir "${TEST_DIR}" \
+              --label-regex "e2e" \
+              --label-exclude "perf" \
+              -E "${SKIP_REGEX}" \
+              -j "${SIMA_CTEST_E2E_JOBS:-1}" \
+              --output-on-failure \
+              --no-tests=error
+          fi
+
+      - name: Run Perf and Throughput Tests (Isolated)
+        env:
+          SIMA_YOLOV8_VARIANTS_BASE_URL: https://docs.sima.ai/pkg_downloads/SDK2.0.0/models/modalix
+        run: |
+          set -x
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-tput"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+          echo "Using SIMA_GST_REGISTRY_DIR=${SIMA_GST_REGISTRY_DIR}"
+          ctest --test-dir "${TEST_DIR}" \
+            --label-regex "perf" \
+            --output-on-failure \
+            --no-tests=error
+
+      - name: Manifest Strict Fallback Gate
+        env:
+          SIMA_STRICT_MANIFEST_NO_JSON_FALLBACK: 1
+        run: |
+          TEST_DIR="$(cat _work/extras_lib_dir.txt)/tests"
+          MPK_ROOT="${RUNNER_TEMP:-/tmp}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}-manifest"
+          mkdir -p "${MPK_ROOT}"
+          export SIMA_MPK_EXTRACT_ROOT="${MPK_ROOT}"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          GATE_REGEX='^(unit_sima_plugin_manifest_strict_model_pipeline_test|unit_sima_plugin_manifest_strict_fallback_test)$'
+          if ctest --test-dir "${TEST_DIR}" -N -R "${GATE_REGEX}" 2>/dev/null \
+               | grep -qE "Test +#"; then
+            echo "Using SIMA_MPK_EXTRACT_ROOT=${SIMA_MPK_EXTRACT_ROOT}"
+            ctest --test-dir "${TEST_DIR}" \
+              --output-on-failure \
+              -R "${GATE_REGEX}"
+          else
+            echo "Manifest-strict tests not registered in this build; skipping the fallback gate."
+          fi
+
+      - name: Run Tutorial Tests
+        env:
+          SIMANEAT_APPS_TEST_RTSP_URL: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URL }}
+          SIMANEAT_APPS_TEST_RTSP_URLS: ${{ vars.SIMANEAT_APPS_TEST_RTSP_URLS }}
+        run: |
+          EXTRAS_PREFIX="$(cat _work/extras_prefix.txt)"
+          TUTORIALS_BUILD_SH="${EXTRAS_PREFIX}/share/sima-neat/tutorials/build.sh"
+          if [[ ! -x "${TUTORIALS_BUILD_SH}" ]]; then
+            echo "Installed tutorial build.sh not found or not executable: ${TUTORIALS_BUILD_SH}" >&2
+            exit 1
+          fi
+          "${TUTORIALS_BUILD_SH}" --download-models-only
+
+          TUTORIALS_DIR="$(cat _work/extras_lib_dir.txt)/tutorials"
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          ctest --test-dir "${TUTORIALS_DIR}" --output-on-failure
+
+      - name: Run Python pytest from installed extras
+        run: |
+          PYTEST_DIR="$(cat _work/pytest_dir.txt)"
+          PYNEAT_HOME="${HOME}/pyneat"
+          if [[ -x "${PYNEAT_HOME}/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/bin/python"
+          elif [[ -x "${PYNEAT_HOME}/.venv/bin/python" ]]; then
+            PYTHON_BIN="${PYNEAT_HOME}/.venv/bin/python"
+          else
+            echo "Expected pyneat python not found at ${PYNEAT_HOME}/bin/python or ${PYNEAT_HOME}/.venv/bin/python" >&2
+            exit 1
+          fi
+
+          "${PYTHON_BIN}" -m pip install --upgrade pip
+          "${PYTHON_BIN}" -m pip install pytest
+          export SIMA_GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+          "${PYTHON_BIN}" -m pytest -q "${PYTEST_DIR}"
+
+      - name: Cleanup test workspace tmp artifacts
+        if: ${{ always() }}
+        run: |
+          TMP_ROOT="${RUNNER_TEMP:-/tmp}"
+          MPK_BASE="${TMP_ROOT}/sima-mpk-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}-${GITHUB_JOB:-test}"
+          echo "Disk usage before cleanup:"
+          df -h "${TMP_ROOT}" || true
+          du -sh "${TMP_ROOT}"/sima* "${TMP_ROOT}"/resnet*_mpk* 2>/dev/null || true
+
+          echo "Cleaning ${MPK_BASE}* (this-job MpK extraction roots)"
+          rm -rf "${MPK_BASE}" "${MPK_BASE}-manifest" "${MPK_BASE}-tput" || true
+          if [[ -f _work/gst_registry_dir.txt ]]; then
+            GST_REGISTRY_DIR="$(cat _work/gst_registry_dir.txt)"
+            echo "Cleaning shared GStreamer registry dir ${GST_REGISTRY_DIR}"
+            rm -rf "${GST_REGISTRY_DIR}" || true
+          fi
+
+          echo "Cleaning per-test mkdtemp roots and downloaded fixtures under ${TMP_ROOT}"
+          rm -rf \
+            "${TMP_ROOT}/sima_neat_mpk_tests" \
+            "${TMP_ROOT}/sima_neat_mpk_fixtures" \
+            "${TMP_ROOT}/sima_neat_fuzz_pipeline_sequence" \
+            "${TMP_ROOT}/sima_unit_asset_utils_readable_model_tar_test" \
+            "${TMP_ROOT}/sima_imagenet_goldfish.jpg" \
+            "${TMP_ROOT}/coco_sample.jpg" \
+            "${TMP_ROOT}/resnet_50_mpk.tar.gz" \
+            "${TMP_ROOT}/resnet-50_mpk.tar.gz" \
+            || true
+          find "${TMP_ROOT}" -maxdepth 1 -name 'sima_gst_registry_*.bin' -delete 2>/dev/null || true
+          find "${TMP_ROOT}" -maxdepth 1 -name 'sima-mpk-*' -type d -mmin +60 \
+            -exec rm -rf {} + 2>/dev/null || true
+
+          echo "Disk usage after cleanup:"
+          df -h "${TMP_ROOT}" || true
+
+  promote-latest-tag:
+    name: Promote Latest Tag
+    if: ${{ always() && github.ref_type == 'branch' && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' }}
+    needs:
+      - detect-changes
+      - resolve-vulcan-config
+      - test-devkit
+    uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
+    with:
+      aws_region: ${{ needs.resolve-vulcan-config.outputs.aws_region }}
+      environment_name: ${{ needs.resolve-vulcan-config.outputs.vulcan_env }}
+      bucket: ${{ needs.resolve-vulcan-config.outputs.artifact_bucket }}
+      role_to_assume: ${{ needs.resolve-vulcan-config.outputs.artifact_publisher_role_arn }}
+      sse_kms_key_id: ${{ needs.resolve-vulcan-config.outputs.artifact_kms_key_id }}
+      artifact_folder: "."
