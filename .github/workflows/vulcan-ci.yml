@@ -103,7 +103,9 @@ jobs:
 
   code-hygiene:
     name: Code Hygiene
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
     runs-on: ubuntu-latest
 
     steps:
@@ -147,6 +149,7 @@ jobs:
     if: ${{ always() && !failure() && !cancelled() }}
     needs:
       - resolve-vulcan-config
+      - detect-changes
       - code-hygiene
     uses: sima-neat/.github/.github/workflows/vulcan-build.yml@main
     with:
