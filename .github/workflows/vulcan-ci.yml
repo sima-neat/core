@@ -89,7 +89,7 @@ jobs:
             if [[ "${#changed_files[@]}" -gt 0 ]]; then
               docs_only=true
               for path in "${changed_files[@]}"; do
-                if [[ "${path}" != docs/* ]]; then
+                if [[ "${path}" != docs/* && "${path}" != website/* ]]; then
                   docs_only=false
                   break
                 fi
