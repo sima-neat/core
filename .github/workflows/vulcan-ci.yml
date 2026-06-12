@@ -60,9 +60,9 @@ jobs:
 
       - name: Install sima-cli
         run: |
-          curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
+          ./scripts/ci/install_sima_cli_main.sh
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
-          "${HOME}/.sima-cli/.venv/bin/sima-cli" version
+          "${HOME}/.sima-cli/.venv/bin/sima-cli" --version
 
       - name: Install code hygiene tools
         run: |
@@ -148,9 +148,9 @@ jobs:
           bash -lc '
             set -euo pipefail
             export SIMA_CLI_CHECK_FOR_UPDATE=0
-            curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
+            /workspace/scripts/ci/install_sima_cli_main.sh
             export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
-            sima-cli version
+            sima-cli --version
             sima-cli neat install --help >/dev/null
             sima-cli packages build --help >/dev/null
             cd /workspace

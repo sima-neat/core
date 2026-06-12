@@ -1145,7 +1145,7 @@ bootstrap_sima_cli_for_ci_if_needed() {
   fi
 
   echo "Installing sima-cli with Neat artifact support for CI..."
-  curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
+  "${SCRIPT_DIR}/scripts/ci/install_sima_cli_main.sh"
 
   export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
   if [[ -x "${HOME}/.sima-cli/.venv/bin/sima-cli" ]]; then
