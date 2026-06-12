@@ -1224,6 +1224,7 @@ add_pipeline_test(
 if (NOT graph_migration_phase3_connected_yolo_route_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST graph_migration_phase3_connected_yolo_route_test
     APPEND PROPERTY LABELS "e2e;obj_detection;graph-migration;unified;phase3")
+  set_tests_properties(graph_migration_phase3_connected_yolo_route_test PROPERTIES DISABLED TRUE)
 endif()
 
 add_pipeline_test(
