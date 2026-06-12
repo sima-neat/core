@@ -589,6 +589,7 @@ endif()
 
 if (NOT decoder_quality_compare_test IN_LIST PIPELINESESSION_TEST_BLACKLIST)
   set_property(TEST decoder_quality_compare_test APPEND PROPERTY RESOURCE_LOCK "rtsp")
+  set_property(TEST decoder_quality_compare_test APPEND PROPERTY RESOURCE_LOCK "accelerator-device")
   set_property(TEST decoder_quality_compare_test
     APPEND PROPERTY ENVIRONMENT "SIMA_RTSP_PORT=8757"
   )
