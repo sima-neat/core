@@ -42,5 +42,4 @@ SIMA_NEAT_EXPORT SIMA_NEAT_USED const char sima_neat_platform_version_marker[] =
 
 SIMA_NEAT_EXPORT SIMA_NEAT_USED const char sima_neat_abi_version_marker[] =
     "sima-neat-abi-version=" SIMA_NEAT_ABI_VERSION_STRING;
-
 }

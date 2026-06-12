@@ -708,11 +708,10 @@ void compare_runtime_vs_host_preproc_debug(const simaai::neat::Tensor& pre_tenso
             << (forced_opt.preprocess.normalize.enable == simaai::neat::AutoFlag::On ? 1 : 0)
             << " mean=[" << forced_opt.preprocess.normalize.mean[0] << ","
             << forced_opt.preprocess.normalize.mean[1] << ","
-            << forced_opt.preprocess.normalize.mean[2] << "]"
-            << " stddev=[" << forced_opt.preprocess.normalize.stddev[0] << ","
+            << forced_opt.preprocess.normalize.mean[2] << "]" << " stddev=["
+            << forced_opt.preprocess.normalize.stddev[0] << ","
             << forced_opt.preprocess.normalize.stddev[1] << ","
-            << forced_opt.preprocess.normalize.stddev[2] << "]"
-            << "\n";
+            << forced_opt.preprocess.normalize.stddev[2] << "]" << "\n";
   compare_window("head", head_off);
   compare_window("center", center_off);
   compare_window("tail", tail_off);

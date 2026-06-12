@@ -55,9 +55,8 @@ int main() {
     std::ostringstream pipeline_desc;
     pipeline_desc << "filesrc location=" << dst.string() << " ! qtdemux name=demux demux.video_0 "
                   << "! h264parse ! " << caps.str()
-                  << " ! neatdecoder drop-on-resolution-change=true "
-                  << "dec-width=" << wrong_w << " dec-height=" << wrong_h
-                  << " sima-allocator-type=2 "
+                  << " ! neatdecoder drop-on-resolution-change=true " << "dec-width=" << wrong_w
+                  << " dec-height=" << wrong_h << " sima-allocator-type=2 "
                   << "! appsink name=mysink emit-signals=false sync=false max-buffers=0 drop=false";
 
     GError* err = nullptr;

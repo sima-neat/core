@@ -25,8 +25,7 @@ std::string H264Depacketize::backend_fragment(int node_index) const {
   if (payload_type_ > 0) {
     ss << ",payload=" << payload_type_;
   }
-  ss << "\" "
-     << "! rtph264depay name=" << dep << " wait-for-keyframe=true "
+  ss << "\" " << "! rtph264depay name=" << dep << " wait-for-keyframe=true "
      << "! identity name=" << hseg << " silent=true single-segment=true "
      << "! h264parse name=" << par << " disable-passthrough=true ";
   if (h264_parse_config_interval_ >= 0) {

@@ -79,8 +79,7 @@ std::set<std::pair<int, int>> probe_caps_with_gst(const fs::path& combined, int6
   std::ostringstream pipeline_desc;
   pipeline_desc
       << "filesrc location=" << combined.string() << " ! h264parse "
-      << "! video/x-h264,parsed=true,stream-format=(string)byte-stream,"
-      << "alignment=(string)au "
+      << "! video/x-h264,parsed=true,stream-format=(string)byte-stream," << "alignment=(string)au "
       << "! neatdecoder name=decoder drop-on-resolution-change=false sima-allocator-type=2 "
       << "! appsink name=mysink emit-signals=false sync=false max-buffers=0 drop=false";
 

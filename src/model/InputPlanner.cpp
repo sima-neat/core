@@ -982,8 +982,8 @@ std::string requirement_source_name(RequirementSource source) {
 
 std::string requirement_issue_message(const RequirementIssue& issue) {
   std::ostringstream oss;
-  oss << "preprocess requirement violation: "
-      << "code=" << (issue.code.empty() ? std::string("PREPROC_REQ_UNSPECIFIED") : issue.code)
+  oss << "preprocess requirement violation: " << "code="
+      << (issue.code.empty() ? std::string("PREPROC_REQ_UNSPECIFIED") : issue.code)
       << " op=" << required_preprocess_op_name(issue.op)
       << " severity=" << requirement_severity_name(issue.severity)
       << " source=" << requirement_source_name(issue.source) << " reason=" << issue.reason;

@@ -39,7 +39,8 @@ struct TestFailure : std::runtime_error {
   explicit TestFailure(const std::string& m) : std::runtime_error(m) {}
 };
 inline void check(bool cond, const std::string& msg) {
-  if (!cond) throw TestFailure(msg);
+  if (!cond)
+    throw TestFailure(msg);
 }
 
 // ---- DDR + CPU cache model -------------------------------------------------
@@ -49,17 +50,22 @@ struct CacheModel {
   struct Line {
     bool valid = false;
     bool dirty = false;
-    std::vector<uint8_t> data;  // kCacheLine bytes
+    std::vector<uint8_t> data; // kCacheLine bytes
   };
-  std::map<uint64_t, Line> lines;  // keyed by line index
+  std::map<uint64_t, Line> lines; // keyed by line index
 
   explicit CacheModel(uint64_t size) : ddr(size, 0), truth(size, 0) {}
-  uint64_t size() const { return ddr.size(); }
-  uint64_t line_of(uint64_t off) const { return off / kCacheLine; }
+  uint64_t size() const {
+    return ddr.size();
+  }
+  uint64_t line_of(uint64_t off) const {
+    return off / kCacheLine;
+  }
 
   Line& line(uint64_t idx) {
     auto& l = lines[idx];
-    if (l.data.empty()) l.data.assign(kCacheLine, 0);
+    if (l.data.empty())
+      l.data.assign(kCacheLine, 0);
     return l;
   }
 
@@ -68,7 +74,7 @@ struct CacheModel {
     for (uint64_t i = 0; i < bytes.size(); ++i) {
       const uint64_t a = off + i;
       Line& l = line(line_of(a));
-      if (!l.valid) {  // allocate-on-write: fill the rest of the line from ddr
+      if (!l.valid) { // allocate-on-write: fill the rest of the line from ddr
         for (uint64_t b = 0; b < kCacheLine; ++b) {
           const uint64_t la = (a / kCacheLine) * kCacheLine + b;
           l.data[b] = la < ddr.size() ? ddr[la] : 0;
@@ -116,7 +122,7 @@ struct CacheModel {
 
   // ---- CMOs (what the backend drives) --------------------------------------
   void range_lines(uint64_t off, uint64_t len, uint64_t& lo, uint64_t& hi) const {
-    if (len == 0) {  // whole segment
+    if (len == 0) { // whole segment
       lo = 0;
       hi = (size() + kCacheLine - 1) / kCacheLine;
       return;
@@ -130,8 +136,10 @@ struct CacheModel {
     range_lines(off, len, lo, hi);
     for (uint64_t idx = lo; idx < hi; ++idx) {
       auto it = lines.find(idx);
-      if (it == lines.end() || !it->second.valid) continue;
-      if (it->second.dirty) writeback(idx, it->second);
+      if (it == lines.end() || !it->second.valid)
+        continue;
+      if (it->second.dirty)
+        writeback(idx, it->second);
       it->second.valid = false;
       it->second.dirty = false;
     }
@@ -143,7 +151,8 @@ struct CacheModel {
     range_lines(off, len, lo, hi);
     for (uint64_t idx = lo; idx < hi; ++idx) {
       auto it = lines.find(idx);
-      if (it == lines.end() || !it->second.valid || !it->second.dirty) continue;
+      if (it == lines.end() || !it->second.valid || !it->second.dirty)
+        continue;
       writeback(idx, it->second);
       it->second.dirty = false;
     }
@@ -152,7 +161,8 @@ struct CacheModel {
   void writeback(uint64_t idx, Line& l) {
     for (uint64_t b = 0; b < kCacheLine; ++b) {
       const uint64_t a = idx * kCacheLine + b;
-      if (a < ddr.size()) ddr[a] = l.data[b];
+      if (a < ddr.size())
+        ddr[a] = l.data[b];
     }
   }
 };
@@ -169,14 +179,20 @@ struct CountingCmo : simaai::neat::coherency::CmoBackend {
   void invalidate(void* /*seg*/, uint64_t off, uint64_t len) override {
     ++civac_calls;
     civac_lines += cm->civac(off, len);
-    last_off = off; last_len = len; last_was_whole = (len == 0);
+    last_off = off;
+    last_len = len;
+    last_was_whole = (len == 0);
   }
   void clean(void* /*seg*/, uint64_t off, uint64_t len) override {
     ++cvac_calls;
     cvac_lines += cm->cvac(off, len);
-    last_off = off; last_len = len; last_was_whole = (len == 0);
+    last_off = off;
+    last_len = len;
+    last_was_whole = (len == 0);
   }
-  void reset_counts() { civac_calls = cvac_calls = civac_lines = cvac_lines = 0; }
+  void reset_counts() {
+    civac_calls = cvac_calls = civac_lines = cvac_lines = 0;
+  }
 };
 
 // ---- a fully-wired test segment -------------------------------------------
@@ -198,8 +214,8 @@ struct Seg {
     for (uint64_t i = 0; i < len; ++i) {
       if (got[i] != cm.truth[off + i]) {
         throw TestFailure(std::string(where) + ": stale CPU read at byte " +
-                          std::to_string(off + i) + " got " + std::to_string(got[i]) +
-                          " want " + std::to_string(cm.truth[off + i]));
+                          std::to_string(off + i) + " got " + std::to_string(got[i]) + " want " +
+                          std::to_string(cm.truth[off + i]));
       }
     }
     return got;
@@ -220,8 +236,8 @@ struct Seg {
     for (uint64_t i = 0; i < len; ++i) {
       if (got[i] != cm.truth[off + i]) {
         throw TestFailure(std::string(where) + ": lost write, device read byte " +
-                          std::to_string(off + i) + " got " + std::to_string(got[i]) +
-                          " want " + std::to_string(cm.truth[off + i]));
+                          std::to_string(off + i) + " got " + std::to_string(got[i]) + " want " +
+                          std::to_string(cm.truth[off + i]));
       }
     }
     return got;
@@ -230,8 +246,9 @@ struct Seg {
 
 inline std::vector<uint8_t> pattern(uint64_t len, uint8_t seed) {
   std::vector<uint8_t> v(len);
-  for (uint64_t i = 0; i < len; ++i) v[i] = static_cast<uint8_t>(seed + i * 31 + (i >> 3));
+  for (uint64_t i = 0; i < len; ++i)
+    v[i] = static_cast<uint8_t>(seed + i * 31 + (i >> 3));
   return v;
 }
 
-}  // namespace simaai::neat::coherency::test
+} // namespace simaai::neat::coherency::test

@@ -79,8 +79,7 @@ void append_contract(std::ostringstream& ss, const char* label, const Preprocess
 
 std::string ResolvedPreprocessPlan::to_debug_string() const {
   std::ostringstream ss;
-  ss << "ResolvedPreprocessPlan{"
-     << "requested.kind=" << input_kind_name(requested.kind)
+  ss << "ResolvedPreprocessPlan{" << "requested.kind=" << input_kind_name(requested.kind)
      << ", requested.enable=" << auto_flag_name(requested.enable)
      << ", requested.preset=" << normalize_preset_name(requested.preset) << ", requested.resize=("
      << auto_flag_name(requested.resize.enable) << ", " << requested.resize.width << "x"
