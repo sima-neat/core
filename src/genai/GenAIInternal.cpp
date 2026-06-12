@@ -113,4 +113,8 @@ void ensure_llima_runtime_connected() {
   });
 }
 
+void disconnect_llima_runtime() {
+  simaai::llima::disconnect_mla_rt();
+}
+
 } // namespace simaai::neat::genai::internal

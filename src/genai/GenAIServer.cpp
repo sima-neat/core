@@ -1445,6 +1445,13 @@ struct GenAIServer::Impl {
     if (worker.joinable()) {
       worker.join();
     }
+
+    internal::disconnect_llima_runtime();
+    {
+      std::lock_guard<std::mutex> lock(warmup_mutex);
+      warmup_complete = false;
+    }
+
     running.store(false);
   }
 
