@@ -1,0 +1,173 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 680" role="img" aria-labelledby="title desc">
+  <title id="title">Develop a SiMa.ai Neat application by describing it to a coding agent</title>
+  <desc id="desc">A prompt is typed in an agent conversation on the left. On the right, the coding agent reads the Neat skill and workspace, creates the application, runs it on a paired Modalix DevKit, inspects diagnostics, refines the code, and validates the result.</desc>
+  <defs>
+    <linearGradient id="bg" x1="40" y1="28" x2="1120" y2="650" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8F6"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7A6BB5"/>
+      <stop offset="1" stop-color="#D1CEE6"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A9C4F"/>
+      <stop offset="1" stop-color="#C0E8DB"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-12%" width="120%" height="132%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#010F0E" flood-opacity="0.12"/>
+    </filter>
+    <clipPath id="promptLine1"><rect class="typed typed-1" x="108" y="214" width="270" height="24"/></clipPath>
+    <clipPath id="promptLine2"><rect class="typed typed-2" x="108" y="245" width="270" height="24"/></clipPath>
+    <clipPath id="promptLine3"><rect class="typed typed-3" x="108" y="276" width="270" height="24"/></clipPath>
+    <clipPath id="promptLine4"><rect class="typed typed-4" x="108" y="307" width="270" height="24"/></clipPath>
+    <clipPath id="promptLine5"><rect class="typed typed-5" x="108" y="338" width="270" height="24"/></clipPath>
+    <clipPath id="promptLine6"><rect class="typed typed-6" x="108" y="369" width="270" height="24"/></clipPath>
+    <style>
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .mono { font-family: "SFMono-Regular", "Cascadia Code", Consolas, "Liberation Mono", monospace; }
+      .title { fill: #010F0E; font-size: 28px; font-weight: 700; }
+      .subtitle { fill: #35536F; font-size: 15px; font-weight: 500; }
+      .panelTitle { fill: #35536F; font-size: 17px; font-weight: 700; }
+      .label { fill: #35536F; font-size: 15px; font-weight: 700; }
+      .small { fill: #6C7D8F; font-size: 13px; font-weight: 650; }
+      .prompt { fill: #EAF2FA; font-size: 13px; font-weight: 500; }
+      .terminalLabel { fill: #B9C7D8; font-size: 12px; font-weight: 600; }
+      .tag { fill: #FFFFFF; font-size: 13px; font-weight: 700; }
+      .typed-1 { animation: typeLine1 14s linear infinite; }
+      .typed-2 { animation: typeLine2 14s linear infinite; }
+      .typed-3 { animation: typeLine3 14s linear infinite; }
+      .typed-4 { animation: typeLine4 14s linear infinite; }
+      .typed-5 { animation: typeLine5 14s linear infinite; }
+      .typed-6 { animation: typeLine6 14s linear infinite; }
+      .cursor { animation: cursor 0.8s steps(1, end) infinite; }
+      .activity {
+        animation: activityPulse 14s ease-in-out infinite;
+        animation-delay: var(--delay);
+      }
+      .activityText {
+        animation: activityText 14s ease-in-out infinite;
+        animation-delay: var(--delay);
+      }
+      .track {
+        stroke-dasharray: 8 8;
+        animation: trackFlow 1.2s linear infinite;
+      }
+      .success {
+        animation: successPulse 14s ease-in-out infinite;
+      }
+      @keyframes typeLine1 { 0%, 2% { width: 0; } 10%, 92% { width: 270px; } 100% { width: 0; } }
+      @keyframes typeLine2 { 0%, 9% { width: 0; } 17%, 92% { width: 270px; } 100% { width: 0; } }
+      @keyframes typeLine3 { 0%, 16% { width: 0; } 24%, 92% { width: 270px; } 100% { width: 0; } }
+      @keyframes typeLine4 { 0%, 23% { width: 0; } 31%, 92% { width: 270px; } 100% { width: 0; } }
+      @keyframes typeLine5 { 0%, 30% { width: 0; } 38%, 92% { width: 270px; } 100% { width: 0; } }
+      @keyframes typeLine6 { 0%, 37% { width: 0; } 45%, 92% { width: 270px; } 100% { width: 0; } }
+      @keyframes cursor {
+        0%, 48% { opacity: 1; }
+        49%, 100% { opacity: 0; }
+      }
+      @keyframes activityPulse {
+        0%, 14%, 100% {
+          fill: var(--base-fill);
+          stroke: var(--base-stroke);
+          stroke-width: 2px;
+          filter: drop-shadow(0 0 0 transparent);
+        }
+        4%, 10% {
+          fill: var(--active-fill);
+          stroke: var(--active-stroke);
+          stroke-width: 4px;
+          filter: drop-shadow(0 0 14px var(--glow));
+        }
+      }
+      @keyframes activityText {
+        0%, 14%, 100% { fill: #35536F; }
+        4%, 10% { fill: var(--active-text); }
+      }
+      @keyframes trackFlow {
+        to { stroke-dashoffset: -16; }
+      }
+      @keyframes successPulse {
+        0%, 75%, 100% {
+          fill: #F3FBF7;
+          stroke: #9CD5B2;
+          stroke-width: 2px;
+          filter: drop-shadow(0 0 0 transparent);
+        }
+        80%, 94% {
+          fill: #D5EFDD;
+          stroke: #2A9C4F;
+          stroke-width: 4px;
+          filter: drop-shadow(0 0 16px rgba(42,156,79,0.65));
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .typed-1, .typed-2, .typed-3, .typed-4, .typed-5, .typed-6 { animation: none; width: 270px; }
+        .cursor, .activity, .activityText, .track, .success { animation: none; }
+      }
+    </style>
+  </defs>
+
+  <rect x="16" y="16" width="1128" height="648" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
+  <circle cx="1070" cy="72" r="48" fill="#C0E8DB" opacity="0.46"/>
+  <circle cx="88" cy="614" r="40" fill="#D1CEE6" opacity="0.42"/>
+  <text x="50" y="58" class="sans title">Describe the application. The agent develops it.</text>
+  <text x="50" y="86" class="sans subtitle">Start with intent; the provided Neat skill guides implementation and on-device validation.</text>
+
+  <!-- Prompt workspace -->
+  <rect x="48" y="126" width="372" height="478" rx="28" fill="#FFFFFF" stroke="#B8B0DC" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="72" y="110" width="138" height="32" rx="16" fill="url(#purple)"/>
+  <text x="141" y="132" class="sans tag" text-anchor="middle">Your application idea</text>
+
+  <rect x="72" y="166" width="324" height="262" rx="18" fill="#10243A" stroke="#35536F" stroke-width="1.2"/>
+  <path d="M72 204H396" stroke="#35536F"/>
+  <circle cx="90" cy="185" r="4.5" fill="#F0998D"/>
+  <circle cx="106" cy="185" r="4.5" fill="#E8CF78"/>
+  <circle cx="122" cy="185" r="4.5" fill="#7FCB9A"/>
+  <text x="142" y="190" class="mono terminalLabel">agent prompt</text>
+  <text x="90" y="231" class="mono" fill="#8FD0A7" font-size="15" font-weight="700">&gt;</text>
+  <text x="108" y="231" class="mono prompt" clip-path="url(#promptLine1)">Build a Python image classifier</text>
+  <text x="108" y="262" class="mono prompt" clip-path="url(#promptLine2)">with SiMa.ai Neat and ResNet-50.</text>
+  <text x="108" y="293" class="mono prompt" clip-path="url(#promptLine3)">Download the model with sima-cli,</text>
+  <text x="108" y="324" class="mono prompt" clip-path="url(#promptLine4)">find a test image, and run it</text>
+  <text x="108" y="355" class="mono prompt" clip-path="url(#promptLine5)">on the paired Modalix DevKit.</text>
+  <text x="108" y="386" class="mono prompt" clip-path="url(#promptLine6)">Inspect and refine the result.</text>
+  <rect x="108" y="390" width="2.5" height="16" rx="1" fill="#8FD0A7" class="cursor"/>
+
+  <text x="234" y="466" class="sans small" text-anchor="middle" style="fill:#35536F;font-size:14px;font-weight:700">Review, edit, and redirect as needed</text>
+
+  <!-- Animated agent activity -->
+  <path d="M420 365H458" fill="none" stroke="#9A8FCA" stroke-width="3" stroke-linecap="round"/>
+  <path d="M448 357L458 365L448 373Z" fill="#9A8FCA"/>
+
+  <rect x="458" y="126" width="654" height="478" rx="28" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="482" y="110" width="134" height="32" rx="16" fill="url(#green)"/>
+  <text x="549" y="132" class="sans tag" text-anchor="middle">Coding agent</text>
+
+  <path class="track" d="M510 210V498" fill="none" stroke="#B8B0DC" stroke-width="3" stroke-linecap="round"/>
+
+  <circle cx="510" cy="208" r="11" fill="#E2DCF3" stroke="#7A6BB5" stroke-width="2"/>
+  <rect class="activity" style="--delay:4.8s;--base-fill:#F7F5FB;--base-stroke:#B8B0DC;--active-fill:#E2DCF3;--active-stroke:#7A6BB5;--glow:rgba(122,107,181,.68)" x="540" y="170" width="530" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2"/>
+  <text x="566" y="202" class="sans label activityText" style="--delay:4.8s;--active-text:#5B4C94">Read the Neat skill and inspect the workspace</text>
+  <text x="566" y="224" class="sans small">Find supported APIs, the model archive, and a test image.</text>
+
+  <circle cx="510" cy="300" r="11" fill="#E7F1FC" stroke="#5998DD" stroke-width="2"/>
+  <rect class="activity" style="--delay:6.8s;--base-fill:#F6F8FB;--base-stroke:#D6E2EF;--active-fill:#D8EAFB;--active-stroke:#5998DD;--glow:rgba(89,152,221,.65)" x="540" y="262" width="530" height="76" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
+  <text x="566" y="294" class="sans label activityText" style="--delay:6.8s;--active-text:#1D4F86">Create the application</text>
+  <text x="566" y="316" class="sans small">Write standard, inspectable SiMa.ai Neat code in the workspace.</text>
+
+  <circle cx="510" cy="392" r="11" fill="#E5F5EA" stroke="#2A9C4F" stroke-width="2"/>
+  <rect class="activity" style="--delay:8.8s;--base-fill:#F3FBF7;--base-stroke:#9CD5B2;--active-fill:#D5EFDD;--active-stroke:#2A9C4F;--glow:rgba(42,156,79,.62)" x="540" y="354" width="530" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <text x="566" y="386" class="sans label activityText" style="--delay:8.8s;--active-text:#1B6A36">Run it on the paired Modalix DevKit</text>
+  <text x="566" y="408" class="sans small">Execute from the shared workspace and capture the result.</text>
+
+  <circle cx="510" cy="484" r="11" fill="#E5F5EA" stroke="#2A9C4F" stroke-width="2"/>
+  <rect class="activity" style="--delay:10.8s;--base-fill:#F3FBF7;--base-stroke:#9CD5B2;--active-fill:#D5EFDD;--active-stroke:#2A9C4F;--glow:rgba(42,156,79,.62)" x="540" y="446" width="530" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <text x="566" y="478" class="sans label activityText" style="--delay:10.8s;--active-text:#1B6A36">Inspect, refine, and rerun</text>
+  <text x="566" y="500" class="sans small">Use output and diagnostics to iterate until validation succeeds.</text>
+
+  <rect class="success" x="620" y="544" width="372" height="42" rx="17" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <circle cx="650" cy="565" r="10" fill="#2A9C4F"/>
+  <path d="M645 565L649 569L656 560" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="671" y="571" class="sans label">Application validated on Modalix</text>
+</svg>

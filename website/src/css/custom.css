@@ -549,6 +549,24 @@ html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
   text-transform: uppercase;
 }
 
+.neat-heading-highlight {
+  padding: 0.04em 0.24em 0.08em;
+  border-radius: 0.28em;
+  background: linear-gradient(105deg, rgba(122, 107, 181, 0.18), rgba(209, 206, 230, 0.42));
+  color: #5b4c94;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.agentic-heading-highlight {
+  padding: 0.04em 0.24em 0.08em;
+  border-radius: 0.28em;
+  background: linear-gradient(105deg, rgba(42, 156, 79, 0.17), rgba(192, 232, 219, 0.5));
+  color: #1b6a36;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
 .overview-pull-quote {
   position: relative;
   margin: 1.15rem 0 1.2rem;
@@ -583,6 +601,36 @@ html[data-theme="dark"] .tutorial-difficulty-advanced .tutorial-card-tag {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.modalix-application-map-desktop {
+  width: 100%;
+  margin-left: 0;
+}
+
+.modalix-application-map-mobile {
+  display: none;
+}
+
+.agentic-visual-mobile {
+  display: none;
+}
+
+.agentic-visual-label {
+  margin: 1.35rem 0 -0.35rem;
+  color: #5b4c94;
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
+.overview-figure-caption {
+  margin: -0.55rem 0 1.35rem;
+  color: #4b6278;
+  font-size: 0.88rem;
+  line-height: 1.45;
+  text-align: center;
 }
 
 .overview-workflow-image-dark {
@@ -741,6 +789,20 @@ html[data-theme="dark"] .overview-section-label {
   color: #bfdbff;
 }
 
+html[data-theme="dark"] .neat-heading-highlight {
+  background: linear-gradient(105deg, rgba(122, 107, 181, 0.38), rgba(209, 206, 230, 0.2));
+  color: #ddd8f4;
+}
+
+html[data-theme="dark"] .agentic-heading-highlight {
+  background: linear-gradient(105deg, rgba(42, 156, 79, 0.38), rgba(192, 232, 219, 0.2));
+  color: #c8f0d4;
+}
+
+html[data-theme="dark"] .agentic-visual-label {
+  color: #cfc8ee;
+}
+
 html[data-theme="dark"] .overview-pull-quote {
   background: linear-gradient(135deg, rgba(89, 152, 221, 0.18) 0%, rgba(42, 156, 79, 0.16) 100%);
   border-color: rgba(148, 163, 184, 0.26);
@@ -751,8 +813,45 @@ html[data-theme="dark"] .overview-pull-quote p {
   color: #f3f8ff;
 }
 
+html[data-theme="dark"] .overview-figure-caption {
+  color: #b9c7d8;
+}
+
 html[data-theme="dark"] .overview-link-panel p {
   color: #b9c7d8;
+}
+
+@media (max-width: 996px) {
+  .modalix-application-map-desktop {
+    display: none;
+  }
+
+  .modalix-application-map-mobile {
+    display: block;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .modalix-application-map-mobile img {
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
+  .agentic-visual-desktop {
+    display: none;
+  }
+
+  .agentic-visual-mobile {
+    display: block;
+  }
+
+  .agentic-visual-mobile img {
+    width: 100%;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+
 }
 
 html[data-theme="dark"] .overview-link-card {
