@@ -6,14 +6,17 @@
     <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7A6BB5"/><stop offset="1" stop-color="#D1CEE6"/></linearGradient>
     <linearGradient id="green" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#2A9C4F"/><stop offset="1" stop-color="#C0E8DB"/></linearGradient>
     <filter id="shadow" x="-10%" y="-10%" width="120%" height="128%"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#010F0E" flood-opacity=".12"/></filter>
-    <clipPath id="mLine1"><rect class="typed t1" x="92" y="220" width="470" height="24"/></clipPath>
-    <clipPath id="mLine2"><rect class="typed t2" x="92" y="252" width="470" height="24"/></clipPath>
-    <clipPath id="mLine3"><rect class="typed t3" x="92" y="284" width="470" height="24"/></clipPath>
-    <clipPath id="mLine4"><rect class="typed t4" x="92" y="316" width="470" height="24"/></clipPath>
-    <clipPath id="mLine5"><rect class="typed t5" x="92" y="348" width="470" height="24"/></clipPath>
+    <filter id="purpleGlow" x="-15%" y="-70%" width="130%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="11" flood-color="#7A6BB5" flood-opacity=".72"/></filter>
+    <filter id="blueGlow" x="-15%" y="-70%" width="130%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="11" flood-color="#5998DD" flood-opacity=".72"/></filter>
+    <filter id="greenGlow" x="-15%" y="-70%" width="130%" height="240%"><feDropShadow dx="0" dy="0" stdDeviation="11" flood-color="#2A9C4F" flood-opacity=".72"/></filter>
+    <clipPath id="mLine1"><rect x="92" y="220" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.02;.10;.92;1"/></rect></clipPath>
+    <clipPath id="mLine2"><rect x="92" y="252" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.09;.17;.92;1"/></rect></clipPath>
+    <clipPath id="mLine3"><rect x="92" y="284" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.16;.24;.92;1"/></rect></clipPath>
+    <clipPath id="mLine4"><rect x="92" y="316" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.23;.31;.92;1"/></rect></clipPath>
+    <clipPath id="mLine5"><rect x="92" y="348" width="470" height="24"><animate class="motion" attributeName="width" dur="14s" repeatCount="indefinite" calcMode="linear" values="0;0;470;470;0" keyTimes="0;.30;.38;.92;1"/></rect></clipPath>
     <style>
-      .sans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif}.mono{font-family:"SFMono-Regular","Cascadia Code",Consolas,"Liberation Mono",monospace}.title{fill:#010F0E;font-size:27px;font-weight:700}.sub{fill:#35536F;font-size:16px;font-weight:500}.label{fill:#35536F;font-size:18px;font-weight:700}.small{fill:#6C7D8F;font-size:14px;font-weight:650}.prompt{fill:#EAF2FA;font-size:14px;font-weight:500}.terminalLabel{fill:#B9C7D8;font-size:13px;font-weight:600}.tag{fill:#fff;font-size:14px;font-weight:700}.t1{animation:type1 14s linear infinite}.t2{animation:type2 14s linear infinite}.t3{animation:type3 14s linear infinite}.t4{animation:type4 14s linear infinite}.t5{animation:type5 14s linear infinite}.cursor{animation:cursor .8s steps(1,end) infinite}.activity{animation:pulse 14s ease-in-out infinite;animation-delay:var(--delay)}.activityText{animation:textPulse 14s ease-in-out infinite;animation-delay:var(--delay)}.track{stroke-dasharray:8 8;animation:flow 1.2s linear infinite}.success{animation:success 14s ease-in-out infinite}
-      @keyframes type1{0%,2%{width:0}10%,92%{width:470px}100%{width:0}}@keyframes type2{0%,9%{width:0}17%,92%{width:470px}100%{width:0}}@keyframes type3{0%,16%{width:0}24%,92%{width:470px}100%{width:0}}@keyframes type4{0%,23%{width:0}31%,92%{width:470px}100%{width:0}}@keyframes type5{0%,30%{width:0}38%,92%{width:470px}100%{width:0}}@keyframes cursor{0%,48%{opacity:1}49%,100%{opacity:0}}@keyframes pulse{0%,14%,100%{fill:var(--base);stroke:var(--stroke);stroke-width:2;filter:drop-shadow(0 0 0 transparent)}4%,10%{fill:var(--active);stroke:var(--active-stroke);stroke-width:4;filter:drop-shadow(0 0 14px var(--glow))}}@keyframes textPulse{0%,14%,100%{fill:#35536F}4%,10%{fill:var(--active-text)}}@keyframes flow{to{stroke-dashoffset:-16}}@keyframes success{0%,75%,100%{fill:#F3FBF7;stroke:#9CD5B2;stroke-width:2;filter:drop-shadow(0 0 0 transparent)}80%,94%{fill:#D5EFDD;stroke:#2A9C4F;stroke-width:4;filter:drop-shadow(0 0 16px rgba(42,156,79,.65))}}@media(prefers-reduced-motion:reduce){.t1,.t2,.t3,.t4,.t5{animation:none;width:470px}.cursor,.activity,.activityText,.track,.success{animation:none}}
+      .sans{font-family:"Avenir Next","Segoe UI",Arial,sans-serif}.mono{font-family:"SFMono-Regular","Cascadia Code",Consolas,"Liberation Mono",monospace}.title{fill:#010F0E;font-size:27px;font-weight:700}.sub{fill:#35536F;font-size:16px;font-weight:500}.label{fill:#35536F;font-size:18px;font-weight:700}.small{fill:#6C7D8F;font-size:14px;font-weight:650}.prompt{fill:#EAF2FA;font-size:14px;font-weight:500}.terminalLabel{fill:#B9C7D8;font-size:13px;font-weight:600}.tag{fill:#fff;font-size:14px;font-weight:700}.track{stroke-dasharray:8 8}.glow{pointer-events:none}
+      @media(prefers-reduced-motion:reduce){animate.motion{display:none}}
     </style>
   </defs>
   <rect x="16" y="16" width="608" height="1296" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
@@ -35,7 +38,9 @@
   <text x="92" y="301" class="mono prompt" clip-path="url(#mLine3)">Download the model with sima-cli, find</text>
   <text x="92" y="333" class="mono prompt" clip-path="url(#mLine4)">a test image, and run it on the paired</text>
   <text x="92" y="365" class="mono prompt" clip-path="url(#mLine5)">Modalix DevKit. Inspect and refine.</text>
-  <rect x="92" y="372" width="2.5" height="18" rx="1" fill="#8FD0A7" class="cursor"/>
+  <rect x="92" y="372" width="2.5" height="18" rx="1" fill="#8FD0A7" opacity="0">
+    <animate class="motion" attributeName="opacity" dur=".8s" repeatCount="indefinite" calcMode="discrete" values="1;1;0;0" keyTimes="0;.48;.49;1"/>
+  </rect>
   <text x="320" y="456" class="sans small" text-anchor="middle" style="fill:#35536F;font-size:15px;font-weight:700">Review, edit, and redirect as needed</text>
 
   <path d="M320 484V520" fill="none" stroke="#9A8FCA" stroke-width="3"/><path d="M312 510L320 520L328 510Z" fill="#9A8FCA"/>
@@ -43,29 +48,73 @@
   <g transform="translate(0 88)">
   <rect x="32" y="432" width="576" height="710" rx="28" fill="#FFFFFF" stroke="#9CD5B2" stroke-width="2" filter="url(#shadow)"/>
   <rect x="54" y="416" width="146" height="34" rx="17" fill="url(#green)"/><text x="127" y="439" class="sans tag" text-anchor="middle">Coding agent</text>
-  <path class="track" d="M78 506V952" fill="none" stroke="#B8B0DC" stroke-width="3" stroke-linecap="round"/>
+  <path class="track" d="M78 506V952" fill="none" stroke="#B8B0DC" stroke-width="3" stroke-linecap="round">
+    <animate class="motion" attributeName="stroke-dashoffset" from="0" to="-16" dur="1.2s" repeatCount="indefinite"/>
+  </path>
 
   <circle cx="78" cy="510" r="10" fill="#E2DCF3" stroke="#7A6BB5" stroke-width="2"/>
-  <rect class="activity" style="--delay:4.8s;--base:#F7F5FB;--stroke:#B8B0DC;--active:#E2DCF3;--active-stroke:#7A6BB5;--glow:rgba(122,107,181,.68)" x="106" y="474" width="464" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2"/>
-  <text x="132" y="506" class="sans label activityText" style="--delay:4.8s;--active-text:#5B4C94">Read the Neat skill and workspace</text><text x="132" y="529" class="sans small">Find APIs, the model, and a test image.</text>
+  <rect class="glow" x="106" y="474" width="464" height="76" rx="18" fill="none" stroke="#7A6BB5" stroke-width="7" opacity="0" filter="url(#purpleGlow)">
+    <animate class="motion" attributeName="opacity" begin="4.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="474" width="464" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="4.8s" dur="14s" repeatCount="indefinite" values="#F7F5FB;#E2DCF3;#E2DCF3;#F7F5FB;#F7F5FB" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="4.8s" dur="14s" repeatCount="indefinite" values="#B8B0DC;#7A6BB5;#7A6BB5;#B8B0DC;#B8B0DC" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="4.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="506" class="sans label">Read the Neat skill and workspace<animate class="motion" attributeName="fill" begin="4.8s" dur="14s" repeatCount="indefinite" values="#35536F;#5B4C94;#5B4C94;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="529" class="sans small">Find APIs, the model, and a test image.</text>
 
   <circle cx="78" cy="610" r="10" fill="#E7F1FC" stroke="#5998DD" stroke-width="2"/>
-  <rect class="activity" style="--delay:6.8s;--base:#F6F8FB;--stroke:#D6E2EF;--active:#D8EAFB;--active-stroke:#5998DD;--glow:rgba(89,152,221,.65)" x="106" y="574" width="464" height="76" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2"/>
-  <text x="132" y="606" class="sans label activityText" style="--delay:6.8s;--active-text:#1D4F86">Create the application</text><text x="132" y="629" class="sans small">Write standard, inspectable SiMa.ai Neat code.</text>
+  <rect class="glow" x="106" y="574" width="464" height="76" rx="18" fill="none" stroke="#5998DD" stroke-width="7" opacity="0" filter="url(#blueGlow)">
+    <animate class="motion" attributeName="opacity" begin="6.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="574" width="464" height="76" rx="18" fill="#F6F8FB" stroke="#D6E2EF" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="6.8s" dur="14s" repeatCount="indefinite" values="#F6F8FB;#D8EAFB;#D8EAFB;#F6F8FB;#F6F8FB" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="6.8s" dur="14s" repeatCount="indefinite" values="#D6E2EF;#5998DD;#5998DD;#D6E2EF;#D6E2EF" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="6.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="606" class="sans label">Create the application<animate class="motion" attributeName="fill" begin="6.8s" dur="14s" repeatCount="indefinite" values="#35536F;#1D4F86;#1D4F86;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="629" class="sans small">Write standard, inspectable SiMa.ai Neat code.</text>
 
   <circle cx="78" cy="710" r="10" fill="#E5F5EA" stroke="#2A9C4F" stroke-width="2"/>
-  <rect class="activity" style="--delay:8.8s;--base:#F3FBF7;--stroke:#9CD5B2;--active:#D5EFDD;--active-stroke:#2A9C4F;--glow:rgba(42,156,79,.62)" x="106" y="674" width="464" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
-  <text x="132" y="706" class="sans label activityText" style="--delay:8.8s;--active-text:#1B6A36">Run on the paired Modalix DevKit</text><text x="132" y="729" class="sans small">Execute from the shared workspace.</text>
+  <rect class="glow" x="106" y="674" width="464" height="76" rx="18" fill="none" stroke="#2A9C4F" stroke-width="7" opacity="0" filter="url(#greenGlow)">
+    <animate class="motion" attributeName="opacity" begin="8.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="674" width="464" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="8.8s" dur="14s" repeatCount="indefinite" values="#F3FBF7;#D5EFDD;#D5EFDD;#F3FBF7;#F3FBF7" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="8.8s" dur="14s" repeatCount="indefinite" values="#9CD5B2;#2A9C4F;#2A9C4F;#9CD5B2;#9CD5B2" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="8.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="706" class="sans label">Run on the paired Modalix DevKit<animate class="motion" attributeName="fill" begin="8.8s" dur="14s" repeatCount="indefinite" values="#35536F;#1B6A36;#1B6A36;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="729" class="sans small">Execute from the shared workspace.</text>
 
   <circle cx="78" cy="810" r="10" fill="#E5F5EA" stroke="#2A9C4F" stroke-width="2"/>
-  <rect class="activity" style="--delay:10.8s;--base:#F3FBF7;--stroke:#9CD5B2;--active:#D5EFDD;--active-stroke:#2A9C4F;--glow:rgba(42,156,79,.62)" x="106" y="774" width="464" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
-  <text x="132" y="806" class="sans label activityText" style="--delay:10.8s;--active-text:#1B6A36">Inspect output and diagnostics</text><text x="132" y="829" class="sans small">Check the result and identify failures.</text>
+  <rect class="glow" x="106" y="774" width="464" height="76" rx="18" fill="none" stroke="#2A9C4F" stroke-width="7" opacity="0" filter="url(#greenGlow)">
+    <animate class="motion" attributeName="opacity" begin="10.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="774" width="464" height="76" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="10.8s" dur="14s" repeatCount="indefinite" values="#F3FBF7;#D5EFDD;#D5EFDD;#F3FBF7;#F3FBF7" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="10.8s" dur="14s" repeatCount="indefinite" values="#9CD5B2;#2A9C4F;#2A9C4F;#9CD5B2;#9CD5B2" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="10.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="806" class="sans label">Inspect output and diagnostics<animate class="motion" attributeName="fill" begin="10.8s" dur="14s" repeatCount="indefinite" values="#35536F;#1B6A36;#1B6A36;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="829" class="sans small">Check the result and identify failures.</text>
 
   <circle cx="78" cy="910" r="10" fill="#E2DCF3" stroke="#7A6BB5" stroke-width="2"/>
-  <rect class="activity" style="--delay:12.8s;--base:#F7F5FB;--stroke:#B8B0DC;--active:#E2DCF3;--active-stroke:#7A6BB5;--glow:rgba(122,107,181,.68)" x="106" y="874" width="464" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2"/>
-  <text x="132" y="906" class="sans label activityText" style="--delay:12.8s;--active-text:#5B4C94">Refine and rerun</text><text x="132" y="929" class="sans small">Iterate until on-device validation succeeds.</text>
+  <rect class="glow" x="106" y="874" width="464" height="76" rx="18" fill="none" stroke="#7A6BB5" stroke-width="7" opacity="0" filter="url(#purpleGlow)">
+    <animate class="motion" attributeName="opacity" begin="12.8s" dur="14s" repeatCount="indefinite" values="0;1;1;0;0" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <rect x="106" y="874" width="464" height="76" rx="18" fill="#F7F5FB" stroke="#B8B0DC" stroke-width="2">
+    <animate class="motion" attributeName="fill" begin="12.8s" dur="14s" repeatCount="indefinite" values="#F7F5FB;#E2DCF3;#E2DCF3;#F7F5FB;#F7F5FB" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke" begin="12.8s" dur="14s" repeatCount="indefinite" values="#B8B0DC;#7A6BB5;#7A6BB5;#B8B0DC;#B8B0DC" keyTimes="0;.04;.10;.14;1"/>
+    <animate class="motion" attributeName="stroke-width" begin="12.8s" dur="14s" repeatCount="indefinite" values="2;5;5;2;2" keyTimes="0;.04;.10;.14;1"/>
+  </rect>
+  <text x="132" y="906" class="sans label">Refine and rerun<animate class="motion" attributeName="fill" begin="12.8s" dur="14s" repeatCount="indefinite" values="#35536F;#5B4C94;#5B4C94;#35536F;#35536F" keyTimes="0;.04;.10;.14;1"/></text><text x="132" y="929" class="sans small">Iterate until on-device validation succeeds.</text>
 
-  <rect class="success" x="126" y="990" width="388" height="48" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2"/>
+  <rect class="glow" x="126" y="990" width="388" height="48" rx="18" fill="none" stroke="#2A9C4F" stroke-width="7" opacity="0" filter="url(#greenGlow)">
+    <animate class="motion" attributeName="opacity" dur="14s" repeatCount="indefinite" values="0;0;1;1;0" keyTimes="0;.75;.80;.94;1"/>
+  </rect>
+  <rect x="126" y="990" width="388" height="48" rx="18" fill="#F3FBF7" stroke="#9CD5B2" stroke-width="2">
+    <animate class="motion" attributeName="fill" dur="14s" repeatCount="indefinite" values="#F3FBF7;#F3FBF7;#D5EFDD;#D5EFDD;#F3FBF7" keyTimes="0;.75;.80;.94;1"/>
+    <animate class="motion" attributeName="stroke" dur="14s" repeatCount="indefinite" values="#9CD5B2;#9CD5B2;#2A9C4F;#2A9C4F;#9CD5B2" keyTimes="0;.75;.80;.94;1"/>
+    <animate class="motion" attributeName="stroke-width" dur="14s" repeatCount="indefinite" values="2;2;5;5;2" keyTimes="0;.75;.80;.94;1"/>
+  </rect>
   <circle cx="156" cy="1014" r="10" fill="#2A9C4F"/><path d="M151 1014L155 1018L162 1009" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
   <text x="177" y="1020" class="sans label">Application validated on Modalix</text>
   </g>
