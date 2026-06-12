@@ -46,6 +46,61 @@ jobs:
     with:
       vulcan_env: ${{ vars.VULCAN_ENV || 'production' }}
 
+  detect-changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.detect.outputs.docs_only }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          clean: true
+          fetch-depth: 0
+
+      - name: Detect docs-only changeset
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          docs_only=false
+          compare_base=""
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            echo "Tag build; treating changeset as code-impacting."
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "branch" ]]; then
+            if [[ "${GITHUB_REF_NAME}" == "develop" || "${GITHUB_REF_NAME}" == "main" ]]; then
+              before_sha="${{ github.event.before }}"
+              if [[ -n "${before_sha}" && ! "${before_sha}" =~ ^0+$ ]]; then
+                compare_base="${before_sha}"
+              fi
+            else
+              git fetch --no-tags origin develop
+              compare_base="$(git merge-base HEAD origin/develop)"
+            fi
+          fi
+
+          if [[ -n "${compare_base}" ]]; then
+            mapfile -t changed_files < <(git diff --name-only "${compare_base}" HEAD | sed '/^$/d')
+            printf 'Changed files (%s):\n' "${#changed_files[@]}"
+            printf '  %s\n' "${changed_files[@]}"
+            if [[ "${#changed_files[@]}" -gt 0 ]]; then
+              docs_only=true
+              for path in "${changed_files[@]}"; do
+                if [[ "${path}" != docs/* ]]; then
+                  docs_only=false
+                  break
+                fi
+              done
+            fi
+          else
+            echo "No reliable compare base found; treating changeset as code-impacting."
+          fi
+
+          echo "docs_only=${docs_only}" | tee -a "${GITHUB_OUTPUT}"
+
   code-hygiene:
     name: Code Hygiene
     if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
@@ -82,7 +137,9 @@ jobs:
 
   resolve-test-runner:
     name: Resolve Test Runner
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
+    needs:
+      - detect-changes
     uses: sima-neat/.github/.github/workflows/vulcan-resolve-modalix-runner.yml@main
 
   build:
@@ -221,8 +278,9 @@ jobs:
 
   test-devkit:
     name: Test Core on DevKit
-    if: ${{ (inputs.build_mode || 'standard') == 'standard' }}
+    if: ${{ (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' }}
     needs:
+      - detect-changes
       - resolve-vulcan-config
       - resolve-test-runner
       - publish-vulcan-artifacts
@@ -549,8 +607,9 @@ jobs:
 
   promote-latest-tag:
     name: Promote Latest Tag
-    if: ${{ github.ref_type == 'branch' && (inputs.build_mode || 'standard') == 'standard' }}
+    if: ${{ always() && github.ref_type == 'branch' && (inputs.build_mode || 'standard') == 'standard' && needs.detect-changes.outputs.docs_only != 'true' && needs.test-devkit.result == 'success' }}
     needs:
+      - detect-changes
       - resolve-vulcan-config
       - test-devkit
     uses: sima-neat/.github/.github/workflows/vulcan-update-latest-artifacts.yml@main
