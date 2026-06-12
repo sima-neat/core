@@ -104,10 +104,8 @@ std::string logical_input_dbg_dequant_local(const LogicalInputStaticSpec& spec) 
       << ",shape=" << ints64_dbg_dequant_local(spec.shape)
       << ",stride_bytes=" << ints64_dbg_dequant_local(spec.stride_bytes)
       << ",byte_offset=" << spec.byte_offset << ",size_bytes=" << spec.size_bytes << ",dtype=\""
-      << spec.dtype << "\""
-      << ",layout=\"" << spec.layout << "\""
-      << ",logical_name=\"" << spec.logical_name << "\""
-      << ",backend_name=\"" << spec.backend_name << "\""
+      << spec.dtype << "\"" << ",layout=\"" << spec.layout << "\"" << ",logical_name=\""
+      << spec.logical_name << "\"" << ",backend_name=\"" << spec.backend_name << "\""
       << ",segment_name=\"" << spec.segment_name << "\""
       << ",quant=" << quant_dbg_dequant_local(spec.quant) << "}";
   return oss.str();
@@ -118,15 +116,13 @@ std::string binding_dbg_dequant_local(const InputBindingStaticSpec& spec) {
   oss << "{sink_pad_index=" << spec.sink_pad_index
       << ",local_logical_input_index=" << spec.local_logical_input_index
       << ",src_stage_index=" << spec.src_stage_index << ",src_stage_id=\"" << spec.src_stage_id
-      << "\""
-      << ",src_logical_output_index=" << spec.src_logical_output_index
+      << "\"" << ",src_logical_output_index=" << spec.src_logical_output_index
       << ",src_output_slot=" << spec.src_output_slot
       << ",src_physical_output_index=" << spec.src_physical_output_index
       << ",src_physical_size_bytes=" << spec.src_physical_size_bytes
       << ",src_physical_byte_offset=" << spec.src_physical_byte_offset
       << ",required=" << (spec.required ? 1 : 0) << ",cm_input_name=\"" << spec.cm_input_name
-      << "\""
-      << ",source_segment_name=\"" << spec.source_segment_name << "\"}";
+      << "\"" << ",source_segment_name=\"" << spec.source_segment_name << "\"}";
   return oss.str();
 }
 
@@ -148,10 +144,8 @@ std::string logical_output_dbg_dequant_local(const LogicalTensorStaticSpec& spec
       << ",tensor_index=" << spec.tensor_index << ",byte_offset=" << spec.byte_offset
       << ",size_bytes=" << spec.size_bytes << ",shape=" << ints64_dbg_dequant_local(spec.shape)
       << ",stride_bytes=" << ints64_dbg_dequant_local(spec.stride_bytes) << ",dtype=\""
-      << spec.dtype << "\""
-      << ",layout=\"" << spec.layout << "\""
-      << ",logical_name=\"" << spec.logical_name << "\""
-      << ",backend_name=\"" << spec.backend_name << "\""
+      << spec.dtype << "\"" << ",layout=\"" << spec.layout << "\"" << ",logical_name=\""
+      << spec.logical_name << "\"" << ",backend_name=\"" << spec.backend_name << "\""
       << ",segment_name=\"" << spec.segment_name << "\""
       << ",quant=" << quant_dbg_dequant_local(spec.quant) << "}";
   return oss.str();
@@ -162,8 +156,7 @@ std::string route_dbg_dequant_local(const StageOutputRoute& route) {
   oss << "{output_slot=" << route.output_slot
       << ",logical_output_index=" << route.logical_output_index
       << ",tensor_index=" << route.tensor_index << ",cm_output_name=\"" << route.cm_output_name
-      << "\""
-      << ",segment_name=\"" << route.segment_name << "\"}";
+      << "\"" << ",segment_name=\"" << route.segment_name << "\"}";
   return oss.str();
 }
 

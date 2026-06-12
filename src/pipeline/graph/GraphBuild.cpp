@@ -1883,8 +1883,8 @@ void throw_if_bus_error_local(GstElement* pipeline, const std::shared_ptr<DiagCt
   rep.error_code = error_codes::kCaps;
   std::ostringstream note;
   note << "where=" << (where ? where : "Graph::build") << " code=" << rep.error_code
-       << " summary=GST ERROR"
-       << " details=element='" << (src ? src : "<unknown>") << "' error='" << err_msg << "'";
+       << " summary=GST ERROR" << " details=element='" << (src ? src : "<unknown>") << "' error='"
+       << err_msg << "'";
   if (!dbg_msg.empty()) {
     note << " gst_debug='" << dbg_msg << "'";
   }

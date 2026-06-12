@@ -573,8 +573,8 @@ void throw_if_bus_error(GstElement* pipeline, const std::shared_ptr<DiagCtx>& di
   rep.error_code = error_codes::kCaps;
   std::ostringstream note;
   note << "where=" << (where ? where : "GstDiagnosticsUtil::throw_if_bus_error")
-       << " code=" << rep.error_code << " summary=GST ERROR"
-       << " details=element='" << (src ? src : "<unknown>") << "' message='" << line << "'";
+       << " code=" << rep.error_code << " summary=GST ERROR" << " details=element='"
+       << (src ? src : "<unknown>") << "' message='" << line << "'";
   rep.repro_note = note.str();
   if (diag)
     rep.repro_note += "\n" + boundary_summary(diag);

@@ -31,22 +31,28 @@ std::vector<Case>& registry() {
   return r;
 }
 struct Reg {
-  Reg(const char* id, std::function<void()> fn) { registry().push_back({id, std::move(fn)}); }
+  Reg(const char* id, std::function<void()> fn) {
+    registry().push_back({id, std::move(fn)});
+  }
 };
-#define TEST(id) \
-  static void id();                            \
-  static Reg reg_##id(#id, id);                \
+#define TEST(id)                                                                                   \
+  static void id();                                                                                \
+  static Reg reg_##id(#id, id);                                                                    \
   static void id()
 
 // Drive begin/end on a Seg without the checked-read wrapper (for state probing).
-void begin_read(Seg& s) { begin_cpu_access(s.coh, Access::Read, &s.cmo); }
-void end_read(Seg& s) { end_cpu_access(s.coh, Access::Read, &s.cmo); }
+void begin_read(Seg& s) {
+  begin_cpu_access(s.coh, Access::Read, &s.cmo);
+}
+void end_read(Seg& s) {
+  end_cpu_access(s.coh, Access::Read, &s.cmo);
+}
 
 // =============================== LEVEL 0 ===================================
 
 // P0-L0-1: CMO op selection is directional.
 TEST(P0_L0_1_directional_op_selection) {
-  {  // read after device write -> civac only
+  { // read after device write -> civac only
     Seg s(256);
     s.device_write(0, pattern(256, 1));
     s.cmo.reset_counts();
@@ -54,11 +60,11 @@ TEST(P0_L0_1_directional_op_selection) {
     check(s.cmo.civac_calls == 1, "read-after-device must issue exactly 1 civac");
     check(s.cmo.cvac_calls == 0, "read path must not clean");
   }
-  {  // write to a CPU-OWNED buffer -> cvac only (no invalidate once owned)
+  { // write to a CPU-OWNED buffer -> cvac only (no invalidate once owned)
     Seg s(256);
-    s.cpu_write(0, pattern(256, 2));  // establish CPU ownership (this first write invalidates)
+    s.cpu_write(0, pattern(256, 2)); // establish CPU ownership (this first write invalidates)
     s.cmo.reset_counts();
-    s.cpu_write(0, pattern(256, 3));  // second write on an owned, clean buffer
+    s.cpu_write(0, pattern(256, 3)); // second write on an owned, clean buffer
     check(s.cmo.cvac_calls == 1, "write on owned buffer must issue exactly 1 cvac");
     check(s.cmo.civac_calls == 0, "write on owned, clean buffer must not invalidate");
   }
@@ -68,15 +74,16 @@ TEST(P0_L0_1_directional_op_selection) {
 TEST(P0_L0_2_alignment_and_dispatch) {
   check(aligned64(0, 64) && aligned64(128, 64), "aligned64 true on 64B multiples");
   check(!aligned64(1, 64) && !aligned64(0, 30), "aligned64 false on non-64B");
-  {  // aligned sub-range -> partial cvac (not whole)
+  { // aligned sub-range -> partial cvac (not whole)
     Seg s(256);
-    s.cpu_write(64, pattern(64, 3));  // line 1 only
+    s.cpu_write(64, pattern(64, 3)); // line 1 only
     check(!s.cmo.last_was_whole, "aligned sub-range clean must be partial");
-    check(s.cmo.last_off == 64 && s.cmo.last_len == 64, "partial range must match the written span");
+    check(s.cmo.last_off == 64 && s.cmo.last_len == 64,
+          "partial range must match the written span");
   }
-  {  // unaligned sub-range -> whole-segment fallback
+  { // unaligned sub-range -> whole-segment fallback
     Seg s(256);
-    s.cpu_write(10, pattern(40, 4));  // unaligned
+    s.cpu_write(10, pattern(40, 4)); // unaligned
     check(s.cmo.last_was_whole, "unaligned clean must fall back to whole-segment");
   }
 }
@@ -91,7 +98,7 @@ TEST(P0_L0_4_api_is_sole_mutator) {
 
 // P0-L0-5: conservative default — first CPU read of a never-seen seg invalidates.
 TEST(P0_L0_5_conservative_default) {
-  Seg s(128);  // never written by anyone
+  Seg s(128); // never written by anyone
   begin_read(s);
   end_read(s);
   check(s.cmo.civac_calls == 1, "first read of an Unknown seg MUST invalidate (conservative)");
@@ -111,8 +118,8 @@ TEST(P0_L1_6_ownership_skip) {
 // P0-L1-7: device write flips dirty — next read invalidates exactly once.
 TEST(P0_L1_7_device_write_flips_dirty) {
   Seg s(256);
-  s.cpu_write(0, pattern(256, 6));   // CPU owns, clean
-  s.device_write(0, pattern(256, 7));  // device takes over
+  s.cpu_write(0, pattern(256, 6));    // CPU owns, clean
+  s.device_write(0, pattern(256, 7)); // device takes over
   s.cmo.reset_counts();
   s.cpu_read_checked(0, 256, "L1-7 first");
   check(s.cmo.civac_calls == 1, "first read after device write must invalidate");
@@ -126,8 +133,8 @@ TEST(P0_L1_8_nested_pairing) {
   Seg s(256);
   s.device_write(0, pattern(256, 8));
   s.cmo.reset_counts();
-  begin_cpu_access(s.coh, Access::Read, &s.cmo);  // sibling tensor A (first)
-  begin_cpu_access(s.coh, Access::Read, &s.cmo);  // sibling tensor B (nested)
+  begin_cpu_access(s.coh, Access::Read, &s.cmo); // sibling tensor A (first)
+  begin_cpu_access(s.coh, Access::Read, &s.cmo); // sibling tensor B (nested)
   check(s.cmo.civac_calls == 1, "nested begins must invalidate only once");
   end_cpu_access(s.coh, Access::Read, &s.cmo);
   end_cpu_access(s.coh, Access::Read, &s.cmo);
@@ -166,7 +173,7 @@ TEST(P0_L1_10_attach_fallback_conservative) {
 TEST(P0_L3_17_cold_buffer_zero_cmo) {
   Seg s(256, /*uncached=*/true);
   s.device_write(0, pattern(256, 11));
-  s.cpu_read_checked(0, 256, "L3-17");  // reads ddr directly, correct
+  s.cpu_read_checked(0, 256, "L3-17"); // reads ddr directly, correct
   check(s.cmo.civac_calls == 0 && s.cmo.cvac_calls == 0, "uncached buffer must issue zero CMO");
 }
 
@@ -175,34 +182,35 @@ TEST(P0_L3_18_no_redundant_invalidate) {
   Seg s(256);
   s.device_write(0, pattern(256, 12));
   s.cmo.reset_counts();
-  for (int i = 0; i < 16; ++i) s.cpu_read_checked(0, 256, "L3-18");
+  for (int i = 0; i < 16; ++i)
+    s.cpu_read_checked(0, 256, "L3-18");
   check(s.cmo.civac_calls == 1, "16 reads after one device write => exactly 1 invalidate, got " +
                                     std::to_string(s.cmo.civac_calls));
 }
 
 // P0-L3-19: partial clean covers only the touched lines; unaligned -> whole.
 TEST(P0_L3_19_part_minimality) {
-  const uint64_t size = 64 * 16;  // 16 lines
-  {  // aligned 4-line write -> 4 lines cleaned, not 16
+  const uint64_t size = 64 * 16; // 16 lines
+  {                              // aligned 4-line write -> 4 lines cleaned, not 16
     Seg s(size);
     s.cpu_write(64 * 2, pattern(64 * 4, 13));
-    check(s.cmo.cvac_lines == 4, "aligned clean must touch exactly 4 lines, got " +
-                                     std::to_string(s.cmo.cvac_lines));
+    check(s.cmo.cvac_lines == 4,
+          "aligned clean must touch exactly 4 lines, got " + std::to_string(s.cmo.cvac_lines));
   }
-  {  // unaligned write -> whole segment (16 lines)
+  { // unaligned write -> whole segment (16 lines)
     Seg s(size);
     s.cpu_write(70, pattern(100, 14));
     check(s.cmo.last_was_whole, "unaligned clean falls back to whole-segment");
-    check(s.cmo.cvac_lines == 16, "whole-segment clean touches all 16 lines, got " +
-                                      std::to_string(s.cmo.cvac_lines));
+    check(s.cmo.cvac_lines == 16,
+          "whole-segment clean touches all 16 lines, got " + std::to_string(s.cmo.cvac_lines));
   }
 }
 
 // P0-L3-20: device->device handoff with no CPU touch issues zero CPU CMO.
 TEST(P0_L3_20_device_to_device_elision) {
   Seg s(256);
-  s.device_write(0, pattern(256, 15));            // EV74 output
-  auto out = s.device_read_checked(0, 256, "L3-20");  // MLA input, straight from ddr
+  s.device_write(0, pattern(256, 15));               // EV74 output
+  auto out = s.device_read_checked(0, 256, "L3-20"); // MLA input, straight from ddr
   (void)out;
   check(s.cmo.civac_calls == 0 && s.cmo.cvac_calls == 0,
         "device->device with no CPU map must issue zero CPU-side CMO");
@@ -221,7 +229,7 @@ TEST(P0_L3_21_directional_minimality) {
   }
   {
     Seg s(256);
-    s.cpu_write(0, pattern(256, 17));  // establish CPU ownership first
+    s.cpu_write(0, pattern(256, 17)); // establish CPU ownership first
     s.cmo.reset_counts();
     begin_cpu_access(s.coh, Access::Write, &s.cmo);
     s.cm.cpu_write(0, pattern(256, 18));
@@ -233,27 +241,65 @@ TEST(P0_L3_21_directional_minimality) {
 
 // P0-L3-22: golden CMO-count matrix (the optimality gate).
 TEST(P0_L3_22_golden_cmo_matrix) {
-  struct Row { const char* name; std::function<void(Seg&)> seq; uint64_t civac; uint64_t cvac; };
+  struct Row {
+    const char* name;
+    std::function<void(Seg&)> seq;
+    uint64_t civac;
+    uint64_t cvac;
+  };
   const std::vector<Row> matrix = {
-    {"dev_write,read", [](Seg& s){ s.device_write(0, pattern(256,1)); s.cmo.reset_counts();
-                                   s.cpu_read_checked(0,256,"m"); }, 1, 0},
-    {"cpu_write,read", [](Seg& s){ s.cpu_write(0, pattern(256,1)); s.cmo.reset_counts();
-                                   s.cpu_read_checked(0,256,"m"); }, 0, 0},
-    {"dev_write,3reads",[](Seg& s){ s.device_write(0,pattern(256,1)); s.cmo.reset_counts();
-                                    for(int i=0;i<3;++i) s.cpu_read_checked(0,256,"m"); }, 1, 0},
-    {"fresh_write",     [](Seg& s){ s.cmo.reset_counts(); s.cpu_write(0,pattern(256,1)); }, 1, 1},
-    {"owned_write_only",[](Seg& s){ s.cpu_write(0,pattern(256,1)); s.cmo.reset_counts();
-                                    s.cpu_write(0,pattern(256,2)); }, 0, 1},
-    {"dev_to_dev",      [](Seg& s){ s.device_write(0,pattern(256,1)); s.cmo.reset_counts();
-                                    s.device_read_checked(0,256,"m"); }, 0, 0},
+      {"dev_write,read",
+       [](Seg& s) {
+         s.device_write(0, pattern(256, 1));
+         s.cmo.reset_counts();
+         s.cpu_read_checked(0, 256, "m");
+       },
+       1, 0},
+      {"cpu_write,read",
+       [](Seg& s) {
+         s.cpu_write(0, pattern(256, 1));
+         s.cmo.reset_counts();
+         s.cpu_read_checked(0, 256, "m");
+       },
+       0, 0},
+      {"dev_write,3reads",
+       [](Seg& s) {
+         s.device_write(0, pattern(256, 1));
+         s.cmo.reset_counts();
+         for (int i = 0; i < 3; ++i)
+           s.cpu_read_checked(0, 256, "m");
+       },
+       1, 0},
+      {"fresh_write",
+       [](Seg& s) {
+         s.cmo.reset_counts();
+         s.cpu_write(0, pattern(256, 1));
+       },
+       1, 1},
+      {"owned_write_only",
+       [](Seg& s) {
+         s.cpu_write(0, pattern(256, 1));
+         s.cmo.reset_counts();
+         s.cpu_write(0, pattern(256, 2));
+       },
+       0, 1},
+      {"dev_to_dev",
+       [](Seg& s) {
+         s.device_write(0, pattern(256, 1));
+         s.cmo.reset_counts();
+         s.device_read_checked(0, 256, "m");
+       },
+       0, 0},
   };
   for (const auto& r : matrix) {
     Seg s(256);
     r.seq(s);
     check(s.cmo.civac_calls == r.civac, std::string("golden civac mismatch for ") + r.name +
-              ": got " + std::to_string(s.cmo.civac_calls) + " want " + std::to_string(r.civac));
-    check(s.cmo.cvac_calls == r.cvac, std::string("golden cvac mismatch for ") + r.name +
-              ": got " + std::to_string(s.cmo.cvac_calls) + " want " + std::to_string(r.cvac));
+                                            ": got " + std::to_string(s.cmo.civac_calls) +
+                                            " want " + std::to_string(r.civac));
+    check(s.cmo.cvac_calls == r.cvac, std::string("golden cvac mismatch for ") + r.name + ": got " +
+                                          std::to_string(s.cmo.cvac_calls) + " want " +
+                                          std::to_string(r.cvac));
   }
 }
 
@@ -270,14 +316,22 @@ TEST(P0_L5_26_fuzzer_vs_oracle) {
     const uint64_t off = rnd(0, size - 1);
     const uint64_t len = std::min<uint64_t>(rnd(1, 96), size - off);
     switch (rng() % 5) {
-      case 0: s.cpu_write(off, pattern(len, (uint8_t)i)); break;
-      case 1: s.cpu_read_checked(off, len, "fuzz-cpu-read"); break;
-      case 2: s.device_write(off, pattern(len, (uint8_t)(i * 7))); break;
-      case 3: s.device_read_checked(off, len, "fuzz-dev-read"); break;
-      case 4:  // device write then immediate CPU read of the same span (hazard)
-        s.device_write(off, pattern(len, (uint8_t)(i * 13)));
-        s.cpu_read_checked(off, len, "fuzz-hazard-read");
-        break;
+    case 0:
+      s.cpu_write(off, pattern(len, (uint8_t)i));
+      break;
+    case 1:
+      s.cpu_read_checked(off, len, "fuzz-cpu-read");
+      break;
+    case 2:
+      s.device_write(off, pattern(len, (uint8_t)(i * 7)));
+      break;
+    case 3:
+      s.device_read_checked(off, len, "fuzz-dev-read");
+      break;
+    case 4: // device write then immediate CPU read of the same span (hazard)
+      s.device_write(off, pattern(len, (uint8_t)(i * 13)));
+      s.cpu_read_checked(off, len, "fuzz-hazard-read");
+      break;
     }
   }
 }
@@ -285,7 +339,7 @@ TEST(P0_L5_26_fuzzer_vs_oracle) {
 // P0-L5-27: neighbour isolation — an aligned partial clean of tensor A must not
 // disturb tensor B in the adjacent line; documents the 64B-alignment invariant.
 TEST(P0_L5_27_neighbour_isolation) {
-  Seg s(128);  // A = line0 [0,64), B = line1 [64,128)
+  Seg s(128); // A = line0 [0,64), B = line1 [64,128)
   // Device produces both tensors fresh.
   s.device_write(0, pattern(128, 20));
   // CPU reads B (caches line1, clean) then reads A.
@@ -311,7 +365,7 @@ TEST(P0_L5_28_tight_loop_barrier) {
   }
 }
 
-}  // namespace
+} // namespace
 
 int main() {
   int failures = 0;

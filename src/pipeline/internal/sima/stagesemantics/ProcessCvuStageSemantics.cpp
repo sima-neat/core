@@ -983,9 +983,8 @@ const char* device_kind_dbg_processcvu_local(const DeviceKind kind) {
 
 std::string payload_dbg_processcvu_local(const ProcessCvuStagePayload& payload) {
   std::ostringstream out;
-  out << "{graph_family=\"" << payload.graph_family << "\""
-      << ",graph_name=\"" << payload.graph_name << "\""
-      << ",graph_id=" << payload.graph_id
+  out << "{graph_family=\"" << payload.graph_family << "\"" << ",graph_name=\""
+      << payload.graph_name << "\"" << ",graph_id=" << payload.graph_id
       << ",canonical_contract=" << (payload.canonical_contract ? 1 : 0)
       << ",slice_shape_raw=" << ints64_dbg_processcvu_local(payload.slice_shape_raw)
       << ",out_shape_raw=" << ints64_dbg_processcvu_local(payload.out_shape_raw)
@@ -998,9 +997,8 @@ std::string payload_dbg_processcvu_local(const ProcessCvuStagePayload& payload) 
       << ",primary_output_transport_kind="
       << static_cast<int>(payload.primary_output_transport_kind)
       << ",primary_output_semantic_kind=" << static_cast<int>(payload.primary_output_semantic_kind)
-      << ",input_dtype=\"" << payload.input_dtype << "\""
-      << ",output_dtype=\"" << payload.output_dtype << "\""
-      << ",out_dtype=\"" << payload.out_dtype << "\""
+      << ",input_dtype=\"" << payload.input_dtype << "\"" << ",output_dtype=\""
+      << payload.output_dtype << "\"" << ",out_dtype=\"" << payload.out_dtype << "\""
       << ",input_layout=\"" << payload_input_layout_token_local(payload) << "\""
       << ",output_layout=\"" << payload_output_layout_token_local(payload) << "\""
       << ",scaled_width=" << payload.scaled_width << ",scaled_height=" << payload.scaled_height
@@ -1037,13 +1035,11 @@ std::string payload_dbg_processcvu_local(const ProcessCvuStagePayload& payload) 
 std::string input_fact_dbg_processcvu_local(const ProcessCvuCanonicalInputFact& fact) {
   std::ostringstream out;
   out << "{logical_index=" << fact.logical_index << ",physical_index=" << fact.physical_index
-      << ",physical_name=\"" << fact.physical_name << "\""
-      << ",logical_name=\"" << fact.logical_name << "\""
-      << ",shape=" << ints64_dbg_processcvu_local(fact.shape) << ",size_bytes=" << fact.size_bytes
-      << ",dtype=\"" << fact.dtype << "\""
-      << ",layout=\"" << fact.layout << "\""
-      << ",byte_offset=" << fact.byte_offset << ",quant=" << quant_dbg_processcvu_local(fact.quant)
-      << "}";
+      << ",physical_name=\"" << fact.physical_name << "\"" << ",logical_name=\""
+      << fact.logical_name << "\"" << ",shape=" << ints64_dbg_processcvu_local(fact.shape)
+      << ",size_bytes=" << fact.size_bytes << ",dtype=\"" << fact.dtype << "\"" << ",layout=\""
+      << fact.layout << "\"" << ",byte_offset=" << fact.byte_offset
+      << ",quant=" << quant_dbg_processcvu_local(fact.quant) << "}";
   return out.str();
 }
 
@@ -1057,9 +1053,7 @@ std::string binding_fact_dbg_processcvu_local(const ProcessCvuCanonicalBindingFa
       << ",src_physical_size_bytes=" << fact.src_physical_size_bytes
       << ",src_physical_byte_offset=" << fact.src_physical_byte_offset
       << ",required=" << (fact.required ? 1 : 0) << ",cm_input_name=\"" << fact.cm_input_name
-      << "\""
-      << ",source_segment_name=\"" << fact.source_segment_name << "\""
-      << "}";
+      << "\"" << ",source_segment_name=\"" << fact.source_segment_name << "\"" << "}";
   return out.str();
 }
 
@@ -1068,10 +1062,9 @@ std::string output_fact_dbg_processcvu_local(const ProcessCvuCanonicalOutputFact
   out << "{representation=" << static_cast<int>(fact.representation)
       << ",logical_index=" << fact.logical_index << ",physical_index=" << fact.physical_index
       << ",output_slot=" << fact.output_slot << ",tensor_index=" << fact.tensor_index
-      << ",physical_name=\"" << fact.physical_name << "\""
-      << ",logical_name=\"" << fact.logical_name << "\""
-      << ",shape=" << ints64_dbg_processcvu_local(fact.shape) << ",dtype=\"" << fact.dtype << "\""
-      << ",layout=\"" << fact.layout << "\""
+      << ",physical_name=\"" << fact.physical_name << "\"" << ",logical_name=\""
+      << fact.logical_name << "\"" << ",shape=" << ints64_dbg_processcvu_local(fact.shape)
+      << ",dtype=\"" << fact.dtype << "\"" << ",layout=\"" << fact.layout << "\""
       << ",byte_offset=" << fact.byte_offset << ",size_bytes=" << fact.size_bytes
       << ",quant=" << quant_dbg_processcvu_local(fact.quant) << "}";
   return out.str();
@@ -1082,9 +1075,7 @@ std::string route_fact_dbg_processcvu_local(const ProcessCvuCanonicalRouteFact& 
   out << "{output_slot=" << fact.output_slot
       << ",logical_output_index=" << fact.logical_output_index
       << ",tensor_index=" << fact.tensor_index << ",cm_output_name=\"" << fact.cm_output_name
-      << "\""
-      << ",segment_name=\"" << fact.segment_name << "\""
-      << "}";
+      << "\"" << ",segment_name=\"" << fact.segment_name << "\"" << "}";
   return out.str();
 }
 
@@ -1096,10 +1087,8 @@ std::string logical_input_dbg_processcvu_local(const LogicalInputStaticSpec& spe
       << ",shape=" << ints64_dbg_processcvu_local(spec.shape)
       << ",stride_bytes=" << ints64_dbg_processcvu_local(spec.stride_bytes)
       << ",byte_offset=" << spec.byte_offset << ",size_bytes=" << spec.size_bytes << ",dtype=\""
-      << spec.dtype << "\""
-      << ",layout=\"" << spec.layout << "\""
-      << ",logical_name=\"" << spec.logical_name << "\""
-      << ",backend_name=\"" << spec.backend_name << "\""
+      << spec.dtype << "\"" << ",layout=\"" << spec.layout << "\"" << ",logical_name=\""
+      << spec.logical_name << "\"" << ",backend_name=\"" << spec.backend_name << "\""
       << ",segment_name=\"" << spec.segment_name << "\""
       << ",quant=" << quant_dbg_processcvu_local(spec.quant) << "}";
   return out.str();
@@ -1110,16 +1099,13 @@ std::string binding_dbg_processcvu_local(const InputBindingStaticSpec& spec) {
   out << "{sink_pad_index=" << spec.sink_pad_index
       << ",local_logical_input_index=" << spec.local_logical_input_index
       << ",src_stage_index=" << spec.src_stage_index << ",src_stage_id=\"" << spec.src_stage_id
-      << "\""
-      << ",src_logical_output_index=" << spec.src_logical_output_index
+      << "\"" << ",src_logical_output_index=" << spec.src_logical_output_index
       << ",src_output_slot=" << spec.src_output_slot
       << ",src_physical_output_index=" << spec.src_physical_output_index
       << ",src_physical_size_bytes=" << spec.src_physical_size_bytes
       << ",src_physical_byte_offset=" << spec.src_physical_byte_offset
       << ",required=" << (spec.required ? 1 : 0) << ",cm_input_name=\"" << spec.cm_input_name
-      << "\""
-      << ",source_segment_name=\"" << spec.source_segment_name << "\""
-      << "}";
+      << "\"" << ",source_segment_name=\"" << spec.source_segment_name << "\"" << "}";
   return out.str();
 }
 
@@ -1142,10 +1128,8 @@ std::string logical_output_dbg_processcvu_local(const LogicalTensorStaticSpec& s
       << ",tensor_index=" << spec.tensor_index << ",byte_offset=" << spec.byte_offset
       << ",size_bytes=" << spec.size_bytes << ",shape=" << ints64_dbg_processcvu_local(spec.shape)
       << ",stride_bytes=" << ints64_dbg_processcvu_local(spec.stride_bytes) << ",dtype=\""
-      << spec.dtype << "\""
-      << ",layout=\"" << spec.layout << "\""
-      << ",logical_name=\"" << spec.logical_name << "\""
-      << ",backend_name=\"" << spec.backend_name << "\""
+      << spec.dtype << "\"" << ",layout=\"" << spec.layout << "\"" << ",logical_name=\""
+      << spec.logical_name << "\"" << ",backend_name=\"" << spec.backend_name << "\""
       << ",segment_name=\"" << spec.segment_name << "\""
       << ",quant=" << quant_dbg_processcvu_local(spec.quant) << "}";
   return out.str();
@@ -1156,9 +1140,7 @@ std::string route_dbg_processcvu_local(const StageOutputRoute& route) {
   out << "{output_slot=" << route.output_slot
       << ",logical_output_index=" << route.logical_output_index
       << ",tensor_index=" << route.tensor_index << ",cm_output_name=\"" << route.cm_output_name
-      << "\""
-      << ",segment_name=\"" << route.segment_name << "\""
-      << "}";
+      << "\"" << ",segment_name=\"" << route.segment_name << "\"" << "}";
   return out.str();
 }
 
@@ -1262,11 +1244,9 @@ DetessIngressTransportView validate_detess_ingress_transport_local(
             : (!published_output.segment_name.empty() ? published_output.segment_name
                                                       : std::string());
     std::ostringstream out;
-    out << reason << " for '" << context << "'"
-        << " published_name=\"" << published_name << "\""
-        << " published_segment=\"" << published_output.segment_name << "\""
-        << " published_dtype=\"" << preferred_tensor_dtype_local(published_output, expected_dtype)
-        << "\""
+    out << reason << " for '" << context << "'" << " published_name=\"" << published_name << "\""
+        << " published_segment=\"" << published_output.segment_name << "\"" << " published_dtype=\""
+        << preferred_tensor_dtype_local(published_output, expected_dtype) << "\""
         << " expected_dtype=\"" << expected_dtype << "\""
         << " published_mpk_shape=" << ints64_dbg_processcvu_local(published_output.mpk_shape)
         << " published_logical_shape="

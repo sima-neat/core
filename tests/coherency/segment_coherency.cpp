@@ -40,7 +40,7 @@ void begin_cpu_access(SegCoherency& c, Access a, CmoBackend* be) {
     const bool need = (w == Writer::Device) ||
                       (w == Writer::Unknown && !c.cpu_cache_clean.load(std::memory_order_relaxed));
     if (need && be != nullptr) {
-#ifndef SEGCOH_BREAK_INVALIDATE  // negative-control switch: proves the tests have teeth
+#ifndef SEGCOH_BREAK_INVALIDATE // negative-control switch: proves the tests have teeth
       // ALWAYS whole-segment: dc civac is clean+invalidate; a partial invalidate
       // can write a neighbour's bytes over fresh device data at a shared line.
       be->invalidate(c.seg, 0, 0);
@@ -59,7 +59,7 @@ void end_cpu_access(SegCoherency& c, Access a, CmoBackend* be, uint64_t off, uin
     return;
   }
   if (!wants_write(a)) {
-    return;  // read-only CPU access leaves nothing to flush
+    return; // read-only CPU access leaves nothing to flush
   }
   if (c.uncached.load(std::memory_order_relaxed)) {
     // Write-combine/uncached: no cache to clean, but a store barrier would be
@@ -73,7 +73,7 @@ void end_cpu_access(SegCoherency& c, Access a, CmoBackend* be, uint64_t off, uin
     // segment; otherwise fall back to whole-segment.
     const bool partial_ok =
         len != 0 && off + len <= c.size && aligned64(off, len) && (off != 0 || len != c.size);
-#ifndef SEGCOH_BREAK_CLEAN  // negative-control switch for the lost-write hazard
+#ifndef SEGCOH_BREAK_CLEAN // negative-control switch for the lost-write hazard
     if (partial_ok) {
       be->clean(c.seg, off, len);
     } else {
@@ -97,4 +97,4 @@ void end_device_access(SegCoherency& c, uint64_t /*off*/, uint64_t /*len*/) {
   c.cpu_cache_clean.store(false, std::memory_order_release);
 }
 
-}  // namespace simaai::neat::coherency
+} // namespace simaai::neat::coherency

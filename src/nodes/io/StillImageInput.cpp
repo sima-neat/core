@@ -147,8 +147,7 @@ StillImageInput::StillImageInput(std::string image_path, ContentWidth content_w,
 std::string StillImageInput::backend_fragment(int node_index) const {
   (void)node_index;
   std::ostringstream ss;
-  ss << "appsrc name=mysrc is-live=true format=time "
-     << "! queue name=n" << node_index << "_queue "
+  ss << "appsrc name=mysrc is-live=true format=time " << "! queue name=n" << node_index << "_queue "
      << "! video/x-raw,format=NV12,width=" << enc_w_ << ",height=" << enc_h_
      << ",framerate=" << fps_ << "/1";
   return ss.str();

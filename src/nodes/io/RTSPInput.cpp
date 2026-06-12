@@ -16,8 +16,7 @@ RTSPInput::RTSPInput(std::string url, int latency_ms, bool tcp, bool drop_on_lat
 std::string RTSPInput::backend_fragment(int node_index) const {
   const std::string el = "n" + std::to_string(node_index) + "_rtspsrc";
   std::ostringstream ss;
-  ss << "rtspsrc name=" << el << " location=\"" << url_ << "\" "
-     << "latency=" << latency_ms_ << " "
+  ss << "rtspsrc name=" << el << " location=\"" << url_ << "\" " << "latency=" << latency_ms_ << " "
      << "protocols=" << (tcp_ ? "tcp" : "udp");
   if (drop_on_latency_) {
     ss << " drop-on-latency=true";

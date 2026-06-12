@@ -694,8 +694,7 @@ void InputStream::signal_eos() {
     std::ostringstream oss;
     oss << "InputStream::signal_eos: gst_app_src_end_of_stream failed"
         << " (flow=" << static_cast<int>(ret) << ":" << (flow_name ? flow_name : "<unknown>")
-        << "). "
-        << "Hint: pipeline may already be flushing or stopped.";
+        << "). " << "Hint: pipeline may already be flushing or stopped.";
     throw std::runtime_error(oss.str());
   }
 }

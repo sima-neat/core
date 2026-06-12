@@ -564,26 +564,21 @@ CombinePolicy parse_combine_policy(const std::string& value) {
 }
 
 void write_input_options_json(std::ostream& oss, const InputOptions& opt) {
-  oss << "{\"payload_type\":" << static_cast<int>(opt.payload_type) << ","
-      << "\"format\":\"" << json_escape(opt.format.str()) << "\","
-      << "\"width\":" << opt.width << ","
-      << "\"height\":" << opt.height << ","
-      << "\"depth\":" << opt.depth << ","
-      << "\"max_width\":" << opt.max_width << ","
-      << "\"max_height\":" << opt.max_height << ","
-      << "\"max_depth\":" << opt.max_depth << ","
-      << "\"fps_n\":" << opt.fps_n << ","
-      << "\"fps_d\":" << opt.fps_d << ","
-      << "\"caps_override\":\"" << json_escape(opt.caps_override) << "\","
+  oss << "{\"payload_type\":" << static_cast<int>(opt.payload_type) << "," << "\"format\":\""
+      << json_escape(opt.format.str()) << "\"," << "\"width\":" << opt.width << ","
+      << "\"height\":" << opt.height << "," << "\"depth\":" << opt.depth << ","
+      << "\"max_width\":" << opt.max_width << "," << "\"max_height\":" << opt.max_height << ","
+      << "\"max_depth\":" << opt.max_depth << "," << "\"fps_n\":" << opt.fps_n << ","
+      << "\"fps_d\":" << opt.fps_d << "," << "\"caps_override\":\""
+      << json_escape(opt.caps_override) << "\","
       << "\"is_live\":" << (opt.is_live ? "true" : "false") << ","
       << "\"do_timestamp\":" << (opt.do_timestamp ? "true" : "false") << ","
       << "\"block\":" << (opt.block ? "true" : "false") << ","
-      << "\"stream_type\":" << opt.stream_type << ","
-      << "\"max_bytes\":" << opt.max_bytes << ","
+      << "\"stream_type\":" << opt.stream_type << "," << "\"max_bytes\":" << opt.max_bytes << ","
       << "\"use_simaai_pool\":" << (opt.use_simaai_pool ? "true" : "false") << ","
       << "\"pool_min_buffers\":" << opt.pool_min_buffers << ","
-      << "\"pool_max_buffers\":" << opt.pool_max_buffers << ","
-      << "\"buffer_name\":\"" << json_escape(opt.buffer_name) << "\"}";
+      << "\"pool_max_buffers\":" << opt.pool_max_buffers << "," << "\"buffer_name\":\""
+      << json_escape(opt.buffer_name) << "\"}";
 }
 
 InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
@@ -619,8 +614,8 @@ InputOptions parse_input_options(const JsonValue::JsonObject& obj) {
 void write_output_options_json(std::ostream& oss, const OutputOptions& opt) {
   oss << "{\"max_buffers\":" << opt.max_buffers << ","
       << "\"drop\":" << (opt.drop ? "true" : "false") << ","
-      << "\"sync\":" << (opt.sync ? "true" : "false") << ","
-      << "\"combine_policy\":\"" << combine_policy_name(opt.combine_policy) << "\"}";
+      << "\"sync\":" << (opt.sync ? "true" : "false") << "," << "\"combine_policy\":\""
+      << combine_policy_name(opt.combine_policy) << "\"}";
 }
 
 OutputOptions parse_output_options(const JsonValue::JsonObject& obj) {
@@ -653,12 +648,10 @@ void write_float3_json(std::ostream& oss, const std::array<float, 3>& values) {
 }
 
 void write_resize_json(std::ostream& oss, const ResizeSpec& spec) {
-  oss << "{\"enable\":" << enum_int(spec.enable) << ","
-      << "\"width\":" << spec.width << ","
-      << "\"height\":" << spec.height << ","
-      << "\"mode\":" << enum_int(spec.mode) << ","
-      << "\"pad_value\":" << spec.pad_value << ","
-      << "\"scaling_type\":\"" << json_escape(spec.scaling_type) << "\"}";
+  oss << "{\"enable\":" << enum_int(spec.enable) << "," << "\"width\":" << spec.width << ","
+      << "\"height\":" << spec.height << "," << "\"mode\":" << enum_int(spec.mode) << ","
+      << "\"pad_value\":" << spec.pad_value << "," << "\"scaling_type\":\""
+      << json_escape(spec.scaling_type) << "\"}";
 }
 
 ResizeSpec parse_resize_json(const JsonValue::JsonObject& obj) {
@@ -719,10 +712,9 @@ NormalizeSpec parse_normalize_json(const JsonValue::JsonObject& obj) {
 }
 
 void write_quantize_json(std::ostream& oss, const QuantizeSpec& spec) {
-  oss << "{\"enable\":" << enum_int(spec.enable) << ","
-      << "\"zero_point\":" << spec.zero_point << ","
-      << "\"scale\":" << spec.scale << ","
-      << "\"output_dtype\":\"" << json_escape(spec.output_dtype) << "\"}";
+  oss << "{\"enable\":" << enum_int(spec.enable) << "," << "\"zero_point\":" << spec.zero_point
+      << "," << "\"scale\":" << spec.scale << "," << "\"output_dtype\":\""
+      << json_escape(spec.output_dtype) << "\"}";
 }
 
 QuantizeSpec parse_quantize_json(const JsonValue::JsonObject& obj) {
@@ -794,8 +786,7 @@ Transform parse_transform_json(const JsonValue::JsonObject& obj) {
 }
 
 void write_preprocess_options_json(std::ostream& oss, const PreprocessOptions& opt) {
-  oss << "{\"kind\":" << enum_int(opt.kind) << ","
-      << "\"enable\":" << enum_int(opt.enable) << ","
+  oss << "{\"kind\":" << enum_int(opt.kind) << "," << "\"enable\":" << enum_int(opt.enable) << ","
       << "\"input_max_width\":" << opt.input_max_width << ","
       << "\"input_max_height\":" << opt.input_max_height << ","
       << "\"input_max_depth\":" << opt.input_max_depth << ",\"resize\":";
@@ -894,10 +885,9 @@ ProcessMlaOptions parse_processmla_options_json(const JsonValue::JsonObject& obj
 }
 
 void write_prepared_runner_options_json(std::ostream& oss, const PreparedRunnerOptions& opt) {
-  oss << "{\"mode\":\"" << json_escape(opt.mode) << "\","
-      << "\"ring_depth\":" << opt.ring_depth << ","
-      << "\"profile\":" << (opt.profile ? "true" : "false") << ","
-      << "\"dequant_flags\":\"" << json_escape(opt.dequant_flags) << "\"}";
+  oss << "{\"mode\":\"" << json_escape(opt.mode) << "\"," << "\"ring_depth\":" << opt.ring_depth
+      << "," << "\"profile\":" << (opt.profile ? "true" : "false") << "," << "\"dequant_flags\":\""
+      << json_escape(opt.dequant_flags) << "\"}";
 }
 
 PreparedRunnerOptions parse_prepared_runner_options_json(const JsonValue::JsonObject& obj) {
@@ -911,12 +901,10 @@ PreparedRunnerOptions parse_prepared_runner_options_json(const JsonValue::JsonOb
 
 void write_model_route_options_json(std::ostream& oss,
                                     const runtime::ModelRouteOptionsProvenance& opt) {
-  oss << "{\"upstream_name\":\"" << json_escape(opt.upstream_name) << "\","
-      << "\"name_suffix\":\"" << json_escape(opt.name_suffix) << "\","
-      << "\"buffer_name\":\"" << json_escape(opt.buffer_name) << "\","
-      << "\"processcvu_requested_run_target\":\""
-      << json_escape(opt.processcvu_requested_run_target) << "\","
-      << "\"processcvu\":";
+  oss << "{\"upstream_name\":\"" << json_escape(opt.upstream_name) << "\"," << "\"name_suffix\":\""
+      << json_escape(opt.name_suffix) << "\"," << "\"buffer_name\":\""
+      << json_escape(opt.buffer_name) << "\"," << "\"processcvu_requested_run_target\":\""
+      << json_escape(opt.processcvu_requested_run_target) << "\"," << "\"processcvu\":";
   write_processcvu_options_json(oss, opt.processcvu);
   oss << ",\"processmla\":";
   write_processmla_options_json(oss, opt.processmla);
@@ -955,9 +943,8 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
   write_preprocess_options_json(oss, opt.preprocess);
   oss << ",\"decode_type\":" << enum_int(opt.decode_type) << ","
       << "\"score_threshold\":" << opt.score_threshold << ","
-      << "\"nms_iou_threshold\":" << opt.nms_iou_threshold << ","
-      << "\"top_k\":" << opt.top_k << ","
-      << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
+      << "\"nms_iou_threshold\":" << opt.nms_iou_threshold << "," << "\"top_k\":" << opt.top_k
+      << "," << "\"boxdecode_original_width\":" << opt.boxdecode_original_width << ","
       << "\"boxdecode_original_height\":" << opt.boxdecode_original_height << ","
       << "\"boxdecode_resize_mode\":";
   if (opt.boxdecode_resize_mode.has_value()) {
@@ -965,8 +952,7 @@ void write_model_options_json(std::ostream& oss, const Model::Options& opt) {
   } else {
     oss << "null";
   }
-  oss << ","
-      << "\"upstream_name\":\"" << json_escape(opt.upstream_name) << "\","
+  oss << "," << "\"upstream_name\":\"" << json_escape(opt.upstream_name) << "\","
       << "\"name_suffix\":\"" << json_escape(opt.name_suffix) << "\","
       << "\"cleanup_extracted_model_data\":"
       << (opt.cleanup_extracted_model_data ? "true" : "false") << ","
@@ -1124,9 +1110,8 @@ void write_model_fragments_json(std::ostream& oss,
       oss << ",\n";
     }
     first = false;
-    oss << "    {\"start\":" << fragment.graph_start << ","
-        << "\"end\":" << fragment.graph_end << ","
-        << "\"model_id\":\"" << json_escape(fragment.provenance.model_id) << "\","
+    oss << "    {\"start\":" << fragment.graph_start << "," << "\"end\":" << fragment.graph_end
+        << "," << "\"model_id\":\"" << json_escape(fragment.provenance.model_id) << "\","
         << "\"source_path\":\"" << json_escape(fragment.provenance.model_source_path) << "\","
         << "\"stage_role\":\"" << json_escape(fragment.provenance.model_stage_role) << "\"";
     if (const auto* binding = lineage_for_fragment_range(vertices, fragment)) {
@@ -1296,8 +1281,8 @@ void Graph::save(const std::string& path) const {
       NodeFragment frag =
           n ? make_node_fragment(n, static_cast<int>(i), name_transform) : NodeFragment{};
 
-      oss << "    {\"kind\":\"" << json_escape(kind) << "\","
-          << "\"label\":\"" << json_escape(label) << "\",";
+      oss << "    {\"kind\":\"" << json_escape(kind) << "\"," << "\"label\":\""
+          << json_escape(label) << "\",";
       if (const auto* input = dynamic_cast<const Input*>(n.get())) {
         oss << "\"endpoint\":\"" << json_escape(input->endpoint_name()) << "\",";
         oss << "\"input_options\":";
@@ -1310,8 +1295,7 @@ void Graph::save(const std::string& path) const {
         write_output_options_json(oss, output->options());
         oss << ",";
       }
-      oss << "\"fragment\":\"" << json_escape(frag.fragment) << "\","
-          << "\"elements\":[";
+      oss << "\"fragment\":\"" << json_escape(frag.fragment) << "\"," << "\"elements\":[";
       for (std::size_t e = 0; e < frag.element_names.size(); ++e) {
         if (e) {
           oss << ",";
@@ -1339,11 +1323,9 @@ void Graph::save(const std::string& path) const {
       if (i) {
         oss << ",\n";
       }
-      oss << "    {\"from\":" << edge.from << ","
-          << "\"to\":" << edge.to << ","
-          << "\"kind\":\"" << edge_kind_name(edge.kind) << "\","
-          << "\"from_port\":\"" << json_escape(edge.from_port) << "\","
-          << "\"to_port\":\"" << json_escape(edge.to_port) << "\"";
+      oss << "    {\"from\":" << edge.from << "," << "\"to\":" << edge.to << "," << "\"kind\":\""
+          << edge_kind_name(edge.kind) << "\"," << "\"from_port\":\"" << json_escape(edge.from_port)
+          << "\"," << "\"to_port\":\"" << json_escape(edge.to_port) << "\"";
       if (edge.endpoint.has_value()) {
         oss << ",\"from_endpoint\":\"" << json_escape(edge.endpoint->from_endpoint) << "\","
             << "\"to_endpoint\":\"" << json_escape(edge.endpoint->to_endpoint) << "\"";
@@ -1388,10 +1370,8 @@ void Graph::save(const std::string& path) const {
     const std::string& fragment = frag.fragment;
     const auto& elements = frag.element_names;
 
-    oss << "    {\"kind\":\"" << json_escape(kind) << "\","
-        << "\"label\":\"" << json_escape(label) << "\","
-        << "\"fragment\":\"" << json_escape(fragment) << "\","
-        << "\"elements\":[";
+    oss << "    {\"kind\":\"" << json_escape(kind) << "\"," << "\"label\":\"" << json_escape(label)
+        << "\"," << "\"fragment\":\"" << json_escape(fragment) << "\"," << "\"elements\":[";
 
     for (size_t e = 0; e < elements.size(); ++e) {
       if (e)
