@@ -28,7 +28,7 @@ Cross-compilation is typically faster than building directly on the DevKit, but 
 Install `sima-cli` first on the host machine, then install the SDK.
 
 ```bash
-curl https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 sima-cli install sdk
 ```
 
@@ -43,7 +43,7 @@ sima-cli sdk elxr
 Then install `sima-cli` inside the SDK, then install the SDK patch.
 
 ```bash
-curl https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+curl -fsSL https://artifacts.neat.sima.ai/sima-cli/linux-mac.sh | bash
 source ~/.bash_profile
 sima-cli install tools/sdk-patch
 ```

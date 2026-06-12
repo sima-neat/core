@@ -55,10 +55,12 @@ NEAT_INTERNALS_DEB_DIR="${NEAT_INTERNALS_DEB_DIR:-${NEAT_INTERNALS_DIR}/debs}"
 NEAT_INTERNALS_RESOLVED_REF=""
 NEAT_INTERNALS_REQUESTED_REF=""
 NEAT_INTERNALS_SNAP_POLICY=OFF
+NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
 NEAT_LLIMA_DEB_DIR="${NEAT_LLIMA_DEB_DIR:-${NEAT_INTERNALS_DIR}/llima-debs}"
 NEAT_LLIMA_RESOLVED_REF=""
 NEAT_LLIMA_REQUESTED_REF=""
 NEAT_LLIMA_SNAP_POLICY=OFF
+NEAT_LLIMA_SNAP_TAG_POLICY=OFF
 ELXR_SDK_RELEASE_FILE="${ELXR_SDK_RELEASE_FILE:-/etc/sdk-release}"
 ELXR_INIT_SCRIPT="${ELXR_INIT_SCRIPT:-/opt/bin/simaai-init-build-env}"
 ELXR_MACHINE="${ELXR_MACHINE:-modalix}"
@@ -883,7 +885,21 @@ current_core_branch() {
   printf '\n'
 }
 
+current_core_tag() {
+  if [[ "${GITHUB_REF_TYPE:-}" == "tag" && -n "${GITHUB_REF_NAME:-}" ]]; then
+    printf '%s\n' "${GITHUB_REF_NAME}"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1 &&
+     git -C "${REPO_ROOT}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git -C "${REPO_ROOT}" describe --tags --exact-match HEAD 2>/dev/null || true
+    return 0
+  fi
+  printf '\n'
+}
+
 resolve_neat_internals_ref() {
+  NEAT_INTERNALS_SNAP_TAG_POLICY=OFF
   if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
     return 1
@@ -894,13 +910,19 @@ resolve_neat_internals_ref() {
     return 1
   fi
 
-  local branch spec
+  local branch spec tag
   if [[ "${manifest_spec}" == "__SNAP__" ]]; then
     NEAT_INTERNALS_SNAP_POLICY=ON
-    branch="$(current_core_branch)"
-    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-      echo "Could not determine current branch for internals snap; using develop." >&2
-      branch="develop"
+    tag="$(current_core_tag)"
+    if [[ -n "${tag}" ]]; then
+      NEAT_INTERNALS_SNAP_TAG_POLICY=ON
+      branch="${tag}"
+    else
+      branch="$(current_core_branch)"
+      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        echo "Could not determine current branch for internals snap; using develop." >&2
+        branch="develop"
+      fi
     fi
   elif [[ "${manifest_spec}" == *":"* ]]; then
     branch="${manifest_spec%%:*}"
@@ -914,6 +936,7 @@ resolve_neat_internals_ref() {
 }
 
 resolve_neat_llima_ref() {
+  NEAT_LLIMA_SNAP_TAG_POLICY=OFF
   if [[ ! -f "${NEAT_DEPS_MANIFEST}" ]]; then
     echo "ERROR: Missing manifest: ${NEAT_DEPS_MANIFEST}" >&2
     return 1
@@ -924,13 +947,19 @@ resolve_neat_llima_ref() {
     return 1
   fi
 
-  local branch spec
+  local branch spec tag
   if [[ "${manifest_spec}" == "__SNAP__" ]]; then
     NEAT_LLIMA_SNAP_POLICY=ON
-    branch="$(current_core_branch)"
-    if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
-      echo "Could not determine current branch for LLiMa snap; using develop." >&2
-      branch="develop"
+    tag="$(current_core_tag)"
+    if [[ -n "${tag}" ]]; then
+      NEAT_LLIMA_SNAP_TAG_POLICY=ON
+      branch="${tag}"
+    else
+      branch="$(current_core_branch)"
+      if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+        echo "Could not determine current branch for LLiMa snap; using develop." >&2
+        branch="develop"
+      fi
     fi
   elif [[ "${manifest_spec}" == *":"* ]]; then
     branch="${manifest_spec%%:*}"
@@ -1166,11 +1195,7 @@ bootstrap_sima_cli_for_ci_if_needed() {
   fi
 
   echo "Installing sima-cli with Neat artifact support for CI..."
-  local installer
-  installer="$(mktemp /tmp/sima-cli-install-XXXXXX.py)"
-  curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o "${installer}"
-  SIMA_CLI_CHECK_FOR_UPDATE=0 python3 "${installer}" main latest
-  rm -f "${installer}"
+  "${SCRIPT_DIR}/scripts/ci/install_sima_cli_main.sh"
 
   export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
   if [[ -x "${HOME}/.sima-cli/.venv/bin/sima-cli" ]]; then
@@ -1212,6 +1237,10 @@ fetch_neat_internals_vulcan_artifacts() {
 
   local resolve_output resolved_ref
   if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" --json)"; then
+    if [[ "${NEAT_INTERNALS_SNAP_TAG_POLICY}" == "ON" ]]; then
+      echo "ERROR: Failed to resolve exact tag-snap internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
+      exit 1
+    fi
     if [[ "${NEAT_INTERNALS_SNAP_POLICY}" != "ON" || "${internals_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve internals Vulcan artifact: ${NEAT_INTERNALS_VULCAN_REPOSITORY}@${internals_ref}" >&2
       exit 1
@@ -1271,6 +1300,10 @@ fetch_neat_llima_vulcan_artifacts() {
 
   local resolve_output resolved_ref
   if ! resolve_output="$("${SIMA_CLI_BIN}" "${base_args[@]}" "${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" --json)"; then
+    if [[ "${NEAT_LLIMA_SNAP_TAG_POLICY}" == "ON" ]]; then
+      echo "ERROR: Failed to resolve exact tag-snap LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
+      exit 1
+    fi
     if [[ "${NEAT_LLIMA_SNAP_POLICY}" != "ON" || "${llima_ref}" == "develop:latest" ]]; then
       echo "ERROR: Failed to resolve LLiMa Vulcan artifact: ${NEAT_LLIMA_VULCAN_REPOSITORY}@${llima_ref}" >&2
       exit 1
@@ -2430,7 +2463,7 @@ platform_version = str(data.get("platform-version", "")).strip()
 if not platform_version:
     raise SystemExit(f"Missing or empty 'platform-version' in {manifest_path}")
 
-board_platform = f"modalix@=={platform_version}"
+board_platform = f"modalix@{platform_version}"
 for arg in ("--board-platform", board_platform, "--palette-platform", platform_version):
     print(arg)
 PY
@@ -2510,7 +2543,7 @@ generate_package_metadata_if_requested() {
     echo "sima-cli packages build does not support platform compatibility flags; metadata platforms will remain empty."
   fi
 
-  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
+  rm -f dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
 
   "${SIMA_CLI_BIN}" packages build dist \
     --name "${NEAT_PACKAGE_NAME}" \
@@ -2537,8 +2570,42 @@ generate_package_metadata_if_requested() {
     --variant all \
     "${package_compatibility_args[@]}"
 
+  "${SIMA_CLI_BIN}" packages build dist \
+    --name "${NEAT_PACKAGE_NAME}" \
+    --version "${package_version}" \
+    --description "PyNeat wheel for ${NEAT_PACKAGE_DESCRIPTION}" \
+    --install-script ":" \
+    --exclude ".deb" \
+    --exclude ".tar.gz" \
+    --exclude ".sh" \
+    --exclude ".txt" \
+    --exclude ".json" \
+    --download-compatible-files-only \
+    --variant pyneat \
+    "${package_compatibility_args[@]}"
+
+  WHEEL_BASENAME="$(basename "${wheel_path}")" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+metadata_path = Path("dist/metadata-pyneat.json")
+metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+wheel_name = os.environ["WHEEL_BASENAME"]
+metadata.setdefault("installation", {})["post-message"] = (
+    "[bold]PyNeat wheel downloaded.[/bold]\n"
+    f"The PyNeat wheel has been downloaded to this directory: {wheel_name}\n"
+    "Install it into a Python 3.11 virtual environment with:\n"
+    f"  pip install ./{wheel_name}\n\n"
+    "PyNeat requires the matching Neat Library runtime packages on this system. "
+    "If they are not already installed, run:\n"
+    "  sima-cli neat install core\n"
+)
+metadata_path.write_text(json.dumps(metadata, indent=4) + "\n", encoding="utf-8")
+PY
+
   echo "Built package metadata:"
-  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json
+  ls -lh dist/metadata.json dist/metadata-minimal.json dist/metadata-all.json dist/metadata-pyneat.json
 }
 
 print_artifact_summary() {

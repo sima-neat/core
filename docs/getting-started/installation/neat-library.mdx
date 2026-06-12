@@ -49,17 +49,17 @@ use a container-local path such as `$HOME/neat`.
 <CodeTabs>
 <CodeTab label="Development Environment" lang="bash">
 
-```bash
+<ShellCommand prompt="sdk-container">
 cd $HOME && mkdir -p neat && cd neat
-```
+</ShellCommand>
 
 </CodeTab>
 
 <CodeTab label="DevKit" lang="bash">
 
-```bash
+<ShellCommand prompt="devkit">
 cd /media/nvme && mkdir -p neat && cd neat
-```
+</ShellCommand>
 
 </CodeTab>
 </CodeTabs>
@@ -69,9 +69,9 @@ cd /media/nvme && mkdir -p neat && cd neat
 Use this option to install the default Neat Library package selected by
 `sima-cli`:
 
-```bash
+<ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core
-```
+</ShellCommand>
 
 You can optionally install extras, including prebuilt tutorials, source-code
 tutorials, and tests.
@@ -81,19 +81,26 @@ tutorials, and tests.
 Use this option to install a specific Neat Library release. Append the version to
 the package name:
 
-```bash
+For Neat Library 0.1.0:
+
+<ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core@0.1.0
+</ShellCommand>
+
+For Neat Library 0.2.0:
+
+<ShellCommand prompt="sdk-or-devkit">
 sima-cli neat install core@0.2.0
-```
+</ShellCommand>
 
 ## After Installation
 
 On the DevKit, installation also provisions a PyNeat virtual environment at
 `~/pyneat`:
 
-```bash
+<ShellCommand prompt="devkit">
 source ~/pyneat/bin/activate
-```
+</ShellCommand>
 
 If you run the installer from inside an SDK container paired with DevKit Sync,
 the installer provisions PyNeat on the paired DevKit, not only inside the SDK
@@ -107,30 +114,53 @@ For SDK setup and DevKit Sync onboarding, see
 
 ## Install PyNeat in a Custom Virtual Environment
 
-The installer provisions the `~/pyneat` virtual environment for you. If you need
-a custom Python environment, install the PyNeat wheel into a separate venv,
-conda environment, or other Python 3.11 setup.
+The Neat Library install artifacts include a PyNeat wheel. The standard
+installer uses that wheel to provision `~/pyneat` for you. If you need a custom
+Python environment, install the downloaded wheel into a separate venv, conda
+environment, or other Python 3.11 setup.
 
-1. Create and activate your target Python 3.11 environment:
+Use this flow when the matching Neat Library runtime packages are already
+installed. The PyNeat-only target downloads the wheel, but it does not install
+or update the runtime `.deb` packages.
 
-   ```bash
+1. Download the PyNeat wheel:
+
+   <ShellCommand prompt="sdk-or-devkit">
+   sima-cli neat install core -t pyneat
+   </ShellCommand>
+
+   To download the wheel for a specific Neat Library release, include the
+   version:
+
+   For Neat Library 0.1.0:
+
+   <ShellCommand prompt="sdk-or-devkit">
+   sima-cli neat install core@0.1.0 -t pyneat
+   </ShellCommand>
+
+   For Neat Library 0.2.0:
+
+   <ShellCommand prompt="sdk-or-devkit">
+   sima-cli neat install core@0.2.0 -t pyneat
+   </ShellCommand>
+
+2. Create and activate your target Python 3.11 environment:
+
+   <ShellCommand prompt="sdk-or-devkit">
    python3.11 -m venv ~/my-neat-env
    source ~/my-neat-env/bin/activate
-   ```
+   </ShellCommand>
 
-2. Install the PyNeat version that matches your Neat Library version:
+3. Install the downloaded wheel:
 
-   ```bash
-   pip install pyneat==0.1.0
-   ```
-
-You can run this command from a compatible Neat Development Environment or on
-the DevKit. `pip` retrieves the matching PyNeat wheel and installs it into the
-active environment.
+   <ShellCommand prompt="sdk-or-devkit">
+   pip install ./pyneat-*.whl
+   </ShellCommand>
 
 The published wheel targets **CPython 3.11** on **`linux_aarch64`**, so install
-it into a matching environment. For supported Neat Library and SDK combinations,
-see the [Compatibility Guide](/getting-started/compatibility/).
+it into a matching environment. For supported Neat Library, SDK, and DevKit
+software combinations, see the
+[Compatibility Guide](/getting-started/compatibility/).
 
 ## Neat CLI
 
@@ -141,9 +171,9 @@ playbooks, and whether newer artifacts are available.
 In the SDK, the status output also includes Insight host-port mappings from
 `$HOME/.insight-config/neat-port-map.json`.
 
-```bash
+<ShellCommand prompt="sdk-or-devkit">
 neat
-```
+</ShellCommand>
 
 Example output:
 
@@ -159,7 +189,7 @@ Components
   neat-runtime           0.0.1-main-e4b19553e07d
   neat-gst-plugins       0.0.1-main-e4b19553e07d
   neat-insight           0.0.0+main.74ae0b5 channel=main latest=74ae0b5 status=Running venv=/opt/neat-insight/venv
-  Model Compiler        2.0.0.neat+main-1ebbc39 run activate-model-sdk to activate
+  Model Compiler        2.0.0.neat+main-1ebbc39 run activate-model-compiler to activate
 
 Exposed Ports
   Insight Web UI     https://10.0.0.22:9900
@@ -177,16 +207,16 @@ Exposed Ports
 
 For automation and tool integrations, use JSON output:
 
-```bash
+<ShellCommand prompt="sdk-or-devkit">
 neat --json
-```
+</ShellCommand>
 
 To update the Neat Library runtime, `neat-insight`, and installed `sima-cli`
 playbooks from the detected channel, run:
 
-```bash
+<ShellCommand prompt="sdk-or-devkit">
 neat update
-```
+</ShellCommand>
 
 ## Next step
 

@@ -130,39 +130,70 @@ def is_git_checkout(path: Path) -> bool:
         return False
 
 
-def clone_source(repo: str, branch: str, githash: str, staging: Path) -> None:
-    """Clone `repo` into a fresh `staging` directory."""
+def clone_source(repo: str, branches: List[str], githash: str, staging: Path) -> str:
+    """Clone `repo` into a fresh `staging` directory.
+
+    Tries each candidate branch in order and returns the one that clones
+    successfully. The clone itself decides which branch exists — there is no
+    separate remote probe — so a missing snap branch cleanly falls through to
+    the next candidate, while a genuine auth/network failure surfaces as the
+    raised error instead of being silently misread as "branch absent".
+    """
     clone_repo = github_https_repo(repo)
     auth_env = github_auth_env()
     staging.parent.mkdir(parents=True, exist_ok=True)
     if githash:
         run_git(["clone", clone_repo, str(staging)], env=auth_env)
         run_git(["checkout", githash], cwd=staging, env=auth_env)
-    else:
-        run_git(["clone", "--branch", branch, "--depth", "1", clone_repo, str(staging)], env=auth_env)
+        return githash
+    last_exc: Optional[subprocess.CalledProcessError] = None
+    for branch in branches:
+        try:
+            run_git(["clone", "--branch", branch, "--depth", "1", clone_repo, str(staging)], env=auth_env)
+            return branch
+        except subprocess.CalledProcessError as exc:
+            last_exc = exc
+            if staging.exists():
+                shutil.rmtree(staging)
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("no branch candidates to clone")
 
 
-def acquire_source(repo: str, branch: str, githash: str, staging: Path) -> None:
-    """Clone or update `repo` at `branch` (+ optional githash) into `staging`."""
+def acquire_source(repo: str, branches: List[str], githash: str, staging: Path) -> str:
+    """Clone or update `repo` into `staging`; return the branch (or githash) used.
+
+    `branches` is the ordered candidate list; the first that resolves against the
+    remote wins. Branch selection therefore happens as part of acquiring the repo,
+    not via a pre-flight probe.
+    """
     if not is_git_checkout(staging):
         if staging.exists():
             LOG.info("removing stale autodoc staging directory: %s", staging)
             shutil.rmtree(staging)
-        clone_source(repo, branch, githash, staging)
-        return
+        return clone_source(repo, branches, githash, staging)
 
     try:
         if githash:
             run_git(["fetch", "origin"], cwd=staging, env=github_auth_env())
             run_git(["checkout", githash], cwd=staging, env=github_auth_env())
             run_git(["reset", "--hard", githash], cwd=staging, env=github_auth_env())
-        else:
-            run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging, env=github_auth_env())
-            run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging, env=github_auth_env())
+            return githash
+        last_exc: Optional[subprocess.CalledProcessError] = None
+        for branch in branches:
+            try:
+                run_git(["fetch", "--depth", "1", "origin", branch], cwd=staging, env=github_auth_env())
+                run_git(["reset", "--hard", "FETCH_HEAD"], cwd=staging, env=github_auth_env())
+                return branch
+            except subprocess.CalledProcessError as exc:
+                last_exc = exc
+        if last_exc is not None:
+            raise last_exc
+        raise RuntimeError("no branch candidates to fetch")
     except subprocess.CalledProcessError:
         LOG.info("refresh failed; recloning autodoc staging directory: %s", staging)
         shutil.rmtree(staging)
-        clone_source(repo, branch, githash, staging)
+        return clone_source(repo, branches, githash, staging)
 
 
 def current_core_branch(repo_root: Path) -> str:
@@ -185,43 +216,30 @@ def current_core_branch(repo_root: Path) -> str:
         return ""
 
 
-def remote_branch_exists(repo: str, branch: str) -> bool:
-    """True if `branch` exists on `repo`'s remote (via `git ls-remote --heads`)."""
-    if not branch:
-        return False
-    try:
-        remote = github_https_repo(repo)
-        out = subprocess.run(
-            ["git", "ls-remote", "--heads", remote, branch],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-            env={**os.environ, **github_auth_env()},
-        ).stdout.strip()
-        return bool(out)
-    except Exception:
-        return False
+def resolve_branch_candidates(source: Dict, repo_root: Path) -> Tuple[List[str], Optional[str]]:
+    """Ordered branch candidates to try at clone time.
 
+    Returns `(candidates, snap_target)`. `snap_target` is `None` for non-snap
+    sources, the current core branch for snap sources (or `""` if it can't be
+    determined). The clone tries each candidate in order and the first that
+    resolves against the remote wins — there is no separate `ls-remote` probe,
+    so a missing snap branch falls through to the next candidate while a real
+    auth/network failure is not silently misread as a branch fallback.
 
-def resolve_source_branch(source: Dict, repo_root: Path) -> Tuple[str, str]:
-    """Resolve which branch to pull for `source`; returns (branch, reason).
-
-    With `"branch_policy": "snap"`, match the current core branch so that
-    e.g. building core@develop pulls each source @develop. If that branch does
-    not exist on the source remote (or can't be determined), fall back to
-    `fallback_branch` (default "main"), then to the configured `branch`.
+    With `"branch_policy": "snap"`, candidates are: current core branch, then
+    `fallback_branch` (default "main"), then the configured `branch`.
     """
     configured = source.get("branch", "main")
     if str(source.get("branch_policy", "")).strip().lower() != "snap":
-        return configured, "configured"
+        return [configured], None
 
-    repo = source["repo"]
     fallback = source.get("fallback_branch", "main")
     core_branch = current_core_branch(repo_root)
-    if core_branch and remote_branch_exists(repo, core_branch):
-        return core_branch, f"snap: matched core@{core_branch}"
-    if remote_branch_exists(repo, fallback):
-        reason = "snap: no branch" if not core_branch else f"snap: {core_branch} not on remote"
-        return fallback, f"{reason}, fell back to {fallback}"
-    return configured, f"snap: {fallback} missing, fell back to configured {configured}"
+    candidates: List[str] = []
+    for candidate in (core_branch, fallback, configured):
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates, (core_branch or "")
 
 
 def has_frontmatter(text: str) -> bool:
@@ -691,7 +709,7 @@ def maybe_write_landing_page(source: Dict, src_docs: Path, dst_section: Path, ti
 def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Path) -> Tuple[bool, str]:
     key = source["key"]
     repo = source["repo"]
-    branch, branch_reason = resolve_source_branch(source, repo_root)
+    branches, snap_target = resolve_branch_candidates(source, repo_root)
     githash = source.get("githash", "") or ""
     docs_subpath = source.get("docs_subpath", "docs")
     mount = source.get("mount", key)
@@ -703,9 +721,9 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
     link_rewrites = normalize_link_rewrites(source.get("link_rewrites", []) or [])
 
     staging = build_dir / "autodoc" / key
-    LOG.info("[%s] clone/update %s @ %s (%s)", key, repo, githash or branch, branch_reason)
+    LOG.info("[%s] clone/update %s (candidates: %s)", key, repo, githash or ", ".join(branches))
     try:
-        acquire_source(repo, branch, githash, staging)
+        used_branch = acquire_source(repo, branches, githash, staging)
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip().splitlines()
         reason = stderr[-1] if stderr else f"exit {exc.returncode}"
@@ -713,6 +731,16 @@ def process_source(source: Dict, repo_root: Path, build_dir: Path, out_root: Pat
         return False, f"git failed ({command}): {reason}"
     except FileNotFoundError:
         return False, "git binary not found"
+
+    if githash:
+        branch_reason = "githash"
+    elif snap_target is None:
+        branch_reason = "configured"
+    elif used_branch == snap_target:
+        branch_reason = f"snap: matched core@{used_branch}"
+    else:
+        branch_reason = f"snap: fell back to {used_branch}"
+    LOG.info("[%s] using %s @ %s (%s)", key, repo, githash or used_branch, branch_reason)
 
     src_docs = staging / docs_subpath
     if not src_docs.is_dir():

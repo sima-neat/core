@@ -4,7 +4,7 @@ set -euo pipefail
 PROGRAM_NAME="$(basename "$0")"
 
 CORE_BASE_URL="${NEAT_ARTIFACTS_BASE_URL:-}"
-INSIGHT_BASE_URL="${NEAT_INSIGHT_BASE_URL:-https://apps.sima-neat.com/insight/download}"
+INSIGHT_BASE_URL="${NEAT_INSIGHT_BASE_URL:-https://artifacts.neat.sima.ai/insight}"
 DEFAULT_SYSROOT="${SYSROOT:-/opt/toolchain/aarch64/modalix}"
 PORT_MAP_FILE="${NEAT_PORT_MAP_FILE:-${HOME}/.insight-config/neat-port-map.json}"
 SIMA_CLI_BIN="${SIMA_CLI_BIN:-}"
@@ -76,7 +76,7 @@ Usage:
 
 Environment:
   NEAT_ARTIFACTS_BASE_URL  Core artifact index override; otherwise derived from installed buildinfo.json
-  NEAT_INSIGHT_BASE_URL    Insight artifact index (default: https://apps.sima-neat.com/insight/download)
+  NEAT_INSIGHT_BASE_URL    Insight artifact index (default: https://artifacts.neat.sima.ai/insight)
   NEAT_PACKAGE_BUILDINFO_FILE
                            Installed package provenance JSON override
   NEAT_UPDATE_TIMEOUT_SECONDS
@@ -167,6 +167,33 @@ download_text() {
   fi
   if have_cmd wget; then
     wget -qO- \
+      --timeout="${UPDATE_TIMEOUT_SECONDS}" \
+      --tries=1 \
+      --header='Cache-Control: no-cache, no-store, max-age=0' \
+      --header='Pragma: no-cache' \
+      "${url}" || rc=$?
+    return "${rc}"
+  fi
+  echo "curl or wget not found" >&2
+  return 127
+}
+
+download_file() {
+  local url="$1"
+  local output="$2"
+  local rc=0
+  if have_cmd curl; then
+    curl -fsSL \
+      --connect-timeout "${UPDATE_CONNECT_TIMEOUT_SECONDS}" \
+      --max-time "${UPDATE_TIMEOUT_SECONDS}" \
+      -H 'Cache-Control: no-cache, no-store, max-age=0' \
+      -H 'Pragma: no-cache' \
+      -o "${output}" \
+      "${url}" || rc=$?
+    return "${rc}"
+  fi
+  if have_cmd wget; then
+    wget -qO "${output}" \
       --timeout="${UPDATE_TIMEOUT_SECONDS}" \
       --tries=1 \
       --header='Cache-Control: no-cache, no-store, max-age=0' \
@@ -699,11 +726,14 @@ resolve_insight_latest() {
     record_empty_update_response "neat-insight latest tag" "${latest_url}"
     return 1
   fi
-  INSIGHT_METADATA_URL="${INSIGHT_BASE_URL}/${channel_key}/${INSIGHT_LATEST_TAG}.json"
+  INSIGHT_METADATA_URL="${INSIGHT_BASE_URL}/${channel_key}/${INSIGHT_LATEST_TAG}/metadata.json"
   if download_text_or_record "neat-insight metadata" "${INSIGHT_METADATA_URL}" metadata && [[ -n "${metadata}" ]]; then
-    INSIGHT_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field short_sha)"
-    if [[ -n "${INSIGHT_LATEST_VERSION}" ]]; then
-      INSIGHT_LATEST_VERSION="0.0.0+${channel}.${INSIGHT_LATEST_VERSION}"
+    INSIGHT_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field version)"
+    if [[ -z "${INSIGHT_LATEST_VERSION}" ]]; then
+      INSIGHT_LATEST_VERSION="$(printf '%s' "${metadata}" | json_field short_sha)"
+      if [[ -n "${INSIGHT_LATEST_VERSION}" ]]; then
+        INSIGHT_LATEST_VERSION="0.0.0+${channel}.${INSIGHT_LATEST_VERSION}"
+      fi
     fi
   fi
 }
@@ -1190,6 +1220,11 @@ run_core_update() {
 run_insight_update() {
   local channel="${CHANNEL_OVERRIDE:-${INSIGHT_CHANNEL:-main}}"
   local tag="${INSIGHT_LATEST_TAG:-${TAG_INPUT}}"
+  local metadata_base
+  local resource
+  local resource_path
+  local installer_path=""
+  local tmp_dir
   [[ -n "${tag}" ]] || die "unable to resolve Insight update tag"
 
   echo "Updating neat-insight channel=${channel} tag=${tag}"
@@ -1198,16 +1233,58 @@ run_insight_update() {
     return 0
   fi
 
+  if [[ -z "${INSIGHT_METADATA_URL}" ]]; then
+    die "unable to resolve Insight update URL"
+  fi
   if ! have_cmd python3; then
     die "python3 is required to update neat-insight without insight-admin"
   fi
 
-  local tmp_script
-  tmp_script="$(mktemp /tmp/install-neat-insight.XXXXXX.py)"
-  trap 'rm -f "${tmp_script}"' EXIT
-  download_text "https://apps.sima-neat.com/tools/install-neat-insight.py" > "${tmp_script}"
-  NEAT_INSIGHT_VENV_DIR="${INSIGHT_VENV_DIR}" python3 "${tmp_script}" "${channel}" "${tag}"
-  rm -f "${tmp_script}"
+  tmp_dir="$(mktemp -d /tmp/install-neat-insight.XXXXXX)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
+  metadata_base="${INSIGHT_METADATA_URL%/metadata.json}"
+  download_text "${INSIGHT_METADATA_URL}" > "${tmp_dir}/metadata.json"
+  while IFS= read -r resource; do
+    [[ -n "${resource}" ]] || continue
+    resource_path="${tmp_dir}/${resource}"
+    mkdir -p "$(dirname "${resource_path}")"
+    download_file "${metadata_base}/${resource}" "${resource_path}"
+    if [[ "$(basename "${resource}")" == "install_neat_insight.py" ]]; then
+      installer_path="${resource_path}"
+    fi
+  done < <(python3 - "${tmp_dir}/metadata.json" <<'PY'
+import json
+import platform
+import sys
+
+def platform_tag():
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if machine in {"x86_64", "amd64"}:
+        arch = "x86_64"
+    elif machine in {"aarch64", "arm64"}:
+        arch = "aarch64"
+    else:
+        return ""
+    if system == "linux":
+        return f"manylinux2014_{arch}"
+    if system == "darwin" and arch == "aarch64":
+        return "macosx_11_0_arm64"
+    if system == "windows" and arch == "x86_64":
+        return "win_amd64"
+    return ""
+
+tag = platform_tag()
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = json.load(f)
+for resource in data.get("resources", []):
+    if resource.endswith("install_neat_insight.py") or (tag and resource.endswith(f"-{tag}.whl")):
+        print(resource)
+PY
+)
+  [[ -n "${installer_path}" ]] || die "neat-insight installer not found in ${INSIGHT_METADATA_URL}"
+  (cd "${tmp_dir}" && NEAT_INSIGHT_VENV_DIR="${INSIGHT_VENV_DIR}" python3 "${installer_path}")
+  rm -rf "${tmp_dir}"
   trap - EXIT
 }
 

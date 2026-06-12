@@ -111,6 +111,7 @@ website/build/
 website/.docusaurus/
 website/static/api/*
 website/sidebar-category-doxygen.json
+website/src/data/buildinfo.json
 !website/static/img/*
 
 # Misc

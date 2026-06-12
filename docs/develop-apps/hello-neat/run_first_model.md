@@ -32,14 +32,9 @@ You do not need to master the full API yet; for now, focus on how `Model` and `M
     :::note sima-cli model download
     If `sima-cli` writes the model somewhere other than the `assets` directory, copy that file into `assets/yolo_v8s_mpk.tar.gz`.
     :::
-3. **Download the sample image:**
-    ```bash
-    curl -L \
-      -o tutorial_sample_image.png \
-      https://docs.sima-neat.com/images/tutorial_sample_image.png
-    ```
+3. **Download the sample image** from the docs and save it as `tutorial_sample_image.png` in the `assets` directory.
 
-    You can also [open or download the sample image](../../images/tutorial_sample_image.png) from the docs.
+    [Open or download the sample image](../../images/tutorial_sample_image.png).
 4. **Return to your project directory:**
     ```bash
     cd ..
@@ -389,4 +384,4 @@ Once YOLOv8 runs, continue with broader SiMa Neat learning resources:
 - Continue to **[Run an App](/develop-apps/hello-neat/run_an_app)** to compose this same model into a `Graph` application — a named input → model → output pipeline you build once and drive with push/pull — instead of calling `Model.run(...)` directly.
 - Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as sessions, models, pipeline stages, and graph execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
-- Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).
+- Explore curated applications on the [apps portal](https://apps.neat.sima.ai/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).
