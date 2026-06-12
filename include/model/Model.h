@@ -125,7 +125,7 @@ public:
       bool pre_quantization =
           false; ///< MLA expects INT8 input; FP32→INT8 conversion required somewhere.
       bool pre_tessellation =
-          false;             ///< MLA expects tessellated layout; row-major→tile transform required.
+          false; ///< MLA expects tessellated layout; row-major→tile transform required.
       bool pre_cast = false; ///< Floating-point dtype conversion required (e.g., FP32→BF16).
       bool post_detessellation =
           false; ///< MLA produces tessellated output; tile→row-major transform required.
