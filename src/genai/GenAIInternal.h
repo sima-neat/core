@@ -22,6 +22,5 @@ std::vector<ChatMessage> build_text_messages(const GenerationRequest& request);
 void validate_text_generation_request(const GenerationRequest& request);
 void validate_asr_generation_request(const GenerationRequest& request);
 void ensure_llima_runtime_connected();
-void disconnect_llima_runtime();
 
 } // namespace simaai::neat::genai::internal

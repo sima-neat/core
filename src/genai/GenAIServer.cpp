@@ -1446,7 +1446,13 @@ struct GenAIServer::Impl {
       worker.join();
     }
 
-    internal::disconnect_llima_runtime();
+    std::map<std::string, Entry> models_to_release;
+    {
+      std::lock_guard<std::mutex> lock(registry_mutex);
+      models_to_release.swap(registry);
+    }
+    models_to_release.clear();
+
     {
       std::lock_guard<std::mutex> lock(warmup_mutex);
       warmup_complete = false;
