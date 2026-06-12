@@ -87,17 +87,10 @@ H264EncodeSima::H264EncodeSima(int w, int h, int fps, int bitrate_kbps, std::str
 
 std::string H264EncodeSima::backend_fragment(int node_index) const {
   std::ostringstream ss;
-  ss << "neatencoder name=n" << node_index << "_encoder "
-     << "enc-type=h264 "
-     << "enc-profile=" << profile_ << " "
-     << "enc-level=" << level_ << " "
-     << "enc-fmt=NV12 "
-     << "enc-width=" << w_ << " "
-     << "enc-height=" << h_ << " "
-     << "enc-frame-rate=" << fps_ << " "
-     << "enc-bitrate=" << bitrate_kbps_ << " "
-     << "enc-ip-mode=async "
-     << "ip-rate-ctrl=false";
+  ss << "neatencoder name=n" << node_index << "_encoder " << "enc-type=h264 "
+     << "enc-profile=" << profile_ << " " << "enc-level=" << level_ << " " << "enc-fmt=NV12 "
+     << "enc-width=" << w_ << " " << "enc-height=" << h_ << " " << "enc-frame-rate=" << fps_ << " "
+     << "enc-bitrate=" << bitrate_kbps_ << " " << "enc-ip-mode=async " << "ip-rate-ctrl=false";
   if (const char* dump_cnt = std::getenv("SIMA_NEATENCODER_DUMP_CNT")) {
     if (*dump_cnt) {
       ss << " dump-cnt=" << dump_cnt;

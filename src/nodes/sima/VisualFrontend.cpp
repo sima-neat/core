@@ -266,8 +266,7 @@ void append_common_summary(std::ostringstream& ss, const VisualFrontendCommonOpt
 void append_fast_summary(std::ostringstream& ss, int threshold, int max_features, int grid_x,
                          int grid_y, int min_px_dist) {
   ss << ",threshold=" << threshold << ",max_features=" << max_features << ",grid=(" << grid_x << ","
-     << grid_y << ")"
-     << ",min_px_dist=" << min_px_dist;
+     << grid_y << ")" << ",min_px_dist=" << min_px_dist;
 }
 
 std::uint64_t dtype_size_bytes(const std::string& raw) {
@@ -716,8 +715,8 @@ std::string FeatureHistogramOptions::summary() const {
   ss << "FeatureHistogramOptions(graph=feature_histogram,graph_id=235,";
   append_common_summary(ss, *this);
   ss << ",input=" << quoted_or_auto(input_name) << ",output=" << quoted_or_auto(output_name)
-     << ",input_shape=[" << batch_size << "," << height << "," << width << "]"
-     << ",output_shape=[" << batch_size << ",256])";
+     << ",input_shape=[" << batch_size << "," << height << "," << width << "]" << ",output_shape=["
+     << batch_size << ",256])";
   return ss.str();
 }
 
@@ -727,9 +726,8 @@ std::string GriderFastOptions::summary() const {
   append_common_summary(ss, *this);
   append_fast_summary(ss, threshold, max_features, grid_x, grid_y, min_px_dist);
   ss << ",input=" << quoted_or_auto(input_name) << ",output=" << quoted_or_auto(output_name)
-     << ",input_shape=[" << batch_size << "," << height << "," << width << "]"
-     << ",feature_shape=[" << batch_size << ","
-     << (1LL + static_cast<long long>(max_features) * 3LL) << "])";
+     << ",input_shape=[" << batch_size << "," << height << "," << width << "]" << ",feature_shape=["
+     << batch_size << "," << (1LL + static_cast<long long>(max_features) * 3LL) << "])";
   return ss.str();
 }
 
@@ -741,11 +739,9 @@ std::string TrackDescriptorOptions::summary() const {
   ss << ",descriptor_words=" << descriptor_words << ",input=" << quoted_or_auto(input_name)
      << ",features=" << quoted_or_auto(features_output_name)
      << ",descriptors=" << quoted_or_auto(descriptors_output_name) << ",input_shape=[" << batch_size
-     << "," << height << "," << width << "]"
-     << ",feature_shape=[" << batch_size << ","
-     << (1LL + static_cast<long long>(max_features) * 3LL) << "]"
-     << ",descriptor_shape=[" << batch_size << "," << max_features << "," << descriptor_words
-     << "])";
+     << "," << height << "," << width << "]" << ",feature_shape=[" << batch_size << ","
+     << (1LL + static_cast<long long>(max_features) * 3LL) << "]" << ",descriptor_shape=["
+     << batch_size << "," << max_features << "," << descriptor_words << "])";
   return ss.str();
 }
 
@@ -764,10 +760,9 @@ std::string TrackKLTOptions::summary() const {
      << ",output_points=" << quoted_or_auto(output_points_name)
      << ",output_status=" << quoted_or_auto(output_status_name)
      << ",output_features=" << quoted_or_auto(output_features_name) << ",image_shape=["
-     << batch_size << "," << height << "," << width << "]"
-     << ",input_points_shape=[" << batch_size << "," << num_points << ",2]"
-     << ",output_points_shape=[" << batch_size << "," << num_points << ",2]"
-     << ",output_status_shape=[" << batch_size << "," << num_points << ",1]";
+     << batch_size << "," << height << "," << width << "]" << ",input_points_shape=[" << batch_size
+     << "," << num_points << ",2]" << ",output_points_shape=[" << batch_size << "," << num_points
+     << ",2]" << ",output_status_shape=[" << batch_size << "," << num_points << ",1]";
   if (detect_new_features != 0) {
     ss << ",published_feature_shape=[" << batch_size << ","
        << (1LL + static_cast<long long>(max_features) * 3LL) << "]";

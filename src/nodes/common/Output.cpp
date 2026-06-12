@@ -31,11 +31,9 @@ std::string Output::backend_fragment(int /*node_index*/) const {
   const int max_buffers = (opt_.max_buffers < 0) ? 0 : opt_.max_buffers;
 
   std::ostringstream ss;
-  ss << "appsink name=mysink emit-signals=false "
-     << "sync=" << (opt_.sync ? "true" : "false") << " "
-     << "max-buffers=" << max_buffers << " "
-     << "drop=" << (opt_.drop ? "true" : "false") << " "
-     << "enable-last-sample=false";
+  ss << "appsink name=mysink emit-signals=false " << "sync=" << (opt_.sync ? "true" : "false")
+     << " " << "max-buffers=" << max_buffers << " " << "drop=" << (opt_.drop ? "true" : "false")
+     << " " << "enable-last-sample=false";
   return ss.str();
 }
 

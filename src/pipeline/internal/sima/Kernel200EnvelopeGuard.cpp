@@ -63,4 +63,3 @@ bool validate_kernel200_envelope(const Kernel200EnvelopeLimits& limits,
 }
 
 } // namespace simaai::neat::pipeline_internal::sima
-

@@ -677,8 +677,8 @@ void require_output_space(const fs::path& root, std::uint64_t extracted_bytes,
           : static_cast<std::uint64_t>(space.available);
   if (available < required) {
     std::ostringstream oss;
-    oss << "insufficient free space extracting model archive"
-        << " path=" << root.string() << " extracted=" << format_bytes(extracted_bytes)
+    oss << "insufficient free space extracting model archive" << " path=" << root.string()
+        << " extracted=" << format_bytes(extracted_bytes)
         << " reserve=" << format_bytes(opt.min_output_free_bytes)
         << " required=" << format_bytes(required) << " available=" << format_bytes(available)
         << " hint=set SIMA_MPK_EXTRACT_ROOT to a filesystem with enough space, "

@@ -42,9 +42,7 @@ void require_throws_contains(const std::function<void()>& fn, const std::string&
 RUN_TEST("graph_migration_phaseA3_branch_helper_test", [] {
   {
     require_throws_contains(
-        [] {
-          (void)simaai::neat::graphs::Branch("image", {"preview", "preview"});
-        },
+        [] { (void)simaai::neat::graphs::Branch("image", {"preview", "preview"}); },
         "duplicate endpoint name", "Branch helper should reject duplicate output names");
   }
 

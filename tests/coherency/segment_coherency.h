@@ -60,14 +60,14 @@ struct CmoBackend {
 // copyable (holds atomics + a mutex). In production the mutex IS the allocation's
 // existing map_mutex; here it is owned for isolation.
 struct SegCoherency {
-  void* seg = nullptr;     // opaque allocation identity passed to the backend
-  uint64_t size = 0;       // bytes; used for whole-segment ops
+  void* seg = nullptr; // opaque allocation identity passed to the backend
+  uint64_t size = 0;   // bytes; used for whole-segment ops
 
   std::atomic<uint8_t> last_writer{static_cast<uint8_t>(Writer::Unknown)};
-  std::atomic<bool> cpu_cache_clean{false};  // conservative default: NOT clean
-  std::atomic<uint32_t> cpu_inflight{0};     // nested begin/end refcount
-  std::atomic<bool> uncached{false};         // non-cacheable buffer => CMOs are no-ops
-  std::mutex lock;                           // taken only on a real transition
+  std::atomic<bool> cpu_cache_clean{false}; // conservative default: NOT clean
+  std::atomic<uint32_t> cpu_inflight{0};    // nested begin/end refcount
+  std::atomic<bool> uncached{false};        // non-cacheable buffer => CMOs are no-ops
+  std::mutex lock;                          // taken only on a real transition
 
   SegCoherency() = default;
   SegCoherency(void* s, uint64_t n) : seg(s), size(n) {}
@@ -82,4 +82,4 @@ void begin_cpu_access(SegCoherency& c, Access a, CmoBackend* be);
 void end_cpu_access(SegCoherency& c, Access a, CmoBackend* be, uint64_t off = 0, uint64_t len = 0);
 void end_device_access(SegCoherency& c, uint64_t off = 0, uint64_t len = 0);
 
-}  // namespace simaai::neat::coherency
+} // namespace simaai::neat::coherency

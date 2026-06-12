@@ -72,9 +72,7 @@ void require_strict_combine_error(simaai::neat::Run& run, const std::string& inp
 RUN_TEST("graph_migration_phaseA3_combine_helper_test", [] {
   {
     require_throws_contains(
-        [] {
-          (void)simaai::neat::graphs::Combine({"left", "left"}, "combined");
-        },
+        [] { (void)simaai::neat::graphs::Combine({"left", "left"}, "combined"); },
         "duplicate endpoint name", "Combine helper should reject duplicate input names");
   }
 
