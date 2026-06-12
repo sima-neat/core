@@ -87,7 +87,7 @@ export function CodeTabs({children}) {
     : (tabs.find((t) => t.id === activeTabId) || tabs[0]);
 
   return (
-    <div className={styles.root}>
+    <div className={styles.root} data-neat-language-aware={isLanguageMode ? 'true' : undefined}>
       <div
         className={styles.tabList}
         role="tablist"
