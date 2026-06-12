@@ -62,8 +62,7 @@ def make_curl(bin_dir: Path, log_path: Path | None = None) -> None:
           https://core.test/main/abcdef0/metadata-minimal.json) printf '{{"version":"0.0.0+main-abcdef0"}}\\n' ;;
           https://core.test/develop/1234567/metadata-minimal.json) printf '{{"version":"0.0.0+develop-1234567"}}\\n' ;;
           https://insight.test/main/latest.tag) printf '7654321\\n' ;;
-          https://insight.test/main/7654321.json) printf '{{"short_sha":"7654321"}}\\n' ;;
-          https://apps.sima-neat.com/tools/install-neat-insight.py) printf 'import sys\\nprint("fallback insight installer", sys.argv[1:])\\n' ;;
+          https://insight.test/main/7654321/metadata.json) printf '{{"version":"0.0.0+main.7654321"}}\\n' ;;
           *) echo "unexpected curl url: $url" >&2; exit 22 ;;
         esac
         """,
