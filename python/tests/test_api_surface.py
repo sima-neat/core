@@ -1257,3 +1257,21 @@ def test_model_runner_measurement_surface_matches_run():
   assert not hasattr(pyneat.ModelRunner, "metrics_report")
   assert not hasattr(pyneat.ModelRunner, "diag_snapshot")
   assert not hasattr(pyneat.ModelRunner, "report")
+
+
+def test_benchmark_options_surface():
+  options = pyneat.BenchmarkOptions()
+  assert options.num_samples == 100
+  assert options.original_width == 0
+  assert options.original_height == 0
+  assert options.resize_mode is None
+
+  options.num_samples = 1000
+  options.original_width = 640
+  options.original_height = 640
+  options.resize_mode = pyneat.ResizeMode.Stretch
+
+  assert options.num_samples == 1000
+  assert options.original_width == 640
+  assert options.original_height == 640
+  assert options.resize_mode == pyneat.ResizeMode.Stretch

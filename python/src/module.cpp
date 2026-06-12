@@ -302,10 +302,10 @@ std::string sample_to_text_for_python(const Sample& sample) {
 // Python they are surfaced as the `Format` enum directly: reads return the underlying
 // FormatTag, writes accept a FormatTag only. Passing a plain string raises TypeError —
 // callers select a value from pyneat.Format (e.g. pyneat.Format.NV12).
-template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_getter(simaai::neat::FormatSpec C::* member) {
   return [member](const C& self) { return (self.*member).tag; };
 }
-template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::*member) {
+template <typename C> auto format_enum_setter(simaai::neat::FormatSpec C::* member) {
   return [member](C& self, simaai::neat::FormatTag value) { self.*member = value; };
 }
 
@@ -4087,6 +4087,12 @@ NB_MODULE(_pyneat_core, m) {
       .def_rw("fps", &simaai::neat::BenchmarkReport::fps)
       .def_rw("avg_power_watts", &simaai::neat::BenchmarkReport::avg_power_watts)
       .def_rw("energy_joules", &simaai::neat::BenchmarkReport::energy_joules);
+  nb::class_<simaai::neat::BenchmarkOptions>(m, "BenchmarkOptions")
+      .def(nb::init<>())
+      .def_rw("num_samples", &simaai::neat::BenchmarkOptions::num_samples)
+      .def_rw("original_width", &simaai::neat::BenchmarkOptions::original_width)
+      .def_rw("original_height", &simaai::neat::BenchmarkOptions::original_height)
+      .def_rw("resize_mode", &simaai::neat::BenchmarkOptions::resize_mode);
 
   // ── Phase 3: model / preprocess introspection (plan slice S1/S14) ────────────────────────────
   // Tiering per S1 ("advanced = by namespace, not by docs"): the diagnostic snapshots that are the
@@ -4369,8 +4375,14 @@ NB_MODULE(_pyneat_core, m) {
             return nb::cast(std::move(out));
           },
           "input"_a, "timeout_ms"_a = -1, "copy"_a = false)
-      .def("benchmark", &simaai::neat::Model::benchmark, "num_samples"_a = 100,
-           nb::call_guard<nb::gil_scoped_release>());
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(int)>(
+               &simaai::neat::Model::benchmark),
+           "num_samples"_a = 100, nb::call_guard<nb::gil_scoped_release>())
+      .def("benchmark",
+           static_cast<simaai::neat::BenchmarkReport (simaai::neat::Model::*)(
+               const simaai::neat::BenchmarkOptions&)>(&simaai::neat::Model::benchmark),
+           "options"_a, nb::call_guard<nb::gil_scoped_release>());
 
   // from-Model constructors for the CVU-atom options (registered here, after Model — pulls tile
   // geometry / quant params / model-managed buffer counts so the standalone nodes are actually

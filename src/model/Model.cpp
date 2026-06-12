@@ -1907,7 +1907,77 @@ Tensor make_dummy_tensor(const simaai::neat::InputOptions& opt) {
   return t;
 }
 
-Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input_index) {
+void validate_benchmark_options(const BenchmarkOptions& options) {
+  if (options.num_samples <= 0) {
+    throw std::runtime_error("Model::benchmark: num_samples must be > 0");
+  }
+  const bool has_geometry = options.original_width != 0 || options.original_height != 0;
+  if (has_geometry && (options.original_width <= 0 || options.original_height <= 0)) {
+    throw std::runtime_error(
+        "Model::benchmark: original_width and original_height must both be > 0 when set");
+  }
+}
+
+const char* benchmark_resize_mode_token(ResizeMode mode) {
+  switch (mode) {
+  case ResizeMode::Stretch:
+    return "stretch";
+  case ResizeMode::Letterbox:
+    return "letterbox";
+  case ResizeMode::Crop:
+    return "crop";
+  }
+  return "stretch";
+}
+
+std::optional<PreprocessRuntimeMeta>
+make_benchmark_preprocess_meta(const Model& model, const Tensor& tensor,
+                               const BenchmarkOptions& options) {
+  if (options.original_width <= 0 || options.original_height <= 0) {
+    return std::nullopt;
+  }
+
+  const ResolvedPreprocessPlan resolved = model.resolved_preprocess_plan();
+  int target_width = resolved.effective.resize.width;
+  int target_height = resolved.effective.resize.height;
+  if (target_width <= 0 || target_height <= 0) {
+    target_width = resolved.mla_contract.width;
+    target_height = resolved.mla_contract.height;
+  }
+  if ((target_width <= 0 || target_height <= 0) &&
+      tensor.axis_semantics.size() == tensor.shape.size()) {
+    for (std::size_t i = 0; i < tensor.axis_semantics.size(); ++i) {
+      if (tensor.axis_semantics[i] == TensorAxisSemantic::W && tensor.shape[i] > 0) {
+        target_width = static_cast<int>(tensor.shape[i]);
+      } else if (tensor.axis_semantics[i] == TensorAxisSemantic::H && tensor.shape[i] > 0) {
+        target_height = static_cast<int>(tensor.shape[i]);
+      }
+    }
+  }
+
+  const ResizeMode resize_mode = options.resize_mode.value_or(
+      resolved.effective.resize.enable == AutoFlag::On ? resolved.effective.resize.mode
+                                                       : ResizeMode::Stretch);
+  const auto flags = simaai::neat::internal::ModelAccess::preprocess_contract_flags(model);
+
+  InputOptions input_opt;
+  PreprocessMetaTemplate meta;
+  meta.enabled = true;
+  meta.target_width = target_width > 0 ? target_width : options.original_width;
+  meta.target_height = target_height > 0 ? target_height : options.original_height;
+  meta.resize_mode = benchmark_resize_mode_token(resize_mode);
+  meta.color_in = preprocess_color_format_name(resolved.effective.color_convert.input_format);
+  meta.color_out = preprocess_color_format_name(resolved.effective.color_convert.output_format);
+  meta.normalize = resolved.effective.normalize.enable == AutoFlag::On;
+  meta.quantize = flags.quant_needed;
+  meta.tessellate = flags.tess_needed;
+  input_opt.preprocess_meta = std::move(meta);
+  return make_simaai_preprocess_meta_from_template(input_opt, options.original_width,
+                                                   options.original_height);
+}
+
+Tensor make_synthetic_benchmark_tensor(const Model& model, const TensorSpec& spec,
+                                       std::size_t input_index, const BenchmarkOptions& options) {
   if (spec.shape.empty()) {
     throw std::runtime_error("Model::benchmark: input_specs() entry has empty shape");
   }
@@ -1985,10 +2055,11 @@ Tensor make_synthetic_benchmark_tensor(const TensorSpec& spec, std::size_t input
       tensor.axis_semantics = {TensorAxisSemantic::H, TensorAxisSemantic::W, TensorAxisSemantic::C};
     }
   }
+  tensor.semantic.preprocess = make_benchmark_preprocess_meta(model, tensor, options);
   return tensor.cvu();
 }
 
-TensorList make_synthetic_benchmark_inputs(const Model& model) {
+TensorList make_synthetic_benchmark_inputs(const Model& model, const BenchmarkOptions& options) {
   const std::vector<TensorSpec> specs = model.input_specs();
   if (specs.empty()) {
     throw std::runtime_error("Model::benchmark: input_specs() returned no inputs");
@@ -1996,7 +2067,7 @@ TensorList make_synthetic_benchmark_inputs(const Model& model) {
   TensorList inputs;
   inputs.reserve(specs.size());
   for (std::size_t i = 0; i < specs.size(); ++i) {
-    inputs.push_back(make_synthetic_benchmark_tensor(specs[i], i));
+    inputs.push_back(make_synthetic_benchmark_tensor(model, specs[i], i, options));
   }
   return inputs;
 }
@@ -7104,13 +7175,17 @@ simaai::neat::TensorList Model::run(const std::vector<cv::Mat>& inputs, int time
 #endif
 
 BenchmarkReport Model::benchmark(int num_samples) {
-  if (num_samples <= 0) {
-    throw std::runtime_error("Model::benchmark: num_samples must be > 0");
-  }
+  BenchmarkOptions options;
+  options.num_samples = num_samples;
+  return benchmark(options);
+}
 
+BenchmarkReport Model::benchmark(const BenchmarkOptions& options) {
+  validate_benchmark_options(options);
   constexpr int kWarmupSamples = 50;
   constexpr int kTimeoutMs = 120000;
-  const TensorList inputs = make_synthetic_benchmark_inputs(*this);
+  const int num_samples = options.num_samples;
+  const TensorList inputs = make_synthetic_benchmark_inputs(*this, options);
   const int logical_batch_size = compiled_batch_size();
 
   RunOptions latency_run_options;

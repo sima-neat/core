@@ -65,6 +65,21 @@ struct BenchmarkReport {
 };
 
 /**
+ * @brief Options for `Model::benchmark()`.
+ *
+ * `num_samples` preserves the original synthetic benchmark behavior. Positive
+ * `original_width`/`original_height` attach preprocess geometry metadata to the
+ * synthetic inputs so BoxDecode routes can remap model-space boxes back to a
+ * source frame. Leave geometry unset for non-detection models.
+ */
+struct BenchmarkOptions {
+  int num_samples = 100;
+  int original_width = 0;
+  int original_height = 0;
+  std::optional<ResizeMode> resize_mode;
+};
+
+/**
  * @brief Loaded form of a compiled model archive; the simplified entry point to run inference on
  * Modalix.
  *
@@ -110,7 +125,7 @@ public:
       bool pre_quantization =
           false; ///< MLA expects INT8 input; FP32→INT8 conversion required somewhere.
       bool pre_tessellation =
-          false; ///< MLA expects tessellated layout; row-major→tile transform required.
+          false;             ///< MLA expects tessellated layout; row-major→tile transform required.
       bool pre_cast = false; ///< Floating-point dtype conversion required (e.g., FP32→BF16).
       bool post_detessellation =
           false; ///< MLA produces tessellated output; tile→row-major transform required.
@@ -609,6 +624,7 @@ public:
    * compact summary, and returns headline metrics.
    */
   BenchmarkReport benchmark(int num_samples = 100);
+  BenchmarkReport benchmark(const BenchmarkOptions& options);
 
 private:
   friend struct internal::ModelAccess;
