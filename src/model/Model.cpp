@@ -2414,8 +2414,7 @@ bool sample_represents_multi_ingress_item(const Sample& sample) {
 }
 
 bool sample_represents_atomic_tensor_set_ingress_item(
-    const Sample& sample,
-    const std::vector<internal::IngressTensorContract>& ingress_contracts) {
+    const Sample& sample, const std::vector<internal::IngressTensorContract>& ingress_contracts) {
   return ingress_contracts.size() > 1U && sample_has_tensor_list(sample) &&
          sample.tensors.size() == ingress_contracts.size();
 }
