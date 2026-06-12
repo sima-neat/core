@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1320 360" role="img" aria-labelledby="title desc">
+  <title id="title">Graph inputs, processing, and outputs</title>
+  <desc id="desc">A Graph boundary with input and output boxes overlapping the boundary, and three connected processing steps marked by a bracket labeled processing happens here.</desc>
+  <defs>
+    <linearGradient id="bg" x1="70" y1="35" x2="1250" y2="340" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#F3F8F6"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5998DD"/>
+      <stop offset="1" stop-color="#7EB4EC"/>
+    </linearGradient>
+    <linearGradient id="green" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2A9C4F"/>
+      <stop offset="1" stop-color="#C0E8DB"/>
+    </linearGradient>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7A6BB5"/>
+      <stop offset="1" stop-color="#D1CEE6"/>
+    </linearGradient>
+    <filter id="shadow" x="-8%" y="-14%" width="116%" height="138%" filterUnits="objectBoundingBox">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#010F0E" flood-opacity="0.12"/>
+    </filter>
+    <marker id="arrow" markerWidth="7" markerHeight="7" refX="7" refY="3.5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L7 3.5L0 7Z" fill="#AAB6C4"/>
+    </marker>
+    <style>
+      .sans { font-family: "Avenir Next", "Segoe UI", Arial, sans-serif; }
+      .title { fill: #010F0E; font-size: 28px; font-weight: 700; }
+      .small { fill: #35536F; font-size: 15px; font-weight: 500; }
+      .tag { fill: #F8FBFF; font-size: 13px; font-weight: 700; }
+      .section { fill: #35536F; font-size: 18px; font-weight: 700; }
+      .step { fill: #6C7D8F; font-size: 14px; font-weight: 650; }
+      .caption { fill: #35536F; font-size: 16px; font-weight: 650; }
+      .arrow { fill: none; stroke: #AAB6C4; stroke-width: 2.5; stroke-linecap: butt; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect x="16" y="16" width="1288" height="328" rx="30" fill="url(#bg)" stroke="#D8E7F1"/>
+  <circle cx="1168" cy="64" r="52" fill="#C0E8DB" opacity="0.5"/>
+  <circle cx="118" cy="300" r="44" fill="#D1CEE6" opacity="0.44"/>
+
+  <text x="56" y="56" class="sans title">Inputs, processing, outputs</text>
+  <text x="56" y="84" class="sans small">A Graph owns the endpoints and the processing path between them.</text>
+
+  <g filter="url(#shadow)">
+    <rect x="240" y="132" width="760" height="170" rx="34" fill="#FFFFFF" stroke="#B8B0DC" stroke-width="2"/>
+    <rect x="272" y="116" width="86" height="32" rx="16" fill="url(#purple)"/>
+    <text x="315" y="137" class="sans tag" text-anchor="middle">Graph</text>
+
+    <rect x="190" y="162" width="150" height="62" rx="20" fill="#FFFFFF" stroke="#9BC2ED" stroke-width="2"/>
+    <rect x="215" y="179" width="100" height="28" rx="14" fill="url(#blue)"/>
+    <text x="265" y="198" class="sans tag" text-anchor="middle">Inputs</text>
+
+    <path class="arrow" d="M340 193H392"/>
+
+    <rect x="392" y="171" width="116" height="44" rx="15" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="450" y="198" class="sans step" text-anchor="middle">Node</text>
+    <path class="arrow" d="M508 193H552"/>
+
+    <rect x="552" y="171" width="116" height="44" rx="15" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="610" y="198" class="sans step" text-anchor="middle">Node</text>
+    <path class="arrow" d="M668 193H712"/>
+
+    <rect x="712" y="171" width="116" height="44" rx="15" fill="#F6F8FB" stroke="#D6E2EF"/>
+    <text x="770" y="198" class="sans step" text-anchor="middle">Node</text>
+
+    <path class="arrow" d="M828 193H880"/>
+
+    <path d="M392 238V252H828V238" fill="none" stroke="#B8B0DC" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="6 7"/>
+    <path d="M610 252V264" fill="none" stroke="#B8B0DC" stroke-width="2.4" stroke-linecap="round" stroke-dasharray="6 7"/>
+
+    <rect x="880" y="162" width="150" height="62" rx="20" fill="#FFFFFF" stroke="#9BC2ED" stroke-width="2"/>
+    <rect x="905" y="179" width="100" height="28" rx="14" fill="url(#blue)"/>
+    <text x="955" y="198" class="sans tag" text-anchor="middle">Outputs</text>
+
+    <text x="610" y="286" class="sans caption" text-anchor="middle">Processing happens here</text>
+  </g>
+</svg>
