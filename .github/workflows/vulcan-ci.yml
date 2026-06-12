@@ -60,7 +60,9 @@ jobs:
 
       - name: Install sima-cli
         run: |
-          curl -fsSL https://docs.sima.ai/_static/tools/sima-cli-installer.sh | bash
+          curl -fsSL https://artifacts.neat.sima.ai/sima-cli/install.py -o sima-cli-install.py
+          python3 sima-cli-install.py main latest --noninteractive
+          rm -f sima-cli-install.py
           echo "${HOME}/.sima-cli/.venv/bin" >> "${GITHUB_PATH}"
           "${HOME}/.sima-cli/.venv/bin/sima-cli" version
 
@@ -148,7 +150,7 @@ jobs:
           bash -lc '
             set -euo pipefail
             export SIMA_CLI_CHECK_FOR_UPDATE=0
-            curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o sima-cli-install.py
+            curl -fsSL https://artifacts.neat.sima.ai/sima-cli/install.py -o sima-cli-install.py
             python3 sima-cli-install.py main latest --noninteractive
             rm -f sima-cli-install.py
             export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"

@@ -45,13 +45,9 @@ You can skip this section — it uses the same `assets/` directory, model packag
     :::note sima-cli model download
     If `sima-cli` writes the model somewhere other than the `assets` directory, copy that file into `assets/yolo_v8s_mpk.tar.gz`.
     :::
-3. **Download the sample image:**
-    ```bash
-    curl -L -o assets/tutorial_sample_image.png \
-      https://docs.sima-neat.com/images/tutorial_sample_image.png
-    ```
+3. **Download the sample image** from the docs and save it as `assets/tutorial_sample_image.png`.
 
-    You can also [open or download the sample image](../../images/tutorial_sample_image.png) from the docs.
+    [Open or download the sample image](../../images/tutorial_sample_image.png).
 
 ## Walk through the code
 
@@ -499,4 +495,4 @@ From there, continue with broader SiMa Neat learning resources:
 
 - Learn the [core programming model](/develop-apps/development-workflow/overview), which explains the main Neat concepts such as graphs, models, pipeline stages, and graph execution.
 - Follow the [tutorials](/tutorials/), which walk through specific concepts and workflows step by step.
-- Explore curated applications on the [apps portal](https://apps.sima-neat.com/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).
+- Explore curated applications on the [apps portal](https://apps.neat.sima.ai/portal), with source code in the [apps repository on GitHub](https://github.com/sima-neat/apps).

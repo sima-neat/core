@@ -5,8 +5,8 @@ const CONSENT_VERSION = 1;
 const ANALYTICS_EVENT = "neat:analytics-consent";
 const TRACK_EVENT = "neat:analytics-track";
 const INTERNAL_HOSTS = new Set([
-  "docs.sima-neat.com",
-  "docs-preview.sima-neat.com",
+  "developer.sima.ai",
+  "build.stg.neat.sima.ai",
   "localhost",
   "127.0.0.1",
 ]);
@@ -297,7 +297,6 @@ const platformFromText = (value) => {
 
 const commandIdFromCode = (value) => {
   const code = String(value || "").toLowerCase();
-  if (code.includes("tools.sima-neat.com/install-neat.sh")) return "install_neat_framework";
   if (code.includes("sima-cli install ghcr:sima-neat/sdk")) return "install_elxr_sdk";
   if (code.includes("sima-cli install sdk")) return "install_sdk";
   if (code.includes("sima-cli install")) return "sima_cli_install";

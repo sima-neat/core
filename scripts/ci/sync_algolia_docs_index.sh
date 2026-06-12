@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 DOCS_DIR="${DOCS_DIR:-docs}"
-SITE_BASE_URL="${SITE_BASE_URL:-https://docs.sima-neat.com}"
+SITE_BASE_URL="${SITE_BASE_URL:-https://developer.sima.ai}"
 BATCH_SIZE="${BATCH_SIZE:-500}"
 MAX_RECORD_BYTES="${MAX_RECORD_BYTES:-9500}"
 DRY_RUN="0"
@@ -20,7 +20,7 @@ Index docs markdown files into Algolia without crawler.
 
 Options:
   --docs-dir <path>      Docs root directory (default: docs)
-  --site-base-url <url>  Public docs base URL (default: https://docs.sima-neat.com)
+  --site-base-url <url>  Public docs base URL (default: https://developer.sima.ai)
   --batch-size <n>       Upload batch size (default: 500)
   --max-record-bytes <n> Max per-record payload size in bytes (default: 9500)
   --clear                Clear target index before upload

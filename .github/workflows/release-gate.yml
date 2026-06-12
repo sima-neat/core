@@ -96,7 +96,7 @@ jobs:
       contents: write
     env:
       DOCS_STRICT_LINKS: "1"
-      DOCS_URL: https://docs.sima-neat.com
+      DOCS_URL: https://developer.sima.ai
       DOCS_BASE_URL: /
       AUTODOC_GITHUB_TOKEN: ${{ secrets.AUTODOC_GITHUB_TOKEN || github.token }}
     steps:

@@ -1147,8 +1147,8 @@ bootstrap_sima_cli_for_ci_if_needed() {
   echo "Installing sima-cli with Neat artifact support for CI..."
   local installer
   installer="$(mktemp /tmp/sima-cli-install-XXXXXX.py)"
-  curl -fsSL https://artifacts.sima-neat.com/tools/sima-cli-install.py -o "${installer}"
-  SIMA_CLI_CHECK_FOR_UPDATE=0 python3 "${installer}" main latest
+  curl -fsSL https://artifacts.neat.sima.ai/sima-cli/install.py -o "${installer}"
+  SIMA_CLI_CHECK_FOR_UPDATE=0 python3 "${installer}" main latest --noninteractive
   rm -f "${installer}"
 
   export PATH="${HOME}/.sima-cli/.venv/bin:${PATH}"
